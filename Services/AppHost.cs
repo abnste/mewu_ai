@@ -16,7 +16,7 @@ public sealed class AppHost : IDisposable
         _single.ActivationRequested+=()=>_app.Dispatcher.Invoke(ShowMainWindow);
         _main=new MainWindow(this); _app.MainWindow=_main;
         _hotkey=new GlobalHotkeyService(); _hotkey.Pressed+=BeginCapture; _hotkey.Register(Settings.CaptureHotkey);
-        BuildTray(); return true;
+        new TempFileService().Cleanup(TimeSpan.FromDays(3));BuildTray(); return true;
     }
     private void BuildTray()
     {

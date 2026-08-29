@@ -6,3 +6,4 @@
 - 不提交密钥、`.env`、用户配置、日志、临时截图或录屏。
 - 禁止 GPL/AGPL；优先微软官方、MIT、BSD、Apache-2.0。
 - 重大修改必须构建和测试，仓库始终保持可运行、可回滚。
+- 区域 MP4 使用 MIT 的 ScreenRecorderLib + Windows Media Foundation；不要改为捆绑 GPL FFmpeg。

@@ -1,0 +1,15 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using mewu_ai_Assistant.Interop;
+using mewu_ai_Assistant.Models;
+using mewu_ai_Assistant.OCR;
+using mewu_ai_Assistant.Services;
+namespace mewu_ai_Assistant.Views;
+public sealed class TranslationWindow : Window
+{
+    private readonly AppHost _host;private readonly BitmapSource _image;private readonly Canvas _canvas=new();private readonly TextBlock _status=new();private readonly List<TextBox> _overlays=[];
+    public TranslationWindow(AppHost host,BitmapSource image){_host=host;_image=image;Title="喵呜AI 原位翻译";Width=Math.Min(image.PixelWidth+40,1200);Height=Math.Min(image.PixelHeight+100,850);WindowStartupLocation=WindowStartupLocation.CenterScreen;Background=new SolidColorBrush(Color.FromRgb(11,16,24));_canvas.Background=new ImageBrush(image){Stretch=Stretch.Fill};var toggle=new Button{Content="原文 / 译文",Margin=new Thickness(8),Padding=new Thickness(12,6,12,6)};toggle.Click+=(_,_)=>{foreach(var b in _overlays)b.Visibility=b.Visibility==Visibility.Visible?Visibility.Hidden:Visibility.Visible;};var bar=new DockPanel();bar.Children.Add(toggle);_status.Text="本地 OCR 识别中…";_status.Foreground=Brushes.White;_status.VerticalAlignment=VerticalAlignment.Center;bar.Children.Add(_status);var g=new Grid();g.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});g.RowDefinitions.Add(new RowDefinition());Grid.SetRow(_canvas,1);g.Children.Add(bar);g.Children.Add(_canvas);Content=g;Loaded+=async(_,_)=>await TranslateAsync();SourceInitialized+=(_,_)=>NativeMethods.SetWindowDisplayAffinity(new System.Windows.Interop.WindowInteropHelper(this).Handle,NativeMethods.WdaExcludeFromCapture);}
+    private async Task TranslateAsync(){try{var doc=await new WindowsOcrService().RecognizeAsync(_image,CancellationToken.None);if(doc.Lines.Count==0){_status.Text="未识别到文字";return;}var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){_status.Text="OCR 已完成，但翻译需要先配置 AI 模型";return;}var prompt="将以下文本逐行翻译成简体中文。必须保持行数完全一致，只输出译文，每行对应输入一行：\n"+string.Join("\n",doc.Lines.Select(x=>x.Text.Replace('\n',' ')));var result=await provider.SendAsync(new AiRequest{Prompt=prompt},CancellationToken.None);var translated=result.Answer.Replace("```","").Split('\n',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);var sx=_canvas.ActualWidth/_image.PixelWidth;var sy=_canvas.ActualHeight/_image.PixelHeight;for(var i=0;i<doc.Lines.Count;i++){var line=doc.Lines[i];var text=i<translated.Length?translated[i]:line.Text;var box=new TextBox{Text=text,Foreground=Brushes.White,Background=new SolidColorBrush(Color.FromArgb(225,8,15,25)),BorderBrush=new SolidColorBrush(Color.FromRgb(49,140,255)),TextWrapping=TextWrapping.Wrap,FontSize=Math.Max(11,line.Height*sy*.68),Padding=new Thickness(3),IsReadOnly=true};Canvas.SetLeft(box,line.X*sx);Canvas.SetTop(box,line.Y*sy);box.Width=Math.Max(45,line.Width*sx);box.Height=Math.Max(24,line.Height*sy*1.35);_canvas.Children.Add(box);_overlays.Add(box);}_status.Text="翻译完成，可切换原文 / 译文并复制";}catch(Exception ex){_status.Text=$"翻译失败：{ex.Message}";}}
+}

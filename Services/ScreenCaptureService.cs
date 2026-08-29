@@ -28,5 +28,6 @@ public sealed class ScreenCaptureService
         BitmapEncoder encoder=jpeg?new JpegBitmapEncoder { QualityLevel=92 }:new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
         using var stream=File.Create(path); encoder.Save(stream);
     }
+    public static byte[] EncodePng(BitmapSource image){var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using var stream=new MemoryStream();encoder.Save(stream);return stream.ToArray();}
 }
 public sealed record CaptureFrame(int OriginX,int OriginY,BitmapSource Image);
