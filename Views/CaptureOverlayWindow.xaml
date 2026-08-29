@@ -3,7 +3,7 @@
  <Window.Resources>
   <Style TargetType="Button"><Setter Property="Foreground" Value="#F3F7FF"/><Setter Property="Background" Value="#202B3A"/><Setter Property="BorderBrush" Value="#31435B"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="11,7"/><Setter Property="Margin" Value="2"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#315B86"/><Setter TargetName="B" Property="BorderBrush" Value="#43A8FF"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Opacity" Value="0.75"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
  </Window.Resources>
- <Canvas x:Name="Root" MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp">
+ <Canvas x:Name="Root" Background="Transparent" MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp">
   <Image x:Name="DesktopImage" Stretch="Fill" IsHitTestVisible="False"/>
   <Rectangle x:Name="Dimmer" Fill="#99000000" IsHitTestVisible="False"/>
   <Image x:Name="SelectedImage" Stretch="Fill" Visibility="Collapsed" IsHitTestVisible="False"/>

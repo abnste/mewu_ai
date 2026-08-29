@@ -67,7 +67,7 @@ public sealed class SettingsWindow : Window
         grid.Children.Add(tabs);
         grid.Children.Add(save);
         Content = grid;
-        SourceInitialized += (_, _) => NativeMethods.SetWindowDisplayAffinity(new System.Windows.Interop.WindowInteropHelper(this).Handle, NativeMethods.WdaExcludeFromCapture);
+        SourceInitialized += (_, _) => NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle);
     }
 
     private void SetWindowStyles()

@@ -17,14 +17,14 @@ public partial class CaptureOverlayWindow : Window
     private readonly AppHost _host; private readonly CaptureFrame _frame; private Point _start; private Rect _selection; private bool _selecting; private bool _moving; private Point _moveStart; private Rect _moveOrigin;
     public CaptureOverlayWindow(AppHost host)
     {
-        _host=host; _frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor); InitializeComponent(); DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
+        _host=host; _frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor); InitializeComponent();if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
         var area=System.Windows.Forms.SystemInformation.VirtualScreen; Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
-        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.SetWindowDisplayAffinity(hwnd,NativeMethods.WdaExcludeFromCapture);};Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=Root.ActualHeight;Focus();};
+        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.ExcludeFromCapture(hwnd);};Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=Root.ActualHeight;Focus();};
     }
     private void OnMouseDown(object s,MouseButtonEventArgs e)
     {
-        if(e.OriginalSource is Thumb)return;var p=e.GetPosition(Root); if(!_selection.IsEmpty&&_selection.Contains(p)){_moving=true;_moveStart=p;_moveOrigin=_selection;CaptureMouse();return;}
-        _selecting=true;_start=p;_selection=Rect.Empty;Toolbar.Visibility=Visibility.Collapsed;SelectionBorder.Visibility=SelectedImage.Visibility=Visibility.Visible;CaptureMouse();
+        if(e.OriginalSource is Thumb)return;var p=e.GetPosition(Root); if(!_selection.IsEmpty&&_selection.Contains(p)){_moving=true;_moveStart=p;_moveOrigin=_selection;Root.CaptureMouse();return;}
+        _selecting=true;_start=p;_selection=Rect.Empty;Toolbar.Visibility=Visibility.Collapsed;SelectionBorder.Visibility=SelectedImage.Visibility=Visibility.Visible;Root.CaptureMouse();
     }
     private void OnMouseMove(object s,MouseEventArgs e)
     {
@@ -32,7 +32,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void OnMouseUp(object s,MouseButtonEventArgs e)
     {
-        if(!_selecting&&!_moving)return; _selecting=_moving=false;ReleaseMouseCapture(); if(_selection.Width<8||_selection.Height<8){Reset();return;} UpdateSelection();ShowToolbar();
+        if(!_selecting&&!_moving)return; _selecting=_moving=false;Root.ReleaseMouseCapture(); if(_selection.Width<8||_selection.Height<8){Reset();return;} UpdateSelection();ShowToolbar();
     }
     private void UpdateSelection()
     {

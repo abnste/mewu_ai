@@ -9,3 +9,6 @@
 - 重大修改必须构建和测试，仓库始终保持可运行、可回滚。
 - 区域 MP4 使用 MIT 的 ScreenRecorderLib + Windows Media Foundation；不要改为捆绑 GPL FFmpeg。
 - .NET 10 WPF `GifBitmapEncoder` 会把帧延迟写成 0；GIF 导出后必须按 GIF 块结构校正 Graphic Control Extension，并用解码测试验证播放时长。
+- 所有产品窗口统一通过 `NativeMethods.ExcludeFromCapture` 启用防捕获；只有 Debug 构建在显式设置 `MEWU_QA_CAPTURE_WINDOWS=1` 时可跳过，供自动化视觉验收观察覆盖层。Release 构建会编译掉该开关，严禁改成运行时可绕过。
+- 全屏截图根画布必须保持 `Background="Transparent"` 才能接收空白区域命中；拖选期间鼠标必须由 `Root` 捕获和释放，不能由窗口捕获后让挂在根画布上的移动/松开事件断路。
+- InkCanvas 的画笔可使用 `FitToCurve`，矩形和箭头等几何标注必须在生成 Stroke 时关闭曲线拟合，否则直角和箭头轮廓会被平滑变形。
