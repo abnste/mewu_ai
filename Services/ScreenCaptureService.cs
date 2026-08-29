@@ -13,6 +13,10 @@ public sealed class ScreenCaptureService
         using(var graphics=Graphics.FromImage(bitmap)){graphics.CopyFromScreen(bounds.Left,bounds.Top,0,0,bounds.Size,CopyPixelOperation.SourceCopy);if(includeCursor)DrawCursor(graphics,bounds.Left,bounds.Top);}
         return new(bounds.Left,bounds.Top,ToSource(bitmap));
     }
+    public BitmapSource CaptureRegion(Models.ScreenRect region,bool includeCursor=false)
+    {
+        if(region.IsEmpty)throw new ArgumentOutOfRangeException(nameof(region));using var bitmap=new Bitmap(region.Width,region.Height,PixelFormat.Format32bppPArgb);using(var graphics=Graphics.FromImage(bitmap)){graphics.CopyFromScreen(region.X,region.Y,0,0,bitmap.Size,CopyPixelOperation.SourceCopy);if(includeCursor)DrawCursor(graphics,region.X,region.Y);}return ToSource(bitmap);
+    }
     private static BitmapSource ToSource(Bitmap bitmap)
     {
         using var stream=new MemoryStream(); bitmap.Save(stream,ImageFormat.Png); stream.Position=0;
