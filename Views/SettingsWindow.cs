@@ -1,30 +1,447 @@
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using mewu_ai_Assistant.AI;
+using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
-using ComboBox=System.Windows.Controls.ComboBox;
-using TextBox=System.Windows.Controls.TextBox;
-using CheckBox=System.Windows.Controls.CheckBox;
-using Button=System.Windows.Controls.Button;
+
 namespace mewu_ai_Assistant.Views;
+
 public sealed class SettingsWindow : Window
 {
-    private readonly AppHost _host; private readonly ComboBox _delay=new(),_providerType=new(),_hotkey=new(),_recordingFps=new(),_gifFps=new(),_voiceLanguage=new(); private readonly TextBox _baseUrl=new(),_model=new(),_customHeaders=new(); private readonly PasswordBox _apiKey=new(); private readonly CheckBox _history=new(),_voice=new(),_autoVoice=new(),_startup=new(),_ctrl=new(),_shift=new(),_alt=new(),_captureCursor=new(),_recordCursor=new();
+    private static readonly Brush PanelBrush = new SolidColorBrush(Color.FromRgb(18, 26, 38));
+    private static readonly Brush InputBrush = new SolidColorBrush(Color.FromRgb(25, 36, 52));
+    private static readonly Brush ControlBorderBrush = new SolidColorBrush(Color.FromRgb(49, 67, 91));
+    private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(145, 160, 181));
+    private readonly AppHost _host;
+    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _hotkey = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new();
+    private readonly TextBox _providerName = new(), _baseUrl = new(), _model = new(), _customHeaders = new();
+    private readonly PasswordBox _apiKey = new();
+    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _ctrl = new(), _shift = new(), _alt = new(), _captureCursor = new(), _recordCursor = new(), _defaultProvider = new();
+    private readonly List<AiProviderSettings> _providers;
+    private readonly Dictionary<string, string> _pendingApiKeys = [];
+    private AiProviderSettings? _selectedProvider;
+    private string _defaultProviderId;
+    private bool _loadingProvider;
+
     public SettingsWindow(AppHost host)
     {
-        _host=host;Title="喵呜AI 设置";Width=720;Height=600;WindowStartupLocation=WindowStartupLocation.CenterScreen;Background=new SolidColorBrush(Color.FromRgb(11,16,24));Foreground=Brushes.White;
-        var tabs=new TabControl{Margin=new Thickness(20)};tabs.Items.Add(Tab("常规",General()));tabs.Items.Add(Tab("捕获",Capture()));tabs.Items.Add(Tab("录屏",Recording()));tabs.Items.Add(Tab("AI",Ai()));tabs.Items.Add(Tab("语音",Voice()));tabs.Items.Add(Tab("隐私",Privacy()));
-        var save=new Button{Content="保存",Padding=new Thickness(24,9,24,9),Margin=new Thickness(0,0,20,20),HorizontalAlignment=HorizontalAlignment.Right};save.Click+=(_,_)=>Save();var grid=new Grid();grid.RowDefinitions.Add(new RowDefinition());grid.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});Grid.SetRow(save,1);grid.Children.Add(tabs);grid.Children.Add(save);Content=grid;
+        _host = host;
+        _providers = host.Settings.Providers.Select(CloneProvider).ToList();
+        if (_providers.Count == 0) _providers.Add(new AiProviderSettings());
+        _defaultProviderId = host.Settings.DefaultProviderId ?? _providers[0].Id;
+        Title = "喵呜AI 设置";
+        Width = 780;
+        Height = 680;
+        MinWidth = 640;
+        MinHeight = 500;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Background = new SolidColorBrush(Color.FromRgb(11, 16, 24));
+        Foreground = Brushes.White;
+        SetWindowStyles();
+
+        var tabs = new TabControl
+        {
+            Margin = new Thickness(20, 20, 20, 14),
+            Background = PanelBrush,
+            BorderBrush = ControlBorderBrush,
+            Foreground = Brushes.White
+        };
+        tabs.Items.Add(Tab("常规", General()));
+        tabs.Items.Add(Tab("捕获", Capture()));
+        tabs.Items.Add(Tab("录屏", Recording()));
+        tabs.Items.Add(Tab("AI", Ai()));
+        tabs.Items.Add(Tab("语音", Voice()));
+        tabs.Items.Add(Tab("隐私", Privacy()));
+
+        var save = ActionButton("保存", true);
+        save.Margin = new Thickness(0, 0, 20, 20);
+        save.HorizontalAlignment = HorizontalAlignment.Right;
+        save.Click += (_, _) => Save();
+        var grid = new Grid();
+        grid.RowDefinitions.Add(new RowDefinition());
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        Grid.SetRow(save, 1);
+        grid.Children.Add(tabs);
+        grid.Children.Add(save);
+        Content = grid;
     }
-    private static TabItem Tab(string h,UIElement c)=>new(){Header=h,Content=c};private static TextBlock Text(string t)=>new(){Text=t,Margin=new Thickness(20),TextWrapping=TextWrapping.Wrap};
-    private UIElement General(){var p=Panel();_startup.Content="登录 Windows 后自动启动";_startup.IsChecked=_host.Settings.LaunchAtStartup;p.Children.Add(_startup);p.Children.Add(Text("全局截图快捷键"));var mods=new StackPanel{Orientation=Orientation.Horizontal};_ctrl.Content="Ctrl";_shift.Content="Shift";_alt.Content="Alt";_ctrl.IsChecked=_host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control);_shift.IsChecked=_host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);_alt.IsChecked=_host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Alt);mods.Children.Add(_ctrl);mods.Children.Add(_shift);mods.Children.Add(_alt);p.Children.Add(mods);foreach(var key in Enumerable.Range('A',26).Select(x=>((char)x).ToString()))_hotkey.Items.Add(key);_hotkey.SelectedItem=_host.Settings.CaptureHotkey.Key.ToString();p.Children.Add(_hotkey);p.Children.Add(Text("关闭主窗口不会退出；请使用托盘菜单退出。"));return p;}
-    private UIElement Capture(){var p=Panel();p.Children.Add(Text("延时截图"));foreach(var i in new[]{0,3,5})_delay.Items.Add($"{i} 秒");_delay.SelectedIndex=_host.Settings.CaptureDelaySeconds switch{3=>1,5=>2,_=>0};p.Children.Add(_delay);_captureCursor.Content="截图包含系统鼠标指针";_captureCursor.IsChecked=_host.Settings.IncludeCaptureCursor;p.Children.Add(_captureCursor);return p;}
-    private UIElement Recording(){var p=Panel();p.Children.Add(Text("MP4 帧率"));foreach(var i in new[]{15,24,30,60})_recordingFps.Items.Add(i);_recordingFps.SelectedItem=_host.Settings.RecordingFps;p.Children.Add(_recordingFps);p.Children.Add(Text("GIF 帧率"));foreach(var i in new[]{5,10,15})_gifFps.Items.Add(i);_gifFps.SelectedItem=_host.Settings.GifFps;p.Children.Add(_gifFps);_recordCursor.Content="录屏包含系统鼠标指针";_recordCursor.IsChecked=_host.Settings.IncludeRecordingCursor;p.Children.Add(_recordCursor);return p;}
-    private UIElement Ai(){var p=Panel();p.Children.Add(Text("API Key 使用 Windows DPAPI 加密，仅保存在本机当前用户目录。"));_providerType.Items.Add("OpenAICompatible");_providerType.Items.Add("MiniMax");p.Children.Add(_providerType);p.Children.Add(Label("Base URL",_baseUrl));p.Children.Add(Label("Model",_model));var keyPanel=Panel();keyPanel.Children.Add(Text("API Key（留空则保留现有密钥）"));_apiKey.Margin=new Thickness(0,4,0,12);_apiKey.Padding=new Thickness(8);keyPanel.Children.Add(_apiKey);p.Children.Add(keyPanel);p.Children.Add(Label("Custom Headers JSON（高级）",_customHeaders));var test=new Button{Content="测试连接",Padding=new Thickness(12,6,12,6)};test.Click+=async(_,_)=>await TestConnectionAsync(test);p.Children.Add(test);var provider=_host.Settings.Providers.FirstOrDefault();_providerType.SelectedIndex=provider?.Type=="MiniMax"?1:0;_baseUrl.Text=provider?.BaseUrl??"https://api.openai.com/v1";_model.Text=provider?.Model??"gpt-4.1-mini";_customHeaders.Text=provider is null||provider.CustomHeaders.Count==0?"{}":System.Text.Json.JsonSerializer.Serialize(provider.CustomHeaders,new System.Text.Json.JsonSerializerOptions{WriteIndented=true});return p;}
-    private UIElement Voice(){var p=Panel();_voice.Content="启用语音输入";_voice.IsChecked=_host.Settings.EnableVoiceInput;_autoVoice.Content="Prompt 出现时自动监听";_autoVoice.IsChecked=_host.Settings.AutomaticallyStartListening;p.Children.Add(_voice);p.Children.Add(_autoVoice);p.Children.Add(Text("识别语言"));foreach(var item in new[]{("跟随 Windows","system"),("简体中文","zh-CN"),("英语","en-US")})_voiceLanguage.Items.Add(new ComboBoxItem{Content=item.Item1,Tag=item.Item2});_voiceLanguage.SelectedIndex=_host.Settings.VoiceLanguage switch{"zh-CN"=>1,"en-US"=>2,_=>0};p.Children.Add(_voiceLanguage);return p;}
-    private UIElement Privacy(){var p=Panel();_history.Content="在本地保存 AI 对话历史";_history.IsChecked=_host.Settings.SaveConversationHistory;p.Children.Add(_history);p.Children.Add(Text("媒体默认不永久保存；截图只有明确发送 AI 时才会上传。"));var clearHistory=new Button{Content="清空本地对话历史",Padding=new Thickness(12,6,12,6),Margin=new Thickness(0,10,0,0)};clearHistory.Click+=(_,_)=>{new ConversationHistoryService().Clear();MessageBox.Show("本地对话历史已清空","喵呜AI");};p.Children.Add(clearHistory);var clear=new Button{Content="清理临时媒体",Padding=new Thickness(12,6,12,6),Margin=new Thickness(0,8,0,0)};clear.Click+=(_,_)=>{new TempFileService().Cleanup(TimeSpan.Zero);MessageBox.Show("临时媒体已清理","喵呜AI");};p.Children.Add(clear);var open=new Button{Content="打开数据目录",Padding=new Thickness(12,6,12,6),Margin=new Thickness(0,8,0,0)};open.Click+=(_,_)=>System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI")){UseShellExecute=true});p.Children.Add(open);p.Children.Add(Text($"应用版本：{typeof(SettingsWindow).Assembly.GetName().Version}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / Windows OCR\n录屏：Media Foundation H.264"));return p;}
-    private static StackPanel Panel()=>new(){Margin=new Thickness(20)};private static FrameworkElement Label(string name,TextBox box){var p=Panel();p.Children.Add(Text(name));box.Margin=new Thickness(0,4,0,12);box.Padding=new Thickness(8);p.Children.Add(box);return p;}
-    private async Task TestConnectionAsync(Button button){button.IsEnabled=false;try{var existing=_host.Settings.Providers.FirstOrDefault();var key=!string.IsNullOrWhiteSpace(_apiKey.Password)?_apiKey.Password:existing is null?null:new CredentialService().Read(existing.CredentialId);if(string.IsNullOrWhiteSpace(key))throw new InvalidOperationException("请先输入 API Key");var settings=new Models.AiProviderSettings{Type=_providerType.SelectedIndex==1?"MiniMax":"OpenAICompatible",BaseUrl=_baseUrl.Text.TrimEnd('/'),Model=_model.Text,CustomHeaders=ParseHeaders()};AI.IAiProvider provider=settings.Type=="MiniMax"?new AI.MiniMaxProvider(settings,key):new AI.OpenAiCompatibleProvider(settings,key);var ok=await provider.TestConnectionAsync(CancellationToken.None);MessageBox.Show(ok?"连接成功":"服务返回失败状态", "AI 连接测试");}catch(Exception ex){MessageBox.Show(ex.Message,"AI 连接测试失败");}finally{button.IsEnabled=true;}}
-    private Dictionary<string,string> ParseHeaders()=>System.Text.Json.JsonSerializer.Deserialize<Dictionary<string,string>>(string.IsNullOrWhiteSpace(_customHeaders.Text)?"{}":_customHeaders.Text)??[];
-    private void Save(){Dictionary<string,string> headers;try{headers=ParseHeaders();}catch(System.Text.Json.JsonException ex){MessageBox.Show($"Custom Headers JSON 无效：{ex.Message}","无法保存");return;}_host.Settings.LaunchAtStartup=_startup.IsChecked==true;StartupService.SetEnabled(_host.Settings.LaunchAtStartup);var mods=System.Windows.Input.ModifierKeys.None;if(_ctrl.IsChecked==true)mods|=System.Windows.Input.ModifierKeys.Control;if(_shift.IsChecked==true)mods|=System.Windows.Input.ModifierKeys.Shift;if(_alt.IsChecked==true)mods|=System.Windows.Input.ModifierKeys.Alt;if(_hotkey.SelectedItem is string key&&Enum.TryParse<System.Windows.Input.Key>(key,out var parsed)){_host.Settings.CaptureHotkey.Key=parsed;_host.Settings.CaptureHotkey.Modifiers=mods;}_host.Settings.CaptureDelaySeconds=_delay.SelectedIndex switch{1=>3,2=>5,_=>0};_host.Settings.IncludeCaptureCursor=_captureCursor.IsChecked==true;_host.Settings.RecordingFps=_recordingFps.SelectedItem is int rf?rf:30;_host.Settings.GifFps=_gifFps.SelectedItem is int gf?gf:15;_host.Settings.IncludeRecordingCursor=_recordCursor.IsChecked==true;_host.Settings.EnableVoiceInput=_voice.IsChecked==true;_host.Settings.AutomaticallyStartListening=_autoVoice.IsChecked==true;_host.Settings.VoiceLanguage=(_voiceLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system";_host.Settings.SaveConversationHistory=_history.IsChecked==true;if(!string.IsNullOrWhiteSpace(_baseUrl.Text)){var p=_host.Settings.Providers.FirstOrDefault();if(p is null){p=new();_host.Settings.Providers.Add(p);_host.Settings.DefaultProviderId=p.Id;}p.Type=_providerType.SelectedIndex==1?"MiniMax":"OpenAICompatible";p.Name=p.Type;if(p.Type=="MiniMax"&&_baseUrl.Text.Contains("api.openai.com",StringComparison.OrdinalIgnoreCase))_baseUrl.Text="https://api.minimaxi.com/v1";if(p.Type=="MiniMax"&&_model.Text.StartsWith("gpt-",StringComparison.OrdinalIgnoreCase))_model.Text="MiniMax-M3";p.BaseUrl=_baseUrl.Text.TrimEnd('/');p.Model=_model.Text;p.CustomHeaders=headers;if(!string.IsNullOrWhiteSpace(_apiKey.Password)){if(string.IsNullOrWhiteSpace(p.CredentialId))p.CredentialId=Guid.NewGuid().ToString("N");new CredentialService().Save(p.CredentialId,_apiKey.Password);}}_host.SaveSettings();Close();}
+
+    private void SetWindowStyles()
+    {
+        Resources[typeof(TextBox)] = InputStyle(typeof(TextBox));
+        Resources[typeof(PasswordBox)] = InputStyle(typeof(PasswordBox));
+        var comboStyle = InputStyle(typeof(ComboBox));
+        comboStyle.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.Black));
+        comboStyle.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.White));
+        Resources[typeof(ComboBox)] = comboStyle;
+        var checkStyle = new Style(typeof(CheckBox));
+        checkStyle.Setters.Add(new Setter(ForegroundProperty, Brushes.White));
+        checkStyle.Setters.Add(new Setter(Control.MarginProperty, new Thickness(0, 6, 0, 6)));
+        Resources[typeof(CheckBox)] = checkStyle;
+        var tabStyle = new Style(typeof(TabItem));
+        tabStyle.Setters.Add(new Setter(ForegroundProperty, Brushes.White));
+        tabStyle.Setters.Add(new Setter(Control.BackgroundProperty, InputBrush));
+        tabStyle.Setters.Add(new Setter(Control.BorderBrushProperty, ControlBorderBrush));
+        tabStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(15, 8, 15, 8)));
+        var selected = new Trigger { Property = TabItem.IsSelectedProperty, Value = true };
+        selected.Setters.Add(new Setter(ForegroundProperty, Brushes.Black));
+        tabStyle.Triggers.Add(selected);
+        Resources[typeof(TabItem)] = tabStyle;
+    }
+
+    private static Style InputStyle(Type type)
+    {
+        var style = new Style(type);
+        style.Setters.Add(new Setter(Control.BackgroundProperty, InputBrush));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+        style.Setters.Add(new Setter(Control.BorderBrushProperty, ControlBorderBrush));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(9, 7, 9, 7)));
+        style.Setters.Add(new Setter(Control.MarginProperty, new Thickness(0, 5, 0, 14)));
+        return style;
+    }
+
+    private static TabItem Tab(string header, UIElement content) => new()
+    {
+        Header = header,
+        Content = new ScrollViewer
+        {
+            Content = content,
+            Background = PanelBrush,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Padding = new Thickness(4)
+        }
+    };
+
+    private static TextBlock Text(string text, bool secondary = false) => new()
+    {
+        Text = text,
+        Margin = new Thickness(0, 5, 0, 9),
+        TextWrapping = TextWrapping.Wrap,
+        Foreground = secondary ? SecondaryBrush : Brushes.White
+    };
+
+    private static StackPanel Panel() => new() { Margin = new Thickness(24) };
+
+    private static FrameworkElement Labeled(string name, Control control)
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(Text(name, true));
+        panel.Children.Add(control);
+        return panel;
+    }
+
+    private static Button ActionButton(string text, bool primary = false) => new()
+    {
+        Content = text,
+        Padding = new Thickness(18, 9, 18, 9),
+        Background = primary ? new SolidColorBrush(Color.FromRgb(49, 140, 255)) : InputBrush,
+        Foreground = Brushes.White,
+        BorderBrush = primary ? Brushes.Transparent : ControlBorderBrush,
+        Cursor = System.Windows.Input.Cursors.Hand
+    };
+
+    private UIElement General()
+    {
+        var panel = Panel();
+        panel.Children.Add(Text("启动与快捷键", true));
+        _startup.Content = "登录 Windows 后自动启动";
+        _startup.IsChecked = _host.Settings.LaunchAtStartup;
+        panel.Children.Add(_startup);
+        panel.Children.Add(Text("全局截图快捷键", true));
+        var modifiers = new StackPanel { Orientation = Orientation.Horizontal };
+        _ctrl.Content = "Ctrl";
+        _shift.Content = "Shift";
+        _alt.Content = "Alt";
+        _ctrl.Margin = new Thickness(0, 5, 18, 5);
+        _shift.Margin = new Thickness(0, 5, 18, 5);
+        _ctrl.IsChecked = _host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control);
+        _shift.IsChecked = _host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);
+        _alt.IsChecked = _host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Alt);
+        modifiers.Children.Add(_ctrl);
+        modifiers.Children.Add(_shift);
+        modifiers.Children.Add(_alt);
+        panel.Children.Add(modifiers);
+        foreach (var key in Enumerable.Range('A', 26).Select(x => ((char)x).ToString())) _hotkey.Items.Add(key);
+        _hotkey.SelectedItem = _host.Settings.CaptureHotkey.Key.ToString();
+        panel.Children.Add(_hotkey);
+        var restore = ActionButton("恢复默认 Ctrl + Shift + A");
+        restore.Click += (_, _) => { _ctrl.IsChecked = true; _shift.IsChecked = true; _alt.IsChecked = false; _hotkey.SelectedItem = "A"; };
+        panel.Children.Add(restore);
+        panel.Children.Add(Text("关闭主窗口不会退出；请使用托盘菜单退出。", true));
+        return panel;
+    }
+
+    private UIElement Capture()
+    {
+        var panel = Panel();
+        panel.Children.Add(Text("延时截图", true));
+        foreach (var seconds in new[] { 0, 3, 5 }) _delay.Items.Add($"{seconds} 秒");
+        _delay.SelectedIndex = _host.Settings.CaptureDelaySeconds switch { 3 => 1, 5 => 2, _ => 0 };
+        panel.Children.Add(_delay);
+        panel.Children.Add(Text("默认图片格式", true));
+        _imageFormat.Items.Add("PNG");
+        _imageFormat.Items.Add("JPEG");
+        _imageFormat.SelectedIndex = _host.Settings.DefaultImageFormat.Equals("jpg", StringComparison.OrdinalIgnoreCase) || _host.Settings.DefaultImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        panel.Children.Add(_imageFormat);
+        panel.Children.Add(Text("选区外暗化程度", true));
+        foreach (var opacity in new[] { 55, 60, 65 }) _overlayOpacity.Items.Add($"{opacity}%");
+        _overlayOpacity.SelectedItem = $"{Math.Round(Math.Clamp(_host.Settings.OverlayOpacity,.55,.65)*100):0}%";
+        panel.Children.Add(_overlayOpacity);
+        _captureCursor.Content = "截图包含系统鼠标指针";
+        _captureCursor.IsChecked = _host.Settings.IncludeCaptureCursor;
+        panel.Children.Add(_captureCursor);
+        panel.Children.Add(Text("截图、OCR、复制和保存均在本地完成。", true));
+        return panel;
+    }
+
+    private UIElement Recording()
+    {
+        var panel = Panel();
+        panel.Children.Add(Text("MP4 帧率", true));
+        foreach (var fps in new[] { 15, 24, 30, 60 }) _recordingFps.Items.Add(fps);
+        _recordingFps.SelectedItem = _host.Settings.RecordingFps;
+        panel.Children.Add(_recordingFps);
+        panel.Children.Add(Text("MP4 质量", true));
+        foreach (var quality in new[] { 50, 75, 90 }) _recordingQuality.Items.Add(quality);
+        _recordingQuality.SelectedItem = _host.Settings.RecordingQuality;
+        panel.Children.Add(_recordingQuality);
+        panel.Children.Add(Text("GIF 帧率", true));
+        foreach (var fps in new[] { 5, 10, 15 }) _gifFps.Items.Add(fps);
+        _gifFps.SelectedItem = _host.Settings.GifFps;
+        panel.Children.Add(_gifFps);
+        _recordCursor.Content = "录屏包含系统鼠标指针";
+        _recordCursor.IsChecked = _host.Settings.IncludeRecordingCursor;
+        panel.Children.Add(_recordCursor);
+        panel.Children.Add(Text("自动清理临时媒体", true));
+        foreach (var days in new[] { 1, 3, 7, 14, 30 }) _tempCleanup.Items.Add($"{days} 天");
+        _tempCleanup.SelectedItem = $"{Math.Clamp(_host.Settings.TempCleanupDays,1,30)} 天";
+        panel.Children.Add(_tempCleanup);
+        panel.Children.Add(Text("未保存的录制暂存在本机，并由应用自动清理。", true));
+        return panel;
+    }
+
+    private UIElement Ai()
+    {
+        var panel = Panel();
+        panel.Children.Add(Text("API Key 使用 Windows DPAPI 加密，仅保存在本机当前用户目录。", true));
+        panel.Children.Add(Text("Provider 配置", true));
+        var providerRow = new Grid();
+        providerRow.ColumnDefinitions.Add(new ColumnDefinition());
+        providerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        providerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _providerSelector.DisplayMemberPath = nameof(AiProviderSettings.Name);
+        _providerSelector.Margin = new Thickness(0, 0, 8, 10);
+        foreach (var configured in _providers) _providerSelector.Items.Add(configured);
+        var add = ActionButton("新增");
+        add.Margin = new Thickness(0, 0, 8, 10);
+        add.Click += (_, _) => AddProvider();
+        var remove = ActionButton("删除");
+        remove.Margin = new Thickness(0, 0, 0, 10);
+        remove.Click += (_, _) => RemoveProvider();
+        Grid.SetColumn(add, 1);
+        Grid.SetColumn(remove, 2);
+        providerRow.Children.Add(_providerSelector);
+        providerRow.Children.Add(add);
+        providerRow.Children.Add(remove);
+        panel.Children.Add(providerRow);
+        panel.Children.Add(Labeled("Provider 名称", _providerName));
+        _defaultProvider.Content = "设为默认 Provider";
+        panel.Children.Add(_defaultProvider);
+        _providerType.Items.Add("OpenAICompatible");
+        _providerType.Items.Add("MiniMax");
+        panel.Children.Add(Labeled("Provider 类型", _providerType));
+        panel.Children.Add(Labeled("Base URL", _baseUrl));
+        panel.Children.Add(Labeled("Model", _model));
+        panel.Children.Add(Labeled("API Key（留空则保留现有密钥）", _apiKey));
+        _customHeaders.AcceptsReturn = true;
+        _customHeaders.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _customHeaders.MinHeight = 88;
+        _customHeaders.FontFamily = new FontFamily("Cascadia Mono, Consolas");
+        panel.Children.Add(Labeled("Custom Headers JSON（高级）", _customHeaders));
+        var test = ActionButton("测试连接");
+        test.Click += async (_, _) => await TestConnectionAsync(test);
+        panel.Children.Add(test);
+        _providerSelector.SelectionChanged += (_, _) => SelectProvider(_providerSelector.SelectedItem as AiProviderSettings);
+        var initial = _providers.FirstOrDefault(x => x.Id == _defaultProviderId) ?? _providers[0];
+        _providerSelector.SelectedItem = initial;
+        return panel;
+    }
+
+    private UIElement Voice()
+    {
+        var panel = Panel();
+        _voice.Content = "启用语音输入";
+        _voice.IsChecked = _host.Settings.EnableVoiceInput;
+        _autoVoice.Content = "Prompt 出现时自动监听";
+        _autoVoice.IsChecked = _host.Settings.AutomaticallyStartListening;
+        panel.Children.Add(_voice);
+        panel.Children.Add(_autoVoice);
+        panel.Children.Add(Text("识别语言", true));
+        foreach (var item in new[] { ("跟随 Windows", "system"), ("简体中文", "zh-CN"), ("英语", "en-US") })
+            _voiceLanguage.Items.Add(new ComboBoxItem { Content = item.Item1, Tag = item.Item2 });
+        _voiceLanguage.SelectedIndex = _host.Settings.VoiceLanguage switch { "zh-CN" => 1, "en-US" => 2, _ => 0 };
+        panel.Children.Add(_voiceLanguage);
+        panel.Children.Add(Text("识别结果只会填入输入框，不会自动发送。", true));
+        return panel;
+    }
+
+    private UIElement Privacy()
+    {
+        var panel = Panel();
+        _history.Content = "在本地保存 AI 对话历史";
+        _history.IsChecked = _host.Settings.SaveConversationHistory;
+        panel.Children.Add(_history);
+        panel.Children.Add(Text("媒体默认不永久保存；截图只有明确点击发送后才会上传。", true));
+        var clearHistory = ActionButton("清空本地对话历史");
+        clearHistory.Margin = new Thickness(0, 10, 0, 0);
+        clearHistory.Click += (_, _) => { new ConversationHistoryService().Clear(); MessageBox.Show("本地对话历史已清空", "喵呜AI"); };
+        panel.Children.Add(clearHistory);
+        var clear = ActionButton("清理临时媒体");
+        clear.Margin = new Thickness(0, 8, 0, 0);
+        clear.Click += (_, _) => { new TempFileService().Cleanup(TimeSpan.Zero); MessageBox.Show("临时媒体已清理", "喵呜AI"); };
+        panel.Children.Add(clear);
+        var open = ActionButton("打开数据目录");
+        open.Margin = new Thickness(0, 8, 0, 0);
+        open.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MewuAI")) { UseShellExecute = true });
+        panel.Children.Add(open);
+        panel.Children.Add(Text($"应用版本：{typeof(SettingsWindow).Assembly.GetName().Version}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / Windows OCR\n录屏：Media Foundation H.264", true));
+        return panel;
+    }
+
+    private static AiProviderSettings CloneProvider(AiProviderSettings source) => new()
+    {
+        Id = source.Id,
+        Name = source.Name,
+        Type = source.Type,
+        BaseUrl = source.BaseUrl,
+        Model = source.Model,
+        CredentialId = source.CredentialId,
+        CustomHeaders = new Dictionary<string, string>(source.CustomHeaders)
+    };
+
+    private void SelectProvider(AiProviderSettings? provider)
+    {
+        if (_loadingProvider || provider is null) return;
+        StoreSelectedProvider();
+        _selectedProvider = provider;
+        _loadingProvider = true;
+        _providerName.Text = provider.Name;
+        _providerType.SelectedIndex = provider.Type.Equals("MiniMax", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        _baseUrl.Text = provider.BaseUrl;
+        _model.Text = provider.Model;
+        _customHeaders.Text = provider.CustomHeaders.Count == 0 ? "{}" : JsonSerializer.Serialize(provider.CustomHeaders, new JsonSerializerOptions { WriteIndented = true });
+        _apiKey.Password = _pendingApiKeys.GetValueOrDefault(provider.Id) ?? string.Empty;
+        _defaultProvider.IsChecked = provider.Id == _defaultProviderId;
+        _loadingProvider = false;
+    }
+
+    private void StoreSelectedProvider()
+    {
+        if (_selectedProvider is null || _loadingProvider) return;
+        _selectedProvider.Name = string.IsNullOrWhiteSpace(_providerName.Text) ? "未命名 Provider" : _providerName.Text.Trim();
+        _selectedProvider.Type = _providerType.SelectedIndex == 1 ? "MiniMax" : "OpenAICompatible";
+        _selectedProvider.BaseUrl = _baseUrl.Text.TrimEnd('/');
+        _selectedProvider.Model = _model.Text.Trim();
+        if (_selectedProvider.Type == "MiniMax" && _selectedProvider.BaseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase)) _selectedProvider.BaseUrl = "https://api.minimaxi.com/v1";
+        if (_selectedProvider.Type == "MiniMax" && _selectedProvider.Model.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase)) _selectedProvider.Model = "MiniMax-M3";
+        try { _selectedProvider.CustomHeaders = ParseHeaders(); } catch (JsonException) { }
+        if (!string.IsNullOrWhiteSpace(_apiKey.Password)) _pendingApiKeys[_selectedProvider.Id] = _apiKey.Password;
+        if (_defaultProvider.IsChecked == true) _defaultProviderId = _selectedProvider.Id;
+        _providerSelector.Items.Refresh();
+    }
+
+    private void AddProvider()
+    {
+        StoreSelectedProvider();
+        var provider = new AiProviderSettings { Name = $"Provider {_providers.Count + 1}" };
+        _providers.Add(provider);
+        _providerSelector.Items.Add(provider);
+        _providerSelector.SelectedItem = provider;
+    }
+
+    private void RemoveProvider()
+    {
+        if (_selectedProvider is null) return;
+        if (_providers.Count == 1)
+        {
+            MessageBox.Show("至少保留一个 Provider 配置。", "喵呜AI");
+            return;
+        }
+        var index = _providers.IndexOf(_selectedProvider);
+        _providers.Remove(_selectedProvider);
+        _providerSelector.Items.Remove(_selectedProvider);
+        _pendingApiKeys.Remove(_selectedProvider.Id);
+        _selectedProvider = null;
+        _providerSelector.SelectedItem = _providers[Math.Clamp(index, 0, _providers.Count - 1)];
+    }
+
+    private async Task TestConnectionAsync(Button button)
+    {
+        button.IsEnabled = false;
+        try
+        {
+            StoreSelectedProvider();
+            var existing = _selectedProvider;
+            var key = !string.IsNullOrWhiteSpace(_apiKey.Password) ? _apiKey.Password : existing is null ? null : new CredentialService().Read(existing.CredentialId);
+            if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("请先输入 API Key");
+            var settings = new AiProviderSettings { Type = _providerType.SelectedIndex == 1 ? "MiniMax" : "OpenAICompatible", BaseUrl = _baseUrl.Text.TrimEnd('/'), Model = _model.Text, CustomHeaders = ParseHeaders() };
+            IAiProvider provider = settings.Type == "MiniMax" ? new MiniMaxProvider(settings, key) : new OpenAiCompatibleProvider(settings, key);
+            var ok = await provider.TestConnectionAsync(CancellationToken.None);
+            MessageBox.Show(ok ? "连接成功" : "服务返回失败状态", "AI 连接测试");
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "AI 连接测试失败"); }
+        finally { button.IsEnabled = true; }
+    }
+
+    private Dictionary<string, string> ParseHeaders() => JsonSerializer.Deserialize<Dictionary<string, string>>(string.IsNullOrWhiteSpace(_customHeaders.Text) ? "{}" : _customHeaders.Text) ?? [];
+
+    private void Save()
+    {
+        Dictionary<string, string> headers;
+        try { headers = ParseHeaders(); }
+        catch (JsonException ex) { MessageBox.Show($"Custom Headers JSON 无效：{ex.Message}", "无法保存"); return; }
+        StoreSelectedProvider();
+        if (_selectedProvider is not null) _selectedProvider.CustomHeaders = headers;
+        _host.Settings.LaunchAtStartup = _startup.IsChecked == true;
+        StartupService.SetEnabled(_host.Settings.LaunchAtStartup);
+        var modifiers = System.Windows.Input.ModifierKeys.None;
+        if (_ctrl.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Control;
+        if (_shift.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Shift;
+        if (_alt.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Alt;
+        if (_hotkey.SelectedItem is not string key || !Enum.TryParse<System.Windows.Input.Key>(key, out var parsed)) { MessageBox.Show("请选择有效的快捷键。", "无法保存"); return; }
+        if (modifiers == System.Windows.Input.ModifierKeys.None) { MessageBox.Show("快捷键至少需要 Ctrl、Shift 或 Alt 中的一个修饰键。", "无法保存"); return; }
+        if (!_host.TrySetCaptureHotkey(new HotkeySetting { Key = parsed, Modifiers = modifiers })) { MessageBox.Show("该快捷键可能已被其他应用占用。旧快捷键仍然有效，请换一个组合。", "快捷键冲突"); return; }
+        _host.Settings.CaptureDelaySeconds = _delay.SelectedIndex switch { 1 => 3, 2 => 5, _ => 0 };
+        _host.Settings.DefaultImageFormat = _imageFormat.SelectedIndex == 1 ? "jpg" : "png";
+        _host.Settings.OverlayOpacity = _overlayOpacity.SelectedIndex switch { 0 => .55, 2 => .65, _ => .60 };
+        _host.Settings.IncludeCaptureCursor = _captureCursor.IsChecked == true;
+        _host.Settings.RecordingFps = _recordingFps.SelectedItem is int recordingFps ? recordingFps : 30;
+        _host.Settings.RecordingQuality = _recordingQuality.SelectedItem is int recordingQuality ? recordingQuality : 75;
+        _host.Settings.GifFps = _gifFps.SelectedItem is int gifFps ? gifFps : 15;
+        _host.Settings.IncludeRecordingCursor = _recordCursor.IsChecked == true;
+        _host.Settings.TempCleanupDays = _tempCleanup.SelectedIndex switch { 0 => 1, 2 => 7, 3 => 14, 4 => 30, _ => 3 };
+        _host.Settings.EnableVoiceInput = _voice.IsChecked == true;
+        _host.Settings.AutomaticallyStartListening = _autoVoice.IsChecked == true;
+        _host.Settings.VoiceLanguage = (_voiceLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "system";
+        _host.Settings.SaveConversationHistory = _history.IsChecked == true;
+        var credentials = new CredentialService();
+        foreach (var removed in _host.Settings.Providers.Where(x => _providers.All(p => p.Id != x.Id)))
+            if (!string.IsNullOrWhiteSpace(removed.CredentialId)) credentials.Delete(removed.CredentialId);
+        foreach (var provider in _providers)
+        {
+            if (_pendingApiKeys.TryGetValue(provider.Id, out var keyValue) && !string.IsNullOrWhiteSpace(keyValue))
+            {
+                if (string.IsNullOrWhiteSpace(provider.CredentialId)) provider.CredentialId = Guid.NewGuid().ToString("N");
+                credentials.Save(provider.CredentialId, keyValue);
+            }
+        }
+        _host.Settings.Providers = _providers.Select(CloneProvider).ToList();
+        _host.Settings.DefaultProviderId = _providers.Any(x => x.Id == _defaultProviderId) ? _defaultProviderId : _providers[0].Id;
+        _host.SaveSettings();
+        Close();
+    }
 }

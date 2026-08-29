@@ -2,10 +2,11 @@ using System.Runtime.InteropServices;
 namespace mewu_ai_Assistant.Services;
 public sealed class CredentialService
 {
-    private readonly string _directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","Credentials");
-    public CredentialService()=>Directory.CreateDirectory(_directory);
+    private readonly string _directory;
+    public CredentialService(string? directory=null){_directory=directory??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","Credentials");Directory.CreateDirectory(_directory);}
     public void Save(string id,string secret){var plain=System.Text.Encoding.UTF8.GetBytes(secret);var encrypted=Protect(plain);File.WriteAllBytes(Path.Combine(_directory,id+".bin"),encrypted);Array.Clear(plain);}
     public string? Read(string id){try{var p=Path.Combine(_directory,id+".bin");if(!File.Exists(p))return null;var plain=Unprotect(File.ReadAllBytes(p));try{return System.Text.Encoding.UTF8.GetString(plain);}finally{Array.Clear(plain);}}catch{return null;}}
+    public void Delete(string id){if(string.IsNullOrWhiteSpace(id))return;var path=Path.Combine(_directory,id+".bin");if(File.Exists(path))File.Delete(path);}
     private static byte[] Protect(byte[] data)=>Crypt(data,true);private static byte[] Unprotect(byte[] data)=>Crypt(data,false);
     private static byte[] Crypt(byte[] data,bool protect)
     {

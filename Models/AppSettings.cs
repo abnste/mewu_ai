@@ -6,7 +6,7 @@ public sealed class AppSettings
     public bool LaunchAtStartup { get; set; }
     public double OverlayOpacity { get; set; } = .6; public int CaptureDelaySeconds { get; set; }
     public string DefaultImageFormat { get; set; } = "png"; public bool IncludeCaptureCursor { get; set; }
-    public int RecordingFps { get; set; } = 30; public int GifFps { get; set; } = 15; public bool IncludeRecordingCursor { get; set; } = true;
+    public int RecordingFps { get; set; } = 30; public int RecordingQuality { get; set; } = 75; public int GifFps { get; set; } = 15; public bool IncludeRecordingCursor { get; set; } = true; public int TempCleanupDays { get; set; } = 3;
     public bool SaveConversationHistory { get; set; } public bool EnableVoiceInput { get; set; } public bool AutomaticallyStartListening { get; set; }
     public string VoiceLanguage { get; set; } = "system"; public string? DefaultProviderId { get; set; }
     public List<AiProviderSettings> Providers { get; set; } = [];

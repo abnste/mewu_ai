@@ -6,7 +6,7 @@ public sealed class SettingsService
 {
     private readonly string _path;
     private static readonly JsonSerializerOptions Options=new() { WriteIndented=true,Converters={new JsonStringEnumConverter()} };
-    public SettingsService() { var dir=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI"); Directory.CreateDirectory(dir); _path=Path.Combine(dir,"settings.json"); }
+    public SettingsService(string? path=null) { _path=path??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","settings.json");Directory.CreateDirectory(Path.GetDirectoryName(_path)!); }
     public AppSettings Load()
     {
         try { return File.Exists(_path)?JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path),Options)??new():new(); }
