@@ -5,6 +5,7 @@ using System.Windows.Media;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
+using mewu_ai_Assistant.Interop;
 
 namespace mewu_ai_Assistant.Views;
 
@@ -66,6 +67,7 @@ public sealed class SettingsWindow : Window
         grid.Children.Add(tabs);
         grid.Children.Add(save);
         Content = grid;
+        SourceInitialized += (_, _) => NativeMethods.SetWindowDisplayAffinity(new System.Windows.Interop.WindowInteropHelper(this).Handle, NativeMethods.WdaExcludeFromCapture);
     }
 
     private void SetWindowStyles()

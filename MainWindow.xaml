@@ -10,6 +10,6 @@
    </Grid>
    <TextBlock Grid.Row="2" Margin="0,28,0,0" TextWrapping="Wrap" Foreground="{StaticResource SecondaryText}" Text="截图、贴图、标注、复制和保存均可离线使用。只有你明确点击 AI 或翻译发送后，屏幕内容才会上传到所选模型。"/>
   </Grid></Border>
-  <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="设置" Click="OpenSettings" Style="{StaticResource SecondaryButton}" Margin="0,0,12,0"/><Button Content="开始屏幕 AI" Click="StartCapture" Style="{StaticResource PrimaryButton}"/></StackPanel>
+  <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="设置" Click="OpenSettings" Style="{StaticResource SecondaryButton}" Margin="0,0,12,0"/><Button Content="文字问答" Click="OpenTextAi" Style="{StaticResource SecondaryButton}" Margin="0,0,12,0"/><Button Content="开始屏幕 AI" Click="StartCapture" Style="{StaticResource PrimaryButton}"/></StackPanel>
  </Grid>
 </Window>
