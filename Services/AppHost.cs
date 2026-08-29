@@ -25,11 +25,11 @@ public sealed class AppHost : IDisposable
         _tray=new Forms.NotifyIcon { Text="喵呜AI",Icon=SystemIcons.Application,Visible=true,ContextMenuStrip=menu };
         _tray.MouseClick+=(_,e)=>{if(e.Button==Forms.MouseButtons.Left)BeginCapture();};
     }
-    public async void BeginCapture()
+    public void BeginCapture()=>_=BeginCaptureAsync();
+    private async Task BeginCaptureAsync()
     {
         if(Interlocked.CompareExchange(ref _captureActive,1,0)!=0)return;
-        if(Settings.CaptureDelaySeconds>0)await Task.Delay(TimeSpan.FromSeconds(Settings.CaptureDelaySeconds));
-        try{_app.Dispatcher.Invoke(()=> { var overlay=new CaptureOverlayWindow(this);overlay.Closed+=(_,_)=>Interlocked.Exchange(ref _captureActive,0);overlay.Show(); overlay.Activate(); });}catch{Interlocked.Exchange(ref _captureActive,0);throw;}
+        try{if(Settings.CaptureDelaySeconds>0)await Task.Delay(TimeSpan.FromSeconds(Settings.CaptureDelaySeconds));await _app.Dispatcher.InvokeAsync(()=> { var overlay=new CaptureOverlayWindow(this);overlay.Closed+=(_,_)=>Interlocked.Exchange(ref _captureActive,0);overlay.Show(); overlay.Activate(); });}catch(Exception ex){Interlocked.Exchange(ref _captureActive,0);new PrivacyLogger().Error("Capture",ex);Notify("无法开始截图，请重试");}
     }
     public void ShowMainWindow() { _app.Dispatcher.Invoke(()=>{_main??=new MainWindow(this);_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
     public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);_settingsWindow.Closed+=(_,_)=>_settingsWindow=null;} _settingsWindow.Show();_settingsWindow.Activate();}); }

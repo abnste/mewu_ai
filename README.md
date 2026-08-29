@@ -6,12 +6,13 @@
 
 - 单实例托盘应用；默认全局快捷键 `Ctrl + Shift + A`。
 - 虚拟桌面暗化框选，支持任意方向拖动、八向缩放、整体移动和方向键微调。
-- PNG/JPEG 保存、剪贴板复制、多贴图窗口及自由画笔标注（颜色、粗细、撤销、重做、清空）。
-- Windows 本地 OCR，可按行选择和复制识别文字。
-- OCR 坐标驱动的原位翻译，可切换原文/译文。
-- OpenAI-compatible 与 MiniMax Provider，DPAPI 加密 API Key，图片能力检查、取消请求和结构化屏幕批注。
-- Windows 原生语音识别输入。
-- 区域 MP4 录制（Media Foundation H.264）及 GIF 导出；录制 UI 排除在捕获之外。
+- PNG/JPEG 保存、剪贴板复制、多贴图窗口，以及画笔、高亮、橡皮、矩形、箭头、粗细、撤销、重做和清空。
+- Windows 本地 OCR；可按字符/单词选择、复制全部和重新识别，大图会在 OCR 限制内缩放并还原坐标。
+- OCR 坐标驱动的原位翻译，可切换原文/译文、复制译文；OCR 失败时可回退为普通图片翻译。
+- 多 Provider 管理，支持 OpenAI-compatible 与 MiniMax、自定义 Base URL/Model/Headers、连接测试、默认 Provider 和 DPAPI 加密 API Key。
+- 图片/纯文字多轮 AI、兼容接口流式输出、取消请求、同区域刷新、结构化屏幕批注及隐藏/显示批注。
+- Windows 原生语音识别；支持再次点击停止、语言选择和可选自动监听，识别结果不会自动发送。
+- 单屏或跨屏区域 MP4 录制（Media Foundation H.264）、暂停/继续、GIF 导出、预览、重新录制和关键帧 AI 分析；录制 UI 排除在捕获之外。
 - 隐私安全日志、临时媒体清理和本地设置。
 
 ## 环境与运行
@@ -31,6 +32,14 @@
 & 'C:\Program Files\dotnet\dotnet.exe' test '.\tests\MewuAI.Tests\MewuAI.Tests.csproj' -p:Platform=x64
 ```
 
+发布自包含版本：
+
+```powershell
+& 'C:\Program Files\dotnet\dotnet.exe' publish '.\mewu_ai_Assistant.csproj' -c Release -p:Platform=x64 -r win-x64 --self-contained true -o '.\artifacts\release\win-x64'
+```
+
+发布目录中的 `MewuAI.exe` 可直接运行，不要求用户预装 .NET。首次启动默认仅驻留系统托盘；重复启动会激活已有实例。
+
 ## 数据与隐私
 
 普通设置位于 `%LOCALAPPDATA%\MewuAI`。API Key 经 Windows DPAPI 加密，仅当前 Windows 用户可解密。临时录像与 GIF 帧位于 `%LOCALAPPDATA%\MewuAI\Temp`，旧文件会自动清理。日志不会主动记录 API Key、Authorization、图片、视频、Base64 或完整 Prompt。
@@ -42,3 +51,9 @@
 - xUnit：测试框架。
 
 项目不引入 GPL/AGPL 组件，也不捆绑 FFmpeg。
+
+## 当前能力边界
+
+- MiniMax Chat Completions Adapter 依据正式接口声明为文字流式能力；该接口未提供可验证的截图或视频理解输入格式，因此不会伪装成多模态。图片理解请配置支持图片输入的 OpenAI-compatible Provider。
+- 当 Provider 不支持直接视频输入时，录屏预览明确使用开始/中间/结束关键帧分析，不会声称理解完整视频。
+- 第一版不录制系统音频或麦克风音频；视频编码仍使用 Windows Media Foundation H.264。

@@ -8,7 +8,7 @@ using MewuScreenRect=mewu_ai_Assistant.Models.ScreenRect;
 namespace mewu_ai_Assistant.Recording;
 public sealed class RecordingSession : IDisposable
 {
-    private readonly AppSettings _settings;private readonly MewuScreenRect _region;private readonly TempFileService _temp=new();private readonly CancellationTokenSource _framesStop=new();private Recorder? _recorder;private Task? _frameTask;private string _framesDirectory=string.Empty;private volatile bool _paused;
+    private readonly AppSettings _settings;private readonly MewuScreenRect _region;private readonly TempFileService _temp=new();private readonly CancellationTokenSource _framesStop=new();private Recorder? _recorder;private Task? _frameTask;private string _framesDirectory=string.Empty;private volatile bool _paused;private int _disposed;
     public string VideoPath { get; private set; }=string.Empty;public string FramesDirectory=>_framesDirectory;public event Action<string>? Completed;public event Action<string>? Failed;
     public RecordingSession(AppSettings settings,MewuScreenRect region){_settings=settings;_region=region;}
     public void Start()
@@ -25,5 +25,5 @@ public sealed class RecordingSession : IDisposable
     public void Stop(){_framesStop.Cancel();_recorder?.Stop();}
     public void Pause(){_paused=true;_recorder?.Pause();}public void Resume(){_recorder?.Resume();_paused=false;}
     public async Task WaitFramesAsync(){if(_frameTask is not null)try{await _frameTask;}catch(OperationCanceledException){}}
-    public void Dispose(){_framesStop.Cancel();_recorder?.Dispose();_framesStop.Dispose();}
+    public void Dispose(){if(Interlocked.Exchange(ref _disposed,1)!=0)return;_framesStop.Cancel();_recorder?.Dispose();_framesStop.Dispose();}
 }

@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 namespace mewu_ai_Assistant.Models;
 public enum AiAttachmentType { Image,Video }
-public sealed record AiAttachment(AiAttachmentType Type,string MimeType,byte[]? Data=null,string? FilePath=null);
+public sealed record AiAttachment(AiAttachmentType Type,string MimeType,byte[]? Data=null,string? FilePath=null,TimeSpan? Duration=null);
 public sealed record AiMessage(string Role,string Text);
 public sealed class AiRequest { public string Prompt { get; init; }=string.Empty; public List<AiMessage> History { get; init; }=[]; public List<AiAttachment> Attachments { get; init; }=[]; public IProgress<string>? StreamingProgress { get; init; } }
 public sealed record AiProviderCapabilities(bool SupportsText,bool SupportsImage,bool SupportsVideo,bool SupportsStreaming,bool SupportsStructuredOutput,long MaxAttachmentSize,TimeSpan MaxVideoDuration,IReadOnlySet<string> AcceptedMimeTypes);
