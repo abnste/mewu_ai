@@ -53,7 +53,7 @@ public partial class CaptureOverlayWindow : Window
     private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=new SolidColorBrush(Color.FromRgb(67,168,255));t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
     private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t)return;var d=t.Tag?.ToString()??"";var l=_selection.Left;var top=_selection.Top;var r=_selection.Right;var b=_selection.Bottom;if(d.Contains('W'))l+=e.HorizontalChange;if(d.Contains('E'))r+=e.HorizontalChange;if(d.Contains('N'))top+=e.VerticalChange;if(d.Contains('S'))b+=e.VerticalChange;if(r-l<12||b-top<12)return;_selection=new Rect(new Point(l,top),new Point(r,b));UpdateSelection();ShowToolbar();e.Handled=true;}
     private void Reset(){_selection=Rect.Empty;SelectionBorder.Visibility=SelectedImage.Visibility=Toolbar.Visibility=SizeText.Visibility=Visibility.Collapsed;foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
-    private void Copy(object s,RoutedEventArgs e){Clipboard.SetImage(CurrentImage());Close();}
+    private void Copy(object s,RoutedEventArgs e){Clipboard.SetImage(CurrentImage());_host.Notify("已复制到剪贴板");Close();}
     private void Save(object s,RoutedEventArgs e){var d=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=".png",AddExtension=true};if(d.ShowDialog(this)==true)ScreenCaptureService.Save(CurrentImage(),d.FileName,d.FilterIndex==2);}
     private void Pin(object s,RoutedEventArgs e){new PinnedImageWindow(CurrentImage()).Show();Close();}
     private void Draw(object s,RoutedEventArgs e){new DrawingWindow(CurrentImage()).Show();Close();}
@@ -63,7 +63,7 @@ public partial class CaptureOverlayWindow : Window
     private void Record(object s,RoutedEventArgs e){var px=ToPixelRect(_selection);new RecordingControlWindow(_host,new ScreenRect(_frame.OriginX+px.X,_frame.OriginY+px.Y,px.Width,px.Height)).Show();Close();}
     private void OnKeyDown(object s,KeyEventArgs e)
     {
-        if(e.Key==Key.Escape){Close();return;}if(_selection.IsEmpty)return;
+        if(e.Key==Key.Escape){Close();return;}if(_selection.IsEmpty){if((int)e.Key>=(int)Key.A&&(int)e.Key<=(int)Key.Z){_host.ShowTextAi(e.Key.ToString());Close();}return;}
         var step=Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)?10:1;if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){_selection.Offset(e.Key==Key.Left?-step:e.Key==Key.Right?step:0,e.Key==Key.Up?-step:e.Key==Key.Down?step:0);UpdateSelection();ShowToolbar();e.Handled=true;return;}
         if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.Enter)AskAi(s,new());else if(e.Key==Key.R)Record(s,new());
     }
