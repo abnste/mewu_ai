@@ -3,6 +3,7 @@ namespace mewu_ai_Assistant.Models;
 public sealed class AppSettings
 {
     public HotkeySetting CaptureHotkey { get; set; } = new();
+    public bool LaunchAtStartup { get; set; }
     public double OverlayOpacity { get; set; } = .6; public int CaptureDelaySeconds { get; set; }
     public string DefaultImageFormat { get; set; } = "png"; public bool IncludeCaptureCursor { get; set; }
     public int RecordingFps { get; set; } = 30; public int GifFps { get; set; } = 15; public bool IncludeRecordingCursor { get; set; } = true;

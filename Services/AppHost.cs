@@ -15,13 +15,13 @@ public sealed class AppHost : IDisposable
         if(!_single.IsPrimary){_single.SignalPrimary();return false;}
         _single.ActivationRequested+=()=>_app.Dispatcher.Invoke(ShowMainWindow);
         _main=new MainWindow(this); _app.MainWindow=_main;
-        _hotkey=new GlobalHotkeyService(); _hotkey.Pressed+=BeginCapture; _hotkey.Register(Settings.CaptureHotkey);
-        new TempFileService().Cleanup(TimeSpan.FromDays(3));BuildTray(); return true;
+        _hotkey=new GlobalHotkeyService(); _hotkey.Pressed+=BeginCapture; var hotkeyOk=_hotkey.Register(Settings.CaptureHotkey);
+        new TempFileService().Cleanup(TimeSpan.FromDays(3));BuildTray();if(!hotkeyOk)Notify("快捷键注册失败，可能已被其他应用占用");return true;
     }
     private void BuildTray()
     {
         var menu=new Forms.ContextMenuStrip();
-        menu.Items.Add("截图 / AI",null,(_,_)=>BeginCapture()); menu.Items.Add("设置",null,(_,_)=>ShowSettings()); menu.Items.Add("打开主界面",null,(_,_)=>ShowMainWindow()); menu.Items.Add(new Forms.ToolStripSeparator()); menu.Items.Add("退出",null,(_,_)=>Exit());
+        menu.Items.Add("截图 / AI",null,(_,_)=>BeginCapture());menu.Items.Add("文字问答",null,(_,_)=>ShowTextAi()); menu.Items.Add("设置",null,(_,_)=>ShowSettings()); menu.Items.Add("打开主界面",null,(_,_)=>ShowMainWindow()); menu.Items.Add(new Forms.ToolStripSeparator()); menu.Items.Add("退出",null,(_,_)=>Exit());
         _tray=new Forms.NotifyIcon { Text="喵呜AI",Icon=SystemIcons.Application,Visible=true,ContextMenuStrip=menu };
         _tray.MouseClick+=(_,e)=>{if(e.Button==Forms.MouseButtons.Left)BeginCapture();};
     }
@@ -32,7 +32,9 @@ public sealed class AppHost : IDisposable
     }
     public void ShowMainWindow() { _app.Dispatcher.Invoke(()=>{_main??=new MainWindow(this);_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
     public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);_settingsWindow.Closed+=(_,_)=>_settingsWindow=null;} _settingsWindow.Show();_settingsWindow.Activate();}); }
-    public void SaveSettings() { _settingsService.Save(Settings); _hotkey?.Register(Settings.CaptureHotkey); }
+    public void ShowTextAi(string initial="")=>_app.Dispatcher.Invoke(()=>new TextAiWindow(this,initial).Show());
+    public void SaveSettings() { _settingsService.Save(Settings); if(_hotkey?.Register(Settings.CaptureHotkey)==false)Notify("快捷键注册失败，可能已被其他应用占用"); }
+    public void Notify(string message){_tray?.ShowBalloonTip(1500,"喵呜AI",message,Forms.ToolTipIcon.Info);}
     public void Exit() { IsExiting=true; _tray!.Visible=false; _app.Shutdown(); }
     public void Dispose() { _tray?.Dispose(); _hotkey?.Dispose(); _single.Dispose(); }
 }
