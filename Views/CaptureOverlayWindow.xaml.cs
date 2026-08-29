@@ -17,7 +17,7 @@ public partial class CaptureOverlayWindow : Window
     private readonly AppHost _host; private readonly CaptureFrame _frame; private Point _start; private Rect _selection; private bool _selecting; private bool _moving; private Point _moveStart; private Rect _moveOrigin;
     public CaptureOverlayWindow(AppHost host)
     {
-        _host=host; _frame=new ScreenCaptureService().CaptureDesktop(); InitializeComponent(); DesktopImage.Source=_frame.Image;
+        _host=host; _frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor); InitializeComponent(); DesktopImage.Source=_frame.Image;
         var area=System.Windows.Forms.SystemInformation.VirtualScreen; Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
         SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.SetWindowDisplayAffinity(hwnd,NativeMethods.WdaExcludeFromCapture);};Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=Root.ActualHeight;Focus();};
     }
