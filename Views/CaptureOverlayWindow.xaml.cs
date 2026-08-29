@@ -19,7 +19,7 @@ public partial class CaptureOverlayWindow : Window
     {
         _host=host; _frame=new ScreenCaptureService().CaptureDesktop(); InitializeComponent(); DesktopImage.Source=_frame.Image;
         var area=System.Windows.Forms.SystemInformation.VirtualScreen; Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
-        Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=Root.ActualHeight;NativeMethods.SetWindowDisplayAffinity(new System.Windows.Interop.WindowInteropHelper(this).Handle,NativeMethods.WdaExcludeFromCapture);Focus();};
+        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.SetWindowDisplayAffinity(hwnd,NativeMethods.WdaExcludeFromCapture);};Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=Root.ActualHeight;Focus();};
     }
     private void OnMouseDown(object s,MouseButtonEventArgs e)
     {
