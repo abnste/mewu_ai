@@ -284,6 +284,16 @@ FakesAssemblies/
 # Node.js Tools for Visual Studio
 .ntvs_analysis.dat
 node_modules/
+.env
+.env.*
+!.env.example
+*.secret
+secrets.json
+MewuAI/Temp/
+MewuAI/Logs/
+Screenshots/
+Recordings/
+Temp/
 
 # Visual Studio 6 build log
 *.plg

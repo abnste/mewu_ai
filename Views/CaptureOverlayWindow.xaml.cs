@@ -2,9 +2,12 @@ using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media.Imaging;
+using System.Windows.Media;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Services;
+using mewu_ai_Assistant.Models;
 using Point=System.Windows.Point;
 using MouseEventArgs=System.Windows.Input.MouseEventArgs;
 using KeyEventArgs=System.Windows.Input.KeyEventArgs;
@@ -20,7 +23,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void OnMouseDown(object s,MouseButtonEventArgs e)
     {
-        var p=e.GetPosition(Root); if(!_selection.IsEmpty&&_selection.Contains(p)){_moving=true;_moveStart=p;_moveOrigin=_selection;CaptureMouse();return;}
+        if(e.OriginalSource is Thumb)return;var p=e.GetPosition(Root); if(!_selection.IsEmpty&&_selection.Contains(p)){_moving=true;_moveStart=p;_moveOrigin=_selection;CaptureMouse();return;}
         _selecting=true;_start=p;_selection=Rect.Empty;Toolbar.Visibility=Visibility.Collapsed;SelectionBorder.Visibility=SelectedImage.Visibility=Visibility.Visible;CaptureMouse();
     }
     private void OnMouseMove(object s,MouseEventArgs e)
@@ -37,6 +40,7 @@ public partial class CaptureOverlayWindow : Window
         Canvas.SetLeft(SelectedImage,r.Left);Canvas.SetTop(SelectedImage,r.Top);SelectedImage.Width=r.Width;SelectedImage.Height=r.Height;
         var px=ToPixelRect(r);if(px.Width>0&&px.Height>0)SelectedImage.Source=ScreenCaptureService.Crop(_frame.Image,px);
         SizeText.Text=$"{px.Width} × {px.Height}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));
+        PositionHandles(r);
     }
     private Int32Rect ToPixelRect(Rect r)
     {
@@ -46,15 +50,17 @@ public partial class CaptureOverlayWindow : Window
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
     private void ShowToolbar(){Toolbar.Visibility=Visibility.Visible;Toolbar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Toolbar.DesiredSize.Width;var h=Toolbar.DesiredSize.Height;var x=Math.Clamp(_selection.Left,8,Math.Max(8,Root.ActualWidth-w-8));var y=_selection.Bottom+10;if(y+h>Root.ActualHeight)y=Math.Max(8,_selection.Top-h-10);Canvas.SetLeft(Toolbar,x);Canvas.SetTop(Toolbar,y);}
     private BitmapSource CurrentImage()=>ScreenCaptureService.Crop(_frame.Image,ToPixelRect(_selection));
-    private void Reset(){_selection=Rect.Empty;SelectionBorder.Visibility=SelectedImage.Visibility=Toolbar.Visibility=SizeText.Visibility=Visibility.Collapsed;}
+    private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=new SolidColorBrush(Color.FromRgb(67,168,255));t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
+    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t)return;var d=t.Tag?.ToString()??"";var l=_selection.Left;var top=_selection.Top;var r=_selection.Right;var b=_selection.Bottom;if(d.Contains('W'))l+=e.HorizontalChange;if(d.Contains('E'))r+=e.HorizontalChange;if(d.Contains('N'))top+=e.VerticalChange;if(d.Contains('S'))b+=e.VerticalChange;if(r-l<12||b-top<12)return;_selection=new Rect(new Point(l,top),new Point(r,b));UpdateSelection();ShowToolbar();e.Handled=true;}
+    private void Reset(){_selection=Rect.Empty;SelectionBorder.Visibility=SelectedImage.Visibility=Toolbar.Visibility=SizeText.Visibility=Visibility.Collapsed;foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
     private void Copy(object s,RoutedEventArgs e){Clipboard.SetImage(CurrentImage());Close();}
     private void Save(object s,RoutedEventArgs e){var d=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=".png",AddExtension=true};if(d.ShowDialog(this)==true)ScreenCaptureService.Save(CurrentImage(),d.FileName,d.FilterIndex==2);}
     private void Pin(object s,RoutedEventArgs e){new PinnedImageWindow(CurrentImage()).Show();Close();}
     private void Draw(object s,RoutedEventArgs e){new DrawingWindow(CurrentImage()).Show();Close();}
     private void AskAi(object s,RoutedEventArgs e){new AiPromptWindow(_host,CurrentImage()).Show();Close();}
-    private void Translate(object s,RoutedEventArgs e){new AiPromptWindow(_host,CurrentImage(),true).Show();Close();}
-    private void Ocr(object s,RoutedEventArgs e){System.Windows.MessageBox.Show("本地 OCR 引擎正在初始化；截图、贴图与标注仍可离线使用。","喵呜AI",MessageBoxButton.OK,MessageBoxImage.Information);}
-    private void Record(object s,RoutedEventArgs e){System.Windows.MessageBox.Show("录屏后端正在初始化。","喵呜AI",MessageBoxButton.OK,MessageBoxImage.Information);}
+    private void Translate(object s,RoutedEventArgs e){new TranslationWindow(_host,CurrentImage()).Show();Close();}
+    private void Ocr(object s,RoutedEventArgs e){new OcrTextWindow(CurrentImage()).Show();Close();}
+    private void Record(object s,RoutedEventArgs e){var px=ToPixelRect(_selection);new RecordingControlWindow(_host,new ScreenRect(_frame.OriginX+px.X,_frame.OriginY+px.Y,px.Width,px.Height)).Show();Close();}
     private void OnKeyDown(object s,KeyEventArgs e)
     {
         if(e.Key==Key.Escape){Close();return;}if(_selection.IsEmpty)return;
