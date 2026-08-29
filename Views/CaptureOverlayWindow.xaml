@@ -1,0 +1,16 @@
+<Window x:Class="mewu_ai_Assistant.Views.CaptureOverlayWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent" Topmost="True" ShowInTaskbar="False" Cursor="Cross" KeyDown="OnKeyDown">
+ <Canvas x:Name="Root" MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp">
+  <Image x:Name="DesktopImage" Stretch="Fill" IsHitTestVisible="False"/>
+  <Rectangle x:Name="Dimmer" Fill="#99000000" IsHitTestVisible="False"/>
+  <Image x:Name="SelectedImage" Stretch="Fill" Visibility="Collapsed" IsHitTestVisible="False"/>
+  <Border x:Name="SelectionBorder" BorderBrush="#43A8FF" BorderThickness="2" Background="Transparent" Visibility="Collapsed" Cursor="SizeAll"/>
+  <Border x:Name="Toolbar" Visibility="Collapsed" Background="#F2131B27" BorderBrush="#526783" BorderThickness="1" CornerRadius="10" Padding="6">
+   <StackPanel Orientation="Horizontal">
+    <Button Content="AI" ToolTip="询问 AI (Enter)" Click="AskAi"/><Button Content="翻译" ToolTip="原位翻译 (T)" Click="Translate"/><Button Content="文字" ToolTip="文字识别 (O)" Click="Ocr"/>
+    <Button Content="贴图" ToolTip="贴图 (P)" Click="Pin"/><Button Content="标注" ToolTip="标注 (D)" Click="Draw"/><Button Content="复制" ToolTip="复制 (C)" Click="Copy"/><Button Content="保存" ToolTip="保存 (S)" Click="Save"/><Button Content="录屏" ToolTip="区域录屏 (R)" Click="Record"/>
+   </StackPanel>
+  </Border>
+  <TextBlock x:Name="SizeText" Visibility="Collapsed" Foreground="White" Background="#CC111722" Padding="6,3"/>
+ </Canvas>
+</Window>
