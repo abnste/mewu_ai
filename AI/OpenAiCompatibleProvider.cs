@@ -13,9 +13,12 @@ public class OpenAiCompatibleProvider : IAiProvider
     private readonly string _apiKey;
 
     public string Id=>_settings.Id;
-    public virtual AiProviderCapabilities Capabilities { get; }=new(true,true,false,true,true,20*1024*1024,TimeSpan.Zero,new HashSet<string>{"image/png","image/jpeg","image/webp"});
+    public virtual AiProviderCapabilities Capabilities { get; }
 
-    public OpenAiCompatibleProvider(AiProviderSettings settings,string apiKey){_settings=settings;_apiKey=apiKey;}
+    public OpenAiCompatibleProvider(AiProviderSettings settings,string apiKey)
+    {
+        _settings=settings;_apiKey=apiKey;var volcengineVideo=settings.BaseUrl.Contains("volces.com",StringComparison.OrdinalIgnoreCase)&&settings.Model.Contains("doubao-seed-2-",StringComparison.OrdinalIgnoreCase);Capabilities=new(true,true,volcengineVideo,true,true,volcengineVideo?48L*1024*1024:20L*1024*1024,TimeSpan.Zero,new HashSet<string>(volcengineVideo?new[]{"image/png","image/jpeg","image/webp","video/mp4","video/x-msvideo","video/quicktime"}:new[]{"image/png","image/jpeg","image/webp"}));
+    }
 
     public async Task<bool> TestConnectionAsync(CancellationToken token)
     {
@@ -33,13 +36,24 @@ public class OpenAiCompatibleProvider : IAiProvider
             var bytes=attachment.Data??await File.ReadAllBytesAsync(attachment.FilePath!,token);
             content.Add(new{type="image_url",image_url=new{url=$"data:{attachment.MimeType};base64,{Convert.ToBase64String(bytes)}"}});
         }
+        foreach(var attachment in request.Attachments.Where(x=>x.Type==AiAttachmentType.Video))
+        {
+            var bytes=attachment.Data??await File.ReadAllBytesAsync(attachment.FilePath!,token);
+            content.Add(new{type="video_url",video_url=new{url=$"data:{attachment.MimeType};base64,{Convert.ToBase64String(bytes)}",fps=2}});
+        }
 
         var messages=request.History.Select(x=>(object)new{role=x.Role,content=x.Text}).ToList();
         messages.Add(new{role="user",content});
         var streaming=request.StreamingProgress is not null&&Capabilities.SupportsStreaming;
         var bodyValues=new Dictionary<string,object?>{{"model",_settings.Model},{"messages",messages},{"temperature",.2},{"stream",streaming}};
-        if(request.MaxOutputTokens is { } maxTokens)bodyValues["max_tokens"]=maxTokens;
-        if(request.DisableReasoning&&_settings.BaseUrl.Contains("volces.com",StringComparison.OrdinalIgnoreCase)){bodyValues["thinking"]=new{type="disabled"};bodyValues["reasoning_effort"]="minimal";}
+        var miniMaxM3=_settings.Type.Equals("MiniMax",StringComparison.OrdinalIgnoreCase)&&_settings.Model.Equals("MiniMax-M3",StringComparison.OrdinalIgnoreCase);
+        if(request.MaxOutputTokens is { } maxTokens)bodyValues[miniMaxM3?"max_completion_tokens":"max_tokens"]=maxTokens;
+        if(miniMaxM3)
+        {
+            bodyValues["reasoning_split"]=true;
+            if(request.DisableReasoning)bodyValues["thinking"]=new{type="disabled"};
+        }
+        else if(request.DisableReasoning&&_settings.BaseUrl.Contains("volces.com",StringComparison.OrdinalIgnoreCase)){bodyValues["thinking"]=new{type="disabled"};bodyValues["reasoning_effort"]="minimal";}
         var body=JsonSerializer.Serialize(bodyValues);
         using var httpRequest=Create(HttpMethod.Post,"chat/completions");
         httpRequest.Content=new StringContent(body,Encoding.UTF8,"application/json");
