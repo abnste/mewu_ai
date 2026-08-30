@@ -101,7 +101,7 @@ public sealed class AiPromptWindow : Window
         _request?.Cancel();_request=new CancellationTokenSource(TimeSpan.FromMinutes(2));_send.IsEnabled=false;if(!auto)_answer.Text="";_status.Text="正在分析…按 Esc 可取消";
         try
         {
-            var progress=provider.Capabilities.SupportsStreaming?new Progress<string>(delta=>{ShowAnswer();_answer.Text+=delta;}):null;
+            var progress=provider.Capabilities.SupportsStreaming?new Progress<Models.AiStreamDelta>(delta=>{if(delta.ReasoningContent.Length>0)_status.Text="正在思考…";else if(delta.Content.Length>0)_status.Text="正在整理回答…";}):null;
             var result=await provider.SendAsync(new Models.AiRequest{Prompt=prompt,History=[.._history],Attachments=[new Models.AiAttachment(Models.AiAttachmentType.Image,"image/png",ScreenCaptureService.EncodePng(_image))],StreamingProgress=progress},_request.Token);
             ShowAnswer();_answer.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));if(!auto)_prompt.Clear();RenderAnnotations(result.Annotations);
             var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,_request.Token);
