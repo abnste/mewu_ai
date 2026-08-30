@@ -21,15 +21,28 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.Windows.SDK.NET.Ref" />
     <Compile Remove="tests\**\*.cs" />
+    <Content Remove="tests\**\*" />
+    <EmbeddedResource Remove="tests\**\*" />
+    <None Remove="tests\**\*" />
+    <Resource Remove="tests\**\*" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="RapidOcrNet" Version="4.0.2" />
     <PackageReference Include="ScreenRecorderLib" Version="7.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Assets\MewuAI.Icon.png" />
     <Content Include="Assets\MewuAI.ico" Link="MewuAI.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" Link="models\v5\ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\PP-OCRv6_det_small.onnx" Link="models\v6\PP-OCRv6_det_small.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\PP-OCRv6_rec_small.onnx" Link="models\v6\PP-OCRv6_rec_small.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\ppocrv6_dict.txt" Link="models\v6\ppocrv6_dict.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="CopyMewuIconAsset" AfterTargets="Build">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\MewuAI.Icon.png" DestinationFolder="$(OutDir)Assets" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

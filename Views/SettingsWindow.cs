@@ -34,8 +34,8 @@ public sealed class SettingsWindow : Window
         if (_providers.Count == 0) _providers.Add(new AiProviderSettings());
         _defaultProviderId = host.Settings.DefaultProviderId ?? _providers[0].Id;
         Title = "喵呜AI 设置";
-        Width = 780;
-        Height = 680;
+        Width = 820;
+        Height = 650;
         MinWidth = 640;
         MinHeight = 500;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -75,41 +75,6 @@ public sealed class SettingsWindow : Window
         SourceInitialized += (_, _) => NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle);
     }
 
-    private void SetWindowStyles()
-    {
-        Resources[typeof(TextBox)] = InputStyle(typeof(TextBox));
-        Resources[typeof(PasswordBox)] = InputStyle(typeof(PasswordBox));
-        var comboStyle = InputStyle(typeof(ComboBox));
-        comboStyle.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.Black));
-        comboStyle.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.White));
-        Resources[typeof(ComboBox)] = comboStyle;
-        var checkStyle = new Style(typeof(CheckBox));
-        checkStyle.Setters.Add(new Setter(ForegroundProperty, Brushes.White));
-        checkStyle.Setters.Add(new Setter(Control.MarginProperty, new Thickness(0, 6, 0, 6)));
-        Resources[typeof(CheckBox)] = checkStyle;
-        var tabStyle = new Style(typeof(TabItem));
-        tabStyle.Setters.Add(new Setter(ForegroundProperty, Brushes.White));
-        tabStyle.Setters.Add(new Setter(Control.BackgroundProperty, InputBrush));
-        tabStyle.Setters.Add(new Setter(Control.BorderBrushProperty, ControlBorderBrush));
-        tabStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(15, 8, 15, 8)));
-        var selected = new Trigger { Property = TabItem.IsSelectedProperty, Value = true };
-        selected.Setters.Add(new Setter(ForegroundProperty, Brushes.Black));
-        tabStyle.Triggers.Add(selected);
-        Resources[typeof(TabItem)] = tabStyle;
-    }
-
-    private static Style InputStyle(Type type)
-    {
-        var style = new Style(type);
-        style.Setters.Add(new Setter(Control.BackgroundProperty, InputBrush));
-        style.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
-        style.Setters.Add(new Setter(Control.BorderBrushProperty, ControlBorderBrush));
-        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
-        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(9, 7, 9, 7)));
-        style.Setters.Add(new Setter(Control.MarginProperty, new Thickness(0, 5, 0, 14)));
-        return style;
-    }
-
     private static TabItem Tab(string header, UIElement content) => new()
     {
         Header = header,
@@ -137,19 +102,17 @@ public sealed class SettingsWindow : Window
     {
         var panel = new StackPanel();
         panel.Children.Add(Text(name, true));
+        control.Margin = new Thickness(0, 0, 0, 12);
         panel.Children.Add(control);
         return panel;
     }
 
-    private static Button ActionButton(string text, bool primary = false) => new()
+    private static Button ActionButton(string text, bool primary = false)
     {
-        Content = text,
-        Padding = new Thickness(18, 9, 18, 9),
-        Background = primary ? new SolidColorBrush(Color.FromRgb(49, 140, 255)) : InputBrush,
-        Foreground = primary ? Brushes.White : new SolidColorBrush(Color.FromRgb(23,32,51)),
-        BorderBrush = primary ? Brushes.Transparent : ControlBorderBrush,
-        Cursor = System.Windows.Input.Cursors.Hand
-    };
+        var button=new Button{Content=text,Padding=new Thickness(18,9,18,9),Cursor=System.Windows.Input.Cursors.Hand};
+        button.SetResourceReference(StyleProperty,primary?"PrimaryButton":"SecondaryButton");
+        return button;
+    }
 
     private UIElement General()
     {

@@ -3,24 +3,65 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using mewu_ai_Assistant.Interop;
+using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
-using ContextMenu=System.Windows.Controls.ContextMenu;
-using MenuItem=System.Windows.Controls.MenuItem;
+
 namespace mewu_ai_Assistant.Views;
+
 public sealed class PinnedImageWindow : Window
 {
-    private readonly BitmapSource _image;private bool _adjustingSize;
-    public PinnedImageWindow(BitmapSource image)
+    private const int ShadowPixels=16;
+    private readonly BitmapSource _image;
+    private readonly ScreenRect? _originalRegion;
+    private readonly Border _frame;
+    private MenuItem? _topmostItem;
+    private bool _adjustingSize;
+
+    public PinnedImageWindow(BitmapSource image,ScreenRect? originalRegion=null)
     {
-        _image=image;Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResizeWithGrip;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;
-        Width=Math.Min(image.PixelWidth,900);Height=Width*image.PixelHeight/image.PixelWidth;Content=new Image{Source=image,Stretch=Stretch.Uniform};
-        SizeChanged+=(_,_)=>{if(_adjustingSize)return;var expected=ActualWidth*image.PixelHeight/image.PixelWidth;if(Math.Abs(ActualHeight-expected)<1)return;_adjustingSize=true;Height=Math.Clamp(expected,80,2400);_adjustingSize=false;};
-        MouseLeftButtonDown+=(_,e)=>{if(e.ButtonState==MouseButtonState.Pressed)DragMove();};MouseWheel+=(_,e)=>{var factor=e.Delta>0?1.08:.92;Width=Math.Clamp(Width*factor,120,2400);Height=Width*image.PixelHeight/image.PixelWidth;};
-        var menu=new ContextMenu{Background=new SolidColorBrush(Color.FromRgb(18,26,38)),Foreground=Brushes.White,BorderBrush=new SolidColorBrush(Color.FromRgb(49,67,91)),BorderThickness=new Thickness(1),Padding=new Thickness(4)};Add(menu,"复制",()=>Clipboard.SetImage(_image));Add(menu,"保存",Save);Add(menu,"100%",()=>{Width=image.PixelWidth;Height=image.PixelHeight;});Add(menu,"置顶",()=>Topmost=!Topmost);Add(menu,"透明度 80%",()=>Opacity=Opacity<1?1:.8);Add(menu,"关闭",Close);ContextMenu=menu;
-        SourceInitialized+=(_,_)=>NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+        _image=image;_originalRegion=originalRegion;Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;
+        _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(7),BorderBrush=new SolidColorBrush(Color.FromArgb(120,145,158,177)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=26,ShadowDepth=5,Opacity=.38},Child=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true}};
+        Content=_frame;Width=Math.Min(image.PixelWidth,900)+ShadowPixels*2;Height=(Width-ShadowPixels*2)*image.PixelHeight/image.PixelWidth+ShadowPixels*2;MinWidth=120+ShadowPixels*2;MinHeight=80+ShadowPixels*2;
+        SizeChanged+=KeepAspectRatio;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
+        SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);if(_originalRegion is { } region)PlaceAtOriginalSize(handle,region);else ApplyShadowPadding(handle);};
     }
-    private static void Add(ContextMenu menu,string text,Action action){var item=new MenuItem{Header=text,Foreground=Brushes.White,Background=Brushes.Transparent,Padding=new Thickness(14,7,24,7)};item.Click+=(_,_)=>action();menu.Items.Add(item);}
-    private void Save(){var d=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=".png"};if(d.ShowDialog(this)==true)ScreenCaptureService.Save(_image,d.FileName,d.FilterIndex==2);}
+
+    private void PlaceAtOriginalSize(IntPtr handle,ScreenRect region)
+    {
+        NativeMethods.SetWindowPos(handle,new IntPtr(-1),region.X-ShadowPixels,region.Y-ShadowPixels,region.Width+ShadowPixels*2,region.Height+ShadowPixels*2,0x0040);ApplyShadowPadding(handle);
+    }
+
+    private void ApplyShadowPadding(IntPtr handle)
+    {
+        var dpi=Math.Max(96,NativeMethods.GetDpiForWindow(handle));var padding=ShadowPixels*96d/dpi;_frame.Margin=new Thickness(padding);
+    }
+
+    private void KeepAspectRatio(object? sender,SizeChangedEventArgs e)
+    {
+        if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_image.PixelHeight/_image.PixelWidth+padding;if(Math.Abs(ActualHeight-expected)<1)return;_adjustingSize=true;Height=Math.Clamp(expected,MinHeight,2400);_adjustingSize=false;
+    }
+
+    private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e)
+    {
+        if(e.ClickCount==2){Topmost=false;UpdateTopmostHeader();e.Handled=true;return;}if(e.ButtonState==MouseButtonState.Pressed)DragMove();
+    }
+
+    private void OnMouseWheel(object sender,MouseWheelEventArgs e)
+    {
+        var factor=e.Delta>0?1.08:.92;Width=Math.Clamp(Width*factor,MinWidth,2400);
+    }
+
+    private ContextMenu BuildContextMenu()
+    {
+        var menu=new ContextMenu();Add(menu,"复制图片",()=>Clipboard.SetImage(_image));Add(menu,"保存图片…",Save);menu.Items.Add(new Separator());Add(menu,"恢复原位原大小",RestoreOriginal);_topmostItem=Add(menu,"保持置顶 ✓",ToggleTopmost);Add(menu,"透明度 80%",()=>Opacity=Opacity<1?1:.8);menu.Items.Add(new Separator());Add(menu,"关闭贴图",Close);return menu;
+    }
+
+    private static MenuItem Add(ContextMenu menu,string text,Action action){var item=new MenuItem{Header=text};item.Click+=(_,_)=>action();menu.Items.Add(item);return item;}
+    private void ToggleTopmost(){Topmost=!Topmost;UpdateTopmostHeader();}
+    private void UpdateTopmostHeader(){if(_topmostItem is not null)_topmostItem.Header=Topmost?"保持置顶 ✓":"恢复置顶";}
+    private void RestoreOriginal(){if(_originalRegion is not { } region)return;var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;PlaceAtOriginalSize(handle,region);}
+    private void Save(){var dialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=".png"};if(dialog.ShowDialog(this)==true)ScreenCaptureService.Save(_image,dialog.FileName,dialog.FilterIndex==2);}
 }

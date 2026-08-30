@@ -37,7 +37,10 @@ public class OpenAiCompatibleProvider : IAiProvider
         var messages=request.History.Select(x=>(object)new{role=x.Role,content=x.Text}).ToList();
         messages.Add(new{role="user",content});
         var streaming=request.StreamingProgress is not null&&Capabilities.SupportsStreaming;
-        var body=JsonSerializer.Serialize(new{model=_settings.Model,messages,temperature=.2,stream=streaming});
+        var bodyValues=new Dictionary<string,object?>{{"model",_settings.Model},{"messages",messages},{"temperature",.2},{"stream",streaming}};
+        if(request.MaxOutputTokens is { } maxTokens)bodyValues["max_tokens"]=maxTokens;
+        if(request.DisableReasoning&&_settings.BaseUrl.Contains("volces.com",StringComparison.OrdinalIgnoreCase)){bodyValues["thinking"]=new{type="disabled"};bodyValues["reasoning_effort"]="minimal";}
+        var body=JsonSerializer.Serialize(bodyValues);
         using var httpRequest=Create(HttpMethod.Post,"chat/completions");
         httpRequest.Content=new StringContent(body,Encoding.UTF8,"application/json");
         using var response=await Client.SendAsync(httpRequest,HttpCompletionOption.ResponseHeadersRead,token);
@@ -55,6 +58,7 @@ public class OpenAiCompatibleProvider : IAiProvider
                 if(delta.Content.Length>0)answer.Append(delta.Content);
                 if(delta.ReasoningContent.Length>0)reasoning.Append(delta.ReasoningContent);
                 if(delta.Content.Length>0||delta.ReasoningContent.Length>0)request.StreamingProgress!.Report(delta);
+                if(request.StreamingCompletionPredicate?.Invoke(answer.ToString())==true)break;
             }
             return StructuredResponseParser.Parse(answer.ToString(),reasoning.ToString());
         }

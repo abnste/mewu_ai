@@ -21,4 +21,5 @@ public sealed class AiProviderSettings
     public string Id { get; set; } = Guid.NewGuid().ToString("N"); public string Name { get; set; } = "OpenAI Compatible"; public string Type { get; set; } = "OpenAICompatible";
     public string BaseUrl { get; set; } = "https://api.openai.com/v1"; public string Model { get; set; } = "gpt-4.1-mini"; public string CredentialId { get; set; } = string.Empty;
     public Dictionary<string,string> CustomHeaders { get; set; } = [];
+    public override string ToString()=>Name;
 }
