@@ -8,8 +8,10 @@ public sealed class EnvironmentProviderBootstrap
     {
         var changed=false;
         changed|=Import(settings,"XAI_API_KEY","xAI Vision","OpenAICompatible","https://api.x.ai/v1","grok-4.6",makeDefault:false);
-        changed|=Import(settings,"MINIMAX_CN_API_KEY","MiniMax Text","MiniMax","https://api.minimaxi.com/v1","MiniMax-M3",makeDefault:false);
-        changed|=Import(settings,"VOLCENGINE_AGENTPLAN_API_KEY","Volcengine Agent Plan","OpenAICompatible","https://ark.cn-beijing.volces.com/api/plan/v3","doubao-seed-2-0-pro-260215",makeDefault:true);
+        changed|=Import(settings,"MINIMAX_CN_API_KEY","MiniMax M3","MiniMax","https://api.minimaxi.com/v1","MiniMax-M3",makeDefault:true);
+        changed|=Import(settings,"VOLCENGINE_AGENTPLAN_API_KEY","Volcengine Agent Plan","OpenAICompatible","https://ark.cn-beijing.volces.com/api/plan/v3","doubao-seed-2-0-pro-260215",makeDefault:false);
+        var miniMaxM3=settings.Providers.LastOrDefault(x=>x.Type.Equals("MiniMax",StringComparison.OrdinalIgnoreCase)&&x.Model.Equals("MiniMax-M3",StringComparison.OrdinalIgnoreCase)&&!string.IsNullOrWhiteSpace(x.CredentialId));
+        if(miniMaxM3 is not null&&settings.DefaultProviderId!=miniMaxM3.Id){settings.DefaultProviderId=miniMaxM3.Id;changed=true;}
         return changed;
     }
 

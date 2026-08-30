@@ -54,6 +54,5 @@
 
 ## 当前能力边界
 
-- MiniMax Chat Completions Adapter 依据正式接口声明为文字流式能力；该接口未提供可验证的截图或视频理解输入格式，因此不会伪装成多模态。图片理解请配置支持图片输入的 OpenAI-compatible Provider。
-- 当 Provider 不支持直接视频输入时，录屏预览明确使用开始/中间/结束关键帧分析，不会声称理解完整视频。
+- MiniMax M3 通过官方 OpenAI-compatible Chat Completions 原生接收图片与视频：图片使用 `image_url`，视频使用 `video_url` 并按 2 FPS 采样；默认 Provider 为 `MiniMax-M3`，不会自动回退到火山方舟。
 - 第一版不录制系统音频或麦克风音频；视频编码仍使用 Windows Media Foundation H.264。
