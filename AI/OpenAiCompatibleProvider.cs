@@ -10,7 +10,11 @@ public class OpenAiCompatibleProvider : IAiProvider
     public string Id=>_settings.Id;
     public virtual AiProviderCapabilities Capabilities { get; }=new(true,true,false,true,true,20*1024*1024,TimeSpan.Zero,new HashSet<string>{"image/png","image/jpeg","image/webp"});
     public OpenAiCompatibleProvider(AiProviderSettings settings,string apiKey){_settings=settings;_apiKey=apiKey;}
-    public async Task<bool> TestConnectionAsync(CancellationToken token){using var req=Create(HttpMethod.Get,"models");using var res=await Client.SendAsync(req,token);return res.IsSuccessStatusCode;}
+    public async Task<bool> TestConnectionAsync(CancellationToken token)
+    {
+        var result=await SendAsync(new AiRequest{Prompt="Reply with OK."},token);
+        return !string.IsNullOrWhiteSpace(result.Answer);
+    }
     public virtual async Task<AiResult> SendAsync(AiRequest request,CancellationToken token)
     {
         Validate(request);var content=new List<object>();if(!string.IsNullOrWhiteSpace(request.Prompt))content.Add(new{type="text",text=request.Prompt});

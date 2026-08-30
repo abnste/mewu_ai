@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
@@ -11,10 +12,10 @@ namespace mewu_ai_Assistant.Views;
 
 public sealed class SettingsWindow : Window
 {
-    private static readonly Brush PanelBrush = new SolidColorBrush(Color.FromRgb(18, 26, 38));
-    private static readonly Brush InputBrush = new SolidColorBrush(Color.FromRgb(25, 36, 52));
-    private static readonly Brush ControlBorderBrush = new SolidColorBrush(Color.FromRgb(49, 67, 91));
-    private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(145, 160, 181));
+    private static readonly Brush PanelBrush = Brushes.White;
+    private static readonly Brush InputBrush = Brushes.White;
+    private static readonly Brush ControlBorderBrush = new SolidColorBrush(Color.FromRgb(224, 230, 240));
+    private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _hotkey = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new();
     private readonly TextBox _providerName = new(), _baseUrl = new(), _model = new(), _customHeaders = new();
@@ -38,16 +39,15 @@ public sealed class SettingsWindow : Window
         MinWidth = 640;
         MinHeight = 500;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        Background = new SolidColorBrush(Color.FromRgb(11, 16, 24));
-        Foreground = Brushes.White;
-        SetWindowStyles();
+        WindowStyle = WindowStyle.None;
+        AllowsTransparency = true;
+        Background = Brushes.Transparent;
+        Foreground = new SolidColorBrush(Color.FromRgb(23,32,51));
 
         var tabs = new TabControl
         {
-            Margin = new Thickness(20, 20, 20, 14),
-            Background = PanelBrush,
-            BorderBrush = ControlBorderBrush,
-            Foreground = Brushes.White
+            Margin = new Thickness(20, 12, 20, 18),
+            TabStripPlacement = Dock.Left
         };
         tabs.Items.Add(Tab("常规", General()));
         tabs.Items.Add(Tab("捕获", Capture()));
@@ -57,16 +57,21 @@ public sealed class SettingsWindow : Window
         tabs.Items.Add(Tab("隐私", Privacy()));
 
         var save = ActionButton("保存", true);
-        save.Margin = new Thickness(0, 0, 20, 20);
+        save.Margin = new Thickness(0, 0, 20, 18);
         save.HorizontalAlignment = HorizontalAlignment.Right;
         save.Click += (_, _) => Save();
-        var grid = new Grid();
+        var grid = new Grid { Background = new SolidColorBrush(Color.FromRgb(245,247,252)) };
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(54) });
         grid.RowDefinitions.Add(new RowDefinition());
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        Grid.SetRow(save, 1);
-        grid.Children.Add(tabs);
+        var header = new Grid { Margin = new Thickness(22,0,14,0) };
+        header.MouseLeftButtonDown += (_,e) => { if(e.ButtonState==System.Windows.Input.MouseButtonState.Pressed&&e.OriginalSource is not Button) DragMove(); };
+        header.Children.Add(new TextBlock { Text="喵呜AI 设置", FontSize=17, FontWeight=FontWeights.SemiBold, VerticalAlignment=VerticalAlignment.Center });
+        var close=ActionButton("×");close.Padding=new Thickness(13,7,13,7);close.HorizontalAlignment=HorizontalAlignment.Right;close.VerticalAlignment=VerticalAlignment.Center;close.Click+=(_,_)=>Close();header.Children.Add(close);
+        Grid.SetRow(tabs,1);Grid.SetRow(save,2);
+        grid.Children.Add(header);grid.Children.Add(tabs);
         grid.Children.Add(save);
-        Content = grid;
+        Content = new Border { CornerRadius=new CornerRadius(18), BorderBrush=ControlBorderBrush, BorderThickness=new Thickness(1), Background=new SolidColorBrush(Color.FromRgb(245,247,252)), Child=grid, Effect=new DropShadowEffect{Color=Color.FromRgb(102,117,140),BlurRadius=30,ShadowDepth=9,Opacity=.25} };
         SourceInitialized += (_, _) => NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle);
     }
 
@@ -123,7 +128,7 @@ public sealed class SettingsWindow : Window
         Text = text,
         Margin = new Thickness(0, 5, 0, 9),
         TextWrapping = TextWrapping.Wrap,
-        Foreground = secondary ? SecondaryBrush : Brushes.White
+        Foreground = secondary ? SecondaryBrush : new SolidColorBrush(Color.FromRgb(23,32,51))
     };
 
     private static StackPanel Panel() => new() { Margin = new Thickness(24) };
@@ -141,7 +146,7 @@ public sealed class SettingsWindow : Window
         Content = text,
         Padding = new Thickness(18, 9, 18, 9),
         Background = primary ? new SolidColorBrush(Color.FromRgb(49, 140, 255)) : InputBrush,
-        Foreground = Brushes.White,
+        Foreground = primary ? Brushes.White : new SolidColorBrush(Color.FromRgb(23,32,51)),
         BorderBrush = primary ? Brushes.Transparent : ControlBorderBrush,
         Cursor = System.Windows.Input.Cursors.Hand
     };

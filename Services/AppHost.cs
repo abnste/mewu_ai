@@ -22,7 +22,9 @@ public sealed class AppHost : IDisposable
     {
         var menu=new Forms.ContextMenuStrip();
         menu.Items.Add("截图 / AI",null,(_,_)=>BeginCapture());menu.Items.Add("文字问答",null,(_,_)=>ShowTextAi()); menu.Items.Add("设置",null,(_,_)=>ShowSettings()); menu.Items.Add("打开主界面",null,(_,_)=>ShowMainWindow()); menu.Items.Add(new Forms.ToolStripSeparator()); menu.Items.Add("退出",null,(_,_)=>Exit());
-        _tray=new Forms.NotifyIcon { Text="喵呜AI",Icon=SystemIcons.Application,Visible=true,ContextMenuStrip=menu };
+        var iconPath=Path.Combine(AppContext.BaseDirectory,"MewuAI.ico");
+        var trayIcon=File.Exists(iconPath)?new Icon(iconPath):SystemIcons.Application;
+        _tray=new Forms.NotifyIcon { Text="喵呜AI",Icon=trayIcon,Visible=true,ContextMenuStrip=menu };
         _tray.MouseClick+=(_,e)=>{if(e.Button==Forms.MouseButtons.Left)BeginCapture();};
     }
     public void BeginCapture()=>_=BeginCaptureAsync();
