@@ -17,6 +17,18 @@
     <Button Content="贴图" ToolTip="贴图 (P)" Click="Pin"/><Button Content="标注" ToolTip="标注 (D)" Click="Draw"/><Button Content="复制" ToolTip="复制 (C)" Click="Copy"/><Button Content="保存" ToolTip="保存 (S)" Click="Save"/><Button Content="录屏" ToolTip="区域录屏 (R)" Click="Record"/>
    </StackPanel>
   </Border>
+  <Border x:Name="PromptBar" Background="#F20A1525" BorderBrush="#704BAEFF" BorderThickness="1" CornerRadius="15" Padding="9" Opacity="0.98">
+   <Border.Effect><DropShadowEffect Color="#020814" BlurRadius="24" ShadowDepth="7" Opacity="0.75"/></Border.Effect>
+   <Grid Width="610">
+    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Grid>
+     <TextBox x:Name="QuickPrompt" MinHeight="44" Padding="13,10" AcceptsReturn="True" TextWrapping="Wrap" Foreground="White" CaretBrush="#43C6FF" Background="#CC101E31" BorderBrush="#526783" BorderThickness="1" PreviewKeyDown="QuickPromptKeyDown"/>
+     <TextBlock x:Name="QuickPromptHint" Text="询问当前屏幕，或先圈选一个区域…" Foreground="#8494AA" Margin="14,13,0,0" IsHitTestVisible="False"/>
+    </Grid>
+    <Button Grid.Column="1" Content="⌁" ToolTip="语音输入" Click="QuickVoice" Padding="14,10"/>
+    <Button Grid.Column="2" Content="➤" ToolTip="发送" Click="QuickSend" Background="#5266E8" BorderBrush="#6F85FF" Padding="17,10"/>
+   </Grid>
+  </Border>
   <TextBlock x:Name="SizeText" Visibility="Collapsed" Foreground="White" Background="#CC111722" Padding="6,3"/>
  </Canvas>
 </Window>
