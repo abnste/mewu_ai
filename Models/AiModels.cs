@@ -11,7 +11,7 @@ public sealed record AiAnnotation(double X,double Y,double Width,double Height,s
 public sealed class StructuredAiResponse
 {
     [JsonPropertyName("answer")] public string Answer { get; set; }=string.Empty;
-    [JsonPropertyName("annotations")] public List<AiAnnotationDto> Annotations { get; set; }=[];
+    [JsonPropertyName("annotations")] public List<AiAnnotationDto>? Annotations { get; set; }=[];
 }
 public sealed class AiAnnotationDto
 {

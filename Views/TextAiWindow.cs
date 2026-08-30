@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
@@ -70,17 +71,21 @@ public sealed class TextAiWindow : Window
         reasoningHost.Children.Add(_reasoningPanel);
 
         _prompt.Text = initial;
-        _prompt.MinHeight = 48;
-        _prompt.MaxHeight = 86;
+        _prompt.MinHeight = 40;
+        _prompt.MaxHeight = 76;
+        _prompt.Padding = new Thickness(9, 5, 9, 5);
+        _prompt.FontSize = 13;
+        TextBlock.SetLineHeight(_prompt, 19);
+        _prompt.VerticalContentAlignment = VerticalAlignment.Center;
         _prompt.AcceptsReturn = true;
         _prompt.TextWrapping = TextWrapping.Wrap;
         _prompt.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _prompt.BorderThickness = new Thickness(0);
         _prompt.Background = Brushes.Transparent;
         _prompt.PreviewKeyDown += async (_, e) => { if (e.Key == Key.Enter && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) { e.Handled = true; await SendAsync(); } };
-        var hint = new TextBlock { Text = "输入问题…", Foreground = new SolidColorBrush(Color.FromRgb(139, 153, 173)), Margin = new Thickness(13, 12, 0, 0), IsHitTestVisible = false };
-        hint.Visibility = string.IsNullOrWhiteSpace(initial) ? Visibility.Visible : Visibility.Collapsed;
-        _prompt.TextChanged += (_, _) => hint.Visibility = string.IsNullOrWhiteSpace(_prompt.Text) ? Visibility.Visible : Visibility.Collapsed;
+        var hint = new TextBlock { Text = "输入问题…", Foreground = new SolidColorBrush(Color.FromRgb(139, 153, 173)), Margin = new Thickness(9, 0, 0, 0), FontSize = 13, LineHeight = 19, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+        hint.Visibility = initial.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _prompt.TextChanged += (_, _) => hint.Visibility = _prompt.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         var promptHost = new Grid(); promptHost.Children.Add(_prompt); promptHost.Children.Add(hint);
         var inputBorder = new Border { Background = new SolidColorBrush(Color.FromRgb(244, 247, 251)), BorderBrush = new SolidColorBrush(Color.FromRgb(220, 228, 239)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = new Thickness(3), Child = promptHost };
 
@@ -117,11 +122,12 @@ public sealed class TextAiWindow : Window
 
     private async Task ToggleListeningAsync()
     {
-        if (_speechRequest is not null) { _speechRequest.Cancel(); return; }
+        if (_speechRequest is not null) { _status.Text = "正在停止聆听…"; _speechRequest.Cancel(); return; }
         _speechRequest = new(); _microphone.Content = "■"; _status.Text = "正在聆听…再次点击可停止";
         try { var text = await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage, _speechRequest.Token); if (!string.IsNullOrWhiteSpace(text)) _prompt.Text += text; _status.Text = "语音已写入，可编辑后发送"; }
         catch (OperationCanceledException) { _status.Text = "已停止聆听"; }
-        catch (Exception ex) { _status.Text = $"语音不可用：{ex.Message}"; }
+        catch (SpeechRecognitionUnavailableException ex) { _status.Text = ex.Message; }
+        catch (Exception) { _status.Text = "语音输入暂时不可用"; }
         finally { _speechRequest.Dispose(); _speechRequest = null; _microphone.Content = "⌕"; }
     }
 
@@ -130,24 +136,38 @@ public sealed class TextAiWindow : Window
         if (string.IsNullOrWhiteSpace(_prompt.Text)) return;
         var provider = new AiProviderFactory().Create(_host.Settings);
         if (provider is null) { _status.Text = "尚未配置 AI 模型或 API Key"; _host.ShowSettings(); return; }
-        _request?.Cancel(); _request = new(); var prompt = _prompt.Text; _answer.Text = ""; _reasoning.Text = ""; _reasoningToggle.Visibility = _reasoningPanel.Visibility = Visibility.Collapsed; _status.Text = "生成中…";
+        _request?.Cancel(); var request = new CancellationTokenSource(); _request = request; var prompt = _prompt.Text; _answer.Text = ""; _reasoning.Text = ""; _reasoningToggle.Visibility = _reasoningPanel.Visibility = Visibility.Collapsed; _status.Text = "生成中…"; var streamOpen = true;
         try
         {
             var progress = provider.Capabilities.SupportsStreaming ? new Progress<AiStreamDelta>(delta =>
             {
+                if (!streamOpen || !ReferenceEquals(_request, request)) return;
                 if (delta.ReasoningContent.Length > 0) { _reasoning.Text += delta.ReasoningContent; _reasoningToggle.Visibility = Visibility.Visible; _reasoningToggle.Content = "正在思考…"; _reasoningPanel.Visibility = Visibility.Visible; }
                 if (delta.Content.Length > 0) _answer.Text += delta.Content;
             }) : null;
-            var result = await provider.SendAsync(new AiRequest { Prompt = prompt, History = [.. _history], StreamingProgress = progress }, _request.Token);
+            var result = await provider.SendAsync(new AiRequest { Prompt = prompt, History = [.. _history], StreamingProgress = progress }, request.Token);
+            streamOpen = false;
+            if (!ReferenceEquals(_request, request)) return;
+            if (!string.IsNullOrWhiteSpace(result.Reasoning)) _reasoning.Text = result.Reasoning.Trim();
+            CloseReasoning("思考过程 · 已完成");
+            var emptyAnswer = AiResultValidation.GetEmptyAnswerMessage(result);
+            if (emptyAnswer is not null) { _answer.Text = emptyAnswer; _status.Text = emptyAnswer; return; }
             _answer.Text = result.Answer;
-            if (_reasoning.Text.Length == 0) _reasoning.Text = result.Reasoning.Trim();
-            if (_reasoning.Text.Length > 0) { _reasoningToggle.Visibility = Visibility.Visible; _reasoningToggle.Content = "思考过程 · 已完成"; _reasoningPanel.Visibility = Visibility.Collapsed; }
             _history.Add(new("user", prompt)); _history.Add(new("assistant", result.Answer));
             var configured = _host.Settings.Providers.FirstOrDefault(x => x.Id == provider.Id);
-            if (_host.Settings.SaveConversationHistory) await new ConversationHistoryService().AppendAsync(configured?.Name ?? provider.Id, configured?.Model ?? "", prompt, result.Answer, _request.Token);
+            if (_host.Settings.SaveConversationHistory) await new ConversationHistoryService().AppendAsync(configured?.Name ?? provider.Id, configured?.Model ?? "", prompt, result.Answer, request.Token);
             _prompt.Clear(); _status.Text = "完成 · 可继续追问";
         }
-        catch (OperationCanceledException) { _status.Text = "已取消"; }
-        catch (Exception ex) { _status.Text = ex.Message; }
+        catch (OperationCanceledException) { if (ReferenceEquals(_request, request)) { CloseReasoning("思考过程 · 已取消"); _status.Text = "已取消"; } }
+        catch (Exception ex) { if (ReferenceEquals(_request, request)) { CloseReasoning("思考过程 · 已中止"); _status.Text = ex.Message; } }
+        finally { streamOpen = false; request.Dispose(); if (ReferenceEquals(_request, request)) _request = null; }
+    }
+
+    private void CloseReasoning(string label)
+    {
+        if (_reasoning.Text.Length == 0) return;
+        _reasoningToggle.Visibility = Visibility.Visible;
+        _reasoningToggle.Content = label;
+        _reasoningPanel.Visibility = Visibility.Collapsed;
     }
 }

@@ -11,7 +11,7 @@
 - OCR 坐标驱动的原位翻译，可切换原文/译文、复制译文；OCR 失败时可回退为普通图片翻译。
 - 多 Provider 管理，支持 OpenAI-compatible 与 MiniMax、自定义 Base URL/Model/Headers、连接测试、默认 Provider 和 DPAPI 加密 API Key。
 - 图片/纯文字多轮 AI、兼容接口流式输出、取消请求、同区域刷新、结构化屏幕批注及隐藏/显示批注。
-- Windows 原生语音识别；支持再次点击停止、语言选择和可选自动监听，识别结果不会自动发送。
+- Windows 桌面 SAPI 本地语音识别；支持再次点击停止、语言选择和可选自动监听，识别结果不会自动发送。
 - 单屏或跨屏区域 MP4 录制（Media Foundation H.264）、暂停/继续、GIF 导出、预览、重新录制和关键帧 AI 分析；录制 UI 排除在捕获之外。
 - 隐私安全日志、临时媒体清理和本地设置。
 
@@ -32,6 +32,8 @@
 & 'C:\Program Files\dotnet\dotnet.exe' test '.\tests\MewuAI.Tests\MewuAI.Tests.csproj' -p:Platform=x64
 ```
 
+`tests\MewuAI.ProviderSmoke` 可用 `MEWU_SMOKE_VIDEO_PATH` 验证既有 MP4，或用 `MEWU_SMOKE_RECORD_SECONDS`（2–20 秒）和可选的 `MEWU_SMOKE_RECORD_RECT_JSON` 先录制指定区域；`MEWU_SMOKE_VIDEO_EXPECTED_ANY_JSON` / `MEWU_SMOKE_VIDEO_EXPECTED_ALL_JSON` 用于约束回答中的目标语义。该工具只验证录制服务与 Provider，发布前仍需在 Release 覆盖层完成“区域录屏 → `@视频N` → 发送 → 回答”的产品闭环。
+
 发布自包含版本：
 
 ```powershell
@@ -47,7 +49,8 @@
 ## 第三方组件
 
 - `ScreenRecorderLib`：MIT，使用 Windows Graphics Capture/Desktop Duplication 与 Microsoft Media Foundation 录制 H.264。
-- `Microsoft.Windows.SDK.NET.Ref`：Windows SDK targeting pack，用于 Windows OCR 与语音 API。
+- `System.Speech`：MIT，调用 Windows 桌面 SAPI 完成本地语音识别，不要求 MSIX 包身份。
+- `Microsoft.Windows.SDK.NET.Ref`：Windows SDK targeting pack，用于 Windows OCR 等系统 API。
 - xUnit：测试框架。
 
 项目不引入 GPL/AGPL 组件，也不捆绑 FFmpeg。
