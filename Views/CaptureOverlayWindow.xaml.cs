@@ -8,8 +8,10 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Models;
+using mewu_ai_Assistant.OCR;
 using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Speech;
 using Button=System.Windows.Controls.Button;
@@ -32,7 +34,7 @@ public partial class CaptureOverlayWindow : Window
     private Rect _moveOrigin;
     private int _activeIndex=-1;
     private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded;
-    private CancellationTokenSource? _speechRequest,_request;
+    private CancellationTokenSource? _speechRequest,_request,_overlayRequest;
 
     private sealed class SelectionItem
     {
@@ -57,7 +59,7 @@ public partial class CaptureOverlayWindow : Window
         SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.ExcludeFromCapture(hwnd);};
         Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=string.IsNullOrWhiteSpace(QuickPrompt.Text)?Visibility.Visible:Visibility.Collapsed;PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();QuickPrompt.Focus();};
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;PositionPromptBar();};
-        Closed+=(_,_)=>{_speechRequest?.Cancel();_request?.Cancel();};
+        Closed+=(_,_)=>{_speechRequest?.Cancel();_request?.Cancel();_overlayRequest?.Cancel();};
     }
 
     private void OnMouseDown(object s,MouseButtonEventArgs e)
@@ -197,8 +199,42 @@ public partial class CaptureOverlayWindow : Window
         try{PromptStatus.Text="正在聆听…";var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))QuickPrompt.Text=string.IsNullOrWhiteSpace(QuickPrompt.Text)?text:QuickPrompt.Text+" "+text;PromptStatus.Text="语音已写入";}
         catch(OperationCanceledException){PromptStatus.Text="已停止聆听";}catch(Exception ex){PromptStatus.Text=$"语音不可用：{ex.Message}";}finally{_speechRequest.Dispose();_speechRequest=null;VoiceIcon.Data=microphone;}
     }
-    private void Translate(object s,RoutedEventArgs e){new TranslationWindow(_host,CurrentImage()).Show();Close();}
-    private void Ocr(object s,RoutedEventArgs e){new OcrTextWindow(CurrentImage()).Show();Close();}
+    private async void Translate(object s,RoutedEventArgs e)
+    {
+        if(Active is not {IsImplicit:false} item)return;var image=CurrentImage();var operation=BeginOverlayOperation("正在识别并翻译当前区域…");
+        try
+        {
+            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!_selections.Contains(item))return;if(document.Lines.Count==0){PromptStatus.Text="当前区域未识别到文字";return;}
+            var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){PromptStatus.Text="翻译需要先配置可用的 AI Provider";_host.ShowSettings();return;}
+            var prompt="将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource="+System.Text.Json.JsonSerializer.Serialize(document.Lines.Select(line=>line.Text).ToArray());
+            var result=await provider.SendAsync(new AiRequest{Prompt=prompt},operation.Token);if(!_selections.Contains(item))return;if(!TranslationResponseParser.TryParse(result.Answer,document.Lines.Count,out var translated)){PromptStatus.Text="翻译结果格式异常，请重试";return;}
+            RenderTextOverlays(item,image,document.Lines,translated,true);PromptStatus.Text=$"已在原位翻译 {translated.Count} 行";
+        }
+        catch(OperationCanceledException){}catch(Exception ex){PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+    }
+
+    private async void Ocr(object s,RoutedEventArgs e)
+    {
+        if(Active is not {IsImplicit:false} item)return;var image=CurrentImage();var operation=BeginOverlayOperation("正在本地识别当前区域…");
+        try
+        {
+            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!_selections.Contains(item))return;RenderTextOverlays(item,image,document.Lines,document.Lines.Select(line=>line.Text).ToList(),false);PromptStatus.Text=document.Lines.Count==0?"当前区域未识别到文字":$"已在原位贴出 {document.Lines.Count} 行文字";
+        }
+        catch(OperationCanceledException){}catch(Exception ex){PromptStatus.Text=$"OCR 失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+    }
+
+    private CancellationTokenSource BeginOverlayOperation(string status){_overlayRequest?.Cancel();var operation=new CancellationTokenSource(TimeSpan.FromMinutes(2));_overlayRequest=operation;PromptStatus.Text=status;Toolbar.IsEnabled=false;return operation;}
+    private void EndOverlayOperation(CancellationTokenSource operation){operation.Dispose();if(!ReferenceEquals(_overlayRequest,operation))return;_overlayRequest=null;Toolbar.IsEnabled=true;if(Active is not null)ShowToolbar();}
+    private static void RenderTextOverlays(SelectionItem item,BitmapSource image,IReadOnlyList<OcrLine> lines,IReadOnlyList<string> texts,bool translated)
+    {
+        item.Annotations.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;
+        for(var index=0;index<lines.Count&&index<texts.Count;index++)
+        {
+            var line=lines[index];var text=new TextBlock{Text=texts[index],Foreground=new SolidColorBrush(Color.FromRgb(35,47,67)),FontSize=Math.Clamp(line.Height*scaleY*.72,10,26),FontWeight=translated?FontWeights.SemiBold:FontWeights.Normal,TextWrapping=TextWrapping.Wrap,LineHeight=Math.Clamp(line.Height*scaleY*.9,14,32)};
+            var box=new Border{Child=text,Background=new SolidColorBrush(translated?Color.FromArgb(242,239,242,255):Color.FromArgb(228,248,251,255)),BorderBrush=new SolidColorBrush(translated?Color.FromRgb(111,124,245):Color.FromRgb(78,164,224)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(5),Padding=new Thickness(3,1,3,1),Width=Math.Max(36,line.Width*scaleX),MinHeight=Math.Max(18,line.Height*scaleY),ToolTip=translated?"原位译文":"本地 OCR 文字"};
+            Canvas.SetLeft(box,line.X*scaleX);Canvas.SetTop(box,line.Y*scaleY);item.Annotations.Children.Add(box);
+        }
+    }
     private void Record(object s,RoutedEventArgs e){if(Active is not { } item)return;var px=ToPixelRect(item.Bounds);new RecordingControlWindow(_host,ScreenCoordinateService.ToScreenRect(px,_frame.OriginX,_frame.OriginY)).Show();Close();}
 
     private async void OnKeyDown(object s,KeyEventArgs e)
