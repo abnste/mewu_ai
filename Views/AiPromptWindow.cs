@@ -1,27 +1,133 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Services;
-using TextBox=System.Windows.Controls.TextBox;
-using Button=System.Windows.Controls.Button;
 using mewu_ai_Assistant.Speech;
+using Button=System.Windows.Controls.Button;
+using TextBox=System.Windows.Controls.TextBox;
+
 namespace mewu_ai_Assistant.Views;
+
 public sealed class AiPromptWindow : Window
 {
-    private readonly AppHost _host;private readonly Models.ScreenRect? _region;private BitmapSource _image;private readonly Image _preview=new();private readonly TextBox _prompt=new();private readonly TextBlock _status=new();private readonly TextBlock _answer=new();private readonly Button _send=new();private readonly Canvas _annotationLayer=new();private readonly List<Models.AiMessage> _history=[new("system","分析图片时优先返回 JSON：{answer:string,annotations:[{x,y,width,height,text,type}]}。坐标必须是选区内 0 到 1 的归一化值，只标注 3 到 6 个最重要位置；不适合标注时 annotations 为空。")];private CancellationTokenSource? _request,_speechRequest;
+    private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(61,190,255));
+    private static readonly Brush Secondary=new SolidColorBrush(Color.FromRgb(145,160,181));
+    private readonly AppHost _host;
+    private readonly Models.ScreenRect _region;
+    private readonly bool _translate;
+    private readonly CaptureFrame _desktop;
+    private BitmapSource _image;
+    private readonly Canvas _root=new(){Background=Brushes.Transparent};
+    private readonly Grid _selectionHost=new();
+    private readonly Image _selectedImage=new(){Stretch=Stretch.Fill};
+    private readonly Canvas _annotationLayer=new();
+    private readonly Border _answerCard=new();
+    private readonly TextBlock _answer=new(){TextWrapping=TextWrapping.Wrap,LineHeight=23,Foreground=new SolidColorBrush(Color.FromRgb(235,242,252))};
+    private readonly TextBox _prompt=new(){AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,MinHeight=46,MaxHeight=92,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,BorderThickness=new Thickness(0),Background=Brushes.Transparent,Foreground=Brushes.White,CaretBrush=Cyan};
+    private readonly TextBlock _status=new(){Foreground=Secondary,FontSize=11};
+    private readonly Button _send=new();
+    private readonly List<Models.AiMessage> _history=[new("system","分析图片时只返回 JSON：{answer:string,annotations:[{x,y,width,height,text,type}]}。坐标为图片内 0 到 1 的归一化值；标注 3 到 6 个最重要位置，说明简洁明确；不适合标注时 annotations 为空。")];
+    private CancellationTokenSource? _request,_speechRequest;
+    private double _selectionWidth,_selectionHeight;
+
     public AiPromptWindow(AppHost host,BitmapSource image,bool translate=false,Models.ScreenRect? region=null)
     {
-        _host=host;_image=image;_region=region;if(translate)_history.Add(new("system","这是 OCR 原位排版失败后的普通翻译回退，请直接翻译图片内容，不要再次路由到原位翻译。"));Title=translate?"喵呜AI 翻译":"喵呜AI";Width=720;Height=650;WindowStartupLocation=WindowStartupLocation.CenterScreen;Background=new SolidColorBrush(Color.FromRgb(11,16,24));Foreground=Brushes.White;
-        var grid=new Grid{Margin=new Thickness(20)};grid.RowDefinitions.Add(new RowDefinition{Height=new GridLength(2,GridUnitType.Star)});grid.RowDefinitions.Add(new RowDefinition{Height=new GridLength(1,GridUnitType.Star)});grid.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});grid.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});grid.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});
-        _preview.Source=image;_preview.Stretch=Stretch.Fill;_annotationLayer.Width=image.PixelWidth;_annotationLayer.Height=image.PixelHeight;var previewGrid=new Grid{Width=image.PixelWidth,Height=image.PixelHeight,Margin=new Thickness(0,0,0,14)};previewGrid.Children.Add(_preview);previewGrid.Children.Add(_annotationLayer);var previewView=new Viewbox{Stretch=Stretch.Uniform,Child=previewGrid};_answer.TextWrapping=TextWrapping.Wrap;_answer.Margin=new Thickness(0,8,0,12);_answer.Foreground=Brushes.White;var answerScroll=new ScrollViewer{Content=_answer,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};_prompt.Text=translate?"翻译成中文":"";_prompt.MinHeight=52;_prompt.Padding=new Thickness(12,9,12,9);_prompt.AcceptsReturn=true;_prompt.TextWrapping=TextWrapping.Wrap;_prompt.Background=new SolidColorBrush(Color.FromRgb(18,26,38));_prompt.Foreground=Brushes.White;_prompt.CaretBrush=Brushes.White;_prompt.BorderBrush=new SolidColorBrush(Color.FromRgb(38,50,70));_prompt.BorderThickness=new Thickness(1);var hint=new TextBlock{Text="询问图中内容…",Foreground=new SolidColorBrush(Color.FromRgb(145,160,181)),Margin=new Thickness(13,10,0,0),VerticalAlignment=VerticalAlignment.Top,IsHitTestVisible=false,Visibility=string.IsNullOrEmpty(_prompt.Text)?Visibility.Visible:Visibility.Collapsed};_prompt.TextChanged+=(_,_)=>hint.Visibility=string.IsNullOrEmpty(_prompt.Text)?Visibility.Visible:Visibility.Collapsed;var promptHost=new Grid();promptHost.Children.Add(_prompt);promptHost.Children.Add(hint);var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};var refresh=new Button{Content="刷新截图",Padding=new Thickness(10,9,10,9),Margin=new Thickness(0,10,8,0),IsEnabled=region is not null};StyleButton(refresh);refresh.Click+=(_,_)=>RefreshScreenshot();var annotations=new Button{Content="隐藏批注",Padding=new Thickness(10,9,10,9),Margin=new Thickness(0,10,8,0)};StyleButton(annotations);annotations.Click+=(_,_)=>{_annotationLayer.Visibility=_annotationLayer.Visibility==Visibility.Visible?Visibility.Hidden:Visibility.Visible;annotations.Content=_annotationLayer.Visibility==Visibility.Visible?"隐藏批注":"显示批注";};var copy=new Button{Content="复制答案",Padding=new Thickness(10,9,10,9),Margin=new Thickness(0,10,8,0)};StyleButton(copy);copy.Click+=(_,_)=>{if(!string.IsNullOrWhiteSpace(_answer.Text))Clipboard.SetText(_answer.Text);};var mic=new Button{Content="🎤",ToolTip="语音输入",Padding=new Thickness(12,9,12,9),Margin=new Thickness(0,10,8,0)};StyleButton(mic);mic.Click+=async(_,_)=>await ListenAsync(mic);_send.Content="发送";_send.Padding=new Thickness(20,9,20,9);_send.Margin=new Thickness(0,10,0,0);StyleButton(_send,true);_send.Click+=async(_,_)=>await SendAsync();actions.Children.Add(refresh);actions.Children.Add(annotations);actions.Children.Add(copy);actions.Children.Add(mic);actions.Children.Add(_send);_status.Foreground=new SolidColorBrush(Color.FromRgb(145,160,181));_status.Text="将发送：图片 + 文字（只有点击发送后才上传）";_status.Margin=new Thickness(0,7,0,0);Grid.SetRow(answerScroll,1);Grid.SetRow(promptHost,2);Grid.SetRow(_status,3);Grid.SetRow(actions,4);grid.Children.Add(previewView);grid.Children.Add(answerScroll);grid.Children.Add(promptHost);grid.Children.Add(_status);grid.Children.Add(actions);Content=grid;
-        Closed+=(_,_)=>{_request?.Cancel();_speechRequest?.Cancel();};SourceInitialized+=(_,_)=>NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle);if(host.Settings.EnableVoiceInput&&host.Settings.AutomaticallyStartListening)Loaded+=async(_,_)=>await ListenAsync(mic);
+        _host=host;_image=image;_translate=translate;_region=region??new Models.ScreenRect(0,0,image.PixelWidth,image.PixelHeight);
+        _desktop=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);
+        if(translate)_history.Add(new("system","把图片内容翻译成中文，保留必要的原位批注。"));
+        Title="喵呜AI 屏幕助手";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;AllowsTransparency=true;Background=Brushes.Transparent;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Cursor=Cursors.Arrow;
+        var area=System.Windows.Forms.SystemInformation.VirtualScreen;Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
+
+        var desktopImage=new Image{Source=_desktop.Image,Stretch=Stretch.Fill,IsHitTestVisible=false};_root.Children.Add(desktopImage);
+        var dimmer=new Rectangle{Fill=new SolidColorBrush(Color.FromArgb(92,0,5,14)),IsHitTestVisible=false};_root.Children.Add(dimmer);
+
+        _selectedImage.Source=image;_selectionHost.Children.Add(_selectedImage);_selectionHost.Children.Add(_annotationLayer);
+        var glow=new Border{BorderBrush=Cyan,BorderThickness=new Thickness(2),CornerRadius=new CornerRadius(9),Background=Brushes.Transparent,IsHitTestVisible=false,Effect=new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=24,ShadowDepth=0,Opacity=.95}};
+        _selectionHost.Children.Add(glow);_root.Children.Add(_selectionHost);
+        _answerCard.Child=BuildAnswerCard();_answerCard.CornerRadius=new CornerRadius(18);_answerCard.Background=new SolidColorBrush(Color.FromArgb(244,7,16,29));_answerCard.BorderBrush=new SolidColorBrush(Color.FromArgb(150,55,144,220));_answerCard.BorderThickness=new Thickness(1);_answerCard.Effect=new DropShadowEffect{Color=Colors.Black,BlurRadius=28,ShadowDepth=9,Opacity=.78};_root.Children.Add(_answerCard);
+
+        var close=new Button{Content="×",ToolTip="关闭",FontSize=18,Foreground=Brushes.White,Background=new SolidColorBrush(Color.FromArgb(210,16,28,45)),BorderBrush=new SolidColorBrush(Color.FromArgb(100,90,125,170)),BorderThickness=new Thickness(1),Padding=new Thickness(12,6,12,6)};close.Click+=(_,_)=>Close();_root.Children.Add(close);Canvas.SetRight(close,18);Canvas.SetTop(close,16);
+        Content=_root;
+        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.ExcludeFromCapture(hwnd);};
+        Loaded+=async(_,_)=>{LayoutOverlay();_prompt.Focus();await SendAsync(auto:true);};
+        SizeChanged+=(_,_)=>LayoutOverlay();
+        Closed+=(_,_)=>{_request?.Cancel();_speechRequest?.Cancel();};
     }
-    private static void StyleButton(Button button,bool primary=false){button.Background=new SolidColorBrush(primary?Color.FromRgb(49,140,255):Color.FromRgb(32,43,58));button.Foreground=Brushes.White;button.BorderBrush=new SolidColorBrush(Color.FromRgb(49,67,91));button.BorderThickness=primary?new Thickness(0):new Thickness(1);}
-    private async Task SendAsync(){var typed=_prompt.Text;if(_history.Count==1&&(typed.Contains("翻译",StringComparison.OrdinalIgnoreCase)||typed.Contains("translate",StringComparison.OrdinalIgnoreCase))){new TranslationWindow(_host,_image).Show();Close();return;}var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){_status.Text="尚未配置 AI 模型或 API Key。请先打开设置 → AI。";_host.ShowSettings();return;}if(!provider.Capabilities.SupportsImage){_status.Text="当前 Provider 仅支持文字，不能上传图片。请切换支持图片的 Provider。";return;}_request?.Cancel();_request=new();_send.IsEnabled=false;_answer.Text="";_status.Text="正在上传并分析…（Esc 可取消）";try{var prompt=string.IsNullOrWhiteSpace(typed)?"理解当前屏幕区域，根据内容给出当前最有帮助的说明。":typed;var progress=provider.Capabilities.SupportsStreaming?new Progress<string>(delta=>_answer.Text+=delta):null;var request=new Models.AiRequest{Prompt=prompt,History=[.._history],Attachments=[new Models.AiAttachment(Models.AiAttachmentType.Image,"image/png",ScreenCaptureService.EncodePng(_image))],StreamingProgress=progress};var result=await provider.SendAsync(request,_request.Token);_answer.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)new ConversationHistoryService().Append(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer);_prompt.Clear();RenderAnnotations(result.Annotations);_status.Text=result.Annotations.Count>0?$"完成，并返回 {result.Annotations.Count} 个屏幕批注；可继续追问。":"完成，可继续追问";}catch(OperationCanceledException){_status.Text="已取消";}catch(Exception ex){_status.Text=ex.Message;}finally{_send.IsEnabled=true;}}
-    private async Task ListenAsync(Button button){if(_speechRequest is not null){_speechRequest.Cancel();return;}_speechRequest=new();button.Content="■";button.ToolTip="停止聆听";_status.Text="正在聆听…再次点击麦克风可停止";try{var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))_prompt.Text=string.IsNullOrWhiteSpace(_prompt.Text)?text:_prompt.Text+" "+text;_status.Text="语音已写入，可继续编辑后发送";}catch(OperationCanceledException){_status.Text="已停止聆听";}catch(Exception ex){_status.Text=$"语音不可用，仍可键盘输入：{ex.Message}";}finally{_speechRequest.Dispose();_speechRequest=null;button.Content="🎤";button.ToolTip="语音输入";}}
-    private void RefreshScreenshot(){if(_region is null)return;_image=new ScreenCaptureService().CaptureRegion(_region.Value,_host.Settings.IncludeCaptureCursor);_preview.Source=_image;_annotationLayer.Children.Clear();_history.RemoveAll(x=>x.Role!="system");_answer.Text="";_status.Text="已刷新同一屏幕区域；尚未上传，可重新提问。";}
-    private void RenderAnnotations(IReadOnlyList<Models.AiAnnotation> notes){_annotationLayer.Children.Clear();var width=_annotationLayer.Width;var height=_annotationLayer.Height;var cardWidth=Math.Clamp(width*.28,160,700);var fontSize=Math.Clamp(width/65,12,48);foreach(var n in notes.Take(6)){var border=new Border{BorderBrush=new SolidColorBrush(Color.FromRgb(67,168,255)),BorderThickness=new Thickness(Math.Max(2,width/900)),Background=Brushes.Transparent};Canvas.SetLeft(border,n.X*width);Canvas.SetTop(border,n.Y*height);border.Width=Math.Max(20,n.Width*width);border.Height=Math.Max(20,n.Height*height);_annotationLayer.Children.Add(border);var card=new TextBlock{Text=n.Text,Foreground=Brushes.White,Background=new SolidColorBrush(Color.FromArgb(225,8,15,25)),Padding=new Thickness(fontSize*.45),FontSize=fontSize,TextWrapping=TextWrapping.Wrap,MaxWidth=cardWidth};Canvas.SetLeft(card,Math.Clamp((n.X+n.Width)*width+8,0,Math.Max(0,width-cardWidth)));Canvas.SetTop(card,Math.Clamp(n.Y*height,0,Math.Max(0,height-fontSize*4)));_annotationLayer.Children.Add(card);}}
-    protected override void OnKeyDown(System.Windows.Input.KeyEventArgs e){if(e.Key==System.Windows.Input.Key.Escape){_request?.Cancel();Close();e.Handled=true;return;}base.OnKeyDown(e);}
+
+    private UIElement BuildAnswerCard()
+    {
+        var grid=new Grid{Margin=new Thickness(22,16,22,14)};grid.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});grid.RowDefinitions.Add(new RowDefinition());grid.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});grid.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});
+        var title=new StackPanel{Orientation=Orientation.Horizontal};title.Children.Add(new TextBlock{Text="✦",Foreground=Cyan,FontSize=17});title.Children.Add(new TextBlock{Text="AI 回答",Foreground=Brushes.White,FontSize=14,FontWeight=FontWeights.SemiBold,Margin=new Thickness(8,1,0,0)});grid.Children.Add(title);
+        _answer.Text="正在理解当前选区…";var scroll=new ScrollViewer{Content=_answer,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Margin=new Thickness(0,10,0,12)};Grid.SetRow(scroll,1);grid.Children.Add(scroll);
+        var divider=new Border{Height=1,Background=new SolidColorBrush(Color.FromArgb(65,114,142,177)),Margin=new Thickness(0,0,0,11)};Grid.SetRow(divider,2);grid.Children.Add(divider);
+        var composer=new Grid();composer.ColumnDefinitions.Add(new ColumnDefinition());composer.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});composer.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+        var inputBorder=new Border{CornerRadius=new CornerRadius(11),BorderBrush=new SolidColorBrush(Color.FromArgb(105,91,122,160)),BorderThickness=new Thickness(1),Background=new SolidColorBrush(Color.FromArgb(195,13,25,42)),Padding=new Thickness(3),Child=_prompt};composer.Children.Add(inputBorder);
+        var hint=new TextBlock{Text="继续询问当前屏幕内容…",Foreground=Secondary,Margin=new Thickness(14,13,0,0),IsHitTestVisible=false};composer.Children.Add(hint);_prompt.TextChanged+=(_,_)=>hint.Visibility=string.IsNullOrWhiteSpace(_prompt.Text)?Visibility.Visible:Visibility.Collapsed;
+        _prompt.PreviewKeyDown+=async(_,e)=>{if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;await SendAsync();}};
+        var mic=DarkButton("⌁","语音输入");mic.Margin=new Thickness(8,0,0,0);mic.Click+=async(_,_)=>await ListenAsync(mic);Grid.SetColumn(mic,1);composer.Children.Add(mic);
+        _send.Content="➤";_send.ToolTip="发送";_send.Foreground=Brushes.White;_send.Background=new LinearGradientBrush(Color.FromRgb(45,137,245),Color.FromRgb(96,76,224),45);_send.BorderThickness=new Thickness(0);_send.Padding=new Thickness(17,12,17,12);_send.Margin=new Thickness(8,0,0,0);_send.Click+=async(_,_)=>await SendAsync();Grid.SetColumn(_send,2);composer.Children.Add(_send);
+        var composerArea=new Grid();composerArea.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});composerArea.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});composerArea.Children.Add(composer);
+        _status.Text="Enter 发送 · Shift+Enter 换行 · Esc 取消";_status.HorizontalAlignment=HorizontalAlignment.Center;_status.Margin=new Thickness(0,7,0,0);Grid.SetRow(_status,1);composerArea.Children.Add(_status);
+        Grid.SetRow(composerArea,3);grid.Children.Add(composerArea);return grid;
+    }
+
+    private static Button DarkButton(string content,string tip)=>new(){Content=content,ToolTip=tip,Foreground=Brushes.White,Background=new SolidColorBrush(Color.FromArgb(210,18,32,52)),BorderBrush=new SolidColorBrush(Color.FromArgb(85,100,132,170)),BorderThickness=new Thickness(1),Padding=new Thickness(13,10,13,10)};
+
+    private void LayoutOverlay()
+    {
+        if(_root.ActualWidth<=0||_root.ActualHeight<=0)return;
+        foreach(var child in _root.Children.OfType<FrameworkElement>().Take(2)){child.Width=_root.ActualWidth;child.Height=_root.ActualHeight;}
+        var sx=_root.ActualWidth/_desktop.Image.PixelWidth;var sy=_root.ActualHeight/_desktop.Image.PixelHeight;
+        var x=(_region.X-_desktop.OriginX)*sx;var y=(_region.Y-_desktop.OriginY)*sy;_selectionWidth=Math.Max(12,_region.Width*sx);_selectionHeight=Math.Max(12,_region.Height*sy);
+        _selectionHost.Width=_selectionWidth;_selectionHost.Height=_selectionHeight;_annotationLayer.Width=_selectionWidth;_annotationLayer.Height=_selectionHeight;Canvas.SetLeft(_selectionHost,x);Canvas.SetTop(_selectionHost,y);
+        var cardWidth=Math.Min(Math.Max(_selectionWidth,620),Math.Max(360,_root.ActualWidth-32));var cardHeight=Math.Min(285,Math.Max(220,_root.ActualHeight*.34));_answerCard.Width=cardWidth;_answerCard.Height=cardHeight;
+        var cardX=Math.Clamp(x+(_selectionWidth-cardWidth)/2,16,Math.Max(16,_root.ActualWidth-cardWidth-16));var cardY=y+_selectionHeight+12;if(cardY+cardHeight>_root.ActualHeight-16)cardY=y-cardHeight-12;if(cardY<16)cardY=Math.Max(16,_root.ActualHeight-cardHeight-16);Canvas.SetLeft(_answerCard,cardX);Canvas.SetTop(_answerCard,cardY);
+    }
+
+    private async Task SendAsync(bool auto=false)
+    {
+        var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){_status.Text="请先配置可用的 AI Provider";_host.ShowSettings();return;}if(!provider.Capabilities.SupportsImage){_status.Text="当前模型不支持图片理解";return;}
+        var typed=_prompt.Text;var prompt=auto?(_translate?"翻译图片中的内容并在原位置标出重点。":"理解当前屏幕选区，解释内容并在原位置标出关键部分。"):typed;if(string.IsNullOrWhiteSpace(prompt))return;
+        _request?.Cancel();_request=new CancellationTokenSource(TimeSpan.FromMinutes(2));_send.IsEnabled=false;if(!auto)_answer.Text="";_status.Text="正在分析当前屏幕…按 Esc 可取消";
+        try
+        {
+            var progress=provider.Capabilities.SupportsStreaming?new Progress<string>(delta=>{if(_answer.Text=="正在理解当前选区…")_answer.Text="";_answer.Text+=delta;}):null;
+            var result=await provider.SendAsync(new Models.AiRequest{Prompt=prompt,History=[.._history],Attachments=[new Models.AiAttachment(Models.AiAttachmentType.Image,"image/png",ScreenCaptureService.EncodePng(_image))],StreamingProgress=progress},_request.Token);
+            _answer.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));if(!auto)_prompt.Clear();RenderAnnotations(result.Annotations);
+            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,_request.Token);
+            _status.Text=result.Annotations.Count>0?$"已标出 {result.Annotations.Count} 个重点 · 可继续提问":"完成 · 可继续提问";
+        }
+        catch(OperationCanceledException){_status.Text="已取消";}
+        catch(Exception ex){_answer.Text="请求失败";_status.Text=ex.Message;}
+        finally{_send.IsEnabled=true;}
+    }
+
+    private async Task ListenAsync(Button button)
+    {
+        if(_speechRequest is not null){_speechRequest.Cancel();return;}_speechRequest=new();button.Content="■";_status.Text="正在聆听…";
+        try{var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))_prompt.Text=string.IsNullOrWhiteSpace(_prompt.Text)?text:_prompt.Text+" "+text;_status.Text="语音已写入";}
+        catch(OperationCanceledException){_status.Text="已停止聆听";}catch(Exception ex){_status.Text=$"语音不可用：{ex.Message}";}finally{_speechRequest.Dispose();_speechRequest=null;button.Content="⌁";}
+    }
+
+    private void RenderAnnotations(IReadOnlyList<Models.AiAnnotation> notes)
+    {
+        _annotationLayer.Children.Clear();var w=_selectionWidth;var h=_selectionHeight;var cardWidth=Math.Clamp(w*.3,145,420);var font=Math.Clamp(w/70,11,25);var slots=new List<double>();
+        foreach(var n in notes.Take(6))
+        {
+            var x=Math.Clamp(n.X,0,1)*w;var y=Math.Clamp(n.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(n.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(n.Height,0,1)*h);
+            var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9}};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);_annotationLayer.Children.Add(box);
+            var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=Math.Clamp(y+rh*.5-font*1.5,5,Math.Max(5,h-font*4));while(slots.Any(v=>Math.Abs(v-cardY)<font*3.2))cardY=Math.Min(Math.Max(5,h-font*4),cardY+font*3.4);slots.Add(cardY);
+            var startX=right?x+rw:x;var endX=right?cardX:cardX+cardWidth;var line=new Line{X1=startX,Y1=y+rh*.5,X2=endX,Y2=cardY+font*1.4,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200)};_annotationLayer.Children.Add(line);
+            var dot=new Ellipse{Width=5,Height=5,Fill=Cyan};Canvas.SetLeft(dot,endX-2.5);Canvas.SetTop(dot,cardY+font*1.4-2.5);_annotationLayer.Children.Add(dot);
+            var text=new TextBlock{Text=n.Text,Foreground=Brushes.White,FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3};
+            var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(238,8,18,31)),BorderBrush=new SolidColorBrush(Color.FromArgb(125,61,190,255)),BorderThickness=new Thickness(1),Child=text,Effect=new DropShadowEffect{Color=Colors.Black,BlurRadius=15,ShadowDepth=4,Opacity=.7}};Canvas.SetLeft(card,cardX);Canvas.SetTop(card,cardY);_annotationLayer.Children.Add(card);
+        }
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e){if(e.Key==Key.Escape){if(_request is {IsCancellationRequested:false})_request.Cancel();else Close();e.Handled=true;return;}base.OnKeyDown(e);}
 }

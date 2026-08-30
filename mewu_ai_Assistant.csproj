@@ -8,6 +8,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\MewuAI.ico</ApplicationIcon>
     <AssemblyName>MewuAI</AssemblyName>
     <RootNamespace>mewu_ai_Assistant</RootNamespace>
     <Version>0.1.0</Version>
@@ -24,6 +25,11 @@
 
   <ItemGroup>
     <PackageReference Include="ScreenRecorderLib" Version="7.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\MewuAI.Icon.png" />
+    <Content Include="Assets\MewuAI.ico" Link="MewuAI.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

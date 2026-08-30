@@ -12,3 +12,5 @@
 - 所有产品窗口统一通过 `NativeMethods.ExcludeFromCapture` 启用防捕获；只有 Debug 构建在显式设置 `MEWU_QA_CAPTURE_WINDOWS=1` 时可跳过，供自动化视觉验收观察覆盖层。Release 构建会编译掉该开关，严禁改成运行时可绕过。
 - 全屏截图根画布必须保持 `Background="Transparent"` 才能接收空白区域命中；拖选期间鼠标必须由 `Root` 捕获和释放，不能由窗口捕获后让挂在根画布上的移动/松开事件断路。
 - InkCanvas 的画笔可使用 `FitToCurve`，矩形和箭头等几何标注必须在生成 Stroke 时关闭曲线拟合，否则直角和箭头轮廓会被平滑变形。
+- 火山方舟 Agent Plan 的 OpenAI-compatible 地址为 `https://ark.cn-beijing.volces.com/api/plan/v3`；视觉模型使用完整 ID `doubao-seed-2-0-pro-260215`。该套餐的 `/models` 可能返回 404，连接测试必须发送最小 Chat Completions 请求，不能以模型列表接口作为健康判断。
+- 屏幕 AI 的产品形态不是把选区截图搬进普通窗口：应保持全屏覆盖层，冻结原桌面作为背景，把选区、发光边框、归一化批注连线和回答/输入卡放回原屏幕坐标；用户点击 AI 即代表明确发送并应自动开始分析。
