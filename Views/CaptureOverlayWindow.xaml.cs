@@ -2,6 +2,7 @@ using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -33,7 +34,7 @@ public partial class CaptureOverlayWindow : Window
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
-    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded,_recordingMode;
     private CancellationTokenSource? _speechRequest,_request,_overlayRequest;
 
     private sealed class SelectionItem
@@ -43,6 +44,7 @@ public partial class CaptureOverlayWindow : Window
         public Grid Host { get; }=new();
         public Image Image { get; }=new(){Stretch=Stretch.Fill,IsHitTestVisible=false};
         public Canvas Annotations { get; }=new(){IsHitTestVisible=false};
+        public Canvas TextSelection { get; }=new(){IsHitTestVisible=false,Background=Brushes.Transparent};
         public Border Outline { get; }=new(){Background=Brushes.Transparent,CornerRadius=new CornerRadius(7),IsHitTestVisible=false};
         public Border Badge { get; }=new(){HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(7),CornerRadius=new CornerRadius(10),Background=new SolidColorBrush(Color.FromArgb(230,29,119,224)),Padding=new Thickness(7,2,7,2),IsHitTestVisible=false};
         public TextBlock BadgeText { get; }=new(){Foreground=Brushes.White,FontWeight=FontWeights.SemiBold,FontSize=11};
@@ -64,7 +66,8 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMouseDown(object s,MouseButtonEventArgs e)
     {
-        if(e.OriginalSource is Thumb||IsInside(e.OriginalSource as DependencyObject,PromptBar)||IsInside(e.OriginalSource as DependencyObject,Toolbar))return;
+        if(_recordingMode)return;
+        if(e.OriginalSource is Thumb||IsInside(e.OriginalSource as DependencyObject,PromptBar)||IsInside(e.OriginalSource as DependencyObject,Toolbar)||_selections.Any(item=>IsInside(e.OriginalSource as DependencyObject,item.TextSelection)))return;
         var p=e.GetPosition(Root);var addNew=_forceNewSelection||Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);_forceNewSelection=false;
         var hit=addNew?-1:FindSelection(p);
         if(hit>=0){Select(hit);_moving=true;_moveStart=p;_moveOrigin=Active!.Bounds;}
@@ -89,12 +92,12 @@ public partial class CaptureOverlayWindow : Window
 
     private SelectionItem CreateSelection(bool implicitFullScreen)
     {
-        var item=new SelectionItem{IsImplicit=implicitFullScreen};item.Badge.Child=item.BadgeText;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Annotations);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
+        var item=new SelectionItem{IsImplicit=implicitFullScreen};item.Badge.Child=item.BadgeText;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Annotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
     }
 
     private void UpdateSelection(SelectionItem item)
     {
-        var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Annotations.Width=r.Width;item.Annotations.Height=r.Height;
+        var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Annotations.Width=item.TextSelection.Width=r.Width;item.Annotations.Height=item.TextSelection.Height=r.Height;
         var px=ToPixelRect(r);if(px.Width>0&&px.Height>0)item.Image.Source=ScreenCaptureService.Crop(_frame.Image,px);
         var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?new SolidColorBrush(Color.FromRgb(102,112,235)):new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:referenced?2:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Background=new SolidColorBrush(referenced?Color.FromArgb(238,91,101,226):Color.FromArgb(230,29,119,224));item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
         if(active&&!item.IsImplicit){SizeText.Text=$"{px.Width} × {px.Height}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
@@ -134,7 +137,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=Cyan;t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
     private void HideHandles(){foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
-    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t||Active is not {IsImplicit:false} item)return;SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);item.Bounds=new Rect(new Point(l,top),new Point(r,b));item.Annotations.Children.Clear();UpdateSelection(item);ShowToolbar();e.Handled=true;}
+    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t||Active is not {IsImplicit:false} item)return;SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);item.Bounds=new Rect(new Point(l,top),new Point(r,b));item.Annotations.Children.Clear();ClearTextSelection(item);UpdateSelection(item);ShowToolbar();e.Handled=true;}
 
     private void AddRegion(object s,RoutedEventArgs e){_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
     private void ReferenceRegion(object s,RoutedEventArgs e)
@@ -175,7 +178,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void RenderAnnotations(IReadOnlyList<AiAnnotation> notes)
     {
-        foreach(var item in _selections)item.Annotations.Children.Clear();
+        foreach(var item in _selections){item.Annotations.Children.Clear();ClearTextSelection(item);}
         for(var regionIndex=0;regionIndex<_lastSentSelections.Count;regionIndex++)
         {
             var item=_lastSentSelections[regionIndex];var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
@@ -189,7 +192,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void Copy(object s,RoutedEventArgs e){Clipboard.SetImage(CurrentImage());_host.Notify("已复制到剪贴板");Close();}
     private void Save(object s,RoutedEventArgs e){var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var d=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(d.ShowDialog(this)==true)ScreenCaptureService.Save(CurrentImage(),d.FileName,d.FilterIndex==2);}
-    private void Pin(object s,RoutedEventArgs e){new PinnedImageWindow(CurrentImage()).Show();Close();}
+    private void Pin(object s,RoutedEventArgs e){if(Active is not { } item)return;var pixels=ToPixelRect(item.Bounds);new PinnedImageWindow(CurrentImage(),ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY)).Show();Close();}
     private void Draw(object s,RoutedEventArgs e){if(Active is not { } item)return;var pixels=ToPixelRect(item.Bounds);new DrawingWindow(_host,CurrentImage(),ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY)).Show();Close();}
     private async void QuickSend(object s,RoutedEventArgs e)=>await SendAsync(true);
     private async void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;await SendAsync(true);}}
@@ -201,16 +204,18 @@ public partial class CaptureOverlayWindow : Window
     }
     private async void Translate(object s,RoutedEventArgs e)
     {
-        if(Active is not {IsImplicit:false} item)return;var image=CurrentImage();var operation=BeginOverlayOperation("正在识别并翻译当前区域…");
+        if(Active is not {IsImplicit:false} item)return;var image=CurrentImage();var operation=BeginOverlayOperation("正在识别文字…按 Esc 可取消");
         try
         {
             var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!_selections.Contains(item))return;if(document.Lines.Count==0){PromptStatus.Text="当前区域未识别到文字";return;}
             var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){PromptStatus.Text="翻译需要先配置可用的 AI Provider";_host.ShowSettings();return;}
+            PromptStatus.Text=$"已识别 {document.Lines.Count} 行，正在翻译…按 Esc 可取消";
             var prompt="将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource="+System.Text.Json.JsonSerializer.Serialize(document.Lines.Select(line=>line.Text).ToArray());
-            var result=await provider.SendAsync(new AiRequest{Prompt=prompt},operation.Token);if(!_selections.Contains(item))return;if(!TranslationResponseParser.TryParse(result.Answer,document.Lines.Count,out var translated)){PromptStatus.Text="翻译结果格式异常，请重试";return;}
+            using var networkTimeout=CancellationTokenSource.CreateLinkedTokenSource(operation.Token);networkTimeout.CancelAfter(TimeSpan.FromSeconds(75));var received=false;var progress=new Progress<AiStreamDelta>(delta=>{if(!received&&(delta.Content.Length>0||delta.ReasoningContent.Length>0)){received=true;PromptStatus.Text="正在接收译文…按 Esc 可取消";}});
+            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,StreamingProgress=progress,StreamingCompletionPredicate=value=>TranslationResponseParser.TryParse(value,document.Lines.Count,out _),DisableReasoning=true,MaxOutputTokens=2048},networkTimeout.Token);if(!_selections.Contains(item))return;if(!TranslationResponseParser.TryParse(result.Answer,document.Lines.Count,out var translated)){PromptStatus.Text="翻译结果格式异常，请重试";return;}
             RenderTextOverlays(item,image,document.Lines,translated,true);PromptStatus.Text=$"已在原位翻译 {translated.Count} 行";
         }
-        catch(OperationCanceledException){}catch(Exception ex){PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+        catch(OperationCanceledException){PromptStatus.Text=operation.IsCancellationRequested?"已取消翻译":"翻译超时，请检查 Provider 后重试";}catch(Exception ex){PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
     }
 
     private async void Ocr(object s,RoutedEventArgs e)
@@ -218,7 +223,7 @@ public partial class CaptureOverlayWindow : Window
         if(Active is not {IsImplicit:false} item)return;var image=CurrentImage();var operation=BeginOverlayOperation("正在本地识别当前区域…");
         try
         {
-            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!_selections.Contains(item))return;RenderTextOverlays(item,image,document.Lines,document.Lines.Select(line=>line.Text).ToList(),false);PromptStatus.Text=document.Lines.Count==0?"当前区域未识别到文字":$"已在原位贴出 {document.Lines.Count} 行文字";
+            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!_selections.Contains(item))return;RenderSelectableText(item,image,document);PromptStatus.Text=document.Lines.Count==0?"当前区域未识别到文字":$"{document.Engine} 已识别 {document.Lines.Count} 行 · 可直接拖选并按 Ctrl+C";
         }
         catch(OperationCanceledException){}catch(Exception ex){PromptStatus.Text=$"OCR 失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
     }
@@ -227,7 +232,7 @@ public partial class CaptureOverlayWindow : Window
     private void EndOverlayOperation(CancellationTokenSource operation){operation.Dispose();if(!ReferenceEquals(_overlayRequest,operation))return;_overlayRequest=null;Toolbar.IsEnabled=true;if(Active is not null)ShowToolbar();}
     private static void RenderTextOverlays(SelectionItem item,BitmapSource image,IReadOnlyList<OcrLine> lines,IReadOnlyList<string> texts,bool translated)
     {
-        item.Annotations.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;
+        ClearTextSelection(item);item.Annotations.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;
         for(var index=0;index<lines.Count&&index<texts.Count;index++)
         {
             var line=lines[index];var text=new TextBlock{Text=texts[index],Foreground=new SolidColorBrush(Color.FromRgb(35,47,67)),FontSize=Math.Clamp(line.Height*scaleY*.72,10,26),FontWeight=translated?FontWeights.SemiBold:FontWeights.Normal,TextWrapping=TextWrapping.Wrap,LineHeight=Math.Clamp(line.Height*scaleY*.9,14,32)};
@@ -235,14 +240,41 @@ public partial class CaptureOverlayWindow : Window
             Canvas.SetLeft(box,line.X*scaleX);Canvas.SetTop(box,line.Y*scaleY);item.Annotations.Children.Add(box);
         }
     }
-    private void Record(object s,RoutedEventArgs e){if(Active is not { } item)return;var px=ToPixelRect(item.Bounds);new RecordingControlWindow(_host,ScreenCoordinateService.ToScreenRect(px,_frame.OriginX,_frame.OriginY)).Show();Close();}
+    private void RenderSelectableText(SelectionItem item,BitmapSource image,OcrDocument document)
+    {
+        item.Annotations.Children.Clear();ClearTextSelection(item);var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;item.TextSelection.IsHitTestVisible=true;
+        var flow=new FlowDocument{PagePadding=new Thickness(0),ColumnGap=0,FontFamily=new FontFamily("Segoe UI")};double previousBottom=0;
+        foreach(var line in document.Lines.OrderBy(x=>x.Y))
+        {
+            var top=line.Y*scaleY;var height=Math.Max(14,line.Height*scaleY);var paragraph=new Paragraph(new Run(line.Text)){Margin=new Thickness(Math.Max(0,line.X*scaleX),Math.Max(0,top-previousBottom),0,0),Padding=new Thickness(0),FontSize=Math.Clamp(height*.82,10,30),LineHeight=height,Foreground=new SolidColorBrush(Color.FromArgb(1,0,0,0)),TextAlignment=TextAlignment.Left};flow.Blocks.Add(paragraph);previousBottom=top+height;
+        }
+        var box=new RichTextBox{Document=flow,IsReadOnly=true,IsReadOnlyCaretVisible=false,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),SelectionBrush=new SolidColorBrush(Color.FromArgb(105,63,145,245)),SelectionTextBrush=new SolidColorBrush(Color.FromArgb(1,0,0,0)),Cursor=Cursors.IBeam,Width=item.Bounds.Width,Height=item.Bounds.Height,VerticalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,ToolTip="可跨行拖动选择文字，Ctrl+C 复制"};
+        box.SelectionChanged+=(_,_)=>{var count=new TextRange(box.Selection.Start,box.Selection.End).Text.Length;if(count>0)PromptStatus.Text=$"已选择 {count} 个字符 · Ctrl+C 复制或右键";};box.ContextMenu=CreateTextContextMenu(box,document.Text);item.TextSelection.Children.Add(box);
+    }
+    private static ContextMenu CreateTextContextMenu(RichTextBox box,string allText)
+    {
+        var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,"TextSelectionContextMenu");var copy=new MenuItem{Header="复制所选文字"};var copyAll=new MenuItem{Header="复制全部识别文字"};foreach(var entry in new[]{copy,copyAll})entry.SetResourceReference(StyleProperty,"TextSelectionMenuItem");copy.Click+=(_,_)=>{var text=new TextRange(box.Selection.Start,box.Selection.End).Text.TrimEnd('\r','\n');if(text.Length>0)Clipboard.SetText(text);};copyAll.Click+=(_,_)=>Clipboard.SetText(allText);var separator=new Separator();separator.SetResourceReference(StyleProperty,"TextSelectionSeparator");menu.Items.Add(copy);menu.Items.Add(separator);menu.Items.Add(copyAll);menu.Opened+=(_,_)=>copy.IsEnabled=!box.Selection.IsEmpty;return menu;
+    }
+    private static void ClearTextSelection(SelectionItem item){item.TextSelection.Children.Clear();item.TextSelection.IsHitTestVisible=false;}
+    private void Record(object s,RoutedEventArgs e)
+    {
+        if(Active is not {IsImplicit:false} item)return;var px=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(px,_frame.OriginX,_frame.OriginY);EnterRecordingMode(item);var control=new RecordingControlWindow(_host,region,Close);control.Show();
+    }
+
+    private void EnterRecordingMode(SelectionItem selected)
+    {
+        _recordingMode=true;Cursor=Cursors.Arrow;Toolbar.Visibility=PromptBar.Visibility=SizeText.Visibility=Visibility.Collapsed;HideHandles();Root.IsHitTestVisible=false;
+        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Annotations.Visibility=Visibility.Collapsed;item.TextSelection.Visibility=Visibility.Collapsed;}
+        selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
+    }
 
     private async void OnKeyDown(object s,KeyEventArgs e)
     {
-        if(e.Key==Key.Escape){if(_request is {IsCancellationRequested:false}){_request.Cancel();e.Handled=true;}else Close();return;}
+        if(e.Key==Key.Escape){if(_overlayRequest is {IsCancellationRequested:false}){_overlayRequest.Cancel();PromptStatus.Text="正在取消…";e.Handled=true;}else if(_request is {IsCancellationRequested:false}){_request.Cancel();e.Handled=true;}else if(_selections.FirstOrDefault(x=>x.TextSelection.IsHitTestVisible) is { } textSelection){ClearTextSelection(textSelection);PromptStatus.Text="已退出文字选择";e.Handled=true;}else Close();return;}
+        if(Keyboard.FocusedElement is RichTextBox richTextBox&&_selections.Any(item=>IsInside(richTextBox,item.TextSelection))){if(e.Key==Key.C&&Keyboard.Modifiers.HasFlag(ModifierKeys.Control)&&!richTextBox.Selection.IsEmpty){var text=new TextRange(richTextBox.Selection.Start,richTextBox.Selection.End).Text.TrimEnd('\r','\n');if(text.Length>0){Clipboard.SetText(text);PromptStatus.Text="文字已复制";}}e.Handled=true;return;}
         if(e.Key==Key.Delete&&Active is not null){RemoveActiveSelection(true);e.Handled=true;return;}
         if(Active is not {IsImplicit:false} item)return;var step=Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)?10:1;
-        if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){item.Bounds=ClampSelection(new Rect(item.Bounds.X+(e.Key==Key.Left?-step:e.Key==Key.Right?step:0),item.Bounds.Y+(e.Key==Key.Up?-step:e.Key==Key.Down?step:0),item.Bounds.Width,item.Bounds.Height));item.Annotations.Children.Clear();UpdateSelection(item);ShowToolbar();e.Handled=true;return;}
+        if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){item.Bounds=ClampSelection(new Rect(item.Bounds.X+(e.Key==Key.Left?-step:e.Key==Key.Right?step:0),item.Bounds.Y+(e.Key==Key.Up?-step:e.Key==Key.Down?step:0),item.Bounds.Width,item.Bounds.Height));item.Annotations.Children.Clear();ClearTextSelection(item);UpdateSelection(item);ShowToolbar();e.Handled=true;return;}
         if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.Enter)await SendAsync(true);else if(e.Key==Key.R)Record(s,new());
     }
 }
