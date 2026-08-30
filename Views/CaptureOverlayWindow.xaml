@@ -6,27 +6,33 @@
  <Canvas x:Name="Root" Background="Transparent" MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp">
   <Image x:Name="DesktopImage" Stretch="Fill" IsHitTestVisible="False"/>
   <Rectangle x:Name="Dimmer" Fill="#99000000" IsHitTestVisible="False"/>
-  <Image x:Name="SelectedImage" Stretch="Fill" Visibility="Collapsed" IsHitTestVisible="False"/>
-  <Border x:Name="SelectionBorder" BorderBrush="#43A8FF" BorderThickness="2" Background="Transparent" Visibility="Collapsed" Cursor="SizeAll"/>
+  <Canvas x:Name="SelectionLayer" IsHitTestVisible="False"/>
   <p:Thumb x:Name="Nw" Tag="NW" Cursor="SizeNWSE" DragDelta="ResizeDelta" Visibility="Collapsed"/><p:Thumb x:Name="N" Tag="N" Cursor="SizeNS" DragDelta="ResizeDelta" Visibility="Collapsed"/><p:Thumb x:Name="Ne" Tag="NE" Cursor="SizeNESW" DragDelta="ResizeDelta" Visibility="Collapsed"/>
   <p:Thumb x:Name="W" Tag="W" Cursor="SizeWE" DragDelta="ResizeDelta" Visibility="Collapsed"/><p:Thumb x:Name="E" Tag="E" Cursor="SizeWE" DragDelta="ResizeDelta" Visibility="Collapsed"/>
   <p:Thumb x:Name="Sw" Tag="SW" Cursor="SizeNESW" DragDelta="ResizeDelta" Visibility="Collapsed"/><p:Thumb x:Name="S" Tag="S" Cursor="SizeNS" DragDelta="ResizeDelta" Visibility="Collapsed"/><p:Thumb x:Name="Se" Tag="SE" Cursor="SizeNWSE" DragDelta="ResizeDelta" Visibility="Collapsed"/>
   <Border x:Name="Toolbar" Visibility="Collapsed" Background="#F2131B27" BorderBrush="#526783" BorderThickness="1" CornerRadius="10" Padding="6">
    <StackPanel Orientation="Horizontal">
-    <Button Content="✦ AI 助手" ToolTip="分析当前选区 (Enter)" Click="AskAi" Background="#2F7FE8" BorderBrush="#4BAEFF"/><Button Content="翻译" ToolTip="原位翻译 (T)" Click="Translate"/><Button Content="文字" ToolTip="文字识别 (O)" Click="Ocr"/>
+    <Button x:Name="AiButton" Content="✦ AI 助手" ToolTip="分析全部选区 (Enter)" Click="AskAi" Background="#2F7FE8" BorderBrush="#4BAEFF"/><Button Content="＋ 区域" ToolTip="继续添加区域；Shift+拖动也可新增重叠区域" Click="AddRegion"/><Button Content="删除此区" ToolTip="删除当前区域 (Delete)" Click="RemoveSelection"/><Button Content="翻译" ToolTip="原位翻译 (T)" Click="Translate"/><Button Content="文字" ToolTip="文字识别 (O)" Click="Ocr"/>
     <Button Content="贴图" ToolTip="贴图 (P)" Click="Pin"/><Button Content="标注" ToolTip="标注 (D)" Click="Draw"/><Button Content="复制" ToolTip="复制 (C)" Click="Copy"/><Button Content="保存" ToolTip="保存 (S)" Click="Save"/><Button Content="录屏" ToolTip="区域录屏 (R)" Click="Record"/>
    </StackPanel>
   </Border>
   <Border x:Name="PromptBar" Background="#F20A1525" BorderBrush="#704BAEFF" BorderThickness="1" CornerRadius="15" Padding="9" Opacity="0.98">
    <Border.Effect><DropShadowEffect Color="#020814" BlurRadius="24" ShadowDepth="7" Opacity="0.75"/></Border.Effect>
-   <Grid Width="610">
-    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-    <Grid>
-     <TextBox x:Name="QuickPrompt" MinHeight="44" Padding="13,10" AcceptsReturn="True" TextWrapping="Wrap" Foreground="White" CaretBrush="#43C6FF" Background="#CC101E31" BorderBrush="#526783" BorderThickness="1" PreviewKeyDown="QuickPromptKeyDown"/>
-     <TextBlock x:Name="QuickPromptHint" Text="询问当前屏幕，或先圈选一个区域…" Foreground="#8494AA" Margin="14,13,0,0" IsHitTestVisible="False"/>
+   <Grid x:Name="PromptContent" Width="610">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <StackPanel x:Name="AnswerHeader" Orientation="Horizontal" Visibility="Collapsed" Margin="8,3,8,0"><TextBlock Text="✦" Foreground="#43C6FF" FontSize="17"/><TextBlock Text="AI 回答" Foreground="White" FontSize="14" FontWeight="SemiBold" Margin="8,1,0,0"/></StackPanel>
+    <ScrollViewer x:Name="AnswerScroll" Grid.Row="1" Visibility="Collapsed" MaxHeight="220" VerticalScrollBarVisibility="Auto" Margin="8,10,8,12"><TextBlock x:Name="AnswerText" TextWrapping="Wrap" LineHeight="23" Foreground="#EBF2FC"/></ScrollViewer>
+    <Border x:Name="AnswerDivider" Grid.Row="2" Visibility="Collapsed" Height="1" Background="#416F8EAD" Margin="8,0,8,10"/>
+    <Grid Grid.Row="3">
+     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+     <Grid>
+      <TextBox x:Name="QuickPrompt" MinHeight="44" MaxHeight="92" Padding="13,10" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Foreground="White" CaretBrush="#43C6FF" Background="#CC101E31" BorderBrush="#526783" BorderThickness="1" PreviewKeyDown="QuickPromptKeyDown"/>
+      <TextBlock x:Name="QuickPromptHint" Text="询问当前屏幕，或连续圈选多个区域…" Foreground="#8494AA" Margin="14,13,0,0" IsHitTestVisible="False"/>
+     </Grid>
+     <Button x:Name="VoiceButton" Grid.Column="1" Content="⌁" ToolTip="语音输入" Click="QuickVoice" Padding="14,10"/>
+     <Button x:Name="SendButton" Grid.Column="2" Content="➤" ToolTip="发送" Click="QuickSend" Background="#5266E8" BorderBrush="#6F85FF" Padding="17,10"/>
     </Grid>
-    <Button Grid.Column="1" Content="⌁" ToolTip="语音输入" Click="QuickVoice" Padding="14,10"/>
-    <Button Grid.Column="2" Content="➤" ToolTip="发送" Click="QuickSend" Background="#5266E8" BorderBrush="#6F85FF" Padding="17,10"/>
+    <TextBlock x:Name="PromptStatus" Grid.Row="4" Text="拖动可连续框选多个区域 · Enter 发送 · Shift+Enter 换行" Foreground="#8494AA" FontSize="11" HorizontalAlignment="Center" Margin="0,7,0,0"/>
    </Grid>
   </Border>
   <TextBlock x:Name="SizeText" Visibility="Collapsed" Foreground="White" Background="#CC111722" Padding="6,3"/>

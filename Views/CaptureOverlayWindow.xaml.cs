@@ -1,85 +1,187 @@
 using Microsoft.Win32;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Media.Imaging;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using mewu_ai_Assistant.Interop;
-using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Models;
+using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Speech;
-using Point=System.Windows.Point;
-using MouseEventArgs=System.Windows.Input.MouseEventArgs;
+using Button=System.Windows.Controls.Button;
 using KeyEventArgs=System.Windows.Input.KeyEventArgs;
+using MouseEventArgs=System.Windows.Input.MouseEventArgs;
+using Point=System.Windows.Point;
+
 namespace mewu_ai_Assistant.Views;
+
 public partial class CaptureOverlayWindow : Window
 {
-    private readonly AppHost _host; private readonly CaptureFrame _frame; private Point _start; private Rect _selection; private bool _selecting; private bool _moving; private Point _moveStart; private Rect _moveOrigin; private bool _promptBarHidden; private CancellationTokenSource? _speechRequest;
+    private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
+    private readonly AppHost _host;
+    private readonly CaptureFrame _frame;
+    private readonly List<SelectionItem> _selections=[];
+    private readonly List<AiMessage> _history=[new("system","分析多张区域图片时只返回 JSON：{answer:string,annotations:[{regionIndex,x,y,width,height,text,type}]}。regionIndex 是从 0 开始的图片序号；坐标是对应图片内 0 到 1 的归一化值。每个重要区域给出简洁批注，不适合批注时 annotations 为空。")];
+    private Point _start,_moveStart;
+    private Rect _moveOrigin;
+    private int _activeIndex=-1;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded;
+    private CancellationTokenSource? _speechRequest,_request;
+
+    private sealed class SelectionItem
+    {
+        public Rect Bounds;
+        public bool IsImplicit;
+        public Grid Host { get; }=new();
+        public Image Image { get; }=new(){Stretch=Stretch.Fill,IsHitTestVisible=false};
+        public Canvas Annotations { get; }=new(){IsHitTestVisible=false};
+        public Border Outline { get; }=new(){Background=Brushes.Transparent,CornerRadius=new CornerRadius(7),IsHitTestVisible=false};
+        public Border Badge { get; }=new(){HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(7),CornerRadius=new CornerRadius(10),Background=new SolidColorBrush(Color.FromArgb(230,29,119,224)),Padding=new Thickness(7,2,7,2),IsHitTestVisible=false};
+        public TextBlock BadgeText { get; }=new(){Foreground=Brushes.White,FontWeight=FontWeights.SemiBold,FontSize=11};
+    }
+
+    private SelectionItem? Active=>_activeIndex>=0&&_activeIndex<_selections.Count?_selections[_activeIndex]:null;
+
     public CaptureOverlayWindow(AppHost host)
     {
-        _host=host; _frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor); InitializeComponent();if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
-        var area=System.Windows.Forms.SystemInformation.VirtualScreen; Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
-        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.ExcludeFromCapture(hwnd);};Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=string.IsNullOrWhiteSpace(QuickPrompt.Text)?Visibility.Visible:Visibility.Collapsed;PositionPromptBar();QuickPrompt.Focus();};SizeChanged+=(_,_)=>PositionPromptBar();Closed+=(_,_)=>_speechRequest?.Cancel();
+        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();
+        if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
+        DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
+        var area=System.Windows.Forms.SystemInformation.VirtualScreen;Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
+        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.ExcludeFromCapture(hwnd);};
+        Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=string.IsNullOrWhiteSpace(QuickPrompt.Text)?Visibility.Visible:Visibility.Collapsed;PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();QuickPrompt.Focus();};
+        SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;PositionPromptBar();};
+        Closed+=(_,_)=>{_speechRequest?.Cancel();_request?.Cancel();};
     }
+
     private void OnMouseDown(object s,MouseButtonEventArgs e)
     {
-        if(e.OriginalSource is Thumb)return;var p=e.GetPosition(Root); if(!_selection.IsEmpty&&_selection.Contains(p)){_moving=true;_moveStart=p;_moveOrigin=_selection;SetPromptBarHidden(true);Root.CaptureMouse();return;}
-        _selecting=true;_start=p;_selection=Rect.Empty;Toolbar.Visibility=Visibility.Collapsed;SelectionBorder.Visibility=SelectedImage.Visibility=Visibility.Visible;SetPromptBarHidden(true);Root.CaptureMouse();
+        if(e.OriginalSource is Thumb||IsInside(e.OriginalSource as DependencyObject,PromptBar)||IsInside(e.OriginalSource as DependencyObject,Toolbar))return;
+        var p=e.GetPosition(Root);var addNew=_forceNewSelection||Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);_forceNewSelection=false;
+        var hit=addNew?-1:FindSelection(p);
+        if(hit>=0){Select(hit);_moving=true;_moveStart=p;_moveOrigin=Active!.Bounds;}
+        else{var item=CreateSelection(false);_selections.Add(item);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();_selecting=true;_start=p;item.Bounds=new Rect(p,p);}
+        Toolbar.Visibility=Visibility.Collapsed;SetPromptBarHidden(true);Root.CaptureMouse();e.Handled=true;
     }
+
     private void OnMouseMove(object s,MouseEventArgs e)
     {
-        var p=e.GetPosition(Root); if(_selecting){_selection=new Rect(_start,p);} else if(_moving){var d=p-_moveStart;_selection=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));} else {SetPromptBarHidden(!_selection.IsEmpty&&_selection.Contains(p));return;} UpdateSelection();
+        var p=e.GetPosition(Root);
+        if(_selecting&&Active is { } created){created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
+        else if(_moving&&Active is { } moved){var d=p-_moveStart;moved.Bounds=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));UpdateSelection(moved);}
+        else{SetPromptBarHidden(PointerOverSelection(p));return;}
     }
+
     private void OnMouseUp(object s,MouseButtonEventArgs e)
     {
-        if(!_selecting&&!_moving)return; _selecting=_moving=false;Root.ReleaseMouseCapture(); if(_selection.Width<8||_selection.Height<8){Reset();SetPromptBarHidden(false);return;} UpdateSelection();ShowToolbar();SetPromptBarHidden(_selection.Contains(e.GetPosition(Root)));
+        if(!_selecting&&!_moving)return;_selecting=_moving=false;Root.ReleaseMouseCapture();
+        if(Active is not { } item||item.Bounds.Width<8||item.Bounds.Height<8){RemoveActiveSelection(false);if(Active is not null)ShowToolbar();SetPromptBarHidden(false);return;}
+        UpdateSelection(item);ShowToolbar();SetPromptBarHidden(PointerOverSelection(e.GetPosition(Root)));PromptStatus.Text=$"已选择 {_selections.Count} 个区域 · 可继续拖动添加";e.Handled=true;
     }
-    private void UpdateSelection()
+
+    private SelectionItem CreateSelection(bool implicitFullScreen)
     {
-        var r=Normalize(_selection);_selection=r;Canvas.SetLeft(SelectionBorder,r.Left);Canvas.SetTop(SelectionBorder,r.Top);SelectionBorder.Width=r.Width;SelectionBorder.Height=r.Height;
-        Canvas.SetLeft(SelectedImage,r.Left);Canvas.SetTop(SelectedImage,r.Top);SelectedImage.Width=r.Width;SelectedImage.Height=r.Height;
-        var px=ToPixelRect(r);if(px.Width>0&&px.Height>0)SelectedImage.Source=ScreenCaptureService.Crop(_frame.Image,px);
-        SizeText.Text=$"{px.Width} × {px.Height}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));
-        PositionHandles(r);
+        var item=new SelectionItem{IsImplicit=implicitFullScreen};item.Badge.Child=item.BadgeText;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Annotations);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
     }
-    private Int32Rect ToPixelRect(Rect r)
-        =>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
+
+    private void UpdateSelection(SelectionItem item)
+    {
+        var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Annotations.Width=r.Width;item.Annotations.Height=r.Height;
+        var px=ToPixelRect(r);if(px.Width>0&&px.Height>0)item.Image.Source=ScreenCaptureService.Crop(_frame.Image,px);
+        var active=ReferenceEquals(item,Active);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
+        if(active&&!item.IsImplicit){SizeText.Text=$"{px.Width} × {px.Height}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
+    }
+
+    private void Select(int index){_activeIndex=index;for(var i=0;i<_selections.Count;i++)UpdateSelection(_selections[i]);}
+    private int FindSelection(Point p){for(var i=_selections.Count-1;i>=0;i--)if(!_selections[i].IsImplicit&&_selections[i].Bounds.Contains(p))return i;return -1;}
+    private bool PointerOverSelection(Point p)=>_selections.Any(x=>!x.IsImplicit&&x.Bounds.Contains(p));
+    private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
+    private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
-    private Rect MonitorBounds(){var pixels=ToPixelRect(_selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).Bounds;var sx=Root.ActualWidth/_frame.Image.PixelWidth;var sy=Root.ActualHeight/_frame.Image.PixelHeight;return new Rect((bounds.Left-_frame.OriginX)*sx,(bounds.Top-_frame.OriginY)*sy,bounds.Width*sx,bounds.Height*sy);}
-    private void ShowToolbar(){Toolbar.Visibility=Visibility.Visible;Toolbar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Toolbar.DesiredSize.Width;var h=Toolbar.DesiredSize.Height;var monitor=MonitorBounds();var x=Math.Clamp(_selection.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var availableBottom=_promptBarHidden?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=_selection.Bottom+10;var above=_selection.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(Toolbar,x);Canvas.SetTop(Toolbar,y);}
-    private void PositionPromptBar(){if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;PromptBar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Math.Min(PromptBar.DesiredSize.Width,Math.Max(320,Root.ActualWidth-32));PromptBar.Width=w;Canvas.SetLeft(PromptBar,(Root.ActualWidth-w)/2);Canvas.SetTop(PromptBar,Math.Max(16,Root.ActualHeight-PromptBar.DesiredSize.Height-24));}
-    private void SetPromptBarHidden(bool hidden)
+    private Rect MonitorBounds(Rect selection){var pixels=ToPixelRect(selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).Bounds;var sx=Root.ActualWidth/_frame.Image.PixelWidth;var sy=Root.ActualHeight/_frame.Image.PixelHeight;return new Rect((bounds.Left-_frame.OriginX)*sx,(bounds.Top-_frame.OriginY)*sy,bounds.Width*sx,bounds.Height*sy);}
+
+    private void ShowToolbar()
     {
-        if(_promptBarHidden==hidden)return;_promptBarHidden=hidden;PromptBar.IsHitTestVisible=!hidden;if(PromptBar.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBar.RenderTransform=transform;}var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(hidden?PromptBar.ActualHeight+32:0,TimeSpan.FromMilliseconds(hidden?150:190)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(hidden?.08:.98,TimeSpan.FromMilliseconds(150)));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();
+        if(Active is not {IsImplicit:false} item){Toolbar.Visibility=Visibility.Collapsed;return;}AiButton.Content=$"✦ AI 助手 ({_selections.Count} 区)";Toolbar.Visibility=Visibility.Visible;Toolbar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Toolbar.DesiredSize.Width;var h=Toolbar.DesiredSize.Height;var monitor=MonitorBounds(item.Bounds);var x=Math.Clamp(item.Bounds.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var availableBottom=_promptBarHidden?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=item.Bounds.Bottom+10;var above=item.Bounds.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(Toolbar,x);Canvas.SetTop(Toolbar,y);
     }
-    private BitmapSource CurrentImage()=>ScreenCaptureService.Crop(_frame.Image,ToPixelRect(_selection));
-    private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=new SolidColorBrush(Color.FromRgb(67,168,255));t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
-    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t)return;SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=_selection.Left;var top=_selection.Top;var r=_selection.Right;var b=_selection.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);_selection=new Rect(new Point(l,top),new Point(r,b));UpdateSelection();ShowToolbar();e.Handled=true;}
-    private void Reset(){_selection=Rect.Empty;SelectionBorder.Visibility=SelectedImage.Visibility=Toolbar.Visibility=SizeText.Visibility=Visibility.Collapsed;foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
+
+    private void PositionPromptBar(){if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;PromptBar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Math.Min(PromptBar.DesiredSize.Width,Math.Max(320,Root.ActualWidth-32));PromptBar.Width=w;Canvas.SetLeft(PromptBar,(Root.ActualWidth-w)/2);Canvas.SetTop(PromptBar,Math.Max(16,Root.ActualHeight-PromptBar.ActualHeight-24));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void SetPromptBarHidden(bool hidden){if(_promptBarHidden==hidden)return;_promptBarHidden=hidden;PromptBar.IsHitTestVisible=!hidden;if(PromptBar.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBar.RenderTransform=transform;}var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(hidden?PromptBar.ActualHeight+32:0,TimeSpan.FromMilliseconds(hidden?150:190)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(hidden?.08:.98,TimeSpan.FromMilliseconds(150)));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+
+    private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return ScreenCaptureService.Crop(_frame.Image,ToPixelRect(Active.Bounds));}
+    private List<AiAttachment> BuildAttachments(){EnsureScreenSelection();return _selections.Select(x=>new AiAttachment(AiAttachmentType.Image,"image/png",ScreenCaptureService.EncodePng(ScreenCaptureService.Crop(_frame.Image,ToPixelRect(x.Bounds))))).ToList();}
+    private void EnsureScreenSelection(){if(_selections.Count>0)return;var item=CreateSelection(true);item.Bounds=new Rect(0,0,Root.ActualWidth,Root.ActualHeight);_selections.Add(item);_activeIndex=0;RefreshSelectionNumbers();UpdateSelection(item);}
+
+    private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=Cyan;t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
+    private void HideHandles(){foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
+    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t||Active is not {IsImplicit:false} item)return;SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);item.Bounds=new Rect(new Point(l,top),new Point(r,b));item.Annotations.Children.Clear();UpdateSelection(item);ShowToolbar();e.Handled=true;}
+
+    private void AddRegion(object s,RoutedEventArgs e){_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
+    private void RemoveSelection(object s,RoutedEventArgs e)=>RemoveActiveSelection(true);
+    private void RemoveActiveSelection(bool updateUi)
+    {
+        if(Active is not { } item)return;SelectionLayer.Children.Remove(item.Host);_selections.RemoveAt(_activeIndex);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();if(Active is { } next)UpdateSelection(next);else{HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}if(updateUi){PromptStatus.Text=_selections.Count==0?"拖动可连续框选多个区域":$"剩余 {_selections.Count} 个区域";if(Active is not null)ShowToolbar();}
+    }
+    private void RefreshSelectionNumbers(){for(var i=0;i<_selections.Count;i++)_selections[i].BadgeText.Text=(i+1).ToString();}
+
+    private async Task SendAsync(bool useDefaultPrompt)
+    {
+        if(_request is {IsCancellationRequested:false})return;var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){PromptStatus.Text="请先配置可用的 AI Provider";_host.ShowSettings();return;}if(!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
+        var prompt=QuickPrompt.Text.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=_selections.Count>1?"综合理解这些屏幕区域，说明它们之间的关系并标出关键部分。":"理解当前屏幕区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
+        _request=new CancellationTokenSource(TimeSpan.FromMinutes(2));SendButton.IsEnabled=false;AnswerText.Text="";PromptStatus.Text=$"正在分析 {Math.Max(1,_selections.Count)} 个区域…按 Esc 可取消";
+        try
+        {
+            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[.._history],Attachments=BuildAttachments()},_request.Token);ShowAnswer();AnswerText.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));QuickPrompt.Clear();RenderAnnotations(result.Annotations);
+            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,_request.Token);PromptStatus.Text=result.Annotations.Count>0?$"已在 {_selections.Count} 个区域中标出重点 · 可继续提问":"完成 · 可继续提问";
+        }
+        catch(OperationCanceledException){PromptStatus.Text="已取消";}
+        catch(Exception ex){ShowAnswer();AnswerText.Text="请求失败";PromptStatus.Text=ex.Message;}
+        finally{_request.Dispose();_request=null;SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+    }
+
+    private void RenderAnnotations(IReadOnlyList<AiAnnotation> notes)
+    {
+        foreach(var item in _selections)item.Annotations.Children.Clear();
+        for(var regionIndex=0;regionIndex<_selections.Count;regionIndex++)
+        {
+            var item=_selections[regionIndex];var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
+            foreach(var n in notes.Where(x=>x.RegionIndex==regionIndex).Take(6))
+            {
+                var x=Math.Clamp(n.X,0,1)*w;var y=Math.Clamp(n.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(n.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(n.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9}};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.Annotations.Children.Add(box);
+                var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=Math.Clamp(y+rh*.5-font*1.5,5,Math.Max(5,h-font*4));while(slots.Any(v=>Math.Abs(v-cardY)<font*3.2))cardY=Math.Min(Math.Max(5,h-font*4),cardY+font*3.4);slots.Add(cardY);var startX=right?x+rw:x;var endX=right?cardX:cardX+cardWidth;item.Annotations.Children.Add(new Line{X1=startX,Y1=y+rh*.5,X2=endX,Y2=cardY+font*1.4,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200)});var dot=new Ellipse{Width=5,Height=5,Fill=Cyan};Canvas.SetLeft(dot,endX-2.5);Canvas.SetTop(dot,cardY+font*1.4-2.5);item.Annotations.Children.Add(dot);var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(238,8,18,31)),BorderBrush=new SolidColorBrush(Color.FromArgb(125,61,190,255)),BorderThickness=new Thickness(1),Child=new TextBlock{Text=n.Text,Foreground=Brushes.White,FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Colors.Black,BlurRadius=15,ShadowDepth=4,Opacity=.7}};Canvas.SetLeft(card,cardX);Canvas.SetTop(card,cardY);item.Annotations.Children.Add(card);
+            }
+        }
+    }
+
     private void Copy(object s,RoutedEventArgs e){Clipboard.SetImage(CurrentImage());_host.Notify("已复制到剪贴板");Close();}
     private void Save(object s,RoutedEventArgs e){var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var d=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(d.ShowDialog(this)==true)ScreenCaptureService.Save(CurrentImage(),d.FileName,d.FilterIndex==2);}
     private void Pin(object s,RoutedEventArgs e){new PinnedImageWindow(CurrentImage()).Show();Close();}
-    private void Draw(object s,RoutedEventArgs e){var pixels=ToPixelRect(_selection);new DrawingWindow(_host,CurrentImage(),ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY)).Show();Close();}
-    private void AskAi(object s,RoutedEventArgs e)=>OpenAi(string.Empty);
-    private void OpenAi(string prompt){if(_selection.IsEmpty){_selection=new Rect(0,0,Root.ActualWidth,Root.ActualHeight);UpdateSelection();}var pixels=ToPixelRect(_selection);new AiPromptWindow(_host,CurrentImage(),false,ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY),prompt,_frame).Show();Close();}
-    private void QuickSend(object s,RoutedEventArgs e){var prompt=QuickPrompt.Text.Trim();if(prompt.Length==0){QuickPrompt.Focus();return;}OpenAi(prompt);}
-    private void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;QuickSend(s,new RoutedEventArgs());}}
+    private void Draw(object s,RoutedEventArgs e){if(Active is not { } item)return;var pixels=ToPixelRect(item.Bounds);new DrawingWindow(_host,CurrentImage(),ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY)).Show();Close();}
+    private async void AskAi(object s,RoutedEventArgs e)=>await SendAsync(true);
+    private async void QuickSend(object s,RoutedEventArgs e)=>await SendAsync(true);
+    private async void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;await SendAsync(true);}}
     private async void QuickVoice(object s,RoutedEventArgs e)
     {
-        if(_speechRequest is not null){_speechRequest.Cancel();return;}_speechRequest=new();if(s is Button b)b.Content="■";
-        try{var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))QuickPrompt.Text=string.IsNullOrWhiteSpace(QuickPrompt.Text)?text:QuickPrompt.Text+" "+text;}
-        catch(OperationCanceledException){}catch(Exception ex){_host.Notify($"语音不可用：{ex.Message}");}finally{_speechRequest.Dispose();_speechRequest=null;if(s is Button button)button.Content="⌁";}
+        if(_speechRequest is not null){_speechRequest.Cancel();return;}_speechRequest=new();VoiceButton.Content="■";
+        try{PromptStatus.Text="正在聆听…";var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))QuickPrompt.Text=string.IsNullOrWhiteSpace(QuickPrompt.Text)?text:QuickPrompt.Text+" "+text;PromptStatus.Text="语音已写入";}
+        catch(OperationCanceledException){PromptStatus.Text="已停止聆听";}catch(Exception ex){PromptStatus.Text=$"语音不可用：{ex.Message}";}finally{_speechRequest.Dispose();_speechRequest=null;VoiceButton.Content="⌁";}
     }
     private void Translate(object s,RoutedEventArgs e){new TranslationWindow(_host,CurrentImage()).Show();Close();}
     private void Ocr(object s,RoutedEventArgs e){new OcrTextWindow(CurrentImage()).Show();Close();}
-    private void Record(object s,RoutedEventArgs e){var px=ToPixelRect(_selection);new RecordingControlWindow(_host,ScreenCoordinateService.ToScreenRect(px,_frame.OriginX,_frame.OriginY)).Show();Close();}
-    private void OnKeyDown(object s,KeyEventArgs e)
+    private void Record(object s,RoutedEventArgs e){if(Active is not { } item)return;var px=ToPixelRect(item.Bounds);new RecordingControlWindow(_host,ScreenCoordinateService.ToScreenRect(px,_frame.OriginX,_frame.OriginY)).Show();Close();}
+
+    private async void OnKeyDown(object s,KeyEventArgs e)
     {
-        if(e.Key==Key.Escape){Close();return;}if(_selection.IsEmpty){if((int)e.Key>=(int)Key.A&&(int)e.Key<=(int)Key.Z){_host.ShowTextAi(e.Key.ToString());Close();}return;}
-        var step=Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)?10:1;if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){_selection=ClampSelection(new Rect(_selection.X+(e.Key==Key.Left?-step:e.Key==Key.Right?step:0),_selection.Y+(e.Key==Key.Up?-step:e.Key==Key.Down?step:0),_selection.Width,_selection.Height));UpdateSelection();ShowToolbar();e.Handled=true;return;}
-        if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.Enter)AskAi(s,new());else if(e.Key==Key.R)Record(s,new());
+        if(e.Key==Key.Escape){if(_request is {IsCancellationRequested:false}){_request.Cancel();e.Handled=true;}else Close();return;}
+        if(e.Key==Key.Delete&&Active is not null){RemoveActiveSelection(true);e.Handled=true;return;}
+        if(Active is not {IsImplicit:false} item)return;var step=Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)?10:1;
+        if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){item.Bounds=ClampSelection(new Rect(item.Bounds.X+(e.Key==Key.Left?-step:e.Key==Key.Right?step:0),item.Bounds.Y+(e.Key==Key.Up?-step:e.Key==Key.Down?step:0),item.Bounds.Width,item.Bounds.Height));item.Annotations.Children.Clear();UpdateSelection(item);ShowToolbar();e.Handled=true;return;}
+        if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.Enter)await SendAsync(true);else if(e.Key==Key.R)Record(s,new());
     }
 }
