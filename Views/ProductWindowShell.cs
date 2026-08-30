@@ -26,7 +26,8 @@ internal static class ProductWindowShell
         titleBar.ColumnDefinitions.Add(new ColumnDefinition());
         titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         titleBar.Children.Add(new TextBlock { Text = title, FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-        var close = new Button { Content = "×", ToolTip = "关闭", Width = 34, Height = 34, Padding = new Thickness(0), FontSize = 18 };
+        var close = new Button { Content = CloseIcon(), ToolTip = "关闭", Width = 34, Height = 34, Padding = new Thickness(0) };
+        System.Windows.Automation.AutomationProperties.SetName(close, "关闭窗口");
         close.SetResourceReference(FrameworkElement.StyleProperty, "IconButton");
         close.Click += (_, _) => window.Close();
         Grid.SetColumn(close, 1);
@@ -56,4 +57,16 @@ internal static class ProductWindowShell
             Effect = new DropShadowEffect { Color = Color.FromRgb(60, 73, 92), BlurRadius = 32, ShadowDepth = 8, Opacity = .25 }
         };
     }
+
+    private static System.Windows.Shapes.Path CloseIcon() => new()
+    {
+        Width = 15,
+        Height = 15,
+        Stretch = Stretch.Uniform,
+        Stroke = new SolidColorBrush(Color.FromRgb(82, 99, 122)),
+        StrokeThickness = 1.8,
+        StrokeStartLineCap = PenLineCap.Round,
+        StrokeEndLineCap = PenLineCap.Round,
+        Data = Geometry.Parse("M3,3 L13,13 M13,3 L3,13")
+    };
 }

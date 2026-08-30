@@ -7,7 +7,10 @@ public static class RecordingLayoutService
     public static IReadOnlyList<RecordingSlice> CreateSlices(ScreenRect region,IEnumerable<ScreenRect> displays)
     {
         var slices=new List<RecordingSlice>();
-        foreach(var display in displays)
+        // Mirrored display devices can report the same desktop bounds. Recording
+        // each duplicate would composite overlapping sources into the same output
+        // rectangle, so keep the first device for each physical desktop rectangle.
+        foreach(var display in displays.Distinct())
         {
             var source=region.Intersect(display);
             if(source.IsEmpty)continue;

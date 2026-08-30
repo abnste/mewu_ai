@@ -17,4 +17,18 @@ public sealed class RecordingLayoutTests
         Assert.Equal(new ScreenRect(0,100,200,200),slices[1].Source);
         Assert.Equal(new ScreenRect(100,0,200,200),slices[1].Output);
     }
+
+    [Fact]
+    public void CreateSlices_DeduplicatesMirroredDisplayBounds()
+    {
+        var display=new ScreenRect(0,0,1920,1080);
+
+        var slices=RecordingLayoutService.CreateSlices(
+            new ScreenRect(100,100,640,360),
+            new[]{display,display});
+
+        var slice=Assert.Single(slices);
+        Assert.Equal(new ScreenRect(100,100,640,360),slice.Source);
+        Assert.Equal(new ScreenRect(0,0,640,360),slice.Output);
+    }
 }

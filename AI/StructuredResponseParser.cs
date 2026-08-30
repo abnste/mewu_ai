@@ -9,6 +9,7 @@ namespace mewu_ai_Assistant.AI;
 public static class StructuredResponseParser
 {
     private static readonly Regex ThinkBlock = new("<(?<tag>think|thinking|reasoning)>\\s*(?<body>[\\s\\S]*?)\\s*</\\k<tag>>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ThinkOpening = new("<(?:think|thinking|reasoning)>",RegexOptions.IgnoreCase|RegexOptions.Compiled);
 
     public static AiResult Parse(string value, string reasoning = "")
     {
@@ -22,18 +23,18 @@ public static class StructuredResponseParser
         try
         {
             using var document = JsonDocument.Parse(json);
-            if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("answer", out _))
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("answer", out var answerElement))
                 return new(value, [], allReasoning);
 
-            var parsed = JsonSerializer.Deserialize<StructuredAiResponse>(json);
-            if (parsed is null || string.IsNullOrWhiteSpace(parsed.Answer))
+            if (answerElement.ValueKind != JsonValueKind.String)
                 return new(string.Empty, [], allReasoning);
 
-            var notes = (parsed.Annotations ?? [])
-                .Where(a => a is not null && a.X >= 0 && a.Y >= 0 && a.Width >= 0 && a.Height >= 0 && a.X + a.Width <= 1.001 && a.Y + a.Height <= 1.001)
-                .Select(a => new AiAnnotation(a.X, a.Y, a.Width, a.Height, a.Text, a.Type, a.RegionIndex))
-                .ToList();
-            return new(parsed.Answer, notes, allReasoning);
+            var answer = answerElement.GetString() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(answer))
+                return new(string.Empty, [], allReasoning);
+
+            return new(answer, ParseAnnotations(root), allReasoning);
         }
         catch (JsonException)
         {
@@ -41,6 +42,87 @@ public static class StructuredResponseParser
                 ? new(answer, [], allReasoning)
                 : new(value, [], allReasoning);
         }
+    }
+
+    private static IReadOnlyList<AiAnnotation> ParseAnnotations(JsonElement root)
+    {
+        if (!root.TryGetProperty("annotations", out var annotations) || annotations.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var result = new List<AiAnnotation>();
+        foreach (var item in annotations.EnumerateArray())
+        {
+            if (TryParseAnnotation(item, out var annotation))
+                result.Add(annotation);
+        }
+
+        return result;
+    }
+
+    private static bool TryParseAnnotation(JsonElement item, out AiAnnotation annotation)
+    {
+        annotation = default!;
+        if (item.ValueKind != JsonValueKind.Object ||
+            !TryReadFiniteDouble(item, "x", out var x) ||
+            !TryReadFiniteDouble(item, "y", out var y) ||
+            !TryReadFiniteDouble(item, "width", out var width) ||
+            !TryReadFiniteDouble(item, "height", out var height) ||
+            !item.TryGetProperty("text", out var textElement) ||
+            textElement.ValueKind != JsonValueKind.String)
+            return false;
+
+        var text = textElement.GetString() ?? string.Empty;
+        var regionIndex = 0;
+        if (item.TryGetProperty("regionIndex", out var regionElement) &&
+            (regionElement.ValueKind != JsonValueKind.Number || !regionElement.TryGetInt32(out regionIndex)))
+            return false;
+
+        if (string.IsNullOrWhiteSpace(text) || regionIndex < 0 ||
+            x < 0 || y < 0 || width < 0 || height < 0 ||
+            x + width > 1.001 || y + height > 1.001)
+            return false;
+
+        annotation = new AiAnnotation(x, y, width, height, text, regionIndex);
+        return true;
+    }
+
+    private static bool TryReadFiniteDouble(JsonElement item, string name, out double value)
+    {
+        value = 0;
+        return item.TryGetProperty(name, out var element) &&
+               element.ValueKind == JsonValueKind.Number &&
+               element.TryGetDouble(out value) &&
+               double.IsFinite(value);
+    }
+
+    public static string GetStreamingAnswerPreview(string value)
+    {
+        if(string.IsNullOrEmpty(value))return string.Empty;
+        var payload=GetPartialStructuredPayload(value);
+        if(payload.Length==0||!TryFindRootAnswerValue(payload.AsSpan(),out var answerStart))return string.Empty;
+        var answerEnd=FindJsonStringEnd(payload.AsSpan(),answerStart);
+        var encoded=answerEnd>=0
+            ?payload.AsSpan(answerStart,answerEnd-answerStart)
+            :payload.AsSpan(answerStart);
+        if(!TryDecodeJsonStringPrefix(encoded,out var decoded))return string.Empty;
+        return RemoveStreamingThinkContent(decoded);
+    }
+
+    public static string GetStreamingTextPreview(string value)
+    {
+        if(string.IsNullOrEmpty(value))return string.Empty;
+        var trimmed=value.TrimStart();
+        if(trimmed.StartsWith('{')||LooksLikeJsonFence(trimmed))return GetStreamingAnswerPreview(value);
+        return RemoveStreamingThinkContent(value);
+    }
+
+    private static bool LooksLikeJsonFence(string value)
+    {
+        if(!value.StartsWith("```",StringComparison.Ordinal))return false;
+        var lineEnd=value.IndexOfAny(['\r','\n'],3);
+        if(lineEnd<0)return "```json".StartsWith(value,StringComparison.OrdinalIgnoreCase);
+        var language=value[3..lineEnd].Trim();
+        return language.Length==0||language.Equals("json",StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryGetStructuredPayload(string value, out string payload)
@@ -78,6 +160,20 @@ public static class StructuredResponseParser
 
         payload = body;
         return true;
+    }
+
+    private static string GetPartialStructuredPayload(string value)
+    {
+        var trimmed=value.TrimStart();
+        if(!trimmed.StartsWith("```",StringComparison.Ordinal))return trimmed;
+        var lineEnd=trimmed.IndexOfAny(['\r','\n'],3);
+        if(lineEnd<0)return string.Empty;
+        var language=trimmed[3..lineEnd].Trim();
+        if(language.Length>0&&!language.Equals("json",StringComparison.OrdinalIgnoreCase))return string.Empty;
+        var bodyStart=lineEnd;
+        if(trimmed[bodyStart]=='\r')bodyStart++;
+        if(bodyStart<trimmed.Length&&trimmed[bodyStart]=='\n')bodyStart++;
+        return trimmed[bodyStart..].TrimStart();
     }
 
     private static bool TryExtractAnswerFromTruncatedStructuredResponse(string json, out string answer)
@@ -285,6 +381,70 @@ public static class StructuredResponseParser
 
         decoded = builder.ToString();
         return true;
+    }
+
+    private static bool TryDecodeJsonStringPrefix(ReadOnlySpan<char> value,out string decoded)
+    {
+        var builder=new StringBuilder(value.Length);
+        for(var index=0;index<value.Length;index++)
+        {
+            var character=value[index];
+            if(character!='\\')
+            {
+                if(character<' '){decoded=string.Empty;return false;}
+                builder.Append(character);
+                continue;
+            }
+
+            if(index+1>=value.Length)break;
+            var escape=value[++index];
+            switch(escape)
+            {
+                case '"':builder.Append('"');break;
+                case '\\':builder.Append('\\');break;
+                case '/':builder.Append('/');break;
+                case 'b':builder.Append('\b');break;
+                case 'f':builder.Append('\f');break;
+                case 'n':builder.Append('\n');break;
+                case 'r':builder.Append('\r');break;
+                case 't':builder.Append('\t');break;
+                case 'u':
+                {
+                    if(index+4>=value.Length)goto CompletePrefix;
+                    if(!ushort.TryParse(value.Slice(index+1,4),NumberStyles.AllowHexSpecifier,CultureInfo.InvariantCulture,out var codePoint)){decoded=string.Empty;return false;}
+                    index+=4;
+                    if(char.IsHighSurrogate((char)codePoint))
+                    {
+                        if(index+6>=value.Length||value[index+1]!='\\'||value[index+2]!='u')goto CompletePrefix;
+                        if(!ushort.TryParse(value.Slice(index+3,4),NumberStyles.AllowHexSpecifier,CultureInfo.InvariantCulture,out var low)||!char.IsLowSurrogate((char)low)){decoded=string.Empty;return false;}
+                        builder.Append((char)codePoint);builder.Append((char)low);index+=6;
+                    }
+                    else if(char.IsLowSurrogate((char)codePoint)){decoded=string.Empty;return false;}
+                    else builder.Append((char)codePoint);
+                    break;
+                }
+                default:decoded=string.Empty;return false;
+            }
+        }
+
+CompletePrefix:
+        decoded=builder.ToString();
+        return true;
+    }
+
+    private static string RemoveStreamingThinkContent(string value)
+    {
+        var visible=ThinkBlock.Replace(value,string.Empty);
+        var opening=ThinkOpening.Match(visible);
+        if(opening.Success)visible=visible[..opening.Index];
+        var partialStart=visible.LastIndexOf('<');
+        if(partialStart>=0)
+        {
+            var partial=visible[partialStart..];
+            var tags=new[]{"<think","<thinking","<reasoning","</think","</thinking","</reasoning"};
+            if(tags.Any(tag=>tag.StartsWith(partial,StringComparison.OrdinalIgnoreCase)))visible=visible[..partialStart];
+        }
+        return visible;
     }
 
     private static int SkipWhitespace(ReadOnlySpan<char> value, int start)

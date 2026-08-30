@@ -1,4 +1,5 @@
 using System.Windows.Input;
+using System.Text.Json.Serialization;
 namespace mewu_ai_Assistant.Models;
 public sealed class AppSettings
 {
@@ -10,16 +11,18 @@ public sealed class AppSettings
     public bool SaveConversationHistory { get; set; } public bool EnableVoiceInput { get; set; } public bool AutomaticallyStartListening { get; set; }
     public string VoiceLanguage { get; set; } = "system"; public string? DefaultProviderId { get; set; }
     public List<AiProviderSettings> Providers { get; set; } = [];
+    [JsonIgnore] public List<string> ConfigurationErrors { get; } = [];
+    [JsonIgnore] public bool HasSensitiveCredentialErrors { get; internal set; }
 }
 public sealed class HotkeySetting
 {
     public Key Key { get; set; } = Key.A; public ModifierKeys Modifiers { get; set; } = ModifierKeys.Control | ModifierKeys.Shift;
-    public string DisplayName => $"{Modifiers.ToString().Replace(", ", " + ")} + {Key}";
 }
 public sealed class AiProviderSettings
 {
-    public string Id { get; set; } = Guid.NewGuid().ToString("N"); public string Name { get; set; } = "OpenAI Compatible"; public string Type { get; set; } = "OpenAICompatible";
-    public string BaseUrl { get; set; } = "https://api.openai.com/v1"; public string Model { get; set; } = "gpt-4.1-mini"; public string CredentialId { get; set; } = string.Empty;
+    [JsonRequired] public string Id { get; set; } = Guid.NewGuid().ToString("N"); public string Name { get; set; } = "MiniMax M3"; [JsonRequired] public string Type { get; set; } = "MiniMax";
+    [JsonRequired] public string BaseUrl { get; set; } = "https://api.minimaxi.com/v1"; [JsonRequired] public string Model { get; set; } = "MiniMax-M3"; public string CredentialId { get; set; } = string.Empty;
     public Dictionary<string,string> CustomHeaders { get; set; } = [];
+    public Dictionary<string,string> SensitiveHeaderCredentialIds { get; set; } = [];
     public override string ToString()=>Name;
 }

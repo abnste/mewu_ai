@@ -27,21 +27,24 @@ namespace mewu_ai_Assistant.Views;
 
 public partial class CaptureOverlayWindow : Window
 {
+    private const int ReasoningDisplayLimit=12_000;
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
     private readonly AppHost _host;
     private readonly CaptureFrame _frame;
     private readonly List<SelectionItem> _selections=[];
     private readonly HashSet<SelectionItem> _references=[];
+    private readonly System.Text.StringBuilder _reasoningBuffer=new();
     private List<SelectionItem> _lastSentSelections=[];
-    private readonly List<AiMessage> _history=[new("system","分析多张区域图片时只返回 JSON：{answer:string,annotations:[{regionIndex,x,y,width,height,text,type}]}。regionIndex 是从 0 开始的图片序号；坐标是对应图片内 0 到 1 的归一化值。每个重要区域给出简洁批注，不适合批注时 annotations 为空。")];
+    private readonly List<AiMessage> _history=[new("system","分析屏幕附件时只返回 JSON：{answer:string,annotations:[{regionIndex,x,y,width,height,text}]}。regionIndex 是从 0 开始的完整附件顺序；坐标是对应图片内 0 到 1 的归一化值。只能给图片附件返回空间批注，视频附件不得返回批注；不适合批注时 annotations 为空。")];
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
-    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded,_recordingMode,_drawingMode,_recordingPaused,_recordingStopping;
-    private CancellationTokenSource? _speechRequest,_request,_overlayRequest;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded,_recordingMode,_drawingMode,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
+    private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingStopWatchdog;
+    private CancellationTokenSource? _reasoningRenderRequest;
     private RecordingSession? _recordingSession;
     private SelectionItem? _recordingItem;
-    private DateTime _recordingStarted;
+    private bool _recordingItemWasReferenced;
     private readonly DispatcherTimer _recordingTimer=new(){Interval=TimeSpan.FromMilliseconds(150)};
     private DrawTool _drawTool=DrawTool.Freehand;
     private Point _drawStart;
@@ -55,16 +58,48 @@ public partial class CaptureOverlayWindow : Window
         public Image Image { get; }=new(){Stretch=Stretch.Fill,IsHitTestVisible=false};
         public MediaElement Video { get; }=new(){Stretch=Stretch.Fill,LoadedBehavior=MediaState.Manual,UnloadedBehavior=MediaState.Close,Visibility=Visibility.Collapsed,IsHitTestVisible=false};
         public InkCanvas Markup { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false};
-        public Canvas Annotations { get; }=new(){IsHitTestVisible=false};
+        public Canvas AiAnnotations { get; }=new(){IsHitTestVisible=false};
+        public Canvas TextOverlays { get; }=new(){IsHitTestVisible=false};
         public Canvas TextSelection { get; }=new(){IsHitTestVisible=false,Background=Brushes.Transparent};
         public Border Outline { get; }=new(){Background=Brushes.Transparent,CornerRadius=new CornerRadius(7),IsHitTestVisible=false};
         public Border Badge { get; }=new(){HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(7),CornerRadius=new CornerRadius(10),Background=new SolidColorBrush(Color.FromArgb(230,29,119,224)),Padding=new Thickness(7,2,7,2),IsHitTestVisible=false};
         public TextBlock BadgeText { get; }=new(){Foreground=Brushes.White,FontWeight=FontWeights.SemiBold,FontSize=11};
         public Stack<Stroke> Redo { get; }=[];
+        public OcrTextSelectionSession? TextSession;
+        public TempMediaLease? VideoLease;
         public string? VideoPath;
-        public string? FramesDirectory;
         public TimeSpan VideoDuration;
         public bool VideoPlaying;
+    }
+
+    private sealed record SelectableGlyph(Rect Bounds,TextPointer Start,TextPointer End);
+    private sealed class OcrTextSelectionSession : IDisposable
+    {
+        private readonly RichTextBox _box;private readonly Canvas _highlights;private readonly IReadOnlyList<SelectableGlyph> _glyphs;private int _anchor=-1;
+        public OcrTextSelectionSession(RichTextBox box,Canvas highlights,IReadOnlyList<SelectableGlyph> glyphs)
+        {
+            _box=box;_highlights=highlights;_glyphs=glyphs;_box.PreviewMouseLeftButtonDown+=MouseDown;_box.PreviewMouseMove+=MouseMove;_box.PreviewMouseLeftButtonUp+=MouseUp;_box.LostMouseCapture+=LostCapture;
+        }
+        private void MouseDown(object sender,MouseButtonEventArgs e){var index=Nearest(e.GetPosition(_box));if(index<0)return;_anchor=index;Select(index);_box.Focus();_box.CaptureMouse();e.Handled=true;}
+        private void MouseMove(object sender,MouseEventArgs e){if(_anchor<0||!_box.IsMouseCaptured||e.LeftButton!=MouseButtonState.Pressed)return;var index=Nearest(e.GetPosition(_box));if(index>=0)Select(index);e.Handled=true;}
+        private void MouseUp(object sender,MouseButtonEventArgs e){if(_anchor<0)return;var index=Nearest(e.GetPosition(_box));if(index>=0)Select(index);if(_box.IsMouseCaptured)_box.ReleaseMouseCapture();_anchor=-1;e.Handled=true;}
+        private void LostCapture(object sender,MouseEventArgs e)=>_anchor=-1;
+        private int Nearest(Point point)
+        {
+            var best=-1;var bestDistance=double.PositiveInfinity;
+            for(var index=0;index<_glyphs.Count;index++)
+            {
+                var bounds=_glyphs[index].Bounds;if(bounds.Contains(point))return index;var dx=point.X<bounds.Left?bounds.Left-point.X:point.X>bounds.Right?point.X-bounds.Right:0;var dy=point.Y<bounds.Top?bounds.Top-point.Y:point.Y>bounds.Bottom?point.Y-bounds.Bottom:0;var distance=dx*dx+dy*dy;if(distance>=bestDistance)continue;bestDistance=distance;best=index;
+            }
+            return best;
+        }
+        private void Select(int current)
+        {
+            var first=Math.Min(_anchor,current);var last=Math.Max(_anchor,current);_box.Selection.Select(_glyphs[first].Start,_glyphs[last].End);_highlights.Children.Clear();
+            Rect? merged=null;for(var index=first;index<=last;index++){var bounds=_glyphs[index].Bounds;if(merged is { } currentBounds&&Math.Abs(currentBounds.Top-bounds.Top)<2&&Math.Abs(currentBounds.Height-bounds.Height)<2&&bounds.Left<=currentBounds.Right+Math.Max(3,bounds.Height*.35)){merged=Rect.Union(currentBounds,bounds);continue;}if(merged is { } completed)AddHighlight(completed);merged=bounds;}if(merged is { } final)AddHighlight(final);
+        }
+        private void AddHighlight(Rect bounds){var highlight=new Border{Width=bounds.Width,Height=bounds.Height,CornerRadius=new CornerRadius(2),Background=new SolidColorBrush(Color.FromArgb(92,63,145,245)),IsHitTestVisible=false};Canvas.SetLeft(highlight,bounds.Left);Canvas.SetTop(highlight,bounds.Top);_highlights.Children.Add(highlight);}
+        public void Dispose(){if(_box.IsMouseCaptured)_box.ReleaseMouseCapture();_box.PreviewMouseLeftButtonDown-=MouseDown;_box.PreviewMouseMove-=MouseMove;_box.PreviewMouseLeftButtonUp-=MouseUp;_box.LostMouseCapture-=LostCapture;_highlights.Children.Clear();}
     }
 
     private enum DrawTool{Freehand,Rectangle,Arrow}
@@ -73,25 +108,54 @@ public partial class CaptureOverlayWindow : Window
 
     public CaptureOverlayWindow(AppHost host)
     {
-        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();
+        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();ApplyVoiceAvailability();
         if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
         DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
         var area=System.Windows.Forms.SystemInformation.VirtualScreen;Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
-        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.ExcludeFromCapture(hwnd);};
-        Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=QuickPrompt.Text.Length==0?Visibility.Visible:Visibility.Collapsed;PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();QuickPrompt.Focus();};
+        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);var excluded=NativeMethods.ExcludeFromCapture(hwnd);var nativeError=excluded?0:System.Runtime.InteropServices.Marshal.GetLastWin32Error();_captureExclusionVerified=excluded&&!NativeMethods.VisualQaCaptureEnabled;if(!excluded)new PrivacyLogger().Error("CaptureProtection",new InvalidOperationException($"无法启用覆盖层防捕获，Win32 错误码 {nativeError}"));};
+        Loaded+=async (_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=QuickPrompt.Text.Length==0?Visibility.Visible:Visibility.Collapsed;PromptBar.SizeChanged+=(_,_)=>{PositionPromptBar();UpdatePromptBarHiddenTransform(false);};PositionPromptBar();QuickPrompt.Focus();if(CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}};
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;PositionPromptBar();};
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
-        Closed+=(_,_)=>{_speechRequest?.Cancel();_request?.Cancel();_overlayRequest?.Cancel();_recordingTimer.Stop();if(_recordingSession is not null){_recordingSession.Stop();_recordingSession.Dispose();}_recordingSession=null;foreach(var item in _selections)item.Video.Close();};
+        Closed+=OnClosed;
+    }
+
+    private void OnClosed(object? sender,EventArgs e)
+    {
+        _closed=true;
+        TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);CancelRecordingStopWatchdog();_recordingTimer.Stop();
+        _reasoningRenderRequest=null;_reasoningRenderScheduled=false;ReasoningPulse.BeginAnimation(OpacityProperty,null);
+        var session=_recordingSession;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;
+        if(session is not null)
+        {
+            try{session.Stop();}catch(Exception ex){new PrivacyLogger().Error("RecordingStopOnClose",ex);}
+            try{session.Dispose();}catch(Exception ex){new PrivacyLogger().Error("RecordingDisposeOnClose",ex);}
+        }
+        foreach(var item in _selections)
+            ReleaseSelectionResources(item);
+    }
+
+    private static void TryCancel(CancellationTokenSource? source)
+    {
+        if(source is null)return;
+        try{source.Cancel();}catch(ObjectDisposedException){}catch(Exception ex){new PrivacyLogger().Error("OverlayCancelOnClose",ex);}
+    }
+
+    private static void ReleaseSelectionResources(SelectionItem item)
+    {
+        try{item.Video.Close();}catch(Exception ex){new PrivacyLogger().Error("OverlayVideoClose",ex);}
+        try{ClearTextSelection(item);}catch(Exception ex){new PrivacyLogger().Error("OverlayTextSelectionClose",ex);}
+        item.VideoLease?.Dispose();item.VideoLease=null;
     }
 
     private void OnMouseDown(object s,MouseButtonEventArgs e)
     {
         if(_recordingMode||_drawingMode)return;
         if(e.OriginalSource is Thumb||IsInside(e.OriginalSource as DependencyObject,PromptBar)||IsInside(e.OriginalSource as DependencyObject,Toolbar)||IsInside(e.OriginalSource as DependencyObject,DrawingToolbar)||IsInside(e.OriginalSource as DependencyObject,RecordingBar)||_selections.Any(item=>IsInside(e.OriginalSource as DependencyObject,item.TextSelection)))return;
+        if(RejectIfOverlayOperationBusy())return;
         var p=e.GetPosition(Root);var addNew=_forceNewSelection||Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);_forceNewSelection=false;
         var hit=addNew?-1:FindSelection(p);
         if(hit>=0){Select(hit);_moving=true;_moveStart=p;_moveOrigin=Active!.Bounds;}
-        else{var item=CreateSelection(false);_selections.Add(item);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();_selecting=true;_start=p;item.Bounds=new Rect(p,p);}
+        else{RemoveImplicitSelections();var item=CreateSelection(false);_selections.Add(item);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();_selecting=true;_start=p;item.Bounds=new Rect(p,p);}
         Toolbar.Visibility=Visibility.Collapsed;SetPromptBarHidden(true);Root.CaptureMouse();e.Handled=true;
     }
 
@@ -100,26 +164,40 @@ public partial class CaptureOverlayWindow : Window
         if(_recordingMode||_drawingMode)return;
         var p=e.GetPosition(Root);
         if(_selecting&&Active is { } created){created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
-        else if(_moving&&Active is { } moved){var d=p-_moveStart;moved.Bounds=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));UpdateSelection(moved);}
-        else{SetPromptBarHidden(PointerOverSelection(p));return;}
+        else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
+        else{if(Active is null)PositionPromptBar();SetPromptBarHidden(PointerOverSelection(p));return;}
     }
 
     private void OnMouseUp(object s,MouseButtonEventArgs e)
     {
         if(_recordingMode||_drawingMode)return;
         if(!_selecting&&!_moving)return;_selecting=_moving=false;Root.ReleaseMouseCapture();
-        if(Active is not { } item||item.Bounds.Width<8||item.Bounds.Height<8){RemoveActiveSelection(false);if(Active is not null)ShowToolbar();SetPromptBarHidden(false);return;}
-        UpdateSelection(item);ShowToolbar();SetPromptBarHidden(PointerOverSelection(e.GetPosition(Root)));PromptStatus.Text=$"已选择 {_selections.Count} 个区域 · 可继续拖动添加";e.Handled=true;
+        if(Active is not { } item||!CaptureOverlayPolicy.IsUsableSelection(item.Bounds.Width,item.Bounds.Height)){RemoveActiveSelection(false);if(Active is not null)ShowToolbar();SetPromptBarHidden(false);return;}
+        UpdateSelection(item);PositionPromptBar();ShowToolbar();SetPromptBarHidden(PointerOverSelection(e.GetPosition(Root)));PromptStatus.Text=$"已选择 {_selections.Count} 个区域 · 可继续拖动添加";e.Handled=true;
+    }
+
+    private void OnLostMouseCapture(object s,MouseEventArgs e)=>FinishInterruptedPointerInteraction();
+    private void OnDeactivated(object? s,EventArgs e)
+    {
+        FinishInterruptedPointerInteraction();
+        if(_drawingMode)FinishInterruptedDrawingMode();
+    }
+    private void FinishInterruptedPointerInteraction()
+    {
+        if(!_selecting&&!_moving)return;_selecting=_moving=false;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
+        if(Active is not { } item||!CaptureOverlayPolicy.IsUsableSelection(item.Bounds.Width,item.Bounds.Height)){RemoveActiveSelection(false);PromptStatus.Text="框选已中断，请重新拖动选择";}
+        else{UpdateSelection(item);PositionPromptBar();ShowToolbar();PromptStatus.Text="框选已结束，可继续操作";}
+        SetPromptBarHidden(false);
     }
 
     private SelectionItem CreateSelection(bool implicitFullScreen)
     {
-        var item=new SelectionItem{IsImplicit=implicitFullScreen};item.Badge.Child=item.BadgeText;item.Markup.DefaultDrawingAttributes=new DrawingAttributes{Color=Colors.Red,Width=4,Height=4,FitToCurve=true};item.Markup.StrokeCollected+=(_,_)=>item.Redo.Clear();item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Video.MediaEnded+=(_,_)=>{item.Video.Position=TimeSpan.Zero;if(item.VideoPlaying)item.Video.Play();};item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.Annotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
+        var item=new SelectionItem{IsImplicit=implicitFullScreen};item.Badge.Child=item.BadgeText;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);item.Markup.StrokeCollected+=(_,_)=>item.Redo.Clear();item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Video.MediaEnded+=(_,_)=>{item.Video.Position=TimeSpan.Zero;if(item.VideoPlaying)item.Video.Play();};item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
     }
 
     private void UpdateSelection(SelectionItem item)
     {
-        var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Markup.Width=item.Annotations.Width=item.TextSelection.Width=r.Width;item.Markup.Height=item.Annotations.Height=item.TextSelection.Height=r.Height;
+        var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Markup.Width=item.TextOverlays.Width=item.AiAnnotations.Width=item.TextSelection.Width=r.Width;item.Markup.Height=item.TextOverlays.Height=item.AiAnnotations.Height=item.TextSelection.Height=r.Height;
         var px=ToPixelRect(r);if(px.Width>0&&px.Height>0&&item.VideoPath is null)item.Image.Source=ScreenCaptureService.Crop(_frame.Image,px);
         var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?new SolidColorBrush(Color.FromRgb(102,112,235)):new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:referenced?2:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Background=new SolidColorBrush(referenced?Color.FromArgb(238,91,101,226):Color.FromArgb(230,29,119,224));item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
         if(active&&!item.IsImplicit){SizeText.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":$"视频 · {item.VideoDuration:mm\\:ss}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
@@ -132,64 +210,202 @@ public partial class CaptureOverlayWindow : Window
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
-    private Rect MonitorBounds(Rect selection){var pixels=ToPixelRect(selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).Bounds;var sx=Root.ActualWidth/_frame.Image.PixelWidth;var sy=Root.ActualHeight/_frame.Image.PixelHeight;return new Rect((bounds.Left-_frame.OriginX)*sx,(bounds.Top-_frame.OriginY)*sy,bounds.Width*sx,bounds.Height*sy);}
+    private Rect MonitorBounds(Rect selection)
+    {
+        var pixels=ToPixelRect(selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).Bounds;
+        return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
+    }
+    private Rect PromptMonitorBounds()
+    {
+        if(Active is {IsImplicit:false} item)return MonitorBounds(item.Bounds);
+        var bounds=System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position).Bounds;
+        return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
+    }
 
     private void ShowToolbar()
     {
         if(Active is not {IsImplicit:false} item||_recordingMode){Toolbar.Visibility=Visibility.Collapsed;return;}
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
-        DrawButton.Visibility=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;RecordButton.Visibility=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;PinButton.ToolTip=item.VideoPath is null?"贴图 (P)":"贴视频 (P)";CopyButton.ToolTip=item.VideoPath is null?"复制图片 (C)":"复制视频文件 (C)";SaveButton.ToolTip=item.VideoPath is null?"保存图片 (S)":"保存 MP4 (S)";
+        var isVideo=item.VideoPath is not null;DrawButton.Visibility=RecordButton.Visibility=TranslateButton.Visibility=OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
 
     private void PositionFloatingBar(FrameworkElement bar,SelectionItem item)
     {
-        bar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=bar.DesiredSize.Width;var h=bar.DesiredSize.Height;var monitor=MonitorBounds(item.Bounds);var x=Math.Clamp(item.Bounds.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var availableBottom=_promptBarHidden||PromptBar.Visibility!=Visibility.Visible?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=item.Bounds.Bottom+10;var above=item.Bounds.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(bar,x);Canvas.SetTop(bar,y);
+        var monitor=MonitorBounds(item.Bounds);var availableWidth=Math.Max(1,monitor.Width-16);bar.MaxWidth=availableWidth;bar.Measure(new Size(availableWidth,double.PositiveInfinity));var w=CaptureOverlayPolicy.ConstrainFloatingBarWidth(monitor,bar.DesiredSize.Width);var h=bar.DesiredSize.Height;var x=Math.Clamp(item.Bounds.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var promptLeft=Canvas.GetLeft(PromptBar);var promptWidth=Math.Max(PromptBar.ActualWidth,PromptBar.DesiredSize.Width);var promptOverlapsMonitor=double.IsFinite(promptTop)&&double.IsFinite(promptLeft)&&promptLeft<monitor.Right&&promptLeft+promptWidth>monitor.Left;var availableBottom=_promptBarHidden||PromptBar.Visibility!=Visibility.Visible||!promptOverlapsMonitor?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=item.Bounds.Bottom+10;var above=item.Bounds.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(bar,x);Canvas.SetTop(bar,y);
         if(ReferenceEquals(bar,Toolbar)&&SizeText.Visibility==Visibility.Visible){SizeText.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var sizeHeight=SizeText.DesiredSize.Height;var preferred=y<item.Bounds.Top?y-sizeHeight-4:item.Bounds.Top-sizeHeight-4;var sizeY=preferred>=monitor.Top+4?preferred:Math.Min(item.Bounds.Bottom-sizeHeight-4,item.Bounds.Top+4);Canvas.SetLeft(SizeText,item.Bounds.Left);Canvas.SetTop(SizeText,sizeY);}
     }
 
-    private void PositionPromptBar(){if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;PromptBar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Math.Min(PromptBar.DesiredSize.Width,Math.Max(320,Root.ActualWidth-32));PromptBar.Width=w;Canvas.SetLeft(PromptBar,(Root.ActualWidth-w)/2);Canvas.SetTop(PromptBar,Math.Max(16,Root.ActualHeight-PromptBar.ActualHeight-24));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();if(DrawingToolbar.Visibility==Visibility.Visible&&Active is { } item)PositionFloatingBar(DrawingToolbar,item);}
-    private void SetPromptBarHidden(bool hidden){if(_promptBarHidden==hidden)return;_promptBarHidden=hidden;PromptBar.IsHitTestVisible=!hidden;if(PromptBar.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBar.RenderTransform=transform;}var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(hidden?PromptBar.ActualHeight+32:0,TimeSpan.FromMilliseconds(hidden?150:190)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(hidden?.08:.98,TimeSpan.FromMilliseconds(150)));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
-    private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
-    private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevron.Text=_reasoningExpanded?"⌃":"⌄";_ = Dispatcher.BeginInvoke(PositionPromptBar);}
-    private void ShowReasoning(string delta)
+    private void PositionPromptBar()
     {
-        if(ReasoningToggle.Visibility!=Visibility.Visible){ReasoningToggle.Visibility=Visibility.Visible;_reasoningExpanded=true;ReasoningPanel.Visibility=Visibility.Visible;ReasoningChevron.Text="⌃";ReasoningLabel.Text="正在思考…";ReasoningPulse.BeginAnimation(OpacityProperty,new DoubleAnimation(.35,1,TimeSpan.FromMilliseconds(650)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever});}
-        ReasoningText.Text+=delta;ReasoningText.GetBindingExpression(TextBlock.TextProperty)?.UpdateTarget();_ = Dispatcher.BeginInvoke(PositionPromptBar);
+        if(_positioningPromptBar||Root.ActualWidth<=0||Root.ActualHeight<=0)return;
+        var monitor=PromptMonitorBounds();
+        if(monitor.IsEmpty)return;
+        _positioningPromptBar=true;
+        try
+        {
+            var availableWidth=Math.Max(1,monitor.Width-CaptureOverlayPolicy.PromptSideMargin*2);
+            PromptBar.Width=Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,availableWidth);
+            // Remove a stale explicit height before measuring content that may
+            // have gained reference chips or an answer since the last pass.
+            PromptBar.Height=double.NaN;
+            PromptBar.MaxHeight=Math.Max(1,monitor.Height-CaptureOverlayPolicy.PromptTopMargin-CaptureOverlayPolicy.PromptBottomMargin);
+            // The previous compact pass intentionally leaves ResponseScroll at
+            // MaxHeight=0.  Lift that cap before measuring newly visible answer
+            // content, otherwise the zero-height response feeds back into the
+            // next desired size and the first answer can never expand.
+            ResponseScroll.MaxHeight=CaptureOverlayPolicy.GetPromptResponseMaxHeight(PromptBar.MaxHeight);
+            PromptBar.Measure(new Size(PromptBar.Width,PromptBar.MaxHeight));
+            var desiredHeight=PromptBar.DesiredSize.Height;
+            var bounds=CaptureOverlayPolicy.GetPromptBarBounds(monitor,desiredHeight);
+            if(bounds.IsEmpty)return;
+
+            ResponseScroll.MaxHeight=CaptureOverlayPolicy.GetPromptResponseMaxHeight(bounds.Height);
+            PromptBar.MaxHeight=bounds.Height;
+            PromptBar.InvalidateMeasure();
+            PromptBar.Measure(new Size(bounds.Width,bounds.Height));
+
+            // DesiredSize can still describe the pre-chip layout during the
+            // SizeChanged callback.  Fit both values now, then run one bounded
+            // render-priority pass using the arranged height below.
+            var measuredHeight=Math.Max(bounds.Height,PromptBar.DesiredSize.Height);
+            bounds=CaptureOverlayPolicy.RefitPromptBarAfterArrange(monitor,bounds,Math.Min(measuredHeight,bounds.Height));
+            PromptBar.Width=bounds.Width;
+            PromptBar.MaxHeight=bounds.Height;
+            Canvas.SetLeft(PromptBar,bounds.Left);
+            Canvas.SetTop(PromptBar,bounds.Top);
+            UpdatePromptBarHiddenTransform(false);
+            QueuePromptBarLayoutClamp();
+            if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();
+            if(DrawingToolbar.Visibility==Visibility.Visible&&Active is { } item)PositionFloatingBar(DrawingToolbar,item);
+        }
+        finally{_positioningPromptBar=false;}
+    }
+
+    private void QueuePromptBarLayoutClamp()
+    {
+        if(_promptBarLayoutPassQueued||_closed||!IsLoaded)return;
+        _promptBarLayoutPassQueued=true;
+        _=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(() =>
+        {
+            _promptBarLayoutPassQueued=false;
+            if(_closed||!IsLoaded||PromptBar.Visibility!=Visibility.Visible)return;
+            var monitor=PromptMonitorBounds();
+            if(monitor.IsEmpty)return;
+            var left=Canvas.GetLeft(PromptBar);
+            var top=Canvas.GetTop(PromptBar);
+            var width=PromptBar.ActualWidth>0?PromptBar.ActualWidth:PromptBar.DesiredSize.Width;
+            var height=PromptBar.ActualHeight>0?PromptBar.ActualHeight:PromptBar.DesiredSize.Height;
+            if(!double.IsFinite(left)||!double.IsFinite(top)||!double.IsFinite(width)||!double.IsFinite(height)||width<=0||height<=0)return;
+            var candidate=new Rect(left,top,width,height);
+            var fitted=CaptureOverlayPolicy.RefitPromptBarAfterArrange(monitor,candidate,height);
+            PromptBar.Width=fitted.Width;
+            if(fitted.Height<height-.25)PromptBar.MaxHeight=fitted.Height;
+            Canvas.SetLeft(PromptBar,fitted.Left);
+            Canvas.SetTop(PromptBar,fitted.Top);
+            UpdatePromptBarHiddenTransform(false);
+        }));
+    }
+    private void SetPromptBarHidden(bool hidden){var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBar.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void UpdatePromptBarHiddenTransform(bool animate)
+    {
+        if(PromptBar.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBar.RenderTransform=transform;}
+        var target=0d;if(_promptBarHidden){var monitor=PromptMonitorBounds();var top=Canvas.GetTop(PromptBar);target=double.IsFinite(top)?Math.Max(PromptBar.ActualHeight+32,monitor.Bottom-top+32):PromptBar.ActualHeight+32;}
+        if(animate){var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(_promptBarHidden?150:190)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(_promptBarHidden?.08:.98,TimeSpan.FromMilliseconds(150)));}
+        else{transform.BeginAnimation(TranslateTransform.YProperty,null);transform.Y=target;PromptBar.BeginAnimation(OpacityProperty,null);PromptBar.Opacity=_promptBarHidden?.08:.98;}
+    }
+    private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+    private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevronRotation.Angle=_reasoningExpanded?180:0;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+    private void ShowReasoning(string delta,CancellationTokenSource request)
+    {
+        AppendReasoning(delta);if(_answerExpanded&&ReasoningToggle.Visibility!=Visibility.Visible)RevealReasoningInProgress();if(_reasoningRenderScheduled&&ReferenceEquals(_reasoningRenderRequest,request))return;_reasoningRenderScheduled=true;_reasoningRenderRequest=request;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>
+        {
+            if(!ReferenceEquals(_reasoningRenderRequest,request))return;
+            _reasoningRenderScheduled=false;_reasoningRenderRequest=null;
+            if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;
+            ReasoningText.Text=LimitReasoning(_reasoningBuffer.ToString());_ = Dispatcher.BeginInvoke(PositionPromptBar);
+        }));
+    }
+    private void RevealReasoningInProgress()
+    {
+        if(string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))return;ReasoningToggle.Visibility=Visibility.Visible;_reasoningExpanded=true;ReasoningPanel.Visibility=Visibility.Visible;ReasoningChevronRotation.Angle=180;ReasoningLabel.Text="正在思考…";ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));ReasoningPulse.BeginAnimation(OpacityProperty,new DoubleAnimation(.35,1,TimeSpan.FromMilliseconds(650)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever});
     }
     private void FinishReasoning(string reasoning)
     {
-        if(!string.IsNullOrWhiteSpace(reasoning))ReasoningText.Text=reasoning.Trim();CloseReasoning("思考过程 · 已完成",Color.FromRgb(95,181,137));
+        if(!string.IsNullOrWhiteSpace(reasoning)){_reasoningBuffer.Clear();AppendReasoning(reasoning.Trim());ReasoningText.Text=LimitReasoning(_reasoningBuffer.ToString());}CloseReasoning("思考过程 · 已完成",Color.FromRgb(95,181,137));
     }
     private void CloseReasoning(string label,Color color)
     {
-        if(ReasoningText.Text.Length==0)return;ReasoningToggle.Visibility=Visibility.Visible;ReasoningLabel.Text=label;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Opacity=1;ReasoningPulse.Background=new SolidColorBrush(color);_reasoningExpanded=false;ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningChevron.Text="⌄";_ = Dispatcher.BeginInvoke(PositionPromptBar);
+        _reasoningRenderRequest=null;_reasoningRenderScheduled=false;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Opacity=1;ReasoningPulse.Background=new SolidColorBrush(color);
+        if(string.IsNullOrWhiteSpace(ReasoningText.Text)&&_reasoningBuffer.Length>0)ReasoningText.Text=LimitReasoning(_reasoningBuffer.ToString());
+        _reasoningExpanded=false;ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningChevronRotation.Angle=0;
+        if(string.IsNullOrWhiteSpace(ReasoningText.Text)||!_answerExpanded){ReasoningToggle.Visibility=Visibility.Collapsed;return;}
+        ReasoningToggle.Visibility=Visibility.Visible;ReasoningLabel.Text=label;_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }
+    private void ResetAnswerForRequest()
+    {
+        foreach(var item in _selections)item.AiAnnotations.Children.Clear();
+        _lastSentSelections.Clear();
+        _answerExpanded=false;AnswerText.Text="";AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;_reasoningBuffer.Clear();_reasoningRenderScheduled=false;_reasoningRenderRequest=null;ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;_ = Dispatcher.BeginInvoke(PositionPromptBar);
+    }
+    private void AppendReasoning(string value)
+    {
+        const int bufferLimit=ReasoningDisplayLimit*2;if(value.Length>=bufferLimit){_reasoningBuffer.Clear();_reasoningBuffer.Append(value.AsSpan(value.Length-bufferLimit));return;}var overflow=_reasoningBuffer.Length+value.Length-bufferLimit;if(overflow>0)_reasoningBuffer.Remove(0,overflow);_reasoningBuffer.Append(value);
+    }
+    private static string LimitReasoning(string value)=>value.Length<=ReasoningDisplayLimit?value:"…较早思考内容已收纳…\n"+value[^ReasoningDisplayLimit..];
 
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active);}
     private BitmapSource RenderSelectionImage(SelectionItem item)
     {
         var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);if(item.Markup.Strokes.Count==0)return source;var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixels.Width/Math.Max(1,item.Bounds.Width),pixels.Height/Math.Max(1,item.Bounds.Height)));drawing.DrawImage(source,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.DrawRectangle(new VisualBrush(item.Markup),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixels.Width),Math.Max(1,pixels.Height),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
-    private List<AiAttachment> BuildAttachments()
+    private async Task<List<AiAttachment>> BuildAttachmentsAsync(IReadOnlyList<SelectionItem> targets,AiProviderCapabilities capabilities,CancellationToken cancellationToken)
     {
-        EnsureScreenSelection();_lastSentSelections=(_references.Count>0?_selections.Where(_references.Contains):_selections).ToList();return _lastSentSelections.Select(item=>item.VideoPath is { } path?new AiAttachment(AiAttachmentType.Video,"video/mp4",FilePath:path,Duration:item.VideoDuration):new AiAttachment(AiAttachmentType.Image,"image/png",ScreenCaptureService.EncodePng(RenderSelectionImage(item)))).ToList();
+        _lastSentSelections=targets.ToList();
+        var prepared=_lastSentSelections.Select(item=>(Item:item,Image:item.VideoPath is null?RenderSelectionImage(item):null)).ToList();var imageCount=prepared.Count(entry=>entry.Image is not null);var rawVideoBytes=prepared.Where(entry=>entry.Item.VideoPath is not null).Sum(entry=>Math.Min(45L*1024*1024,new FileInfo(entry.Item.VideoPath!).Length));var aggregateImageBudget=Math.Max(256L*1024,45L*1024*1024-rawVideoBytes);var perImageBudget=imageCount==0?0:Math.Min(capabilities.MaxImageSize,aggregateImageBudget/imageCount);
+        return await Task.Run(()=>
+        {
+            var attachments=new List<AiAttachment>(prepared.Count);
+            try
+            {
+                foreach(var entry in prepared)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if(entry.Item.VideoPath is { } path)attachments.Add(new AiAttachment(AiAttachmentType.Video,"video/mp4",FilePath:path,Duration:entry.Item.VideoDuration));
+                    else{var encoded=AiImageEncodingService.Encode(entry.Image!,perImageBudget,capabilities.AcceptedMimeTypes,cancellationToken);attachments.Add(new AiAttachment(AiAttachmentType.Image,encoded.MimeType,encoded.Data));}
+                }
+                return attachments;
+            }
+            catch{AiImageEncodingService.ClearAttachmentBuffers(attachments);throw;}
+        },cancellationToken);
     }
     private void EnsureScreenSelection(){if(_selections.Count>0)return;var item=CreateSelection(true);item.Bounds=new Rect(0,0,Root.ActualWidth,Root.ActualHeight);_selections.Add(item);_activeIndex=0;RefreshSelectionNumbers();UpdateSelection(item);}
 
     private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=Cyan;t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
     private void HideHandles(){foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
-    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t||Active is not {IsImplicit:false} item)return;SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);item.Bounds=new Rect(new Point(l,top),new Point(r,b));item.Annotations.Children.Clear();ClearTextSelection(item);UpdateSelection(item);ShowToolbar();e.Handled=true;}
+    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(RejectIfOverlayOperationBusy()||sender is not Thumb t||Active is not {IsImplicit:false} item)return;SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);var next=new Rect(new Point(l,top),new Point(r,b));if(CaptureOverlayPolicy.HasContentGeometryChanged(item.Bounds,next))InvalidateImageDerivedLayers(item);item.Bounds=next;UpdateSelection(item);ShowToolbar();e.Handled=true;}
+    private void ResizeCompleted(object sender,DragCompletedEventArgs e){PositionPromptBar();if(Active is not null)ShowToolbar();SetPromptBarHidden(PointerOverSelection(Mouse.GetPosition(Root)));e.Handled=true;}
 
-    private void AddRegion(object s,RoutedEventArgs e){_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
+    private void AddRegion(object s,RoutedEventArgs e){if(RejectIfOverlayOperationBusy())return;_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
     private void ReferenceRegion(object s,RoutedEventArgs e)
     {
-        if(Active is not {IsImplicit:false} item)return;_references.Add(item);UpdateReferenceChips();UpdateSelection(item);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();PromptStatus.Text=$"已加入 @{(item.VideoPath is null?"区域":"视频")}{_activeIndex+1} · 输入问题后发送";
+        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;_references.Add(item);UpdateReferenceChips();UpdateSelection(item);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();PromptStatus.Text=$"已加入 @{(item.VideoPath is null?"区域":"视频")}{_activeIndex+1} · 输入问题后发送";
     }
-    private void RemoveSelection(object s,RoutedEventArgs e)=>RemoveActiveSelection(true);
+    private void RemoveSelection(object s,RoutedEventArgs e){if(!RejectIfOverlayOperationBusy())RemoveActiveSelection(true);}
+    private void RemoveImplicitSelections()
+    {
+        var active=Active;var removed=false;
+        foreach(var item in _selections.Where(item=>item.IsImplicit).ToList())
+        {
+            ReleaseSelectionResources(item);_references.Remove(item);SelectionLayer.Children.Remove(item.Host);_selections.Remove(item);removed=true;
+        }
+        if(!removed)return;
+        _activeIndex=active is not null&&!active.IsImplicit?_selections.IndexOf(active):_selections.Count-1;RefreshSelectionNumbers();
+    }
     private void RemoveActiveSelection(bool updateUi)
     {
-        if(Active is not { } item)return;item.Video.Close();_references.Remove(item);SelectionLayer.Children.Remove(item.Host);_selections.RemoveAt(_activeIndex);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();if(Active is { } next)UpdateSelection(next);else{HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}if(updateUi){PromptStatus.Text=_selections.Count==0?"拖动可连续框选多个区域":$"剩余 {_selections.Count} 个区域";if(Active is not null)ShowToolbar();}
+        if(Active is not { } item)return;ReleaseSelectionResources(item);_references.Remove(item);SelectionLayer.Children.Remove(item.Host);_selections.RemoveAt(_activeIndex);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();if(Active is { } next)UpdateSelection(next);else{HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}if(updateUi){PromptStatus.Text=_selections.Count==0?"拖动可连续框选多个区域":$"剩余 {_selections.Count} 个区域";if(Active is not null)ShowToolbar();}
     }
     private void RefreshSelectionNumbers(){for(var i=0;i<_selections.Count;i++)_selections[i].BadgeText.Text=(i+1).ToString();UpdateReferenceChips();}
     private void UpdateReferenceChips()
@@ -197,73 +413,140 @@ public partial class CaptureOverlayWindow : Window
         ReferenceChips.Children.Clear();
         foreach(var item in _selections.Where(_references.Contains))
         {
-            var chip=new Border{Background=new SolidColorBrush(Color.FromRgb(231,236,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(205,214,252)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(9),Margin=new Thickness(0,0,5,3)};var row=new StackPanel{Orientation=Orientation.Horizontal};var type=item.VideoPath is null?"区域":"视频";var link=new Button{Content=$"@{type}{_selections.IndexOf(item)+1}",ToolTip=$"定位到此{type}"};link.SetResourceReference(StyleProperty,"ReferenceChipButton");link.Click+=(_,_)=>{var index=_selections.IndexOf(item);if(index<0)return;Select(index);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();};var remove=new Button{Content="×",ToolTip="移除此引用"};remove.SetResourceReference(StyleProperty,"ReferenceChipRemoveButton");remove.Click+=(_,_)=>{_references.Remove(item);UpdateReferenceChips();UpdateSelection(item);if(ReferenceEquals(item,Active))ShowToolbar();QuickPrompt.Focus();};row.Children.Add(link);row.Children.Add(remove);chip.Child=row;ReferenceChips.Children.Add(chip);
+            var chip=new Border{Background=new SolidColorBrush(Color.FromRgb(231,236,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(205,214,252)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(9),Margin=new Thickness(0,0,5,3)};var row=new StackPanel{Orientation=Orientation.Horizontal};var type=item.VideoPath is null?"区域":"视频";var link=new Button{Content=$"@{type}{_selections.IndexOf(item)+1}",ToolTip=$"定位到此{type}"};link.SetResourceReference(StyleProperty,"ReferenceChipButton");link.Click+=(_,_)=>{var index=_selections.IndexOf(item);if(index<0)return;Select(index);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();};var remove=new Button{Content=CreateCloseIcon(),ToolTip="移除此引用"};System.Windows.Automation.AutomationProperties.SetName(remove,$"移除{type}{_selections.IndexOf(item)+1}引用");remove.SetResourceReference(StyleProperty,"ReferenceChipRemoveButton");remove.Click+=(_,_)=>{_references.Remove(item);UpdateReferenceChips();UpdateSelection(item);if(ReferenceEquals(item,Active))ShowToolbar();QuickPrompt.Focus();};row.Children.Add(link);row.Children.Add(remove);chip.Child=row;ReferenceChips.Children.Add(chip);
         }
         ReferenceChips.Visibility=ReferenceChips.Children.Count>0?Visibility.Visible:Visibility.Collapsed;QuickPromptHint.Text=ReferenceChips.Children.Count>0?"继续输入关于引用区域的问题…":"询问当前屏幕，或连续圈选多个区域…";_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }
+    private static System.Windows.Shapes.Path CreateCloseIcon()=>new(){Width=12,Height=12,Stretch=Stretch.Uniform,Stroke=new SolidColorBrush(Color.FromRgb(126,139,160)),StrokeThickness=1.8,StrokeStartLineCap=PenLineCap.Round,StrokeEndLineCap=PenLineCap.Round,Data=Geometry.Parse("M3,3 L9,9 M9,3 L3,9")};
 
     private async Task SendAsync(bool useDefaultPrompt)
     {
-        if(_request is {IsCancellationRequested:false})return;var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){PromptStatus.Text="请先配置可用的 AI Provider";_host.ShowSettings();return;}
-        EnsureScreenSelection();var targets=(_references.Count>0?_selections.Where(_references.Contains):_selections).ToList();var hasVideo=targets.Any(x=>x.VideoPath is not null);var hasImage=targets.Any(x=>x.VideoPath is null);if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
-        var targetCount=targets.Count;var prompt=QuickPrompt.Text.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=hasVideo?"按时间顺序说明引用视频中发生了什么，包括主体、动作和画面变化。":targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
-        var request=new CancellationTokenSource(TimeSpan.FromMinutes(2));_request=request;SendButton.IsEnabled=false;AnswerText.Text="";ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";var streamOpen=true;
+        if(_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;var provider=new AiProviderFactory().Create(_host.Settings,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";ShowSettingsFromOverlay();return;}
+        EnsureScreenSelection();var targets=CaptureOverlayPolicy.SelectSendTargets(_selections,item=>item.IsImplicit,_references.Contains);var hasVideo=targets.Any(x=>x.VideoPath is not null);var hasImage=targets.Any(x=>x.VideoPath is null);if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
+        var targetCount=targets.Count;if(targetCount>OpenAiCompatibleProvider.AttachmentCountLimit){PromptStatus.Text=$"单次最多发送 {OpenAiCompatibleProvider.AttachmentCountLimit} 个附件，请移除部分引用后重试";return;}var sentDraft=QuickPrompt.Text;var prompt=sentDraft.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=hasVideo?"按时间顺序说明引用视频中发生了什么，包括主体、动作和画面变化。":targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
+        var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();PromptStatus.Text=$"正在准备 {targetCount} 个引用区域…按 Esc 可取消";var streamOpen=true;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;
         try
         {
-            var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!streamOpen||!ReferenceEquals(_request,request))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent);if(delta.Content.Length>0)PromptStatus.Text="正在整理回答…";}):null;
-            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[.._history],Attachments=BuildAttachments(),StreamingProgress=progress},request.Token);streamOpen=false;if(!ReferenceEquals(_request,request))return;FinishReasoning(result.Reasoning);var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){ShowAnswer();AnswerText.Text=emptyAnswer;PromptStatus.Text=emptyAnswer;return;}ShowAnswer();AnswerText.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));QuickPrompt.Clear();RenderAnnotations(result.Annotations);
-            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,request.Token);PromptStatus.Text=hasVideo?"视频理解完成 · 可继续提问":result.Annotations.Count>0?$"已在 {_lastSentSelections.Count} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";
+            foreach(var video in targets.Select(item=>item.VideoPath).Where(path=>path is not null))attachmentLeases.Add(TempMediaRegistry.Shared.AcquireExistingFile(video!));
+            attachments=await BuildAttachmentsAsync(targets,provider.Capabilities,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";
+            var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;ShowAnswer();AnswerText.Text=preview;AnswerText.CaretIndex=AnswerText.Text.Length;AnswerText.ScrollToEnd();PromptStatus.Text="正在整理回答…";}));}}):null;
+            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[..ConversationContextPolicy.CreateBoundedHistory(_history)],Attachments=attachments,StreamingProgress=progress,MaxOutputTokens=4096},request.Token);streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){ShowAnswer();if(!string.IsNullOrWhiteSpace(result.Reasoning))ReasoningText.Text=LimitReasoning(result.Reasoning.Trim());CloseReasoning("思考过程 · 未生成正文",Color.FromRgb(213,91,104));AnswerText.Text=emptyAnswer;PromptStatus.Text=emptyAnswer;return;}ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Text=result.Answer;if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var renderedAnnotationCount=RenderAnnotations(result.Annotations);
+            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));ConversationContextPolicy.TrimInPlace(_history);PromptStatus.Text=hasVideo?"视频理解完成 · 可继续提问":renderedAnnotationCount>0?$"已在 {_lastSentSelections.Count(item=>item.VideoPath is null)} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";
         }
-        catch(OperationCanceledException){if(ReferenceEquals(_request,request)){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}}
-        catch(Exception ex){if(ReferenceEquals(_request,request)){CloseReasoning("思考过程 · 已中止",Color.FromRgb(213,91,104));ShowAnswer();AnswerText.Text="请求失败";PromptStatus.Text=ex.Message;}}
-        finally{streamOpen=false;request.Dispose();if(ReferenceEquals(_request,request)){_request=null;SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}
+        catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_request,request)){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}}
+        catch(Exception ex){if(!_closed&&ReferenceEquals(_request,request)){if(request.IsCancellationRequested){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}else{ShowAnswer();CloseReasoning("思考过程 · 已中止",Color.FromRgb(213,91,104));AnswerText.Text="请求失败";PromptStatus.Text=ex.Message;}}}
+        finally{streamOpen=false;if(attachments is not null)AiImageEncodingService.ClearAttachmentBuffers(attachments);foreach(var lease in attachmentLeases)lease.Dispose();var ownsRequest=ReferenceEquals(_request,request);if(CaptureOverlayPolicy.ShouldFinalizeCanceledAiRequest(_request,request,_closed)){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}request.Dispose();if(ownsRequest){_request=null;if(!_closed){SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}}
     }
 
-    private void RenderAnnotations(IReadOnlyList<AiAnnotation> notes)
+    private int RenderAnnotations(IReadOnlyList<AiAnnotation> notes)
     {
-        foreach(var item in _selections){item.Annotations.Children.Clear();ClearTextSelection(item);}
-        for(var regionIndex=0;regionIndex<_lastSentSelections.Count;regionIndex++)
+        foreach(var item in _lastSentSelections.Distinct())item.AiAnnotations.Children.Clear();var rendered=0;
+        foreach(var target in CaptureOverlayPolicy.SelectSpatialAnnotationTargets(_lastSentSelections,item=>item.VideoPath is not null))
         {
-            var item=_lastSentSelections[regionIndex];var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
+            var regionIndex=target.RegionIndex;var item=target.Item;var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
             foreach(var n in notes.Where(x=>x.RegionIndex==regionIndex).Take(6))
             {
-                var x=Math.Clamp(n.X,0,1)*w;var y=Math.Clamp(n.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(n.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(n.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9}};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.Annotations.Children.Add(box);
-                var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=AnnotationLayoutService.FindCardTop(y+rh*.5-font*1.5,5,Math.Max(5,h-font*4),font*3.2,slots);slots.Add(cardY);var startX=right?x+rw:x;var endX=right?cardX:cardX+cardWidth;item.Annotations.Children.Add(new Line{X1=startX,Y1=y+rh*.5,X2=endX,Y2=cardY+font*1.4,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200)});var dot=new Ellipse{Width=5,Height=5,Fill=Cyan};Canvas.SetLeft(dot,endX-2.5);Canvas.SetTop(dot,cardY+font*1.4-2.5);item.Annotations.Children.Add(dot);var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(238,8,18,31)),BorderBrush=new SolidColorBrush(Color.FromArgb(125,61,190,255)),BorderThickness=new Thickness(1),Child=new TextBlock{Text=n.Text,Foreground=Brushes.White,FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Colors.Black,BlurRadius=15,ShadowDepth=4,Opacity=.7}};Canvas.SetLeft(card,cardX);Canvas.SetTop(card,cardY);item.Annotations.Children.Add(card);
+                rendered++;
+                var x=Math.Clamp(n.X,0,1)*w;var y=Math.Clamp(n.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(n.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(n.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9}};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.AiAnnotations.Children.Add(box);
+                var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=AnnotationLayoutService.FindCardTop(y+rh*.5-font*1.5,5,Math.Max(5,h-font*4),font*3.2,slots);slots.Add(cardY);var startX=right?x+rw:x;var endX=right?cardX:cardX+cardWidth;item.AiAnnotations.Children.Add(new Line{X1=startX,Y1=y+rh*.5,X2=endX,Y2=cardY+font*1.4,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200)});var dot=new Ellipse{Width=5,Height=5,Fill=Cyan};Canvas.SetLeft(dot,endX-2.5);Canvas.SetTop(dot,cardY+font*1.4-2.5);item.AiAnnotations.Children.Add(dot);var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Child=new TextBlock{Text=n.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};Canvas.SetLeft(card,cardX);Canvas.SetTop(card,cardY);item.AiAnnotations.Children.Add(card);
             }
         }
+        return rendered;
     }
 
-    private void Copy(object s,RoutedEventArgs e)
+    private async void Copy(object s,RoutedEventArgs e)
     {
-        if(Active is not { } item)return;if(item.VideoPath is { } video){var files=new System.Collections.Specialized.StringCollection{video};var data=new DataObject();data.SetFileDropList(files);Clipboard.SetDataObject(data,true);PromptStatus.Text="视频文件已复制";}else{Clipboard.SetImage(RenderSelectionImage(item));PromptStatus.Text="图片已复制";}SetPromptBarHidden(false);
+        if(RejectIfOverlayOperationBusy()||Active is not { } item)return;
+        if(item.VideoPath is not { } video)
+        {
+            var copied=ClipboardService.TrySetImage(RenderSelectionImage(item),out var copyError);
+            PromptStatus.Text=copied?"图片已复制":copyError;SetPromptBarHidden(false);return;
+        }
+
+        var operation=BeginOverlayOperation("正在准备视频副本…按 Esc 可取消");
+        try
+        {
+            var result=await ClipboardService.TrySetFileDropListAsync(video,operation.Token);
+            if(IsOverlayOperationActive(operation,item))PromptStatus.Text=result.Success?"视频文件已复制":result.Error;
+        }
+        catch(OperationCanceledException){if(IsOverlayOperationActive(operation,item))PromptStatus.Text="已取消复制视频";}
+        finally{EndOverlayOperation(operation);SetPromptBarHidden(false);}
     }
-    private void Save(object s,RoutedEventArgs e)
+    private async void Save(object s,RoutedEventArgs e)
     {
-        if(Active is not { } item)return;if(item.VideoPath is { } video){var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4",DefaultExt=".mp4"};if(dialog.ShowDialog(this)==true){File.Copy(video,dialog.FileName,true);PromptStatus.Text="MP4 已保存";}return;}var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(imageDialog.ShowDialog(this)==true){ScreenCaptureService.Save(RenderSelectionImage(item),imageDialog.FileName,imageDialog.FilterIndex==2);PromptStatus.Text="图片已保存";}
+        if(RejectIfOverlayOperationBusy()||Active is not { } item)return;
+        if(item.VideoPath is { } video)
+        {
+            var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4|GIF 动图|*.gif",DefaultExt=".mp4",FilterIndex=1,AddExtension=true};
+            if(dialog.ShowDialog(this)!=true)return;
+            var exportGif=dialog.FilterIndex==2;
+            var destination=System.IO.Path.ChangeExtension(dialog.FileName,exportGif?".gif":".mp4");
+            var operation=BeginOverlayOperation(exportGif?"正在导出 GIF…按 Esc 可取消":"正在保存 MP4…按 Esc 可取消");TempMediaLease? exportLease=null;
+            try
+            {
+                exportLease=TempMediaRegistry.Shared.AcquireExistingFile(video);
+                if(exportGif)
+                {
+                    var fps=_host.Settings.GifFps;
+                    var result=await GifExportService.ExportFromVideoAsync(video,destination,fps,operation.Token);
+                    if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"GIF 已保存 · {result.FrameCount} 帧 / {result.EffectiveFps:0.#} FPS";
+                }
+                else
+                {
+                    await Task.Run(()=>AtomicFileService.Copy(video,destination),operation.Token);
+                    if(IsOverlayOperationActive(operation,item))PromptStatus.Text="MP4 已保存";
+                }
+            }
+            catch(OperationCanceledException){if(IsOverlayOperationActive(operation,item))PromptStatus.Text="已取消保存视频";}
+            catch(Exception ex){new PrivacyLogger().Error("SaveVideo",ex);if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"保存失败：{ex.Message}";}
+            finally{exportLease?.Dispose();EndOverlayOperation(operation);}
+            return;
+        }
+
+        var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(imageDialog.ShowDialog(this)!=true)return;
+        var image=RenderSelectionImage(item);var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
+        try{await Task.Run(()=>ScreenCaptureService.Save(image,imageDialog.FileName,imageDialog.FilterIndex==2),imageOperation.Token);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="图片已保存";}
+        catch(OperationCanceledException){if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="已取消保存图片";}
+        catch(Exception ex){new PrivacyLogger().Error("SaveImage",ex);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text=$"图片保存失败：{ex.Message}";}
+        finally{EndOverlayOperation(imageOperation);}
     }
     private void Pin(object s,RoutedEventArgs e)
     {
-        if(Active is not { } item)return;var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);if(item.VideoPath is { } video)new PinnedVideoWindow(video,region).Show();else new PinnedImageWindow(RenderSelectionImage(item),region).Show();PromptStatus.Text=item.VideoPath is null?"已在原位贴图":"已在原位贴视频";SetPromptBarHidden(false);
+        if(RejectIfOverlayOperationBusy()||Active is not { } item)return;var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);
+        try
+        {
+            if(item.VideoPath is { } video){var window=new PinnedVideoWindow(video,region);try{window.Show();}catch{window.Close();throw;}}
+            else new PinnedImageWindow(RenderSelectionImage(item),region).Show();
+            PromptStatus.Text=item.VideoPath is null?"已在原位贴图":"已在原位贴视频";SetPromptBarHidden(false);
+        }
+        catch(Exception ex){new PrivacyLogger().Error("PinMedia",ex);PromptStatus.Text=$"贴图失败：{ex.Message}";}
     }
     private void Draw(object s,RoutedEventArgs e)=>EnterDrawingMode();
     private void EnterDrawingMode()
     {
-        if(Active is not {IsImplicit:false,VideoPath:null} item)return;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=true;SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text="原位标注中 · Esc 或 ✓ 完成";
+        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false,VideoPath:null} item)return;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=true;SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text="原位标注中 · Esc 或点击完成按钮结束";
     }
     private void ExitDrawingMode()
     {
         if(Active is { } item)item.Markup.IsHitTestVisible=false;_drawingMode=false;DrawingToolbar.Visibility=Visibility.Collapsed;Cursor=Cursors.Cross;SetPromptBarHidden(false);if(Active is not null){UpdateSelection(Active);ShowToolbar();}PromptStatus.Text="标注已保留在当前区域";
     }
+    private void FinishInterruptedDrawingMode()
+    {
+        var canvas=Active?.Markup;_drawPreview=null;if(canvas?.IsMouseCaptured==true)canvas.ReleaseMouseCapture();ExitDrawingMode();
+    }
     private void SetDrawTool(DrawTool tool)
     {
         if(Active is not { } item)return;_drawTool=tool;item.Markup.EditingMode=tool==DrawTool.Freehand?InkCanvasEditingMode.Ink:InkCanvasEditingMode.None;Cursor=tool==DrawTool.Freehand?Cursors.Pen:Cursors.Cross;
     }
-    private void DrawPen(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes.IsHighlighter=false;SetDrawTool(DrawTool.Freehand);}}
-    private void DrawRectangleTool(object s,RoutedEventArgs e)=>SetDrawTool(DrawTool.Rectangle);
-    private void DrawArrowTool(object s,RoutedEventArgs e)=>SetDrawTool(DrawTool.Arrow);
-    private void DrawRed(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes.IsHighlighter=false;item.Markup.DefaultDrawingAttributes.Color=Colors.Red;SetDrawTool(DrawTool.Freehand);}}
-    private void DrawBlue(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes.IsHighlighter=false;item.Markup.DefaultDrawingAttributes.Color=Color.FromRgb(49,140,255);SetDrawTool(DrawTool.Freehand);}}
-    private void DrawHighlight(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes.IsHighlighter=true;item.Markup.DefaultDrawingAttributes.Color=Colors.Yellow;item.Markup.DefaultDrawingAttributes.Width=item.Markup.DefaultDrawingAttributes.Height=18;SetDrawTool(DrawTool.Freehand);}}
+    private static DrawingAttributes RegularDrawingAttributes(Color color)=>new(){Color=color,Width=4,Height=4,IsHighlighter=false,FitToCurve=true};
+    private static DrawingAttributes HighlightDrawingAttributes()=>new(){Color=Colors.Yellow,Width=18,Height=18,IsHighlighter=true,FitToCurve=true};
+    private void DrawPen(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);SetDrawTool(DrawTool.Freehand);}}
+    private void SetShapeTool(DrawTool tool){if(Active is not { } item)return;var current=item.Markup.DefaultDrawingAttributes;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(current.IsHighlighter?Colors.Red:current.Color);SetDrawTool(tool);}
+    private void DrawRectangleTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Rectangle);
+    private void DrawArrowTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Arrow);
+    private void DrawRed(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);SetDrawTool(DrawTool.Freehand);}}
+    private void DrawBlue(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Color.FromRgb(49,140,255));SetDrawTool(DrawTool.Freehand);}}
+    private void DrawHighlight(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=HighlightDrawingAttributes();SetDrawTool(DrawTool.Freehand);}}
     private void DrawEraser(object s,RoutedEventArgs e){if(Active is { } item){_drawTool=DrawTool.Freehand;item.Markup.EditingMode=InkCanvasEditingMode.EraseByStroke;Cursor=Cursors.Cross;}}
     private void DrawUndo(object s,RoutedEventArgs e){if(Active is not { } item||item.Markup.Strokes.Count==0)return;var stroke=item.Markup.Strokes[^1];item.Markup.Strokes.Remove(stroke);item.Redo.Push(stroke);}
     private void DrawRedo(object s,RoutedEventArgs e){if(Active is { } item&&item.Redo.TryPop(out var stroke))item.Markup.Strokes.Add(stroke);}
@@ -279,7 +562,11 @@ public partial class CaptureOverlayWindow : Window
     }
     private void MarkupUp(object sender,MouseButtonEventArgs e)
     {
-        if(sender is not InkCanvas canvas||_drawTool==DrawTool.Freehand||!canvas.IsMouseCaptured)return;canvas.ReleaseMouseCapture();_drawPreview=null;if(Active is { } item)item.Redo.Clear();e.Handled=true;
+        if(sender is not InkCanvas canvas||_drawTool==DrawTool.Freehand||!canvas.IsMouseCaptured)return;_drawPreview=null;canvas.ReleaseMouseCapture();if(Active is { } item)item.Redo.Clear();e.Handled=true;
+    }
+    private void MarkupLostMouseCapture(object sender,MouseEventArgs e)
+    {
+        if(!_drawingMode||sender is not InkCanvas canvas||_drawTool==DrawTool.Freehand||_drawPreview is null)return;_drawPreview=null;if(ReferenceEquals(canvas,Active?.Markup)&&Active is { } item)item.Redo.Clear();PromptStatus.Text="标注笔划已保留，可继续编辑";
     }
     private static Stroke CreateShapeStroke(InkCanvas canvas,Point a,Point b,DrawTool tool)
     {
@@ -287,114 +574,244 @@ public partial class CaptureOverlayWindow : Window
     }
     private async void QuickSend(object s,RoutedEventArgs e)=>await SendAsync(true);
     private async void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;await SendAsync(true);}}
-    private async void QuickVoice(object s,RoutedEventArgs e)
+    private async void QuickVoice(object s,RoutedEventArgs e)=>await ToggleVoiceAsync();
+    private async Task ToggleVoiceAsync()
     {
-        if(_speechRequest is not null){PromptStatus.Text="正在停止聆听…";_speechRequest.Cancel();return;}var microphone=VoiceIcon.Data;_speechRequest=new();VoiceIcon.Data=Geometry.Parse("M7,7 L17,7 L17,17 L7,17 Z");
-        try{PromptStatus.Text="正在聆听…";var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))QuickPrompt.Text=string.IsNullOrWhiteSpace(QuickPrompt.Text)?text:QuickPrompt.Text+" "+text;PromptStatus.Text="语音已写入";}
-        catch(OperationCanceledException){PromptStatus.Text="已停止聆听";}catch(SpeechRecognitionUnavailableException ex){PromptStatus.Text=ex.Message;}catch(Exception){PromptStatus.Text="语音输入暂时不可用";}finally{_speechRequest.Dispose();_speechRequest=null;VoiceIcon.Data=microphone;}
-    }
-    private async void Translate(object s,RoutedEventArgs e)
-    {
-        if(Active is not {IsImplicit:false} item)return;var image=CurrentImage();var operation=BeginOverlayOperation("正在识别文字…按 Esc 可取消");
+        if(_closed||RejectIfOverlayOperationBusy())return;
+        if(!_host.Settings.EnableVoiceInput){ApplyVoiceAvailability();PromptStatus.Text="语音输入已在设置中关闭";return;}
+        if(_speechRequest is not null){PromptStatus.Text="正在停止聆听…";_speechRequest.Cancel();return;}
+        var microphone=VoiceIcon.Data;var speechRequest=new CancellationTokenSource();_speechRequest=speechRequest;VoiceIcon.Data=Geometry.Parse("M7,7 L17,7 L17,17 L7,17 Z");
         try
         {
-            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!_selections.Contains(item))return;if(document.Lines.Count==0){PromptStatus.Text="当前区域未识别到文字";return;}
-            var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){PromptStatus.Text="翻译需要先配置可用的 AI Provider";_host.ShowSettings();return;}
-            PromptStatus.Text=$"已识别 {document.Lines.Count} 行，正在翻译…按 Esc 可取消";
-            var prompt="将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource="+System.Text.Json.JsonSerializer.Serialize(document.Lines.Select(line=>line.Text).ToArray());
-            using var networkTimeout=CancellationTokenSource.CreateLinkedTokenSource(operation.Token);networkTimeout.CancelAfter(TimeSpan.FromSeconds(75));var received=false;var progress=new Progress<AiStreamDelta>(delta=>{if(!received&&(delta.Content.Length>0||delta.ReasoningContent.Length>0)){received=true;PromptStatus.Text="正在接收译文…按 Esc 可取消";}});
-            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,StreamingProgress=progress,StreamingCompletionPredicate=value=>TranslationResponseParser.TryParse(value,document.Lines.Count,out _),DisableReasoning=true,MaxOutputTokens=2048},networkTimeout.Token);if(!_selections.Contains(item))return;if(!TranslationResponseParser.TryParse(result.Answer,document.Lines.Count,out var translated)){PromptStatus.Text="翻译结果格式异常，请重试";return;}
-            RenderTextOverlays(item,image,document.Lines,translated,true);PromptStatus.Text=$"已在原位翻译 {translated.Count} 行";
+            PromptStatus.Text="正在聆听…";var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,speechRequest.Token);
+            if(_closed||!ReferenceEquals(_speechRequest,speechRequest))return;
+            if(!string.IsNullOrWhiteSpace(text))QuickPrompt.Text=string.IsNullOrWhiteSpace(QuickPrompt.Text)?text:QuickPrompt.Text+" "+text;PromptStatus.Text="语音已写入";
         }
-        catch(OperationCanceledException){PromptStatus.Text=operation.IsCancellationRequested?"已取消翻译":"翻译超时，请检查 Provider 后重试";}catch(Exception ex){PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+        catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_speechRequest,speechRequest))PromptStatus.Text="已停止聆听";}
+        catch(SpeechRecognitionUnavailableException ex){if(!_closed&&ReferenceEquals(_speechRequest,speechRequest))PromptStatus.Text=ex.Message;}
+        catch(Exception){if(!_closed&&ReferenceEquals(_speechRequest,speechRequest))PromptStatus.Text="语音输入暂时不可用";}
+        finally{speechRequest.Dispose();if(ReferenceEquals(_speechRequest,speechRequest))_speechRequest=null;if(!_closed)VoiceIcon.Data=microphone;}
+    }
+    private void ApplyVoiceAvailability()=>VoiceButton.Visibility=_host.Settings.EnableVoiceInput?Visibility.Visible:Visibility.Collapsed;
+    private async void Translate(object s,RoutedEventArgs e)
+    {
+        if(RejectIfOverlayOperationBusy())return;
+        if(Active is not { } item||!CaptureOverlayPolicy.CanRunImageOnlyCommand(item.IsImplicit,item.VideoPath)){if(Active?.VideoPath is not null)PromptStatus.Text="视频区域不支持 OCR/翻译，请先选择截图区域";else PromptStatus.Text="请先框选截图区域";return;}var image=CurrentImage();var operation=BeginOverlayOperation("正在识别文字…按 Esc 可取消");
+        try
+        {
+            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);
+            if(!IsOverlayOperationActive(operation,item))return;
+            if(document.Lines.Count==0){PromptStatus.Text=$"{document.Engine} 未识别到文字";return;}
+            var provider=new AiProviderFactory().Create(_host.Settings,out var providerError);if(provider is null){PromptStatus.Text=providerError??"翻译需要先配置可用的 AI Provider";ShowSettingsFromOverlay();return;}
+            var batches=CaptureOverlayPolicy.CreateTranslationBatches(document.Lines.Select(line=>line.Text).ToArray());
+            var translations=new string[document.Lines.Count];
+            for(var batchIndex=0;batchIndex<batches.Count;batchIndex++)
+            {
+                if(!IsOverlayOperationActive(operation,item))return;
+                var batch=batches[batchIndex];var batchNumber=batchIndex+1;
+                PromptStatus.Text=$"{document.Engine} 已识别 {document.Lines.Count} 行 · 正在翻译 {batchNumber}/{batches.Count}…按 Esc 可取消";
+                var prompt="将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource="+System.Text.Json.JsonSerializer.Serialize(batch.Lines);
+                using var networkTimeout=CancellationTokenSource.CreateLinkedTokenSource(operation.Token);networkTimeout.CancelAfter(TimeSpan.FromSeconds(75));var received=false;var batchOpen=true;
+                var progress=new Progress<AiStreamDelta>(delta=>{if(!batchOpen||!IsOverlayOperationActive(operation,item))return;if(!received&&(delta.Content.Length>0||delta.ReasoningContent.Length>0)){received=true;PromptStatus.Text=$"{document.Engine} · 正在接收译文 {batchNumber}/{batches.Count}…按 Esc 可取消";}});
+                AiResult result;
+                try
+                {
+                    result=await provider.SendAsync(new AiRequest{Prompt=prompt,StreamingProgress=progress,StreamingCompletionPredicate=value=>TranslationResponseParser.TryParse(value,batch.Lines.Count,out _),DisableReasoning=true,MaxOutputTokens=batch.MaxOutputTokens},networkTimeout.Token);
+                }
+                catch(OperationCanceledException) when(!operation.IsCancellationRequested)
+                {
+                    throw new TimeoutException($"翻译第 {batchNumber}/{batches.Count} 批超时，请检查 Provider 后重试");
+                }
+                finally{batchOpen=false;}
+                if(!IsOverlayOperationActive(operation,item))return;
+                if(!TranslationResponseParser.TryParse(result.Answer,batch.Lines.Count,out var translated)){PromptStatus.Text=$"翻译第 {batchNumber}/{batches.Count} 批结果格式异常，请重试";return;}
+                for(var offset=0;offset<translated.Count;offset++)translations[batch.StartIndex+offset]=translated[offset];
+            }
+            if(!IsOverlayOperationActive(operation,item))return;
+            RenderTextOverlays(item,image,document.Lines,translations,true);PromptStatus.Text=$"{document.Engine} · 已在原位翻译 {translations.Length} 行";
+        }
+        catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消翻译";}catch(TimeoutException ex){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=ex.Message;}catch(Exception ex){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
     }
 
     private async void Ocr(object s,RoutedEventArgs e)
     {
-        if(Active is not {IsImplicit:false} item)return;var image=CurrentImage();var operation=BeginOverlayOperation("正在本地识别当前区域…");
+        if(RejectIfOverlayOperationBusy())return;
+        if(Active is not { } item||!CaptureOverlayPolicy.CanRunImageOnlyCommand(item.IsImplicit,item.VideoPath)){if(Active?.VideoPath is not null)PromptStatus.Text="视频区域不支持 OCR，请先选择截图区域";else PromptStatus.Text="请先框选截图区域";return;}var image=CurrentImage();var operation=BeginOverlayOperation("正在本地识别当前区域…");
         try
         {
-            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!_selections.Contains(item))return;RenderSelectableText(item,image,document);PromptStatus.Text=document.Lines.Count==0?"当前区域未识别到文字":$"{document.Engine} 已识别 {document.Lines.Count} 行 · 可直接拖选并按 Ctrl+C";
+            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!IsOverlayOperationActive(operation,item))return;if(document.Lines.Count==0){item.TextOverlays.Children.Clear();ClearTextSelection(item);}else RenderSelectableText(item,image,document);PromptStatus.Text=document.Lines.Count==0?$"{document.Engine} 未识别到文字":$"{document.Engine} 已识别 {document.Lines.Count} 行 · 可直接拖选并按 Ctrl+C";
         }
-        catch(OperationCanceledException){}catch(Exception ex){PromptStatus.Text=$"OCR 失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+        catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消文字识别";}catch(Exception ex){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"OCR 失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
     }
 
-    private CancellationTokenSource BeginOverlayOperation(string status){_overlayRequest?.Cancel();var operation=new CancellationTokenSource(TimeSpan.FromMinutes(2));_overlayRequest=operation;PromptStatus.Text=status;Toolbar.IsEnabled=false;return operation;}
-    private void EndOverlayOperation(CancellationTokenSource operation){operation.Dispose();if(!ReferenceEquals(_overlayRequest,operation))return;_overlayRequest=null;Toolbar.IsEnabled=true;if(Active is not null)ShowToolbar();}
+    private bool RejectIfOverlayOperationBusy()
+    {
+        if(_overlayRequest is not null){PromptStatus.Text=_overlayRequest.IsCancellationRequested?"正在取消当前操作…":"当前操作尚未完成 · 按 Esc 可取消";return true;}
+        if(_request is not null){PromptStatus.Text=_request.IsCancellationRequested?"正在取消 AI 分析…":"AI 正在分析 · 按 Esc 可取消后再修改区域";return true;}
+        return false;
+    }
+    private CancellationTokenSource BeginOverlayOperation(string status){var operation=new CancellationTokenSource();_overlayRequest=operation;PromptStatus.Text=status;Toolbar.IsEnabled=false;return operation;}
+    private void EndOverlayOperation(CancellationTokenSource operation){operation.Dispose();if(!ReferenceEquals(_overlayRequest,operation))return;_overlayRequest=null;if(_closed)return;Toolbar.IsEnabled=true;if(Active is not null)ShowToolbar();}
+    private bool IsOverlayOperationActive(CancellationTokenSource operation,SelectionItem item)=>!_closed&&ReferenceEquals(_overlayRequest,operation)&&!operation.IsCancellationRequested&&_selections.Contains(item);
+    private void ShowSettingsFromOverlay()
+    {
+        Topmost=false;
+        try
+        {
+            _host.ShowSettings();var settings=Application.Current.Windows.OfType<SettingsWindow>().FirstOrDefault(window=>window.IsVisible);
+            if(settings is null){Topmost=true;Activate();return;}
+            settings.Topmost=true;
+            EventHandler? restore=null;restore=(_,_)=>{settings.Closed-=restore;if(IsVisible){ApplyVoiceAvailability();PositionPromptBar();Topmost=true;Activate();QuickPrompt.Focus();}};settings.Closed+=restore;settings.Activate();
+        }
+        catch(Exception ex){Topmost=true;Activate();new PrivacyLogger().Error("OverlaySettings",ex);PromptStatus.Text="无法打开设置，请从托盘重试";}
+    }
     private static void RenderTextOverlays(SelectionItem item,BitmapSource image,IReadOnlyList<OcrLine> lines,IReadOnlyList<string> texts,bool translated)
     {
-        ClearTextSelection(item);item.Annotations.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;
+        ClearTextSelection(item);item.TextOverlays.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;
         for(var index=0;index<lines.Count&&index<texts.Count;index++)
         {
             var line=lines[index];var text=new TextBlock{Text=texts[index],Foreground=new SolidColorBrush(Color.FromRgb(35,47,67)),FontSize=Math.Clamp(line.Height*scaleY*.72,10,26),FontWeight=translated?FontWeights.SemiBold:FontWeights.Normal,TextWrapping=TextWrapping.Wrap,LineHeight=Math.Clamp(line.Height*scaleY*.9,14,32)};
             var box=new Border{Child=text,Background=new SolidColorBrush(translated?Color.FromArgb(242,239,242,255):Color.FromArgb(228,248,251,255)),BorderBrush=new SolidColorBrush(translated?Color.FromRgb(111,124,245):Color.FromRgb(78,164,224)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(5),Padding=new Thickness(3,1,3,1),Width=Math.Max(36,line.Width*scaleX),MinHeight=Math.Max(18,line.Height*scaleY),ToolTip=translated?"原位译文":"本地 OCR 文字"};
-            Canvas.SetLeft(box,line.X*scaleX);Canvas.SetTop(box,line.Y*scaleY);item.Annotations.Children.Add(box);
+            Canvas.SetLeft(box,line.X*scaleX);Canvas.SetTop(box,line.Y*scaleY);item.TextOverlays.Children.Add(box);
         }
     }
     private void RenderSelectableText(SelectionItem item,BitmapSource image,OcrDocument document)
     {
-        item.Annotations.Children.Clear();ClearTextSelection(item);var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;item.TextSelection.IsHitTestVisible=true;
-        var flow=new FlowDocument{PagePadding=new Thickness(0),ColumnGap=0,FontFamily=new FontFamily("Segoe UI")};double previousBottom=0;
-        foreach(var line in document.Lines.OrderBy(x=>x.Y))
+        item.TextOverlays.Children.Clear();ClearTextSelection(item);if(document.Lines.Count==0)return;var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;var layout=OcrSelectionLayout.Build(document.Lines,scaleX,scaleY);if(layout.Count==0)return;
+        var flow=new FlowDocument{PagePadding=new Thickness(0),ColumnGap=0,FontFamily=new FontFamily("Segoe UI"),FontSize=1,LineHeight=1,Foreground=Brushes.Transparent};var pending=new List<(OcrSelectionGlyph Glyph,Run Run)>();
+        foreach(var line in layout)
         {
-            var top=line.Y*scaleY;var height=Math.Max(14,line.Height*scaleY);var paragraph=new Paragraph(new Run(line.Text)){Margin=new Thickness(Math.Max(0,line.X*scaleX),Math.Max(0,top-previousBottom),0,0),Padding=new Thickness(0),FontSize=Math.Clamp(height*.82,10,30),LineHeight=height,Foreground=new SolidColorBrush(Color.FromArgb(1,0,0,0)),TextAlignment=TextAlignment.Left};flow.Blocks.Add(paragraph);previousBottom=top+height;
+            var paragraph=new Paragraph{Margin=new Thickness(0),Padding=new Thickness(0),FontSize=1,LineHeight=1,Foreground=Brushes.Transparent};
+            foreach(var token in line.Tokens){if(token.Prefix.Length>0)paragraph.Inlines.Add(new Run(token.Prefix));var run=new Run(token.Text);paragraph.Inlines.Add(run);foreach(var glyph in token.Glyphs)pending.Add((glyph,run));}
+            flow.Blocks.Add(paragraph);
         }
-        var box=new RichTextBox{Document=flow,IsReadOnly=true,IsReadOnlyCaretVisible=false,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),SelectionBrush=new SolidColorBrush(Color.FromArgb(105,63,145,245)),SelectionTextBrush=new SolidColorBrush(Color.FromArgb(1,0,0,0)),Cursor=Cursors.IBeam,Width=item.Bounds.Width,Height=item.Bounds.Height,VerticalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,ToolTip="可跨行拖动选择文字，Ctrl+C 复制"};
-        box.SelectionChanged+=(_,_)=>{var count=new TextRange(box.Selection.Start,box.Selection.End).Text.Length;if(count>0)PromptStatus.Text=$"已选择 {count} 个字符 · Ctrl+C 复制或右键";};box.ContextMenu=CreateTextContextMenu(box,document.Text);item.TextSelection.Children.Add(box);
+        var box=new RichTextBox{Document=flow,IsReadOnly=true,IsReadOnlyCaretVisible=false,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),SelectionBrush=Brushes.Transparent,SelectionTextBrush=Brushes.Transparent,Cursor=Cursors.IBeam,Width=item.Bounds.Width,Height=item.Bounds.Height,VerticalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,ToolTip="可跨行拖动选择文字，Ctrl+C 复制"};
+        var highlights=new Canvas{Width=item.Bounds.Width,Height=item.Bounds.Height,IsHitTestVisible=false};var selectable=new List<SelectableGlyph>(pending.Count);
+        foreach(var entry in pending){var start=entry.Run.ContentStart.GetPositionAtOffset(entry.Glyph.Utf16Start,LogicalDirection.Forward);var end=entry.Run.ContentStart.GetPositionAtOffset(entry.Glyph.Utf16Start+entry.Glyph.Utf16Length,LogicalDirection.Forward);if(start is not null&&end is not null)selectable.Add(new SelectableGlyph(entry.Glyph.Bounds,start,end));}
+        if(selectable.Count==0)return;box.SelectionChanged+=(_,_)=>{var count=new TextRange(box.Selection.Start,box.Selection.End).Text.Length;if(count>0)PromptStatus.Text=$"已选择 {count} 个字符 · Ctrl+C 复制或右键";};box.ContextMenu=CreateTextContextMenu(box,document.Text);item.TextSelection.Children.Add(highlights);item.TextSelection.Children.Add(box);item.TextSession=new OcrTextSelectionSession(box,highlights,selectable);item.TextSelection.IsHitTestVisible=true;
     }
-    private static ContextMenu CreateTextContextMenu(RichTextBox box,string allText)
+    private ContextMenu CreateTextContextMenu(RichTextBox box,string allText)
     {
-        var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,"TextSelectionContextMenu");var copy=new MenuItem{Header="复制所选文字"};var copyAll=new MenuItem{Header="复制全部识别文字"};foreach(var entry in new[]{copy,copyAll})entry.SetResourceReference(StyleProperty,"TextSelectionMenuItem");copy.Click+=(_,_)=>{var text=new TextRange(box.Selection.Start,box.Selection.End).Text.TrimEnd('\r','\n');if(text.Length>0)Clipboard.SetText(text);};copyAll.Click+=(_,_)=>Clipboard.SetText(allText);var separator=new Separator();separator.SetResourceReference(StyleProperty,"TextSelectionSeparator");menu.Items.Add(copy);menu.Items.Add(separator);menu.Items.Add(copyAll);menu.Opened+=(_,_)=>copy.IsEnabled=!box.Selection.IsEmpty;return menu;
+        var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,"TextSelectionContextMenu");var copy=new MenuItem{Header="复制所选文字"};var copyAll=new MenuItem{Header="复制全部识别文字"};foreach(var entry in new[]{copy,copyAll})entry.SetResourceReference(StyleProperty,"TextSelectionMenuItem");copy.Click+=(_,_)=>CopyTextToClipboard(new TextRange(box.Selection.Start,box.Selection.End).Text.TrimEnd('\r','\n'));copyAll.Click+=(_,_)=>CopyTextToClipboard(allText);var separator=new Separator();separator.SetResourceReference(StyleProperty,"TextSelectionSeparator");menu.Items.Add(copy);menu.Items.Add(separator);menu.Items.Add(copyAll);menu.Opened+=(_,_)=>copy.IsEnabled=!box.Selection.IsEmpty;return menu;
     }
-    private static void ClearTextSelection(SelectionItem item){item.TextSelection.Children.Clear();item.TextSelection.IsHitTestVisible=false;}
+    private void CopyTextToClipboard(string text){if(text.Length==0)return;PromptStatus.Text=ClipboardService.TrySetText(text,out var error)?"文字已复制":error;}
+    private static void ClearTextSelection(SelectionItem item){item.TextSession?.Dispose();item.TextSession=null;item.TextSelection.Children.Clear();item.TextSelection.IsHitTestVisible=false;}
     private void Record(object s,RoutedEventArgs e)
     {
-        if(_recordingSession is not null||Active is not {IsImplicit:false,VideoPath:null} item)return;var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var session=new RecordingSession(_host.Settings,region);_recordingSession=session;_recordingItem=item;session.Completed+=path=>Dispatcher.InvokeAsync(async()=>await CompleteRecordingAsync(path));session.Failed+=error=>Dispatcher.Invoke(()=>FailRecording(error));
-        try{EnterRecordingMode(item);session.Start();_recordingStarted=DateTime.UtcNow;_recordingTimer.Start();PromptStatus.Text="正在录制当前区域";}catch(Exception ex){FailRecording(ex.Message);}
+        if(RejectIfOverlayOperationBusy())return;
+        if(!_captureExclusionVerified){SetPromptBarHidden(false);PromptStatus.Text=NativeMethods.VisualQaCaptureEnabled?"视觉验收模式未启用防捕获，已阻止录屏以免录入覆盖控件":"系统未能启用窗口防捕获，为避免录入遮罩和控件，已阻止录屏；请重启软件后重试";return;}
+        if(_recordingSession is not null||Active is not {IsImplicit:false,VideoPath:null} item)return;
+        try
+        {
+            var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var session=new RecordingSession(_host.Settings,region);_recordingSession=session;_recordingItem=item;_recordingItemWasReferenced=_references.Contains(item);session.Completed+=path=>{if(!Dispatcher.HasShutdownStarted)Dispatcher.BeginInvoke(new Action(()=>CompleteRecording(session,item,path)));};session.Failed+=error=>{if(!Dispatcher.HasShutdownStarted)Dispatcher.BeginInvoke(new Action(()=>FailRecording(session,item,error)));};EnterRecordingMode(item);session.Start();_recordingTimer.Start();PromptStatus.Text="正在录制当前区域";
+        }
+        catch(Exception ex)
+        {
+            if(_recordingSession is { } failedSession&&ReferenceEquals(_recordingItem,item))FailRecording(failedSession,item,ex.Message);else{new PrivacyLogger().Error("RecordingStart",ex);SetPromptBarHidden(false);PromptStatus.Text=$"录屏失败：{ex.Message}";}
+        }
     }
 
     private void EnterRecordingMode(SelectionItem selected)
     {
         _recordingMode=true;_recordingPaused=_recordingStopping=false;Cursor=Cursors.Arrow;Toolbar.Visibility=DrawingToolbar.Visibility=PromptBar.Visibility=SizeText.Visibility=Visibility.Collapsed;HideHandles();
-        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Annotations.Visibility=Visibility.Collapsed;item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;}
-        selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};RecordingTime.Text="00:00";RecordingPauseButton.Content=new TextBlock{Text="Ⅱ",FontSize=14};RecordingPauseButton.ToolTip="暂停";RecordingBar.Visibility=Visibility.Visible;PositionFloatingBar(RecordingBar,selected);
+        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;}
+        selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};RecordingTime.Text="00:00";SetRecordingPauseVisual(false);RecordingPauseButton.ToolTip="暂停";RecordingBar.Visibility=Visibility.Visible;PositionFloatingBar(RecordingBar,selected);
     }
     private void RecordingTick()
     {
-        if(!_recordingMode||_recordingItem is not { } item)return;RecordingTime.Text=(DateTime.UtcNow-_recordingStarted).ToString(@"mm\:ss");if(_recordingPaused||NativeMethods.VisualQaCaptureEnabled)return;try{var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);item.Image.Source=new ScreenCaptureService().CaptureRegion(region,_host.Settings.IncludeRecordingCursor);}catch{}
+        if(!_recordingMode||_recordingSession is not { } session)return;RecordingTime.Text=session.Elapsed.ToString(@"mm\:ss");
     }
     private void PauseRecording(object s,RoutedEventArgs e)
     {
-        if(_recordingSession is null||_recordingStopping)return;_recordingPaused=!_recordingPaused;if(_recordingPaused){_recordingSession.Pause();RecordingPauseButton.Content=new TextBlock{Text="▶",FontSize=14};RecordingPauseButton.ToolTip="继续";}else{_recordingSession.Resume();RecordingPauseButton.Content=new TextBlock{Text="Ⅱ",FontSize=14};RecordingPauseButton.ToolTip="暂停";}
+        if(_recordingSession is not { } session||_recordingItem is not { } item||_recordingStopping)return;try{if(!_recordingPaused){session.Pause();_recordingPaused=true;SetRecordingPauseVisual(true);RecordingPauseButton.ToolTip="继续";}else{session.Resume();_recordingPaused=false;SetRecordingPauseVisual(false);RecordingPauseButton.ToolTip="暂停";}}catch(Exception ex){FailRecording(session,item,ex.Message);}
     }
-    private async void StopRecording(object s,RoutedEventArgs e)
+    private void SetRecordingPauseVisual(bool paused)
     {
-        if(_recordingSession is null||_recordingStopping)return;_recordingStopping=true;_recordingTimer.Stop();RecordingTime.Text="处理中…";_recordingSession.Stop();await _recordingSession.WaitFramesAsync();
+        RecordingPauseBars.Visibility=paused?Visibility.Collapsed:Visibility.Visible;
+        RecordingResumeIcon.Visibility=paused?Visibility.Visible:Visibility.Collapsed;
     }
-    private async Task CompleteRecordingAsync(string path)
+    private void StopRecording(object s,RoutedEventArgs e)
     {
-        var session=_recordingSession;var item=_recordingItem;if(session is null||item is null)return;_recordingTimer.Stop();await session.WaitFramesAsync();item.VideoPath=path;item.FramesDirectory=session.FramesDirectory;item.VideoDuration=DateTime.UtcNow-_recordingStarted;session.Dispose();_recordingSession=null;_recordingItem=null;item.Video.Source=new Uri(path);item.Video.Visibility=Visibility.Visible;item.Image.Visibility=Visibility.Collapsed;item.Video.Position=TimeSpan.Zero;item.Video.Play();item.VideoPlaying=true;_references.Add(item);ExitRecordingMode(item);PromptStatus.Text=$"录屏完成 {item.VideoDuration:mm\\:ss} · 已引用为 @视频{_selections.IndexOf(item)+1}";
+        if(_recordingSession is not { } session||_recordingItem is not { } item||_recordingStopping)return;_recordingStopping=true;_recordingTimer.Stop();RecordingTime.Text="处理中…";try{session.Stop();StartRecordingStopWatchdog(session,item);}catch(Exception ex){FailRecording(session,item,ex.Message);}
     }
-    private void FailRecording(string error)
+    private void StartRecordingStopWatchdog(RecordingSession session,SelectionItem item)
     {
-        _recordingTimer.Stop();_recordingSession?.Dispose();_recordingSession=null;var item=_recordingItem;_recordingItem=null;if(item is not null)ExitRecordingMode(item);PromptStatus.Text=$"录屏失败：{error}";
+        CancelRecordingStopWatchdog();var watchdog=new CancellationTokenSource();_recordingStopWatchdog=watchdog;_ = WatchRecordingStopAsync(session,item,watchdog);
     }
+    private async Task WatchRecordingStopAsync(RecordingSession session,SelectionItem item,CancellationTokenSource watchdog)
+    {
+        try
+        {
+            await Task.Delay(CaptureOverlayPolicy.RecordingStopTimeout,watchdog.Token);
+            if(!_closed&&ReferenceEquals(_recordingStopWatchdog,watchdog)&&IsCurrentRecording(session,item))FailRecording(session,item,"停止录屏超时，已安全结束本次录制，请重试");
+        }
+        catch(OperationCanceledException)when(watchdog.IsCancellationRequested){}
+    }
+    private void CancelRecordingStopWatchdog()
+    {
+        var watchdog=Interlocked.Exchange(ref _recordingStopWatchdog,null);if(watchdog is null)return;try{watchdog.Cancel();}catch(ObjectDisposedException){}watchdog.Dispose();
+    }
+    private void CompleteRecording(RecordingSession session,SelectionItem item,string path)
+    {
+        if(!IsCurrentRecording(session,item))return;
+        try
+        {
+            CancelRecordingStopWatchdog();_recordingTimer.Stop();if(!File.Exists(path)||new FileInfo(path).Length==0)throw new InvalidDataException("录屏文件为空");item.VideoLease=session.RetainCompletedVideo();if(new FileInfo(item.VideoLease.Path).Length==0)throw new InvalidDataException("录屏文件为空");item.VideoPath=item.VideoLease.Path;item.VideoDuration=session.Elapsed;item.Video.Source=new Uri(item.VideoPath);item.Video.Visibility=Visibility.Visible;item.Image.Visibility=Visibility.Collapsed;item.Video.Position=TimeSpan.Zero;item.Video.Play();item.VideoPlaying=true;_references.Add(item);ExitRecordingMode(item);try{ClearImageOnlyLayers(item);}catch(Exception clearError){new PrivacyLogger().Error("RecordingLayerCleanup",clearError);}PromptStatus.Text=$"录屏完成 {item.VideoDuration:mm\\:ss} · 已引用为 @视频{_selections.IndexOf(item)+1}";_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;try{session.Dispose();}catch(Exception ex){new PrivacyLogger().Error("RecordingDispose",ex);}
+        }
+        catch(Exception ex){FailRecording(session,item,ex.Message);}
+    }
+    private void FailRecording(RecordingSession session,SelectionItem item,string error)
+    {
+        if(!IsCurrentRecording(session,item))return;CancelRecordingStopWatchdog();_recordingTimer.Stop();var wasReferenced=_recordingItemWasReferenced;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;try{session.Dispose();}catch(Exception ex){new PrivacyLogger().Error("RecordingDispose",ex);}var stillPresent=_selections.Contains(item);if(stillPresent)CaptureOverlayPolicy.RestoreRecordingReference(_references,item,wasReferenced);else _references.Remove(item);ResetFailedVideoPreview(item);if(stillPresent)ExitRecordingMode(item);PromptStatus.Text=$"录屏失败：{error}";
+    }
+    private static void ResetFailedVideoPreview(SelectionItem item)
+    {
+        try{item.Video.Stop();}catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewStop",ex);}
+        try{item.Video.Source=null;}catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewReset",ex);}
+        item.Video.Visibility=Visibility.Collapsed;item.Image.Visibility=Visibility.Visible;item.VideoLease?.Dispose();item.VideoLease=null;item.VideoPath=null;item.VideoDuration=TimeSpan.Zero;item.VideoPlaying=false;
+    }
+    private static void ClearImageOnlyLayers(SelectionItem item){item.Markup.Strokes.Clear();item.Redo.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
+    private static void InvalidateImageDerivedLayers(SelectionItem item){if(item.VideoPath is not null)return;ClearImageOnlyLayers(item);}
+    private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)
     {
-        _recordingMode=_recordingPaused=_recordingStopping=false;RecordingBar.Visibility=Visibility.Collapsed;PromptBar.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;item.Annotations.Visibility=Visibility.Visible;item.TextSelection.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();SetPromptBarHidden(false);
+        _recordingMode=_recordingPaused=_recordingStopping=false;RecordingBar.Visibility=Visibility.Collapsed;PromptBar.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var imageOnly=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=imageOnly;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
     }
     private void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
-        if(Active is not {VideoPath:not null} item)return;if(item.VideoPlaying){item.Video.Pause();item.VideoPlaying=false;PromptStatus.Text="视频已暂停";}else{item.Video.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";}
+        if(RejectIfOverlayOperationBusy()||Active is not {VideoPath:not null} item)return;if(item.VideoPlaying){item.Video.Pause();item.VideoPlaying=false;PromptStatus.Text="视频已暂停";}else{item.Video.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";}
     }
 
-    private async void OnKeyDown(object s,KeyEventArgs e)
+    private async void OnPreviewKeyDown(object s,KeyEventArgs e)
     {
-        if(e.Key==Key.Escape){if(_recordingMode){StopRecording(s,new());e.Handled=true;}else if(_drawingMode){ExitDrawingMode();e.Handled=true;}else if(_overlayRequest is {IsCancellationRequested:false}){_overlayRequest.Cancel();PromptStatus.Text="正在取消…";e.Handled=true;}else if(_request is {IsCancellationRequested:false}){_request.Cancel();e.Handled=true;}else if(_selections.FirstOrDefault(x=>x.TextSelection.IsHitTestVisible) is { } textSelection){ClearTextSelection(textSelection);PromptStatus.Text="已退出文字选择";e.Handled=true;}else Close();return;}
-        if(Keyboard.FocusedElement is RichTextBox richTextBox&&_selections.Any(item=>IsInside(richTextBox,item.TextSelection))){if(e.Key==Key.C&&Keyboard.Modifiers.HasFlag(ModifierKeys.Control)&&!richTextBox.Selection.IsEmpty){var text=new TextRange(richTextBox.Selection.Start,richTextBox.Selection.End).Text.TrimEnd('\r','\n');if(text.Length>0){Clipboard.SetText(text);PromptStatus.Text="文字已复制";}}e.Handled=true;return;}
+        if(e.Key==Key.Escape)
+        {
+            if(_recordingMode)StopRecording(s,new());
+            else if(_drawingMode)ExitDrawingMode();
+            else if(_overlayRequest is not null){if(!_overlayRequest.IsCancellationRequested)_overlayRequest.Cancel();PromptStatus.Text="正在取消当前操作…";}
+            else if(_request is not null){if(!_request.IsCancellationRequested)_request.Cancel();PromptStatus.Text="正在取消 AI 分析…";}
+            else
+            {
+                var focused=Keyboard.FocusedElement as DependencyObject;
+                var textSelection=_selections.FirstOrDefault(item=>item.TextSelection.IsHitTestVisible&&focused is not null&&IsInside(focused,item.TextSelection))
+                    ??(Active is { } active&&active.TextSelection.IsHitTestVisible?active:null)
+                    ??_selections.FirstOrDefault(item=>item.TextSelection.IsHitTestVisible);
+                if(textSelection is not null){ClearTextSelection(textSelection);PromptStatus.Text="已退出文字选择";}else Close();
+            }
+            e.Handled=true;return;
+        }
+        if(Keyboard.FocusedElement is RichTextBox richTextBox&&_selections.Any(item=>IsInside(richTextBox,item.TextSelection)))
+        {
+            if(e.Key==Key.C&&Keyboard.Modifiers.HasFlag(ModifierKeys.Control)&&!richTextBox.Selection.IsEmpty){CopyTextToClipboard(new TextRange(richTextBox.Selection.Start,richTextBox.Selection.End).Text.TrimEnd('\r','\n'));e.Handled=true;}return;
+        }
+        if(Keyboard.FocusedElement is TextBox or ButtonBase)return;
+        if(_recordingMode||_drawingMode)return;
+        if(_overlayRequest is not null||_request is not null){e.Handled=true;return;}
         if(e.Key==Key.Delete&&Active is not null){RemoveActiveSelection(true);e.Handled=true;return;}
         if(Active is not {IsImplicit:false} item)return;var step=Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)?10:1;
-        if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){item.Bounds=ClampSelection(new Rect(item.Bounds.X+(e.Key==Key.Left?-step:e.Key==Key.Right?step:0),item.Bounds.Y+(e.Key==Key.Up?-step:e.Key==Key.Down?step:0),item.Bounds.Width,item.Bounds.Height));item.Annotations.Children.Clear();ClearTextSelection(item);UpdateSelection(item);ShowToolbar();e.Handled=true;return;}
-        if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.Enter)await SendAsync(true);else if(e.Key==Key.R)Record(s,new());
+        if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){var next=ClampSelection(new Rect(item.Bounds.X+(e.Key==Key.Left?-step:e.Key==Key.Right?step:0),item.Bounds.Y+(e.Key==Key.Up?-step:e.Key==Key.Down?step:0),item.Bounds.Width,item.Bounds.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(item.Bounds,next))InvalidateImageDerivedLayers(item);item.Bounds=next;UpdateSelection(item);PositionPromptBar();ShowToolbar();e.Handled=true;return;}
+        if(Keyboard.Modifiers!=ModifierKeys.None)return;
+        if(item.VideoPath is not null&&(e.Key==Key.T||e.Key==Key.O)){PromptStatus.Text="视频区域不支持 OCR/翻译，请先选择截图区域";e.Handled=true;return;}
+        if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.R)Record(s,new());else if(e.Key==Key.Enter){e.Handled=true;await SendAsync(true);return;}else return;e.Handled=true;
     }
 }

@@ -3,6 +3,37 @@ using Xunit;
 namespace MewuAI.Tests;
 public sealed class StructuredResponseParserTests
 {
+    [Fact]
+    public void StreamingPreviewOnlyShowsDecodedRootAnswerAcrossEveryChunkBoundary()
+    {
+        const string json="{\"meta\":{\"answer\":\"不能显示\"},\"answer\":\"第一行\\n引号：\\\"好\\\"，表情：\\uD83D\\uDE00\",\"annotations\":[]}";
+        const string expected="第一行\n引号：\"好\"，表情：😀";
+        for(var length=1;length<=json.Length;length++)
+        {
+            var preview=StructuredResponseParser.GetStreamingAnswerPreview(json[..length]);
+            Assert.StartsWith(preview,expected,StringComparison.Ordinal);
+            Assert.DoesNotContain("不能显示",preview,StringComparison.Ordinal);
+            Assert.DoesNotContain("annotations",preview,StringComparison.Ordinal);
+        }
+        Assert.Equal(expected,StructuredResponseParser.GetStreamingAnswerPreview(json));
+    }
+
+    [Fact]
+    public void StreamingPreviewSuppressesThinkBlocksAndMarkdownProtocolShell()
+    {
+        const string stream="```json\n{\"answer\":\"<think>内部推理不能显示</think>可见答案\",\"annotations\":[]}```";
+        for(var length=1;length<=stream.Length;length++)
+        {
+            var preview=StructuredResponseParser.GetStreamingAnswerPreview(stream[..length]);
+            Assert.DoesNotContain("内部推理",preview,StringComparison.Ordinal);
+            Assert.DoesNotContain("<think",preview,StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("answer",preview,StringComparison.Ordinal);
+        }
+        Assert.Equal("可见答案",StructuredResponseParser.GetStreamingAnswerPreview(stream));
+    }
+    [Fact] public void StreamingTextPreviewShowsPlainTextWithoutThinkContent(){Assert.Equal("可见回答",StructuredResponseParser.GetStreamingTextPreview("<think>内部推理</think>可见回答"));Assert.Empty(StructuredResponseParser.GetStreamingTextPreview("<think>仍在推理"));}
+    [Fact] public void StreamingTextPreviewKeepsStructuredProtocolHidden(){Assert.Equal("尚未结束",StructuredResponseParser.GetStreamingTextPreview("{\"answer\":\"尚未结束"));Assert.Equal("回答",StructuredResponseParser.GetStreamingTextPreview("{\"answer\":\"回答\",\"annotations\":[]}"));}
+    [Fact] public void StreamingTextPreviewPreservesNonJsonCodeFence(){const string value="```csharp\nvar answer = 42;";Assert.Equal(value,StructuredResponseParser.GetStreamingTextPreview(value));}
     [Fact] public void Parse_ValidNormalizedAnnotation(){var r=StructuredResponseParser.Parse("```json\n{\"answer\":\"说明\",\"annotations\":[{\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"重点\",\"type\":\"note\"}]}\n```");Assert.Equal("说明",r.Answer);Assert.Single(r.Annotations);}
     [Fact] public void Parse_PreservesMultiRegionIndex(){var r=StructuredResponseParser.Parse("{\"answer\":\"说明\",\"annotations\":[{\"regionIndex\":2,\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"第三个区域\",\"type\":\"note\"}]}");Assert.Equal(2,Assert.Single(r.Annotations).RegionIndex);}
     [Fact] public void Parse_MalformedJsonFallsBack(){const string value="{not json";var r=StructuredResponseParser.Parse(value);Assert.Equal(value,r.Answer);Assert.Empty(r.Annotations);}
@@ -13,6 +44,57 @@ public sealed class StructuredResponseParserTests
     [Fact] public void Parse_PreservesOrdinaryAnswerContainingJson(){const string value="依赖如下：{\"dependencies\":{\"x\":\"1\"}}";Assert.Equal(value,StructuredResponseParser.Parse(value).Answer);}
     [Fact] public void Parse_AllowsNullAnnotations(){var r=StructuredResponseParser.Parse("{\"answer\":\"正文\",\"annotations\":null}");Assert.Equal("正文",r.Answer);Assert.Empty(r.Annotations);}
     [Fact] public void Parse_IgnoresNullAnnotationItems(){var r=StructuredResponseParser.Parse("{\"answer\":\"正文\",\"annotations\":[null]}");Assert.Equal("正文",r.Answer);Assert.Empty(r.Annotations);}
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("\"错误类型\"")]
+    [InlineData("42")]
+    [InlineData("true")]
+    public void Parse_IgnoresAnnotationsWithWrongRootType(string annotations)
+    {
+        var result=StructuredResponseParser.Parse($"{{\"answer\":\"正文\",\"annotations\":{annotations}}}");
+        Assert.Equal("正文",result.Answer);
+        Assert.Empty(result.Annotations);
+    }
+    [Fact]
+    public void Parse_IgnoresBadAnnotationItemsButKeepsValidSiblings()
+    {
+        const string value="""
+            {"answer":"正文","annotations":[
+              null,
+              "错误类型",
+              {"x":"0.1","y":0.2,"width":0.3,"height":0.2,"text":"错误坐标"},
+              {"x":0.1,"y":0.2,"width":0.3,"height":0.2,"text":"有效","regionIndex":2},
+              {"x":0.1,"y":0.2,"width":0.3,"height":0.2,"text":"错误区域","regionIndex":"2"}
+            ]}
+            """;
+        var result=StructuredResponseParser.Parse(value);
+        var annotation=Assert.Single(result.Annotations);
+        Assert.Equal("正文",result.Answer);
+        Assert.Equal("有效",annotation.Text);
+        Assert.Equal(2,annotation.RegionIndex);
+    }
+    [Fact]
+    public void Parse_PreservesCompleteRootJsonWithoutAnswerAsOrdinaryText()
+    {
+        const string value="{\"message\":\"这是普通 JSON\",\"annotations\":[]}";
+        var result=StructuredResponseParser.Parse(value);
+        Assert.Equal(value,result.Answer);
+        Assert.Empty(result.Annotations);
+    }
+    [Theory]
+    [InlineData("null")]
+    [InlineData("42")]
+    [InlineData("true")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    public void Parse_CompleteRootJsonWithNonStringAnswerHasEmptyBody(string answer)
+    {
+        var result=StructuredResponseParser.Parse($"{{\"answer\":{answer},\"annotations\":[{{\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"不应渲染\"}}]}}");
+        Assert.Empty(result.Answer);
+        Assert.Empty(result.Annotations);
+    }
+    [Fact] public void Parse_DropsBlankOrNegativeRegionAnnotations(){var r=StructuredResponseParser.Parse("{\"answer\":\"正文\",\"annotations\":[{\"regionIndex\":0,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2,\"text\":\" \"},{\"regionIndex\":-1,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2,\"text\":\"无效\"}]}");Assert.Empty(r.Annotations);}
     [Fact] public void Parse_RecoversAnswerFromTruncatedFencedResponseWithUnescapedQuotes()
     {
         const string value = """

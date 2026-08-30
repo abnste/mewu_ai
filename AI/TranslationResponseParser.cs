@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace mewu_ai_Assistant.AI;
@@ -7,23 +9,43 @@ public static class TranslationResponseParser
     public static bool TryParse(string value,int expectedCount,out IReadOnlyList<string> translations)
     {
         translations=[];
-        var payload=ExtractJson(RemoveMarkdownFence(value));
+        if(expectedCount<0)return false;
+        var payload=RemoveMarkdownFence(value);
+        var utf8=Encoding.UTF8.GetBytes(payload);
         try
         {
-            using var document=JsonDocument.Parse(payload);
-            var root=document.RootElement;
-            if(root.ValueKind==JsonValueKind.Object)
+            for(var offset=0;offset<utf8.Length;offset++)
             {
-                var property=root.EnumerateObject().FirstOrDefault(x=>x.Name.Equals("translations",StringComparison.OrdinalIgnoreCase));
-                if(property.Value.ValueKind!=JsonValueKind.Undefined)root=property.Value;
+                if(utf8[offset] is not ((byte)'{') and not ((byte)'['))continue;
+                try
+                {
+                    var reader=new Utf8JsonReader(utf8.AsSpan(offset),isFinalBlock:true,state:default);
+                    using var document=JsonDocument.ParseValue(ref reader);
+                    if(TryReadTranslations(document.RootElement,expectedCount,out translations))return true;
+                }
+                catch(JsonException)
+                {
+                }
             }
-            if(root.ValueKind!=JsonValueKind.Array)return false;
-            var values=root.EnumerateArray().Select(item=>item.ValueKind==JsonValueKind.String?item.GetString()??string.Empty:string.Empty).ToList();
-            if(values.Count!=expectedCount||values.Any(string.IsNullOrWhiteSpace))return false;
-            translations=values;
-            return true;
+            return false;
         }
-        catch(JsonException){return false;}
+        finally{CryptographicOperations.ZeroMemory(utf8);}
+    }
+
+    private static bool TryReadTranslations(JsonElement root,int expectedCount,out IReadOnlyList<string> translations)
+    {
+        translations=[];
+        if(root.ValueKind==JsonValueKind.Object)
+        {
+            var property=root.EnumerateObject().FirstOrDefault(x=>x.Name.Equals("translations",StringComparison.OrdinalIgnoreCase));
+            if(property.Value.ValueKind==JsonValueKind.Undefined)return false;
+            root=property.Value;
+        }
+        if(root.ValueKind!=JsonValueKind.Array)return false;
+        var values=root.EnumerateArray().Select(item=>item.ValueKind==JsonValueKind.String?item.GetString()??string.Empty:string.Empty).ToList();
+        if(values.Count!=expectedCount||values.Any(string.IsNullOrWhiteSpace))return false;
+        translations=values;
+        return true;
     }
 
     private static string RemoveMarkdownFence(string value)
@@ -35,11 +57,5 @@ public static class TranslationResponseParser
         var body=trimmed[(firstLineEnd+1)..];
         var closing=body.LastIndexOf("```",StringComparison.Ordinal);
         return (closing>=0?body[..closing]:body).Trim();
-    }
-
-    private static string ExtractJson(string value)
-    {
-        var objectStart=value.IndexOf('{');var arrayStart=value.IndexOf('[');var start=objectStart<0?arrayStart:arrayStart<0?objectStart:Math.Min(objectStart,arrayStart);if(start<0)return value;
-        var end=value.LastIndexOf(value[start]=='{'?'}':']');return end>=start?value[start..(end+1)]:value;
     }
 }
