@@ -25,7 +25,7 @@
     <Button ToolTip="删除当前区域 (Delete)" Click="RemoveSelection" Style="{StaticResource ToolbarIconButton}"><Path Width="17" Height="18" Stroke="#D75B68" StrokeThickness="1.8" StrokeLineJoin="Round" Data="M3,5 L15,5 M6,5 L6,3 L12,3 L12,5 M5,7 L6,17 L12,17 L13,7 M8,8 L8,14 M10,8 L10,14"/></Button>
     <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
     <Button ToolTip="原位翻译 (T)" Click="Translate" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="译" FontSize="16" FontWeight="SemiBold" Foreground="#52637A"/></Button>
-    <Button ToolTip="文字识别 (O)" Click="Ocr" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="T" FontSize="17" FontWeight="Bold" Foreground="#52637A"/></Button>
+    <Button ToolTip="原位文字识别 (O)" Click="Ocr" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="T" FontSize="17" FontWeight="Bold" Foreground="#52637A"/></Button>
     <Button ToolTip="贴图 (P)" Click="Pin" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#52637A" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M6,2 L14,2 L12,7 L16,11 L10.5,11 L10,17 L8.5,11 L3,11 L7,7 Z"/></Button>
     <Button ToolTip="标注 (D)" Click="Draw" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#52637A" StrokeThickness="1.8" StrokeLineJoin="Round" Data="M3,14 L3,17 L6,17 L16,7 L13,4 Z M11.5,5.5 L14.5,8.5"/></Button>
     <Button ToolTip="复制 (C)" Click="Copy" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#52637A" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M6,6 L16,6 L16,16 L6,16 Z M3,12 L3,3 L12,3"/></Button>
