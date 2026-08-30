@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -12,10 +12,15 @@
     <AssemblyName>MewuAI</AssemblyName>
     <RootNamespace>mewu_ai_Assistant</RootNamespace>
     <Version>0.1.0</Version>
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
     <Platforms>x64</Platforms>
     <Platform Condition="'$(Platform)' == '' Or '$(Platform)' == 'AnyCPU'">x64</Platform>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,22 +33,40 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="RapidOcrNet" Version="4.0.2" />
+    <PackageReference Include="RapidOcrNet" Version="4.1.0" ExcludeAssets="contentFiles" />
     <PackageReference Include="ScreenRecorderLib" Version="7.0.0" />
     <PackageReference Include="System.Speech" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>
     <Resource Include="Assets\MewuAI.Icon.png" />
-    <Content Include="Assets\MewuAI.ico" Link="MewuAI.ico" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\OcrModels\ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" Link="models\v5\ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\OcrModels\PP-OCRv6_det_small.onnx" Link="models\v6\PP-OCRv6_det_small.onnx" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\OcrModels\PP-OCRv6_rec_small.onnx" Link="models\v6\PP-OCRv6_rec_small.onnx" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\OcrModels\ppocrv6_dict.txt" Link="models\v6\ppocrv6_dict.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" Link="models\v5\ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\PP-OCRv6_det_small.onnx" Link="models\v6\PP-OCRv6_det_small.onnx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\PP-OCRv6_rec_small.onnx" Link="models\v6\PP-OCRv6_rec_small.onnx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\OcrModels\ppocrv6_dict.txt" Link="models\v6\ppocrv6_dict.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Licenses\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <Target Name="CopyMewuIconAsset" AfterTargets="Build">
-    <Copy SourceFiles="$(MSBuildProjectDirectory)\Assets\MewuAI.Icon.png" DestinationFolder="$(OutDir)Assets" SkipUnchangedFiles="true" />
+  <Target Name="PruneRapidOcrBundledV5Models" BeforeTargets="CopyModelsBuild;CopyModelsPublish">
+    <ItemGroup>
+      <Models Remove="@(Models)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="RemoveDevelopmentAndForeignNativeFilesFromPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishFilesToRemove Include="$(PublishDir)**\*.pdb;$(PublishDir)**\*.lib;$(PublishDir)**\*.a;$(PublishDir)**\*.so;$(PublishDir)**\*.dylib;$(PublishDir)ScreenRecorderLib.xml;$(PublishDir)MewuAI.ico;$(PublishDir)Assets\MewuAI.Icon.png" />
+    </ItemGroup>
+    <Delete Files="@(PublishFilesToRemove)" />
+    <ItemGroup>
+      <ForbiddenPublishFiles Include="$(PublishDir)**\*.pdb;$(PublishDir)**\*.lib;$(PublishDir)**\*.a;$(PublishDir)**\*.so;$(PublishDir)**\*.dylib" />
+      <ForbiddenPublishFiles Include="$(PublishDir)**\settings.json;$(PublishDir)**\.env;$(PublishDir)**\.env.*;$(PublishDir)**\*.jsonl;$(PublishDir)**\*.log;$(PublishDir)**\*.tmp" />
+      <ForbiddenPublishFiles Include="$(PublishDir)**\Credentials\**\*;$(PublishDir)**\Logs\**\*;$(PublishDir)**\History\**\*;$(PublishDir)**\Temp\**\*;$(PublishDir)**\Clipboard\**\*;$(PublishDir)**\Screenshots\**\*;$(PublishDir)**\Recordings\**\*" />
+      <ForbiddenPublishFiles Include="$(PublishDir)**\*.png;$(PublishDir)**\*.bmp;$(PublishDir)**\*.tif;$(PublishDir)**\*.tiff;$(PublishDir)**\*.jpg;$(PublishDir)**\*.jpeg;$(PublishDir)**\*.gif;$(PublishDir)**\*.mp4;$(PublishDir)**\*.webm;$(PublishDir)**\*.avi;$(PublishDir)**\*.mkv;$(PublishDir)**\*.mov" />
+      <ForbiddenPublishFiles Include="$(PublishDir)**\*MEWU_QA*;$(PublishDir)runtimes\linux-*\**\*;$(PublishDir)runtimes\linux\**\*" />
+    </ItemGroup>
+    <Error Condition="'@(ForbiddenPublishFiles)' != ''" Text="发布目录包含禁止分发的开发文件、外平台原生资产或用户/QA 数据：@(ForbiddenPublishFiles, ', ')" />
   </Target>
 
 </Project>

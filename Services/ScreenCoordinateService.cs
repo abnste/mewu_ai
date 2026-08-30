@@ -18,4 +18,11 @@ public static class ScreenCoordinateService
     }
 
     public static ScreenRect ToScreenRect(Int32Rect localPixels,int originX,int originY)=>new(originX+localPixels.X,originY+localPixels.Y,localPixels.Width,localPixels.Height);
+
+    public static Rect ToLocalDipRect(ScreenRect screenPixels,int virtualOriginX,int virtualOriginY,double surfaceWidth,double surfaceHeight,int pixelWidth,int pixelHeight)
+    {
+        if(surfaceWidth<=0||surfaceHeight<=0||pixelWidth<=0||pixelHeight<=0||screenPixels.IsEmpty)return Rect.Empty;
+        var scaleX=surfaceWidth/pixelWidth;var scaleY=surfaceHeight/pixelHeight;
+        return new Rect((screenPixels.X-virtualOriginX)*scaleX,(screenPixels.Y-virtualOriginY)*scaleY,screenPixels.Width*scaleX,screenPixels.Height*scaleY);
+    }
 }

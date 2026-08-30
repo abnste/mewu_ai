@@ -1,0 +1,10 @@
+Based on source code originally developed in the RapidOCR project (Apache-2.0 license).
+	- https://github.com/RapidAI/RapidOCR
+
+Uses parts of source code originally developed in the PdfPig project (Apache-2.0 license).
+	- https://github.com/UglyToad/PdfPig
+
+The dependency on OpenCV was removed thanks to the PContour library and its C# port.
+	- https://github.com/LingDong-/PContour
+	- https://github.com/BobLd/PContourNet
+The models made available are from the PaddleOCR project (Apache-2.0 license) and were downloaded from https://github.com/RapidAI/RapidOCR/blob/main/python/rapidocr/default_models.yaml

@@ -10,31 +10,44 @@ using Windows.Media.Ocr;
 
 namespace mewu_ai_Assistant.OCR;
 
-public sealed class WindowsOcrService : IOcrService
+public sealed class WindowsOcrService
 {
     private static readonly SemaphoreSlim PaddleGate=new(1,1);
     private static readonly Lazy<RapidOcr> PaddleEngine=new(CreatePaddleEngine,LazyThreadSafetyMode.ExecutionAndPublication);
+    private readonly PrivacyLogger? _logger;
+
+    public WindowsOcrService():this(new PrivacyLogger()){}
+    internal WindowsOcrService(PrivacyLogger? logger){_logger=logger;}
 
     public async Task<OcrDocument> RecognizeAsync(BitmapSource image,CancellationToken token)
     {
+        ArgumentNullException.ThrowIfNull(image);
+        var input=image;
+        if(!input.IsFrozen)
+        {
+            input=input.Clone();
+            input.Freeze();
+        }
         try
         {
-            var result=await RecognizeWithPaddleAsync(image,token);
-            if(result.Lines.Count>0)return result;
+            // An empty PP-OCR result is a valid result (for example, a blank
+            // selection). Only initialization or inference failures may fall
+            // back to the legacy Windows engine.
+            return await RecognizeWithPaddleAsync(input,token).ConfigureAwait(false);
         }
         catch(OperationCanceledException){throw;}
-        catch(Exception ex){new PrivacyLogger().Error("PP-OCRv6",ex);}
-        return await RecognizeWithLegacyEngineAsync(image,token);
+        catch(Exception ex){_logger?.Error("PP-OCRv6",ex);}
+        return await RecognizeWithLegacyEngineAsync(input,token).ConfigureAwait(false);
     }
 
     private static async Task<OcrDocument> RecognizeWithPaddleAsync(BitmapSource image,CancellationToken token)
     {
-        using var bitmap=CreateSkBitmap(image);
-        await PaddleGate.WaitAsync(token);
+        using var bitmap=await Task.Run(()=>CreateSkBitmap(image),token).ConfigureAwait(false);
+        await PaddleGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
             var options=RapidOcrOptions.PPOCRv6 with {ReturnWordBox=true,ReturnSingleCharBox=true,TextScore=.45f};
-            var result=await PaddleEngine.Value.DetectAsync(bitmap,options,null,token);
+            var result=await PaddleEngine.Value.DetectAsync(bitmap,options,null,token).ConfigureAwait(false);
             var lines=result.TextBlocks.Select(ToLine).Where(line=>!string.IsNullOrWhiteSpace(line.Text)&&line.Width>0&&line.Height>0).ToList();
             return new OcrDocument(string.Join(Environment.NewLine,lines.Select(line=>line.Text)),lines,"PP-OCRv6 本地 OCR");
         }
@@ -43,10 +56,17 @@ public sealed class WindowsOcrService : IOcrService
 
     private static async Task<OcrDocument> RecognizeWithLegacyEngineAsync(BitmapSource image,CancellationToken token)
     {
-        using var bitmap=CreateSoftwareBitmap(image,out var sourceWidth,out var sourceHeight,out var convertedWidth,out var convertedHeight);
-        var engine=OcrEngine.TryCreateFromUserProfileLanguages()??throw new InvalidOperationException("Windows 未安装可用的 OCR 语言包");var result=await engine.RecognizeAsync(bitmap).AsTask(token);var lines=new List<Models.OcrLine>();var scaleX=sourceWidth/(double)convertedWidth;var scaleY=sourceHeight/(double)convertedHeight;
+        var prepared=await Task.Run(()=>CreateLegacyInput(image),token).ConfigureAwait(false);
+        using var bitmap=prepared.Bitmap;
+        var engine=OcrEngine.TryCreateFromUserProfileLanguages()??throw new InvalidOperationException("Windows 未安装可用的 OCR 语言包");var result=await engine.RecognizeAsync(bitmap).AsTask(token).ConfigureAwait(false);var lines=new List<Models.OcrLine>();var scaleX=prepared.SourceWidth/(double)prepared.ConvertedWidth;var scaleY=prepared.SourceHeight/(double)prepared.ConvertedHeight;
         foreach(var line in result.Lines){var words=line.Words.Select(word=>new Models.OcrWord(word.Text,word.BoundingRect.X*scaleX,word.BoundingRect.Y*scaleY,word.BoundingRect.Width*scaleX,word.BoundingRect.Height*scaleY)).ToList();if(words.Count==0)continue;var x=words.Min(word=>word.X);var y=words.Min(word=>word.Y);var right=words.Max(word=>word.X+word.Width);var bottom=words.Max(word=>word.Y+word.Height);lines.Add(new Models.OcrLine(line.Text,x,y,right-x,bottom-y,words));}
         return new OcrDocument(result.Text,lines,"Windows 传统 OCR");
+    }
+
+    private static LegacyInput CreateLegacyInput(BitmapSource image)
+    {
+        var bitmap=CreateSoftwareBitmap(image,out var sourceWidth,out var sourceHeight,out var convertedWidth,out var convertedHeight);
+        return new LegacyInput(bitmap,sourceWidth,sourceHeight,convertedWidth,convertedHeight);
     }
 
     private static SoftwareBitmap CreateSoftwareBitmap(BitmapSource image,out int sourceWidth,out int sourceHeight,out int convertedWidth,out int convertedHeight)
@@ -61,19 +81,42 @@ public sealed class WindowsOcrService : IOcrService
         var engine=new RapidOcr();engine.InitModels(model);return engine;
     }
 
-    private static SKBitmap CreateSkBitmap(BitmapSource image)
+    internal static SKBitmap CreateSkBitmap(BitmapSource image)
     {
-        var encoder=new PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(image));using var stream=new MemoryStream();encoder.Save(stream);stream.Position=0;return SKBitmap.Decode(stream)??throw new InvalidOperationException("无法转换截图供 OCR 识别");
+        ArgumentNullException.ThrowIfNull(image);
+        BitmapSource input=image;
+        if(input.Format!=PixelFormats.Bgra32)
+        {
+            var converted=new FormatConvertedBitmap(input,PixelFormats.Bgra32,null,0);
+            converted.Freeze();
+            input=converted;
+        }
+
+        var bitmap=new SKBitmap(new SKImageInfo(input.PixelWidth,input.PixelHeight,SKColorType.Bgra8888,SKAlphaType.Unpremul));
+        try
+        {
+            input.CopyPixels(System.Windows.Int32Rect.Empty,bitmap.GetPixels(),checked(bitmap.RowBytes*bitmap.Height),bitmap.RowBytes);
+            return bitmap;
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
     }
 
     private static Models.OcrLine ToLine(RapidOcrNet.TextBlock block)
     {
         var bounds=Bounds(block.BoxPoints);
-        var confidence=block.CharScores is {Length:>0}?block.CharScores.Average():block.BoxScore;
-        var words=block.WordResults?.Select(word=>{var b=Bounds(word.BoxPoints);return new Models.OcrWord(word.Text,b.X,b.Y,b.Width,b.Height,word.Score);}).Where(word=>word.Width>0&&word.Height>0).ToList()
-            ??[new Models.OcrWord(block.Text,bounds.X,bounds.Y,bounds.Width,bounds.Height,confidence)];
+        var detectedWords=block.WordResults?.Select(word=>{var b=Bounds(word.BoxPoints);return new Models.OcrWord(word.Text,b.X,b.Y,b.Width,b.Height);}).Where(word=>!string.IsNullOrEmpty(word.Text)&&word.Width>0&&word.Height>0).ToList();
+        var words=EnsureWordBoxes(block.Text,bounds.X,bounds.Y,bounds.Width,bounds.Height,detectedWords);
         return new Models.OcrLine(block.Text,bounds.X,bounds.Y,bounds.Width,bounds.Height,words);
     }
 
+    internal static IReadOnlyList<Models.OcrWord> EnsureWordBoxes(string text,double x,double y,double width,double height,IReadOnlyList<Models.OcrWord>? words)=>
+        words is {Count:>0}?words:[new Models.OcrWord(text,x,y,width,height)];
+
     private static (double X,double Y,double Width,double Height) Bounds(IReadOnlyList<SKPointI> points){var left=points.Min(point=>point.X);var top=points.Min(point=>point.Y);var right=points.Max(point=>point.X);var bottom=points.Max(point=>point.Y);return(left,top,right-left,bottom-top);}
+
+    private sealed record LegacyInput(SoftwareBitmap Bitmap,int SourceWidth,int SourceHeight,int ConvertedWidth,int ConvertedHeight);
 }

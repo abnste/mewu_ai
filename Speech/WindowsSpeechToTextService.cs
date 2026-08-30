@@ -3,7 +3,7 @@ using System.Speech.Recognition;
 
 namespace mewu_ai_Assistant.Speech;
 
-public sealed class WindowsSpeechToTextService : ISpeechToTextService
+public sealed class WindowsSpeechToTextService
 {
     private readonly Func<string, CancellationToken, Task<string?>> _recognizeCore;
 
@@ -138,25 +138,34 @@ public sealed class WindowsSpeechToTextService : ISpeechToTextService
         try
         {
             recognizer.RecognizeAsync(RecognizeMode.Single);
-            using var registration = cancellationToken.Register(
-                () =>
-                {
-                    try
-                    {
-                        recognizer.RecognizeAsyncCancel();
-                    }
-                    catch (Exception)
-                    {
-                        // The single recognition may already have completed.
-                        completion.TrySetCanceled(cancellationToken);
-                    }
-                });
-            return await completion.Task.ConfigureAwait(false);
+            return await AwaitCompletionWithCancellationAsync(
+                completion,
+                recognizer.RecognizeAsyncCancel,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             recognizer.RecognizeCompleted -= completed;
         }
+    }
+
+    internal static async Task<T> AwaitCompletionWithCancellationAsync<T>(
+        TaskCompletionSource<T> completion,
+        Action cancelRecognition,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(completion);ArgumentNullException.ThrowIfNull(cancelRecognition);
+        using var registration=cancellationToken.Register(() =>
+        {
+            try{cancelRecognition();}
+            catch(Exception)
+            {
+                // Cancellation must still complete even when the recognizer has
+                // already stopped or its audio device disappeared.
+            }
+            finally{completion.TrySetCanceled(cancellationToken);}
+        });
+        return await completion.Task.ConfigureAwait(false);
     }
 
     private static SpeechRecognitionUnavailableException ToUnavailable(

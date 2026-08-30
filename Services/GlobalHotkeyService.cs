@@ -5,7 +5,7 @@ using mewu_ai_Assistant.Models;
 namespace mewu_ai_Assistant.Services;
 public sealed class GlobalHotkeyService : IDisposable
 {
-    private const int Id=0x4D57; private readonly HwndSource _source;private HotkeySetting? _current;
+    private const int PrimaryId=0x4D57,SecondaryId=0x4D58; private readonly HwndSource _source;private HotkeySetting? _current;private int _currentId;
     public event Action? Pressed;
     public GlobalHotkeyService()
     {
@@ -14,12 +14,14 @@ public sealed class GlobalHotkeyService : IDisposable
     }
     public bool Register(HotkeySetting hotkey)
     {
-        NativeMethods.UnregisterHotKey(_source.Handle,Id);
+        ArgumentNullException.ThrowIfNull(hotkey);
+        if(_current is not null&&_current.Key==hotkey.Key&&_current.Modifiers==hotkey.Modifiers)return true;
+        var candidateId=_current is null?PrimaryId:_currentId==PrimaryId?SecondaryId:PrimaryId;
         var modifiers=(uint)hotkey.Modifiers | 0x4000u;
-        if(NativeMethods.RegisterHotKey(_source.Handle,Id,modifiers,(uint)KeyInterop.VirtualKeyFromKey(hotkey.Key))){_current=new HotkeySetting{Key=hotkey.Key,Modifiers=hotkey.Modifiers};return true;}
-        if(_current is not null)NativeMethods.RegisterHotKey(_source.Handle,Id,(uint)_current.Modifiers|0x4000u,(uint)KeyInterop.VirtualKeyFromKey(_current.Key));
-        return false;
+        if(!NativeMethods.RegisterHotKey(_source.Handle,candidateId,modifiers,(uint)KeyInterop.VirtualKeyFromKey(hotkey.Key)))return false;
+        if(_current is not null)NativeMethods.UnregisterHotKey(_source.Handle,_currentId);
+        _currentId=candidateId;_current=new HotkeySetting{Key=hotkey.Key,Modifiers=hotkey.Modifiers};return true;
     }
-    private IntPtr WndProc(IntPtr hwnd,int msg,IntPtr wParam,IntPtr lParam,ref bool handled) { if(msg==NativeMethods.WmHotkey&&wParam.ToInt32()==Id){handled=true;Pressed?.Invoke();} return IntPtr.Zero; }
-    public void Dispose() { NativeMethods.UnregisterHotKey(_source.Handle,Id); _source.RemoveHook(WndProc); _source.Dispose(); }
+    private IntPtr WndProc(IntPtr hwnd,int msg,IntPtr wParam,IntPtr lParam,ref bool handled) { if(msg==NativeMethods.WmHotkey&&wParam.ToInt32()==_currentId){handled=true;Pressed?.Invoke();} return IntPtr.Zero; }
+    public void Dispose() { if(_current is not null)NativeMethods.UnregisterHotKey(_source.Handle,_currentId); _source.RemoveHook(WndProc); _source.Dispose(); }
 }

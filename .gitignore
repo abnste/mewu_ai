@@ -62,6 +62,16 @@ BenchmarkDotNet.Artifacts/
 project.lock.json
 project.fragment.lock.json
 artifacts/
+.codex-build/
+# Local runtime and QA output must never enter source control.
+settings.json
+Credentials/
+History/
+Clipboard/
+*.jsonl
+provider-verification.json
+# User-created workspace note; keep it local and never include it in releases.
+新建文本文档.txt
 
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
