@@ -78,7 +78,7 @@ public partial class CaptureOverlayWindow : Window
         DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
         var area=System.Windows.Forms.SystemInformation.VirtualScreen;Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
         SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);NativeMethods.ExcludeFromCapture(hwnd);};
-        Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=string.IsNullOrWhiteSpace(QuickPrompt.Text)?Visibility.Visible:Visibility.Collapsed;PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();QuickPrompt.Focus();};
+        Loaded+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=QuickPrompt.Text.Length==0?Visibility.Visible:Visibility.Collapsed;PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();QuickPrompt.Focus();};
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;PositionPromptBar();};
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
         Closed+=(_,_)=>{_speechRequest?.Cancel();_request?.Cancel();_overlayRequest?.Cancel();_recordingTimer.Stop();if(_recordingSession is not null){_recordingSession.Stop();_recordingSession.Dispose();}_recordingSession=null;foreach(var item in _selections)item.Video.Close();};
@@ -145,6 +145,7 @@ public partial class CaptureOverlayWindow : Window
     private void PositionFloatingBar(FrameworkElement bar,SelectionItem item)
     {
         bar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=bar.DesiredSize.Width;var h=bar.DesiredSize.Height;var monitor=MonitorBounds(item.Bounds);var x=Math.Clamp(item.Bounds.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var availableBottom=_promptBarHidden||PromptBar.Visibility!=Visibility.Visible?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=item.Bounds.Bottom+10;var above=item.Bounds.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(bar,x);Canvas.SetTop(bar,y);
+        if(ReferenceEquals(bar,Toolbar)&&SizeText.Visibility==Visibility.Visible){SizeText.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var sizeHeight=SizeText.DesiredSize.Height;var preferred=y<item.Bounds.Top?y-sizeHeight-4:item.Bounds.Top-sizeHeight-4;var sizeY=preferred>=monitor.Top+4?preferred:Math.Min(item.Bounds.Bottom-sizeHeight-4,item.Bounds.Top+4);Canvas.SetLeft(SizeText,item.Bounds.Left);Canvas.SetTop(SizeText,sizeY);}
     }
 
     private void PositionPromptBar(){if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;PromptBar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Math.Min(PromptBar.DesiredSize.Width,Math.Max(320,Root.ActualWidth-32));PromptBar.Width=w;Canvas.SetLeft(PromptBar,(Root.ActualWidth-w)/2);Canvas.SetTop(PromptBar,Math.Max(16,Root.ActualHeight-PromptBar.ActualHeight-24));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();if(DrawingToolbar.Visibility==Visibility.Visible&&Active is { } item)PositionFloatingBar(DrawingToolbar,item);}
@@ -158,7 +159,11 @@ public partial class CaptureOverlayWindow : Window
     }
     private void FinishReasoning(string reasoning)
     {
-        if(string.IsNullOrWhiteSpace(reasoning)&&ReasoningText.Text.Length==0)return;if(ReasoningText.Text.Length==0)ReasoningText.Text=reasoning.Trim();ReasoningToggle.Visibility=Visibility.Visible;ReasoningLabel.Text="思考过程 · 已完成";ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Opacity=1;ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(95,181,137));_reasoningExpanded=false;ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningChevron.Text="⌄";
+        if(!string.IsNullOrWhiteSpace(reasoning))ReasoningText.Text=reasoning.Trim();CloseReasoning("思考过程 · 已完成",Color.FromRgb(95,181,137));
+    }
+    private void CloseReasoning(string label,Color color)
+    {
+        if(ReasoningText.Text.Length==0)return;ReasoningToggle.Visibility=Visibility.Visible;ReasoningLabel.Text=label;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Opacity=1;ReasoningPulse.Background=new SolidColorBrush(color);_reasoningExpanded=false;ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningChevron.Text="⌄";_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }
 
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active);}
@@ -202,16 +207,16 @@ public partial class CaptureOverlayWindow : Window
         if(_request is {IsCancellationRequested:false})return;var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){PromptStatus.Text="请先配置可用的 AI Provider";_host.ShowSettings();return;}
         EnsureScreenSelection();var targets=(_references.Count>0?_selections.Where(_references.Contains):_selections).ToList();var hasVideo=targets.Any(x=>x.VideoPath is not null);var hasImage=targets.Any(x=>x.VideoPath is null);if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
         var targetCount=targets.Count;var prompt=QuickPrompt.Text.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=hasVideo?"按时间顺序说明引用视频中发生了什么，包括主体、动作和画面变化。":targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
-        _request=new CancellationTokenSource(TimeSpan.FromMinutes(2));SendButton.IsEnabled=false;AnswerText.Text="";ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;_reasoningExpanded=false;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";
+        var request=new CancellationTokenSource(TimeSpan.FromMinutes(2));_request=request;SendButton.IsEnabled=false;AnswerText.Text="";ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";var streamOpen=true;
         try
         {
-            var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent);if(delta.Content.Length>0)PromptStatus.Text="正在整理回答…";}):null;
-            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[.._history],Attachments=BuildAttachments(),StreamingProgress=progress},_request.Token);FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));QuickPrompt.Clear();RenderAnnotations(result.Annotations);
-            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,_request.Token);PromptStatus.Text=hasVideo?"视频理解完成 · 可继续提问":result.Annotations.Count>0?$"已在 {_lastSentSelections.Count} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";
+            var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!streamOpen||!ReferenceEquals(_request,request))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent);if(delta.Content.Length>0)PromptStatus.Text="正在整理回答…";}):null;
+            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[.._history],Attachments=BuildAttachments(),StreamingProgress=progress},request.Token);streamOpen=false;if(!ReferenceEquals(_request,request))return;FinishReasoning(result.Reasoning);var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){ShowAnswer();AnswerText.Text=emptyAnswer;PromptStatus.Text=emptyAnswer;return;}ShowAnswer();AnswerText.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));QuickPrompt.Clear();RenderAnnotations(result.Annotations);
+            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,request.Token);PromptStatus.Text=hasVideo?"视频理解完成 · 可继续提问":result.Annotations.Count>0?$"已在 {_lastSentSelections.Count} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";
         }
-        catch(OperationCanceledException){PromptStatus.Text="已取消";}
-        catch(Exception ex){ShowAnswer();AnswerText.Text="请求失败";PromptStatus.Text=ex.Message;}
-        finally{_request.Dispose();_request=null;SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+        catch(OperationCanceledException){if(ReferenceEquals(_request,request)){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}}
+        catch(Exception ex){if(ReferenceEquals(_request,request)){CloseReasoning("思考过程 · 已中止",Color.FromRgb(213,91,104));ShowAnswer();AnswerText.Text="请求失败";PromptStatus.Text=ex.Message;}}
+        finally{streamOpen=false;request.Dispose();if(ReferenceEquals(_request,request)){_request=null;SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}
     }
 
     private void RenderAnnotations(IReadOnlyList<AiAnnotation> notes)
@@ -284,9 +289,9 @@ public partial class CaptureOverlayWindow : Window
     private async void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;await SendAsync(true);}}
     private async void QuickVoice(object s,RoutedEventArgs e)
     {
-        if(_speechRequest is not null){_speechRequest.Cancel();return;}var microphone=VoiceIcon.Data;_speechRequest=new();VoiceIcon.Data=Geometry.Parse("M7,7 L17,7 L17,17 L7,17 Z");
+        if(_speechRequest is not null){PromptStatus.Text="正在停止聆听…";_speechRequest.Cancel();return;}var microphone=VoiceIcon.Data;_speechRequest=new();VoiceIcon.Data=Geometry.Parse("M7,7 L17,7 L17,17 L7,17 Z");
         try{PromptStatus.Text="正在聆听…";var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))QuickPrompt.Text=string.IsNullOrWhiteSpace(QuickPrompt.Text)?text:QuickPrompt.Text+" "+text;PromptStatus.Text="语音已写入";}
-        catch(OperationCanceledException){PromptStatus.Text="已停止聆听";}catch(Exception ex){PromptStatus.Text=$"语音不可用：{ex.Message}";}finally{_speechRequest.Dispose();_speechRequest=null;VoiceIcon.Data=microphone;}
+        catch(OperationCanceledException){PromptStatus.Text="已停止聆听";}catch(SpeechRecognitionUnavailableException ex){PromptStatus.Text=ex.Message;}catch(Exception){PromptStatus.Text="语音输入暂时不可用";}finally{_speechRequest.Dispose();_speechRequest=null;VoiceIcon.Data=microphone;}
     }
     private async void Translate(object s,RoutedEventArgs e)
     {

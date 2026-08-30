@@ -1,7 +1,10 @@
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
+using mewu_ai_Assistant.Speech;
+using System.Globalization;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using Xunit;
 namespace MewuAI.Tests;
 public sealed class ServicesTests
@@ -17,5 +20,62 @@ public sealed class ServicesTests
     [Fact] public void OpenAiProvider_DeclaresSupportedImageMimeTypes(){var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"unused");Assert.Contains("image/png",provider.Capabilities.AcceptedMimeTypes);Assert.False(provider.Capabilities.SupportsVideo);}
     [Fact] public async Task GenericOpenAiProvider_RejectsVideoBeforeNetwork(){var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"unused");await Assert.ThrowsAsync<NotSupportedException>(()=>provider.SendAsync(new AiRequest{Attachments=[new(AiAttachmentType.Video,"video/mp4",[1,2,3])]},TestContext.Current.CancellationToken));}
     [Fact] public async Task OpenAiProvider_RejectsUnsupportedMimeBeforeNetwork(){var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"unused");await Assert.ThrowsAsync<NotSupportedException>(()=>provider.SendAsync(new AiRequest{Attachments=[new(AiAttachmentType.Image,"image/bmp",[1,2,3])]},TestContext.Current.CancellationToken));}
+    [Fact] public void SpeechFailureMapper_MapsDesktopRecognizerAndAudioFailures(){Assert.Equal("当前语言缺少可用的语音识别器",SpeechRecognitionFailureMapper.FromException(new COMException("missing",SpeechRecognitionFailureMapper.RecognizerNotFound),SpeechRecognitionFailureContext.RecognizerInitialization));Assert.Equal("未检测到可用麦克风",SpeechRecognitionFailureMapper.FromException(new COMException("no device",SpeechRecognitionFailureMapper.AudioDeviceNotFound),SpeechRecognitionFailureContext.AudioInput));Assert.Equal("麦克风权限未开启，无法使用语音输入",SpeechRecognitionFailureMapper.FromException(new UnauthorizedAccessException(),SpeechRecognitionFailureContext.AudioInput));Assert.Equal("麦克风正被其他应用占用，请稍后重试",SpeechRecognitionFailureMapper.FromException(new COMException("busy",SpeechRecognitionFailureMapper.DeviceBusy),SpeechRecognitionFailureContext.AudioInput));Assert.Equal("没有听到语音，请重试",SpeechRecognitionFailureMapper.FromException(new COMException("timeout",SpeechRecognitionFailureMapper.RecognitionTimeout),SpeechRecognitionFailureContext.Recognition));}
+    [Fact] public void SpeechLanguageSelector_PrefersExactAndCompatibleInstalledRecognizers(){CultureInfo[] installed=[CultureInfo.GetCultureInfo("en-GB"),CultureInfo.GetCultureInfo("zh-CN")];Assert.Equal("zh-CN",SpeechRecognizerLanguageSelector.SelectBestCulture(" zh-CN ",installed,CultureInfo.GetCultureInfo("en-US"))?.Name);Assert.Equal("en-GB",SpeechRecognizerLanguageSelector.SelectBestCulture("en-US",installed,CultureInfo.GetCultureInfo("zh-CN"))?.Name);Assert.Null(SpeechRecognizerLanguageSelector.SelectBestCulture("ja-JP",installed,CultureInfo.GetCultureInfo("zh-CN")));}
+    [Fact] public void SpeechLanguageSelector_SystemUsesWindowsCultureThenSafeInstalledFallback(){CultureInfo[] installed=[CultureInfo.GetCultureInfo("en-US"),CultureInfo.GetCultureInfo("zh-CN")];Assert.Equal("zh-CN",SpeechRecognizerLanguageSelector.SelectBestCulture("system",installed,CultureInfo.GetCultureInfo("zh-CN"))?.Name);Assert.Equal("en-US",SpeechRecognizerLanguageSelector.SelectBestCulture("system",installed,CultureInfo.GetCultureInfo("ja-JP"))?.Name);CultureInfo[] familyFirst=[CultureInfo.GetCultureInfo("zh-CN"),CultureInfo.GetCultureInfo("en-GB")];Assert.Equal("en-GB",SpeechRecognizerLanguageSelector.SelectBestCulture("system",familyFirst,CultureInfo.GetCultureInfo("en-US"),CultureInfo.GetCultureInfo("zh-CN"))?.Name);Assert.Null(SpeechRecognizerLanguageSelector.SelectBestCulture("system",Array.Empty<CultureInfo>(),CultureInfo.GetCultureInfo("zh-CN")));}
+    [Fact] public async Task SpeechService_PreCanceledRequestDoesNotInitializeDesktopRecognizer(){using var cancellation=new CancellationTokenSource();cancellation.Cancel();await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>new WindowsSpeechToTextService().RecognizeOnceAsync("system",cancellation.Token));}
+    [Fact]
+    public async Task SpeechService_ReturnsTaskBeforeSynchronousRecognizerInitializationCompletes()
+    {
+        var testCancellation = TestContext.Current.CancellationToken;
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        using var returned = new ManualResetEventSlim();
+        var callerThread = 0;
+        var coreThread = 0;
+        Task<string?>? recognition = null;
+        Exception? callerError = null;
+        var service = new WindowsSpeechToTextService((_, _) =>
+        {
+            coreThread = Environment.CurrentManagedThreadId;
+            entered.Set();
+            release.Wait(testCancellation);
+            return Task.FromResult<string?>("完成");
+        });
+        var caller = new Thread(() =>
+        {
+            try
+            {
+                callerThread = Environment.CurrentManagedThreadId;
+                recognition = service.RecognizeOnceAsync("system", testCancellation);
+                returned.Set();
+            }
+            catch (Exception ex)
+            {
+                callerError = ex;
+                returned.Set();
+            }
+        });
+        caller.SetApartmentState(ApartmentState.STA);
+        caller.Start();
+
+        try
+        {
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(2), testCancellation), "后台识别核心没有启动");
+            Assert.True(returned.Wait(TimeSpan.FromMilliseconds(500), testCancellation), "公开方法被同步识别初始化阻塞");
+            Assert.NotEqual(callerThread, coreThread);
+        }
+        finally
+        {
+            release.Set();
+            Assert.True(caller.Join(TimeSpan.FromSeconds(2)), "调用线程没有正常结束");
+        }
+
+        Assert.Null(callerError);
+        Assert.Equal(
+            "完成",
+            await (recognition ?? throw new InvalidOperationException("未返回识别任务"))
+                .WaitAsync(TimeSpan.FromSeconds(2), testCancellation));
+    }
     private static string TestDirectory(){var path=Path.Combine(Path.GetTempPath(),"MewuAI.Tests",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(path);return path;}
 }
