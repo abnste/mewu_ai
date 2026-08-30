@@ -24,7 +24,7 @@ public sealed class ProviderVerificationService
             try
             {
                 var streamed=new System.Text.StringBuilder();
-                var result=await provider.SendAsync(new AiRequest{Prompt="只回复 MEWU_OK",StreamingProgress=new Progress<string>(x=>streamed.Append(x))},token);
+                var result=await provider.SendAsync(new AiRequest{Prompt="只回复 MEWU_OK",StreamingProgress=new Progress<AiStreamDelta>(x=>streamed.Append(x.Content).Append(x.ReasoningContent))},token);
                 text=!string.IsNullOrWhiteSpace(result.Answer);streaming=streamed.Length>0;
             }catch(Exception ex){errors.Add("text: "+ex.Message);}
             try

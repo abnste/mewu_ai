@@ -25,11 +25,13 @@ public partial class CaptureOverlayWindow : Window
     private readonly AppHost _host;
     private readonly CaptureFrame _frame;
     private readonly List<SelectionItem> _selections=[];
+    private readonly HashSet<SelectionItem> _references=[];
+    private List<SelectionItem> _lastSentSelections=[];
     private readonly List<AiMessage> _history=[new("system","分析多张区域图片时只返回 JSON：{answer:string,annotations:[{regionIndex,x,y,width,height,text,type}]}。regionIndex 是从 0 开始的图片序号；坐标是对应图片内 0 到 1 的归一化值。每个重要区域给出简洁批注，不适合批注时 annotations 为空。")];
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
-    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded;
     private CancellationTokenSource? _speechRequest,_request;
 
     private sealed class SelectionItem
@@ -92,7 +94,7 @@ public partial class CaptureOverlayWindow : Window
     {
         var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Annotations.Width=r.Width;item.Annotations.Height=r.Height;
         var px=ToPixelRect(r);if(px.Width>0&&px.Height>0)item.Image.Source=ScreenCaptureService.Crop(_frame.Image,px);
-        var active=ReferenceEquals(item,Active);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
+        var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?new SolidColorBrush(Color.FromRgb(102,112,235)):new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:referenced?2:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Background=new SolidColorBrush(referenced?Color.FromArgb(238,91,101,226):Color.FromArgb(230,29,119,224));item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
         if(active&&!item.IsImplicit){SizeText.Text=$"{px.Width} × {px.Height}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
     }
 
@@ -107,15 +109,25 @@ public partial class CaptureOverlayWindow : Window
 
     private void ShowToolbar()
     {
-        if(Active is not {IsImplicit:false} item){Toolbar.Visibility=Visibility.Collapsed;return;}AiButton.Content=$"✦ AI 助手 ({_selections.Count} 区)";Toolbar.Visibility=Visibility.Visible;Toolbar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Toolbar.DesiredSize.Width;var h=Toolbar.DesiredSize.Height;var monitor=MonitorBounds(item.Bounds);var x=Math.Clamp(item.Bounds.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var availableBottom=_promptBarHidden?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=item.Bounds.Bottom+10;var above=item.Bounds.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(Toolbar,x);Canvas.SetTop(Toolbar,y);
+        if(Active is not {IsImplicit:false} item){Toolbar.Visibility=Visibility.Collapsed;return;}var regionNumber=_activeIndex+1;ReferenceButton.ToolTip=_references.Contains(item)?$"区域{regionNumber} 已引用；可在输入框移除":$"引用当前区域为 @区域{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));Toolbar.Visibility=Visibility.Visible;Toolbar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Toolbar.DesiredSize.Width;var h=Toolbar.DesiredSize.Height;var monitor=MonitorBounds(item.Bounds);var x=Math.Clamp(item.Bounds.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var availableBottom=_promptBarHidden?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=item.Bounds.Bottom+10;var above=item.Bounds.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(Toolbar,x);Canvas.SetTop(Toolbar,y);
     }
 
     private void PositionPromptBar(){if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;PromptBar.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var w=Math.Min(PromptBar.DesiredSize.Width,Math.Max(320,Root.ActualWidth-32));PromptBar.Width=w;Canvas.SetLeft(PromptBar,(Root.ActualWidth-w)/2);Canvas.SetTop(PromptBar,Math.Max(16,Root.ActualHeight-PromptBar.ActualHeight-24));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void SetPromptBarHidden(bool hidden){if(_promptBarHidden==hidden)return;_promptBarHidden=hidden;PromptBar.IsHitTestVisible=!hidden;if(PromptBar.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBar.RenderTransform=transform;}var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(hidden?PromptBar.ActualHeight+32:0,TimeSpan.FromMilliseconds(hidden?150:190)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(hidden?.08:.98,TimeSpan.FromMilliseconds(150)));if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+    private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevron.Text=_reasoningExpanded?"⌃":"⌄";_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+    private void ShowReasoning(string delta)
+    {
+        if(ReasoningToggle.Visibility!=Visibility.Visible){ReasoningToggle.Visibility=Visibility.Visible;_reasoningExpanded=true;ReasoningPanel.Visibility=Visibility.Visible;ReasoningChevron.Text="⌃";ReasoningLabel.Text="正在思考…";ReasoningPulse.BeginAnimation(OpacityProperty,new DoubleAnimation(.35,1,TimeSpan.FromMilliseconds(650)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever});}
+        ReasoningText.Text+=delta;ReasoningText.GetBindingExpression(TextBlock.TextProperty)?.UpdateTarget();_ = Dispatcher.BeginInvoke(PositionPromptBar);
+    }
+    private void FinishReasoning(string reasoning)
+    {
+        if(string.IsNullOrWhiteSpace(reasoning)&&ReasoningText.Text.Length==0)return;if(ReasoningText.Text.Length==0)ReasoningText.Text=reasoning.Trim();ReasoningToggle.Visibility=Visibility.Visible;ReasoningLabel.Text="思考过程 · 已完成";ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Opacity=1;ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(95,181,137));_reasoningExpanded=false;ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningChevron.Text="⌄";
+    }
 
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return ScreenCaptureService.Crop(_frame.Image,ToPixelRect(Active.Bounds));}
-    private List<AiAttachment> BuildAttachments(){EnsureScreenSelection();return _selections.Select(x=>new AiAttachment(AiAttachmentType.Image,"image/png",ScreenCaptureService.EncodePng(ScreenCaptureService.Crop(_frame.Image,ToPixelRect(x.Bounds))))).ToList();}
+    private List<AiAttachment> BuildAttachments(){EnsureScreenSelection();_lastSentSelections=(_references.Count>0?_selections.Where(_references.Contains):_selections).ToList();return _lastSentSelections.Select(x=>new AiAttachment(AiAttachmentType.Image,"image/png",ScreenCaptureService.EncodePng(ScreenCaptureService.Crop(_frame.Image,ToPixelRect(x.Bounds))))).ToList();}
     private void EnsureScreenSelection(){if(_selections.Count>0)return;var item=CreateSelection(true);item.Bounds=new Rect(0,0,Root.ActualWidth,Root.ActualHeight);_selections.Add(item);_activeIndex=0;RefreshSelectionNumbers();UpdateSelection(item);}
 
     private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=Cyan;t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
@@ -123,22 +135,36 @@ public partial class CaptureOverlayWindow : Window
     private void ResizeDelta(object sender,DragDeltaEventArgs e){if(sender is not Thumb t||Active is not {IsImplicit:false} item)return;SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);item.Bounds=new Rect(new Point(l,top),new Point(r,b));item.Annotations.Children.Clear();UpdateSelection(item);ShowToolbar();e.Handled=true;}
 
     private void AddRegion(object s,RoutedEventArgs e){_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
+    private void ReferenceRegion(object s,RoutedEventArgs e)
+    {
+        if(Active is not {IsImplicit:false} item)return;_references.Add(item);UpdateReferenceChips();UpdateSelection(item);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();PromptStatus.Text=$"已加入 @区域{_activeIndex+1} · 输入问题后发送";
+    }
     private void RemoveSelection(object s,RoutedEventArgs e)=>RemoveActiveSelection(true);
     private void RemoveActiveSelection(bool updateUi)
     {
-        if(Active is not { } item)return;SelectionLayer.Children.Remove(item.Host);_selections.RemoveAt(_activeIndex);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();if(Active is { } next)UpdateSelection(next);else{HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}if(updateUi){PromptStatus.Text=_selections.Count==0?"拖动可连续框选多个区域":$"剩余 {_selections.Count} 个区域";if(Active is not null)ShowToolbar();}
+        if(Active is not { } item)return;_references.Remove(item);SelectionLayer.Children.Remove(item.Host);_selections.RemoveAt(_activeIndex);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();if(Active is { } next)UpdateSelection(next);else{HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}if(updateUi){PromptStatus.Text=_selections.Count==0?"拖动可连续框选多个区域":$"剩余 {_selections.Count} 个区域";if(Active is not null)ShowToolbar();}
     }
-    private void RefreshSelectionNumbers(){for(var i=0;i<_selections.Count;i++)_selections[i].BadgeText.Text=(i+1).ToString();}
+    private void RefreshSelectionNumbers(){for(var i=0;i<_selections.Count;i++)_selections[i].BadgeText.Text=(i+1).ToString();UpdateReferenceChips();}
+    private void UpdateReferenceChips()
+    {
+        ReferenceChips.Children.Clear();
+        foreach(var item in _selections.Where(_references.Contains))
+        {
+            var chip=new Border{Background=new SolidColorBrush(Color.FromRgb(231,236,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(205,214,252)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(9),Margin=new Thickness(0,0,5,3)};var row=new StackPanel{Orientation=Orientation.Horizontal};var link=new Button{Content=$"@区域{_selections.IndexOf(item)+1}",ToolTip="定位到此区域"};link.SetResourceReference(StyleProperty,"ReferenceChipButton");link.Click+=(_,_)=>{var index=_selections.IndexOf(item);if(index<0)return;Select(index);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();};var remove=new Button{Content="×",ToolTip="移除此引用"};remove.SetResourceReference(StyleProperty,"ReferenceChipRemoveButton");remove.Click+=(_,_)=>{_references.Remove(item);UpdateReferenceChips();UpdateSelection(item);if(ReferenceEquals(item,Active))ShowToolbar();QuickPrompt.Focus();};row.Children.Add(link);row.Children.Add(remove);chip.Child=row;ReferenceChips.Children.Add(chip);
+        }
+        ReferenceChips.Visibility=ReferenceChips.Children.Count>0?Visibility.Visible:Visibility.Collapsed;QuickPromptHint.Text=ReferenceChips.Children.Count>0?"继续输入关于引用区域的问题…":"询问当前屏幕，或连续圈选多个区域…";_ = Dispatcher.BeginInvoke(PositionPromptBar);
+    }
 
     private async Task SendAsync(bool useDefaultPrompt)
     {
         if(_request is {IsCancellationRequested:false})return;var provider=new AiProviderFactory().Create(_host.Settings);if(provider is null){PromptStatus.Text="请先配置可用的 AI Provider";_host.ShowSettings();return;}if(!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
-        var prompt=QuickPrompt.Text.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=_selections.Count>1?"综合理解这些屏幕区域，说明它们之间的关系并标出关键部分。":"理解当前屏幕区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
-        _request=new CancellationTokenSource(TimeSpan.FromMinutes(2));SendButton.IsEnabled=false;AnswerText.Text="";PromptStatus.Text=$"正在分析 {Math.Max(1,_selections.Count)} 个区域…按 Esc 可取消";
+        var targetCount=_references.Count>0?_references.Count:Math.Max(1,_selections.Count);var prompt=QuickPrompt.Text.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
+        _request=new CancellationTokenSource(TimeSpan.FromMinutes(2));SendButton.IsEnabled=false;AnswerText.Text="";ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;_reasoningExpanded=false;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";
         try
         {
-            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[.._history],Attachments=BuildAttachments()},_request.Token);ShowAnswer();AnswerText.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));QuickPrompt.Clear();RenderAnnotations(result.Annotations);
-            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,_request.Token);PromptStatus.Text=result.Annotations.Count>0?$"已在 {_selections.Count} 个区域中标出重点 · 可继续提问":"完成 · 可继续提问";
+            var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent);if(delta.Content.Length>0)PromptStatus.Text="正在整理回答…";}):null;
+            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[.._history],Attachments=BuildAttachments(),StreamingProgress=progress},_request.Token);FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Text=result.Answer;_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));QuickPrompt.Clear();RenderAnnotations(result.Annotations);
+            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().AppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,_request.Token);PromptStatus.Text=result.Annotations.Count>0?$"已在 {_lastSentSelections.Count} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";
         }
         catch(OperationCanceledException){PromptStatus.Text="已取消";}
         catch(Exception ex){ShowAnswer();AnswerText.Text="请求失败";PromptStatus.Text=ex.Message;}
@@ -148,9 +174,9 @@ public partial class CaptureOverlayWindow : Window
     private void RenderAnnotations(IReadOnlyList<AiAnnotation> notes)
     {
         foreach(var item in _selections)item.Annotations.Children.Clear();
-        for(var regionIndex=0;regionIndex<_selections.Count;regionIndex++)
+        for(var regionIndex=0;regionIndex<_lastSentSelections.Count;regionIndex++)
         {
-            var item=_selections[regionIndex];var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
+            var item=_lastSentSelections[regionIndex];var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
             foreach(var n in notes.Where(x=>x.RegionIndex==regionIndex).Take(6))
             {
                 var x=Math.Clamp(n.X,0,1)*w;var y=Math.Clamp(n.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(n.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(n.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9}};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.Annotations.Children.Add(box);
@@ -163,14 +189,13 @@ public partial class CaptureOverlayWindow : Window
     private void Save(object s,RoutedEventArgs e){var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var d=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(d.ShowDialog(this)==true)ScreenCaptureService.Save(CurrentImage(),d.FileName,d.FilterIndex==2);}
     private void Pin(object s,RoutedEventArgs e){new PinnedImageWindow(CurrentImage()).Show();Close();}
     private void Draw(object s,RoutedEventArgs e){if(Active is not { } item)return;var pixels=ToPixelRect(item.Bounds);new DrawingWindow(_host,CurrentImage(),ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY)).Show();Close();}
-    private async void AskAi(object s,RoutedEventArgs e)=>await SendAsync(true);
     private async void QuickSend(object s,RoutedEventArgs e)=>await SendAsync(true);
     private async void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;await SendAsync(true);}}
     private async void QuickVoice(object s,RoutedEventArgs e)
     {
-        if(_speechRequest is not null){_speechRequest.Cancel();return;}_speechRequest=new();VoiceButton.Content="■";
+        if(_speechRequest is not null){_speechRequest.Cancel();return;}var microphone=VoiceIcon.Data;_speechRequest=new();VoiceIcon.Data=Geometry.Parse("M7,7 L17,7 L17,17 L7,17 Z");
         try{PromptStatus.Text="正在聆听…";var text=await new WindowsSpeechToTextService().RecognizeOnceAsync(_host.Settings.VoiceLanguage,_speechRequest.Token);if(!string.IsNullOrWhiteSpace(text))QuickPrompt.Text=string.IsNullOrWhiteSpace(QuickPrompt.Text)?text:QuickPrompt.Text+" "+text;PromptStatus.Text="语音已写入";}
-        catch(OperationCanceledException){PromptStatus.Text="已停止聆听";}catch(Exception ex){PromptStatus.Text=$"语音不可用：{ex.Message}";}finally{_speechRequest.Dispose();_speechRequest=null;VoiceButton.Content="⌁";}
+        catch(OperationCanceledException){PromptStatus.Text="已停止聆听";}catch(Exception ex){PromptStatus.Text=$"语音不可用：{ex.Message}";}finally{_speechRequest.Dispose();_speechRequest=null;VoiceIcon.Data=microphone;}
     }
     private void Translate(object s,RoutedEventArgs e){new TranslationWindow(_host,CurrentImage()).Show();Close();}
     private void Ocr(object s,RoutedEventArgs e){new OcrTextWindow(CurrentImage()).Show();Close();}
