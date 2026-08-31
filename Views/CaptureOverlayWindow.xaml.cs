@@ -28,6 +28,13 @@ namespace mewu_ai_Assistant.Views;
 public partial class CaptureOverlayWindow : Window
 {
     private const int ReasoningDisplayLimit=12_000;
+    private const double PromptPreferredWidthTight=540;
+    private const double PromptEdgeMargin=6;
+    private const double PromptFloatingGap=8;
+    private const double PromptHiddenOffset=20;
+    private const double CompactChipScrollMaxHeight=36;
+    private const double CompactQuickPromptMinHeight=30;
+    private const double CompactQuickPromptMaxHeight=52;
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
     private readonly AppHost _host;
     private readonly CaptureFrame _frame;
@@ -108,15 +115,87 @@ public partial class CaptureOverlayWindow : Window
 
     public CaptureOverlayWindow(AppHost host)
     {
-        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();ApplyVoiceAvailability();
+        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();
+        // Keep overlay text and icon edges crisp at mixed DPI values.  The
+        // capture surface remains in physical-pixel coordinates; these flags
+        // only affect WPF rasterisation of the presentation layer.
+        UseLayoutRounding=true;SnapsToDevicePixels=true;TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);Root.SnapsToDevicePixels=true;
+        ApplyOverlayVisualTuning();
+        ApplyVoiceAvailability();
         if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
         DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
-        var area=System.Windows.Forms.SystemInformation.VirtualScreen;Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
-        SourceInitialized+=(_,_)=>{var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);var excluded=NativeMethods.ExcludeFromCapture(hwnd);var nativeError=excluded?0:System.Runtime.InteropServices.Marshal.GetLastWin32Error();_captureExclusionVerified=excluded&&!NativeMethods.VisualQaCaptureEnabled;if(!excluded)new PrivacyLogger().Error("CaptureProtection",new InvalidOperationException($"无法启用覆盖层防捕获，Win32 错误码 {nativeError}"));};
-        Loaded+=async (_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;QuickPrompt.TextChanged+=(_,_)=>QuickPromptHint.Visibility=QuickPrompt.Text.Length==0?Visibility.Visible:Visibility.Collapsed;PromptBar.SizeChanged+=(_,_)=>{PositionPromptBar();UpdatePromptBarHiddenTransform(false);};PositionPromptBar();QuickPrompt.Focus();if(CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}};
+        var area=System.Windows.Forms.SystemInformation.VirtualScreen;
+        // Window dimensions are WPF DIPs while the virtual desktop and the
+        // captured frame are physical pixels.  On a 175% display assigning the
+        // raw pixel size here makes the HWND render 1.75x too large and pushes
+        // the composer below the screen.  Read the per-monitor DPI once the
+        // HWND exists, express the layout surface in DIPs, then pin the native
+        // window to the exact physical virtual-screen bounds.
+        Left=area.Left;Top=area.Top;Width=area.Width;Height=area.Height;
+        SourceInitialized+=(_,_)=>
+        {
+            var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);
+            var excluded=NativeMethods.ExcludeFromCapture(hwnd);var nativeError=excluded?0:System.Runtime.InteropServices.Marshal.GetLastWin32Error();_captureExclusionVerified=excluded&&!NativeMethods.VisualQaCaptureEnabled;if(!excluded)new PrivacyLogger().Error("CaptureProtection",new InvalidOperationException($"无法启用覆盖层防捕获，Win32 错误码 {nativeError}"));
+        };
+        Loaded+=async (_,_)=>
+        {
+            ApplyOverlayDpiLayout(area);
+            DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
+            QuickPrompt.TextChanged+=(_,_)=>UpdateQuickPromptHint();QuickPrompt.GotKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(115,130,235));};QuickPrompt.LostKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(220,228,239));};UpdateQuickPromptHint();PromptBar.SizeChanged+=(_,_)=>{PositionPromptBar();UpdatePromptBarHiddenTransform(false);};PositionPromptBar();QuickPrompt.Focus();
+            // WPF can re-apply the initial Width/Height after SourceInitialized;
+            // run one render-priority pass so the DIP surface remains in sync
+            // with the physical HWND before any pointer coordinates arrive.
+            _=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>
+            {
+                if(_closed)return;
+                ApplyOverlayDpiLayout(area);
+                DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
+                PositionPromptBar();
+            }));
+            _=Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>
+            {
+                if(_closed)return;
+                ApplyOverlayDpiLayout(area);
+                DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
+                PositionPromptBar();
+            }));
+            if(CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
+        };
+        DpiChanged+=(_,_)=>ApplyOverlayDpiLayout(area);
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;PositionPromptBar();};
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
         Closed+=OnClosed;
+    }
+
+    private void ApplyOverlayVisualTuning()
+    {
+        Toolbar.Padding=new Thickness(5);
+        DrawingToolbar.Padding=new Thickness(5);
+        RecordingBar.Padding=new Thickness(8,6,8,6);
+        PromptBar.Padding=new Thickness(6);
+        PromptBar.CornerRadius=new CornerRadius(18);
+        ReferenceChipScroll.MaxHeight=CompactChipScrollMaxHeight;
+        ReferenceChips.Margin=new Thickness(4,2,4,0);
+        QuickPrompt.MinHeight=CompactQuickPromptMinHeight;
+        QuickPrompt.MaxHeight=CompactQuickPromptMaxHeight;
+        QuickPrompt.Padding=new Thickness(8,4,8,4);
+        QuickPrompt.FontSize=12.5;
+        TextBlock.SetLineHeight(QuickPrompt,17);
+        QuickPromptHint.Margin=new Thickness(8,0,0,0);
+        AnswerHeader.Margin=new Thickness(8,2,8,0);
+        AnswerScroll.Margin=new Thickness(8,6,8,6);
+        PromptStatus.Margin=new Thickness(0,3,0,0);
+        PromptStatus.FontSize=10;
+        ReasoningPanel.Margin=new Thickness(6,5,6,0);
+        ReasoningPanel.Padding=new Thickness(10,8,10,8);
+    }
+
+    private void UpdateQuickPromptHint()
+    {
+        var empty=QuickPrompt.Text.Length==0;
+        QuickPromptHint.Visibility=empty?Visibility.Visible:Visibility.Collapsed;
+        QuickPrompt.CaretBrush=empty?Brushes.Transparent:new SolidColorBrush(Color.FromRgb(91,108,235));
     }
 
     private void OnClosed(object? sender,EventArgs e)
@@ -138,6 +217,25 @@ public partial class CaptureOverlayWindow : Window
     {
         if(source is null)return;
         try{source.Cancel();}catch(ObjectDisposedException){}catch(Exception ex){new PrivacyLogger().Error("OverlayCancelOnClose",ex);}
+    }
+
+    private void ApplyOverlayDpiLayout(System.Drawing.Rectangle area)
+    {
+        if(!IsInitialized)return;
+        var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        var dpi=Math.Max(96u,NativeMethods.GetDpiForWindow(hwnd));
+        // Window and canvas dimensions are WPF DIPs.  The captured frame and
+        // native SetWindowPos bounds are physical pixels, so express the
+        // virtual desktop surface in DIPs once using the current monitor DPI.
+        // Keeping the canvas untransformed preserves a one-to-one logical
+        // coordinate space for pointer hit testing and ScreenCoordinateService.
+        var dipSize=ScreenCoordinateService.PixelsToDipSize(area.Width,area.Height,dpi);
+        Width=dipSize.Width;
+        Height=dipSize.Height;
+        Root.Width=dipSize.Width;
+        Root.Height=dipSize.Height;
+        Root.HorizontalAlignment=HorizontalAlignment.Left;
+        Root.VerticalAlignment=VerticalAlignment.Top;
     }
 
     private static void ReleaseSelectionResources(SelectionItem item)
@@ -200,7 +298,7 @@ public partial class CaptureOverlayWindow : Window
         var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Markup.Width=item.TextOverlays.Width=item.AiAnnotations.Width=item.TextSelection.Width=r.Width;item.Markup.Height=item.TextOverlays.Height=item.AiAnnotations.Height=item.TextSelection.Height=r.Height;
         var px=ToPixelRect(r);if(px.Width>0&&px.Height>0&&item.VideoPath is null)item.Image.Source=ScreenCaptureService.Crop(_frame.Image,px);
         var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?new SolidColorBrush(Color.FromRgb(102,112,235)):new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:referenced?2:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Background=new SolidColorBrush(referenced?Color.FromArgb(238,91,101,226):Color.FromArgb(230,29,119,224));item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
-        if(active&&!item.IsImplicit){SizeText.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":$"视频 · {item.VideoDuration:mm\\:ss}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
+        if(active&&!item.IsImplicit){SizeTextLabel.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":$"视频 · {item.VideoDuration:mm\\:ss}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
     }
 
     private void Select(int index){_activeIndex=index;for(var i=0;i<_selections.Count;i++)UpdateSelection(_selections[i]);}
@@ -212,13 +310,13 @@ public partial class CaptureOverlayWindow : Window
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
     private Rect MonitorBounds(Rect selection)
     {
-        var pixels=ToPixelRect(selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).Bounds;
+        var pixels=ToPixelRect(selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).WorkingArea;
         return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     }
     private Rect PromptMonitorBounds()
     {
         if(Active is {IsImplicit:false} item)return MonitorBounds(item.Bounds);
-        var bounds=System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position).Bounds;
+        var bounds=System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position).WorkingArea;
         return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     }
 
@@ -232,7 +330,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void PositionFloatingBar(FrameworkElement bar,SelectionItem item)
     {
-        var monitor=MonitorBounds(item.Bounds);var availableWidth=Math.Max(1,monitor.Width-16);bar.MaxWidth=availableWidth;bar.Measure(new Size(availableWidth,double.PositiveInfinity));var w=CaptureOverlayPolicy.ConstrainFloatingBarWidth(monitor,bar.DesiredSize.Width);var h=bar.DesiredSize.Height;var x=Math.Clamp(item.Bounds.Left,monitor.Left+8,Math.Max(monitor.Left+8,monitor.Right-w-8));var promptTop=Canvas.GetTop(PromptBar);var promptLeft=Canvas.GetLeft(PromptBar);var promptWidth=Math.Max(PromptBar.ActualWidth,PromptBar.DesiredSize.Width);var promptOverlapsMonitor=double.IsFinite(promptTop)&&double.IsFinite(promptLeft)&&promptLeft<monitor.Right&&promptLeft+promptWidth>monitor.Left;var availableBottom=_promptBarHidden||PromptBar.Visibility!=Visibility.Visible||!promptOverlapsMonitor?monitor.Bottom-8:Math.Min(monitor.Bottom-8,promptTop-8);var below=item.Bounds.Bottom+10;var above=item.Bounds.Top-h-10;var y=below+h<=availableBottom?below:above>=monitor.Top+8?above:Math.Clamp(below,monitor.Top+8,Math.Max(monitor.Top+8,availableBottom-h));Canvas.SetLeft(bar,x);Canvas.SetTop(bar,y);
+        var monitor=MonitorBounds(item.Bounds);var availableWidth=Math.Max(1,monitor.Width-PromptEdgeMargin*2);bar.MaxWidth=availableWidth;bar.Measure(new Size(availableWidth,double.PositiveInfinity));var w=CaptureOverlayPolicy.ConstrainFloatingBarWidth(monitor,bar.DesiredSize.Width);var h=bar.DesiredSize.Height;var x=Math.Clamp(item.Bounds.Left,monitor.Left+PromptEdgeMargin,Math.Max(monitor.Left+PromptEdgeMargin,monitor.Right-w-PromptEdgeMargin));var promptTop=Canvas.GetTop(PromptBar);var promptLeft=Canvas.GetLeft(PromptBar);var promptWidth=Math.Max(PromptBar.ActualWidth,PromptBar.DesiredSize.Width);var promptOverlapsMonitor=double.IsFinite(promptTop)&&double.IsFinite(promptLeft)&&promptLeft<monitor.Right&&promptLeft+promptWidth>monitor.Left;var availableBottom=_promptBarHidden||PromptBar.Visibility!=Visibility.Visible||!promptOverlapsMonitor?monitor.Bottom-PromptEdgeMargin:Math.Min(monitor.Bottom-PromptEdgeMargin,promptTop-PromptFloatingGap);var below=item.Bounds.Bottom+PromptFloatingGap;var above=item.Bounds.Top-h-PromptFloatingGap;var y=below+h<=availableBottom?below:above>=monitor.Top+PromptEdgeMargin?above:Math.Clamp(below,monitor.Top+PromptEdgeMargin,Math.Max(monitor.Top+PromptEdgeMargin,availableBottom-h));Canvas.SetLeft(bar,x);Canvas.SetTop(bar,y);
         if(ReferenceEquals(bar,Toolbar)&&SizeText.Visibility==Visibility.Visible){SizeText.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var sizeHeight=SizeText.DesiredSize.Height;var preferred=y<item.Bounds.Top?y-sizeHeight-4:item.Bounds.Top-sizeHeight-4;var sizeY=preferred>=monitor.Top+4?preferred:Math.Min(item.Bounds.Bottom-sizeHeight-4,item.Bounds.Top+4);Canvas.SetLeft(SizeText,item.Bounds.Left);Canvas.SetTop(SizeText,sizeY);}
     }
 
@@ -245,7 +343,7 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             var availableWidth=Math.Max(1,monitor.Width-CaptureOverlayPolicy.PromptSideMargin*2);
-            PromptBar.Width=Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,availableWidth);
+            PromptBar.Width=Math.Min(Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,PromptPreferredWidthTight),availableWidth);
             // Remove a stale explicit height before measuring content that may
             // have gained reference chips or an answer since the last pass.
             PromptBar.Height=double.NaN;
@@ -274,6 +372,7 @@ public partial class CaptureOverlayWindow : Window
             PromptBar.MaxHeight=bounds.Height;
             Canvas.SetLeft(PromptBar,bounds.Left);
             Canvas.SetTop(PromptBar,bounds.Top);
+            if(_answerExpanded)AnswerScroll.MaxHeight=Math.Min(170,Math.Max(120,monitor.Height*.22));
             UpdatePromptBarHiddenTransform(false);
             QueuePromptBarLayoutClamp();
             if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();
@@ -310,9 +409,9 @@ public partial class CaptureOverlayWindow : Window
     private void UpdatePromptBarHiddenTransform(bool animate)
     {
         if(PromptBar.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBar.RenderTransform=transform;}
-        var target=0d;if(_promptBarHidden){var monitor=PromptMonitorBounds();var top=Canvas.GetTop(PromptBar);target=double.IsFinite(top)?Math.Max(PromptBar.ActualHeight+32,monitor.Bottom-top+32):PromptBar.ActualHeight+32;}
-        if(animate){var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(_promptBarHidden?150:190)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(_promptBarHidden?.08:.98,TimeSpan.FromMilliseconds(150)));}
-        else{transform.BeginAnimation(TranslateTransform.YProperty,null);transform.Y=target;PromptBar.BeginAnimation(OpacityProperty,null);PromptBar.Opacity=_promptBarHidden?.08:.98;}
+        var target=0d;if(_promptBarHidden){var monitor=PromptMonitorBounds();var top=Canvas.GetTop(PromptBar);target=double.IsFinite(top)?Math.Max(PromptBar.ActualHeight+PromptHiddenOffset,monitor.Bottom-top+PromptHiddenOffset):PromptBar.ActualHeight+PromptHiddenOffset;}
+        if(animate){var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(_promptBarHidden?140:180)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(_promptBarHidden?0d:.985,TimeSpan.FromMilliseconds(140)));}
+        else{transform.BeginAnimation(TranslateTransform.YProperty,null);transform.Y=target;PromptBar.BeginAnimation(OpacityProperty,null);PromptBar.Opacity=_promptBarHidden?0d:.985;}
     }
     private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(PositionPromptBar);}
     private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevronRotation.Angle=_reasoningExpanded?180:0;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
@@ -413,7 +512,7 @@ public partial class CaptureOverlayWindow : Window
         ReferenceChips.Children.Clear();
         foreach(var item in _selections.Where(_references.Contains))
         {
-            var chip=new Border{Background=new SolidColorBrush(Color.FromRgb(231,236,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(205,214,252)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(9),Margin=new Thickness(0,0,5,3)};var row=new StackPanel{Orientation=Orientation.Horizontal};var type=item.VideoPath is null?"区域":"视频";var link=new Button{Content=$"@{type}{_selections.IndexOf(item)+1}",ToolTip=$"定位到此{type}"};link.SetResourceReference(StyleProperty,"ReferenceChipButton");link.Click+=(_,_)=>{var index=_selections.IndexOf(item);if(index<0)return;Select(index);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();};var remove=new Button{Content=CreateCloseIcon(),ToolTip="移除此引用"};System.Windows.Automation.AutomationProperties.SetName(remove,$"移除{type}{_selections.IndexOf(item)+1}引用");remove.SetResourceReference(StyleProperty,"ReferenceChipRemoveButton");remove.Click+=(_,_)=>{_references.Remove(item);UpdateReferenceChips();UpdateSelection(item);if(ReferenceEquals(item,Active))ShowToolbar();QuickPrompt.Focus();};row.Children.Add(link);row.Children.Add(remove);chip.Child=row;ReferenceChips.Children.Add(chip);
+            var chip=new Border{Background=new SolidColorBrush(Color.FromRgb(241,245,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(214,222,238)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(8),Margin=new Thickness(0,0,4,2),Padding=new Thickness(1)};var row=new StackPanel{Orientation=Orientation.Horizontal};var type=item.VideoPath is null?"区域":"视频";var link=new Button{Content=$"@{type}{_selections.IndexOf(item)+1}",ToolTip=$"定位到此{type}"};link.SetResourceReference(StyleProperty,"ReferenceChipButton");link.Click+=(_,_)=>{var index=_selections.IndexOf(item);if(index<0)return;Select(index);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();};var remove=new Button{Content=CreateCloseIcon(),ToolTip="移除此引用"};System.Windows.Automation.AutomationProperties.SetName(remove,$"移除{type}{_selections.IndexOf(item)+1}引用");remove.SetResourceReference(StyleProperty,"ReferenceChipRemoveButton");remove.Click+=(_,_)=>{_references.Remove(item);UpdateReferenceChips();UpdateSelection(item);if(ReferenceEquals(item,Active))ShowToolbar();QuickPrompt.Focus();};row.Children.Add(link);row.Children.Add(remove);chip.Child=row;ReferenceChips.Children.Add(chip);
         }
         ReferenceChips.Visibility=ReferenceChips.Children.Count>0?Visibility.Visible:Visibility.Collapsed;QuickPromptHint.Text=ReferenceChips.Children.Count>0?"继续输入关于引用区域的问题…":"询问当前屏幕，或连续圈选多个区域…";_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }

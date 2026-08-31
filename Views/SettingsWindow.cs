@@ -1,7 +1,9 @@
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Media.Media3D;
 using System.Windows.Media.Effects;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
@@ -71,19 +73,24 @@ public sealed class SettingsWindow : Window
         foreach(var unavailable in unavailableByProvider)
             if(unavailable.Headers.Count>0)_unavailableSensitiveHeaders[unavailable.Provider]=unavailable.Headers;
         Title = "喵呜AI 设置";
-        Width = 820;
-        Height = 650;
-        MinWidth = 640;
-        MinHeight = 500;
+        Width = 760;
+        // Keep the short settings pages dense while leaving the AI editor
+        // enough room to scroll within its own card.
+        Height = 430;
+        MinWidth = 600;
+        MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
         Background = Brushes.Transparent;
         Foreground = new SolidColorBrush(Color.FromRgb(23,32,51));
+        UseLayoutRounding = true;
+        SnapsToDevicePixels = true;
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
 
         var tabs = new TabControl
         {
-            Margin = new Thickness(20, 12, 20, 18),
+            Margin = new Thickness(16, 8, 16, 14),
             TabStripPlacement = Dock.Left
         };
         tabs.Items.Add(Tab("常规", General()));
@@ -94,28 +101,51 @@ public sealed class SettingsWindow : Window
         tabs.Items.Add(Tab("隐私", Privacy()));
 
         var save = ActionButton("保存", true);
-        save.Margin = new Thickness(0, 0, 20, 18);
+        save.Margin = new Thickness(0, 0, 18, 16);
         save.HorizontalAlignment = HorizontalAlignment.Right;
         save.Click += (_, _) => Save();
-        var grid = new Grid { Background = new SolidColorBrush(Color.FromRgb(245,247,252)) };
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(HasConfigurationWarnings?76:54) });
+        var grid = new Grid { Background = new SolidColorBrush(Color.FromRgb(245,247,252)), ClipToBounds = true };
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(HasConfigurationWarnings?68:48) });
         grid.RowDefinitions.Add(new RowDefinition());
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var header = new Grid { Margin = new Thickness(22,0,14,0) };
-        header.MouseLeftButtonDown += (_,e) => { if(e.ButtonState==System.Windows.Input.MouseButtonState.Pressed&&e.OriginalSource is not Button) DragMove(); };
-        var titleStack=new StackPanel{VerticalAlignment=VerticalAlignment.Center};
-        titleStack.Children.Add(new TextBlock { Text="喵呜AI 设置", FontSize=17, FontWeight=FontWeights.SemiBold });
+        var header = new Grid { Margin = new Thickness(20,0,12,0) };
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.MouseLeftButtonDown += (_,e) => { if(e.ButtonState==System.Windows.Input.MouseButtonState.Pressed&&!IsInsideButton(e.OriginalSource)) DragMove(); };
+        var titleStack=new StackPanel{Orientation=Orientation.Horizontal,VerticalAlignment=VerticalAlignment.Center};
+        titleStack.Children.Add(new Border
+        {
+            Width=26,
+            Height=26,
+            CornerRadius=new CornerRadius(8),
+            Background=new SolidColorBrush(Color.FromRgb(232,245,255)),
+            BorderBrush=new SolidColorBrush(Color.FromRgb(211,235,255)),
+            BorderThickness=new Thickness(1),
+            Padding=new Thickness(3),
+            Child=new Image
+            {
+                Source=new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/Assets/MewuAI.Icon.png")),
+                Stretch=Stretch.Uniform
+            }
+        });
+        var titleText=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(8,0,0,0)};
+        titleText.Children.Add(new TextBlock { Text="喵呜AI 设置", FontSize=16.5, FontWeight=FontWeights.SemiBold });
         _windowConfigurationWarning.Foreground=new SolidColorBrush(Color.FromRgb(185,93,32));
-        _windowConfigurationWarning.FontSize=11;
+        _windowConfigurationWarning.FontSize=10.5;
         _windowConfigurationWarning.TextTrimming=TextTrimming.CharacterEllipsis;
-        _windowConfigurationWarning.MaxWidth=650;
-        titleStack.Children.Add(_windowConfigurationWarning);
+        _windowConfigurationWarning.MaxWidth=600;
+        titleText.Children.Add(_windowConfigurationWarning);
+        titleStack.Children.Add(titleText);
+        Grid.SetColumn(titleStack, 0);
         header.Children.Add(titleStack);
-        var close=ActionButton(string.Empty);close.Content=CloseIcon();close.ToolTip="关闭设置";System.Windows.Automation.AutomationProperties.SetName(close,"关闭设置窗口");close.Padding=new Thickness(13,7,13,7);close.HorizontalAlignment=HorizontalAlignment.Right;close.VerticalAlignment=VerticalAlignment.Center;close.Click+=(_,_)=>Close();header.Children.Add(close);
+        // Keep the settings chrome aligned with the compact shell used by
+        // the quick-question window; a full 42-DIP circle made the close
+        // affordance visually heavier than the title bar around it.
+        var close=ActionButton(string.Empty);close.Content=CloseIcon();close.ToolTip="关闭设置";System.Windows.Automation.AutomationProperties.SetName(close,"关闭设置窗口");close.Width=34;close.Height=34;close.MinWidth=34;close.MinHeight=34;close.Padding=new Thickness(0);close.SetResourceReference(StyleProperty,"RoundIconButton");close.HorizontalAlignment=HorizontalAlignment.Right;close.VerticalAlignment=VerticalAlignment.Center;Grid.SetColumn(close, 1);close.Click+=(_,_)=>Close();header.Children.Add(close);
         Grid.SetRow(tabs,1);Grid.SetRow(save,2);
         grid.Children.Add(header);grid.Children.Add(tabs);
         grid.Children.Add(save);
-        Content = new Border { CornerRadius=new CornerRadius(18), BorderBrush=ControlBorderBrush, BorderThickness=new Thickness(1), Background=new SolidColorBrush(Color.FromRgb(245,247,252)), Child=grid, Effect=new DropShadowEffect{Color=Color.FromRgb(102,117,140),BlurRadius=30,ShadowDepth=9,Opacity=.25} };
+        Content = new Border { Margin=new Thickness(10), CornerRadius=new CornerRadius(18), BorderBrush=ControlBorderBrush, BorderThickness=new Thickness(1), Background=new SolidColorBrush(Color.FromRgb(245,247,252)), Child=grid, Effect=new DropShadowEffect{Color=Color.FromRgb(102,117,140),BlurRadius=30,ShadowDepth=9,Opacity=.25} };
         RefreshConfigurationWarnings();
         SourceInitialized += (_, _) =>
         {
@@ -137,35 +167,61 @@ public sealed class SettingsWindow : Window
             Background = PanelBrush,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Padding = new Thickness(4)
+            Padding = new Thickness(3)
         }
     };
 
     private static TextBlock Text(string text, bool secondary = false) => new()
     {
         Text = text,
-        Margin = new Thickness(0, 5, 0, 9),
+        Margin = new Thickness(0, 4, 0, 8),
         TextWrapping = TextWrapping.Wrap,
         Foreground = secondary ? SecondaryBrush : new SolidColorBrush(Color.FromRgb(23,32,51))
     };
 
-    private static StackPanel Panel() => new() { Margin = new Thickness(24) };
+    private static StackPanel Panel() => new() { Margin = new Thickness(20) };
 
     private static FrameworkElement Labeled(string name, Control control)
     {
         var panel = new StackPanel();
         panel.Children.Add(Text(name, true));
         System.Windows.Automation.AutomationProperties.SetName(control, name);
-        control.Margin = new Thickness(0, 0, 0, 12);
+        control.Margin = new Thickness(0, 0, 0, 9);
         panel.Children.Add(control);
         return panel;
     }
 
     private static Button ActionButton(string text, bool primary = false)
     {
-        var button=new Button{Content=text,Padding=new Thickness(18,9,18,9),Cursor=System.Windows.Input.Cursors.Hand};
+        var button=new Button{Content=text,Padding=new Thickness(16,8,16,8),Cursor=System.Windows.Input.Cursors.Hand};
         button.SetResourceReference(StyleProperty,primary?"PrimaryButton":"SecondaryButton");
         return button;
+    }
+
+    private static void AddNumericChoices(ComboBox box,IEnumerable<int> values,int selected,string suffix)
+    {
+        box.SelectedValuePath="Tag";
+        foreach(var value in values)
+            box.Items.Add(new ComboBoxItem{Content=suffix=="%"?$"{value}%":$"{value} {suffix}",Tag=value});
+        box.SelectedValue=selected;
+    }
+
+    private static int ReadNumericChoice(ComboBox box,int fallback)=>box.SelectedValue is int value?value:fallback;
+
+    private static bool IsInsideButton(object? source)
+    {
+        var current=source as DependencyObject;
+        while(current is not null)
+        {
+            if(current is ButtonBase)return true;
+            current=current switch
+            {
+                Visual or Visual3D=>VisualTreeHelper.GetParent(current),
+                FrameworkContentElement content=>content.Parent,
+                _=>LogicalTreeHelper.GetParent(current)
+            };
+        }
+        return false;
     }
 
     private static System.Windows.Shapes.Path CloseIcon() => new()
@@ -227,8 +283,8 @@ public sealed class SettingsWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(_imageFormat, "默认图片格式");
         panel.Children.Add(_imageFormat);
         panel.Children.Add(Text("选区外暗化程度", true));
-        foreach (var opacity in new[] { 55, 60, 65 }) _overlayOpacity.Items.Add($"{opacity}%");
-        _overlayOpacity.SelectedItem = $"{Math.Round(Math.Clamp(_host.Settings.OverlayOpacity,.55,.65)*100):0}%";
+        var opacityPercent=(int)Math.Round(Math.Clamp(_host.Settings.OverlayOpacity,.4,.75)*100);
+        AddNumericChoices(_overlayOpacity,SettingsChoicePolicy.IncludeCurrent(new[] { 40, 45, 50, 55, 60, 65, 70, 75 },opacityPercent),opacityPercent,"%");
         System.Windows.Automation.AutomationProperties.SetName(_overlayOpacity, "选区外暗化程度");
         panel.Children.Add(_overlayOpacity);
         _captureCursor.Content = "截图包含系统鼠标指针";
@@ -242,26 +298,22 @@ public sealed class SettingsWindow : Window
     {
         var panel = Panel();
         panel.Children.Add(Text("MP4 帧率", true));
-        foreach (var fps in SettingsChoicePolicy.IncludeCurrent(new[] { 15, 24, 30, 60 },_host.Settings.RecordingFps)) _recordingFps.Items.Add(fps);
-        _recordingFps.SelectedItem = _host.Settings.RecordingFps;
+        AddNumericChoices(_recordingFps,SettingsChoicePolicy.IncludeCurrent(new[] { 15, 24, 30, 60 },_host.Settings.RecordingFps),_host.Settings.RecordingFps,"FPS");
         System.Windows.Automation.AutomationProperties.SetName(_recordingFps, "MP4 帧率");
         panel.Children.Add(_recordingFps);
         panel.Children.Add(Text("MP4 质量", true));
-        foreach (var quality in SettingsChoicePolicy.IncludeCurrent(new[] { 50, 75, 90 },_host.Settings.RecordingQuality)) _recordingQuality.Items.Add(quality);
-        _recordingQuality.SelectedItem = _host.Settings.RecordingQuality;
+        AddNumericChoices(_recordingQuality,SettingsChoicePolicy.IncludeCurrent(new[] { 50, 75, 90 },_host.Settings.RecordingQuality),_host.Settings.RecordingQuality,"%");
         System.Windows.Automation.AutomationProperties.SetName(_recordingQuality, "MP4 质量");
         panel.Children.Add(_recordingQuality);
         panel.Children.Add(Text("GIF 帧率", true));
-        foreach (var fps in SettingsChoicePolicy.IncludeCurrent(new[] { 5, 10, 15 },_host.Settings.GifFps)) _gifFps.Items.Add(fps);
-        _gifFps.SelectedItem = _host.Settings.GifFps;
+        AddNumericChoices(_gifFps,SettingsChoicePolicy.IncludeCurrent(new[] { 5, 10, 15 },_host.Settings.GifFps),_host.Settings.GifFps,"FPS");
         System.Windows.Automation.AutomationProperties.SetName(_gifFps, "GIF 帧率");
         panel.Children.Add(_gifFps);
         _recordCursor.Content = "录屏包含系统鼠标指针";
         _recordCursor.IsChecked = _host.Settings.IncludeRecordingCursor;
         panel.Children.Add(_recordCursor);
         panel.Children.Add(Text("自动清理临时媒体", true));
-        foreach (var days in SettingsChoicePolicy.IncludeCurrent(new[] { 1, 3, 7, 14, 30 },_host.Settings.TempCleanupDays)) _tempCleanup.Items.Add(days);
-        _tempCleanup.SelectedItem = _host.Settings.TempCleanupDays;
+        AddNumericChoices(_tempCleanup,SettingsChoicePolicy.IncludeCurrent(new[] { 1, 3, 7, 14, 30 },_host.Settings.TempCleanupDays),_host.Settings.TempCleanupDays,"天");
         System.Windows.Automation.AutomationProperties.SetName(_tempCleanup, "临时媒体保留天数");
         panel.Children.Add(_tempCleanup);
         panel.Children.Add(Text("未保存的录制暂存在本机，并由应用自动清理。", true));
@@ -285,13 +337,13 @@ public sealed class SettingsWindow : Window
         providerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _providerSelector.DisplayMemberPath = nameof(AiProviderSettings.Name);
         System.Windows.Automation.AutomationProperties.SetName(_providerSelector, "Provider 配置");
-        _providerSelector.Margin = new Thickness(0, 0, 8, 10);
+        _providerSelector.Margin = new Thickness(0, 0, 8, 8);
         foreach (var configured in _providers) _providerSelector.Items.Add(configured);
         var add = ActionButton("新增");
-        add.Margin = new Thickness(0, 0, 8, 10);
+        add.Margin = new Thickness(0, 0, 8, 8);
         add.Click += (_, _) => AddProvider();
         var remove = ActionButton("删除");
-        remove.Margin = new Thickness(0, 0, 0, 10);
+        remove.Margin = new Thickness(0, 0, 0, 8);
         remove.Click += (_, _) => RemoveProvider();
         Grid.SetColumn(add, 1);
         Grid.SetColumn(remove, 2);
@@ -314,8 +366,9 @@ public sealed class SettingsWindow : Window
             RefreshConfigurationWarnings();
         };
         panel.Children.Add(_defaultProvider);
-        _providerType.Items.Add("OpenAICompatible");
-        _providerType.Items.Add("MiniMax");
+        _providerType.SelectedValuePath = "Tag";
+        _providerType.Items.Add(new ComboBoxItem { Content = "OpenAI 兼容", Tag = "OpenAICompatible" });
+        _providerType.Items.Add(new ComboBoxItem { Content = "MiniMax M3", Tag = "MiniMax" });
         panel.Children.Add(Labeled("Provider 类型", _providerType));
         panel.Children.Add(Labeled("Base URL", _baseUrl));
         panel.Children.Add(Labeled("Model", _model));
@@ -328,7 +381,9 @@ public sealed class SettingsWindow : Window
         _apiKey.PasswordChanged+=(_,_)=>{if(_loadingProvider)return;if(_apiKey.Password.Length>0&&_selectedProvider is not null)_apiKeysMarkedForDeletion.Remove(_selectedProvider.Id);UpdateApiKeyStatus();};
         _customHeaders.AcceptsReturn = true;
         _customHeaders.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-        _customHeaders.MinHeight = 88;
+        _customHeaders.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _customHeaders.TextWrapping = TextWrapping.NoWrap;
+        _customHeaders.MinHeight = 80;
         _customHeaders.FontFamily = new FontFamily("Cascadia Mono, Consolas");
         panel.Children.Add(Labeled("Custom Headers JSON（高级，敏感值保存时自动加密）", _customHeaders));
         var test = ActionButton("测试连接");
@@ -370,7 +425,7 @@ public sealed class SettingsWindow : Window
         panel.Children.Add(_history);
         panel.Children.Add(Text("媒体默认不永久保存；截图只有明确点击发送后才会上传。", true));
         var clearHistory = ActionButton("清空本地对话历史");
-        clearHistory.Margin = new Thickness(0, 10, 0, 0);
+        clearHistory.Margin = new Thickness(0, 8, 0, 0);
         clearHistory.Click += async (_, _) =>
         {
             clearHistory.IsEnabled=false;
@@ -389,11 +444,11 @@ public sealed class SettingsWindow : Window
         };
         panel.Children.Add(clearHistory);
         var clear = ActionButton("清理临时媒体");
-        clear.Margin = new Thickness(0, 8, 0, 0);
+        clear.Margin = new Thickness(0, 6, 0, 0);
         clear.Click += (_, _) => ClearTemporaryMedia();
         panel.Children.Add(clear);
         var open = ActionButton("打开数据目录");
-        open.Margin = new Thickness(0, 8, 0, 0);
+        open.Margin = new Thickness(0, 6, 0, 0);
         open.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MewuAI")) { UseShellExecute = true });
         panel.Children.Add(open);
         panel.Children.Add(Text($"应用版本：{typeof(SettingsWindow).Assembly.GetName().Version}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / PP-OCRv6（Windows OCR 仅故障降级）\n录屏：Media Foundation H.264", true));
@@ -408,7 +463,7 @@ public sealed class SettingsWindow : Window
         _selectedProvider = provider;
         _loadingProvider = true;
         _providerName.Text = provider.Name;
-        _providerType.SelectedIndex = provider.Type.Equals("MiniMax", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        _providerType.SelectedValue = provider.Type.Equals("MiniMax", StringComparison.OrdinalIgnoreCase) ? "MiniMax" : "OpenAICompatible";
         _baseUrl.Text = provider.BaseUrl;
         _model.Text = provider.Model;
         _customHeaders.Text = _captureProtectionAvailable==false
@@ -431,7 +486,7 @@ public sealed class SettingsWindow : Window
             return false;
         }
         _selectedProvider.Name = string.IsNullOrWhiteSpace(_providerName.Text) ? "未命名 Provider" : _providerName.Text.Trim();
-        _selectedProvider.Type = _providerType.SelectedIndex == 1 ? "MiniMax" : "OpenAICompatible";
+        _selectedProvider.Type = IsMiniMaxTypeSelected() ? "MiniMax" : "OpenAICompatible";
         _selectedProvider.BaseUrl = _baseUrl.Text.TrimEnd('/');
         _selectedProvider.Model = _model.Text.Trim();
         if (_selectedProvider.Type == "MiniMax" && _selectedProvider.BaseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase)) _selectedProvider.BaseUrl = "https://api.minimaxi.com/v1";
@@ -499,7 +554,7 @@ public sealed class SettingsWindow : Window
             if(!StoreSelectedProvider(true))return;
             var existing = _selectedProvider;
             var key = !string.IsNullOrWhiteSpace(_apiKey.Password) ? _apiKey.Password : existing is null||_apiKeysMarkedForDeletion.Contains(existing.Id) ? null : new CredentialService().Read(existing.CredentialId);
-            var settings = new AiProviderSettings { Type = _providerType.SelectedIndex == 1 ? "MiniMax" : "OpenAICompatible", BaseUrl = _baseUrl.Text.TrimEnd('/'), Model = _model.Text.Trim(), CustomHeaders = ParseHeaders() };
+            var settings = new AiProviderSettings { Type = IsMiniMaxTypeSelected() ? "MiniMax" : "OpenAICompatible", BaseUrl = _baseUrl.Text.TrimEnd('/'), Model = _model.Text.Trim(), CustomHeaders = ParseHeaders() };
             ValidateProvider(settings);
             if(!string.IsNullOrWhiteSpace(key)&&settings.CustomHeaders.Keys.Any(ProviderHeaderCredentialService.IsAuthentication))throw new InvalidOperationException("API Key 与认证 Custom Header 不能同时发送。请清除已保存 API Key，或移除认证 Header。");
             if(string.IsNullOrWhiteSpace(key)&&!settings.CustomHeaders.Keys.Any(ProviderHeaderCredentialService.IsAuthentication))throw new InvalidOperationException("请先输入 API Key，或在 Custom Headers 中配置认证字段");
@@ -519,6 +574,9 @@ public sealed class SettingsWindow : Window
         ProviderHeaderPolicy.EnsureValid(headers);
         return headers;
     }
+
+    private bool IsMiniMaxTypeSelected() =>
+        string.Equals(_providerType.SelectedValue as string, "MiniMax", StringComparison.OrdinalIgnoreCase);
 
     private void Save()
     {
@@ -562,19 +620,20 @@ public sealed class SettingsWindow : Window
             foreach (var provider in storedProviders) _headerCredentials.ProtectEditableHeaders(provider);
             var competing=storedProviders.FirstOrDefault(ProviderApiKeyChangePolicy.HasCompetingAuthentication);
             if(competing is not null)throw new InvalidOperationException($"{competing.Name} 同时配置了 API Key 与认证 Custom Header。请使用“清除已保存密钥”后再保存，避免并发发送两套凭据。");
+            var overlayOpacityPercent=ReadNumericChoice(_overlayOpacity,(int)Math.Round(Math.Clamp(_host.Settings.OverlayOpacity,.4,.75)*100));
             var candidate=new AppSettings
             {
                 CaptureHotkey=new HotkeySetting{Key=parsed,Modifiers=modifiers},
                 LaunchAtStartup=_startup.IsChecked==true,
-                OverlayOpacity=_overlayOpacity.SelectedIndex switch{0=>.55,2=>.65,_=>.60},
+                OverlayOpacity=overlayOpacityPercent/100d,
                 CaptureDelaySeconds=_delay.SelectedIndex switch{1=>3,2=>5,_=>0},
                 DefaultImageFormat=_imageFormat.SelectedIndex==1?"jpg":"png",
                 IncludeCaptureCursor=_captureCursor.IsChecked==true,
-                RecordingFps=_recordingFps.SelectedItem is int recordingFps?recordingFps:30,
-                RecordingQuality=_recordingQuality.SelectedItem is int recordingQuality?recordingQuality:75,
-                GifFps=_gifFps.SelectedItem is int gifFps?gifFps:15,
+                RecordingFps=ReadNumericChoice(_recordingFps,30),
+                RecordingQuality=ReadNumericChoice(_recordingQuality,75),
+                GifFps=ReadNumericChoice(_gifFps,15),
                 IncludeRecordingCursor=_recordCursor.IsChecked==true,
-                TempCleanupDays=_tempCleanup.SelectedItem is int tempCleanupDays?tempCleanupDays:_host.Settings.TempCleanupDays,
+                TempCleanupDays=ReadNumericChoice(_tempCleanup,_host.Settings.TempCleanupDays),
                 SaveConversationHistory=_history.IsChecked==true,
                 EnableVoiceInput=_voice.IsChecked==true,
                 AutomaticallyStartListening=_voice.IsChecked==true&&_autoVoice.IsChecked==true,
@@ -667,7 +726,10 @@ public sealed class SettingsWindow : Window
             messages.Add($"已在编辑副本中修复 {_repairedProviderIdentityCount} 个空白或重复的 Provider ID，保存后才会写入设置。");
         if(string.IsNullOrWhiteSpace(_defaultProviderId))
             messages.Add("请选择一个 Provider，并明确勾选“设为默认 Provider”。");
-        _windowConfigurationWarning.Text=messages.Count==0?string.Empty:$"AI 配置需要确认：{messages[0]}";
+        var headerWarning=messages.Count==0?string.Empty:$"AI 配置需要确认：{messages[0]}";
+        _windowConfigurationWarning.Text=headerWarning;
+        _windowConfigurationWarning.ToolTip=messages.Count==0?null:string.Join("\n",messages);
+        System.Windows.Automation.AutomationProperties.SetHelpText(_windowConfigurationWarning, string.Join("\n",messages));
         _windowConfigurationWarning.Visibility=messages.Count==0?Visibility.Collapsed:Visibility.Visible;
         _aiConfigurationWarning.Text=string.Join("\n",messages.Select(message=>$"• {message}"));
         _aiConfigurationWarning.Visibility=messages.Count==0?Visibility.Collapsed:Visibility.Visible;

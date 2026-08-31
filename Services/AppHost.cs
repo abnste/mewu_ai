@@ -9,7 +9,7 @@ public sealed class AppHost : IDisposable
     internal static readonly TimeSpan TempMediaShutdownWait=TimeSpan.FromSeconds(5);
     private readonly System.Windows.Application _app; private readonly SingleInstanceService _single; private readonly CancellationTokenSource _lifetime=new(); private readonly StartupActivationGate _activationGate=new();
     private SettingsService? _settingsService;
-    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow;private int _captureActive;
+    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private TextAiWindow? _textAiWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
@@ -74,6 +74,14 @@ public sealed class AppHost : IDisposable
         var token=_lifetime.Token;
         try
         {
+            // A capture can be triggered from the tray or the global hotkey
+            // while the launcher is still visible.  Hide it before the frame
+            // is frozen so the assistant never captures its own launcher and
+            // the overlay remains the single, clean surface the user sees.
+            await _app.Dispatcher.InvokeAsync(() =>
+            {
+                if (_main?.IsVisible == true) _main.Hide();
+            });
             if(Settings.CaptureDelaySeconds>0)await Task.Delay(TimeSpan.FromSeconds(Settings.CaptureDelaySeconds),token);
             token.ThrowIfCancellationRequested();
             await _app.Dispatcher.InvokeAsync(()=>
@@ -90,8 +98,65 @@ public sealed class AppHost : IDisposable
         }
     }
     public void ShowMainWindow() { _app.Dispatcher.Invoke(()=>{_main??=new MainWindow(this);_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
-    public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);_settingsWindow.Closed+=(_,_)=>_settingsWindow=null;} _settingsWindow.Show();_settingsWindow.Activate();}); }
-    public void ShowTextAi(string initial="")=>_app.Dispatcher.Invoke(()=>new TextAiWindow(this,initial).Show());
+    public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);var window=_settingsWindow;window.Closed+=(_,_)=>{if(ReferenceEquals(_settingsWindow,window))_settingsWindow=null;FinishAuxiliary(window);};} PrepareAuxiliary(_settingsWindow);_settingsWindow.Show();_settingsWindow.WindowState=WindowState.Normal;_settingsWindow.Activate();}); }
+    public void ShowTextAi(string initial="")=>_app.Dispatcher.Invoke(()=>
+    {
+        if(_textAiWindow is { } existing)
+        {
+            PrepareAuxiliary(existing);existing.Show();existing.WindowState=WindowState.Normal;existing.Activate();return;
+        }
+        var window=new TextAiWindow(this,initial);_textAiWindow=window;
+        window.Closed+=(_,_)=>{if(ReferenceEquals(_textAiWindow,window))_textAiWindow=null;FinishAuxiliary(window);};
+        PrepareAuxiliary(window);window.Show();window.Activate();
+    });
+
+    /// <summary>
+    /// Presents one auxiliary surface at a time. Keeping the launcher and
+    /// other editor surfaces hidden while a child is open prevents transparent
+    /// rounded shells from stacking over one another; nested transitions (for
+    /// example, opening Settings from a quick question) restore the previous
+    /// surface when the new one closes.
+    /// </summary>
+    private void PrepareAuxiliary(Window window)
+    {
+        var existingIndex=_auxiliaryWindows.LastIndexOf(window);
+        if(existingIndex>=0)
+        {
+            if(existingIndex==_auxiliaryWindows.Count-1)return;
+            // The same window may be suspended underneath another auxiliary
+            // surface. Move it to the front instead of adding a duplicate
+            // stack entry that could otherwise be restored twice.
+            _auxiliaryWindows.RemoveAt(existingIndex);
+        }
+        if(_auxiliaryWindows.Count==0)_restoreMainAfterAuxiliary=_main?.IsVisible==true;
+        else
+        {
+            var current=_auxiliaryWindows[^1];
+            try{if(current.IsVisible)current.Hide();}catch(Exception ex){try{new PrivacyLogger().Error("AuxiliaryHide",ex);}catch{}}
+        }
+        if(!ReferenceEquals(_main,window))try{_main?.Hide();}catch(Exception ex){try{new PrivacyLogger().Error("MainHide",ex);}catch{}}
+        if(!ReferenceEquals(_settingsWindow,window))try{_settingsWindow?.Hide();}catch(Exception ex){try{new PrivacyLogger().Error("SettingsHide",ex);}catch{}}
+        if(!ReferenceEquals(_textAiWindow,window))try{_textAiWindow?.Hide();}catch(Exception ex){try{new PrivacyLogger().Error("TextAiHide",ex);}catch{}}
+        _auxiliaryWindows.Add(window);
+    }
+
+    private void FinishAuxiliary(Window window)
+    {
+        var index=_auxiliaryWindows.LastIndexOf(window);if(index<0)return;
+        var wasTop=index==_auxiliaryWindows.Count-1;_auxiliaryWindows.RemoveAt(index);if(!wasTop)return;
+        while(_auxiliaryWindows.Count>0)
+        {
+            var previous=_auxiliaryWindows[^1];
+            try
+            {
+                if(previous.IsVisible){previous.Activate();return;}
+                previous.Show();previous.WindowState=WindowState.Normal;previous.Activate();return;
+            }
+            catch(Exception ex){_auxiliaryWindows.RemoveAt(_auxiliaryWindows.Count-1);try{new PrivacyLogger().Error("AuxiliaryRestore",ex);}catch{}}
+        }
+        if(_restoreMainAfterAuxiliary&&!IsExiting)ShowMainWindow();
+        _restoreMainAfterAuxiliary=false;
+    }
     public bool TryApplySettings(AppSettings candidate,out string? error,out string? warning)
     {
         error=null;warning=null;var previous=Settings;var startupChanged=candidate.LaunchAtStartup!=previous.LaunchAtStartup;
