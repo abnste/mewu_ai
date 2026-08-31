@@ -7,6 +7,15 @@ using Xunit;
 namespace MewuAI.Tests;
 public sealed class GeometryTests
 {
+    [Theory]
+    [InlineData(640,360,640,360)]
+    [InlineData(3840,2160,1280,720)]
+    [InlineData(2160,3840,720,1280)]
+    public void VideoPreviewSizeCapsLongEdgeWithoutChangingAspectRatio(int width,int height,int expectedWidth,int expectedHeight)
+    {
+        Assert.Equal((expectedWidth,expectedHeight),VideoPreviewSurface.CalculatePreviewSize(width,height));
+    }
+
     [Fact] public void FromPoints_NormalizesReverseDrag(){Assert.Equal(new ScreenRect(-50,-20,150,100),ScreenRect.FromPoints(100,80,-50,-20));}
     [Fact] public void Clamp_HandlesNegativeVirtualCoordinates(){var value=new ScreenRect(-2100,-100,500,500).Clamp(new ScreenRect(-1920,0,3840,1080));Assert.Equal(new ScreenRect(-1920,0,500,500),value);}
     [Fact] public void Clamp_MovesRegionInsideRightAndBottomEdges(){var value=new ScreenRect(1800,1000,500,500).Clamp(new ScreenRect(-1920,0,3840,1080));Assert.Equal(new ScreenRect(1420,580,500,500),value);}
@@ -16,6 +25,9 @@ public sealed class GeometryTests
     [Fact] public void DipSelection_ClampsRoundingAtSurfaceEdge(){var result=ScreenCoordinateService.ToPixelRect(new Rect(1279.8,719.8,10,10),1280,720,1920,1080);Assert.Equal(new Int32Rect(1920,1080,0,0),result);}
     [Fact] public void PhysicalMonitor_MapsToLocalDipWithNegativeVirtualOrigin(){var result=ScreenCoordinateService.ToLocalDipRect(new ScreenRect(-1920,0,1920,1080),-1920,0,2560,720,3840,1080);Assert.Equal(new Rect(0,0,1280,720),result);}
     [Fact] public void PrimaryMonitor_MapsAfterNegativePhysicalDisplay(){var result=ScreenCoordinateService.ToLocalDipRect(new ScreenRect(0,0,1920,1080),-1920,0,2560,720,3840,1080);Assert.Equal(new Rect(1280,0,1280,720),result);}
+    [Fact] public void RecordingHole_MapsFromNegativeVirtualOriginToActualWindow(){var result=ScreenCoordinateService.ToWindowRelativePixelRect(new Int32Rect(200,100,640,360),-1920,0,new ScreenRect(-1920,0,3840,1080),5);Assert.Equal(new ScreenRect(205,105,630,350),result);}
+    [Fact] public void RecordingHole_UsesActualHwndOriginInsteadOfFrameOrigin(){var result=ScreenCoordinateService.ToWindowRelativePixelRect(new Int32Rect(2000,100,640,360),-1920,0,new ScreenRect(0,0,1920,1080),5);Assert.Equal(new ScreenRect(85,105,630,350),result);}
+    [Fact] public void RecordingBar_ClipsSafelyAtWindowEdge(){var result=ScreenCoordinateService.ToWindowRelativePixelRect(new Int32Rect(1850,1020,200,100),-1920,0,new ScreenRect(0,0,1920,1080));Assert.Equal(new ScreenRect(0,1020,130,60),result);}
     [Fact] public void CropClipsBothEdgesWhenSelectionStartsOutsideSource()
     {
         var pixels=new byte[100*60*4];var source=BitmapSource.Create(100,60,96,96,PixelFormats.Bgra32,null,pixels,100*4);source.Freeze();

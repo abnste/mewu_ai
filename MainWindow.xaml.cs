@@ -9,8 +9,24 @@ using System.Windows.Input;
 namespace mewu_ai_Assistant;
 public partial class MainWindow : Window
 {
+    private const double ShellCornerRadius = 14;
     private readonly AppHost _host;
     public MainWindow(AppHost host) { _host=host; InitializeComponent(); RefreshStatus();SourceInitialized+=(_,_)=>NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle); }
+    private void OnLoaded(object sender,RoutedEventArgs e)=>UpdateShellClip();
+    private void OnSizeChanged(object sender,SizeChangedEventArgs e)=>UpdateShellClip();
+    private void OnDpiChanged(object sender,DpiChangedEventArgs e)=>UpdateShellClip();
+    private void UpdateShellClip()
+    {
+        if (Shell.ActualWidth <= 0 || Shell.ActualHeight <= 0) return;
+        // Border's CornerRadius paints rounded pixels, but FrameworkElement's
+        // ClipToBounds is rectangular.  Clip the complete content explicitly
+        // so no child/background can leak through as square corners on a
+        // transparent WPF window (especially after a DPI or resize pass).
+        Shell.Clip = new RectangleGeometry(
+            new Rect(0, 0, Shell.ActualWidth, Shell.ActualHeight),
+            ShellCornerRadius,
+            ShellCornerRadius);
+    }
     public void RefreshStatus()
     {
         if(_host.Settings.Providers.Count==0){ProviderText.Text="尚未配置（基础功能可用）";return;}

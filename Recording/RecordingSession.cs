@@ -75,14 +75,14 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
                 Interlocked.Exchange(ref _stopRequested,1);StopElapsed();CancelRuntimeGuard();
                 if(Volatile.Read(ref _disposed)!=0)return;
                 var outputPath=string.IsNullOrWhiteSpace(e.FilePath)?VideoPath:e.FilePath;
-                if(string.IsNullOrWhiteSpace(outputPath)||!WaitForCompletedFile(outputPath))
+                if(string.IsNullOrWhiteSpace(outputPath)||!WaitForCompletedFile(outputPath)||!AdoptCompletedOutputPath(outputPath))
                 {
                     TryReportFailure("录屏输出文件为空");
                     return;
                 }
                 if(_terminalState.TryComplete())
                 {
-                    try{Completed?.Invoke(outputPath);}
+                    try{Completed?.Invoke(VideoPath);}
                     catch(Exception ex){Log("RecordingCompletedHandler",ex);}
                 }
             }
@@ -160,6 +160,37 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
     {
         if(_terminalState.Current!=RecordingTerminalResult.Completed||string.IsNullOrWhiteSpace(VideoPath))throw new InvalidOperationException("录屏尚未成功完成，无法保留视频");
         return TempMediaRegistry.Shared.AcquireExistingFile(VideoPath);
+    }
+
+    /// <summary>
+    /// ScreenRecorderLib normally writes to the requested path, but some
+    /// Media Foundation sinks report the finalized path in the completion
+    /// callback.  Make that callback path the single source of truth and move
+    /// the registry lease before exposing the completed event.
+    /// </summary>
+    private bool AdoptCompletedOutputPath(string outputPath)
+    {
+        try
+        {
+            var normalized=Path.GetFullPath(outputPath);
+            if(!File.Exists(normalized))return false;
+            if(string.Equals(Path.GetFullPath(VideoPath),normalized,StringComparison.OrdinalIgnoreCase))
+            {
+                VideoPath=normalized;
+                return true;
+            }
+
+            var replacement=TempMediaRegistry.Shared.AcquireExistingFile(normalized);
+            var previous=Interlocked.Exchange(ref _videoLease,replacement);
+            VideoPath=normalized;
+            previous?.Dispose();
+            return true;
+        }
+        catch(Exception ex)
+        {
+            Log("RecordingOutputPath",ex);
+            return false;
+        }
     }
     public void Dispose()
     {
@@ -248,9 +279,28 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
     private static bool WaitForCompletedFile(string path)
     {
         var started=Stopwatch.GetTimestamp();
+        long previousLength=-1;
+        var stableReads=0;
         do
         {
-            try{if(File.Exists(path)&&new FileInfo(path).Length>0)return true;}
+            try
+            {
+                if(File.Exists(path))
+                {
+                    // ScreenRecorderLib raises completion while its native
+                    // sink may still own the file handle.  Inspecting the
+                    // metadata length does not require opening that handle;
+                    // requiring FileShare.Read here would turn a valid
+                    // recording into a false failure.  The overlay awaits
+                    // DisposeAsync (which releases Media Foundation) before
+                    // handing the file to the decoder.
+                    var length=new FileInfo(path).Length;
+                    if(length>0&&length==previousLength)stableReads++;
+                    else stableReads=0;
+                    previousLength=length;
+                    if(length>0&&stableReads>=2)return true;
+                }
+            }
             catch(IOException){}
             catch(UnauthorizedAccessException){}
             Thread.Sleep(FileReleaseRetryDelay);

@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Diagnostics;
+using System.Windows.Controls;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Recording;
 using mewu_ai_Assistant.Services;
@@ -138,7 +140,7 @@ public sealed class RecordingIntegrationTests
         var gifPath=Path.Combine(Path.GetTempPath(),$"mewu-recording-{Guid.NewGuid():N}.gif");
         try
         {
-            var token=TestContext.Current.CancellationToken;session.Start();Assert.True(TempMediaRegistry.Shared.IsLeased(session.VideoPath));await Task.Delay(1200,token);session.Stop();var path=await done.Task.WaitAsync(TimeSpan.FromSeconds(20),token);Assert.True(File.Exists(path));Assert.True(new FileInfo(path).Length>1000);Assert.True(TempMediaRegistry.Shared.IsLeased(path));using var retained=session.RetainCompletedVideo();await session.DisposeAsync();Assert.True(TempMediaRegistry.Shared.IsLeased(path));var sourceHash=SHA256.HashData(await File.ReadAllBytesAsync(path,token));
+            var token=TestContext.Current.CancellationToken;session.Start();Assert.True(TempMediaRegistry.Shared.IsLeased(session.VideoPath));await Task.Delay(1200,token);session.Stop();var path=await done.Task.WaitAsync(TimeSpan.FromSeconds(20),token);Assert.Equal(Path.GetFullPath(path),Path.GetFullPath(session.VideoPath),StringComparer.OrdinalIgnoreCase);Assert.True(File.Exists(path));Assert.True(new FileInfo(path).Length>1000);Assert.True(TempMediaRegistry.Shared.IsLeased(path));using var retained=session.RetainCompletedVideo();Assert.Equal(Path.GetFullPath(path),retained.Path,StringComparer.OrdinalIgnoreCase);await session.DisposeAsync();Assert.True(TempMediaRegistry.Shared.IsLeased(path));var sourceHash=SHA256.HashData(await File.ReadAllBytesAsync(path,token));await VerifyPreviewAutoplaysAsync(path,token);
             var export=await GifExportService.ExportFromVideoAsync(path,gifPath,5,token);Assert.True(File.Exists(gifPath));Assert.True(new FileInfo(gifPath).Length>100);Assert.InRange(export.FrameCount,1,10);Assert.Equal(sourceHash,SHA256.HashData(await File.ReadAllBytesAsync(path,token)));
             using var stream=File.OpenRead(gifPath);var decoder=new GifBitmapDecoder(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);Assert.Equal(export.FrameCount,decoder.Frames.Count);var durationCentiseconds=decoder.Frames.Sum(frame=>Convert.ToInt32(Assert.IsType<BitmapMetadata>(frame.Metadata).GetQuery("/grctlext/Delay")));Assert.InRange(Math.Abs(durationCentiseconds*10-export.Duration.TotalMilliseconds),0,10);
         }
@@ -199,4 +201,51 @@ public sealed class RecordingIntegrationTests
         MaximumActiveDuration=maximumActiveDuration,
         MinimumFreeSpaceBytes=RecordingRuntimePolicy.RuntimeMinimumFreeSpaceBytes
     };
+
+    private static async Task VerifyPreviewAutoplaysAsync(string path,CancellationToken cancellationToken)
+    {
+        var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread=new Thread(() =>
+        {
+            VideoPreviewSurface? preview=null;
+            DispatcherTimer? poll=null;
+            Exception? terminalError=null;
+            var completed=0;
+            try
+            {
+                var dispatcher=Dispatcher.CurrentDispatcher;
+                var view=new Image();
+                var opened=false;
+                var elapsed=Stopwatch.StartNew();
+                preview=new VideoPreviewSurface(view,dispatcher);
+                void Finish(Exception? error)
+                {
+                    if(Interlocked.Exchange(ref completed,1)!=0)return;
+                    terminalError=error;
+                    poll?.Stop();
+                    dispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
+                }
+                preview.Opened+=()=>opened=true;
+                preview.Failed+=error=>Finish(error);
+                poll=new DispatcherTimer(TimeSpan.FromMilliseconds(50),DispatcherPriority.Background,(_,_)=>
+                {
+                    if(opened&&view.Source is not null&&preview.PresentedFrameCount>=2&&preview.IsPlaying)Finish(null);
+                    else if(elapsed.Elapsed>TimeSpan.FromSeconds(6))Finish(new TimeoutException("录屏视频未能在原位预览表面自动播放"));
+                },dispatcher);
+                preview.Load(path,autoplay:true);
+                poll.Start();
+                Dispatcher.Run();
+            }
+            catch(Exception ex){terminalError=ex;}
+            finally
+            {
+                try{poll?.Stop();preview?.Dispose();}
+                catch(Exception ex){terminalError??=ex;}
+                if(terminalError is null)completion.TrySetResult();else completion.TrySetException(terminalError);
+            }
+        }){IsBackground=true,Name="MewuAI.VideoPreviewTest"};
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        await completion.Task.WaitAsync(TimeSpan.FromSeconds(10),cancellationToken);
+    }
 }

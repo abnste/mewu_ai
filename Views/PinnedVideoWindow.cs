@@ -17,7 +17,8 @@ public sealed class PinnedVideoWindow : Window
     private readonly TempMediaLease _videoLease;
     private readonly ScreenRect _originalRegion;
     private readonly Border _frame;
-    private readonly MediaElement _player;
+    private readonly Image _videoView;
+    private readonly VideoPreviewSurface _player;
     private MenuItem? _topmostItem,_playItem,_opacityItem,_copyItem,_saveItem;
     private bool _playing=true,_adjustingSize,_mediaOperationBusy;
 
@@ -27,9 +28,11 @@ public sealed class PinnedVideoWindow : Window
         try
         {
             Title="喵呜AI 贴视频";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
-            _player=new MediaElement{Source=new Uri(_videoPath),Stretch=Stretch.Fill,LoadedBehavior=MediaState.Manual,UnloadedBehavior=MediaState.Close};_player.MediaEnded+=(_,_)=>{_player.Position=TimeSpan.Zero;if(_playing)_player.Play();};
-            _frame=new Border{Background=Brushes.Black,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),ClipToBounds=true,Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_player};Content=_frame;Width=originalRegion.Width+ShadowPixels*2;Height=originalRegion.Height+ShadowPixels*2;
-            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>_player.Play();Closed+=(_,_)=>{try{_player.Close();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);PlaceAtOriginalSize(handle);};
+            _videoView=new Image{Stretch=Stretch.Fill,IsHitTestVisible=false};
+            _player=new VideoPreviewSurface(_videoView,Dispatcher);
+            _player.Failed+=error=>{_playing=false;if(_playItem is not null)_playItem.Header="播放";new PrivacyLogger().Error("PinnedVideoPreview",error);};
+            _frame=new Border{Background=Brushes.Black,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),ClipToBounds=true,Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_videoView};Content=_frame;Width=originalRegion.Width+ShadowPixels*2;Height=originalRegion.Height+ShadowPixels*2;
+            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);PlaceAtOriginalSize(handle);};
         }
         catch
         {
@@ -58,7 +61,7 @@ public sealed class PinnedVideoWindow : Window
     private ContextMenu BuildContextMenu(){var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,typeof(ContextMenu));_playItem=Add(menu,"暂停",TogglePlayback);_copyItem=Add(menu,"复制",()=>_ = CopyFileAsync());_saveItem=Add(menu,"保存…",()=>_ = SaveAsync());AddSeparator(menu);Add(menu,"回到原位",()=>PlaceAtOriginalSize(new System.Windows.Interop.WindowInteropHelper(this).Handle));_topmostItem=Add(menu,"置顶",ToggleTopmost);_opacityItem=Add(menu,"80% 透明度",ToggleOpacity);AddSeparator(menu);Add(menu,"关闭",Close);UpdateTopmostHeader();return menu;}
     private static MenuItem Add(ContextMenu menu,string text,Action action){var item=new MenuItem{Header=text};item.SetResourceReference(StyleProperty,typeof(MenuItem));item.Click+=(_,_)=>action();menu.Items.Add(item);return item;}
     private static void AddSeparator(ContextMenu menu){var separator=new Separator();separator.SetResourceReference(StyleProperty,typeof(Separator));menu.Items.Add(separator);}
-    private void TogglePlayback(){if(_playing){_player.Pause();_playing=false;}else{_player.Play();_playing=true;}if(_playItem is not null)_playItem.Header=_playing?"暂停":"播放";}
+    private void TogglePlayback(){if(_playing){_player.Pause();_playing=false;}else{try{_player.Play();_playing=true;}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoToggle",ex);return;}}if(_playItem is not null)_playItem.Header=_playing?"暂停":"播放";}
     private async Task CopyFileAsync()
     {
         if(!TryBeginMediaOperation())return;
