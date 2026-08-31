@@ -11,7 +11,29 @@ public sealed class ScreenCaptureService
     {
         var bounds=Forms.SystemInformation.VirtualScreen;
         using var bitmap=new Bitmap(bounds.Width,bounds.Height,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-        using(var graphics=Graphics.FromImage(bitmap)){graphics.CopyFromScreen(bounds.Left,bounds.Top,0,0,bounds.Size,CopyPixelOperation.SourceCopy);if(includeCursor)DrawCursor(graphics,bounds.Left,bounds.Top);}
+        // CAPTUREBLT is important for modern Windows surfaces: layered
+        // windows (including WebView2/Chromium browser chrome and translucent
+        // app panels) are otherwise omitted by the default BitBlt operation,
+        // leaving a white/empty crop even though the desktop preview is
+        // visible underneath. Graphics.CopyFromScreen validates its enum
+        // argument and rejects the documented bitwise combination, so use the
+        // equivalent native BitBlt call directly.
+        using(var graphics=Graphics.FromImage(bitmap))
+        {
+            var destination=graphics.GetHdc();
+            var screen=GetDC(IntPtr.Zero);
+            try
+            {
+                if(screen==IntPtr.Zero||!BitBlt(destination,0,0,bounds.Width,bounds.Height,screen,bounds.Left,bounds.Top,SourceCopy|CaptureBlt))
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"无法冻结桌面像素");
+            }
+            finally
+            {
+                if(screen!=IntPtr.Zero)ReleaseDC(IntPtr.Zero,screen);
+                graphics.ReleaseHdc(destination);
+            }
+            if(includeCursor)DrawCursor(graphics,bounds.Left,bounds.Top);
+        }
         return new(bounds.Left,bounds.Top,ToSource(bitmap));
     }
     private static BitmapSource ToSource(Bitmap bitmap)
@@ -67,6 +89,10 @@ public sealed class ScreenCaptureService
         }
     }
     private static void DrawCursor(Graphics graphics,int originX,int originY){var info=new CursorInfo{Size=Marshal.SizeOf<CursorInfo>()};if(!GetCursorInfo(ref info)||info.Flags!=1)return;if(!GetIconInfo(info.CursorHandle,out var icon))return;try{var hdc=graphics.GetHdc();try{DrawIconEx(hdc,info.Position.X-originX-icon.HotspotX,info.Position.Y-originY-icon.HotspotY,info.CursorHandle,0,0,0,IntPtr.Zero,3);}finally{graphics.ReleaseHdc(hdc);}}finally{if(icon.Mask!=IntPtr.Zero)DeleteObject(icon.Mask);if(icon.Color!=IntPtr.Zero)DeleteObject(icon.Color);}}
+    private const uint SourceCopy=0x00CC0020; private const uint CaptureBlt=0x40000000;
+    [DllImport("user32.dll",SetLastError=true)] private static extern IntPtr GetDC(IntPtr window);
+    [DllImport("user32.dll",SetLastError=true)] private static extern int ReleaseDC(IntPtr window,IntPtr dc);
+    [DllImport("gdi32.dll",SetLastError=true)] private static extern bool BitBlt(IntPtr destination,int x,int y,int width,int height,IntPtr source,int sourceX,int sourceY,uint rasterOperation);
     [StructLayout(LayoutKind.Sequential)]private struct CursorInfo{public int Size;public int Flags;public IntPtr CursorHandle;public NativePoint Position;}
     [StructLayout(LayoutKind.Sequential)]private struct NativePoint{public int X;public int Y;}
     [StructLayout(LayoutKind.Sequential)]private struct IconInfo{[MarshalAs(UnmanagedType.Bool)]public bool IsIcon;public int HotspotX;public int HotspotY;public IntPtr Mask;public IntPtr Color;}

@@ -1,5 +1,8 @@
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
+using System.Windows.Media.Media3D;
 using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Interop;
 using System.Windows.Input;
@@ -23,7 +26,22 @@ public partial class MainWindow : Window
     private void StartCapture(object sender,RoutedEventArgs e){Hide();_host.BeginCapture();}
     private void OpenSettings(object sender,RoutedEventArgs e)=>_host.ShowSettings();
     private void OpenTextAi(object sender,RoutedEventArgs e)=>_host.ShowTextAi();
-    private void DragWindow(object sender,MouseButtonEventArgs e){if(e.ButtonState==MouseButtonState.Pressed&&e.OriginalSource is not System.Windows.Controls.Button)DragMove();}
+    private void DragWindow(object sender,MouseButtonEventArgs e){if(e.ButtonState==MouseButtonState.Pressed&&!IsInsideButton(e.OriginalSource))DragMove();}
+    private static bool IsInsideButton(object? source)
+    {
+        var current=source as DependencyObject;
+        while(current is not null)
+        {
+            if(current is ButtonBase)return true;
+            current=current switch
+            {
+                Visual or Visual3D=>VisualTreeHelper.GetParent(current),
+                FrameworkContentElement content=>content.Parent,
+                _=>LogicalTreeHelper.GetParent(current)
+            };
+        }
+        return false;
+    }
     private void MinimizeWindow(object sender,RoutedEventArgs e)=>WindowState=WindowState.Minimized;
     private void HideWindow(object sender,RoutedEventArgs e)=>Hide();
     private void OnClosing(object? sender,CancelEventArgs e) { if(_host.IsExiting)return; e.Cancel=true; Hide(); }

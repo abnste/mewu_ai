@@ -6,6 +6,17 @@ namespace mewu_ai_Assistant.Services;
 
 public static class ScreenCoordinateService
 {
+    private const double DefaultDpi=96d;
+
+    /// <summary>Returns the device scale represented by a Win32 DPI value.</summary>
+    public static double DpiScale(uint dpi)=>Math.Max(DefaultDpi,dpi)/DefaultDpi;
+
+    /// <summary>Converts a physical-pixel length to the WPF DIP space.</summary>
+    public static double PixelsToDip(double pixels,uint dpi)=>pixels/DpiScale(dpi);
+
+    /// <summary>Converts a physical-pixel size to the WPF DIP space.</summary>
+    public static Size PixelsToDipSize(double width,double height,uint dpi)=>new(PixelsToDip(width,dpi),PixelsToDip(height,dpi));
+
     public static Int32Rect ToPixelRect(Rect dipRect,double surfaceWidth,double surfaceHeight,int pixelWidth,int pixelHeight)
     {
         if(surfaceWidth<=0||surfaceHeight<=0||pixelWidth<=0||pixelHeight<=0)return Int32Rect.Empty;
