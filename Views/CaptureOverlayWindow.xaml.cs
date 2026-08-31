@@ -11,6 +11,7 @@ using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Windows.Interop;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Models;
@@ -52,6 +53,15 @@ public partial class CaptureOverlayWindow : Window
     private RecordingSession? _recordingSession;
     private SelectionItem? _recordingItem;
     private bool _recordingItemWasReferenced;
+    private HwndSource? _overlaySource;
+    private System.Drawing.Rectangle _virtualScreenArea;
+    private bool _recordingWindowRegionApplied;
+    private bool _recordingHoleUpdateQueued;
+    private bool _recordingRegionResetQueued;
+    private bool _recordingRegionCloseQueued;
+    private int _recordingHoleRetryCount;
+    private int _recordingRegionResetRetryCount;
+    private (int WindowLeft,int WindowTop,int WindowWidth,int WindowHeight,int HoleLeft,int HoleTop,int HoleRight,int HoleBottom,int BarLeft,int BarTop,int BarRight,int BarBottom)? _recordingWindowRegionKey;
     private readonly DispatcherTimer _recordingTimer=new(){Interval=TimeSpan.FromMilliseconds(150)};
     private DrawTool _drawTool=DrawTool.Freehand;
     private Point _drawStart;
@@ -63,7 +73,12 @@ public partial class CaptureOverlayWindow : Window
         public bool IsImplicit;
         public Grid Host { get; }=new();
         public Image Image { get; }=new(){Stretch=Stretch.Fill,IsHitTestVisible=false};
-        public MediaElement Video { get; }=new(){Stretch=Stretch.Fill,LoadedBehavior=MediaState.Manual,UnloadedBehavior=MediaState.Close,Visibility=Visibility.Collapsed,IsHitTestVisible=false};
+        // Video is rendered into the same Image surface as the selection.
+        // The player behind it is WinRT frame-server based (see
+        // VideoPreviewSurface), so the overlay never depends on the legacy
+        // WPF MediaElement/WMP renderer.
+        public Image Video { get; }=new(){Stretch=Stretch.Fill,Visibility=Visibility.Collapsed,IsHitTestVisible=false};
+        public VideoPreviewSurface? VideoPreview;
         public InkCanvas Markup { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false};
         public Canvas AiAnnotations { get; }=new(){IsHitTestVisible=false};
         public Canvas TextOverlays { get; }=new(){IsHitTestVisible=false};
@@ -125,6 +140,7 @@ public partial class CaptureOverlayWindow : Window
         if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
         DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
         var area=System.Windows.Forms.SystemInformation.VirtualScreen;
+        _virtualScreenArea=area;
         // Window dimensions are WPF DIPs while the virtual desktop and the
         // captured frame are physical pixels.  On a 175% display assigning the
         // raw pixel size here makes the HWND render 1.75x too large and pushes
@@ -135,6 +151,8 @@ public partial class CaptureOverlayWindow : Window
         SourceInitialized+=(_,_)=>
         {
             var hwnd=new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            _overlaySource=HwndSource.FromHwnd(hwnd);
+            _overlaySource?.AddHook(OverlayWindowMessage);
             NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);
             var excluded=NativeMethods.ExcludeFromCapture(hwnd);var nativeError=excluded?0:System.Runtime.InteropServices.Marshal.GetLastWin32Error();_captureExclusionVerified=excluded&&!NativeMethods.VisualQaCaptureEnabled;if(!excluded)new PrivacyLogger().Error("CaptureProtection",new InvalidOperationException($"无法启用覆盖层防捕获，Win32 错误码 {nativeError}"));
         };
@@ -163,7 +181,8 @@ public partial class CaptureOverlayWindow : Window
             if(CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
         };
         DpiChanged+=(_,_)=>ApplyOverlayDpiLayout(area);
-        SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;PositionPromptBar();};
+        SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;UpdateRecordingVisualHole();PositionPromptBar();};
+        RecordingBar.SizeChanged+=(_,_)=>{if(_recordingMode)UpdateRecordingVisualHole();};
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
         Closed+=OnClosed;
     }
@@ -201,6 +220,12 @@ public partial class CaptureOverlayWindow : Window
     private void OnClosed(object? sender,EventArgs e)
     {
         _closed=true;
+        ClearRecordingVisualHole();
+        if(_overlaySource is not null)
+        {
+            try{_overlaySource.RemoveHook(OverlayWindowMessage);}catch(Exception ex){new PrivacyLogger().Error("OverlayHookRemove",ex);}
+            _overlaySource=null;
+        }
         TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);CancelRecordingStopWatchdog();_recordingTimer.Stop();
         _reasoningRenderRequest=null;_reasoningRenderScheduled=false;ReasoningPulse.BeginAnimation(OpacityProperty,null);
         var session=_recordingSession;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;
@@ -236,11 +261,258 @@ public partial class CaptureOverlayWindow : Window
         Root.Height=dipSize.Height;
         Root.HorizontalAlignment=HorizontalAlignment.Left;
         Root.VerticalAlignment=VerticalAlignment.Top;
+        if(_recordingMode)UpdateRecordingVisualHole();
+    }
+
+    /// <summary>
+    /// During a recording the selected rectangle is a live pass-through hole.
+    /// The desktop frame and dimmer remain visible everywhere else, while the
+    /// native hit-test hook sends pointer input in the hole to the window below
+    /// (for example, a full-screen browser video).
+    /// </summary>
+    private bool UpdateRecordingVisualHole(bool requireNativeRegion=false)
+    {
+        if(!_recordingMode||_recordingItem is not { } item)
+        {
+            ClearRecordingVisualHole();
+            return !requireNativeRegion;
+        }
+
+        // Size/DPI changes can briefly report a zero-sized root while WPF is
+        // rebuilding the surface.  Do not clear an already working native
+        // hole in that interval: clearing it makes the frozen overlay swallow
+        // the underlying video until the next layout pass.  A single render
+        // retry is enough to pick up the settled size without creating an
+        // unbounded dispatcher loop.
+        if(Root.ActualWidth<=0||Root.ActualHeight<=0)
+        {
+            if(!requireNativeRegion&&_recordingHoleRetryCount++<3&&!_recordingHoleUpdateQueued&&!Dispatcher.HasShutdownStarted)
+            {
+                _recordingHoleUpdateQueued=true;
+                _=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(() =>
+                {
+                    _recordingHoleUpdateQueued=false;
+                    if(!_closed&&_recordingMode)UpdateRecordingVisualHole();
+                }));
+            }
+            return _recordingWindowRegionApplied;
+        }
+
+        _recordingHoleRetryCount=0;
+
+        var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));
+        var hole=new RectangleGeometry(Normalize(item.Bounds));
+        // Use an exclude geometry instead of an opacity mask so the pixels
+        // under the selection are genuinely transparent and can receive input.
+        DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);
+        Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);
+        item.Image.Visibility=Visibility.Collapsed;
+        return ApplyRecordingWindowRegion(item);
+    }
+
+    private void ClearRecordingVisualHole()
+    {
+        _recordingHoleRetryCount=0;
+        DesktopImage.Clip=null;
+        Dimmer.Clip=null;
+        ResetRecordingWindowRegion();
+    }
+
+    private bool ApplyRecordingWindowRegion(SelectionItem item)
+    {
+        if(!IsInitialized||_virtualScreenArea.Width<=0||_virtualScreenArea.Height<=0)return false;
+        var hwnd=new WindowInteropHelper(this).Handle;
+        if(hwnd==IntPtr.Zero)return false;
+        var pixels=ToPixelRect(item.Bounds);
+        // Keep a very small ring for the live border and its shadow.  The
+        // interior is removed from the native window region, which makes the
+        // hole genuinely click-through even when the browser is another UI
+        // thread/process (HTTRANSPARENT alone is same-thread only).
+        const int borderReserve=5;
+        // SetWindowRgn uses coordinates relative to the actual HWND bounds,
+        // not the captured frame.  Normally these are identical, but using
+        // the live rectangle avoids DPI/layout rounding offsets (especially
+        // on mixed-DPI or negative-coordinate virtual desktops).
+        var windowLeft=_virtualScreenArea.Left;var windowTop=_virtualScreenArea.Top;
+        var windowWidth=_virtualScreenArea.Width;var windowHeight=_virtualScreenArea.Height;
+        if(NativeMethods.GetWindowRect(hwnd,out var windowRect))
+        {
+            var measuredWidth=windowRect.Right-windowRect.Left;var measuredHeight=windowRect.Bottom-windowRect.Top;
+            if(measuredWidth>0&&measuredHeight>0)
+            {
+                windowLeft=windowRect.Left;windowTop=windowRect.Top;windowWidth=measuredWidth;windowHeight=measuredHeight;
+            }
+        }
+        var windowBounds=new ScreenRect(windowLeft,windowTop,windowWidth,windowHeight);
+        var holeRect=ScreenCoordinateService.ToWindowRelativePixelRect(pixels,_frame.OriginX,_frame.OriginY,windowBounds,borderReserve);
+        if(holeRect.IsEmpty)
+        {
+            LogRecordingRegionFailure("录屏选区太小或已超出当前窗口，无法建立实时穿透区域");
+            return false;
+        }
+        var left=holeRect.X;var top=holeRect.Y;var right=holeRect.Right;var bottom=holeRect.Bottom;
+        var barRect=CreateRecordingBarRegion(windowLeft,windowTop,windowWidth,windowHeight);
+        if(RecordingBar.Visibility==Visibility.Visible&&barRect.IsEmpty)
+        {
+            LogRecordingRegionFailure("录屏控制条尚未完成布局，无法安全开始录制");
+            return false;
+        }
+        var key=(windowLeft,windowTop,windowWidth,windowHeight,left,top,right,bottom,barRect.Left,barRect.Top,barRect.Right,barRect.Bottom);
+        if(_recordingWindowRegionApplied&&_recordingWindowRegionKey==key)return true;
+        var full=NativeMethods.CreateRectRgn(0,0,windowWidth,windowHeight);
+        var hole=NativeMethods.CreateRectRgn(left,top,right,bottom);
+        var result=NativeMethods.CreateRectRgn(0,0,0,0);
+        if(full==IntPtr.Zero||hole==IntPtr.Zero||result==IntPtr.Zero||NativeMethods.CombineRgn(result,full,hole,NativeMethods.RgnDiff)==0)
+        {
+            var error=System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+            if(result!=IntPtr.Zero)NativeMethods.DeleteObject(result);
+            if(hole!=IntPtr.Zero)NativeMethods.DeleteObject(hole);
+            if(full!=IntPtr.Zero)NativeMethods.DeleteObject(full);
+            LogRecordingRegionFailure("无法创建录屏实时穿透区域",error);
+            return false;
+        }
+        NativeMethods.DeleteObject(hole);NativeMethods.DeleteObject(full);
+        // A nearly full-screen selection can leave no room above or below for
+        // the stop/pause bar.  Keep the bar in the native region so its
+        // buttons remain actionable even when it overlaps the live hole.
+        if(!barRect.IsEmpty)
+        {
+            var barRegion=NativeMethods.CreateRectRgn(barRect.Left,barRect.Top,barRect.Right,barRect.Bottom);
+            var union=NativeMethods.CreateRectRgn(0,0,windowWidth,windowHeight);
+            if(barRegion==IntPtr.Zero||union==IntPtr.Zero||NativeMethods.CombineRgn(union,result,barRegion,NativeMethods.RgnOr)==0)
+            {
+                var error=System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+                if(union!=IntPtr.Zero)NativeMethods.DeleteObject(union);
+                if(barRegion!=IntPtr.Zero)NativeMethods.DeleteObject(barRegion);
+                NativeMethods.DeleteObject(result);
+                LogRecordingRegionFailure("无法保留录屏控制条的交互区域",error);
+                return false;
+            }
+            NativeMethods.DeleteObject(result);result=union;
+            NativeMethods.DeleteObject(barRegion);
+        }
+        if(NativeMethods.SetWindowRgn(hwnd,result,true)==0)
+        {
+            var error=System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+            NativeMethods.DeleteObject(result);
+            LogRecordingRegionFailure("无法设置录屏实时区域的窗口命中区域",error);
+            return false;
+        }
+        // Ownership of result transfers to the window after SetWindowRgn.
+        _recordingWindowRegionApplied=true;
+        _recordingWindowRegionKey=key;
+        return true;
+    }
+
+    private static void LogRecordingRegionFailure(string message,int error=0)
+    {
+        var detail=error==0?message:$"{message}（Win32 {error}）";
+        new PrivacyLogger().Error("RecordingHitRegion",error==0?new InvalidOperationException(detail):new System.ComponentModel.Win32Exception(error,detail));
+    }
+
+    private System.Drawing.Rectangle CreateRecordingBarRegion(int windowLeft,int windowTop,int windowWidth,int windowHeight)
+    {
+        if(RecordingBar.Visibility!=Visibility.Visible)return System.Drawing.Rectangle.Empty;
+        var left=Canvas.GetLeft(RecordingBar);var top=Canvas.GetTop(RecordingBar);
+        var width=RecordingBar.ActualWidth>0?RecordingBar.ActualWidth:RecordingBar.DesiredSize.Width;
+        var height=RecordingBar.ActualHeight>0?RecordingBar.ActualHeight:RecordingBar.DesiredSize.Height;
+        if(!double.IsFinite(left)||!double.IsFinite(top)||width<=0||height<=0)return System.Drawing.Rectangle.Empty;
+        try
+        {
+            // Convert through the same physical-pixel mapping used for the
+            // selected region.  PointToScreen is monitor-DPI dependent and can
+            // otherwise introduce a one-monitor offset on mixed-DPI desktops.
+            var pixels=ToPixelRect(new Rect(left,top,width,height));
+            var relative=ScreenCoordinateService.ToWindowRelativePixelRect(pixels,_frame.OriginX,_frame.OriginY,new ScreenRect(windowLeft,windowTop,windowWidth,windowHeight));
+            return relative.IsEmpty?System.Drawing.Rectangle.Empty:new System.Drawing.Rectangle(relative.X,relative.Y,relative.Width,relative.Height);
+        }
+        catch(Exception ex){new PrivacyLogger().Error("RecordingBarRegion",ex);return System.Drawing.Rectangle.Empty;}
+    }
+
+    private void ResetRecordingWindowRegion()
+    {
+        if(!_recordingWindowRegionApplied||!IsInitialized)return;
+        try
+        {
+            var hwnd=new WindowInteropHelper(this).Handle;
+            if(hwnd!=IntPtr.Zero&&NativeMethods.SetWindowRgn(hwnd,IntPtr.Zero,true)!=0)
+            {
+                _recordingWindowRegionApplied=false;
+                _recordingWindowRegionKey=null;
+                _recordingRegionResetRetryCount=0;
+                _recordingRegionResetQueued=false;
+                _recordingRegionCloseQueued=false;
+                return;
+            }
+            var error=System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
+            LogRecordingRegionFailure("无法恢复截图覆盖层的完整窗口区域",error);
+        }
+        catch(Exception ex){new PrivacyLogger().Error("RecordingHitRegionReset",ex);}
+        if(_closed)
+        {
+            // HWND is being destroyed, so Windows will release the stale
+            // region even if this final reset call failed.
+            _recordingWindowRegionApplied=false;
+            _recordingWindowRegionKey=null;
+            return;
+        }
+        if(_recordingRegionResetRetryCount++<3&&!_recordingRegionResetQueued&&!Dispatcher.HasShutdownStarted)
+        {
+            _recordingRegionResetQueued=true;
+            _=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(() =>
+            {
+                _recordingRegionResetQueued=false;
+                if(!_closed)ResetRecordingWindowRegion();
+            }));
+            return;
+        }
+        if(!_recordingRegionCloseQueued&&!Dispatcher.HasShutdownStarted)
+        {
+            _recordingRegionCloseQueued=true;
+            PromptStatus.Text="窗口交互区域恢复失败，正在安全关闭覆盖层，请重新截图";
+            _=Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(() =>{if(_recordingRegionCloseQueued&&!_closed)Close();}));
+        }
+    }
+
+    private IntPtr OverlayWindowMessage(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam,ref bool handled)
+    {
+        if(message!=NativeMethods.WmNcHitTest||!_recordingMode||_recordingItem is not { } item)return IntPtr.Zero;
+        // WM_NCHITTEST carries the actual point being tested.  Reading the
+        // current cursor instead can answer for a different point when the
+        // pointer is moving quickly, and breaks negative multi-monitor coords.
+        var raw=lParam.ToInt64();
+        var screenX=(short)(raw&0xffff);
+        var screenY=(short)((raw>>16)&0xffff);
+        if(!IsScreenPointInRecordingBar(screenX,screenY)&&IsScreenPointInRecordingHole(item,screenX,screenY))
+        {
+            handled=true;
+            return new IntPtr(NativeMethods.HtTransparent);
+        }
+        return IntPtr.Zero;
+    }
+
+    private bool IsScreenPointInRecordingHole(SelectionItem item,int screenX,int screenY)
+    {
+        var pixels=ToPixelRect(item.Bounds);
+        var left=_frame.OriginX+pixels.X;
+        var top=_frame.OriginY+pixels.Y;
+        return screenX>=left&&screenY>=top&&screenX<left+pixels.Width&&screenY<top+pixels.Height;
+    }
+
+    private bool IsScreenPointInRecordingBar(int screenX,int screenY)
+    {
+        if(RecordingBar.Visibility!=Visibility.Visible)return false;
+        var local=PointFromScreen(new Point(screenX,screenY));
+        var left=Canvas.GetLeft(RecordingBar);var top=Canvas.GetTop(RecordingBar);
+        if(!double.IsFinite(left)||!double.IsFinite(top))return false;
+        var width=RecordingBar.ActualWidth>0?RecordingBar.ActualWidth:RecordingBar.DesiredSize.Width;
+        var height=RecordingBar.ActualHeight>0?RecordingBar.ActualHeight:RecordingBar.DesiredSize.Height;
+        return width>0&&height>0&&new Rect(left,top,width,height).Contains(local);
     }
 
     private static void ReleaseSelectionResources(SelectionItem item)
     {
-        try{item.Video.Close();}catch(Exception ex){new PrivacyLogger().Error("OverlayVideoClose",ex);}
+        try{item.VideoPreview?.Dispose();item.VideoPreview=null;}catch(Exception ex){new PrivacyLogger().Error("OverlayVideoClose",ex);}
         try{ClearTextSelection(item);}catch(Exception ex){new PrivacyLogger().Error("OverlayTextSelectionClose",ex);}
         item.VideoLease?.Dispose();item.VideoLease=null;
     }
@@ -290,7 +562,7 @@ public partial class CaptureOverlayWindow : Window
 
     private SelectionItem CreateSelection(bool implicitFullScreen)
     {
-        var item=new SelectionItem{IsImplicit=implicitFullScreen};item.Badge.Child=item.BadgeText;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);item.Markup.StrokeCollected+=(_,_)=>item.Redo.Clear();item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Video.MediaEnded+=(_,_)=>{item.Video.Position=TimeSpan.Zero;if(item.VideoPlaying)item.Video.Play();};item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
+        var item=new SelectionItem{IsImplicit=implicitFullScreen};item.Badge.Child=item.BadgeText;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);item.Markup.StrokeCollected+=(_,_)=>item.Redo.Clear();item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
     }
 
     private void UpdateSelection(SelectionItem item)
@@ -812,9 +1084,14 @@ public partial class CaptureOverlayWindow : Window
 
     private void EnterRecordingMode(SelectionItem selected)
     {
-        _recordingMode=true;_recordingPaused=_recordingStopping=false;Cursor=Cursors.Arrow;Toolbar.Visibility=DrawingToolbar.Visibility=PromptBar.Visibility=SizeText.Visibility=Visibility.Collapsed;HideHandles();
-        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;}
-        selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};RecordingTime.Text="00:00";SetRecordingPauseVisual(false);RecordingPauseButton.ToolTip="暂停";RecordingBar.Visibility=Visibility.Visible;PositionFloatingBar(RecordingBar,selected);
+        _recordingMode=true;_recordingPaused=_recordingStopping=false;Cursor=Cursors.Arrow;
+        if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
+        Toolbar.Visibility=DrawingToolbar.Visibility=PromptBar.Visibility=SizeText.Visibility=Visibility.Collapsed;HideHandles();
+        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
+        selected.Video.Visibility=Visibility.Collapsed;
+        selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
+        RecordingTime.Text="00:00";SetRecordingPauseVisual(false);RecordingPauseButton.ToolTip="暂停";RecordingBar.Visibility=Visibility.Visible;PositionFloatingBar(RecordingBar,selected);
+        if(!UpdateRecordingVisualHole(requireNativeRegion:true))throw new InvalidOperationException("无法建立录屏区域的鼠标穿透，请调整选区后重试");
     }
     private void RecordingTick()
     {
@@ -850,14 +1127,54 @@ public partial class CaptureOverlayWindow : Window
     {
         var watchdog=Interlocked.Exchange(ref _recordingStopWatchdog,null);if(watchdog is null)return;try{watchdog.Cancel();}catch(ObjectDisposedException){}watchdog.Dispose();
     }
-    private void CompleteRecording(RecordingSession session,SelectionItem item,string path)
+    private async void CompleteRecording(RecordingSession session,SelectionItem item,string path)
     {
         if(!IsCurrentRecording(session,item))return;
         try
         {
-            CancelRecordingStopWatchdog();_recordingTimer.Stop();if(!File.Exists(path)||new FileInfo(path).Length==0)throw new InvalidDataException("录屏文件为空");item.VideoLease=session.RetainCompletedVideo();if(new FileInfo(item.VideoLease.Path).Length==0)throw new InvalidDataException("录屏文件为空");item.VideoPath=item.VideoLease.Path;item.VideoDuration=session.Elapsed;item.Video.Source=new Uri(item.VideoPath);item.Video.Visibility=Visibility.Visible;item.Image.Visibility=Visibility.Collapsed;item.Video.Position=TimeSpan.Zero;item.Video.Play();item.VideoPlaying=true;_references.Add(item);ExitRecordingMode(item);try{ClearImageOnlyLayers(item);}catch(Exception clearError){new PrivacyLogger().Error("RecordingLayerCleanup",clearError);}PromptStatus.Text=$"录屏完成 {item.VideoDuration:mm\\:ss} · 已引用为 @视频{_selections.IndexOf(item)+1}";_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;try{session.Dispose();}catch(Exception ex){new PrivacyLogger().Error("RecordingDispose",ex);}
+            CancelRecordingStopWatchdog();_recordingTimer.Stop();if(!File.Exists(path)||new FileInfo(path).Length==0)throw new InvalidDataException("录屏文件为空");item.VideoLease=session.RetainCompletedVideo();if(new FileInfo(item.VideoLease.Path).Length==0)throw new InvalidDataException("录屏文件为空");item.VideoPath=item.VideoLease.Path;item.VideoDuration=session.Elapsed;item.VideoPlaying=false;RecordingTime.Text="处理中…";try{ClearImageOnlyLayers(item);}catch(Exception clearError){new PrivacyLogger().Error("RecordingLayerCleanup",clearError);}
+            // Dispose the recorder before opening the file in WinRT.  This
+            // awaits Media Foundation's final handle release; loading the
+            // player first is a race that can leave the selection blank even
+            // though the MP4 exists.
+            try{await session.DisposeAsync();}catch(Exception ex){new PrivacyLogger().Error("RecordingDispose",ex);}
+            if(!IsCurrentRecording(session,item)||_closed||!_selections.Contains(item))return;
+            _references.Add(item);ExitRecordingMode(item);StartVideoPreview(item);_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;
+            if(item.VideoPath is not null)PromptStatus.Text=$"录屏完成 {item.VideoDuration:mm\\:ss} · 已引用为 @视频{_selections.IndexOf(item)+1}";
         }
         catch(Exception ex){FailRecording(session,item,ex.Message);}
+    }
+    private void StartVideoPreview(SelectionItem item)
+    {
+        item.Image.Visibility=Visibility.Collapsed;
+        item.Video.Visibility=Visibility.Visible;
+        if(item.VideoPath is not { } path)return;
+        try
+        {
+            EnsureVideoPreview(item).Load(path,autoplay:true);
+            item.VideoPlaying=true;
+        }
+        catch(Exception ex)
+        {
+            item.VideoPlaying=false;
+            new PrivacyLogger().Error("RecordingPreviewPlay",ex);
+            PromptStatus.Text="录屏已完成，但预览启动失败；仍可保存或复制视频";
+        }
+    }
+
+    private VideoPreviewSurface EnsureVideoPreview(SelectionItem item)
+    {
+        if(item.VideoPreview is not null)return item.VideoPreview;
+        var preview=new VideoPreviewSurface(item.Video,Dispatcher);
+        preview.Failed+=error=>
+        {
+            if(_closed||!_selections.Contains(item))return;
+            item.VideoPlaying=false;
+            new PrivacyLogger().Error("RecordingPreviewDecode",error);
+            PromptStatus.Text="录屏已完成，但当前视频无法解码；仍可保存或复制视频";
+        };
+        item.VideoPreview=preview;
+        return preview;
     }
     private void FailRecording(RecordingSession session,SelectionItem item,string error)
     {
@@ -865,8 +1182,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private static void ResetFailedVideoPreview(SelectionItem item)
     {
-        try{item.Video.Stop();}catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewStop",ex);}
-        try{item.Video.Source=null;}catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewReset",ex);}
+        try{item.VideoPreview?.CloseSource();}catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewReset",ex);}
         item.Video.Visibility=Visibility.Collapsed;item.Image.Visibility=Visibility.Visible;item.VideoLease?.Dispose();item.VideoLease=null;item.VideoPath=null;item.VideoDuration=TimeSpan.Zero;item.VideoPlaying=false;
     }
     private static void ClearImageOnlyLayers(SelectionItem item){item.Markup.Strokes.Clear();item.Redo.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
@@ -874,11 +1190,18 @@ public partial class CaptureOverlayWindow : Window
     private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)
     {
-        _recordingMode=_recordingPaused=_recordingStopping=false;RecordingBar.Visibility=Visibility.Collapsed;PromptBar.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var imageOnly=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=imageOnly;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
+        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();RecordingBar.Visibility=Visibility.Collapsed;PromptBar.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=imageOnly;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
     }
     private void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
-        if(RejectIfOverlayOperationBusy()||Active is not {VideoPath:not null} item)return;if(item.VideoPlaying){item.Video.Pause();item.VideoPlaying=false;PromptStatus.Text="视频已暂停";}else{item.Video.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";}
+        if(RejectIfOverlayOperationBusy()||Active is not {VideoPath:not null} item)return;
+        try
+        {
+            var preview=EnsureVideoPreview(item);
+            if(item.VideoPlaying){preview.Pause();item.VideoPlaying=false;PromptStatus.Text="视频已暂停";}
+            else{preview.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";}
+        }
+        catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewToggle",ex);item.VideoPlaying=false;PromptStatus.Text="视频预览暂不可用；仍可保存或复制视频";}
     }
 
     private async void OnPreviewKeyDown(object s,KeyEventArgs e)

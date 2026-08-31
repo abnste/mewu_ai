@@ -15,6 +15,10 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
     <Platforms>x64</Platforms>
+    <!-- Win2D is consumed as a frame-server interop library. The WPF
+         desktop build does not need Windows App SDK MRT resource generation,
+         whose Visual Studio-only task is unavailable in the bundled .NET SDK. -->
+    <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
     <Platform Condition="'$(Platform)' == '' Or '$(Platform)' == 'AnyCPU'">x64</Platform>
   </PropertyGroup>
 
@@ -33,6 +37,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- WinRT frame-server video preview keeps playback inside the WPF
+         overlay without relying on the legacy Windows Media Player COM
+         renderer used by MediaElement. -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.1" />
     <PackageReference Include="RapidOcrNet" Version="4.1.0" ExcludeAssets="contentFiles" />
     <PackageReference Include="ScreenRecorderLib" Version="7.0.0" />
     <PackageReference Include="System.Speech" Version="10.0.11" />

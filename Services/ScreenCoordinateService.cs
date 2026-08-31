@@ -30,6 +30,34 @@ public static class ScreenCoordinateService
 
     public static ScreenRect ToScreenRect(Int32Rect localPixels,int originX,int originY)=>new(originX+localPixels.X,originY+localPixels.Y,localPixels.Width,localPixels.Height);
 
+    /// <summary>
+    /// Maps captured-frame physical pixels into coordinates relative to the
+    /// live HWND rectangle used by SetWindowRgn.  The window can start at a
+    /// different point than the virtual desktop (including a negative one),
+    /// so this conversion must not assume both origins are identical.
+    /// </summary>
+    public static ScreenRect ToWindowRelativePixelRect(Int32Rect localPixels,int frameOriginX,int frameOriginY,ScreenRect windowBounds,int inset=0)
+    {
+        if(localPixels.IsEmpty||windowBounds.IsEmpty)return default;
+        var safeInset=Math.Max(0,inset);
+        var absoluteLeft=(long)frameOriginX+localPixels.X+safeInset;
+        var absoluteTop=(long)frameOriginY+localPixels.Y+safeInset;
+        var absoluteRight=(long)frameOriginX+localPixels.X+localPixels.Width-safeInset;
+        var absoluteBottom=(long)frameOriginY+localPixels.Y+localPixels.Height-safeInset;
+        var windowRight=(long)windowBounds.X+windowBounds.Width;
+        var windowBottom=(long)windowBounds.Y+windowBounds.Height;
+        var clippedLeft=Math.Max(absoluteLeft,windowBounds.X);
+        var clippedTop=Math.Max(absoluteTop,windowBounds.Y);
+        var clippedRight=Math.Min(absoluteRight,windowRight);
+        var clippedBottom=Math.Min(absoluteBottom,windowBottom);
+        if(clippedRight<=clippedLeft||clippedBottom<=clippedTop)return default;
+        return new ScreenRect(
+            checked((int)(clippedLeft-windowBounds.X)),
+            checked((int)(clippedTop-windowBounds.Y)),
+            checked((int)(clippedRight-clippedLeft)),
+            checked((int)(clippedBottom-clippedTop)));
+    }
+
     public static Rect ToLocalDipRect(ScreenRect screenPixels,int virtualOriginX,int virtualOriginY,double surfaceWidth,double surfaceHeight,int pixelWidth,int pixelHeight)
     {
         if(surfaceWidth<=0||surfaceHeight<=0||pixelWidth<=0||pixelHeight<=0||screenPixels.IsEmpty)return Rect.Empty;
