@@ -20,7 +20,7 @@
   <p:Thumb x:Name="Nw" Tag="NW" Cursor="SizeNWSE" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="N" Tag="N" Cursor="SizeNS" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="Ne" Tag="NE" Cursor="SizeNESW" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/>
   <p:Thumb x:Name="W" Tag="W" Cursor="SizeWE" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="E" Tag="E" Cursor="SizeWE" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/>
   <p:Thumb x:Name="Sw" Tag="SW" Cursor="SizeNESW" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="S" Tag="S" Cursor="SizeNS" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="Se" Tag="SE" Cursor="SizeNWSE" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/>
-  <Border x:Name="Toolbar" Visibility="Collapsed" Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="18" Padding="6">
+  <Border x:Name="Toolbar" Visibility="Collapsed" Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="18" Padding="6" MouseEnter="ToolbarMouseEnter">
    <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="24" ShadowDepth="6" Opacity="0.24"/></Border.Effect>
    <WrapPanel x:Name="ToolbarItems" Orientation="Horizontal">
     <Button x:Name="ReferenceButton" ToolTip="引用当前区域到对话" AutomationProperties.Name="引用当前区域" Click="ReferenceRegion" Style="{StaticResource ReferenceIconButton}"><TextBlock Text="@" FontSize="18" FontWeight="Bold"/></Button>
