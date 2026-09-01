@@ -6,3 +6,4 @@
 - 对话条回答区的最大高度必须按显示器可用高度计算，不能把当前 `DesiredSize` 再反馈成下一轮上限，否则多次测量会把回答区越压越小。回答展开时输入区底边保持锚定，内容只向上扩展。
 - 屏幕结构化回答必须兼容完整 JSON 代码块及 ` ```json{...}` 同行围栏，但最终 UI 只能显示根 `answer`，不得泄漏围栏、协议字段或原始批注 JSON。
 - Hermes 的“Agent / 人格”选择必须使用网关 `profiles.list` 返回的真实 Profile；模型枚举、会话创建/恢复和 TTS 都要携带同一 `profile`。不同 Profile 各自保留独立持续会话，严禁为了切人格写 `SOUL.md`、切换 Hermes 全局默认 Profile 或重启用户现有网关。
+- 普通文字问答与屏幕覆盖层的 AI 正文统一渲染为原生 WPF `FlowDocument` Markdown，并保持文字可选择、可复制。Markdown HTML 只能按普通文字显示，远程图片不得自动加载，链接只允许用户主动打开 `http/https`，emoji 明确使用 `Segoe UI Emoji`；流式回答必须节流，不能每个 token 都重建文档。
