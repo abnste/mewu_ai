@@ -33,4 +33,23 @@ public sealed class VideoAnnotationTimelineTests
         var annotation=new AiAnnotation(.2,.3,.1,.1,"点",0,4.2,4.2,[new(4.2,.2,.3,.1,.1)]);
         Assert.True(VideoAnnotationTimeline.TryInterpolate(annotation,4.2,out var frame));Assert.Equal(.2,frame.X,8);
     }
+
+    [Fact] public void FirstMarkerUsesEarliestKeyframeAcrossAnnotations()
+    {
+        var later=new AiAnnotation(.1,.1,.2,.2,"later",0,8,10,[new(8,.1,.1,.2,.2),new(10,.2,.2,.2,.2)]);
+        var earlier=new AiAnnotation(.2,.2,.2,.2,"earlier",0,2,4,[new(2,.2,.2,.2,.2),new(4,.3,.3,.2,.2)]);
+        Assert.True(VideoAnnotationTimeline.TryGetFirstMarker([later,earlier],out var annotation,out var frame));Assert.Same(earlier,annotation);Assert.Equal(2,frame.Time);
+    }
+
+    [Fact] public void AnswerActionsIncludeRangePlaybackAndEveryKeyframeJump()
+    {
+        var actions=VideoAnnotationTimeline.CreateAnswerActions([Tracked]);
+        Assert.Equal(3,actions.Count);Assert.Equal(VideoAnnotationAnswerActionKind.PlayRange,actions[0].Kind);Assert.Equal(new[]{10d,12d},actions.Skip(1).Select(action=>action.Frame!.Time));
+    }
+
+    [Fact] public void AnswerActionCountIsBounded()
+    {
+        var frames=Enumerable.Range(0,40).Select(index=>new VideoAnnotationKeyframe(index,.1,.1,.2,.2)).ToArray();var annotation=new AiAnnotation(.1,.1,.2,.2,"long",0,0,39,frames);
+        Assert.Equal(VideoAnnotationTimeline.MaxAnswerActions,VideoAnnotationTimeline.CreateAnswerActions([annotation]).Count);
+    }
 }

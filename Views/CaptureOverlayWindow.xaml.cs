@@ -692,8 +692,7 @@ public partial class CaptureOverlayWindow : Window
         ResolveOverlayInteractionWithFallback();AgentActivityItems.Children.Clear();AgentActivityCard.Visibility=AiInteractionCard.Visibility=Visibility.Collapsed;
         RefreshSelectionNumbers();
         foreach(var item in _selections)UpdateSelection(item);
-        foreach(var item in _selections.Where(item=>item.VideoPath is not null))
-            if(item.AnnotationNotes.FirstOrDefault(note=>note.IsVideoTimeline) is { } annotation)_=PlayVideoAnnotationsAsync(item,annotation);
+        AutoJumpToFirstVideoMarker(_selections);
         ApplyVideoAnswerActions(snapshot.AnswerMarkdown);
         if(Active is null){HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}else ShowToolbar();
         SetPromptBarHidden(false);PositionPromptBar();
@@ -1111,11 +1110,19 @@ public partial class CaptureOverlayWindow : Window
         {
             var isVideo=target.Item.VideoPath is not null;
             var mapped=notes.Where(note=>note.RegionIndex==target.RegionIndex&&note.IsVideoTimeline==isVideo)
-                .Where(note=>!isVideo||note.EndTime<=target.Item.VideoDuration.TotalSeconds+.05).Take(6).ToArray();
+                .Where(note=>!isVideo||note.EndTime<=target.Item.VideoDuration.TotalSeconds+.05).OrderBy(note=>note.IsVideoTimeline?note.Keyframes![0].Time:0).Take(6).ToArray();
             target.Item.AnnotationNotes.AddRange(mapped);rendered+=mapped.Length;RenderAnnotationsForItem(target.Item);
-            if(isVideo&&mapped.Length>0)_=PlayVideoAnnotationsAsync(target.Item,mapped[0]);
         }
+        AutoJumpToFirstVideoMarker(_lastSentSelections);
         return rendered;
+    }
+
+    private void AutoJumpToFirstVideoMarker(IEnumerable<SelectionItem> items)
+    {
+        SelectionItem? firstItem=null;AiAnnotation? firstAnnotation=null;VideoAnnotationKeyframe? firstFrame=null;
+        foreach(var item in items.Where(candidate=>candidate.VideoPath is not null))
+            if(VideoAnnotationTimeline.TryGetFirstMarker(item.AnnotationNotes,out var annotation,out var frame)&&(firstFrame is null||frame.Time<firstFrame.Time)){firstItem=item;firstAnnotation=annotation;firstFrame=frame;}
+        if(firstItem is not null&&firstAnnotation is not null&&firstFrame is not null)_=JumpToVideoAnnotationFrameAsync(firstItem,firstAnnotation,firstFrame,true);
     }
 
     private void ApplyVideoAnswerActions(string answer)
@@ -1123,13 +1130,20 @@ public partial class CaptureOverlayWindow : Window
         var actions=new List<MarkdownAnswerAction>();
         foreach(var target in _lastSentSelections.Where(item=>item.VideoPath is not null))
         {
-            foreach(var annotation in target.AnnotationNotes.Where(note=>note.IsVideoTimeline).Take(6))
+            foreach(var action in VideoAnnotationTimeline.CreateAnswerActions(target.AnnotationNotes))
             {
-                var start=TimeSpan.FromSeconds(annotation.StartTime!.Value);var end=TimeSpan.FromSeconds(annotation.EndTime!.Value);var range=end>start;
-                var summary=annotation.Text.Length<=20?annotation.Text:annotation.Text[..20]+"…";var label=(range?$"播放 {FormatVideoTime(start)}–{FormatVideoTime(end)}":$"跳到 {FormatVideoTime(start)}")+$" · {summary}";
-                var tooltip=range?$"播放对应动作并跟踪标注：{annotation.Text}":$"跳转到对应时刻并显示标注：{annotation.Text}";
-                actions.Add(new MarkdownAnswerAction(label,tooltip,()=>ActivateVideoAnswerAction(target,annotation)));
+                if(actions.Count>=VideoAnnotationTimeline.MaxAnswerActions)break;
+                var annotation=action.Annotation;var summary=annotation.Text.Length<=20?annotation.Text:annotation.Text[..20]+"…";
+                if(action.Kind==VideoAnnotationAnswerActionKind.PlayRange)
+                {
+                    var start=TimeSpan.FromSeconds(annotation.StartTime!.Value);var end=TimeSpan.FromSeconds(annotation.EndTime!.Value);actions.Add(new MarkdownAnswerAction($"播放 {FormatVideoTime(start)}–{FormatVideoTime(end)} · {summary}",$"播放对应动作并跟踪标注：{annotation.Text}",()=>ActivateVideoAnswerAction(target,annotation)));
+                }
+                else if(action.Frame is { } frame)
+                {
+                    var marker=frame;var time=TimeSpan.FromSeconds(marker.Time);actions.Add(new MarkdownAnswerAction($"跳到 {FormatVideoTime(time)} · {summary}",$"跳转到这一标记帧并暂停显示标注：{annotation.Text}",()=>ActivateVideoFrameAnswerAction(target,annotation,marker)));
+                }
             }
+            if(actions.Count>=VideoAnnotationTimeline.MaxAnswerActions)break;
         }
         AnswerText.SetMarkdownWithActions(answer,actions);
     }
@@ -1137,6 +1151,24 @@ public partial class CaptureOverlayWindow : Window
     private void ActivateVideoAnswerAction(SelectionItem item,AiAnnotation annotation)
     {
         if(_closed||!_selections.Contains(item)||item.VideoPath is null)return;var index=_selections.IndexOf(item);if(index>=0)Select(index);SetPromptBarHidden(false);ShowToolbar();_ = PlayVideoAnnotationsAsync(item,annotation);
+    }
+
+    private void ActivateVideoFrameAnswerAction(SelectionItem item,AiAnnotation annotation,VideoAnnotationKeyframe frame)
+    {
+        if(_closed||!_selections.Contains(item)||item.VideoPath is null)return;var index=_selections.IndexOf(item);if(index>=0)Select(index);SetPromptBarHidden(false);ShowToolbar();_ = JumpToVideoAnnotationFrameAsync(item,annotation,frame,false);
+    }
+
+    private async Task JumpToVideoAnnotationFrameAsync(SelectionItem item,AiAnnotation annotation,VideoAnnotationKeyframe frame,bool automatic)
+    {
+        CrashDiagnosticsService.MarkOperation("屏幕助手：视频标记帧跳转");CancelVideoAnnotationPlayback(item);var playback=new CancellationTokenSource();item.VideoAnnotationPlayback=playback;
+        try
+        {
+            var preview=EnsureVideoPreview(item);var position=TimeSpan.FromSeconds(frame.Time);await preview.SeekAsync(position,pauseAfterSeek:true,playback.Token);
+            if(_closed||!ReferenceEquals(item.VideoAnnotationPlayback,playback)||!_selections.Contains(item))return;item.VideoPlaying=false;RenderAnnotationsForItem(item,frame.Time);PromptStatus.Text=automatic?$"已自动定位到第一个标记 {FormatVideoTime(position)} · 视频已暂停":$"已跳到标记 {FormatVideoTime(position)} · 视频已暂停";
+        }
+        catch(OperationCanceledException){}
+        catch(Exception ex){new PrivacyLogger().Error("VideoAnnotationFrameJump",ex);if(!_closed&&ReferenceEquals(item.VideoAnnotationPlayback,playback))PromptStatus.Text=$"视频标记跳转失败：{ex.Message}";}
+        finally{if(ReferenceEquals(item.VideoAnnotationPlayback,playback))item.VideoAnnotationPlayback=null;playback.Dispose();if(!_closed)CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");}
     }
 
     private static void RenderAnnotationsForItem(SelectionItem item,double? videoTime=null)
