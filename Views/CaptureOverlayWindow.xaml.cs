@@ -571,7 +571,13 @@ public partial class CaptureOverlayWindow : Window
         var p=e.GetPosition(Root);
         if(_selecting&&Active is { } created){created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
-        else{if(Active is null)PositionPromptBar();SetPromptBarHidden(PointerOverSelection(p));return;}
+        else
+        {
+            if(Active is null)PositionPromptBar();
+            var preserveToolbarPlacement=PointerInToolbarInteractionZone(p);
+            SetPromptBarHidden(preserveToolbarPlacement||PointerOverSelection(p),preserveToolbarPlacement);
+            return;
+        }
     }
 
     private void OnMouseUp(object s,MouseButtonEventArgs e)
@@ -698,6 +704,20 @@ public partial class CaptureOverlayWindow : Window
         var height=PromptBar.ActualHeight>0?PromptBar.ActualHeight:PromptBar.DesiredSize.Height;
         return double.IsFinite(left)&&double.IsFinite(top)&&width>0&&height>0&&new Rect(left,top,width,height).Contains(point);
     }
+    private bool PointerInToolbarInteractionZone(Point point)
+    {
+        if(Toolbar.Visibility!=Visibility.Visible)return false;
+        var left=Canvas.GetLeft(Toolbar);var top=Canvas.GetTop(Toolbar);
+        var width=Toolbar.ActualWidth>0?Toolbar.ActualWidth:Toolbar.DesiredSize.Width;
+        var height=Toolbar.ActualHeight>0?Toolbar.ActualHeight:Toolbar.DesiredSize.Height;
+        var bounds=double.IsFinite(left)&&double.IsFinite(top)&&width>0&&height>0
+            ?new Rect(left,top,width,height)
+            :Rect.Empty;
+        // Include the selection-to-toolbar gap so the prompt cannot reappear
+        // during the short pointer transit into a toolbar placed below/above.
+        return CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(point,bounds,PromptFloatingGap+2);
+    }
+    private void ToolbarMouseEnter(object sender,MouseEventArgs e)=>SetPromptBarHidden(true,true);
     private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
@@ -802,7 +822,7 @@ public partial class CaptureOverlayWindow : Window
             UpdatePromptBarHiddenTransform(false);
         }));
     }
-    private void SetPromptBarHidden(bool hidden){var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void UpdatePromptBarHiddenTransform(bool animate)
     {
         if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}

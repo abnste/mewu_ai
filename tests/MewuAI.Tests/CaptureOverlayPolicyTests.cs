@@ -308,6 +308,17 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void FloatingToolbarInteractionZoneIncludesItsPointerTransitGap()
+    {
+        var toolbar=new Rect(500,508,420,52);
+
+        Assert.True(CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(new Point(700,503),toolbar,10));
+        Assert.True(CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(new Point(700,530),toolbar,10));
+        Assert.False(CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(new Point(700,490),toolbar,10));
+        Assert.False(CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(new Point(480,530),toolbar,10));
+    }
+
+    [Fact]
     public void ContentLayersAreInvalidatedByMoveAndResizeButNotLayoutNoise()
     {
         var original=new Rect(10,20,300,200);

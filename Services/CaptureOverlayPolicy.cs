@@ -214,6 +214,16 @@ internal static class CaptureOverlayPolicy
         return Math.Min(Math.Max(1,double.IsFinite(desiredWidth)?desiredWidth:1),Math.Max(1,monitor.Width-16));
     }
 
+    internal static bool IsPointerInFloatingBarInteractionZone(Point pointer,Rect barBounds,double transitionPadding)
+    {
+        if(barBounds.IsEmpty||!double.IsFinite(barBounds.Left)||!double.IsFinite(barBounds.Top)||
+           !double.IsFinite(barBounds.Width)||!double.IsFinite(barBounds.Height)||barBounds.Width<=0||barBounds.Height<=0)
+            return false;
+        var padding=double.IsFinite(transitionPadding)?Math.Max(0,transitionPadding):0;
+        barBounds.Inflate(padding,padding);
+        return barBounds.Contains(pointer);
+    }
+
     internal static bool HasContentGeometryChanged(Rect previous,Rect current)=>
         !AreClose(previous.Left,current.Left)||!AreClose(previous.Top,current.Top)||!AreClose(previous.Width,current.Width)||!AreClose(previous.Height,current.Height);
 
