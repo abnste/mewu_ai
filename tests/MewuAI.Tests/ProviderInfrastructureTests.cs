@@ -73,6 +73,43 @@ public sealed class ProviderInfrastructureTests
     }
 
     [Fact]
+    public async Task MiniMaxM3ExplicitlyRequestsAdaptiveSplitReasoning()
+    {
+        string? requestBody=null;
+        var provider=new OpenAiCompatibleProvider(
+            new AiProviderSettings{Type="MiniMax",BaseUrl="https://api.minimaxi.com/v1",Model="MiniMax-M3"},
+            "unused",
+            async (request,_,_)=>
+            {
+                requestBody=await request.Content!.ReadAsStringAsync();
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content=new StringContent("{\"choices\":[{\"message\":{\"content\":\"完成\"}}]}")
+                };
+            },
+            _=>TimeSpan.FromMinutes(1));
+
+        await provider.SendAsync(new AiRequest{Prompt="test"},TestContext.Current.CancellationToken);
+
+        using var document=System.Text.Json.JsonDocument.Parse(requestBody!);
+        var root=document.RootElement;
+        Assert.True(root.GetProperty("reasoning_split").GetBoolean());
+        Assert.Equal("adaptive",root.GetProperty("thinking").GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public void StructuredAccumulatorSuppressesInvalidJsonEnvelope()
+    {
+        var accumulator=new StreamingResponseAccumulator(contentIsCumulative:true,expectStructuredResponse:true);
+        accumulator.Accept(new AiStreamDelta("{\"result\":\"协议错误\"}","已思考"),true,null,null);
+
+        var result=accumulator.BuildResult();
+
+        Assert.Empty(result.Answer);
+        Assert.Equal("已思考",result.Reasoning);
+    }
+
+    [Fact]
     public async Task TestConnectionRequiresTheChallengeMarkerInsteadOfAnyNonEmptyText()
     {
         string? requestBody=null;

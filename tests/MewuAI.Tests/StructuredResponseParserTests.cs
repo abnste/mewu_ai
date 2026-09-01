@@ -101,6 +101,23 @@ public sealed class StructuredResponseParserTests
         Assert.Empty(result.Annotations);
     }
     [Theory]
+    [InlineData("{\"message\":\"协议字段错误\",\"annotations\":[]}")]
+    [InlineData("[ {\"answer\":\"错误根类型\"} ]")]
+    [InlineData("```json\n{not valid}\n```")]
+    [InlineData("json\n{\"result\":\"错误字段\"}")]
+    public void Parse_ExpectedStructuredResponseNeverLeaksBrokenProtocol(string value)
+    {
+        var result=StructuredResponseParser.Parse(value,expectStructuredResponse:true);
+        Assert.Empty(result.Answer);
+        Assert.Empty(result.Annotations);
+    }
+    [Fact]
+    public void Parse_ExpectedStructuredResponseStillAllowsPlainProseFallback()
+    {
+        const string value="模型直接返回了普通说明";
+        Assert.Equal(value,StructuredResponseParser.Parse(value,expectStructuredResponse:true).Answer);
+    }
+    [Theory]
     [InlineData("null")]
     [InlineData("42")]
     [InlineData("true")]
