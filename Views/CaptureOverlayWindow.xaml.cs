@@ -574,6 +574,16 @@ public partial class CaptureOverlayWindow : Window
         else
         {
             if(Active is null)PositionPromptBar();
+            if(!_forceNewSelection)
+            {
+                var hovered=FindSelection(p);
+                if(hovered>=0&&hovered!=_activeIndex)
+                {
+                    Select(hovered);
+                    PositionPromptBar();
+                    ShowToolbar();
+                }
+            }
             var preserveToolbarPlacement=PointerInToolbarInteractionZone(p);
             SetPromptBarHidden(preserveToolbarPlacement||PointerOverSelection(p),preserveToolbarPlacement);
             return;
@@ -686,7 +696,7 @@ public partial class CaptureOverlayWindow : Window
     }
 
     private void Select(int index){_activeIndex=index;for(var i=0;i<_selections.Count;i++)UpdateSelection(_selections[i]);}
-    private int FindSelection(Point p){for(var i=_selections.Count-1;i>=0;i--)if(!_selections[i].IsImplicit&&_selections[i].Bounds.Contains(p))return i;return -1;}
+    private int FindSelection(Point p)=>CaptureOverlayPolicy.FindTopmostHoveredSelection(p,_selections,item=>item.IsImplicit,item=>item.Bounds);
     private bool PointerOverSelection(Point p)
     {
         var promptLeft=Canvas.GetLeft(PromptBarHost);var promptTop=Canvas.GetTop(PromptBarHost);
@@ -827,8 +837,18 @@ public partial class CaptureOverlayWindow : Window
     {
         if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}
         var target=0d;if(_promptBarHidden){var monitor=PromptMonitorBounds();var top=Canvas.GetTop(PromptBarHost);target=double.IsFinite(top)?Math.Max(PromptBar.ActualHeight+PromptHiddenOffset,monitor.Bottom-top+PromptHiddenOffset):PromptBar.ActualHeight+PromptHiddenOffset;}
-        if(animate){var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(_promptBarHidden?140:180)){EasingFunction=ease});PromptBarHost.BeginAnimation(OpacityProperty,new DoubleAnimation(_promptBarHidden?0d:.99,TimeSpan.FromMilliseconds(140)));}
-        else{transform.BeginAnimation(TranslateTransform.YProperty,null);transform.Y=target;PromptBarHost.BeginAnimation(OpacityProperty,null);PromptBarHost.Opacity=_promptBarHidden?0d:.99;}
+        var targetOpacity=_promptBarHidden?0d:.99;
+        var currentOffset=transform.Y;
+        var currentOpacity=PromptBarHost.Opacity;
+        transform.BeginAnimation(TranslateTransform.YProperty,null);
+        PromptBarHost.BeginAnimation(OpacityProperty,null);
+        transform.Y=target;
+        PromptBarHost.Opacity=targetOpacity;
+        if(!animate)return;
+        var duration=TimeSpan.FromMilliseconds(_promptBarHidden?150:230);
+        var ease=new CubicEase{EasingMode=EasingMode.EaseOut};
+        transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(currentOffset,target,duration){EasingFunction=ease,FillBehavior=FillBehavior.Stop});
+        PromptBarHost.BeginAnimation(OpacityProperty,new DoubleAnimation(currentOpacity,targetOpacity,TimeSpan.FromMilliseconds(_promptBarHidden?120:190)){EasingFunction=ease,FillBehavior=FillBehavior.Stop});
     }
     private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(PositionPromptBar);}
     private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevronRotation.Angle=_reasoningExpanded?180:0;_ = Dispatcher.BeginInvoke(PositionPromptBar);}

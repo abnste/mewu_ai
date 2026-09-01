@@ -224,6 +224,20 @@ internal static class CaptureOverlayPolicy
         return barBounds.Contains(pointer);
     }
 
+    internal static int FindTopmostHoveredSelection<T>(
+        Point pointer,
+        IReadOnlyList<T> selections,
+        Func<T,bool> isImplicit,
+        Func<T,Rect> getBounds)
+    {
+        for(var index=selections.Count-1;index>=0;index--)
+        {
+            var item=selections[index];
+            if(!isImplicit(item)&&getBounds(item).Contains(pointer))return index;
+        }
+        return -1;
+    }
+
     internal static bool HasContentGeometryChanged(Rect previous,Rect current)=>
         !AreClose(previous.Left,current.Left)||!AreClose(previous.Top,current.Top)||!AreClose(previous.Width,current.Width)||!AreClose(previous.Height,current.Height);
 
