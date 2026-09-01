@@ -577,6 +577,7 @@ public sealed class TextAiWindow : Window
         var lastPreview=string.Empty;
         var previewScheduled=false;
         var reasoningScheduled=false;
+        var requestStage="provider";
         try
         {
             var progress = provider.Capabilities.SupportsStreaming ? new Progress<AiStreamDelta>(delta =>
@@ -607,6 +608,7 @@ public sealed class TextAiWindow : Window
                 InteractionHandler=HandleInteractionAsync,
                 MaxOutputTokens=4096
             }, request.Token);
+            requestStage="render";
             streamOpen = false;
             // The provider can finish concurrently with Esc, window close, or
             // a replacement request.  Do not render or commit that late result
@@ -650,7 +652,7 @@ public sealed class TextAiWindow : Window
             if(usingHermes&&_host.Settings.HermesAutoReadAloud)_=BeginReadAloudAsync(result.Answer);
         }
         catch (OperationCanceledException) { if (!_closed&&ReferenceEquals(_request, request)) { CloseReasoning("思考过程"); _status.Text = usingHermes?HermesStatusText("已取消"):"已取消"; } }
-        catch (Exception ex) { if (!_closed&&ReferenceEquals(_request, request)) { CloseReasoning("思考过程"); RevealAnswerCard(); _answer.Markdown = "请求失败"; _status.Text = ex.Message; } }
+        catch (Exception ex) { try{new PrivacyLogger().Error(requestStage=="render"?"TextAiRender":"TextAiRequest",ex);}catch{} if (!_closed&&ReferenceEquals(_request, request)) { CloseReasoning("思考过程"); RevealAnswerCard(); _answer.Markdown = "请求失败"; _status.Text = ex.Message; } }
         finally
         {
             streamOpen = false;

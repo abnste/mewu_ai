@@ -224,7 +224,19 @@ internal static class CaptureOverlayPolicy
 
     internal static bool CanRunImageOnlyCommand(bool isImplicit,string? videoPath)=>
         !isImplicit&&string.IsNullOrWhiteSpace(videoPath);
+
+    internal static OverlayUndoTarget ResolveUndoTarget(
+        bool editablePromptFocused,
+        bool pointerOverPrompt,
+        bool pointerOverExplicitSelection)=>
+        editablePromptFocused&&pointerOverPrompt
+            ?OverlayUndoTarget.Text
+            :pointerOverExplicitSelection
+                ?OverlayUndoTarget.Overlay
+                :OverlayUndoTarget.Overlay;
 }
+
+public enum OverlayUndoTarget{Overlay,Text}
 
 internal sealed record TranslationBatch(
     int StartIndex,

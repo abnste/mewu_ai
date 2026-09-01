@@ -7,3 +7,5 @@
 - 屏幕结构化回答必须兼容完整 JSON 代码块及 ` ```json{...}` 同行围栏，但最终 UI 只能显示根 `answer`，不得泄漏围栏、协议字段或原始批注 JSON。
 - Hermes 的“Agent / 人格”选择必须使用网关 `profiles.list` 返回的真实 Profile；模型枚举、会话创建/恢复和 TTS 都要携带同一 `profile`。不同 Profile 各自保留独立持续会话，严禁为了切人格写 `SOUL.md`、切换 Hermes 全局默认 Profile 或重启用户现有网关。
 - 普通文字问答与屏幕覆盖层的 AI 正文统一渲染为原生 WPF `FlowDocument` Markdown，并保持文字可选择、可复制。Markdown HTML 只能按普通文字显示，远程图片不得自动加载，链接只允许用户主动打开 `http/https`；emoji 必须经 Emoji.Wpf 转成 Segoe UI Emoji 的彩色矢量层，不能退化成 WPF 默认黑白字形，复制时仍须还原原 Unicode；流式回答必须节流，不能每个 token 都重建文档。
+- 覆盖层撤销/重做按鼠标所在区域分流：鼠标位于显式截图区域时，`Ctrl+Z`、`Ctrl+Shift+Z`/`Ctrl+Y` 操作截图历史，即使输入框仍保有键盘焦点；只有鼠标位于底部对话条且可编辑输入框有焦点时，才交给 WPF 文本框自身处理文字撤销/重做。OCR、翻译、AI 识图、区域新建/删除/移动/缩放都必须进入有限截图历史，撤销期间不得提前释放可重做区域持有的视频或 OCR 资源。
+- 文字窗口和截图覆盖层的 AI 请求失败必须写入 `PrivacyLogger`，并按 Provider 请求阶段与回答渲染阶段区分组件名；日志只记录脱敏异常，不得记录 prompt、answer 或附件内容。OCR/翻译异常同样必须落脱敏日志。
