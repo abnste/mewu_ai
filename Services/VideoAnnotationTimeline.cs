@@ -4,6 +4,36 @@ namespace mewu_ai_Assistant.Services;
 
 internal static class VideoAnnotationTimeline
 {
+    internal const int MaxAnswerActions=24;
+
+    internal static bool TryGetFirstMarker(IEnumerable<AiAnnotation> annotations,out AiAnnotation annotation,out VideoAnnotationKeyframe frame)
+    {
+        var candidate=annotations
+            .Where(item=>item.IsVideoTimeline)
+            .SelectMany(item=>item.Keyframes!.Select(keyframe=>(Annotation:item,Frame:keyframe)))
+            .OrderBy(entry=>entry.Frame.Time)
+            .FirstOrDefault();
+        if(candidate.Annotation is null){annotation=null!;frame=null!;return false;}
+        annotation=candidate.Annotation;frame=candidate.Frame;return true;
+    }
+
+    internal static IReadOnlyList<VideoAnnotationAnswerAction> CreateAnswerActions(IEnumerable<AiAnnotation> annotations)
+    {
+        var result=new List<VideoAnnotationAnswerAction>();
+        foreach(var annotation in annotations.Where(item=>item.IsVideoTimeline).Take(6))
+        {
+            if(annotation.EndTime>annotation.StartTime)
+                result.Add(new(VideoAnnotationAnswerActionKind.PlayRange,annotation,null));
+            foreach(var frame in annotation.Keyframes!)
+            {
+                result.Add(new(VideoAnnotationAnswerActionKind.JumpToFrame,annotation,frame));
+                if(result.Count>=MaxAnswerActions)return result;
+            }
+            if(result.Count>=MaxAnswerActions)return result;
+        }
+        return result;
+    }
+
     internal static bool TryInterpolate(AiAnnotation annotation,double time,out VideoAnnotationKeyframe frame)
     {
         frame=default!;
@@ -33,3 +63,6 @@ internal static class VideoAnnotationTimeline
 
     private static double Lerp(double start,double end,double amount)=>start+(end-start)*amount;
 }
+
+internal enum VideoAnnotationAnswerActionKind{JumpToFrame,PlayRange}
+internal sealed record VideoAnnotationAnswerAction(VideoAnnotationAnswerActionKind Kind,AiAnnotation Annotation,VideoAnnotationKeyframe? Frame);
