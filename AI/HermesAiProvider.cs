@@ -14,6 +14,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
     private static readonly TimeSpan InterruptDrainTimeout=TimeSpan.FromSeconds(12);
     private static readonly IReadOnlySet<string> AcceptedMimeTypes=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"image/png","image/jpeg","image/webp","image/gif","image/bmp","video/mp4"};
     private readonly HermesRuntimeService _runtime;
+    private readonly string _profile;
     private readonly Func<AppSettings> _settingsAccessor;
     private readonly SemaphoreSlim _turnGate=new(1,1),_sessionGate=new(1,1);
     private readonly object _activeGate=new();
@@ -25,16 +26,17 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
     private long _generation;
     private int _disposed;
 
-    public HermesAiProvider(HermesRuntimeService runtime,Func<AppSettings> settingsAccessor)
+    public HermesAiProvider(HermesRuntimeService runtime,string profile,Func<AppSettings> settingsAccessor)
     {
         _runtime=runtime??throw new ArgumentNullException(nameof(runtime));
+        _profile=HermesRuntimeService.NormalizeProfile(profile);
         _settingsAccessor=settingsAccessor??throw new ArgumentNullException(nameof(settingsAccessor));
         _runtime.EventReceived+=OnHermesEvent;
     }
 
     // Kept for internal callers compiled against the first bridge prototype;
     // both entry points now intentionally share the same runtime conversation.
-    internal HermesAiProvider(HermesRuntimeService runtime,HermesConversationKind kind,Func<AppSettings> settingsAccessor):this(runtime,settingsAccessor){}
+    internal HermesAiProvider(HermesRuntimeService runtime,HermesConversationKind kind,Func<AppSettings> settingsAccessor):this(runtime,settingsAccessor().HermesProfile,settingsAccessor){}
 
     public string Id=>"hermes-local";
     public AiProviderCapabilities Capabilities { get; }=new(true,true,true,MaxImageBytes,MaxVideoBytes,TimeSpan.FromHours(4),AcceptedMimeTypes);
@@ -145,6 +147,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
                     resumed=await _runtime.InvokeAsync("session.resume",new
                     {
                         session_id=_storedSessionId,
+                        profile=_profile,
                         source="desktop",
                         omit_messages=true,
                         close_on_disconnect=true
@@ -170,6 +173,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
                 ["close_on_disconnect"]=true,
                 ["source"]="desktop"
             };
+            createParams["profile"]=_profile;
             if(!string.IsNullOrWhiteSpace(settings.HermesModel))createParams["model"]=settings.HermesModel;
             if(!string.IsNullOrWhiteSpace(settings.HermesProvider))createParams["provider"]=settings.HermesProvider;
             if(!string.IsNullOrWhiteSpace(settings.HermesReasoningEffort))createParams["reasoning_effort"]=NormalizeReasoning(settings.HermesReasoningEffort);
@@ -197,14 +201,14 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
         if((!string.Equals(provider,_appliedProvider,StringComparison.Ordinal)||!string.Equals(model,_appliedModel,StringComparison.Ordinal))&&model.Length>0)
         {
             var modelValue=provider.Length>0?$"{model} --provider {provider} --session":$"{model} --session";
-            var result=await _runtime.InvokeAsync("config.set",new{session_id=sessionId,key="model",value=modelValue,confirm_expensive_model=true},cancellationToken).ConfigureAwait(false);
+            var result=await _runtime.InvokeAsync("config.set",new{session_id=sessionId,profile=_profile,key="model",value=modelValue,confirm_expensive_model=true},cancellationToken).ConfigureAwait(false);
             if(result.TryGetProperty("confirm_required",out var confirm)&&confirm.ValueKind==JsonValueKind.True)
                 throw new InvalidOperationException(ReadString(result,"confirm_message","Hermes 要求确认模型切换，请在设置页重新选择后测试连接。"));
             _appliedProvider=provider;_appliedModel=model;
         }
         if(!string.Equals(reasoning,_appliedReasoning,StringComparison.Ordinal))
         {
-            _=await _runtime.InvokeAsync("config.set",new{session_id=sessionId,key="reasoning",value=reasoning},cancellationToken).ConfigureAwait(false);
+            _=await _runtime.InvokeAsync("config.set",new{session_id=sessionId,profile=_profile,key="reasoning",value=reasoning},cancellationToken).ConfigureAwait(false);
             _appliedReasoning=reasoning;
         }
     }
@@ -417,9 +421,11 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
     private static string ToolTitle(JsonElement payload)=>ReadString(payload,"name",ReadString(payload,"tool",ReadString(payload,"title","Hermes 工具")));
     private static string ToolDetail(JsonElement payload)=>ReadString(payload,"message",ReadString(payload,"detail",ReadString(payload,"output",string.Empty)));
 
-    private static void ValidateSettings(AppSettings settings)
+    private void ValidateSettings(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        if(!string.Equals(HermesRuntimeService.NormalizeProfile(settings.HermesProfile),_profile,StringComparison.Ordinal))
+            throw new InvalidOperationException("Hermes Agent / 人格已切换，请重新发送本轮消息。");
         ValidateToken(settings.HermesProvider,"Hermes Provider");
         ValidateToken(settings.HermesModel,"Hermes 模型");
         _=NormalizeReasoning(settings.HermesReasoningEffort);

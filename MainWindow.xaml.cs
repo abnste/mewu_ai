@@ -46,6 +46,7 @@ public partial class MainWindow : Window
         ArgumentNullException.ThrowIfNull(settings);
         if(settings.HermesEnabled)
         {
+            var profile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
             var model=string.IsNullOrWhiteSpace(settings.HermesModel)?"未选择模型":settings.HermesModel.Trim();
             var reasoning=(settings.HermesReasoningEffort??string.Empty).Trim().ToLowerInvariant() switch
             {
@@ -59,7 +60,7 @@ public partial class MainWindow : Window
                 "ultra"=>"极致思考",
                 _=>"思考程度待修复"
             };
-            return $"本机 Hermes · {model} · {reasoning}";
+            return $"本机 Hermes · {profile} · {model} · {reasoning}";
         }
         if(settings.Providers.Count==0)return "尚未配置（基础功能可用）";
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))return "默认 Provider 未选择 · AI 不可用";

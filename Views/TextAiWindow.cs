@@ -625,7 +625,7 @@ public sealed class TextAiWindow : Window
             RevealAnswerCard();
             _answer.Text = result.Answer;
             var configured = _host.Settings.Providers.FirstOrDefault(x => x.Id == provider.Id);
-            var historyProvider=usingHermes?"本机 Hermes":configured?.Name??provider.Id;
+            var historyProvider=usingHermes?$"本机 Hermes · {_host.Settings.HermesProfile}":configured?.Name??provider.Id;
             var historyModel=usingHermes?_host.Settings.HermesModel:configured?.Model??string.Empty;
             if (_host.Settings.SaveConversationHistory)
             {

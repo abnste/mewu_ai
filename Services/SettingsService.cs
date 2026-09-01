@@ -193,6 +193,7 @@ public sealed class SettingsService
         settings.DefaultImageFormat=settings.DefaultImageFormat?.Trim().ToLowerInvariant() is "jpg" or "jpeg"?"jpg":"png";
         settings.VoiceLanguage=settings.VoiceLanguage?.Trim() is "zh-CN" or "en-US"?settings.VoiceLanguage.Trim():"system";
         settings.HermesProvider=settings.HermesProvider?.Trim()??string.Empty;
+        settings.HermesProfile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
         settings.HermesModel=settings.HermesModel?.Trim()??string.Empty;
         settings.HermesReasoningEffort=string.IsNullOrWhiteSpace(settings.HermesReasoningEffort)?"medium":settings.HermesReasoningEffort.Trim().ToLowerInvariant();
         settings.RecordingFps=Math.Clamp(settings.RecordingFps,10,60);settings.RecordingQuality=Math.Clamp(settings.RecordingQuality,20,100);settings.GifFps=Math.Clamp(settings.GifFps,1,15);settings.TempCleanupDays=Math.Clamp(settings.TempCleanupDays,1,30);settings.OverlayOpacity=double.IsFinite(settings.OverlayOpacity)?Math.Clamp(settings.OverlayOpacity,.4,.75):.6;if(!settings.EnableVoiceInput)settings.AutomaticallyStartListening=false;
@@ -214,6 +215,8 @@ public sealed class SettingsService
 
     private static IEnumerable<string> HermesConfigurationErrors(AppSettings settings)
     {
+        if(string.IsNullOrWhiteSpace(settings.HermesProfile))yield return "本机 Hermes 尚未选择 Agent / 人格";
+        else if(!IsValidHermesProfile(settings.HermesProfile))yield return "本机 Hermes Agent / 人格无效，请从列表重新选择";
         if(string.IsNullOrWhiteSpace(settings.HermesProvider))yield return "本机 Hermes 尚未选择 Provider";
         else if(ContainsUnsafeHermesToken(settings.HermesProvider))yield return "本机 Hermes Provider 无效，请从模型列表重新选择";
         if(string.IsNullOrWhiteSpace(settings.HermesModel))yield return "本机 Hermes 尚未选择模型";
@@ -226,6 +229,12 @@ public sealed class SettingsService
         value.StartsWith('-')||
         value.Contains("--",StringComparison.Ordinal)||
         value.Any(character=>char.IsWhiteSpace(character)||char.IsControl(character)||character is '\"' or '\'' or '\\');
+
+    private static bool IsValidHermesProfile(string value)
+    {
+        try{return string.Equals(HermesRuntimeService.NormalizeProfile(value),value.Trim(),StringComparison.Ordinal);}
+        catch(InvalidOperationException){return false;}
+    }
 
     private static HashSet<string> ReferencedHeaderCredentialIds(IEnumerable<AiProviderSettings> providers)=>
         providers
