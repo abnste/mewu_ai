@@ -21,18 +21,19 @@ public sealed class PinnedVideoWindow : Window
     private readonly VideoPreviewSurface _player;
     private MenuItem? _topmostItem,_playItem,_opacityItem,_copyItem,_saveItem;
     private bool _playing=true,_adjustingSize,_mediaOperationBusy;
+    private readonly PinnedWindowDragController _drag;
 
     public PinnedVideoWindow(string videoPath,ScreenRect originalRegion)
     {
         _videoPath=Path.GetFullPath(videoPath);_originalRegion=originalRegion;_videoLease=TempMediaRegistry.Shared.AcquireExistingFile(_videoPath);
         try
         {
-            Title="喵呜AI 贴视频";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
+            _drag=new PinnedWindowDragController(this);Title="喵呜AI 贴视频";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
             _videoView=new Image{Stretch=Stretch.Fill,IsHitTestVisible=false};
             _player=new VideoPreviewSurface(_videoView,Dispatcher);
             _player.Failed+=error=>{_playing=false;if(_playItem is not null)_playItem.Header="播放";new PrivacyLogger().Error("PinnedVideoPreview",error);};
             _frame=new Border{Background=Brushes.Black,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),ClipToBounds=true,Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_videoView};Content=_frame;Width=originalRegion.Width+ShadowPixels*2;Height=originalRegion.Height+ShadowPixels*2;
-            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);PlaceAtOriginalSize(handle);};
+            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseLeftButtonUp+=OnMouseLeftButtonUp;MouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);PlaceAtOriginalSize(handle);};
         }
         catch
         {
@@ -56,7 +57,9 @@ public sealed class PinnedVideoWindow : Window
     private void OnDpiChanged(object sender,DpiChangedEventArgs e){var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(handle==IntPtr.Zero)return;ApplyShadowPadding(handle);UpdateHeightForAspectRatio();}
     private void KeepAspectRatio(object? sender,SizeChangedEventArgs e)=>UpdateHeightForAspectRatio();
     private void UpdateHeightForAspectRatio(){if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_originalRegion.Height/Math.Max(1d,_originalRegion.Width)+padding;if(Math.Abs(ActualHeight-expected)<1)return;_adjustingSize=true;Height=Math.Min(expected,2400);_adjustingSize=false;}
-    private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e){if(e.ClickCount==2){Topmost=false;UpdateTopmostHeader();e.Handled=true;return;}if(e.ButtonState==MouseButtonState.Pressed)DragMove();}
+    private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e){if(e.ClickCount>=2){_drag.End();Topmost=false;UpdateTopmostHeader();e.Handled=true;return;}if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));}
+    private void OnMouseLeftButtonUp(object sender,MouseButtonEventArgs e)=>_drag.End();
+    private void OnMouseMove(object sender,MouseEventArgs e)=>_drag.Move(e.LeftButton,e.GetPosition(this));
     private void OnMouseWheel(object sender,MouseWheelEventArgs e){var minimumWidth=_frame.Margin.Left*2+1;Width=Math.Clamp(Width*(e.Delta>0?1.08:.92),minimumWidth,2400);}
     private ContextMenu BuildContextMenu(){var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,typeof(ContextMenu));_playItem=Add(menu,"暂停",TogglePlayback);_copyItem=Add(menu,"复制",()=>_ = CopyFileAsync());_saveItem=Add(menu,"保存…",()=>_ = SaveAsync());AddSeparator(menu);Add(menu,"回到原位",()=>PlaceAtOriginalSize(new System.Windows.Interop.WindowInteropHelper(this).Handle));_topmostItem=Add(menu,"置顶",ToggleTopmost);_opacityItem=Add(menu,"80% 透明度",ToggleOpacity);AddSeparator(menu);Add(menu,"关闭",Close);UpdateTopmostHeader();return menu;}
     private static MenuItem Add(ContextMenu menu,string text,Action action){var item=new MenuItem{Header=text};item.SetResourceReference(StyleProperty,typeof(MenuItem));item.Click+=(_,_)=>action();menu.Items.Add(item);return item;}

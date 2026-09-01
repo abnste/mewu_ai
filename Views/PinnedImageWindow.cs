@@ -19,14 +19,15 @@ public sealed class PinnedImageWindow : Window
     private readonly Border _frame;
     private MenuItem? _topmostItem, _opacityItem;
     private bool _adjustingSize;
+    private readonly PinnedWindowDragController _drag;
     private readonly int _initialContentWidthPixels;
 
     public PinnedImageWindow(BitmapSource image,ScreenRect? originalRegion=null)
     {
-        _image=image;_originalRegion=originalRegion;_initialContentWidthPixels=Math.Min(image.PixelWidth,900);Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
+        _image=image;_originalRegion=originalRegion;_initialContentWidthPixels=Math.Min(image.PixelWidth,900);_drag=new PinnedWindowDragController(this);Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
         _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true}};
         Content=_frame;Width=_initialContentWidthPixels+ShadowPixels*2;Height=_initialContentWidthPixels*(double)image.PixelHeight/Math.Max(1,image.PixelWidth)+ShadowPixels*2;
-        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
+        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseLeftButtonUp+=OnMouseLeftButtonUp;MouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
         SourceInitialized+=(_,_)=>
         {
             var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);
@@ -81,8 +82,12 @@ public sealed class PinnedImageWindow : Window
 
     private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e)
     {
-        if(e.ClickCount==2){Topmost=false;UpdateTopmostHeader();e.Handled=true;return;}if(e.ButtonState==MouseButtonState.Pressed)DragMove();
+        if(e.ClickCount>=2){_drag.End();Topmost=false;UpdateTopmostHeader();e.Handled=true;return;}
+        if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));
     }
+
+    private void OnMouseLeftButtonUp(object sender,MouseButtonEventArgs e)=>_drag.End();
+    private void OnMouseMove(object sender,MouseEventArgs e)=>_drag.Move(e.LeftButton,e.GetPosition(this));
 
     private void OnMouseWheel(object sender,MouseWheelEventArgs e)
     {
