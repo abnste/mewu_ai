@@ -4,7 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
-using System.Windows.Media.Effects;
+using System.Windows.Shell;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
@@ -93,12 +93,20 @@ public sealed class SettingsWindow : Window
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         WindowStyle = WindowStyle.None;
-        AllowsTransparency = true;
-        Background = Brushes.Transparent;
+        AllowsTransparency = false;
+        Background = new SolidColorBrush(Color.FromRgb(245,247,252));
         Foreground = new SolidColorBrush(Color.FromRgb(23,32,51));
         UseLayoutRounding = true;
         SnapsToDevicePixels = true;
         TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+        WindowChrome.SetWindowChrome(this,new WindowChrome
+        {
+            CaptionHeight=0,
+            ResizeBorderThickness=new Thickness(6),
+            GlassFrameThickness=new Thickness(0),
+            CornerRadius=new CornerRadius(0),
+            UseAeroCaptionButtons=false
+        });
 
         var tabs = new TabControl
         {
@@ -157,11 +165,12 @@ public sealed class SettingsWindow : Window
         Grid.SetRow(tabs,1);Grid.SetRow(save,2);
         grid.Children.Add(header);grid.Children.Add(tabs);
         grid.Children.Add(save);
-        Content = new Border { Margin=new Thickness(10), CornerRadius=new CornerRadius(18), BorderBrush=ControlBorderBrush, BorderThickness=new Thickness(1), Background=new SolidColorBrush(Color.FromRgb(245,247,252)), Child=grid, Effect=new DropShadowEffect{Color=Color.FromRgb(102,117,140),BlurRadius=30,ShadowDepth=9,Opacity=.25} };
+        Content = new Border { BorderBrush=ControlBorderBrush, BorderThickness=new Thickness(1), Background=new SolidColorBrush(Color.FromRgb(245,247,252)), Child=grid };
         RefreshConfigurationWarnings();
         SourceInitialized += (_, _) =>
         {
             var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            NativeMethods.TryUseSystemRoundedCorners(handle);
             _captureProtectionAvailable=NativeMethods.ExcludeFromCapture(handle);
             if(_captureProtectionAvailable==true)return;
             try{new PrivacyLogger().Error("SettingsCaptureProtection",new InvalidOperationException("设置窗口无法启用防捕获"));}catch{}

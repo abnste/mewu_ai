@@ -22,6 +22,19 @@ internal static class NativeMethods
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern IntPtr CreateRectRgn(int left,int top,int right,int bottom);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern int CombineRgn(IntPtr destination,IntPtr source1,IntPtr source2,int mode);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern bool DeleteObject(IntPtr handle);
+    [DllImport("dwmapi.dll",PreserveSig=true)] private static extern int DwmSetWindowAttribute(IntPtr windowHandle,int attribute,ref int value,int valueSize);
+
+    private const int DwmWindowCornerPreference=33;
+    private const int DwmCornerRound=2;
+
+    internal static bool TryUseSystemRoundedCorners(IntPtr windowHandle)
+    {
+        if(windowHandle==IntPtr.Zero||!OperatingSystem.IsWindowsVersionAtLeast(10,0,22000))return false;
+        var preference=DwmCornerRound;
+        try{return DwmSetWindowAttribute(windowHandle,DwmWindowCornerPreference,ref preference,sizeof(int))>=0;}
+        catch(DllNotFoundException){return false;}
+        catch(EntryPointNotFoundException){return false;}
+    }
 
     internal static bool ExcludeFromCapture(IntPtr windowHandle)
     {

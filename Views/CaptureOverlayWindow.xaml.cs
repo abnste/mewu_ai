@@ -683,7 +683,7 @@ public partial class CaptureOverlayWindow : Window
     private int FindSelection(Point p){for(var i=_selections.Count-1;i>=0;i--)if(!_selections[i].IsImplicit&&_selections[i].Bounds.Contains(p))return i;return -1;}
     private bool PointerOverSelection(Point p)
     {
-        var promptLeft=Canvas.GetLeft(PromptBar);var promptTop=Canvas.GetTop(PromptBar);
+        var promptLeft=Canvas.GetLeft(PromptBarHost);var promptTop=Canvas.GetTop(PromptBarHost);
         var promptWidth=PromptBar.ActualWidth>0?PromptBar.ActualWidth:PromptBar.DesiredSize.Width;
         var promptHeight=PromptBar.ActualHeight>0?PromptBar.ActualHeight:PromptBar.DesiredSize.Height;
         var promptBounds=double.IsFinite(promptLeft)&&double.IsFinite(promptTop)&&promptWidth>0&&promptHeight>0
@@ -693,7 +693,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private bool PointerOverPromptBar(Point point)
     {
-        var left=Canvas.GetLeft(PromptBar);var top=Canvas.GetTop(PromptBar);
+        var left=Canvas.GetLeft(PromptBarHost);var top=Canvas.GetTop(PromptBarHost);
         var width=PromptBar.ActualWidth>0?PromptBar.ActualWidth:PromptBar.DesiredSize.Width;
         var height=PromptBar.ActualHeight>0?PromptBar.ActualHeight:PromptBar.DesiredSize.Height;
         return double.IsFinite(left)&&double.IsFinite(top)&&width>0&&height>0&&new Rect(left,top,width,height).Contains(point);
@@ -724,7 +724,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void PositionFloatingBar(FrameworkElement bar,SelectionItem item)
     {
-        var monitor=MonitorBounds(item.Bounds);var availableWidth=Math.Max(1,monitor.Width-PromptEdgeMargin*2);bar.MaxWidth=availableWidth;bar.Measure(new Size(availableWidth,double.PositiveInfinity));var w=CaptureOverlayPolicy.ConstrainFloatingBarWidth(monitor,bar.DesiredSize.Width);var h=bar.DesiredSize.Height;var x=Math.Clamp(item.Bounds.Left,monitor.Left+PromptEdgeMargin,Math.Max(monitor.Left+PromptEdgeMargin,monitor.Right-w-PromptEdgeMargin));var promptTop=Canvas.GetTop(PromptBar);var promptLeft=Canvas.GetLeft(PromptBar);var promptWidth=Math.Max(PromptBar.ActualWidth,PromptBar.DesiredSize.Width);var promptOverlapsMonitor=double.IsFinite(promptTop)&&double.IsFinite(promptLeft)&&promptLeft<monitor.Right&&promptLeft+promptWidth>monitor.Left;var availableBottom=_promptBarHidden||PromptBar.Visibility!=Visibility.Visible||!promptOverlapsMonitor?monitor.Bottom-PromptEdgeMargin:Math.Min(monitor.Bottom-PromptEdgeMargin,promptTop-PromptFloatingGap);var below=item.Bounds.Bottom+PromptFloatingGap;var above=item.Bounds.Top-h-PromptFloatingGap;var y=below+h<=availableBottom?below:above>=monitor.Top+PromptEdgeMargin?above:Math.Clamp(below,monitor.Top+PromptEdgeMargin,Math.Max(monitor.Top+PromptEdgeMargin,availableBottom-h));Canvas.SetLeft(bar,x);Canvas.SetTop(bar,y);
+        var monitor=MonitorBounds(item.Bounds);var availableWidth=Math.Max(1,monitor.Width-PromptEdgeMargin*2);bar.MaxWidth=availableWidth;bar.Measure(new Size(availableWidth,double.PositiveInfinity));var w=CaptureOverlayPolicy.ConstrainFloatingBarWidth(monitor,bar.DesiredSize.Width);var h=bar.DesiredSize.Height;var x=Math.Clamp(item.Bounds.Left,monitor.Left+PromptEdgeMargin,Math.Max(monitor.Left+PromptEdgeMargin,monitor.Right-w-PromptEdgeMargin));var promptTop=Canvas.GetTop(PromptBarHost);var promptLeft=Canvas.GetLeft(PromptBarHost);var promptWidth=Math.Max(PromptBar.ActualWidth,PromptBar.DesiredSize.Width);var promptOverlapsMonitor=double.IsFinite(promptTop)&&double.IsFinite(promptLeft)&&promptLeft<monitor.Right&&promptLeft+promptWidth>monitor.Left;var availableBottom=_promptBarHidden||PromptBarHost.Visibility!=Visibility.Visible||!promptOverlapsMonitor?monitor.Bottom-PromptEdgeMargin:Math.Min(monitor.Bottom-PromptEdgeMargin,promptTop-PromptFloatingGap);var below=item.Bounds.Bottom+PromptFloatingGap;var above=item.Bounds.Top-h-PromptFloatingGap;var y=below+h<=availableBottom?below:above>=monitor.Top+PromptEdgeMargin?above:Math.Clamp(below,monitor.Top+PromptEdgeMargin,Math.Max(monitor.Top+PromptEdgeMargin,availableBottom-h));Canvas.SetLeft(bar,x);Canvas.SetTop(bar,y);
         if(ReferenceEquals(bar,Toolbar)&&SizeText.Visibility==Visibility.Visible){SizeText.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var sizeHeight=SizeText.DesiredSize.Height;var preferred=y<item.Bounds.Top?y-sizeHeight-4:item.Bounds.Top-sizeHeight-4;var sizeY=preferred>=monitor.Top+4?preferred:Math.Min(item.Bounds.Bottom-sizeHeight-4,item.Bounds.Top+4);Canvas.SetLeft(SizeText,item.Bounds.Left);Canvas.SetTop(SizeText,sizeY);}
     }
 
@@ -767,8 +767,8 @@ public partial class CaptureOverlayWindow : Window
             bounds=CaptureOverlayPolicy.RefitPromptBarAfterArrange(monitor,bounds,Math.Min(measuredHeight,bounds.Height));
             PromptBar.Width=bounds.Width;
             PromptBar.MaxHeight=bounds.Height;
-            Canvas.SetLeft(PromptBar,bounds.Left);
-            Canvas.SetTop(PromptBar,bounds.Top);
+            Canvas.SetLeft(PromptBarHost,bounds.Left);
+            Canvas.SetTop(PromptBarHost,bounds.Top);
             if(_answerExpanded)AnswerScroll.MaxHeight=CaptureOverlayPolicy.GetAnswerViewportHeight(monitor.Height);
             UpdatePromptBarHiddenTransform(false);
             QueuePromptBarLayoutClamp();
@@ -785,11 +785,11 @@ public partial class CaptureOverlayWindow : Window
         _=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(() =>
         {
             _promptBarLayoutPassQueued=false;
-            if(_closed||!IsLoaded||PromptBar.Visibility!=Visibility.Visible)return;
+            if(_closed||!IsLoaded||PromptBarHost.Visibility!=Visibility.Visible)return;
             var monitor=PromptMonitorBounds();
             if(monitor.IsEmpty)return;
-            var left=Canvas.GetLeft(PromptBar);
-            var top=Canvas.GetTop(PromptBar);
+            var left=Canvas.GetLeft(PromptBarHost);
+            var top=Canvas.GetTop(PromptBarHost);
             var width=PromptBar.ActualWidth>0?PromptBar.ActualWidth:PromptBar.DesiredSize.Width;
             var height=PromptBar.ActualHeight>0?PromptBar.ActualHeight:PromptBar.DesiredSize.Height;
             if(!double.IsFinite(left)||!double.IsFinite(top)||!double.IsFinite(width)||!double.IsFinite(height)||width<=0||height<=0)return;
@@ -797,18 +797,18 @@ public partial class CaptureOverlayWindow : Window
             var fitted=CaptureOverlayPolicy.RefitPromptBarAfterArrange(monitor,candidate,height);
             PromptBar.Width=fitted.Width;
             if(fitted.Height<height-.25)PromptBar.MaxHeight=fitted.Height;
-            Canvas.SetLeft(PromptBar,fitted.Left);
-            Canvas.SetTop(PromptBar,fitted.Top);
+            Canvas.SetLeft(PromptBarHost,fitted.Left);
+            Canvas.SetTop(PromptBarHost,fitted.Top);
             UpdatePromptBarHiddenTransform(false);
         }));
     }
-    private void SetPromptBarHidden(bool hidden){var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBar.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void SetPromptBarHidden(bool hidden){var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void UpdatePromptBarHiddenTransform(bool animate)
     {
-        if(PromptBar.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBar.RenderTransform=transform;}
-        var target=0d;if(_promptBarHidden){var monitor=PromptMonitorBounds();var top=Canvas.GetTop(PromptBar);target=double.IsFinite(top)?Math.Max(PromptBar.ActualHeight+PromptHiddenOffset,monitor.Bottom-top+PromptHiddenOffset):PromptBar.ActualHeight+PromptHiddenOffset;}
-        if(animate){var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(_promptBarHidden?140:180)){EasingFunction=ease});PromptBar.BeginAnimation(OpacityProperty,new DoubleAnimation(_promptBarHidden?0d:.985,TimeSpan.FromMilliseconds(140)));}
-        else{transform.BeginAnimation(TranslateTransform.YProperty,null);transform.Y=target;PromptBar.BeginAnimation(OpacityProperty,null);PromptBar.Opacity=_promptBarHidden?0d:.985;}
+        if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}
+        var target=0d;if(_promptBarHidden){var monitor=PromptMonitorBounds();var top=Canvas.GetTop(PromptBarHost);target=double.IsFinite(top)?Math.Max(PromptBar.ActualHeight+PromptHiddenOffset,monitor.Bottom-top+PromptHiddenOffset):PromptBar.ActualHeight+PromptHiddenOffset;}
+        if(animate){var ease=new CubicEase{EasingMode=EasingMode.EaseOut};transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(target,TimeSpan.FromMilliseconds(_promptBarHidden?140:180)){EasingFunction=ease});PromptBarHost.BeginAnimation(OpacityProperty,new DoubleAnimation(_promptBarHidden?0d:.99,TimeSpan.FromMilliseconds(140)));}
+        else{transform.BeginAnimation(TranslateTransform.YProperty,null);transform.Y=target;PromptBarHost.BeginAnimation(OpacityProperty,null);PromptBarHost.Opacity=_promptBarHidden?0d:.99;}
     }
     private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(PositionPromptBar);}
     private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevronRotation.Angle=_reasoningExpanded?180:0;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
@@ -1317,7 +1317,7 @@ public partial class CaptureOverlayWindow : Window
     {
         _recordingMode=true;_recordingPaused=_recordingStopping=false;Cursor=Cursors.Arrow;
         if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
-        Toolbar.Visibility=DrawingToolbar.Visibility=PromptBar.Visibility=SizeText.Visibility=Visibility.Collapsed;HideHandles();
+        Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=Visibility.Collapsed;HideHandles();
         foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
         selected.Video.Visibility=Visibility.Collapsed;
         selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
@@ -1421,7 +1421,7 @@ public partial class CaptureOverlayWindow : Window
     private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)
     {
-        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();RecordingBar.Visibility=Visibility.Collapsed;PromptBar.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=imageOnly;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
+        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();RecordingBar.Visibility=Visibility.Collapsed;PromptBarHost.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=imageOnly;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
     }
     private void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
