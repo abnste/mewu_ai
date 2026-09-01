@@ -319,6 +319,21 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void HoverSelectsTheTopmostExplicitScreenshotObject()
+    {
+        var selections=new[]
+        {
+            new HoverTarget(new Rect(100,100,300,220),false),
+            new HoverTarget(new Rect(180,140,260,200),false),
+            new HoverTarget(new Rect(0,0,800,600),true)
+        };
+
+        Assert.Equal(1,CaptureOverlayPolicy.FindTopmostHoveredSelection(new Point(220,180),selections,item=>item.IsImplicit,item=>item.Bounds));
+        Assert.Equal(0,CaptureOverlayPolicy.FindTopmostHoveredSelection(new Point(120,120),selections,item=>item.IsImplicit,item=>item.Bounds));
+        Assert.Equal(-1,CaptureOverlayPolicy.FindTopmostHoveredSelection(new Point(700,500),selections,item=>item.IsImplicit,item=>item.Bounds));
+    }
+
+    [Fact]
     public void ContentLayersAreInvalidatedByMoveAndResizeButNotLayoutNoise()
     {
         var original=new Rect(10,20,300,200);
@@ -339,4 +354,5 @@ public sealed class CaptureOverlayPolicyTests
 
     private sealed record Target(string Id, bool IsImplicit, bool IsReferenced);
     private sealed record Attachment(string Id,bool IsVideo);
+    private sealed record HoverTarget(Rect Bounds,bool IsImplicit);
 }
