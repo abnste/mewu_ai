@@ -27,6 +27,7 @@ public sealed class TextAiWindow : Window
     private readonly Border _answerCard = new();
     private readonly TextBlock _status = new(), _reasoning = new();
     private readonly Border _reasoningPanel = new();
+    private readonly ScrollViewer _reasoningScroll = new();
     private readonly Border _agentActivityCard = new(), _interactionCard = new();
     private readonly StackPanel _agentActivityItems = new(), _interactionContent = new();
     private readonly Dictionary<string,AgentActivityVisual> _agentActivityRows = new(StringComparer.Ordinal);
@@ -118,7 +119,7 @@ public sealed class TextAiWindow : Window
         _reasoningPanel.Padding = new Thickness(10, 8, 10, 8);
         _reasoningPanel.Margin = new Thickness(0, 4, 0, 0);
         _reasoningPanel.Visibility = Visibility.Collapsed;
-        _reasoningPanel.Child = new ScrollViewer { MaxHeight = 72, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = _reasoning };
+        _reasoningScroll.MaxHeight=72;_reasoningScroll.VerticalScrollBarVisibility=ScrollBarVisibility.Auto;_reasoningScroll.Content=_reasoning;_reasoningPanel.Child=_reasoningScroll;
         _reasoningToggle.Content = "思考过程";
         _reasoningToggle.HorizontalContentAlignment = HorizontalAlignment.Left;
         _reasoningToggle.Padding = new Thickness(10, 6, 10, 6);
@@ -595,7 +596,7 @@ public sealed class TextAiWindow : Window
                     else reasoningBuffer.Append(delta.ReasoningContent);
                     if(reasoningBuffer.Length>ReasoningDisplayLimit*2)reasoningBuffer.Remove(0,reasoningBuffer.Length-ReasoningDisplayLimit*2);
                     _reasoningToggle.Visibility=Visibility.Visible;_reasoningToggle.Content="正在思考…";_reasoningPanel.Visibility=Visibility.Visible;if(first)_reasoning.Text=LimitReasoning(reasoningBuffer.ToString());
-                    if(!reasoningScheduled){reasoningScheduled=true;_ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{reasoningScheduled=false;if(_closed||!streamOpen||!ReferenceEquals(_request,request))return;_reasoning.Text=LimitReasoning(reasoningBuffer.ToString());}));}
+                    if(!reasoningScheduled){reasoningScheduled=true;_ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{reasoningScheduled=false;if(_closed||!streamOpen||!ReferenceEquals(_request,request))return;_reasoning.Text=LimitReasoning(reasoningBuffer.ToString());_reasoningScroll.ScrollToEnd();}));}
                 }
                 if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(_closed||!streamOpen||!ReferenceEquals(_request,request))return;var preview=StructuredResponseParser.GetStreamingTextPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;RevealAnswerCard();_answer.Markdown=preview;}));}
             }) : null;
@@ -616,7 +617,7 @@ public sealed class TextAiWindow : Window
             // unless this request is still the live, uncancelled one.
             if (!CanAcceptRequest(request)) return;
             request.Token.ThrowIfCancellationRequested();
-            if (!string.IsNullOrWhiteSpace(result.Reasoning)) _reasoning.Text = LimitReasoning(result.Reasoning.Trim());
+            if (!string.IsNullOrWhiteSpace(result.Reasoning)) {_reasoning.Text = LimitReasoning(result.Reasoning.Trim());_reasoningScroll.ScrollToEnd();}
             var emptyAnswer = AiResultValidation.GetEmptyAnswerMessage(result);
             if (emptyAnswer is not null) { CloseReasoning("思考过程"); RevealAnswerCard(); _answer.Markdown = emptyAnswer; _status.Text = emptyAnswer; return; }
             CloseReasoning("思考过程");

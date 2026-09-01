@@ -112,8 +112,7 @@ public static class StructuredResponseParser
             if(keyframes.Count>0&&time<=keyframes[^1].Time)return false;
             keyframes.Add(new(time,x,y,width,height));
         }
-        if(keyframes.Count==0||(end>start&&keyframes.Count<2)||
-           Math.Abs(keyframes[0].Time-start)>.001||Math.Abs(keyframes[^1].Time-end)>.001)return false;
+        if(keyframes.Count==0||(end>start&&keyframes.Count<2))return false;
         annotation=new AiAnnotation(keyframes[0].X,keyframes[0].Y,keyframes[0].Width,keyframes[0].Height,text,regionIndex,start,end,keyframes);
         return true;
     }

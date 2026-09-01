@@ -12,7 +12,16 @@ internal static class CaptureOverlayPolicy
     internal const double PromptReservedComposerHeight = 132;
     internal const int TranslationBatchLineLimit = 24;
     internal const int TranslationBatchCharacterLimit = 3200;
+    internal static readonly IReadOnlyList<int> RecordingCountdownValues = [3, 2, 1];
+    internal static readonly TimeSpan RecordingCountdownStep = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan RecordingStopTimeout = TimeSpan.FromSeconds(15);
+
+    internal static string GetVideoCompletionStatus(bool hasVideo,int renderedAnnotationCount) =>
+        !hasVideo
+            ? string.Empty
+            : renderedAnnotationCount > 0
+                ? "视频理解与时间轴标注完成 · 可继续提问"
+                : "已回答，但模型没有返回可定位的视频时间轴标注；请重试或明确要定位的目标";
 
     internal static IReadOnlyList<T> SelectSendTargets<T>(
         IEnumerable<T> selections,
