@@ -694,6 +694,7 @@ public partial class CaptureOverlayWindow : Window
         foreach(var item in _selections)UpdateSelection(item);
         foreach(var item in _selections.Where(item=>item.VideoPath is not null))
             if(item.AnnotationNotes.FirstOrDefault(note=>note.IsVideoTimeline) is { } annotation)_=PlayVideoAnnotationsAsync(item,annotation);
+        ApplyVideoAnswerActions(snapshot.AnswerMarkdown);
         if(Active is null){HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}else ShowToolbar();
         SetPromptBarHidden(false);PositionPromptBar();
     }
@@ -1085,7 +1086,17 @@ public partial class CaptureOverlayWindow : Window
             foreach(var video in targets.Select(item=>item.VideoPath).Where(path=>path is not null))attachmentLeases.Add(TempMediaRegistry.Shared.AcquireExistingFile(video!));
             attachments=await BuildAttachmentsAsync(targets,provider.Capabilities,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";
             var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;ShowAnswer();AnswerText.Markdown=preview;AnswerScroll.ScrollToEnd();PromptStatus.Text="正在整理回答…";}));}}):null;
-            var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(prompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Markdown=result.Answer;if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var renderedAnnotationCount=RenderAnnotations(result.Annotations);new PrivacyLogger().Info("ScreenAiResult",$"附件 {targetCount}，视频 {targets.Count(item=>item.VideoPath is not null)}，有效批注 {renderedAnnotationCount}");
+            var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(prompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}ShowAnswer();FinishReasoning(result.Reasoning);if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var renderedAnnotationCount=RenderAnnotations(result.Annotations);
+            var repairReturnedAnnotationCount=-1;
+            if(hasVideo&&renderedAnnotationCount==0)
+            {
+                PromptStatus.Text="模型未返回时间轴标注，正在自动补标…按 Esc 可取消";requestStage="provider";
+                var repairRequest=CaptureOverlayPolicy.CreateScreenAiRequest(CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt(prompt),ConversationContextPolicy.CreateBoundedHistory(_history),attachments,null,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);
+                var repaired=await provider.SendAsync(repairRequest,request.Token);repairReturnedAnnotationCount=repaired.Annotations.Count;requestStage="render";if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
+                var repairedCount=AiResultValidation.GetEmptyAnswerMessage(repaired) is null?RenderAnnotations(repaired.Annotations):0;
+                if(repairedCount>0){result=repaired;renderedAnnotationCount=repairedCount;FinishReasoning(repaired.Reasoning);}
+            }
+            ApplyVideoAnswerActions(result.Answer);new PrivacyLogger().Info("ScreenAiResult",$"附件 {targetCount}，视频 {targets.Count(item=>item.VideoPath is not null)}，最终模型批注 {result.Annotations.Count}，补标返回 {repairReturnedAnnotationCount}，有效批注 {renderedAnnotationCount}");
             var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);var historyProvider=usingHermes?$"本机 Hermes · {_host.Settings.HermesProfile}":configured?.Name??provider.Id;var historyModel=usingHermes?_host.Settings.HermesModel:configured?.Model??string.Empty;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(historyProvider,historyModel,prompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));ConversationContextPolicy.TrimInPlace(_history);RecordOverlayOperation(before,"AI 识图");PromptStatus.Text=hasVideo?CaptureOverlayPolicy.GetVideoCompletionStatus(true,renderedAnnotationCount):renderedAnnotationCount>0?$"已在 {_lastSentSelections.Count(item=>item.VideoPath is null)} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";if(usingHermes&&_host.Settings.HermesAutoReadAloud)_=BeginOverlayReadAloudAsync(result.Answer);
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_request,request)){ApplyOverlaySnapshot(before);PromptStatus.Text="已取消";}}
@@ -1105,6 +1116,27 @@ public partial class CaptureOverlayWindow : Window
             if(isVideo&&mapped.Length>0)_=PlayVideoAnnotationsAsync(target.Item,mapped[0]);
         }
         return rendered;
+    }
+
+    private void ApplyVideoAnswerActions(string answer)
+    {
+        var actions=new List<MarkdownAnswerAction>();
+        foreach(var target in _lastSentSelections.Where(item=>item.VideoPath is not null))
+        {
+            foreach(var annotation in target.AnnotationNotes.Where(note=>note.IsVideoTimeline).Take(6))
+            {
+                var start=TimeSpan.FromSeconds(annotation.StartTime!.Value);var end=TimeSpan.FromSeconds(annotation.EndTime!.Value);var range=end>start;
+                var summary=annotation.Text.Length<=20?annotation.Text:annotation.Text[..20]+"…";var label=(range?$"播放 {FormatVideoTime(start)}–{FormatVideoTime(end)}":$"跳到 {FormatVideoTime(start)}")+$" · {summary}";
+                var tooltip=range?$"播放对应动作并跟踪标注：{annotation.Text}":$"跳转到对应时刻并显示标注：{annotation.Text}";
+                actions.Add(new MarkdownAnswerAction(label,tooltip,()=>ActivateVideoAnswerAction(target,annotation)));
+            }
+        }
+        AnswerText.SetMarkdownWithActions(answer,actions);
+    }
+
+    private void ActivateVideoAnswerAction(SelectionItem item,AiAnnotation annotation)
+    {
+        if(_closed||!_selections.Contains(item)||item.VideoPath is null)return;var index=_selections.IndexOf(item);if(index>=0)Select(index);SetPromptBarHidden(false);ShowToolbar();_ = PlayVideoAnnotationsAsync(item,annotation);
     }
 
     private static void RenderAnnotationsForItem(SelectionItem item,double? videoTime=null)
