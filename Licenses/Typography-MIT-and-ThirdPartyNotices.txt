@@ -1,0 +1,58 @@
+Typography.OpenFont / Typography.GlyphLayout
+Source: https://github.com/LayoutFarm/Typography
+
+The project is based on multiple open-sourced projects (listed below) all using permissive licenses.
+A license for the whole project is MIT. Individual source files can carry the notices listed below.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Upstream component notices
+
+Font
+- Apache-2.0, 2014-2016, Samuel Carlsson; NRasterizer: https://github.com/vidstige/NRasterizer
+- MIT, 2015, Michael Popoloski; SharpFont: https://github.com/MikePopoloski/SharpFont
+- FreeType Project License (3-clause BSD style), 2003-2016, David Turner, Robert Wilhelm, Werner Lemberg and others: https://www.freetype.org/
+- Apache-2.0, 2018, Apache/PDFBox Authors: https://github.com/apache/pdfbox
+- Apache-2.0, 2020, Adobe Font Development Kit for OpenType authors: https://github.com/adobe-type-tools/afdko
+
+Text processing
+- Unicode License (BSD style), 2020, Unicode, Inc.: https://www.unicode.org/license.html
+- Apache-2.0, 2014, Muhammad Tayyab Akram; SheenBidi/Tehreer: https://github.com/Tehreer
+
+Geometry
+- BSD, 2002-2005, Maxim Shemanarev; Anti-Grain Geometry 2.4: http://www.antigrain.com/
+- BSD, 2007-2014, Lars Brubaker; agg-sharp: https://github.com/MatterHackers/agg-sharp
+- MIT, 2016, Viktor Chlumsky; msdfgen: https://github.com/Chlumsky/msdfgen
+- BSD, 2009-2010, Poly2Tri contributors: https://github.com/PaintLab/poly2tri-cs
+- Apache-2.0, 2016-2017, WinterDev; PixelFarm: https://github.com/PaintLab/PixelFarm
+
+Platforms and compression
+- MIT, 2015, Xamarin, Inc.; SkiaSharp: https://github.com/mono/SkiaSharp
+- MIT, 2006-2009, Stefanos Apostolopoulos and OpenTK contributors: https://github.com/opentk/opentk
+- MIT, 2013, Antonie Blom; Pencil.Gaming: https://github.com/andykorth/Pencil.Gaming
+- MIT, 2004, 2007, Novell Inc.; System.Drawing
+- MIT, 2018, SharpZipLib authors: https://github.com/icsharpcode/SharpZipLib
+- MIT, 2009-2016, Brotli authors: https://github.com/google/brotli
+- MIT, 2017, brezza92; Brotli C# port: https://github.com/brezza92/brotli
+- MIT, 2019, master131; BrotliSharpLib: https://github.com/master131/BrotliSharpLib
+
+The complete upstream notice is available at:
+https://github.com/LayoutFarm/Typography/blob/master/LICENSE.md

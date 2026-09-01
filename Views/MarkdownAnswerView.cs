@@ -2,10 +2,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using mewu_ai_Assistant.Services;
+using EmojiRichTextBox=Emoji.Wpf.RichTextBox;
 
 namespace mewu_ai_Assistant.Views;
 
-public sealed class MarkdownAnswerView:RichTextBox
+public sealed class MarkdownAnswerView:EmojiRichTextBox
 {
     private string _markdown=string.Empty;
 
@@ -27,5 +28,5 @@ public sealed class MarkdownAnswerView:RichTextBox
         }
     }
 
-    public string PlainText=>MarkdownFlowDocumentRenderer.ToPlainText(Document);
+    public string PlainText=>Text.TrimEnd('\r','\n');
 }
