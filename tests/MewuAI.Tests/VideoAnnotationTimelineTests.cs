@@ -52,4 +52,37 @@ public sealed class VideoAnnotationTimelineTests
         var first=new AiAnnotation(.1,.1,.2,.2,"red circle",0,1,1,[new(1,.1,.1,.2,.2)]);var second=new AiAnnotation(.4,.4,.2,.2,"phone",0,5,5,[new(5,.4,.4,.2,.2)]);
         var actions=VideoAnnotationTimeline.CreateAnswerActions([first,second]);Assert.Equal(2,actions.Count);Assert.All(actions,action=>Assert.Equal(VideoAnnotationAnswerActionKind.JumpToFrame,action.Kind));Assert.Equal(new[]{1d,5d},actions.Select(action=>action.Frame!.Time));
     }
+
+    [Fact] public void SlightPointOvershootIsClampedToActualDuration()
+    {
+        var annotation=new AiAnnotation(.2,.3,.1,.1,"片尾按钮",1,10.2,10.2,[new(10.2,.2,.3,.1,.1)]);
+        Assert.True(VideoAnnotationTimeline.TryFitToDuration(annotation,10,out var fitted,out var clamped));
+        Assert.True(clamped);Assert.Equal(10,fitted.StartTime);Assert.Equal(10,fitted.EndTime);Assert.Equal(10,Assert.Single(fitted.Keyframes!).Time);
+    }
+
+    [Fact] public void SlightRangeOvershootClampsEndAndLastKeyframeTogether()
+    {
+        var annotation=new AiAnnotation(.1,.2,.2,.2,"片尾动作",0,9.5,10.2,[new(9.5,.1,.2,.2,.2),new(10.2,.3,.4,.2,.2)]);
+        Assert.True(VideoAnnotationTimeline.TryFitToDuration(annotation,10,out var fitted,out var clamped));
+        Assert.True(clamped);Assert.Equal(10,fitted.EndTime);Assert.Equal(new[]{9.5,10},fitted.Keyframes!.Select(frame=>frame.Time));
+    }
+
+    [Fact] public void LargeDurationOvershootIsRejected()
+    {
+        var annotation=new AiAnnotation(.2,.3,.1,.1,"错误时间",0,10.5,10.5,[new(10.5,.2,.3,.1,.1)]);
+        Assert.False(VideoAnnotationTimeline.TryFitToDuration(annotation,10,out _,out _));
+    }
+
+    [Fact] public void SingleVideoAcceptsTimelineAnnotationWithWrongModelIndex()
+    {
+        Assert.True(VideoAnnotationTimeline.TryResolveTargetIndex(1,true,[true],out var target,out var remapped));
+        Assert.Equal(0,target);Assert.True(remapped);
+    }
+
+    [Fact] public void MultipleAttachmentsKeepStrictFullAttachmentIndexMapping()
+    {
+        Assert.False(VideoAnnotationTimeline.TryResolveTargetIndex(1,true,[true,false],out _,out _));
+        Assert.True(VideoAnnotationTimeline.TryResolveTargetIndex(0,true,[true,false],out var videoTarget,out var remapped));Assert.Equal(0,videoTarget);Assert.False(remapped);
+        Assert.True(VideoAnnotationTimeline.TryResolveTargetIndex(1,false,[true,false],out var imageTarget,out _));Assert.Equal(1,imageTarget);
+    }
 }
