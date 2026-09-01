@@ -216,6 +216,7 @@ public sealed class RecordingIntegrationTests
                 var dispatcher=Dispatcher.CurrentDispatcher;
                 var view=new Image();
                 var opened=false;
+                var seekStarted=false;
                 var elapsed=Stopwatch.StartNew();
                 preview=new VideoPreviewSurface(view,dispatcher);
                 void Finish(Exception? error)
@@ -227,9 +228,22 @@ public sealed class RecordingIntegrationTests
                 }
                 preview.Opened+=()=>opened=true;
                 preview.Failed+=error=>Finish(error);
+                async Task VerifySeekAsync()
+                {
+                    try
+                    {
+                        var target=TimeSpan.FromMilliseconds(300);
+                        await preview.SeekAsync(target,pauseAfterSeek:true,cancellationToken);
+                        Assert.False(preview.IsPlaying);
+                        Assert.InRange(Math.Abs((preview.Position-target).TotalMilliseconds),0,250);
+                        Assert.NotNull(view.Source);
+                        Finish(null);
+                    }
+                    catch(Exception ex){Finish(ex);}
+                }
                 poll=new DispatcherTimer(TimeSpan.FromMilliseconds(50),DispatcherPriority.Background,(_,_)=>
                 {
-                    if(opened&&view.Source is not null&&preview.PresentedFrameCount>=2&&preview.IsPlaying)Finish(null);
+                    if(opened&&view.Source is not null&&preview.PresentedFrameCount>=2&&preview.IsPlaying&&!seekStarted){seekStarted=true;_=VerifySeekAsync();}
                     else if(elapsed.Elapsed>TimeSpan.FromSeconds(6))Finish(new TimeoutException("录屏视频未能在原位预览表面自动播放"));
                 },dispatcher);
                 preview.Load(path,autoplay:true);

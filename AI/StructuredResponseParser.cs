@@ -74,10 +74,6 @@ public static class StructuredResponseParser
     {
         annotation = default!;
         if (item.ValueKind != JsonValueKind.Object ||
-            !TryReadFiniteDouble(item, "x", out var x) ||
-            !TryReadFiniteDouble(item, "y", out var y) ||
-            !TryReadFiniteDouble(item, "width", out var width) ||
-            !TryReadFiniteDouble(item, "height", out var height) ||
             !item.TryGetProperty("text", out var textElement) ||
             textElement.ValueKind != JsonValueKind.String)
             return false;
@@ -88,13 +84,46 @@ public static class StructuredResponseParser
             (regionElement.ValueKind != JsonValueKind.Number || !regionElement.TryGetInt32(out regionIndex)))
             return false;
 
-        if (string.IsNullOrWhiteSpace(text) || regionIndex < 0 ||
-            x < 0 || y < 0 || width < 0 || height < 0 ||
-            x + width > 1.001 || y + height > 1.001)
+        if (string.IsNullOrWhiteSpace(text) || regionIndex < 0)
             return false;
+
+        var hasTimelineField=item.TryGetProperty("startTime",out _)||item.TryGetProperty("endTime",out _)||item.TryGetProperty("keyframes",out _);
+        if(hasTimelineField)return TryParseVideoAnnotation(item,text,regionIndex,out annotation);
+
+        if(!TryReadNormalizedRect(item,out var x,out var y,out var width,out var height))return false;
 
         annotation = new AiAnnotation(x, y, width, height, text, regionIndex);
         return true;
+    }
+
+    private static bool TryParseVideoAnnotation(JsonElement item,string text,int regionIndex,out AiAnnotation annotation)
+    {
+        annotation=default!;
+        if(!TryReadFiniteDouble(item,"startTime",out var start)||
+           !TryReadFiniteDouble(item,"endTime",out var end)||
+           start<0||end<start||
+           !item.TryGetProperty("keyframes",out var keyframesElement)||keyframesElement.ValueKind!=JsonValueKind.Array)return false;
+        var keyframes=new List<VideoAnnotationKeyframe>();
+        foreach(var keyframe in keyframesElement.EnumerateArray())
+        {
+            if(keyframe.ValueKind!=JsonValueKind.Object||
+               !TryReadFiniteDouble(keyframe,"time",out var time)||time<start||time>end||
+               !TryReadNormalizedRect(keyframe,out var x,out var y,out var width,out var height))return false;
+            if(keyframes.Count>0&&time<=keyframes[^1].Time)return false;
+            keyframes.Add(new(time,x,y,width,height));
+        }
+        if(keyframes.Count==0||(end>start&&keyframes.Count<2)||
+           Math.Abs(keyframes[0].Time-start)>.001||Math.Abs(keyframes[^1].Time-end)>.001)return false;
+        annotation=new AiAnnotation(keyframes[0].X,keyframes[0].Y,keyframes[0].Width,keyframes[0].Height,text,regionIndex,start,end,keyframes);
+        return true;
+    }
+
+    private static bool TryReadNormalizedRect(JsonElement item,out double x,out double y,out double width,out double height)
+    {
+        x=y=width=height=0;
+        if(!TryReadFiniteDouble(item,"x",out x)||!TryReadFiniteDouble(item,"y",out y)||
+           !TryReadFiniteDouble(item,"width",out width)||!TryReadFiniteDouble(item,"height",out height))return false;
+        return x>=0&&y>=0&&width>0&&height>0&&x+width<=1.001&&y+height<=1.001;
     }
 
     private static bool TryReadFiniteDouble(JsonElement item, string name, out double value)
