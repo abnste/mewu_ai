@@ -68,6 +68,41 @@ public sealed class LifecycleSecurityTests
     }
 
     [Fact]
+    public void CrashDiagnosticsReportsAnUncleanPreviousSessionAndKeepsStructuredMarker()
+    {
+        var root=TestDirectory();
+        try
+        {
+            var marker=Path.Combine(root,"Diagnostics","active-session.json");
+            var logs=Path.Combine(root,"Logs");
+            var first=new CrashDiagnosticsService(marker,new PrivacyLogger(logs),_=>false,()=>DateTimeOffset.Parse("2026-09-01T10:00:00Z"));
+            first.StartSession(101);first.Mark("屏幕助手：停止并封装区域录屏");
+            var second=new CrashDiagnosticsService(marker,new PrivacyLogger(logs),_=>false,()=>DateTimeOffset.Parse("2026-09-01T10:01:00Z"));
+            second.StartSession(202);
+            var record=System.Text.Json.JsonSerializer.Deserialize<CrashDiagnosticsService.CrashSessionMarker>(File.ReadAllText(marker));
+            Assert.NotNull(record);Assert.Equal(202,record.ProcessId);Assert.False(record.CleanExit);
+            Assert.Contains("PreviousSessionCrash",string.Join('\n',Directory.EnumerateFiles(logs).Select(File.ReadAllText)));
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
+    public void CrashDiagnosticsDoesNotReportACleanPreviousSession()
+    {
+        var root=TestDirectory();
+        try
+        {
+            var marker=Path.Combine(root,"Diagnostics","active-session.json");var logs=Path.Combine(root,"Logs");var logger=new PrivacyLogger(logs);
+            var first=new CrashDiagnosticsService(marker,logger,_=>false);first.StartSession(301);first.CleanExit();
+            var before=string.Join('\n',Directory.EnumerateFiles(logs).Select(File.ReadAllText));
+            new CrashDiagnosticsService(marker,logger,_=>false).StartSession(302);
+            var after=string.Join('\n',Directory.EnumerateFiles(logs).Select(File.ReadAllText));
+            Assert.DoesNotContain("PreviousSessionCrash",after[before.Length..]);
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
     public void TempCleanupIsBestEffortWhenItsDirectoryDisappears()
     {
         var root=TestDirectory();var service=new TempFileService(root);Directory.Delete(root,true);
