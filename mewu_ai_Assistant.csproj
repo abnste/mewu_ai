@@ -41,6 +41,7 @@
          overlay without relying on the legacy Windows Media Player COM
          renderer used by MediaElement. -->
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.1" />
+    <PackageReference Include="Markdig" Version="1.3.2" />
     <PackageReference Include="RapidOcrNet" Version="4.1.0" ExcludeAssets="contentFiles" />
     <PackageReference Include="ScreenRecorderLib" Version="7.0.0" />
     <PackageReference Include="System.Speech" Version="10.0.11" />

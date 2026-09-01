@@ -22,7 +22,8 @@ public sealed class TextAiWindow : Window
     private const double ExpandedWindowHeight=360;
     private const double InteractionWindowHeight=438;
     private readonly AppHost _host;
-    private readonly TextBox _prompt = new(), _answer = new();
+    private readonly TextBox _prompt = new();
+    private readonly MarkdownAnswerView _answer = new();
     private readonly Border _answerCard = new();
     private readonly TextBlock _status = new(), _reasoning = new();
     private readonly Border _reasoningPanel = new();
@@ -85,16 +86,10 @@ public sealed class TextAiWindow : Window
 
         var conversation = new StackPanel();
 
-        _answer.IsReadOnly = true;
-        _answer.IsTabStop = false;
-        _answer.TextWrapping = TextWrapping.Wrap;
         _answer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-        _answer.Background = Brushes.Transparent;
-        _answer.BorderThickness = new Thickness(0);
         _answer.Padding = new Thickness(12, 10, 12, 10);
         _answer.MaxHeight = 214;
         _answer.FontSize = 13;
-        TextBlock.SetLineHeight(_answer, 20);
         System.Windows.Automation.AutomationProperties.SetName(_answer, "AI 回答");
         _answerCard.Background = Brushes.White;
         _answerCard.BorderBrush = new SolidColorBrush(Color.FromRgb(220, 228, 239));
@@ -600,7 +595,7 @@ public sealed class TextAiWindow : Window
                     _reasoningToggle.Visibility=Visibility.Visible;_reasoningToggle.Content="正在思考…";_reasoningPanel.Visibility=Visibility.Visible;if(first)_reasoning.Text=LimitReasoning(reasoningBuffer.ToString());
                     if(!reasoningScheduled){reasoningScheduled=true;_ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{reasoningScheduled=false;if(_closed||!streamOpen||!ReferenceEquals(_request,request))return;_reasoning.Text=LimitReasoning(reasoningBuffer.ToString());}));}
                 }
-                if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(_closed||!streamOpen||!ReferenceEquals(_request,request))return;var preview=StructuredResponseParser.GetStreamingTextPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;RevealAnswerCard();_answer.Text=preview;}));}
+                if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(_closed||!streamOpen||!ReferenceEquals(_request,request))return;var preview=StructuredResponseParser.GetStreamingTextPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;RevealAnswerCard();_answer.Markdown=preview;}));}
             }) : null;
             var agentProgress=new Progress<AiAgentEvent>(update=>UpdateAgentActivity(update,request));
             var result = await provider.SendAsync(new AiRequest
@@ -620,10 +615,10 @@ public sealed class TextAiWindow : Window
             request.Token.ThrowIfCancellationRequested();
             if (!string.IsNullOrWhiteSpace(result.Reasoning)) _reasoning.Text = LimitReasoning(result.Reasoning.Trim());
             var emptyAnswer = AiResultValidation.GetEmptyAnswerMessage(result);
-            if (emptyAnswer is not null) { CloseReasoning("思考过程"); RevealAnswerCard(); _answer.Text = emptyAnswer; _status.Text = emptyAnswer; return; }
+            if (emptyAnswer is not null) { CloseReasoning("思考过程"); RevealAnswerCard(); _answer.Markdown = emptyAnswer; _status.Text = emptyAnswer; return; }
             CloseReasoning("思考过程");
             RevealAnswerCard();
-            _answer.Text = result.Answer;
+            _answer.Markdown = result.Answer;
             var configured = _host.Settings.Providers.FirstOrDefault(x => x.Id == provider.Id);
             var historyProvider=usingHermes?$"本机 Hermes · {_host.Settings.HermesProfile}":configured?.Name??provider.Id;
             var historyModel=usingHermes?_host.Settings.HermesModel:configured?.Model??string.Empty;
@@ -655,7 +650,7 @@ public sealed class TextAiWindow : Window
             if(usingHermes&&_host.Settings.HermesAutoReadAloud)_=BeginReadAloudAsync(result.Answer);
         }
         catch (OperationCanceledException) { if (!_closed&&ReferenceEquals(_request, request)) { CloseReasoning("思考过程"); _status.Text = usingHermes?HermesStatusText("已取消"):"已取消"; } }
-        catch (Exception ex) { if (!_closed&&ReferenceEquals(_request, request)) { CloseReasoning("思考过程"); RevealAnswerCard(); _answer.Text = "请求失败"; _status.Text = ex.Message; } }
+        catch (Exception ex) { if (!_closed&&ReferenceEquals(_request, request)) { CloseReasoning("思考过程"); RevealAnswerCard(); _answer.Markdown = "请求失败"; _status.Text = ex.Message; } }
         finally
         {
             streamOpen = false;
