@@ -138,7 +138,7 @@ public class OpenAiCompatibleProvider : IAiProvider
             var responseStream=await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
             using var limitedStream=new ResponseSizeLimitedStream(responseStream,ResponseBodySizeLimit);
             using var reader=new StreamReader(limitedStream,Encoding.UTF8,true,4096,false);
-            var accumulator=new StreamingResponseAccumulator(StreamingContentIsCumulative);
+            var accumulator=new StreamingResponseAccumulator(StreamingContentIsCumulative,request.ExpectStructuredResponse);
             var completed=false;
             while(await reader.ReadLineAsync(token).ConfigureAwait(false) is { } line)
             {
@@ -156,7 +156,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         var reasoningText=ReadString(message,"reasoning_content");
         if(reasoningText.Length==0)reasoningText=ReadString(message,"thinking_content");
         if(reasoningText.Length==0)reasoningText=StreamingResponseParser.ReadReasoningDetails(message);
-        return StructuredResponseParser.Parse(answerText,reasoningText);
+        return StructuredResponseParser.Parse(answerText,reasoningText,request.ExpectStructuredResponse);
         }
     }
 
@@ -322,7 +322,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         if(miniMaxM3)
         {
             bodyValues["reasoning_split"]=true;
-            if(request.DisableReasoning)bodyValues["thinking"]=new{type="disabled"};
+            bodyValues["thinking"]=new{type=request.DisableReasoning?"disabled":"adaptive"};
         }
         else if(request.DisableReasoning&&HostMatches(_baseUri.Host,"volces.com"))
         {
@@ -466,12 +466,14 @@ internal sealed class StreamingResponseAccumulator
 {
     private readonly StringBuilder _answer=new();
     private readonly bool _contentIsCumulative;
+    private readonly bool _expectStructuredResponse;
     private string _cumulativeAnswer=string.Empty;
     private string _reasoning=string.Empty;
 
-    internal StreamingResponseAccumulator(bool contentIsCumulative=false)
+    internal StreamingResponseAccumulator(bool contentIsCumulative=false,bool expectStructuredResponse=false)
     {
         _contentIsCumulative=contentIsCumulative;
+        _expectStructuredResponse=expectStructuredResponse;
     }
 
     public bool Accept(AiStreamDelta delta,bool done,IProgress<AiStreamDelta>? progress,Func<string,bool>? completionPredicate)
@@ -499,7 +501,7 @@ internal sealed class StreamingResponseAccumulator
     }
 
     private string CurrentAnswer()=>_contentIsCumulative?_cumulativeAnswer:_answer.ToString();
-    public AiResult BuildResult()=>StructuredResponseParser.Parse(CurrentAnswer(),_reasoning);
+    public AiResult BuildResult()=>StructuredResponseParser.Parse(CurrentAnswer(),_reasoning,_expectStructuredResponse);
 
     private static string AppendCumulativeBlock(ref string accumulated,string incoming)
     {

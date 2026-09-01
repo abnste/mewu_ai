@@ -49,7 +49,8 @@ public partial class CaptureOverlayWindow : Window
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
-    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded,_recordingMode,_drawingMode,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_reasoningExpanded,_recordingMode,_drawingMode,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
+    private int _promptBarAnimationVersion;
     private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingStopWatchdog,_readAloudRequest;
     private CancellationTokenSource? _reasoningRenderRequest;
     private TaskCompletionSource<AiInteractionResponse>? _activeInteraction;
@@ -166,6 +167,11 @@ public partial class CaptureOverlayWindow : Window
     public CaptureOverlayWindow(AppHost host)
     {
         _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();
+        // Keep the composer fully below the viewport until its first arranged
+        // frame.  Starting visible here lets WPF paint one terminal frame
+        // before Loaded can start the entrance animation.
+        PromptBarHost.Opacity=0;
+        PromptBarHost.IsHitTestVisible=false;
         // Keep overlay text and icon edges crisp at mixed DPI values.  The
         // capture surface remains in physical-pixel coordinates; these flags
         // only affect WPF rasterisation of the presentation layer.
@@ -195,7 +201,7 @@ public partial class CaptureOverlayWindow : Window
         {
             ApplyOverlayDpiLayout(area);
             DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
-            QuickPrompt.TextChanged+=(_,_)=>UpdateQuickPromptHint();QuickPrompt.GotKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(115,130,235));};QuickPrompt.LostKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(220,228,239));};UpdateQuickPromptHint();PromptBar.SizeChanged+=(_,_)=>{PositionPromptBar();UpdatePromptBarHiddenTransform(false);};PositionPromptBar();QuickPrompt.Focus();
+            QuickPrompt.TextChanged+=(_,_)=>UpdateQuickPromptHint();QuickPrompt.GotKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(115,130,235));};QuickPrompt.LostKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(220,228,239));};UpdateQuickPromptHint();PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();QuickPrompt.Focus();
             // WPF can re-apply the initial Width/Height after SourceInitialized;
             // run one render-priority pass so the DIP surface remains in sync
             // with the physical HWND before any pointer coordinates arrive.
@@ -205,6 +211,11 @@ public partial class CaptureOverlayWindow : Window
                 ApplyOverlayDpiLayout(area);
                 DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
                 PositionPromptBar();
+                if(!_promptBarEntranceStarted)
+                {
+                    _promptBarEntranceStarted=true;
+                    SetPromptBarHidden(false);
+                }
             }));
             _=Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>
             {
@@ -838,23 +849,35 @@ public partial class CaptureOverlayWindow : Window
         if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}
         var target=0d;if(_promptBarHidden){var monitor=PromptMonitorBounds();var top=Canvas.GetTop(PromptBarHost);target=double.IsFinite(top)?Math.Max(PromptBar.ActualHeight+PromptHiddenOffset,monitor.Bottom-top+PromptHiddenOffset):PromptBar.ActualHeight+PromptHiddenOffset;}
         var targetOpacity=_promptBarHidden?0d:.99;
+        // Layout passes are frequent while the pointer crosses selections.
+        // They may move the host, but must never cancel an in-flight visibility
+        // animation and expose its terminal frame for one render.
+        if(!animate&&_promptBarVisibilityAnimating)return;
         var currentOffset=transform.Y;
         var currentOpacity=PromptBarHost.Opacity;
         transform.BeginAnimation(TranslateTransform.YProperty,null);
         PromptBarHost.BeginAnimation(OpacityProperty,null);
         transform.Y=target;
         PromptBarHost.Opacity=targetOpacity;
-        if(!animate)return;
+        if(!animate){_promptBarVisibilityAnimating=false;return;}
         var duration=TimeSpan.FromMilliseconds(_promptBarHidden?150:230);
-        var ease=new CubicEase{EasingMode=EasingMode.EaseOut};
-        transform.BeginAnimation(TranslateTransform.YProperty,new DoubleAnimation(currentOffset,target,duration){EasingFunction=ease,FillBehavior=FillBehavior.Stop});
-        PromptBarHost.BeginAnimation(OpacityProperty,new DoubleAnimation(currentOpacity,targetOpacity,TimeSpan.FromMilliseconds(_promptBarHidden?120:190)){EasingFunction=ease,FillBehavior=FillBehavior.Stop});
+        var version=++_promptBarAnimationVersion;
+        _promptBarVisibilityAnimating=true;
+        var movement=new DoubleAnimation(currentOffset,target,duration){FillBehavior=FillBehavior.Stop};
+        movement.Completed+=(_,_)=>
+        {
+            if(version!=_promptBarAnimationVersion)return;
+            _promptBarVisibilityAnimating=false;
+            UpdatePromptBarHiddenTransform(false);
+        };
+        transform.BeginAnimation(TranslateTransform.YProperty,movement);
+        PromptBarHost.BeginAnimation(OpacityProperty,new DoubleAnimation(currentOpacity,targetOpacity,TimeSpan.FromMilliseconds(_promptBarHidden?120:190)){FillBehavior=FillBehavior.Stop});
     }
     private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(PositionPromptBar);}
     private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevronRotation.Angle=_reasoningExpanded?180:0;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
     private void ShowReasoning(string delta,CancellationTokenSource request)
     {
-        AppendReasoning(delta);if(_answerExpanded&&ReasoningToggle.Visibility!=Visibility.Visible)RevealReasoningInProgress();if(_reasoningRenderScheduled&&ReferenceEquals(_reasoningRenderRequest,request))return;_reasoningRenderScheduled=true;_reasoningRenderRequest=request;
+        AppendReasoning(delta);if(ReasoningToggle.Visibility!=Visibility.Visible)RevealReasoningInProgress();if(_reasoningRenderScheduled&&ReferenceEquals(_reasoningRenderRequest,request))return;_reasoningRenderScheduled=true;_reasoningRenderRequest=request;
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>
         {
             if(!ReferenceEquals(_reasoningRenderRequest,request))return;

@@ -11,21 +11,23 @@ public static class StructuredResponseParser
     private static readonly Regex ThinkBlock = new("<(?<tag>think|thinking|reasoning)>\\s*(?<body>[\\s\\S]*?)\\s*</\\k<tag>>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex ThinkOpening = new("<(?:think|thinking|reasoning)>",RegexOptions.IgnoreCase|RegexOptions.Compiled);
 
-    public static AiResult Parse(string value, string reasoning = "")
+    public static AiResult Parse(string value, string reasoning = "",bool expectStructuredResponse=false)
     {
         var extracted = ThinkBlock.Matches(value).Select(x => x.Groups["body"].Value.Trim()).Where(x => x.Length > 0);
         var allReasoning = string.Join(Environment.NewLine + Environment.NewLine, new[] { reasoning.Trim() }.Concat(extracted).Where(x => x.Length > 0));
         value = ThinkBlock.Replace(value, string.Empty).Trim();
 
         if (!TryGetStructuredPayload(value, out var json))
-            return new(value, [], allReasoning);
+            return expectStructuredResponse&&LooksLikeBrokenStructuredPayload(value)
+                ?new(string.Empty,[],allReasoning)
+                :new(value, [], allReasoning);
 
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("answer", out var answerElement))
-                return new(value, [], allReasoning);
+                return expectStructuredResponse?new(string.Empty,[],allReasoning):new(value, [], allReasoning);
 
             if (answerElement.ValueKind != JsonValueKind.String)
                 return new(string.Empty, [], allReasoning);
@@ -40,8 +42,17 @@ public static class StructuredResponseParser
         {
             return TryExtractAnswerFromTruncatedStructuredResponse(json, out var answer)
                 ? new(answer, [], allReasoning)
-                : new(value, [], allReasoning);
+                : expectStructuredResponse?new(string.Empty,[],allReasoning):new(value, [], allReasoning);
         }
+    }
+
+    private static bool LooksLikeBrokenStructuredPayload(string value)
+    {
+        var trimmed=value.TrimStart();
+        if(trimmed.StartsWith('{')||trimmed.StartsWith('[')||trimmed.StartsWith("```",StringComparison.Ordinal))return true;
+        if(!trimmed.StartsWith("json",StringComparison.OrdinalIgnoreCase))return false;
+        var remainder=trimmed[4..].TrimStart();
+        return remainder.StartsWith('{')||remainder.StartsWith('[');
     }
 
     private static IReadOnlyList<AiAnnotation> ParseAnnotations(JsonElement root)
