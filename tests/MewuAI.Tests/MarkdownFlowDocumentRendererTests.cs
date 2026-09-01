@@ -40,6 +40,22 @@ public sealed class MarkdownFlowDocumentRendererTests
     }
 
     [Fact]
+    public void MarkdownAnswerViewConvertsEmojiToColorVectorInlinesAndPreservesCopiedText()
+    {
+        RunSta(() =>
+        {
+            var view=new mewu_ai_Assistant.Views.MarkdownAnswerView
+            {
+                Markdown="彩色 👋🏽 🧑‍💻 🇨🇳"
+            };
+
+            Assert.Equal(3,view.EmojiInlines.Count());
+            Assert.Equal("彩色 👋🏽 🧑‍💻 🇨🇳",view.PlainText);
+            Assert.All(view.EmojiInlines,emoji=>Assert.NotNull(emoji.Child.Source));
+        });
+    }
+
+    [Fact]
     public void DoesNotExecuteHtmlOrLoadRemoteImages()
     {
         RunSta(() =>

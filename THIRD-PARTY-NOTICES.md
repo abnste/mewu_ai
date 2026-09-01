@@ -5,6 +5,9 @@
 
 | 组件 | 当前版本/资源 | 许可证 | 来源 |
 | --- | --- | --- | --- |
+| Emoji.Wpf | 0.3.4 | WTFPL-2.0 | https://github.com/samhocevar/emoji.wpf |
+| Stfu | 0.1.1 | WTFPL-2.0 | https://github.com/samhocevar/stfu |
+| Typography.OpenFont / Typography.GlyphLayout（由 Emoji.Wpf 携带） | Emoji.Wpf 0.3.4 内置版本 | MIT 及上游第三方条款 | https://github.com/LayoutFarm/Typography |
 | Markdig | 1.3.2 | BSD-2-Clause | https://github.com/xoofx/markdig |
 | RapidOcrNet | 4.1.0 | Apache-2.0（含上游 NOTICE） | https://github.com/BobLd/RapidOcrNet |
 | PaddleOCR PP-OCRv5/PP-OCRv6 模型及字典 | 随仓库资源 | Apache-2.0 | https://github.com/PaddlePaddle/PaddleOCR |
