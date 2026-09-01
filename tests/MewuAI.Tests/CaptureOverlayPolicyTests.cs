@@ -8,6 +8,17 @@ namespace MewuAI.Tests;
 public sealed class CaptureOverlayPolicyTests
 {
     [Theory]
+    [InlineData(true,true,false,OverlayUndoTarget.Text)]
+    [InlineData(true,true,true,OverlayUndoTarget.Text)]
+    [InlineData(true,false,true,OverlayUndoTarget.Overlay)]
+    [InlineData(false,true,false,OverlayUndoTarget.Overlay)]
+    public void ResolveUndoTarget_UsesPointerBeforeStalePromptFocus(
+        bool promptFocused,bool pointerOverPrompt,bool pointerOverSelection,OverlayUndoTarget expected)
+    {
+        Assert.Equal(expected,CaptureOverlayPolicy.ResolveUndoTarget(promptFocused,pointerOverPrompt,pointerOverSelection));
+    }
+
+    [Theory]
     [InlineData(false, null, true)]
     [InlineData(false, "", true)]
     [InlineData(true, null, false)]
