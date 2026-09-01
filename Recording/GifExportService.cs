@@ -16,7 +16,8 @@ public static class GifExportService
         string videoPath,
         string outputPath,
         int requestedFps,
-        CancellationToken cancellationToken=default)
+        CancellationToken cancellationToken=default,
+        Func<BitmapSource,TimeSpan,BitmapSource>? annotationCompositor=null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(videoPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
@@ -40,7 +41,9 @@ public static class GifExportService
             using var thumbnail=await composition.GetThumbnailAsync(timestamp,thumbnailSize.Width,thumbnailSize.Height,VideoFramePrecision.NearestFrame).AsTask(cancellationToken).ConfigureAwait(false);
             using var stream=thumbnail.AsStreamForRead();
             var decoder=BitmapDecoder.Create(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);
-            var bitmap=decoder.Frames[0];bitmap.Freeze();frames.Add(bitmap);
+            BitmapSource bitmap=decoder.Frames[0];bitmap.Freeze();
+            if(annotationCompositor is not null){bitmap=annotationCompositor(bitmap,timestamp);if(!bitmap.IsFrozen)bitmap.Freeze();}
+            frames.Add(bitmap);
         }
 
         cancellationToken.ThrowIfCancellationRequested();

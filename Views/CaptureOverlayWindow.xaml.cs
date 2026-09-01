@@ -798,7 +798,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(Active is not {IsImplicit:false} item||_recordingMode){Toolbar.Visibility=Visibility.Collapsed;return;}
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
-        var isVideo=item.VideoPath is not null;DrawButton.Visibility=RecordButton.Visibility=TranslateButton.Visibility=OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
+        var isVideo=item.VideoPath is not null;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=TranslateButton.Visibility=OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
 
@@ -1039,9 +1039,19 @@ public partial class CaptureOverlayWindow : Window
     private static string LimitReasoning(string value)=>value.Length<=ReasoningDisplayLimit?value:"…较早思考内容已收纳…\n"+value[^ReasoningDisplayLimit..];
 
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active);}
-    private BitmapSource RenderSelectionImage(SelectionItem item)
+    private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false)
     {
-        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);if(item.Markup.Strokes.Count==0&&item.DrawingElements.Count==0)return source;var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixels.Width/Math.Max(1,item.Bounds.Width),pixels.Height/Math.Max(1,item.Bounds.Height)));drawing.DrawImage(source,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.DrawRectangle(new VisualBrush(item.Markup),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixels.Width),Math.Max(1,pixels.Height),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
+        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);if(!hasManual&&!hasAi)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes):null;return AnnotationOverlayRenderer.Composite(source,manual,ai);
+    }
+    private static bool HasManualAnnotations(SelectionItem item)=>item.Markup.Strokes.Count>0||item.DrawingElements.Count>0;
+    private static bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||item.AnnotationNotes.Count>0;
+    private static BitmapSource RenderManualOverlay(SelectionItem item,int pixelWidth,int pixelHeight)
+    {
+        var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixelWidth/Math.Max(1,item.Bounds.Width),pixelHeight/Math.Max(1,item.Bounds.Height)));drawing.DrawRectangle(new VisualBrush(item.Markup),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixelWidth),Math.Max(1,pixelHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
+    }
+    private bool? AskWhetherToIncludeAnnotations(SelectionItem item)
+    {
+        if(!HasAnyAnnotations(item))return false;var kind=item.VideoPath is null?"图片":"视频";var result=MessageBox.Show(this,$"这个{kind}包含 AI 标注或手工标注。\n\n是否把标注一起保存到导出的{kind}中？\n\n是：保存带标注版本\n否：保存干净原件\n取消：停止保存","保存标注内容",MessageBoxButton.YesNoCancel,MessageBoxImage.Question);return result switch{MessageBoxResult.Yes=>true,MessageBoxResult.No=>false,_=>null};
     }
     private async Task<List<AiAttachment>> BuildAttachmentsAsync(IReadOnlyList<SelectionItem> targets,AiProviderCapabilities capabilities,CancellationToken cancellationToken)
     {
@@ -1316,26 +1326,28 @@ public partial class CaptureOverlayWindow : Window
     private async void Save(object s,RoutedEventArgs e)
     {
         if(RejectIfOverlayOperationBusy()||Active is not { } item)return;
+        RemoveEmptyDrawingText(item);var includeAnnotations=AskWhetherToIncludeAnnotations(item);if(!includeAnnotations.HasValue)return;
         if(item.VideoPath is { } video)
         {
             var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4|GIF 动图|*.gif",DefaultExt=".mp4",FilterIndex=1,AddExtension=true};
             if(dialog.ShowDialog(this)!=true)return;
             var exportGif=dialog.FilterIndex==2;
             var destination=System.IO.Path.ChangeExtension(dialog.FileName,exportGif?".gif":".mp4");
-            var operation=BeginOverlayOperation(exportGif?"正在导出 GIF…按 Esc 可取消":"正在保存 MP4…按 Esc 可取消");TempMediaLease? exportLease=null;
+            var pixels=ToPixelRect(item.Bounds);var manualOverlay=includeAnnotations.Value&&HasManualAnnotations(item)?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var annotations=includeAnnotations.Value?item.AnnotationNotes.ToArray():[];var operation=BeginOverlayOperation(exportGif?"正在导出 GIF…按 Esc 可取消":includeAnnotations.Value?"正在合成带标注 MP4…按 Esc 可取消":"正在保存 MP4…按 Esc 可取消");TempMediaLease? exportLease=null;
             try
             {
                 exportLease=TempMediaRegistry.Shared.AcquireExistingFile(video);
                 if(exportGif)
                 {
                     var fps=_host.Settings.GifFps;
-                    var result=await GifExportService.ExportFromVideoAsync(video,destination,fps,operation.Token);
+                    Func<BitmapSource,TimeSpan,BitmapSource>? compositor=includeAnnotations.Value?(frame,time)=>Dispatcher.Invoke(()=>AnnotationOverlayRenderer.Composite(frame,manualOverlay,AnnotationOverlayRenderer.RenderAiOverlay(frame.PixelWidth,frame.PixelHeight,annotations,time.TotalSeconds))):null;
+                    var result=await GifExportService.ExportFromVideoAsync(video,destination,fps,operation.Token,compositor);
                     if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"GIF 已保存 · {result.FrameCount} 帧 / {result.EffectiveFps:0.#} FPS";
                 }
                 else
                 {
-                    await Task.Run(()=>AtomicFileService.Copy(video,destination),operation.Token);
-                    if(IsOverlayOperationActive(operation,item))PromptStatus.Text="MP4 已保存";
+                    if(includeAnnotations.Value)await AnnotatedVideoExportService.ExportAsync(video,destination,manualOverlay,annotations,operation.Token);else await Task.Run(()=>AtomicFileService.Copy(video,destination),operation.Token);
+                    if(IsOverlayOperationActive(operation,item))PromptStatus.Text=includeAnnotations.Value?"带标注 MP4 已保存":"MP4 原件已保存";
                 }
             }
             catch(OperationCanceledException){if(IsOverlayOperationActive(operation,item))PromptStatus.Text="已取消保存视频";}
@@ -1345,7 +1357,7 @@ public partial class CaptureOverlayWindow : Window
         }
 
         var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(imageDialog.ShowDialog(this)!=true)return;
-        var image=RenderSelectionImage(item);var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
+        var image=RenderSelectionImage(item,includeAnnotations.Value,includeAnnotations.Value);var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
         try{await Task.Run(()=>ScreenCaptureService.Save(image,imageDialog.FileName,imageDialog.FilterIndex==2),imageOperation.Token);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="图片已保存";}
         catch(OperationCanceledException){if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="已取消保存图片";}
         catch(Exception ex){new PrivacyLogger().Error("SaveImage",ex);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text=$"图片保存失败：{ex.Message}";}
@@ -1365,7 +1377,7 @@ public partial class CaptureOverlayWindow : Window
     private void Draw(object s,RoutedEventArgs e)=>EnterDrawingMode();
     private void EnterDrawingMode()
     {
-        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false,VideoPath:null} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=true;EnsureDrawingControls();ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text="原位标注中 · 颜色统一作用于画笔、形状、文字和序号";
+        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=Visibility.Collapsed;item.Markup.Visibility=Visibility.Visible;item.Markup.IsHitTestVisible=true;EnsureDrawingControls();ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text=item.VideoPath is null?"原位标注中 · 颜色统一作用于画笔、形状、文字和序号":"视频原位标注中 · 手工标注将贯穿整个视频";
     }
     private void ExitDrawingMode()
     {
@@ -1702,7 +1714,7 @@ public partial class CaptureOverlayWindow : Window
     private void RestoreAfterRecordingCountdown(SelectionItem selected,string status)
     {
         var interactionRestored=NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);_recordingCountdownActive=false;RecordingCountdown.Visibility=Visibility.Collapsed;RecordingCountdown.BeginAnimation(OpacityProperty,null);RecordingCountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty,null);RecordingCountdownScale.BeginAnimation(ScaleTransform.ScaleYProperty,null);DesktopImage.Clip=null;Dimmer.Clip=null;_recordingItem=null;_recordingItemWasReferenced=false;PromptBarHost.Visibility=Visibility.Visible;Cursor=Cursors.Cross;
-        foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;item.Badge.Visibility=Visibility.Visible;var imageOnly=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}
+        foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;item.Badge.Visibility=Visibility.Visible;var imageOnly=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}
         var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);PromptStatus.Text=interactionRestored?status:"窗口交互恢复失败，正在安全关闭覆盖层，请重新截图";CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");if(!interactionRestored)_=Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(Close));
     }
 
@@ -1816,7 +1828,7 @@ public partial class CaptureOverlayWindow : Window
     private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)
     {
-        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();RecordingBar.Visibility=Visibility.Collapsed;PromptBarHost.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
+        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();RecordingBar.Visibility=Visibility.Collapsed;PromptBarHost.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
     }
     private void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
