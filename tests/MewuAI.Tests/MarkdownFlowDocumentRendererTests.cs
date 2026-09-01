@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using System.Threading;
+using System.Windows;
 using System.Windows.Documents;
 using mewu_ai_Assistant.Services;
 using Xunit;
@@ -80,6 +81,19 @@ public sealed class MarkdownFlowDocumentRendererTests
             Assert.Equal(2,links.Length);
             Assert.Equal("https",links[0].NavigateUri?.Scheme);
             Assert.Null(links[1].NavigateUri);
+        });
+    }
+
+    [Fact]
+    public void MarkdownAnswerViewAppendsClickableLocalVideoActions()
+    {
+        RunSta(() =>
+        {
+            var invoked=false;var view=new mewu_ai_Assistant.Views.MarkdownAnswerView();
+            view.SetMarkdownWithActions("错误发生在按钮点击后",[new mewu_ai_Assistant.Views.MarkdownAnswerAction("跳到 00:12.4","跳转并显示标注",()=>invoked=true)]);
+            var paragraph=Assert.IsType<Paragraph>(view.Document.Blocks.LastBlock);var link=Assert.Single(paragraph.Inlines.OfType<Hyperlink>());
+            Assert.Contains("视频定位",MarkdownFlowDocumentRenderer.ToPlainText(view.Document));Assert.Equal("跳到 00:12.4",new TextRange(link.ContentStart,link.ContentEnd).Text);
+            link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));Assert.True(invoked);
         });
     }
 

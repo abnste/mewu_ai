@@ -23,6 +23,12 @@ internal static class CaptureOverlayPolicy
                 ? "视频理解与时间轴标注完成 · 可继续提问"
                 : "已回答，但模型没有返回可定位的视频时间轴标注；请重试或明确要定位的目标";
 
+    internal static string CreateVideoAnnotationRepairPrompt(string originalPrompt) =>
+        "上一次视频分析没有返回可渲染的时间轴批注。请重新分析同一批视频附件，完整回答原问题并补齐关键事件与可定位目标。"+
+        "只能返回 JSON 根对象 {answer:string,annotations:array}。每条视频批注必须包含 regionIndex、startTime、endTime、text、keyframes；"+
+        "单点事件提供一个关键帧，动作过程至少两个按时间递增的关键帧，每个关键帧都要给出 time 与 0 到 1 的 x、y、width、height。"+
+        "不要返回 Markdown 围栏，也不要省略 annotations。原问题："+originalPrompt;
+
     internal static IReadOnlyList<T> SelectSendTargets<T>(
         IEnumerable<T> selections,
         Func<T, bool> isImplicit,
