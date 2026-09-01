@@ -24,11 +24,7 @@ internal static class VideoAnnotationTimeline
         {
             if(annotation.EndTime>annotation.StartTime)
                 result.Add(new(VideoAnnotationAnswerActionKind.PlayRange,annotation,null));
-            foreach(var frame in annotation.Keyframes!)
-            {
-                result.Add(new(VideoAnnotationAnswerActionKind.JumpToFrame,annotation,frame));
-                if(result.Count>=MaxAnswerActions)return result;
-            }
+            else result.Add(new(VideoAnnotationAnswerActionKind.JumpToFrame,annotation,annotation.Keyframes![0]));
             if(result.Count>=MaxAnswerActions)return result;
         }
         return result;

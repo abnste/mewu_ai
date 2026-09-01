@@ -41,15 +41,15 @@ public sealed class VideoAnnotationTimelineTests
         Assert.True(VideoAnnotationTimeline.TryGetFirstMarker([later,earlier],out var annotation,out var frame));Assert.Same(earlier,annotation);Assert.Equal(2,frame.Time);
     }
 
-    [Fact] public void AnswerActionsIncludeRangePlaybackAndEveryKeyframeJump()
+    [Fact] public void RangeAnnotationCreatesOnePlaybackActionWithoutDuplicateEndpointLinks()
     {
         var actions=VideoAnnotationTimeline.CreateAnswerActions([Tracked]);
-        Assert.Equal(3,actions.Count);Assert.Equal(VideoAnnotationAnswerActionKind.PlayRange,actions[0].Kind);Assert.Equal(new[]{10d,12d},actions.Skip(1).Select(action=>action.Frame!.Time));
+        var action=Assert.Single(actions);Assert.Equal(VideoAnnotationAnswerActionKind.PlayRange,action.Kind);Assert.Null(action.Frame);
     }
 
-    [Fact] public void AnswerActionCountIsBounded()
+    [Fact] public void DistinctPointAnnotationsCreateDistinctJumpActions()
     {
-        var frames=Enumerable.Range(0,40).Select(index=>new VideoAnnotationKeyframe(index,.1,.1,.2,.2)).ToArray();var annotation=new AiAnnotation(.1,.1,.2,.2,"long",0,0,39,frames);
-        Assert.Equal(VideoAnnotationTimeline.MaxAnswerActions,VideoAnnotationTimeline.CreateAnswerActions([annotation]).Count);
+        var first=new AiAnnotation(.1,.1,.2,.2,"red circle",0,1,1,[new(1,.1,.1,.2,.2)]);var second=new AiAnnotation(.4,.4,.2,.2,"phone",0,5,5,[new(5,.4,.4,.2,.2)]);
+        var actions=VideoAnnotationTimeline.CreateAnswerActions([first,second]);Assert.Equal(2,actions.Count);Assert.All(actions,action=>Assert.Equal(VideoAnnotationAnswerActionKind.JumpToFrame,action.Kind));Assert.Equal(new[]{1d,5d},actions.Select(action=>action.Frame!.Time));
     }
 }
