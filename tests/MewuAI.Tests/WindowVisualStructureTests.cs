@@ -54,4 +54,18 @@ public sealed class WindowVisualStructureTests
         Assert.Null(content.Element(presentation+"Border.Effect"));
         Assert.Same(host,content.Parent);
     }
+
+    [Fact]
+    public void CaptureOverlayHasNamedReasoningScrollAndNonInteractiveRecordingCountdown()
+    {
+        var path=Path.Combine(AppContext.BaseDirectory,"Fixtures","CaptureOverlayWindow.xaml.xml");
+        var document=XDocument.Load(path,LoadOptions.SetLineInfo);
+        XNamespace x="http://schemas.microsoft.com/winfx/2006/xaml";
+        XElement FindNamed(string name)=>document.Descendants().Single(element=>string.Equals((string?)element.Attribute(x+"Name"),name,StringComparison.Ordinal));
+
+        Assert.Equal("ScrollViewer",FindNamed("ReasoningScroll").Name.LocalName);
+        var countdown=FindNamed("RecordingCountdown");
+        Assert.Equal("Collapsed",(string?)countdown.Attribute("Visibility"));
+        Assert.Equal("False",(string?)countdown.Attribute("IsHitTestVisible"));
+    }
 }

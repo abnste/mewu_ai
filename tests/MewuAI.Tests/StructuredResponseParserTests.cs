@@ -143,6 +143,12 @@ public sealed class StructuredResponseParserTests
         Assert.Equal(2,Assert.Single(result.Annotations).Keyframes!.Count);
     }
 
+    [Fact] public void Parse_AcceptsTrackedVideoRangeWhoseKeyframesAreInsideTheEndpoints()
+    {
+        var result=StructuredResponseParser.Parse("{\"answer\":\"点击过程\",\"annotations\":[{\"startTime\":11.8,\"endTime\":14.2,\"text\":\"按钮移动\",\"keyframes\":[{\"time\":12.0,\"x\":0.4,\"y\":0.3,\"width\":0.18,\"height\":0.12},{\"time\":14.0,\"x\":0.48,\"y\":0.34,\"width\":0.18,\"height\":0.12}]}]}");
+        Assert.Equal(2,Assert.Single(result.Annotations).Keyframes!.Count);
+    }
+
     [Theory]
     [InlineData("{\"startTime\":1,\"endTime\":2,\"text\":\"bad\",\"keyframes\":[{\"time\":1,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2}]}")]
     [InlineData("{\"startTime\":2,\"endTime\":1,\"text\":\"bad\",\"keyframes\":[]}")]

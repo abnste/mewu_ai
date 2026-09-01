@@ -216,6 +216,22 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void RecordingCountdownIsExactlyThreeFiniteCancelableSteps()
+    {
+        Assert.Equal(new[]{3,2,1},CaptureOverlayPolicy.RecordingCountdownValues);
+        Assert.InRange(CaptureOverlayPolicy.RecordingCountdownStep,TimeSpan.FromMilliseconds(500),TimeSpan.FromSeconds(2));
+    }
+
+    [Theory]
+    [InlineData(true,0,"已回答，但模型没有返回可定位的视频时间轴标注；请重试或明确要定位的目标")]
+    [InlineData(true,1,"视频理解与时间轴标注完成 · 可继续提问")]
+    [InlineData(false,0,"")]
+    public void VideoCompletionStatusNeverPretendsMissingAnnotationsSucceeded(bool hasVideo,int count,string expected)
+    {
+        Assert.Equal(expected,CaptureOverlayPolicy.GetVideoCompletionStatus(hasVideo,count));
+    }
+
+    [Fact]
     public void PromptBar_IsCenteredInsideTheSelectedNegativeCoordinateMonitor()
     {
         var monitor=new Rect(-1280,0,1280,720);
