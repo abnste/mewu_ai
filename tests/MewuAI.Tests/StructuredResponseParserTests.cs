@@ -130,6 +130,29 @@ public sealed class StructuredResponseParserTests
         Assert.Empty(result.Annotations);
     }
     [Fact] public void Parse_DropsBlankOrNegativeRegionAnnotations(){var r=StructuredResponseParser.Parse("{\"answer\":\"正文\",\"annotations\":[{\"regionIndex\":0,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2,\"text\":\" \"},{\"regionIndex\":-1,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2,\"text\":\"无效\"}]}");Assert.Empty(r.Annotations);}
+    [Fact] public void Parse_AcceptsVideoPointAnnotation()
+    {
+        var result=StructuredResponseParser.Parse("{\"answer\":\"错误发生在 00:12.4\",\"annotations\":[{\"regionIndex\":1,\"startTime\":12.4,\"endTime\":12.4,\"text\":\"按钮没有响应\",\"keyframes\":[{\"time\":12.4,\"x\":0.42,\"y\":0.31,\"width\":0.18,\"height\":0.12}]}]}");
+        var annotation=Assert.Single(result.Annotations);
+        Assert.True(annotation.IsVideoTimeline);Assert.Equal(12.4,annotation.StartTime);Assert.Single(annotation.Keyframes!);
+    }
+
+    [Fact] public void Parse_AcceptsTrackedVideoRangeAnnotation()
+    {
+        var result=StructuredResponseParser.Parse("{\"answer\":\"点击过程\",\"annotations\":[{\"startTime\":11.8,\"endTime\":14.2,\"text\":\"按钮移动\",\"keyframes\":[{\"time\":11.8,\"x\":0.4,\"y\":0.3,\"width\":0.18,\"height\":0.12},{\"time\":14.2,\"x\":0.48,\"y\":0.34,\"width\":0.18,\"height\":0.12}]}]}");
+        Assert.Equal(2,Assert.Single(result.Annotations).Keyframes!.Count);
+    }
+
+    [Theory]
+    [InlineData("{\"startTime\":1,\"endTime\":2,\"text\":\"bad\",\"keyframes\":[{\"time\":1,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2}]}")]
+    [InlineData("{\"startTime\":2,\"endTime\":1,\"text\":\"bad\",\"keyframes\":[]}")]
+    [InlineData("{\"startTime\":1,\"endTime\":2,\"text\":\"bad\",\"keyframes\":[{\"time\":1,\"x\":0.9,\"y\":0.1,\"width\":0.2,\"height\":0.2},{\"time\":2,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2}]}")]
+    [InlineData("{\"startTime\":1,\"endTime\":2,\"text\":\"bad\",\"keyframes\":[{\"time\":1.5,\"x\":0.1,\"y\":0.1,\"width\":0.2,\"height\":0.2},{\"time\":1.5,\"x\":0.2,\"y\":0.2,\"width\":0.2,\"height\":0.2}]}")]
+    public void Parse_DropsInvalidVideoAnnotationButKeepsAnswer(string annotation)
+    {
+        var result=StructuredResponseParser.Parse($"{{\"answer\":\"正文保留\",\"annotations\":[{annotation}]}}");
+        Assert.Equal("正文保留",result.Answer);Assert.Empty(result.Annotations);
+    }
     [Fact] public void Parse_RecoversAnswerFromTruncatedFencedResponseWithUnescapedQuotes()
     {
         const string value = """

@@ -7,6 +7,7 @@ using System.Windows.Threading;
 using Microsoft.Graphics.Canvas;
 using Windows.Graphics.Imaging;
 using Windows.Media.Core;
+using Windows.Media.Playback;
 using WinMediaPlayer = Windows.Media.Playback.MediaPlayer;
 
 namespace mewu_ai_Assistant.Services;
@@ -52,11 +53,20 @@ internal sealed class VideoPreviewSurface : IDisposable
     }
 
     internal bool IsPlaying => _playing;
+    internal TimeSpan Position
+    {
+        get
+        {
+            VerifyDispatcher();
+            return _player?.PlaybackSession.Position??TimeSpan.Zero;
+        }
+    }
     internal long PresentedFrameCount => Interlocked.Read(ref _presentedFrameCount);
 
     internal event Action? Opened;
     internal event Action<Exception>? Failed;
     internal event Action? Ended;
+    internal event Action<TimeSpan>? FramePresented;
 
     internal void Load(string path, bool autoplay)
     {
@@ -118,6 +128,40 @@ internal sealed class VideoPreviewSurface : IDisposable
         _playing = false;
     }
 
+    internal async Task SeekAsync(TimeSpan position,bool pauseAfterSeek,CancellationToken cancellationToken=default)
+    {
+        VerifyDispatcher();
+        ObjectDisposedException.ThrowIf(_disposed,this);
+        var player=_player??throw new InvalidOperationException("视频尚未加载");
+        var session=player.PlaybackSession;
+        if(!session.CanSeek)throw new InvalidOperationException("当前视频不支持跳转");
+        if(position<TimeSpan.Zero)position=TimeSpan.Zero;
+        var duration=session.NaturalDuration;
+        if(duration>TimeSpan.Zero&&position>duration)position=duration;
+        if(pauseAfterSeek){player.Pause();_playing=false;}
+        var previousFrameCount=PresentedFrameCount;
+        var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var frameReady=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Windows.Foundation.TypedEventHandler<MediaPlaybackSession,object>? handler=null;
+        Action<TimeSpan>? frameHandler=null;
+        handler=(_,_)=>completion.TrySetResult();
+        frameHandler=_=>frameReady.TrySetResult();
+        session.SeekCompleted+=handler;
+        FramePresented+=frameHandler;
+        try
+        {
+            session.Position=position;
+            await completion.Task.WaitAsync(TimeSpan.FromSeconds(3),cancellationToken);
+            if(PresentedFrameCount<=previousFrameCount)
+                await frameReady.Task.WaitAsync(TimeSpan.FromSeconds(2),cancellationToken);
+        }
+        finally
+        {
+            session.SeekCompleted-=handler;
+            FramePresented-=frameHandler;
+        }
+    }
+
     internal void Stop()
     {
         VerifyDispatcher();
@@ -126,7 +170,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         if (player is not null)
         {
             try { player.Pause(); } catch { }
-            try { player.Position = TimeSpan.Zero; } catch { }
+            try { player.PlaybackSession.Position = TimeSpan.Zero; } catch { }
         }
         _playing = false;
     }
@@ -256,6 +300,8 @@ internal sealed class VideoPreviewSurface : IDisposable
                 _displayFrame.WritePixels(new Int32Rect(0,0,width,height),pixels,width*4,0);
                 if(!ReferenceEquals(_view.Source,_displayFrame))_view.Source=_displayFrame;
                 Interlocked.Increment(ref _presentedFrameCount);
+                var player=_player;
+                if(player is not null)FramePresented?.Invoke(player.PlaybackSession.Position);
             }
         }
         catch(Exception ex)
