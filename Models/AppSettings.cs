@@ -10,6 +10,11 @@ public sealed class AppSettings
     public int RecordingFps { get; set; } = 30; public int RecordingQuality { get; set; } = 75; public int GifFps { get; set; } = 15; public bool IncludeRecordingCursor { get; set; } = true; public int TempCleanupDays { get; set; } = 3;
     public bool SaveConversationHistory { get; set; } public bool EnableVoiceInput { get; set; } public bool AutomaticallyStartListening { get; set; }
     public string VoiceLanguage { get; set; } = "system"; public string? DefaultProviderId { get; set; }
+    public bool HermesEnabled { get; set; }
+    public string HermesProvider { get; set; } = string.Empty;
+    public string HermesModel { get; set; } = string.Empty;
+    public string HermesReasoningEffort { get; set; } = "medium";
+    public bool HermesAutoReadAloud { get; set; }
     public List<AiProviderSettings> Providers { get; set; } = [];
     [JsonIgnore] public List<string> ConfigurationErrors { get; } = [];
     [JsonIgnore] public bool HasSensitiveCredentialErrors { get; internal set; }

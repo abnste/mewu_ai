@@ -1,4 +1,5 @@
 using System.Windows;
+using mewu_ai_Assistant.Models;
 
 namespace mewu_ai_Assistant.Services;
 
@@ -92,6 +93,24 @@ internal static class CaptureOverlayPolicy
 
     internal static CancellationTokenSource CreateManualAiRequestCancellation() => new();
 
+    internal static AiRequest CreateScreenAiRequest(
+        string prompt,
+        IEnumerable<AiMessage> history,
+        List<AiAttachment> attachments,
+        IProgress<AiStreamDelta>? streamingProgress,
+        IProgress<AiAgentEvent>? agentProgress=null,
+        Func<AiInteractionRequest,CancellationToken,Task<AiInteractionResponse>>? interactionHandler=null) => new()
+    {
+        Prompt=prompt,
+        History=[..history],
+        Attachments=attachments,
+        StreamingProgress=streamingProgress,
+        AgentProgress=agentProgress,
+        InteractionHandler=interactionHandler,
+        ExpectStructuredResponse=true,
+        MaxOutputTokens=4096
+    };
+
     internal static bool CanAcceptAiUpdate(
         CancellationTokenSource? activeRequest,
         CancellationTokenSource candidate,
@@ -159,6 +178,35 @@ internal static class CaptureOverlayPolicy
         !double.IsFinite(promptHeight)||promptHeight<=PromptReservedComposerHeight
             ?0
             :promptHeight-PromptReservedComposerHeight;
+
+    internal static double GetAnswerViewportHeight(double monitorHeight)
+    {
+        if(!double.IsFinite(monitorHeight)||monitorHeight<=0)return 160;
+        return Math.Clamp(monitorHeight*.34,160,300);
+    }
+
+    internal static bool ShouldAutoHidePromptBar(
+        Point pointer,
+        Rect promptBounds,
+        Rect monitorBounds,
+        IEnumerable<Rect> explicitSelections)
+    {
+        if(!promptBounds.IsEmpty&&promptBounds.Contains(pointer))return false;
+        foreach(var selection in explicitSelections)
+        {
+            if(selection.IsEmpty||!selection.Contains(pointer))continue;
+            if(!monitorBounds.IsEmpty&&CoversMostOfMonitor(selection,monitorBounds))return false;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool CoversMostOfMonitor(Rect selection,Rect monitor)
+    {
+        var intersection=Rect.Intersect(selection,monitor);
+        if(intersection.IsEmpty||monitor.Width<=0||monitor.Height<=0)return false;
+        return intersection.Width*intersection.Height/(monitor.Width*monitor.Height)>=.85;
+    }
 
     internal static double ConstrainFloatingBarWidth(Rect monitor,double desiredWidth)
     {

@@ -35,6 +35,24 @@ public sealed class StructuredResponseParserTests
     [Fact] public void StreamingTextPreviewKeepsStructuredProtocolHidden(){Assert.Equal("尚未结束",StructuredResponseParser.GetStreamingTextPreview("{\"answer\":\"尚未结束"));Assert.Equal("回答",StructuredResponseParser.GetStreamingTextPreview("{\"answer\":\"回答\",\"annotations\":[]}"));}
     [Fact] public void StreamingTextPreviewPreservesNonJsonCodeFence(){const string value="```csharp\nvar answer = 42;";Assert.Equal(value,StructuredResponseParser.GetStreamingTextPreview(value));}
     [Fact] public void Parse_ValidNormalizedAnnotation(){var r=StructuredResponseParser.Parse("```json\n{\"answer\":\"说明\",\"annotations\":[{\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"重点\",\"type\":\"note\"}]}\n```");Assert.Equal("说明",r.Answer);Assert.Single(r.Annotations);}
+    [Theory]
+    [InlineData("```json{\"answer\":\"说明\",\"annotations\":[{\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"重点\"}]}```")]
+    [InlineData("```JSON {\"answer\":\"说明\",\"annotations\":[{\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"重点\"}]} ```")]
+    [InlineData("``` {\"answer\":\"说明\",\"annotations\":[{\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"重点\"}]} ```")]
+    public void Parse_AcceptsSameLineJsonFencesWithoutLeakingProtocol(string value)
+    {
+        var result=StructuredResponseParser.Parse(value);
+        Assert.Equal("说明",result.Answer);
+        Assert.Single(result.Annotations);
+        Assert.DoesNotContain("```",result.Answer,StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StreamingPreviewAcceptsSameLineJsonFence()
+    {
+        const string value="```json{\"answer\":\"实时说明\",\"annotations\":[]}```";
+        Assert.Equal("实时说明",StructuredResponseParser.GetStreamingAnswerPreview(value));
+    }
     [Fact] public void Parse_PreservesMultiRegionIndex(){var r=StructuredResponseParser.Parse("{\"answer\":\"说明\",\"annotations\":[{\"regionIndex\":2,\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.2,\"text\":\"第三个区域\",\"type\":\"note\"}]}");Assert.Equal(2,Assert.Single(r.Annotations).RegionIndex);}
     [Fact] public void Parse_MalformedJsonFallsBack(){const string value="{not json";var r=StructuredResponseParser.Parse(value);Assert.Equal(value,r.Answer);Assert.Empty(r.Annotations);}
     [Fact] public void Parse_DropsOutOfBoundsAnnotation(){var r=StructuredResponseParser.Parse("{\"answer\":\"ok\",\"annotations\":[{\"x\":.9,\"y\":.2,\"width\":.5,\"height\":.2,\"text\":\"bad\",\"type\":\"note\"}]}");Assert.Empty(r.Annotations);}

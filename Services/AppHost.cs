@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows;
+using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Views;
 using Forms=System.Windows.Forms;
@@ -8,6 +9,9 @@ public sealed class AppHost : IDisposable
 {
     internal static readonly TimeSpan TempMediaShutdownWait=TimeSpan.FromSeconds(5);
     private readonly System.Windows.Application _app; private readonly SingleInstanceService _single; private readonly CancellationTokenSource _lifetime=new(); private readonly StartupActivationGate _activationGate=new();
+    private readonly AiProviderFactory _aiProviderFactory=new();
+    private readonly HermesRuntimeService _hermesRuntime;
+    private readonly HermesReadAloudService _hermesReadAloud;
     private SettingsService? _settingsService;
     private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private TextAiWindow? _textAiWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
     private int _disposed;
@@ -15,7 +19,9 @@ public sealed class AppHost : IDisposable
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
     public AppHost(System.Windows.Application app)
     {
-        _app=app;
+        _app=app??throw new ArgumentNullException(nameof(app));
+        _hermesRuntime=new HermesRuntimeService();
+        _hermesReadAloud=new HermesReadAloudService(_app.Dispatcher);
         _single=new();
         if(_single.IsPrimary)_single.ActivationRequested+=()=>_activationGate.Signal(QueueMainWindowActivation);
     }
@@ -110,6 +116,75 @@ public sealed class AppHost : IDisposable
         PrepareAuxiliary(window);window.Show();window.Activate();
     });
 
+    public HermesInstallation? DiscoverHermes()=>_hermesRuntime.Discover();
+
+    public Task<IReadOnlyList<HermesModelOption>> GetHermesModelOptionsAsync(bool refresh,CancellationToken cancellationToken)
+        =>_hermesRuntime.GetModelOptionsAsync(refresh,cancellationToken);
+
+    public Task<bool> TestHermesConnectionAsync(CancellationToken cancellationToken)
+        =>_hermesRuntime.TestConnectionAsync(cancellationToken);
+
+    /// <summary>
+    /// Selects the only permitted backend for a conversation. Once local
+    /// Hermes is enabled, configuration or connection failures remain Hermes
+    /// failures and can never silently leak the prompt to a remote Provider.
+    /// </summary>
+    public IAiProvider? CreateConversationProvider(HermesConversationKind kind,out string? error)
+    {
+        error=null;
+        if(Volatile.Read(ref _disposed)!=0||IsExiting)
+        {
+            error="喵呜AI 正在退出，无法开始新的对话。";
+            return null;
+        }
+        return CreateConversationProviderCore(kind,()=>Settings,_hermesRuntime,_aiProviderFactory,out error);
+    }
+
+    internal static IAiProvider? CreateConversationProviderCore(
+        HermesConversationKind kind,
+        Func<AppSettings> settingsAccessor,
+        HermesRuntimeService hermesRuntime,
+        AiProviderFactory aiProviderFactory,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(settingsAccessor);
+        ArgumentNullException.ThrowIfNull(hermesRuntime);
+        ArgumentNullException.ThrowIfNull(aiProviderFactory);
+        error=null;
+        if(!Enum.IsDefined(kind))
+        {
+            error="Hermes 会话类型无效。";
+            return null;
+        }
+        var settings=settingsAccessor();
+        if(!settings.HermesEnabled)return aiProviderFactory.Create(settings,out error);
+        try
+        {
+            // This runtime and provider live for the whole AppHost lifetime.
+            // Model/reasoning changes are read from Settings on the next turn
+            // without replacing the persistent Hermes session.
+            return hermesRuntime.GetConversationProvider(kind,settingsAccessor);
+        }
+        catch(Exception ex)when(ex is InvalidOperationException or ArgumentException or ObjectDisposedException)
+        {
+            error=$"本机 Hermes 不可用：{ex.Message}";
+            try{new PrivacyLogger().Error("HermesConversationRoute",ex);}catch{}
+            return null;
+        }
+    }
+
+    /// <summary>Translation remains a strict remote-Provider operation.</summary>
+    public IAiProvider? CreateTranslationProvider(out string? error)=>_aiProviderFactory.Create(Settings,out error);
+
+    public Task ReadHermesResponseAloudAsync(string text,CancellationToken cancellationToken=default)
+    {
+        if(!Settings.HermesEnabled||!Settings.HermesAutoReadAloud||string.IsNullOrWhiteSpace(text))return Task.CompletedTask;
+        if(Volatile.Read(ref _disposed)!=0||IsExiting)return Task.CompletedTask;
+        return _hermesReadAloud.SpeakAsync(_hermesRuntime,text,cancellationToken);
+    }
+
+    public void StopHermesReadAloud()=>_hermesReadAloud.Stop();
+
     /// <summary>
     /// Presents one auxiliary surface at a time. Keeping the launcher and
     /// other editor surfaces hidden while a child is open prevents transparent
@@ -177,6 +252,8 @@ public sealed class AppHost : IDisposable
             error=ex.Message;return false;
         }
         Settings=candidate;
+        if((previous.HermesEnabled&&!candidate.HermesEnabled)||(previous.HermesAutoReadAloud&&!candidate.HermesAutoReadAloud))
+            _hermesReadAloud.Stop();
         try{_main?.RefreshStatus();}
         catch(Exception ex){try{new PrivacyLogger().Error("SettingsUiRefresh",ex);}catch{}warning??="设置已保存，但主界面状态刷新失败。";}
         return true;
@@ -188,6 +265,11 @@ public sealed class AppHost : IDisposable
         if(Interlocked.Exchange(ref _disposed,1)!=0)return;
         var shouldCleanupTemp=_single.IsPrimary;
         IsExiting=true;_lifetime.Cancel();Interlocked.Exchange(ref _captureActive,0);
+        // Drain speech first, then stop the runtime and only afterwards clean
+        // temporary media. This prevents deleting an audio file still opened
+        // by WPF or disposing Hermes while synthesis is still in flight.
+        DisposeSafely(_hermesReadAloud,"HermesReadAloudDispose");
+        DisposeSafely(_hermesRuntime,"HermesRuntimeDispose");
         try{if(_tray is not null)_tray.Visible=false;}catch{}
         DisposeSafely(_tray,"TrayDispose");DisposeSafely(_trayMenu,"TrayMenuDispose");DisposeSafely(_ownedTrayMenuFont,"TrayMenuFontDispose");DisposeSafely(_ownedTrayIcon,"TrayIconDispose");DisposeSafely(_hotkey,"HotkeyDispose");
         if(shouldCleanupTemp)try

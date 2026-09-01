@@ -1,4 +1,5 @@
 using mewu_ai_Assistant.Services;
+using mewu_ai_Assistant.Models;
 using System.Windows;
 using Xunit;
 
@@ -146,6 +147,22 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void ScreenAiRequestAlwaysRequiresStructuredAnnotations()
+    {
+        var attachment=new AiAttachment(AiAttachmentType.Image,"image/png",[1,2,3],ProviderOwnsData:false);
+        var request=CaptureOverlayPolicy.CreateScreenAiRequest(
+            "标出重点",
+            [new AiMessage("system","返回结构化批注")],
+            [attachment],
+            null);
+
+        Assert.True(request.ExpectStructuredResponse);
+        Assert.Equal(4096,request.MaxOutputTokens);
+        Assert.Same(attachment,Assert.Single(request.Attachments));
+        Assert.Equal("system",Assert.Single(request.History).Role);
+    }
+
+    [Fact]
     public void AiUpdatesAreRejectedAfterCancellationReplacementClosureOrStreamCompletion()
     {
         using var request=new CancellationTokenSource();using var replacement=new CancellationTokenSource();
@@ -241,6 +258,34 @@ public sealed class CaptureOverlayPolicyTests
     public void PromptResponseAreaLeavesComposerVisible(double promptHeight,double expected)
     {
         Assert.Equal(expected,CaptureOverlayPolicy.GetPromptResponseMaxHeight(promptHeight));
+    }
+
+    [Theory]
+    [InlineData(360,160)]
+    [InlineData(720,244.8)]
+    [InlineData(1200,300)]
+    public void AnswerViewportRemainsReadableAndBounded(double monitorHeight,double expected)
+    {
+        Assert.Equal(expected,CaptureOverlayPolicy.GetAnswerViewportHeight(monitorHeight),5);
+    }
+
+    [Fact]
+    public void PromptHoverWinsOverAnUnderlyingSelection()
+    {
+        var pointer=new Point(300,650);
+        var prompt=new Rect(100,600,400,100);
+        var monitor=new Rect(0,0,800,720);
+
+        Assert.False(CaptureOverlayPolicy.ShouldAutoHidePromptBar(pointer,prompt,monitor,[new Rect(0,0,800,720)]));
+    }
+
+    [Fact]
+    public void NearlyFullScreenSelectionCannotPermanentlyHidePromptBar()
+    {
+        var monitor=new Rect(0,0,1920,1080);
+
+        Assert.False(CaptureOverlayPolicy.ShouldAutoHidePromptBar(new Point(900,500),Rect.Empty,monitor,[new Rect(0,0,1920,1080)]));
+        Assert.True(CaptureOverlayPolicy.ShouldAutoHidePromptBar(new Point(300,250),Rect.Empty,monitor,[new Rect(200,150,500,300)]));
     }
 
     [Fact]

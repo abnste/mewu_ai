@@ -7,6 +7,7 @@ using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Interop;
 using System.Windows.Input;
 using System.Windows.Threading;
+using mewu_ai_Assistant.Models;
 namespace mewu_ai_Assistant;
 public partial class MainWindow : Window
 {
@@ -37,10 +38,33 @@ public partial class MainWindow : Window
     }
     public void RefreshStatus()
     {
-        if(_host.Settings.Providers.Count==0){ProviderText.Text="尚未配置（基础功能可用）";return;}
-        if(string.IsNullOrWhiteSpace(_host.Settings.DefaultProviderId)){ProviderText.Text="默认 Provider 未选择 · AI 不可用";return;}
-        var matches=_host.Settings.Providers.Where(provider=>provider.Id==_host.Settings.DefaultProviderId).Take(2).ToList();
-        ProviderText.Text=matches.Count switch
+        ProviderText.Text=BuildAiStatusText(_host.Settings);
+    }
+
+    internal static string BuildAiStatusText(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if(settings.HermesEnabled)
+        {
+            var model=string.IsNullOrWhiteSpace(settings.HermesModel)?"未选择模型":settings.HermesModel.Trim();
+            var reasoning=(settings.HermesReasoningEffort??string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "none"=>"关闭思考",
+                "minimal"=>"极简思考",
+                "low"=>"低度思考",
+                "medium"=>"中等思考",
+                "high"=>"高度思考",
+                "xhigh"=>"超高思考",
+                "max"=>"最大思考",
+                "ultra"=>"极致思考",
+                _=>"思考程度待修复"
+            };
+            return $"本机 Hermes · {model} · {reasoning}";
+        }
+        if(settings.Providers.Count==0)return "尚未配置（基础功能可用）";
+        if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))return "默认 Provider 未选择 · AI 不可用";
+        var matches=settings.Providers.Where(provider=>provider.Id==settings.DefaultProviderId).Take(2).ToList();
+        return matches.Count switch
         {
             0=>"默认 Provider 需重新选择 · AI 不可用",
             >1=>"Provider ID 重复 · AI 不可用",
