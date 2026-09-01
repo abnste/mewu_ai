@@ -1,7 +1,13 @@
 <Window x:Class="mewu_ai_Assistant.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="喵呜AI" Height="286" Width="676" MinHeight="276" MinWidth="612" SizeToContent="Manual" WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize" AllowsTransparency="True" Background="Transparent" Foreground="{StaticResource PrimaryText}" UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display" Loaded="OnLoaded" SizeChanged="OnSizeChanged" DpiChanged="OnDpiChanged" Closing="OnClosing">
- <Border x:Name="Shell" Margin="10" Background="{StaticResource WindowGlow}" BorderBrush="#D8E0EC" BorderThickness="1" CornerRadius="14" ClipToBounds="True" TextElement.Foreground="{StaticResource PrimaryText}" MouseLeftButtonDown="DragWindow">
-  <Border.Effect><DropShadowEffect Color="#66758C" BlurRadius="24" ShadowDepth="7" Opacity=".23"/></Border.Effect>
+ Title="喵呜AI" Height="300" Width="688" MinHeight="290" MinWidth="624" SizeToContent="Manual" WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize" AllowsTransparency="True" Background="Transparent" Foreground="{StaticResource PrimaryText}" UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display" Loaded="OnLoaded" SizeChanged="OnSizeChanged" DpiChanged="OnDpiChanged" Closing="OnClosing">
+ <Grid Margin="16,12,16,22">
+  <!-- Keep the shadow outside the clipped content tree. Applying the effect
+       to Shell itself lets Shell.Clip cut the blur off and also disables
+       ClearType for every child rendered through that effect. -->
+  <Border x:Name="WindowShadow" Background="{StaticResource WindowGlow}" CornerRadius="14" IsHitTestVisible="False">
+   <Border.Effect><DropShadowEffect Color="#596579" BlurRadius="24" Direction="270" ShadowDepth="7" Opacity=".3" RenderingBias="Quality"/></Border.Effect>
+  </Border>
+  <Border x:Name="Shell" Background="{StaticResource WindowGlow}" BorderBrush="#D8E0EC" BorderThickness="1" CornerRadius="14" ClipToBounds="True" TextElement.Foreground="{StaticResource PrimaryText}" MouseLeftButtonDown="DragWindow">
   <Grid ClipToBounds="True">
    <Grid Margin="20,12,20,14">
     <Grid.RowDefinitions><RowDefinition Height="36"/><RowDefinition Height="10"/><RowDefinition Height="94"/><RowDefinition Height="8"/><RowDefinition Height="60"/></Grid.RowDefinitions>
@@ -35,5 +41,6 @@
     </Border>
    </Grid>
   </Grid>
- </Border>
+  </Border>
+ </Grid>
 </Window>

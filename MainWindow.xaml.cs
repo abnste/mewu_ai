@@ -6,6 +6,7 @@ using System.Windows.Media.Media3D;
 using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Interop;
 using System.Windows.Input;
+using System.Windows.Threading;
 namespace mewu_ai_Assistant;
 public partial class MainWindow : Window
 {
@@ -14,7 +15,14 @@ public partial class MainWindow : Window
     public MainWindow(AppHost host) { _host=host; InitializeComponent(); RefreshStatus();SourceInitialized+=(_,_)=>NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle); }
     private void OnLoaded(object sender,RoutedEventArgs e)=>UpdateShellClip();
     private void OnSizeChanged(object sender,SizeChangedEventArgs e)=>UpdateShellClip();
-    private void OnDpiChanged(object sender,DpiChangedEventArgs e)=>UpdateShellClip();
+    private void OnDpiChanged(object sender,DpiChangedEventArgs e)
+    {
+        UpdateShellClip();
+        // DpiChanged can arrive before WPF publishes the final layout size.
+        // Recompute once at render priority so the rounded clip cannot keep a
+        // one-frame rectangle from the previous monitor scale.
+        _=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(UpdateShellClip));
+    }
     private void UpdateShellClip()
     {
         if (Shell.ActualWidth <= 0 || Shell.ActualHeight <= 0) return;
