@@ -49,7 +49,7 @@ public partial class CaptureOverlayWindow : Window
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
-    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
     private int _promptBarAnimationVersion;
     private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingCountdownRequest,_recordingStopWatchdog,_readAloudRequest;
     private CancellationTokenSource? _reasoningRenderRequest;
@@ -71,6 +71,10 @@ public partial class CaptureOverlayWindow : Window
     private (int WindowLeft,int WindowTop,int WindowWidth,int WindowHeight,int HoleLeft,int HoleTop,int HoleRight,int HoleBottom,int BarLeft,int BarTop,int BarRight,int BarBottom)? _recordingWindowRegionKey;
     private readonly DispatcherTimer _recordingTimer=new(){Interval=TimeSpan.FromMilliseconds(150)};
     private DrawTool _drawTool=DrawTool.Freehand;
+    private Color _drawColor=Colors.Red;
+    private bool _drawHighlighter,_drawTextHighlight,_restoringDrawingAction,_drawingFontsLoaded;
+    private string _drawFontFamily="Microsoft YaHei UI";
+    private double _drawFontSize=24;
     private Point _drawStart;
     private Stroke? _drawPreview;
     private OverlaySnapshot? _pointerOperationBefore;
@@ -91,14 +95,17 @@ public partial class CaptureOverlayWindow : Window
         // WPF MediaElement/WMP renderer.
         public Image Video { get; }=new(){Stretch=Stretch.Fill,Visibility=Visibility.Collapsed,IsHitTestVisible=false};
         public VideoPreviewSurface? VideoPreview;
-        public InkCanvas Markup { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false};
+        public InkCanvas Markup { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false,ClipToBounds=true};
         public Canvas AiAnnotations { get; }=new(){IsHitTestVisible=false};
         public Canvas TextOverlays { get; }=new(){IsHitTestVisible=false};
         public Canvas TextSelection { get; }=new(){IsHitTestVisible=false,Background=Brushes.Transparent};
         public Border Outline { get; }=new(){Background=Brushes.Transparent,CornerRadius=new CornerRadius(7),IsHitTestVisible=false};
         public Border Badge { get; }=new(){HorizontalAlignment=HorizontalAlignment.Left,VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(7),CornerRadius=new CornerRadius(10),Background=new SolidColorBrush(Color.FromArgb(230,29,119,224)),Padding=new Thickness(7,2,7,2),IsHitTestVisible=false};
         public TextBlock BadgeText { get; }=new(){Foreground=Brushes.White,FontWeight=FontWeights.SemiBold,FontSize=11};
-        public Stack<Stroke> Redo { get; }=[];
+        public List<DrawingElementSpec> DrawingElements { get; }=[];
+        public List<DrawingAction> DrawingOrder { get; }=[];
+        public Stack<DrawingAction> DrawingRedo { get; }=[];
+        public int NextDrawingNumber { get; set; }=1;
         public TextLayerState TextLayer { get; set; }=NoTextLayerState.Instance;
         public List<AiAnnotation> AnnotationNotes { get; }=[];
         public OcrTextSelectionSession? TextSession;
@@ -121,6 +128,7 @@ public partial class CaptureOverlayWindow : Window
         Rect Bounds,
         bool Referenced,
         StrokeCollection Markup,
+        IReadOnlyList<DrawingElementSpec> DrawingElements,
         TextLayerState TextLayer,
         IReadOnlyList<AiAnnotation> AnnotationNotes);
     private sealed record OverlaySnapshot(
@@ -173,7 +181,13 @@ public partial class CaptureOverlayWindow : Window
         public void Dispose(){if(_box.IsMouseCaptured)_box.ReleaseMouseCapture();_box.PreviewMouseLeftButtonDown-=MouseDown;_box.PreviewMouseMove-=MouseMove;_box.PreviewMouseLeftButtonUp-=MouseUp;_box.LostMouseCapture-=LostCapture;_highlights.Children.Clear();}
     }
 
-    private enum DrawTool{Freehand,Rectangle,Arrow}
+    private abstract record DrawingElementSpec(Guid Id,double X,double Y);
+    private sealed record TextDrawingElement(Guid Id,double X,double Y,double Width,string Text,string FontFamily,double FontSize,Color Color,bool Highlight):DrawingElementSpec(Id,X,Y);
+    private sealed record NumberDrawingElement(Guid Id,double X,double Y,double Diameter,int Number,Color Color):DrawingElementSpec(Id,X,Y);
+    private abstract record DrawingAction;
+    private sealed record StrokeDrawingAction(Stroke Stroke):DrawingAction;
+    private sealed record ElementDrawingAction(DrawingElementSpec Element):DrawingAction;
+    private enum DrawTool{Freehand,Rectangle,Ellipse,Arrow,Text,Number}
 
     private SelectionItem? Active=>_activeIndex>=0&&_activeIndex<_selections.Count?_selections[_activeIndex]:null;
 
@@ -635,7 +649,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnDeactivated(object? s,EventArgs e)
     {
         FinishInterruptedPointerInteraction();
-        if(_drawingMode)FinishInterruptedDrawingMode();
+        if(_drawingMode&&!_drawingModalOpen)FinishInterruptedDrawingMode();
     }
     private void FinishInterruptedPointerInteraction()
     {
@@ -647,7 +661,7 @@ public partial class CaptureOverlayWindow : Window
 
     private SelectionItem CreateSelection(bool implicitFullScreen)
     {
-        var item=new SelectionItem{IsImplicit=implicitFullScreen};_ownedSelections.Add(item);item.Badge.Child=item.BadgeText;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);item.Markup.StrokeCollected+=(_,_)=>{item.Redo.Clear();if(_drawingMode)_drawingOperationChanged=true;};item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
+        var item=new SelectionItem{IsImplicit=implicitFullScreen};_ownedSelections.Add(item);item.Badge.Child=item.BadgeText;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(_drawColor);item.Markup.StrokeCollected+=(_,args)=>{if(!_drawingMode||_restoringDrawingAction||!ReferenceEquals(item,Active)||_drawTool!=DrawTool.Freehand||ReferenceEquals(args.Stroke,_drawPreview))return;item.DrawingOrder.Add(new StrokeDrawingAction(args.Stroke));item.DrawingRedo.Clear();_drawingOperationChanged=true;};item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
     }
 
     private OverlaySnapshot CaptureOverlaySnapshot()=>new(
@@ -656,6 +670,7 @@ public partial class CaptureOverlayWindow : Window
             item.Bounds,
             _references.Contains(item),
             new StrokeCollection(item.Markup.Strokes.Select(stroke=>stroke.Clone())),
+            item.DrawingElements.ToArray(),
             item.TextLayer,
             item.AnnotationNotes.ToArray())).ToArray(),
         Active,
@@ -687,7 +702,7 @@ public partial class CaptureOverlayWindow : Window
             item.Bounds=state.Bounds;
             item.Markup.Strokes.Clear();
             foreach(var stroke in state.Markup)item.Markup.Strokes.Add(stroke.Clone());
-            item.Redo.Clear();item.TextLayer=state.TextLayer;
+            item.DrawingElements.Clear();item.DrawingElements.AddRange(state.DrawingElements);item.DrawingOrder.Clear();item.DrawingOrder.AddRange(item.Markup.Strokes.Select(stroke=>(DrawingAction)new StrokeDrawingAction(stroke)));item.DrawingOrder.AddRange(item.DrawingElements.Select(element=>(DrawingAction)new ElementDrawingAction(element)));item.DrawingRedo.Clear();item.NextDrawingNumber=Math.Max(1,item.DrawingElements.OfType<NumberDrawingElement>().Select(element=>element.Number).DefaultIfEmpty(0).Max()+1);RebuildDrawingElements(item);item.TextLayer=state.TextLayer;
             item.AnnotationNotes.Clear();item.AnnotationNotes.AddRange(state.AnnotationNotes);
             ApplyTextLayerState(item);RenderAnnotationsForItem(item,item.VideoPath is not null?item.AnnotationNotes.FirstOrDefault(note=>note.IsVideoTimeline)?.StartTime:null);
             if(state.Referenced)_references.Add(item);
@@ -740,7 +755,7 @@ public partial class CaptureOverlayWindow : Window
         var promptBounds=double.IsFinite(promptLeft)&&double.IsFinite(promptTop)&&promptWidth>0&&promptHeight>0
             ?new Rect(promptLeft,promptTop,promptWidth,promptHeight)
             :Rect.Empty;
-        return CaptureOverlayPolicy.ShouldAutoHidePromptBar(p,promptBounds,PromptMonitorBounds(),_selections.Where(item=>!item.IsImplicit).Select(item=>item.Bounds));
+        return CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(_promptBarHidden,p,promptBounds,PromptMonitorBounds(),_selections.Where(item=>!item.IsImplicit).Select(item=>item.Bounds));
     }
     private bool PointerOverPromptBar(Point point)
     {
@@ -1026,7 +1041,7 @@ public partial class CaptureOverlayWindow : Window
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active);}
     private BitmapSource RenderSelectionImage(SelectionItem item)
     {
-        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);if(item.Markup.Strokes.Count==0)return source;var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixels.Width/Math.Max(1,item.Bounds.Width),pixels.Height/Math.Max(1,item.Bounds.Height)));drawing.DrawImage(source,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.DrawRectangle(new VisualBrush(item.Markup),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixels.Width),Math.Max(1,pixels.Height),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
+        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);if(item.Markup.Strokes.Count==0&&item.DrawingElements.Count==0)return source;var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixels.Width/Math.Max(1,item.Bounds.Width),pixels.Height/Math.Max(1,item.Bounds.Height)));drawing.DrawImage(source,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.DrawRectangle(new VisualBrush(item.Markup),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixels.Width),Math.Max(1,pixels.Height),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
     private async Task<List<AiAttachment>> BuildAttachmentsAsync(IReadOnlyList<SelectionItem> targets,AiProviderCapabilities capabilities,CancellationToken cancellationToken)
     {
@@ -1350,11 +1365,11 @@ public partial class CaptureOverlayWindow : Window
     private void Draw(object s,RoutedEventArgs e)=>EnterDrawingMode();
     private void EnterDrawingMode()
     {
-        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false,VideoPath:null} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=true;SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text="原位标注中 · Esc 或点击完成按钮结束";
+        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false,VideoPath:null} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=true;EnsureDrawingControls();ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text="原位标注中 · 颜色统一作用于画笔、形状、文字和序号";
     }
     private void ExitDrawingMode()
     {
-        if(Active is { } item)item.Markup.IsHitTestVisible=false;_drawingMode=false;DrawingToolbar.Visibility=Visibility.Collapsed;Cursor=Cursors.Cross;SetPromptBarHidden(false);if(Active is not null){UpdateSelection(Active);ShowToolbar();}if(_drawingOperationChanged&&_drawingOperationBefore is { } before)RecordOverlayOperation(before,"原位标注");_drawingOperationBefore=null;_drawingOperationChanged=false;PromptStatus.Text="标注已保留在当前区域";
+        if(Active is { } item){Keyboard.ClearFocus();RemoveEmptyDrawingText(item);item.Markup.IsHitTestVisible=false;}_drawingMode=false;DrawingToolbar.Visibility=Visibility.Collapsed;Cursor=Cursors.Cross;SetPromptBarHidden(false);if(Active is not null){UpdateSelection(Active);ShowToolbar();}if(_drawingOperationChanged&&_drawingOperationBefore is { } before)RecordOverlayOperation(before,"原位标注");_drawingOperationBefore=null;_drawingOperationChanged=false;PromptStatus.Text="标注已保留在当前区域";
     }
     private void FinishInterruptedDrawingMode()
     {
@@ -1365,38 +1380,124 @@ public partial class CaptureOverlayWindow : Window
         if(Active is not { } item)return;_drawTool=tool;item.Markup.EditingMode=tool==DrawTool.Freehand?InkCanvasEditingMode.Ink:InkCanvasEditingMode.None;Cursor=tool==DrawTool.Freehand?Cursors.Pen:Cursors.Cross;
     }
     private static DrawingAttributes RegularDrawingAttributes(Color color)=>new(){Color=color,Width=4,Height=4,IsHighlighter=false,FitToCurve=true};
-    private static DrawingAttributes HighlightDrawingAttributes()=>new(){Color=Colors.Yellow,Width=18,Height=18,IsHighlighter=true,FitToCurve=true};
-    private void DrawPen(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);SetDrawTool(DrawTool.Freehand);}}
-    private void SetShapeTool(DrawTool tool){if(Active is not { } item)return;var current=item.Markup.DefaultDrawingAttributes;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(current.IsHighlighter?Colors.Red:current.Color);SetDrawTool(tool);}
+    private static DrawingAttributes HighlightDrawingAttributes(Color color)=>new(){Color=color,Width=18,Height=18,IsHighlighter=true,FitToCurve=true};
+    private void ApplyCurrentDrawingAttributes(SelectionItem item){item.Markup.DefaultDrawingAttributes=_drawHighlighter?HighlightDrawingAttributes(_drawColor):RegularDrawingAttributes(_drawColor);if(DrawColorSwatch is not null)DrawColorSwatch.Fill=new SolidColorBrush(_drawColor);}
+    private void DrawPen(object s,RoutedEventArgs e){if(Active is { } item){_drawHighlighter=false;ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);}}
+    private void SetShapeTool(DrawTool tool){if(Active is not { } item)return;_drawHighlighter=false;ApplyCurrentDrawingAttributes(item);SetDrawTool(tool);}
     private void DrawRectangleTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Rectangle);
+    private void DrawEllipseTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Ellipse);
     private void DrawArrowTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Arrow);
-    private void DrawRed(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Colors.Red);SetDrawTool(DrawTool.Freehand);}}
-    private void DrawBlue(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(Color.FromRgb(49,140,255));SetDrawTool(DrawTool.Freehand);}}
-    private void DrawHighlight(object s,RoutedEventArgs e){if(Active is { } item){item.Markup.DefaultDrawingAttributes=HighlightDrawingAttributes();SetDrawTool(DrawTool.Freehand);}}
+    private void DrawTextTool(object s,RoutedEventArgs e){_drawHighlighter=false;if(Active is { } item)ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Text);PromptStatus.Text="点击截图放置文本框 · 可选系统字体、字号和荧光底色";}
+    private void DrawNumberTool(object s,RoutedEventArgs e){_drawHighlighter=false;if(Active is { } item)ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Number);PromptStatus.Text="点击截图依次放置实心序号";}
+    private void SetDrawColor(Color color){_drawColor=color;if(Active is { } item)ApplyCurrentDrawingAttributes(item);}
+    private void DrawRed(object s,RoutedEventArgs e)=>SetDrawColor(Colors.Red);
+    private void DrawBlue(object s,RoutedEventArgs e)=>SetDrawColor(Color.FromRgb(49,140,255));
+    private void DrawChooseColor(object s,RoutedEventArgs e)
+    {
+        using var dialog=new System.Windows.Forms.ColorDialog{AllowFullOpen=true,FullOpen=true,AnyColor=true,SolidColorOnly=true,Color=System.Drawing.Color.FromArgb(_drawColor.R,_drawColor.G,_drawColor.B)};_drawingModalOpen=true;Topmost=false;
+        try{if(dialog.ShowDialog()!=System.Windows.Forms.DialogResult.OK)return;SetDrawColor(Color.FromRgb(dialog.Color.R,dialog.Color.G,dialog.Color.B));PromptStatus.Text=$"当前颜色 RGB({_drawColor.R}, {_drawColor.G}, {_drawColor.B})";}
+        finally{_drawingModalOpen=false;if(!_closed){Topmost=true;Activate();}}
+    }
+    private void DrawHighlight(object s,RoutedEventArgs e){if(Active is { } item){_drawHighlighter=true;ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);}}
+    private void ToggleTextHighlight(object s,RoutedEventArgs e){_drawTextHighlight=!_drawTextHighlight;TextHighlightButton.Background=new SolidColorBrush(_drawTextHighlight?Color.FromRgb(255,236,139):Colors.Transparent);PromptStatus.Text=_drawTextHighlight?"新文字使用荧光底色":"新文字使用普通颜色";}
     private void DrawEraser(object s,RoutedEventArgs e){if(Active is { } item){_drawTool=DrawTool.Freehand;item.Markup.EditingMode=InkCanvasEditingMode.EraseByStroke;Cursor=Cursors.Cross;}}
-    private void DrawUndo(object s,RoutedEventArgs e){if(Active is not { } item||item.Markup.Strokes.Count==0)return;var stroke=item.Markup.Strokes[^1];item.Markup.Strokes.Remove(stroke);item.Redo.Push(stroke);_drawingOperationChanged=true;}
-    private void DrawRedo(object s,RoutedEventArgs e){if(Active is { } item&&item.Redo.TryPop(out var stroke)){item.Markup.Strokes.Add(stroke);_drawingOperationChanged=true;}}
-    private void DrawClear(object s,RoutedEventArgs e){if(Active is { } item&&item.Markup.Strokes.Count>0){item.Markup.Strokes.Clear();item.Redo.Clear();_drawingOperationChanged=true;}}
+    private void DrawUndo(object s,RoutedEventArgs e)
+    {
+        if(Active is not { } item)return;
+        while(item.DrawingOrder.Count>0)
+        {
+            var action=item.DrawingOrder[^1];item.DrawingOrder.RemoveAt(item.DrawingOrder.Count-1);
+            if(action is StrokeDrawingAction strokeAction&&item.Markup.Strokes.Contains(strokeAction.Stroke)){item.Markup.Strokes.Remove(strokeAction.Stroke);item.DrawingRedo.Push(action);_drawingOperationChanged=true;return;}
+            if(action is ElementDrawingAction elementAction)
+            {
+                var current=item.DrawingElements.FirstOrDefault(element=>element.Id==elementAction.Element.Id);if(current is null)continue;item.DrawingElements.Remove(current);item.DrawingRedo.Push(new ElementDrawingAction(current));RebuildDrawingElements(item);_drawingOperationChanged=true;return;
+            }
+        }
+    }
+    private void DrawRedo(object s,RoutedEventArgs e)
+    {
+        if(Active is not { } item||!item.DrawingRedo.TryPop(out var action))return;
+        if(action is StrokeDrawingAction strokeAction){_restoringDrawingAction=true;try{item.Markup.Strokes.Add(strokeAction.Stroke);}finally{_restoringDrawingAction=false;}}
+        else if(action is ElementDrawingAction elementAction){item.DrawingElements.Add(elementAction.Element);RebuildDrawingElements(item);}
+        item.DrawingOrder.Add(action);_drawingOperationChanged=true;
+    }
+    private void DrawClear(object s,RoutedEventArgs e){if(Active is { } item&&(item.Markup.Strokes.Count>0||item.DrawingElements.Count>0)){item.Markup.Strokes.Clear();item.Markup.Children.Clear();item.DrawingElements.Clear();item.DrawingOrder.Clear();item.DrawingRedo.Clear();item.NextDrawingNumber=1;_drawingOperationChanged=true;}}
     private void DrawDone(object s,RoutedEventArgs e)=>ExitDrawingMode();
     private void MarkupDown(object sender,MouseButtonEventArgs e)
     {
-        if(!_drawingMode||sender is not InkCanvas canvas||!ReferenceEquals(canvas,Active?.Markup)||_drawTool==DrawTool.Freehand)return;_drawStart=e.GetPosition(canvas);canvas.CaptureMouse();e.Handled=true;
+        if(!_drawingMode||sender is not InkCanvas canvas||Active is not { } item||!ReferenceEquals(canvas,item.Markup)||_drawTool==DrawTool.Freehand)return;var point=e.GetPosition(canvas);
+        if(_drawTool==DrawTool.Text){AddTextDrawingElement(item,point);e.Handled=true;return;}
+        if(_drawTool==DrawTool.Number){AddNumberDrawingElement(item,point);e.Handled=true;return;}
+        _drawStart=point;canvas.CaptureMouse();e.Handled=true;
     }
     private void MarkupMove(object sender,MouseEventArgs e)
     {
-        if(!_drawingMode||sender is not InkCanvas canvas||!ReferenceEquals(canvas,Active?.Markup)||_drawTool==DrawTool.Freehand||e.LeftButton!=MouseButtonState.Pressed||!canvas.IsMouseCaptured)return;if(_drawPreview is not null)canvas.Strokes.Remove(_drawPreview);_drawPreview=CreateShapeStroke(canvas,_drawStart,e.GetPosition(canvas),_drawTool);canvas.Strokes.Add(_drawPreview);e.Handled=true;
+        if(!_drawingMode||sender is not InkCanvas canvas||!ReferenceEquals(canvas,Active?.Markup)||_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||e.LeftButton!=MouseButtonState.Pressed||!canvas.IsMouseCaptured)return;if(_drawPreview is not null)canvas.Strokes.Remove(_drawPreview);_drawPreview=CreateShapeStroke(canvas,_drawStart,e.GetPosition(canvas),_drawTool,Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));canvas.Strokes.Add(_drawPreview);e.Handled=true;
     }
     private void MarkupUp(object sender,MouseButtonEventArgs e)
     {
-        if(sender is not InkCanvas canvas||_drawTool==DrawTool.Freehand||!canvas.IsMouseCaptured)return;_drawPreview=null;canvas.ReleaseMouseCapture();if(Active is { } item)item.Redo.Clear();_drawingOperationChanged=true;e.Handled=true;
+        if(sender is not InkCanvas canvas||_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||!canvas.IsMouseCaptured)return;var completed=_drawPreview;_drawPreview=null;canvas.ReleaseMouseCapture();if(Active is { } item&&completed is not null){item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();}_drawingOperationChanged=completed is not null||_drawingOperationChanged;e.Handled=true;
     }
     private void MarkupLostMouseCapture(object sender,MouseEventArgs e)
     {
-        if(!_drawingMode||sender is not InkCanvas canvas||_drawTool==DrawTool.Freehand||_drawPreview is null)return;_drawPreview=null;if(ReferenceEquals(canvas,Active?.Markup)&&Active is { } item)item.Redo.Clear();PromptStatus.Text="标注笔划已保留，可继续编辑";
+        if(!_drawingMode||sender is not InkCanvas canvas||_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||_drawPreview is null)return;var completed=_drawPreview;_drawPreview=null;if(ReferenceEquals(canvas,Active?.Markup)&&Active is { } item){item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();_drawingOperationChanged=true;}PromptStatus.Text="标注笔划已保留，可继续编辑";
     }
-    private static Stroke CreateShapeStroke(InkCanvas canvas,Point a,Point b,DrawTool tool)
+    private static Stroke CreateShapeStroke(InkCanvas canvas,Point a,Point b,DrawTool tool,bool constrain)
     {
-        var points=new StylusPointCollection();if(tool==DrawTool.Rectangle){points.Add(new StylusPoint(a.X,a.Y));points.Add(new StylusPoint(b.X,a.Y));points.Add(new StylusPoint(b.X,b.Y));points.Add(new StylusPoint(a.X,b.Y));points.Add(new StylusPoint(a.X,a.Y));}else{points.Add(new StylusPoint(a.X,a.Y));points.Add(new StylusPoint(b.X,b.Y));var angle=Math.Atan2(b.Y-a.Y,b.X-a.X);var length=Math.Min(24,Math.Max(10,new Vector(b.X-a.X,b.Y-a.Y).Length*.25));points.Add(new StylusPoint(b.X-length*Math.Cos(angle-Math.PI/6),b.Y-length*Math.Sin(angle-Math.PI/6)));points.Add(new StylusPoint(b.X,b.Y));points.Add(new StylusPoint(b.X-length*Math.Cos(angle+Math.PI/6),b.Y-length*Math.Sin(angle+Math.PI/6)));}var attributes=canvas.DefaultDrawingAttributes.Clone();attributes.FitToCurve=false;return new Stroke(points,attributes);
+        if(tool==DrawTool.Ellipse&&constrain)b=DrawingAnnotationGeometry.ConstrainEllipseEndToCircle(a,b,new Size(canvas.ActualWidth,canvas.ActualHeight));
+        var points=new StylusPointCollection();
+        if(tool==DrawTool.Rectangle){points.Add(new StylusPoint(a.X,a.Y));points.Add(new StylusPoint(b.X,a.Y));points.Add(new StylusPoint(b.X,b.Y));points.Add(new StylusPoint(a.X,b.Y));points.Add(new StylusPoint(a.X,a.Y));}
+        else if(tool==DrawTool.Ellipse){var left=Math.Min(a.X,b.X);var top=Math.Min(a.Y,b.Y);var rx=Math.Abs(b.X-a.X)/2;var ry=Math.Abs(b.Y-a.Y)/2;for(var index=0;index<=64;index++){var angle=index*Math.PI*2/64;points.Add(new StylusPoint(left+rx+Math.Cos(angle)*rx,top+ry+Math.Sin(angle)*ry));}}
+        else{points.Add(new StylusPoint(a.X,a.Y));points.Add(new StylusPoint(b.X,b.Y));var angle=Math.Atan2(b.Y-a.Y,b.X-a.X);var length=Math.Min(24,Math.Max(10,new Vector(b.X-a.X,b.Y-a.Y).Length*.25));points.Add(new StylusPoint(b.X-length*Math.Cos(angle-Math.PI/6),b.Y-length*Math.Sin(angle-Math.PI/6)));points.Add(new StylusPoint(b.X,b.Y));points.Add(new StylusPoint(b.X-length*Math.Cos(angle+Math.PI/6),b.Y-length*Math.Sin(angle+Math.PI/6)));}
+        var attributes=canvas.DefaultDrawingAttributes.Clone();attributes.IsHighlighter=false;attributes.FitToCurve=false;return new Stroke(points,attributes);
+    }
+    private void EnsureDrawingControls()
+    {
+        if(!_drawingFontsLoaded)
+        {
+            foreach(var family in Fonts.SystemFontFamilies.Select(font=>font.Source).Distinct(StringComparer.CurrentCultureIgnoreCase).OrderBy(name=>name,StringComparer.CurrentCultureIgnoreCase))DrawingFontFamily.Items.Add(family);
+            foreach(var size in new[]{12d,14,16,18,20,24,28,32,40,48,56,64,72})DrawingFontSize.Items.Add(size);
+            _drawingFontsLoaded=true;
+        }
+        DrawingFontFamily.SelectedItem=DrawingFontFamily.Items.Cast<object>().FirstOrDefault(item=>string.Equals(item?.ToString(),_drawFontFamily,StringComparison.CurrentCultureIgnoreCase))??DrawingFontFamily.Items.Cast<object>().FirstOrDefault();
+        DrawingFontSize.SelectedItem=DrawingFontSize.Items.Cast<object>().FirstOrDefault(item=>item is double value&&Math.Abs(value-_drawFontSize)<.1)??24d;
+        TextHighlightButton.Background=new SolidColorBrush(_drawTextHighlight?Color.FromRgb(255,236,139):Colors.Transparent);DrawColorSwatch.Fill=new SolidColorBrush(_drawColor);
+    }
+    private void DrawingFontFamilyChanged(object sender,SelectionChangedEventArgs e){if(DrawingFontFamily.SelectedItem is { } selected)_drawFontFamily=selected.ToString()??_drawFontFamily;UpdateFocusedDrawingTextStyle();}
+    private void DrawingFontSizeChanged(object sender,SelectionChangedEventArgs e){if(DrawingFontSize.SelectedItem is double selected)_drawFontSize=selected;UpdateFocusedDrawingTextStyle();}
+    private void UpdateFocusedDrawingTextStyle()
+    {
+        if(Active is not { } item||Keyboard.FocusedElement is not TextBox box||box.Tag is not Guid id)return;var index=item.DrawingElements.FindIndex(element=>element.Id==id);if(index<0||item.DrawingElements[index] is not TextDrawingElement text)return;var updated=text with{FontFamily=_drawFontFamily,FontSize=_drawFontSize};item.DrawingElements[index]=updated;box.FontFamily=new FontFamily(updated.FontFamily);box.FontSize=updated.FontSize;_drawingOperationChanged=true;
+    }
+    private void AddTextDrawingElement(SelectionItem item,Point point)
+    {
+        var width=Math.Clamp(Math.Min(260,Math.Max(120,item.Bounds.Width*.42)),80,Math.Max(80,item.Bounds.Width));var x=Math.Clamp(point.X,0,Math.Max(0,item.Bounds.Width-width));var y=Math.Clamp(point.Y,0,Math.Max(0,item.Bounds.Height-Math.Max(32,_drawFontSize*1.7)));var element=new TextDrawingElement(Guid.NewGuid(),x,y,width,string.Empty,_drawFontFamily,_drawFontSize,_drawColor,_drawTextHighlight);item.DrawingElements.Add(element);item.DrawingOrder.Add(new ElementDrawingAction(element));item.DrawingRedo.Clear();var editor=CreateTextDrawingEditor(item,element);item.Markup.Children.Add(editor);editor.Focus();_drawingOperationChanged=true;
+    }
+    private void AddNumberDrawingElement(SelectionItem item,Point point)
+    {
+        var diameter=Math.Clamp(_drawFontSize+12,28,56);var x=Math.Clamp(point.X-diameter/2,0,Math.Max(0,item.Bounds.Width-diameter));var y=Math.Clamp(point.Y-diameter/2,0,Math.Max(0,item.Bounds.Height-diameter));var element=new NumberDrawingElement(Guid.NewGuid(),x,y,diameter,item.NextDrawingNumber++,_drawColor);item.DrawingElements.Add(element);item.DrawingOrder.Add(new ElementDrawingAction(element));item.DrawingRedo.Clear();item.Markup.Children.Add(CreateNumberDrawingVisual(element));_drawingOperationChanged=true;PromptStatus.Text=$"已放置序号 {element.Number} · 继续点击放置 {item.NextDrawingNumber}";
+    }
+    private TextBox CreateTextDrawingEditor(SelectionItem item,TextDrawingElement element)
+    {
+        var editor=new TextBox{Tag=element.Id,Text=element.Text,Width=element.Width,MinHeight=Math.Max(30,element.FontSize*1.55),AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily(element.FontFamily),FontSize=element.FontSize,FontWeight=FontWeights.SemiBold,Padding=new Thickness(4,1,4,2),Foreground=element.Highlight?ContrastBrush(element.Color):new SolidColorBrush(element.Color),Background=element.Highlight?new SolidColorBrush(Color.FromArgb(178,element.Color.R,element.Color.G,element.Color.B)):Brushes.Transparent,BorderBrush=Brushes.Transparent,BorderThickness=new Thickness(1),CaretBrush=new SolidColorBrush(element.Highlight?Colors.Black:element.Color)};
+        InkCanvas.SetLeft(editor,element.X);InkCanvas.SetTop(editor,element.Y);
+        editor.GotKeyboardFocus+=(_,_)=>editor.BorderBrush=new SolidColorBrush(Color.FromRgb(108,124,238));
+        editor.LostKeyboardFocus+=(_,_)=>editor.BorderBrush=Brushes.Transparent;
+        editor.TextChanged+=(_,_)=>{var index=item.DrawingElements.FindIndex(candidate=>candidate.Id==element.Id);if(index<0||item.DrawingElements[index] is not TextDrawingElement current)return;item.DrawingElements[index]=current with{Text=editor.Text};item.DrawingRedo.Clear();_drawingOperationChanged=true;};
+        return editor;
+    }
+    private static Border CreateNumberDrawingVisual(NumberDrawingElement element)
+    {
+        var visual=new Border{Width=element.Diameter,Height=element.Diameter,CornerRadius=new CornerRadius(element.Diameter/2),Background=new SolidColorBrush(element.Color),IsHitTestVisible=false,Child=new TextBlock{Text=element.Number.ToString(System.Globalization.CultureInfo.InvariantCulture),Foreground=ContrastBrush(element.Color),FontSize=Math.Clamp(element.Diameter*.48,13,25),FontWeight=FontWeights.Bold,HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center,TextAlignment=TextAlignment.Center}};InkCanvas.SetLeft(visual,element.X);InkCanvas.SetTop(visual,element.Y);return visual;
+    }
+    private static Brush ContrastBrush(Color color)=>color.R*.299+color.G*.587+color.B*.114>155?Brushes.Black:Brushes.White;
+    private void RebuildDrawingElements(SelectionItem item)
+    {
+        item.Markup.Children.Clear();foreach(var element in item.DrawingElements){if(element is TextDrawingElement text)item.Markup.Children.Add(CreateTextDrawingEditor(item,text));else if(element is NumberDrawingElement number)item.Markup.Children.Add(CreateNumberDrawingVisual(number));}
+    }
+    private void RemoveEmptyDrawingText(SelectionItem item)
+    {
+        var empty=item.DrawingElements.OfType<TextDrawingElement>().Where(element=>string.IsNullOrWhiteSpace(element.Text)).Select(element=>element.Id).ToHashSet();if(empty.Count==0)return;item.DrawingElements.RemoveAll(element=>empty.Contains(element.Id));item.DrawingOrder.RemoveAll(action=>action is ElementDrawingAction element&&empty.Contains(element.Element.Id));RebuildDrawingElements(item);
     }
     private async void QuickSend(object s,RoutedEventArgs e)=>await SendAsync(true);
     private async void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;await SendAsync(true);}}
@@ -1710,7 +1811,7 @@ public partial class CaptureOverlayWindow : Window
         try{item.VideoPreview?.CloseSource();}catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewReset",ex);}
         item.Video.Visibility=Visibility.Collapsed;item.Image.Visibility=Visibility.Visible;item.VideoLease?.Dispose();item.VideoLease=null;item.VideoPath=null;item.VideoDuration=TimeSpan.Zero;item.VideoPlaying=false;
     }
-    private static void ClearImageOnlyLayers(SelectionItem item){item.Markup.Strokes.Clear();item.Redo.Clear();item.TextLayer=NoTextLayerState.Instance;item.AnnotationNotes.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
+    private static void ClearImageOnlyLayers(SelectionItem item){item.Markup.Strokes.Clear();item.Markup.Children.Clear();item.DrawingElements.Clear();item.DrawingOrder.Clear();item.DrawingRedo.Clear();item.NextDrawingNumber=1;item.TextLayer=NoTextLayerState.Instance;item.AnnotationNotes.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
     private static void InvalidateImageDerivedLayers(SelectionItem item){if(item.VideoPath is not null)return;ClearImageOnlyLayers(item);}
     private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)

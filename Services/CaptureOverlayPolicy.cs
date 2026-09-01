@@ -220,6 +220,14 @@ internal static class CaptureOverlayPolicy
         return false;
     }
 
+    internal static bool ShouldKeepPromptBarHiddenOverSelection(
+        bool currentlyHidden,
+        Point pointer,
+        Rect promptBounds,
+        Rect monitorBounds,
+        IEnumerable<Rect> explicitSelections) =>
+        ShouldAutoHidePromptBar(pointer,currentlyHidden?Rect.Empty:promptBounds,monitorBounds,explicitSelections);
+
     private static bool CoversMostOfMonitor(Rect selection,Rect monitor)
     {
         var intersection=Rect.Intersect(selection,monitor);
