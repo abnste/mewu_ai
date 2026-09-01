@@ -331,6 +331,27 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void FloatingToolbarAlwaysPrefersTheSpaceAboveSelection()
+    {
+        var placement=CaptureOverlayPolicy.GetFloatingBarPlacement(new Rect(0,0,1920,1080),new Rect(300,300,600,400),420,52,new Rect(670,900,580,130));
+        Assert.Equal(FloatingBarSide.Above,placement.Side);Assert.Equal(240,placement.Top);
+    }
+
+    [Fact]
+    public void FloatingToolbarUsesBelowOnlyWhenTopDoesNotFitAndPromptWillNotBeCovered()
+    {
+        var placement=CaptureOverlayPolicy.GetFloatingBarPlacement(new Rect(0,0,1920,1080),new Rect(300,30,600,300),420,52,new Rect(670,900,580,130));
+        Assert.Equal(FloatingBarSide.Below,placement.Side);Assert.Equal(338,placement.Top);
+    }
+
+    [Fact]
+    public void FloatingToolbarDoesNotMoveBelowWhenThatWouldCoverPromptBar()
+    {
+        var placement=CaptureOverlayPolicy.GetFloatingBarPlacement(new Rect(0,0,900,600),new Rect(100,20,600,430),420,52,new Rect(160,458,574,120));
+        Assert.Equal(FloatingBarSide.AboveFallback,placement.Side);Assert.Equal(6,placement.Top);
+    }
+
+    [Fact]
     public void FloatingToolbarInteractionZoneIncludesItsPointerTransitGap()
     {
         var toolbar=new Rect(500,508,420,52);

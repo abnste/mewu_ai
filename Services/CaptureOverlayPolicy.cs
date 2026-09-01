@@ -233,6 +233,30 @@ internal static class CaptureOverlayPolicy
         return Math.Min(Math.Max(1,double.IsFinite(desiredWidth)?desiredWidth:1),Math.Max(1,monitor.Width-16));
     }
 
+    internal static FloatingBarPlacement GetFloatingBarPlacement(
+        Rect monitor,
+        Rect selection,
+        double barWidth,
+        double barHeight,
+        Rect promptBounds,
+        double edgeMargin=6,
+        double gap=8)
+    {
+        var width=Math.Clamp(double.IsFinite(barWidth)?barWidth:1,1,Math.Max(1,monitor.Width-edgeMargin*2));
+        var height=Math.Clamp(double.IsFinite(barHeight)?barHeight:1,1,Math.Max(1,monitor.Height-edgeMargin*2));
+        var left=Math.Clamp(selection.Left,monitor.Left+edgeMargin,Math.Max(monitor.Left+edgeMargin,monitor.Right-width-edgeMargin));
+        var above=selection.Top-height-gap;
+        if(above>=monitor.Top+edgeMargin)return new(left,above,FloatingBarSide.Above);
+
+        var below=selection.Bottom+gap;var belowBounds=new Rect(left,below,width,height);
+        var belowFits=belowBounds.Bottom<=monitor.Bottom-edgeMargin;
+        var overlapsPrompt=!promptBounds.IsEmpty&&belowBounds.IntersectsWith(promptBounds);
+        if(belowFits&&!overlapsPrompt)return new(left,below,FloatingBarSide.Below);
+
+        var fallback=Math.Clamp(above,monitor.Top+edgeMargin,Math.Max(monitor.Top+edgeMargin,monitor.Bottom-height-edgeMargin));
+        return new(left,fallback,FloatingBarSide.AboveFallback);
+    }
+
     internal static bool IsPointerInFloatingBarInteractionZone(Point pointer,Rect barBounds,double transitionPadding)
     {
         if(barBounds.IsEmpty||!double.IsFinite(barBounds.Left)||!double.IsFinite(barBounds.Top)||
@@ -278,6 +302,9 @@ internal static class CaptureOverlayPolicy
                 ?OverlayUndoTarget.Overlay
                 :OverlayUndoTarget.Overlay;
 }
+
+internal enum FloatingBarSide{Above,Below,AboveFallback}
+internal sealed record FloatingBarPlacement(double Left,double Top,FloatingBarSide Side);
 
 public enum OverlayUndoTarget{Overlay,Text}
 
