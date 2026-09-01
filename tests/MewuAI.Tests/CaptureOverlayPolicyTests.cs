@@ -323,6 +323,14 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void HiddenPromptCannotReappearFromItsStaleBoundsWhilePointerRemainsOnSelection()
+    {
+        var monitor=new Rect(0,0,1920,1080);var selection=new Rect(500,700,900,300);var prompt=new Rect(670,850,574,150);var pointer=new Point(800,900);
+        Assert.False(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(false,pointer,prompt,monitor,[selection]));
+        Assert.True(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(true,pointer,prompt,monitor,[selection]));
+    }
+
+    [Fact]
     public void FloatingToolbarWrapsToTheMonitorWidthInsteadOfOverflowing()
     {
         var monitor=new Rect(800,50,300,500);
