@@ -5,6 +5,44 @@ namespace mewu_ai_Assistant.Services;
 internal static class VideoAnnotationTimeline
 {
     internal const int MaxAnswerActions=24;
+    internal const double DurationOvershootToleranceSeconds=.35;
+
+    internal static bool TryResolveTargetIndex(int regionIndex,bool isTimeline,IReadOnlyList<bool> videoTargets,out int targetIndex,out bool wasSingleVideoRemapped)
+    {
+        targetIndex=regionIndex;wasSingleVideoRemapped=false;
+        if(videoTargets.Count==1&&videoTargets[0]&&isTimeline)
+        {
+            wasSingleVideoRemapped=regionIndex!=0;targetIndex=0;return true;
+        }
+        return regionIndex>=0&&regionIndex<videoTargets.Count&&videoTargets[regionIndex]==isTimeline;
+    }
+
+    internal static bool TryFitToDuration(AiAnnotation annotation,double durationSeconds,out AiAnnotation fitted,out bool wasClamped)
+    {
+        fitted=default!;wasClamped=false;
+        if(!annotation.IsVideoTimeline||!double.IsFinite(durationSeconds)||durationSeconds<=0)return false;
+        var start=annotation.StartTime!.Value;var end=annotation.EndTime!.Value;
+        if(start>durationSeconds+DurationOvershootToleranceSeconds||end>durationSeconds+DurationOvershootToleranceSeconds)return false;
+        var fittedStart=Math.Min(start,durationSeconds);var fittedEnd=Math.Min(end,durationSeconds);
+        var frames=new List<VideoAnnotationKeyframe>();
+        foreach(var frame in annotation.Keyframes!)
+        {
+            if(frame.Time>durationSeconds+DurationOvershootToleranceSeconds)return false;
+            var time=Math.Min(frame.Time,durationSeconds);
+            var next=frame with{Time=time};
+            if(frames.Count>0&&Math.Abs(frames[^1].Time-time)<1e-9)frames[^1]=next;
+            else frames.Add(next);
+            wasClamped|=time!=frame.Time;
+        }
+        if(frames.Count==0||(fittedEnd>fittedStart&&frames.Count<2))return false;
+        wasClamped|=fittedStart!=start||fittedEnd!=end;
+        fitted=annotation with
+        {
+            X=frames[0].X,Y=frames[0].Y,Width=frames[0].Width,Height=frames[0].Height,
+            StartTime=fittedStart,EndTime=fittedEnd,Keyframes=frames
+        };
+        return true;
+    }
 
     internal static bool TryGetFirstMarker(IEnumerable<AiAnnotation> annotations,out AiAnnotation annotation,out VideoAnnotationKeyframe frame)
     {
