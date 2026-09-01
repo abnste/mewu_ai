@@ -29,4 +29,29 @@ public sealed class WindowVisualStructureTests
         Assert.Equal("14",(string?)shell.Attribute("CornerRadius"));
         Assert.Null(shell.Element(presentation+"Border.Effect"));
     }
+
+    [Fact]
+    public void CapturePromptKeepsShadowsOutsideClippedContent()
+    {
+        var path=Path.Combine(AppContext.BaseDirectory,"Fixtures","CaptureOverlayWindow.xaml.xml");
+        var document=XDocument.Load(path,LoadOptions.SetLineInfo);
+        XNamespace presentation="http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x="http://schemas.microsoft.com/winfx/2006/xaml";
+
+        XElement FindNamed(string name)=>document
+            .Descendants()
+            .Single(element=>string.Equals((string?)element.Attribute(x+"Name"),name,StringComparison.Ordinal));
+
+        var host=FindNamed("PromptBarHost");
+        var content=FindNamed("PromptBar");
+        var shadowBorders=host.Elements(presentation+"Border")
+            .Where(border=>border.Element(presentation+"Border.Effect")?.Element(presentation+"DropShadowEffect") is not null)
+            .ToArray();
+
+        Assert.Equal(2,shadowBorders.Length);
+        Assert.All(shadowBorders,border=>Assert.Equal("False",(string?)border.Attribute("IsHitTestVisible")));
+        Assert.Equal("True",(string?)content.Attribute("ClipToBounds"));
+        Assert.Null(content.Element(presentation+"Border.Effect"));
+        Assert.Same(host,content.Parent);
+    }
 }

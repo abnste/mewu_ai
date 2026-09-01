@@ -64,8 +64,14 @@
     <Button ToolTip="停止并原位预览" AutomationProperties.Name="停止录屏并原位预览" Click="StopRecording" Style="{StaticResource ToolbarIconButton}"><Rectangle Width="12" Height="12" RadiusX="2" Fill="#DA4856"/></Button>
    </StackPanel>
   </Border>
-   <Border x:Name="PromptBar" Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="20" Padding="7" Opacity="0.99" ClipToBounds="True">
-   <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="24" ShadowDepth="6" Opacity="0.24"/></Border.Effect>
+  <Grid x:Name="PromptBarHost" Opacity="0.99">
+   <Border Background="#FFFFFFFF" CornerRadius="20" IsHitTestVisible="False">
+    <Border.Effect><DropShadowEffect Color="#1D2B3F" BlurRadius="36" ShadowDepth="8" Opacity="0.30"/></Border.Effect>
+   </Border>
+   <Border Background="#FFFFFFFF" CornerRadius="20" IsHitTestVisible="False">
+    <Border.Effect><DropShadowEffect Color="#26384F" BlurRadius="13" ShadowDepth="3" Opacity="0.20"/></Border.Effect>
+   </Border>
+   <Border x:Name="PromptBar" Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="20" Padding="7" ClipToBounds="True">
     <Grid x:Name="PromptContent">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <ScrollViewer x:Name="ResponseScroll" Grid.Row="0" MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -89,7 +95,8 @@
     </Grid>
      <TextBlock x:Name="PromptStatus" Grid.Row="2" Text="拖动可连续框选多个区域 · Enter 发送 · Shift+Enter 换行" Foreground="#8B98AA" FontSize="10.5" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,0"/>
    </Grid>
-  </Border>
+   </Border>
+  </Grid>
   <Border x:Name="SizeText" Visibility="Collapsed" Background="#E6111722" BorderBrush="#80FFFFFF" BorderThickness="1" CornerRadius="7" Padding="6,3" SnapsToDevicePixels="True" IsHitTestVisible="False">
    <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="10" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
    <TextBlock x:Name="SizeTextLabel" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
