@@ -3,9 +3,12 @@ using System.Diagnostics;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using System.Runtime.InteropServices.WindowsRuntime;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Recording;
 using mewu_ai_Assistant.Services;
+using Windows.Media.Editing;
+using Windows.Storage;
 using Xunit;
 namespace MewuAI.Tests;
 public sealed class RecordingIntegrationTests
@@ -138,11 +141,15 @@ public sealed class RecordingIntegrationTests
     {
         var session=new RecordingSession(new AppSettings{RecordingFps=10,GifFps=2,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null);var done=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);session.Completed+=p=>done.TrySetResult(p);session.Failed+=e=>done.TrySetException(new InvalidOperationException(e));
         var gifPath=Path.Combine(Path.GetTempPath(),$"mewu-recording-{Guid.NewGuid():N}.gif");
+        var annotatedGifPath=Path.Combine(Path.GetTempPath(),$"mewu-recording-annotated-{Guid.NewGuid():N}.gif");
+        var annotatedPath=Path.Combine(Path.GetTempPath(),$"mewu-recording-annotated-{Guid.NewGuid():N}.mp4");
         try
         {
             var token=TestContext.Current.CancellationToken;session.Start();Assert.True(TempMediaRegistry.Shared.IsLeased(session.VideoPath));await Task.Delay(1200,token);session.Stop();var path=await done.Task.WaitAsync(TimeSpan.FromSeconds(20),token);Assert.Equal(Path.GetFullPath(path),Path.GetFullPath(session.VideoPath),StringComparer.OrdinalIgnoreCase);Assert.True(File.Exists(path));Assert.True(new FileInfo(path).Length>1000);Assert.True(TempMediaRegistry.Shared.IsLeased(path));using var retained=session.RetainCompletedVideo();Assert.Equal(Path.GetFullPath(path),retained.Path,StringComparer.OrdinalIgnoreCase);await session.DisposeAsync();Assert.True(TempMediaRegistry.Shared.IsLeased(path));var sourceHash=SHA256.HashData(await File.ReadAllBytesAsync(path,token));await VerifyPreviewAutoplaysAsync(path,token);
             var export=await GifExportService.ExportFromVideoAsync(path,gifPath,5,token);Assert.True(File.Exists(gifPath));Assert.True(new FileInfo(gifPath).Length>100);Assert.InRange(export.FrameCount,1,10);Assert.Equal(sourceHash,SHA256.HashData(await File.ReadAllBytesAsync(path,token)));
             using var stream=File.OpenRead(gifPath);var decoder=new GifBitmapDecoder(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);Assert.Equal(export.FrameCount,decoder.Frames.Count);var durationCentiseconds=decoder.Frames.Sum(frame=>Convert.ToInt32(Assert.IsType<BitmapMetadata>(frame.Metadata).GetQuery("/grctlext/Delay")));Assert.InRange(Math.Abs(durationCentiseconds*10-export.Duration.TotalMilliseconds),0,10);
+            var annotation=new AiAnnotation(.08,.08,.35,.25,"测试标注",0,.1,.8,[new VideoAnnotationKeyframe(.1,.08,.08,.35,.25),new VideoAnnotationKeyframe(.8,.35,.25,.35,.25)]);await AnnotatedVideoExportService.ExportAsync(path,annotatedPath,null,[annotation],token);Assert.True(File.Exists(annotatedPath));Assert.True(new FileInfo(annotatedPath).Length>1000);var annotatedFile=await StorageFile.GetFileFromPathAsync(annotatedPath).AsTask(token);var annotatedClip=await MediaClip.CreateFromFileAsync(annotatedFile).AsTask(token);Assert.InRange(Math.Abs((annotatedClip.OriginalDuration-export.Duration).TotalMilliseconds),0,150);Assert.Equal(sourceHash,SHA256.HashData(await File.ReadAllBytesAsync(path,token)));
+            var annotatedGif=await GifExportService.ExportFromVideoAsync(path,annotatedGifPath,5,token,(frame,time)=>AnnotationOverlayRenderer.Composite(frame,AnnotationOverlayRenderer.RenderAiOverlay(frame.PixelWidth,frame.PixelHeight,[annotation],time.TotalSeconds)));Assert.True(File.Exists(annotatedGifPath));using(var annotatedGifStream=File.OpenRead(annotatedGifPath))Assert.Equal(annotatedGif.FrameCount,new GifBitmapDecoder(annotatedGifStream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad).Frames.Count);Assert.Equal(sourceHash,SHA256.HashData(await File.ReadAllBytesAsync(path,token)));
         }
         finally
         {
@@ -153,6 +160,8 @@ public sealed class RecordingIntegrationTests
             {
                 try{if(File.Exists(session.VideoPath))File.Delete(session.VideoPath);}catch(IOException){}
                 try{if(File.Exists(gifPath))File.Delete(gifPath);}catch(IOException){}
+                try{if(File.Exists(annotatedPath))File.Delete(annotatedPath);}catch(IOException){}
+                try{if(File.Exists(annotatedGifPath))File.Delete(annotatedGifPath);}catch(IOException){}
             }
         }
     }
