@@ -148,6 +148,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         var frameReady=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Windows.Foundation.TypedEventHandler<MediaPlaybackSession,object>? handler=null;
         Action<TimeSpan>? frameHandler=null;
+        Action<TimeSpan>? steppedFrameHandler=null;
         handler=(_,_)=>completion.TrySetResult();
         frameHandler=_=>frameReady.TrySetResult();
         session.SeekCompleted+=handler;
@@ -156,13 +157,27 @@ internal sealed class VideoPreviewSurface : IDisposable
         {
             session.Position=position;
             await completion.Task.WaitAsync(TimeSpan.FromSeconds(3),cancellationToken);
-            if(PresentedFrameCount<=previousFrameCount)
+            // Microsoft documents that a paused MediaPlayer can report an
+            // imprecise frame position after seeking. Advancing one decoded
+            // frame after Pause makes the frame-server surface settle on the
+            // requested visual frame instead of retaining the previous GOP
+            // frame while the session position has already changed.
+            if(pauseAfterSeek&&(duration<=TimeSpan.Zero||position<duration))
+            {
+                var steppedFrameReady=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                steppedFrameHandler=_=>steppedFrameReady.TrySetResult();
+                FramePresented+=steppedFrameHandler;
+                player.StepForwardOneFrame();
+                await steppedFrameReady.Task.WaitAsync(TimeSpan.FromSeconds(2),cancellationToken);
+            }
+            else if(PresentedFrameCount<=previousFrameCount)
                 await frameReady.Task.WaitAsync(TimeSpan.FromSeconds(2),cancellationToken);
         }
         finally
         {
             session.SeekCompleted-=handler;
             FramePresented-=frameHandler;
+            if(steppedFrameHandler is not null)FramePresented-=steppedFrameHandler;
         }
     }
 

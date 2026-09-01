@@ -234,8 +234,8 @@ public sealed class CaptureOverlayPolicyTests
     [Fact]
     public void VideoAnnotationRepairPromptRequiresTimelineFieldsAndKeepsOriginalQuestion()
     {
-        var prompt=CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt("按钮为什么没反应？");
-        Assert.Contains("startTime",prompt);Assert.Contains("endTime",prompt);Assert.Contains("keyframes",prompt);Assert.Contains("regionIndex",prompt);Assert.Contains("按钮为什么没反应？",prompt);
+        var prompt=CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt("按钮为什么没反应？","初稿只提到了红圈");
+        Assert.Contains("startTime",prompt);Assert.Contains("endTime",prompt);Assert.Contains("keyframes",prompt);Assert.Contains("regionIndex",prompt);Assert.Contains("按钮为什么没反应？",prompt);Assert.Contains("初稿只提到了红圈",prompt);Assert.Contains("每个独立",prompt);Assert.Contains("不能把同一事件重复",prompt);
     }
 
     [Fact]
