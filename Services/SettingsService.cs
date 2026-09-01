@@ -5,6 +5,7 @@ using mewu_ai_Assistant.Models;
 namespace mewu_ai_Assistant.Services;
 public sealed class SettingsService
 {
+    private static readonly string[] HermesReasoningEfforts=["none","minimal","low","medium","high","xhigh","max","ultra"];
     private readonly string _path;
     private readonly ProviderHeaderCredentialService _headerCredentials;
     private readonly Action<string,Exception>? _logError;
@@ -93,7 +94,14 @@ public sealed class SettingsService
             ProviderHeaderPolicy.EnsureCredentialMappingsValid(provider.CustomHeaders,provider.SensitiveHeaderCredentialIds);
         }
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId)||!providerIds.Contains(settings.DefaultProviderId))throw new InvalidOperationException("默认 Provider 必须指向现有 Provider");
-        ProviderAuthenticationPolicy.EnsureStoredCredentialReferences(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId));
+        // Hermes is an explicit, fail-closed conversation route.  It must not
+        // force users to keep an otherwise unused remote API credential merely
+        // so the settings document can be saved.  The Provider entry remains
+        // structurally valid for features that still use it, but its
+        // authentication is checked only when that route is active.
+        if(!settings.HermesEnabled)
+            ProviderAuthenticationPolicy.EnsureStoredCredentialReferences(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId));
+        ValidateHermesForSave(settings);
     }
 
     private void SaveCore(AppSettings settings)
@@ -172,6 +180,7 @@ public sealed class SettingsService
         }
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))settings.ConfigurationErrors.Add("尚未选择默认 AI Provider");
         else if(settings.Providers.All(provider=>provider.Id!=settings.DefaultProviderId))settings.ConfigurationErrors.Add("默认 AI Provider 已不存在，请重新选择");
+        AppendHermesConfigurationErrors(settings);
     }
 
     private static AppSettings NormalizeCommon(AppSettings settings)
@@ -183,9 +192,40 @@ public sealed class SettingsService
         settings.CaptureDelaySeconds=settings.CaptureDelaySeconds is 3 or 5?settings.CaptureDelaySeconds:0;
         settings.DefaultImageFormat=settings.DefaultImageFormat?.Trim().ToLowerInvariant() is "jpg" or "jpeg"?"jpg":"png";
         settings.VoiceLanguage=settings.VoiceLanguage?.Trim() is "zh-CN" or "en-US"?settings.VoiceLanguage.Trim():"system";
+        settings.HermesProvider=settings.HermesProvider?.Trim()??string.Empty;
+        settings.HermesModel=settings.HermesModel?.Trim()??string.Empty;
+        settings.HermesReasoningEffort=string.IsNullOrWhiteSpace(settings.HermesReasoningEffort)?"medium":settings.HermesReasoningEffort.Trim().ToLowerInvariant();
         settings.RecordingFps=Math.Clamp(settings.RecordingFps,10,60);settings.RecordingQuality=Math.Clamp(settings.RecordingQuality,20,100);settings.GifFps=Math.Clamp(settings.GifFps,1,15);settings.TempCleanupDays=Math.Clamp(settings.TempCleanupDays,1,30);settings.OverlayOpacity=double.IsFinite(settings.OverlayOpacity)?Math.Clamp(settings.OverlayOpacity,.4,.75):.6;if(!settings.EnableVoiceInput)settings.AutomaticallyStartListening=false;
         return settings;
     }
+
+    private static void ValidateHermesForSave(AppSettings settings)
+    {
+        if(!settings.HermesEnabled)return;
+        var errors=HermesConfigurationErrors(settings).ToList();
+        if(errors.Count>0)throw new InvalidOperationException(string.Join("；",errors));
+    }
+
+    private static void AppendHermesConfigurationErrors(AppSettings settings)
+    {
+        if(!settings.HermesEnabled)return;
+        settings.ConfigurationErrors.AddRange(HermesConfigurationErrors(settings));
+    }
+
+    private static IEnumerable<string> HermesConfigurationErrors(AppSettings settings)
+    {
+        if(string.IsNullOrWhiteSpace(settings.HermesProvider))yield return "本机 Hermes 尚未选择 Provider";
+        else if(ContainsUnsafeHermesToken(settings.HermesProvider))yield return "本机 Hermes Provider 无效，请从模型列表重新选择";
+        if(string.IsNullOrWhiteSpace(settings.HermesModel))yield return "本机 Hermes 尚未选择模型";
+        else if(ContainsUnsafeHermesToken(settings.HermesModel))yield return "本机 Hermes 模型无效，请从模型列表重新选择";
+        if(!HermesReasoningEfforts.Contains(settings.HermesReasoningEffort,StringComparer.Ordinal))
+            yield return "本机 Hermes 思考程度无效，请重新选择";
+    }
+
+    private static bool ContainsUnsafeHermesToken(string value)=>
+        value.StartsWith('-')||
+        value.Contains("--",StringComparison.Ordinal)||
+        value.Any(character=>char.IsWhiteSpace(character)||char.IsControl(character)||character is '\"' or '\'' or '\\');
 
     private static HashSet<string> ReferencedHeaderCredentialIds(IEnumerable<AiProviderSettings> providers)=>
         providers

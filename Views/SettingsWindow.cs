@@ -14,17 +14,25 @@ namespace mewu_ai_Assistant.Views;
 
 public sealed class SettingsWindow : Window
 {
+    private static readonly (string Value,string Label)[] HermesReasoningChoices=
+    [
+        ("none","关闭"),("minimal","极少"),("low","较低"),("medium","中等"),
+        ("high","较高"),("xhigh","很高"),("max","最大"),("ultra","极致")
+    ];
+    private static readonly string[] HermesReasoningValues=HermesReasoningChoices.Select(choice=>choice.Value).ToArray();
     private static readonly Brush PanelBrush = Brushes.White;
     private static readonly Brush ControlBorderBrush = new SolidColorBrush(Color.FromRgb(224, 230, 240));
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials = new();
-    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _hotkey = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new();
+    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _hotkey = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesModelSelector = new(), _hermesReasoning = new();
     private readonly TextBox _providerName = new(), _baseUrl = new(), _model = new(), _customHeaders = new();
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
-    private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new();
-    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _ctrl = new(), _shift = new(), _alt = new(), _captureCursor = new(), _recordCursor = new(), _defaultProvider = new();
+    private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
+    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _ctrl = new(), _shift = new(), _alt = new(), _captureCursor = new(), _recordCursor = new(), _defaultProvider = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
+    private readonly Button _hermesDetect = new(), _hermesTest = new();
+    private readonly System.Windows.Shapes.Ellipse _hermesStatusDot = new();
     private readonly List<AiProviderSettings> _providers;
     private readonly Dictionary<string, string> _pendingApiKeys = [];
     private readonly HashSet<string> _apiKeysMarkedForDeletion = [];
@@ -36,11 +44,15 @@ public sealed class SettingsWindow : Window
     private readonly Dictionary<AiProviderSettings,string> _hydrationErrors = new(ReferenceEqualityComparer.Instance);
     private readonly List<string> _editorWarnings = [];
     private CancellationTokenSource? _connectionTest;
+    private CancellationTokenSource? _hermesConnectionTest;
     private readonly CancellationTokenSource _windowLifetime=new();
+    private HermesInstallation? _hermesInstallation;
     private AiProviderSettings? _selectedProvider;
     private string? _defaultProviderId;
     private readonly int _repairedProviderIdentityCount;
     private bool _loadingProvider;
+    private bool _loadingHermes;
+    private bool _hermesBusy;
     private bool? _captureProtectionAvailable;
 
     public SettingsWindow(AppHost host)
@@ -155,7 +167,14 @@ public sealed class SettingsWindow : Window
             try{new PrivacyLogger().Error("SettingsCaptureProtection",new InvalidOperationException("设置窗口无法启用防捕获"));}catch{}
             HideSensitiveEditorsAfterCaptureProtectionFailure();
         };
-        Closed += (_, _) => {_windowLifetime.Cancel();_connectionTest?.Cancel();};
+        Loaded += SettingsWindowLoaded;
+        Closed += (_, _) =>
+        {
+            _windowLifetime.Cancel();
+            _connectionTest?.Cancel();
+            _hermesConnectionTest?.Cancel();
+            _windowLifetime.Dispose();
+        };
     }
 
     private static TabItem Tab(string header, UIElement content) => new()
@@ -323,6 +342,7 @@ public sealed class SettingsWindow : Window
     private UIElement Ai()
     {
         var panel = Panel();
+        panel.Children.Add(HermesCard());
         _aiConfigurationWarning.Foreground=new SolidColorBrush(Color.FromRgb(185,93,32));
         _aiConfigurationWarning.Background=new SolidColorBrush(Color.FromRgb(255,247,235));
         _aiConfigurationWarning.Padding=new Thickness(12,9,12,9);
@@ -394,6 +414,244 @@ public sealed class SettingsWindow : Window
         _providerSelector.SelectedItem = initial;
         return panel;
     }
+
+    private UIElement HermesCard()
+    {
+        _loadingHermes=true;
+        _hermesEnabled.Content="使用本机 Hermes";
+        _hermesEnabled.IsChecked=_host.Settings.HermesEnabled;
+        _hermesEnabled.FontWeight=FontWeights.SemiBold;
+        System.Windows.Automation.AutomationProperties.SetName(_hermesEnabled,"使用本机 Hermes");
+
+        var badge=new Border
+        {
+            Width=34,Height=34,CornerRadius=new CornerRadius(11),
+            Background=new SolidColorBrush(Color.FromRgb(228,243,255)),
+            BorderBrush=new SolidColorBrush(Color.FromRgb(199,226,248)),BorderThickness=new Thickness(1),
+            Child=new TextBlock{Text="H",FontSize=16,FontWeight=FontWeights.Bold,Foreground=new SolidColorBrush(Color.FromRgb(31,126,200)),HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center}
+        };
+        var heading=new StackPanel{Margin=new Thickness(10,0,0,0),VerticalAlignment=VerticalAlignment.Center};
+        heading.Children.Add(new TextBlock{Text="本机 Hermes",FontSize=14.5,FontWeight=FontWeights.SemiBold});
+        heading.Children.Add(new TextBlock{Text="普通对话与屏幕对话",FontSize=11,Foreground=SecondaryBrush,Margin=new Thickness(0,2,0,0)});
+        var header=new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+        header.Children.Add(badge);Grid.SetColumn(heading,1);header.Children.Add(heading);Grid.SetColumn(_hermesEnabled,2);header.Children.Add(_hermesEnabled);
+
+        _hermesStatusDot.Width=8;_hermesStatusDot.Height=8;_hermesStatusDot.Margin=new Thickness(0,0,8,0);_hermesStatusDot.VerticalAlignment=VerticalAlignment.Center;
+        _hermesStatus.FontSize=11.5;_hermesStatus.Foreground=SecondaryBrush;_hermesStatus.TextWrapping=TextWrapping.NoWrap;_hermesStatus.TextTrimming=TextTrimming.CharacterEllipsis;_hermesStatus.VerticalAlignment=VerticalAlignment.Center;
+        var statusContent=new Grid{VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,0,12,0)};
+        statusContent.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});statusContent.ColumnDefinitions.Add(new ColumnDefinition());
+        statusContent.Children.Add(_hermesStatusDot);Grid.SetColumn(_hermesStatus,1);statusContent.Children.Add(_hermesStatus);
+
+        ConfigureHermesActionButton(_hermesDetect,"重新检测");
+        ConfigureHermesActionButton(_hermesTest,"连接测试");
+        _hermesTest.Margin=new Thickness(8,0,0,0);
+        var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
+        actions.Children.Add(_hermesDetect);actions.Children.Add(_hermesTest);
+        var statusRow=new Grid{Margin=new Thickness(1,13,0,12)};
+        statusRow.ColumnDefinitions.Add(new ColumnDefinition());statusRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+        statusRow.Children.Add(statusContent);Grid.SetColumn(actions,1);statusRow.Children.Add(actions);
+
+        _hermesModelSelector.DisplayMemberPath=nameof(HermesModelOption.DisplayName);
+        _hermesModelSelector.MinWidth=240;
+        System.Windows.Automation.AutomationProperties.SetName(_hermesModelSelector,"Hermes 模型");
+        System.Windows.Automation.AutomationProperties.SetName(_hermesReasoning,"Hermes 思考程度");
+        EnsureStoredHermesModelItem();
+        PopulateHermesReasoningChoices(_host.Settings.HermesReasoningEffort);
+        var selectors=new Grid{Margin=new Thickness(0,0,0,7)};
+        selectors.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(2,GridUnitType.Star)});
+        selectors.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(12)});
+        selectors.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(1,GridUnitType.Star)});
+        var modelField=new StackPanel();modelField.Children.Add(HermesFieldLabel("模型"));modelField.Children.Add(_hermesModelSelector);
+        var reasoningField=new StackPanel();reasoningField.Children.Add(HermesFieldLabel("思考程度"));reasoningField.Children.Add(_hermesReasoning);
+        selectors.Children.Add(modelField);Grid.SetColumn(reasoningField,2);selectors.Children.Add(reasoningField);
+
+        _hermesAutoReadAloud.Content="回复后自动朗读";
+        _hermesAutoReadAloud.IsChecked=_host.Settings.HermesAutoReadAloud;
+        _hermesAutoReadAloud.Margin=new Thickness(0,5,0,0);
+        System.Windows.Automation.AutomationProperties.SetName(_hermesAutoReadAloud,"Hermes 回复后自动朗读");
+
+        var body=new StackPanel();body.Children.Add(header);body.Children.Add(statusRow);body.Children.Add(selectors);body.Children.Add(_hermesAutoReadAloud);
+        var card=new Border
+        {
+            CornerRadius=new CornerRadius(15),Padding=new Thickness(16),Margin=new Thickness(0,0,0,14),
+            Background=new SolidColorBrush(Color.FromRgb(248,251,255)),
+            BorderBrush=new SolidColorBrush(Color.FromRgb(217,230,244)),BorderThickness=new Thickness(1),
+            Child=body
+        };
+
+        _hermesEnabled.Checked+=HermesEnabledChanged;
+        _hermesEnabled.Unchecked+=HermesEnabledChanged;
+        _hermesModelSelector.SelectionChanged+=(_,_)=>{if(!_loadingHermes)PopulateHermesReasoningChoices(ReadHermesReasoning());};
+        _hermesDetect.Click+=async (_,_)=>
+        {
+            DetectHermes();
+            if(_hermesEnabled.IsChecked==true&&_hermesInstallation is not null)await ConnectHermesAsync(true);
+        };
+        _hermesTest.Click+=async (_,_)=>await ConnectHermesAsync(true);
+        _loadingHermes=false;
+        DetectHermes();
+        UpdateHermesControls();
+        return card;
+    }
+
+    private static TextBlock HermesFieldLabel(string text)=>new()
+    {
+        Text=text,FontSize=11,Foreground=SecondaryBrush,Margin=new Thickness(1,0,0,6)
+    };
+
+    private static void ConfigureHermesActionButton(Button button,string text)
+    {
+        button.Content=text;button.Padding=new Thickness(13,7,13,7);button.Cursor=System.Windows.Input.Cursors.Hand;
+        button.SetResourceReference(StyleProperty,"SecondaryButton");
+        System.Windows.Automation.AutomationProperties.SetName(button,text);
+    }
+
+    private async void SettingsWindowLoaded(object sender,RoutedEventArgs e)
+    {
+        Loaded-=SettingsWindowLoaded;
+        DetectHermes();
+        if(_hermesEnabled.IsChecked==true&&_hermesInstallation is not null)
+            await ConnectHermesAsync(false);
+    }
+
+    private void HermesEnabledChanged(object sender,RoutedEventArgs e)
+    {
+        if(_loadingHermes)return;
+        DetectHermes();
+        UpdateHermesControls();
+        if(IsLoaded&&_hermesEnabled.IsChecked==true&&_hermesInstallation is not null)
+            _=ConnectHermesAsync(false);
+    }
+
+    private void DetectHermes()
+    {
+        try
+        {
+            _hermesInstallation=_host.DiscoverHermes();
+            if(_hermesInstallation is null)SetHermesStatus("未检测到本机 Hermes",HermesStatusTone.Error);
+            else SetHermesStatus($"已检测 · {_hermesInstallation.HomePath}",HermesStatusTone.Ready);
+        }
+        catch(Exception ex)
+        {
+            _hermesInstallation=null;
+            SetHermesStatus("检测失败，请重试",HermesStatusTone.Error);
+            try{new PrivacyLogger().Error("HermesDiscovery",ex);}catch{}
+        }
+        UpdateHermesControls();
+    }
+
+    private async Task ConnectHermesAsync(bool refresh)
+    {
+        if(_hermesBusy)return;
+        DetectHermes();
+        if(_hermesInstallation is null)return;
+        _hermesBusy=true;
+        _hermesConnectionTest?.Cancel();
+        using var test=CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
+        test.CancelAfter(TimeSpan.FromSeconds(55));
+        _hermesConnectionTest=test;
+        SetHermesStatus("正在连接本机 Hermes…",HermesStatusTone.Working);
+        UpdateHermesControls();
+        try
+        {
+            var options=await _host.GetHermesModelOptionsAsync(refresh,test.Token);
+            test.Token.ThrowIfCancellationRequested();
+            if(options.Count==0)throw new InvalidOperationException("Hermes 未返回可用模型，请先完成 Hermes 模型配置。");
+            PopulateHermesModels(options);
+            SetHermesStatus($"连接正常 · {options.Count} 个模型",HermesStatusTone.Connected);
+        }
+        catch(OperationCanceledException) when(_windowLifetime.IsCancellationRequested){}
+        catch(OperationCanceledException)
+        {
+            if(IsVisible)SetHermesStatus("连接超时，请检查 Hermes 配置",HermesStatusTone.Error);
+        }
+        catch(Exception ex)
+        {
+            try{new PrivacyLogger().Error("HermesConnectionTest",ex);}catch{}
+            if(IsVisible)SetHermesStatus(ex.Message,HermesStatusTone.Error);
+        }
+        finally
+        {
+            if(ReferenceEquals(_hermesConnectionTest,test))_hermesConnectionTest=null;
+            _hermesBusy=false;
+            if(IsVisible)UpdateHermesControls();
+        }
+    }
+
+    private void PopulateHermesModels(IReadOnlyList<HermesModelOption> options)
+    {
+        var current=_hermesModelSelector.SelectedItem as HermesModelOption;
+        var provider=current?.Provider??_host.Settings.HermesProvider;
+        var model=current?.Model??_host.Settings.HermesModel;
+        _loadingHermes=true;
+        try
+        {
+            _hermesModelSelector.Items.Clear();
+            var unique=options.GroupBy(item=>item.Key,StringComparer.Ordinal).Select(group=>group.First()).ToList();
+            foreach(var option in unique)
+                _hermesModelSelector.Items.Add(option);
+            _hermesModelSelector.SelectedItem=unique.FirstOrDefault(option=>
+                string.Equals(option.Provider,provider,StringComparison.Ordinal)&&string.Equals(option.Model,model,StringComparison.Ordinal))
+                ??unique.FirstOrDefault(option=>option.IsCurrent)
+                ??unique.FirstOrDefault();
+            PopulateHermesReasoningChoices(ReadHermesReasoning());
+        }
+        finally{_loadingHermes=false;}
+        UpdateHermesControls();
+    }
+
+    private void EnsureStoredHermesModelItem()
+    {
+        if(string.IsNullOrWhiteSpace(_host.Settings.HermesModel))return;
+        var provider=_host.Settings.HermesProvider?.Trim()??string.Empty;
+        var model=_host.Settings.HermesModel.Trim();
+        var prefix=string.IsNullOrWhiteSpace(provider)?string.Empty:$"{provider} · ";
+        var saved=new HermesModelOption(provider,model,$"{prefix}{model}",HermesReasoningValues);
+        _hermesModelSelector.Items.Add(saved);_hermesModelSelector.SelectedItem=saved;
+    }
+
+    private void PopulateHermesReasoningChoices(string preferred)
+    {
+        var selectedModel=_hermesModelSelector.SelectedItem as HermesModelOption;
+        var allowed=(selectedModel?.ReasoningEfforts??HermesReasoningValues).ToHashSet(StringComparer.Ordinal);
+        var normalized=string.IsNullOrWhiteSpace(preferred)?"medium":preferred.Trim().ToLowerInvariant();
+        _hermesReasoning.Items.Clear();
+        foreach(var choice in HermesReasoningChoices.Where(choice=>allowed.Contains(choice.Value)))
+            _hermesReasoning.Items.Add(new ComboBoxItem{Content=choice.Label,Tag=choice.Value});
+        _hermesReasoning.SelectedItem=_hermesReasoning.Items.OfType<ComboBoxItem>().FirstOrDefault(item=>string.Equals(item.Tag?.ToString(),normalized,StringComparison.Ordinal))
+            ??_hermesReasoning.Items.OfType<ComboBoxItem>().FirstOrDefault();
+    }
+
+    private string ReadHermesReasoning()=>
+        (_hermesReasoning.SelectedItem as ComboBoxItem)?.Tag?.ToString()??_host.Settings.HermesReasoningEffort;
+
+    private void UpdateHermesControls()
+    {
+        var enabled=_hermesEnabled.IsChecked==true;
+        _hermesDetect.IsEnabled=!_hermesBusy;
+        _hermesTest.IsEnabled=!_hermesBusy&&_hermesInstallation is not null;
+        _hermesModelSelector.IsEnabled=enabled&&!_hermesBusy&&_hermesModelSelector.Items.Count>0;
+        _hermesReasoning.IsEnabled=enabled&&!_hermesBusy&&_hermesReasoning.Items.Count>0;
+        _hermesAutoReadAloud.IsEnabled=enabled;
+    }
+
+    private void SetHermesStatus(string message,HermesStatusTone tone)
+    {
+        _hermesStatus.Text=message;_hermesStatus.ToolTip=message;
+        var color=tone switch
+        {
+            HermesStatusTone.Connected=>Color.FromRgb(34,157,105),
+            HermesStatusTone.Ready=>Color.FromRgb(44,137,204),
+            HermesStatusTone.Working=>Color.FromRgb(221,143,50),
+            _=>Color.FromRgb(201,78,91)
+        };
+        var brush=new SolidColorBrush(color);_hermesStatusDot.Fill=brush;_hermesStatus.Foreground=brush;
+    }
+
+    private enum HermesStatusTone { Ready,Connected,Working,Error }
 
     private UIElement Voice()
     {
@@ -581,6 +839,19 @@ public sealed class SettingsWindow : Window
     private void Save()
     {
         if(!StoreSelectedProvider(true))return;
+        var hermesEnabled=_hermesEnabled.IsChecked==true;
+        var hermesSelection=_hermesModelSelector.SelectedItem as HermesModelOption;
+        var hermesReasoning=ReadHermesReasoning();
+        if(hermesEnabled&&_hermesInstallation is null)
+        {
+            MessageBox.Show(this,"未检测到可用的本机 Hermes，请重新检测后再启用。","无法保存");
+            return;
+        }
+        if(hermesEnabled&&(hermesSelection is null||string.IsNullOrWhiteSpace(hermesSelection.Provider)||string.IsNullOrWhiteSpace(hermesSelection.Model)))
+        {
+            MessageBox.Show(this,"请先连接 Hermes 并选择模型。","无法保存");
+            return;
+        }
         var modifiers = System.Windows.Input.ModifierKeys.None;
         if (_ctrl.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Control;
         if (_shift.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Shift;
@@ -603,8 +874,11 @@ public sealed class SettingsWindow : Window
             :_apiKeysMarkedForDeletion.Contains(defaultProvider.Id)
                 ?null
                 :credentials.Read(defaultProvider.CredentialId);
-        try{ProviderAuthenticationPolicy.EnsureUsableCredentials(defaultProvider,effectiveDefaultKey);}
-        catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"默认 Provider 无法使用");return;}
+        if(!hermesEnabled)
+        {
+            try{ProviderAuthenticationPolicy.EnsureUsableCredentials(defaultProvider,effectiveDefaultKey);}
+            catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"默认 Provider 无法使用");return;}
+        }
         var previousCredentialIds=_host.Settings.Providers
             .SelectMany(provider=>provider.SensitiveHeaderCredentialIds.Values.Append(provider.CredentialId))
             .Where(id=>!string.IsNullOrWhiteSpace(id)).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -638,6 +912,11 @@ public sealed class SettingsWindow : Window
                 EnableVoiceInput=_voice.IsChecked==true,
                 AutomaticallyStartListening=_voice.IsChecked==true&&_autoVoice.IsChecked==true,
                 VoiceLanguage=(_voiceLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system",
+                HermesEnabled=hermesEnabled,
+                HermesProvider=hermesSelection?.Provider??_host.Settings.HermesProvider,
+                HermesModel=hermesSelection?.Model??_host.Settings.HermesModel,
+                HermesReasoningEffort=hermesReasoning,
+                HermesAutoReadAloud=_hermesAutoReadAloud.IsChecked==true,
                 Providers=storedProviders,
                 DefaultProviderId=_defaultProviderId
             };

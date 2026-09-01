@@ -119,10 +119,8 @@ public static class StructuredResponseParser
     private static bool LooksLikeJsonFence(string value)
     {
         if(!value.StartsWith("```",StringComparison.Ordinal))return false;
-        var lineEnd=value.IndexOfAny(['\r','\n'],3);
-        if(lineEnd<0)return "```json".StartsWith(value,StringComparison.OrdinalIgnoreCase);
-        var language=value[3..lineEnd].Trim();
-        return language.Length==0||language.Equals("json",StringComparison.OrdinalIgnoreCase);
+        if(TryGetJsonFenceBodyStart(value,out _))return true;
+        return "```json".StartsWith(value,StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryGetStructuredPayload(string value, out string payload)
@@ -138,19 +136,7 @@ public static class StructuredResponseParser
         if (!trimmed.StartsWith("```", StringComparison.Ordinal))
             return false;
 
-        var lineEnd = trimmed.IndexOfAny(['\r', '\n'], 3);
-        if (lineEnd < 0)
-            return false;
-
-        var language = trimmed[3..lineEnd].Trim();
-        if (language.Length > 0 && !language.Equals("json", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var bodyStart = lineEnd;
-        if (trimmed[bodyStart] == '\r')
-            bodyStart++;
-        if (bodyStart < trimmed.Length && trimmed[bodyStart] == '\n')
-            bodyStart++;
+        if(!TryGetJsonFenceBodyStart(trimmed,out var bodyStart))return false;
 
         var body = trimmed[bodyStart..].Trim();
         if (body.EndsWith("```", StringComparison.Ordinal))
@@ -166,14 +152,25 @@ public static class StructuredResponseParser
     {
         var trimmed=value.TrimStart();
         if(!trimmed.StartsWith("```",StringComparison.Ordinal))return trimmed;
-        var lineEnd=trimmed.IndexOfAny(['\r','\n'],3);
-        if(lineEnd<0)return string.Empty;
-        var language=trimmed[3..lineEnd].Trim();
-        if(language.Length>0&&!language.Equals("json",StringComparison.OrdinalIgnoreCase))return string.Empty;
-        var bodyStart=lineEnd;
-        if(trimmed[bodyStart]=='\r')bodyStart++;
-        if(bodyStart<trimmed.Length&&trimmed[bodyStart]=='\n')bodyStart++;
+        if(!TryGetJsonFenceBodyStart(trimmed,out var bodyStart))return string.Empty;
         return trimmed[bodyStart..].TrimStart();
+    }
+
+    private static bool TryGetJsonFenceBodyStart(string value,out int bodyStart)
+    {
+        bodyStart=0;
+        if(!value.StartsWith("```",StringComparison.Ordinal)||value.Length<=3)return false;
+        var index=3;
+        if(value.AsSpan(index).StartsWith("json",StringComparison.OrdinalIgnoreCase))
+        {
+            index+=4;
+            if(index<value.Length&&!char.IsWhiteSpace(value[index])&&value[index]!='{')return false;
+        }
+        else if(value[index]!='{'&&!char.IsWhiteSpace(value[index]))return false;
+        while(index<value.Length&&char.IsWhiteSpace(value[index]))index++;
+        if(index>=value.Length||value[index]!='{')return false;
+        bodyStart=index;
+        return true;
     }
 
     private static bool TryExtractAnswerFromTruncatedStructuredResponse(string json, out string answer)

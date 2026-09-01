@@ -43,13 +43,17 @@ public partial class CaptureOverlayWindow : Window
     private readonly HashSet<SelectionItem> _references=[];
     private readonly System.Text.StringBuilder _reasoningBuffer=new();
     private List<SelectionItem> _lastSentSelections=[];
-    private readonly List<AiMessage> _history=[new("system","分析屏幕附件时只返回 JSON：{answer:string,annotations:[{regionIndex,x,y,width,height,text}]}。regionIndex 是从 0 开始的完整附件顺序；坐标是对应图片内 0 到 1 的归一化值。只能给图片附件返回空间批注，视频附件不得返回批注；不适合批注时 annotations 为空。")];
+    private readonly List<AiMessage> _history=[new("system","分析屏幕附件时只能返回一个 JSON 根对象：{answer:string,annotations:[{regionIndex,x,y,width,height,text}]}，禁止添加 Markdown 代码围栏、json 标记或 JSON 之外的说明。regionIndex 是从 0 开始的完整附件顺序；坐标是对应图片内 0 到 1 的归一化值。只能给图片附件返回空间批注，视频附件不得返回批注。当用户要求标出、框选或指出关键部分且图片中存在可定位对象时，必须为相关图片返回 1 至 6 条有效批注；确实没有可定位目标时 annotations 才能为空。")];
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
     private bool _selecting,_moving,_forceNewSelection,_promptBarHidden,_answerExpanded,_reasoningExpanded,_recordingMode,_drawingMode,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
-    private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingStopWatchdog;
+    private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingStopWatchdog,_readAloudRequest;
     private CancellationTokenSource? _reasoningRenderRequest;
+    private TaskCompletionSource<AiInteractionResponse>? _activeInteraction;
+    private AiInteractionResponse? _activeInteractionFallback;
+    private CancellationTokenRegistration _interactionCancellation;
+    private PasswordBox? _activeSensitiveInput;
     private RecordingSession? _recordingSession;
     private SelectionItem? _recordingItem;
     private bool _recordingItemWasReferenced;
@@ -226,7 +230,7 @@ public partial class CaptureOverlayWindow : Window
             try{_overlaySource.RemoveHook(OverlayWindowMessage);}catch(Exception ex){new PrivacyLogger().Error("OverlayHookRemove",ex);}
             _overlaySource=null;
         }
-        TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);CancelRecordingStopWatchdog();_recordingTimer.Stop();
+        ResolveOverlayInteractionWithFallback();StopOverlayReadAloud();TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);CancelRecordingStopWatchdog();_recordingTimer.Stop();
         _reasoningRenderRequest=null;_reasoningRenderScheduled=false;ReasoningPulse.BeginAnimation(OpacityProperty,null);
         var session=_recordingSession;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;
         if(session is not null)
@@ -575,7 +579,16 @@ public partial class CaptureOverlayWindow : Window
 
     private void Select(int index){_activeIndex=index;for(var i=0;i<_selections.Count;i++)UpdateSelection(_selections[i]);}
     private int FindSelection(Point p){for(var i=_selections.Count-1;i>=0;i--)if(!_selections[i].IsImplicit&&_selections[i].Bounds.Contains(p))return i;return -1;}
-    private bool PointerOverSelection(Point p)=>_selections.Any(x=>!x.IsImplicit&&x.Bounds.Contains(p));
+    private bool PointerOverSelection(Point p)
+    {
+        var promptLeft=Canvas.GetLeft(PromptBar);var promptTop=Canvas.GetTop(PromptBar);
+        var promptWidth=PromptBar.ActualWidth>0?PromptBar.ActualWidth:PromptBar.DesiredSize.Width;
+        var promptHeight=PromptBar.ActualHeight>0?PromptBar.ActualHeight:PromptBar.DesiredSize.Height;
+        var promptBounds=double.IsFinite(promptLeft)&&double.IsFinite(promptTop)&&promptWidth>0&&promptHeight>0
+            ?new Rect(promptLeft,promptTop,promptWidth,promptHeight)
+            :Rect.Empty;
+        return CaptureOverlayPolicy.ShouldAutoHidePromptBar(p,promptBounds,PromptMonitorBounds(),_selections.Where(item=>!item.IsImplicit).Select(item=>item.Bounds));
+    }
     private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
@@ -630,7 +643,10 @@ public partial class CaptureOverlayWindow : Window
             var bounds=CaptureOverlayPolicy.GetPromptBarBounds(monitor,desiredHeight);
             if(bounds.IsEmpty)return;
 
-            ResponseScroll.MaxHeight=CaptureOverlayPolicy.GetPromptResponseMaxHeight(bounds.Height);
+            // Keep the response budget tied to the monitor's usable height.
+            // Feeding the current desired card height back as the next cap
+            // makes every measure pass progressively shrink the answer.
+            ResponseScroll.MaxHeight=CaptureOverlayPolicy.GetPromptResponseMaxHeight(PromptBar.MaxHeight);
             PromptBar.MaxHeight=bounds.Height;
             PromptBar.InvalidateMeasure();
             PromptBar.Measure(new Size(bounds.Width,bounds.Height));
@@ -644,7 +660,7 @@ public partial class CaptureOverlayWindow : Window
             PromptBar.MaxHeight=bounds.Height;
             Canvas.SetLeft(PromptBar,bounds.Left);
             Canvas.SetTop(PromptBar,bounds.Top);
-            if(_answerExpanded)AnswerScroll.MaxHeight=Math.Min(170,Math.Max(120,monitor.Height*.22));
+            if(_answerExpanded)AnswerScroll.MaxHeight=CaptureOverlayPolicy.GetAnswerViewportHeight(monitor.Height);
             UpdatePromptBarHiddenTransform(false);
             QueuePromptBarLayoutClamp();
             if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();
@@ -718,8 +734,90 @@ public partial class CaptureOverlayWindow : Window
     {
         foreach(var item in _selections)item.AiAnnotations.Children.Clear();
         _lastSentSelections.Clear();
-        _answerExpanded=false;AnswerText.Text="";AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;_reasoningBuffer.Clear();_reasoningRenderScheduled=false;_reasoningRenderRequest=null;ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;_ = Dispatcher.BeginInvoke(PositionPromptBar);
+        ResolveOverlayInteractionWithFallback();AgentActivityItems.Children.Clear();AgentActivityCard.Visibility=AiInteractionCard.Visibility=Visibility.Collapsed;_answerExpanded=false;AnswerText.Text="";AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;_reasoningBuffer.Clear();_reasoningRenderScheduled=false;_reasoningRenderRequest=null;ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }
+
+    private void UpdateOverlayAgentActivity(AiAgentEvent update,CancellationTokenSource request)
+    {
+        if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;
+        ShowAnswer();
+        var key=$"{update.Kind}:{update.Title}";
+        var line=AgentActivityItems.Children.OfType<TextBlock>().FirstOrDefault(item=>string.Equals(item.Tag as string,key,StringComparison.Ordinal));
+        if(line is null)
+        {
+            line=new TextBlock{Tag=key,FontSize=11,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,2,0,2),Foreground=new SolidColorBrush(Color.FromRgb(91,105,128))};
+            AgentActivityItems.Children.Add(line);
+            while(AgentActivityItems.Children.Count>6)AgentActivityItems.Children.RemoveAt(0);
+        }
+        var state=update.IsError?"失败":update.Kind==AiAgentEventKind.ToolCompleted?"完成":"进行中";
+        var detail=string.IsNullOrWhiteSpace(update.Detail)?string.Empty:$" · {LimitAgentDetail(update.Detail)}";
+        line.Text=$"{update.Title} · {state}{detail}";
+        line.Foreground=new SolidColorBrush(update.IsError?Color.FromRgb(196,73,83):update.Kind==AiAgentEventKind.ToolCompleted?Color.FromRgb(34,157,105):Color.FromRgb(91,105,128));
+        AgentActivityCard.Visibility=Visibility.Visible;
+        _=Dispatcher.BeginInvoke(PositionPromptBar);
+    }
+
+    private Task<AiInteractionResponse> HandleOverlayInteractionAsync(AiInteractionRequest interaction,CancellationToken cancellationToken)
+    {
+        if(_closed||cancellationToken.IsCancellationRequested)return Task.FromCanceled<AiInteractionResponse>(cancellationToken);
+        return Dispatcher.CheckAccess()?BeginOverlayInteraction(interaction,cancellationToken):Dispatcher.InvokeAsync(()=>BeginOverlayInteraction(interaction,cancellationToken)).Task.Unwrap();
+    }
+
+    private Task<AiInteractionResponse> BeginOverlayInteraction(AiInteractionRequest interaction,CancellationToken cancellationToken)
+    {
+        ResolveOverlayInteractionWithFallback();
+        var fallback=interaction.Kind==AiInteractionKind.Approval?new AiInteractionResponse(string.Empty,"deny"):new AiInteractionResponse(string.Empty);
+        var completion=new TaskCompletionSource<AiInteractionResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _activeInteraction=completion;_activeInteractionFallback=fallback;AiInteractionContent.Children.Clear();
+        AiInteractionContent.Children.Add(new TextBlock{Text=interaction.Title,FontWeight=FontWeights.SemiBold,FontSize=13,Foreground=new SolidColorBrush(Color.FromRgb(65,76,95))});
+        if(!string.IsNullOrWhiteSpace(interaction.Message))AiInteractionContent.Children.Add(new TextBlock{Text=interaction.Message,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,5,0,8),Foreground=new SolidColorBrush(Color.FromRgb(87,99,119))});
+        if(interaction.Choices.Count>0)AddOverlayChoiceInteraction(interaction);else AddOverlayTextInteraction(interaction);
+        ShowAnswer();AiInteractionCard.Visibility=Visibility.Visible;PromptStatus.Text="Hermes 等待你的确认";_interactionCancellation=cancellationToken.Register(()=>Dispatcher.BeginInvoke(new Action(ResolveOverlayInteractionWithFallback)));_=Dispatcher.BeginInvoke(PositionPromptBar);
+        return completion.Task;
+    }
+
+    private void AddOverlayChoiceInteraction(AiInteractionRequest interaction)
+    {
+        if(interaction.MultiSelect)
+        {
+            var checks=interaction.Choices.Select(choice=>new CheckBox{Content=choice,Tag=choice,Margin=new Thickness(0,2,0,2)}).ToList();
+            foreach(var check in checks)AiInteractionContent.Children.Add(check);
+            var actions=OverlayInteractionActions();
+            actions.Children.Add(OverlayInteractionButton("确认",true,()=>CompleteOverlayInteraction(new AiInteractionResponse(string.Empty,Values:checks.Where(check=>check.IsChecked==true).Select(check=>(string)check.Tag).ToArray()))));
+            actions.Children.Add(OverlayInteractionButton("取消",false,ResolveOverlayInteractionWithFallback));AiInteractionContent.Children.Add(actions);return;
+        }
+        var row=OverlayInteractionActions();
+        foreach(var choice in interaction.Choices){var captured=choice;row.Children.Add(OverlayInteractionButton(InteractionChoiceLabel(captured),!captured.Equals("deny",StringComparison.OrdinalIgnoreCase),()=>CompleteOverlayInteraction(new AiInteractionResponse(captured,captured))));}
+        AiInteractionContent.Children.Add(row);
+    }
+
+    private void AddOverlayTextInteraction(AiInteractionRequest interaction)
+    {
+        Control input;
+        if(interaction.IsSensitive){var password=new PasswordBox{MinHeight=34,Padding=new Thickness(8,5,8,5)};_activeSensitiveInput=password;input=password;}
+        else input=new TextBox{MinHeight=34,Padding=new Thickness(8,5,8,5),TextWrapping=TextWrapping.Wrap};
+        AiInteractionContent.Children.Add(input);var actions=OverlayInteractionActions();
+        actions.Children.Add(OverlayInteractionButton("提交",true,()=>CompleteOverlayInteraction(new AiInteractionResponse(input is PasswordBox password?password.Password:((TextBox)input).Text))));
+        actions.Children.Add(OverlayInteractionButton("取消",false,ResolveOverlayInteractionWithFallback));AiInteractionContent.Children.Add(actions);_=Dispatcher.BeginInvoke(new Action(()=>Keyboard.Focus(input)));
+    }
+
+    private static StackPanel OverlayInteractionActions()=>new(){Orientation=Orientation.Horizontal,Margin=new Thickness(0,8,0,0)};
+    private static Button OverlayInteractionButton(string text,bool primary,Action action){var button=new Button{Content=text,MinWidth=70,MinHeight=30,Margin=new Thickness(0,0,7,0),Padding=new Thickness(12,4,12,4)};if(primary){button.Background=new SolidColorBrush(Color.FromRgb(74,111,222));button.Foreground=Brushes.White;}button.Click+=(_,_)=>action();return button;}
+    private static string InteractionChoiceLabel(string choice)=>choice.ToLowerInvariant() switch{"once"=>"允许一次","session"=>"本次会话允许","always"=>"始终允许","deny"=>"拒绝",_=>choice};
+
+    private void CompleteOverlayInteraction(AiInteractionResponse response)
+    {
+        var completion=_activeInteraction;if(completion is null)return;_activeInteraction=null;_activeInteractionFallback=null;_activeSensitiveInput?.Clear();_activeSensitiveInput=null;_interactionCancellation.Dispose();AiInteractionContent.Children.Clear();AiInteractionCard.Visibility=Visibility.Collapsed;PromptStatus.Text="Hermes 已收到选择，继续处理中…";completion.TrySetResult(response);_=Dispatcher.BeginInvoke(PositionPromptBar);
+    }
+    private void ResolveOverlayInteractionWithFallback(){if(_activeInteraction is not null)CompleteOverlayInteraction(_activeInteractionFallback??new AiInteractionResponse(string.Empty));}
+    private static string LimitAgentDetail(string value){var normalized=value?.Trim()??string.Empty;return normalized.Length<=600?normalized:normalized[..600]+"…";}
+
+    private async Task BeginOverlayReadAloudAsync(string text)
+    {
+        StopOverlayReadAloud();var request=new CancellationTokenSource();_readAloudRequest=request;
+        try{await _host.ReadHermesResponseAloudAsync(text,request.Token);}catch(OperationCanceledException)when(request.IsCancellationRequested){}catch(Exception ex){if(!_closed&&ReferenceEquals(_readAloudRequest,request))PromptStatus.Text=$"自动朗读失败：{ex.Message}";}finally{request.Dispose();if(ReferenceEquals(_readAloudRequest,request))_readAloudRequest=null;}
+    }
+    private void StopOverlayReadAloud(){var request=_readAloudRequest;_readAloudRequest=null;try{request?.Cancel();}catch(ObjectDisposedException){}_host.StopHermesReadAloud();}
     private void AppendReasoning(string value)
     {
         const int bufferLimit=ReasoningDisplayLimit*2;if(value.Length>=bufferLimit){_reasoningBuffer.Clear();_reasoningBuffer.Append(value.AsSpan(value.Length-bufferLimit));return;}var overflow=_reasoningBuffer.Length+value.Length-bufferLimit;if(overflow>0)_reasoningBuffer.Remove(0,overflow);_reasoningBuffer.Append(value);
@@ -792,7 +890,7 @@ public partial class CaptureOverlayWindow : Window
 
     private async Task SendAsync(bool useDefaultPrompt)
     {
-        if(_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;var provider=new AiProviderFactory().Create(_host.Settings,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";ShowSettingsFromOverlay();return;}
+        if(_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;StopOverlayReadAloud();var usingHermes=_host.Settings.HermesEnabled;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";ShowSettingsFromOverlay();return;}
         EnsureScreenSelection();var targets=CaptureOverlayPolicy.SelectSendTargets(_selections,item=>item.IsImplicit,_references.Contains);var hasVideo=targets.Any(x=>x.VideoPath is not null);var hasImage=targets.Any(x=>x.VideoPath is null);if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
         var targetCount=targets.Count;if(targetCount>OpenAiCompatibleProvider.AttachmentCountLimit){PromptStatus.Text=$"单次最多发送 {OpenAiCompatibleProvider.AttachmentCountLimit} 个附件，请移除部分引用后重试";return;}var sentDraft=QuickPrompt.Text;var prompt=sentDraft.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=hasVideo?"按时间顺序说明引用视频中发生了什么，包括主体、动作和画面变化。":targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
         var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();PromptStatus.Text=$"正在准备 {targetCount} 个引用区域…按 Esc 可取消";var streamOpen=true;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;
@@ -801,8 +899,8 @@ public partial class CaptureOverlayWindow : Window
             foreach(var video in targets.Select(item=>item.VideoPath).Where(path=>path is not null))attachmentLeases.Add(TempMediaRegistry.Shared.AcquireExistingFile(video!));
             attachments=await BuildAttachmentsAsync(targets,provider.Capabilities,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";
             var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;ShowAnswer();AnswerText.Text=preview;AnswerText.CaretIndex=AnswerText.Text.Length;AnswerText.ScrollToEnd();PromptStatus.Text="正在整理回答…";}));}}):null;
-            var result=await provider.SendAsync(new AiRequest{Prompt=prompt,History=[..ConversationContextPolicy.CreateBoundedHistory(_history)],Attachments=attachments,StreamingProgress=progress,MaxOutputTokens=4096},request.Token);streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){ShowAnswer();if(!string.IsNullOrWhiteSpace(result.Reasoning))ReasoningText.Text=LimitReasoning(result.Reasoning.Trim());CloseReasoning("思考过程 · 未生成正文",Color.FromRgb(213,91,104));AnswerText.Text=emptyAnswer;PromptStatus.Text=emptyAnswer;return;}ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Text=result.Answer;if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var renderedAnnotationCount=RenderAnnotations(result.Annotations);
-            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(configured?.Name??provider.Id,configured?.Model??"",prompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));ConversationContextPolicy.TrimInPlace(_history);PromptStatus.Text=hasVideo?"视频理解完成 · 可继续提问":renderedAnnotationCount>0?$"已在 {_lastSentSelections.Count(item=>item.VideoPath is null)} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";
+            var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(prompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){ShowAnswer();if(!string.IsNullOrWhiteSpace(result.Reasoning))ReasoningText.Text=LimitReasoning(result.Reasoning.Trim());CloseReasoning("思考过程 · 未生成正文",Color.FromRgb(213,91,104));AnswerText.Text=emptyAnswer;PromptStatus.Text=emptyAnswer;return;}ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Text=result.Answer;if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var renderedAnnotationCount=RenderAnnotations(result.Annotations);
+            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);var historyProvider=usingHermes?"本机 Hermes":configured?.Name??provider.Id;var historyModel=usingHermes?_host.Settings.HermesModel:configured?.Model??string.Empty;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(historyProvider,historyModel,prompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));ConversationContextPolicy.TrimInPlace(_history);PromptStatus.Text=hasVideo?"视频理解完成 · 可继续提问":renderedAnnotationCount>0?$"已在 {_lastSentSelections.Count(item=>item.VideoPath is null)} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";if(usingHermes&&_host.Settings.HermesAutoReadAloud)_=BeginOverlayReadAloudAsync(result.Answer);
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_request,request)){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}}
         catch(Exception ex){if(!_closed&&ReferenceEquals(_request,request)){if(request.IsCancellationRequested){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}else{ShowAnswer();CloseReasoning("思考过程 · 已中止",Color.FromRgb(213,91,104));AnswerText.Text="请求失败";PromptStatus.Text=ex.Message;}}}
@@ -1210,6 +1308,7 @@ public partial class CaptureOverlayWindow : Window
         {
             if(_recordingMode)StopRecording(s,new());
             else if(_drawingMode)ExitDrawingMode();
+            else if(_activeInteraction is not null){ResolveOverlayInteractionWithFallback();PromptStatus.Text="已取消本次 Hermes 交互";}
             else if(_overlayRequest is not null){if(!_overlayRequest.IsCancellationRequested)_overlayRequest.Cancel();PromptStatus.Text="正在取消当前操作…";}
             else if(_request is not null){if(!_request.IsCancellationRequested)_request.Cancel();PromptStatus.Text="正在取消 AI 分析…";}
             else

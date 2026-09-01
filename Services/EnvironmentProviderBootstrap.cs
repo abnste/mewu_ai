@@ -164,6 +164,11 @@ public sealed class EnvironmentProviderBootstrap
             EnableVoiceInput=source.EnableVoiceInput,
             AutomaticallyStartListening=source.AutomaticallyStartListening,
             VoiceLanguage=source.VoiceLanguage,
+            HermesEnabled=source.HermesEnabled,
+            HermesProvider=source.HermesProvider,
+            HermesModel=source.HermesModel,
+            HermesReasoningEffort=source.HermesReasoningEffort,
+            HermesAutoReadAloud=source.HermesAutoReadAloud,
             DefaultProviderId=source.DefaultProviderId,
             Providers=(source.Providers??[]).Where(provider=>provider is not null).Select(CloneProvider).ToList(),
             HasSensitiveCredentialErrors=source.HasSensitiveCredentialErrors
