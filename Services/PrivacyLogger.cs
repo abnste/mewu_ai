@@ -34,6 +34,15 @@ public sealed class PrivacyLogger
         }
         catch{}
     }
+    public void Info(string component,string message)
+    {
+        try
+        {
+            var line=$"{DateTimeOffset.Now:O} [{Sanitize(component,MaxComponentCharacters)}] {Sanitize(message,MaxMessageCharacters)}{Environment.NewLine}";
+            lock(Gate){File.AppendAllText(CurrentPath(),line);Rotate();}
+        }
+        catch{}
+    }
     private string CurrentPath(){var stem=$"mewu-{DateTime.UtcNow:yyyyMMdd}";for(var i=0;i<100;i++){var path=Path.Combine(_directory,$"{stem}-{i:D2}.log");if(!File.Exists(path)||new FileInfo(path).Length<MaxFileBytes)return path;}return Path.Combine(_directory,$"{stem}-overflow.log");}
     private static string Sanitize(string? value,int maxLength=MaxMessageCharacters)
     {

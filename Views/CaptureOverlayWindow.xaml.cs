@@ -1071,6 +1071,7 @@ public partial class CaptureOverlayWindow : Window
         var before=CaptureOverlaySnapshot();EnsureScreenSelection();var targets=CaptureOverlayPolicy.SelectSendTargets(_selections,item=>item.IsImplicit,_references.Contains);var hasVideo=targets.Any(x=>x.VideoPath is not null);var hasImage=targets.Any(x=>x.VideoPath is null);if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
         var targetCount=targets.Count;if(targetCount>OpenAiCompatibleProvider.AttachmentCountLimit){PromptStatus.Text=$"单次最多发送 {OpenAiCompatibleProvider.AttachmentCountLimit} 个附件，请移除部分引用后重试";return;}var sentDraft=QuickPrompt.Text;var prompt=sentDraft.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=hasVideo?"按时间顺序说明引用视频中发生了什么，包括主体、动作和画面变化。":targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
         var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();PromptStatus.Text=$"正在准备 {targetCount} 个引用区域…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;
+        CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频理解请求":"屏幕助手：图片理解请求");
         try
         {
             foreach(var video in targets.Select(item=>item.VideoPath).Where(path=>path is not null))attachmentLeases.Add(TempMediaRegistry.Shared.AcquireExistingFile(video!));
@@ -1081,7 +1082,7 @@ public partial class CaptureOverlayWindow : Window
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_request,request)){ApplyOverlaySnapshot(before);PromptStatus.Text="已取消";}}
         catch(Exception ex){new PrivacyLogger().Error(requestStage=="render"?"ScreenAiRender":"ScreenAiRequest",ex);if(!_closed&&ReferenceEquals(_request,request)){ApplyOverlaySnapshot(before);PromptStatus.Text=request.IsCancellationRequested?"已取消":$"请求失败：{ex.Message}";}}
-        finally{streamOpen=false;if(attachments is not null)AiImageEncodingService.ClearAttachmentBuffers(attachments);foreach(var lease in attachmentLeases)lease.Dispose();var ownsRequest=ReferenceEquals(_request,request);if(CaptureOverlayPolicy.ShouldFinalizeCanceledAiRequest(_request,request,_closed)){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}request.Dispose();if(ownsRequest){_request=null;if(!_closed){SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}}
+        finally{streamOpen=false;if(attachments is not null)AiImageEncodingService.ClearAttachmentBuffers(attachments);foreach(var lease in attachmentLeases)lease.Dispose();var ownsRequest=ReferenceEquals(_request,request);if(CaptureOverlayPolicy.ShouldFinalizeCanceledAiRequest(_request,request,_closed)){CloseReasoning("思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text="已取消";}request.Dispose();if(ownsRequest){_request=null;if(!_closed){SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}if(!_closed)CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");}
     }
 
     private int RenderAnnotations(IReadOnlyList<AiAnnotation> notes)
@@ -1112,6 +1113,7 @@ public partial class CaptureOverlayWindow : Window
 
     private async Task PlayVideoAnnotationsAsync(SelectionItem item,AiAnnotation primary)
     {
+        CrashDiagnosticsService.MarkOperation("屏幕助手：视频时间轴标注播放");
         CancelVideoAnnotationPlayback(item);
         var playback=new CancellationTokenSource();item.VideoAnnotationPlayback=playback;
         Action<TimeSpan>? frameHandler=null;Action? endedHandler=null;
@@ -1145,6 +1147,7 @@ public partial class CaptureOverlayWindow : Window
             if(endedHandler is not null&&item.VideoPreview is { } endedPreview)endedPreview.Ended-=endedHandler;
             if(ReferenceEquals(item.VideoAnnotationPlayback,playback))item.VideoAnnotationPlayback=null;
             playback.Dispose();
+            if(!_closed)CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");
         }
     }
 
@@ -1424,6 +1427,7 @@ public partial class CaptureOverlayWindow : Window
         if(_recordingSession is not null||Active is not {IsImplicit:false,VideoPath:null} item)return;
         try
         {
+            CrashDiagnosticsService.MarkOperation("屏幕助手：开始区域录屏");
             var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var session=new RecordingSession(_host.Settings,region);_recordingSession=session;_recordingItem=item;_recordingItemWasReferenced=_references.Contains(item);session.Completed+=path=>{if(!Dispatcher.HasShutdownStarted)Dispatcher.BeginInvoke(new Action(()=>CompleteRecording(session,item,path)));};session.Failed+=error=>{if(!Dispatcher.HasShutdownStarted)Dispatcher.BeginInvoke(new Action(()=>FailRecording(session,item,error)));};EnterRecordingMode(item);session.Start();_recordingTimer.Start();PromptStatus.Text="正在录制当前区域";
         }
         catch(Exception ex)
@@ -1458,7 +1462,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void StopRecording(object s,RoutedEventArgs e)
     {
-        if(_recordingSession is not { } session||_recordingItem is not { } item||_recordingStopping)return;_recordingStopping=true;_recordingTimer.Stop();RecordingTime.Text="处理中…";try{session.Stop();StartRecordingStopWatchdog(session,item);}catch(Exception ex){FailRecording(session,item,ex.Message);}
+        if(_recordingSession is not { } session||_recordingItem is not { } item||_recordingStopping)return;CrashDiagnosticsService.MarkOperation("屏幕助手：停止并封装区域录屏");_recordingStopping=true;_recordingTimer.Stop();RecordingTime.Text="处理中…";try{session.Stop();StartRecordingStopWatchdog(session,item);}catch(Exception ex){FailRecording(session,item,ex.Message);}
     }
     private void StartRecordingStopWatchdog(RecordingSession session,SelectionItem item)
     {
@@ -1496,6 +1500,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void StartVideoPreview(SelectionItem item)
     {
+        CrashDiagnosticsService.MarkOperation("屏幕助手：启动录屏原位预览");
         item.Image.Visibility=Visibility.Collapsed;
         item.Video.Visibility=Visibility.Visible;
         if(item.VideoPath is not { } path)return;
@@ -1528,7 +1533,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void FailRecording(RecordingSession session,SelectionItem item,string error)
     {
-        if(!IsCurrentRecording(session,item))return;CancelRecordingStopWatchdog();_recordingTimer.Stop();var wasReferenced=_recordingItemWasReferenced;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;try{session.Dispose();}catch(Exception ex){new PrivacyLogger().Error("RecordingDispose",ex);}var stillPresent=_selections.Contains(item);if(stillPresent)CaptureOverlayPolicy.RestoreRecordingReference(_references,item,wasReferenced);else _references.Remove(item);ResetFailedVideoPreview(item);if(stillPresent)ExitRecordingMode(item);PromptStatus.Text=$"录屏失败：{error}";
+        if(!IsCurrentRecording(session,item))return;CancelRecordingStopWatchdog();_recordingTimer.Stop();var wasReferenced=_recordingItemWasReferenced;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;try{session.Dispose();}catch(Exception ex){new PrivacyLogger().Error("RecordingDispose",ex);}var stillPresent=_selections.Contains(item);if(stillPresent)CaptureOverlayPolicy.RestoreRecordingReference(_references,item,wasReferenced);else _references.Remove(item);ResetFailedVideoPreview(item);if(stillPresent)ExitRecordingMode(item);PromptStatus.Text=$"录屏失败：{error}";CrashDiagnosticsService.MarkOperation("屏幕助手：录屏失败后等待操作");
     }
     private static void ResetFailedVideoPreview(SelectionItem item)
     {

@@ -28,10 +28,12 @@ public sealed class AppHost : IDisposable
     public bool Start()
     {
         if(!_single.IsPrimary){_single.SignalPrimary();return false;}
+        CrashDiagnosticsService.InitializePrimary();
+        CrashDiagnosticsService.MarkOperation("加载设置");
         _settingsService=new();Settings=_settingsService.Load();
         _main=new MainWindow(this); _app.MainWindow=_main;
         _hotkey=new GlobalHotkeyService(); _hotkey.Pressed+=BeginCapture; var hotkeyOk=_hotkey.Register(Settings.CaptureHotkey);
-        var retention=TimeSpan.FromDays(Math.Clamp(Settings.TempCleanupDays,1,30));new TempFileService().Cleanup(retention);ClipboardService.CleanupStagedFiles(retention);BuildTray();if(!hotkeyOk)Notify("快捷键注册失败，可能已被其他应用占用");_activationGate.MarkStarted(QueueMainWindowActivation);return true;
+        var retention=TimeSpan.FromDays(Math.Clamp(Settings.TempCleanupDays,1,30));new TempFileService().Cleanup(retention);ClipboardService.CleanupStagedFiles(retention);BuildTray();if(!hotkeyOk)Notify("快捷键注册失败，可能已被其他应用占用");_activationGate.MarkStarted(QueueMainWindowActivation);CrashDiagnosticsService.MarkOperation("空闲");return true;
     }
     private void QueueMainWindowActivation()
     {
@@ -77,6 +79,7 @@ public sealed class AppHost : IDisposable
     private async Task BeginCaptureAsync()
     {
         if(Interlocked.CompareExchange(ref _captureActive,1,0)!=0)return;
+        CrashDiagnosticsService.MarkOperation("启动屏幕助手");
         var token=_lifetime.Token;
         try
         {
@@ -93,13 +96,14 @@ public sealed class AppHost : IDisposable
             await _app.Dispatcher.InvokeAsync(()=>
             {
                 token.ThrowIfCancellationRequested();
-                var overlay=new CaptureOverlayWindow(this);overlay.Closed+=(_,_)=>Interlocked.Exchange(ref _captureActive,0);overlay.Show();overlay.Activate();
+                var overlay=new CaptureOverlayWindow(this);overlay.Closed+=(_,_)=>{Interlocked.Exchange(ref _captureActive,0);CrashDiagnosticsService.MarkOperation("空闲");};overlay.Show();overlay.Activate();
             });
         }
-        catch(OperationCanceledException) when(token.IsCancellationRequested){Interlocked.Exchange(ref _captureActive,0);}
+        catch(OperationCanceledException) when(token.IsCancellationRequested){Interlocked.Exchange(ref _captureActive,0);CrashDiagnosticsService.MarkOperation("空闲");}
         catch(Exception ex)
         {
             Interlocked.Exchange(ref _captureActive,0);new PrivacyLogger().Error("Capture",ex);
+            CrashDiagnosticsService.MarkOperation("截图启动失败后空闲");
             if(!token.IsCancellationRequested&&!IsExiting)try{Notify("无法开始截图，请重试");}catch{}
         }
     }
@@ -262,7 +266,7 @@ public sealed class AppHost : IDisposable
         return true;
     }
     public void Notify(string message){_tray?.ShowBalloonTip(1500,"喵呜AI",message,Forms.ToolTipIcon.Info);}
-    public void Exit() { IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
+    public void Exit() { CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
     public void Dispose()
     {
         if(Interlocked.Exchange(ref _disposed,1)!=0)return;
@@ -282,6 +286,7 @@ public sealed class AppHost : IDisposable
             if(!released&&cleanup.SkippedLeasedCount>0)new PrivacyLogger().Error("TempCleanupOnExit",new TimeoutException($"等待临时媒体释放超时，已保留 {cleanup.SkippedLeasedCount} 个仍在使用的文件"));
         }
         catch(Exception ex){try{new PrivacyLogger().Error("TempCleanupOnExit",ex);}catch{}}
+        CrashDiagnosticsService.MarkCleanExit();
         DisposeSafely(_single,"SingleInstanceDispose");
         _lifetime.Dispose();
     }

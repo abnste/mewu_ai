@@ -70,6 +70,7 @@ internal sealed class VideoPreviewSurface : IDisposable
 
     internal void Load(string path, bool autoplay)
     {
+        CrashDiagnosticsService.MarkOperation("视频预览：加载媒体");
         VerifyDispatcher();
         ObjectDisposedException.ThrowIf(_disposed, this);
         var normalized = Path.GetFullPath(path);
@@ -113,6 +114,7 @@ internal sealed class VideoPreviewSurface : IDisposable
 
     internal void Play()
     {
+        CrashDiagnosticsService.MarkOperation("视频预览：正在播放");
         VerifyDispatcher();
         ObjectDisposedException.ThrowIf(_disposed, this);
         var player = _player ?? throw new InvalidOperationException("视频尚未加载");
@@ -122,6 +124,7 @@ internal sealed class VideoPreviewSurface : IDisposable
 
     internal void Pause()
     {
+        CrashDiagnosticsService.MarkOperation("视频预览：暂停");
         VerifyDispatcher();
         if (_disposed) return;
         _player?.Pause();
@@ -130,6 +133,7 @@ internal sealed class VideoPreviewSurface : IDisposable
 
     internal async Task SeekAsync(TimeSpan position,bool pauseAfterSeek,CancellationToken cancellationToken=default)
     {
+        CrashDiagnosticsService.MarkOperation("视频预览：跳转时间轴");
         VerifyDispatcher();
         ObjectDisposedException.ThrowIf(_disposed,this);
         var player=_player??throw new InvalidOperationException("视频尚未加载");

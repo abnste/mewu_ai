@@ -578,6 +578,7 @@ public sealed class TextAiWindow : Window
         var previewScheduled=false;
         var reasoningScheduled=false;
         var requestStage="provider";
+        CrashDiagnosticsService.MarkOperation("文字问答：生成回答");
         try
         {
             var progress = provider.Capabilities.SupportsStreaming ? new Progress<AiStreamDelta>(delta =>
@@ -659,6 +660,7 @@ public sealed class TextAiWindow : Window
             if(ReferenceEquals(_request, request))ResolveActiveInteractionWithFallback();
             request.Dispose();
             if (ReferenceEquals(_request, request)) _request = null;
+            if(!_closed)CrashDiagnosticsService.MarkOperation("文字问答：等待操作");
         }
     }
 
