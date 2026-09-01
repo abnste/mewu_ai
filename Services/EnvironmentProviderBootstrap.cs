@@ -165,6 +165,7 @@ public sealed class EnvironmentProviderBootstrap
             AutomaticallyStartListening=source.AutomaticallyStartListening,
             VoiceLanguage=source.VoiceLanguage,
             HermesEnabled=source.HermesEnabled,
+            HermesProfile=source.HermesProfile,
             HermesProvider=source.HermesProvider,
             HermesModel=source.HermesModel,
             HermesReasoningEffort=source.HermesReasoningEffort,

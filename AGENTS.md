@@ -63,3 +63,4 @@
 - 自包含 Windows 发布包必须携带 Microsoft .NET Library License、.NET/WPF 第三方声明及所有 NuGet/模型许可证；发布审计同时排除 PDB、Linux 原生资产、设置、凭据、日志、截图、录屏和 QA 临时文件。
 - 临时媒体必须通过 `TempMediaRegistry` 的规范化路径租约管理；录制器、覆盖层视频对象、贴视频窗口和异步导出各自持有独立租约，清理只能删除未租用文件。主实例退出时应在仍持有单实例哨兵期间有界等待租约释放，超时后保留仍租用文件。
 - 视频文件放入剪贴板前必须先原子复制到 `%LOCALAPPDATA%\MewuAI\Clipboard` 的持久暂存目录；设置系统剪贴板失败时回滚本次副本，程序退出不得清空该目录，只能按保留天数清理过期副本。
+- 本机 Hermes 多 Agent/人格使用 TUI Gateway 的 `profiles.list` 与 profile-scoped RPC；设置页只能选择现有 Profile，不得编辑其 `SOUL.md` 或改变 Hermes 全局默认项。会话、模型、思考程度、附件与 TTS 必须统一绑定所选 Profile，不同 Profile 的持续会话不得混用。

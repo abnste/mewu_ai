@@ -118,11 +118,14 @@ public sealed class AppHost : IDisposable
 
     public HermesInstallation? DiscoverHermes()=>_hermesRuntime.Discover();
 
-    public Task<IReadOnlyList<HermesModelOption>> GetHermesModelOptionsAsync(bool refresh,CancellationToken cancellationToken)
-        =>_hermesRuntime.GetModelOptionsAsync(refresh,cancellationToken);
+    public Task<IReadOnlyList<HermesAgentOption>> GetHermesAgentOptionsAsync(CancellationToken cancellationToken)
+        =>_hermesRuntime.GetAgentOptionsAsync(cancellationToken);
 
-    public Task<bool> TestHermesConnectionAsync(CancellationToken cancellationToken)
-        =>_hermesRuntime.TestConnectionAsync(cancellationToken);
+    public Task<IReadOnlyList<HermesModelOption>> GetHermesModelOptionsAsync(string? profile,bool refresh,CancellationToken cancellationToken)
+        =>_hermesRuntime.GetModelOptionsAsync(profile,refresh,cancellationToken);
+
+    public Task<bool> TestHermesConnectionAsync(string? profile,CancellationToken cancellationToken)
+        =>_hermesRuntime.TestConnectionAsync(profile,cancellationToken);
 
     /// <summary>
     /// Selects the only permitted backend for a conversation. Once local
@@ -180,7 +183,7 @@ public sealed class AppHost : IDisposable
     {
         if(!Settings.HermesEnabled||!Settings.HermesAutoReadAloud||string.IsNullOrWhiteSpace(text))return Task.CompletedTask;
         if(Volatile.Read(ref _disposed)!=0||IsExiting)return Task.CompletedTask;
-        return _hermesReadAloud.SpeakAsync(_hermesRuntime,text,cancellationToken);
+        return _hermesReadAloud.SpeakAsync(_hermesRuntime,text,Settings.HermesProfile,cancellationToken);
     }
 
     public void StopHermesReadAloud()=>_hermesReadAloud.Stop();

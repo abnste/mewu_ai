@@ -11,6 +11,7 @@ public sealed class AppSettings
     public bool SaveConversationHistory { get; set; } public bool EnableVoiceInput { get; set; } public bool AutomaticallyStartListening { get; set; }
     public string VoiceLanguage { get; set; } = "system"; public string? DefaultProviderId { get; set; }
     public bool HermesEnabled { get; set; }
+    public string HermesProfile { get; set; } = "default";
     public string HermesProvider { get; set; } = string.Empty;
     public string HermesModel { get; set; } = string.Empty;
     public string HermesReasoningEffort { get; set; } = "medium";

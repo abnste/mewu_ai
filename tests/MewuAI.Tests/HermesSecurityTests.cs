@@ -140,6 +140,21 @@ public sealed class HermesSecurityTests
     }
 
     [Fact]
+    public void EachHermesAgentProfileKeepsAnIndependentPersistentConversation()
+    {
+        using var runtime=new HermesRuntimeService();
+        var settings=new AppSettings{HermesEnabled=true,HermesProfile="default",HermesReasoningEffort="medium"};
+        var first=runtime.GetConversationProvider(HermesConversationKind.Text,()=>settings);
+        settings.HermesProfile="coder";
+        var coder=runtime.GetConversationProvider(HermesConversationKind.Screen,()=>settings);
+        settings.HermesProfile="default";
+        var restored=runtime.GetConversationProvider(HermesConversationKind.Screen,()=>settings);
+
+        Assert.NotSame(first,coder);
+        Assert.Same(first,restored);
+    }
+
+    [Fact]
     public async Task HermesProviderClearsOwnedAttachmentEvenWhenAlreadyCancelled()
     {
         using var runtime=new HermesRuntimeService();
@@ -222,6 +237,7 @@ public sealed class HermesSecurityTests
         Assert.Contains("UseProxy=false",source,StringComparison.Ordinal);
         Assert.Contains("UseCookies=false",source,StringComparison.Ordinal);
         Assert.Contains("AllowAutoRedirect=false",source,StringComparison.Ordinal);
+        Assert.Contains("api/audio/speak?profile=",source,StringComparison.Ordinal);
     }
 
     [Fact]
@@ -255,6 +271,7 @@ public sealed class HermesSecurityTests
         var backendSource=ReadRepositoryFile("Services","HermesBackendService.cs");
 
         Assert.Contains("[\"source\"]=\"desktop\"",providerSource,StringComparison.Ordinal);
+        Assert.Contains("createParams[\"profile\"]=_profile",providerSource,StringComparison.Ordinal);
         Assert.Contains("Environment.Remove(\"HERMES_DESKTOP\")",backendSource,StringComparison.Ordinal);
     }
 

@@ -24,13 +24,13 @@ public sealed class ServicesTests
             var settings=new AppSettings
             {
                 Providers=[provider],DefaultProviderId=provider.Id,
-                HermesEnabled=true,HermesProvider="openrouter",HermesModel="anthropic/claude-sonnet-4.5",
+                HermesEnabled=true,HermesProfile="coder",HermesProvider="openrouter",HermesModel="anthropic/claude-sonnet-4.5",
                 HermesReasoningEffort="high",HermesAutoReadAloud=true
             };
 
             var service=new SettingsService(path);service.Save(settings);var loaded=service.Load();
 
-            Assert.True(loaded.HermesEnabled);Assert.Equal("openrouter",loaded.HermesProvider);
+            Assert.True(loaded.HermesEnabled);Assert.Equal("coder",loaded.HermesProfile);Assert.Equal("openrouter",loaded.HermesProvider);
             Assert.Equal("anthropic/claude-sonnet-4.5",loaded.HermesModel);Assert.Equal("high",loaded.HermesReasoningEffort);
             Assert.True(loaded.HermesAutoReadAloud);Assert.Empty(loaded.ConfigurationErrors);
         }
@@ -45,12 +45,12 @@ public sealed class ServicesTests
         {
             var path=Path.Combine(root,"settings.json");var provider=ValidProvider("legacy");
             var json=JsonSerializer.SerializeToNode(new AppSettings{Providers=[provider],DefaultProviderId=provider.Id})!.AsObject();
-            foreach(var name in new[]{"HermesEnabled","HermesProvider","HermesModel","HermesReasoningEffort","HermesAutoReadAloud"})json.Remove(name);
+            foreach(var name in new[]{"HermesEnabled","HermesProfile","HermesProvider","HermesModel","HermesReasoningEffort","HermesAutoReadAloud"})json.Remove(name);
             File.WriteAllText(path,json.ToJsonString());
 
             var loaded=new SettingsService(path).Load();
 
-            Assert.False(loaded.HermesEnabled);Assert.Equal(string.Empty,loaded.HermesProvider);
+            Assert.False(loaded.HermesEnabled);Assert.Equal("default",loaded.HermesProfile);Assert.Equal(string.Empty,loaded.HermesProvider);
             Assert.Equal(string.Empty,loaded.HermesModel);Assert.Equal("medium",loaded.HermesReasoningEffort);
             Assert.False(loaded.HermesAutoReadAloud);
         }
@@ -89,6 +89,22 @@ public sealed class ServicesTests
             var provider=ValidProvider("provider");
             var settings=new AppSettings{Providers=[provider],DefaultProviderId=provider.Id,HermesEnabled=true,HermesProvider=providerValue,HermesModel="model",HermesReasoningEffort="medium"};
             Assert.Throws<InvalidOperationException>(()=>new SettingsService(Path.Combine(root,"settings.json")).Save(settings));
+        }
+        finally{Directory.Delete(root,true);}
+    }
+    [Theory]
+    [InlineData("../escape")]
+    [InlineData("bad profile")]
+    [InlineData("--profile")]
+    public void SettingsServiceRejectsUnsafeHermesAgentProfiles(string profile)
+    {
+        var root=TestDirectory();
+        try
+        {
+            var provider=ValidProvider("provider");
+            var settings=new AppSettings{Providers=[provider],DefaultProviderId=provider.Id,HermesEnabled=true,HermesProfile=profile,HermesProvider="nous",HermesModel="model",HermesReasoningEffort="medium"};
+            var error=Assert.Throws<InvalidOperationException>(()=>new SettingsService(Path.Combine(root,"settings.json")).Save(settings));
+            Assert.Contains("Agent / 人格",error.Message,StringComparison.Ordinal);
         }
         finally{Directory.Delete(root,true);}
     }
@@ -494,7 +510,7 @@ public sealed class ServicesTests
             settingsService.Save(new AppSettings
             {
                 Providers=[provider],DefaultProviderId=provider.Id,
-                HermesEnabled=true,HermesProvider="nous",HermesModel="hermes-4",
+                HermesEnabled=true,HermesProfile="research",HermesProvider="nous",HermesModel="hermes-4",
                 HermesReasoningEffort="xhigh",HermesAutoReadAloud=true
             });
             var bootstrap=new EnvironmentProviderBootstrap(
@@ -506,7 +522,7 @@ public sealed class ServicesTests
             var result=await bootstrap.ImportAndCommitAsync(settingsService,false,TestContext.Current.CancellationToken);
             var loaded=settingsService.Load();
 
-            Assert.True(result.Changed);Assert.True(loaded.HermesEnabled);Assert.Equal("nous",loaded.HermesProvider);
+            Assert.True(result.Changed);Assert.True(loaded.HermesEnabled);Assert.Equal("research",loaded.HermesProfile);Assert.Equal("nous",loaded.HermesProvider);
             Assert.Equal("hermes-4",loaded.HermesModel);Assert.Equal("xhigh",loaded.HermesReasoningEffort);
             Assert.True(loaded.HermesAutoReadAloud);
         }

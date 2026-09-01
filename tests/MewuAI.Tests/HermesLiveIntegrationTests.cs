@@ -19,9 +19,13 @@ public sealed class HermesLiveIntegrationTests
         Assert.NotNull(installation);
         await using var runtime=new HermesRuntimeService();
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        var agents=await runtime.GetAgentOptionsAsync(timeout.Token);
+        var selected=agents.FirstOrDefault(agent=>agent.IsDefault)??agents.First();
 
-        var options=await runtime.GetModelOptionsAsync(false,timeout.Token);
+        var options=await runtime.GetModelOptionsAsync(selected.Name,false,timeout.Token);
 
+        Assert.NotEmpty(agents);
+        Assert.False(string.IsNullOrWhiteSpace(selected.Name));
         Assert.NotEmpty(options);
         Assert.Contains(options,option=>option.IsCurrent);
         Assert.All(options,option=>
@@ -37,11 +41,14 @@ public sealed class HermesLiveIntegrationTests
         if(!string.Equals(Environment.GetEnvironmentVariable("MEWU_HERMES_LIVE_PROMPT"),"1",StringComparison.Ordinal))return;
         await using var runtime=new HermesRuntimeService();
         using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var options=await runtime.GetModelOptionsAsync(false,timeout.Token);
+        var agents=await runtime.GetAgentOptionsAsync(timeout.Token);
+        var profile=(agents.FirstOrDefault(agent=>agent.IsDefault)??agents.First()).Name;
+        var options=await runtime.GetModelOptionsAsync(profile,false,timeout.Token);
         var current=options.First(option=>option.IsCurrent);
         var settings=new AppSettings
         {
             HermesEnabled=true,
+            HermesProfile=profile,
             HermesProvider=current.Provider,
             HermesModel=current.Model,
             HermesReasoningEffort=current.ReasoningEfforts.Contains("low",StringComparer.Ordinal)?"low":current.ReasoningEfforts[0]

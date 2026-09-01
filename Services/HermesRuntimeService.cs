@@ -17,7 +17,7 @@ public sealed class HermesRuntimeService : IDisposable, IAsyncDisposable
     private readonly HermesBackendService _backend;
     private readonly HermesJsonRpcClient _rpc;
     private readonly HttpClient _http;
-    private HermesAiProvider? _provider;
+    private readonly Dictionary<string,HermesAiProvider> _providers=new(StringComparer.Ordinal);
     private readonly object _providerGate=new();
     private int _disposed;
 
@@ -51,35 +51,51 @@ public sealed class HermesRuntimeService : IDisposable, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(settingsAccessor);
         lock(_providerGate)
         {
-            // Text and screen entry points deliberately share one Hermes
-            // session. The request itself carries the expected response shape,
-            // so switching surfaces or models never discards conversation state.
-            return _provider??=new HermesAiProvider(this,settingsAccessor);
+            // Text and screen entry points deliberately share one session per
+            // Agent profile. Switching away and back selects the same provider
+            // instance, preserving that Agent's isolated conversation state.
+            var profile=NormalizeProfile(settingsAccessor().HermesProfile);
+            if(!_providers.TryGetValue(profile,out var provider))
+                _providers[profile]=provider=new HermesAiProvider(this,profile,settingsAccessor);
+            return provider;
         }
     }
 
-    public async Task<IReadOnlyList<HermesModelOption>> GetModelOptionsAsync(bool refresh,CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<HermesAgentOption>> GetAgentOptionsAsync(CancellationToken cancellationToken)
     {
-        var result=await InvokeAsync("model.options",new{refresh},cancellationToken).ConfigureAwait(false);
+        var result=await InvokeAsync("profiles.list",new{include_sessions=false},cancellationToken).ConfigureAwait(false);
+        return ParseAgentOptions(result);
+    }
+
+    public async Task<IReadOnlyList<HermesModelOption>> GetModelOptionsAsync(string? profile,bool refresh,CancellationToken cancellationToken)
+    {
+        var result=await InvokeAsync("model.options",new{profile=NormalizeProfile(profile),refresh},cancellationToken).ConfigureAwait(false);
         return ParseModelOptions(result);
     }
 
-    public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken)
+    public Task<IReadOnlyList<HermesModelOption>> GetModelOptionsAsync(bool refresh,CancellationToken cancellationToken)
+        =>GetModelOptionsAsync("default",refresh,cancellationToken);
+
+    public async Task<bool> TestConnectionAsync(string? profile,CancellationToken cancellationToken)
     {
-        _=await GetModelOptionsAsync(false,cancellationToken).ConfigureAwait(false);
+        _=await GetAgentOptionsAsync(cancellationToken).ConfigureAwait(false);
+        _=await GetModelOptionsAsync(profile,false,cancellationToken).ConfigureAwait(false);
         return true;
     }
 
+    public Task<bool> TestConnectionAsync(CancellationToken cancellationToken)=>TestConnectionAsync("default",cancellationToken);
+
     internal Task<JsonElement> InvokeAsync(string method,object? parameters,CancellationToken cancellationToken)=>_rpc.InvokeAsync(method,parameters,cancellationToken);
 
-    public async Task<HermesSpeechAudio> SynthesizeSpeechAsync(string text,CancellationToken cancellationToken)
+    public async Task<HermesSpeechAudio> SynthesizeSpeechAsync(string text,string? profile,CancellationToken cancellationToken)
     {
         if(string.IsNullOrWhiteSpace(text))throw new ArgumentException("朗读内容不能为空。",nameof(text));
         if(text.Length>MaxTtsTextChars)throw new InvalidOperationException("朗读内容过长，请缩短后重试。");
         var connection=await _rpc.EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if(!connection.HttpBaseUri.IsLoopback||!string.Equals(connection.HttpBaseUri.Scheme,Uri.UriSchemeHttp,StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("拒绝向非本机 Hermes 地址发送朗读内容。");
-        using var request=new HttpRequestMessage(HttpMethod.Post,new Uri(connection.HttpBaseUri,"api/audio/speak"));
+        var scopedPath=$"api/audio/speak?profile={Uri.EscapeDataString(NormalizeProfile(profile))}";
+        using var request=new HttpRequestMessage(HttpMethod.Post,new Uri(connection.HttpBaseUri,scopedPath));
         request.Headers.TryAddWithoutValidation("X-Hermes-Session-Token",_backend.GetSessionToken());
         request.Content=JsonContent.Create(new{text});
         using var response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellationToken).ConfigureAwait(false);
@@ -87,6 +103,28 @@ public sealed class HermesRuntimeService : IDisposable, IAsyncDisposable
         if(response.Content.Headers.ContentLength is >MaxTtsResponseBytes)throw new InvalidDataException("Hermes 返回的朗读数据超过安全上限。");
         await using var stream=await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         return await DecodeSpeechResponseAsync(stream,cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<HermesSpeechAudio> SynthesizeSpeechAsync(string text,CancellationToken cancellationToken)
+        =>SynthesizeSpeechAsync(text,"default",cancellationToken);
+
+    internal static IReadOnlyList<HermesAgentOption> ParseAgentOptions(JsonElement result)
+    {
+        var options=new List<HermesAgentOption>();
+        if(result.ValueKind!=JsonValueKind.Object||!result.TryGetProperty("profiles",out var profiles)||profiles.ValueKind!=JsonValueKind.Array)return options;
+        foreach(var row in profiles.EnumerateArray())
+        {
+            if(row.ValueKind!=JsonValueKind.Object)continue;
+            var name=ReadString(row,"name").Trim();
+            if(!IsSafeProfile(name))continue;
+            var display=ReadString(row,"display_name").Trim();
+            var description=ReadString(row,"description").Trim();
+            options.Add(new HermesAgentOption(name,display,description,ReadString(row,"model"),ReadString(row,"provider"),ReadBoolean(row,"is_default")));
+        }
+        return options
+            .GroupBy(option=>option.Name,StringComparer.Ordinal).Select(group=>group.First())
+            .OrderByDescending(option=>option.IsDefault).ThenBy(option=>option.Label,StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
     }
 
     internal static IReadOnlyList<HermesModelOption> ParseModelOptions(JsonElement result)
@@ -167,18 +205,32 @@ public sealed class HermesRuntimeService : IDisposable, IAsyncDisposable
     }
 
     private static string ReadString(JsonElement element,string name)=>element.TryGetProperty(name,out var value)&&value.ValueKind==JsonValueKind.String?value.GetString()??string.Empty:string.Empty;
+    private static bool ReadBoolean(JsonElement element,string name)=>element.TryGetProperty(name,out var value)&&value.ValueKind==JsonValueKind.True;
+
+    internal static string NormalizeProfile(string? profile)
+    {
+        var value=string.IsNullOrWhiteSpace(profile)?"default":profile.Trim();
+        if(!IsSafeProfile(value))throw new InvalidOperationException("Hermes Agent / 人格名称无效，请从设置列表重新选择。");
+        return value;
+    }
+
+    private static bool IsSafeProfile(string value)=>
+        value.Length is >=1 and <=64&&
+        char.IsLetterOrDigit(value[0])&&
+        value.All(character=>char.IsLetterOrDigit(character)||character is '-' or '_' or '.')&&
+        !value.Contains("..",StringComparison.Ordinal);
 
     public void Dispose()
     {
         if(Interlocked.Exchange(ref _disposed,1)!=0)return;
-        lock(_providerGate){_provider?.Dispose();_provider=null;}
+        lock(_providerGate){foreach(var provider in _providers.Values)provider.Dispose();_providers.Clear();}
         _rpc.Dispose();_backend.Dispose();_http.Dispose();
     }
 
     public async ValueTask DisposeAsync()
     {
         if(Interlocked.Exchange(ref _disposed,1)!=0)return;
-        lock(_providerGate){_provider?.Dispose();_provider=null;}
+        lock(_providerGate){foreach(var provider in _providers.Values)provider.Dispose();_providers.Clear();}
         await _rpc.DisposeAsync().ConfigureAwait(false);
         await _backend.DisposeAsync().ConfigureAwait(false);
         _http.Dispose();

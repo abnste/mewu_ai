@@ -14,6 +14,7 @@ public sealed class HermesHostIntegrationTests
         var settings=new AppSettings
         {
             HermesEnabled=true,
+            HermesProfile="coder",
             HermesProvider="openrouter",
             HermesModel="test-model",
             HermesReasoningEffort="medium",
@@ -67,7 +68,7 @@ public sealed class HermesHostIntegrationTests
             HermesReasoningEffort="high"
         });
 
-        Assert.Equal("本机 Hermes · MiniMax-M3 · 高度思考",status);
+        Assert.Equal("本机 Hermes · default · MiniMax-M3 · 高度思考",status);
     }
 
     [Fact]

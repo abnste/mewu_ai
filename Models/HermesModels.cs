@@ -11,6 +11,18 @@ public sealed record HermesConnectionInfo(
     int Port,
     Uri HttpBaseUri);
 
+public sealed record HermesAgentOption(
+    string Name,
+    string DisplayName,
+    string Description,
+    string Model,
+    string Provider,
+    bool IsDefault=false)
+{
+    public string Label=>string.IsNullOrWhiteSpace(DisplayName)?Name:DisplayName;
+    public override string ToString()=>string.IsNullOrWhiteSpace(Description)?Label:$"{Label} · {Description}";
+}
+
 public sealed record HermesModelOption(
     string Provider,
     string Model,

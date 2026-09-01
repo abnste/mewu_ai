@@ -31,6 +31,7 @@ public sealed class HermesReadAloudService : IDisposable
     public async Task SpeakAsync(
         HermesRuntimeService runtime,
         string text,
+        string? profile,
         CancellationToken cancellationToken=default)
     {
         ArgumentNullException.ThrowIfNull(runtime);
@@ -46,7 +47,7 @@ public sealed class HermesReadAloudService : IDisposable
         try
         {
             StopPlaybackOnDispatcher();
-            using(var audio=await runtime.SynthesizeSpeechAsync(text,request.Token).ConfigureAwait(false))
+            using(var audio=await runtime.SynthesizeSpeechAsync(text,profile,request.Token).ConfigureAwait(false))
                 stagedFile=await _fileStore.StageAsync(audio,request.Token).ConfigureAwait(false);
             request.Token.ThrowIfCancellationRequested();
 
@@ -74,6 +75,9 @@ public sealed class HermesReadAloudService : IDisposable
             EndRequest(request,operation);
         }
     }
+
+    public Task SpeakAsync(HermesRuntimeService runtime,string text,CancellationToken cancellationToken=default)
+        =>SpeakAsync(runtime,text,"default",cancellationToken);
 
     public void Stop()
     {
