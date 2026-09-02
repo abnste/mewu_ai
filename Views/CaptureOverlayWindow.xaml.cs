@@ -1523,11 +1523,26 @@ public partial class CaptureOverlayWindow : Window
     }
     private void ExitDrawingMode()
     {
-        if(Active is { } item){Keyboard.ClearFocus();RemoveEmptyDrawingText(item);item.Markup.IsHitTestVisible=false;}_drawingMode=false;DrawingToolbar.Visibility=Visibility.Collapsed;Cursor=Cursors.Cross;SetPromptBarHidden(false);if(Active is not null){UpdateSelection(Active);ShowToolbar();}if(_drawingOperationChanged&&_drawingOperationBefore is { } before)RecordOverlayOperation(before,"原位标注");_drawingOperationBefore=null;_drawingOperationChanged=false;PromptStatus.Text="标注已保留在当前区域";
+        if(Active is { } item)
+        {
+            // InkCanvas can keep capture on an internal child rather than on
+            // the canvas itself. Release the whole capture subtree before it
+            // stops receiving input, otherwise the overlay can feel frozen.
+            if(item.Markup.IsMouseCaptureWithin)Mouse.Capture(null);
+            _drawPreview=null;
+            Keyboard.ClearFocus();
+            RemoveEmptyDrawingText(item);
+            item.Markup.IsHitTestVisible=false;
+        }
+        _drawingMode=false;DrawingToolbar.Visibility=Visibility.Collapsed;Cursor=Cursors.Cross;SetPromptBarHidden(false);if(Active is not null){UpdateSelection(Active);ShowToolbar();}if(_drawingOperationChanged&&_drawingOperationBefore is { } before)RecordOverlayOperation(before,"原位标注");_drawingOperationBefore=null;_drawingOperationChanged=false;PromptStatus.Text="标注已保留在当前区域";
+        // ClearFocus is needed to commit an active annotation TextBox, but it
+        // also leaves PreviewKeyDown without a route. Give focus back to the
+        // full-screen root so the next Esc can always close the overlay.
+        if(IsActive&&!_closed)Root.Focus();
     }
     private void FinishInterruptedDrawingMode()
     {
-        var canvas=Active?.Markup;_drawPreview=null;if(canvas?.IsMouseCaptured==true)canvas.ReleaseMouseCapture();ExitDrawingMode();
+        ExitDrawingMode();
     }
     private void SetDrawTool(DrawTool tool)
     {
