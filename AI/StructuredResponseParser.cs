@@ -41,10 +41,32 @@ public static class StructuredResponseParser
         }
         catch (JsonException)
         {
-            return TryExtractAnswerFromTruncatedStructuredResponse(json, out var answer)
+            return TryExtractAnswerFromTruncatedStructuredResponse(json, out var answer) || (expectStructuredResponse && TryExtractLooseRootAnswer(json, out answer))
                 ? new(answer, [], allReasoning)
                 : expectStructuredResponse?new(string.Empty,[],allReasoning):new(value, [], allReasoning);
         }
+    }
+
+    // Providers occasionally emit invalid JSON escapes (for example \@) in an
+    // otherwise useful root response. Keep the answer visible while discarding
+    // the malformed annotation tail; never render the protocol envelope.
+    private static bool TryExtractLooseRootAnswer(string json, out string answer)
+    {
+        answer=string.Empty;
+        var marker=json.IndexOf("\"answer\"",StringComparison.OrdinalIgnoreCase);
+        if(marker<0)return false;
+        var colon=json.IndexOf(':',marker+8);if(colon<0)return false;
+        var start=json.IndexOf('"',colon+1);if(start<0)return false;
+        var tail=json.IndexOf("\",\"annotations\"",start+1,StringComparison.OrdinalIgnoreCase);
+        if(tail<0)tail=json.IndexOf("\", \"annotations\"",start+1,StringComparison.OrdinalIgnoreCase);
+        if(tail<0)return false;
+        var raw=json[(start+1)..tail];var sb=new StringBuilder(raw.Length);
+        for(var i=0;i<raw.Length;i++)
+        {
+            if(raw[i]=='\\'&&i+1<raw.Length){var next=raw[++i];sb.Append(next switch{'n'=>'\n','r'=>'\r','t'=>'\t','"'=>'"','\\'=>'\\','/'=>'/',_=>next});}
+            else sb.Append(raw[i]);
+        }
+        answer=sb.ToString();return !string.IsNullOrWhiteSpace(answer);
     }
 
     private static bool LooksLikeBrokenStructuredPayload(string value)
