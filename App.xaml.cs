@@ -46,7 +46,11 @@ public partial class App : System.Windows.Application
         try
         {
             _host = new AppHost(this);
-            if (!_host.Start()) Shutdown();
+            if (!_host.Start()) { Shutdown(); return; }
+#if DEBUG
+            if (e.Args.Contains("--settings", StringComparer.OrdinalIgnoreCase))
+                _host.ShowSettings();
+#endif
         }
         catch(Exception ex)
         {

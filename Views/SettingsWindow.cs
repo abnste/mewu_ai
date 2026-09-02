@@ -27,7 +27,8 @@ public sealed class SettingsWindow : Window
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials = new();
-    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _hotkey = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
+    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
+    private readonly TextBox _hotkey = new();
     private readonly TextBox _providerName = new(), _baseUrl = new(), _customHeaders = new();
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
@@ -56,6 +57,8 @@ public sealed class SettingsWindow : Window
     private bool _loadingHermes;
     private bool _hermesBusy;
     private bool? _captureProtectionAvailable;
+    private System.Windows.Input.Key _capturedHotkeyKey = System.Windows.Input.Key.S;
+    private System.Windows.Input.ModifierKeys _capturedHotkeyModifiers = System.Windows.Input.ModifierKeys.Shift | System.Windows.Input.ModifierKeys.Alt;
 
     public SettingsWindow(AppHost host)
     {
@@ -114,8 +117,9 @@ public sealed class SettingsWindow : Window
         {
             Margin = new Thickness(16, 8, 16, 14),
             TabStripPlacement = Dock.Left,
-            Padding = new Thickness(0, 0, 0, 6),
-            MinWidth = 680
+            Padding = new Thickness(0, 0, 0, 14),
+            MinWidth = 680,
+            ClipToBounds = false
         };
         tabs.Items.Add(Tab("常规", General()));
         tabs.Items.Add(Tab("捕获", Capture()));
@@ -194,9 +198,10 @@ public sealed class SettingsWindow : Window
     private static TabItem Tab(string header, UIElement content) => new()
     {
         Header = header,
-        MinHeight = 38,
-        Margin = new Thickness(0, 1, 8, 1),
-        Padding = new Thickness(14, 8, 14, 8),
+        Height = 46,
+        MinHeight = 46,
+        Margin = new Thickness(0, 2, 8, 6),
+        Padding = new Thickness(14, 9, 14, 9),
         Content = new ScrollViewer
         {
             Content = content,
@@ -293,15 +298,54 @@ public sealed class SettingsWindow : Window
         modifiers.Children.Add(_shift);
         modifiers.Children.Add(_alt);
         panel.Children.Add(modifiers);
-        foreach (var key in Enumerable.Range('A', 26).Select(x => ((char)x).ToString())) _hotkey.Items.Add(key);
-        _hotkey.SelectedItem = _host.Settings.CaptureHotkey.Key.ToString();
+        _capturedHotkeyKey = _host.Settings.CaptureHotkey.Key;
+        _capturedHotkeyModifiers = _host.Settings.CaptureHotkey.Modifiers;
+        _hotkey.IsReadOnly = true;
+        _hotkey.MinHeight = 36;
+        _hotkey.Padding = new Thickness(10, 6, 10, 6);
+        _hotkey.VerticalContentAlignment = VerticalAlignment.Center;
+        _hotkey.Cursor = System.Windows.Input.Cursors.Hand;
+        _hotkey.Text = FormatHotkey(_capturedHotkeyKey, _capturedHotkeyModifiers);
+        _hotkey.PreviewKeyDown += CaptureHotkeyKeyDown;
+        _hotkey.GotKeyboardFocus += (_, _) => _hotkey.SelectAll();
         System.Windows.Automation.AutomationProperties.SetName(_hotkey, "全局截图快捷键按键");
         panel.Children.Add(_hotkey);
-        var restore = ActionButton("恢复默认 Ctrl + Shift + A");
-        restore.Click += (_, _) => { _ctrl.IsChecked = true; _shift.IsChecked = true; _alt.IsChecked = false; _hotkey.SelectedItem = "A"; };
+        panel.Children.Add(Text("点击上面的输入框，然后直接按下新的组合键（至少包含 Shift、Alt 或 Ctrl）。", true));
+        var restore = ActionButton("恢复默认 Shift + Alt + S");
+        restore.Click += (_, _) => SetCapturedHotkey(System.Windows.Input.Key.S, System.Windows.Input.ModifierKeys.Shift | System.Windows.Input.ModifierKeys.Alt);
         panel.Children.Add(restore);
         panel.Children.Add(Text("关闭主窗口不会退出；请使用托盘菜单退出。", true));
         return panel;
+    }
+
+    private static string FormatHotkey(System.Windows.Input.Key key, System.Windows.Input.ModifierKeys modifiers)
+    {
+        var parts = new List<string>();
+        if (modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control)) parts.Add("Ctrl");
+        if (modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift)) parts.Add("Shift");
+        if (modifiers.HasFlag(System.Windows.Input.ModifierKeys.Alt)) parts.Add("Alt");
+        parts.Add(key.ToString());
+        return string.Join(" + ", parts);
+    }
+
+    private void SetCapturedHotkey(System.Windows.Input.Key key, System.Windows.Input.ModifierKeys modifiers)
+    {
+        _capturedHotkeyKey = key; _capturedHotkeyModifiers = modifiers;
+        _ctrl.IsChecked = modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control);
+        _shift.IsChecked = modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);
+        _alt.IsChecked = modifiers.HasFlag(System.Windows.Input.ModifierKeys.Alt);
+        _hotkey.Text = FormatHotkey(key, modifiers);
+    }
+
+    private void CaptureHotkeyKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        e.Handled = true;
+        var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
+        if (key is System.Windows.Input.Key.LeftCtrl or System.Windows.Input.Key.RightCtrl or System.Windows.Input.Key.LeftShift or System.Windows.Input.Key.RightShift or System.Windows.Input.Key.LeftAlt or System.Windows.Input.Key.RightAlt) return;
+        var modifiers = System.Windows.Input.Keyboard.Modifiers & (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift | System.Windows.Input.ModifierKeys.Alt);
+        if (modifiers == System.Windows.Input.ModifierKeys.None) return;
+        if (key < System.Windows.Input.Key.A || key > System.Windows.Input.Key.Z) return;
+        SetCapturedHotkey(key, modifiers);
     }
 
     private UIElement Capture()
@@ -957,11 +1001,8 @@ public sealed class SettingsWindow : Window
             MessageBox.Show(this,"请先连接 Hermes 并选择模型。","无法保存");
             return;
         }
-        var modifiers = System.Windows.Input.ModifierKeys.None;
-        if (_ctrl.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Control;
-        if (_shift.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Shift;
-        if (_alt.IsChecked == true) modifiers |= System.Windows.Input.ModifierKeys.Alt;
-        if (_hotkey.SelectedItem is not string key || !Enum.TryParse<System.Windows.Input.Key>(key, out var parsed)) { MessageBox.Show(this,"请选择有效的快捷键。", "无法保存"); return; }
+        var modifiers = _capturedHotkeyModifiers;
+        var parsed = _capturedHotkeyKey;
         if (modifiers == System.Windows.Input.ModifierKeys.None) { MessageBox.Show(this,"快捷键至少需要 Ctrl、Shift 或 Alt 中的一个修饰键。", "无法保存"); return; }
         try{foreach(var provider in _providers){ValidateProvider(provider);ValidateSensitiveHeaderAvailability(provider);}}
         catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"Provider 配置无效");return;}
