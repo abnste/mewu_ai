@@ -1,8 +1,49 @@
 using mewu_ai_Assistant.AI;
+using mewu_ai_Assistant.Models;
 using Xunit;
 namespace MewuAI.Tests;
 public sealed class StructuredResponseParserTests
 {
+    [Fact]
+    public void Parse_VisualAnnotationProtocolSupportsAllDrawingTools()
+    {
+        const string value="""
+        {"annotationProtocol":"mewu.visual-annotations/1","answer":"已批改","annotations":[
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"pen","geometry":{"coordinateSpace":"normalized","points":[{"x":0.1,"y":0.2},{"x":0.2,"y":0.3}]},"style":{"color":"#E53935","strokeWidth":0.006},"label":"订正"},
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"highlighter","geometry":{"coordinateSpace":"normalized","points":[{"x":0.1,"y":0.4},{"x":0.4,"y":0.4}]},"label":"重点"},
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"rectangle","geometry":{"coordinateSpace":"normalized","rect":{"x":0.1,"y":0.1,"width":0.2,"height":0.2}},"label":"错误区域"},
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"ellipse","geometry":{"coordinateSpace":"normalized","rect":{"x":0.4,"y":0.1,"width":0.2,"height":0.2}},"label":"圈出"},
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"arrow","geometry":{"coordinateSpace":"normalized","points":[{"x":0.2,"y":0.7},{"x":0.5,"y":0.5}]},"label":"指向答案"},
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"text","geometry":{"coordinateSpace":"normalized","rect":{"x":0.5,"y":0.5,"width":0.3,"height":0.1}},"content":{"text":"这里应为 42"},"label":"批改说明"},
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"number","geometry":{"coordinateSpace":"normalized","rect":{"x":0.8,"y":0.1,"width":0.08,"height":0.08}},"content":{"number":3}},
+          {"target":{"regionIndex":0,"referenceHandle":"ref-paper"},"kind":"mosaic","geometry":{"coordinateSpace":"normalized","rect":{"x":0.7,"y":0.7,"width":0.2,"height":0.2}},"label":"隐藏姓名"}
+        ]}
+        """;
+        var result=StructuredResponseParser.Parse(value);
+        Assert.Equal(8,result.Annotations.Count);Assert.Equal(Enum.GetValues<AiAnnotationKind>().Where(kind=>kind!=AiAnnotationKind.Callout),result.Annotations.Select(note=>note.Kind));
+        Assert.Equal("#E53935",result.Annotations[0].EffectiveStyle.Color);Assert.Equal("这里应为 42",result.Annotations[5].Text);Assert.Equal(3,result.Annotations[6].Number);
+    }
+
+    [Fact]
+    public void Parse_VisualVideoAnnotationUsesSamePrimitiveWithTimeline()
+    {
+        const string value="""{"annotationProtocol":"mewu.visual-annotations/1","answer":"跟踪","annotations":[{"target":{"regionIndex":1,"referenceHandle":"ref-video"},"kind":"arrow","label":"移动方向","timeline":{"startTime":1,"endTime":2,"keyframes":[{"time":1,"geometry":{"coordinateSpace":"normalized","points":[{"x":0.1,"y":0.2},{"x":0.3,"y":0.4}]}},{"time":2,"geometry":{"coordinateSpace":"normalized","points":[{"x":0.2,"y":0.3},{"x":0.5,"y":0.6}]}}]}}]}""";
+        var annotation=Assert.Single(StructuredResponseParser.Parse(value).Annotations);Assert.True(annotation.IsVideoTimeline);Assert.Equal(AiAnnotationKind.Arrow,annotation.Kind);Assert.Equal(2,annotation.Keyframes![0].Points!.Count);
+    }
+
+    [Fact]
+    public void Parse_DropsInvalidVisualSiblingAndKeepsValidOne()
+    {
+        const string value="""{"answer":"正文","annotations":[{"target":{"regionIndex":0,"referenceHandle":"ref-a"},"kind":"mosaic","geometry":{"rect":{"x":0.9,"y":0.9,"width":0.2,"height":0.2}}},{"target":{"regionIndex":0,"referenceHandle":"ref-a"},"kind":"text","geometry":{"rect":{"x":0.1,"y":0.1,"width":0.2,"height":0.1}},"content":{"text":"正确"}}]}""";
+        Assert.Equal(AiAnnotationKind.Text,Assert.Single(StructuredResponseParser.Parse(value).Annotations).Kind);
+    }
+
+    [Fact]
+    public void Parse_RejectsAnnotationsFromUnknownProtocolVersionButKeepsAnswer()
+    {
+        const string value="""{"annotationProtocol":"mewu.visual-annotations/99","answer":"正文","annotations":[{"target":{"regionIndex":0,"referenceHandle":"ref-a"},"kind":"text","geometry":{"rect":{"x":0.1,"y":0.1,"width":0.2,"height":0.1}},"content":{"text":"不能执行"}}]}""";
+        var result=StructuredResponseParser.Parse(value);Assert.Equal("正文",result.Answer);Assert.Empty(result.Annotations);
+    }
     [Fact]
     public void StreamingPreviewOnlyShowsDecodedRootAnswerAcrossEveryChunkBoundary()
     {

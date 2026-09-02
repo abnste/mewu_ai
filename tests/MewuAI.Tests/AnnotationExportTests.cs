@@ -9,6 +9,15 @@ namespace MewuAI.Tests;
 public sealed class AnnotationExportTests
 {
     [Fact]
+    public void UnifiedDrawingPrimitivesAndMosaicRenderIntoImage()
+    {
+        var source=SolidBitmap(200,120,Colors.White);var annotations=new AiAnnotation[]{
+            new(.1,.1,.3,.25,"框",Kind:AiAnnotationKind.Rectangle,Style:new("#FF0000",.01,1,true)),
+            new(.1,.55,.5,.001,"笔",Kind:AiAnnotationKind.Pen,Points:[new(.1,.55),new(.6,.7)],Style:new("#0055FF",.02)),
+            new(.65,.1,.2,.3,"隐私",Kind:AiAnnotationKind.Mosaic)};
+        var result=AnnotationOverlayRenderer.ApplyAiAnnotations(source,annotations);Assert.True(HasNonWhitePixel(result));
+    }
+    [Fact]
     public void VideoOverlayPlan_PointEventGetsReadableBoundedDuration()
     {
         var note=Timeline(1.25,1.25);var plan=VideoAnnotationOverlayPlan.Create([note],TimeSpan.FromSeconds(2));var frame=Assert.Single(plan);Assert.Equal(TimeSpan.FromSeconds(1.25),frame.Start);Assert.Equal(TimeSpan.FromMilliseconds(750),frame.Duration);

@@ -84,12 +84,16 @@ internal static class VideoAnnotationTimeline
             var span=right.Time-left.Time;
             if(span<=0)return false;
             var amount=Math.Clamp((time-left.Time)/span,0,1);
+            IReadOnlyList<AiAnnotationPoint>? points=null;
+            if(left.Points is {Count:>0} leftPoints&&right.Points is {Count:>0} rightPoints&&leftPoints.Count==rightPoints.Count)
+                points=leftPoints.Zip(rightPoints,(a,b)=>new AiAnnotationPoint(Lerp(a.X,b.X,amount),Lerp(a.Y,b.Y,amount))).ToArray();
+            else points=amount<.5?left.Points:right.Points;
             frame=new VideoAnnotationKeyframe(
                 time,
                 Lerp(left.X,right.X,amount),
                 Lerp(left.Y,right.Y,amount),
                 Lerp(left.Width,right.Width,amount),
-                Lerp(left.Height,right.Height,amount));
+                Lerp(left.Height,right.Height,amount),points);
             return true;
         }
         return false;

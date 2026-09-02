@@ -28,7 +28,13 @@ internal static class AnnotatedVideoExportService
             stage="创建手工标注覆盖层";if(manualOverlay is not null)await AddOverlayAsync(manualOverlay,TimeSpan.Zero,composition.Duration);
             foreach(var frame in VideoAnnotationOverlayPlan.Create(annotations,composition.Duration))
             {
-                stage="创建 AI 时间轴覆盖层";cancellationToken.ThrowIfCancellationRequested();var overlay=AnnotationOverlayRenderer.RenderAiOverlay((int)properties.Width,(int)properties.Height,annotations,frame.SampleTime.TotalSeconds);await AddOverlayAsync(overlay,frame.Start,frame.Duration);
+                stage="创建 AI 时间轴覆盖层";cancellationToken.ThrowIfCancellationRequested();BitmapSource overlay;
+                if(annotations.Any(note=>note.Kind==AiAnnotationKind.Mosaic&&note.IsVideoTimeline&&frame.SampleTime.TotalSeconds>=note.StartTime&&frame.SampleTime.TotalSeconds<=note.EndTime))
+                {
+                    using var thumbnail=await composition.GetThumbnailAsync(frame.SampleTime,(int)properties.Width,(int)properties.Height,VideoFramePrecision.NearestFrame).AsTask(cancellationToken);using var thumbnailStream=thumbnail.AsStreamForRead();var decoder=BitmapDecoder.Create(thumbnailStream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);var sourceFrame=decoder.Frames[0];sourceFrame.Freeze();overlay=AnnotationOverlayRenderer.RenderAiOverlay(sourceFrame,annotations,frame.SampleTime.TotalSeconds);
+                }
+                else overlay=AnnotationOverlayRenderer.RenderAiOverlay((int)properties.Width,(int)properties.Height,annotations,frame.SampleTime.TotalSeconds);
+                await AddOverlayAsync(overlay,frame.Start,frame.Duration);
             }
             if(layer.Overlays.Count==0){await Task.Run(()=>AtomicFileService.Copy(sourcePath,destinationPath),cancellationToken);return;}
             composition.OverlayLayers.Add(layer);

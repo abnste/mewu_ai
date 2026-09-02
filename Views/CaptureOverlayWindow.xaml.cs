@@ -48,7 +48,7 @@ public partial class CaptureOverlayWindow : Window
     private readonly UndoRedoHistory<OverlaySnapshot> _overlayHistory=new();
     private readonly System.Text.StringBuilder _reasoningBuffer=new();
     private List<SelectionItem> _lastSentSelections=[];
-    private readonly List<AiMessage> _history=[new("system","分析屏幕附件时只能返回一个 JSON 根对象，禁止添加 Markdown 代码围栏、json 标记或 JSON 之外的说明。根格式为 {answer:string,annotations:array}，regionIndex 是从 0 开始的完整图片与视频附件顺序。图片批注格式为 {regionIndex,x,y,width,height,text}，坐标是图片内 0 到 1 的归一化值。视频只能返回带时间轴的批注，格式为 {regionIndex,startTime,endTime,text,keyframes:[{time,x,y,width,height}]}，时间单位为秒且可带小数；单点事件令 startTime=endTime 并提供一个关键帧，动作过程令 endTime>startTime 并提供至少两个按时间递增的关键帧，让框跟随目标移动。关键帧必须位于时间区间内并按时间递增，但不要求首尾关键帧严格等于区间端点。固定目标必须选择目标已经完整稳定出现的精确帧，不能选择过早的转场帧。禁止给视频返回缺少时间和关键帧的静态框。任何视频理解请求都要逐项覆盖原问题涉及的每个独立人物、设备、画面或事件，每个可定位项各返回一条批注；同一事件不能重复拆分成多条。确实没有可定位目标时 annotations 才能为空。")];
+    private readonly List<AiMessage> _history=[new("system",VisualAnnotationProtocol.SystemInstruction)];
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
@@ -106,7 +106,7 @@ public partial class CaptureOverlayWindow : Window
         public Image Video { get; }=new(){Stretch=Stretch.Fill,Visibility=Visibility.Collapsed,IsHitTestVisible=false};
         public VideoPreviewSurface? VideoPreview;
         public InkCanvas Markup { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false,ClipToBounds=true};
-        public Canvas AiAnnotations { get; }=new(){IsHitTestVisible=false};
+        public Canvas AiAnnotations { get; }=new(){IsHitTestVisible=true};
         public Canvas TextOverlays { get; }=new(){IsHitTestVisible=false};
         public Canvas TextSelection { get; }=new(){IsHitTestVisible=false,Background=Brushes.Transparent};
         public Border Outline { get; }=new(){Background=Brushes.Transparent,CornerRadius=new CornerRadius(7),IsHitTestVisible=false};
@@ -118,6 +118,7 @@ public partial class CaptureOverlayWindow : Window
         public int NextDrawingNumber { get; set; }=1;
         public TextLayerState TextLayer { get; set; }=NoTextLayerState.Instance;
         public List<AiAnnotation> AnnotationNotes { get; }=[];
+        public Dictionary<AiAnnotation,Point> AnnotationCardPositions { get; }=[];
         public OcrTextSelectionSession? TextSession;
         public TempMediaLease? VideoLease;
         public string? VideoPath;
@@ -1122,7 +1123,7 @@ public partial class CaptureOverlayWindow : Window
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active);}
     private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false,bool includeTranslation=true)
     {
-        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var translation=hasTranslation?RenderTranslationOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes):null;return AnnotationOverlayRenderer.Composite(source,manual,translation,ai);
+        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var translation=hasTranslation?RenderTranslationOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes):null;var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;return AnnotationOverlayRenderer.Composite(background,manual,translation,ai);
     }
     private static bool HasManualAnnotations(SelectionItem item)=>item.Markup.Strokes.Count>0||item.DrawingElements.Count>0;
     private static bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||item.AnnotationNotes.Count>0||item.TextLayer is TranslationTextLayerState;
@@ -1256,7 +1257,16 @@ public partial class CaptureOverlayWindow : Window
             }
             buckets[target].Add(note);
         }
-        foreach(var entry in buckets)mapped[entry.Key]=entry.Value.OrderBy(note=>note.IsVideoTimeline?note.Keyframes![0].Time:0).Take(6).ToArray();
+        foreach(var entry in buckets)
+        {
+            var notesForItem=entry.Value.OrderBy(note=>note.IsVideoTimeline?note.Keyframes![0].Time:0).Take(48).ToArray();
+            if(entry.Key.VideoPath is null&&notesForItem.Length>0)
+            {
+                var cleanImage=RenderSelectionImage(entry.Key,false,false,false);
+                notesForItem=notesForItem.Select(note=>note.Kind is AiAnnotationKind.Callout or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse?AnnotationBoxRefinementService.Refine(cleanImage,note):note).ToArray();
+            }
+            mapped[entry.Key]=notesForItem;
+        }
         return new AnnotationMappingResult(mapped,notes.Count,timelineCandidates,regionMismatch,typeMismatch,durationRejected,singleVideoRemaps,durationClamped,handleMismatches,handleRemaps);
     }
 
@@ -1264,7 +1274,7 @@ public partial class CaptureOverlayWindow : Window
     {
         foreach(var item in _lastSentSelections.Distinct())
         {
-            CancelVideoAnnotationPlayback(item);item.AnnotationNotes.Clear();item.AiAnnotations.Children.Clear();
+            CancelVideoAnnotationPlayback(item);item.AnnotationNotes.Clear();item.AnnotationCardPositions.Clear();item.AiAnnotations.Children.Clear();
             if(mapping.BySelection.TryGetValue(item,out var notes))item.AnnotationNotes.AddRange(notes);
             RenderAnnotationsForItem(item);
         }
@@ -1333,12 +1343,36 @@ public partial class CaptureOverlayWindow : Window
     private static void RenderAnnotationsForItem(SelectionItem item,double? videoTime=null)
     {
         item.AiAnnotations.Children.Clear();var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
-        foreach(var n in item.AnnotationNotes.Take(6))
+        var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic)).ToArray();
+        if(primitiveNotes.Length>0)
+        {
+            var overlay=AnnotationOverlayRenderer.RenderAiOverlay(Math.Max(1,(int)Math.Ceiling(w)),Math.Max(1,(int)Math.Ceiling(h)),primitiveNotes,videoTime);item.AiAnnotations.Children.Add(new Image{Source=overlay,Width=w,Height=h,Stretch=Stretch.Fill,IsHitTestVisible=false});
+        }
+        var calloutCount=0;foreach(var n in item.AnnotationNotes.Take(48))
         {
             var frame=new VideoAnnotationKeyframe(videoTime??0,n.X,n.Y,n.Width,n.Height);
             if(n.IsVideoTimeline&&(!videoTime.HasValue||videoTime<n.StartTime||videoTime>n.EndTime||!VideoAnnotationTimeline.TryInterpolate(n,videoTime.Value,out frame)))continue;
-            var x=Math.Clamp(frame.X,0,1)*w;var y=Math.Clamp(frame.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(frame.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(frame.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9}};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.AiAnnotations.Children.Add(box);
-            var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=AnnotationLayoutService.FindCardTop(y+rh*.5-font*1.5,5,Math.Max(5,h-font*4),font*3.2,slots);slots.Add(cardY);var startX=right?x+rw:x;var endX=right?cardX:cardX+cardWidth;item.AiAnnotations.Children.Add(new Line{X1=startX,Y1=y+rh*.5,X2=endX,Y2=cardY+font*1.4,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200)});var dot=new Ellipse{Width=5,Height=5,Fill=Cyan};Canvas.SetLeft(dot,endX-2.5);Canvas.SetTop(dot,cardY+font*1.4-2.5);item.AiAnnotations.Children.Add(dot);var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Child=new TextBlock{Text=n.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};Canvas.SetLeft(card,cardX);Canvas.SetTop(card,cardY);item.AiAnnotations.Children.Add(card);
+            if(n.Kind==AiAnnotationKind.Mosaic)
+            {
+                if((item.VideoPath is null?item.Image.Source:item.Video.Source) is BitmapSource source)
+                {
+                    var left=Math.Clamp((int)Math.Floor(frame.X*source.PixelWidth),0,source.PixelWidth-1);var top=Math.Clamp((int)Math.Floor(frame.Y*source.PixelHeight),0,source.PixelHeight-1);var pixelRight=Math.Clamp((int)Math.Ceiling((frame.X+frame.Width)*source.PixelWidth),left+1,source.PixelWidth);var pixelBottom=Math.Clamp((int)Math.Ceiling((frame.Y+frame.Height)*source.PixelHeight),top+1,source.PixelHeight);var region=new Int32Rect(left,top,pixelRight-left,pixelBottom-top);var pixelated=ImagePixelationService.Pixelate(source,region,Math.Clamp((int)Math.Round(12*Math.Max(source.PixelWidth/Math.Max(1,w),source.PixelHeight/Math.Max(1,h))),6,40));var crop=new CroppedBitmap(pixelated,region);crop.Freeze();var mosaic=new Image{Source=crop,Width=frame.Width*w,Height=frame.Height*h,Stretch=Stretch.Fill,IsHitTestVisible=false};Canvas.SetLeft(mosaic,frame.X*w);Canvas.SetTop(mosaic,frame.Y*h);item.AiAnnotations.Children.Add(mosaic);
+                }
+                continue;
+            }
+            if(n.Kind!=AiAnnotationKind.Callout||calloutCount++>=6)continue;
+            var x=Math.Clamp(frame.X,0,1)*w;var y=Math.Clamp(frame.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(frame.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(frame.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9},IsHitTestVisible=false};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.AiAnnotations.Children.Add(box);
+            var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=AnnotationLayoutService.FindCardTop(y+rh*.5-font*1.5,5,Math.Max(5,h-font*4),font*3.2,slots);if(item.AnnotationCardPositions.TryGetValue(n,out var saved)){cardX=Math.Clamp(saved.X*w,5,Math.Max(5,w-cardWidth-5));cardY=Math.Clamp(saved.Y*h,5,Math.Max(5,h-font*3.2));}slots.Add(cardY);var startX=right?x+rw:x;var line=new Line{X1=startX,Y1=y+rh*.5,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200),IsHitTestVisible=false};var dot=new Ellipse{Width=5,Height=5,Fill=Cyan,IsHitTestVisible=false};var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Cursor=Cursors.SizeAll,ToolTip="拖动批注气泡",Child=new TextBlock{Text=n.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};
+            void PositionCard(double left,double top)
+            {
+                left=Math.Clamp(left,5,Math.Max(5,w-cardWidth-5));top=Math.Clamp(top,5,Math.Max(5,h-Math.Max(card.ActualHeight,font*3.2)-5));Canvas.SetLeft(card,left);Canvas.SetTop(card,top);var attachRight=left+cardWidth/2<x+rw/2;var endX=attachRight?left+cardWidth:left;var endY=top+Math.Max(font*1.4,card.ActualHeight/2);line.X2=endX;line.Y2=endY;Canvas.SetLeft(dot,endX-2.5);Canvas.SetTop(dot,endY-2.5);
+            }
+            Point dragStart=default,cardStart=default;var dragging=false;
+            card.PreviewMouseLeftButtonDown+=(_,args)=>{dragging=true;dragStart=args.GetPosition(item.AiAnnotations);cardStart=new Point(Canvas.GetLeft(card),Canvas.GetTop(card));card.CaptureMouse();args.Handled=true;};
+            card.PreviewMouseMove+=(_,args)=>{if(!dragging||!card.IsMouseCaptured||args.LeftButton!=MouseButtonState.Pressed)return;var point=args.GetPosition(item.AiAnnotations);PositionCard(cardStart.X+point.X-dragStart.X,cardStart.Y+point.Y-dragStart.Y);args.Handled=true;};
+            card.PreviewMouseLeftButtonUp+=(_,args)=>{if(!dragging)return;dragging=false;if(card.IsMouseCaptured)card.ReleaseMouseCapture();item.AnnotationCardPositions[n]=new Point(Canvas.GetLeft(card)/Math.Max(1,w),Canvas.GetTop(card)/Math.Max(1,h));args.Handled=true;};
+            card.LostMouseCapture+=(_,_)=>{if(!dragging)return;dragging=false;item.AnnotationCardPositions[n]=new Point(Canvas.GetLeft(card)/Math.Max(1,w),Canvas.GetTop(card)/Math.Max(1,h));};
+            item.AiAnnotations.Children.Add(line);item.AiAnnotations.Children.Add(dot);item.AiAnnotations.Children.Add(card);PositionCard(cardX,cardY);
         }
     }
 
@@ -1425,7 +1459,7 @@ public partial class CaptureOverlayWindow : Window
                 if(exportGif)
                 {
                     var fps=_host.Settings.GifFps;
-                    Func<BitmapSource,TimeSpan,BitmapSource>? compositor=includeAnnotations.Value?(frame,time)=>Dispatcher.Invoke(()=>AnnotationOverlayRenderer.Composite(frame,manualOverlay,AnnotationOverlayRenderer.RenderAiOverlay(frame.PixelWidth,frame.PixelHeight,annotations,time.TotalSeconds))):null;
+                    Func<BitmapSource,TimeSpan,BitmapSource>? compositor=includeAnnotations.Value?(frame,time)=>Dispatcher.Invoke(()=>AnnotationOverlayRenderer.Composite(AnnotationOverlayRenderer.ApplyAiMosaics(frame,annotations,time.TotalSeconds),manualOverlay,AnnotationOverlayRenderer.RenderAiOverlay(frame.PixelWidth,frame.PixelHeight,annotations,time.TotalSeconds))):null;
                     var result=await GifExportService.ExportFromVideoAsync(video,destination,fps,operation.Token,compositor);
                     if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"GIF 已保存 · {result.FrameCount} 帧 / {result.EffectiveFps:0.#} FPS";
                 }
