@@ -1540,13 +1540,20 @@ public partial class CaptureOverlayWindow : Window
         {
             var pixels=ToPixelRect(item.Bounds);var screen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=screen.X+screen.Width/2;var centerY=screen.Y+screen.Height/2;var scrollTarget=_windowSnap.FindTopmostTargetAt(centerX,centerY,handle);MouseWheelInputService.SetCursor(centerX,centerY);transparent=NativeMethods.TrySetWindowMouseTransparent(handle,true);if(!transparent)throw new InvalidOperationException("无法把滚轮交给下层窗口");SnapPreview.Visibility=Visibility.Collapsed;await Task.Delay(160,operation.Token);
             var frames=new List<BitmapSource>();
+            var initialLive=new ScreenCaptureService().CaptureDesktop();
+            frames.Add(ScreenCaptureService.Crop(initialLive.Image,pixels));
+            // Give the underlying page a real wheel tick before comparing the
+            // next capture; capturing immediately after SendInput often
+            // produces an identical frame and makes long capture abort.
+            if(!MouseWheelInputService.ScrollDown(scrollTarget?.Handle??IntPtr.Zero,centerX,centerY))throw new InvalidOperationException("当前窗口不接受滚动输入，请先点击页面内容");
+            await Task.Delay(480,operation.Token);
             for(var index=0;index<24;index++)
             {
                 operation.Token.ThrowIfCancellationRequested();var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);
-                if(frames.Count>0&&ScrollingCaptureComposer.EstimateVerticalShift(frames[^1],frame)<=0)break;
+                if(ScrollingCaptureComposer.EstimateVerticalShift(frames[^1],frame)<=0)break;
                 frames.Add(frame);PromptStatus.Text=$"正在拼接长截图 · 已采集 {frames.Count} 段…按 Esc 可取消";
                 if(checked((long)frame.PixelWidth*frame.PixelHeight*frames.Count)>=ScrollingCaptureComposer.MaxOutputPixels||!MouseWheelInputService.ScrollDown(scrollTarget?.Handle??IntPtr.Zero,centerX,centerY))break;
-                await Task.Delay(260,operation.Token);
+                await Task.Delay(480,operation.Token);
             }
             if(frames.Count<2)throw new InvalidOperationException("未检测到可滚动内容；请把选区放在页面内容上并确认鼠标滚轮可滚动");var result=await Task.Run(()=>ScrollingCaptureComposer.Compose(frames),operation.Token);if(!IsOverlayOperationActive(operation,item))return;new PinnedImageWindow(result).Show();PromptStatus.Text=$"长截图完成 · {result.PixelWidth} × {result.PixelHeight} · 已生成贴图，可右键保存";
         }
