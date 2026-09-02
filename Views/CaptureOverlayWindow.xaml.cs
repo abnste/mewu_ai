@@ -1136,7 +1136,7 @@ public partial class CaptureOverlayWindow : Window
     private async Task BeginOverlayReadAloudAsync(string text)
     {
         StopOverlayReadAloud();var request=new CancellationTokenSource();_readAloudRequest=request;
-        try{await _host.ReadHermesResponseAloudAsync(text,request.Token);}catch(OperationCanceledException)when(request.IsCancellationRequested){}catch(Exception ex){if(!_closed&&ReferenceEquals(_readAloudRequest,request))PromptStatus.Text=$"自动朗读失败：{ex.Message}";}finally{request.Dispose();if(ReferenceEquals(_readAloudRequest,request))_readAloudRequest=null;}
+        try{await _host.ReadHermesResponseAloudAsync(text,request.Token);}catch(OperationCanceledException)when(request.IsCancellationRequested){}catch(Exception ex){if(!_closed&&ReferenceEquals(_readAloudRequest,request))PromptStatus.Text=$"Hermes 朗读失败：{ex.Message}。请检查 Hermes 语音服务和默认语音包。";}finally{request.Dispose();if(ReferenceEquals(_readAloudRequest,request))_readAloudRequest=null;}
     }
     private void StopOverlayReadAloud(){var request=_readAloudRequest;_readAloudRequest=null;try{request?.Cancel();}catch(ObjectDisposedException){}_host.StopHermesReadAloud();}
     private void AppendReasoning(string value)
