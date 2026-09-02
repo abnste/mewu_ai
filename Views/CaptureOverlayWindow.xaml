@@ -86,8 +86,8 @@
      <Grid x:Name="PromptContent">
      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
      <StackPanel x:Name="HistorySection" Grid.Row="0">
-      <Button x:Name="HistoryToggle" AutomationProperties.Name="查看提问和历史对话" ToolTip="查看提问与历史" Style="{StaticResource ToolbarIconButton}" Click="ToggleHistory" Width="28" Height="26" Margin="6,0,6,0" Padding="0">
-       <Path Width="11" Height="11" Stretch="Uniform" Stroke="#617188" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M2,4 L5.5,7.5 L9,4" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform x:Name="HistoryChevronRotation" Angle="180"/></Path.RenderTransform></Path>
+      <Button x:Name="HistoryToggle" AutomationProperties.Name="查看提问和历史对话" ToolTip="查看提问与历史" Style="{StaticResource ToolbarIconButton}" Click="ToggleHistory" Width="24" Height="20" Margin="2,-1,2,-1" Padding="0">
+       <Path Width="9" Height="9" Stretch="Uniform" Stroke="#617188" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M2,4 L5.5,7.5 L9,4" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform x:Name="HistoryChevronRotation" Angle="180"/></Path.RenderTransform></Path>
       </Button>
       <Border x:Name="HistoryPanel" Visibility="Collapsed" Background="#F3F6FA" BorderBrush="#DFE7F1" BorderThickness="1" CornerRadius="12" Padding="10,8" Margin="6,4,6,2">
        <ScrollViewer x:Name="HistoryScroll" MaxHeight="210" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
