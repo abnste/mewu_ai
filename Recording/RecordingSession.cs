@@ -9,6 +9,7 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
 {
     private static readonly TimeSpan FileReleaseTimeout=TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FileReleaseRetryDelay=TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan DeletedFileStabilityWindow=TimeSpan.FromSeconds(1);
     private static readonly TimeSpan CompletedFileWaitTimeout=TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RecordingStartupStopTimeout=TimeSpan.FromSeconds(5);
     private readonly AppSettings _settings;
@@ -262,10 +263,20 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
         if(_terminalState.Current==RecordingTerminalResult.Completed||string.IsNullOrWhiteSpace(VideoPath))return;
         var path=VideoPath;
         var started=Stopwatch.GetTimestamp();
+        long absentSince=0;
         do
         {
             if(_terminalState.Current==RecordingTerminalResult.Completed)return;
-            if(TryDelete(path))return;
+            if(File.Exists(path))
+            {
+                absentSince=0;
+                TryDelete(path);
+            }
+            else
+            {
+                if(absentSince==0)absentSince=Stopwatch.GetTimestamp();
+                else if(Stopwatch.GetElapsedTime(absentSince)>=DeletedFileStabilityWindow)return;
+            }
             await Task.Delay(FileReleaseRetryDelay).ConfigureAwait(false);
         }while(Stopwatch.GetElapsedTime(started)<FileReleaseTimeout);
         if(File.Exists(path))Log("RecordingCleanup",new IOException("无法清理未完成的临时录屏文件"));
