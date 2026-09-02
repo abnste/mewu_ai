@@ -1,12 +1,16 @@
-using System.Windows.Media;
 using System.Windows.Threading;
+using System.Security.Cryptography;
+using Windows.Media.Core;
+using WinMediaPlayer = Windows.Media.Playback.MediaPlayer;
 
 namespace mewu_ai_Assistant.Services;
 
 /// <summary>
 /// Synthesizes speech through the isolated local Hermes runtime and plays one
-/// response at a time. MediaPlayer needs a local file and is dispatcher-bound,
-/// so the staged file remains leased until playback has fully closed.
+/// response at a time. Windows Media Foundation's WinRT MediaPlayer is used
+/// instead of WPF's legacy MediaPlayer because Hermes can legitimately return
+/// Ogg/Opus (for example, the local minimax-mmx provider). The staged file
+/// remains leased until playback has fully closed.
 /// </summary>
 public sealed class HermesReadAloudService : IDisposable
 {
@@ -140,16 +144,37 @@ public sealed class HermesReadAloudService : IDisposable
     {
         _dispatcher.VerifyAccess();
         StopPlaybackCore();
-        var player=new MediaPlayer();
+        var player=new WinMediaPlayer
+        {
+            AutoPlay=false,
+            IsMuted=false,
+            IsLoopingEnabled=false
+        };
         var playback=new Playback(generation,player,speechFile);
+        player.MediaOpened+=PlaybackOpened;
         player.MediaEnded+=PlaybackEnded;
         player.MediaFailed+=PlaybackFailed;
         try
         {
             _playback=playback;
             player.Volume=1.0;
-            player.Open(new Uri(speechFile.Path,UriKind.Absolute));
-            player.Play();
+            player.Source=MediaSource.CreateFromUri(new Uri(speechFile.Path,UriKind.Absolute));
+
+            // A missing MediaOpened event must not leave the read-aloud
+            // request waiting forever. This is also useful on machines where
+            // the Windows audio codec is unavailable.
+            var timeout=new DispatcherTimer(DispatcherPriority.Background,_dispatcher)
+            {
+                Interval=TimeSpan.FromSeconds(15)
+            };
+            timeout.Tick+=(_,_) =>
+            {
+                timeout.Stop();
+                if(_playback is { } current&&ReferenceEquals(current,playback)&&!playback.Opened)
+                    CompletePlaybackCore(playback,new TimeoutException("Hermes 朗读音频打开超时，请检查系统音频编码支持。"),canceled:false);
+            };
+            playback.OpenTimeout=timeout;
+            timeout.Start();
             return playback;
         }
         catch
@@ -159,18 +184,47 @@ public sealed class HermesReadAloudService : IDisposable
         }
     }
 
-    private void PlaybackEnded(object? sender,EventArgs eventArgs)
+    private void PlaybackOpened(WinMediaPlayer sender,object args)
     {
-        _dispatcher.VerifyAccess();
+        if(!_dispatcher.CheckAccess())
+        {
+            if(!_dispatcher.HasShutdownStarted&&!_dispatcher.HasShutdownFinished)
+                _= _dispatcher.BeginInvoke(new Action(()=>PlaybackOpened(sender,args)));
+            return;
+        }
+        if(_playback is not { } playback||!ReferenceEquals(playback.Player,sender))return;
+        playback.Opened=true;
+        playback.OpenTimeout?.Stop();
+        try{sender.Play();}
+        catch(Exception ex)
+        {
+            try{new PrivacyLogger().Error("HermesReadAloudPlayback",ex);}catch{}
+            CompletePlaybackCore(playback,ex,canceled:false);
+        }
+    }
+
+    private void PlaybackEnded(WinMediaPlayer sender,object eventArgs)
+    {
+        if(!_dispatcher.CheckAccess())
+        {
+            if(!_dispatcher.HasShutdownStarted&&!_dispatcher.HasShutdownFinished)
+                _= _dispatcher.BeginInvoke(new Action(()=>PlaybackEnded(sender,eventArgs)));
+            return;
+        }
         if(_playback is { } playback&&ReferenceEquals(playback.Player,sender))
             CompletePlaybackCore(playback,null,canceled:false);
     }
 
-    private void PlaybackFailed(object? sender,ExceptionEventArgs eventArgs)
+    private void PlaybackFailed(WinMediaPlayer sender,Windows.Media.Playback.MediaPlayerFailedEventArgs eventArgs)
     {
-        _dispatcher.VerifyAccess();
+        if(!_dispatcher.CheckAccess())
+        {
+            if(!_dispatcher.HasShutdownStarted&&!_dispatcher.HasShutdownFinished)
+                _= _dispatcher.BeginInvoke(new Action(()=>PlaybackFailed(sender,eventArgs)));
+            return;
+        }
         if(_playback is not { } playback||!ReferenceEquals(playback.Player,sender))return;
-        var error=new InvalidOperationException("Hermes 朗读音频播放失败。",eventArgs.ErrorException);
+        var error=new InvalidOperationException($"Hermes 朗读音频播放失败（{eventArgs.Error}）。");
         try{new PrivacyLogger().Error("HermesReadAloudPlayback",error);}catch{}
         CompletePlaybackCore(playback,error,canceled:false);
     }
@@ -204,9 +258,14 @@ public sealed class HermesReadAloudService : IDisposable
     {
         _dispatcher.VerifyAccess();
         if(ReferenceEquals(_playback,playback))_playback=null;
+        playback.OpenTimeout?.Stop();
+        playback.OpenTimeout=null;
+        playback.Player.MediaOpened-=PlaybackOpened;
         playback.Player.MediaEnded-=PlaybackEnded;
         playback.Player.MediaFailed-=PlaybackFailed;
-        try{playback.Player.Close();}
+        try{playback.Player.Pause();}
+        catch(Exception pauseError){try{new PrivacyLogger().Error("HermesReadAloudPause",pauseError);}catch{}}
+        try{playback.Player.Dispose();}
         catch(Exception closeError){try{new PrivacyLogger().Error("HermesReadAloudClose",closeError);}catch{}}
         playback.File.Dispose();
 
@@ -233,13 +292,16 @@ public sealed class HermesReadAloudService : IDisposable
         }
     }
 
-    private sealed class Playback(long generation,MediaPlayer player,HermesSpeechFile file)
+    private sealed class Playback(long generation,WinMediaPlayer player,HermesSpeechFile file)
     {
         internal long Generation { get; }=generation;
-        internal MediaPlayer Player { get; }=player;
+        internal WinMediaPlayer Player { get; }=player;
         internal HermesSpeechFile File { get; }=file;
+        internal bool Opened { get; set; }
+        internal DispatcherTimer? OpenTimeout { get; set; }
         internal TaskCompletionSource Completion { get; }=new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
+
 }
 
 internal sealed class HermesSpeechFileStore
@@ -257,28 +319,44 @@ internal sealed class HermesSpeechFileStore
     {
         ArgumentNullException.ThrowIfNull(audio);
         if(audio.Data.Length==0)throw new InvalidDataException("Hermes 返回的朗读音频为空。");
-        var path=_tempFiles.NewFile(audio.Extension);
-        var lease=_registry.Acquire(path);
+        byte[]? converted=null;
+        var extension=audio.Extension;
+        ReadOnlyMemory<byte> payload=audio.Data;
+        if(HermesAudioTranscoder.IsOggOpus(audio.MimeType,audio.Extension,audio.Data))
+        {
+            converted=HermesAudioTranscoder.DecodeToWave(audio.Data);
+            extension=".wav";
+            payload=converted;
+        }
         try
         {
-            await using(var stream=new FileStream(
-                            path,
-                            FileMode.CreateNew,
-                            FileAccess.Write,
-                            FileShare.None,
-                            81_920,
-                            FileOptions.Asynchronous|FileOptions.WriteThrough))
+            var path=_tempFiles.NewFile(extension);
+            var lease=_registry.Acquire(path);
+            try
             {
-                await stream.WriteAsync(audio.Data,cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                await using(var stream=new FileStream(
+                                path,
+                                FileMode.CreateNew,
+                                FileAccess.Write,
+                                FileShare.None,
+                                81_920,
+                                FileOptions.Asynchronous|FileOptions.WriteThrough))
+                {
+                    await stream.WriteAsync(payload,cancellationToken).ConfigureAwait(false);
+                    await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                return new HermesSpeechFile(path,lease,_registry);
             }
-            return new HermesSpeechFile(path,lease,_registry);
+            catch
+            {
+                lease.Dispose();
+                TryDelete(path,_registry);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            lease.Dispose();
-            TryDelete(path,_registry);
-            throw;
+            if(converted is not null)CryptographicOperations.ZeroMemory(converted);
         }
     }
 

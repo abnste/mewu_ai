@@ -88,3 +88,4 @@
 - 托盘 `ContextMenuStrip` 的 `OnRenderMenuItemBackground` 使用菜单项局部绘图坐标，不能重复使用带父级偏移的 `Item.Bounds`；悬浮胶囊必须在菜单项内部留出有界的上下左右安全边距，确保首尾圆角不被裁切。
 - 标准火山方舟模型使用 `https://ark.cn-beijing.volces.com/api/v3` 并通过受限的 `GET models` 动态获取当前账户真实可用 ID；不得把未出现在账户目录中的新模型伪装成已可用。DeepSeek V4 Pro/Flash 与 GLM 5.2 在方舟按文本模型处理；Doubao Seed 2.x、精确的 `glm-5-3-flash` 以及名称含 `vision` 的 DeepSeek V4 变体才声明多模态能力。文本模型不得显示截图 AI 对话条。
 - 图片与视频的 AI 可执行标注统一使用版本化 `mewu.visual-annotations/1`：目标由完整附件 `regionIndex` 与不可变 `referenceHandle` 双重绑定，空间采用附件内 0–1 坐标，视频采用秒级时间轴关键帧；支持 callout、画笔、高亮、矩形、椭圆、箭头、文字、序号和真实像素化马赛克。解析必须逐条严格校验并有界，未知协议版本不得执行；旧扁平矩形协议仅保留读取兼容。
+- Hermes 自动朗读必须播放所选 Profile 的真实 TTS Provider 音频，严禁用系统 SAPI 等机械音冒充成功；Hermes 返回 Ogg/Opus 时应在本机有界解码为 PCM/WAV 后播放，保持克隆声线不变，并清零中间音频缓冲。

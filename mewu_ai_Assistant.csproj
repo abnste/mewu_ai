@@ -43,6 +43,10 @@
          overlay without relying on the legacy Windows Media Player COM
          renderer used by MediaElement. -->
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.3.1" />
+    <!-- Hermes desktop TTS may be configured with an Ogg/Opus voice. The
+         managed decoder converts that provider output to PCM/WAV so playback
+         does not depend on optional Windows Web Media Extensions. -->
+    <PackageReference Include="Concentus.Oggfile" Version="1.0.7" />
     <PackageReference Include="Emoji.Wpf" Version="0.3.4" />
     <PackageReference Include="Markdig" Version="1.3.2" />
     <PackageReference Include="RapidOcrNet" Version="4.1.0" ExcludeAssets="contentFiles" />
