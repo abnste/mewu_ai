@@ -7,11 +7,11 @@
 
   [简体中文](./README.zh-CN.md) · **English** · [Download](https://github.com/abnste/mewu_ai/releases/latest) · [Report a bug](https://github.com/abnste/mewu_ai/issues)
 
-  [![Release](https://img.shields.io/badge/release-v0.0.10-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.0.10)
+  [![Release](https://img.shields.io/badge/release-v0.0.11-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.0.11)
   [![Windows](https://img.shields.io/badge/Windows-10%202004%2B-3A8DDE?style=flat-square&logo=windows11&logoColor=white)](#system-requirements)
   [![.NET](https://img.shields.io/badge/.NET-10-6C4BC1?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 
-  [**Download installer**](https://github.com/abnste/mewu_ai/releases/download/v0.0.10/MewuAI-Setup-0.0.10-win-x64.exe) · [Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.0.10/MewuAI-Portable-0.0.10-win-x64.zip)
+  [**Download installer**](https://github.com/abnste/mewu_ai/releases/download/v0.0.11/MewuAI-Setup-0.0.11-win-x64.exe) · [Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.0.11/MewuAI-Portable-0.0.11-win-x64.zip)
 </div>
 
 <br />
