@@ -117,10 +117,6 @@ public sealed class SettingsWindow : Window
             Padding = new Thickness(0, 0, 0, 6),
             MinWidth = 680
         };
-        tabs.Resources[typeof(TabItem)] = new Style(typeof(TabItem))
-        {
-            Setters = { new Setter(Control.MinHeightProperty, 38d), new Setter(Control.MarginProperty, new Thickness(0, 1, 8, 1)), new Setter(Control.PaddingProperty, new Thickness(14, 8, 14, 8)) }
-        };
         tabs.Items.Add(Tab("常规", General()));
         tabs.Items.Add(Tab("捕获", Capture()));
         tabs.Items.Add(Tab("录屏", Recording()));
@@ -198,6 +194,9 @@ public sealed class SettingsWindow : Window
     private static TabItem Tab(string header, UIElement content) => new()
     {
         Header = header,
+        MinHeight = 38,
+        Margin = new Thickness(0, 1, 8, 1),
+        Padding = new Thickness(14, 8, 14, 8),
         Content = new ScrollViewer
         {
             Content = content,
