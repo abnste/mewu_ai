@@ -33,7 +33,7 @@ public sealed class PinnedVideoWindow : Window
             _player=new VideoPreviewSurface(_videoView,Dispatcher);
             _player.Failed+=error=>{_playing=false;if(_playItem is not null)_playItem.Header="播放";new PrivacyLogger().Error("PinnedVideoPreview",error);};
             _frame=new Border{Background=Brushes.Black,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),ClipToBounds=true,Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_videoView};Content=_frame;Width=originalRegion.Width+ShadowPixels*2;Height=originalRegion.Height+ShadowPixels*2;
-            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseLeftButtonUp+=OnMouseLeftButtonUp;MouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);PlaceAtOriginalSize(handle);};
+            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);PlaceAtOriginalSize(handle);};
         }
         catch
         {
@@ -57,7 +57,7 @@ public sealed class PinnedVideoWindow : Window
     private void OnDpiChanged(object sender,DpiChangedEventArgs e){var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(handle==IntPtr.Zero)return;ApplyShadowPadding(handle);UpdateHeightForAspectRatio();}
     private void KeepAspectRatio(object? sender,SizeChangedEventArgs e)=>UpdateHeightForAspectRatio();
     private void UpdateHeightForAspectRatio(){if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_originalRegion.Height/Math.Max(1d,_originalRegion.Width)+padding;if(Math.Abs(ActualHeight-expected)<1)return;_adjustingSize=true;Height=Math.Min(expected,2400);_adjustingSize=false;}
-    private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e){if(e.ClickCount>=2){_drag.End();Topmost=false;UpdateTopmostHeader();e.Handled=true;return;}if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));}
+    private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e){if(e.ClickCount>=2){_drag.End();Unpin();e.Handled=true;return;}if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));}
     private void OnMouseLeftButtonUp(object sender,MouseButtonEventArgs e)=>_drag.End();
     private void OnMouseMove(object sender,MouseEventArgs e)=>_drag.Move(e.LeftButton,e.GetPosition(this));
     private void OnMouseWheel(object sender,MouseWheelEventArgs e){var minimumWidth=_frame.Margin.Left*2+1;Width=Math.Clamp(Width*(e.Delta>0?1.08:.92),minimumWidth,2400);}
@@ -92,6 +92,7 @@ public sealed class PinnedVideoWindow : Window
     private void EndMediaOperation(){_mediaOperationBusy=false;if(_copyItem is not null)_copyItem.IsEnabled=true;if(_saveItem is not null)_saveItem.IsEnabled=true;}
     private void ShowOperationError(string message,string title){if(IsVisible)MessageBox.Show(this,message,title,MessageBoxButton.OK,MessageBoxImage.Warning);else MessageBox.Show(message,title,MessageBoxButton.OK,MessageBoxImage.Warning);}
     private void ToggleTopmost(){Topmost=!Topmost;UpdateTopmostHeader();}
+    private void Unpin(){Topmost=false;var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(handle!=IntPtr.Zero)NativeMethods.SetWindowPos(handle,new IntPtr(-2),0,0,0,0,0x0001|0x0002|0x0010);UpdateTopmostHeader();}
     private void UpdateTopmostHeader(){if(_topmostItem is not null)_topmostItem.Header=Topmost?"取消置顶":"置顶";}
     private void ToggleOpacity(){Opacity=Opacity<1?1:.8;if(_opacityItem is not null)_opacityItem.Header=Opacity<1?"100% 不透明度":"80% 透明度";}
 }

@@ -384,6 +384,8 @@ public partial class CaptureOverlayWindow : Window
     {
         _closed=true;
         if(IsInitialized)NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);
+        if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
+        if(Mouse.Captured is not null)Mouse.Capture(null);
         ClearRecordingVisualHole();
         if(_overlaySource is not null)
         {
