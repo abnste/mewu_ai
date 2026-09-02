@@ -44,7 +44,7 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
-    public void SelectSendTargets_KeepsImplicitSelectionWhenItIsTheOnlyChoice()
+    public void SelectSendTargets_NeverSendsImplicitSelectionWithoutExplicitVisualInput()
     {
         var implicitSelection = new Target("implicit", true, false);
 
@@ -53,7 +53,7 @@ public sealed class CaptureOverlayPolicyTests
             item => item.IsImplicit,
             item => item.IsReferenced);
 
-        Assert.Equal(new[] { implicitSelection }, selected);
+        Assert.Empty(selected);
     }
 
     [Fact]
@@ -72,11 +72,11 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Theory]
-    [InlineData(false,false,true)]
+    [InlineData(false,false,false)]
     [InlineData(true,false,false)]
     [InlineData(false,true,false)]
     [InlineData(true,true,false)]
-    public void ImplicitFullScreenIsOnlyCreatedWithoutAnyOtherInput(bool hasUploadedReferences,bool hasExplicitSelections,bool expected)
+    public void ImplicitFullScreenIsNeverCreatedForTextOnlyTurns(bool hasUploadedReferences,bool hasExplicitSelections,bool expected)
     {
         Assert.Equal(expected,CaptureOverlayPolicy.ShouldCreateImplicitScreenSelection(hasUploadedReferences,hasExplicitSelections));
     }
@@ -181,6 +181,21 @@ public sealed class CaptureOverlayPolicyTests
         Assert.Equal(8192,request.MaxOutputTokens);
         Assert.Same(attachment,Assert.Single(request.Attachments));
         Assert.Equal("system",Assert.Single(request.History).Role);
+    }
+
+    [Fact]
+    public void TextOnlyRequestDoesNotOptIntoVisualAnnotationProtocol()
+    {
+        var request=CaptureOverlayPolicy.CreateScreenAiRequest(
+            "请总结上一轮对话",
+            [new AiMessage("system","保持上下文")],
+            [],
+            null,
+            expectStructuredResponse:false);
+
+        Assert.False(request.ExpectStructuredResponse);
+        Assert.Empty(request.Attachments);
+        Assert.Equal("请总结上一轮对话",request.Prompt);
     }
 
     [Fact]

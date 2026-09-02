@@ -202,10 +202,10 @@ public sealed class AppHost : IDisposable
         error=null;
         if(Settings.HermesEnabled)return IsConversationAvailable(out error);
         var provider=_aiProviderFactory.Create(Settings,out error);
-        if(provider is null)return false;
-        if(provider.Capabilities.SupportsImage)return true;
-        error="当前默认模型只支持文字，请选择支持图片理解的多模态模型";
-        return false;
+        // The overlay also hosts clean text-only turns. A text model may
+        // therefore expose the composer, while SendAsync still blocks visual
+        // attachments when the selected model lacks image/video capability.
+        return provider is not null;
     }
 
     public Task ReadHermesResponseAloudAsync(string text,CancellationToken cancellationToken=default)
