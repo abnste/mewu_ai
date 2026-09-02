@@ -1243,6 +1243,7 @@ public partial class CaptureOverlayWindow : Window
             if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {targetCount+_uploadedReferences.Count} 个附件…按 Esc 可取消";
             var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;ShowAnswer();AnswerText.Markdown=preview;AnswerScroll.ScrollToEnd();PromptStatus.Text="正在整理回答…";}));}}):null;
             var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}ShowAnswer();FinishReasoning(result.Reasoning);if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=MapAnnotations(result.Annotations);ApplyAnnotationMapping(primaryMapping,true);var renderedAnnotationCount=primaryMapping.RenderedCount;ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
+            AgentActivityCard.Visibility=Visibility.Collapsed;
             var repairReturnedAnnotationCount=-1;
             if(hasVideo)
             {
@@ -1375,7 +1376,10 @@ public partial class CaptureOverlayWindow : Window
     private static void RenderAnnotationsForItem(SelectionItem item,double? videoTime=null)
     {
         item.AiAnnotations.Children.Clear();var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);var slots=new List<double>();
-        var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic)).ToArray();
+        // Callout boxes are laid out against the same normalized geometry below.
+        // Do not render a second primitive rectangle/ellipse layer: it is the
+        // source of the offset blue duplicate boxes on dense pages.
+        var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse)).ToArray();
         if(primitiveNotes.Length>0)
         {
             var overlay=AnnotationOverlayRenderer.RenderAiOverlay(Math.Max(1,(int)Math.Ceiling(w)),Math.Max(1,(int)Math.Ceiling(h)),primitiveNotes,videoTime);item.AiAnnotations.Children.Add(new Image{Source=overlay,Width=w,Height=h,Stretch=Stretch.Fill,IsHitTestVisible=false});
@@ -1854,8 +1858,8 @@ public partial class CaptureOverlayWindow : Window
         ClearTextSelection(item);item.TextOverlays.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;
         for(var index=0;index<lines.Count&&index<texts.Count;index++)
         {
-            var line=lines[index];var text=new TextBlock{Text=texts[index],Foreground=new SolidColorBrush(Color.FromRgb(35,47,67)),FontSize=Math.Clamp(line.Height*scaleY*.72,10,26),FontWeight=translated?FontWeights.SemiBold:FontWeights.Normal,TextWrapping=TextWrapping.Wrap,LineHeight=Math.Clamp(line.Height*scaleY*.9,14,32)};
-            var box=new Border{Child=text,Background=new SolidColorBrush(translated?Color.FromArgb(242,239,242,255):Color.FromArgb(228,248,251,255)),BorderBrush=new SolidColorBrush(translated?Color.FromRgb(111,124,245):Color.FromRgb(78,164,224)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(5),Padding=new Thickness(3,1,3,1),Width=Math.Max(36,line.Width*scaleX),MinHeight=Math.Max(18,line.Height*scaleY),ToolTip=translated?"原位译文":"本地 OCR 文字"};
+            var line=lines[index];var width=Math.Max(36,line.Width*scaleX);var baseFont=Math.Clamp(line.Height*scaleY*.78,10,26);var fit=string.IsNullOrWhiteSpace(texts[index])?1:Math.Min(1,width/Math.Max(1,texts[index].Length*baseFont*.56));var fontSize=Math.Clamp(baseFont*fit,8,26);var text=new TextBlock{Text=texts[index],Foreground=translated?Brushes.White:new SolidColorBrush(Color.FromRgb(35,47,67)),FontSize=fontSize,FontWeight=translated?FontWeights.Normal:FontWeights.Normal,TextWrapping=TextWrapping.NoWrap,LineHeight=Math.Clamp(line.Height*scaleY*.9,14,32)};
+            var box=new Border{Child=text,Background=translated?new SolidColorBrush(Color.FromArgb(170,30,38,50)):new SolidColorBrush(Color.FromArgb(228,248,251,255)),BorderBrush=translated?Brushes.Transparent:new SolidColorBrush(Color.FromRgb(78,164,224)),BorderThickness=translated?new Thickness(0):new Thickness(1),CornerRadius=new CornerRadius(5),Padding=new Thickness(3,1,3,1),Width=width,MinHeight=Math.Max(18,line.Height*scaleY),Effect=translated?new BlurEffect{Radius=7}:null,ToolTip=translated?"原位译文":"本地 OCR 文字"};
             Canvas.SetLeft(box,line.X*scaleX);Canvas.SetTop(box,line.Y*scaleY);item.TextOverlays.Children.Add(box);
         }
     }
