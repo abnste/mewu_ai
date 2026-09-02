@@ -34,25 +34,19 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
 
     public void SetMarkdownWithActions(string? markdown,IReadOnlyList<MarkdownAnswerAction> actions)
     {
-        Markdown=markdown??string.Empty;
+        _markdown=markdown??string.Empty;Document=MarkdownFlowDocumentRenderer.Render(_markdown,FontSize>0?FontSize:13);
         if(actions.Count==0)return;
-        var paragraph=new Paragraph{Margin=new Thickness(0,5,0,2)};
-        paragraph.Inlines.Add(new Run("视频定位：") {FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(58,72,96))});
-        for(var index=0;index<actions.Count;index++)
+        var chips=new WrapPanel{Margin=new Thickness(0,7,0,2)};
+        foreach(var action in actions)
         {
-            if(index>0)paragraph.Inlines.Add(new Run("  "));
-            var action=actions[index];
-            var link=new Hyperlink(new Run(action.Label))
-            {
-                Foreground=new SolidColorBrush(Color.FromRgb(78,98,218)),
-                TextDecorations=TextDecorations.Underline,
-                Cursor=Cursors.Hand,
-                ToolTip=action.ToolTip
-            };
-            link.Click+=(_,_)=>action.Invoke();
-            paragraph.Inlines.Add(link);
+            var currentAction=action;var button=new Button{Content=currentAction.Label,ToolTip=currentAction.ToolTip,Foreground=new SolidColorBrush(Color.FromRgb(71,87,188)),Background=new SolidColorBrush(Color.FromRgb(239,242,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(205,213,250)),BorderThickness=new Thickness(1),Padding=new Thickness(11,6,11,6),Margin=new Thickness(0,0,7,7),FontSize=Math.Max(12,FontSize-1),FontWeight=FontWeights.SemiBold,Cursor=Cursors.Hand,FocusVisualStyle=null};button.Template=CreateChipTemplate();button.Click+=(_,_)=>currentAction.Invoke();chips.Children.Add(button);
         }
-        Document.Blocks.Add(paragraph);
+        Document.Blocks.Add(new BlockUIContainer(chips){Margin=new Thickness(0)});
+    }
+
+    private static ControlTemplate CreateChipTemplate()
+    {
+        var border=new FrameworkElementFactory(typeof(Border));border.Name="Bubble";border.SetValue(Border.BackgroundProperty,new TemplateBindingExtension(Button.BackgroundProperty));border.SetValue(Border.BorderBrushProperty,new TemplateBindingExtension(Button.BorderBrushProperty));border.SetValue(Border.BorderThicknessProperty,new TemplateBindingExtension(Button.BorderThicknessProperty));border.SetValue(Border.CornerRadiusProperty,new CornerRadius(13));border.SetValue(Border.PaddingProperty,new TemplateBindingExtension(Button.PaddingProperty));var presenter=new FrameworkElementFactory(typeof(ContentPresenter));presenter.SetValue(HorizontalAlignmentProperty,HorizontalAlignment.Center);presenter.SetValue(VerticalAlignmentProperty,VerticalAlignment.Center);border.AppendChild(presenter);var template=new ControlTemplate(typeof(Button)){VisualTree=border};var hover=new Trigger{Property=IsMouseOverProperty,Value=true};hover.Setters.Add(new Setter(Button.BackgroundProperty,new SolidColorBrush(Color.FromRgb(226,232,255)),"Bubble"));template.Triggers.Add(hover);var pressed=new Trigger{Property=Button.IsPressedProperty,Value=true};pressed.Setters.Add(new Setter(OpacityProperty,.72,"Bubble"));template.Triggers.Add(pressed);return template;
     }
 }
 

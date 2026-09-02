@@ -12,6 +12,8 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using System.Windows.Interop;
+using System.Windows.Markup;
+using System.Globalization;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Models;
@@ -184,6 +186,10 @@ public partial class CaptureOverlayWindow : Window
     private abstract record DrawingElementSpec(Guid Id,double X,double Y);
     private sealed record TextDrawingElement(Guid Id,double X,double Y,double Width,string Text,string FontFamily,double FontSize,Color Color,bool Highlight):DrawingElementSpec(Id,X,Y);
     private sealed record NumberDrawingElement(Guid Id,double X,double Y,double Diameter,int Number,Color Color):DrawingElementSpec(Id,X,Y);
+    private sealed record DrawingFontChoice(string Source,string DisplayName)
+    {
+        public override string ToString()=>DisplayName;
+    }
     private abstract record DrawingAction;
     private sealed record StrokeDrawingAction(Stroke Stroke):DrawingAction;
     private sealed record ElementDrawingAction(DrawingElementSpec Element):DrawingAction;
@@ -1051,7 +1057,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private bool? AskWhetherToIncludeAnnotations(SelectionItem item)
     {
-        if(!HasAnyAnnotations(item))return false;var kind=item.VideoPath is null?"图片":"视频";var result=MessageBox.Show(this,$"这个{kind}包含 AI 标注或手工标注。\n\n是否把标注一起保存到导出的{kind}中？\n\n是：保存带标注版本\n否：保存干净原件\n取消：停止保存","保存标注内容",MessageBoxButton.YesNoCancel,MessageBoxImage.Question);return result switch{MessageBoxResult.Yes=>true,MessageBoxResult.No=>false,_=>null};
+        if(!HasAnyAnnotations(item))return false;var kind=item.VideoPath is null?"图片":"视频";var result=MewuDialogWindow.ShowChoice(this,"保存标注内容",$"这个{kind}包含 AI 标注或手工标注。请选择导出方式。","保存带标注版本","保存干净原件");return result switch{MewuDialogResult.Primary=>true,MewuDialogResult.Secondary=>false,_=>null};
     }
     private async Task<List<AiAttachment>> BuildAttachmentsAsync(IReadOnlyList<SelectionItem> targets,AiProviderCapabilities capabilities,CancellationToken cancellationToken)
     {
@@ -1207,14 +1213,14 @@ public partial class CaptureOverlayWindow : Window
             foreach(var action in VideoAnnotationTimeline.CreateAnswerActions(target.AnnotationNotes))
             {
                 if(actions.Count>=VideoAnnotationTimeline.MaxAnswerActions)break;
-                var annotation=action.Annotation;var summary=annotation.Text.Length<=20?annotation.Text:annotation.Text[..20]+"…";
+                var annotation=action.Annotation;var label=VideoAnnotationActionLabelFormatter.Create(annotation,action.Kind);
                 if(action.Kind==VideoAnnotationAnswerActionKind.PlayRange)
                 {
-                    var start=TimeSpan.FromSeconds(annotation.StartTime!.Value);var end=TimeSpan.FromSeconds(annotation.EndTime!.Value);actions.Add(new MarkdownAnswerAction($"播放 {FormatVideoTime(start)}–{FormatVideoTime(end)} · {summary}",$"播放对应动作并跟踪标注：{annotation.Text}",()=>ActivateVideoAnswerAction(target,annotation)));
+                    var currentTarget=target;var currentAnnotation=annotation;actions.Add(new MarkdownAnswerAction(label,$"播放对应动作并跟踪标注：{annotation.Text}",()=>ActivateVideoAnswerAction(currentTarget,currentAnnotation)));
                 }
                 else if(action.Frame is { } frame)
                 {
-                    var marker=frame;var time=TimeSpan.FromSeconds(marker.Time);actions.Add(new MarkdownAnswerAction($"跳到 {FormatVideoTime(time)} · {summary}",$"跳转到这一标记帧并暂停显示标注：{annotation.Text}",()=>ActivateVideoFrameAnswerAction(target,annotation,marker)));
+                    var currentTarget=target;var currentAnnotation=annotation;var marker=frame;actions.Add(new MarkdownAnswerAction(label,$"跳转到这一标记帧并暂停显示标注：{annotation.Text}",()=>ActivateVideoFrameAnswerAction(currentTarget,currentAnnotation,marker)));
                 }
             }
             if(actions.Count>=VideoAnnotationTimeline.MaxAnswerActions)break;
@@ -1401,14 +1407,16 @@ public partial class CaptureOverlayWindow : Window
     private void DrawArrowTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Arrow);
     private void DrawTextTool(object s,RoutedEventArgs e){_drawHighlighter=false;if(Active is { } item)ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Text);PromptStatus.Text="点击截图放置文本框 · 可选系统字体、字号和荧光底色";}
     private void DrawNumberTool(object s,RoutedEventArgs e){_drawHighlighter=false;if(Active is { } item)ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Number);PromptStatus.Text="点击截图依次放置实心序号";}
-    private void SetDrawColor(Color color){_drawColor=color;if(Active is { } item)ApplyCurrentDrawingAttributes(item);}
+    private void SetDrawColor(Color color){_drawColor=color;if(Active is { } item){ApplyCurrentDrawingAttributes(item);UpdateFocusedDrawingTextColor(item);}}
+    private void UpdateFocusedDrawingTextColor(SelectionItem item)
+    {
+        if(Keyboard.FocusedElement is not TextBox box||box.Tag is not Guid id)return;var index=item.DrawingElements.FindIndex(element=>element.Id==id);if(index<0||item.DrawingElements[index] is not TextDrawingElement text)return;var updated=text with{Color=_drawColor};item.DrawingElements[index]=updated;box.Foreground=box.CaretBrush=new SolidColorBrush(_drawColor);box.Background=updated.Highlight?new SolidColorBrush(Color.FromArgb(150,255,237,105)):Brushes.Transparent;_drawingOperationChanged=true;
+    }
     private void DrawRed(object s,RoutedEventArgs e)=>SetDrawColor(Colors.Red);
     private void DrawBlue(object s,RoutedEventArgs e)=>SetDrawColor(Color.FromRgb(49,140,255));
     private void DrawChooseColor(object s,RoutedEventArgs e)
     {
-        using var dialog=new System.Windows.Forms.ColorDialog{AllowFullOpen=true,FullOpen=true,AnyColor=true,SolidColorOnly=true,Color=System.Drawing.Color.FromArgb(_drawColor.R,_drawColor.G,_drawColor.B)};_drawingModalOpen=true;Topmost=false;
-        try{if(dialog.ShowDialog()!=System.Windows.Forms.DialogResult.OK)return;SetDrawColor(Color.FromRgb(dialog.Color.R,dialog.Color.G,dialog.Color.B));PromptStatus.Text=$"当前颜色 RGB({_drawColor.R}, {_drawColor.G}, {_drawColor.B})";}
-        finally{_drawingModalOpen=false;if(!_closed){Topmost=true;Activate();}}
+        _drawingModalOpen=true;try{if(!MewuColorDialog.TryChoose(this,_drawColor,out var selected))return;SetDrawColor(selected);PromptStatus.Text=$"当前标注颜色 RGB({_drawColor.R}, {_drawColor.G}, {_drawColor.B})";}finally{_drawingModalOpen=false;if(!_closed)Activate();}
     }
     private void DrawHighlight(object s,RoutedEventArgs e){if(Active is { } item){_drawHighlighter=true;ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);}}
     private void ToggleTextHighlight(object s,RoutedEventArgs e){_drawTextHighlight=!_drawTextHighlight;TextHighlightButton.Background=new SolidColorBrush(_drawTextHighlight?Color.FromRgb(255,236,139):Colors.Transparent);PromptStatus.Text=_drawTextHighlight?"新文字使用荧光底色":"新文字使用普通颜色";}
@@ -1467,15 +1475,23 @@ public partial class CaptureOverlayWindow : Window
     {
         if(!_drawingFontsLoaded)
         {
-            foreach(var family in Fonts.SystemFontFamilies.Select(font=>font.Source).Distinct(StringComparer.CurrentCultureIgnoreCase).OrderBy(name=>name,StringComparer.CurrentCultureIgnoreCase))DrawingFontFamily.Items.Add(family);
+            foreach(var family in Fonts.SystemFontFamilies.GroupBy(font=>font.Source,StringComparer.CurrentCultureIgnoreCase).Select(group=>group.First()).Select(font=>new DrawingFontChoice(font.Source,LocalizedFontName(font))).OrderBy(choice=>choice.DisplayName,StringComparer.CurrentCultureIgnoreCase))DrawingFontFamily.Items.Add(family);
             foreach(var size in new[]{12d,14,16,18,20,24,28,32,40,48,56,64,72})DrawingFontSize.Items.Add(size);
             _drawingFontsLoaded=true;
         }
-        DrawingFontFamily.SelectedItem=DrawingFontFamily.Items.Cast<object>().FirstOrDefault(item=>string.Equals(item?.ToString(),_drawFontFamily,StringComparison.CurrentCultureIgnoreCase))??DrawingFontFamily.Items.Cast<object>().FirstOrDefault();
+        DrawingFontFamily.SelectedItem=DrawingFontFamily.Items.Cast<object>().OfType<DrawingFontChoice>().FirstOrDefault(item=>string.Equals(item.Source,_drawFontFamily,StringComparison.CurrentCultureIgnoreCase))??DrawingFontFamily.Items.Cast<object>().FirstOrDefault();
         DrawingFontSize.SelectedItem=DrawingFontSize.Items.Cast<object>().FirstOrDefault(item=>item is double value&&Math.Abs(value-_drawFontSize)<.1)??24d;
         TextHighlightButton.Background=new SolidColorBrush(_drawTextHighlight?Color.FromRgb(255,236,139):Colors.Transparent);DrawColorSwatch.Fill=new SolidColorBrush(_drawColor);
     }
-    private void DrawingFontFamilyChanged(object sender,SelectionChangedEventArgs e){if(DrawingFontFamily.SelectedItem is { } selected)_drawFontFamily=selected.ToString()??_drawFontFamily;UpdateFocusedDrawingTextStyle();}
+    private static string LocalizedFontName(FontFamily family)
+    {
+        foreach(var tag in new[]{CultureInfo.CurrentUICulture.IetfLanguageTag,"zh-CN","zh-Hans","en-US"})
+        {
+            var language=XmlLanguage.GetLanguage(tag);if(family.FamilyNames.TryGetValue(language,out var name)&&!string.IsNullOrWhiteSpace(name))return name;
+        }
+        return family.FamilyNames.Values.FirstOrDefault(name=>!string.IsNullOrWhiteSpace(name))??family.Source;
+    }
+    private void DrawingFontFamilyChanged(object sender,SelectionChangedEventArgs e){if(DrawingFontFamily.SelectedItem is DrawingFontChoice selected)_drawFontFamily=selected.Source;UpdateFocusedDrawingTextStyle();}
     private void DrawingFontSizeChanged(object sender,SelectionChangedEventArgs e){if(DrawingFontSize.SelectedItem is double selected)_drawFontSize=selected;UpdateFocusedDrawingTextStyle();}
     private void UpdateFocusedDrawingTextStyle()
     {
@@ -1491,7 +1507,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private TextBox CreateTextDrawingEditor(SelectionItem item,TextDrawingElement element)
     {
-        var editor=new TextBox{Tag=element.Id,Text=element.Text,Width=element.Width,MinHeight=Math.Max(30,element.FontSize*1.55),AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily(element.FontFamily),FontSize=element.FontSize,FontWeight=FontWeights.SemiBold,Padding=new Thickness(4,1,4,2),Foreground=element.Highlight?ContrastBrush(element.Color):new SolidColorBrush(element.Color),Background=element.Highlight?new SolidColorBrush(Color.FromArgb(178,element.Color.R,element.Color.G,element.Color.B)):Brushes.Transparent,BorderBrush=Brushes.Transparent,BorderThickness=new Thickness(1),CaretBrush=new SolidColorBrush(element.Highlight?Colors.Black:element.Color)};
+        var editor=new TextBox{Tag=element.Id,Text=element.Text,Width=element.Width,MinHeight=Math.Max(30,element.FontSize*1.55),AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily(element.FontFamily),FontSize=element.FontSize,FontWeight=FontWeights.SemiBold,Padding=new Thickness(4,1,4,2),Foreground=new SolidColorBrush(element.Color),Background=element.Highlight?new SolidColorBrush(Color.FromArgb(150,255,237,105)):Brushes.Transparent,BorderBrush=Brushes.Transparent,BorderThickness=new Thickness(1),CaretBrush=new SolidColorBrush(element.Color)};
         InkCanvas.SetLeft(editor,element.X);InkCanvas.SetTop(editor,element.Y);
         editor.GotKeyboardFocus+=(_,_)=>editor.BorderBrush=new SolidColorBrush(Color.FromRgb(108,124,238));
         editor.LostKeyboardFocus+=(_,_)=>editor.BorderBrush=Brushes.Transparent;

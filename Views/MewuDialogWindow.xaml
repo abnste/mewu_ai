@@ -1,0 +1,22 @@
+<Window x:Class="mewu_ai_Assistant.Views.MewuDialogWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+ Title="喵呜AI" Width="430" SizeToContent="Height" MaxHeight="560"
+ WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="False"
+ Background="#F9FBFE" ShowInTaskbar="False" WindowStartupLocation="CenterOwner"
+ FontFamily="Microsoft YaHei UI" Foreground="#2F3C52">
+ <shell:WindowChrome.WindowChrome><shell:WindowChrome CaptionHeight="46" CornerRadius="16" GlassFrameThickness="0" ResizeBorderThickness="0" UseAeroCaptionButtons="False"/></shell:WindowChrome.WindowChrome>
+ <Window.Resources>
+  <Style x:Key="DialogButton" TargetType="Button"><Setter Property="MinWidth" Value="94"/><Setter Property="Height" Value="38"/><Setter Property="Margin" Value="8,0,0,0"/><Setter Property="Padding" Value="16,0"/><Setter Property="FontSize" Value="13"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="#4A5A72"/><Setter Property="Background" Value="#F2F5FA"/><Setter Property="BorderBrush" Value="#DCE4EF"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Body" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="12" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Body" Property="Background" Value="#E9EFF8"/><Setter TargetName="Body" Property="BorderBrush" Value="#C4D1E2"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="Body" Property="Opacity" Value="0.72"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+  <Style x:Key="PrimaryDialogButton" TargetType="Button" BasedOn="{StaticResource DialogButton}"><Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#6173ED"/><Setter Property="BorderBrush" Value="#6173ED"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Body" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Body" Property="Background" Value="#5365DF"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="Body" Property="Opacity" Value="0.74"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+ </Window.Resources>
+ <Border Background="#F9FBFE" BorderBrush="#DCE4EF" BorderThickness="1" CornerRadius="16">
+  <Grid>
+   <Grid.RowDefinitions><RowDefinition Height="46"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <Grid Grid.Row="0" MouseLeftButtonDown="TitleMouseDown"><TextBlock x:Name="DialogTitle" Margin="20,0,52,0" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold"/><Button Width="32" Height="32" HorizontalAlignment="Right" Margin="0,0,9,0" Background="Transparent" BorderThickness="0" Cursor="Hand" Click="CloseClick"><TextBlock Text="×" FontSize="20" Foreground="#75839A"/></Button></Grid>
+   <Grid Grid.Row="1" Margin="22,14,22,18"><Grid.ColumnDefinitions><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Border Width="34" Height="34" VerticalAlignment="Top" Background="#EEF1FF" CornerRadius="17"><TextBlock Text="?" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#6071E9" FontSize="17" FontWeight="Bold"/></Border><TextBlock x:Name="DialogMessage" Grid.Column="1" Margin="10,1,0,0" TextWrapping="Wrap" FontSize="13.5" LineHeight="23" Foreground="#46566E"/></Grid>
+   <StackPanel x:Name="DialogButtons" Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="20,0,20,20"/>
+  </Grid>
+ </Border>
+</Window>
