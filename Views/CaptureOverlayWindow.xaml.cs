@@ -1036,6 +1036,9 @@ public partial class CaptureOverlayWindow : Window
         {
             var availableWidth=Math.Max(1,monitor.Width-CaptureOverlayPolicy.PromptSideMargin*2);
             PromptBar.Width=Math.Min(Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,PromptPreferredWidthTight),availableWidth);
+            var historyMaxHeight=GetHistoryMaxHeight();
+            HistoryPanel.MaxHeight=historyMaxHeight+28;
+            HistoryScroll.MaxHeight=historyMaxHeight;
             // Remove a stale explicit height before measuring content that may
             // have gained reference chips or an answer since the last pass.
             PromptBar.Height=double.NaN;
