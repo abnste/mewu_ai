@@ -14,6 +14,12 @@ public sealed class AppHost : IDisposable
     private readonly HermesRuntimeService _hermesRuntime;
     private readonly HermesReadAloudService _hermesReadAloud;
     private SettingsService? _settingsService;
+    // Conversation history is also retained for the lifetime of this host.
+    // This makes closing and reopening the capture overlay lossless even
+    // when the user deliberately leaves disk history disabled. Entries are
+    // filtered by provider/model before they are exposed to another overlay.
+    private readonly object _sessionHistoryGate=new();
+    private readonly List<ConversationHistoryEntry> _sessionConversationHistory=[];
     private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
@@ -211,6 +217,34 @@ public sealed class AppHost : IDisposable
 
     public void StopHermesReadAloud()=>_hermesReadAloud.Stop();
 
+    internal IReadOnlyList<ConversationHistoryEntry> GetSessionConversationHistory(string provider,string model)
+    {
+        lock(_sessionHistoryGate)
+        {
+            return _sessionConversationHistory
+                .Where(entry=>string.Equals(entry.Provider,provider,StringComparison.Ordinal)&&string.Equals(entry.Model,model,StringComparison.Ordinal))
+                .TakeLast(24)
+                .ToArray();
+        }
+    }
+
+    internal void RememberConversationHistory(ConversationHistoryEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        lock(_sessionHistoryGate)
+        {
+            _sessionConversationHistory.Add(entry);
+            const int maxEntries=100;
+            if(_sessionConversationHistory.Count>maxEntries)
+                _sessionConversationHistory.RemoveRange(0,_sessionConversationHistory.Count-maxEntries);
+        }
+    }
+
+    internal void ClearSessionConversationHistory()
+    {
+        lock(_sessionHistoryGate)_sessionConversationHistory.Clear();
+    }
+
     /// <summary>
     /// Presents one auxiliary surface at a time. Keeping the launcher and
     /// other editor surfaces hidden while a child is open prevents transparent
@@ -305,6 +339,7 @@ public sealed class AppHost : IDisposable
         }
         catch(Exception ex){try{new PrivacyLogger().Error("TempCleanupOnExit",ex);}catch{}}
         CrashDiagnosticsService.MarkCleanExit();
+        lock(_sessionHistoryGate)_sessionConversationHistory.Clear();
         DisposeSafely(_single,"SingleInstanceDispose");
         _lifetime.Dispose();
     }

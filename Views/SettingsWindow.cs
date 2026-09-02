@@ -768,6 +768,7 @@ public sealed class SettingsWindow : Window
         _history.Content = "在本地保存 AI 对话历史";
         _history.IsChecked = _host.Settings.SaveConversationHistory;
         panel.Children.Add(_history);
+        panel.Children.Add(Text("关闭后仍可在本次运行中查看；退出应用后不保留。", true));
         panel.Children.Add(Text("媒体默认不永久保存；截图只有明确点击发送后才会上传。", true));
         var clearHistory = ActionButton("清空本地对话历史");
         clearHistory.Margin = new Thickness(0, 8, 0, 0);
@@ -777,6 +778,7 @@ public sealed class SettingsWindow : Window
             try
             {
                 await new ConversationHistoryService().ClearAsync(_windowLifetime.Token);
+                _host.ClearSessionConversationHistory();
                 if(IsVisible)MessageBox.Show(this,"本地对话历史已清空","喵呜AI");
             }
             catch(OperationCanceledException) when(_windowLifetime.IsCancellationRequested){}
