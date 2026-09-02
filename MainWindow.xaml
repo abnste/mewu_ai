@@ -27,7 +27,7 @@
     <Border Grid.Row="4" Style="{StaticResource CardStyle}" Padding="14,10">
      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Ellipse Width="8" Height="8" Fill="#35C98A" VerticalAlignment="Center"><Ellipse.Effect><DropShadowEffect Color="#35C98A" BlurRadius="9" ShadowDepth="0" Opacity=".45"/></Ellipse.Effect></Ellipse>
-      <StackPanel Grid.Column="1" Margin="10,0,16,0" VerticalAlignment="Center"><TextBlock Text="本地功能可用" FontSize="13" FontWeight="SemiBold"/><TextBlock x:Name="ProviderText" Text="AI Provider 未配置" Foreground="{StaticResource SecondaryText}" FontSize="11" Margin="0,2,0,0"/></StackPanel>
+       <StackPanel Grid.Column="1" Margin="10,0,16,0" VerticalAlignment="Center"><TextBlock x:Name="AiStatusTitle" Text="暂未设置AI功能" FontSize="13" FontWeight="SemiBold"/><TextBlock x:Name="ProviderText" Text="截图、OCR、标注和录屏可用" Foreground="{StaticResource SecondaryText}" FontSize="11" Margin="0,2,0,0"/></StackPanel>
       <Button Grid.Column="2" Content="设置" Click="OpenSettings" Style="{StaticResource SecondaryButton}" Padding="16,8"/>
      </Grid>
     </Border>
