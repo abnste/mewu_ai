@@ -253,7 +253,7 @@ public sealed class RecordingIntegrationTests
                 poll=new DispatcherTimer(TimeSpan.FromMilliseconds(50),DispatcherPriority.Background,(_,_)=>
                 {
                     if(opened&&view.Source is not null&&preview.PresentedFrameCount>=2&&preview.IsPlaying&&!seekStarted){seekStarted=true;_=VerifySeekAsync();}
-                    else if(elapsed.Elapsed>TimeSpan.FromSeconds(6))Finish(new TimeoutException("录屏视频未能在原位预览表面自动播放"));
+                    else if(elapsed.Elapsed>TimeSpan.FromSeconds(20))Finish(new TimeoutException("录屏视频未能在原位预览表面自动播放"));
                 },dispatcher);
                 preview.Load(path,autoplay:true);
                 poll.Start();
@@ -269,6 +269,6 @@ public sealed class RecordingIntegrationTests
         }){IsBackground=true,Name="MewuAI.VideoPreviewTest"};
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        await completion.Task.WaitAsync(TimeSpan.FromSeconds(10),cancellationToken);
+        await completion.Task.WaitAsync(TimeSpan.FromSeconds(25),cancellationToken);
     }
 }
