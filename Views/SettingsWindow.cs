@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using System.Windows.Shell;
@@ -112,7 +113,13 @@ public sealed class SettingsWindow : Window
         var tabs = new TabControl
         {
             Margin = new Thickness(16, 8, 16, 14),
-            TabStripPlacement = Dock.Left
+            TabStripPlacement = Dock.Left,
+            Padding = new Thickness(0, 0, 0, 6),
+            MinWidth = 680
+        };
+        tabs.Resources[typeof(TabItem)] = new Style(typeof(TabItem))
+        {
+            Setters = { new Setter(Control.MinHeightProperty, 38d), new Setter(Control.MarginProperty, new Thickness(0, 1, 8, 1)), new Setter(Control.PaddingProperty, new Thickness(14, 8, 14, 8)) }
         };
         tabs.Items.Add(Tab("常规", General()));
         tabs.Items.Add(Tab("捕获", Capture()));
@@ -120,12 +127,13 @@ public sealed class SettingsWindow : Window
         tabs.Items.Add(Tab("AI", Ai()));
         tabs.Items.Add(Tab("语音", Voice()));
         tabs.Items.Add(Tab("隐私", Privacy()));
+        tabs.Items.Add(Tab("关于", About()));
 
         var save = ActionButton("保存", true);
         save.Margin = new Thickness(0, 0, 18, 16);
         save.HorizontalAlignment = HorizontalAlignment.Right;
         save.Click += (_, _) => Save();
-        var grid = new Grid { Background = new SolidColorBrush(Color.FromRgb(245,247,252)), ClipToBounds = true };
+        var grid = new Grid { Background = new SolidColorBrush(Color.FromRgb(245,247,252)), ClipToBounds = false };
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(HasConfigurationWarnings?68:48) });
         grid.RowDefinitions.Add(new RowDefinition());
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -761,6 +769,18 @@ public sealed class SettingsWindow : Window
         open.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MewuAI")) { UseShellExecute = true });
         panel.Children.Add(open);
         panel.Children.Add(Text($"应用版本：{typeof(SettingsWindow).Assembly.GetName().Version}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / PP-OCRv6（Windows OCR 仅故障降级）\n录屏：Media Foundation H.264", true));
+        return panel;
+    }
+
+    private UIElement About()
+    {
+        var panel=Panel();
+        panel.Children.Add(new TextBlock{Text="喵呜AI",FontSize=24,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(49,73,126)),Margin=new Thickness(0,0,0,4)});
+        panel.Children.Add(Text("作者：Abner Stephen\n版本："+typeof(SettingsWindow).Assembly.GetName().Version, true));
+        var repo=new TextBlock{Margin=new Thickness(0,8,0,12),TextWrapping=TextWrapping.Wrap};
+        var link=new Hyperlink(new Run("GitHub 开源仓库 · github.com/abnste/mewu_ai")){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
+        link.RequestNavigate+=(_,e)=>{try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri){UseShellExecute=true});}catch{};e.Handled=true;};repo.Inlines.Add(link);panel.Children.Add(repo);
+        panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text="许可说明\n本项目除第三方依赖外的源代码按仓库许可证开放。将本软件用于商业产品、商业部署或商业服务前，需要取得作者的商业授权。个人学习、研究和非商业使用请遵守仓库中的开源许可与第三方许可。\n\nLicense\nThe project source is open under the licenses in the repository, excluding third-party components. Commercial products, deployments, or services require separate authorization from the author. Personal, research, and non-commercial use must follow the repository and third-party licenses.",TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
         return panel;
     }
 
