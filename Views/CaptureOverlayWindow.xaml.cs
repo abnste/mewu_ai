@@ -753,7 +753,7 @@ public partial class CaptureOverlayWindow : Window
 
     private SelectionItem CreateSelection(bool implicitFullScreen)
     {
-        var item=new SelectionItem{IsImplicit=implicitFullScreen};_ownedSelections.Add(item);item.Badge.Child=item.BadgeText;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(_drawColor);item.Markup.StrokeCollected+=(_,args)=>{if(!_drawingMode||_restoringDrawingAction||!ReferenceEquals(item,Active)||_drawTool!=DrawTool.Freehand||ReferenceEquals(args.Stroke,_drawPreview))return;item.DrawingOrder.Add(new StrokeDrawingAction(args.Stroke));item.DrawingRedo.Clear();_drawingOperationChanged=true;};item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);item.Host.Children.Add(item.Badge);SelectionLayer.Children.Add(item.Host);return item;
+        var item=new SelectionItem{IsImplicit=implicitFullScreen};_ownedSelections.Add(item);item.Badge.Child=item.BadgeText;item.Badge.Visibility=Visibility.Collapsed;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(_drawColor);item.Markup.StrokeCollected+=(_,args)=>{if(!_drawingMode||_restoringDrawingAction||!ReferenceEquals(item,Active)||_drawTool!=DrawTool.Freehand||ReferenceEquals(args.Stroke,_drawPreview))return;item.DrawingOrder.Add(new StrokeDrawingAction(args.Stroke));item.DrawingRedo.Clear();_drawingOperationChanged=true;};item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);SelectionLayer.Children.Add(item.Host);return item;
     }
 
     private OverlaySnapshot CaptureOverlaySnapshot()=>new(
@@ -1219,7 +1219,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(Active is not { } item)return;CancelVideoAnnotationPlayback(item);_references.Remove(item);SelectionLayer.Children.Remove(item.Host);_selections.RemoveAt(_activeIndex);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();if(Active is { } next)UpdateSelection(next);else{HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}if(updateUi){PromptStatus.Text=_selections.Count==0?"拖动可连续框选多个区域":$"剩余 {_selections.Count} 个区域";if(Active is not null)ShowToolbar();}
     }
-    private void RefreshSelectionNumbers(){for(var i=0;i<_selections.Count;i++)_selections[i].BadgeText.Text=(i+1).ToString();UpdateReferenceChips();}
+    private void RefreshSelectionNumbers()=>UpdateReferenceChips();
     private void UpdateReferenceChips()
     {
         ReferenceChips.Children.Clear();
