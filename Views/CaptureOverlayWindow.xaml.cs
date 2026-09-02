@@ -86,6 +86,8 @@ public partial class CaptureOverlayWindow : Window
     private Rect _snapCandidate=Rect.Empty;
     private Rect? _pendingAutoSelection;
     private long _lastSnapProbeTicks;
+    private Point _latestSnapProbePoint;
+    private bool _latestSnapProbePointValid;
     private string _drawFontFamily="Microsoft YaHei UI";
     private double _drawFontSize=24;
     private Point _drawStart;
@@ -975,22 +977,40 @@ public partial class CaptureOverlayWindow : Window
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
     private async void UpdateSnapPreview(Point point)
     {
-        if(PointerOverSelection(point)){CancelSnapProbe();SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=Rect.Empty;return;}
+        _latestSnapProbePoint=point;_latestSnapProbePointValid=true;
+        if(PointerOverSelection(point)){_latestSnapProbePointValid=false;CancelSnapProbe();SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=Rect.Empty;return;}
+        // UI Automation can take longer than a pointer move.  Keep one probe
+        // alive and remember the newest pointer location instead of cancelling
+        // the active probe on every move (which previously meant a moving
+        // pointer could cancel every request before any snap target arrived).
+        if(_snapProbeRequest is not null){SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=Rect.Empty;return;}
         var now=System.Diagnostics.Stopwatch.GetTimestamp();if(now-_lastSnapProbeTicks<System.Diagnostics.Stopwatch.Frequency/12)return;_lastSnapProbeTicks=now;
-        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;
-        var request=new CancellationTokenSource();var previous=Interlocked.Exchange(ref _snapProbeRequest,request);if(previous is not null){try{previous.Cancel();}catch(ObjectDisposedException){}previous.Dispose();}
+        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;var probePoint=point;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(probePoint.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(probePoint.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;
+        var request=new CancellationTokenSource();if(Interlocked.CompareExchange(ref _snapProbeRequest,request,null) is not null){request.Dispose();return;}
         try
         {
             // UI Automation calls can encounter this overlay, so follow the
             // documented UIA threading model and probe from an MTA worker.
             var bounds=await Task.Run(()=>_windowSnap.FindTopmostWindowAt(screenX,screenY,handle),request.Token);
             if(_closed||request.IsCancellationRequested||!ReferenceEquals(_snapProbeRequest,request))return;
+            // Do not paint a result for a stale pointer location.  The latest
+            // location is scheduled once this bounded probe is released.
+            if(!_latestSnapProbePointValid||!_latestSnapProbePoint.Equals(probePoint))return;
             _snapCandidate=bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;
             if(_snapCandidate.IsEmpty){SnapPreview.Visibility=Visibility.Collapsed;return;}SnapPreview.Width=_snapCandidate.Width;SnapPreview.Height=_snapCandidate.Height;Canvas.SetLeft(SnapPreview,_snapCandidate.Left);Canvas.SetTop(SnapPreview,_snapCandidate.Top);SnapPreview.Visibility=Visibility.Visible;
         }
         catch(OperationCanceledException){}
         catch(Exception ex){new PrivacyLogger().Error("SmartSelectionProbe",ex);if(!_closed&&ReferenceEquals(_snapProbeRequest,request)){_snapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;}}
-        finally{if(ReferenceEquals(Interlocked.CompareExchange(ref _snapProbeRequest,null,request),request))request.Dispose();}
+        finally
+        {
+            var ownsRequest=ReferenceEquals(Interlocked.CompareExchange(ref _snapProbeRequest,null,request),request);request.Dispose();
+            if(ownsRequest&&!_closed&&_latestSnapProbePointValid&&!_latestSnapProbePoint.Equals(probePoint))
+            {
+                _lastSnapProbeTicks=0;
+                var nextPoint=_latestSnapProbePoint;
+                _=Dispatcher.BeginInvoke(DispatcherPriority.Input,new Action(()=>UpdateSnapPreview(nextPoint)));
+            }
+        }
     }
     private void CancelSnapProbe(){var request=Interlocked.Exchange(ref _snapProbeRequest,null);if(request is null)return;try{request.Cancel();}catch(ObjectDisposedException){}request.Dispose();}
     private Rect ProbeSnapRect(Point point)
