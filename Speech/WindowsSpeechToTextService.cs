@@ -109,7 +109,27 @@ public sealed class WindowsSpeechToTextService
         CancellationToken cancellationToken)
     {
         var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bestCandidate = string.Empty;
+        var heardAudio = false;
         EventHandler<RecognizeCompletedEventArgs>? completed = null;
+        EventHandler<SpeechHypothesizedEventArgs>? hypothesized = null;
+        EventHandler<SpeechRecognitionRejectedEventArgs>? rejected = null;
+        EventHandler<SpeechRecognizedEventArgs>? recognized = null;
+        EventHandler<AudioLevelUpdatedEventArgs>? audioLevelUpdated = null;
+        hypothesized = (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Result?.Text)) bestCandidate = args.Result.Text.Trim();
+        };
+        rejected = (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Result?.Text)) bestCandidate = args.Result.Text.Trim();
+        };
+        recognized = (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Result?.Text))
+                completion.TrySetResult(args.Result.Text.Trim());
+        };
+        audioLevelUpdated = (_, args) => heardAudio |= args.AudioLevel > 0;
         completed = (_, args) =>
         {
             if (cancellationToken.IsCancellationRequested || args.Cancelled)
@@ -124,16 +144,29 @@ public sealed class WindowsSpeechToTextService
                 return;
             }
 
-            if (args.InitialSilenceTimeout || args.BabbleTimeout || args.Result is null ||
-                string.IsNullOrWhiteSpace(args.Result.Text))
+            var finalText = args.Result?.Text?.Trim();
+            if (!string.IsNullOrWhiteSpace(finalText))
             {
-                completion.TrySetException(new SpeechRecognitionUnavailableException("没有听到语音，请重试"));
+                completion.TrySetResult(finalText);
                 return;
             }
 
-            completion.TrySetResult(args.Result.Text.Trim());
+            if (!string.IsNullOrWhiteSpace(bestCandidate))
+            {
+                completion.TrySetResult(bestCandidate);
+                return;
+            }
+
+            var message = heardAudio || args.BabbleTimeout
+                ? "检测到麦克风声音，但未识别出文字；请确认语音语言与 Windows 语音包一致"
+                : "没有检测到麦克风声音；请检查默认输入设备和麦克风权限";
+            completion.TrySetException(new SpeechRecognitionUnavailableException(message));
         };
 
+        recognizer.SpeechHypothesized += hypothesized;
+        recognizer.SpeechRecognitionRejected += rejected;
+        recognizer.SpeechRecognized += recognized;
+        recognizer.AudioLevelUpdated += audioLevelUpdated;
         recognizer.RecognizeCompleted += completed;
         try
         {
@@ -145,6 +178,10 @@ public sealed class WindowsSpeechToTextService
         }
         finally
         {
+            recognizer.SpeechHypothesized -= hypothesized;
+            recognizer.SpeechRecognitionRejected -= rejected;
+            recognizer.SpeechRecognized -= recognized;
+            recognizer.AudioLevelUpdated -= audioLevelUpdated;
             recognizer.RecognizeCompleted -= completed;
         }
     }
@@ -211,7 +248,11 @@ public static class SpeechRecognizerLanguageSelector
                 return family;
         }
 
-        return followsSystem ? installed[0] : null;
+        // Never listen with an unrelated language merely because it happens
+        // to be the first installed recognizer. SAPI will appear to hear the
+        // microphone while producing no useful text (for example, en-US for
+        // spoken Chinese), which is worse than an actionable setup error.
+        return null;
     }
 
     private static CultureInfo[] TryCreateCulture(string language)

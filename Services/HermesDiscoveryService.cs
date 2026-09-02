@@ -18,6 +18,14 @@ public sealed class HermesDiscoveryService
         Path.Combine("hermes_cli", "main.py")
     ];
 
+    internal static readonly string[] ExecutableCandidates =
+    [
+        Path.Combine("hermes-agent", "bin", "hermes.exe"),
+        Path.Combine("hermes-agent", "venv", "Scripts", "hermes.exe"),
+        Path.Combine("hermes-agent", ".venv", "Scripts", "hermes.exe"),
+        Path.Combine("bin", "hermes.exe")
+    ];
+
     public HermesDiscoveryService()
         : this(
             static (name, target) => Environment.GetEnvironmentVariable(name, target),
@@ -78,17 +86,16 @@ public sealed class HermesDiscoveryService
             for (var index = 0; index < entryCount; index++)
             {
                 if (!TryNormalizeLocalAbsolutePath(entries[index], out var pathDirectory) ||
-                    !string.Equals(Path.GetFileName(pathDirectory), "bin", StringComparison.OrdinalIgnoreCase))
+                    !TryInferHomeFromPathDirectory(pathDirectory, out var home))
                 {
                     continue;
                 }
 
-                var home = Path.GetDirectoryName(pathDirectory);
                 if (TryNormalizeLocalAbsolutePath(home, out var normalized) && seen.Add(normalized))
                 {
-                    // PATH discovery deliberately understands only the supported
-                    // <home>\bin\hermes.exe layout. It never searches a drive,
-                    // invokes command shims, or honors PATHEXT aliases.
+                    // PATH discovery only recognizes the documented Windows
+                    // launcher directories. It never searches a drive, invokes
+                    // command shims, or honors PATHEXT aliases.
                     yield return normalized;
                 }
             }
@@ -110,12 +117,22 @@ public sealed class HermesDiscoveryService
         }
 
         var agentPath = Path.Combine(normalized, "hermes-agent");
-        var executable = Path.Combine(normalized, "bin", "hermes.exe");
         var config = Path.Combine(normalized, "config.yaml");
         if (!IsTrustedExistingPath(normalized, driveRoot, expectDirectory: true, fileSystem) ||
             !IsTrustedExistingPath(agentPath, driveRoot, expectDirectory: true, fileSystem) ||
-            !IsTrustedExistingPath(executable, driveRoot, expectDirectory: false, fileSystem) ||
             !IsTrustedExistingPath(config, driveRoot, expectDirectory: false, fileSystem))
+        {
+            return null;
+        }
+
+        var executable = ExecutableCandidates
+            .Select(relative => Path.Combine(normalized, relative))
+            .FirstOrDefault(candidate => IsTrustedExistingPath(
+                candidate,
+                driveRoot,
+                expectDirectory: false,
+                fileSystem));
+        if (executable is null)
         {
             return null;
         }
@@ -133,6 +150,41 @@ public sealed class HermesDiscoveryService
         }
 
         return new HermesInstallation(normalized, agentPath, executable, config);
+    }
+
+    private static bool TryInferHomeFromPathDirectory(string pathDirectory, out string? home)
+    {
+        home = null;
+        var leaf = Path.GetFileName(pathDirectory);
+        if (string.Equals(leaf, "bin", StringComparison.OrdinalIgnoreCase))
+        {
+            var parent = Path.GetDirectoryName(pathDirectory);
+            home = string.Equals(Path.GetFileName(parent), "hermes-agent", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetDirectoryName(parent)
+                : parent;
+            return !string.IsNullOrWhiteSpace(home);
+        }
+
+        if (!string.Equals(leaf, "Scripts", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var environmentDirectory = Path.GetDirectoryName(pathDirectory);
+        if (!string.Equals(Path.GetFileName(environmentDirectory), "venv", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(Path.GetFileName(environmentDirectory), ".venv", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var agentDirectory = Path.GetDirectoryName(environmentDirectory);
+        if (!string.Equals(Path.GetFileName(agentDirectory), "hermes-agent", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        home = Path.GetDirectoryName(agentDirectory);
+        return !string.IsNullOrWhiteSpace(home);
     }
 
     private static readonly EnvironmentVariableTarget[] EnvironmentTargets =

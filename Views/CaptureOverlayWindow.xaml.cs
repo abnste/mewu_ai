@@ -75,6 +75,7 @@ public partial class CaptureOverlayWindow : Window
     private DrawTool _drawTool=DrawTool.Freehand;
     private Color _drawColor=Colors.Red;
     private bool _drawHighlighter,_drawTextHighlight,_restoringDrawingAction,_drawingFontsLoaded;
+    private bool _conversationAiAvailable,_translationAiAvailable;
     private string _drawFontFamily="Microsoft YaHei UI";
     private double _drawFontSize=24;
     private Point _drawStart;
@@ -210,6 +211,7 @@ public partial class CaptureOverlayWindow : Window
         // only affect WPF rasterisation of the presentation layer.
         UseLayoutRounding=true;SnapsToDevicePixels=true;TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);Root.SnapsToDevicePixels=true;
         ApplyOverlayVisualTuning();
+        RefreshAiFeatureAvailability();
         ApplyVoiceAvailability();
         if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
         DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
@@ -234,7 +236,7 @@ public partial class CaptureOverlayWindow : Window
         {
             ApplyOverlayDpiLayout(area);
             DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
-            QuickPrompt.TextChanged+=(_,_)=>UpdateQuickPromptHint();QuickPrompt.GotKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(115,130,235));};QuickPrompt.LostKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(220,228,239));};UpdateQuickPromptHint();PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();QuickPrompt.Focus();
+            QuickPrompt.TextChanged+=(_,_)=>UpdateQuickPromptHint();QuickPrompt.GotKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(115,130,235));};QuickPrompt.LostKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(220,228,239));};UpdateQuickPromptHint();PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();if(_conversationAiAvailable)QuickPrompt.Focus();
             // WPF can re-apply the initial Width/Height after SourceInitialized;
             // run one render-priority pass so the DIP surface remains in sync
             // with the physical HWND before any pointer coordinates arrive.
@@ -244,7 +246,7 @@ public partial class CaptureOverlayWindow : Window
                 ApplyOverlayDpiLayout(area);
                 DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
                 PositionPromptBar();
-                if(!_promptBarEntranceStarted)
+                if(_conversationAiAvailable&&!_promptBarEntranceStarted)
                 {
                     _promptBarEntranceStarted=true;
                     SetPromptBarHidden(false);
@@ -257,7 +259,7 @@ public partial class CaptureOverlayWindow : Window
                 DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
                 PositionPromptBar();
             }));
-            if(CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
+            if(_conversationAiAvailable&&CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
         };
         DpiChanged+=(_,_)=>ApplyOverlayDpiLayout(area);
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;UpdateRecordingVisualHole();PositionPromptBar();};
@@ -287,6 +289,16 @@ public partial class CaptureOverlayWindow : Window
         PromptStatus.FontSize=10;
         ReasoningPanel.Margin=new Thickness(6,5,6,0);
         ReasoningPanel.Padding=new Thickness(10,8,10,8);
+    }
+
+    private void RefreshAiFeatureAvailability()
+    {
+        _conversationAiAvailable=_host.IsConversationAvailable(out _);
+        _translationAiAvailable=_host.IsTranslationAvailable(out _);
+        PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
+        PromptBarHost.IsHitTestVisible=_conversationAiAvailable&&!_promptBarHidden;
+        ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
+        ApplyVoiceAvailability();
     }
 
     private void UpdateQuickPromptHint()
@@ -804,7 +816,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(Active is not {IsImplicit:false} item||_recordingMode){Toolbar.Visibility=Visibility.Collapsed;return;}
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
-        var isVideo=item.VideoPath is not null;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=TranslateButton.Visibility=OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
+        var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
 
@@ -818,6 +830,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void PositionPromptBar()
     {
+        if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;return;}
         if(_positioningPromptBar||Root.ActualWidth<=0||Root.ActualHeight<=0)return;
         var monitor=PromptMonitorBounds();
         if(monitor.IsEmpty)return;
@@ -890,7 +903,7 @@ public partial class CaptureOverlayWindow : Window
             UpdatePromptBarHiddenTransform(false);
         }));
     }
-    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void UpdatePromptBarHiddenTransform(bool animate)
     {
         if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}
@@ -1045,19 +1058,23 @@ public partial class CaptureOverlayWindow : Window
     private static string LimitReasoning(string value)=>value.Length<=ReasoningDisplayLimit?value:"…较早思考内容已收纳…\n"+value[^ReasoningDisplayLimit..];
 
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active);}
-    private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false)
+    private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false,bool includeTranslation=true)
     {
-        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);if(!hasManual&&!hasAi)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes):null;return AnnotationOverlayRenderer.Composite(source,manual,ai);
+        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var translation=hasTranslation?RenderTranslationOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes):null;return AnnotationOverlayRenderer.Composite(source,manual,translation,ai);
     }
     private static bool HasManualAnnotations(SelectionItem item)=>item.Markup.Strokes.Count>0||item.DrawingElements.Count>0;
-    private static bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||item.AnnotationNotes.Count>0;
+    private static bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||item.AnnotationNotes.Count>0||item.TextLayer is TranslationTextLayerState;
     private static BitmapSource RenderManualOverlay(SelectionItem item,int pixelWidth,int pixelHeight)
     {
         var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixelWidth/Math.Max(1,item.Bounds.Width),pixelHeight/Math.Max(1,item.Bounds.Height)));drawing.DrawRectangle(new VisualBrush(item.Markup),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixelWidth),Math.Max(1,pixelHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
+    private static BitmapSource RenderTranslationOverlay(SelectionItem item,int pixelWidth,int pixelHeight)
+    {
+        var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixelWidth/Math.Max(1,item.Bounds.Width),pixelHeight/Math.Max(1,item.Bounds.Height)));drawing.DrawRectangle(new VisualBrush(item.TextOverlays),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixelWidth),Math.Max(1,pixelHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
+    }
     private bool? AskWhetherToIncludeAnnotations(SelectionItem item)
     {
-        if(!HasAnyAnnotations(item))return false;var kind=item.VideoPath is null?"图片":"视频";var result=MewuDialogWindow.ShowChoice(this,"保存标注内容",$"这个{kind}包含 AI 标注或手工标注。请选择导出方式。","保存带标注版本","保存干净原件");return result switch{MewuDialogResult.Primary=>true,MewuDialogResult.Secondary=>false,_=>null};
+        if(!HasAnyAnnotations(item))return false;var kind=item.VideoPath is null?"图片":"视频";var result=MewuDialogWindow.ShowChoice(this,"保存标注内容",$"这个{kind}包含翻译、AI 标注或手工标注。请选择导出方式。","保存带标注版本","保存干净原件");return result switch{MewuDialogResult.Primary=>true,MewuDialogResult.Secondary=>false,_=>null};
     }
     private async Task<List<AiAttachment>> BuildAttachmentsAsync(IReadOnlyList<SelectionItem> targets,AiProviderCapabilities capabilities,CancellationToken cancellationToken)
     {
@@ -1089,7 +1106,7 @@ public partial class CaptureOverlayWindow : Window
     private void AddRegion(object s,RoutedEventArgs e){if(RejectIfOverlayOperationBusy())return;_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
     private void ReferenceRegion(object s,RoutedEventArgs e)
     {
-        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;var before=CaptureOverlaySnapshot();var added=_references.Add(item);UpdateReferenceChips();UpdateSelection(item);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();if(added)RecordOverlayOperation(before,"引用截图区域");PromptStatus.Text=$"已加入 @{(item.VideoPath is null?"区域":"视频")}{_activeIndex+1} · 输入问题后发送";
+        if(!_conversationAiAvailable||RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;var before=CaptureOverlaySnapshot();var added=_references.Add(item);UpdateReferenceChips();UpdateSelection(item);ShowToolbar();SetPromptBarHidden(false);QuickPrompt.Focus();if(added)RecordOverlayOperation(before,"引用截图区域");PromptStatus.Text=$"已加入 @{(item.VideoPath is null?"区域":"视频")}{_activeIndex+1} · 输入问题后发送";
     }
     private void RemoveSelection(object s,RoutedEventArgs e){if(RejectIfOverlayOperationBusy()||Active is null)return;var before=CaptureOverlaySnapshot();RemoveActiveSelection(true);RecordOverlayOperation(before,"删除截图区域");}
     private void RemoveImplicitSelections()
@@ -1120,7 +1137,7 @@ public partial class CaptureOverlayWindow : Window
 
     private async Task SendAsync(bool useDefaultPrompt)
     {
-        if(_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;StopOverlayReadAloud();var usingHermes=_host.Settings.HermesEnabled;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";ShowSettingsFromOverlay();return;}
+        if(!_conversationAiAvailable||_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;StopOverlayReadAloud();var usingHermes=_host.Settings.HermesEnabled;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
         var before=CaptureOverlaySnapshot();EnsureScreenSelection();var targets=CaptureOverlayPolicy.SelectSendTargets(_selections,item=>item.IsImplicit,_references.Contains);var hasVideo=targets.Any(x=>x.VideoPath is not null);var hasImage=targets.Any(x=>x.VideoPath is null);if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
         var targetCount=targets.Count;if(targetCount>OpenAiCompatibleProvider.AttachmentCountLimit){PromptStatus.Text=$"单次最多发送 {OpenAiCompatibleProvider.AttachmentCountLimit} 个附件，请移除部分引用后重试";return;}var sentDraft=QuickPrompt.Text;var prompt=sentDraft.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=hasVideo?"按时间顺序说明引用视频中发生了什么，并为关键事件和可定位目标返回时间轴批注；动作目标需要关键帧跟踪。":targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}
         var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();PromptStatus.Text=$"正在准备 {targetCount} 个引用区域…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;
@@ -1363,7 +1380,7 @@ public partial class CaptureOverlayWindow : Window
         }
 
         var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(imageDialog.ShowDialog(this)!=true)return;
-        var image=RenderSelectionImage(item,includeAnnotations.Value,includeAnnotations.Value);var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
+        var image=RenderSelectionImage(item,includeAnnotations.Value,includeAnnotations.Value,includeAnnotations.Value);var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
         try{await Task.Run(()=>ScreenCaptureService.Save(image,imageDialog.FileName,imageDialog.FilterIndex==2),imageOperation.Token);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="图片已保存";}
         catch(OperationCanceledException){if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="已取消保存图片";}
         catch(Exception ex){new PrivacyLogger().Error("SaveImage",ex);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text=$"图片保存失败：{ex.Message}";}
@@ -1533,6 +1550,7 @@ public partial class CaptureOverlayWindow : Window
     private async Task ToggleVoiceAsync()
     {
         if(_closed||RejectIfOverlayOperationBusy())return;
+        if(!_conversationAiAvailable)return;
         if(!_host.Settings.EnableVoiceInput){ApplyVoiceAvailability();PromptStatus.Text="语音输入已在设置中关闭";return;}
         if(_speechRequest is not null){PromptStatus.Text="正在停止聆听…";_speechRequest.Cancel();return;}
         var microphone=VoiceIcon.Data;var speechRequest=new CancellationTokenSource();_speechRequest=speechRequest;VoiceIcon.Data=Geometry.Parse("M7,7 L17,7 L17,17 L7,17 Z");
@@ -1544,20 +1562,21 @@ public partial class CaptureOverlayWindow : Window
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_speechRequest,speechRequest))PromptStatus.Text="已停止聆听";}
         catch(SpeechRecognitionUnavailableException ex){if(!_closed&&ReferenceEquals(_speechRequest,speechRequest))PromptStatus.Text=ex.Message;}
-        catch(Exception){if(!_closed&&ReferenceEquals(_speechRequest,speechRequest))PromptStatus.Text="语音输入暂时不可用";}
+        catch(Exception ex){new PrivacyLogger().Error("OverlaySpeech",ex);if(!_closed&&ReferenceEquals(_speechRequest,speechRequest))PromptStatus.Text="语音输入暂时不可用";}
         finally{speechRequest.Dispose();if(ReferenceEquals(_speechRequest,speechRequest))_speechRequest=null;if(!_closed)VoiceIcon.Data=microphone;}
     }
-    private void ApplyVoiceAvailability()=>VoiceButton.Visibility=_host.Settings.EnableVoiceInput?Visibility.Visible:Visibility.Collapsed;
+    private void ApplyVoiceAvailability()=>VoiceButton.Visibility=_conversationAiAvailable&&_host.Settings.EnableVoiceInput?Visibility.Visible:Visibility.Collapsed;
     private async void Translate(object s,RoutedEventArgs e)
     {
         if(RejectIfOverlayOperationBusy())return;
+        if(!_translationAiAvailable)return;
         if(Active is not { } item||!CaptureOverlayPolicy.CanRunImageOnlyCommand(item.IsImplicit,item.VideoPath)){if(Active?.VideoPath is not null)PromptStatus.Text="视频区域不支持 OCR/翻译，请先选择截图区域";else PromptStatus.Text="请先框选截图区域";return;}var before=CaptureOverlaySnapshot();var image=CurrentImage();var operation=BeginOverlayOperation("正在识别文字…按 Esc 可取消");
         try
         {
             var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);
             if(!IsOverlayOperationActive(operation,item))return;
             if(document.Lines.Count==0){PromptStatus.Text=$"{document.Engine} 未识别到文字";return;}
-            var provider=new AiProviderFactory().Create(_host.Settings,out var providerError);if(provider is null){PromptStatus.Text=providerError??"翻译需要先配置可用的 AI Provider";ShowSettingsFromOverlay();return;}
+            var provider=_host.CreateTranslationProvider(out var providerError);if(provider is null){PromptStatus.Text=providerError??"翻译需要先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
             var batches=CaptureOverlayPolicy.CreateTranslationBatches(document.Lines.Select(line=>line.Text).ToArray());
             var translations=new string[document.Lines.Count];
             for(var batchIndex=0;batchIndex<batches.Count;batchIndex++)
@@ -1616,7 +1635,7 @@ public partial class CaptureOverlayWindow : Window
             _host.ShowSettings();var settings=Application.Current.Windows.OfType<SettingsWindow>().FirstOrDefault(window=>window.IsVisible);
             if(settings is null){Topmost=true;Activate();return;}
             settings.Topmost=true;
-            EventHandler? restore=null;restore=(_,_)=>{settings.Closed-=restore;if(IsVisible){ApplyVoiceAvailability();PositionPromptBar();Topmost=true;Activate();QuickPrompt.Focus();}};settings.Closed+=restore;settings.Activate();
+            EventHandler? restore=null;restore=(_,_)=>{settings.Closed-=restore;if(IsVisible){RefreshAiFeatureAvailability();PositionPromptBar();if(Active is not null)ShowToolbar();Topmost=true;Activate();if(_conversationAiAvailable)QuickPrompt.Focus();}};settings.Closed+=restore;settings.Activate();
         }
         catch(Exception ex){Topmost=true;Activate();new PrivacyLogger().Error("OverlaySettings",ex);PromptStatus.Text="无法打开设置，请从托盘重试";}
     }
@@ -1729,7 +1748,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void RestoreAfterRecordingCountdown(SelectionItem selected,string status)
     {
-        var interactionRestored=NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);_recordingCountdownActive=false;RecordingCountdown.Visibility=Visibility.Collapsed;RecordingCountdown.BeginAnimation(OpacityProperty,null);RecordingCountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty,null);RecordingCountdownScale.BeginAnimation(ScaleTransform.ScaleYProperty,null);DesktopImage.Clip=null;Dimmer.Clip=null;_recordingItem=null;_recordingItemWasReferenced=false;PromptBarHost.Visibility=Visibility.Visible;Cursor=Cursors.Cross;
+        var interactionRestored=NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);_recordingCountdownActive=false;RecordingCountdown.Visibility=Visibility.Collapsed;RecordingCountdown.BeginAnimation(OpacityProperty,null);RecordingCountdownScale.BeginAnimation(ScaleTransform.ScaleXProperty,null);RecordingCountdownScale.BeginAnimation(ScaleTransform.ScaleYProperty,null);DesktopImage.Clip=null;Dimmer.Clip=null;_recordingItem=null;_recordingItemWasReferenced=false;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;Cursor=Cursors.Cross;
         foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;item.Badge.Visibility=Visibility.Visible;var imageOnly=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}
         var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);PromptStatus.Text=interactionRestored?status:"窗口交互恢复失败，正在安全关闭覆盖层，请重新截图";CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");if(!interactionRestored)_=Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(Close));
     }
@@ -1844,7 +1863,7 @@ public partial class CaptureOverlayWindow : Window
     private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)
     {
-        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();RecordingBar.Visibility=Visibility.Collapsed;PromptBarHost.Visibility=Visibility.Visible;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
+        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();RecordingBar.Visibility=Visibility.Collapsed;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
     }
     private void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
