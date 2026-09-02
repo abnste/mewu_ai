@@ -31,7 +31,7 @@ public sealed class PinnedImageWindow : Window
         _imageView=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true};
         _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_imageView};
         Content=_frame;Width=_initialContentWidthPixels+ShadowPixels*2;Height=_initialContentWidthPixels*(double)image.PixelHeight/Math.Max(1,image.PixelWidth)+ShadowPixels*2;
-        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseLeftButtonUp+=OnMouseLeftButtonUp;MouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
+        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
         SourceInitialized+=(_,_)=>
         {
             var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);
@@ -86,7 +86,7 @@ public sealed class PinnedImageWindow : Window
 
     private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e)
     {
-        if(e.ClickCount>=2){_drag.End();Topmost=false;UpdateTopmostHeader();e.Handled=true;return;}
+        if(e.ClickCount>=2){_drag.End();Unpin();e.Handled=true;return;}
         if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));
     }
 
@@ -106,6 +106,13 @@ public sealed class PinnedImageWindow : Window
     private static MenuItem Add(ContextMenu menu,string text,Action action){var item=new MenuItem{Header=text};item.SetResourceReference(StyleProperty,typeof(MenuItem));item.Click+=(_,_)=>action();menu.Items.Add(item);return item;}
     private static void AddSeparator(ContextMenu menu){var separator=new Separator();separator.SetResourceReference(StyleProperty,typeof(Separator));menu.Items.Add(separator);}
     private void ToggleTopmost(){Topmost=!Topmost;UpdateTopmostHeader();}
+    private void Unpin()
+    {
+        Topmost=false;
+        var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if(handle!=IntPtr.Zero)NativeMethods.SetWindowPos(handle,new IntPtr(-2),0,0,0,0,0x0001|0x0002|0x0010);
+        UpdateTopmostHeader();
+    }
     private void UpdateTopmostHeader(){if(_topmostItem is not null)_topmostItem.Header=Topmost?"取消置顶":"置顶";}
     private void ToggleOpacity(){Opacity=Opacity<1?1:.8;if(_opacityItem is not null)_opacityItem.Header=Opacity<1?"100% 不透明度":"80% 透明度";}
     private void RestoreOriginal(){if(_originalRegion is not { } region)return;var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;PlaceAtOriginalSize(handle,region);}

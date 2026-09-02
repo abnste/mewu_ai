@@ -40,7 +40,6 @@ public partial class MainWindow : Window
     {
         var available=_host.IsConversationAvailable(out var error);
         ProviderText.Text=available?BuildAiStatusText(_host.Settings):error??BuildAiStatusText(_host.Settings);
-        QuickAiButton.Visibility=available?Visibility.Visible:Visibility.Collapsed;
         CaptureSubtitle.Text=available?"圈选并直接分析":"截图、OCR、标注和录屏";
     }
 
@@ -77,7 +76,6 @@ public partial class MainWindow : Window
     }
     private void StartCapture(object sender,RoutedEventArgs e){Hide();_host.BeginCapture();}
     private void OpenSettings(object sender,RoutedEventArgs e)=>_host.ShowSettings();
-    private void OpenTextAi(object sender,RoutedEventArgs e)=>_host.ShowTextAi();
     private void DragWindow(object sender,MouseButtonEventArgs e){if(e.ButtonState==MouseButtonState.Pressed&&!IsInsideButton(e.OriginalSource))DragMove();}
     private static bool IsInsideButton(object? source)
     {

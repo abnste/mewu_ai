@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
@@ -13,7 +14,7 @@ public sealed class AppHost : IDisposable
     private readonly HermesRuntimeService _hermesRuntime;
     private readonly HermesReadAloudService _hermesReadAloud;
     private SettingsService? _settingsService;
-    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Forms.ToolStripMenuItem? _captureMenuItem; private Forms.ToolStripMenuItem? _textAiMenuItem; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private TextAiWindow? _textAiWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
+    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Forms.ToolStripMenuItem? _captureMenuItem; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
@@ -51,11 +52,10 @@ public sealed class AppHost : IDisposable
             ShowCheckMargin=false,
             ShowImageMargin=false,
             MinimumSize=new System.Drawing.Size(156,0),
-            Renderer=new Forms.ToolStripProfessionalRenderer(new LightTrayMenuColorTable()) { RoundedEdges=true }
+            Renderer=new LightTrayMenuRenderer()
         };
         _trayMenu=menu;
         _captureMenuItem=AddTrayMenuItem(menu,"截图 / AI",(_,_)=>BeginCapture());
-        _textAiMenuItem=AddTrayMenuItem(menu,"文字问答",(_,_)=>ShowTextAi());
         AddTrayMenuItem(menu,"设置",(_,_)=>ShowSettings());
         AddTrayMenuItem(menu,"打开主界面",(_,_)=>ShowMainWindow());
         menu.Items.Add(new Forms.ToolStripSeparator{Margin=new Forms.Padding(8,4,8,4)});
@@ -74,7 +74,7 @@ public sealed class AppHost : IDisposable
     }
     private static Forms.ToolStripMenuItem AddTrayMenuItem(Forms.ContextMenuStrip menu,string text,EventHandler onClick)
     {
-        var item=new Forms.ToolStripMenuItem(text){AutoSize=true,Margin=new Forms.Padding(0,1,0,1),Padding=new Forms.Padding(10,6,18,6)};item.Click+=onClick;menu.Items.Add(item);return item;
+        var item=new Forms.ToolStripMenuItem(text){AutoSize=false,Height=36,Margin=new Forms.Padding(0,1,0,1),Padding=new Forms.Padding(12,0,14,0),TextAlign=ContentAlignment.MiddleLeft};item.Click+=onClick;menu.Items.Add(item);return item;
     }
     public void BeginCapture(){if(!IsExiting&&Volatile.Read(ref _disposed)==0)_=BeginCaptureAsync();}
     private async Task BeginCaptureAsync()
@@ -110,18 +110,6 @@ public sealed class AppHost : IDisposable
     }
     public void ShowMainWindow() { _app.Dispatcher.Invoke(()=>{_main??=new MainWindow(this);_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
     public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);var window=_settingsWindow;window.Closed+=(_,_)=>{if(ReferenceEquals(_settingsWindow,window))_settingsWindow=null;FinishAuxiliary(window);};} PrepareAuxiliary(_settingsWindow);_settingsWindow.Show();_settingsWindow.WindowState=WindowState.Normal;_settingsWindow.Activate();}); }
-    public void ShowTextAi(string initial="")=>_app.Dispatcher.Invoke(()=>
-    {
-        if(!IsConversationAvailable(out _))return;
-        if(_textAiWindow is { } existing)
-        {
-            PrepareAuxiliary(existing);existing.Show();existing.WindowState=WindowState.Normal;existing.Activate();return;
-        }
-        var window=new TextAiWindow(this,initial);_textAiWindow=window;
-        window.Closed+=(_,_)=>{if(ReferenceEquals(_textAiWindow,window))_textAiWindow=null;FinishAuxiliary(window);};
-        PrepareAuxiliary(window);window.Show();window.Activate();
-    });
-
     public HermesInstallation? DiscoverHermes()=>_hermesRuntime.Discover();
 
     public Task<IReadOnlyList<HermesAgentOption>> GetHermesAgentOptionsAsync(CancellationToken cancellationToken)
@@ -228,7 +216,7 @@ public sealed class AppHost : IDisposable
     /// Presents one auxiliary surface at a time. Keeping the launcher and
     /// other editor surfaces hidden while a child is open prevents transparent
     /// rounded shells from stacking over one another; nested transitions (for
-    /// example, opening Settings from a quick question) restore the previous
+    /// example, opening Settings from the capture overlay) restore the previous
     /// surface when the new one closes.
     /// </summary>
     private void PrepareAuxiliary(Window window)
@@ -250,7 +238,6 @@ public sealed class AppHost : IDisposable
         }
         if(!ReferenceEquals(_main,window))try{_main?.Hide();}catch(Exception ex){try{new PrivacyLogger().Error("MainHide",ex);}catch{}}
         if(!ReferenceEquals(_settingsWindow,window))try{_settingsWindow?.Hide();}catch(Exception ex){try{new PrivacyLogger().Error("SettingsHide",ex);}catch{}}
-        if(!ReferenceEquals(_textAiWindow,window))try{_textAiWindow?.Hide();}catch(Exception ex){try{new PrivacyLogger().Error("TextAiHide",ex);}catch{}}
         _auxiliaryWindows.Add(window);
     }
 
@@ -297,7 +284,7 @@ public sealed class AppHost : IDisposable
         catch(Exception ex){try{new PrivacyLogger().Error("SettingsUiRefresh",ex);}catch{}warning??="设置已保存，但主界面状态刷新失败。";}
         RefreshAiEntryVisibility();return true;
     }
-    private void RefreshAiEntryVisibility(){var conversationAvailable=IsConversationAvailable(out _);var screenAiAvailable=IsScreenAiAvailable(out _);if(_captureMenuItem is not null)_captureMenuItem.Text=screenAiAvailable?"截图 / AI":"截图";if(_textAiMenuItem is not null)_textAiMenuItem.Visible=conversationAvailable;}
+    private void RefreshAiEntryVisibility(){var screenAiAvailable=IsScreenAiAvailable(out _);if(_captureMenuItem is not null)_captureMenuItem.Text=screenAiAvailable?"截图 / AI":"截图";}
     public void Notify(string message){_tray?.ShowBalloonTip(1500,"喵呜AI",message,Forms.ToolTipIcon.Info);}
     public void Exit() { CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
     public void Dispose()
@@ -324,6 +311,52 @@ public sealed class AppHost : IDisposable
         _lifetime.Dispose();
     }
     private static void DisposeSafely(IDisposable? resource,string component){try{resource?.Dispose();}catch(Exception ex){try{new PrivacyLogger().Error(component,ex);}catch{}}}
+
+    private sealed class LightTrayMenuRenderer : Forms.ToolStripProfessionalRenderer
+    {
+        private static readonly Color Background=Color.FromArgb(250,251,253);
+        private static readonly Color Border=Color.FromArgb(215,222,233);
+        private static readonly Color Hover=Color.FromArgb(237,242,250);
+
+        internal LightTrayMenuRenderer():base(new LightTrayMenuColorTable()){RoundedEdges=true;}
+
+        protected override void OnRenderToolStripBackground(Forms.ToolStripRenderEventArgs e)
+        {
+            if(e.ToolStrip is not Forms.ContextMenuStrip){base.OnRenderToolStripBackground(e);return;}
+            e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            var bounds=new Rectangle(0,0,e.ToolStrip.Width-1,e.ToolStrip.Height-1);
+            using var path=RoundedRectangle(bounds,11);
+            using var brush=new SolidBrush(Background);
+            e.Graphics.FillPath(brush,path);
+        }
+
+        protected override void OnRenderToolStripBorder(Forms.ToolStripRenderEventArgs e)
+        {
+            if(e.ToolStrip is not Forms.ContextMenuStrip){base.OnRenderToolStripBorder(e);return;}
+            e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            var bounds=new Rectangle(0,0,e.ToolStrip.Width-1,e.ToolStrip.Height-1);
+            using var path=RoundedRectangle(bounds,11);
+            using var pen=new Pen(Border);
+            e.Graphics.DrawPath(pen,path);
+        }
+
+        protected override void OnRenderMenuItemBackground(Forms.ToolStripItemRenderEventArgs e)
+        {
+            if(!e.Item.Selected)return;
+            e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            var bounds=e.Item.Bounds;bounds.Inflate(-2,-1);
+            using var path=RoundedRectangle(bounds,7);
+            using var brush=new SolidBrush(Hover);
+            using var pen=new Pen(Color.FromArgb(205,216,232));
+            e.Graphics.FillPath(brush,path);e.Graphics.DrawPath(pen,path);
+        }
+
+        private static GraphicsPath RoundedRectangle(Rectangle bounds,int radius)
+        {
+            var path=new GraphicsPath();var diameter=radius*2;var arc=new Rectangle(bounds.Left,bounds.Top,diameter,diameter);
+            path.AddArc(arc,180,90);arc.X=bounds.Right-diameter;path.AddArc(arc,270,90);arc.Y=bounds.Bottom-diameter;path.AddArc(arc,0,90);arc.X=bounds.Left;path.AddArc(arc,90,90);path.CloseFigure();return path;
+        }
+    }
 
     private sealed class LightTrayMenuColorTable : Forms.ProfessionalColorTable
     {

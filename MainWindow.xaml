@@ -16,18 +16,10 @@
      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button ToolTip="最小化" AutomationProperties.Name="最小化" Style="{StaticResource IconButton}" Padding="11,4" Click="MinimizeWindow"><Path Width="15" Height="15" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" StrokeStartLineCap="Round" Data="M3,8 L13,8"/></Button><Button ToolTip="隐藏到托盘" AutomationProperties.Name="隐藏到托盘" Style="{StaticResource IconButton}" Padding="11,4" Margin="6,0,0,0" Click="HideWindow"><Path Width="15" Height="15" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeLineJoin="Round" Data="M3,4 L13,4 L13,13 L3,13 Z M5,8 L11,8 M8,8 L8,2 M5.5,5 L8,2.5 L10.5,5"/></Button></StackPanel>
     </Grid>
     <Grid Grid.Row="2">
-     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="10"/><ColumnDefinition/></Grid.ColumnDefinitions>
      <Button Click="StartCapture" Style="{StaticResource SecondaryButton}" HorizontalContentAlignment="Stretch" Padding="16" AutomationProperties.Name="屏幕助手">
       <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
        <Border Width="36" Height="36" CornerRadius="10" Background="#E5F6FD"><Path Width="20" Height="20" Stretch="Uniform" Stroke="#1689E8" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M10,2 L10,5 M10,15 L10,18 M2,10 L5,10 M15,10 L18,10 M6,6 L14,6 L14,14 L6,14 Z" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
        <StackPanel Grid.Column="1" Margin="11,0,8,0" VerticalAlignment="Center"><TextBlock Text="屏幕助手" FontSize="16" FontWeight="SemiBold"/><TextBlock x:Name="CaptureSubtitle" Text="圈选并直接分析" Foreground="{StaticResource SecondaryText}" FontSize="12" Margin="0,3,0,0"/></StackPanel>
-       <Path Grid.Column="2" Width="14" Height="14" Stretch="Uniform" Stroke="{StaticResource MutedText}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M5,3 L11,8 L5,13" VerticalAlignment="Center" HorizontalAlignment="Right"/>
-      </Grid>
-     </Button>
-     <Button x:Name="QuickAiButton" Grid.Column="2" Click="OpenTextAi" Style="{StaticResource SecondaryButton}" HorizontalContentAlignment="Stretch" Padding="16" AutomationProperties.Name="快速提问">
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="42"/><ColumnDefinition/><ColumnDefinition Width="24"/></Grid.ColumnDefinitions>
-       <Border Width="36" Height="36" CornerRadius="10" Background="#EEEAFE"><Path Width="18" Height="18" Stretch="Uniform" Fill="#6157E8" Data="M9.5,0 L11.5,7.5 L19,9.5 L11.5,11.5 L9.5,19 L7.5,11.5 L0,9.5 L7.5,7.5 Z" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-       <StackPanel Grid.Column="1" Margin="11,0,8,0" VerticalAlignment="Center"><TextBlock Text="快速提问" FontSize="16" FontWeight="SemiBold"/><TextBlock Text="不截取屏幕" Foreground="{StaticResource SecondaryText}" FontSize="12" Margin="0,3,0,0"/></StackPanel>
        <Path Grid.Column="2" Width="14" Height="14" Stretch="Uniform" Stroke="{StaticResource MutedText}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M5,3 L11,8 L5,13" VerticalAlignment="Center" HorizontalAlignment="Right"/>
       </Grid>
      </Button>
