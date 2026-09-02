@@ -14,18 +14,22 @@ namespace mewu_ai_Assistant.Views;
 public sealed class PinnedImageWindow : Window
 {
     private const int ShadowPixels=12;
-    private readonly BitmapSource _image;
+    private readonly BitmapSource _originalImage;
+    private BitmapSource _image;
+    private readonly Image _imageView;
     private readonly ScreenRect? _originalRegion;
     private readonly Border _frame;
     private MenuItem? _topmostItem, _opacityItem;
     private bool _adjustingSize;
     private readonly PinnedWindowDragController _drag;
     private readonly int _initialContentWidthPixels;
+    private int _quarterTurns;
 
     public PinnedImageWindow(BitmapSource image,ScreenRect? originalRegion=null)
     {
-        _image=image;_originalRegion=originalRegion;_initialContentWidthPixels=Math.Min(image.PixelWidth,900);_drag=new PinnedWindowDragController(this);Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
-        _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true}};
+        _originalImage=_image=image;_originalRegion=originalRegion;_initialContentWidthPixels=Math.Min(image.PixelWidth,900);_drag=new PinnedWindowDragController(this);Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
+        _imageView=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true};
+        _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_imageView};
         Content=_frame;Width=_initialContentWidthPixels+ShadowPixels*2;Height=_initialContentWidthPixels*(double)image.PixelHeight/Math.Max(1,image.PixelWidth)+ShadowPixels*2;
         SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;MouseLeftButtonDown+=OnMouseLeftButtonDown;MouseLeftButtonUp+=OnMouseLeftButtonUp;MouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
         SourceInitialized+=(_,_)=>
@@ -77,7 +81,7 @@ public sealed class PinnedImageWindow : Window
 
     private void UpdateHeightForAspectRatio()
     {
-        if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_image.PixelHeight/_image.PixelWidth+padding;if(Math.Abs(ActualHeight-expected)<1)return;_adjustingSize=true;Height=Math.Min(expected,2400);_adjustingSize=false;
+        if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_image.PixelHeight/_image.PixelWidth+padding;var maximumHeight=Math.Max(180,Math.Min(2400,SystemParameters.WorkArea.Height*.9));_adjustingSize=true;try{if(expected>maximumHeight){Height=maximumHeight;Width=(maximumHeight-padding)*_image.PixelWidth/_image.PixelHeight+padding;}else if(Math.Abs(ActualHeight-expected)>=1)Height=expected;}finally{_adjustingSize=false;}
     }
 
     private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e)
@@ -96,7 +100,7 @@ public sealed class PinnedImageWindow : Window
 
     private ContextMenu BuildContextMenu()
     {
-        var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,typeof(ContextMenu));Add(menu,"复制",CopyImage);Add(menu,"保存…",Save);AddSeparator(menu);Add(menu,"回到原位",RestoreOriginal);_topmostItem=Add(menu,"置顶",ToggleTopmost);_opacityItem=Add(menu,"80% 透明度",ToggleOpacity);AddSeparator(menu);Add(menu,"关闭",Close);UpdateTopmostHeader();return menu;
+        var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,typeof(ContextMenu));Add(menu,"复制",CopyImage);Add(menu,"保存…",Save);AddSeparator(menu);Add(menu,"向左旋转 90°",()=>Rotate(-1));Add(menu,"向右旋转 90°",()=>Rotate(1));AddSeparator(menu);Add(menu,"回到原位",RestoreOriginal);_topmostItem=Add(menu,"置顶",ToggleTopmost);_opacityItem=Add(menu,"80% 透明度",ToggleOpacity);AddSeparator(menu);Add(menu,"关闭",Close);UpdateTopmostHeader();return menu;
     }
 
     private static MenuItem Add(ContextMenu menu,string text,Action action){var item=new MenuItem{Header=text};item.SetResourceReference(StyleProperty,typeof(MenuItem));item.Click+=(_,_)=>action();menu.Items.Add(item);return item;}
@@ -105,6 +109,10 @@ public sealed class PinnedImageWindow : Window
     private void UpdateTopmostHeader(){if(_topmostItem is not null)_topmostItem.Header=Topmost?"取消置顶":"置顶";}
     private void ToggleOpacity(){Opacity=Opacity<1?1:.8;if(_opacityItem is not null)_opacityItem.Header=Opacity<1?"100% 不透明度":"80% 透明度";}
     private void RestoreOriginal(){if(_originalRegion is not { } region)return;var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;PlaceAtOriginalSize(handle,region);}
+    private void Rotate(int delta)
+    {
+        var padding=_frame.Margin.Left*2;var oldContentWidth=Math.Max(1,ActualWidth-padding);var oldContentHeight=Math.Max(1,ActualHeight-padding);_quarterTurns=(_quarterTurns+delta)%4;_image=PinnedImageTransform.RotateQuarterTurns(_originalImage,_quarterTurns);_imageView.Source=_image;_adjustingSize=true;try{Width=oldContentHeight+padding;Height=oldContentWidth+padding;}finally{_adjustingSize=false;}UpdateHeightForAspectRatio();
+    }
     private void CopyImage(){if(!ClipboardService.TrySetImage(_image,out var error))MessageBox.Show(this,error??"复制图片失败，请稍后重试","复制失败",MessageBoxButton.OK,MessageBoxImage.Warning);}
     private void Save(){var dialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=".png"};if(dialog.ShowDialog(this)!=true)return;try{ScreenCaptureService.Save(_image,dialog.FileName,dialog.FilterIndex==2);}catch(Exception ex){new PrivacyLogger().Error("PinnedImageSave",ex);MessageBox.Show(this,$"图片保存失败：{ex.Message}","保存失败",MessageBoxButton.OK,MessageBoxImage.Warning);}}
 }
