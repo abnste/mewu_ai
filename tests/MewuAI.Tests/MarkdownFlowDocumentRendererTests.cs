@@ -89,11 +89,12 @@ public sealed class MarkdownFlowDocumentRendererTests
     {
         RunSta(() =>
         {
-            var invoked=false;var view=new mewu_ai_Assistant.Views.MarkdownAnswerView();
-            view.SetMarkdownWithActions("错误发生在按钮点击后",[new mewu_ai_Assistant.Views.MarkdownAnswerAction("跳到 00:12.4","跳转并显示标注",()=>invoked=true)]);
-            var paragraph=Assert.IsType<Paragraph>(view.Document.Blocks.LastBlock);var link=Assert.Single(paragraph.Inlines.OfType<Hyperlink>());
-            Assert.Contains("视频定位",MarkdownFlowDocumentRenderer.ToPlainText(view.Document));Assert.Equal("跳到 00:12.4",new TextRange(link.ContentStart,link.ContentEnd).Text);
-            link.RaiseEvent(new RoutedEventArgs(Hyperlink.ClickEvent));Assert.True(invoked);
+            var oldInvoked=false;var currentInvoked=false;var view=new mewu_ai_Assistant.Views.MarkdownAnswerView();
+            view.SetMarkdownWithActions("错误发生在按钮点击后",[new mewu_ai_Assistant.Views.MarkdownAnswerAction("12秒：按钮","旧标记",()=>oldInvoked=true)]);
+            view.SetMarkdownWithActions("错误发生在按钮点击后",[new mewu_ai_Assistant.Views.MarkdownAnswerAction("18秒：黑色手机","当前标记",()=>currentInvoked=true)]);
+            var container=Assert.IsType<BlockUIContainer>(view.Document.Blocks.LastBlock);var panel=Assert.IsType<System.Windows.Controls.WrapPanel>(container.Child);var chip=Assert.IsType<System.Windows.Controls.Button>(Assert.Single(panel.Children));
+            Assert.DoesNotContain("视频定位",MarkdownFlowDocumentRenderer.ToPlainText(view.Document));Assert.Equal("18秒：黑色手机",chip.Content);
+            chip.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));Assert.True(currentInvoked);Assert.False(oldInvoked);
         });
     }
 
