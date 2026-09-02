@@ -108,4 +108,4 @@ jobs:
             ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip",
             '.\artifacts\packages\SHA256SUMS.txt'
           )
-          gh release create $tag @assets --title "MewuAI $version · 喵呜AI $version" --notes-file '.\docs\release-notes-v0.0.1.md' --verify-tag
+          gh release create $tag @assets --title "MewuAI $version · 喵呜AI $version" --notes-file ".\docs\release-notes-v$version.md" --verify-tag
