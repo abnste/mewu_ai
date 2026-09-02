@@ -296,7 +296,7 @@ public partial class CaptureOverlayWindow : Window
         Toolbar.Padding=new Thickness(5);
         DrawingToolbar.Padding=new Thickness(5);
         RecordingBar.Padding=new Thickness(8,6,8,6);
-        PromptBar.Padding=new Thickness(6);
+        PromptBar.Padding=new Thickness(6,2,6,6);
         PromptBar.CornerRadius=new CornerRadius(18);
         HistoryPanel.MaxHeight=GetHistoryMaxHeight()+28;
         HistoryScroll.MaxHeight=GetHistoryMaxHeight();
