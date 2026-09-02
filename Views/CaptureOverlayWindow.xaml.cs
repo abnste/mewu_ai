@@ -76,6 +76,10 @@ public partial class CaptureOverlayWindow : Window
     private Color _drawColor=Colors.Red;
     private bool _drawHighlighter,_drawTextHighlight,_restoringDrawingAction,_drawingFontsLoaded;
     private bool _conversationAiAvailable,_translationAiAvailable;
+    private readonly NativeWindowSnapService _windowSnap=new();
+    private Rect _snapCandidate=Rect.Empty;
+    private Rect? _pendingAutoSelection;
+    private long _lastSnapProbeTicks;
     private string _drawFontFamily="Microsoft YaHei UI";
     private double _drawFontSize=24;
     private Point _drawStart;
@@ -187,6 +191,7 @@ public partial class CaptureOverlayWindow : Window
     private abstract record DrawingElementSpec(Guid Id,double X,double Y);
     private sealed record TextDrawingElement(Guid Id,double X,double Y,double Width,string Text,string FontFamily,double FontSize,Color Color,bool Highlight):DrawingElementSpec(Id,X,Y);
     private sealed record NumberDrawingElement(Guid Id,double X,double Y,double Diameter,int Number,Color Color):DrawingElementSpec(Id,X,Y);
+    private sealed record MosaicDrawingElement(Guid Id,double X,double Y,double Width,double Height):DrawingElementSpec(Id,X,Y);
     private sealed record DrawingFontChoice(string Source,string DisplayName)
     {
         public override string ToString()=>DisplayName;
@@ -194,7 +199,7 @@ public partial class CaptureOverlayWindow : Window
     private abstract record DrawingAction;
     private sealed record StrokeDrawingAction(Stroke Stroke):DrawingAction;
     private sealed record ElementDrawingAction(DrawingElementSpec Element):DrawingAction;
-    private enum DrawTool{Freehand,Rectangle,Ellipse,Arrow,Text,Number}
+    private enum DrawTool{Freehand,Rectangle,Ellipse,Arrow,Mosaic,Text,Number}
 
     private SelectionItem? Active=>_activeIndex>=0&&_activeIndex<_selections.Count?_selections[_activeIndex]:null;
 
@@ -625,7 +630,7 @@ public partial class CaptureOverlayWindow : Window
         var p=e.GetPosition(Root);var addNew=_forceNewSelection||Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);_forceNewSelection=false;
         var hit=addNew?-1:FindSelection(p);
         if(hit>=0){Select(hit);_moving=true;_pointerOperationLabel="移动截图区域";_moveStart=p;_moveOrigin=Active!.Bounds;}
-        else{RemoveImplicitSelections();var item=CreateSelection(false);_selections.Add(item);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();_selecting=true;_pointerOperationLabel="新建截图区域";_start=p;item.Bounds=new Rect(p,p);}
+        else{RemoveImplicitSelections();var item=CreateSelection(false);_selections.Add(item);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();_selecting=true;_pointerOperationLabel="新建截图区域";_start=p;_pendingAutoSelection=!addNew&&!_snapCandidate.IsEmpty&&_snapCandidate.Contains(p)?_snapCandidate:null;item.Bounds=new Rect(p,p);SnapPreview.Visibility=Visibility.Collapsed;}
         Toolbar.Visibility=Visibility.Collapsed;SetPromptBarHidden(true);Root.CaptureMouse();e.Handled=true;
     }
 
@@ -633,10 +638,11 @@ public partial class CaptureOverlayWindow : Window
     {
         if(_recordingMode||_drawingMode)return;
         var p=e.GetPosition(Root);
-        if(_selecting&&Active is { } created){created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
+        if(_selecting&&Active is { } created){if(_pendingAutoSelection is not null&&(p-_start).Length<SystemParameters.MinimumHorizontalDragDistance)return;_pendingAutoSelection=null;created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
         else
         {
+            UpdateSnapPreview(p);
             if(Active is null)PositionPromptBar();
             if(!_forceNewSelection)
             {
@@ -657,7 +663,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnMouseUp(object s,MouseButtonEventArgs e)
     {
         if(_recordingMode||_drawingMode)return;
-        if(!_selecting&&!_moving)return;_selecting=_moving=false;Root.ReleaseMouseCapture();
+        if(!_selecting&&!_moving)return;if(_pendingAutoSelection is { } automatic&&Active is { } automaticItem){automaticItem.Bounds=automatic;_pendingAutoSelection=null;} _selecting=_moving=false;Root.ReleaseMouseCapture();
         if(Active is not { } item||!CaptureOverlayPolicy.IsUsableSelection(item.Bounds.Width,item.Bounds.Height)){RemoveActiveSelection(false);_pointerOperationBefore=null;_pointerOperationLabel="";if(Active is not null)ShowToolbar();SetPromptBarHidden(false);return;}
         UpdateSelection(item);PositionPromptBar();ShowToolbar();SetPromptBarHidden(PointerOverSelection(e.GetPosition(Root)));PromptStatus.Text=$"已选择 {_selections.Count} 个区域 · 可继续拖动添加";e.Handled=true;
         if(_pointerOperationBefore is { } before)RecordGeometryOperationIfChanged(before,_pointerOperationLabel);_pointerOperationBefore=null;_pointerOperationLabel="";
@@ -671,7 +677,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void FinishInterruptedPointerInteraction()
     {
-        if(!_selecting&&!_moving)return;_selecting=_moving=false;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
+        if(!_selecting&&!_moving)return;_pendingAutoSelection=null;_selecting=_moving=false;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
         if(Active is not { } item||!CaptureOverlayPolicy.IsUsableSelection(item.Bounds.Width,item.Bounds.Height)){RemoveActiveSelection(false);_pointerOperationBefore=null;_pointerOperationLabel="";PromptStatus.Text="框选已中断，请重新拖动选择";}
         else{UpdateSelection(item);PositionPromptBar();ShowToolbar();if(_pointerOperationBefore is { } before)RecordGeometryOperationIfChanged(before,_pointerOperationLabel);_pointerOperationBefore=null;_pointerOperationLabel="";PromptStatus.Text="框选已结束，可继续操作";}
         SetPromptBarHidden(false);
@@ -800,6 +806,15 @@ public partial class CaptureOverlayWindow : Window
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
+    private void UpdateSnapPreview(Point point)
+    {
+        if(PointerOverSelection(point)){SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=Rect.Empty;return;}
+        var now=System.Diagnostics.Stopwatch.GetTimestamp();if(now-_lastSnapProbeTicks<System.Diagnostics.Stopwatch.Frequency/30)return;_lastSnapProbeTicks=now;_snapCandidate=ProbeSnapRect(point);if(_snapCandidate.IsEmpty){SnapPreview.Visibility=Visibility.Collapsed;return;}SnapPreview.Width=_snapCandidate.Width;SnapPreview.Height=_snapCandidate.Height;Canvas.SetLeft(SnapPreview,_snapCandidate.Left);Canvas.SetTop(SnapPreview,_snapCandidate.Top);SnapPreview.Visibility=Visibility.Visible;
+    }
+    private Rect ProbeSnapRect(Point point)
+    {
+        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return Rect.Empty;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;var bounds=_windowSnap.FindTopmostWindowAt(screenX,screenY,handle);return bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;
+    }
     private Rect MonitorBounds(Rect selection)
     {
         var pixels=ToPixelRect(selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).WorkingArea;
@@ -816,7 +831,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(Active is not {IsImplicit:false} item||_recordingMode){Toolbar.Visibility=Visibility.Collapsed;return;}
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
-        var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
+        var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=OcrButton.Visibility=LongCaptureButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
 
@@ -1100,7 +1115,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=Cyan;t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
     private void HideHandles(){foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
-    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(RejectIfOverlayOperationBusy()||sender is not Thumb t||Active is not {IsImplicit:false} item)return;_resizeOperationBefore??=CaptureOverlaySnapshot();SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);var next=new Rect(new Point(l,top),new Point(r,b));if(CaptureOverlayPolicy.HasContentGeometryChanged(item.Bounds,next))InvalidateImageDerivedLayers(item);item.Bounds=next;UpdateSelection(item);ShowToolbar();e.Handled=true;}
+    private void ResizeDelta(object sender,DragDeltaEventArgs e){if(RejectIfOverlayOperationBusy()||sender is not Thumb t||Active is not {IsImplicit:false} item)return;_resizeOperationBefore??=CaptureOverlaySnapshot();SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);var next=new Rect(new Point(l,top),new Point(r,b));var snapTarget=ProbeSnapRect(Mouse.GetPosition(Root));if(!snapTarget.IsEmpty)next=SelectionSnapPolicy.SnapResize(next,d,snapTarget,9);if(CaptureOverlayPolicy.HasContentGeometryChanged(item.Bounds,next))InvalidateImageDerivedLayers(item);item.Bounds=next;UpdateSelection(item);ShowToolbar();e.Handled=true;}
     private void ResizeCompleted(object sender,DragCompletedEventArgs e){if(_resizeOperationBefore is { } before)RecordGeometryOperationIfChanged(before,"调整截图区域");_resizeOperationBefore=null;PositionPromptBar();if(Active is not null)ShowToolbar();SetPromptBarHidden(PointerOverSelection(Mouse.GetPosition(Root)));e.Handled=true;}
 
     private void AddRegion(object s,RoutedEventArgs e){if(RejectIfOverlayOperationBusy())return;_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
@@ -1397,6 +1412,29 @@ public partial class CaptureOverlayWindow : Window
         }
         catch(Exception ex){new PrivacyLogger().Error("PinMedia",ex);PromptStatus.Text=$"贴图失败：{ex.Message}";}
     }
+    private async void CaptureLongScreenshot(object s,RoutedEventArgs e)
+    {
+        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false,VideoPath:null} item)return;
+        if(!_captureExclusionVerified){PromptStatus.Text="覆盖层防捕获不可用，无法安全生成长截图";return;}
+        var operation=BeginOverlayOperation("正在滚动并拼接长截图…按 Esc 可取消");var handle=new WindowInteropHelper(this).Handle;var originalCursor=System.Windows.Forms.Cursor.Position;var transparent=false;
+        try
+        {
+            var pixels=ToPixelRect(item.Bounds);var screen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=screen.X+screen.Width/2;var centerY=screen.Y+screen.Height/2;var scrollTarget=_windowSnap.FindTopmostTargetAt(centerX,centerY,handle);MouseWheelInputService.SetCursor(centerX,centerY);transparent=NativeMethods.TrySetWindowMouseTransparent(handle,true);if(!transparent)throw new InvalidOperationException("无法把滚轮交给下层窗口");SnapPreview.Visibility=Visibility.Collapsed;await Task.Delay(160,operation.Token);
+            var frames=new List<BitmapSource>();
+            for(var index=0;index<24;index++)
+            {
+                operation.Token.ThrowIfCancellationRequested();var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);
+                if(frames.Count>0&&ScrollingCaptureComposer.EstimateVerticalShift(frames[^1],frame)<=0)break;
+                frames.Add(frame);PromptStatus.Text=$"正在拼接长截图 · 已采集 {frames.Count} 段…按 Esc 可取消";
+                if(checked((long)frame.PixelWidth*frame.PixelHeight*frames.Count)>=ScrollingCaptureComposer.MaxOutputPixels||!MouseWheelInputService.ScrollDown(scrollTarget?.Handle??IntPtr.Zero,centerX,centerY))break;
+                await Task.Delay(260,operation.Token);
+            }
+            if(frames.Count<2)throw new InvalidOperationException("未检测到可滚动内容；请把选区放在页面内容上并确认鼠标滚轮可滚动");var result=await Task.Run(()=>ScrollingCaptureComposer.Compose(frames),operation.Token);if(!IsOverlayOperationActive(operation,item))return;new PinnedImageWindow(result).Show();PromptStatus.Text=$"长截图完成 · {result.PixelWidth} × {result.PixelHeight} · 已生成贴图，可右键保存";
+        }
+        catch(OperationCanceledException){if(IsOverlayOperationActive(operation,item))PromptStatus.Text="已取消长截图";}
+        catch(Exception ex){new PrivacyLogger().Error("LongScreenshot",ex);if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"长截图失败：{ex.Message}";}
+        finally{if(transparent&&!NativeMethods.TrySetWindowMouseTransparent(handle,false)){new PrivacyLogger().Error("LongScreenshotInteractionRestore",new InvalidOperationException("长截图后窗口交互恢复失败"));if(!_closed)Close();}MouseWheelInputService.SetCursor(originalCursor.X,originalCursor.Y);EndOverlayOperation(operation);}
+    }
     private void Draw(object s,RoutedEventArgs e)=>EnterDrawingMode();
     private void EnterDrawingMode()
     {
@@ -1422,6 +1460,7 @@ public partial class CaptureOverlayWindow : Window
     private void DrawRectangleTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Rectangle);
     private void DrawEllipseTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Ellipse);
     private void DrawArrowTool(object s,RoutedEventArgs e)=>SetShapeTool(DrawTool.Arrow);
+    private void DrawMosaicTool(object s,RoutedEventArgs e){SetShapeTool(DrawTool.Mosaic);PromptStatus.Text="拖动绘制矩形马赛克 · 可撤销或重做";}
     private void DrawTextTool(object s,RoutedEventArgs e){_drawHighlighter=false;if(Active is { } item)ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Text);PromptStatus.Text="点击截图放置文本框 · 可选系统字体、字号和荧光底色";}
     private void DrawNumberTool(object s,RoutedEventArgs e){_drawHighlighter=false;if(Active is { } item)ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Number);PromptStatus.Text="点击截图依次放置实心序号";}
     private void SetDrawColor(Color color){_drawColor=color;if(Active is { } item){ApplyCurrentDrawingAttributes(item);UpdateFocusedDrawingTextColor(item);}}
@@ -1473,17 +1512,17 @@ public partial class CaptureOverlayWindow : Window
     }
     private void MarkupUp(object sender,MouseButtonEventArgs e)
     {
-        if(sender is not InkCanvas canvas||_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||!canvas.IsMouseCaptured)return;var completed=_drawPreview;_drawPreview=null;canvas.ReleaseMouseCapture();if(Active is { } item&&completed is not null){item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();}_drawingOperationChanged=completed is not null||_drawingOperationChanged;e.Handled=true;
+        if(sender is not InkCanvas canvas||_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||!canvas.IsMouseCaptured)return;var completed=_drawPreview;_drawPreview=null;canvas.ReleaseMouseCapture();if(Active is { } item&&completed is not null){if(_drawTool==DrawTool.Mosaic){canvas.Strokes.Remove(completed);AddMosaicElement(item,_drawStart,e.GetPosition(canvas));}else{item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();}}_drawingOperationChanged=completed is not null||_drawingOperationChanged;e.Handled=true;
     }
     private void MarkupLostMouseCapture(object sender,MouseEventArgs e)
     {
-        if(!_drawingMode||sender is not InkCanvas canvas||_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||_drawPreview is null)return;var completed=_drawPreview;_drawPreview=null;if(ReferenceEquals(canvas,Active?.Markup)&&Active is { } item){item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();_drawingOperationChanged=true;}PromptStatus.Text="标注笔划已保留，可继续编辑";
+        if(!_drawingMode||sender is not InkCanvas canvas||_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||_drawPreview is null)return;var completed=_drawPreview;_drawPreview=null;if(ReferenceEquals(canvas,Active?.Markup)&&Active is { } item){if(_drawTool==DrawTool.Mosaic)canvas.Strokes.Remove(completed);else{item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();_drawingOperationChanged=true;}}PromptStatus.Text="标注笔划已保留，可继续编辑";
     }
     private static Stroke CreateShapeStroke(InkCanvas canvas,Point a,Point b,DrawTool tool,bool constrain)
     {
         if(tool==DrawTool.Ellipse&&constrain)b=DrawingAnnotationGeometry.ConstrainEllipseEndToCircle(a,b,new Size(canvas.ActualWidth,canvas.ActualHeight));
         var points=new StylusPointCollection();
-        if(tool==DrawTool.Rectangle){points.Add(new StylusPoint(a.X,a.Y));points.Add(new StylusPoint(b.X,a.Y));points.Add(new StylusPoint(b.X,b.Y));points.Add(new StylusPoint(a.X,b.Y));points.Add(new StylusPoint(a.X,a.Y));}
+        if(tool is DrawTool.Rectangle or DrawTool.Mosaic){points.Add(new StylusPoint(a.X,a.Y));points.Add(new StylusPoint(b.X,a.Y));points.Add(new StylusPoint(b.X,b.Y));points.Add(new StylusPoint(a.X,b.Y));points.Add(new StylusPoint(a.X,a.Y));}
         else if(tool==DrawTool.Ellipse){var left=Math.Min(a.X,b.X);var top=Math.Min(a.Y,b.Y);var rx=Math.Abs(b.X-a.X)/2;var ry=Math.Abs(b.Y-a.Y)/2;for(var index=0;index<=64;index++){var angle=index*Math.PI*2/64;points.Add(new StylusPoint(left+rx+Math.Cos(angle)*rx,top+ry+Math.Sin(angle)*ry));}}
         else{points.Add(new StylusPoint(a.X,a.Y));points.Add(new StylusPoint(b.X,b.Y));var angle=Math.Atan2(b.Y-a.Y,b.X-a.X);var length=Math.Min(24,Math.Max(10,new Vector(b.X-a.X,b.Y-a.Y).Length*.25));points.Add(new StylusPoint(b.X-length*Math.Cos(angle-Math.PI/6),b.Y-length*Math.Sin(angle-Math.PI/6)));points.Add(new StylusPoint(b.X,b.Y));points.Add(new StylusPoint(b.X-length*Math.Cos(angle+Math.PI/6),b.Y-length*Math.Sin(angle+Math.PI/6)));}
         var attributes=canvas.DefaultDrawingAttributes.Clone();attributes.IsHighlighter=false;attributes.FitToCurve=false;return new Stroke(points,attributes);
@@ -1522,6 +1561,14 @@ public partial class CaptureOverlayWindow : Window
     {
         var diameter=Math.Clamp(_drawFontSize+12,28,56);var x=Math.Clamp(point.X-diameter/2,0,Math.Max(0,item.Bounds.Width-diameter));var y=Math.Clamp(point.Y-diameter/2,0,Math.Max(0,item.Bounds.Height-diameter));var element=new NumberDrawingElement(Guid.NewGuid(),x,y,diameter,item.NextDrawingNumber++,_drawColor);item.DrawingElements.Add(element);item.DrawingOrder.Add(new ElementDrawingAction(element));item.DrawingRedo.Clear();item.Markup.Children.Add(CreateNumberDrawingVisual(element));_drawingOperationChanged=true;PromptStatus.Text=$"已放置序号 {element.Number} · 继续点击放置 {item.NextDrawingNumber}";
     }
+    private void AddMosaicElement(SelectionItem item,Point start,Point end)
+    {
+        var bounds=Normalize(new Rect(start,end));if(bounds.Width<3||bounds.Height<3)return;var element=new MosaicDrawingElement(Guid.NewGuid(),bounds.X,bounds.Y,bounds.Width,bounds.Height);item.DrawingElements.Add(element);item.DrawingOrder.Add(new ElementDrawingAction(element));item.DrawingRedo.Clear();item.Markup.Children.Add(CreateMosaicVisual(item,element));_drawingOperationChanged=true;
+    }
+    private Image CreateMosaicVisual(SelectionItem item,MosaicDrawingElement element)
+    {
+        var source=RenderSelectionImage(item,false,false,false);var scaleX=source.PixelWidth/Math.Max(1,item.Bounds.Width);var scaleY=source.PixelHeight/Math.Max(1,item.Bounds.Height);var region=new Int32Rect((int)Math.Floor(element.X*scaleX),(int)Math.Floor(element.Y*scaleY),Math.Max(1,(int)Math.Ceiling(element.Width*scaleX)),Math.Max(1,(int)Math.Ceiling(element.Height*scaleY)));var pixelated=ImagePixelationService.Pixelate(source,region,Math.Clamp((int)Math.Round(12*Math.Max(scaleX,scaleY)),6,40));var visual=new Image{Source=pixelated,Width=element.Width,Height=element.Height,Stretch=Stretch.Fill,IsHitTestVisible=false};InkCanvas.SetLeft(visual,element.X);InkCanvas.SetTop(visual,element.Y);return visual;
+    }
     private TextBox CreateTextDrawingEditor(SelectionItem item,TextDrawingElement element)
     {
         var editor=new TextBox{Tag=element.Id,Text=element.Text,Width=element.Width,MinHeight=Math.Max(30,element.FontSize*1.55),AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,FontFamily=new FontFamily(element.FontFamily),FontSize=element.FontSize,FontWeight=FontWeights.SemiBold,Padding=new Thickness(4,1,4,2),Foreground=new SolidColorBrush(element.Color),Background=element.Highlight?new SolidColorBrush(Color.FromArgb(150,255,237,105)):Brushes.Transparent,BorderBrush=Brushes.Transparent,BorderThickness=new Thickness(1),CaretBrush=new SolidColorBrush(element.Color)};
@@ -1538,7 +1585,7 @@ public partial class CaptureOverlayWindow : Window
     private static Brush ContrastBrush(Color color)=>color.R*.299+color.G*.587+color.B*.114>155?Brushes.Black:Brushes.White;
     private void RebuildDrawingElements(SelectionItem item)
     {
-        item.Markup.Children.Clear();foreach(var element in item.DrawingElements){if(element is TextDrawingElement text)item.Markup.Children.Add(CreateTextDrawingEditor(item,text));else if(element is NumberDrawingElement number)item.Markup.Children.Add(CreateNumberDrawingVisual(number));}
+        item.Markup.Children.Clear();foreach(var element in item.DrawingElements){if(element is TextDrawingElement text)item.Markup.Children.Add(CreateTextDrawingEditor(item,text));else if(element is NumberDrawingElement number)item.Markup.Children.Add(CreateNumberDrawingVisual(number));else if(element is MosaicDrawingElement mosaic)item.Markup.Children.Add(CreateMosaicVisual(item,mosaic));}
     }
     private void RemoveEmptyDrawingText(SelectionItem item)
     {
