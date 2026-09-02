@@ -22,7 +22,7 @@ public sealed class AppSettings
 }
 public sealed class HotkeySetting
 {
-    public Key Key { get; set; } = Key.A; public ModifierKeys Modifiers { get; set; } = ModifierKeys.Control | ModifierKeys.Shift;
+    public Key Key { get; set; } = Key.S; public ModifierKeys Modifiers { get; set; } = ModifierKeys.Shift | ModifierKeys.Alt;
 }
 public sealed class AiProviderSettings
 {

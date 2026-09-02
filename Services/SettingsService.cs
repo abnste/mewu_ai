@@ -188,7 +188,9 @@ public sealed class SettingsService
         settings.CaptureHotkey??=new();
         if(settings.CaptureHotkey.Key is < System.Windows.Input.Key.A or > System.Windows.Input.Key.Z)settings.CaptureHotkey.Key=System.Windows.Input.Key.A;
         const System.Windows.Input.ModifierKeys allowed=System.Windows.Input.ModifierKeys.Control|System.Windows.Input.ModifierKeys.Shift|System.Windows.Input.ModifierKeys.Alt;
-        settings.CaptureHotkey.Modifiers&=allowed;if(settings.CaptureHotkey.Modifiers==System.Windows.Input.ModifierKeys.None)settings.CaptureHotkey.Modifiers=System.Windows.Input.ModifierKeys.Control|System.Windows.Input.ModifierKeys.Shift;
+        settings.CaptureHotkey.Modifiers&=allowed;if(settings.CaptureHotkey.Modifiers==System.Windows.Input.ModifierKeys.None)settings.CaptureHotkey.Modifiers=System.Windows.Input.ModifierKeys.Shift|System.Windows.Input.ModifierKeys.Alt;
+        if(settings.CaptureHotkey.Key==System.Windows.Input.Key.A && settings.CaptureHotkey.Modifiers==(System.Windows.Input.ModifierKeys.Control|System.Windows.Input.ModifierKeys.Shift))
+            settings.CaptureHotkey=new(){Key=System.Windows.Input.Key.S,Modifiers=System.Windows.Input.ModifierKeys.Shift|System.Windows.Input.ModifierKeys.Alt};
         settings.CaptureDelaySeconds=settings.CaptureDelaySeconds is 3 or 5?settings.CaptureDelaySeconds:0;
         settings.DefaultImageFormat=settings.DefaultImageFormat?.Trim().ToLowerInvariant() is "jpg" or "jpeg"?"jpg":"png";
         settings.VoiceLanguage=settings.VoiceLanguage?.Trim() is "zh-CN" or "en-US"?settings.VoiceLanguage.Trim():"system";
