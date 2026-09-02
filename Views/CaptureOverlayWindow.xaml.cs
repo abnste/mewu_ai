@@ -894,7 +894,7 @@ public partial class CaptureOverlayWindow : Window
         _lastSentSelections=[..snapshot.LastSentSelections.Where(targetItems.Contains)];
         _lastSentAnnotationTargets=[.._lastSentSelections.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item))];
         _answerExpanded=false;_historyExpanded=false;AnswerText.Markdown=snapshot.AnswerMarkdown;
-        AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;
+        ResponseScroll.Visibility=Visibility.Collapsed;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;
         if(snapshot.AnswerExpanded&&snapshot.AnswerMarkdown.Length>0)ShowAnswer();
         _reasoningBuffer.Clear();ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;
         ResolveOverlayInteractionWithFallback();AgentActivityItems.Children.Clear();AgentActivityCard.Visibility=AiInteractionCard.Visibility=Visibility.Collapsed;
@@ -1130,7 +1130,7 @@ public partial class CaptureOverlayWindow : Window
         transform.BeginAnimation(TranslateTransform.YProperty,movement);
         PromptBarHost.BeginAnimation(OpacityProperty,new DoubleAnimation(currentOpacity,targetOpacity,TimeSpan.FromMilliseconds(_promptBarHidden?120:190)){FillBehavior=FillBehavior.Stop});
     }
-    private void ShowAnswer(){SetPromptBarHidden(false);if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(DispatcherPriority.Render,PositionPromptBar);}
+    private void ShowAnswer(){SetPromptBarHidden(false);ResponseScroll.Visibility=Visibility.Visible;if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(DispatcherPriority.Render,PositionPromptBar);}
     private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevronRotation.Angle=_reasoningExpanded?180:0;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
     private void ShowReasoning(string delta,CancellationTokenSource request)
     {
@@ -1146,7 +1146,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void RevealReasoningInProgress()
     {
-        if(string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))return;ReasoningToggle.Visibility=Visibility.Visible;_reasoningExpanded=true;ReasoningPanel.Visibility=Visibility.Visible;ReasoningChevronRotation.Angle=180;ReasoningLabel.Text="正在思考…";ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));ReasoningPulse.BeginAnimation(OpacityProperty,new DoubleAnimation(.35,1,TimeSpan.FromMilliseconds(650)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever});ScrollReasoningToEnd();
+        if(string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))return;ResponseScroll.Visibility=Visibility.Visible;ReasoningToggle.Visibility=Visibility.Visible;_reasoningExpanded=true;ReasoningPanel.Visibility=Visibility.Visible;ReasoningChevronRotation.Angle=180;ReasoningLabel.Text="正在思考…";ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));ReasoningPulse.BeginAnimation(OpacityProperty,new DoubleAnimation(.35,1,TimeSpan.FromMilliseconds(650)){AutoReverse=true,RepeatBehavior=RepeatBehavior.Forever});ScrollReasoningToEnd();
     }
     private void FinishReasoning(string reasoning)
     {
@@ -1166,7 +1166,7 @@ public partial class CaptureOverlayWindow : Window
         foreach(var item in _selections){CancelVideoAnnotationPlayback(item);item.AnnotationNotes.Clear();item.AiAnnotations.Children.Clear();}
         _lastSentSelections.Clear();
         _lastSentAnnotationTargets.Clear();
-        ResolveOverlayInteractionWithFallback();AgentActivityItems.Children.Clear();AgentActivityCard.Visibility=AiInteractionCard.Visibility=Visibility.Collapsed;_answerExpanded=false;_historyExpanded=false;AnswerText.Markdown="";AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;_reasoningBuffer.Clear();_reasoningRenderScheduled=false;_reasoningRenderRequest=null;ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;RefreshHistoryPreview();_ = Dispatcher.BeginInvoke(PositionPromptBar);
+        ResolveOverlayInteractionWithFallback();AgentActivityItems.Children.Clear();AgentActivityCard.Visibility=AiInteractionCard.Visibility=Visibility.Collapsed;_answerExpanded=false;_historyExpanded=false;ResponseScroll.Visibility=Visibility.Collapsed;AnswerText.Markdown="";AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;_reasoningBuffer.Clear();_reasoningRenderScheduled=false;_reasoningRenderRequest=null;ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;RefreshHistoryPreview();_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }
 
     private void UpdateOverlayAgentActivity(AiAgentEvent update,CancellationTokenSource request)
