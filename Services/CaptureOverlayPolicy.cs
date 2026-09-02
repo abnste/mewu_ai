@@ -85,15 +85,14 @@ internal static class CaptureOverlayPolicy
         Func<T, bool> isImplicit,
         Func<T, bool> isReferenced)
     {
-        var all = selections.ToList();
-        var explicitSelections = all.Where(item => !isImplicit(item)).ToList();
-        var eligible = explicitSelections.Count > 0 ? explicitSelections : all;
+        var eligible = selections.Where(item => !isImplicit(item)).ToList();
         var referenced = eligible.Where(isReferenced).ToList();
         return referenced.Count > 0 ? referenced : eligible;
     }
 
-    internal static bool ShouldCreateImplicitScreenSelection(bool hasUploadedReferences,bool hasExplicitSelections)=>
-        !hasUploadedReferences&&!hasExplicitSelections;
+    // Kept as a compatibility seam for callers compiled against older
+    // versions. A plain text turn must never manufacture a desktop image.
+    internal static bool ShouldCreateImplicitScreenSelection(bool hasUploadedReferences,bool hasExplicitSelections)=>false;
 
     internal static IReadOnlyList<(int RegionIndex,T Item)> SelectSpatialAnnotationTargets<T>(
         IReadOnlyList<T> attachments,
@@ -168,7 +167,8 @@ internal static class CaptureOverlayPolicy
         List<AiAttachment> attachments,
         IProgress<AiStreamDelta>? streamingProgress,
         IProgress<AiAgentEvent>? agentProgress=null,
-        Func<AiInteractionRequest,CancellationToken,Task<AiInteractionResponse>>? interactionHandler=null) => new()
+        Func<AiInteractionRequest,CancellationToken,Task<AiInteractionResponse>>? interactionHandler=null,
+        bool expectStructuredResponse=true) => new()
     {
         Prompt=prompt,
         History=[..history],
@@ -176,7 +176,7 @@ internal static class CaptureOverlayPolicy
         StreamingProgress=streamingProgress,
         AgentProgress=agentProgress,
         InteractionHandler=interactionHandler,
-        ExpectStructuredResponse=true,
+        ExpectStructuredResponse=expectStructuredResponse,
         MaxOutputTokens=8192
     };
 
