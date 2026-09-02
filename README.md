@@ -1,64 +1,118 @@
-# 喵呜AI
+<div align="center">
+  <img src="./Assets/MewuAI.Icon.png" width="112" alt="MewuAI icon" />
 
-喵呜AI 是一款 Windows 常驻型屏幕工具。即使没有网络、API Key 或 AI 模型，截图、调整选区、贴图、标注、文字识别、复制、保存和区域录屏仍可独立使用；只有用户明确点击发送或翻译后，内容才会交给所选模型。
+  # MewuAI · 喵呜AI
 
-## 当前功能
+  **A native Windows screen assistant that keeps capture, annotation, OCR, recording, and AI in one continuous canvas.**
 
-- 单实例托盘应用；默认全局快捷键 `Ctrl + Shift + A`。
-- PerMonitorV2 虚拟桌面暗化框选；选区以物理像素统一处理多屏、负坐标和混合 DPI，并支持任意方向拖动、八向缩放、整体移动和方向键微调。
-- PNG/JPEG 保存、剪贴板复制、多贴图窗口，以及画笔、高亮、橡皮、矩形、箭头、粗细、撤销、重做和清空。
-- 随软件离线交付的 PP-OCRv6 Small 多语言 OCR；初始化或推理异常时才回退 Windows OCR。识别后可跨行选择、复制全部，大图坐标会还原到原选区。
-- OCR 坐标驱动的分批原位翻译；支持取消、独立超时和长文档保序合并。
-- 多 Provider 管理，支持 OpenAI-compatible 与 MiniMax、自定义 Base URL/Model/Headers、连接测试和默认 Provider；API Key 与敏感自定义 Header 均由 DPAPI 加密。
-- 图片/视频/纯文字多轮 AI、兼容接口流式输出、取消请求、重复分析同一区域及结构化屏幕批注。
-- Windows 桌面 SAPI 本地语音识别；支持再次点击停止、语言选择和可选自动监听，识别结果不会自动发送。
-- 单屏或跨屏区域 MP4 录制（Media Foundation H.264）、暂停/继续、保存时按需 GIF 导出、原位预览和原生视频 AI 理解；录制 UI 排除在捕获之外。
-- 隐私安全日志、临时媒体清理和本地设置。
+  [简体中文](./README.zh-CN.md) · **English** · [Download](https://github.com/abnste/mewu_ai/releases/latest) · [Report a bug](https://github.com/abnste/mewu_ai/issues)
 
-## 环境与运行
+  [![Release](https://img.shields.io/badge/release-v0.0.1-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.0.1)
+  [![Windows](https://img.shields.io/badge/Windows-10%202004%2B-3A8DDE?style=flat-square&logo=windows11&logoColor=white)](#system-requirements)
+  [![.NET](https://img.shields.io/badge/.NET-10-6C4BC1?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+  [![WPF](https://img.shields.io/badge/UI-native%20WPF-E65A8D?style=flat-square)](#architecture)
 
-- Windows 10 2004（build 19041）或更高版本，x64。
-- 开发环境：.NET 10 SDK。
-- 录屏使用 Media Foundation；Windows N/KN 版本需要安装 Microsoft Media Feature Pack。
+  [**Download installer**](https://github.com/abnste/mewu_ai/releases/download/v0.0.1/MewuAI-Setup-0.0.1-win-x64.exe) · [Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.0.1/MewuAI-Portable-0.0.1-win-x64.zip)
+</div>
 
-```powershell
-& 'C:\Program Files\dotnet\dotnet.exe' build '.\mewu_ai_Assistant.csproj' -p:Platform=x64
-& '.\bin\x64\Debug\net10.0-windows10.0.19041.0\MewuAI.exe'
+<br />
+
+<div align="center">
+  <img src="./docs/images/mewu-main.png" width="720" alt="MewuAI main window" />
+</div>
+
+## Why MewuAI?
+
+Most screenshot tools stop after producing an image, while most AI clients pull that image into a separate chat window. MewuAI keeps the whole workflow in place: select one or more regions, annotate them, record motion, ask a question, inspect streamed reasoning, and jump back to AI-marked video moments without leaving the frozen desktop context.
+
+> [!IMPORTANT]
+> Capture, pinning, annotation, copy, save, local OCR, and region recording work without an API key. Screen content is sent only after you explicitly invoke AI or translation.
+
+## Highlights
+
+| | Capability | What it gives you |
+|---:|---|---|
+| ✂️ | **Multi-region capture** | Re-select, move, resize, number, reference, undo, and redo multiple regions across mixed-DPI monitors. |
+| ✍️ | **In-place annotation** | Pen, highlighter, rectangle, ellipse, arrow, text, localized system fonts, numbered markers, RGB colors, and export with or without annotations. |
+| 👁️ | **Offline OCR** | Bundled PP-OCRv6 Small multilingual models with continuous cross-line text selection; Windows OCR is used only as an error fallback. |
+| 🎬 | **Region video** | Three-second interactive countdown, MP4 recording, pause/resume, in-place preview, on-demand GIF export, and video-aware AI questions. |
+| 🎯 | **Video timeline annotations** | AI answers can seek to a marked frame or play a tracked action range. Compact action chips take you back to every relevant moment. |
+| 🤖 | **Provider freedom** | MiniMax M3 by default plus OpenAI-compatible endpoints, custom models, headers, image/video input, streaming reasoning, and local history. |
+| 🐚 | **Local Hermes** | Detect a local Hermes installation and keep profile/agent, model, reasoning level, session, attachments, and TTS bound together. |
+| 🔊 | **Voice** | Desktop SAPI speech input and optional Hermes-powered automatic read-aloud. |
+| 🔐 | **Privacy by design** | Capture-protected product windows, explicit-send boundary, DPAPI-protected credentials, scrubbed buffers, and sanitized logs. |
+
+## One canvas, from capture to answer
+
+MewuAI does not open a detached result window. The bottom composer expands in place only when an answer arrives; screen regions remain mapped to their original coordinates, and AI annotations return to the exact image or video object that produced them.
+
+| Native settings | Local Hermes integration |
+|:---:|:---:|
+| <img src="./docs/images/mewu-settings.png" width="560" alt="MewuAI settings" /> | <img src="./docs/images/mewu-hermes.png" width="560" alt="MewuAI local Hermes settings" /> |
+
+## Download and install
+
+### Installer — recommended
+
+Download [`MewuAI-Setup-0.0.1-win-x64.exe`](https://github.com/abnste/mewu_ai/releases/download/v0.0.1/MewuAI-Setup-0.0.1-win-x64.exe). It installs per user, adds a Start Menu shortcut, optionally creates a desktop shortcut, and includes an uninstaller.
+
+### Portable
+
+Download [`MewuAI-Portable-0.0.1-win-x64.zip`](https://github.com/abnste/mewu_ai/releases/download/v0.0.1/MewuAI-Portable-0.0.1-win-x64.zip), extract it, and run `MewuAI.exe`. The package is self-contained; no separate .NET installation is required.
+
+On first launch MewuAI stays in the system tray. Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>A</kbd> to open the screen assistant.
+
+### System requirements
+
+- Windows 10 version 2004 / build 19041 or newer, x64.
+- Windows N/KN editions need the Microsoft Media Feature Pack for H.264 recording and preview.
+- AI features need a compatible provider or a local Hermes installation; local capture tools do not.
+
+> [!NOTE]
+> Version `0.0.1` is an early public build. The installer is not Authenticode-signed yet, so Windows SmartScreen may display an unknown-publisher notice. Verify the SHA-256 values published in the release notes.
+
+## Privacy and data flow
+
+```text
+Frozen desktop ──► local selection / drawing / OCR / recording
+                         │
+                         └── explicit Send / Translate ──► selected Provider or local Hermes
 ```
 
-测试：
+- API keys and sensitive custom headers are encrypted with Windows DPAPI for the current user.
+- Generated image buffers are cleared after provider requests, including cancellation and failure paths.
+- Conversation context is bounded; incomplete turns and late streaming fragments are rejected.
+- Logs do not intentionally contain API keys, authorization headers, Base64 media, screenshots, recordings, or full prompts.
+- Temporary media is lease-managed so an active preview, export, or clipboard operation cannot be cleaned out from under the user.
+
+## Architecture
+
+MewuAI is Windows-only by design and stays on modern C#, WPF, and .NET. Coordinate conversion is centralized around physical virtual-desktop pixels for per-monitor DPI correctness. Capture/presentation, AI providers, local Hermes, OCR, and recording are isolated behind services.
+
+- **UI:** .NET 10 WPF, PerMonitorV2, native DWM corners/shadows where applicable.
+- **Capture & recording:** Windows Graphics Capture / Desktop Duplication through ScreenRecorderLib; H.264 via Windows Media Foundation.
+- **OCR:** RapidOcrNet + bundled PP-OCRv6 Small ONNX models; Windows OCR fallback on initialization/inference errors only.
+- **Rich answers:** Markdig FlowDocument rendering and color emoji through Emoji.Wpf.
+- **No FFmpeg, no GPL/AGPL dependencies.**
+
+## Build from source
+
+Requirements: Windows x64 and the .NET 10 SDK.
 
 ```powershell
-& 'C:\Program Files\dotnet\dotnet.exe' test '.\tests\MewuAI.Tests\MewuAI.Tests.csproj' -p:Platform=x64
+dotnet build .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64
+dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64
+dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true -o .\artifacts\release\win-x64
 ```
 
-`tests\MewuAI.ProviderSmoke` 可用 `MEWU_SMOKE_VIDEO_PATH` 验证既有 MP4，或用 `MEWU_SMOKE_RECORD_SECONDS`（严格为 2–20 秒）和可选的 `MEWU_SMOKE_RECORD_RECT_JSON` 先录制指定区域；视频验收必须通过 `MEWU_SMOKE_VIDEO_EXPECTED_ANY_JSON` / `MEWU_SMOKE_VIDEO_EXPECTED_ALL_JSON` 提供至少一项非空目标语义，并默认要求首中末帧发生变化（仅静态素材可显式设置 `MEWU_SMOKE_VIDEO_REQUIRE_FRAME_CHANGES=false`）。动态判定会把帧缩成 32 × 18 亮度签名：任意两帧中亮度差至少 12 的网格达到 3% 才通过，同时保存原始像素 SHA-256 证据。该工具必须在主程序关闭时独占运行，会走真实流式视频请求并核对时长与发送前后文件哈希；它仍只验证录制服务与 Provider，发布前还需在 Release 覆盖层完成“区域录屏 → `@视频N` → 发送 → 回答”的产品闭环。
+The publish target rejects PDBs, non-Windows native assets, settings, credentials, logs, screenshots, recordings, and QA files. Third-party notices and runtime/model licenses are included in every distribution.
 
-发布自包含版本：
+## Project status
 
-```powershell
-& 'C:\Program Files\dotnet\dotnet.exe' publish '.\mewu_ai_Assistant.csproj' -c Release -p:Platform=x64 -r win-x64 --self-contained true -o '.\artifacts\release\win-x64'
-```
+The current build focuses on a stable Windows capture-to-AI loop. Feedback and reproducible bug reports are welcome in [GitHub Issues](https://github.com/abnste/mewu_ai/issues).
 
-发布目录中的 `MewuAI.exe` 可直接运行，不要求用户预装 .NET。发布目标会附带 `THIRD-PARTY-NOTICES.md` 与 `Licenses`，清除 PDB、原生开发库和非 Windows 原生资产，并在发现设置、凭据、日志、截图、录屏或 QA 临时文件时终止发布。首次启动默认仅驻留系统托盘；重复启动会激活已有实例。
+---
 
-## 数据与隐私
-
-普通设置位于 `%LOCALAPPDATA%\MewuAI`。API Key 与敏感自定义 Header 经 Windows DPAPI 加密，仅当前 Windows 用户可解密。临时录像和导出中间文件位于 `%LOCALAPPDATA%\MewuAI\Temp`，录制、预览、贴视频、发送或导出期间均由引用租约保护，清理只会删除未使用的旧文件；录制期间不会额外落盘 PNG 帧。复制视频时会先原子暂存到 `%LOCALAPPDATA%\MewuAI\Clipboard`，让退出程序后粘贴仍然有效；暂存副本按用户配置的保留天数清理。日志不会主动记录 API Key、Authorization、图片、视频、Base64 或完整 Prompt。
-
-## 第三方组件
-
-- `ScreenRecorderLib`：MIT，使用 Windows Graphics Capture/Desktop Duplication 与 Microsoft Media Foundation 录制 H.264。
-- `RapidOcrNet`、PP-OCRv6 与 ONNX Runtime：Apache-2.0/MIT，提供离线多语言 OCR。
-- `SkiaSharp` 与 `Clipper2`：MIT/BSL-1.0，作为 OCR 处理链的传递依赖。
-- `System.Speech`：MIT，调用 Windows 桌面 SAPI 完成本地语音识别，不要求 MSIX 包身份。
-- `Microsoft.Windows.SDK.NET.Ref`：Windows SDK targeting pack，用于 Windows OCR 等系统 API。
-- Windows 自包含 .NET 与 WPF 运行时按 Microsoft .NET Library License 分发；对应许可证和第三方声明随发布目录一并提供。
-- xUnit：测试框架。
-
-项目不引入 GPL/AGPL 组件，也不捆绑 FFmpeg。
-
-## 当前能力边界
-
-- MiniMax M3 通过官方 OpenAI-compatible Chat Completions 原生接收图片与视频：图片使用 `image_url`，视频使用 `video_url` 并按 2 FPS 采样；图片单张上限 10 MB、视频单文件上限 50 MB，但 Base64 内联请求体总上限为 64 MiB，因此内联视频应压缩到约 47 MB 或改用 Files API 的 `mm_file://` 引用。所有兼容 Provider 单次最多接收 16 个附件；历史上下文最多保留 20 条消息、24,000 个 UTF-16 字符，并只选取最近的完整问答对。默认 Provider 为 `MiniMax-M3`，不会自动回退到火山方舟。
-- 第一版不录制系统音频或麦克风音频；视频编码仍使用 Windows Media Foundation H.264。
+<div align="center">
+  Built for fast, private, in-place screen understanding on Windows.
+</div>
