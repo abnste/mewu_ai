@@ -84,19 +84,27 @@ public static class StructuredResponseParser
             (regionElement.ValueKind != JsonValueKind.Number || !regionElement.TryGetInt32(out regionIndex)))
             return false;
 
+        var referenceHandle=string.Empty;
+        if(item.TryGetProperty("referenceHandle",out var handleElement))
+        {
+            if(handleElement.ValueKind!=JsonValueKind.String)return false;
+            referenceHandle=handleElement.GetString()?.Trim()??string.Empty;
+            if(referenceHandle.Length>80||referenceHandle.Any(ch=>!char.IsAsciiLetterOrDigit(ch)&&ch is not '-' and not '_'))return false;
+        }
+
         if (string.IsNullOrWhiteSpace(text) || regionIndex < 0)
             return false;
 
         var hasTimelineField=item.TryGetProperty("startTime",out _)||item.TryGetProperty("endTime",out _)||item.TryGetProperty("keyframes",out _);
-        if(hasTimelineField)return TryParseVideoAnnotation(item,text,regionIndex,out annotation);
+        if(hasTimelineField)return TryParseVideoAnnotation(item,text,regionIndex,referenceHandle,out annotation);
 
         if(!TryReadNormalizedRect(item,out var x,out var y,out var width,out var height))return false;
 
-        annotation = new AiAnnotation(x, y, width, height, text, regionIndex);
+        annotation = new AiAnnotation(x, y, width, height, text, regionIndex,ReferenceHandle:referenceHandle);
         return true;
     }
 
-    private static bool TryParseVideoAnnotation(JsonElement item,string text,int regionIndex,out AiAnnotation annotation)
+    private static bool TryParseVideoAnnotation(JsonElement item,string text,int regionIndex,string referenceHandle,out AiAnnotation annotation)
     {
         annotation=default!;
         if(!TryReadFiniteDouble(item,"startTime",out var start)||
@@ -113,7 +121,7 @@ public static class StructuredResponseParser
             keyframes.Add(new(time,x,y,width,height));
         }
         if(keyframes.Count==0||(end>start&&keyframes.Count<2))return false;
-        annotation=new AiAnnotation(keyframes[0].X,keyframes[0].Y,keyframes[0].Width,keyframes[0].Height,text,regionIndex,start,end,keyframes);
+        annotation=new AiAnnotation(keyframes[0].X,keyframes[0].Y,keyframes[0].Width,keyframes[0].Height,text,regionIndex,start,end,keyframes,referenceHandle);
         return true;
     }
 

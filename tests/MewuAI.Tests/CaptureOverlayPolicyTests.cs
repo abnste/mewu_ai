@@ -174,6 +174,29 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void ReferenceAwarePromptBindsVisibleLabelsToActualAttachmentIndexesAndHandles()
+    {
+        var prompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt("比较 @图片1 和 @图片3",[
+            new(0,"image-a","@图片1",AiAttachmentType.Image,640,480,null),
+            new(1,"image-c","@图片3",AiAttachmentType.Image,800,600,null)]);
+        Assert.Contains("\"RegionIndex\":0",prompt);Assert.Contains("\"Label\":\"@图片3\"",prompt);Assert.Contains("\"ReferenceHandle\":\"image-c\"",prompt);Assert.Contains("禁止按显示编号猜测",prompt);Assert.Contains("比较 @图片1 和 @图片3",prompt);
+    }
+
+    [Fact]
+    public void StableHandleOverridesAConflictingModelRegionIndex()
+    {
+        var result=CaptureOverlayPolicy.ResolveAnnotationTarget(2,"image-a",false,[new("image-a",false),new("image-c",false),new("video-b",true)]);
+        Assert.True(result.Success);Assert.Equal(0,result.TargetIndex);Assert.True(result.Remapped);
+    }
+
+    [Fact]
+    public void UnknownStableHandleIsRejectedInsteadOfFallingBackToWrongImage()
+    {
+        var result=CaptureOverlayPolicy.ResolveAnnotationTarget(1,"missing",false,[new("image-a",false),new("image-c",false)]);
+        Assert.False(result.Success);Assert.Equal(AnnotationTargetFailure.HandleMismatch,result.Failure);
+    }
+
+    [Fact]
     public void AiUpdatesAreRejectedAfterCancellationReplacementClosureOrStreamCompletion()
     {
         using var request=new CancellationTokenSource();using var replacement=new CancellationTokenSource();

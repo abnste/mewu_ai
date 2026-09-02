@@ -56,7 +56,8 @@ public sealed record AiAnnotation(
     int RegionIndex=0,
     double? StartTime=null,
     double? EndTime=null,
-    IReadOnlyList<VideoAnnotationKeyframe>? Keyframes=null)
+    IReadOnlyList<VideoAnnotationKeyframe>? Keyframes=null,
+    string ReferenceHandle="")
 {
     public bool IsVideoTimeline=>StartTime.HasValue&&EndTime.HasValue&&Keyframes is {Count:>0};
 }
