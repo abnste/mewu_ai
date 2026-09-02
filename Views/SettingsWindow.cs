@@ -91,9 +91,10 @@ public sealed class SettingsWindow : Window
             if(unavailable.Headers.Count>0)_unavailableSensitiveHeaders[unavailable.Provider]=unavailable.Headers;
         Title = "喵呜AI 设置";
         Width = 760;
-        // Keep the short settings pages dense while leaving the AI editor
-        // enough room to scroll within its own card.
-        Height = 430;
+        // Give the settings pages enough vertical room for the provider and
+        // About cards without forcing a scroll on first open.  This is 4/3 of
+        // the previous default height (430 DIP), rounded up to a whole DIP.
+        Height = 574;
         MinWidth = 600;
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
