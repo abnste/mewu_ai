@@ -13,3 +13,4 @@
 - 带标注 MP4 导出使用 `MediaComposition` + `MediaOverlayLayer`：手工层以透明 PNG 覆盖完整时长，AI 时间轴层以有界采样帧和 `Delay` 烘焙；输出先写 `TempFileService` 临时 MP4，再经 `AtomicFileService` 替换目标。带标注 GIF 在现有帧数、尺寸和总像素预算内逐帧合成，不得先转码或修改源 MP4；所有临时透明图和视频均需持有 `TempMediaRegistry` 租约并在结束后清理。
 - 统一视觉标注协议的矢量图元必须在图片、GIF 与 MP4 导出中复用同一渲染器；AI 马赛克不能退化成纯色遮挡。图片/GIF 直接从当前干净帧像素化，MP4 在有界时间轴采样点提取源缩略帧生成仅马赛克区域不透明的覆盖层，保持源音频和源 MP4 哈希不变。
 - GitHub Windows Runner 在高负载时，WinRT 帧服务器首次解码真实录屏可能超过 6 秒；自动播放集成测试必须继续等待 `Opened`、实际呈现帧和播放状态等真实事件条件，并使用不少于 20 秒的有界超时，不能用短超时或反复重跑掩盖偶发失败。
+- 释放尚在启动期的 ScreenRecorderLib 会话时，临时 MP4 在某一轮检查中不存在不代表原生写入已彻底结束；清理必须在 Recorder 释放后观察一段有界的连续缺失窗口，迟到出现则删除并重新计时，避免 `DisposeAsync` 返回后遗留文件。
