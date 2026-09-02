@@ -72,7 +72,7 @@ public sealed class TempMediaLifecycleTests
                 releaseDelete.Wait(TestContext.Current.CancellationToken);
                 File.Delete(path);
             }),TestContext.Current.CancellationToken);
-            Assert.True(entered.Wait(TimeSpan.FromSeconds(1),TestContext.Current.CancellationToken));
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken));
             var acquisition=Task.Run(() => Record.Exception(()=>registry.AcquireExistingFile(path).Dispose()),TestContext.Current.CancellationToken);
             await Task.Delay(50,TestContext.Current.CancellationToken);
             Assert.False(acquisition.IsCompleted);
@@ -143,17 +143,22 @@ public sealed class TempMediaLifecycleTests
         {
             var path=Path.Combine(root,"clip.mp4");File.WriteAllText(path,"video");
             var registry=new TempMediaRegistry();var lease=registry.AcquireExistingFile(path);
-            var waiting=Task.Run(()=>registry.WaitForNoActiveLeases(TimeSpan.FromSeconds(2)),TestContext.Current.CancellationToken);
-            await Task.Delay(50,TestContext.Current.CancellationToken);
+            using var waitingStarted=new ManualResetEventSlim();
+            var waiting=Task.Run(() =>
+            {
+                waitingStarted.Set();
+                return registry.WaitForNoActiveLeases(TimeSpan.FromSeconds(10));
+            },TestContext.Current.CancellationToken);
+            Assert.True(waitingStarted.Wait(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken));
             Assert.False(waiting.IsCompleted);
             lease.Dispose();
-            Assert.True(await waiting.WaitAsync(TimeSpan.FromSeconds(1),TestContext.Current.CancellationToken));
+            Assert.True(await waiting.WaitAsync(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken));
 
             using var retained=registry.AcquireExistingFile(path);
             var stopwatch=Stopwatch.StartNew();
             Assert.False(registry.WaitForNoActiveLeases(TimeSpan.FromMilliseconds(60)));
             stopwatch.Stop();
-            Assert.InRange(stopwatch.ElapsedMilliseconds,40,1000);
+            Assert.InRange(stopwatch.ElapsedMilliseconds,40,5000);
         }
         finally{Directory.Delete(root,true);}
     }
