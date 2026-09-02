@@ -83,9 +83,23 @@
     <Border.Effect><DropShadowEffect Color="#26384F" BlurRadius="13" ShadowDepth="3" Opacity="0.20"/></Border.Effect>
    </Border>
    <Border x:Name="PromptBar" Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="20" Padding="7" ClipToBounds="True">
-    <Grid x:Name="PromptContent">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <ScrollViewer x:Name="ResponseScroll" Grid.Row="0" MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+     <Grid x:Name="PromptContent">
+     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+     <StackPanel x:Name="HistorySection" Grid.Row="0">
+      <Button x:Name="HistoryToggle" AutomationProperties.Name="查看提问和历史对话" Style="{StaticResource ReasoningButton}" Click="ToggleHistory" Margin="6,0,6,0" Padding="10,7">
+       <StackPanel Orientation="Horizontal">
+        <Path Width="15" Height="15" Stretch="Uniform" Fill="#6172EF" Data="M2,2 L13,2 L13,10 L8,10 L5,13 L5,10 L2,10 Z"/>
+        <TextBlock x:Name="HistorySummary" Text="提问与历史 / Prompt &amp; history" FontSize="12.5" Margin="8,0,0,0" VerticalAlignment="Center"/>
+        <Path Width="11" Height="11" Stretch="Uniform" Stroke="#617188" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Margin="8,0,0,0" Data="M2,4 L5.5,7.5 L9,4" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform x:Name="HistoryChevronRotation" Angle="0"/></Path.RenderTransform></Path>
+       </StackPanel>
+      </Button>
+      <Border x:Name="HistoryPanel" Visibility="Collapsed" Background="#F3F6FA" BorderBrush="#DFE7F1" BorderThickness="1" CornerRadius="12" Padding="10,8" Margin="6,4,6,2">
+       <ScrollViewer x:Name="HistoryScroll" MaxHeight="210" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="HistoryItems"/>
+       </ScrollViewer>
+      </Border>
+     </StackPanel>
+     <ScrollViewer x:Name="ResponseScroll" Grid.Row="1" MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
      <StackPanel>
       <StackPanel x:Name="AnswerHeader" Orientation="Horizontal" Visibility="Collapsed" Margin="8,3,8,0"><Path Width="17" Height="17" Stretch="Uniform" Fill="#6172EF" Data="M8.5,0 L10.4,6.6 L17,8.5 L10.4,10.4 L8.5,17 L6.6,10.4 L0,8.5 L6.6,6.6 Z"/><TextBlock Text="AI 回答" Foreground="#243148" FontSize="14" FontWeight="SemiBold" Margin="8,1,0,0"/></StackPanel>
       <Button x:Name="ReasoningToggle" Visibility="Collapsed" Style="{StaticResource ReasoningButton}" Click="ToggleReasoning"><StackPanel Orientation="Horizontal"><Border x:Name="ReasoningPulse" Width="7" Height="7" CornerRadius="4" Background="#7B8AF4" Margin="0,0,9,0" VerticalAlignment="Center"/><TextBlock x:Name="ReasoningLabel" Text="正在思考…" FontSize="12.5"/><Path x:Name="ReasoningChevron" Width="12" Height="12" Stretch="Uniform" Stroke="#617188" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Margin="8,0,0,0" Data="M2,4 L6,8 L10,4" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform x:Name="ReasoningChevronRotation" Angle="180"/></Path.RenderTransform></Path></StackPanel></Button>
@@ -96,7 +110,7 @@
       <Border x:Name="AnswerDivider" Visibility="Collapsed" Height="1" Background="#E1E7F0" Margin="8,0,8,8"/>
      </StackPanel>
     </ScrollViewer>
-    <Grid Grid.Row="1">
+     <Grid Grid.Row="2">
      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
      <Border x:Name="PromptInputBorder" Grid.Column="1" Margin="8,0,0,0" Background="#F4F7FB" BorderBrush="#DCE4EF" BorderThickness="1" CornerRadius="13" Padding="3,2">
       <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><ScrollViewer x:Name="ReferenceChipScroll" MaxHeight="42" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><WrapPanel x:Name="ReferenceChips" Visibility="Collapsed" Margin="6,3,6,1"/></ScrollViewer><Grid Grid.Row="1"><TextBox x:Name="QuickPrompt" MinHeight="34" MaxHeight="58" Padding="9,5" FontSize="13" TextBlock.LineHeight="19" VerticalContentAlignment="Center" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Foreground="#26344A" CaretBrush="#5B6CEB" Background="Transparent" BorderThickness="0" PreviewKeyDown="QuickPromptKeyDown"/><TextBlock x:Name="QuickPromptHint" Text="询问当前屏幕，或连续圈选多个区域…" Foreground="#8B99AD" Margin="9,0,0,0" FontSize="13" LineHeight="19" VerticalAlignment="Center" IsHitTestVisible="False"/></Grid></Grid>
@@ -111,7 +125,7 @@
      <Button x:Name="VoiceButton" Grid.Column="2" VerticalAlignment="Bottom" ToolTip="语音输入" AutomationProperties.Name="语音输入" Click="QuickVoice" Style="{StaticResource RoundIconButton}"><Path x:Name="VoiceIcon" Width="16" Height="18" Stretch="Uniform" Fill="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" Data="M12,14 C13.66,14 15,12.66 15,11 L15,5 C15,3.34 13.66,2 12,2 C10.34,2 9,3.34 9,5 L9,11 C9,12.66 10.34,14 12,14 M17.3,11 C17.3,14 14.76,16.1 12,16.1 C9.24,16.1 6.7,14 6.7,11 L5,11 C5,14.41 7.72,17.23 11,17.72 L11,21 L13,21 L13,17.72 C16.28,17.23 19,14.41 19,11 Z"/></Button>
      <Button x:Name="SendButton" Grid.Column="3" VerticalAlignment="Bottom" ToolTip="发送" AutomationProperties.Name="发送问题" Click="QuickSend" Style="{StaticResource SendRoundButton}"><Path Width="17" Height="17" Stretch="Uniform" Fill="White" Data="M2,3 L22,12 L2,21 L2,14 L16,12 L2,10 Z"/></Button>
     </Grid>
-     <TextBlock x:Name="PromptStatus" Grid.Row="2" Text="拖动可连续框选多个区域 · Enter 发送 · Shift+Enter 换行" Foreground="#8B98AA" FontSize="10.5" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,0"/>
+      <TextBlock x:Name="PromptStatus" Grid.Row="3" Text="拖动可连续框选多个区域 · Enter 发送 · Shift+Enter 换行" Foreground="#8B98AA" FontSize="10.5" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,0"/>
    </Grid>
    </Border>
   </Grid>
