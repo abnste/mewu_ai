@@ -8,6 +8,7 @@ public sealed class EnvironmentProviderBootstrap
     [
         new("XAI_API_KEY","xAI Vision","OpenAICompatible","https://api.x.ai/v1","grok-4.6"),
         new("MINIMAX_CN_API_KEY","MiniMax M3","MiniMax","https://api.minimaxi.com/v1","MiniMax-M3"),
+        new("VOLCENGINE_ARK_API_KEY","Volcengine Ark","OpenAICompatible",VolcengineModelPolicy.StandardBaseUrl,"doubao-seed-2-1-pro-260628"),
         new("VOLCENGINE_AGENTPLAN_API_KEY","Volcengine Agent Plan","OpenAICompatible","https://ark.cn-beijing.volces.com/api/plan/v3","doubao-seed-2-0-pro-260215")
     ];
 

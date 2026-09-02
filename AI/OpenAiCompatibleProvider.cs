@@ -54,8 +54,9 @@ public class OpenAiCompatibleProvider : IAiProvider
         _baseUri=ProviderEndpointPolicy.NormalizeBaseUri(settings.BaseUrl);
         _sendAsync=sendAsync;
         _requestTimeout=requestTimeout;
-        var volcengineVideo=HostMatches(_baseUri.Host,"volces.com")&&settings.Model.Contains("doubao-seed-2-",StringComparison.OrdinalIgnoreCase);
-        Capabilities=new(true,volcengineVideo,true,volcengineVideo?10L*1024*1024:20L*1024*1024,volcengineVideo?50L*1024*1024:0,TimeSpan.Zero,new HashSet<string>(volcengineVideo?new[]{"image/png","image/jpeg","image/webp","video/mp4","video/x-msvideo","video/quicktime"}:new[]{"image/png","image/jpeg","image/webp"},StringComparer.OrdinalIgnoreCase));
+        Capabilities=VolcengineModelPolicy.IsEndpoint(_baseUri)
+            ?VolcengineModelPolicy.GetCapabilities(settings.Model)
+            :new(true,false,true,20L*1024*1024,0,TimeSpan.Zero,new HashSet<string>(["image/png","image/jpeg","image/webp"],StringComparer.OrdinalIgnoreCase));
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken token)

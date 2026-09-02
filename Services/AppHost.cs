@@ -204,6 +204,17 @@ public sealed class AppHost : IDisposable
         return IsTranslationAvailable(out error);
     }
 
+    public bool IsScreenAiAvailable(out string? error)
+    {
+        error=null;
+        if(Settings.HermesEnabled)return IsConversationAvailable(out error);
+        var provider=_aiProviderFactory.Create(Settings,out error);
+        if(provider is null)return false;
+        if(provider.Capabilities.SupportsImage)return true;
+        error="当前默认模型只支持文字，请选择支持图片理解的多模态模型";
+        return false;
+    }
+
     public Task ReadHermesResponseAloudAsync(string text,CancellationToken cancellationToken=default)
     {
         if(!Settings.HermesEnabled||!Settings.HermesAutoReadAloud||string.IsNullOrWhiteSpace(text))return Task.CompletedTask;
@@ -286,7 +297,7 @@ public sealed class AppHost : IDisposable
         catch(Exception ex){try{new PrivacyLogger().Error("SettingsUiRefresh",ex);}catch{}warning??="设置已保存，但主界面状态刷新失败。";}
         RefreshAiEntryVisibility();return true;
     }
-    private void RefreshAiEntryVisibility(){var available=IsConversationAvailable(out _);if(_captureMenuItem is not null)_captureMenuItem.Text=available?"截图 / AI":"截图";if(_textAiMenuItem is not null)_textAiMenuItem.Visible=available;}
+    private void RefreshAiEntryVisibility(){var conversationAvailable=IsConversationAvailable(out _);var screenAiAvailable=IsScreenAiAvailable(out _);if(_captureMenuItem is not null)_captureMenuItem.Text=screenAiAvailable?"截图 / AI":"截图";if(_textAiMenuItem is not null)_textAiMenuItem.Visible=conversationAvailable;}
     public void Notify(string message){_tray?.ShowBalloonTip(1500,"喵呜AI",message,Forms.ToolTipIcon.Info);}
     public void Exit() { CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
     public void Dispose()

@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -25,8 +26,8 @@ public sealed class SettingsWindow : Window
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials = new();
-    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _hotkey = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new();
-    private readonly TextBox _providerName = new(), _baseUrl = new(), _model = new(), _customHeaders = new();
+    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _hotkey = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
+    private readonly TextBox _providerName = new(), _baseUrl = new(), _customHeaders = new();
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
@@ -400,7 +401,7 @@ public sealed class SettingsWindow : Window
         _providerType.Items.Add(new ComboBoxItem { Content = "MiniMax M3", Tag = "MiniMax" });
         panel.Children.Add(Labeled("Provider 类型", _providerType));
         panel.Children.Add(Labeled("Base URL", _baseUrl));
-        panel.Children.Add(Labeled("Model", _model));
+        panel.Children.Add(Text("Model",true));var modelRow=new Grid{Margin=new Thickness(0,0,0,9)};modelRow.ColumnDefinitions.Add(new ColumnDefinition());modelRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});_model.IsEditable=true;_model.IsTextSearchEnabled=true;System.Windows.Automation.AutomationProperties.SetName(_model,"Model");var refreshModels=ActionButton("获取火山模型");refreshModels.Margin=new Thickness(8,0,0,0);refreshModels.Click+=async (_,_)=>await RefreshVolcengineModelsAsync(refreshModels);modelRow.Children.Add(_model);Grid.SetColumn(refreshModels,1);modelRow.Children.Add(refreshModels);panel.Children.Add(modelRow);
         panel.Children.Add(Text("API Key（留空则保留现有密钥）", true));
         var apiKeyRow=new Grid{Margin=new Thickness(0,0,0,4)};apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition());apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
         _clearApiKey.Content="清除已保存密钥";_clearApiKey.Padding=new Thickness(14,9,14,9);_clearApiKey.Margin=new Thickness(8,0,0,0);_clearApiKey.SetResourceReference(StyleProperty,"SecondaryButton");_clearApiKey.Click+=(_,_)=>ToggleApiKeyDeletion();
@@ -774,6 +775,7 @@ public sealed class SettingsWindow : Window
         _providerType.SelectedValue = provider.Type.Equals("MiniMax", StringComparison.OrdinalIgnoreCase) ? "MiniMax" : "OpenAICompatible";
         _baseUrl.Text = provider.BaseUrl;
         _model.Text = provider.Model;
+        PopulateModelSuggestions(provider.BaseUrl,provider.Model);
         _customHeaders.Text = _captureProtectionAvailable==false
             ?"屏幕防捕获不可用，Custom Headers 已隐藏。"
             :provider.CustomHeaders.Count == 0 ? "{}" : JsonSerializer.Serialize(provider.CustomHeaders, new JsonSerializerOptions { WriteIndented = true });
@@ -781,6 +783,34 @@ public sealed class SettingsWindow : Window
         _defaultProvider.IsChecked = provider.Id == _defaultProviderId;
         _loadingProvider = false;
         UpdateApiKeyStatus();
+    }
+
+    private void PopulateModelSuggestions(string baseUrl,string currentModel,IEnumerable<string>? liveModels=null)
+    {
+        _model.Items.Clear();var models=new List<string>();
+        try{if(VolcengineModelPolicy.IsEndpoint(ProviderEndpointPolicy.NormalizeBaseUri(baseUrl)))models.AddRange(liveModels??VolcengineModelPolicy.RecommendedModels);}catch(InvalidOperationException){}
+        if(!string.IsNullOrWhiteSpace(currentModel)&&!models.Contains(currentModel,StringComparer.OrdinalIgnoreCase))models.Insert(0,currentModel);
+        foreach(var model in models.Distinct(StringComparer.OrdinalIgnoreCase))_model.Items.Add(model);
+        _model.Text=currentModel;
+    }
+
+    private async Task RefreshVolcengineModelsAsync(Button button)
+    {
+        if(_selectedProvider is null||_loadingProvider)return;button.IsEnabled=false;
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        try
+        {
+            if(_captureProtectionAvailable==false)throw new InvalidOperationException("系统未能启用设置窗口防捕获，不能读取敏感凭据");
+            if(!StoreSelectedProvider(true))return;
+            var key=!string.IsNullOrWhiteSpace(_apiKey.Password)?_apiKey.Password:_apiKeysMarkedForDeletion.Contains(_selectedProvider.Id)?null:new CredentialService().Read(_selectedProvider.CredentialId);
+            var models=await new VolcengineModelCatalogService().GetChatModelsAsync(_baseUrl.Text.TrimEnd('/'),key??string.Empty,ParseHeaders(),timeout.Token);
+            if(models.Count==0)throw new InvalidOperationException("当前账户没有返回可用的对话模型");
+            PopulateModelSuggestions(_baseUrl.Text,_model.Text,models);button.Content=$"已获取 {models.Count} 个";
+        }
+        catch(OperationCanceledException)when(_windowLifetime.IsCancellationRequested){}
+        catch(OperationCanceledException){if(IsVisible)MessageBox.Show(this,"获取模型列表超时，请检查网络后重试。","火山模型列表");}
+        catch(Exception ex)when(ex is InvalidOperationException or JsonException or HttpRequestException or IOException){if(IsVisible)MessageBox.Show(this,ex.Message,"火山模型列表");}
+        finally{if(IsVisible)button.IsEnabled=true;}
     }
 
     private bool StoreSelectedProvider(bool showValidationError=false)

@@ -445,6 +445,7 @@ public sealed class ServicesTests
 
     [Theory]
     [InlineData("XAI_API_KEY","grok-4.6")]
+    [InlineData("VOLCENGINE_ARK_API_KEY","doubao-seed-2-1-pro-260628")]
     [InlineData("VOLCENGINE_AGENTPLAN_API_KEY","doubao-seed-2-0-pro-260215")]
     public async Task EnvironmentImportOnFreshInstallSelectsTheOnlyAuthenticatedImportedProvider(
         string environmentVariable,
@@ -570,6 +571,34 @@ public sealed class ServicesTests
     [Fact] public void MiniMaxM3Provider_EnablesNativeImageAndVideoUnderstanding(){var provider=new MiniMaxProvider(new AiProviderSettings{Type="MiniMax",BaseUrl="https://api.minimax.io/v1",Model="MiniMax-M3"},"unused");Assert.True(provider.Capabilities.SupportsImage);Assert.True(provider.Capabilities.SupportsVideo);Assert.Contains("image/png",provider.Capabilities.AcceptedMimeTypes);Assert.Contains("video/mp4",provider.Capabilities.AcceptedMimeTypes);Assert.Equal(10L*1024*1024,provider.Capabilities.MaxImageSize);Assert.Equal(50L*1024*1024,provider.Capabilities.MaxVideoSize);Assert.Equal(50L*1024*1024,provider.Capabilities.MaxAttachmentSize);}
     [Fact] public void OlderMiniMaxModel_DoesNotClaimM3MultimodalProtocol(){var provider=new MiniMaxProvider(new AiProviderSettings{Type="MiniMax",BaseUrl="https://api.minimax.io/v1",Model="MiniMax-M2.7"},"unused");Assert.False(provider.Capabilities.SupportsImage);Assert.False(provider.Capabilities.SupportsVideo);}
     [Fact] public void OpenAiProvider_DeclaresSupportedImageMimeTypes(){var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"unused");Assert.Contains("image/png",provider.Capabilities.AcceptedMimeTypes);Assert.False(provider.Capabilities.SupportsVideo);Assert.Equal(20L*1024*1024,provider.Capabilities.MaxImageSize);Assert.Equal(0,provider.Capabilities.MaxVideoSize);}
+    [Theory]
+    [InlineData("deepseek-v4-pro-ga-260813")]
+    [InlineData("deepseek-v4-flash-ga-260731")]
+    [InlineData("glm-5-2-260617")]
+    public void VolcengineTextModelsDoNotFalselyClaimImageUnderstanding(string model)
+    {
+        var provider=new OpenAiCompatibleProvider(new AiProviderSettings{BaseUrl=VolcengineModelPolicy.StandardBaseUrl,Model=model},"unused");
+        Assert.False(provider.Capabilities.SupportsImage);Assert.False(provider.Capabilities.SupportsVideo);Assert.Equal(0,provider.Capabilities.MaxImageSize);
+    }
+    [Theory]
+    [InlineData("doubao-seed-2-1-pro-260628")]
+    [InlineData("doubao-seed-2-1-turbo-260628")]
+    [InlineData("doubao-seed-2-0-lite-260428")]
+    [InlineData("glm-5-3-flash")]
+    [InlineData("glm-5.3-flash")]
+    [InlineData("deepseek-v4-flash-vision-exp")]
+    public void LatestVolcengineMultimodalModelsEnableImageAndVideoUnderstanding(string model)
+    {
+        var provider=new OpenAiCompatibleProvider(new AiProviderSettings{BaseUrl=VolcengineModelPolicy.StandardBaseUrl,Model=model},"unused");
+        Assert.True(provider.Capabilities.SupportsImage);Assert.True(provider.Capabilities.SupportsVideo);Assert.Equal(10L*1024*1024,provider.Capabilities.MaxImageSize);Assert.Equal(50L*1024*1024,provider.Capabilities.MaxVideoSize);
+    }
+    [Theory]
+    [InlineData("deepseek-v4-pro-ga-260813",true)]
+    [InlineData("glm-5-2-260617",true)]
+    [InlineData("doubao-seedream-5-0-pro-260628",false)]
+    [InlineData("doubao-seedance-2-5-260628",false)]
+    [InlineData("doubao-embedding-vision-251215",false)]
+    public void VolcengineCatalogOnlyOffersChatAndUnderstandingModels(string model,bool expected)=>Assert.Equal(expected,VolcengineModelPolicy.IsChatModel(model));
     [Fact] public async Task GenericOpenAiProvider_RejectsVideoBeforeNetwork(){var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"unused");await Assert.ThrowsAsync<NotSupportedException>(()=>provider.SendAsync(new AiRequest{Attachments=[new(AiAttachmentType.Video,"video/mp4",[1,2,3])]},TestContext.Current.CancellationToken));}
     [Fact] public async Task OpenAiProvider_RejectsUnsupportedMimeBeforeNetwork(){var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"unused");await Assert.ThrowsAsync<NotSupportedException>(()=>provider.SendAsync(new AiRequest{Attachments=[new(AiAttachmentType.Image,"image/bmp",[1,2,3])]},TestContext.Current.CancellationToken));}
     [Fact] public async Task OpenAiProvider_RejectsInvalidAttachmentTypeBeforeNetwork(){var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"unused");await Assert.ThrowsAsync<InvalidOperationException>(()=>provider.SendAsync(new AiRequest{Attachments=[new((AiAttachmentType)99,"image/png",[1,2,3])]},TestContext.Current.CancellationToken));}
