@@ -38,6 +38,42 @@ public sealed class HermesDiscoveryServiceTests
     }
 
     [Fact]
+    public void DiscoverAcceptsOfficialWindowsVenvLauncher()
+    {
+        const string home = @"D:\Users\Mewu\AppData\Local\hermes";
+        var fileSystem = new FakeHermesDiscoveryFileSystem();
+        fileSystem.AddInstallation(home, Path.Combine("hermes-agent", "venv", "Scripts", "hermes.exe"));
+        var service = CreateService(
+            fileSystem,
+            (name, target) => name == "PATH" && target == EnvironmentVariableTarget.User
+                ? Path.Combine(home, "hermes-agent", "venv", "Scripts")
+                : null);
+
+        var installation = Assert.IsType<mewu_ai_Assistant.Models.HermesInstallation>(service.Discover());
+
+        Assert.Equal(home, installation.HomePath);
+        Assert.Equal(Path.Combine(home, "hermes-agent", "venv", "Scripts", "hermes.exe"), installation.ExecutablePath);
+    }
+
+    [Fact]
+    public void DiscoverAcceptsOfficialWindowsAgentBinLauncher()
+    {
+        const string home = @"D:\Users\Mewu\AppData\Local\hermes";
+        var fileSystem = new FakeHermesDiscoveryFileSystem();
+        fileSystem.AddInstallation(home, Path.Combine("hermes-agent", "bin", "hermes.exe"));
+        var service = CreateService(
+            fileSystem,
+            (name, target) => name == "PATH" && target == EnvironmentVariableTarget.User
+                ? Path.Combine(home, "hermes-agent", "bin")
+                : null);
+
+        var installation = Assert.IsType<mewu_ai_Assistant.Models.HermesInstallation>(service.Discover());
+
+        Assert.Equal(home, installation.HomePath);
+        Assert.Equal(Path.Combine(home, "hermes-agent", "bin", "hermes.exe"), installation.ExecutablePath);
+    }
+
+    [Fact]
     public void ValidateRejectsUncAndDevicePathsBeforeAnyFileSystemProbe()
     {
         var fileSystem = new FakeHermesDiscoveryFileSystem();
@@ -129,13 +165,13 @@ public sealed class HermesDiscoveryServiceTests
         internal List<string> AttributeQueries { get; } = [];
         internal List<string> DriveTypeQueries { get; } = [];
 
-        internal void AddInstallation(string home)
+        internal void AddInstallation(string home, string? executableRelativePath = null)
         {
             AddDirectory(home);
             AddDirectory(Path.Combine(home, "bin"));
             AddDirectory(Path.Combine(home, "hermes-agent"));
             AddDirectory(Path.Combine(home, "hermes-agent", "hermes_cli"));
-            AddFile(Path.Combine(home, "bin", "hermes.exe"));
+            AddFile(Path.Combine(home, executableRelativePath ?? Path.Combine("bin", "hermes.exe")));
             AddFile(Path.Combine(home, "config.yaml"));
             AddFile(Path.Combine(home, "hermes-agent", "hermes_cli", "main.py"));
             SetDriveType(home, DriveType.Fixed);

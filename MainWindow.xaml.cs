@@ -38,7 +38,10 @@ public partial class MainWindow : Window
     }
     public void RefreshStatus()
     {
-        ProviderText.Text=BuildAiStatusText(_host.Settings);
+        var available=_host.IsConversationAvailable(out var error);
+        ProviderText.Text=available?BuildAiStatusText(_host.Settings):error??BuildAiStatusText(_host.Settings);
+        QuickAiButton.Visibility=available?Visibility.Visible:Visibility.Collapsed;
+        CaptureSubtitle.Text=available?"圈选并直接分析":"截图、OCR、标注和录屏";
     }
 
     internal static string BuildAiStatusText(AppSettings settings)

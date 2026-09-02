@@ -13,7 +13,7 @@ public sealed class AppHost : IDisposable
     private readonly HermesRuntimeService _hermesRuntime;
     private readonly HermesReadAloudService _hermesReadAloud;
     private SettingsService? _settingsService;
-    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private TextAiWindow? _textAiWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
+    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Forms.ToolStripMenuItem? _captureMenuItem; private Forms.ToolStripMenuItem? _textAiMenuItem; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private TextAiWindow? _textAiWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
@@ -54,8 +54,8 @@ public sealed class AppHost : IDisposable
             Renderer=new Forms.ToolStripProfessionalRenderer(new LightTrayMenuColorTable()) { RoundedEdges=true }
         };
         _trayMenu=menu;
-        AddTrayMenuItem(menu,"截图 / AI",(_,_)=>BeginCapture());
-        AddTrayMenuItem(menu,"文字问答",(_,_)=>ShowTextAi());
+        _captureMenuItem=AddTrayMenuItem(menu,"截图 / AI",(_,_)=>BeginCapture());
+        _textAiMenuItem=AddTrayMenuItem(menu,"文字问答",(_,_)=>ShowTextAi());
         AddTrayMenuItem(menu,"设置",(_,_)=>ShowSettings());
         AddTrayMenuItem(menu,"打开主界面",(_,_)=>ShowMainWindow());
         menu.Items.Add(new Forms.ToolStripSeparator{Margin=new Forms.Padding(8,4,8,4)});
@@ -70,10 +70,11 @@ public sealed class AppHost : IDisposable
         trayIcon??=SystemIcons.Application;
         _tray=new Forms.NotifyIcon { Text="喵呜AI",Icon=trayIcon,Visible=true,ContextMenuStrip=menu };
         _tray.MouseClick+=(_,e)=>{if(e.Button==Forms.MouseButtons.Left)BeginCapture();};
+        RefreshAiEntryVisibility();
     }
-    private static void AddTrayMenuItem(Forms.ContextMenuStrip menu,string text,EventHandler onClick)
+    private static Forms.ToolStripMenuItem AddTrayMenuItem(Forms.ContextMenuStrip menu,string text,EventHandler onClick)
     {
-        var item=new Forms.ToolStripMenuItem(text){AutoSize=true,Margin=new Forms.Padding(0,1,0,1),Padding=new Forms.Padding(10,6,18,6)};item.Click+=onClick;menu.Items.Add(item);
+        var item=new Forms.ToolStripMenuItem(text){AutoSize=true,Margin=new Forms.Padding(0,1,0,1),Padding=new Forms.Padding(10,6,18,6)};item.Click+=onClick;menu.Items.Add(item);return item;
     }
     public void BeginCapture(){if(!IsExiting&&Volatile.Read(ref _disposed)==0)_=BeginCaptureAsync();}
     private async Task BeginCaptureAsync()
@@ -111,6 +112,7 @@ public sealed class AppHost : IDisposable
     public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);var window=_settingsWindow;window.Closed+=(_,_)=>{if(ReferenceEquals(_settingsWindow,window))_settingsWindow=null;FinishAuxiliary(window);};} PrepareAuxiliary(_settingsWindow);_settingsWindow.Show();_settingsWindow.WindowState=WindowState.Normal;_settingsWindow.Activate();}); }
     public void ShowTextAi(string initial="")=>_app.Dispatcher.Invoke(()=>
     {
+        if(!IsConversationAvailable(out _))return;
         if(_textAiWindow is { } existing)
         {
             PrepareAuxiliary(existing);existing.Show();existing.WindowState=WindowState.Normal;existing.Activate();return;
@@ -182,6 +184,25 @@ public sealed class AppHost : IDisposable
 
     /// <summary>Translation remains a strict remote-Provider operation.</summary>
     public IAiProvider? CreateTranslationProvider(out string? error)=>_aiProviderFactory.Create(Settings,out error);
+
+    public bool IsTranslationAvailable(out string? error)
+    {
+        var provider=_aiProviderFactory.Create(Settings,out error);
+        return provider is not null;
+    }
+
+    public bool IsConversationAvailable(out string? error)
+    {
+        error=null;
+        if(Settings.HermesEnabled)
+        {
+            if(_hermesRuntime.Discover() is not null)return true;
+            error="已启用本机 Hermes，但未找到可用的 Windows Hermes 安装。";
+            return false;
+        }
+
+        return IsTranslationAvailable(out error);
+    }
 
     public Task ReadHermesResponseAloudAsync(string text,CancellationToken cancellationToken=default)
     {
@@ -263,8 +284,9 @@ public sealed class AppHost : IDisposable
             _hermesReadAloud.Stop();
         try{_main?.RefreshStatus();}
         catch(Exception ex){try{new PrivacyLogger().Error("SettingsUiRefresh",ex);}catch{}warning??="设置已保存，但主界面状态刷新失败。";}
-        return true;
+        RefreshAiEntryVisibility();return true;
     }
+    private void RefreshAiEntryVisibility(){var available=IsConversationAvailable(out _);if(_captureMenuItem is not null)_captureMenuItem.Text=available?"截图 / AI":"截图";if(_textAiMenuItem is not null)_textAiMenuItem.Visible=available;}
     public void Notify(string message){_tray?.ShowBalloonTip(1500,"喵呜AI",message,Forms.ToolTipIcon.Info);}
     public void Exit() { CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
     public void Dispose()
