@@ -1,0 +1,100 @@
+name: Release Windows packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Verify tag and project version
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          [xml]$project = Get-Content -LiteralPath 'mewu_ai_Assistant.csproj'
+          $projectVersion = [string]$project.Project.PropertyGroup.Version
+          if ($tagVersion -ne $projectVersion) {
+            throw "Tag version $tagVersion does not match project version $projectVersion"
+          }
+
+      - name: Run release tests
+        run: dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64
+
+      - name: Publish self-contained app
+        run: dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true -o .\artifacts\release\win-x64
+
+      - name: Audit publish payload
+        shell: pwsh
+        run: |
+          $publish = (Resolve-Path '.\artifacts\release\win-x64').Path
+          $forbidden = Get-ChildItem -LiteralPath $publish -Recurse -File | Where-Object {
+            $_.Extension -in '.pdb','.log','.jsonl','.tmp','.png','.jpg','.jpeg','.gif','.mp4','.webm','.avi','.mkv','.mov' -or
+            $_.Name -in 'settings.json','.env' -or
+            $_.FullName -match '[\\/](Credentials|Logs|History|Temp|Clipboard|Screenshots|Recordings)[\\/]'
+          }
+          if ($forbidden) {
+            $forbidden.FullName | ForEach-Object { Write-Error "Forbidden release file: $_" }
+            throw 'Release payload contains private or development files.'
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $publish 'MewuAI.exe'))) { throw 'MewuAI.exe is missing.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $publish 'THIRD-PARTY-NOTICES.md'))) { throw 'Third-party notices are missing.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $publish 'Licenses\DotNet-Windows-Library-License.txt'))) { throw 'Runtime license is missing.' }
+
+      - name: Build portable ZIP
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          New-Item -ItemType Directory -Path '.\artifacts\packages' -Force | Out-Null
+          Compress-Archive -Path '.\artifacts\release\win-x64\*' -DestinationPath ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip" -CompressionLevel Optimal
+
+      - name: Install Inno Setup compiler
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer EXE
+        shell: pwsh
+        run: |
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $compiler)) { throw 'Inno Setup compiler was not installed.' }
+          & $compiler '.\installer\MewuAI.iss'
+
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem '.\artifacts\installer\*.exe','.\artifacts\packages\*.zip' -File | Sort-Object Name
+          if ($files.Count -ne 2) { throw "Expected one installer and one portable ZIP, found $($files.Count)." }
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          [IO.File]::WriteAllLines((Join-Path (Resolve-Path '.\artifacts\packages') 'SHA256SUMS.txt'), $lines, [Text.UTF8Encoding]::new($false))
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.TrimStart('v')
+          $assets = @(
+            ".\artifacts\installer\MewuAI-Setup-$version-win-x64.exe",
+            ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip",
+            '.\artifacts\packages\SHA256SUMS.txt'
+          )
+          gh release create $tag @assets --title "MewuAI $version · 喵呜AI $version" --notes-file '.\docs\release-notes-v0.0.1.md' --verify-tag
