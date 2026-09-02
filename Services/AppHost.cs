@@ -344,7 +344,11 @@ public sealed class AppHost : IDisposable
         {
             if(!e.Item.Selected)return;
             e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
-            var bounds=e.Item.Bounds;bounds.Inflate(-2,-1);
+            // ToolStrip paints each item in an item-local graphics context. Using
+            // Item.Bounds here applies the parent offset a second time, so most of
+            // the hover pill is clipped and only a patch behind the text survives.
+            var bounds=TrayMenuRenderLayout.GetHoverBounds(e.Item.Size);
+            if(bounds.IsEmpty)return;
             using var path=RoundedRectangle(bounds,7);
             using var brush=new SolidBrush(Hover);
             using var pen=new Pen(Color.FromArgb(205,216,232));
@@ -375,6 +379,20 @@ public sealed class AppHost : IDisposable
         public override Color MenuItemSelectedGradientEnd=>Hover;
         public override Color SeparatorDark=>Color.FromArgb(226,231,239);
         public override Color SeparatorLight=>Background;
+    }
+}
+
+internal static class TrayMenuRenderLayout
+{
+    internal static Rectangle GetHoverBounds(System.Drawing.Size itemSize)
+    {
+        const int horizontalInset=2;
+        const int verticalInset=1;
+        var width=itemSize.Width-horizontalInset*2;
+        var height=itemSize.Height-verticalInset*2;
+        return width>0&&height>0
+            ?new Rectangle(horizontalInset,verticalInset,width,height)
+            :Rectangle.Empty;
     }
 }
 
