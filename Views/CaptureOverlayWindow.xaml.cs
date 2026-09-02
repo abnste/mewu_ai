@@ -49,6 +49,7 @@ public partial class CaptureOverlayWindow : Window
     private readonly UndoRedoHistory<OverlaySnapshot> _overlayHistory=new();
     private readonly System.Text.StringBuilder _reasoningBuffer=new();
     private List<SelectionItem> _lastSentSelections=[];
+    private List<SentAnnotationTarget> _lastSentAnnotationTargets=[];
     private readonly List<AiMessage> _history=[new("system",VisualAnnotationProtocol.SystemInstruction)];
     private Point _start,_moveStart;
     private Rect _moveOrigin;
@@ -132,6 +133,7 @@ public partial class CaptureOverlayWindow : Window
     {
         public string Label { get; set; }=string.Empty;
     }
+    private sealed record SentAnnotationTarget(string ReferenceHandle,AiAttachmentType Type,SelectionItem? Selection);
 
     private abstract record TextLayerState;
     private sealed record NoTextLayerState:TextLayerState
@@ -802,6 +804,7 @@ public partial class CaptureOverlayWindow : Window
         if(_activeIndex<0&&_selections.Count>0)_activeIndex=_selections.Count-1;
         _history.Clear();_history.AddRange(snapshot.History);
         _lastSentSelections=[..snapshot.LastSentSelections.Where(targetItems.Contains)];
+        _lastSentAnnotationTargets=[.._lastSentSelections.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item))];
         _answerExpanded=false;AnswerText.Markdown=snapshot.AnswerMarkdown;
         AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;
         if(snapshot.AnswerExpanded&&snapshot.AnswerMarkdown.Length>0)ShowAnswer();
@@ -1058,6 +1061,7 @@ public partial class CaptureOverlayWindow : Window
     {
         foreach(var item in _selections){CancelVideoAnnotationPlayback(item);item.AnnotationNotes.Clear();item.AiAnnotations.Children.Clear();}
         _lastSentSelections.Clear();
+        _lastSentAnnotationTargets.Clear();
         ResolveOverlayInteractionWithFallback();AgentActivityItems.Children.Clear();AgentActivityCard.Visibility=AiInteractionCard.Visibility=Visibility.Collapsed;_answerExpanded=false;AnswerText.Markdown="";AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;_reasoningBuffer.Clear();_reasoningRenderScheduled=false;_reasoningRenderRequest=null;ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Background=new SolidColorBrush(Color.FromRgb(123,138,244));_reasoningExpanded=false;_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }
 
@@ -1209,6 +1213,7 @@ public partial class CaptureOverlayWindow : Window
         }
         if(!removed)return;
         _activeIndex=active is not null&&!active.IsImplicit?_selections.IndexOf(active):_selections.Count-1;RefreshSelectionNumbers();
+        if(Active is null){HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}
     }
     private void RemoveActiveSelection(bool updateUi)
     {
@@ -1236,21 +1241,61 @@ public partial class CaptureOverlayWindow : Window
     private async Task SendAsync(bool useDefaultPrompt)
     {
         if(!_conversationAiAvailable||_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;StopOverlayReadAloud();var usingHermes=_host.Settings.HermesEnabled;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
-        var before=CaptureOverlaySnapshot();EnsureScreenSelection();var targets=CaptureOverlayPolicy.SelectSendTargets(_selections,item=>item.IsImplicit,_references.Contains);var hasVideo=targets.Any(x=>x.VideoPath is not null);var hasImage=targets.Any(x=>x.VideoPath is null);if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
-        var targetCount=targets.Count;if(targetCount>OpenAiCompatibleProvider.AttachmentCountLimit){PromptStatus.Text=$"单次最多发送 {OpenAiCompatibleProvider.AttachmentCountLimit} 个附件，请移除部分引用后重试";return;}var sentDraft=QuickPrompt.Text;var prompt=sentDraft.Trim();if(prompt.Length==0&&useDefaultPrompt)prompt=hasVideo?"按时间顺序说明引用视频中发生了什么，并为关键事件和可定位目标返回时间轴批注；动作目标需要关键帧跟踪。":targetCount>1?"综合理解这些引用区域，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。";if(prompt.Length==0){QuickPrompt.Focus();return;}var referenceDescriptors=targets.Select((item,index)=>{var pixels=ToPixelRect(item.Bounds);var label=item.IsImplicit?"@当前屏幕":GetReferenceLabel(item);return new AttachmentReferenceDescriptor(index,item.ReferenceHandle,label,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,pixels.Width,pixels.Height,item.VideoPath is null?null:item.VideoDuration.TotalSeconds);}).ToArray();var providerPrompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors);
-        var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();PromptStatus.Text=$"正在准备 {targetCount} 个引用区域…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;
+        var uploadedReferences=_uploadedReferences.ToArray();
+        OverlaySnapshot before;
+        if(!CaptureOverlayPolicy.ShouldCreateImplicitScreenSelection(uploadedReferences.Length>0,_selections.Any(item=>!item.IsImplicit)))
+        {
+            // An explicit screenshot or an uploaded file is already the user's
+            // visual input. Remove any stale implicit full-screen placeholder
+            // so it can never leak into this request (or its rollback state).
+            RemoveImplicitSelections();
+            before=CaptureOverlaySnapshot();
+        }
+        else
+        {
+            before=CaptureOverlaySnapshot();
+            EnsureScreenSelection();
+        }
+        var targets=CaptureOverlayPolicy.SelectSendTargets(_selections,item=>item.IsImplicit,_references.Contains);
+        var totalCount=targets.Count+uploadedReferences.Length;
+        var hasVideo=targets.Any(x=>x.VideoPath is not null)||uploadedReferences.Any(file=>file.Type==AiAttachmentType.Video);
+        var hasImage=targets.Any(x=>x.VideoPath is null)||uploadedReferences.Any(file=>file.Type==AiAttachmentType.Image);
+        if(hasVideo&&!provider.Capabilities.SupportsVideo){PromptStatus.Text="当前 Provider 未开启视频理解能力";return;}
+        if(hasImage&&!provider.Capabilities.SupportsImage){PromptStatus.Text="当前模型不支持图片理解";return;}
+        if(totalCount>OpenAiCompatibleProvider.AttachmentCountLimit){PromptStatus.Text=$"单次最多发送 {OpenAiCompatibleProvider.AttachmentCountLimit} 个附件，请移除部分引用后重试";return;}
+        var sentDraft=QuickPrompt.Text;var prompt=sentDraft.Trim();
+        if(prompt.Length==0&&useDefaultPrompt)
+            prompt=hasVideo
+                ?"按时间顺序说明引用视频中发生了什么，并为关键事件和可定位目标返回时间轴批注；动作目标需要关键帧跟踪。"
+                :targets.Count>0
+                    ?totalCount>1?"综合理解这些引用区域和上传附件，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。"
+                    :totalCount>1?"综合理解这些上传附件，概括它们之间的关系和关键内容。":"理解当前上传附件，概括内容并回答问题。";
+        if(prompt.Length==0){QuickPrompt.Focus();return;}
+        var referenceDescriptors=new List<AttachmentReferenceDescriptor>(totalCount);
+        foreach(var (item,index) in targets.Select((item,index)=>(item,index)))
+        {
+            var pixels=ToPixelRect(item.Bounds);var label=item.IsImplicit?"@当前屏幕":GetReferenceLabel(item);
+            referenceDescriptors.Add(new AttachmentReferenceDescriptor(index,item.ReferenceHandle,label,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,pixels.Width,pixels.Height,item.VideoPath is null?null:item.VideoDuration.TotalSeconds,true));
+        }
+        foreach(var (file,index) in uploadedReferences.Select((file,index)=>(file,index)))
+        {
+            var dimensions=file.Type==AiAttachmentType.Image?GetUploadedImageSize(file.Path):(Width:0,Height:0);
+            referenceDescriptors.Add(new AttachmentReferenceDescriptor(targets.Count+index,file.Handle,file.Label,file.Type,dimensions.Width,dimensions.Height,null,false));
+        }
+        var providerPrompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors);
+        var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=$"正在准备 {totalCount} 个附件…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;
         CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频理解请求":"屏幕助手：图片理解请求");
         try
         {
             foreach(var video in targets.Select(item=>item.VideoPath).Where(path=>path is not null))attachmentLeases.Add(TempMediaRegistry.Shared.AcquireExistingFile(video!));
             attachments=await BuildAttachmentsAsync(targets,provider.Capabilities,request.Token);
-            foreach(var file in _uploadedReferences)
+            foreach(var file in uploadedReferences)
             {
                 request.Token.ThrowIfCancellationRequested();
-                if(file.Type==AiAttachmentType.Text){var bytes=await File.ReadAllBytesAsync(file.Path,request.Token);attachments.Add(new AiAttachment(AiAttachmentType.Text,file.MimeType,bytes,ProviderOwnsData:false));}
+                if(file.Type==AiAttachmentType.Text){var bytes=await File.ReadAllBytesAsync(file.Path,request.Token);attachments.Add(new AiAttachment(AiAttachmentType.Text,file.MimeType,bytes,ProviderOwnsData:true));}
                 else attachments.Add(new AiAttachment(file.Type,file.MimeType,FilePath:file.Path,ProviderOwnsData:false));
             }
-            if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {targetCount+_uploadedReferences.Count} 个附件…按 Esc 可取消";
+            if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {totalCount} 个附件…按 Esc 可取消";
             var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>{previewScheduled=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;ShowAnswer();AnswerText.Markdown=preview;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();PromptStatus.Text="正在整理回答…";}));}}):null;
             var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}ShowAnswer();FinishReasoning(result.Reasoning);if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=MapAnnotations(result.Annotations);ApplyAnnotationMapping(primaryMapping,true);var renderedAnnotationCount=primaryMapping.RenderedCount;ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             AgentActivityCard.Visibility=Visibility.Collapsed;
@@ -1274,7 +1319,7 @@ public partial class CaptureOverlayWindow : Window
                 catch(OperationCanceledException){throw;}
                 catch(Exception ex){new PrivacyLogger().Error("ScreenAiAnnotationRepair",ex);new PrivacyLogger().Info("ScreenAiAnnotationPhase",$"核验失败；保留初稿有效批注 {renderedAnnotationCount}");requestStage="render";}
             }
-            new PrivacyLogger().Info("ScreenAiResult",$"附件 {targetCount}，视频 {targets.Count(item=>item.VideoPath is not null)}，最终模型批注 {result.Annotations.Count}，补标返回 {repairReturnedAnnotationCount}，有效批注 {renderedAnnotationCount}");
+            new PrivacyLogger().Info("ScreenAiResult",$"附件 {totalCount}，视频 {targets.Count(item=>item.VideoPath is not null)+uploadedReferences.Count(file=>file.Type==AiAttachmentType.Video)}，最终模型批注 {result.Annotations.Count}，补标返回 {repairReturnedAnnotationCount}，有效批注 {renderedAnnotationCount}");
             var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);var historyProvider=usingHermes?$"本机 Hermes · {_host.Settings.HermesProfile}":configured?.Name??provider.Id;var historyModel=usingHermes?_host.Settings.HermesModel:configured?.Model??string.Empty;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(historyProvider,historyModel,prompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_history.Add(new("user",prompt));_history.Add(new("assistant",result.Answer));ConversationContextPolicy.TrimInPlace(_history);RecordOverlayOperation(before,"AI 识图");PromptStatus.Text=hasVideo?CaptureOverlayPolicy.GetVideoCompletionStatus(true,renderedAnnotationCount):renderedAnnotationCount>0?$"已在 {_lastSentSelections.Count(item=>item.VideoPath is null)} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";if(usingHermes&&_host.Settings.HermesAutoReadAloud)_=BeginOverlayReadAloudAsync(result.Answer);
         }
         catch(OperationCanceledException){new PrivacyLogger().Info("ScreenAiAnnotationPhase",primaryApplied?"核验或后续处理已取消；保留已显示的初稿":"初稿请求已取消；恢复发送前状态");if(!_closed&&ReferenceEquals(_request,request)){if(primaryApplied)PromptStatus.Text="已停止核验，保留初稿和已显示标注";else{ApplyOverlaySnapshot(before);PromptStatus.Text="已取消";}}}
@@ -1284,7 +1329,7 @@ public partial class CaptureOverlayWindow : Window
 
     private AnnotationMappingResult MapAnnotations(IReadOnlyList<AiAnnotation> notes)
     {
-        var mapped=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>(IReadOnlyList<AiAnnotation>)Array.Empty<AiAnnotation>());var buckets=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>new List<AiAnnotation>());var targets=_lastSentSelections.Select(item=>new AnnotationReferenceTarget(item.ReferenceHandle,item.VideoPath is not null)).ToArray();
+        var mapped=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>(IReadOnlyList<AiAnnotation>)Array.Empty<AiAnnotation>());var buckets=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>new List<AiAnnotation>());var sentTargets=_lastSentAnnotationTargets.ToArray();var targets=sentTargets.Select(item=>new AnnotationReferenceTarget(item.ReferenceHandle,item.Type==AiAttachmentType.Video)).ToArray();
         var timelineCandidates=0;var regionMismatch=0;var typeMismatch=0;var durationRejected=0;var singleVideoRemaps=0;var durationClamped=0;var handleMismatches=0;var handleRemaps=0;
         foreach(var original in notes)
         {
@@ -1296,8 +1341,12 @@ public partial class CaptureOverlayWindow : Window
                 continue;
             }
             var targetIndex=resolution.TargetIndex;if(resolution.Remapped){if(string.IsNullOrWhiteSpace(original.ReferenceHandle))singleVideoRemaps++;else handleRemaps++;}
-            var target=_lastSentSelections[targetIndex];var isVideo=target.VideoPath is not null;
-            var note=original.RegionIndex==targetIndex&&string.Equals(original.ReferenceHandle,target.ReferenceHandle,StringComparison.Ordinal)?original:original with{RegionIndex=targetIndex,ReferenceHandle=target.ReferenceHandle};
+            var sentTarget=sentTargets[targetIndex];
+            // Uploaded files are valid model inputs but do not have an in-place
+            // selection layer. Never route their annotations to another image.
+            if(sentTarget.Selection is not { } target)continue;
+            var isVideo=sentTarget.Type==AiAttachmentType.Video;
+            var note=original.RegionIndex==targetIndex&&string.Equals(original.ReferenceHandle,sentTarget.ReferenceHandle,StringComparison.Ordinal)?original:original with{RegionIndex=targetIndex,ReferenceHandle=sentTarget.ReferenceHandle};
             if(isVideo)
             {
                 if(!VideoAnnotationTimeline.TryFitToDuration(note,target.VideoDuration.TotalSeconds,out note,out var clamped)){durationRejected++;continue;}
@@ -1777,6 +1826,16 @@ public partial class CaptureOverlayWindow : Window
     {
         try{using var reader=new StreamReader(path);var text=reader.ReadToEnd();return text.Length>90?text[..90]+"…":text;}
         catch{return "文本文件";}
+    }
+    private static (int Width,int Height) GetUploadedImageSize(string path)
+    {
+        try
+        {
+            using var stream=File.OpenRead(path);
+            var frame=BitmapFrame.Create(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);
+            return (frame.PixelWidth,frame.PixelHeight);
+        }
+        catch{return (0,0);}
     }
     private async Task ToggleVoiceAsync()
     {
