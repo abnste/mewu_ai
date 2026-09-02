@@ -26,9 +26,11 @@ jobs:
       - name: Verify tag and project version
         shell: pwsh
         run: |
-          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v').Trim()
           [xml]$project = Get-Content -LiteralPath 'mewu_ai_Assistant.csproj'
-          $projectVersion = [string]$project.Project.PropertyGroup.Version
+          $versionNode = $project.SelectSingleNode('/Project/PropertyGroup/Version')
+          if ($null -eq $versionNode) { throw 'Project Version is missing.' }
+          $projectVersion = $versionNode.InnerText.Trim()
           if ($tagVersion -ne $projectVersion) {
             throw "Tag version $tagVersion does not match project version $projectVersion"
           }
