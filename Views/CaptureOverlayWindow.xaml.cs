@@ -304,7 +304,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void RefreshAiFeatureAvailability()
     {
-        _conversationAiAvailable=_host.IsConversationAvailable(out _);
+        _conversationAiAvailable=_host.IsScreenAiAvailable(out _);
         _translationAiAvailable=_host.IsTranslationAvailable(out _);
         PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
         PromptBarHost.IsHitTestVisible=_conversationAiAvailable&&!_promptBarHidden;
