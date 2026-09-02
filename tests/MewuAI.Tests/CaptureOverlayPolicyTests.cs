@@ -168,7 +168,7 @@ public sealed class CaptureOverlayPolicyTests
             null);
 
         Assert.True(request.ExpectStructuredResponse);
-        Assert.Equal(4096,request.MaxOutputTokens);
+        Assert.Equal(8192,request.MaxOutputTokens);
         Assert.Same(attachment,Assert.Single(request.Attachments));
         Assert.Equal("system",Assert.Single(request.History).Role);
     }

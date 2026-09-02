@@ -46,7 +46,10 @@ public sealed record AiProviderCapabilities(bool SupportsImage,bool SupportsVide
     };
 }
 public sealed record AiResult(string Answer,IReadOnlyList<AiAnnotation> Annotations,string Reasoning="");
-public sealed record VideoAnnotationKeyframe(double Time,double X,double Y,double Width,double Height);
+public enum AiAnnotationKind{Callout,Pen,Highlighter,Rectangle,Ellipse,Arrow,Text,Number,Mosaic}
+public sealed record AiAnnotationPoint(double X,double Y);
+public sealed record AiAnnotationStyle(string Color="#2AAEFF",double StrokeWidth=.006,double Opacity=1,bool Filled=false,double FontSize=.04);
+public sealed record VideoAnnotationKeyframe(double Time,double X,double Y,double Width,double Height,IReadOnlyList<AiAnnotationPoint>? Points=null);
 public sealed record AiAnnotation(
     double X,
     double Y,
@@ -57,7 +60,12 @@ public sealed record AiAnnotation(
     double? StartTime=null,
     double? EndTime=null,
     IReadOnlyList<VideoAnnotationKeyframe>? Keyframes=null,
-    string ReferenceHandle="")
+    string ReferenceHandle="",
+    AiAnnotationKind Kind=AiAnnotationKind.Callout,
+    IReadOnlyList<AiAnnotationPoint>? Points=null,
+    AiAnnotationStyle? Style=null,
+    int? Number=null)
 {
     public bool IsVideoTimeline=>StartTime.HasValue&&EndTime.HasValue&&Keyframes is {Count:>0};
+    public AiAnnotationStyle EffectiveStyle=>Style??new();
 }

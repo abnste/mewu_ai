@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using mewu_ai_Assistant.Models;
+using mewu_ai_Assistant.Services;
 
 namespace mewu_ai_Assistant.AI;
 
@@ -57,11 +58,13 @@ public static class StructuredResponseParser
 
     private static IReadOnlyList<AiAnnotation> ParseAnnotations(JsonElement root)
     {
+        if(root.TryGetProperty("annotationProtocol",out var protocol)&&
+           (protocol.ValueKind!=JsonValueKind.String||!string.Equals(protocol.GetString(),VisualAnnotationProtocol.Version,StringComparison.Ordinal)))return [];
         if (!root.TryGetProperty("annotations", out var annotations) || annotations.ValueKind != JsonValueKind.Array)
             return [];
 
         var result = new List<AiAnnotation>();
-        foreach (var item in annotations.EnumerateArray())
+        foreach (var item in annotations.EnumerateArray().Take(VisualAnnotationProtocol.MaximumAnnotations))
         {
             if (TryParseAnnotation(item, out var annotation))
                 result.Add(annotation);
@@ -73,6 +76,8 @@ public static class StructuredResponseParser
     private static bool TryParseAnnotation(JsonElement item, out AiAnnotation annotation)
     {
         annotation = default!;
+        if(item.ValueKind==JsonValueKind.Object&&(item.TryGetProperty("target",out _)||item.TryGetProperty("geometry",out _)||item.TryGetProperty("kind",out _)))
+            return TryParseVisualAnnotation(item,out annotation);
         if (item.ValueKind != JsonValueKind.Object ||
             !item.TryGetProperty("text", out var textElement) ||
             textElement.ValueKind != JsonValueKind.String)
@@ -102,6 +107,103 @@ public static class StructuredResponseParser
 
         annotation = new AiAnnotation(x, y, width, height, text, regionIndex,ReferenceHandle:referenceHandle);
         return true;
+    }
+
+    private static bool TryParseVisualAnnotation(JsonElement item,out AiAnnotation annotation)
+    {
+        annotation=default!;
+        if(!item.TryGetProperty("target",out var target)||target.ValueKind!=JsonValueKind.Object||
+           !target.TryGetProperty("regionIndex",out var region)||region.ValueKind!=JsonValueKind.Number||!region.TryGetInt32(out var regionIndex)||regionIndex<0||
+           !target.TryGetProperty("referenceHandle",out var handle)||handle.ValueKind!=JsonValueKind.String)return false;
+        var referenceHandle=handle.GetString()?.Trim()??string.Empty;
+        if(referenceHandle.Length is 0 or >80||referenceHandle.Any(ch=>!char.IsAsciiLetterOrDigit(ch)&&ch is not '-' and not '_'))return false;
+        if(!item.TryGetProperty("kind",out var kindElement)||kindElement.ValueKind!=JsonValueKind.String||!TryParseKind(kindElement.GetString(),out var kind))return false;
+        if(!TryParseStyle(item,out var style))return false;
+        var text=ReadTextContent(item,kind);var number=ReadNumberContent(item);
+        if(kind==AiAnnotationKind.Text&&string.IsNullOrWhiteSpace(text)||kind==AiAnnotationKind.Number&&!number.HasValue)return false;
+        if(string.IsNullOrWhiteSpace(text))text=kind switch{AiAnnotationKind.Mosaic=>"马赛克",AiAnnotationKind.Highlighter=>"高亮",AiAnnotationKind.Pen=>"手绘标记",AiAnnotationKind.Rectangle=>"矩形标记",AiAnnotationKind.Ellipse=>"椭圆标记",AiAnnotationKind.Arrow=>"箭头标记",AiAnnotationKind.Number=>$"序号 {number}",_=>"重点"};
+
+        if(item.TryGetProperty("timeline",out var timeline))
+        {
+            if(timeline.ValueKind!=JsonValueKind.Object||!TryParseVisualTimeline(timeline,kind,out var start,out var end,out var keyframes))return false;
+            var first=keyframes[0];annotation=new(first.X,first.Y,first.Width,first.Height,text,regionIndex,start,end,keyframes,referenceHandle,kind,first.Points,style,number);return true;
+        }
+        if(!item.TryGetProperty("geometry",out var geometry)||geometry.ValueKind!=JsonValueKind.Object||!TryParseGeometry(geometry,kind,out var x,out var y,out var width,out var height,out var points))return false;
+        annotation=new(x,y,width,height,text,regionIndex,ReferenceHandle:referenceHandle,Kind:kind,Points:points,Style:style,Number:number);return true;
+    }
+
+    private static bool TryParseKind(string? value,out AiAnnotationKind kind)
+    {
+        kind=value?.Trim().ToLowerInvariant() switch
+        {
+            "callout"=>AiAnnotationKind.Callout,"pen"=>AiAnnotationKind.Pen,"highlighter"=>AiAnnotationKind.Highlighter,
+            "rectangle"=>AiAnnotationKind.Rectangle,"ellipse"=>AiAnnotationKind.Ellipse,"arrow"=>AiAnnotationKind.Arrow,
+            "text"=>AiAnnotationKind.Text,"number"=>AiAnnotationKind.Number,"mosaic"=>AiAnnotationKind.Mosaic,_=>(AiAnnotationKind)(-1)
+        };
+        return Enum.IsDefined(kind);
+    }
+
+    private static bool TryParseGeometry(JsonElement geometry,AiAnnotationKind kind,out double x,out double y,out double width,out double height,out IReadOnlyList<AiAnnotationPoint>? points)
+    {
+        x=y=width=height=0;points=null;
+        if(kind is AiAnnotationKind.Pen or AiAnnotationKind.Highlighter or AiAnnotationKind.Arrow)
+        {
+            if(!geometry.TryGetProperty("points",out var pointArray)||!TryReadNormalizedPoints(pointArray,out points))return false;
+            var parsedPoints=points!;var minimumX=parsedPoints.Min(point=>point.X);var minimumY=parsedPoints.Min(point=>point.Y);var maximumX=parsedPoints.Max(point=>point.X);var maximumY=parsedPoints.Max(point=>point.Y);
+            x=minimumX;y=minimumY;width=Math.Max(.0001,maximumX-minimumX);height=Math.Max(.0001,maximumY-minimumY);return true;
+        }
+        return geometry.TryGetProperty("rect",out var rect)&&rect.ValueKind==JsonValueKind.Object&&TryReadNormalizedRect(rect,out x,out y,out width,out height);
+    }
+
+    private static bool TryReadNormalizedPoints(JsonElement element,out IReadOnlyList<AiAnnotationPoint>? points)
+    {
+        points=null;if(element.ValueKind!=JsonValueKind.Array)return false;var result=new List<AiAnnotationPoint>();
+        foreach(var point in element.EnumerateArray())
+        {
+            if(result.Count>=VisualAnnotationProtocol.MaximumPointsPerPath||point.ValueKind!=JsonValueKind.Object||!TryReadFiniteDouble(point,"x",out var x)||!TryReadFiniteDouble(point,"y",out var y)||x<0||x>1||y<0||y>1)return false;
+            result.Add(new(x,y));
+        }
+        if(result.Count<2)return false;points=result;return true;
+    }
+
+    private static bool TryParseStyle(JsonElement item,out AiAnnotationStyle style)
+    {
+        style=new();if(!item.TryGetProperty("style",out var element))return true;if(element.ValueKind!=JsonValueKind.Object)return false;
+        var color=style.Color;var strokeWidth=style.StrokeWidth;var opacity=style.Opacity;var filled=style.Filled;var fontSize=style.FontSize;
+        if(element.TryGetProperty("color",out var colorElement)){if(colorElement.ValueKind!=JsonValueKind.String)return false;color=colorElement.GetString()??string.Empty;if(color.Length!=7||color[0]!='#'||color[1..].Any(ch=>!Uri.IsHexDigit(ch)))return false;}
+        if(element.TryGetProperty("strokeWidth",out _)&&(!TryReadFiniteDouble(element,"strokeWidth",out strokeWidth)||strokeWidth<=0||strokeWidth>.1))return false;
+        if(element.TryGetProperty("opacity",out _)&&(!TryReadFiniteDouble(element,"opacity",out opacity)||opacity<.05||opacity>1))return false;
+        if(element.TryGetProperty("fontSize",out _)&&(!TryReadFiniteDouble(element,"fontSize",out fontSize)||fontSize<.01||fontSize>.2))return false;
+        if(element.TryGetProperty("filled",out var filledElement)){if(filledElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))return false;filled=filledElement.GetBoolean();}
+        style=new(color,strokeWidth,opacity,filled,fontSize);return true;
+    }
+
+    private static string ReadTextContent(JsonElement item,AiAnnotationKind kind)
+    {
+        var contentText=string.Empty;if(item.TryGetProperty("content",out var content)&&content.ValueKind==JsonValueKind.Object&&content.TryGetProperty("text",out var text)&&text.ValueKind==JsonValueKind.String)contentText=(text.GetString()??string.Empty).Trim();
+        if(kind==AiAnnotationKind.Text&&!string.IsNullOrWhiteSpace(contentText))return contentText;
+        if(item.TryGetProperty("label",out var label)&&label.ValueKind==JsonValueKind.String)return (label.GetString()??string.Empty).Trim();
+        if(!string.IsNullOrWhiteSpace(contentText))return contentText;
+        return string.Empty;
+    }
+
+    private static int? ReadNumberContent(JsonElement item)
+    {
+        if(item.TryGetProperty("content",out var content)&&content.ValueKind==JsonValueKind.Object&&content.TryGetProperty("number",out var number)&&number.ValueKind==JsonValueKind.Number&&number.TryGetInt32(out var value)&&value is >=1 and <=999)return value;
+        return null;
+    }
+
+    private static bool TryParseVisualTimeline(JsonElement timeline,AiAnnotationKind kind,out double start,out double end,out IReadOnlyList<VideoAnnotationKeyframe> keyframes)
+    {
+        start=end=0;keyframes=[];
+        if(!TryReadFiniteDouble(timeline,"startTime",out start)||!TryReadFiniteDouble(timeline,"endTime",out end)||start<0||end<start||!timeline.TryGetProperty("keyframes",out var frames)||frames.ValueKind!=JsonValueKind.Array)return false;
+        var result=new List<VideoAnnotationKeyframe>();
+        foreach(var frame in frames.EnumerateArray())
+        {
+            if(frame.ValueKind!=JsonValueKind.Object||!TryReadFiniteDouble(frame,"time",out var time)||time<start||time>end||!frame.TryGetProperty("geometry",out var geometry)||geometry.ValueKind!=JsonValueKind.Object||!TryParseGeometry(geometry,kind,out var x,out var y,out var width,out var height,out var points))return false;
+            if(result.Count>0&&time<=result[^1].Time)return false;result.Add(new(time,x,y,width,height,points));
+        }
+        if(result.Count==0||end>start&&result.Count<2)return false;keyframes=result;return true;
     }
 
     private static bool TryParseVideoAnnotation(JsonElement item,string text,int regionIndex,string referenceHandle,out AiAnnotation annotation)
