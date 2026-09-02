@@ -34,17 +34,25 @@ jobs:
           if ($tagVersion -ne $projectVersion) {
             throw "Tag version $tagVersion does not match project version $projectVersion"
           }
+          foreach ($field in @('AssemblyVersion','FileVersion')) {
+            $node = $project.SelectSingleNode("/Project/PropertyGroup/$field")
+            if ($null -eq $node -or $node.InnerText.Trim() -ne "$tagVersion.0") {
+              throw "$field must be $tagVersion.0"
+            }
+          }
+          $installer = Get-Content -Raw -LiteralPath 'installer/MewuAI.iss'
+          if ($installer -notmatch ('#define MyAppVersion "' + [regex]::Escape($tagVersion) + '"')) {
+            throw 'Installer MyAppVersion does not match the tag.'
+          }
+          if ($installer -notmatch ('VersionInfoVersion=' + [regex]::Escape($tagVersion) + '\.0')) {
+            throw 'Installer VersionInfoVersion does not match the tag.'
+          }
 
       - name: Run release tests
         shell: pwsh
         run: |
-          $passed = $false
-          for ($attempt = 1; $attempt -le 2 -and -not $passed; $attempt++) {
-            dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64
-            $passed = ($LASTEXITCODE -eq 0)
-            if (-not $passed -and $attempt -lt 2) { Start-Sleep -Seconds 5 }
-          }
-          if (-not $passed) { throw 'Release tests failed after two attempts.' }
+          dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { throw 'Release tests failed.' }
 
       - name: Publish self-contained app
         run: dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true -o .\artifacts\release\win-x64

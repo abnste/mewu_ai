@@ -23,12 +23,15 @@ internal static class VolcengineModelPolicy
     {
         var normalized=model.Trim();
         var seed2=normalized.StartsWith("doubao-seed-2-",StringComparison.OrdinalIgnoreCase);
-        var glm53Flash=normalized.StartsWith("glm-5-3-flash",StringComparison.OrdinalIgnoreCase)||normalized.StartsWith("glm-5.3-flash",StringComparison.OrdinalIgnoreCase);
+        // Keep the allow-list deliberately narrow. A text-only DeepSeek/GLM
+        // endpoint must not make the screenshot assistant appear available
+        // merely because its name happens to contain a generic keyword.
+        var glm53Flash=normalized.Equals("glm-5-3-flash",StringComparison.OrdinalIgnoreCase)||
+                       normalized.StartsWith("glm-5-3-flash-",StringComparison.OrdinalIgnoreCase)||
+                       normalized.Equals("glm-5.3-flash",StringComparison.OrdinalIgnoreCase)||
+                       normalized.StartsWith("glm-5.3-flash-",StringComparison.OrdinalIgnoreCase);
         var deepSeekVision=normalized.StartsWith("deepseek-v4",StringComparison.OrdinalIgnoreCase)&&normalized.Contains("vision",StringComparison.OrdinalIgnoreCase);
-        var image=seed2||glm53Flash||deepSeekVision||
-                  normalized.Contains("vision",StringComparison.OrdinalIgnoreCase)||
-                  normalized.Contains("ui-tars",StringComparison.OrdinalIgnoreCase)||
-                  normalized.StartsWith("doubao-seed-1-8-",StringComparison.OrdinalIgnoreCase);
+        var image=seed2||glm53Flash||deepSeekVision;
         var video=seed2||glm53Flash||deepSeekVision;
         var accepted=video
             ?new HashSet<string>(["image/png","image/jpeg","image/webp","video/mp4","video/x-msvideo","video/quicktime"],StringComparer.OrdinalIgnoreCase)

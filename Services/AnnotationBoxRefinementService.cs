@@ -22,6 +22,23 @@ internal static class AnnotationBoxRefinementService
         return RefineBgra32(pixels,converted.PixelWidth,converted.PixelHeight,stride,annotation);
     }
 
+    internal static IReadOnlyList<AiAnnotation> RefineAll(BitmapSource source,IReadOnlyList<AiAnnotation> annotations)
+    {
+        ArgumentNullException.ThrowIfNull(source);ArgumentNullException.ThrowIfNull(annotations);
+        if(annotations.Count==0)return [];
+        var converted=source.Format==PixelFormats.Bgra32?source:new FormatConvertedBitmap(source,PixelFormats.Bgra32,null,0);
+        var stride=checked(converted.PixelWidth*4);var pixels=new byte[checked(stride*converted.PixelHeight)];converted.CopyPixels(pixels,stride,0);
+        var result=new AiAnnotation[annotations.Count];
+        for(var index=0;index<annotations.Count;index++)
+        {
+            var annotation=annotations[index];
+            result[index]=annotation.Kind is AiAnnotationKind.Callout or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse
+                ?RefineBgra32(pixels,converted.PixelWidth,converted.PixelHeight,stride,annotation)
+                :annotation;
+        }
+        return result;
+    }
+
     internal static AiAnnotation RefineBgra32(byte[] pixels,int width,int height,int stride,AiAnnotation annotation)
     {
         if(annotation.IsVideoTimeline||width<12||height<12||stride<width*4||pixels.Length<stride*height)return annotation;

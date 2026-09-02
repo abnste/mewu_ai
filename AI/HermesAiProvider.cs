@@ -109,7 +109,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
             if(!terminal.Status.Equals("complete",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Hermes 返回了无法确认的会话终态。");
             if(string.IsNullOrWhiteSpace(terminal.Text))throw new InvalidOperationException("Hermes 已结束本轮，但没有生成可显示的正文。");
             return request.ExpectStructuredResponse
-                ?StructuredResponseParser.Parse(terminal.Text,terminal.Reasoning)
+                ?StructuredResponseParser.Parse(terminal.Text,terminal.Reasoning,true)
                 :new AiResult(terminal.Text,[],terminal.Reasoning);
         }
         catch(OperationCanceledException) when(cancellationToken.IsCancellationRequested)

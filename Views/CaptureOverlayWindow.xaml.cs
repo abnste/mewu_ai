@@ -57,7 +57,8 @@ public partial class CaptureOverlayWindow : Window
     private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
     private int _promptBarAnimationVersion;
     private int _referenceMentionStart=-1;
-    private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingCountdownRequest,_recordingStopWatchdog,_readAloudRequest;
+    private int _nextUploadNumber;
+    private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingCountdownRequest,_recordingStopWatchdog,_readAloudRequest,_snapProbeRequest;
     private CancellationTokenSource? _reasoningRenderRequest;
     private TaskCompletionSource<AiInteractionResponse>? _activeInteraction;
     private AiInteractionResponse? _activeInteractionFallback;
@@ -392,7 +393,7 @@ public partial class CaptureOverlayWindow : Window
             try{_overlaySource.RemoveHook(OverlayWindowMessage);}catch(Exception ex){new PrivacyLogger().Error("OverlayHookRemove",ex);}
             _overlaySource=null;
         }
-        ResolveOverlayInteractionWithFallback();StopOverlayReadAloud();TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);CancelRecordingCountdown();CancelRecordingStopWatchdog();_recordingTimer.Stop();
+        ResolveOverlayInteractionWithFallback();StopOverlayReadAloud();CancelSnapProbe();TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);CancelRecordingCountdown();CancelRecordingStopWatchdog();_recordingTimer.Stop();
         _reasoningRenderRequest=null;_reasoningRenderScheduled=false;ReasoningPulse.BeginAnimation(OpacityProperty,null);
         var session=_recordingSession;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;
         if(session is not null)
@@ -886,11 +887,26 @@ public partial class CaptureOverlayWindow : Window
     }
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
-    private void UpdateSnapPreview(Point point)
+    private async void UpdateSnapPreview(Point point)
     {
-        if(PointerOverSelection(point)){SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=Rect.Empty;return;}
-        var now=System.Diagnostics.Stopwatch.GetTimestamp();if(now-_lastSnapProbeTicks<System.Diagnostics.Stopwatch.Frequency/30)return;_lastSnapProbeTicks=now;_snapCandidate=ProbeSnapRect(point);if(_snapCandidate.IsEmpty){SnapPreview.Visibility=Visibility.Collapsed;return;}SnapPreview.Width=_snapCandidate.Width;SnapPreview.Height=_snapCandidate.Height;Canvas.SetLeft(SnapPreview,_snapCandidate.Left);Canvas.SetTop(SnapPreview,_snapCandidate.Top);SnapPreview.Visibility=Visibility.Visible;
+        if(PointerOverSelection(point)){CancelSnapProbe();SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=Rect.Empty;return;}
+        var now=System.Diagnostics.Stopwatch.GetTimestamp();if(now-_lastSnapProbeTicks<System.Diagnostics.Stopwatch.Frequency/12)return;_lastSnapProbeTicks=now;
+        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;
+        var request=new CancellationTokenSource();var previous=Interlocked.Exchange(ref _snapProbeRequest,request);if(previous is not null){try{previous.Cancel();}catch(ObjectDisposedException){}previous.Dispose();}
+        try
+        {
+            // UI Automation calls can encounter this overlay, so follow the
+            // documented UIA threading model and probe from an MTA worker.
+            var bounds=await Task.Run(()=>_windowSnap.FindTopmostWindowAt(screenX,screenY,handle),request.Token);
+            if(_closed||request.IsCancellationRequested||!ReferenceEquals(_snapProbeRequest,request))return;
+            _snapCandidate=bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;
+            if(_snapCandidate.IsEmpty){SnapPreview.Visibility=Visibility.Collapsed;return;}SnapPreview.Width=_snapCandidate.Width;SnapPreview.Height=_snapCandidate.Height;Canvas.SetLeft(SnapPreview,_snapCandidate.Left);Canvas.SetTop(SnapPreview,_snapCandidate.Top);SnapPreview.Visibility=Visibility.Visible;
+        }
+        catch(OperationCanceledException){}
+        catch(Exception ex){new PrivacyLogger().Error("SmartSelectionProbe",ex);if(!_closed&&ReferenceEquals(_snapProbeRequest,request)){_snapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;}}
+        finally{if(ReferenceEquals(Interlocked.CompareExchange(ref _snapProbeRequest,null,request),request))request.Dispose();}
     }
+    private void CancelSnapProbe(){var request=Interlocked.Exchange(ref _snapProbeRequest,null);if(request is null)return;try{request.Cancel();}catch(ObjectDisposedException){}request.Dispose();}
     private Rect ProbeSnapRect(Point point)
     {
         if(Root.ActualWidth<=0||Root.ActualHeight<=0)return Rect.Empty;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;var bounds=_windowSnap.FindTopmostWindowAt(screenX,screenY,handle);return bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;
@@ -1154,7 +1170,10 @@ public partial class CaptureOverlayWindow : Window
     }
     private static string LimitReasoning(string value)=>value.Length<=ReasoningDisplayLimit?value:"…较早思考内容已收纳…\n"+value[^ReasoningDisplayLimit..];
 
-    private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active);}
+    // Recognition must use the frozen, unmodified capture. Otherwise an OCR
+    // or translation pass can feed its own previous overlay back into the next
+    // pass and progressively corrupt the result.
+    private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active,false,false,false);}
     private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false,bool includeTranslation=true)
     {
         var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var translation=hasTranslation?RenderTranslationOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes):null;var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;return AnnotationOverlayRenderer.Composite(background,manual,translation,ai);
@@ -1192,6 +1211,25 @@ public partial class CaptureOverlayWindow : Window
             }
             catch{AiImageEncodingService.ClearAttachmentBuffers(attachments);throw;}
         },cancellationToken);
+    }
+    private static List<AiAttachment> CloneAttachmentsForFollowUp(IReadOnlyList<AiAttachment> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var clones=new List<AiAttachment>(source.Count);
+        try
+        {
+            foreach(var attachment in source)
+            {
+                var data=attachment.Data is { } bytes?bytes.ToArray():null;
+                clones.Add(attachment with { Data=data, ProviderOwnsData=data is not null });
+            }
+            return clones;
+        }
+        catch
+        {
+            AiImageEncodingService.ClearAttachmentBuffers(clones);
+            throw;
+        }
     }
     private void EnsureScreenSelection(){if(_selections.Count>0)return;var item=CreateSelection(true);item.Bounds=new Rect(0,0,Root.ActualWidth,Root.ActualHeight);_selections.Add(item);_activeIndex=0;RefreshSelectionNumbers();UpdateSelection(item);}
 
@@ -1285,7 +1323,7 @@ public partial class CaptureOverlayWindow : Window
             referenceDescriptors.Add(new AttachmentReferenceDescriptor(targets.Count+index,file.Handle,file.Label,file.Type,dimensions.Width,dimensions.Height,null,false));
         }
         var providerPrompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors);
-        var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=$"正在准备 {totalCount} 个附件…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;
+        var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=$"正在准备 {totalCount} 个附件…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;List<AiAttachment>? repairAttachments=null;
         CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频理解请求":"屏幕助手：图片理解请求");
         try
         {
@@ -1297,9 +1335,20 @@ public partial class CaptureOverlayWindow : Window
                 if(file.Type==AiAttachmentType.Text){var bytes=await File.ReadAllBytesAsync(file.Path,request.Token);attachments.Add(new AiAttachment(AiAttachmentType.Text,file.MimeType,bytes,ProviderOwnsData:true));}
                 else attachments.Add(new AiAttachment(file.Type,file.MimeType,FilePath:file.Path,ProviderOwnsData:false));
             }
+            // Providers clear owned byte buffers as soon as a request ends.
+            // Keep an independent, owned copy for the optional video repair
+            // request so it never sends a zeroed image/text attachment.
+            repairAttachments=CloneAttachmentsForFollowUp(attachments);
             if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {totalCount} 个附件…按 Esc 可取消";
             var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>{previewScheduled=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;ShowAnswer();AnswerText.Markdown=preview;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();PromptStatus.Text="正在整理回答…";}));}}):null;
-            var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}ShowAnswer();FinishReasoning(result.Reasoning);if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=MapAnnotations(result.Annotations);ApplyAnnotationMapping(primaryMapping,true);var renderedAnnotationCount=primaryMapping.RenderedCount;ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
+            var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
+            // Normalize the protocol before touching the answer card, mapping
+            // annotations, or writing history. This prevents a complete JSON
+            // envelope from flashing in the UI and makes every downstream
+            // operation consume the same validated answer.
+            result=NormalizeStructuredResult(result);
+            var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}
+            ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Markdown=result.Answer;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=MapAnnotations(result.Annotations);ApplyAnnotationMapping(primaryMapping,true);var renderedAnnotationCount=primaryMapping.RenderedCount;ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             AgentActivityCard.Visibility=Visibility.Collapsed;
             // Defensive normalization: a compatible backend may return the
             // protocol envelope as plain text even when structured mode was
@@ -1313,10 +1362,10 @@ public partial class CaptureOverlayWindow : Window
                 CrashDiagnosticsService.MarkOperation("屏幕助手：视频批注完整性核验");new PrivacyLogger().Info("ScreenAiAnnotationPhase",$"开始核验；初稿有效批注 {renderedAnnotationCount}");
                 try
                 {
-                    var repairRequest=CaptureOverlayPolicy.CreateScreenAiRequest(CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt(providerPrompt,result.Answer),ConversationContextPolicy.CreateBoundedHistory(_history),attachments,null,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);
-                    var repaired=await provider.SendAsync(repairRequest,request.Token);repairReturnedAnnotationCount=repaired.Annotations.Count;requestStage="render";if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
+                    var repairRequest=CaptureOverlayPolicy.CreateScreenAiRequest(CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt(providerPrompt,result.Answer),ConversationContextPolicy.CreateBoundedHistory(_history),repairAttachments??[],null,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);
+                    var repaired=await provider.SendAsync(repairRequest,request.Token);requestStage="render";if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();repaired=NormalizeStructuredResult(repaired);repairReturnedAnnotationCount=repaired.Annotations.Count;
                     var repairedMapping=AiResultValidation.GetEmptyAnswerMessage(repaired) is null?MapAnnotations(repaired.Annotations):MapAnnotations([]);LogAnnotationMapping("核验",repairedMapping);
-                    if(repairedMapping.RenderedCount>0&&repairedMapping.RenderedCount>=renderedAnnotationCount){result=repaired;renderedAnnotationCount=repairedMapping.RenderedCount;ApplyAnnotationMapping(repairedMapping,true);ApplyVideoAnswerActions(result.Answer);FinishReasoning(repaired.Reasoning);}
+                    if(repairedMapping.RenderedCount>0&&repairedMapping.RenderedCount>=renderedAnnotationCount){result=repaired;renderedAnnotationCount=repairedMapping.RenderedCount;ApplyAnnotationMapping(repairedMapping,true);ShowAnswer();FinishReasoning(repaired.Reasoning);AnswerText.Markdown=result.Answer;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();ApplyVideoAnswerActions(result.Answer);}
                 }
                 catch(OperationCanceledException){throw;}
                 catch(Exception ex){new PrivacyLogger().Error("ScreenAiAnnotationRepair",ex);new PrivacyLogger().Info("ScreenAiAnnotationPhase",$"核验失败；保留初稿有效批注 {renderedAnnotationCount}");requestStage="render";}
@@ -1326,7 +1375,23 @@ public partial class CaptureOverlayWindow : Window
         }
         catch(OperationCanceledException){new PrivacyLogger().Info("ScreenAiAnnotationPhase",primaryApplied?"核验或后续处理已取消；保留已显示的初稿":"初稿请求已取消；恢复发送前状态");if(!_closed&&ReferenceEquals(_request,request)){if(primaryApplied)PromptStatus.Text="已停止核验，保留初稿和已显示标注";else{ApplyOverlaySnapshot(before);PromptStatus.Text="已取消";}}}
         catch(Exception ex){new PrivacyLogger().Error(requestStage=="render"?"ScreenAiRender":"ScreenAiRequest",ex);if(!_closed&&ReferenceEquals(_request,request)){var message=request.IsCancellationRequested?"已取消":$"请求失败：{ex.Message}";if(request.IsCancellationRequested)ApplyOverlaySnapshot(before);else{CloseReasoning("思考过程 · 请求失败",Color.FromRgb(214,120,120));ShowAnswer();AnswerText.Markdown=message;}PromptStatus.Text=message;}}
-        finally{streamOpen=false;if(attachments is not null)AiImageEncodingService.ClearAttachmentBuffers(attachments);foreach(var lease in attachmentLeases)lease.Dispose();var ownsRequest=ReferenceEquals(_request,request);if(CaptureOverlayPolicy.ShouldFinalizeCanceledAiRequest(_request,request,_closed)){CloseReasoning(primaryApplied?"思考过程 · 核验已停止":"思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text=primaryApplied?"已停止核验，保留初稿和已显示标注":"已取消";}request.Dispose();if(ownsRequest){_request=null;if(!_closed){SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}if(!_closed)CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");}
+        finally{streamOpen=false;if(attachments is not null)AiImageEncodingService.ClearAttachmentBuffers(attachments);if(repairAttachments is not null)AiImageEncodingService.ClearAttachmentBuffers(repairAttachments);foreach(var lease in attachmentLeases)lease.Dispose();var ownsRequest=ReferenceEquals(_request,request);if(CaptureOverlayPolicy.ShouldFinalizeCanceledAiRequest(_request,request,_closed)){CloseReasoning(primaryApplied?"思考过程 · 核验已停止":"思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text=primaryApplied?"已停止核验，保留初稿和已显示标注":"已取消";}request.Dispose();if(ownsRequest){_request=null;if(!_closed){SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}if(!_closed)CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");}
+    }
+
+    private static AiResult NormalizeStructuredResult(AiResult result)
+    {
+        // OpenAI-compatible providers already parse the envelope inside their
+        // transport layer. Re-parsing a plain answer would discard its valid
+        // annotations, so only inspect responses that still look like a raw
+        // structured root and have not yielded annotations yet.
+        if(result.Annotations.Count>0)return result;
+        var value=result.Answer?.TrimStart()??string.Empty;
+        if(value.StartsWith('{')||value.StartsWith('[')||value.StartsWith("```",StringComparison.OrdinalIgnoreCase)||value.StartsWith("json",StringComparison.OrdinalIgnoreCase))
+        {
+            var parsed=StructuredResponseParser.Parse(value,result.Reasoning,true);
+            if(!string.IsNullOrWhiteSpace(parsed.Answer)||value.Length==0)return parsed;
+        }
+        return result;
     }
 
     private AnnotationMappingResult MapAnnotations(IReadOnlyList<AiAnnotation> notes)
@@ -1362,7 +1427,7 @@ public partial class CaptureOverlayWindow : Window
             if(entry.Key.VideoPath is null&&notesForItem.Length>0)
             {
                 var cleanImage=RenderSelectionImage(entry.Key,false,false,false);
-                notesForItem=notesForItem.Select(note=>note.Kind is AiAnnotationKind.Callout or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse?AnnotationBoxRefinementService.Refine(cleanImage,note):note).ToArray();
+                notesForItem=AnnotationBoxRefinementService.RefineAll(cleanImage,notesForItem).ToArray();
             }
             mapped[entry.Key]=notesForItem;
         }
@@ -1445,7 +1510,10 @@ public partial class CaptureOverlayWindow : Window
         // Callout boxes are laid out against the same normalized geometry below.
         // Do not render a second primitive rectangle/ellipse layer: it is the
         // source of the offset blue duplicate boxes on dense pages.
-        var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse)).ToArray();
+        // Render protocol rectangles/ellipses in the same primitive layer as
+        // the other AI tools. The old callout-only path silently dropped these
+        // accurate red boxes while a separate blue approximation remained.
+        var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic)).ToArray();
         if(primitiveNotes.Length>0)
         {
             var overlay=AnnotationOverlayRenderer.RenderAiOverlay(Math.Max(1,(int)Math.Ceiling(w)),Math.Max(1,(int)Math.Ceiling(h)),primitiveNotes,videoTime);item.AiAnnotations.Children.Add(new Image{Source=overlay,Width=w,Height=h,Stretch=Stretch.Fill,IsHitTestVisible=false});
@@ -1464,7 +1532,7 @@ public partial class CaptureOverlayWindow : Window
             }
             if(n.Kind!=AiAnnotationKind.Callout||calloutCount++>=6)continue;
             if(string.IsNullOrWhiteSpace(n.Text)||n.Width<0.012||n.Height<0.012||n.Width>0.92||n.Height>0.92)continue;
-            var x=Math.Clamp(frame.X,0,1)*w;var y=Math.Clamp(frame.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(frame.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(frame.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9},IsHitTestVisible=false};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.AiAnnotations.Children.Add(box);
+            var x=Math.Clamp(frame.X,0,1)*w;var y=Math.Clamp(frame.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(frame.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(frame.Height,0,1)*h);
             var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=0d;var startX=right?x+rw:x;var line=new Line{X1=startX,Y1=y+rh*.5,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200),IsHitTestVisible=false};var dot=new Ellipse{Width=5,Height=5,Fill=Cyan,IsHitTestVisible=false};var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Cursor=Cursors.SizeAll,ToolTip="拖动批注气泡",Child=new TextBlock{Text=n.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};
             card.Measure(new Size(cardWidth,Math.Max(40,h)));var cardHeight=Math.Max(font*3.2,card.DesiredSize.Height);cardY=AnnotationLayoutService.FindCardTop(y+rh*.5-cardHeight*.5,5,Math.Max(5,h-cardHeight-5),cardHeight+8,slots);if(item.AnnotationCardPositions.TryGetValue(n,out var saved)){cardX=Math.Clamp(saved.X*w,5,Math.Max(5,w-cardWidth-5));cardY=Math.Clamp(saved.Y*h,5,Math.Max(5,h-cardHeight-5));}slots.Add(cardY);
             void PositionCard(double left,double top)
@@ -1774,7 +1842,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private Image CreateMosaicVisual(SelectionItem item,MosaicDrawingElement element)
     {
-        var source=RenderSelectionImage(item,false,false,false);var scaleX=source.PixelWidth/Math.Max(1,item.Bounds.Width);var scaleY=source.PixelHeight/Math.Max(1,item.Bounds.Height);var region=new Int32Rect((int)Math.Floor(element.X*scaleX),(int)Math.Floor(element.Y*scaleY),Math.Max(1,(int)Math.Ceiling(element.Width*scaleX)),Math.Max(1,(int)Math.Ceiling(element.Height*scaleY)));var pixelated=ImagePixelationService.Pixelate(source,region,Math.Clamp((int)Math.Round(12*Math.Max(scaleX,scaleY)),6,40));var visual=new Image{Source=pixelated,Width=element.Width,Height=element.Height,Stretch=Stretch.Fill,IsHitTestVisible=false};InkCanvas.SetLeft(visual,element.X);InkCanvas.SetTop(visual,element.Y);return visual;
+        var source=RenderSelectionImage(item,false,false,false);var scaleX=source.PixelWidth/Math.Max(1,item.Bounds.Width);var scaleY=source.PixelHeight/Math.Max(1,item.Bounds.Height);var left=Math.Clamp((int)Math.Floor(element.X*scaleX),0,source.PixelWidth-1);var top=Math.Clamp((int)Math.Floor(element.Y*scaleY),0,source.PixelHeight-1);var right=Math.Clamp((int)Math.Ceiling((element.X+element.Width)*scaleX),left+1,source.PixelWidth);var bottom=Math.Clamp((int)Math.Ceiling((element.Y+element.Height)*scaleY),top+1,source.PixelHeight);var region=new Int32Rect(left,top,right-left,bottom-top);var pixelated=ImagePixelationService.Pixelate(source,region,Math.Clamp((int)Math.Round(12*Math.Max(scaleX,scaleY)),6,40));var crop=new CroppedBitmap(pixelated,region);crop.Freeze();var visual=new Image{Source=crop,Width=element.Width,Height=element.Height,Stretch=Stretch.Fill,IsHitTestVisible=false};InkCanvas.SetLeft(visual,element.X);InkCanvas.SetTop(visual,element.Y);return visual;
     }
     private TextBox CreateTextDrawingEditor(SelectionItem item,TextDrawingElement element)
     {
@@ -1811,12 +1879,27 @@ public partial class CaptureOverlayWindow : Window
         {
             try
             {
-                var info=new FileInfo(path); if(!info.Exists||info.Length==0||info.Length>8L*1024*1024){PromptStatus.Text="附件为空或超过 8 MB，已跳过";continue;}
-                var ext=info.Extension.ToLowerInvariant(); var image=ext is ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif"; var video=ext is ".mp4" or ".mov" or ".webm";
-                var type=image?AiAttachmentType.Image:video?AiAttachmentType.Video:AiAttachmentType.Text;
-                var mime=image?(ext==".png"?"image/png":"image/jpeg"):video?"video/mp4":"text/plain";
+                var info=new FileInfo(path);if(!info.Exists||info.Length==0){PromptStatus.Text="附件为空，已跳过";continue;}
+                var ext=info.Extension.ToLowerInvariant();
+                var (type,mime,maxBytes)=ext switch
+                {
+                    ".png"=>(AiAttachmentType.Image,"image/png",25L*1024*1024),
+                    ".jpg" or ".jpeg"=>(AiAttachmentType.Image,"image/jpeg",25L*1024*1024),
+                    ".webp"=>(AiAttachmentType.Image,"image/webp",25L*1024*1024),
+                    ".gif"=>(AiAttachmentType.Image,"image/gif",25L*1024*1024),
+                    ".bmp"=>(AiAttachmentType.Image,"image/bmp",25L*1024*1024),
+                    ".mp4"=>(AiAttachmentType.Video,"video/mp4",50L*1024*1024),
+                    ".mov"=>(AiAttachmentType.Video,"video/quicktime",50L*1024*1024),
+                    ".webm"=>(AiAttachmentType.Video,"video/webm",50L*1024*1024),
+                    ".txt"=>(AiAttachmentType.Text,"text/plain",8L*1024*1024),
+                    ".md"=>(AiAttachmentType.Text,"text/markdown",8L*1024*1024),
+                    ".json"=>(AiAttachmentType.Text,"application/json",8L*1024*1024),
+                    ".csv"=>(AiAttachmentType.Text,"text/csv",8L*1024*1024),
+                    _=>throw new NotSupportedException("暂不支持此文件格式，请选择图片、视频或文本文件")
+                };
+                if(info.Length>maxBytes){PromptStatus.Text=$"附件超过 {maxBytes/(1024*1024)} MB，已跳过";continue;}
                 var preview=type==AiAttachmentType.Text?ReadTextPreview(path):info.Name;
-                var item=new UploadedReference("upload-"+Guid.NewGuid().ToString("N"),info.FullName,type,mime,preview){Label=$"@文件{_uploadedReferences.Count+1}"};
+                var item=new UploadedReference("upload-"+Guid.NewGuid().ToString("N"),info.FullName,type,mime,preview){Label=$"@文件{++_nextUploadNumber}"};
                 _uploadedReferences.Add(item);
             }
             catch(Exception ex){PromptStatus.Text=$"无法读取附件：{ex.Message}";}
@@ -1826,7 +1909,11 @@ public partial class CaptureOverlayWindow : Window
 
     private static string ReadTextPreview(string path)
     {
-        try{using var reader=new StreamReader(path);var text=reader.ReadToEnd();return text.Length>90?text[..90]+"…":text;}
+        try
+        {
+            using var reader=new StreamReader(path);var buffer=new char[91];var count=reader.ReadBlock(buffer,0,buffer.Length);var text=new string(buffer,0,count);
+            return count==buffer.Length?text[..90]+"…":text;
+        }
         catch{return "文本文件";}
     }
     private static (int Width,int Height) GetUploadedImageSize(string path)
