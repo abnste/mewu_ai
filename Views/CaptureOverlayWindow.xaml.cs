@@ -371,11 +371,11 @@ public partial class CaptureOverlayWindow : Window
         }
 
         var conversationCount=messages.Length+(!currentIsInHistory&&!string.IsNullOrWhiteSpace(_lastSubmittedPrompt)?1:0);
-        HistorySummary.Text=conversationCount>0
-            ?$"提问与历史 / Prompt & history · {conversationCount}"
-            :"提问与历史 / Prompt & history";
+        HistoryToggle.ToolTip=conversationCount>0
+            ?$"查看提问与历史 / Prompt & history ({conversationCount})"
+            :"查看提问与历史 / Prompt & history";
         HistoryPanel.Visibility=_historyExpanded?Visibility.Visible:Visibility.Collapsed;
-        HistoryChevronRotation.Angle=_historyExpanded?180:0;
+        HistoryChevronRotation.Angle=_historyExpanded?0:180;
         HistoryScroll.MaxHeight=GetHistoryMaxHeight();
     }
 
