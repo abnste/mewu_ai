@@ -85,6 +85,12 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
                     var result=await _runtime.InvokeAsync("file.attach",new{session_id=sessionId,path=info.FullName,name=info.Name},cancellationToken).ConfigureAwait(false);
                     if(TryReadString(result,"ref_text",out var reference))prompt+=$"\n\n视频附件：{reference}";
                 }
+                else if(attachment.Type==AiAttachmentType.Text)
+                {
+                    var bytes=await ReadAttachmentAsync(attachment,8L*1024*1024,cancellationToken).ConfigureAwait(false);
+                    try{prompt+=$"\n\n文本附件（{Path.GetFileName(attachment.FilePath??"文本") }）：\n{System.Text.Encoding.UTF8.GetString(bytes)}";}
+                    finally{if(!ReferenceEquals(bytes,attachment.Data))CryptographicOperations.ZeroMemory(bytes);}
+                }
             }
 
             turn=new ActiveTurn(Interlocked.Increment(ref _generation),sessionId,request,cancellationToken);
@@ -455,7 +461,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
         foreach(var attachment in request.Attachments)
         {
             if(attachment is null)throw new InvalidOperationException("Hermes 附件不能为空。");
-            if(!AcceptedMimeTypes.Contains(attachment.MimeType))throw new InvalidOperationException($"Hermes 暂不支持附件格式：{attachment.MimeType}");
+            if(attachment.Type!=AiAttachmentType.Text&&!AcceptedMimeTypes.Contains(attachment.MimeType))throw new InvalidOperationException($"Hermes 暂不支持附件格式：{attachment.MimeType}");
             var size=GetAttachmentSize(attachment);
             if(size<=0)throw new InvalidOperationException("Hermes 附件内容为空。");
             if(attachment.Type==AiAttachmentType.Image)
@@ -469,6 +475,10 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
                 if(size>MaxVideoBytes)throw new InvalidOperationException("Hermes 本地会话单个视频暂限 512 MB，请先压缩或裁剪。");
                 if(attachment.Duration>TimeSpan.FromHours(4))throw new InvalidOperationException("Hermes 本地会话暂不接收超过 4 小时的视频。");
                 videoBytes=AddSaturating(videoBytes,size);
+            }
+            else if(attachment.Type==AiAttachmentType.Text)
+            {
+                if(size>8L*1024*1024)throw new InvalidOperationException("发送给 Hermes 的文本文件超过 8 MB。");
             }
             else throw new InvalidOperationException("Hermes 收到了未知附件类型。");
         }

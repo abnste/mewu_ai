@@ -1,5 +1,5 @@
 namespace mewu_ai_Assistant.Models;
-public enum AiAttachmentType { Image,Video }
+public enum AiAttachmentType { Image,Video,Text }
 public sealed record AiAttachment(
     AiAttachmentType Type,
     string MimeType,
@@ -42,6 +42,7 @@ public sealed record AiProviderCapabilities(bool SupportsImage,bool SupportsVide
     {
         AiAttachmentType.Image=>MaxImageSize,
         AiAttachmentType.Video=>MaxVideoSize,
+        AiAttachmentType.Text=>8L*1024*1024,
         _=>0
     };
 }

@@ -181,7 +181,7 @@ public class OpenAiCompatibleProvider : IAiProvider
             if(attachment.Type==AiAttachmentType.Image&&!Capabilities.SupportsImage)throw new NotSupportedException("当前模型不支持图片");
             if(attachment.Type==AiAttachmentType.Video&&!Capabilities.SupportsVideo)throw new NotSupportedException("当前模型不支持视频");
             if(string.IsNullOrWhiteSpace(attachment.MimeType))throw new InvalidOperationException("附件 MIME 类型不能为空");
-            if(Capabilities.AcceptedMimeTypes.Count>0&&!Capabilities.AcceptedMimeTypes.Contains(attachment.MimeType))throw new NotSupportedException($"当前模型不接受 {attachment.MimeType} 附件");
+            if(attachment.Type!=AiAttachmentType.Text&&Capabilities.AcceptedMimeTypes.Count>0&&!Capabilities.AcceptedMimeTypes.Contains(attachment.MimeType))throw new NotSupportedException($"当前模型不接受 {attachment.MimeType} 附件");
             var size=GetAttachmentSize(attachment);
             if(size<=0)throw new InvalidOperationException("附件内容为空");
             ValidateAttachmentSize(attachment,size);
@@ -199,7 +199,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         var limit=Capabilities.MaxSizeFor(attachment.Type);
         if(limit>0&&size>limit)
         {
-            var kind=attachment.Type==AiAttachmentType.Image?"图片":"视频";
+            var kind=attachment.Type==AiAttachmentType.Image?"图片":attachment.Type==AiAttachmentType.Video?"视频":"文本文件";
             throw new InvalidOperationException($"{kind}超过当前模型的 {FormatMegabytes(limit)} MB 单文件限制");
         }
     }
@@ -307,7 +307,8 @@ public class OpenAiCompatibleProvider : IAiProvider
             var dataUrl=$"data:{attachment.MimeType};base64,{Convert.ToBase64String(loaded.Bytes)}";
             token.ThrowIfCancellationRequested();
             if(attachment.Type==AiAttachmentType.Image)content.Add(new{type="image_url",image_url=new{url=dataUrl}});
-            else content.Add(new{type="video_url",video_url=new{url=dataUrl,fps=2}});
+            else if(attachment.Type==AiAttachmentType.Video)content.Add(new{type="video_url",video_url=new{url=dataUrl,fps=2}});
+            else content.Add(new{type="text",text=System.Text.Encoding.UTF8.GetString(loaded.Bytes)});
         }
 
         var messages=new List<object>(request.History.Count+1);

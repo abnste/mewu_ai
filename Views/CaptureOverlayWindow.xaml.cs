@@ -45,6 +45,7 @@ public partial class CaptureOverlayWindow : Window
     private readonly HashSet<SelectionItem> _ownedSelections=[];
     private readonly HashSet<SelectionItem> _references=[];
     private readonly List<SelectionItem> _referencePickerCandidates=[];
+    private readonly List<UploadedReference> _uploadedReferences=[];
     private readonly UndoRedoHistory<OverlaySnapshot> _overlayHistory=new();
     private readonly System.Text.StringBuilder _reasoningBuffer=new();
     private List<SelectionItem> _lastSentSelections=[];
@@ -125,6 +126,11 @@ public partial class CaptureOverlayWindow : Window
         public TimeSpan VideoDuration;
         public bool VideoPlaying;
         public CancellationTokenSource? VideoAnnotationPlayback;
+    }
+
+    private sealed record UploadedReference(string Handle,string Path,AiAttachmentType Type,string MimeType,string Preview)
+    {
+        public string Label { get; set; }=string.Empty;
     }
 
     private abstract record TextLayerState;
@@ -328,7 +334,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void UpdateReferencePicker()
     {
-        if(!_conversationAiAvailable||QuickPrompt.CaretIndex<1||_selections.All(item=>item.IsImplicit)){ReferencePicker.IsOpen=false;return;}
+        if(!_conversationAiAvailable||QuickPrompt.CaretIndex<1||(_selections.All(item=>item.IsImplicit)&&_uploadedReferences.Count==0)){ReferencePicker.IsOpen=false;return;}
         var caret=Math.Min(QuickPrompt.CaretIndex,QuickPrompt.Text.Length);var start=caret-1;
         while(start>=0&&!char.IsWhiteSpace(QuickPrompt.Text[start])&&QuickPrompt.Text[start] is not ',' and not '，' and not '。' and not '；' and not ';')start--;
         start++;
@@ -343,7 +349,25 @@ public partial class CaptureOverlayWindow : Window
             var button=new Button{HorizontalContentAlignment=HorizontalAlignment.Left,Margin=new Thickness(1),Padding=new Thickness(10,7,10,7),Content=new StackPanel{Children={new TextBlock{Text=label,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(82,100,223))},new TextBlock{Text=detail,FontSize=10.5,Foreground=new SolidColorBrush(Color.FromRgb(126,139,160))}}}};
             button.Click+=(_,_)=>InsertReferenceMention(item);ReferencePickerItems.Children.Add(button);
         }
-        ReferencePicker.IsOpen=_referencePickerCandidates.Count>0;
+        foreach(var file in _uploadedReferences)
+        {
+            if(prefix.Length>0&&!file.Label.AsSpan(1).StartsWith(prefix,StringComparison.OrdinalIgnoreCase))continue;
+            var stack=new StackPanel{Orientation=Orientation.Horizontal};
+            if(file.Type==AiAttachmentType.Image)
+            {
+                try{stack.Children.Add(new Image{Source=new BitmapImage(new Uri(file.Path)),Width=34,Height=28,Stretch=Stretch.UniformToFill,Margin=new Thickness(0,0,8,0)});}catch{}
+            }
+            else stack.Children.Add(new TextBlock{Text=file.Type==AiAttachmentType.Text?"📄":"🎞",FontSize=22,Margin=new Thickness(0,0,8,0)});
+            stack.Children.Add(new StackPanel{Children={new TextBlock{Text=file.Label,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(82,100,223))},new TextBlock{Text=file.Type==AiAttachmentType.Text?file.Preview:file.Path,FontSize=10.5,Foreground=new SolidColorBrush(Color.FromRgb(126,139,160)),TextTrimming=TextTrimming.CharacterEllipsis,MaxWidth=220}}});
+            var button=new Button{HorizontalContentAlignment=HorizontalAlignment.Left,Margin=new Thickness(1),Padding=new Thickness(10,7,10,7),Content=stack};
+            button.Click+=(_,_)=>InsertUploadedMention(file);ReferencePickerItems.Children.Add(button);
+        }
+        ReferencePicker.IsOpen=ReferencePickerItems.Children.Count>0;
+    }
+
+    private void InsertUploadedMention(UploadedReference file)
+    {
+        var caret=Math.Min(QuickPrompt.CaretIndex,QuickPrompt.Text.Length);var start=Math.Clamp(_referenceMentionStart,0,caret);var label=file.Label+" ";QuickPrompt.Text=QuickPrompt.Text[..start]+label+QuickPrompt.Text[caret..];QuickPrompt.CaretIndex=start+label.Length;ReferencePicker.IsOpen=false;_referenceMentionStart=-1;QuickPrompt.Focus();
     }
 
     private void InsertReferenceMention(SelectionItem item)
@@ -996,17 +1020,18 @@ public partial class CaptureOverlayWindow : Window
         transform.BeginAnimation(TranslateTransform.YProperty,movement);
         PromptBarHost.BeginAnimation(OpacityProperty,new DoubleAnimation(currentOpacity,targetOpacity,TimeSpan.FromMilliseconds(_promptBarHidden?120:190)){FillBehavior=FillBehavior.Stop});
     }
-    private void ShowAnswer(){if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(PositionPromptBar);}
+    private void ShowAnswer(){SetPromptBarHidden(false);if(_answerExpanded)return;_answerExpanded=true;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Visible;if(ReasoningToggle.Visibility!=Visibility.Visible&&!string.IsNullOrWhiteSpace(_reasoningBuffer.ToString()))RevealReasoningInProgress();_ = Dispatcher.BeginInvoke(DispatcherPriority.Render,PositionPromptBar);}
     private void ToggleReasoning(object s,RoutedEventArgs e){_reasoningExpanded=!_reasoningExpanded;ReasoningPanel.Visibility=_reasoningExpanded?Visibility.Visible:Visibility.Collapsed;ReasoningChevronRotation.Angle=_reasoningExpanded?180:0;_ = Dispatcher.BeginInvoke(PositionPromptBar);}
     private void ShowReasoning(string delta,CancellationTokenSource request)
     {
         AppendReasoning(delta);if(ReasoningToggle.Visibility!=Visibility.Visible)RevealReasoningInProgress();if(_reasoningRenderScheduled&&ReferenceEquals(_reasoningRenderRequest,request))return;_reasoningRenderScheduled=true;_reasoningRenderRequest=request;
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>
+        SetPromptBarHidden(false);
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>
         {
             if(!ReferenceEquals(_reasoningRenderRequest,request))return;
             _reasoningRenderScheduled=false;_reasoningRenderRequest=null;
             if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;
-            ReasoningText.Text=LimitReasoning(_reasoningBuffer.ToString());ScrollReasoningToEnd();_ = Dispatcher.BeginInvoke(PositionPromptBar);
+            ReasoningText.Text=LimitReasoning(_reasoningBuffer.ToString());ScrollReasoningToEnd();_ = Dispatcher.BeginInvoke(DispatcherPriority.Render,PositionPromptBar);
         }));
     }
     private void RevealReasoningInProgress()
@@ -1017,7 +1042,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(!string.IsNullOrWhiteSpace(reasoning)){_reasoningBuffer.Clear();AppendReasoning(reasoning.Trim());ReasoningText.Text=LimitReasoning(_reasoningBuffer.ToString());ScrollReasoningToEnd();}CloseReasoning("思考过程 · 已完成",Color.FromRgb(95,181,137));
     }
-    private void ScrollReasoningToEnd()=>_ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>ReasoningScroll.ScrollToEnd()));
+    private void ScrollReasoningToEnd()=>_ = Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>{ReasoningScroll.UpdateLayout();ReasoningScroll.ScrollToEnd();}));
     private void CloseReasoning(string label,Color color)
     {
         _reasoningRenderRequest=null;_reasoningRenderScheduled=false;ReasoningPulse.BeginAnimation(OpacityProperty,null);ReasoningPulse.Opacity=1;ReasoningPulse.Background=new SolidColorBrush(color);
@@ -1208,7 +1233,14 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             foreach(var video in targets.Select(item=>item.VideoPath).Where(path=>path is not null))attachmentLeases.Add(TempMediaRegistry.Shared.AcquireExistingFile(video!));
-            attachments=await BuildAttachmentsAsync(targets,provider.Capabilities,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {targetCount} 个引用区域…按 Esc 可取消";
+            attachments=await BuildAttachmentsAsync(targets,provider.Capabilities,request.Token);
+            foreach(var file in _uploadedReferences)
+            {
+                request.Token.ThrowIfCancellationRequested();
+                if(file.Type==AiAttachmentType.Text){var bytes=await File.ReadAllBytesAsync(file.Path,request.Token);attachments.Add(new AiAttachment(AiAttachmentType.Text,file.MimeType,bytes,ProviderOwnsData:false));}
+                else attachments.Add(new AiAttachment(file.Type,file.MimeType,FilePath:file.Path,ProviderOwnsData:false));
+            }
+            if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;PromptStatus.Text=$"正在分析 {targetCount+_uploadedReferences.Count} 个附件…按 Esc 可取消";
             var progress=provider.Capabilities.SupportsStreaming?new Progress<AiStreamDelta>(delta=>{if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);if(delta.Content.Length>0){streamedContent.Append(delta.Content);if(previewScheduled)return;previewScheduled=true;_ = Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>{previewScheduled=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen))return;var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;lastPreview=preview;ShowAnswer();AnswerText.Markdown=preview;AnswerScroll.ScrollToEnd();PromptStatus.Text="正在整理回答…";}));}}):null;
             var agentProgress=usingHermes?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,progress,agentProgress,usingHermes?HandleOverlayInteractionAsync:null);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}ShowAnswer();FinishReasoning(result.Reasoning);if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=MapAnnotations(result.Annotations);ApplyAnnotationMapping(primaryMapping,true);var renderedAnnotationCount=primaryMapping.RenderedCount;ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             var repairReturnedAnnotationCount=-1;
@@ -1361,8 +1393,10 @@ public partial class CaptureOverlayWindow : Window
                 continue;
             }
             if(n.Kind!=AiAnnotationKind.Callout||calloutCount++>=6)continue;
+            if(string.IsNullOrWhiteSpace(n.Text)||n.Width<0.012||n.Height<0.012||n.Width>0.92||n.Height>0.92)continue;
             var x=Math.Clamp(frame.X,0,1)*w;var y=Math.Clamp(frame.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(frame.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(frame.Height,0,1)*h);var box=new Border{Width=rw,Height=rh,CornerRadius=new CornerRadius(5),BorderBrush=Cyan,BorderThickness=new Thickness(Math.Max(1.5,w/900)),Background=new SolidColorBrush(Color.FromArgb(14,55,170,255)),Effect=new DropShadowEffect{Color=Color.FromRgb(34,169,255),BlurRadius=13,ShadowDepth=0,Opacity=.9},IsHitTestVisible=false};Canvas.SetLeft(box,x);Canvas.SetTop(box,y);item.AiAnnotations.Children.Add(box);
-            var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=AnnotationLayoutService.FindCardTop(y+rh*.5-font*1.5,5,Math.Max(5,h-font*4),font*3.2,slots);if(item.AnnotationCardPositions.TryGetValue(n,out var saved)){cardX=Math.Clamp(saved.X*w,5,Math.Max(5,w-cardWidth-5));cardY=Math.Clamp(saved.Y*h,5,Math.Max(5,h-font*3.2));}slots.Add(cardY);var startX=right?x+rw:x;var line=new Line{X1=startX,Y1=y+rh*.5,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200),IsHitTestVisible=false};var dot=new Ellipse{Width=5,Height=5,Fill=Cyan,IsHitTestVisible=false};var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Cursor=Cursors.SizeAll,ToolTip="拖动批注气泡",Child=new TextBlock{Text=n.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};
+            var right=x+rw+cardWidth+28<w;var cardX=right?x+rw+24:Math.Max(5,x-cardWidth-24);var cardY=0d;var startX=right?x+rw:x;var line=new Line{X1=startX,Y1=y+rh*.5,Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200),IsHitTestVisible=false};var dot=new Ellipse{Width=5,Height=5,Fill=Cyan,IsHitTestVisible=false};var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Cursor=Cursors.SizeAll,ToolTip="拖动批注气泡",Child=new TextBlock{Text=n.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};
+            card.Measure(new Size(cardWidth,Math.Max(40,h)));var cardHeight=Math.Max(font*3.2,card.DesiredSize.Height);cardY=AnnotationLayoutService.FindCardTop(y+rh*.5-cardHeight*.5,5,Math.Max(5,h-cardHeight-5),cardHeight+8,slots);if(item.AnnotationCardPositions.TryGetValue(n,out var saved)){cardX=Math.Clamp(saved.X*w,5,Math.Max(5,w-cardWidth-5));cardY=Math.Clamp(saved.Y*h,5,Math.Max(5,h-cardHeight-5));}slots.Add(cardY);
             void PositionCard(double left,double top)
             {
                 left=Math.Clamp(left,5,Math.Max(5,w-cardWidth-5));top=Math.Clamp(top,5,Math.Max(5,h-Math.Max(card.ActualHeight,font*3.2)-5));Canvas.SetLeft(card,left);Canvas.SetTop(card,top);var attachRight=left+cardWidth/2<x+rw/2;var endX=attachRight?left+cardWidth:left;var endY=top+Math.Max(font*1.4,card.ActualHeight/2);line.X2=endX;line.Y2=endY;Canvas.SetLeft(dot,endX-2.5);Canvas.SetTop(dot,endY-2.5);
@@ -1690,6 +1724,34 @@ public partial class CaptureOverlayWindow : Window
     private async void QuickSend(object s,RoutedEventArgs e)=>await SendAsync(true);
     private async void QuickPromptKeyDown(object s,KeyEventArgs e){if(e.Key==Key.Enter&&!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)){e.Handled=true;if(ReferencePicker.IsOpen&&_referencePickerCandidates.Count>0){InsertReferenceMention(_referencePickerCandidates[0]);return;}await SendAsync(true);}}
     private async void QuickVoice(object s,RoutedEventArgs e)=>await ToggleVoiceAsync();
+
+    private void UploadAttachment(object sender,RoutedEventArgs e)
+    {
+        if(!_conversationAiAvailable)return;
+        var dialog=new OpenFileDialog{Multiselect=true,Filter="图片/视频/文本|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.mp4;*.mov;*.webm;*.txt;*.md;*.json;*.csv|所有文件|*.*"};
+        if(dialog.ShowDialog(this)!=true)return;
+        foreach(var path in dialog.FileNames)
+        {
+            try
+            {
+                var info=new FileInfo(path); if(!info.Exists||info.Length==0||info.Length>8L*1024*1024){PromptStatus.Text="附件为空或超过 8 MB，已跳过";continue;}
+                var ext=info.Extension.ToLowerInvariant(); var image=ext is ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif"; var video=ext is ".mp4" or ".mov" or ".webm";
+                var type=image?AiAttachmentType.Image:video?AiAttachmentType.Video:AiAttachmentType.Text;
+                var mime=image?(ext==".png"?"image/png":"image/jpeg"):video?"video/mp4":"text/plain";
+                var preview=type==AiAttachmentType.Text?ReadTextPreview(path):info.Name;
+                var item=new UploadedReference("upload-"+Guid.NewGuid().ToString("N"),info.FullName,type,mime,preview){Label=$"@文件{_uploadedReferences.Count+1}"};
+                _uploadedReferences.Add(item);
+            }
+            catch(Exception ex){PromptStatus.Text=$"无法读取附件：{ex.Message}";}
+        }
+        UpdateReferencePicker(); PromptStatus.Text=$"已添加 {_uploadedReferences.Count} 个附件，可输入 @ 选择"; QuickPrompt.Focus();
+    }
+
+    private static string ReadTextPreview(string path)
+    {
+        try{using var reader=new StreamReader(path);var text=reader.ReadToEnd();return text.Length>90?text[..90]+"…":text;}
+        catch{return "文本文件";}
+    }
     private async Task ToggleVoiceAsync()
     {
         if(_closed||RejectIfOverlayOperationBusy())return;
