@@ -33,7 +33,7 @@ public sealed class SettingsWindow : Window
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
-    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _ctrl = new(), _shift = new(), _alt = new(), _captureCursor = new(), _recordCursor = new(), _defaultProvider = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
+    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _recordCursor = new(), _defaultProvider = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
     private readonly System.Windows.Shapes.Ellipse _hermesStatusDot = new();
     private readonly List<AiProviderSettings> _providers;
@@ -285,19 +285,6 @@ public sealed class SettingsWindow : Window
         _startup.IsChecked = _host.Settings.LaunchAtStartup;
         panel.Children.Add(_startup);
         panel.Children.Add(Text("全局截图快捷键", true));
-        var modifiers = new StackPanel { Orientation = Orientation.Horizontal };
-        _ctrl.Content = "Ctrl";
-        _shift.Content = "Shift";
-        _alt.Content = "Alt";
-        _ctrl.Margin = new Thickness(0, 5, 18, 5);
-        _shift.Margin = new Thickness(0, 5, 18, 5);
-        _ctrl.IsChecked = _host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control);
-        _shift.IsChecked = _host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);
-        _alt.IsChecked = _host.Settings.CaptureHotkey.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Alt);
-        modifiers.Children.Add(_ctrl);
-        modifiers.Children.Add(_shift);
-        modifiers.Children.Add(_alt);
-        panel.Children.Add(modifiers);
         _capturedHotkeyKey = _host.Settings.CaptureHotkey.Key;
         _capturedHotkeyModifiers = _host.Settings.CaptureHotkey.Modifiers;
         _hotkey.IsReadOnly = true;
@@ -331,9 +318,6 @@ public sealed class SettingsWindow : Window
     private void SetCapturedHotkey(System.Windows.Input.Key key, System.Windows.Input.ModifierKeys modifiers)
     {
         _capturedHotkeyKey = key; _capturedHotkeyModifiers = modifiers;
-        _ctrl.IsChecked = modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control);
-        _shift.IsChecked = modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);
-        _alt.IsChecked = modifiers.HasFlag(System.Windows.Input.ModifierKeys.Alt);
         _hotkey.Text = FormatHotkey(key, modifiers);
     }
 
@@ -811,7 +795,8 @@ public sealed class SettingsWindow : Window
         open.Margin = new Thickness(0, 6, 0, 0);
         open.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MewuAI")) { UseShellExecute = true });
         panel.Children.Add(open);
-        panel.Children.Add(Text($"应用版本：{typeof(SettingsWindow).Assembly.GetName().Version}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / PP-OCRv6（Windows OCR 仅故障降级）\n录屏：Media Foundation H.264", true));
+        var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.1.0";
+        panel.Children.Add(Text($"应用版本 / App version：{appVersion}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / PP-OCRv6（Windows OCR 仅故障降级）\n录屏：Media Foundation H.264", true));
         return panel;
     }
 
@@ -819,9 +804,10 @@ public sealed class SettingsWindow : Window
     {
         var panel=Panel();
         panel.Children.Add(new TextBlock{Text="喵呜AI",FontSize=24,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(49,73,126)),Margin=new Thickness(0,0,0,4)});
-        panel.Children.Add(Text("作者：Abner Stephen\n版本："+typeof(SettingsWindow).Assembly.GetName().Version, true));
+        var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.1.0";
+        panel.Children.Add(Text("作者：Abner Stephen\nAuthor: Abner Stephen\n版本 / Version："+appVersion+"\nWindows 截图、OCR、标注、录屏与多模态 AI 工作流\nWindows capture, OCR, annotation, recording and multimodal AI workflow", true));
         var repo=new TextBlock{Margin=new Thickness(0,8,0,12),TextWrapping=TextWrapping.Wrap};
-        var link=new Hyperlink(new Run("GitHub 开源仓库 · github.com/abnste/mewu_ai")){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
+        var link=new Hyperlink(new Run("GitHub 开源仓库 / Open-source repository · github.com/abnste/mewu_ai")){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
         link.RequestNavigate+=(_,e)=>{try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri){UseShellExecute=true});}catch{};e.Handled=true;};repo.Inlines.Add(link);panel.Children.Add(repo);
         panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text="许可说明\n本项目除第三方依赖外的源代码按仓库许可证开放。将本软件用于商业产品、商业部署或商业服务前，需要取得作者的商业授权。个人学习、研究和非商业使用请遵守仓库中的开源许可与第三方许可。\n\nLicense\nThe project source is open under the licenses in the repository, excluding third-party components. Commercial products, deployments, or services require separate authorization from the author. Personal, research, and non-commercial use must follow the repository and third-party licenses.",TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
         return panel;

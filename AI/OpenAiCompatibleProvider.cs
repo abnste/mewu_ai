@@ -56,7 +56,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         _requestTimeout=requestTimeout;
         Capabilities=VolcengineModelPolicy.IsEndpoint(_baseUri)
             ?VolcengineModelPolicy.GetCapabilities(settings.Model)
-            :new(true,false,true,20L*1024*1024,0,TimeSpan.Zero,new HashSet<string>(["image/png","image/jpeg","image/webp"],StringComparer.OrdinalIgnoreCase));
+            :GetGenericCapabilities(settings.Model);
     }
 
     public async Task<bool> TestConnectionAsync(CancellationToken token)
@@ -178,10 +178,7 @@ public class OpenAiCompatibleProvider : IAiProvider
             if(attachment is null)throw new InvalidOperationException("附件列表包含空项");
             if(attachment.Data is not null&&!string.IsNullOrWhiteSpace(attachment.FilePath))throw new InvalidOperationException("附件不能同时包含内存数据和文件路径");
             if(!Enum.IsDefined(attachment.Type))throw new InvalidOperationException("附件类型无效");
-            if(attachment.Type==AiAttachmentType.Image&&!Capabilities.SupportsImage)throw new NotSupportedException("当前模型不支持图片");
-            if(attachment.Type==AiAttachmentType.Video&&!Capabilities.SupportsVideo)throw new NotSupportedException("当前模型不支持视频");
             if(string.IsNullOrWhiteSpace(attachment.MimeType))throw new InvalidOperationException("附件 MIME 类型不能为空");
-            if(attachment.Type!=AiAttachmentType.Text&&Capabilities.AcceptedMimeTypes.Count>0&&!Capabilities.AcceptedMimeTypes.Contains(attachment.MimeType))throw new NotSupportedException($"当前模型不接受 {attachment.MimeType} 附件");
             var size=GetAttachmentSize(attachment);
             if(size<=0)throw new InvalidOperationException("附件内容为空");
             ValidateAttachmentSize(attachment,size);
@@ -192,6 +189,29 @@ public class OpenAiCompatibleProvider : IAiProvider
             if(attachment.Duration is { } duration&&duration<TimeSpan.Zero)throw new InvalidOperationException("视频时长不能为负数");
             if(attachment.Duration is { } limitedDuration&&Capabilities.MaxVideoDuration>TimeSpan.Zero&&limitedDuration>Capabilities.MaxVideoDuration)throw new InvalidOperationException("视频时长超过当前模型限制");
         }
+        foreach(var attachment in request.Attachments)
+        {
+            if(attachment.Type==AiAttachmentType.Image&&!Capabilities.SupportsImage)throw new NotSupportedException("当前模型不支持图片理解，请在设置中选择多模态模型");
+            if(attachment.Type==AiAttachmentType.Video&&!Capabilities.SupportsVideo)throw new NotSupportedException("当前模型不支持视频理解，请在设置中选择视频多模态模型");
+            if(attachment.Type!=AiAttachmentType.Text&&Capabilities.AcceptedMimeTypes.Count>0&&!Capabilities.AcceptedMimeTypes.Contains(attachment.MimeType))throw new NotSupportedException($"当前模型不接受 {attachment.MimeType} 附件");
+        }
+    }
+
+    private static AiProviderCapabilities GetGenericCapabilities(string model)
+    {
+        var value=model?.Trim()??string.Empty;
+        var image=value.Contains("vision",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("-vl",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("vl-",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("gpt-4o",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("gpt-4.1",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("grok-4",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("gemini",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("qwen2.5-vl",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("qwen-vl",StringComparison.OrdinalIgnoreCase)||
+                   value.Contains("claude-3",StringComparison.OrdinalIgnoreCase);
+        var accepted=image?new HashSet<string>(["image/png","image/jpeg","image/webp"],StringComparer.OrdinalIgnoreCase):new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return new(image,false,true,image?20L*1024*1024:0,0,TimeSpan.Zero,accepted);
     }
 
     protected virtual void ValidateAttachmentSize(AiAttachment attachment,long size)

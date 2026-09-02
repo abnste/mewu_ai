@@ -25,7 +25,7 @@ internal static class AnnotationOverlayRenderer
                 if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
                 var x=Math.Clamp(frame.X,0,1)*width;var y=Math.Clamp(frame.Y,0,1)*height;var boxWidth=Math.Max(14,Math.Clamp(frame.Width,0,1)*width);var boxHeight=Math.Max(14,Math.Clamp(frame.Height,0,1)*height);
                 if(annotation.Kind==AiAnnotationKind.Mosaic)continue;
-                var style=annotation.EffectiveStyle;var color=ParseColor(style.Color,style.Opacity);var brush=new SolidColorBrush(color);var stroke=Math.Clamp(style.StrokeWidth*Math.Min(width,height),1,48);var pen=new Pen(brush,annotation.Kind==AiAnnotationKind.Highlighter?Math.Max(5,stroke):stroke){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round,LineJoin=PenLineJoin.Round};
+                var style=annotation.EffectiveStyle;var colorName=annotation.Kind is AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse&&string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?"#FF0000":style.Color;var color=ParseColor(colorName,style.Opacity);var brush=new SolidColorBrush(color);var stroke=Math.Clamp(style.StrokeWidth*Math.Min(width,height),1,48);var pen=new Pen(brush,annotation.Kind==AiAnnotationKind.Highlighter?Math.Max(5,stroke):stroke){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round,LineJoin=PenLineJoin.Round};
                 var points=(frame.Points??annotation.Points)?.Select(point=>new Point(point.X*width,point.Y*height)).ToArray();
                 switch(annotation.Kind)
                 {
@@ -45,7 +45,6 @@ internal static class AnnotationOverlayRenderer
                         var diameter=Math.Min(boxWidth,boxHeight);drawing.DrawEllipse(brush,null,new Point(x+diameter/2,y+diameter/2),diameter/2,diameter/2);DrawCenteredText(drawing,(annotation.Number??1).ToString(CultureInfo.InvariantCulture),new Rect(x,y,diameter,diameter),Math.Clamp(diameter*.48,12,52),Contrast(color));break;
                     default:
                         if(calloutCount++>=6)break;
-                        var boxPen=new Pen(Cyan,Math.Max(2,width/900d));boxPen.Freeze();drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(14,55,170,255)),boxPen,new Rect(x,y,boxWidth,boxHeight),5,5);
                         var right=x+boxWidth+cardWidth+28<width;var cardX=right?x+boxWidth+24:Math.Max(5,x-cardWidth-24);var cardHeight=Math.Max(font*3.2,font*1.8);var cardY=AnnotationLayoutService.FindCardTop(y+boxHeight*.5-font*1.5,5,Math.Max(5,height-font*4),cardHeight,slots);slots.Add(cardY);var startX=right?x+boxWidth:x;var endX=right?cardX:cardX+cardWidth;
                         var linePen=new Pen(Cyan,Math.Max(1,width/1200d));linePen.Freeze();drawing.DrawLine(linePen,new Point(startX,y+boxHeight*.5),new Point(endX,cardY+font*1.4));drawing.DrawEllipse(Cyan,null,new Point(endX,cardY+font*1.4),2.5,2.5);
                         drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(248,255,255,255)),new Pen(new SolidColorBrush(Color.FromArgb(145,61,174,242)),1),new Rect(cardX,cardY,cardWidth,cardHeight),8,8);
@@ -70,9 +69,22 @@ internal static class AnnotationOverlayRenderer
             var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);
             if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
             var x=Math.Clamp((int)Math.Floor(frame.X*source.PixelWidth),0,source.PixelWidth-1);var y=Math.Clamp((int)Math.Floor(frame.Y*source.PixelHeight),0,source.PixelHeight-1);var right=Math.Clamp((int)Math.Ceiling((frame.X+frame.Width)*source.PixelWidth),x+1,source.PixelWidth);var bottom=Math.Clamp((int)Math.Ceiling((frame.Y+frame.Height)*source.PixelHeight),y+1,source.PixelHeight);
-            result=ImagePixelationService.Pixelate(result,new Int32Rect(x,y,right-x,bottom-y),Math.Clamp((int)Math.Round(12*Math.Max(source.PixelWidth/1280d,source.PixelHeight/720d)),8,40));
+            // Always sample the clean source, then composite only this region.
+            // Reading from result would feed an earlier mosaic back into the
+            // next block and progressively destroy detail in overlaps.
+            var pixelated=ImagePixelationService.Pixelate(source,new Int32Rect(x,y,right-x,bottom-y),Math.Clamp((int)Math.Round(12*Math.Max(source.PixelWidth/1280d,source.PixelHeight/720d)),8,40));
+            result=CompositeRegion(result,pixelated,new Int32Rect(x,y,right-x,bottom-y));
         }
         return result;
+    }
+
+    private static BitmapSource CompositeRegion(BitmapSource baseImage,BitmapSource overlay,Int32Rect region)
+    {
+        var visual=new DrawingVisual();using(var drawing=visual.RenderOpen())
+        {
+            var bounds=new Rect(0,0,baseImage.PixelWidth,baseImage.PixelHeight);drawing.DrawImage(baseImage,bounds);drawing.PushClip(new RectangleGeometry(new Rect(region.X,region.Y,region.Width,region.Height)));drawing.DrawImage(overlay,bounds);drawing.Pop();
+        }
+        var bitmap=new RenderTargetBitmap(baseImage.PixelWidth,baseImage.PixelHeight,baseImage.DpiX,baseImage.DpiY,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
 
     internal static BitmapSource RenderAiOverlay(BitmapSource source,IReadOnlyList<AiAnnotation> annotations,double? videoTime)
@@ -148,8 +160,17 @@ internal static class VideoAnnotationOverlayPlan
         {
             var start=TimeSpan.FromSeconds(Math.Clamp(note.StartTime!.Value,0,videoDuration.TotalSeconds));var end=TimeSpan.FromSeconds(Math.Clamp(note.EndTime!.Value,0,videoDuration.TotalSeconds));if(end<start)continue;
             if(end-start<=TimeSpan.FromMilliseconds(50)){samples.Add(start.Ticks);continue;}
-            for(var time=start;time<end;time+=step)samples.Add(time.Ticks);
-            samples.Add(Math.Max(start.Ticks,end.Ticks-1));
+            // Sample each interval directly into a bounded set. Generating a
+            // many-hour timeline at full FPS and truncating afterwards creates
+            // avoidable memory/CPU spikes during video export.
+            var idealCount=(long)Math.Ceiling((end-start).Ticks/(double)Math.Max(1,step.Ticks))+1;
+            var count=(int)Math.Clamp(idealCount,2,maximumFrames);
+            var last=Math.Max(start.Ticks,end.Ticks-1);
+            for(var index=0;index<count;index++)
+            {
+                var ticks=count==1?start.Ticks:start.Ticks+(long)Math.Round((last-start.Ticks)*(index/(double)(count-1)));
+                samples.Add(ticks);
+            }
         }
         var all=samples.ToArray();if(all.Length>maximumFrames)all=Enumerable.Range(0,maximumFrames).Select(index=>all[(int)Math.Round(index*(all.Length-1d)/Math.Max(1,maximumFrames-1))]).Distinct().ToArray();
         var result=new List<VideoOverlayFrame>(all.Length);

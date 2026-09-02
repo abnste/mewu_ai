@@ -624,7 +624,7 @@ public sealed class ProviderInfrastructureTests
 
     private static MiniMaxProvider MiniMax()=>new(new AiProviderSettings{Type="MiniMax",BaseUrl="https://api.minimaxi.com/v1",Model="MiniMax-M3"},"unused");
     private static OpenAiCompatibleProvider ProviderWithResponse(HttpContent content)=>new(
-        new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://example.invalid/v1",Model="model"},
+        new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://example.invalid/v1",Model="gpt-4o"},
         "unused",
         (_,_,_)=>Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK){Content=content}),
         _=>TimeSpan.FromMinutes(1));

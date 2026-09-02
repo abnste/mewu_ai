@@ -21,6 +21,14 @@ public sealed class CaptureImageFeatureTests
     }
 
     [Fact]
+    public void PixelationKeepsFullFrameAndLeavesOutsideRegionUntouched()
+    {
+        var pixels=new byte[6*4*4];for(var y=0;y<4;y++)for(var x=0;x<6;x++){var offset=(y*6+x)*4;pixels[offset]=(byte)(x*31+y*7);pixels[offset+1]=(byte)(x*17+y*11);pixels[offset+2]=(byte)(x*13+y*19);pixels[offset+3]=255;}
+        var source=BitmapSource.Create(6,4,96,96,PixelFormats.Bgra32,null,pixels,24);var result=ImagePixelationService.Pixelate(source,new Int32Rect(2,1,2,2),2);var output=new byte[pixels.Length];result.CopyPixels(output,24,0);
+        Assert.Equal(6,result.PixelWidth);Assert.Equal(4,result.PixelHeight);Assert.Equal(pixels[(0*6+0)*4],output[(0*6+0)*4]);Assert.Equal(pixels[(3*6+5)*4+1],output[(3*6+5)*4+1]);Assert.Equal(output[(1*6+2)*4],output[(1*6+3)*4]);Assert.Equal(output[(2*6+2)*4+1],output[(2*6+3)*4+1]);
+    }
+
+    [Fact]
     public void ScrollingFramesDetectOverlapAndComposeNovelRows()
     {
         var first=Frame(64,100,0);var second=Frame(64,100,40);Assert.Equal(40,ScrollingCaptureComposer.EstimateVerticalShift(first,second));var result=ScrollingCaptureComposer.Compose([first,second]);Assert.Equal(64,result.PixelWidth);Assert.Equal(140,result.PixelHeight);

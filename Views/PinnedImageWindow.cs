@@ -34,7 +34,13 @@ public sealed class PinnedImageWindow : Window
         SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
         SourceInitialized+=(_,_)=>
         {
-            var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;NativeMethods.ExcludeFromCapture(handle);
+            var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if(!NativeMethods.ExcludeFromCapture(handle))
+            {
+                new PrivacyLogger().Error("PinnedImageCaptureProtection",new InvalidOperationException("无法启用贴图防捕获，已阻止显示贴图"));
+                Dispatcher.BeginInvoke(new Action(Close));
+                return;
+            }
             var dpi=Math.Max(96u,NativeMethods.GetDpiForWindow(handle));
             if(_originalRegion is { } region)PlaceAtOriginalSize(handle,region);
             else

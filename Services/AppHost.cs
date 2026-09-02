@@ -51,7 +51,8 @@ public sealed class AppHost : IDisposable
             Padding=new Forms.Padding(6),
             ShowCheckMargin=false,
             ShowImageMargin=false,
-            MinimumSize=new System.Drawing.Size(156,0),
+            MinimumSize=new System.Drawing.Size(196,0),
+            AutoSize=true,
             Renderer=new LightTrayMenuRenderer()
         };
         _trayMenu=menu;
@@ -74,7 +75,7 @@ public sealed class AppHost : IDisposable
     }
     private static Forms.ToolStripMenuItem AddTrayMenuItem(Forms.ContextMenuStrip menu,string text,EventHandler onClick)
     {
-        var item=new Forms.ToolStripMenuItem(text){AutoSize=false,Height=36,Margin=new Forms.Padding(0,1,0,1),Padding=new Forms.Padding(12,0,14,0),TextAlign=ContentAlignment.MiddleLeft};item.Click+=onClick;menu.Items.Add(item);return item;
+        var item=new Forms.ToolStripMenuItem(text){AutoSize=false,Width=Math.Max(156,menu.MinimumSize.Width-menu.Padding.Horizontal),Height=36,Margin=new Forms.Padding(0,1,0,1),Padding=new Forms.Padding(12,0,14,0),TextAlign=ContentAlignment.MiddleLeft};item.Click+=onClick;menu.Items.Add(item);return item;
     }
     public void BeginCapture(){if(!IsExiting&&Volatile.Read(ref _disposed)==0)_=BeginCaptureAsync();}
     private async Task BeginCaptureAsync()
