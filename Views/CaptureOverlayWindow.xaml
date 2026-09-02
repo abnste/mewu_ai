@@ -92,7 +92,7 @@
       <Border x:Name="ReasoningPanel" Visibility="Collapsed" Background="#F3F6FA" BorderBrush="#DFE7F1" BorderThickness="1" CornerRadius="12" Padding="12,9" Margin="6,6,6,0"><ScrollViewer x:Name="ReasoningScroll" MaxHeight="100" VerticalScrollBarVisibility="Auto"><TextBlock x:Name="ReasoningText" Foreground="#65748A" FontSize="12.5" LineHeight="19" TextWrapping="Wrap"/></ScrollViewer></Border>
       <Border x:Name="AgentActivityCard" Visibility="Collapsed" Background="#F7F9FD" BorderBrush="#DCE4EF" BorderThickness="1" CornerRadius="12" Padding="10,8" Margin="6,6,6,0"><StackPanel><TextBlock Text="Hermes 运行" FontSize="12.5" FontWeight="SemiBold" Foreground="#3E4D65" Margin="0,0,0,4"/><StackPanel x:Name="AgentActivityItems"/></StackPanel></Border>
       <Border x:Name="AiInteractionCard" Visibility="Collapsed" Background="#FFFCF6" BorderBrush="#ECD3A3" BorderThickness="1" CornerRadius="12" Padding="12,10" Margin="6,6,6,0"><StackPanel x:Name="AiInteractionContent"/></Border>
-      <ScrollViewer x:Name="AnswerScroll" Visibility="Collapsed" MaxHeight="188" VerticalScrollBarVisibility="Auto" Margin="8,8,8,8"><local:MarkdownAnswerView x:Name="AnswerText" FontSize="13"/></ScrollViewer>
+      <ScrollViewer x:Name="AnswerScroll" Visibility="Collapsed" MaxHeight="300" VerticalScrollBarVisibility="Auto" Margin="8,8,8,8"><local:MarkdownAnswerView x:Name="AnswerText" FontSize="13"/></ScrollViewer>
       <Border x:Name="AnswerDivider" Visibility="Collapsed" Height="1" Background="#E1E7F0" Margin="8,0,8,8"/>
      </StackPanel>
     </ScrollViewer>
