@@ -71,6 +71,16 @@ public sealed class CaptureOverlayPolicyTests
         Assert.Equal(new[] { second }, selected);
     }
 
+    [Theory]
+    [InlineData(false,false,true)]
+    [InlineData(true,false,false)]
+    [InlineData(false,true,false)]
+    [InlineData(true,true,false)]
+    public void ImplicitFullScreenIsOnlyCreatedWithoutAnyOtherInput(bool hasUploadedReferences,bool hasExplicitSelections,bool expected)
+    {
+        Assert.Equal(expected,CaptureOverlayPolicy.ShouldCreateImplicitScreenSelection(hasUploadedReferences,hasExplicitSelections));
+    }
+
     [Fact]
     public void SpatialAnnotationTargetsKeepFullAttachmentIndexesAndExcludeVideos()
     {
@@ -180,6 +190,17 @@ public sealed class CaptureOverlayPolicyTests
             new(0,"image-a","@图片1",AiAttachmentType.Image,640,480,null),
             new(1,"image-c","@图片3",AiAttachmentType.Image,800,600,null)]);
         Assert.Contains("\"RegionIndex\":0",prompt);Assert.Contains("\"Label\":\"@图片3\"",prompt);Assert.Contains("\"ReferenceHandle\":\"image-c\"",prompt);Assert.Contains("禁止按显示编号猜测",prompt);Assert.Contains("比较 @图片1 和 @图片3",prompt);
+    }
+
+    [Fact]
+    public void ReferenceAwarePromptDescribesUploadedFilesWithoutMakingThemRenderable()
+    {
+        var prompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt("看 @文件1",[
+            new(0,"upload-text","@文件1",AiAttachmentType.Text,0,0,null,false)]);
+
+        Assert.Contains("\"type\":\"text\"",prompt);
+        Assert.Contains("\"canRenderAnnotations\":false",prompt);
+        Assert.Contains("@文件N",prompt);
     }
 
     [Fact]
