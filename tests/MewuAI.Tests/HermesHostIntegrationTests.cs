@@ -68,7 +68,26 @@ public sealed class HermesHostIntegrationTests
             HermesReasoningEffort="high"
         });
 
-        Assert.Equal("本机 Hermes · default · MiniMax-M3 · 高度思考",status);
+        Assert.Equal("Hermes · default · MiniMax-M3 · 高度思考",status);
+    }
+
+    [Fact]
+    public void MainWindowStatusUsesBackendSpecificLabels()
+    {
+        Assert.Equal("智能体已接入",MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=true},true));
+        Assert.Equal("AI模型已接入",MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=false},true));
+        Assert.Equal("暂未设置AI功能",MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=false},false));
+    }
+
+    [Fact]
+    public void MainWindowStatusDoesNotRepeatEquivalentProviderNameAndModel()
+    {
+        var status=MainWindow.BuildAiStatusText(new AppSettings
+        {
+            DefaultProviderId="minimax",
+            Providers=[new AiProviderSettings{Id="minimax",Name="MiniMax M3",Model="MiniMax-M3"}]
+        });
+        Assert.Equal("MiniMax M3",status);
     }
 
     [Fact]

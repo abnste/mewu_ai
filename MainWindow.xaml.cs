@@ -39,8 +39,17 @@ public partial class MainWindow : Window
     public void RefreshStatus()
     {
         var available=_host.IsConversationAvailable(out var error);
-        ProviderText.Text=available?BuildAiStatusText(_host.Settings):error??BuildAiStatusText(_host.Settings);
-        CaptureSubtitle.Text=available?"圈选并直接分析":"截图、OCR、标注和录屏";
+        AiStatusTitle.Text=BuildAiStatusTitle(_host.Settings,available);
+        ProviderText.Text=available?BuildAiStatusText(_host.Settings):"截图、OCR、标注和录屏可用";
+        var screenAiAvailable=_host.IsScreenAiAvailable(out _);
+        CaptureSubtitle.Text=screenAiAvailable?"圈选并直接分析":"截图、OCR、标注和录屏";
+    }
+
+    internal static string BuildAiStatusTitle(AppSettings settings,bool available)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if(!available)return "暂未设置AI功能";
+        return settings.HermesEnabled?"智能体已接入":"AI模型已接入";
     }
 
     internal static string BuildAiStatusText(AppSettings settings)
@@ -62,17 +71,27 @@ public partial class MainWindow : Window
                 "ultra"=>"极致思考",
                 _=>"思考程度待修复"
             };
-            return $"本机 Hermes · {profile} · {model} · {reasoning}";
+            return $"Hermes · {profile} · {model} · {reasoning}";
         }
-        if(settings.Providers.Count==0)return "尚未配置（基础功能可用）";
+        if(settings.Providers.Count==0)return "未配置 AI 模型";
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))return "默认 Provider 未选择 · AI 不可用";
         var matches=settings.Providers.Where(provider=>provider.Id==settings.DefaultProviderId).Take(2).ToList();
         return matches.Count switch
         {
             0=>"默认 Provider 需重新选择 · AI 不可用",
             >1=>"Provider ID 重复 · AI 不可用",
-            _=>$"{matches[0].Name} · {matches[0].Model}"
+            _=>BuildProviderDisplayText(matches[0])
         };
+    }
+    private static string BuildProviderDisplayText(AiProviderSettings provider)
+    {
+        var name=(provider.Name??string.Empty).Trim();
+        var model=(provider.Model??string.Empty).Trim();
+        if(name.Length==0)return model.Length==0?"AI 模型":model;
+        if(model.Length==0)return name;
+        var normalizedName=new string(name.Where(char.IsLetterOrDigit).ToArray());
+        var normalizedModel=new string(model.Where(char.IsLetterOrDigit).ToArray());
+        return string.Equals(normalizedName,normalizedModel,StringComparison.OrdinalIgnoreCase)?name:$"{name} · {model}";
     }
     private void StartCapture(object sender,RoutedEventArgs e){Hide();_host.BeginCapture();}
     private void OpenSettings(object sender,RoutedEventArgs e)=>_host.ShowSettings();
