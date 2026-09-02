@@ -14,7 +14,7 @@ public sealed class AppHost : IDisposable
     private readonly HermesRuntimeService _hermesRuntime;
     private readonly HermesReadAloudService _hermesReadAloud;
     private SettingsService? _settingsService;
-    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Forms.ToolStripMenuItem? _captureMenuItem; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
+    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
@@ -56,7 +56,6 @@ public sealed class AppHost : IDisposable
             Renderer=new LightTrayMenuRenderer()
         };
         _trayMenu=menu;
-        _captureMenuItem=AddTrayMenuItem(menu,"截图 / AI",(_,_)=>BeginCapture());
         AddTrayMenuItem(menu,"设置",(_,_)=>ShowSettings());
         AddTrayMenuItem(menu,"打开主界面",(_,_)=>ShowMainWindow());
         menu.Items.Add(new Forms.ToolStripSeparator{Margin=new Forms.Padding(8,4,8,4)});
@@ -71,7 +70,6 @@ public sealed class AppHost : IDisposable
         trayIcon??=SystemIcons.Application;
         _tray=new Forms.NotifyIcon { Text="喵呜AI",Icon=trayIcon,Visible=true,ContextMenuStrip=menu };
         _tray.MouseClick+=(_,e)=>{if(e.Button==Forms.MouseButtons.Left)BeginCapture();};
-        RefreshAiEntryVisibility();
     }
     private static Forms.ToolStripMenuItem AddTrayMenuItem(Forms.ContextMenuStrip menu,string text,EventHandler onClick)
     {
@@ -283,9 +281,8 @@ public sealed class AppHost : IDisposable
             _hermesReadAloud.Stop();
         try{_main?.RefreshStatus();}
         catch(Exception ex){try{new PrivacyLogger().Error("SettingsUiRefresh",ex);}catch{}warning??="设置已保存，但主界面状态刷新失败。";}
-        RefreshAiEntryVisibility();return true;
+        return true;
     }
-    private void RefreshAiEntryVisibility(){var screenAiAvailable=IsScreenAiAvailable(out _);if(_captureMenuItem is not null)_captureMenuItem.Text=screenAiAvailable?"截图 / AI":"截图";}
     public void Notify(string message){_tray?.ShowBalloonTip(1500,"喵呜AI",message,Forms.ToolTipIcon.Info);}
     public void Exit() { CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
     public void Dispose()
