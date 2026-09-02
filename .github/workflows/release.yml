@@ -67,7 +67,16 @@ jobs:
 
       - name: Install Inno Setup compiler
         shell: pwsh
-        run: choco install innosetup --no-progress -y
+        run: |
+          choco install innosetup --no-progress -y
+          $languageDir = 'C:\Program Files (x86)\Inno Setup 6\Languages'
+          $languageFile = Join-Path $languageDir 'ChineseSimplified.isl'
+          $translationUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/6ef32198ef1f7b7b375cd4b6b90896c2a58eb4c2/Files/Languages/ChineseSimplified.isl'
+          Invoke-WebRequest -Uri $translationUrl -OutFile $languageFile
+          $translationHash = (Get-FileHash -LiteralPath $languageFile -Algorithm SHA256).Hash
+          if ($translationHash -ne 'E0B0B350E2245F3C5E65586DFE43D574F6E7F06F2261149ABA284954B3FC9A8D') {
+            throw "Unexpected ChineseSimplified.isl SHA-256: $translationHash"
+          }
 
       - name: Build installer EXE
         shell: pwsh
