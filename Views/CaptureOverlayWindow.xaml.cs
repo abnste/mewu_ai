@@ -673,8 +673,9 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMouseMove(object s,MouseEventArgs e)
     {
-        if(_recordingMode||_drawingMode)return;
         var p=e.GetPosition(Root);
+        if(_recordingMode||_drawingMode){PointerInspector.Visibility=Visibility.Collapsed;return;}
+        UpdatePointerInspector(p);
         if(_selecting&&Active is { } created){if(_pendingAutoSelection is not null&&(p-_start).Length<SystemParameters.MinimumHorizontalDragDistance)return;_pendingAutoSelection=null;created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
         else
@@ -841,6 +842,15 @@ public partial class CaptureOverlayWindow : Window
     private void ToolbarMouseEnter(object sender,MouseEventArgs e)=>SetPromptBarHidden(true,true);
     private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
+
+    private void UpdatePointerInspector(Point point)
+    {
+        if(Root.ActualWidth<=0||Root.ActualHeight<=0||point.X<0||point.Y<0||point.X>=Root.ActualWidth||point.Y>=Root.ActualHeight){PointerInspector.Visibility=Visibility.Collapsed;return;}
+        var pixelX=Math.Clamp((int)Math.Floor(point.X*_frame.Image.PixelWidth/Root.ActualWidth),0,_frame.Image.PixelWidth-1);var pixelY=Math.Clamp((int)Math.Floor(point.Y*_frame.Image.PixelHeight/Root.ActualHeight),0,_frame.Image.PixelHeight-1);
+        if(!ScreenPixelSampler.TrySample(_frame.Image,pixelX,pixelY,out var color)){PointerInspector.Visibility=Visibility.Collapsed;return;}
+        PointerColorSwatch.Fill=new SolidColorBrush(color);PointerColorText.Text=$"#{color.R:X2}{color.G:X2}{color.B:X2}";PointerCoordinateText.Text=$"X {_frame.OriginX+pixelX}  Y {_frame.OriginY+pixelY}";PointerInspector.Visibility=Visibility.Visible;PointerInspector.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));
+        var width=Math.Max(1,PointerInspector.DesiredSize.Width);var height=Math.Max(1,PointerInspector.DesiredSize.Height);const double gap=16;var left=point.X+gap;var top=point.Y+gap;if(left+width>Root.ActualWidth-4)left=point.X-width-gap;if(top+height>Root.ActualHeight-4)top=point.Y-height-gap;Canvas.SetLeft(PointerInspector,Math.Clamp(left,4,Math.Max(4,Root.ActualWidth-width-4)));Canvas.SetTop(PointerInspector,Math.Clamp(top,4,Math.Max(4,Root.ActualHeight-height-4)));
+    }
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
     private void UpdateSnapPreview(Point point)
@@ -1475,7 +1485,7 @@ public partial class CaptureOverlayWindow : Window
     private void Draw(object s,RoutedEventArgs e)=>EnterDrawingMode();
     private void EnterDrawingMode()
     {
-        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=Visibility.Collapsed;item.Markup.Visibility=Visibility.Visible;item.Markup.IsHitTestVisible=true;EnsureDrawingControls();ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text=item.VideoPath is null?"原位标注中 · 颜色统一作用于画笔、形状、文字和序号":"视频原位标注中 · 手工标注将贯穿整个视频";
+        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=PointerInspector.Visibility=Visibility.Collapsed;item.Markup.Visibility=Visibility.Visible;item.Markup.IsHitTestVisible=true;EnsureDrawingControls();ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text=item.VideoPath is null?"原位标注中 · 颜色统一作用于画笔、形状、文字和序号":"视频原位标注中 · 手工标注将贯穿整个视频";
     }
     private void ExitDrawingMode()
     {
@@ -1806,7 +1816,7 @@ public partial class CaptureOverlayWindow : Window
     private void EnterRecordingCountdown(SelectionItem selected)
     {
         if(!NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,true))throw new InvalidOperationException("无法启用倒计时期间的鼠标穿透，请重新截图");
-        Cursor=Cursors.Arrow;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=RecordingBar.Visibility=Visibility.Collapsed;HideHandles();
+        Cursor=Cursors.Arrow;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=PointerInspector.Visibility=RecordingBar.Visibility=Visibility.Collapsed;HideHandles();
         foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
         selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
         var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));var hole=new RectangleGeometry(Normalize(selected.Bounds));DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);

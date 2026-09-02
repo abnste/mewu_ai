@@ -118,6 +118,15 @@
    <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="10" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
    <TextBlock x:Name="SizeTextLabel" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
   </Border>
+  <Border x:Name="PointerInspector" Visibility="Collapsed" Background="#F2111722" BorderBrush="#90FFFFFF" BorderThickness="1" CornerRadius="8" Padding="7,5" SnapsToDevicePixels="True" IsHitTestVisible="False">
+   <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="12" ShadowDepth="3" Opacity="0.34"/></Border.Effect>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <Border Width="15" Height="15" CornerRadius="3" BorderBrush="#CCFFFFFF" BorderThickness="1" Margin="0,0,6,0"><Rectangle x:Name="PointerColorSwatch" Fill="White" RadiusX="2" RadiusY="2"/></Border>
+    <TextBlock x:Name="PointerColorText" Text="#FFFFFF" Foreground="White" FontFamily="Consolas" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+    <Border Width="1" Height="13" Background="#70FFFFFF" Margin="8,0"/>
+    <TextBlock x:Name="PointerCoordinateText" Text="X 0  Y 0" Foreground="White" FontFamily="Consolas" FontSize="11" VerticalAlignment="Center"/>
+   </StackPanel>
+  </Border>
   <Border x:Name="RecordingCountdown" Visibility="Collapsed" Width="108" Height="108" CornerRadius="54" Background="#D91C2635" BorderBrush="#CCFFFFFF" BorderThickness="2" IsHitTestVisible="False" RenderTransformOrigin="0.5,0.5">
    <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="28" ShadowDepth="5" Opacity="0.48"/></Border.Effect>
    <Border.RenderTransform><ScaleTransform x:Name="RecordingCountdownScale" ScaleX="1" ScaleY="1"/></Border.RenderTransform>
