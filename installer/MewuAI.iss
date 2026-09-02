@@ -1,6 +1,6 @@
 #define MyAppName "MewuAI"
 #define MyAppChineseName "喵呜AI"
-#define MyAppVersion "0.0.4"
+#define MyAppVersion "0.0.8"
 #define MyAppPublisher "abnste"
 #define MyAppURL "https://github.com/abnste/mewu_ai"
 #define PublishDir "..\artifacts\release\win-x64"
