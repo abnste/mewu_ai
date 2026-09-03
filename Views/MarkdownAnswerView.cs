@@ -11,6 +11,7 @@ namespace mewu_ai_Assistant.Views;
 public sealed class MarkdownAnswerView:EmojiRichTextBox
 {
     private string _markdown=string.Empty;
+    public event EventHandler? MarkdownChanged;
 
     public MarkdownAnswerView()
     {
@@ -26,7 +27,7 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
         {
             var normalized=value??string.Empty;
             if(string.Equals(_markdown,normalized,StringComparison.Ordinal))return;
-            _markdown=normalized;Document=MarkdownFlowDocumentRenderer.Render(normalized,FontSize>0?FontSize:13);
+            _markdown=normalized;Document=MarkdownFlowDocumentRenderer.Render(normalized,FontSize>0?FontSize:13);MarkdownChanged?.Invoke(this,EventArgs.Empty);
         }
     }
 
@@ -34,7 +35,7 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
 
     public void SetMarkdownWithActions(string? markdown,IReadOnlyList<MarkdownAnswerAction> actions)
     {
-        _markdown=markdown??string.Empty;Document=MarkdownFlowDocumentRenderer.Render(_markdown,FontSize>0?FontSize:13);
+        _markdown=markdown??string.Empty;Document=MarkdownFlowDocumentRenderer.Render(_markdown,FontSize>0?FontSize:13);MarkdownChanged?.Invoke(this,EventArgs.Empty);
         if(actions.Count==0)return;
         var chips=new WrapPanel{Margin=new Thickness(0,7,0,2)};
         foreach(var action in actions)
