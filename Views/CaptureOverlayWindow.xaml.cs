@@ -267,7 +267,7 @@ public partial class CaptureOverlayWindow : Window
 
     public CaptureOverlayWindow(AppHost host)
     {
-        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=TableClipboardService.Parse(AnswerText.Markdown).Count>0?Visibility.Visible:Visibility.Collapsed;
+        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=TableClipboardService.Parse(AnswerText.Markdown).Count>0?Visibility.Visible:Visibility.Collapsed;
         _history[0]=_history[0] with{Text=_history[0].Text+" 本轮附件清单中的 referenceHandle 是不可变主键；每条批注都必须原样返回它。句柄与 regionIndex 冲突时以句柄为准，禁止按 @图片N 或 @视频N 的显示编号猜测附件顺序。"};
         LoadSessionHistory();
         // Keep the composer fully below the viewport until its first arranged
@@ -1773,10 +1773,10 @@ public partial class CaptureOverlayWindow : Window
         if(prompt.Length==0&&totalCount==0){QuickPrompt.Focus();return;}
         if(prompt.Length==0&&useDefaultPrompt)
             prompt=hasVideo
-                ?"按时间顺序说明引用视频中发生了什么，并为关键事件和可定位目标返回时间轴批注；动作目标需要关键帧跟踪。"
+                ?LocalizationService.T("按时间顺序说明引用视频中发生了什么，并为关键事件和可定位目标返回时间轴批注；动作目标需要关键帧跟踪。","Describe what happens in the referenced videos in chronological order. Add timeline annotations for key events and identifiable subjects, using keyframes to track moving subjects.")
                 :targets.Count>0
-                    ?totalCount>1?"综合理解这些引用区域和上传附件，说明它们之间的关系并标出关键部分。":"理解当前引用区域，解释内容并标出关键部分。"
-                    :totalCount>1?"综合理解这些上传附件，概括它们之间的关系和关键内容。":"理解当前上传附件，概括内容并回答问题。";
+                    ?totalCount>1?LocalizationService.T("综合理解这些引用区域和上传附件，说明它们之间的关系并标出关键部分。","Analyze the referenced regions and uploaded attachments together. Explain how they relate and annotate the most important details."):LocalizationService.T("理解当前引用区域，解释内容并标出关键部分。","Analyze the referenced region, explain its content, and annotate the most important details.")
+                    :totalCount>1?LocalizationService.T("综合理解这些上传附件，概括它们之间的关系和关键内容。","Analyze these attachments together and summarize their relationships and key details."):LocalizationService.T("理解当前上传附件，概括内容并回答问题。","Analyze the uploaded attachment, summarize it, and answer the question.");
         if(prompt.Length==0){QuickPrompt.Focus();return;}
         var referenceDescriptors=new List<AttachmentReferenceDescriptor>(totalCount);
         foreach(var (item,index) in targets.Select((item,index)=>(item,index)))
@@ -2135,7 +2135,7 @@ public partial class CaptureOverlayWindow : Window
         RemoveEmptyDrawingText(item);var includeAnnotations=AskWhetherToIncludeAnnotations(item);if(!includeAnnotations.HasValue)return;
         if(item.VideoPath is { } video)
         {
-            var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4|GIF 动图|*.gif",DefaultExt=".mp4",FilterIndex=1,AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};
+            var dialog=new SaveFileDialog{Filter=LocalizationService.T("MP4 视频|*.mp4|GIF 动图|*.gif","MP4 video|*.mp4|Animated GIF|*.gif"),DefaultExt=".mp4",FilterIndex=1,AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};
             if(ShowSystemFileDialog(dialog)!=true)return;
             var exportGif=dialog.FilterIndex==2;
             var destination=System.IO.Path.ChangeExtension(dialog.FileName,exportGif?".gif":".mp4");
@@ -2165,7 +2165,7 @@ public partial class CaptureOverlayWindow : Window
         // Flatten the selected pixels before opening the system picker. The
         // picker is external visual state and must never become source pixels.
         var image=RenderSelectionImage(item,includeAnnotations.Value,includeAnnotations.Value,includeAnnotations.Value);
-        var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true,FileName=ExportFileNameService.Screenshot(DateTime.Now)};if(ShowSystemFileDialog(imageDialog)!=true)return;
+        var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter=LocalizationService.T("PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg","PNG image|*.png|JPEG image|*.jpg;*.jpeg"),DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true,FileName=ExportFileNameService.Screenshot(DateTime.Now)};if(ShowSystemFileDialog(imageDialog)!=true)return;
         var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
         try{await Task.Run(()=>ScreenCaptureService.Save(image,imageDialog.FileName,imageDialog.FilterIndex==2),imageOperation.Token);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="图片已保存";}
         catch(OperationCanceledException){if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="已取消保存图片";}
@@ -2626,7 +2626,7 @@ public partial class CaptureOverlayWindow : Window
     private async void RecognizeTable(object sender,RoutedEventArgs e)
     {
         if(Active is not {IsImplicit:false,VideoPath:null} item){PromptStatus.Text="请先框选包含表格的图片区域";return;}
-        const string prompt="识别当前图片中的所有表格并逐格精确转录。answer 只输出 Markdown 表格，不要添加标题、解释、代码围栏或表格外文字；每个原表格对应一个 Markdown 表格。严格保持行列顺序，空单元格保留为空，合并单元格把内容放在左上格，其余对应格留空；数字、小数点、正负号、百分号、日期和单位必须逐字符核对。annotationMode 必须为 preserve，annotations 必须为空数组。";
+        var prompt=LocalizationService.T("识别当前图片中的所有表格并逐格精确转录。answer 只输出 Markdown 表格，不要添加标题、解释、代码围栏或表格外文字；每个原表格对应一个 Markdown 表格。严格保持行列顺序，空单元格保留为空，合并单元格把内容放在左上格，其余对应格留空；数字、小数点、正负号、百分号、日期和单位必须逐字符核对。annotationMode 必须为 preserve，annotations 必须为空数组。","Recognize every table in the current image and transcribe it cell by cell. In answer, return Markdown tables only—no heading, explanation, code fence, or text outside the tables. Preserve row and column order and keep empty cells empty. For merged cells, put the content in the top-left cell and leave the covered cells blank. Verify every digit, decimal point, sign, percentage, date, and unit. Set annotationMode to preserve and return an empty annotations array.");
         await SendAsync(false,prompt,item,true);
     }
 
@@ -2639,7 +2639,7 @@ public partial class CaptureOverlayWindow : Window
     private void UploadAttachment(object sender,RoutedEventArgs e)
     {
         if(!_conversationAiAvailable)return;
-        var dialog=new OpenFileDialog{Multiselect=true,Filter="图片/视频/文本|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.mp4;*.mov;*.webm;*.txt;*.md;*.json;*.csv|所有文件|*.*"};
+        var dialog=new OpenFileDialog{Multiselect=true,Filter=LocalizationService.T("图片/视频/文本|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.mp4;*.mov;*.webm;*.txt;*.md;*.json;*.csv|所有文件|*.*","Images, video, and text|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.mp4;*.mov;*.webm;*.txt;*.md;*.json;*.csv|All files|*.*")};
         if(ShowSystemFileDialog(dialog)!=true)return;
         foreach(var path in dialog.FileNames)
         {
@@ -2729,7 +2729,7 @@ public partial class CaptureOverlayWindow : Window
                 if(!IsOverlayOperationActive(operation,item))return;
                 var batch=batches[batchIndex];var batchNumber=batchIndex+1;
                 PromptStatus.Text=$"{document.Engine} 已识别 {document.Lines.Count} 行 · 正在翻译 {batchNumber}/{batches.Count}…按 Esc 可取消";
-                var prompt="将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource="+System.Text.Json.JsonSerializer.Serialize(batch.Lines);
+                var prompt=LocalizationService.T("将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource=","Translate every item in translationsSource into natural English. Preserve the exact array length and order. Return JSON only: {\"translations\":[\"translation 1\",\"translation 2\"]}. translationsSource=")+System.Text.Json.JsonSerializer.Serialize(batch.Lines);
                 using var networkTimeout=CancellationTokenSource.CreateLinkedTokenSource(operation.Token);networkTimeout.CancelAfter(TimeSpan.FromSeconds(75));var received=false;var batchOpen=true;
                 var progress=new Progress<AiStreamDelta>(delta=>{if(!batchOpen||!IsOverlayOperationActive(operation,item))return;if(!received&&(delta.Content.Length>0||delta.ReasoningContent.Length>0)){received=true;PromptStatus.Text=$"{document.Engine} · 正在接收译文 {batchNumber}/{batches.Count}…按 Esc 可取消";}});
                 AiResult result;

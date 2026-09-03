@@ -53,7 +53,7 @@ public sealed class AppHost : IDisposable
         {
             BackColor=Color.FromArgb(250,251,253),
             ForeColor=Color.FromArgb(38,49,66),
-            Font=_ownedTrayMenuFont=new Font("Microsoft YaHei UI",9F,System.Drawing.FontStyle.Regular,GraphicsUnit.Point),
+            Font=_ownedTrayMenuFont=new Font(LocalizationService.IsEnglish?"Segoe UI":"Microsoft YaHei UI",9F,System.Drawing.FontStyle.Regular,GraphicsUnit.Point),
             Padding=new Forms.Padding(6),
             ShowCheckMargin=false,
             ShowImageMargin=false,
@@ -62,10 +62,10 @@ public sealed class AppHost : IDisposable
             Renderer=new LightTrayMenuRenderer()
         };
         _trayMenu=menu;
-        AddTrayMenuItem(menu,"设置",(_,_)=>ShowSettings());
-        AddTrayMenuItem(menu,"打开主界面",(_,_)=>ShowMainWindow());
+        AddTrayMenuItem(menu,LocalizationService.T("设置","Settings"),(_,_)=>ShowSettings());
+        AddTrayMenuItem(menu,LocalizationService.T("打开主界面","Open MewuAI"),(_,_)=>ShowMainWindow());
         menu.Items.Add(new Forms.ToolStripSeparator{Margin=new Forms.Padding(8,4,8,4)});
-        AddTrayMenuItem(menu,"退出",(_,_)=>Exit());
+        AddTrayMenuItem(menu,LocalizationService.T("退出","Quit"),(_,_)=>Exit());
         Icon? trayIcon=null;
         try
         {
@@ -74,7 +74,7 @@ public sealed class AppHost : IDisposable
         }
         catch(Exception ex){try{new PrivacyLogger().Error("TrayIcon",ex);}catch{}}
         trayIcon??=SystemIcons.Application;
-        _tray=new Forms.NotifyIcon { Text="喵呜AI",Icon=trayIcon,Visible=true,ContextMenuStrip=menu };
+        _tray=new Forms.NotifyIcon { Text="MewuAI",Icon=trayIcon,Visible=true,ContextMenuStrip=menu };
         _tray.MouseClick+=(_,e)=>{if(e.Button==Forms.MouseButtons.Left)BeginCapture();};
     }
     private static Forms.ToolStripMenuItem AddTrayMenuItem(Forms.ContextMenuStrip menu,string text,EventHandler onClick)
@@ -317,7 +317,7 @@ public sealed class AppHost : IDisposable
         catch(Exception ex){try{new PrivacyLogger().Error("SettingsUiRefresh",ex);}catch{}warning??="设置已保存，但主界面状态刷新失败。";}
         return true;
     }
-    public void Notify(string message){_tray?.ShowBalloonTip(1500,"喵呜AI",message,Forms.ToolTipIcon.Info);}
+    public void Notify(string message){_tray?.ShowBalloonTip(1500,"MewuAI",LocalizationService.TranslateUiText(message),Forms.ToolTipIcon.Info);}
     public void Exit() { CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
     public void Dispose()
     {

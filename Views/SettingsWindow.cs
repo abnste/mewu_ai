@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Media;
+using MessageBox=mewu_ai_Assistant.Services.LocalizedMessageBox;
 using System.Windows.Media.Media3D;
 using System.Windows.Shell;
 using mewu_ai_Assistant.AI;
@@ -21,6 +22,12 @@ public sealed class SettingsWindow : Window
         ("none","关闭"),("minimal","极少"),("low","较低"),("medium","中等"),
         ("high","较高"),("xhigh","很高"),("max","最大"),("ultra","极致")
     ];
+    private static string LocalizedHermesReasoningLabel(string value,string chinese)=>LocalizationService.IsEnglish?value switch
+    {
+        "none"=>"Off","minimal"=>"Minimal","low"=>"Low","medium"=>"Medium",
+        "high"=>"High","xhigh"=>"Extra high","max"=>"Maximum","ultra"=>"Ultra",
+        _=>value
+    }:chinese;
     private static readonly string[] HermesReasoningValues=HermesReasoningChoices.Select(choice=>choice.Value).ToArray();
     private static readonly Brush PanelBrush = Brushes.White;
     private static readonly Brush ControlBorderBrush = new SolidColorBrush(Color.FromRgb(224, 230, 240));
@@ -708,7 +715,7 @@ public sealed class SettingsWindow : Window
         var normalized=string.IsNullOrWhiteSpace(preferred)?"medium":preferred.Trim().ToLowerInvariant();
         _hermesReasoning.Items.Clear();
         foreach(var choice in HermesReasoningChoices.Where(choice=>allowed.Contains(choice.Value)))
-            _hermesReasoning.Items.Add(new ComboBoxItem{Content=choice.Label,Tag=choice.Value});
+            _hermesReasoning.Items.Add(new ComboBoxItem{Content=LocalizedHermesReasoningLabel(choice.Value,choice.Label),Tag=choice.Value});
         _hermesReasoning.SelectedItem=_hermesReasoning.Items.OfType<ComboBoxItem>().FirstOrDefault(item=>string.Equals(item.Tag?.ToString(),normalized,StringComparison.Ordinal))
             ??_hermesReasoning.Items.OfType<ComboBoxItem>().FirstOrDefault();
     }
@@ -729,7 +736,7 @@ public sealed class SettingsWindow : Window
 
     private void SetHermesStatus(string message,HermesStatusTone tone)
     {
-        _hermesStatus.Text=message;_hermesStatus.ToolTip=message;
+        message=LocalizationService.TranslateUiText(message);_hermesStatus.Text=message;_hermesStatus.ToolTip=message;
         var color=tone switch
         {
             HermesStatusTone.Connected=>Color.FromRgb(34,157,105),
@@ -801,27 +808,27 @@ public sealed class SettingsWindow : Window
         open.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MewuAI")) { UseShellExecute = true });
         panel.Children.Add(open);
         var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.1.0";
-        panel.Children.Add(Text($"应用版本 / App version：{appVersion}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / PP-OCRv6（Windows OCR 仅故障降级）\n录屏：Media Foundation H.264", true));
+        panel.Children.Add(Text(LocalizationService.T($"应用版本：{appVersion}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / PP-OCRv6（Windows OCR 仅故障降级）\n录屏：Media Foundation H.264",$"App version: {appVersion}\n.NET: {Environment.Version}\nWindows: {Environment.OSVersion.Version}\nCapture: GDI desktop snapshot / PP-OCRv6 (Windows OCR fallback)\nRecording: Media Foundation H.264"), true));
         return panel;
     }
 
     private UIElement About()
     {
         var panel=Panel();
-        panel.Children.Add(new TextBlock{Text="喵呜AI",FontSize=24,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(49,73,126)),Margin=new Thickness(0,0,0,4)});
+        panel.Children.Add(new TextBlock{Text="MewuAI",FontSize=24,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(49,73,126)),Margin=new Thickness(0,0,0,4)});
         var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.1.0";
-        panel.Children.Add(Text("作者：Abner Stephen\nAuthor: Abner Stephen\n版本 / Version："+appVersion+"\nWindows 截图、OCR、标注、录屏与多模态 AI 工作流\nWindows capture, OCR, annotation, recording and multimodal AI workflow", true));
-        var updateStatus=Text("从 GitHub Releases 获取正式版本。安装包下载后会校验 SHA-256。\nOfficial releases are checked on GitHub and verified with SHA-256.",true);
+        panel.Children.Add(Text(LocalizationService.T("作者：Abner Stephen\n版本："+appVersion+"\nWindows 截图、OCR、标注、录屏与多模态 AI 工作流","Author: Abner Stephen\nVersion: "+appVersion+"\nA Windows workflow for capture, OCR, annotation, recording, and multimodal AI."), true));
+        var updateStatus=Text(LocalizationService.T("从 GitHub Releases 获取正式版本。安装包下载后会校验 SHA-256。","MewuAI checks GitHub Releases for official updates and verifies every installer with SHA-256."),true);
         updateStatus.Margin=new Thickness(0,4,0,8);
-        var checkUpdate=ActionButton("检查更新 / Check for updates");
+        var checkUpdate=ActionButton(LocalizationService.T("检查更新","Check for updates"));
         checkUpdate.HorizontalAlignment=HorizontalAlignment.Left;
         checkUpdate.Click+=async (_,_)=>await CheckForUpdatesAsync(checkUpdate,updateStatus);
         panel.Children.Add(checkUpdate);
         panel.Children.Add(updateStatus);
         var repo=new TextBlock{Margin=new Thickness(0,8,0,12),TextWrapping=TextWrapping.Wrap};
-        var link=new Hyperlink(new Run("GitHub 开源仓库 / Open-source repository · github.com/abnste/mewu_ai")){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
+        var link=new Hyperlink(new Run(LocalizationService.T("GitHub 开源仓库 · github.com/abnste/mewu_ai","Open-source repository · github.com/abnste/mewu_ai"))){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
         link.RequestNavigate+=(_,e)=>{try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri){UseShellExecute=true});}catch{};e.Handled=true;};repo.Inlines.Add(link);panel.Children.Add(repo);
-        panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text="许可说明\n本项目除第三方依赖外的源代码按仓库许可证开放。将本软件用于商业产品、商业部署或商业服务前，需要取得作者的商业授权。个人学习、研究和非商业使用请遵守仓库中的开源许可与第三方许可。\n\nLicense\nThe project source is open under the licenses in the repository, excluding third-party components. Commercial products, deployments, or services require separate authorization from the author. Personal, research, and non-commercial use must follow the repository and third-party licenses.",TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
+        panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text=LocalizationService.T("许可说明\n本项目除第三方依赖外的源代码按仓库许可证开放。将本软件用于商业产品、商业部署或商业服务前，需要取得作者的商业授权。个人学习、研究和非商业使用请遵守仓库中的开源许可与第三方许可。","License\nThe project source is open under the licenses in the repository, excluding third-party components. Commercial products, deployments, and services require separate authorization from the author. Personal, research, and non-commercial use must comply with the repository and third-party licenses."),TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
         return panel;
     }
 
@@ -847,19 +854,19 @@ public sealed class SettingsWindow : Window
             if(!ReferenceEquals(_updateCheck,operation)||!IsVisible)return;
             if(!result.IsUpdateAvailable)
             {
-                status.Text=$"已是最新版 v{current.ToString(3)} / You're up to date";
+                status.Text=LocalizationService.T($"已是最新版 v{current.ToString(3)}",$"You're up to date (v{current.ToString(3)})");
                 return;
             }
 
-            status.Text=$"{result.TagName} 已下载并通过校验 / Downloaded and verified";
+            status.Text=LocalizationService.T($"{result.TagName} 已下载并通过校验",$"{result.TagName} downloaded and verified");
             var choice=MewuDialogWindow.ShowChoice(
                 this,
-                "更新已准备好 / Update ready",
-                $"喵呜AI {result.TagName} 已下载并通过 SHA-256 校验。立即安装并自动重启应用吗？\n\nMewuAI {result.TagName} is ready. Install it now and restart the app automatically?",
-                "安装并重启 / Install & restart",
-                "稍后 / Later");
+                LocalizationService.T("更新已准备好","Update ready"),
+                LocalizationService.T($"喵呜AI {result.TagName} 已下载并通过 SHA-256 校验。立即安装并自动重启应用吗？",$"MewuAI {result.TagName} has been downloaded and verified with SHA-256. Install it now and restart MewuAI?"),
+                LocalizationService.T("安装并重启","Install and restart"),
+                LocalizationService.T("稍后","Later"));
             if(choice!=MewuDialogResult.Primary)return;
-            status.Text="正在启动安装程序… / Starting installer…";
+            status.Text=LocalizationService.T("正在启动安装程序…","Starting the installer…");
             await service.LaunchInstallerAsync(result.Package!,operation.Token);
             _host.Exit();
         }
@@ -868,7 +875,7 @@ public sealed class SettingsWindow : Window
         {
             try{new PrivacyLogger().Error("ApplicationUpdate",ex);}catch{}
             if(ReferenceEquals(_updateCheck,operation)&&IsVisible)
-                status.Text=$"检查更新失败：{ex.Message}\nUpdate failed. Please try again.";
+                status.Text=LocalizationService.T($"检查更新失败：{ex.Message}",$"Update failed: {LocalizationService.TranslateUiText(ex.Message)}\nPlease try again.");
         }
         finally
         {

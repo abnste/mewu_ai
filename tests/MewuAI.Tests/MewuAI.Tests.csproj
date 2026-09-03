@@ -4,5 +4,6 @@
   <ItemGroup>
     <None Include="..\..\MainWindow.xaml" Link="Fixtures\MainWindow.xaml.xml" CopyToOutputDirectory="PreserveNewest"/>
     <None Include="..\..\Views\CaptureOverlayWindow.xaml" Link="Fixtures\CaptureOverlayWindow.xaml.xml" CopyToOutputDirectory="PreserveNewest"/>
+    <None Include="..\..\installer\MewuAI.iss" Link="Fixtures\MewuAI.iss.txt" CopyToOutputDirectory="PreserveNewest"/>
   </ItemGroup>
 </Project>
