@@ -55,3 +55,4 @@ Name: "{autodesktop}\{#MyAppChineseName}"; Filename: "{app}\MewuAI.exe"; Working
 
 [Run]
 Filename: "{app}\MewuAI.exe"; Description: "{cm:LaunchProgram,{#StringChange(MyAppChineseName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MewuAI.exe"; Flags: nowait skipifnotsilent
