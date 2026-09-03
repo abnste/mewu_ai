@@ -310,7 +310,7 @@ public partial class CaptureOverlayWindow : Window
         RecordingBar.Padding=new Thickness(8,6,8,6);
         PromptBar.Padding=new Thickness(6,2,6,6);
         PromptBar.CornerRadius=new CornerRadius(18);
-        HistoryPanel.MaxHeight=GetHistoryMaxHeight()+28;
+        HistoryPanel.MaxHeight=GetHistoryMaxHeight()+12;
         HistoryScroll.MaxHeight=GetHistoryMaxHeight();
         ReferenceChipScroll.MaxHeight=CompactChipScrollMaxHeight;
         ReferenceChips.Margin=new Thickness(4,2,4,0);
@@ -487,16 +487,16 @@ public partial class CaptureOverlayWindow : Window
             BorderBrush=new SolidColorBrush(current?Color.FromRgb(197,207,250):Color.FromRgb(224,231,240)),
             BorderThickness=new Thickness(1),
             CornerRadius=new CornerRadius(9),
-            Padding=new Thickness(8,6,8,6),
-            Margin=new Thickness(0,0,0,5)
+            Padding=new Thickness(6,4,6,4),
+            Margin=new Thickness(0,0,0,3)
         };
         var content=new StackPanel();
         var roleColor=new SolidColorBrush(current?Color.FromRgb(79,95,207):Color.FromRgb(96,112,135));
-        content.Children.Add(new TextBlock{Text="用户 / You",Foreground=roleColor,FontSize=10.5,FontWeight=FontWeights.SemiBold});
-        content.Children.Add(new TextBlock{Text=LimitHistoryText(prompt),Foreground=new SolidColorBrush(Color.FromRgb(47,61,82)),FontSize=12,LineHeight=18,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,2,0,5)});
-        content.Children.Add(new Border{Height=1,Background=new SolidColorBrush(current?Color.FromRgb(205,214,246):Color.FromRgb(230,235,242)),Margin=new Thickness(0,0,0,5)});
-        content.Children.Add(new TextBlock{Text="AI",Foreground=roleColor,FontSize=10.5,FontWeight=FontWeights.SemiBold});
-        content.Children.Add(new TextBlock{Text=LimitHistoryText(answer),Foreground=new SolidColorBrush(Color.FromRgb(47,61,82)),FontSize=12,LineHeight=18,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,2,0,0)});
+        content.Children.Add(new TextBlock{Text="用户 / You",Foreground=roleColor,FontSize=9.5,FontWeight=FontWeights.SemiBold});
+        content.Children.Add(new TextBlock{Text=LimitHistoryText(prompt),Foreground=new SolidColorBrush(Color.FromRgb(47,61,82)),FontSize=11.5,LineHeight=15,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,1,0,3)});
+        content.Children.Add(new Border{Height=1,Background=new SolidColorBrush(current?Color.FromRgb(205,214,246):Color.FromRgb(230,235,242)),Margin=new Thickness(0,0,0,3)});
+        content.Children.Add(new TextBlock{Text="AI",Foreground=roleColor,FontSize=9.5,FontWeight=FontWeights.SemiBold});
+        content.Children.Add(new TextBlock{Text=LimitHistoryText(answer),Foreground=new SolidColorBrush(Color.FromRgb(47,61,82)),FontSize=11.5,LineHeight=15,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,1,0,0)});
         card.Child=content;
         HistoryItems.Children.Add(card);
     }
@@ -511,11 +511,11 @@ public partial class CaptureOverlayWindow : Window
     private double GetHistoryMaxHeight()
     {
         var monitor=PromptMonitorBounds();
-        if(monitor.IsEmpty||!double.IsFinite(monitor.Height))return 104;
+        if(monitor.IsEmpty||!double.IsFinite(monitor.Height))return 82;
         // History is an optional peek panel. Keep it compact so expanding the
         // arrow does not push the composer far away from the screen edge;
         // users can still scroll through all paired turns inside it.
-        return Math.Clamp(monitor.Height*.14,84,112);
+        return Math.Clamp(monitor.Height*.10,68,88);
     }
 
     private string GetReferenceLabel(SelectionItem item)
@@ -1246,7 +1246,7 @@ public partial class CaptureOverlayWindow : Window
             var availableWidth=Math.Max(1,monitor.Width-CaptureOverlayPolicy.PromptSideMargin*2);
             PromptBar.Width=Math.Min(Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,PromptPreferredWidthTight),availableWidth);
             var historyMaxHeight=GetHistoryMaxHeight();
-            HistoryPanel.MaxHeight=historyMaxHeight+18;
+            HistoryPanel.MaxHeight=historyMaxHeight+12;
             HistoryScroll.MaxHeight=historyMaxHeight;
             // Remove a stale explicit height before measuring content that may
             // have gained reference chips or an answer since the last pass.
