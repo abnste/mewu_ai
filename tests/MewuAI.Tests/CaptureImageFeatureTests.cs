@@ -79,6 +79,50 @@ public sealed class CaptureImageFeatureTests
     }
 
     [Fact]
+    public void SparseDocumentTextIsNotHiddenByBlankBackground()
+    {
+        var first=SparseDocumentFrame(960,520,0);var second=SparseDocumentFrame(960,520,120);
+        Assert.Equal(120,ScrollingCaptureComposer.EstimateVerticalShift(first,second));
+        Assert.Equal(640,ScrollingCaptureComposer.Compose([first,second]).PixelHeight);
+    }
+
+    [Fact]
+    public void TransientPointerAreaDoesNotCreateDuplicateScrollingFrame()
+    {
+        var ignored=new Int32Rect(380,180,200,160);var first=SparseDocumentFrame(960,520,0);var second=SparseDocumentFrame(960,520,0,ignored,96);
+        Assert.Equal(0,ScrollingCaptureComposer.EstimateVerticalShift(first,second,out _,ignored));
+    }
+
+    [Fact]
+    public void TransientPointerAreaDoesNotHideRealDocumentScroll()
+    {
+        var ignored=new Int32Rect(380,180,200,160);var first=SparseDocumentFrame(960,520,0);var second=SparseDocumentFrame(960,520,120,ignored,96);
+        Assert.Equal(120,ScrollingCaptureComposer.EstimateVerticalShift(first,second,out _,ignored));
+    }
+
+    [Theory]
+    [InlineData(120)]
+    [InlineData(-120)]
+    [InlineData(720)]
+    [InlineData(-720)]
+    public void ForwardedWheelPreservesSignedDelta(int delta)
+    {
+        var packed=MouseWheelInputService.PackWheelWParam(delta).ToInt64();
+        Assert.Equal((short)delta,unchecked((short)((ulong)packed>>16)));
+    }
+
+    [Theory]
+    [InlineData(640,480)]
+    [InlineData(-1920,240)]
+    [InlineData(320,-1080)]
+    public void ForwardedWheelPreservesSignedVirtualDesktopCoordinates(int x,int y)
+    {
+        var packed=MouseWheelInputService.PackScreenPointLParam(x,y).ToInt64();
+        Assert.Equal((short)x,unchecked((short)packed));
+        Assert.Equal((short)y,unchecked((short)((ulong)packed>>16)));
+    }
+
+    [Fact]
     public void ResizeHandleSnapsOnlyTheActiveEdges()
     {
         var result=SelectionSnapPolicy.SnapResize(new Rect(98,80,202,220),"NW",new Rect(100,100,400,300),5);Assert.Equal(100,result.Left);Assert.Equal(80,result.Top);Assert.Equal(300,result.Right);
@@ -116,5 +160,16 @@ public sealed class CaptureImageFeatureTests
     private static BitmapSource Frame(int width,int height,int globalTop)
     {
         var stride=width*4;var pixels=new byte[stride*height];for(var y=0;y<height;y++)for(var x=0;x<width;x++){var globalY=y+globalTop;var offset=y*stride+x*4;pixels[offset]=(byte)((globalY*17+x*3)%251);pixels[offset+1]=(byte)((globalY*7+x*11)%253);pixels[offset+2]=(byte)((globalY*13+x*5)%247);pixels[offset+3]=255;}var result=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,stride);result.Freeze();return result;
+    }
+
+    private static BitmapSource SparseDocumentFrame(int width,int height,int globalTop,Int32Rect? patch=null,byte patchValue=0)
+    {
+        var stride=width*4;var pixels=new byte[stride*height];
+        for(var y=0;y<height;y++)for(var x=0;x<width;x++)
+        {
+            var globalY=y+globalTop;var line=globalY/20;var withinLine=globalY%20;var text=x<240&&withinLine is >=4 and <=13&&((x/3+line*7)%19)<8;var inPatch=patch is { } area&&x>=area.X&&x<area.X+area.Width&&y>=area.Y&&y<area.Y+area.Height;var value=inPatch?patchValue:(byte)(text?24:250);var offset=y*stride+x*4;
+            pixels[offset]=pixels[offset+1]=pixels[offset+2]=value;pixels[offset+3]=255;
+        }
+        var result=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,stride);result.Freeze();return result;
     }
 }
