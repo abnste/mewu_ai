@@ -3,6 +3,7 @@
 - `AllowsTransparency=True` 的自绘圆角窗口不使用系统 DWM 阴影。主界面的柔和窗口阴影必须由圆角、无命中的独立同级 `Border` 绘制，内容 `Shell` 单独做圆角裁剪；严禁把 `DropShadowEffect` 重新挂到带 `Clip` 的 `Shell` 上，否则阴影会被裁掉，整个内容子树的 ClearType 也会失效。
 - 透明窗口外框要为模糊阴影预留足够的透明边距，并同步增加窗口 `Width`/`Height` 与最小尺寸，保持实际内容壳尺寸不变；否则阴影会再次被 HWND 边界截断。
 - 设置窗口必须保持 `AllowsTransparency=False`，通过 `WindowChrome` 保留系统缩放边框，并用 DWM `DWMWA_WINDOW_CORNER_PREFERENCE` 请求 Windows 11 原生圆角和阴影；不得恢复整窗 `DropShadowEffect` 或透明阴影边距。
+- 关于页的手动更新入口只读取官方 GitHub `abnste/mewu_ai` 最新正式 Release；必须严格匹配版本化安装包和 `SHA256SUMS.txt`，有界下载并在启动安装器前再次校验 SHA-256。静默安装完成后由 Inno Setup 重启应用；下载、校验或启动任一失败时保留当前版本运行并给出可操作提示。
 - 截图覆盖层无法使用普通 HWND 阴影；底部对话条必须由无命中的独立双层阴影与裁剪内容卡组成，定位、收纳、透明度和显隐统一作用于 `PromptBarHost`，内容测量仍以 `PromptBar` 为准。
 - 截图覆盖层的对话条命中优先于下层选区：鼠标位于回答、思考、Hermes 进度或交互卡时不得因下层选区命中而收纳；覆盖显示器绝大部分的显式选区也不能让“进入选区收纳”永久成立。
 - 鼠标进入选区工具栏及其与选区之间的过渡带时，必须保持对话条收纳并冻结工具栏当前上下位置；不得让对话条显隐反过来触发工具栏在选区上下跳动。

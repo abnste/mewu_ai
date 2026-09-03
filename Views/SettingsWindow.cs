@@ -48,6 +48,7 @@ public sealed class SettingsWindow : Window
     private readonly List<string> _editorWarnings = [];
     private CancellationTokenSource? _connectionTest;
     private CancellationTokenSource? _hermesConnectionTest;
+    private CancellationTokenSource? _updateCheck;
     private readonly CancellationTokenSource _windowLifetime=new();
     private HermesInstallation? _hermesInstallation;
     private AiProviderSettings? _selectedProvider;
@@ -192,6 +193,7 @@ public sealed class SettingsWindow : Window
             _windowLifetime.Cancel();
             _connectionTest?.Cancel();
             _hermesConnectionTest?.Cancel();
+            _updateCheck?.Cancel();
             _windowLifetime.Dispose();
         };
     }
@@ -809,11 +811,74 @@ public sealed class SettingsWindow : Window
         panel.Children.Add(new TextBlock{Text="喵呜AI",FontSize=24,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(49,73,126)),Margin=new Thickness(0,0,0,4)});
         var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.1.0";
         panel.Children.Add(Text("作者：Abner Stephen\nAuthor: Abner Stephen\n版本 / Version："+appVersion+"\nWindows 截图、OCR、标注、录屏与多模态 AI 工作流\nWindows capture, OCR, annotation, recording and multimodal AI workflow", true));
+        var updateStatus=Text("从 GitHub Releases 获取正式版本。安装包下载后会校验 SHA-256。\nOfficial releases are checked on GitHub and verified with SHA-256.",true);
+        updateStatus.Margin=new Thickness(0,4,0,8);
+        var checkUpdate=ActionButton("检查更新 / Check for updates",true);
+        checkUpdate.HorizontalAlignment=HorizontalAlignment.Left;
+        checkUpdate.Click+=async (_,_)=>await CheckForUpdatesAsync(checkUpdate,updateStatus);
+        panel.Children.Add(checkUpdate);
+        panel.Children.Add(updateStatus);
         var repo=new TextBlock{Margin=new Thickness(0,8,0,12),TextWrapping=TextWrapping.Wrap};
         var link=new Hyperlink(new Run("GitHub 开源仓库 / Open-source repository · github.com/abnste/mewu_ai")){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
         link.RequestNavigate+=(_,e)=>{try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri){UseShellExecute=true});}catch{};e.Handled=true;};repo.Inlines.Add(link);panel.Children.Add(repo);
         panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text="许可说明\n本项目除第三方依赖外的源代码按仓库许可证开放。将本软件用于商业产品、商业部署或商业服务前，需要取得作者的商业授权。个人学习、研究和非商业使用请遵守仓库中的开源许可与第三方许可。\n\nLicense\nThe project source is open under the licenses in the repository, excluding third-party components. Commercial products, deployments, or services require separate authorization from the author. Personal, research, and non-commercial use must follow the repository and third-party licenses.",TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
         return panel;
+    }
+
+    private async Task CheckForUpdatesAsync(Button button,TextBlock status)
+    {
+        _updateCheck?.Cancel();
+        _updateCheck?.Dispose();
+        _updateCheck=CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
+        var operation=_updateCheck;
+        button.IsEnabled=false;
+        var service=new ApplicationUpdateService();
+        var progress=new Progress<ApplicationUpdateProgress>(value=>
+        {
+            if(!ReferenceEquals(_updateCheck,operation)||!IsVisible)return;
+            status.Text=value.TotalBytes is >0
+                ?$"{value.Message} {Math.Clamp(value.BytesReceived*100d/value.TotalBytes.Value,0,100):0}%"
+                :value.Message;
+        });
+        try
+        {
+            var current=typeof(SettingsWindow).Assembly.GetName().Version??new Version(0,1,0);
+            var result=await service.CheckAndDownloadAsync(current,progress,operation.Token);
+            if(!ReferenceEquals(_updateCheck,operation)||!IsVisible)return;
+            if(!result.IsUpdateAvailable)
+            {
+                status.Text=$"已是最新版 v{current.ToString(3)} / You're up to date";
+                return;
+            }
+
+            status.Text=$"{result.TagName} 已下载并通过校验 / Downloaded and verified";
+            var choice=MewuDialogWindow.ShowChoice(
+                this,
+                "更新已准备好 / Update ready",
+                $"喵呜AI {result.TagName} 已下载并通过 SHA-256 校验。立即安装并自动重启应用吗？\n\nMewuAI {result.TagName} is ready. Install it now and restart the app automatically?",
+                "安装并重启 / Install & restart",
+                "稍后 / Later");
+            if(choice!=MewuDialogResult.Primary)return;
+            status.Text="正在启动安装程序… / Starting installer…";
+            await service.LaunchInstallerAsync(result.Package!,operation.Token);
+            _host.Exit();
+        }
+        catch(OperationCanceledException) when(operation.IsCancellationRequested){}
+        catch(Exception ex)
+        {
+            try{new PrivacyLogger().Error("ApplicationUpdate",ex);}catch{}
+            if(ReferenceEquals(_updateCheck,operation)&&IsVisible)
+                status.Text=$"检查更新失败：{ex.Message}\nUpdate failed. Please try again.";
+        }
+        finally
+        {
+            if(ReferenceEquals(_updateCheck,operation))
+            {
+                _updateCheck=null;
+                operation.Dispose();
+                if(IsVisible)button.IsEnabled=true;
+            }
+        }
     }
 
     private static AiProviderSettings CloneProvider(AiProviderSettings source) => ProviderHeaderCredentialService.Clone(source);
