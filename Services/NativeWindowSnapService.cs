@@ -29,6 +29,7 @@ internal sealed class NativeWindowSnapService
     // walk, with a strict time budget, rather than a whole-window scan.
     private const int MaxAutomationDepth = 24;
     private const int MaxAutomationSiblingsPerLevel = 512;
+    private const int MaxAutomationBranchesPerLevel = 6;
     private const int AutomationTraversalBudgetMs = 120;
     private const int MaxWindowCacheAgeMs = 250;
     private const int MaxPreciseCacheAgeMs = 450;
@@ -252,46 +253,38 @@ internal sealed class NativeWindowSnapService
             // top-level desktop child by HWND before falling back to
             // FromHandle: packaged WinUI apps can give those two entry points
             // different provider roots even for the same native window.
-            var current = FindDesktopWindowAutomationRoot(windowHandle) ?? AutomationElement.FromHandle(windowHandle);
+            var root = FindDesktopWindowAutomationRoot(windowHandle) ?? AutomationElement.FromHandle(windowHandle);
             var currentProcess = (int)Environment.ProcessId;
             WindowSnapTarget? best = null;
             var deadline=Stopwatch.GetTimestamp()+Stopwatch.Frequency*AutomationTraversalBudgetMs/1000;
+            IReadOnlyList<AutomationElement> current=[root];
 
-            for (var depth = 0; current is not null && depth < MaxAutomationDepth && Stopwatch.GetTimestamp()<=deadline; depth++)
+            for (var depth = 0; current.Count>0 && depth < MaxAutomationDepth && Stopwatch.GetTimestamp()<=deadline; depth++)
             {
-                var info = current.Current;
-                var rectangle = info.BoundingRectangle;
-                if (info.ProcessId != currentProcess && info.NativeWindowHandle != excludedWindow.ToInt32() && IsUsefulElement(current, info, rectangle, screenX, screenY))
-                    best = PreferSmaller(best, ToTarget(info, rectangle, windowHandle));
-
-                AutomationElement? next = null;
-                var nextArea = double.PositiveInfinity;
-                var nextEnabled = false;
-                var child = walker.GetFirstChild(current);
-                for (var siblings = 0; child is not null && siblings < MaxAutomationSiblingsPerLevel && Stopwatch.GetTimestamp()<=deadline; siblings++)
+                var next=new List<AutomationBranchCandidate>();
+                foreach(var parent in current)
                 {
-                    var childInfo = child.Current;
-                    var childRectangle = childInfo.BoundingRectangle;
-                    if (childInfo.ProcessId != currentProcess && Contains(childRectangle, screenX, screenY))
+                    var info=parent.Current;var rectangle=info.BoundingRectangle;
+                    if(info.ProcessId!=currentProcess&&info.NativeWindowHandle!=excludedWindow.ToInt32()&&IsUsefulElement(parent,info,rectangle,screenX,screenY))
+                        best=PreferSmaller(best,ToTarget(info,rectangle,windowHandle));
+                    var child=walker.GetFirstChild(parent);
+                    for(var siblings=0;child is not null&&siblings<MaxAutomationSiblingsPerLevel&&Stopwatch.GetTimestamp()<=deadline;siblings++)
                     {
-                        var area = Math.Max(1, childRectangle.Width * childRectangle.Height);
-                        // WinUI/WebView roots can expose an equal-sized,
-                        // disabled placeholder Pane before the real enabled
-                        // Region.  Choosing only by smallest area permanently
-                        // entered that dead branch and made Codex controls
-                        // unreachable.  On equal geometry prefer the enabled
-                        // provider branch while retaining the bounded spatial
-                        // single-branch traversal.
-                        if (area < nextArea || (Math.Abs(area-nextArea)<1 && childInfo.IsEnabled && !nextEnabled))
+                        var childInfo=child.Current;var childRectangle=childInfo.BoundingRectangle;
+                        if(childInfo.ProcessId!=currentProcess&&Contains(childRectangle,screenX,screenY))
                         {
-                            next = child;
-                            nextArea = area;
-                            nextEnabled = childInfo.IsEnabled;
+                            var area=Math.Max(1,childRectangle.Width*childRectangle.Height);
+                            next.Add(new AutomationBranchCandidate(child,area,childInfo.IsEnabled,IsActionableControlType(childInfo.ControlType)));
                         }
+                        child=walker.GetNextSibling(child);
                     }
-                    child = walker.GetNextSibling(child);
                 }
-                current = next;
+                current=next.OrderByDescending(candidate=>candidate.Actionable)
+                    .ThenByDescending(candidate=>candidate.Enabled)
+                    .ThenBy(candidate=>candidate.Area)
+                    .Take(MaxAutomationBranchesPerLevel)
+                    .Select(candidate=>candidate.Element)
+                    .ToArray();
             }
             return best;
         }
@@ -299,6 +292,11 @@ internal sealed class NativeWindowSnapService
         catch (InvalidOperationException) { return null; }
         catch (ArgumentException) { return null; }
     }
+
+    private static bool IsActionableControlType(ControlType? type)
+        =>type is not null&&(type==ControlType.Button||type==ControlType.CheckBox||type==ControlType.ComboBox||
+            type==ControlType.Hyperlink||type==ControlType.Image||type==ControlType.ListItem||type==ControlType.MenuItem||
+            type==ControlType.RadioButton||type==ControlType.TabItem||type==ControlType.Edit||type==ControlType.Slider||type==ControlType.SplitButton);
 
     private static AutomationElement? FindDesktopWindowAutomationRoot(IntPtr windowHandle)
     {
@@ -503,6 +501,7 @@ internal sealed class NativeWindowSnapService
 
     private sealed record WindowHitCache(IntPtr Handle, ScreenRect Bounds, long ExpiresAt);
     private sealed record PreciseTargetCache(WindowSnapTarget Target, long ExpiresAt);
+    private sealed record AutomationBranchCandidate(AutomationElement Element,double Area,bool Enabled,bool Actionable);
     private delegate bool EnumWindowsCallback(IntPtr handle, IntPtr parameter);
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct NativePoint { public int X, Y; }

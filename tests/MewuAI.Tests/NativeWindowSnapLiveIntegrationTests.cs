@@ -64,17 +64,8 @@ public sealed class NativeWindowSnapLiveIntegrationTests
                 (int)Math.Round(rootBounds.Left),(int)Math.Round(rootBounds.Top),
                 (int)Math.Round(rootBounds.Width),(int)Math.Round(rootBounds.Height),0x0040);
 
-            Assert.True(NativeMethods.SetWindowPos(overlayHandle,new IntPtr(1),0,0,0,0,0x0001|0x0002|0x0010));
-            var transparentHit=FindSemanticTargetAtPoint(point,codex.Id);
-            Assert.NotNull(transparentHit);
-            Assert.True(IsSameBounds(expected,new ScreenRect(
-                (int)Math.Round(transparentHit!.Value.Left),(int)Math.Round(transparentHit.Value.Top),
-                (int)Math.Round(transparentHit.Value.Width),(int)Math.Round(transparentHit.Value.Height))),
-                $"覆盖层临时降层后 FromPoint 仍未命中 Codex 控件：期望 {Format(expected)}，实际 {Format(transparentHit.Value)}");
-
             var result=new NativeWindowSnapService().FindTopmostTargetAt(
                 (int)Math.Round(point.X),(int)Math.Round(point.Y),overlayHandle);
-            Assert.True(NativeMethods.SetWindowPos(overlayHandle,new IntPtr(-1),0,0,0,0,0x0001|0x0002|0x0010));
             Assert.NotNull(result);
             Assert.True(IsSameBounds(expected,result!.Bounds),
                 $"覆盖层下命中了错误区域：期望 {Format(expected)}，实际 {result.Bounds}；{DescribeWindow(result.Handle)}；Codex HWND {codex.MainWindowHandle}");
@@ -107,23 +98,6 @@ public sealed class NativeWindowSnapLiveIntegrationTests
                 }
                 catch{break;}
             }
-        }
-        return null;
-    }
-
-    private static Rect? FindSemanticTargetAtPoint(System.Windows.Point point,int processId)
-    {
-        AutomationElement? element;
-        try{element=AutomationElement.FromPoint(point);}catch{return null;}
-        for(var depth=0;element is not null&&depth<16;depth++)
-        {
-            try
-            {
-                var info=element.Current;var bounds=info.BoundingRectangle;
-                if(info.ProcessId==processId&&(info.ControlType==ControlType.Button||info.ControlType==ControlType.Edit||info.ControlType==ControlType.MenuItem))return bounds;
-                element=TreeWalker.RawViewWalker.GetParent(element);
-            }
-            catch{return null;}
         }
         return null;
     }

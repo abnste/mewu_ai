@@ -92,7 +92,6 @@ public partial class CaptureOverlayWindow : Window
     private bool _conversationAiAvailable,_translationAiAvailable;
     private bool _lastSubmittedTurnRecorded;
     private readonly NativeWindowSnapService _windowSnap=new();
-    private readonly object _snapZOrderProbeGate=new();
     private Rect _snapCandidate=Rect.Empty;
     private Rect? _pendingAutoSelection;
     private long _lastSnapProbeTicks;
@@ -1240,7 +1239,7 @@ public partial class CaptureOverlayWindow : Window
         {
             // UI Automation calls can encounter this overlay, so follow the
             // documented UIA threading model and probe from an MTA worker.
-            var bounds=await Task.Run(()=>FindPreciseSnapTargetUnderOverlay(screenX,screenY,handle),request.Token);
+            var bounds=await Task.Run(()=>_windowSnap.FindTopmostTargetAt(screenX,screenY,handle),request.Token);
             if(_closed||request.IsCancellationRequested||!ReferenceEquals(_snapProbeRequest,request))return;
             // Do not paint a result for a stale pointer location.  The latest
             // location is scheduled once this bounded probe is released.
@@ -1267,37 +1266,9 @@ public partial class CaptureOverlayWindow : Window
         if(candidate.IsEmpty){SnapPreview.Visibility=Visibility.Collapsed;return;}
         SnapPreview.Width=candidate.Width;SnapPreview.Height=candidate.Height;Canvas.SetLeft(SnapPreview,candidate.Left);Canvas.SetTop(SnapPreview,candidate.Top);SnapPreview.Visibility=Visibility.Visible;
     }
-    private WindowSnapTarget? FindPreciseSnapTargetUnderOverlay(int screenX,int screenY,IntPtr overlayHandle)
-    {
-        // UI Automation point lookup always sees the topmost capture overlay.
-        // Preserve its exact Z-order anchor, move it to the bottom only for
-        // the bounded hit test, then restore it without activation.  This is
-        // what lets Chromium/WinUI controls use the same accurate FromPoint
-        // provider path while keeping pinned images above the overlay.
-        const uint noMove=0x0001,noSize=0x0002,noActivate=0x0010,noOwnerZOrder=0x0200;
-        const uint previousWindow=3;
-        lock(_snapZOrderProbeGate)
-        {
-            var restoreAfter=NativeMethods.GetWindow(overlayHandle,previousWindow);
-            var lowered=NativeMethods.SetWindowPos(overlayHandle,new IntPtr(1),0,0,0,0,noMove|noSize|noActivate|noOwnerZOrder);
-            try{return _windowSnap.FindTopmostTargetAt(screenX,screenY,overlayHandle);}
-            finally
-            {
-                if(lowered)
-                {
-                    var restoreTarget=restoreAfter!=IntPtr.Zero&&NativeMethods.IsWindow(restoreAfter)?restoreAfter:new IntPtr(-1);
-                    if(!NativeMethods.SetWindowPos(overlayHandle,restoreTarget,0,0,0,0,noMove|noSize|noActivate|noOwnerZOrder))
-                    {
-                        new PrivacyLogger().Error("SmartSelectionZOrderRestore",new InvalidOperationException("精确吸附后无法恢复截图覆盖层层级"));
-                        if(!_closed&&!Dispatcher.HasShutdownStarted)_=Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(Close));
-                    }
-                }
-            }
-        }
-    }
     private Rect ProbeSnapRect(Point point)
     {
-        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return Rect.Empty;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;var bounds=FindPreciseSnapTargetUnderOverlay(screenX,screenY,handle);var result=bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value.Bounds,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;_snapCandidate=result;return result;
+        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return Rect.Empty;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;var bounds=_windowSnap.FindTopmostTargetAt(screenX,screenY,handle);var result=bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value.Bounds,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;_snapCandidate=result;return result;
     }
     private Rect MonitorBounds(Rect selection)
     {
@@ -1850,7 +1821,7 @@ public partial class CaptureOverlayWindow : Window
                 // use its actual physical bounds instead of trusting a visual
                 // estimate. This is the same accessibility-first principle
                 // used by computer-use for reliable button/edit targeting.
-                var pixels=ToPixelRect(target.Bounds);var selectionScreen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=selectionScreen.X+(int)Math.Round((note.X+note.Width/2)*selectionScreen.Width);var centerY=selectionScreen.Y+(int)Math.Round((note.Y+note.Height/2)*selectionScreen.Height);var control=FindPreciseSnapTargetUnderOverlay(centerX,centerY,overlayHandle);
+                var pixels=ToPixelRect(target.Bounds);var selectionScreen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=selectionScreen.X+(int)Math.Round((note.X+note.Width/2)*selectionScreen.Width);var centerY=selectionScreen.Y+(int)Math.Round((note.Y+note.Height/2)*selectionScreen.Height);var control=_windowSnap.FindTopmostTargetAt(centerX,centerY,overlayHandle);
                 if(control is not null&&AccessibilityAnnotationRefinementService.TryRefine(note,selectionScreen,control.Bounds,out var exact)){note=exact;elementAligned.Add(note);}
             }
             buckets[target].Add(note);
