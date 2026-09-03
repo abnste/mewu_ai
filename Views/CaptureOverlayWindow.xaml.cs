@@ -511,11 +511,11 @@ public partial class CaptureOverlayWindow : Window
     private double GetHistoryMaxHeight()
     {
         var monitor=PromptMonitorBounds();
-        if(monitor.IsEmpty||!double.IsFinite(monitor.Height))return 140;
+        if(monitor.IsEmpty||!double.IsFinite(monitor.Height))return 104;
         // History is an optional peek panel. Keep it compact so expanding the
         // arrow does not push the composer far away from the screen edge;
         // users can still scroll through all paired turns inside it.
-        return Math.Clamp(monitor.Height*.18,96,150);
+        return Math.Clamp(monitor.Height*.14,84,112);
     }
 
     private string GetReferenceLabel(SelectionItem item)
@@ -1246,7 +1246,7 @@ public partial class CaptureOverlayWindow : Window
             var availableWidth=Math.Max(1,monitor.Width-CaptureOverlayPolicy.PromptSideMargin*2);
             PromptBar.Width=Math.Min(Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,PromptPreferredWidthTight),availableWidth);
             var historyMaxHeight=GetHistoryMaxHeight();
-            HistoryPanel.MaxHeight=historyMaxHeight+28;
+            HistoryPanel.MaxHeight=historyMaxHeight+18;
             HistoryScroll.MaxHeight=historyMaxHeight;
             // Remove a stale explicit height before measuring content that may
             // have gained reference chips or an answer since the last pass.
