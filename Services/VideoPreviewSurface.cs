@@ -23,6 +23,7 @@ internal sealed class VideoPreviewSurface : IDisposable
 {
     private const int MaxVideoDimension = 8192;
     private const int MaxPreviewLongEdge = 1280;
+    private static readonly TimeSpan SeekPresentationTimeout=TimeSpan.FromSeconds(20);
     private static readonly long MinimumFrameIntervalTicks = Math.Max(1, Stopwatch.Frequency / 15);
     private readonly Image _view;
     private readonly Dispatcher _dispatcher;
@@ -153,10 +154,17 @@ internal sealed class VideoPreviewSurface : IDisposable
         frameHandler=_=>frameReady.TrySetResult();
         session.SeekCompleted+=handler;
         FramePresented+=frameHandler;
+        var seekTimer=Stopwatch.StartNew();
+        TimeSpan RemainingTimeout()
+        {
+            var remaining=SeekPresentationTimeout-seekTimer.Elapsed;
+            if(remaining<=TimeSpan.Zero)throw new TimeoutException("视频跳转后未能在限定时间内呈现目标帧");
+            return remaining;
+        }
         try
         {
             session.Position=position;
-            await completion.Task.WaitAsync(TimeSpan.FromSeconds(3),cancellationToken);
+            await completion.Task.WaitAsync(RemainingTimeout(),cancellationToken);
             // Microsoft documents that a paused MediaPlayer can report an
             // imprecise frame position after seeking. Advancing one decoded
             // frame after Pause makes the frame-server surface settle on the
@@ -168,10 +176,10 @@ internal sealed class VideoPreviewSurface : IDisposable
                 steppedFrameHandler=_=>steppedFrameReady.TrySetResult();
                 FramePresented+=steppedFrameHandler;
                 player.StepForwardOneFrame();
-                await steppedFrameReady.Task.WaitAsync(TimeSpan.FromSeconds(2),cancellationToken);
+                await steppedFrameReady.Task.WaitAsync(RemainingTimeout(),cancellationToken);
             }
             else if(PresentedFrameCount<=previousFrameCount)
-                await frameReady.Task.WaitAsync(TimeSpan.FromSeconds(2),cancellationToken);
+                await frameReady.Task.WaitAsync(RemainingTimeout(),cancellationToken);
         }
         finally
         {

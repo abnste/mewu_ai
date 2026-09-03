@@ -119,7 +119,7 @@ public static class StructuredResponseParser
             if(referenceHandle.Length>80||referenceHandle.Any(ch=>!char.IsAsciiLetterOrDigit(ch)&&ch is not '-' and not '_'))return false;
         }
 
-        if (string.IsNullOrWhiteSpace(text) || regionIndex < 0)
+        if (string.IsNullOrWhiteSpace(text) || text.Length>VisualAnnotationProtocol.MaximumAnnotationTextLength || regionIndex < 0)
             return false;
 
         var hasTimelineField=item.TryGetProperty("startTime",out _)||item.TryGetProperty("endTime",out _)||item.TryGetProperty("keyframes",out _);
@@ -142,6 +142,7 @@ public static class StructuredResponseParser
         if(!item.TryGetProperty("kind",out var kindElement)||kindElement.ValueKind!=JsonValueKind.String||!TryParseKind(kindElement.GetString(),out var kind))return false;
         if(!TryParseStyle(item,out var style))return false;
         var text=ReadTextContent(item,kind);var number=ReadNumberContent(item);
+        if(text.Length>VisualAnnotationProtocol.MaximumAnnotationTextLength)return false;
         if(kind==AiAnnotationKind.Text&&string.IsNullOrWhiteSpace(text)||kind==AiAnnotationKind.Number&&!number.HasValue)return false;
         if(string.IsNullOrWhiteSpace(text))text=kind switch{AiAnnotationKind.Mosaic=>"马赛克",AiAnnotationKind.Highlighter=>"高亮",AiAnnotationKind.Pen=>"手绘标记",AiAnnotationKind.Rectangle=>"矩形标记",AiAnnotationKind.Ellipse=>"椭圆标记",AiAnnotationKind.Arrow=>"箭头标记",AiAnnotationKind.Number=>$"序号 {number}",_=>"重点"};
 
@@ -193,7 +194,7 @@ public static class StructuredResponseParser
         style=new();if(!item.TryGetProperty("style",out var element))return true;if(element.ValueKind!=JsonValueKind.Object)return false;
         var color=style.Color;var strokeWidth=style.StrokeWidth;var opacity=style.Opacity;var filled=style.Filled;var fontSize=style.FontSize;
         if(element.TryGetProperty("color",out var colorElement)){if(colorElement.ValueKind!=JsonValueKind.String)return false;color=colorElement.GetString()??string.Empty;if(color.Length!=7||color[0]!='#'||color[1..].Any(ch=>!Uri.IsHexDigit(ch)))return false;}
-        if(element.TryGetProperty("strokeWidth",out _)&&(!TryReadFiniteDouble(element,"strokeWidth",out strokeWidth)||strokeWidth<=0||strokeWidth>.1))return false;
+        if(element.TryGetProperty("strokeWidth",out _)&&(!TryReadFiniteDouble(element,"strokeWidth",out strokeWidth)||strokeWidth<.001||strokeWidth>.1))return false;
         if(element.TryGetProperty("opacity",out _)&&(!TryReadFiniteDouble(element,"opacity",out opacity)||opacity<.05||opacity>1))return false;
         if(element.TryGetProperty("fontSize",out _)&&(!TryReadFiniteDouble(element,"fontSize",out fontSize)||fontSize<.01||fontSize>.2))return false;
         if(element.TryGetProperty("filled",out var filledElement)){if(filledElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))return false;filled=filledElement.GetBoolean();}
@@ -222,6 +223,7 @@ public static class StructuredResponseParser
         var result=new List<VideoAnnotationKeyframe>();
         foreach(var frame in frames.EnumerateArray())
         {
+            if(result.Count>=VisualAnnotationProtocol.MaximumKeyframesPerAnnotation)return false;
             if(frame.ValueKind!=JsonValueKind.Object||!TryReadFiniteDouble(frame,"time",out var time)||time<start||time>end||!frame.TryGetProperty("geometry",out var geometry)||geometry.ValueKind!=JsonValueKind.Object||!TryParseGeometry(geometry,kind,out var x,out var y,out var width,out var height,out var points))return false;
             if(result.Count>0&&time<=result[^1].Time)return false;result.Add(new(time,x,y,width,height,points));
         }
@@ -238,6 +240,7 @@ public static class StructuredResponseParser
         var keyframes=new List<VideoAnnotationKeyframe>();
         foreach(var keyframe in keyframesElement.EnumerateArray())
         {
+            if(keyframes.Count>=VisualAnnotationProtocol.MaximumKeyframesPerAnnotation)return false;
             if(keyframe.ValueKind!=JsonValueKind.Object||
                !TryReadFiniteDouble(keyframe,"time",out var time)||time<start||time>end||
                !TryReadNormalizedRect(keyframe,out var x,out var y,out var width,out var height))return false;

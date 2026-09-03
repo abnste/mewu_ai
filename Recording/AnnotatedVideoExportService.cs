@@ -12,7 +12,7 @@ namespace mewu_ai_Assistant.Recording;
 
 internal static class AnnotatedVideoExportService
 {
-    internal static async Task ExportAsync(string videoPath,string outputPath,BitmapSource? manualOverlay,IReadOnlyList<AiAnnotation> annotations,CancellationToken cancellationToken=default)
+    internal static async Task ExportAsync(string videoPath,string outputPath,BitmapSource? manualOverlay,IReadOnlyList<AiAnnotation> annotations,CancellationToken cancellationToken=default,IReadOnlyDictionary<AiAnnotation,System.Windows.Point>? calloutPositions=null)
     {
         var stage="读取源视频";
         try
@@ -31,9 +31,9 @@ internal static class AnnotatedVideoExportService
                 stage="创建 AI 时间轴覆盖层";cancellationToken.ThrowIfCancellationRequested();BitmapSource overlay;
                 if(annotations.Any(note=>note.Kind==AiAnnotationKind.Mosaic&&note.IsVideoTimeline&&frame.SampleTime.TotalSeconds>=note.StartTime&&frame.SampleTime.TotalSeconds<=note.EndTime))
                 {
-                    using var thumbnail=await composition.GetThumbnailAsync(frame.SampleTime,(int)properties.Width,(int)properties.Height,VideoFramePrecision.NearestFrame).AsTask(cancellationToken);using var thumbnailStream=thumbnail.AsStreamForRead();var decoder=BitmapDecoder.Create(thumbnailStream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);var sourceFrame=decoder.Frames[0];sourceFrame.Freeze();overlay=AnnotationOverlayRenderer.RenderAiOverlay(sourceFrame,annotations,frame.SampleTime.TotalSeconds);
+                    using var thumbnail=await composition.GetThumbnailAsync(frame.SampleTime,(int)properties.Width,(int)properties.Height,VideoFramePrecision.NearestFrame).AsTask(cancellationToken);using var thumbnailStream=thumbnail.AsStreamForRead();var decoder=BitmapDecoder.Create(thumbnailStream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);var sourceFrame=decoder.Frames[0];sourceFrame.Freeze();overlay=AnnotationOverlayRenderer.RenderAiOverlay(sourceFrame,annotations,frame.SampleTime.TotalSeconds,calloutPositions);
                 }
-                else overlay=AnnotationOverlayRenderer.RenderAiOverlay((int)properties.Width,(int)properties.Height,annotations,frame.SampleTime.TotalSeconds);
+                else overlay=AnnotationOverlayRenderer.RenderAiOverlay((int)properties.Width,(int)properties.Height,annotations,frame.SampleTime.TotalSeconds,calloutPositions);
                 await AddOverlayAsync(overlay,frame.Start,frame.Duration);
             }
             if(layer.Overlays.Count==0){await Task.Run(()=>AtomicFileService.Copy(sourcePath,destinationPath),cancellationToken);return;}

@@ -42,6 +42,7 @@ public partial class CaptureOverlayWindow : Window
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
     private readonly AppHost _host;
     private CaptureFrame _frame;
+    private int _desktopFrameVersion;
     private readonly List<SelectionItem> _selections=[];
     private readonly HashSet<SelectionItem> _ownedSelections=[];
     private readonly HashSet<SelectionItem> _references=[];
@@ -136,6 +137,9 @@ public partial class CaptureOverlayWindow : Window
         public TextLayerState TextLayer { get; set; }=NoTextLayerState.Instance;
         public List<AiAnnotation> AnnotationNotes { get; }=[];
         public Dictionary<AiAnnotation,Point> AnnotationCardPositions { get; }=[];
+        public OcrDocument? AnnotationOcrDocument;
+        public int AnnotationOcrFrameVersion=-1;
+        public Rect AnnotationOcrBounds;
         public OcrTextSelectionSession? TextSession;
         public TempMediaLease? VideoLease;
         public string? VideoPath;
@@ -183,7 +187,10 @@ public partial class CaptureOverlayWindow : Window
         int SingleVideoRemapCount,
         int DurationClampedCount,
         int HandleMismatchCount,
-        int HandleRemapCount)
+        int HandleRemapCount,
+        int QualityRejectedCount,
+        int DuplicateRemovedCount,
+        int KeyframesRemovedCount)
     {
         public int RenderedCount=>BySelection.Sum(entry=>entry.Value.Count);
     }
@@ -1068,6 +1075,7 @@ public partial class CaptureOverlayWindow : Window
             var updated=new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor);
             if(updated.OriginX!=_frame.OriginX||updated.OriginY!=_frame.OriginY||updated.Image.PixelWidth!=_frame.Image.PixelWidth||updated.Image.PixelHeight!=_frame.Image.PixelHeight)return;
             _frame=updated;
+            _desktopFrameVersion++;
             DesktopImage.Source=updated.Image;
             foreach(var item in _selections)UpdateSelection(item);
             if(ReferencePicker.IsOpen)UpdateReferencePicker();
@@ -1602,7 +1610,7 @@ public partial class CaptureOverlayWindow : Window
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active,false,false,false);}
     private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false,bool includeTranslation=true)
     {
-        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var translation=hasTranslation?RenderTranslationOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes):null;var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;return AnnotationOverlayRenderer.Composite(background,manual,translation,ai);
+        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var translation=hasTranslation?RenderTranslationOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes,null,item.AnnotationCardPositions):null;var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;return AnnotationOverlayRenderer.Composite(background,manual,translation,ai);
     }
     private static bool HasManualAnnotations(SelectionItem item)=>item.Markup.Strokes.Count>0||item.DrawingElements.Count>0;
     private static bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||item.AnnotationNotes.Count>0||item.TextLayer is TranslationTextLayerState;
@@ -1772,7 +1780,7 @@ public partial class CaptureOverlayWindow : Window
             // envelopes. Re-parsing the extracted plain answer here discarded
             // its valid annotation list and made diagnostics report zero even
             // though the initial mapping still held annotations.
-            var repairReturnedAnnotationCount=-1;var imageRepair=hasVisualAttachments&&!hasVideo&&CaptureOverlayPolicy.NeedsImageAnnotationRepair(prompt,result.Answer,renderedAnnotationCount);
+            var repairReturnedAnnotationCount=-1;var imageRepair=hasVisualAttachments&&!hasVideo&&CaptureOverlayPolicy.NeedsImageAnnotationRepair(prompt,result.Answer,renderedAnnotationCount,primaryMapping.QualityRejectedCount);
             if(hasVideo||imageRepair)
             {
                 PromptStatus.Text=hasVideo?(renderedAnnotationCount==0?"模型未返回时间轴标注，正在自动补标…按 Esc 可取消":"正在核对遗漏片段和定位时间…按 Esc 可取消"):"模型没有返回可执行图片标注，正在自动纠正…按 Esc 可取消";requestStage="provider";
@@ -1814,7 +1822,7 @@ public partial class CaptureOverlayWindow : Window
     private async Task<AnnotationMappingResult> MapAnnotationsAsync(IReadOnlyList<AiAnnotation> notes,CancellationToken token)
     {
         var mapped=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>(IReadOnlyList<AiAnnotation>)Array.Empty<AiAnnotation>());var buckets=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>new List<AiAnnotation>());var sentTargets=_lastSentAnnotationTargets.ToArray();var targets=sentTargets.Select(item=>new AnnotationReferenceTarget(item.ReferenceHandle,item.Type==AiAttachmentType.Video)).ToArray();
-        var timelineCandidates=0;var regionMismatch=0;var typeMismatch=0;var durationRejected=0;var singleVideoRemaps=0;var durationClamped=0;var handleMismatches=0;var handleRemaps=0;var elementAligned=new HashSet<AiAnnotation>();var accessibilityAttempts=0;var overlayHandle=new WindowInteropHelper(this).Handle;
+        var timelineCandidates=0;var regionMismatch=0;var typeMismatch=0;var durationRejected=0;var singleVideoRemaps=0;var durationClamped=0;var handleMismatches=0;var handleRemaps=0;var qualityRejected=0;var duplicatesRemoved=0;var keyframesRemoved=0;var elementAligned=new HashSet<AiAnnotation>();var accessibilityAttempts=0;var overlayHandle=new WindowInteropHelper(this).Handle;
         foreach(var original in notes)
         {
             if(original.IsVideoTimeline)timelineCandidates++;
@@ -1856,10 +1864,10 @@ public partial class CaptureOverlayWindow : Window
             {
                 var cleanImage=RenderSelectionImage(entry.Key,false,false,false);
                 var beforeOcr=notesForItem;
-                OcrDocument? document=(entry.Key.TextLayer as OcrTextLayerState)?.Document;
+                OcrDocument? document=entry.Key.AnnotationOcrFrameVersion==_desktopFrameVersion&&entry.Key.AnnotationOcrBounds==entry.Key.Bounds?entry.Key.AnnotationOcrDocument:null;
                 if(document is null&&notesForItem.Any(note=>!elementAligned.Contains(note)&&note.Kind is (AiAnnotationKind.Callout or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse)&&!string.IsNullOrWhiteSpace(note.Text)))
                 {
-                    try{document=await new WindowsOcrService().RecognizeAsync(cleanImage,token);}
+                    try{document=await new WindowsOcrService().RecognizeAsync(cleanImage,token);entry.Key.AnnotationOcrDocument=document;entry.Key.AnnotationOcrFrameVersion=_desktopFrameVersion;entry.Key.AnnotationOcrBounds=entry.Key.Bounds;}
                     catch(OperationCanceledException){throw;}
                     catch(Exception ex){new PrivacyLogger().Error("AiAnnotationOcrRefinement",ex);}
                 }
@@ -1870,9 +1878,10 @@ public partial class CaptureOverlayWindow : Window
                 }
                 notesForItem=notesForItem.Select((note,index)=>elementAligned.Contains(beforeOcr[index])||!Equals(note,beforeOcr[index])?note:AnnotationBoxRefinementService.Refine(cleanImage,note)).ToArray();
             }
+            notesForItem=AnnotationPostProcessor.Process(notesForItem,entry.Key.VideoPath is not null,out var postProcess).ToArray();qualityRejected+=postProcess.QualityRejected;duplicatesRemoved+=postProcess.DuplicatesRemoved;keyframesRemoved+=postProcess.KeyframesRemoved;
             mapped[entry.Key]=notesForItem;
         }
-        return new AnnotationMappingResult(mapped,notes.Count,timelineCandidates,regionMismatch,typeMismatch,durationRejected,singleVideoRemaps,durationClamped,handleMismatches,handleRemaps);
+        return new AnnotationMappingResult(mapped,notes.Count,timelineCandidates,regionMismatch,typeMismatch,durationRejected,singleVideoRemaps,durationClamped,handleMismatches,handleRemaps,qualityRejected,duplicatesRemoved,keyframesRemoved);
     }
 
     private void ApplyAnnotationMapping(AnnotationMappingResult mapping,bool autoJump)
@@ -1888,7 +1897,7 @@ public partial class CaptureOverlayWindow : Window
 
     private static void LogAnnotationMapping(string phase,AnnotationMappingResult mapping)
     {
-        new PrivacyLogger().Info("ScreenAiAnnotationMap",$"{phase}：原始 {mapping.RawCount}，时间轴候选 {mapping.TimelineCandidateCount}，句柄不匹配 {mapping.HandleMismatchCount}，句柄纠偏 {mapping.HandleRemapCount}，索引不匹配 {mapping.RegionMismatchCount}，类型不匹配 {mapping.TypeMismatchCount}，时长拒绝 {mapping.DurationRejectedCount}，单视频重映射 {mapping.SingleVideoRemapCount}，时长钳制 {mapping.DurationClampedCount}，最终渲染 {mapping.RenderedCount}");
+        new PrivacyLogger().Info("ScreenAiAnnotationMap",$"{phase}：原始 {mapping.RawCount}，时间轴候选 {mapping.TimelineCandidateCount}，句柄不匹配 {mapping.HandleMismatchCount}，句柄纠偏 {mapping.HandleRemapCount}，索引不匹配 {mapping.RegionMismatchCount}，类型不匹配 {mapping.TypeMismatchCount}，时长拒绝 {mapping.DurationRejectedCount}，质量拒绝 {mapping.QualityRejectedCount}，重复抑制 {mapping.DuplicateRemovedCount}，关键帧精简 {mapping.KeyframesRemovedCount}，单视频重映射 {mapping.SingleVideoRemapCount}，时长钳制 {mapping.DurationClampedCount}，最终渲染 {mapping.RenderedCount}");
     }
 
     private void AutoJumpToFirstVideoMarker(IEnumerable<SelectionItem> items)
@@ -1947,7 +1956,7 @@ public partial class CaptureOverlayWindow : Window
 
     private static void RenderAnnotationsForItem(SelectionItem item,double? videoTime=null)
     {
-        item.AiAnnotations.Children.Clear();var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Clamp(w*.3,145,360);var font=Math.Clamp(w/70,11,22);
+        item.AiAnnotations.Children.Clear();var w=item.Bounds.Width;var h=item.Bounds.Height;var cardWidth=Math.Min(Math.Clamp(w*.3,145,360),Math.Max(1,w-10));var font=Math.Clamp(w/70,11,22);
         // Callout boxes are laid out against the same normalized geometry below.
         // Do not render a second primitive rectangle/ellipse layer: it is the
         // source of the offset blue duplicate boxes on dense pages.
@@ -1958,34 +1967,46 @@ public partial class CaptureOverlayWindow : Window
         var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic)&&!AnnotationLayoutService.IsDuplicateTargetMarker(note,callouts)).ToArray();
         if(primitiveNotes.Length>0)
         {
-            var overlay=AnnotationOverlayRenderer.RenderAiOverlay(Math.Max(1,(int)Math.Ceiling(w)),Math.Max(1,(int)Math.Ceiling(h)),primitiveNotes,videoTime);item.AiAnnotations.Children.Add(new Image{Source=overlay,Width=w,Height=h,Stretch=Stretch.Fill,IsHitTestVisible=false});
+            var overlay=AnnotationOverlayRenderer.CreateAiDrawingImage(Math.Max(1,(int)Math.Ceiling(w)),Math.Max(1,(int)Math.Ceiling(h)),primitiveNotes,videoTime);item.AiAnnotations.Children.Add(new Image{Source=overlay,Width=w,Height=h,Stretch=Stretch.Fill,IsHitTestVisible=false});
         }
         var calloutTargets=new Dictionary<AiAnnotation,Rect>(ReferenceEqualityComparer.Instance);var targetCount=0;
         foreach(var n in item.AnnotationNotes.Take(48))
         {
             var frame=new VideoAnnotationKeyframe(videoTime??0,n.X,n.Y,n.Width,n.Height);
-            if(n.Kind!=AiAnnotationKind.Callout||targetCount>=6||string.IsNullOrWhiteSpace(n.Text)||n.Width<0.012||n.Height<0.012||n.Width>0.92||n.Height>0.92)continue;
+            if(n.Kind!=AiAnnotationKind.Callout||targetCount>=VisualAnnotationProtocol.MaximumCallouts||string.IsNullOrWhiteSpace(n.Text)||n.Width<0.012||n.Height<0.012||n.Width>0.92||n.Height>0.92)continue;
             if(n.IsVideoTimeline&&(!videoTime.HasValue||videoTime<n.StartTime||videoTime>n.EndTime||!VideoAnnotationTimeline.TryInterpolate(n,videoTime.Value,out frame)))continue;
             var x=Math.Clamp(frame.X,0,1)*w;var y=Math.Clamp(frame.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(frame.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(frame.Height,0,1)*h);
             calloutTargets[n]=new Rect(x,y,rw,rh);targetCount++;
         }
-        var occupiedCards=new List<Rect>();
+        var calloutOrder=calloutTargets.Keys.ToArray();var calloutCards=new Dictionary<AiAnnotation,(Border Card,double Height,AnnotationCalloutPlacement Placement)>(ReferenceEqualityComparer.Instance);var requests=new List<AnnotationCalloutRequest>(calloutOrder.Length);
+        foreach(var note in calloutOrder)
+        {
+            var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Cursor=Cursors.SizeAll,ToolTip="拖动批注气泡",Child=new TextBlock{Text=note.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};
+            card.Measure(new Size(cardWidth,Math.Max(40,h)));var cardHeight=Math.Min(Math.Max(font*3.2,card.DesiredSize.Height),Math.Max(1,h-10));card.Height=cardHeight;requests.Add(new AnnotationCalloutRequest(calloutTargets[note],new Size(cardWidth,cardHeight)));calloutCards[note]=(card,cardHeight,default);
+        }
+        var planned=AnnotationLayoutService.PlanCallouts(requests,new Size(w,h));for(var index=0;index<calloutOrder.Length;index++){var value=calloutCards[calloutOrder[index]];calloutCards[calloutOrder[index]]=(value.Card,value.Height,planned[index]);}
+        if((item.VideoPath is null?item.Image.Source:item.Video.Source) is BitmapSource mosaicSource)
+        {
+            var mosaics=new List<(VideoAnnotationKeyframe Frame,Int32Rect Region)>();
+            foreach(var note in item.AnnotationNotes.Where(note=>note.Kind==AiAnnotationKind.Mosaic).Take(16))
+            {
+                var frame=new VideoAnnotationKeyframe(videoTime??0,note.X,note.Y,note.Width,note.Height);if(note.IsVideoTimeline&&(!videoTime.HasValue||videoTime<note.StartTime||videoTime>note.EndTime||!VideoAnnotationTimeline.TryInterpolate(note,videoTime.Value,out frame)))continue;
+                var left=Math.Clamp((int)Math.Floor(frame.X*mosaicSource.PixelWidth),0,mosaicSource.PixelWidth-1);var top=Math.Clamp((int)Math.Floor(frame.Y*mosaicSource.PixelHeight),0,mosaicSource.PixelHeight-1);var right=Math.Clamp((int)Math.Ceiling((frame.X+frame.Width)*mosaicSource.PixelWidth),left+1,mosaicSource.PixelWidth);var bottom=Math.Clamp((int)Math.Ceiling((frame.Y+frame.Height)*mosaicSource.PixelHeight),top+1,mosaicSource.PixelHeight);mosaics.Add((frame,new Int32Rect(left,top,right-left,bottom-top)));
+            }
+            if(mosaics.Count>0)
+            {
+                var pixelated=ImagePixelationService.PixelateMany(mosaicSource,mosaics.Select(mosaic=>mosaic.Region).ToArray(),Math.Clamp((int)Math.Round(12*Math.Max(mosaicSource.PixelWidth/Math.Max(1,w),mosaicSource.PixelHeight/Math.Max(1,h))),6,40));
+                foreach(var mosaic in mosaics){var crop=new CroppedBitmap(pixelated,mosaic.Region);crop.Freeze();var image=new Image{Source=crop,Width=mosaic.Frame.Width*w,Height=mosaic.Frame.Height*h,Stretch=Stretch.Fill,IsHitTestVisible=false};Canvas.SetLeft(image,mosaic.Frame.X*w);Canvas.SetTop(image,mosaic.Frame.Y*h);item.AiAnnotations.Children.Add(image);}
+            }
+        }
         foreach(var n in item.AnnotationNotes.Take(48))
         {
             var frame=new VideoAnnotationKeyframe(videoTime??0,n.X,n.Y,n.Width,n.Height);
             if(n.IsVideoTimeline&&(!videoTime.HasValue||videoTime<n.StartTime||videoTime>n.EndTime||!VideoAnnotationTimeline.TryInterpolate(n,videoTime.Value,out frame)))continue;
-            if(n.Kind==AiAnnotationKind.Mosaic)
-            {
-                if((item.VideoPath is null?item.Image.Source:item.Video.Source) is BitmapSource source)
-                {
-                    var left=Math.Clamp((int)Math.Floor(frame.X*source.PixelWidth),0,source.PixelWidth-1);var top=Math.Clamp((int)Math.Floor(frame.Y*source.PixelHeight),0,source.PixelHeight-1);var pixelRight=Math.Clamp((int)Math.Ceiling((frame.X+frame.Width)*source.PixelWidth),left+1,source.PixelWidth);var pixelBottom=Math.Clamp((int)Math.Ceiling((frame.Y+frame.Height)*source.PixelHeight),top+1,source.PixelHeight);var region=new Int32Rect(left,top,pixelRight-left,pixelBottom-top);var pixelated=ImagePixelationService.Pixelate(source,region,Math.Clamp((int)Math.Round(12*Math.Max(source.PixelWidth/Math.Max(1,w),source.PixelHeight/Math.Max(1,h))),6,40));var crop=new CroppedBitmap(pixelated,region);crop.Freeze();var mosaic=new Image{Source=crop,Width=frame.Width*w,Height=frame.Height*h,Stretch=Stretch.Fill,IsHitTestVisible=false};Canvas.SetLeft(mosaic,frame.X*w);Canvas.SetTop(mosaic,frame.Y*h);item.AiAnnotations.Children.Add(mosaic);
-                }
-                continue;
-            }
+            if(n.Kind==AiAnnotationKind.Mosaic)continue;
             if(!calloutTargets.TryGetValue(n,out var target))continue;
             var x=target.Left;var y=target.Top;var rw=target.Width;var rh=target.Height;var style=n.EffectiveStyle;var targetColor=string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?Color.FromRgb(255,0,0):(Color)ColorConverter.ConvertFromString(style.Color);var targetOutline=new Rectangle{Width=rw,Height=rh,Stroke=new SolidColorBrush(targetColor),StrokeThickness=Math.Max(1,style.StrokeWidth*Math.Min(w,h)),RadiusX=3,RadiusY=3,IsHitTestVisible=false};Canvas.SetLeft(targetOutline,x);Canvas.SetTop(targetOutline,y);item.AiAnnotations.Children.Add(targetOutline);
-            var line=new Line{Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200),IsHitTestVisible=false};var dot=new Ellipse{Width=5,Height=5,Fill=Cyan,IsHitTestVisible=false};var card=new Border{Width=cardWidth,Padding=new Thickness(font*.65,font*.5,font*.65,font*.5),CornerRadius=new CornerRadius(8),Background=new SolidColorBrush(Color.FromArgb(248,255,255,255)),BorderBrush=new SolidColorBrush(Color.FromArgb(145,61,174,242)),BorderThickness=new Thickness(1),Cursor=Cursors.SizeAll,ToolTip="拖动批注气泡",Child=new TextBlock{Text=n.Text,Foreground=new SolidColorBrush(Color.FromRgb(35,48,70)),FontSize=font,TextWrapping=TextWrapping.Wrap,LineHeight=font*1.3},Effect=new DropShadowEffect{Color=Color.FromRgb(51,71,98),BlurRadius=16,ShadowDepth=4,Opacity=.28}};
-            card.Measure(new Size(cardWidth,Math.Max(40,h)));var cardHeight=Math.Max(font*3.2,card.DesiredSize.Height);var occupied=calloutTargets.Where(entry=>!ReferenceEquals(entry.Key,n)).Select(entry=>entry.Value).Concat(occupiedCards).ToArray();var placement=AnnotationLayoutService.FindCalloutPlacement(target,new Size(cardWidth,cardHeight),new Size(w,h),occupied);var cardX=placement.CardBounds.Left;var cardY=placement.CardBounds.Top;if(item.AnnotationCardPositions.TryGetValue(n,out var saved)){cardX=Math.Clamp(saved.X*w,5,Math.Max(5,w-cardWidth-5));cardY=Math.Clamp(saved.Y*h,5,Math.Max(5,h-cardHeight-5));}occupiedCards.Add(new Rect(cardX,cardY,cardWidth,cardHeight));
+            var line=new Line{Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200),IsHitTestVisible=false};var dot=new Ellipse{Width=5,Height=5,Fill=Cyan,IsHitTestVisible=false};var view=calloutCards[n];var card=view.Card;var cardHeight=view.Height;var cardX=view.Placement.CardBounds.Left;var cardY=view.Placement.CardBounds.Top;if(item.AnnotationCardPositions.TryGetValue(n,out var saved)){cardX=Math.Clamp(saved.X*w,5,Math.Max(5,w-cardWidth-5));cardY=Math.Clamp(saved.Y*h,5,Math.Max(5,h-cardHeight-5));}
             void PositionCard(double left,double top)
             {
                 left=Math.Clamp(left,5,Math.Max(5,w-cardWidth-5));top=Math.Clamp(top,5,Math.Max(5,h-cardHeight-5));Canvas.SetLeft(card,left);Canvas.SetTop(card,top);var cardBounds=new Rect(left,top,cardWidth,cardHeight);var connector=AnnotationLayoutService.FindConnector(target,cardBounds);var targetPoint=new Point(connector.X<=target.Left?target.Left:connector.X>=target.Right?target.Right:Math.Clamp(connector.X,target.Left,target.Right),connector.Y<=target.Top?target.Top:connector.Y>=target.Bottom?target.Bottom:Math.Clamp(connector.Y,target.Top,target.Bottom));line.X1=targetPoint.X;line.Y1=targetPoint.Y;line.X2=connector.X;line.Y2=connector.Y;Canvas.SetLeft(dot,connector.X-2.5);Canvas.SetTop(dot,connector.Y-2.5);
@@ -2082,13 +2103,13 @@ public partial class CaptureOverlayWindow : Window
                 if(exportGif)
                 {
                     var fps=_host.Settings.GifFps;
-                    Func<BitmapSource,TimeSpan,BitmapSource>? compositor=includeAnnotations.Value?(frame,time)=>Dispatcher.Invoke(()=>AnnotationOverlayRenderer.Composite(AnnotationOverlayRenderer.ApplyAiMosaics(frame,annotations,time.TotalSeconds),manualOverlay,AnnotationOverlayRenderer.RenderAiOverlay(frame.PixelWidth,frame.PixelHeight,annotations,time.TotalSeconds))):null;
+                    Func<BitmapSource,TimeSpan,BitmapSource>? compositor=includeAnnotations.Value?(frame,time)=>Dispatcher.Invoke(()=>AnnotationOverlayRenderer.Composite(AnnotationOverlayRenderer.ApplyAiMosaics(frame,annotations,time.TotalSeconds),manualOverlay,AnnotationOverlayRenderer.RenderAiOverlay(frame.PixelWidth,frame.PixelHeight,annotations,time.TotalSeconds,item.AnnotationCardPositions))):null;
                     var result=await GifExportService.ExportFromVideoAsync(video,destination,fps,operation.Token,compositor);
                     if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"GIF 已保存 · {result.FrameCount} 帧 / {result.EffectiveFps:0.#} FPS";
                 }
                 else
                 {
-                    if(includeAnnotations.Value)await AnnotatedVideoExportService.ExportAsync(video,destination,manualOverlay,annotations,operation.Token);else await Task.Run(()=>AtomicFileService.Copy(video,destination),operation.Token);
+                    if(includeAnnotations.Value)await AnnotatedVideoExportService.ExportAsync(video,destination,manualOverlay,annotations,operation.Token,item.AnnotationCardPositions);else await Task.Run(()=>AtomicFileService.Copy(video,destination),operation.Token);
                     if(IsOverlayOperationActive(operation,item))PromptStatus.Text=includeAnnotations.Value?"带标注 MP4 已保存":"MP4 原件已保存";
                 }
             }

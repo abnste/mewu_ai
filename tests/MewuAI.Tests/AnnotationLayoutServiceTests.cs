@@ -34,7 +34,15 @@ public sealed class AnnotationLayoutServiceTests
     public void RecognizesOverlappingProtocolRectangleAsCalloutDuplicate()
     {
         var callout=new AiAnnotation(.2,.3,.16,.08,"新对话",0,ReferenceHandle:"ref-1",Kind:AiAnnotationKind.Callout);
-        var rectangle=callout with{Kind=AiAnnotationKind.Rectangle,Text="矩形标记"};
+        var rectangle=callout with{X=.207,Y=.304,Width=.155,Height=.078,Kind=AiAnnotationKind.Rectangle,Text="矩形标记"};
         Assert.True(AnnotationLayoutService.IsDuplicateTargetMarker(rectangle,[callout]));
+    }
+
+    [Fact]
+    public void GlobalPlanAvoidsOtherTargetsAndPreviouslyPlacedCards()
+    {
+        var requests=new[]{new AnnotationCalloutRequest(new Rect(80,40,120,30),new Size(150,44)),new AnnotationCalloutRequest(new Rect(80,120,120,30),new Size(150,44))};
+        var placements=AnnotationLayoutService.PlanCallouts(requests,new Size(500,240));
+        Assert.Equal(2,placements.Count);Assert.False(placements[0].CardBounds.IntersectsWith(requests[1].Target));Assert.False(placements[1].CardBounds.IntersectsWith(requests[0].Target));Assert.False(placements[0].CardBounds.IntersectsWith(placements[1].CardBounds));
     }
 }

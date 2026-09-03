@@ -43,8 +43,17 @@ public sealed class AnnotationExportTests
         Assert.True(ContainsRedPixel(overlay,48,34,56,42));
     }
 
+    [Fact]
+    public void ExportUsesTheUsersDraggedCalloutPosition()
+    {
+        var note=new AiAnnotation(.7,.7,.15,.12,"右下目标",ReferenceHandle:"ref-1",Kind:AiAnnotationKind.Callout);var positions=new Dictionary<AiAnnotation,System.Windows.Point>{{note,new(.05,.05)}};
+        var overlay=AnnotationOverlayRenderer.RenderAiOverlay(300,180,[note],null,positions);
+        Assert.True(ContainsBluePixel(overlay,10,5,105,15));
+    }
+
     private static AiAnnotation Timeline(double start,double end)=>new(.1,.2,.2,.2,"目标",0,start,end,[new VideoAnnotationKeyframe(start,.1,.2,.2,.2),new VideoAnnotationKeyframe(end,.2,.25,.2,.2)]);
     private static BitmapSource SolidBitmap(int width,int height,Color color){var pixels=new byte[width*height*4];for(var i=0;i<pixels.Length;i+=4){pixels[i]=color.B;pixels[i+1]=color.G;pixels[i+2]=color.R;pixels[i+3]=color.A;}var bitmap=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,width*4);bitmap.Freeze();return bitmap;}
     private static bool HasNonWhitePixel(BitmapSource image){var pixels=new byte[image.PixelWidth*image.PixelHeight*4];image.CopyPixels(pixels,image.PixelWidth*4,0);for(var i=0;i<pixels.Length;i+=4)if(pixels[i]<245||pixels[i+1]<245||pixels[i+2]<245)return true;return false;}
     private static bool ContainsRedPixel(BitmapSource image,int left,int top,int right,int bottom){var pixels=new byte[image.PixelWidth*image.PixelHeight*4];image.CopyPixels(pixels,image.PixelWidth*4,0);for(var y=top;y<=bottom;y++)for(var x=left;x<=right;x++){var offset=(y*image.PixelWidth+x)*4;if(pixels[offset+2]>180&&pixels[offset+1]<100&&pixels[offset]<100)return true;}return false;}
+    private static bool ContainsBluePixel(BitmapSource image,int left,int top,int right,int bottom){var pixels=new byte[image.PixelWidth*image.PixelHeight*4];image.CopyPixels(pixels,image.PixelWidth*4,0);for(var y=top;y<=bottom;y++)for(var x=left;x<=right;x++){var offset=(y*image.PixelWidth+x)*4;if(pixels[offset]>150&&pixels[offset+1]>100&&pixels[offset+2]<150)return true;}return false;}
 }
