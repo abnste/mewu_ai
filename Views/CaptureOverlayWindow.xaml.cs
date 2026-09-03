@@ -316,7 +316,7 @@ public partial class CaptureOverlayWindow : Window
         // Keep the empty-state hint just to the right of the visible caret.  The
         // TextBox retains its own left padding so typed text stays aligned while
         // the hint no longer paints underneath the caret on an empty input.
-        QuickPromptHint.Margin=new Thickness(14,0,0,0);
+        QuickPromptHint.Margin=new Thickness(20,0,0,0);
         AnswerHeader.Margin=new Thickness(8,2,8,0);
         AnswerScroll.Margin=new Thickness(8,6,8,6);
         PromptStatus.Margin=new Thickness(0,3,0,0);
