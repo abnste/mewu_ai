@@ -807,7 +807,7 @@ public sealed class SettingsWindow : Window
         open.Margin = new Thickness(0, 6, 0, 0);
         open.Click += (_, _) => System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MewuAI")) { UseShellExecute = true });
         panel.Children.Add(open);
-        var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.1.0";
+        var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.2.0";
         panel.Children.Add(Text(LocalizationService.T($"应用版本：{appVersion}\n.NET：{Environment.Version}\nWindows：{Environment.OSVersion.Version}\n捕获：GDI desktop snapshot / PP-OCRv6（Windows OCR 仅故障降级）\n录屏：Media Foundation H.264",$"App version: {appVersion}\n.NET: {Environment.Version}\nWindows: {Environment.OSVersion.Version}\nCapture: GDI desktop snapshot / PP-OCRv6 (Windows OCR fallback)\nRecording: Media Foundation H.264"), true));
         return panel;
     }
@@ -816,7 +816,7 @@ public sealed class SettingsWindow : Window
     {
         var panel=Panel();
         panel.Children.Add(new TextBlock{Text="MewuAI",FontSize=24,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(49,73,126)),Margin=new Thickness(0,0,0,4)});
-        var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.1.0";
+        var appVersion=typeof(SettingsWindow).Assembly.GetName().Version?.ToString(3)??"0.2.0";
         panel.Children.Add(Text(LocalizationService.T("作者：Abner Stephen\n版本："+appVersion+"\nWindows 截图、OCR、标注、录屏与多模态 AI 工作流","Author: Abner Stephen\nVersion: "+appVersion+"\nA Windows workflow for capture, OCR, annotation, recording, and multimodal AI."), true));
         var updateStatus=Text(LocalizationService.T("从 GitHub Releases 获取正式版本。安装包下载后会校验 SHA-256。","MewuAI checks GitHub Releases for official updates and verifies every installer with SHA-256."),true);
         updateStatus.Margin=new Thickness(0,4,0,8);
