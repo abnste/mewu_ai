@@ -298,6 +298,17 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void ImageAnnotationRepairRetriesOnlyForAnUnrenderedAnnotationRequest()
+    {
+        Assert.True(CaptureOverlayPolicy.NeedsImageAnnotationRepair("请框选新对话", "目标在左边", 0));
+        Assert.True(CaptureOverlayPolicy.NeedsImageAnnotationRepair("帮我看这是什么", "请画红框定位", 0));
+        Assert.False(CaptureOverlayPolicy.NeedsImageAnnotationRepair("这是什么", "这是设置窗口", 0));
+        Assert.False(CaptureOverlayPolicy.NeedsImageAnnotationRepair("请框选按钮", "完成", 1));
+        var repair=CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt("请框选新对话", "左 10 px");
+        Assert.Contains("callout",repair);Assert.Contains("请框选新对话",repair);Assert.Contains("左 10 px",repair);
+    }
+
+    [Fact]
     public void PromptBar_IsCenteredInsideTheSelectedNegativeCoordinateMonitor()
     {
         var monitor=new Rect(-1280,0,1280,720);

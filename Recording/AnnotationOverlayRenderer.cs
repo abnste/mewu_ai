@@ -19,10 +19,12 @@ internal static class AnnotationOverlayRenderer
         using(var drawing=visual.RenderOpen())
         {
             var cardWidth=Math.Clamp(width*.3,145,360);var font=Math.Clamp(width/70d,11,22);var slots=new List<double>();var calloutCount=0;
+            var callouts=annotations.Where(annotation=>annotation.Kind==AiAnnotationKind.Callout).ToArray();
             foreach(var annotation in annotations.Take(48))
             {
                 var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);
                 if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
+                if(AnnotationLayoutService.IsDuplicateTargetMarker(annotation,callouts))continue;
                 var x=Math.Clamp(frame.X,0,1)*width;var y=Math.Clamp(frame.Y,0,1)*height;var boxWidth=Math.Max(14,Math.Clamp(frame.Width,0,1)*width);var boxHeight=Math.Max(14,Math.Clamp(frame.Height,0,1)*height);
                 if(annotation.Kind==AiAnnotationKind.Mosaic)continue;
                 var style=annotation.EffectiveStyle;var colorName=annotation.Kind is AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse&&string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?"#FF0000":style.Color;var color=ParseColor(colorName,style.Opacity);var brush=new SolidColorBrush(color);var stroke=Math.Clamp(style.StrokeWidth*Math.Min(width,height),1,48);var pen=new Pen(brush,annotation.Kind==AiAnnotationKind.Highlighter?Math.Max(5,stroke):stroke){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round,LineJoin=PenLineJoin.Round};
@@ -45,8 +47,9 @@ internal static class AnnotationOverlayRenderer
                         var diameter=Math.Min(boxWidth,boxHeight);drawing.DrawEllipse(brush,null,new Point(x+diameter/2,y+diameter/2),diameter/2,diameter/2);DrawCenteredText(drawing,(annotation.Number??1).ToString(CultureInfo.InvariantCulture),new Rect(x,y,diameter,diameter),Math.Clamp(diameter*.48,12,52),Contrast(color));break;
                     default:
                         if(calloutCount++>=6)break;
-                        var right=x+boxWidth+cardWidth+28<width;var cardX=right?x+boxWidth+24:Math.Max(5,x-cardWidth-24);var cardHeight=Math.Max(font*3.2,font*1.8);var cardY=AnnotationLayoutService.FindCardTop(y+boxHeight*.5-font*1.5,5,Math.Max(5,height-font*4),cardHeight,slots);slots.Add(cardY);var startX=right?x+boxWidth:x;var endX=right?cardX:cardX+cardWidth;
-                        var linePen=new Pen(Cyan,Math.Max(1,width/1200d));linePen.Freeze();drawing.DrawLine(linePen,new Point(startX,y+boxHeight*.5),new Point(endX,cardY+font*1.4));drawing.DrawEllipse(Cyan,null,new Point(endX,cardY+font*1.4),2.5,2.5);
+                        var target=new Rect(x,y,boxWidth,boxHeight);var targetColor=string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?Color.FromRgb(255,0,0):color;drawing.DrawRoundedRectangle(null,new Pen(new SolidColorBrush(targetColor),stroke),target,3,3);
+                        var cardHeight=Math.Max(font*3.2,font*1.8);var occupied=slots.Select(top=>new Rect(5,top,Math.Max(1,width-10),cardHeight)).ToArray();var placement=AnnotationLayoutService.FindCalloutPlacement(target,new Size(cardWidth,cardHeight),new Size(width,height),occupied);var cardX=placement.CardBounds.Left;var cardY=placement.CardBounds.Top;slots.Add(cardY);var connector=placement.ConnectorPoint;var targetPoint=new Point(connector.X<=target.Left?target.Left:connector.X>=target.Right?target.Right:Math.Clamp(connector.X,target.Left,target.Right),connector.Y<=target.Top?target.Top:connector.Y>=target.Bottom?target.Bottom:Math.Clamp(connector.Y,target.Top,target.Bottom));
+                        var linePen=new Pen(Cyan,Math.Max(1,width/1200d));linePen.Freeze();drawing.DrawLine(linePen,targetPoint,connector);drawing.DrawEllipse(Cyan,null,connector,2.5,2.5);
                         drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(248,255,255,255)),new Pen(new SolidColorBrush(Color.FromArgb(145,61,174,242)),1),new Rect(cardX,cardY,cardWidth,cardHeight),8,8);
                         DrawText(drawing,annotation.Text,new Rect(cardX+font*.65,cardY+font*.45,cardWidth-font*1.3,cardHeight-font),font,new SolidColorBrush(Color.FromRgb(35,48,70)));break;
                 }
