@@ -68,4 +68,25 @@ public sealed class WindowVisualStructureTests
         Assert.Equal("Collapsed",(string?)countdown.Attribute("Visibility"));
         Assert.Equal("False",(string?)countdown.Attribute("IsHitTestVisible"));
     }
+
+    [Fact]
+    public void CaptureSelectionToolbarFollowsTheUserWorkflow()
+    {
+        var path=Path.Combine(AppContext.BaseDirectory,"Fixtures","CaptureOverlayWindow.xaml.xml");
+        var document=XDocument.Load(path,LoadOptions.SetLineInfo);
+        XNamespace presentation="http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x="http://schemas.microsoft.com/winfx/2006/xaml";
+        var toolbar=document.Descendants().Single(element=>string.Equals((string?)element.Attribute(x+"Name"),"Toolbar",StringComparison.Ordinal));
+        var names=toolbar.Descendants(presentation+"Button")
+            .Select(button=>(string?)button.Attribute(x+"Name"))
+            .Where(name=>name is not null)
+            .ToArray();
+
+        Assert.Equal(new[]
+        {
+            "ReferenceButton","DrawButton","OcrButton","TranslateButton","TableButton",
+            "LongCaptureButton","RecordButton","VideoPlayButton","CopyButton","SaveButton","PinButton"
+        },names);
+        Assert.Equal(3,toolbar.Descendants(presentation+"Border").Count(border=>string.Equals((string?)border.Attribute("Style"),"{StaticResource ToolbarSeparator}",StringComparison.Ordinal)));
+    }
 }
