@@ -7,13 +7,13 @@
 
   **简体中文** · [English](./README.md) · [下载](https://github.com/abnste/mewu_ai/releases/latest) · [反馈问题](https://github.com/abnste/mewu_ai/issues)
 
-  [![Release](https://img.shields.io/badge/版本-v0.1.0-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.1.0)
+  [![Release](https://img.shields.io/badge/版本-v0.2.0-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.2.0)
   [![Windows](https://img.shields.io/badge/Windows-10%202004%2B-3A8DDE?style=flat-square&logo=windows11&logoColor=white)](#系统要求)
   [![.NET](https://img.shields.io/badge/.NET-10-6C4BC1?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 
-  **0.1.0 公测版 · 测试模型：MiniMax M3（MiniMax-M3）**
+  **0.2.0 公测版 · 测试模型：MiniMax M3（MiniMax-M3）**
 
-  [**下载安装版**](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Setup-0.1.0-win-x64.exe) · [免安装 ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Portable-0.1.0-win-x64.zip)
+  [**下载安装版**](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Setup-0.2.0-win-x64.exe) · [免安装 ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Portable-0.2.0-win-x64.zip)
 </div>
 
 <br />
@@ -40,8 +40,8 @@
 
 ## 下载
 
-- [安装版 0.1.0](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Setup-0.1.0-win-x64.exe)：按当前用户安装，包含开始菜单、可选桌面快捷方式和卸载入口。
-- [免安装版 0.1.0](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Portable-0.1.0-win-x64.zip)：解压后运行 `MewuAI.exe`，无需另装 .NET。
+- [安装版 0.2.0](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Setup-0.2.0-win-x64.exe)：按当前用户安装，包含开始菜单、可选桌面快捷方式和卸载入口。
+- [免安装版 0.2.0](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Portable-0.2.0-win-x64.zip)：解压后运行 `MewuAI.exe`，无需另装 .NET。
 
 启动后按 <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd> 唤醒屏幕助手（可在设置中修改）。
 

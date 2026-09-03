@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Build and publish Windows x64
@@ -16,12 +20,17 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: 10.0.x
+          dotnet-version: 10.0.400
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
 
       - name: Verify tag and project version
         shell: pwsh
@@ -47,15 +56,54 @@ jobs:
           if ($installer -notmatch ('VersionInfoVersion=' + [regex]::Escape($tagVersion) + '\.0')) {
             throw 'Installer VersionInfoVersion does not match the tag.'
           }
+          if (-not (Test-Path -LiteralPath "docs/release-notes-v$tagVersion.md")) {
+            throw "Release notes for $tagVersion are missing."
+          }
+
+      - name: Restore locked dependencies
+        shell: pwsh
+        run: |
+          dotnet restore .\mewu_ai_Assistant.slnx --locked-mode
+          if ($LASTEXITCODE -ne 0) { throw 'Locked dependency restore failed.' }
+
+      - name: Audit NuGet vulnerabilities
+        shell: pwsh
+        run: |
+          $report = dotnet list .\mewu_ai_Assistant.csproj package --vulnerable --include-transitive --format json | ConvertFrom-Json -AsHashtable
+          if ($LASTEXITCODE -ne 0) { throw 'NuGet vulnerability audit failed.' }
+          function Find-VulnerabilityLists($node) {
+            if ($node -is [System.Collections.IDictionary]) {
+              foreach ($entry in $node.GetEnumerator()) {
+                if ($entry.Key -eq 'vulnerabilities' -and $entry.Value -and $entry.Value.Count -gt 0) { return $true }
+                if (Find-VulnerabilityLists $entry.Value) { return $true }
+              }
+            } elseif ($node -is [System.Collections.IEnumerable] -and $node -isnot [string]) {
+              foreach ($item in $node) { if (Find-VulnerabilityLists $item) { return $true } }
+            }
+            return $false
+          }
+          if (Find-VulnerabilityLists $report) { throw 'NuGet reports one or more vulnerable packages.' }
+
+      - name: Build all release projects
+        shell: pwsh
+        run: |
+          foreach ($project in @(
+            '.\mewu_ai_Assistant.csproj',
+            '.\tests\MewuAI.Tests\MewuAI.Tests.csproj',
+            '.\tests\MewuAI.ProviderSmoke\MewuAI.ProviderSmoke.csproj'
+          )) {
+            dotnet build $project -c Release -p:Platform=x64 --no-restore -warnaserror
+            if ($LASTEXITCODE -ne 0) { throw "Release build failed: $project" }
+          }
 
       - name: Run release tests
         shell: pwsh
         run: |
-          dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64
+          dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64 --no-build --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Release tests failed.' }
 
       - name: Publish self-contained app
-        run: dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true -o .\artifacts\release\win-x64
+        run: dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -o .\artifacts\release\win-x64
 
       - name: Audit publish payload
         shell: pwsh
@@ -73,6 +121,16 @@ jobs:
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'MewuAI.exe'))) { throw 'MewuAI.exe is missing.' }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'THIRD-PARTY-NOTICES.md'))) { throw 'Third-party notices are missing.' }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'Licenses\DotNet-Windows-Library-License.txt'))) { throw 'Runtime license is missing.' }
+          foreach ($license in @(
+            'Licenses\Microsoft.Web.WebView2-LICENSE.txt',
+            'Licenses\Microsoft.Web.WebView2-NOTICE.txt',
+            'Licenses\Microsoft.WindowsAppSDK-LICENSE.txt',
+            'Licenses\Microsoft.WindowsAppSDK-NOTICE.txt'
+          )) {
+            if (-not (Test-Path -LiteralPath (Join-Path $publish $license))) { throw "Required license file is missing: $license" }
+          }
+          $unexpectedCultures = Get-ChildItem -LiteralPath $publish -Directory | Where-Object { $_.Name -match '^(cs|de|es|fr|it|ja|ko|pl|pt-BR|ru|tr|zh-Hant)$' }
+          if ($unexpectedCultures) { throw "Unsupported satellite resources were published: $($unexpectedCultures.Name -join ', ')" }
 
       - name: Build portable ZIP
         shell: pwsh
@@ -84,7 +142,8 @@ jobs:
       - name: Install Inno Setup compiler
         shell: pwsh
         run: |
-          choco install innosetup --no-progress -y
+          choco install innosetup --version 6.7.1 --no-progress -y
+          if ($LASTEXITCODE -notin 0, 1641, 3010) { throw "Inno Setup installation failed with exit code $LASTEXITCODE" }
           $languageDir = 'C:\Program Files (x86)\Inno Setup 6\Languages'
           $languageFile = Join-Path $languageDir 'ChineseSimplified.isl'
           $translationUrl = 'https://raw.githubusercontent.com/jrsoftware/issrc/6ef32198ef1f7b7b375cd4b6b90896c2a58eb4c2/Files/Languages/ChineseSimplified.isl'

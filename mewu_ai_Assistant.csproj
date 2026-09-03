@@ -11,17 +11,20 @@
     <ApplicationIcon>Assets\MewuAI.ico</ApplicationIcon>
     <AssemblyName>MewuAI</AssemblyName>
     <RootNamespace>mewu_ai_Assistant</RootNamespace>
-    <Version>0.1.0</Version>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <FileVersion>0.1.0.0</FileVersion>
+    <Version>0.2.0</Version>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
     <Platforms>x64</Platforms>
+    <!-- The product UI supports English and Simplified Chinese.  Keep only
+         their framework/package satellite resources in distributable builds. -->
+    <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
     <!-- Win2D is consumed as a frame-server interop library. The WPF
          desktop build does not need Windows App SDK MRT resource generation,
          whose Visual Studio-only task is unavailable in the bundled .NET SDK. -->
     <EnableCoreMrtTooling>false</EnableCoreMrtTooling>
-    <Platform Condition="'$(Platform)' == '' Or '$(Platform)' == 'AnyCPU'">x64</Platform>
+    <Platform Condition="'$(Platform)' == '' Or '$(Platform)' == 'AnyCPU' Or '$(Platform)' == 'Any CPU'">x64</Platform>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
@@ -62,7 +65,20 @@
     <Content Include="Assets\OcrModels\ppocrv6_dict.txt" Link="models\v6\ppocrv6_dict.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Licenses\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Win2D brings these redistributable Microsoft components transitively.
+         Carry their exact package license and NOTICE files in every build. -->
+    <Content Include="$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\LICENSE.txt" Link="Licenses\Microsoft.Web.WebView2-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\NOTICE.txt" Link="Licenses\Microsoft.Web.WebView2-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\license.txt" Link="Licenses\Microsoft.WindowsAppSDK-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\NOTICE.txt" Link="Licenses\Microsoft.WindowsAppSDK-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="ValidateTransitiveMicrosoftLicenseSources" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\LICENSE.txt')" Text="Microsoft.Web.WebView2 license source is missing; restore the locked packages before building." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\NOTICE.txt')" Text="Microsoft.Web.WebView2 NOTICE source is missing; restore the locked packages before building." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\license.txt')" Text="Microsoft.WindowsAppSDK license source is missing; restore the locked packages before building." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\NOTICE.txt')" Text="Microsoft.WindowsAppSDK NOTICE source is missing; restore the locked packages before building." />
+  </Target>
 
   <Target Name="PruneRapidOcrBundledV5Models" BeforeTargets="CopyModelsBuild;CopyModelsPublish">
     <ItemGroup>

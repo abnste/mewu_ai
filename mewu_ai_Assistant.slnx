@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="mewu_ai_Assistant.csproj" />
   <Project Path="tests/MewuAI.Tests/MewuAI.Tests.csproj" />
+  <Project Path="tests/MewuAI.ProviderSmoke/MewuAI.ProviderSmoke.csproj" />
 </Solution>

@@ -16,6 +16,8 @@
 | Clipper2 | 2.0.0 | BSL-1.0 | https://github.com/AngusJohnson/Clipper2 |
 | ScreenRecorderLib | 7.0.0 | MIT | https://github.com/sskodje/ScreenRecorderLib |
 | Microsoft.Graphics.Win2D | 1.3.1 | MIT | https://github.com/microsoft/Win2D |
+| Microsoft Windows App SDK（由 Win2D 携带） | 1.6.241114003 | Microsoft Software License Terms 及上游 NOTICE | https://github.com/microsoft/WindowsAppSDK |
+| Microsoft WebView2 SDK / Loader（由 Win2D 携带） | 1.0.2651.64 | BSD-3-Clause 及上游 NOTICE | https://github.com/MicrosoftEdge/WebView2Feedback |
 | Concentus | 2.2.2 | BSD-style Opus license | https://github.com/lostromb/Concentus |
 | Concentus.Oggfile | 1.0.7 | MIT | https://github.com/lostromb/concentus.oggfile |
 | System.Speech | 10.0.11 | MIT 及第三方条款 | https://github.com/dotnet/runtime |

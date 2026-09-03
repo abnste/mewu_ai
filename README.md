@@ -7,13 +7,13 @@
 
   [简体中文](./README.zh-CN.md) · **English** · [Download](https://github.com/abnste/mewu_ai/releases/latest) · [Report a bug](https://github.com/abnste/mewu_ai/issues)
 
-  [![Release](https://img.shields.io/badge/release-v0.1.0-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.1.0)
+  [![Release](https://img.shields.io/badge/release-v0.2.0-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.2.0)
   [![Windows](https://img.shields.io/badge/Windows-10%202004%2B-3A8DDE?style=flat-square&logo=windows11&logoColor=white)](#system-requirements)
   [![.NET](https://img.shields.io/badge/.NET-10-6C4BC1?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 
-  **v0.1.0 Public Beta · Tested model: MiniMax M3 (MiniMax-M3)**
+  **v0.2.0 Public Beta · Tested model: MiniMax M3 (MiniMax-M3)**
 
-  [**Download installer**](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Setup-0.1.0-win-x64.exe) · [Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Portable-0.1.0-win-x64.zip)
+  [**Download installer**](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Setup-0.2.0-win-x64.exe) · [Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Portable-0.2.0-win-x64.zip)
 </div>
 
 <br />
@@ -40,8 +40,8 @@
 
 ## Download
 
-- [Installer 0.1.0](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Setup-0.1.0-win-x64.exe): per-user setup with Start Menu entry, optional desktop shortcut, and uninstaller.
-- [Portable 0.1.0](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Portable-0.1.0-win-x64.zip): extract and run `MewuAI.exe`; no separate .NET installation is required.
+- [Installer 0.2.0](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Setup-0.2.0-win-x64.exe): per-user setup with Start Menu entry, optional desktop shortcut, and uninstaller.
+- [Portable 0.2.0](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-Portable-0.2.0-win-x64.zip): extract and run `MewuAI.exe`; no separate .NET installation is required.
 
 Press <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd> to open the screen assistant (customizable in Settings).
 
