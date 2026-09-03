@@ -57,7 +57,7 @@ public partial class CaptureOverlayWindow : Window
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
-    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_historyExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_reasoningRenderScheduled;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_historyExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_promptBarInputLayoutQueued,_reasoningRenderScheduled;
     private int _promptBarAnimationVersion;
     private int _referenceMentionStart=-1;
     private int _nextUploadNumber;
@@ -264,7 +264,7 @@ public partial class CaptureOverlayWindow : Window
         {
             ApplyOverlayDpiLayout(area);
             DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
-             QuickPrompt.TextChanged+=(_,_)=>{UpdateQuickPromptHint();UpdateReferencePicker();};QuickPrompt.GotKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(115,130,235));};QuickPrompt.LostKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(220,228,239));};UpdateQuickPromptHint();RefreshHistoryPreview();PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();if(_conversationAiAvailable)QuickPrompt.Focus();
+             QuickPrompt.TextChanged+=(_,_)=>{UpdateQuickPromptHint();UpdateReferencePicker();QueuePromptBarInputLayout();};QuickPrompt.GotKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(115,130,235));};QuickPrompt.LostKeyboardFocus+=(_,_)=>{UpdateQuickPromptHint();PromptInputBorder.BorderBrush=new SolidColorBrush(Color.FromRgb(220,228,239));};UpdateQuickPromptHint();RefreshHistoryPreview();PromptBar.SizeChanged+=(_,_)=>PositionPromptBar();PositionPromptBar();if(_conversationAiAvailable)QuickPrompt.Focus();
             _=LoadPersistedHistoryAsync();
             // WPF can re-apply the initial Width/Height after SourceInitialized;
             // run one render-priority pass so the DIP surface remains in sync
@@ -1226,6 +1226,23 @@ public partial class CaptureOverlayWindow : Window
             Canvas.SetLeft(PromptBarHost,fitted.Left);
             Canvas.SetTop(PromptBarHost,fitted.Top);
             UpdatePromptBarHiddenTransform(false);
+        }));
+    }
+    private void QueuePromptBarInputLayout()
+    {
+        if(_promptBarInputLayoutQueued||_closed||!IsLoaded)return;
+        _promptBarInputLayoutQueued=true;
+        _=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(() =>
+        {
+            _promptBarInputLayoutQueued=false;
+            if(_closed||!IsLoaded||PromptBarHost.Visibility!=Visibility.Visible)return;
+            // TextBox text changes invalidate the child, but the overlay is
+            // hosted by a Canvas and can otherwise keep the previous arranged
+            // height for one frame.  Re-measure the composer at render priority
+            // so Shift+Enter grows the input row before its second line paints.
+            QuickPrompt.InvalidateMeasure();
+            PromptBar.InvalidateMeasure();
+            PositionPromptBar();
         }));
     }
     private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
