@@ -603,7 +603,10 @@ internal sealed class NativeWindowSnapService
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out int value, int valueSize);
 }
 
-internal sealed record WindowSnapTarget(IntPtr Handle, ScreenRect Bounds, int SemanticPriority = 0);
+internal sealed record WindowSnapTarget(IntPtr Handle, ScreenRect Bounds, int SemanticPriority = 0)
+{
+    internal bool IsActionableSemanticControl=>SemanticPriority>=2;
+}
 
 internal static class SelectionSnapPolicy
 {

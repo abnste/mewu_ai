@@ -22,4 +22,18 @@ public sealed class AccessibilityAnnotationRefinementServiceTests
         var image=note with{StartTime=null,EndTime=null,Keyframes=null};
         Assert.False(AccessibilityAnnotationRefinementService.TryRefine(image,new ScreenRect(0,0,200,100),new ScreenRect(300,20,40,30),out _));
     }
+
+    [Fact]
+    public void DoesNotExpandALocalMarkerToTheWholeSelection()
+    {
+        var note=new AiAnnotation(.34,.40,.18,.10,"按钮",Kind:AiAnnotationKind.Callout);
+        Assert.False(AccessibilityAnnotationRefinementService.TryRefine(note,new ScreenRect(100,200,1000,600),new ScreenRect(100,200,1000,600),out _));
+    }
+
+    [Fact]
+    public void DoesNotUseNativeWindowFallbackAsASemanticAnnotationControl()
+    {
+        Assert.False(new WindowSnapTarget(new IntPtr(1),new ScreenRect(0,0,1920,1080)).IsActionableSemanticControl);
+        Assert.True(new WindowSnapTarget(new IntPtr(1),new ScreenRect(100,100,120,40),2).IsActionableSemanticControl);
+    }
 }

@@ -1750,14 +1750,10 @@ public partial class CaptureOverlayWindow : Window
             var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}
             ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Markdown=result.Answer;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=MapAnnotations(result.Annotations);ApplyAnnotationMapping(primaryMapping,true);var renderedAnnotationCount=primaryMapping.RenderedCount;ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             AgentActivityCard.Visibility=Visibility.Collapsed;
-            // Defensive normalization: a compatible backend may return the
-            // protocol envelope as plain text even when structured mode was
-            // requested. Never expose the annotation JSON in the answer card.
-            if(hasVisualAttachments)
-            {
-                var normalizedResult=StructuredResponseParser.Parse(result.Answer,result.Reasoning,true);
-                if(!string.IsNullOrWhiteSpace(normalizedResult.Answer))result=normalizedResult;
-            }
+            // NormalizeStructuredResult above already handles raw protocol
+            // envelopes. Re-parsing the extracted plain answer here discarded
+            // its valid annotation list and made diagnostics report zero even
+            // though the initial mapping still held annotations.
             var repairReturnedAnnotationCount=-1;var imageRepair=hasVisualAttachments&&!hasVideo&&CaptureOverlayPolicy.NeedsImageAnnotationRepair(prompt,result.Answer,renderedAnnotationCount);
             if(hasVideo||imageRepair)
             {
@@ -1830,7 +1826,7 @@ public partial class CaptureOverlayWindow : Window
                 // estimate. This is the same accessibility-first principle
                 // used by computer-use for reliable button/edit targeting.
                 var pixels=ToPixelRect(target.Bounds);var selectionScreen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=selectionScreen.X+(int)Math.Round((note.X+note.Width/2)*selectionScreen.Width);var centerY=selectionScreen.Y+(int)Math.Round((note.Y+note.Height/2)*selectionScreen.Height);var control=_windowSnap.FindTopmostTargetAt(centerX,centerY,overlayHandle);
-                if(control is not null&&AccessibilityAnnotationRefinementService.TryRefine(note,selectionScreen,control.Bounds,out var exact)){note=exact;elementAligned.Add(note);}
+                if(control is {IsActionableSemanticControl:true}&&AccessibilityAnnotationRefinementService.TryRefine(note,selectionScreen,control.Bounds,out var exact)){note=exact;elementAligned.Add(note);}
             }
             buckets[target].Add(note);
         }
