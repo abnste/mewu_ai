@@ -242,9 +242,11 @@ public sealed class RecordingIntegrationTests
                     try
                     {
                         var target=TimeSpan.FromMilliseconds(300);
-                        await preview.SeekAsync(target,pauseAfterSeek:true,cancellationToken);
+                        var presented=await preview.SeekAsync(target,pauseAfterSeek:true,cancellationToken);
                         Assert.False(preview.IsPlaying);
                         Assert.InRange(Math.Abs((preview.Position-target).TotalMilliseconds),0,250);
+                        Assert.Equal(preview.LastPresentedPosition,presented);
+                        Assert.InRange(Math.Abs((presented-target).TotalMilliseconds),0,250);
                         Assert.NotNull(view.Source);
                         Finish(null);
                     }

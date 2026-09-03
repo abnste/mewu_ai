@@ -8,6 +8,7 @@
 - 原位视频预览使用 WinRT 帧服务器时，预览表面的长边限制为 1280 像素、最高接收 15 FPS；WPF 渲染队列已有待显示帧时必须在 GPU 读回前丢帧，并复用 `WriteableBitmap`，避免 1080p/4K 视频造成持续大对象分配。该限制只影响预览，不修改源 MP4。
 - 首次无法建立 `SetWindowRgn` 录制穿透孔洞时必须拒绝开始录屏；结束录屏恢复完整窗口区域失败时只在成功后清状态，并做至多三次渲染优先级重试，仍失败则关闭覆盖层销毁 HWND，不能让旧孔洞永久残留。
 - 原位视频标注 seek 必须使用 `MediaPlaybackSession.Position` 并等待 `SeekCompleted` 后再显示目标框；区间播放的跟踪刷新绑定实际呈现帧的位置，终点有界停止。播放器替换或释放时必须解绑帧回调，generation、取消令牌和当前选区共同拒绝旧播放器的迟到更新。
+- 帧服务器必须在 `CopyFrameToVideoSurface` 取得像素时同步记录该帧的 `PlaybackSession.Position`，并把这对像素与时间戳一起送到 WPF；严禁等 UI 调度器显示像素时再读取已经前进的播放器位置。普通播放、暂停、回答跳转和区间播放都只能按实际呈现帧刷新时间轴标注，播放/暂停操作不得删除已经映射的批注。
 - 暂停状态 seek 完成后必须按微软帧精确定位建议推进并等待一帧真正呈现，再显示批注；不能只看 `SeekCompleted` 或已变化的 session position 就把旧 GOP 画面当成目标帧。
 - 录屏倒计时只负责原位视觉与底层交互，不能提前创建或启动 `RecordingSession`。倒计时期间用可恢复的窗口级鼠标穿透保持跨进程操作，固定三步且支持取消；数字隐藏并恢复窗口输入后才进入现有录屏模式，确保成片首帧不含倒计时。
 - 带标注 MP4 导出使用 `MediaComposition` + `MediaOverlayLayer`：手工层以透明 PNG 覆盖完整时长，AI 时间轴层以有界采样帧和 `Delay` 烘焙；输出先写 `TempFileService` 临时 MP4，再经 `AtomicFileService` 替换目标。带标注 GIF 在现有帧数、尺寸和总像素预算内逐帧合成，不得先转码或修改源 MP4；所有临时透明图和视频均需持有 `TempMediaRegistry` 租约并在结束后清理。
