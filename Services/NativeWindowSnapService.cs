@@ -245,6 +245,7 @@ internal sealed class NativeWindowSnapService
             var element = AutomationElement.FromPoint(new System.Windows.Point(screenX, screenY));
             var walker = TreeWalker.RawViewWalker;
             var currentProcess = (int)Environment.ProcessId;
+            WindowSnapTarget? best = null;
             for (var depth = 0; element is not null && depth < MaxAutomationDepth; depth++)
             {
                 var info = element.Current;
@@ -254,10 +255,11 @@ internal sealed class NativeWindowSnapService
                     IsUsefulElement(element, info, rectangle, screenX, screenY) &&
                     IsInsideRoot(rectangle, rootWindow))
                 {
-                    return ToTarget(info, rectangle, rootWindow);
+                    best = PreferTarget(best, ToTarget(info, rectangle, rootWindow));
                 }
                 element = walker.GetParent(element);
             }
+            return best;
         }
         catch (COMException) { }
         catch (InvalidOperationException) { }
@@ -295,7 +297,7 @@ internal sealed class NativeWindowSnapService
                 {
                     var info=parent.Current;var rectangle=info.BoundingRectangle;
                     if(info.ProcessId!=currentProcess&&info.NativeWindowHandle!=excludedWindow.ToInt32()&&IsUsefulElement(parent,info,rectangle,screenX,screenY))
-                        best=PreferSmaller(best,ToTarget(info,rectangle,windowHandle));
+                        best=PreferTarget(best,ToTarget(info,rectangle,windowHandle));
                     var child=walker.GetFirstChild(parent);
                     for(var siblings=0;child is not null&&siblings<MaxAutomationSiblingsPerLevel&&Stopwatch.GetTimestamp()<=deadline;siblings++)
                     {
@@ -343,10 +345,15 @@ internal sealed class NativeWindowSnapService
         catch (ArgumentException) { return null; }
     }
 
-    private static WindowSnapTarget PreferSmaller(WindowSnapTarget? current, WindowSnapTarget candidate)
+    internal static WindowSnapTarget PreferTarget(WindowSnapTarget? current, WindowSnapTarget candidate)
     {
         if (current is null)
             return candidate;
+        // A focusable Custom/Text descendant can be only the glyph run inside
+        // a real Button. Prefer the semantic control first, then use area to
+        // choose the most specific target among controls of the same class.
+        if (candidate.SemanticPriority != current.SemanticPriority)
+            return candidate.SemanticPriority > current.SemanticPriority ? candidate : current;
         var currentArea = (long)current.Bounds.Width * current.Bounds.Height;
         var candidateArea = (long)candidate.Bounds.Width * candidate.Bounds.Height;
         return candidateArea < currentArea ? candidate : current;
@@ -355,7 +362,8 @@ internal sealed class NativeWindowSnapService
     private static WindowSnapTarget ToTarget(AutomationElement.AutomationElementInformation info, Rect rectangle, IntPtr fallbackHandle)
     {
         var handle = info.NativeWindowHandle == 0 ? fallbackHandle : new IntPtr(info.NativeWindowHandle);
-        return new WindowSnapTarget(handle, ToScreenRect(rectangle));
+        var priority = IsActionableControlType(info.ControlType) ? 2 : 1;
+        return new WindowSnapTarget(handle, ToScreenRect(rectangle), priority);
     }
 
     private static ScreenRect ToScreenRect(Rect rectangle)
@@ -595,10 +603,13 @@ internal sealed class NativeWindowSnapService
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out int value, int valueSize);
 }
 
-internal sealed record WindowSnapTarget(IntPtr Handle, ScreenRect Bounds);
+internal sealed record WindowSnapTarget(IntPtr Handle, ScreenRect Bounds, int SemanticPriority = 0);
 
 internal static class SelectionSnapPolicy
 {
+    internal static Rect PreferStablePreview(Point pointer, Rect stable, Rect fast)
+        => !stable.IsEmpty && stable.Contains(pointer) ? stable : fast;
+
     internal static Rect SnapResize(Rect value, string directions, Rect target, double threshold)
     {
         if (value.IsEmpty || target.IsEmpty || threshold < 0)

@@ -13,6 +13,24 @@ namespace MewuAI.Tests;
 public sealed class CaptureImageFeatureTests
 {
     [Fact]
+    public void SemanticButtonWinsOverSmallerFocusableTextChild()
+    {
+        var text=new WindowSnapTarget(new IntPtr(1),new ScreenRect(120,110,42,18),1);
+        var button=new WindowSnapTarget(new IntPtr(1),new ScreenRect(100,100,100,40),2);
+        Assert.Equal(button,NativeWindowSnapService.PreferTarget(text,button));
+        Assert.Equal(button,NativeWindowSnapService.PreferTarget(button,text));
+    }
+
+    [Fact]
+    public void ConfirmedButtonPreviewStaysStableAcrossItsBackground()
+    {
+        var stable=new Rect(100,100,100,40);
+        var fullWindow=new Rect(0,0,1920,1080);
+        Assert.Equal(stable,SelectionSnapPolicy.PreferStablePreview(new System.Windows.Point(185,120),stable,fullWindow));
+        Assert.Equal(fullWindow,SelectionSnapPolicy.PreferStablePreview(new System.Windows.Point(240,120),stable,fullWindow));
+    }
+
+    [Fact]
     public void PinnedImageRotationSwapsDimensionsAndIsReversible()
     {
         var source=Frame(30,20,0);var rotated=PinnedImageTransform.RotateQuarterTurns(source,1);Assert.Equal(20,rotated.PixelWidth);Assert.Equal(30,rotated.PixelHeight);var restored=PinnedImageTransform.RotateQuarterTurns(source,4);Assert.Same(source,restored);

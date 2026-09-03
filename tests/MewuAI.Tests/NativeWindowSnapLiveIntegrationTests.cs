@@ -40,7 +40,8 @@ public sealed class NativeWindowSnapLiveIntegrationTests
             .FirstOrDefault()??throw new InvalidOperationException("未找到可见的 Codex/ChatGPT 窗口");
         var root=AutomationElement.FromHandle(codex.MainWindowHandle);
         var rootBounds=root.Current.BoundingRectangle;
-        var expected=FindSemanticTarget(rootBounds);
+        var expected=FindSemanticTarget(root,rootBounds);
+        Assert.NotNull(expected);
         var point=expected is { } semantic
             ?new System.Windows.Point(semantic.Left+semantic.Width/2,semantic.Top+semantic.Height/2)
             :new System.Windows.Point(rootBounds.Left+rootBounds.Width/2,rootBounds.Top+rootBounds.Height/2);
@@ -67,12 +68,29 @@ public sealed class NativeWindowSnapLiveIntegrationTests
                 virtualScreen.Width,virtualScreen.Height,0x0040);
 
             var service=new NativeWindowSnapService();
-            var result=service.FindTopmostTargetAt(
-                (int)Math.Round(point.X),(int)Math.Round(point.Y),overlayHandle);
-            Assert.NotNull(result);
             if(expected is { } expectedBounds)
-                Assert.True(IsSameBounds(expectedBounds,result!.Bounds),
-                    $"覆盖层下命中了错误区域：期望 {Format(expectedBounds)}，实际 {result.Bounds}；{DescribeWindow(result.Handle)}；Codex HWND {codex.MainWindowHandle}");
+            {
+                var probes=new[]
+                {
+                    point,
+                    new System.Windows.Point(expectedBounds.Left+expectedBounds.Width*.2,expectedBounds.Top+expectedBounds.Height/2),
+                    new System.Windows.Point(expectedBounds.Left+expectedBounds.Width*.8,expectedBounds.Top+expectedBounds.Height/2),
+                    new System.Windows.Point(expectedBounds.Left+expectedBounds.Width/2,expectedBounds.Top+expectedBounds.Height*.2),
+                    new System.Windows.Point(expectedBounds.Left+expectedBounds.Width/2,expectedBounds.Top+expectedBounds.Height*.8)
+                };
+                foreach(var probe in probes)
+                {
+                    var probeResult=service.FindTopmostTargetAt((int)Math.Round(probe.X),(int)Math.Round(probe.Y),overlayHandle);
+                    Assert.NotNull(probeResult);
+                    Assert.True(IsSameBounds(expectedBounds,probeResult!.Bounds),
+                        $"同一按钮内命中发生跳变：点 {probe.X:0},{probe.Y:0}，期望 {Format(expectedBounds)}，实际 {probeResult.Bounds}；{DescribeWindow(probeResult.Handle)}；Codex HWND {codex.MainWindowHandle}");
+                }
+            }
+            else
+            {
+                var result=service.FindTopmostTargetAt((int)Math.Round(point.X),(int)Math.Round(point.Y),overlayHandle);
+                Assert.NotNull(result);
+            }
 
             // Use the same service after it has populated both native and
             // semantic caches. A real full-screen overlay must not let those
@@ -88,7 +106,7 @@ public sealed class NativeWindowSnapLiveIntegrationTests
         finally{overlay.Close();}
     }
 
-    private static Rect? FindSemanticTarget(Rect rootBounds)
+    private static Rect? FindSemanticTarget(AutomationElement root,Rect rootBounds)
     {
         for(var row=1;row<=10;row++)
         for(var column=1;column<=14;column++)
@@ -114,6 +132,23 @@ public sealed class NativeWindowSnapLiveIntegrationTests
                 catch{break;}
             }
         }
+        try
+        {
+            var condition=new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Button),
+                new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.Edit),
+                new PropertyCondition(AutomationElement.ControlTypeProperty,ControlType.MenuItem));
+            var elements=root.FindAll(TreeScope.Descendants,condition);
+            for(var index=0;index<elements.Count;index++)
+            {
+                var bounds=elements[index].Current.BoundingRectangle;
+                if(rootBounds.Contains(bounds.TopLeft)&&bounds.Width>=24&&bounds.Height>=20&&
+                   bounds.Width<rootBounds.Width*.8&&bounds.Height<rootBounds.Height*.8)
+                    return bounds;
+            }
+        }
+        catch(COMException){}
+        catch(InvalidOperationException){}
         return null;
     }
 
