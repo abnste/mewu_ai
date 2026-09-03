@@ -28,7 +28,7 @@ public sealed class PinnedVideoWindow : Window
         _videoPath=Path.GetFullPath(videoPath);_originalRegion=originalRegion;_videoLease=TempMediaRegistry.Shared.AcquireExistingFile(_videoPath);
         try
         {
-            _drag=new PinnedWindowDragController(this);Title="喵呜AI 贴视频";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
+            _drag=new PinnedWindowDragController(this);Title="喵呜AI 贴视频";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowActivated=false;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
             _videoView=new Image{Stretch=Stretch.Fill,IsHitTestVisible=false};
             _player=new VideoPreviewSurface(_videoView,Dispatcher);
             _player.Failed+=error=>{_playing=false;if(_playItem is not null)_playItem.Header="播放";new PrivacyLogger().Error("PinnedVideoPreview",error);};

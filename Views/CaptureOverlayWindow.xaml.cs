@@ -40,7 +40,7 @@ public partial class CaptureOverlayWindow : Window
     private const double CompactQuickPromptMaxHeight=52;
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
     private readonly AppHost _host;
-    private readonly CaptureFrame _frame;
+    private CaptureFrame _frame;
     private readonly List<SelectionItem> _selections=[];
     private readonly HashSet<SelectionItem> _ownedSelections=[];
     private readonly HashSet<SelectionItem> _references=[];
@@ -73,6 +73,8 @@ public partial class CaptureOverlayWindow : Window
     private HwndSource? _overlaySource;
     private System.Drawing.Rectangle _virtualScreenArea;
     private bool _recordingWindowRegionApplied;
+    private bool _overlayReady;
+    private readonly List<Window> _pinnedWindowsLoweredForOverlay=[];
     private bool _recordingHoleUpdateQueued;
     private bool _recordingRegionResetQueued;
     private bool _recordingRegionCloseQueued;
@@ -288,13 +290,16 @@ public partial class CaptureOverlayWindow : Window
                 DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;
                 PositionPromptBar();
             }));
-            if(_conversationAiAvailable&&CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
+             _overlayReady=true;
+             LowerPinnedWindowsForOverlay();
+             if(_conversationAiAvailable&&CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
         };
         DpiChanged+=(_,_)=>ApplyOverlayDpiLayout(area);
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;UpdateRecordingVisualHole();PositionPromptBar();};
         RecordingBar.SizeChanged+=(_,_)=>{if(_recordingMode)UpdateRecordingVisualHole();};
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
-        Closed+=OnClosed;
+         Activated+=OnActivated;
+         Closed+=OnClosed;
     }
 
     private void ApplyOverlayVisualTuning()
@@ -560,6 +565,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnClosed(object? sender,EventArgs e)
     {
         _closed=true;
+        RestorePinnedWindowsAfterOverlay();
         if(IsInitialized)NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);
         if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
         if(Mouse.Captured is not null)Mouse.Capture(null);
@@ -921,6 +927,76 @@ public partial class CaptureOverlayWindow : Window
     {
         FinishInterruptedPointerInteraction();
         if(_drawingMode&&!_drawingModalOpen)FinishInterruptedDrawingMode();
+        RestorePinnedWindowsAfterOverlay();
+    }
+
+    private void OnActivated(object? s,EventArgs e)
+    {
+        if(_closed||!_overlayReady)return;
+        // A pinned window is display-affinity protected and therefore absent
+        // from the desktop BitBlt. Refresh the clean background while the pin
+        // is still topmost, then put the pin below this overlay so it can be
+        // selected again and Esc/drag input continues to reach the overlay.
+        if(!HasVisibleTopmostPinnedWindow())return;
+        RefreshDesktopFrameIncludingPinnedWindows();
+        LowerPinnedWindowsForOverlay();
+    }
+
+    private static IEnumerable<Window> GetPinnedWindows()
+        => Application.Current?.Windows.OfType<Window>().Where(window=>window is PinnedImageWindow or PinnedVideoWindow) ?? [];
+
+    private bool HasVisibleTopmostPinnedWindow()
+        => GetPinnedWindows().Any(window=>window.IsVisible&&window.Topmost);
+
+    private void LowerPinnedWindowsForOverlay()
+    {
+        foreach(var window in GetPinnedWindows())
+        {
+            if(!window.IsVisible||!window.Topmost)continue;
+            if(!_pinnedWindowsLoweredForOverlay.Contains(window))_pinnedWindowsLoweredForOverlay.Add(window);
+            window.Topmost=false;
+            SetPinnedWindowZOrder(window,new IntPtr(-2));
+        }
+    }
+
+    private void RestorePinnedWindowsAfterOverlay()
+    {
+        if(_pinnedWindowsLoweredForOverlay.Count==0)return;
+        foreach(var window in _pinnedWindowsLoweredForOverlay.ToArray())
+        {
+            if(window.IsVisible)
+            {
+                window.Topmost=true;
+                SetPinnedWindowZOrder(window,new IntPtr(-1));
+            }
+        }
+        _pinnedWindowsLoweredForOverlay.Clear();
+    }
+
+    private static void SetPinnedWindowZOrder(Window window,IntPtr insertAfter)
+    {
+        var handle=new WindowInteropHelper(window).Handle;
+        if(handle==IntPtr.Zero)return;
+        const uint NoMove=0x0001,NoSize=0x0002,NoActivate=0x0010;
+        NativeMethods.SetWindowPos(handle,insertAfter,0,0,0,0,NoMove|NoSize|NoActivate);
+    }
+
+    private void RefreshDesktopFrameIncludingPinnedWindows()
+    {
+        if(_closed||!_overlayReady)return;
+        try
+        {
+            var updated=new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor);
+            if(updated.OriginX!=_frame.OriginX||updated.OriginY!=_frame.OriginY||updated.Image.PixelWidth!=_frame.Image.PixelWidth||updated.Image.PixelHeight!=_frame.Image.PixelHeight)return;
+            _frame=updated;
+            DesktopImage.Source=updated.Image;
+            foreach(var item in _selections)UpdateSelection(item);
+            if(ReferencePicker.IsOpen)UpdateReferencePicker();
+        }
+        catch(Exception ex)
+        {
+            new PrivacyLogger().Error("OverlayPinnedFrameRefresh",ex);
+        }
     }
     private void FinishInterruptedPointerInteraction()
     {
@@ -1907,6 +1983,10 @@ public partial class CaptureOverlayWindow : Window
         {
             if(item.VideoPath is { } video){var window=new PinnedVideoWindow(video,region);try{window.Show();}catch{window.Close();throw;}}
             else new PinnedImageWindow(RenderSelectionImage(item),region).Show();
+            // The newly shown pin is still topmost, so capture it into the
+            // frozen desktop frame before lowering it beneath this overlay.
+            RefreshDesktopFrameIncludingPinnedWindows();
+            LowerPinnedWindowsForOverlay();
             PromptStatus.Text=item.VideoPath is null?"已在原位贴图":"已在原位贴视频";SetPromptBarHidden(false);
         }
         catch(Exception ex){new PrivacyLogger().Error("PinMedia",ex);PromptStatus.Text=$"贴图失败：{ex.Message}";}
