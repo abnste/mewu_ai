@@ -73,6 +73,18 @@ public sealed class CaptureImageFeatureTests
     }
 
     [Fact]
+    public void ScrollingFramesSupportUpwardCaptureAndPrependNovelRows()
+    {
+        var first=Frame(64,100,80);var second=Frame(64,100,0);Assert.Equal(-80,ScrollingCaptureComposer.EstimateVerticalShift(first,second));var result=ScrollingCaptureComposer.Compose([first,second]);Assert.Equal(64,result.PixelWidth);Assert.Equal(180,result.PixelHeight);AssertPixelEquals(second,0,result,0);AssertPixelEquals(first,0,result,80);
+    }
+
+    [Fact]
+    public void ReversingScrollDirectionDoesNotDuplicatePreviouslyCapturedRows()
+    {
+        var first=Frame(64,100,40);var second=Frame(64,100,80);var third=Frame(64,100,40);var result=ScrollingCaptureComposer.Compose([first,second,third],[40,-40]);Assert.Equal(140,result.PixelHeight);
+    }
+
+    [Fact]
     public void ScrollingCaptureStopsWhenThePageNoLongerMoves()
     {
         var frame=Frame(64,100,0);Assert.Equal(0,ScrollingCaptureComposer.EstimateVerticalShift(frame,frame));Assert.Equal(100,ScrollingCaptureComposer.Compose([frame,frame]).PixelHeight);
@@ -97,7 +109,7 @@ public sealed class CaptureImageFeatureTests
     public void TransientPointerAreaDoesNotHideRealDocumentScroll()
     {
         var ignored=new Int32Rect(380,180,200,160);var first=SparseDocumentFrame(960,520,0);var second=SparseDocumentFrame(960,520,120,ignored,96);
-        Assert.Equal(120,ScrollingCaptureComposer.EstimateVerticalShift(first,second,out _,ignored));
+        Assert.Equal(120,ScrollingCaptureComposer.EstimateVerticalShift(first,second,out _,ignored,1));
     }
 
     [Theory]
@@ -109,6 +121,21 @@ public sealed class CaptureImageFeatureTests
     {
         var packed=MouseWheelInputService.PackWheelWParam(delta).ToInt64();
         Assert.Equal((short)delta,unchecked((short)((ulong)packed>>16)));
+    }
+
+    [Theory]
+    [InlineData(0x00780000u,120)]
+    [InlineData(0xFF880000u,-120)]
+    public void LowLevelMouseWheelMonitorDecodesSignedWheelDelta(uint mouseData,int expected)
+    {
+        Assert.Equal(expected,LowLevelMouseWheelMonitor.DecodeWheelDelta(mouseData));
+    }
+
+    [Fact]
+    public void LowLevelMouseWheelMonitorDistinguishesPhysicalAndInjectedInput()
+    {
+        Assert.False(LowLevelMouseWheelMonitor.IsInjected(0));
+        Assert.True(LowLevelMouseWheelMonitor.IsInjected(1));
     }
 
     [Theory]
@@ -160,6 +187,11 @@ public sealed class CaptureImageFeatureTests
     private static BitmapSource Frame(int width,int height,int globalTop)
     {
         var stride=width*4;var pixels=new byte[stride*height];for(var y=0;y<height;y++)for(var x=0;x<width;x++){var globalY=y+globalTop;var offset=y*stride+x*4;pixels[offset]=(byte)((globalY*17+x*3)%251);pixels[offset+1]=(byte)((globalY*7+x*11)%253);pixels[offset+2]=(byte)((globalY*13+x*5)%247);pixels[offset+3]=255;}var result=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,stride);result.Freeze();return result;
+    }
+
+    private static void AssertPixelEquals(BitmapSource expected,int expectedY,BitmapSource actual,int actualY)
+    {
+        var expectedPixel=new byte[4];var actualPixel=new byte[4];expected.CopyPixels(new Int32Rect(0,expectedY,1,1),expectedPixel,4,0);actual.CopyPixels(new Int32Rect(0,actualY,1,1),actualPixel,4,0);Assert.Equal(expectedPixel,actualPixel);
     }
 
     private static BitmapSource SparseDocumentFrame(int width,int height,int globalTop,Int32Rect? patch=null,byte patchValue=0)
