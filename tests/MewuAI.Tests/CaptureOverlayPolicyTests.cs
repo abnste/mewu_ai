@@ -167,6 +167,18 @@ public sealed class CaptureOverlayPolicyTests
         Assert.True(cancellation.IsCancellationRequested);
     }
 
+    [Theory]
+    [InlineData(50,50,true)]
+    [InlineData(150,50,false)]
+    [InlineData(50,115,false)]
+    public void LongCapturePassThroughOnlyCoversScrollableRegionOutsideControls(double x,double y,bool expected)
+    {
+        var capture=new Rect(0,0,100,120);
+        var controls=new Rect(20,105,60,30);
+
+        Assert.Equal(expected,CaptureOverlayPolicy.ShouldPassThroughLongCapturePointer(capture,controls,new Point(x,y)));
+    }
+
     [Fact]
     public void ScreenAiRequestAlwaysRequiresStructuredAnnotations()
     {
