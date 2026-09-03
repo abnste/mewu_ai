@@ -9,6 +9,6 @@
 - 新增 AI 表格识别及一次复制 Excel、Markdown、CSV 与图片格式。 / Added AI table recognition with one-step Excel, Markdown, CSV, and image clipboard formats.
 - 智能框选、按钮吸附、全屏对话条收纳和保存时机经过稳定性修复。 / Improved smart selection, control snapping, full-screen composer hiding, and capture-safe saving.
 - 关于页支持 GitHub 检查更新、校验下载并静默安装；贴图层级、缩放与双击关闭同步修复。 / About now checks GitHub updates, verifies downloads, and installs silently; pinned-image layering, zoom, and double-click close were also fixed.
-- 应用与安装程序自动跟随 Windows UI 语言，原生支持简体中文与自然英语。 / The app and installer now follow the Windows UI language with native Simplified Chinese and natural English.
+- 应用默认跟随 Windows UI 语言，也可在“常规”中固定简体中文或 English；安装程序自动适配系统语言。 / The app follows the Windows UI language by default and can be pinned to Simplified Chinese or English in General; the installer adapts automatically.
 
 本版本支持 Windows 10 2004（build 19041）或更高版本，x64。安装版和免安装 ZIP 均为自包含发布包。 / Requires Windows 10 version 2004 (build 19041) or newer on x64. Both installer and portable ZIP are self-contained.

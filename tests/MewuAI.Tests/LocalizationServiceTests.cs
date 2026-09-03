@@ -15,6 +15,15 @@ public sealed class LocalizationServiceTests
     public void SystemUiCultureSelectsChineseOrEnglishFallback(string culture,int expected)
         =>Assert.Equal((AppLanguage)expected,LocalizationService.ResolveLanguage(CultureInfo.GetCultureInfo(culture)));
 
+    [Theory]
+    [InlineData("system","en-US",0)]
+    [InlineData("system","zh-SG",1)]
+    [InlineData("zh-CN","en-US",1)]
+    [InlineData("en-US","zh-CN",0)]
+    [InlineData("invalid","zh-CN",1)]
+    public void SavedUiLanguageOverridesOrSafelyFallsBackToWindows(string preference,string systemCulture,int expected)
+        =>Assert.Equal((AppLanguage)expected,LocalizationService.ResolveLanguagePreference(preference,CultureInfo.GetCultureInfo(systemCulture)));
+
     [Fact]
     public void EnglishUiUsesNaturalProductCopyAndDynamicStatuses()
     {

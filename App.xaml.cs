@@ -10,11 +10,10 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        System.Globalization.CultureInfo? qaUiCulture=null;
 #if DEBUG
         var qaCultureName=Environment.GetEnvironmentVariable("MEWU_QA_UI_CULTURE");
-        LocalizationService.Initialize(string.IsNullOrWhiteSpace(qaCultureName)?null:System.Globalization.CultureInfo.GetCultureInfo(qaCultureName));
-#else
-        LocalizationService.Initialize();
+        if(!string.IsNullOrWhiteSpace(qaCultureName))qaUiCulture=System.Globalization.CultureInfo.GetCultureInfo(qaCultureName);
 #endif
         base.OnStartup(e);
         DispatcherUnhandledException+=(_,args)=>
@@ -51,7 +50,7 @@ public partial class App : System.Windows.Application
         }
         try
         {
-            _host = new AppHost(this);
+            _host = new AppHost(this,qaUiCulture);
             if (!_host.Start()) { Shutdown(); return; }
 #if DEBUG
             if (e.Args.Contains("--settings", StringComparer.OrdinalIgnoreCase))

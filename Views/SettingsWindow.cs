@@ -34,7 +34,7 @@ public sealed class SettingsWindow : Window
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials = new();
-    private readonly ComboBox _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
+    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
     private readonly TextBox _hotkey = new();
     private readonly TextBox _providerName = new(), _baseUrl = new(), _customHeaders = new();
     private readonly PasswordBox _apiKey = new();
@@ -290,6 +290,13 @@ public sealed class SettingsWindow : Window
     private UIElement General()
     {
         var panel = Panel();
+        panel.Children.Add(Text("界面语言", true));
+        foreach(var item in new[]{("跟随 Windows","system"),("简体中文","zh-CN"),("English","en-US")})
+            _uiLanguage.Items.Add(new ComboBoxItem{Content=item.Item1,Tag=item.Item2});
+        _uiLanguage.SelectedIndex=_host.Settings.UiLanguage switch{"zh-CN"=>1,"en-US"=>2,_=>0};
+        System.Windows.Automation.AutomationProperties.SetName(_uiLanguage,"界面语言");
+        panel.Children.Add(_uiLanguage);
+        panel.Children.Add(Text("语言设置将在重新启动喵呜AI后生效。",true));
         panel.Children.Add(Text("启动与快捷键", true));
         _startup.Content = "登录 Windows 后自动启动";
         _startup.IsChecked = _host.Settings.LaunchAtStartup;
@@ -1106,6 +1113,7 @@ public sealed class SettingsWindow : Window
             {
                 CaptureHotkey=new HotkeySetting{Key=parsed,Modifiers=modifiers},
                 LaunchAtStartup=_startup.IsChecked==true,
+                UiLanguage=(_uiLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system",
                 OverlayOpacity=overlayOpacityPercent/100d,
                 CaptureDelaySeconds=_delay.SelectedIndex switch{1=>3,2=>5,_=>0},
                 DefaultImageFormat=_imageFormat.SelectedIndex==1?"jpg":"png",
