@@ -14,10 +14,14 @@
   <Style x:Key="TextSelectionMenuItem" TargetType="MenuItem"><Setter Property="Foreground" Value="#34435A"/><Setter Property="Background" Value="Transparent"/><Setter Property="Padding" Value="12,8"/><Setter Property="MinWidth" Value="178"/><Setter Property="FontSize" Value="13"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem"><Border x:Name="Item" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}"><ContentPresenter ContentSource="Header" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Item" Property="Background" Value="#EAF1FA"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.42"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
   <Style x:Key="TextSelectionSeparator" TargetType="Separator"><Setter Property="Height" Value="1"/><Setter Property="Margin" Value="8,5"/><Setter Property="Background" Value="#E3E9F1"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Background="{TemplateBinding Background}" Height="1"/></ControlTemplate></Setter.Value></Setter></Style>
  </Window.Resources>
- <Canvas x:Name="Root" Background="Transparent" Focusable="True" KeyboardNavigation.IsTabStop="False" AllowDrop="True" PreviewDragOver="OnUploadedReferenceDragOver" PreviewDrop="OnUploadedReferenceDrop" MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp" LostMouseCapture="OnLostMouseCapture">
+ <Canvas x:Name="Root" Background="Transparent" Focusable="True" KeyboardNavigation.IsTabStop="False" AllowDrop="True" PreviewDragOver="OnUploadedReferenceDragOver" PreviewDrop="OnUploadedReferenceDrop" PreviewMouseWheel="OnPreviewMouseWheel" MouseLeftButtonDown="OnMouseDown" MouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp" LostMouseCapture="OnLostMouseCapture">
   <Image x:Name="DesktopImage" Stretch="Fill" IsHitTestVisible="False"/>
   <Rectangle x:Name="Dimmer" Fill="#99000000" IsHitTestVisible="False"/>
   <Canvas x:Name="SelectionLayer" IsHitTestVisible="True"/>
+  <Border x:Name="LongCapturePreviewHost" Visibility="Collapsed" Background="#F8FFFFFF" BorderBrush="#7385F2" BorderThickness="2" CornerRadius="12" Padding="4" ClipToBounds="True" IsHitTestVisible="False">
+   <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="22" ShadowDepth="5" Opacity="0.25"/></Border.Effect>
+   <Image x:Name="LongCapturePreviewImage" Stretch="Uniform" VerticalAlignment="Bottom"/>
+  </Border>
   <Border x:Name="SnapPreview" Visibility="Collapsed" BorderBrush="#42A5FF" BorderThickness="2" CornerRadius="7" Background="#123FA9F5" IsHitTestVisible="False"/>
   <p:Thumb x:Name="Nw" Tag="NW" Cursor="SizeNWSE" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="N" Tag="N" Cursor="SizeNS" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="Ne" Tag="NE" Cursor="SizeNESW" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/>
   <p:Thumb x:Name="W" Tag="W" Cursor="SizeWE" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/><p:Thumb x:Name="E" Tag="E" Cursor="SizeWE" DragDelta="ResizeDelta" DragCompleted="ResizeCompleted" Visibility="Collapsed"/>
@@ -69,6 +73,16 @@
     <Button ToolTip="清空标注" AutomationProperties.Name="清空全部标注" Click="DrawClear" Style="{StaticResource ToolbarIconButton}"><Path Width="17" Height="18" Stretch="Uniform" Stroke="#D75B68" StrokeThickness="1.8" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M3,5 L15,5 M6,5 L6,3 L12,3 L12,5 M5,7 L6,17 L12,17 L13,7 M8,9 L8,14 M10,9 L10,14"/></Button>
     <Button ToolTip="完成标注" AutomationProperties.Name="完成标注" Click="DrawDone" Style="{StaticResource ReferenceIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M4,10 L8,14 L16,5"/></Button>
    </WrapPanel>
+  </Border>
+  <Border x:Name="LongCaptureBar" Visibility="Collapsed" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="18" Padding="10,6">
+   <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="24" ShadowDepth="6" Opacity="0.24"/></Border.Effect>
+   <StackPanel Orientation="Horizontal">
+    <Path Width="16" Height="16" Stroke="#5869E9" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M5,2 L11,2 L11,14 L5,14 Z M3,5 L5,3 L7,5 M9,11 L11,13 L13,11" VerticalAlignment="Center"/>
+    <TextBlock Text="滚轮截长图" FontWeight="SemiBold" VerticalAlignment="Center" Margin="8,0,0,0"/>
+    <TextBlock x:Name="LongCaptureProgressText" Text="已采集 1 段" Foreground="#637089" VerticalAlignment="Center" Margin="10,0,8,0"/>
+    <Button ToolTip="完成长截图" AutomationProperties.Name="完成长截图" Click="FinishLongCapture" Padding="10,5"><TextBlock Text="完成"/></Button>
+    <Button ToolTip="取消长截图" AutomationProperties.Name="取消长截图" Click="CancelLongCapture" Padding="10,5"><TextBlock Text="取消"/></Button>
+   </StackPanel>
   </Border>
   <Border x:Name="RecordingBar" Visibility="Collapsed" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="18" Padding="10,7">
    <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="24" ShadowDepth="6" Opacity="0.24"/></Border.Effect>

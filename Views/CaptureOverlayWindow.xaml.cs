@@ -63,12 +63,14 @@ public partial class CaptureOverlayWindow : Window
     private Point _start,_moveStart;
     private Rect _moveOrigin;
     private int _activeIndex=-1;
-    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_historyExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_promptBarInputLayoutQueued,_reasoningRenderScheduled;
+    private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_historyExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_longCaptureMode,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_promptBarInputLayoutQueued,_reasoningRenderScheduled;
     private int _promptBarAnimationVersion;
     private int _systemFileDialogDepth;
     private int _referenceMentionStart=-1;
     private int _nextUploadNumber;
     private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingCountdownRequest,_recordingStopWatchdog,_readAloudRequest,_snapProbeRequest;
+    private CancellationTokenSource? _longCaptureSampleRequest;
+    private Task? _longCaptureSampleTask;
     private CancellationTokenSource? _reasoningRenderRequest;
     private TaskCompletionSource<AiInteractionResponse>? _activeInteraction;
     private AiInteractionResponse? _activeInteractionFallback;
@@ -76,6 +78,12 @@ public partial class CaptureOverlayWindow : Window
     private PasswordBox? _activeSensitiveInput;
     private RecordingSession? _recordingSession;
     private SelectionItem? _recordingItem;
+    private SelectionItem? _longCaptureItem;
+    private OverlaySnapshot? _longCaptureBefore;
+    private readonly List<BitmapSource> _longCaptureFrames=[];
+    private BitmapSource? _longCaptureComposite;
+    private IntPtr _longCaptureScrollTarget;
+    private int _longCaptureSampleVersion;
     private bool _recordingItemWasReferenced;
     private HwndSource? _overlaySource;
     private System.Drawing.Rectangle _virtualScreenArea;
@@ -154,6 +162,7 @@ public partial class CaptureOverlayWindow : Window
         public TimeSpan VideoDuration;
         public bool VideoPlaying;
         public CancellationTokenSource? VideoAnnotationPlayback;
+        public BitmapSource? CapturedImageOverride;
     }
 
     private sealed record UploadedReference(string Handle,string Path,AiAttachmentType Type,string MimeType,string Preview)
@@ -177,6 +186,7 @@ public partial class CaptureOverlayWindow : Window
         bool Referenced,
         StrokeCollection Markup,
         IReadOnlyList<DrawingElementSpec> DrawingElements,
+        BitmapSource? CapturedImageOverride,
         TextLayerState TextLayer,
         IReadOnlyList<AiAnnotation> AnnotationNotes);
     private sealed record OverlaySnapshot(
@@ -324,7 +334,7 @@ public partial class CaptureOverlayWindow : Window
             if(_conversationAiAvailable&&CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
         };
         DpiChanged+=(_,_)=>ApplyOverlayDpiLayout(area);
-        SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;UpdateRecordingVisualHole();PositionPromptBar();};
+        SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;UpdateRecordingVisualHole();if(_longCaptureMode&&_longCaptureItem is { } item){BeginLongCaptureLiveRegion(item);PositionFloatingBar(LongCaptureBar,item);if(_longCaptureComposite is { } composite)UpdateLongCapturePreview(item,composite);}PositionPromptBar();};
         RecordingBar.SizeChanged+=(_,_)=>{if(_recordingMode)UpdateRecordingVisualHole();};
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
         Activated+=OnActivated;
@@ -692,7 +702,7 @@ public partial class CaptureOverlayWindow : Window
             try{_overlaySource.RemoveHook(OverlayWindowMessage);}catch(Exception ex){new PrivacyLogger().Error("OverlayHookRemove",ex);}
             _overlaySource=null;
         }
-        ResolveOverlayInteractionWithFallback();StopOverlayReadAloud();CancelSnapProbe();TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);TryCancel(_historyLoadRequest);CancelRecordingCountdown();CancelRecordingStopWatchdog();_recordingTimer.Stop();
+        ResolveOverlayInteractionWithFallback();StopOverlayReadAloud();CancelSnapProbe();CancelLongCaptureSample();ResetLongCaptureState();TryCancel(_speechRequest);TryCancel(_request);TryCancel(_overlayRequest);TryCancel(_historyLoadRequest);CancelRecordingCountdown();CancelRecordingStopWatchdog();_recordingTimer.Stop();
         _reasoningRenderRequest=null;_reasoningRenderScheduled=false;ReasoningPulse.BeginAnimation(OpacityProperty,null);
         var session=_recordingSession;_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;
         if(session is not null)
@@ -992,7 +1002,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMouseDown(object s,MouseButtonEventArgs e)
     {
-        if(_recordingMode||_drawingMode)return;
+        if(_recordingMode||_drawingMode||_longCaptureMode)return;
         if(e.OriginalSource is Thumb||IsInside(e.OriginalSource as DependencyObject,PromptBar)||IsInside(e.OriginalSource as DependencyObject,Toolbar)||IsInside(e.OriginalSource as DependencyObject,DrawingToolbar)||IsInside(e.OriginalSource as DependencyObject,RecordingBar)||_selections.Any(item=>IsInside(e.OriginalSource as DependencyObject,item.TextSelection)))return;
         if(RejectIfOverlayOperationBusy())return;
         _pointerOperationBefore=CaptureOverlaySnapshot();
@@ -1006,7 +1016,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnMouseMove(object s,MouseEventArgs e)
     {
         var p=e.GetPosition(Root);
-        if(_recordingMode||_drawingMode){PointerInspector.Visibility=Visibility.Collapsed;return;}
+        if(_recordingMode||_drawingMode||_longCaptureMode){PointerInspector.Visibility=Visibility.Collapsed;return;}
         UpdatePointerInspector(p);
         if(_selecting&&Active is { } created){if(_pendingAutoSelection is not null&&(p-_start).Length<SystemParameters.MinimumHorizontalDragDistance)return;_pendingAutoSelection=null;created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
@@ -1032,7 +1042,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnMouseUp(object s,MouseButtonEventArgs e)
     {
-        if(_recordingMode||_drawingMode)return;
+        if(_recordingMode||_drawingMode||_longCaptureMode)return;
         if(!_selecting&&!_moving)return;if(_pendingAutoSelection is { } automatic&&Active is { } automaticItem){automaticItem.Bounds=automatic;_pendingAutoSelection=null;} _selecting=_moving=false;Root.ReleaseMouseCapture();
         if(Active is not { } item||!CaptureOverlayPolicy.IsUsableSelection(item.Bounds.Width,item.Bounds.Height)){RemoveActiveSelection(false);_pointerOperationBefore=null;_pointerOperationLabel="";if(Active is not null)ShowToolbar();SetPromptBarHidden(false);return;}
         UpdateSelection(item);PositionPromptBar();ShowToolbar();SetPromptBarHidden(PointerOverSelection(e.GetPosition(Root)));PromptStatus.Text=$"已选择 {_selections.Count} 个区域 · 可继续拖动添加";e.Handled=true;
@@ -1049,6 +1059,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnActivated(object? s,EventArgs e)
     {
         if(_closed||!_overlayReady)return;
+        if(_longCaptureMode){RaisePinnedWindowsAboveOverlay();return;}
         // A modal file picker temporarily activates/deactivates its owner.
         // Capturing the desktop during that transition freezes the picker into
         // the screenshot. Keep the original clean frame until the modal has
@@ -1147,6 +1158,7 @@ public partial class CaptureOverlayWindow : Window
             _references.Contains(item),
             new StrokeCollection(item.Markup.Strokes.Select(stroke=>stroke.Clone())),
             item.DrawingElements.ToArray(),
+            item.CapturedImageOverride,
             item.TextLayer,
             item.AnnotationNotes.ToArray())).ToArray(),
         Active,
@@ -1179,7 +1191,7 @@ public partial class CaptureOverlayWindow : Window
             item.Bounds=state.Bounds;
             item.Markup.Strokes.Clear();
             foreach(var stroke in state.Markup)item.Markup.Strokes.Add(stroke.Clone());
-            item.DrawingElements.Clear();item.DrawingElements.AddRange(state.DrawingElements);item.DrawingOrder.Clear();item.DrawingOrder.AddRange(item.Markup.Strokes.Select(stroke=>(DrawingAction)new StrokeDrawingAction(stroke)));item.DrawingOrder.AddRange(item.DrawingElements.Select(element=>(DrawingAction)new ElementDrawingAction(element)));item.DrawingRedo.Clear();item.NextDrawingNumber=Math.Max(1,item.DrawingElements.OfType<NumberDrawingElement>().Select(element=>element.Number).DefaultIfEmpty(0).Max()+1);RebuildDrawingElements(item);item.TextLayer=state.TextLayer;
+            item.DrawingElements.Clear();item.DrawingElements.AddRange(state.DrawingElements);item.DrawingOrder.Clear();item.DrawingOrder.AddRange(item.Markup.Strokes.Select(stroke=>(DrawingAction)new StrokeDrawingAction(stroke)));item.DrawingOrder.AddRange(item.DrawingElements.Select(element=>(DrawingAction)new ElementDrawingAction(element)));item.DrawingRedo.Clear();item.NextDrawingNumber=Math.Max(1,item.DrawingElements.OfType<NumberDrawingElement>().Select(element=>element.Number).DefaultIfEmpty(0).Max()+1);RebuildDrawingElements(item);item.CapturedImageOverride=state.CapturedImageOverride;item.TextLayer=state.TextLayer;
             item.AnnotationNotes.Clear();item.AnnotationNotes.AddRange(state.AnnotationNotes);
             ApplyTextLayerState(item);RenderAnnotationsForItem(item,item.VideoPath is not null?item.AnnotationNotes.FirstOrDefault(note=>note.IsVideoTimeline)?.StartTime:null);
             if(state.Referenced)_references.Add(item);
@@ -1220,7 +1232,7 @@ public partial class CaptureOverlayWindow : Window
     private void UpdateSelection(SelectionItem item)
     {
         var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Markup.Width=item.TextOverlays.Width=item.AiAnnotations.Width=item.TextSelection.Width=r.Width;item.Markup.Height=item.TextOverlays.Height=item.AiAnnotations.Height=item.TextSelection.Height=r.Height;
-        var px=ToPixelRect(r);if(px.Width>0&&px.Height>0&&item.VideoPath is null)item.Image.Source=ScreenCaptureService.Crop(_frame.Image,px);
+        var px=ToPixelRect(r);if(px.Width>0&&px.Height>0&&item.VideoPath is null)item.Image.Source=item.CapturedImageOverride??ScreenCaptureService.Crop(_frame.Image,px);
         var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?new SolidColorBrush(Color.FromRgb(102,112,235)):new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:referenced?2:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Background=new SolidColorBrush(referenced?Color.FromArgb(238,91,101,226):Color.FromArgb(230,29,119,224));item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
         if(active&&!item.IsImplicit){SizeTextLabel.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":$"视频 · {item.VideoDuration:mm\\:ss}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
     }
@@ -1348,9 +1360,9 @@ public partial class CaptureOverlayWindow : Window
 
     private void ShowToolbar()
     {
-        if(Active is not {IsImplicit:false} item||_recordingMode){Toolbar.Visibility=Visibility.Collapsed;return;}
+        if(Active is not {IsImplicit:false} item||_recordingMode||_longCaptureMode){Toolbar.Visibility=Visibility.Collapsed;return;}
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
-        var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=OcrButton.Visibility=LongCaptureButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
+        var isVideo=item.VideoPath is not null;var isLongImage=item.CapturedImageOverride is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo&&!isLongImage?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
 
@@ -1640,7 +1652,7 @@ public partial class CaptureOverlayWindow : Window
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active,false,false,false);}
     private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false,bool includeTranslation=true)
     {
-        var pixels=ToPixelRect(item.Bounds);var source=ScreenCaptureService.Crop(_frame.Image,pixels);var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var translation=hasTranslation?RenderTranslationOverlay(item,pixels.Width,pixels.Height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(pixels.Width,pixels.Height,item.AnnotationNotes,null,item.AnnotationCardPositions):null;var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;return AnnotationOverlayRenderer.Composite(background,manual,translation,ai);
+        var pixels=ToPixelRect(item.Bounds);var source=item.CapturedImageOverride??ScreenCaptureService.Crop(_frame.Image,pixels);var width=source.PixelWidth;var height=source.PixelHeight;var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,width,height):null;var translation=hasTranslation?RenderTranslationOverlay(item,width,height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(width,height,item.AnnotationNotes,null,item.AnnotationCardPositions):null;var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;return AnnotationOverlayRenderer.Composite(background,manual,translation,ai);
     }
     private static bool HasManualAnnotations(SelectionItem item)=>item.Markup.Strokes.Count>0||item.DrawingElements.Count>0;
     private static bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||item.AnnotationNotes.Count>0||item.TextLayer is TranslationTextLayerState;
@@ -2189,33 +2201,88 @@ public partial class CaptureOverlayWindow : Window
     }
     private async void CaptureLongScreenshot(object s,RoutedEventArgs e)
     {
-        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false,VideoPath:null} item)return;
+        if(RejectIfOverlayOperationBusy()||_longCaptureMode||Active is not {IsImplicit:false,VideoPath:null,CapturedImageOverride:null} item)return;
         if(!_captureExclusionVerified){PromptStatus.Text="覆盖层防捕获不可用，无法安全生成长截图";return;}
-        var operation=BeginOverlayOperation("正在滚动并拼接长截图…按 Esc 可取消");var handle=new WindowInteropHelper(this).Handle;var originalCursor=System.Windows.Forms.Cursor.Position;var transparent=false;
+        _longCaptureBefore=CaptureOverlaySnapshot();_longCaptureItem=item;_longCaptureMode=true;_longCaptureFrames.Clear();_longCaptureComposite=null;_longCaptureScrollTarget=IntPtr.Zero;_longCaptureSampleVersion=0;
         try
         {
-            var pixels=ToPixelRect(item.Bounds);var screen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=screen.X+screen.Width/2;var centerY=screen.Y+screen.Height/2;var scrollTarget=_windowSnap.FindTopmostTargetAt(centerX,centerY,handle);MouseWheelInputService.SetCursor(centerX,centerY);transparent=NativeMethods.TrySetWindowMouseTransparent(handle,true);if(!transparent)throw new InvalidOperationException("无法把滚轮交给下层窗口");SnapPreview.Visibility=Visibility.Collapsed;await Task.Delay(160,operation.Token);
-            var frames=new List<BitmapSource>();
-            var initialLive=new ScreenCaptureService().CaptureDesktop();
-            frames.Add(ScreenCaptureService.Crop(initialLive.Image,pixels));
-            // Give the underlying page a real wheel tick before comparing the
-            // next capture; capturing immediately after SendInput often
-            // produces an identical frame and makes long capture abort.
-            if(!MouseWheelInputService.ScrollDown(scrollTarget?.Handle??IntPtr.Zero,centerX,centerY))throw new InvalidOperationException("当前窗口不接受滚动输入，请先点击页面内容");
-            await Task.Delay(480,operation.Token);
-            for(var index=0;index<24;index++)
-            {
-                operation.Token.ThrowIfCancellationRequested();var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);
-                if(ScrollingCaptureComposer.EstimateVerticalShift(frames[^1],frame)<=0)break;
-                frames.Add(frame);PromptStatus.Text=$"正在拼接长截图 · 已采集 {frames.Count} 段…按 Esc 可取消";
-                if(checked((long)frame.PixelWidth*frame.PixelHeight*frames.Count)>=ScrollingCaptureComposer.MaxOutputPixels||!MouseWheelInputService.ScrollDown(scrollTarget?.Handle??IntPtr.Zero,centerX,centerY))break;
-                await Task.Delay(480,operation.Token);
-            }
-            if(frames.Count<2)throw new InvalidOperationException("未检测到可滚动内容；请把选区放在页面内容上并确认鼠标滚轮可滚动");var result=await Task.Run(()=>ScrollingCaptureComposer.Compose(frames),operation.Token);if(!IsOverlayOperationActive(operation,item))return;new PinnedImageWindow(result).Show();PromptStatus.Text=$"长截图完成 · {result.PixelWidth} × {result.PixelHeight} · 已生成贴图，可右键保存";
+            Toolbar.Visibility=SizeText.Visibility=PointerInspector.Visibility=PromptBarHost.Visibility=Visibility.Collapsed;HideHandles();SnapPreview.Visibility=Visibility.Collapsed;BeginLongCaptureLiveRegion(item);LongCaptureBar.Visibility=Visibility.Visible;PositionFloatingBar(LongCaptureBar,item);Cursor=Cursors.Arrow;
+            await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.Render);await Task.Delay(100);
+            var pixels=ToPixelRect(item.Bounds);var screen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=screen.X+screen.Width/2;var centerY=screen.Y+screen.Height/2;var handle=new WindowInteropHelper(this).Handle;_longCaptureScrollTarget=_windowSnap.FindTopmostTargetAt(centerX,centerY,handle)?.Handle??IntPtr.Zero;
+            var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);_longCaptureFrames.Add(frame);_longCaptureComposite=frame;UpdateLongCapturePreview(item,frame);LongCaptureProgressText.Text="已采集 1 段";PromptStatus.Text="滚轮向下控制截取长度 · 已截内容会在旁边向上拼接";Root.Focus();
         }
-        catch(OperationCanceledException){if(IsOverlayOperationActive(operation,item))PromptStatus.Text="已取消长截图";}
-        catch(Exception ex){new PrivacyLogger().Error("LongScreenshot",ex);if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"长截图失败：{ex.Message}";}
-        finally{if(transparent&&!NativeMethods.TrySetWindowMouseTransparent(handle,false)){new PrivacyLogger().Error("LongScreenshotInteractionRestore",new InvalidOperationException("长截图后窗口交互恢复失败"));if(!_closed)Close();}MouseWheelInputService.SetCursor(originalCursor.X,originalCursor.Y);EndOverlayOperation(operation);}
+        catch(Exception ex)
+        {
+            new PrivacyLogger().Error("LongScreenshotStart",ex);CancelLongCaptureSession($"长截图启动失败：{ex.Message}");
+        }
+    }
+
+    private void BeginLongCaptureLiveRegion(SelectionItem item)
+    {
+        var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));var hole=new RectangleGeometry(Normalize(item.Bounds));DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);item.Image.Visibility=item.Video.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;
+    }
+
+    private void OnPreviewMouseWheel(object sender,MouseWheelEventArgs e)
+    {
+        if(!_longCaptureMode||_longCaptureItem is not { } item)return;
+        if(IsInside(e.OriginalSource as DependencyObject,LongCaptureBar))return;
+        var point=e.GetPosition(Root);e.Handled=true;
+        if(!item.Bounds.Contains(point)){PromptStatus.Text="请把鼠标放在长截图区域内滚动";return;}
+        var screen=ScreenCoordinateService.ToScreenPixelPoint(point,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight,_frame.OriginX,_frame.OriginY);var handle=new WindowInteropHelper(this).Handle;var target=_windowSnap.FindTopmostTargetAt(screen.X,screen.Y,handle)?.Handle??_longCaptureScrollTarget;if(target!=IntPtr.Zero)_longCaptureScrollTarget=target;
+        if(!MouseWheelInputService.Scroll(_longCaptureScrollTarget,screen.X,screen.Y,e.Delta)){PromptStatus.Text="当前区域没有响应滚轮，请把鼠标移到实际可滚动内容上";return;}
+        if(e.Delta>=0){PromptStatus.Text="已向上滚动；继续向下滚动才会追加长图";return;}
+        ScheduleLongCaptureSample();PromptStatus.Text="正在等待页面滚动完成…";
+    }
+
+    private void ScheduleLongCaptureSample()
+    {
+        var previous=Interlocked.Exchange(ref _longCaptureSampleRequest,new CancellationTokenSource());if(previous is not null){try{previous.Cancel();}catch(ObjectDisposedException){}previous.Dispose();}var request=_longCaptureSampleRequest!;var version=++_longCaptureSampleVersion;_longCaptureSampleTask=CaptureLongFrameAfterScrollAsync(request,version);
+    }
+
+    private async Task CaptureLongFrameAfterScrollAsync(CancellationTokenSource request,int version)
+    {
+        try
+        {
+            await Task.Delay(280,request.Token);if(!_longCaptureMode||_longCaptureItem is not { } item||!ReferenceEquals(request,_longCaptureSampleRequest)||version!=_longCaptureSampleVersion)return;
+            var pixels=ToPixelRect(item.Bounds);var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);var previous=_longCaptureFrames[^1];var shift=await Task.Run(()=>ScrollingCaptureComposer.EstimateVerticalShift(previous,frame),request.Token);if(shift<=0){if(_longCaptureMode)PromptStatus.Text="没有检测到新的滚动内容；可能已到底或滚动过快";return;}
+            if(_longCaptureFrames.Count>=24){PromptStatus.Text="已达到 24 段安全上限，请点击完成";return;}
+            _longCaptureFrames.Add(frame);var frames=_longCaptureFrames.ToArray();var composite=await Task.Run(()=>ScrollingCaptureComposer.Compose(frames),request.Token);if(!_longCaptureMode||!ReferenceEquals(request,_longCaptureSampleRequest)||version!=_longCaptureSampleVersion)return;
+            _longCaptureComposite=composite;UpdateLongCapturePreview(item,composite);LongCaptureProgressText.Text=$"已采集 {_longCaptureFrames.Count} 段 · {composite.PixelHeight}px";PromptStatus.Text=$"长图已追加 {shift}px · 继续滚动或点击完成";if((long)composite.PixelWidth*composite.PixelHeight>=ScrollingCaptureComposer.MaxOutputPixels)PromptStatus.Text="已达到长图像素安全上限，请点击完成";
+        }
+        catch(OperationCanceledException){}
+        catch(Exception ex){new PrivacyLogger().Error("LongScreenshotSample",ex);if(_longCaptureMode)PromptStatus.Text=$"本次滚动未能拼接：{ex.Message}";}
+    }
+
+    private void UpdateLongCapturePreview(SelectionItem item,BitmapSource composite)
+    {
+        var monitor=MonitorBounds(item.Bounds);var width=Math.Clamp(Math.Min(220,Math.Max(120,item.Bounds.Width*.34)),96,Math.Max(96,monitor.Width*.28));var height=Math.Min(monitor.Height*.68,width*composite.PixelHeight/Math.Max(1d,composite.PixelWidth));var placeLeft=item.Bounds.Left-monitor.Left>=width+12;var left=placeLeft?item.Bounds.Left-width-10:item.Bounds.Right+10;if(!placeLeft&&left+width>monitor.Right)left=monitor.Right-width-6;var bottom=Math.Min(monitor.Bottom-6,item.Bounds.Bottom);var top=Math.Max(monitor.Top+6,bottom-height);LongCapturePreviewImage.Source=composite;LongCapturePreviewHost.Width=width;LongCapturePreviewHost.Height=Math.Max(48,bottom-top);Canvas.SetLeft(LongCapturePreviewHost,Math.Clamp(left,monitor.Left+4,Math.Max(monitor.Left+4,monitor.Right-width-4)));Canvas.SetTop(LongCapturePreviewHost,top);LongCapturePreviewHost.Visibility=Visibility.Visible;
+    }
+
+    private async void FinishLongCapture(object sender,RoutedEventArgs e)
+    {
+        if(!_longCaptureMode||_longCaptureItem is not { } item)return;var pending=_longCaptureSampleTask;if(pending is not null&&!pending.IsCompleted)await Task.WhenAny(pending,Task.Delay(650));CancelLongCaptureSample();var result=_longCaptureComposite??_longCaptureFrames.FirstOrDefault();if(result is null){CancelLongCaptureSession("没有采集到可用画面");return;}var before=_longCaptureBefore;var original=item.Bounds;var monitor=MonitorBounds(original);ClearImageOnlyLayers(item);item.CapturedImageOverride=result;var desiredHeight=original.Width*result.PixelHeight/Math.Max(1d,result.PixelWidth);var height=Math.Clamp(desiredHeight,Math.Min(original.Height,monitor.Height),Math.Max(Math.Min(original.Height,monitor.Height),monitor.Height-8));var bottom=Math.Min(original.Bottom,monitor.Bottom-4);var top=Math.Max(monitor.Top+4,bottom-height);item.Bounds=new Rect(Math.Clamp(original.Left,monitor.Left+4,Math.Max(monitor.Left+4,monitor.Right-original.Width-4)),top,original.Width,Math.Max(1,bottom-top));EndLongCaptureSession(item);UpdateSelection(item);if(before is not null)RecordOverlayOperation(before,"滚动长截图");PromptStatus.Text=$"长截图完成 · {result.PixelWidth} × {result.PixelHeight} · 已留在原位";
+    }
+
+    private void CancelLongCapture(object sender,RoutedEventArgs e)=>CancelLongCaptureSession("已取消长截图");
+
+    private void CancelLongCaptureSession(string status)
+    {
+        var item=_longCaptureItem;CancelLongCaptureSample();if(item is not null)EndLongCaptureSession(item);else ResetLongCaptureState();PromptStatus.Text=status;
+    }
+
+    private void EndLongCaptureSession(SelectionItem item)
+    {
+        DesktopImage.Clip=null;Dimmer.Clip=null;LongCaptureBar.Visibility=LongCapturePreviewHost.Visibility=Visibility.Collapsed;LongCapturePreviewImage.Source=null;item.Image.Visibility=Visibility.Visible;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=Visibility.Visible;ApplyTextLayerState(item);ResetLongCaptureState();Cursor=Cursors.Cross;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;if(_selections.Contains(item)){var index=_selections.IndexOf(item);if(index>=0)Select(index);ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);}if(IsActive&&!_closed)Root.Focus();
+    }
+
+    private void ResetLongCaptureState()
+    {
+        _longCaptureMode=false;_longCaptureItem=null;_longCaptureBefore=null;_longCaptureFrames.Clear();_longCaptureComposite=null;_longCaptureScrollTarget=IntPtr.Zero;_longCaptureSampleTask=null;
+    }
+
+    private void CancelLongCaptureSample()
+    {
+        var request=Interlocked.Exchange(ref _longCaptureSampleRequest,null);if(request is null)return;try{request.Cancel();}catch(ObjectDisposedException){}request.Dispose();
     }
     private void Draw(object s,RoutedEventArgs e)=>EnterDrawingMode();
     private void EnterDrawingMode()
@@ -2984,6 +3051,7 @@ public partial class CaptureOverlayWindow : Window
             HandleEscape();
             e.Handled=true;return;
         }
+        if(_longCaptureMode){e.Handled=true;return;}
         if(_drawingMode&&_drawTool==DrawTool.Select&&e.Key==Key.Delete)
         {
             if(!DeleteSelectedDrawingObject())PromptStatus.Text="请先点击选择要删除的标注";
@@ -3023,7 +3091,8 @@ public partial class CaptureOverlayWindow : Window
 
     private void HandleEscape()
     {
-        if(ReferencePicker.IsOpen){ReferencePicker.IsOpen=false;_referenceMentionStart=-1;}
+        if(_longCaptureMode)CancelLongCaptureSession("已取消长截图");
+        else if(ReferencePicker.IsOpen){ReferencePicker.IsOpen=false;_referenceMentionStart=-1;}
         else if(_recordingCountdownActive){CancelRecordingCountdown();PromptStatus.Text="正在取消录屏倒计时…";}
         else if(_recordingMode)StopRecording(this,new RoutedEventArgs());
         else if(_drawingMode)ExitDrawingMode();
