@@ -37,6 +37,7 @@ internal sealed class NativeWindowSnapService
     private const uint ChildWindowSkipTransparent = 0x0004;
     private const uint ChildWindowFlags = ChildWindowSkipInvisible | ChildWindowSkipDisabled | ChildWindowSkipTransparent;
     private const uint GetAncestorRoot = 2;
+    private const int DwmWindowAttributeCloaked = 14;
 
     private readonly object _cacheGate = new();
     private WindowHitCache? _windowCache;
@@ -189,9 +190,19 @@ internal sealed class NativeWindowSnapService
 
     private static bool IsSelectableWindow(IntPtr handle, IntPtr excludedWindow)
     {
-        if (handle == IntPtr.Zero || handle == excludedWindow || !IsWindowVisible(handle) || IsIconic(handle) || IsDesktopShellWindow(handle))
+        if (handle == IntPtr.Zero || handle == excludedWindow || !IsWindowVisible(handle) || IsIconic(handle) || IsWindowCloaked(handle) || IsDesktopShellWindow(handle))
             return false;
         return true;
+    }
+
+    private static bool IsWindowCloaked(IntPtr handle)
+    {
+        try
+        {
+            return DwmGetWindowAttribute(handle,DwmWindowAttributeCloaked,out int value,sizeof(int))>=0&&value!=0;
+        }
+        catch(DllNotFoundException){return false;}
+        catch(EntryPointNotFoundException){return false;}
     }
 
     private static IntPtr GetRootWindow(IntPtr handle)
@@ -255,6 +266,7 @@ internal sealed class NativeWindowSnapService
 
                 AutomationElement? next = null;
                 var nextArea = double.PositiveInfinity;
+                var nextEnabled = false;
                 var child = walker.GetFirstChild(current);
                 for (var siblings = 0; child is not null && siblings < MaxAutomationSiblingsPerLevel && Stopwatch.GetTimestamp()<=deadline; siblings++)
                 {
@@ -263,10 +275,18 @@ internal sealed class NativeWindowSnapService
                     if (childInfo.ProcessId != currentProcess && Contains(childRectangle, screenX, screenY))
                     {
                         var area = Math.Max(1, childRectangle.Width * childRectangle.Height);
-                        if (area < nextArea)
+                        // WinUI/WebView roots can expose an equal-sized,
+                        // disabled placeholder Pane before the real enabled
+                        // Region.  Choosing only by smallest area permanently
+                        // entered that dead branch and made Codex controls
+                        // unreachable.  On equal geometry prefer the enabled
+                        // provider branch while retaining the bounded spatial
+                        // single-branch traversal.
+                        if (area < nextArea || (Math.Abs(area-nextArea)<1 && childInfo.IsEnabled && !nextEnabled))
                         {
                             next = child;
                             nextArea = area;
+                            nextEnabled = childInfo.IsEnabled;
                         }
                     }
                     child = walker.GetNextSibling(child);
@@ -498,6 +518,7 @@ internal sealed class NativeWindowSnapService
     [DllImport("user32.dll")] private static extern bool ScreenToClient(IntPtr handle, ref NativePoint point);
     [DllImport("user32.dll")] private static extern IntPtr ChildWindowFromPointEx(IntPtr parent, NativePoint point, uint flags);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out NativeRect value, int valueSize);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out int value, int valueSize);
 }
 
 internal sealed record WindowSnapTarget(IntPtr Handle, ScreenRect Bounds);
