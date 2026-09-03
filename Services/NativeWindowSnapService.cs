@@ -29,7 +29,7 @@ internal sealed class NativeWindowSnapService
     // walk, with a strict time budget, rather than a whole-window scan.
     private const int MaxAutomationDepth = 24;
     private const int MaxAutomationSiblingsPerLevel = 512;
-    private const int AutomationTraversalBudgetMs = 40;
+    private const int AutomationTraversalBudgetMs = 120;
     private const int MaxWindowCacheAgeMs = 250;
     private const int MaxPreciseCacheAgeMs = 450;
     private const uint ChildWindowSkipInvisible = 0x0001;
@@ -215,11 +215,18 @@ internal sealed class NativeWindowSnapService
     }
 
     private static WindowSnapTarget? FindAutomationBranchAt(IntPtr windowHandle, int screenX, int screenY, IntPtr excludedWindow)
+        // Computer-use resolves Codex's semantic Control View (Button/Edit/
+        // MenuItem), while Raw View may expose only its WebView render hosts.
+        // Prefer the semantic tree and only fall back to Raw View for apps
+        // whose providers omit controls from the former.
+        => FindAutomationBranchAt(windowHandle,screenX,screenY,excludedWindow,TreeWalker.ControlViewWalker)
+           ??FindAutomationBranchAt(windowHandle,screenX,screenY,excludedWindow,TreeWalker.RawViewWalker);
+
+    private static WindowSnapTarget? FindAutomationBranchAt(IntPtr windowHandle, int screenX, int screenY, IntPtr excludedWindow,TreeWalker walker)
     {
         try
         {
             var current = AutomationElement.FromHandle(windowHandle);
-            var walker = TreeWalker.RawViewWalker;
             var currentProcess = (int)Environment.ProcessId;
             WindowSnapTarget? best = null;
             var deadline=Stopwatch.GetTimestamp()+Stopwatch.Frequency*AutomationTraversalBudgetMs/1000;
