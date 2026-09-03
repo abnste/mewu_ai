@@ -23,8 +23,13 @@ internal sealed class NativeWindowSnapService
     private const int MaxUsefulControlWidth = 1200;
     private const int MaxUsefulControlHeight = 240;
     private const int MaxUsefulControlArea = 360_000;
-    private const int MaxAutomationDepth = 8;
-    private const int MaxAutomationSiblingsPerLevel = 48;
+    // Modern WebView/Electron shells (including Codex) expose actionable
+    // controls below several generic Region/Group/Document layers. Eight
+    // levels stopped before the actual buttons. This remains a single branch
+    // walk, with a strict time budget, rather than a whole-window scan.
+    private const int MaxAutomationDepth = 24;
+    private const int MaxAutomationSiblingsPerLevel = 512;
+    private const int AutomationTraversalBudgetMs = 40;
     private const int MaxWindowCacheAgeMs = 250;
     private const int MaxPreciseCacheAgeMs = 450;
     private const uint ChildWindowSkipInvisible = 0x0001;
@@ -217,8 +222,9 @@ internal sealed class NativeWindowSnapService
             var walker = TreeWalker.RawViewWalker;
             var currentProcess = (int)Environment.ProcessId;
             WindowSnapTarget? best = null;
+            var deadline=Stopwatch.GetTimestamp()+Stopwatch.Frequency*AutomationTraversalBudgetMs/1000;
 
-            for (var depth = 0; current is not null && depth < MaxAutomationDepth; depth++)
+            for (var depth = 0; current is not null && depth < MaxAutomationDepth && Stopwatch.GetTimestamp()<=deadline; depth++)
             {
                 var info = current.Current;
                 var rectangle = info.BoundingRectangle;
@@ -228,7 +234,7 @@ internal sealed class NativeWindowSnapService
                 AutomationElement? next = null;
                 var nextArea = double.PositiveInfinity;
                 var child = walker.GetFirstChild(current);
-                for (var siblings = 0; child is not null && siblings < MaxAutomationSiblingsPerLevel; siblings++)
+                for (var siblings = 0; child is not null && siblings < MaxAutomationSiblingsPerLevel && Stopwatch.GetTimestamp()<=deadline; siblings++)
                 {
                     var childInfo = child.Current;
                     var childRectangle = childInfo.BoundingRectangle;
