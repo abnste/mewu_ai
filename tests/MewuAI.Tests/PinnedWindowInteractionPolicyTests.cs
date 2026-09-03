@@ -6,6 +6,13 @@ namespace MewuAI.Tests;
 
 public sealed class PinnedWindowInteractionPolicyTests
 {
+    [Fact]
+    public void OriginalPlacement_ShowsPinnedWindowWithoutActivation()
+    {
+        Assert.Equal(0x0040u,PinnedWindowInteractionPolicy.ShowWithoutActivationFlags&0x0040u);
+        Assert.Equal(0x0010u,PinnedWindowInteractionPolicy.ShowWithoutActivationFlags&0x0010u);
+    }
+
     [Theory]
     [InlineData(0,0,3.9,3.9,false)]
     [InlineData(0,0,4,0,true)]

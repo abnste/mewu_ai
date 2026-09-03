@@ -15,5 +15,13 @@ internal static class DrawingAnnotationGeometry
         return new Point(start.X+directionX*side,start.Y+directionY*side);
     }
 
+    internal static Vector ConstrainTranslation(Rect bounds,Vector requested,Size canvas)
+    {
+        if(bounds.IsEmpty||!IsFinite(requested.X)||!IsFinite(requested.Y)||!IsFinite(canvas.Width)||!IsFinite(canvas.Height))return new Vector();
+        var minimumX=-bounds.Left;var maximumX=Math.Max(minimumX,canvas.Width-bounds.Right);
+        var minimumY=-bounds.Top;var maximumY=Math.Max(minimumY,canvas.Height-bounds.Bottom);
+        return new Vector(Math.Clamp(requested.X,minimumX,maximumX),Math.Clamp(requested.Y,minimumY,maximumY));
+    }
+
     private static bool IsFinite(double value)=>double.IsFinite(value);
 }
