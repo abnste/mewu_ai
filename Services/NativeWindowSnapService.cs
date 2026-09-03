@@ -109,17 +109,18 @@ internal sealed class NativeWindowSnapService
             return automation;
         }
 
-        // Chromium/Electron and some WPF controls expose a useful child only
-        // from a branch rooted at the top-level automation element. Follow
-        // the child whose rectangle contains the pointer at each level.
-        if (fast.Handle == root)
+        // Chromium/Electron and some WPF controls expose the actual button or
+        // edit box only from a branch rooted at the top-level automation
+        // element. A native render-host HWND can be slightly smaller than its
+        // root, so restricting this fallback to fast.Handle == root made the
+        // snapper stop at that host instead of reaching the real control.
+        // Always do this one bounded branch walk before accepting the coarse
+        // native rectangle.
+        automation = FindAutomationBranchAt(root, screenX, screenY, excludedWindow);
+        if (automation is not null)
         {
-            automation = FindAutomationBranchAt(root, screenX, screenY, excludedWindow);
-            if (automation is not null)
-            {
-                CachePrecise(automation);
-                return automation;
-            }
+            CachePrecise(automation);
+            return automation;
         }
 
         return fast;
