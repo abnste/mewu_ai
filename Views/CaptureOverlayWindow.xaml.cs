@@ -93,6 +93,7 @@ public partial class CaptureOverlayWindow : Window
     private bool _lastSubmittedTurnRecorded;
     private readonly NativeWindowSnapService _windowSnap=new();
     private Rect _snapCandidate=Rect.Empty;
+    private Rect _stableSnapCandidate=Rect.Empty;
     private Rect? _pendingAutoSelection;
     private long _lastSnapProbeTicks;
     private Point _latestSnapProbePoint;
@@ -1217,7 +1218,7 @@ public partial class CaptureOverlayWindow : Window
     private async void UpdateSnapPreview(Point point)
     {
         _latestSnapProbePoint=point;_latestSnapProbePointValid=true;
-        if(PointerOverSelection(point)){_latestSnapProbePointValid=false;CancelSnapProbe();SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=Rect.Empty;return;}
+        if(PointerOverSelection(point)){_latestSnapProbePointValid=false;CancelSnapProbe();SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=_stableSnapCandidate=Rect.Empty;return;}
         // UI Automation can take longer than a pointer move.  Keep one probe
         // alive and remember the newest pointer location instead of cancelling
         // the active probe on every move (which previously meant a moving
@@ -1228,14 +1229,15 @@ public partial class CaptureOverlayWindow : Window
         // Stop the in-flight semantic refinement too: otherwise its result
         // from the previous app position can repaint a stale full-screen box
         // after the pointer has already entered the taskbar.
-        if(_windowSnap.IsTaskbarAt(screenX,screenY)){_latestSnapProbePointValid=false;CancelSnapProbe();_snapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;return;}
+        if(_windowSnap.IsTaskbarAt(screenX,screenY)){_latestSnapProbePointValid=false;CancelSnapProbe();_snapCandidate=_stableSnapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;return;}
         // Native hit testing is intentionally synchronous and cheap. It gives
         // the user a stable preview immediately while the single UIA probe
         // below refines it to a button/menu/image when the provider exposes
         // one.
         var fast=_windowSnap.FindFastTargetAt(screenX,screenY,handle);
         var fastRect=fast is { } fastTarget?ClampSelection(ScreenCoordinateService.ToLocalDipRect(fastTarget.Bounds,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;
-        if(!fastRect.IsEmpty){_snapCandidate=fastRect;ShowSnapPreview(fastRect);}else if(_snapProbeRequest is null){_snapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;}
+        var immediate=SelectionSnapPolicy.PreferStablePreview(point,_stableSnapCandidate,fastRect);
+        if(!immediate.IsEmpty){if(immediate!=_stableSnapCandidate)_stableSnapCandidate=Rect.Empty;_snapCandidate=immediate;ShowSnapPreview(immediate);}else if(_snapProbeRequest is null){_snapCandidate=_stableSnapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;}
         if(_snapProbeRequest is not null)return;
         var now=System.Diagnostics.Stopwatch.GetTimestamp();if(now-_lastSnapProbeTicks<System.Diagnostics.Stopwatch.Frequency/12)return;_lastSnapProbeTicks=now;
         var probePoint=point;
@@ -1250,6 +1252,7 @@ public partial class CaptureOverlayWindow : Window
             // location is scheduled once this bounded probe is released.
             if(!_latestSnapProbePointValid||!_latestSnapProbePoint.Equals(probePoint))return;
             _snapCandidate=bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value.Bounds,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;
+            _stableSnapCandidate=_snapCandidate;
             if(_snapCandidate.IsEmpty){SnapPreview.Visibility=Visibility.Collapsed;return;}ShowSnapPreview(_snapCandidate);
         }
         catch(OperationCanceledException){}
@@ -1273,7 +1276,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private Rect ProbeSnapRect(Point point)
     {
-        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return Rect.Empty;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;var bounds=_windowSnap.FindTopmostTargetAt(screenX,screenY,handle);var result=bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value.Bounds,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;_snapCandidate=result;return result;
+        if(Root.ActualWidth<=0||Root.ActualHeight<=0)return Rect.Empty;var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;var bounds=_windowSnap.FindTopmostTargetAt(screenX,screenY,handle);var result=bounds is { } value?ClampSelection(ScreenCoordinateService.ToLocalDipRect(value.Bounds,_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight)):Rect.Empty;_snapCandidate=_stableSnapCandidate=result;return result;
     }
     private Rect MonitorBounds(Rect selection)
     {
