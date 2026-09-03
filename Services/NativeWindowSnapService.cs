@@ -69,12 +69,10 @@ internal sealed class NativeWindowSnapService
             return target;
         }
 
-        // Keep maximized/full-monitor windows out of the immediate preview;
-        // their concrete UIA buttons are still eligible in the refinement
-        // path below.
-        if (!IsUsefulWindow(root, rootBounds, screenX, screenY))
-            return null;
-
+        // A maximized application is still a valid Snipaste-style automatic
+        // selection.  Its semantic controls can replace this rectangle in the
+        // refinement path, but suppressing the root entirely made a maximized
+        // Codex window look as though smart selection was unavailable.
         CacheWindow(root, rootBounds);
         return new WindowSnapTarget(root, rootBounds);
     }
@@ -238,7 +236,12 @@ internal sealed class NativeWindowSnapService
     {
         try
         {
-            var current = AutomationElement.FromHandle(windowHandle);
+            // When the capture overlay is topmost, FromPoint correctly sees
+            // the overlay, not the application below it.  Resolve the actual
+            // top-level desktop child by HWND before falling back to
+            // FromHandle: packaged WinUI apps can give those two entry points
+            // different provider roots even for the same native window.
+            var current = FindDesktopWindowAutomationRoot(windowHandle) ?? AutomationElement.FromHandle(windowHandle);
             var currentProcess = (int)Environment.ProcessId;
             WindowSnapTarget? best = null;
             var deadline=Stopwatch.GetTimestamp()+Stopwatch.Frequency*AutomationTraversalBudgetMs/1000;
@@ -271,6 +274,22 @@ internal sealed class NativeWindowSnapService
                 current = next;
             }
             return best;
+        }
+        catch (COMException) { return null; }
+        catch (InvalidOperationException) { return null; }
+        catch (ArgumentException) { return null; }
+    }
+
+    private static AutomationElement? FindDesktopWindowAutomationRoot(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero)
+            return null;
+        try
+        {
+            var handle = unchecked((int)windowHandle.ToInt64());
+            return AutomationElement.RootElement.FindFirst(
+                TreeScope.Children,
+                new PropertyCondition(AutomationElement.NativeWindowHandleProperty, handle));
         }
         catch (COMException) { return null; }
         catch (InvalidOperationException) { return null; }
