@@ -18,7 +18,10 @@ internal sealed class PinnedWindowDragController(Window window)
         var handle=new WindowInteropHelper(window).Handle;
         if(handle==IntPtr.Zero||!NativeMethods.GetWindowRect(handle,out _windowOrigin))return;
         _cursorOrigin=window.PointToScreen(pointer);
-        _armed=true;_moving=false;Mouse.Capture(window);
+        // Do not capture on the first button-down.  Capturing immediately can
+        // steal the second click in a double-click sequence and makes the
+        // pinned window's unpin gesture unreliable.
+        _armed=true;_moving=false;
     }
 
     internal void Move(MouseButtonState leftButton,Point pointer)
@@ -34,7 +37,7 @@ internal sealed class PinnedWindowDragController(Window window)
                 new Point(0,0),new Point(deltaX,deltaY),
                 SystemParameters.MinimumHorizontalDragDistance*dpi.DpiScaleX,
                 SystemParameters.MinimumVerticalDragDistance*dpi.DpiScaleY))return;
-            _moving=true;
+            _moving=true;Mouse.Capture(window);
         }
         var handle=new WindowInteropHelper(window).Handle;
         if(handle!=IntPtr.Zero)NativeMethods.SetWindowPos(handle,IntPtr.Zero,_windowOrigin.Left+(int)Math.Round(deltaX),_windowOrigin.Top+(int)Math.Round(deltaY),0,0,MoveWithoutResizeOrZOrder);

@@ -1,7 +1,11 @@
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Drawing;
+using DrawingColor=System.Drawing.Color;
+using DrawingPixelFormat=System.Drawing.Imaging.PixelFormat;
 using mewu_ai_Assistant.Services;
+using mewu_ai_Assistant.Models;
 using Xunit;
 
 namespace MewuAI.Tests;
@@ -44,6 +48,35 @@ public sealed class CaptureImageFeatureTests
     public void ResizeHandleSnapsOnlyTheActiveEdges()
     {
         var result=SelectionSnapPolicy.SnapResize(new Rect(98,80,202,220),"NW",new Rect(100,100,400,300),5);Assert.Equal(100,result.Left);Assert.Equal(80,result.Top);Assert.Equal(300,result.Right);
+    }
+
+    [Fact]
+    public void ExplicitScreenshotCompositesVisiblePinnedImageBackIntoFrame()
+    {
+        var source=BitmapSource.Create(2,2,96,96,PixelFormats.Bgra32,null,new byte[]
+        {
+            0,0,255,255,0,0,255,255,
+            0,0,255,255,0,0,255,255
+        },8);source.Freeze();
+        using var registration=PinnedImageCaptureRegistry.Register(()=>new PinnedImageCaptureSnapshot(new ScreenRect(1,1,2,2),source,1));
+        using var destination=new Bitmap(4,4,DrawingPixelFormat.Format32bppPArgb);
+        using(var graphics=Graphics.FromImage(destination))graphics.Clear(DrawingColor.Black);
+        PinnedImageCaptureRegistry.CompositeInto(destination,new ScreenRect(0,0,4,4));
+        var pixel=destination.GetPixel(1,1);
+        Assert.True(pixel.R>200);Assert.True(pixel.G<20);Assert.True(pixel.B<20);
+    }
+
+    [Fact]
+    public void NewerPinnedImageIsCompositedAboveOlderImage()
+    {
+        var older=BitmapSource.Create(1,1,96,96,PixelFormats.Bgra32,null,new byte[]{255,0,0,255},4);older.Freeze();
+        var newer=BitmapSource.Create(1,1,96,96,PixelFormats.Bgra32,null,new byte[]{0,255,0,255},4);newer.Freeze();
+        using var first=PinnedImageCaptureRegistry.Register(()=>new PinnedImageCaptureSnapshot(new ScreenRect(0,0,1,1),older,1));
+        using var second=PinnedImageCaptureRegistry.Register(()=>new PinnedImageCaptureSnapshot(new ScreenRect(0,0,1,1),newer,1));
+        using var destination=new Bitmap(1,1,DrawingPixelFormat.Format32bppPArgb);
+        PinnedImageCaptureRegistry.CompositeInto(destination,new ScreenRect(0,0,1,1));
+        var pixel=destination.GetPixel(0,0);
+        Assert.True(pixel.G>200);Assert.True(pixel.R<20);
     }
 
     private static BitmapSource Frame(int width,int height,int globalTop)
