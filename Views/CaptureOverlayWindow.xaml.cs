@@ -86,7 +86,7 @@ public partial class CaptureOverlayWindow : Window
     private readonly List<int> _longCaptureShifts=[];
     private BitmapSource? _longCaptureComposite;
     private IntPtr _longCaptureScrollTarget;
-    private bool _longCaptureWheelForwarding;
+    private bool _longCaptureWheelForwarding,_longCaptureInputPassThrough;
     private int _longCaptureSampleVersion;
     private bool _recordingItemWasReferenced;
     private HwndSource? _overlaySource;
@@ -100,6 +100,7 @@ public partial class CaptureOverlayWindow : Window
     private int _recordingRegionResetRetryCount;
     private (int WindowLeft,int WindowTop,int WindowWidth,int WindowHeight,int HoleLeft,int HoleTop,int HoleRight,int HoleBottom,int BarLeft,int BarTop,int BarRight,int BarBottom)? _recordingWindowRegionKey;
     private readonly DispatcherTimer _recordingTimer=new(){Interval=TimeSpan.FromMilliseconds(150)};
+    private readonly DispatcherTimer _longCaptureInputTimer=new(){Interval=TimeSpan.FromMilliseconds(32)};
     private DrawTool _drawTool=DrawTool.Freehand;
     private Color _drawColor=Colors.Red;
     private bool _drawHighlighter,_drawTextHighlight,_restoringDrawingAction,_drawingFontsLoaded;
@@ -341,6 +342,7 @@ public partial class CaptureOverlayWindow : Window
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;UpdateRecordingVisualHole();if(_longCaptureMode&&_longCaptureItem is { } item){BeginLongCaptureLiveRegion(item);PositionFloatingBar(LongCaptureBar,item);if(_longCaptureComposite is { } composite)UpdateLongCapturePreview(item,composite);}PositionPromptBar();};
         RecordingBar.SizeChanged+=(_,_)=>{if(_recordingMode)UpdateRecordingVisualHole();};
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
+        _longCaptureInputTimer.Tick+=(_,_)=>UpdateLongCaptureInputRouting();
         Activated+=OnActivated;
         Closed+=OnClosed;
     }
@@ -697,6 +699,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnClosed(object? sender,EventArgs e)
     {
         _closed=true;
+        _longCaptureInputTimer.Stop();
         if(IsInitialized)NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);
         if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
         if(Mouse.Captured is not null)Mouse.Capture(null);
@@ -1366,7 +1369,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(Active is not {IsImplicit:false} item||_recordingMode||_longCaptureMode){Toolbar.Visibility=Visibility.Collapsed;return;}
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
-        var isVideo=item.VideoPath is not null;var isLongImage=item.CapturedImageOverride is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo&&!isLongImage?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;TableButton.Visibility=!isVideo&&_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
+        var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;TableButton.Visibility=!isVideo&&_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
 
@@ -2205,7 +2208,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private async void CaptureLongScreenshot(object s,RoutedEventArgs e)
     {
-        if(RejectIfOverlayOperationBusy()||_longCaptureMode||Active is not {IsImplicit:false,VideoPath:null,CapturedImageOverride:null} item)return;
+        if(RejectIfOverlayOperationBusy()||_longCaptureMode||Active is not {IsImplicit:false,VideoPath:null} item)return;
         if(!_captureExclusionVerified
 #if DEBUG
             &&!NativeMethods.VisualQaCaptureEnabled
@@ -2217,7 +2220,7 @@ public partial class CaptureOverlayWindow : Window
             Toolbar.Visibility=SizeText.Visibility=PointerInspector.Visibility=PromptBarHost.Visibility=Visibility.Collapsed;HideHandles();SnapPreview.Visibility=Visibility.Collapsed;BeginLongCaptureLiveRegion(item);LongCaptureBar.Visibility=Visibility.Visible;PositionFloatingBar(LongCaptureBar,item);Cursor=Cursors.Arrow;
             await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.Render);await Task.Delay(100);
             var pixels=ToPixelRect(item.Bounds);var screen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=screen.X+screen.Width/2;var centerY=screen.Y+screen.Height/2;var handle=new WindowInteropHelper(this).Handle;_longCaptureScrollTarget=_windowSnap.FindFastTargetAt(centerX,centerY,handle)?.Handle??IntPtr.Zero;
-            var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);_longCaptureFrames.Add(frame);_longCaptureComposite=frame;UpdateLongCapturePreview(item,frame);LongCaptureProgressText.Text="已采集 1 段";PromptStatus.Text="滚轮向下控制截取长度 · 已截内容会在旁边向上拼接";StartLongCapturePolling();Root.Focus();
+            var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);_longCaptureFrames.Add(frame);_longCaptureComposite=frame;UpdateLongCapturePreview(item,frame);LongCaptureProgressText.Text="已采集 1 段";PromptStatus.Text="滚轮向下控制截取长度 · 已截内容会在旁边向上拼接";StartLongCapturePolling();_longCaptureInputTimer.Start();UpdateLongCaptureInputRouting();Root.Focus();
         }
         catch(Exception ex)
         {
@@ -2242,16 +2245,16 @@ public partial class CaptureOverlayWindow : Window
         _longCaptureWheelForwarding=true;
         try
         {
-            // Modern Chromium/WebView/WinUI surfaces may ignore a posted
-            // WM_MOUSEWHEEL even when it is addressed to their deepest HWND.
-            // This overlay is already layered, so briefly make it transparent
-            // to hit testing and inject one real wheel event into the system
-            // input stream.  The OS then resolves the actual scroll consumer.
-            if(NativeMethods.TrySetWindowMouseTransparent(handle,true))
+            // Keep the capture window mouse-transparent while the pointer stays
+            // inside the live region.  The first wheel can arrive before the
+            // 32 ms routing timer observes the pointer, so forward that one as
+            // real input after enabling pass-through and leave pass-through on.
+            // Subsequent physical wheel input then reaches Chromium/WinUI/WPF
+            // directly without relying on posted WM_MOUSEWHEEL messages.
+            if(SetLongCaptureInputPassThrough(true))
             {
-                await Task.Delay(16);
+                await Task.Delay(8);
                 forwarded=MouseWheelInputService.InjectWheel(e.Delta);
-                await Task.Delay(32);
             }
             else
             {
@@ -2264,18 +2267,40 @@ public partial class CaptureOverlayWindow : Window
         }
         finally
         {
-            var restored=NativeMethods.TrySetWindowMouseTransparent(handle,false);
             _longCaptureWheelForwarding=false;
-            if(!restored)
-            {
-                new PrivacyLogger().Error("LongScreenshotInteractionRestore",new InvalidOperationException("滚轮转发后无法恢复覆盖层交互"));
-                CancelLongCaptureSession("窗口交互恢复失败，正在安全关闭覆盖层，请重新截图");
-                _=Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(Close));
-            }
         }
         if(_closed||!_longCaptureMode||!forwarded){if(!_closed&&_longCaptureMode)PromptStatus.Text="当前区域没有响应滚轮，请把鼠标移到实际可滚动内容上";return;}
         if(e.Delta>=0){PromptStatus.Text="已向上滚动；继续向下滚动才会追加长图";return;}
         ScheduleLongCaptureSample(true);PromptStatus.Text="正在等待页面滚动完成…";
+    }
+
+    private void UpdateLongCaptureInputRouting()
+    {
+        if(!_longCaptureMode||_longCaptureItem is not { } item)
+        {
+            SetLongCaptureInputPassThrough(false);
+            return;
+        }
+
+        var point=Mouse.GetPosition(Root);
+        var barBounds=GetElementBounds(LongCaptureBar);
+        SetLongCaptureInputPassThrough(CaptureOverlayPolicy.ShouldPassThroughLongCapturePointer(item.Bounds,barBounds,point));
+    }
+
+    private Rect GetElementBounds(FrameworkElement element)
+    {
+        if(element.Visibility!=Visibility.Visible||element.ActualWidth<=0||element.ActualHeight<=0)return Rect.Empty;
+        try{return new Rect(element.TranslatePoint(new Point(0,0),Root),new Size(element.ActualWidth,element.ActualHeight));}
+        catch(InvalidOperationException){return Rect.Empty;}
+    }
+
+    private bool SetLongCaptureInputPassThrough(bool enabled)
+    {
+        if(_longCaptureInputPassThrough==enabled)return true;
+        if(!IsInitialized)return !enabled;
+        var changed=NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,enabled);
+        if(changed)_longCaptureInputPassThrough=enabled;
+        return changed;
     }
 
     private void StartLongCapturePolling()
@@ -2340,7 +2365,14 @@ public partial class CaptureOverlayWindow : Window
 
     private void ResetLongCaptureState()
     {
+        _longCaptureInputTimer.Stop();
+        var interactionRestored=SetLongCaptureInputPassThrough(false);
         _longCaptureMode=false;_longCaptureItem=null;_longCaptureBefore=null;_longCaptureFrames.Clear();_longCaptureShifts.Clear();_longCaptureComposite=null;_longCaptureScrollTarget=IntPtr.Zero;_longCaptureWheelForwarding=false;_longCaptureSampleTask=null;_longCapturePollTask=null;
+        if(!interactionRestored&&!_closed)
+        {
+            new PrivacyLogger().Error("LongScreenshotInteractionRestore",new InvalidOperationException("结束长截图后无法恢复覆盖层交互"));
+            _=Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(Close));
+        }
     }
 
     private void CancelLongCaptureSample()

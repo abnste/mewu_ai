@@ -217,6 +217,9 @@ internal static class CaptureOverlayPolicy
         ReferenceEquals(activeRequest,candidate) &&
         !candidate.IsCancellationRequested;
 
+    internal static bool ShouldPassThroughLongCapturePointer(Rect captureBounds,Rect controlBounds,Point pointer) =>
+        !captureBounds.IsEmpty&&captureBounds.Contains(pointer)&&(controlBounds.IsEmpty||!controlBounds.Contains(pointer));
+
     internal static bool ShouldFinalizeCanceledAiRequest(
         CancellationTokenSource? activeRequest,
         CancellationTokenSource candidate,
