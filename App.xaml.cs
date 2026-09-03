@@ -10,12 +10,18 @@ public partial class App : System.Windows.Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+#if DEBUG
+        var qaCultureName=Environment.GetEnvironmentVariable("MEWU_QA_UI_CULTURE");
+        LocalizationService.Initialize(string.IsNullOrWhiteSpace(qaCultureName)?null:System.Globalization.CultureInfo.GetCultureInfo(qaCultureName));
+#else
+        LocalizationService.Initialize();
+#endif
         base.OnStartup(e);
         DispatcherUnhandledException+=(_,args)=>
         {
             CrashDiagnosticsService.MarkOperation("UI 未处理异常");
             _logger.Error("UI",args.Exception);
-            try{System.Windows.MessageBox.Show("喵呜AI 遇到无法安全恢复的错误，即将退出。错误信息已写入本地日志，请重新启动应用。","喵呜AI");}catch{}
+            try{LocalizedMessageBox.Show(LocalizationService.T("喵呜AI 遇到无法安全恢复的错误，即将退出。错误信息已写入本地日志，请重新启动应用。","MewuAI encountered an error it cannot safely recover from and will close. Details were written to the local log. Please restart the app."),"MewuAI");}catch{}
             // Unknown UI-thread exceptions can leave capture, recording, or credential state
             // partially mutated. Let WPF terminate instead of pretending the process is safe.
             args.Handled=false;
@@ -55,7 +61,7 @@ public partial class App : System.Windows.Application
         catch(Exception ex)
         {
             _logger.Error("Startup",ex);
-            try{System.Windows.MessageBox.Show("喵呜AI 启动失败，错误已安全记录。请重启应用；若问题持续，请查看本地日志。","喵呜AI");}catch{}
+            try{LocalizedMessageBox.Show(LocalizationService.T("喵呜AI 启动失败，错误已安全记录。请重启应用；若问题持续，请查看本地日志。","MewuAI could not start. The error was recorded safely. Restart the app, and check the local log if the problem continues."),"MewuAI");}catch{}
             Shutdown(1);
         }
     }

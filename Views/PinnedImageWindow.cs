@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
+using MessageBox=mewu_ai_Assistant.Services.LocalizedMessageBox;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
@@ -153,5 +154,5 @@ public sealed class PinnedImageWindow : Window
         var padding=_frame.Margin.Left*2;var oldContentWidth=Math.Max(1,ActualWidth-padding);var oldContentHeight=Math.Max(1,ActualHeight-padding);_quarterTurns=(_quarterTurns+delta)%4;_image=PinnedImageTransform.RotateQuarterTurns(_originalImage,_quarterTurns);_imageView.Source=_image;_adjustingSize=true;try{Width=oldContentHeight+padding;Height=oldContentWidth+padding;}finally{_adjustingSize=false;}UpdateHeightForAspectRatio();
     }
     private void CopyImage(){if(!ClipboardService.TrySetImage(_image,out var error))MessageBox.Show(this,error??"复制图片失败，请稍后重试","复制失败",MessageBoxButton.OK,MessageBoxImage.Warning);}
-    private void Save(){var dialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=".png",AddExtension=true,FileName=ExportFileNameService.Screenshot(DateTime.Now)};if(dialog.ShowDialog(this)!=true)return;try{ScreenCaptureService.Save(_image,dialog.FileName,dialog.FilterIndex==2);}catch(Exception ex){new PrivacyLogger().Error("PinnedImageSave",ex);MessageBox.Show(this,$"图片保存失败：{ex.Message}","保存失败",MessageBoxButton.OK,MessageBoxImage.Warning);}}
+    private void Save(){var dialog=new SaveFileDialog{Filter=LocalizationService.T("PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg","PNG image|*.png|JPEG image|*.jpg;*.jpeg"),DefaultExt=".png",AddExtension=true,FileName=ExportFileNameService.Screenshot(DateTime.Now)};if(dialog.ShowDialog(this)!=true)return;try{ScreenCaptureService.Save(_image,dialog.FileName,dialog.FilterIndex==2);}catch(Exception ex){new PrivacyLogger().Error("PinnedImageSave",ex);MessageBox.Show(this,$"图片保存失败：{ex.Message}","保存失败",MessageBoxButton.OK,MessageBoxImage.Warning);}}
 }

@@ -68,15 +68,15 @@ public sealed class HermesHostIntegrationTests
             HermesReasoningEffort="high"
         });
 
-        Assert.Equal("Hermes · default · MiniMax-M3 · 高度思考",status);
+        Assert.Equal(LocalizationService.T("Hermes · default · MiniMax-M3 · 高度思考","Hermes · default · MiniMax-M3 · high reasoning"),status);
     }
 
     [Fact]
     public void MainWindowStatusUsesBackendSpecificLabels()
     {
-        Assert.Equal("智能体已接入",MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=true},true));
-        Assert.Equal("AI模型已接入",MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=false},true));
-        Assert.Equal("暂未设置AI功能",MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=false},false));
+        Assert.Equal(LocalizationService.T("智能体已接入","Agent connected"),MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=true},true));
+        Assert.Equal(LocalizationService.T("AI模型已接入","AI model connected"),MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=false},true));
+        Assert.Equal(LocalizationService.T("暂未设置AI功能","AI features are not set up"),MainWindow.BuildAiStatusTitle(new AppSettings{HermesEnabled=false},false));
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 # 视图实现备忘
 
+- 应用界面语言按 Windows `CurrentUICulture` 自动选择：所有 `zh-*` 使用简体中文，英语及暂未提供翻译的其他系统语言统一回退自然英语；不得恢复中英斜杠混排。代码动态创建的 WPF 控件必须进入 `LocalizationService` 的 Loaded/属性变更观察链，截图/OCR/译文、AI 回答、历史、文件名和引用标签等用户内容子树必须显式排除。Debug 视觉验收可用 `MEWU_QA_UI_CULTURE`，Release 必须编译掉该覆盖；Inno Setup 同样按系统 UI 语言自动选择英文或简体中文产品名和安装文案。
 - `AllowsTransparency=True` 的自绘圆角窗口不使用系统 DWM 阴影。主界面的柔和窗口阴影必须由圆角、无命中的独立同级 `Border` 绘制，内容 `Shell` 单独做圆角裁剪；严禁把 `DropShadowEffect` 重新挂到带 `Clip` 的 `Shell` 上，否则阴影会被裁掉，整个内容子树的 ClearType 也会失效。
 - 透明窗口外框要为模糊阴影预留足够的透明边距，并同步增加窗口 `Width`/`Height` 与最小尺寸，保持实际内容壳尺寸不变；否则阴影会再次被 HWND 边界截断。
 - 设置窗口必须保持 `AllowsTransparency=False`，通过 `WindowChrome` 保留系统缩放边框，并用 DWM `DWMWA_WINDOW_CORNER_PREFERENCE` 请求 Windows 11 原生圆角和阴影；不得恢复整窗 `DropShadowEffect` 或透明阴影边距。

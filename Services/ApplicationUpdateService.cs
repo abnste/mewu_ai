@@ -53,7 +53,7 @@ internal sealed class ApplicationUpdateService
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(currentVersion);
-        progress?.Report(new ApplicationUpdateProgress("正在检查 GitHub 更新…"));
+        progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在检查 GitHub 更新…","Checking GitHub for updates…")));
         var release=await GetLatestReleaseAsync(cancellationToken).ConfigureAwait(false);
         var latestVersion=ParseReleaseVersion(release.TagName);
         if(release.Draft||release.Prerelease)throw new InvalidDataException("GitHub 最新版本不是正式 Release");
@@ -68,7 +68,7 @@ internal sealed class ApplicationUpdateService
         ValidateReleaseDownloadUri(installer.DownloadUrl,release.TagName,installerName);
         ValidateReleaseDownloadUri(checksums.DownloadUrl,release.TagName,checksumsName);
 
-        progress?.Report(new ApplicationUpdateProgress("正在读取更新校验信息…"));
+        progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在读取更新校验信息…","Downloading update verification data…")));
         var checksumText=await DownloadStringAsync(checksums,MaximumChecksumBytes,cancellationToken).ConfigureAwait(false);
         var expectedHash=ParseExpectedSha256(checksumText,installerName);
         var versionDirectory=Path.Combine(_updatesDirectory,versionText);
@@ -77,14 +77,14 @@ internal sealed class ApplicationUpdateService
 
         if(File.Exists(destination))
         {
-            progress?.Report(new ApplicationUpdateProgress("正在校验已下载的安装包…"));
+            progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在校验已下载的安装包…","Verifying the downloaded installer…")));
             var existingHash=await ComputeSha256Async(destination,cancellationToken).ConfigureAwait(false);
             if(string.Equals(existingHash,expectedHash,StringComparison.OrdinalIgnoreCase))
                 return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,new ApplicationUpdatePackage(latestVersion,release.TagName,destination,expectedHash));
             TryDelete(destination);
         }
 
-            progress?.Report(new ApplicationUpdateProgress("正在下载更新…",0,installer.Size));
+        progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在下载更新…","Downloading update…"),0,installer.Size));
         await DownloadInstallerAsync(installer,destination,expectedHash,progress,cancellationToken).ConfigureAwait(false);
         return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,new ApplicationUpdatePackage(latestVersion,release.TagName,destination,expectedHash));
     }
@@ -203,7 +203,7 @@ internal sealed class ApplicationUpdateService
                     if(received>MaximumInstallerBytes||(asset.Size is >0&&received>asset.Size))throw new InvalidDataException("更新安装包超过 Release 声明大小");
                     hash.AppendData(buffer,0,count);
                     await output.WriteAsync(buffer.AsMemory(0,count),cancellationToken).ConfigureAwait(false);
-                    progress?.Report(new ApplicationUpdateProgress("正在下载更新…",received,asset.Size));
+                    progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在下载更新…","Downloading update…"),received,asset.Size));
                 }
                 if(asset.Size is >0&&received!=asset.Size)throw new InvalidDataException("更新安装包下载不完整");
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
