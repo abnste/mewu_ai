@@ -202,9 +202,9 @@ public sealed class CaptureOverlayPolicyTests
     public void ReferenceAwarePromptBindsVisibleLabelsToActualAttachmentIndexesAndHandles()
     {
         var prompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt("比较 @图片1 和 @图片3",[
-            new(0,"image-a","@图片1",AiAttachmentType.Image,640,480,null),
+            new(0,"image-a","@图片1",AiAttachmentType.Image,640,480,null,true,true),
             new(1,"image-c","@图片3",AiAttachmentType.Image,800,600,null)]);
-        Assert.Contains("\"RegionIndex\":0",prompt);Assert.Contains("\"Label\":\"@图片3\"",prompt);Assert.Contains("\"ReferenceHandle\":\"image-c\"",prompt);Assert.Contains("禁止按显示编号猜测",prompt);Assert.Contains("比较 @图片1 和 @图片3",prompt);
+        Assert.Contains("\"RegionIndex\":0",prompt);Assert.Contains("\"Label\":\"@图片3\"",prompt);Assert.Contains("\"ReferenceHandle\":\"image-c\"",prompt);Assert.Contains("\"hasExistingAiAnnotations\":true",prompt);Assert.Contains("preserve",prompt);Assert.Contains("append",prompt);Assert.Contains("replace",prompt);Assert.Contains("禁止按显示编号猜测",prompt);Assert.Contains("比较 @图片1 和 @图片3",prompt);
     }
 
     [Fact]
@@ -294,7 +294,35 @@ public sealed class CaptureOverlayPolicyTests
     public void VideoAnnotationRepairPromptRequiresTimelineFieldsAndKeepsOriginalQuestion()
     {
         var prompt=CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt("按钮为什么没反应？","初稿只提到了红圈");
-        Assert.Contains("startTime",prompt);Assert.Contains("endTime",prompt);Assert.Contains("keyframes",prompt);Assert.Contains("regionIndex",prompt);Assert.Contains("按钮为什么没反应？",prompt);Assert.Contains("初稿只提到了红圈",prompt);Assert.Contains("每个独立",prompt);Assert.Contains("不能把同一事件重复",prompt);
+        Assert.Contains("startTime",prompt);Assert.Contains("endTime",prompt);Assert.Contains("keyframes",prompt);Assert.Contains("regionIndex",prompt);Assert.Contains("annotationMode 必须为 replace",prompt);Assert.Contains("按钮为什么没反应？",prompt);Assert.Contains("初稿只提到了红圈",prompt);Assert.Contains("每个独立",prompt);Assert.Contains("不能把同一事件重复",prompt);
+    }
+
+    [Theory]
+    [InlineData(false,AiAnnotationUpdateMode.Append,AiAnnotationUpdateMode.Replace)]
+    [InlineData(true,AiAnnotationUpdateMode.Append,AiAnnotationUpdateMode.Append)]
+    [InlineData(true,AiAnnotationUpdateMode.Replace,AiAnnotationUpdateMode.Replace)]
+    [InlineData(true,AiAnnotationUpdateMode.Preserve,AiAnnotationUpdateMode.Replace)]
+    public void RepairModeNeverTurnsAnAppendFollowUpIntoReplacement(bool hadExisting,AiAnnotationUpdateMode requested,AiAnnotationUpdateMode expected)
+    {
+        Assert.Equal(expected,CaptureOverlayPolicy.GetRepairAnnotationUpdateMode(hadExisting,requested));
+    }
+
+    [Fact]
+    public void FollowUpRepairPromptCanRequireAppendWithoutClearingExistingAnnotations()
+    {
+        Assert.Contains("annotationMode 必须为 append",CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt("再标一个","初稿",AiAnnotationUpdateMode.Append));
+        Assert.Contains("annotationMode 必须为 append",CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt("再标一个","初稿",AiAnnotationUpdateMode.Append));
+    }
+
+    [Theory]
+    [InlineData(true,true,AiAnnotationUpdateMode.Preserve,false)]
+    [InlineData(true,true,AiAnnotationUpdateMode.Append,true)]
+    [InlineData(true,true,AiAnnotationUpdateMode.Replace,true)]
+    [InlineData(true,false,AiAnnotationUpdateMode.Preserve,true)]
+    [InlineData(false,true,AiAnnotationUpdateMode.Replace,false)]
+    public void VideoRepairRespectsTheModelsDecisionToPreserveExistingAnnotations(bool hasVideo,bool hadExisting,AiAnnotationUpdateMode requested,bool expected)
+    {
+        Assert.Equal(expected,CaptureOverlayPolicy.ShouldRunVideoAnnotationRepair(hasVideo,hadExisting,requested));
     }
 
     [Fact]
@@ -306,7 +334,7 @@ public sealed class CaptureOverlayPolicyTests
         Assert.False(CaptureOverlayPolicy.NeedsImageAnnotationRepair("请框选按钮", "完成", 1));
         Assert.True(CaptureOverlayPolicy.NeedsImageAnnotationRepair("请框选按钮", "完成", 2,1));
         var repair=CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt("请框选新对话", "左 10 px");
-        Assert.Contains("callout",repair);Assert.Contains("请框选新对话",repair);Assert.Contains("左 10 px",repair);
+        Assert.Contains("callout",repair);Assert.Contains("annotationMode 必须为 replace",repair);Assert.Contains("请框选新对话",repair);Assert.Contains("左 10 px",repair);
     }
 
     [Fact]

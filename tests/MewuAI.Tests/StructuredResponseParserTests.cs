@@ -5,6 +5,23 @@ using Xunit;
 namespace MewuAI.Tests;
 public sealed class StructuredResponseParserTests
 {
+    [Theory]
+    [InlineData("preserve",AiAnnotationUpdateMode.Preserve)]
+    [InlineData("append",AiAnnotationUpdateMode.Append)]
+    [InlineData("replace",AiAnnotationUpdateMode.Replace)]
+    public void Parse_ReadsAnnotationUpdateMode(string value,AiAnnotationUpdateMode expected)
+    {
+        var result=StructuredResponseParser.Parse($$"""{"annotationProtocol":"mewu.visual-annotations/1","answer":"继续","annotationMode":"{{value}}","annotations":[]}""",expectStructuredResponse:true);
+        Assert.Equal(expected,result.AnnotationUpdateMode);
+    }
+
+    [Fact]
+    public void Parse_LegacyStructuredResponseDefaultsToReplace()
+    {
+        var result=StructuredResponseParser.Parse("{\"annotationProtocol\":\"mewu.visual-annotations/1\",\"answer\":\"完成\",\"annotations\":[]}",expectStructuredResponse:true);
+        Assert.Equal(AiAnnotationUpdateMode.Replace,result.AnnotationUpdateMode);
+    }
+
     [Fact]
     public void Parse_VisualAnnotationProtocolSupportsAllDrawingTools()
     {

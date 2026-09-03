@@ -46,7 +46,8 @@ public sealed record AiProviderCapabilities(bool SupportsImage,bool SupportsVide
         _=>0
     };
 }
-public sealed record AiResult(string Answer,IReadOnlyList<AiAnnotation> Annotations,string Reasoning="");
+public enum AiAnnotationUpdateMode{Preserve,Append,Replace}
+public sealed record AiResult(string Answer,IReadOnlyList<AiAnnotation> Annotations,string Reasoning="",AiAnnotationUpdateMode AnnotationUpdateMode=AiAnnotationUpdateMode.Replace);
 public enum AiAnnotationKind{Callout,Pen,Highlighter,Rectangle,Ellipse,Arrow,Text,Number,Mosaic}
 public sealed record AiAnnotationPoint(double X,double Y);
 public sealed record AiAnnotationStyle(string Color="#2AAEFF",double StrokeWidth=.006,double Opacity=1,bool Filled=false,double FontSize=.04);
