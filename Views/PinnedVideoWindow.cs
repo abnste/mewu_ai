@@ -83,7 +83,7 @@ public sealed class PinnedVideoWindow : Window
     private async Task SaveAsync()
     {
         if(_mediaOperationBusy)return;
-        var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4",DefaultExt=".mp4"};if(dialog.ShowDialog(this)!=true)return;
+        var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4",DefaultExt=".mp4",AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};if(dialog.ShowDialog(this)!=true)return;
         if(!TryBeginMediaOperation())return;
         try{await Task.Run(()=>AtomicFileService.Copy(_videoPath,dialog.FileName));}
         catch(Exception ex){new PrivacyLogger().Error("PinnedVideoSave",ex);ShowOperationError($"视频保存失败：{ex.Message}","保存失败");}
