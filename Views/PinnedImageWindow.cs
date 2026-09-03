@@ -33,7 +33,7 @@ public sealed class PinnedImageWindow : Window
         _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_imageView};
         _captureRegistration=PinnedImageCaptureRegistry.Register(CreateCaptureSnapshot);
         Content=_frame;Width=_initialContentWidthPixels+ShadowPixels*2;Height=_initialContentWidthPixels*(double)image.PixelHeight/Math.Max(1,image.PixelWidth)+ShadowPixels*2;
-        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Closed+=(_,_)=>_captureRegistration.Dispose();
+        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewKeyDown+=OnPreviewKeyDown;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Closed+=(_,_)=>_captureRegistration.Dispose();
         SourceInitialized+=(_,_)=>
         {
             var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
@@ -67,7 +67,7 @@ public sealed class PinnedImageWindow : Window
             var dpi=Math.Max(96u,NativeMethods.GetDpiForWindow(handle));
             var outerWidth=region.Width+ShadowPixels*2;var outerHeight=region.Height+ShadowPixels*2;
             Width=ScreenCoordinateService.PixelsToDip(outerWidth,dpi);Height=ScreenCoordinateService.PixelsToDip(outerHeight,dpi);
-            NativeMethods.SetWindowPos(handle,Topmost?new IntPtr(-1):new IntPtr(-2),region.X-ShadowPixels,region.Y-ShadowPixels,outerWidth,outerHeight,0x0040);ApplyShadowPadding(handle);
+            NativeMethods.SetWindowPos(handle,Topmost?new IntPtr(-1):new IntPtr(-2),region.X-ShadowPixels,region.Y-ShadowPixels,outerWidth,outerHeight,PinnedWindowInteractionPolicy.ShowWithoutActivationFlags);ApplyShadowPadding(handle);
         }
         finally{_adjustingSize=false;}
     }
@@ -96,6 +96,12 @@ public sealed class PinnedImageWindow : Window
     {
         if(e.ClickCount>=2){QueueCloseFromDoubleClick();e.Handled=true;return;}
         if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));
+    }
+
+    private static void OnPreviewKeyDown(object sender,KeyEventArgs e)
+    {
+        if(e.Key!=Key.Escape)return;
+        e.Handled=CaptureOverlayWindow.TryHandleEscapeFromPinnedWindow();
     }
 
     // Keep an explicit double-click route as a fallback for child visuals

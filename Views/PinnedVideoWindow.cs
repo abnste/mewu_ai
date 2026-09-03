@@ -33,7 +33,7 @@ public sealed class PinnedVideoWindow : Window
             _player=new VideoPreviewSurface(_videoView,Dispatcher);
             _player.Failed+=error=>{_playing=false;if(_playItem is not null)_playItem.Header="播放";new PrivacyLogger().Error("PinnedVideoPreview",error);};
             _frame=new Border{Background=Brushes.Black,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),ClipToBounds=true,Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_videoView};Content=_frame;Width=originalRegion.Width+ShadowPixels*2;Height=originalRegion.Height+ShadowPixels*2;
-            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(!NativeMethods.ExcludeFromCapture(handle)){new PrivacyLogger().Error("PinnedVideoCaptureProtection",new InvalidOperationException("无法启用贴视频防捕获，已阻止显示贴视频"));Dispatcher.BeginInvoke(new Action(Close));return;}PlaceAtOriginalSize(handle);};
+            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewKeyDown+=OnPreviewKeyDown;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(!NativeMethods.ExcludeFromCapture(handle)){new PrivacyLogger().Error("PinnedVideoCaptureProtection",new InvalidOperationException("无法启用贴视频防捕获，已阻止显示贴视频"));Dispatcher.BeginInvoke(new Action(Close));return;}PlaceAtOriginalSize(handle);};
         }
         catch
         {
@@ -49,7 +49,7 @@ public sealed class PinnedVideoWindow : Window
             var dpi=Math.Max(96u,NativeMethods.GetDpiForWindow(handle));
             var outerWidth=_originalRegion.Width+ShadowPixels*2;var outerHeight=_originalRegion.Height+ShadowPixels*2;
             Width=ScreenCoordinateService.PixelsToDip(outerWidth,dpi);Height=ScreenCoordinateService.PixelsToDip(outerHeight,dpi);
-            NativeMethods.SetWindowPos(handle,Topmost?new IntPtr(-1):new IntPtr(-2),_originalRegion.X-ShadowPixels,_originalRegion.Y-ShadowPixels,outerWidth,outerHeight,0x0040);ApplyShadowPadding(handle);
+            NativeMethods.SetWindowPos(handle,Topmost?new IntPtr(-1):new IntPtr(-2),_originalRegion.X-ShadowPixels,_originalRegion.Y-ShadowPixels,outerWidth,outerHeight,PinnedWindowInteractionPolicy.ShowWithoutActivationFlags);ApplyShadowPadding(handle);
         }
         finally{_adjustingSize=false;}
     }
@@ -58,6 +58,7 @@ public sealed class PinnedVideoWindow : Window
     private void KeepAspectRatio(object? sender,SizeChangedEventArgs e)=>UpdateHeightForAspectRatio();
     private void UpdateHeightForAspectRatio(){if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_originalRegion.Height/Math.Max(1d,_originalRegion.Width)+padding;var maximumHeight=PinnedWindowZoomPolicy.GetMaximumHeight(_originalRegion.Width,_originalRegion.Height,padding);if(Math.Abs(ActualHeight-expected)<1)return;_adjustingSize=true;Height=Math.Min(expected,maximumHeight);_adjustingSize=false;}
     private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e){if(e.ClickCount>=2){_drag.End();Unpin();e.Handled=true;return;}if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));}
+    private static void OnPreviewKeyDown(object sender,KeyEventArgs e){if(e.Key!=Key.Escape)return;e.Handled=CaptureOverlayWindow.TryHandleEscapeFromPinnedWindow();}
     private void OnMouseDoubleClick(object sender,MouseButtonEventArgs e){if(e.ChangedButton!=MouseButton.Left)return;_drag.End();Unpin();e.Handled=true;}
     private void OnMouseLeftButtonUp(object sender,MouseButtonEventArgs e)=>_drag.End();
     private void OnMouseMove(object sender,MouseEventArgs e)=>_drag.Move(e.LeftButton,e.GetPosition(this));
