@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.OCR;
+using mewu_ai_Assistant.Services;
 using Xunit;
 namespace MewuAI.Tests;
 public sealed class OcrIntegrationTests
@@ -31,8 +33,19 @@ public sealed class OcrIntegrationTests
         var word=Assert.Single(words);Assert.Equal("整行文字",word.Text);Assert.Equal(10,word.X);Assert.Equal(20,word.Y);Assert.Equal(300,word.Width);Assert.Equal(40,word.Height);
     }
 
+    [Fact] public async Task PaddleTextBoundsCorrectAnOversizedModelCallout()
+    {
+        var bitmap=RenderText("ESP32 主程序","Microsoft YaHei UI","zh-CN");
+        var document=await new WindowsOcrService(null).RecognizeAsync(bitmap,TestContext.Current.CancellationToken);
+        var coarse=new AiAnnotation(.05,.05,.9,.85,"程序入口：ESP32 主程序",ReferenceHandle:"ref-image",Kind:AiAnnotationKind.Callout);
+
+        var refined=Assert.Single(OcrAnnotationRefinementService.RefineAll(document,bitmap.PixelWidth,bitmap.PixelHeight,[coarse],out var count));
+
+        Assert.Equal(1,count);Assert.True(refined.Width<.65,$"width={refined.Width}");Assert.True(refined.Height<.75,$"height={refined.Height}");Assert.NotEqual(coarse,refined);
+    }
+
     private static RenderTargetBitmap RenderText(string text,string font,string culture)
     {
-        var visual=new DrawingVisual();using(var dc=visual.RenderOpen()){dc.DrawRectangle(Brushes.White,null,new Rect(0,0,760,150));dc.DrawText(new FormattedText(text,CultureInfo.GetCultureInfo(culture),FlowDirection.LeftToRight,new Typeface(font),48,Brushes.Black,1),new Point(20,32));}var bitmap=new RenderTargetBitmap(760,150,96,96,PixelFormats.Pbgra32);bitmap.Render(visual);return bitmap;
+        var visual=new DrawingVisual();using(var dc=visual.RenderOpen()){dc.DrawRectangle(Brushes.White,null,new Rect(0,0,760,150));dc.DrawText(new FormattedText(text,CultureInfo.GetCultureInfo(culture),FlowDirection.LeftToRight,new Typeface(font),48,Brushes.Black,1),new Point(20,32));}var bitmap=new RenderTargetBitmap(760,150,96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
 }
