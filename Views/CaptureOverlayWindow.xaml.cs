@@ -79,7 +79,6 @@ public partial class CaptureOverlayWindow : Window
     private System.Drawing.Rectangle _virtualScreenArea;
     private bool _recordingWindowRegionApplied;
     private bool _overlayReady;
-    private readonly List<Window> _pinnedWindowsLoweredForOverlay=[];
     private bool _recordingHoleUpdateQueued;
     private bool _recordingRegionResetQueued;
     private bool _recordingRegionCloseQueued;
@@ -297,7 +296,7 @@ public partial class CaptureOverlayWindow : Window
                 PositionPromptBar();
             }));
             _overlayReady=true;
-            LowerPinnedWindowsForOverlay();
+            RaisePinnedWindowsAboveOverlay();
             if(_conversationAiAvailable&&CaptureOverlayPolicy.ShouldStartAutomaticListening(_host.Settings.EnableVoiceInput,_host.Settings.AutomaticallyStartListening,_autoVoiceStarted,_closed)){_autoVoiceStarted=true;await ToggleVoiceAsync();}
         };
         DpiChanged+=(_,_)=>ApplyOverlayDpiLayout(area);
@@ -629,7 +628,7 @@ public partial class CaptureOverlayWindow : Window
             try{window.Show();}catch{window.Close();throw;}
             ReferencePicker.IsOpen=false;
             RefreshDesktopFrameIncludingPinnedWindows();
-            LowerPinnedWindowsForOverlay();
+            RaisePinnedWindowsAboveOverlay();
             PromptStatus.Text=$"{file.Label} 已置顶，可继续框选截图";
             SetPromptBarHidden(false);
             e.Effects=DragDropEffects.Copy;
@@ -660,7 +659,6 @@ public partial class CaptureOverlayWindow : Window
     private void OnClosed(object? sender,EventArgs e)
     {
         _closed=true;
-        RestorePinnedWindowsAfterOverlay();
         if(IsInitialized)NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);
         if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
         if(Mouse.Captured is not null)Mouse.Capture(null);
@@ -1022,50 +1020,29 @@ public partial class CaptureOverlayWindow : Window
     {
         FinishInterruptedPointerInteraction();
         if(_drawingMode&&!_drawingModalOpen)FinishInterruptedDrawingMode();
-        RestorePinnedWindowsAfterOverlay();
     }
 
     private void OnActivated(object? s,EventArgs e)
     {
         if(_closed||!_overlayReady)return;
-        // A pinned window is display-affinity protected and therefore absent
-        // from the desktop BitBlt. Refresh the clean background while the pin
-        // is still topmost, then put the pin below this overlay so it can be
-        // selected again and Esc/drag input continues to reach the overlay.
-        if(!HasVisibleTopmostPinnedWindow())return;
+        // A pin stays above the capture UI so it remains directly movable and
+        // closable. Refreshing first also removes a pin that was just closed
+        // from the frozen frame, or records its latest position before the
+        // overlay starts another selection.
         RefreshDesktopFrameIncludingPinnedWindows();
-        LowerPinnedWindowsForOverlay();
+        RaisePinnedWindowsAboveOverlay();
     }
 
     private static IEnumerable<Window> GetPinnedWindows()
         => Application.Current?.Windows.OfType<Window>().Where(window=>window is PinnedImageWindow or PinnedVideoWindow) ?? [];
 
-    private bool HasVisibleTopmostPinnedWindow()
-        => GetPinnedWindows().Any(window=>window.IsVisible&&window.Topmost);
-
-    private void LowerPinnedWindowsForOverlay()
+    private void RaisePinnedWindowsAboveOverlay()
     {
         foreach(var window in GetPinnedWindows())
         {
             if(!window.IsVisible||!window.Topmost)continue;
-            if(!_pinnedWindowsLoweredForOverlay.Contains(window))_pinnedWindowsLoweredForOverlay.Add(window);
-            window.Topmost=false;
-            SetPinnedWindowZOrder(window,new IntPtr(-2));
+            SetPinnedWindowZOrder(window,new IntPtr(-1));
         }
-    }
-
-    private void RestorePinnedWindowsAfterOverlay()
-    {
-        if(_pinnedWindowsLoweredForOverlay.Count==0)return;
-        foreach(var window in _pinnedWindowsLoweredForOverlay.ToArray())
-        {
-            if(window.IsVisible)
-            {
-                window.Topmost=true;
-                SetPinnedWindowZOrder(window,new IntPtr(-1));
-            }
-        }
-        _pinnedWindowsLoweredForOverlay.Clear();
     }
 
     private static void SetPinnedWindowZOrder(Window window,IntPtr insertAfter)
@@ -2079,10 +2056,10 @@ public partial class CaptureOverlayWindow : Window
         {
             if(item.VideoPath is { } video){var window=new PinnedVideoWindow(video,region);try{window.Show();}catch{window.Close();throw;}}
             else new PinnedImageWindow(RenderSelectionImage(item),region).Show();
-            // The newly shown pin is still topmost, so capture it into the
-            // frozen desktop frame before lowering it beneath this overlay.
+            // Capture the protected pin into the frozen desktop frame, then
+            // explicitly keep the live pin above the capture controls.
             RefreshDesktopFrameIncludingPinnedWindows();
-            LowerPinnedWindowsForOverlay();
+            RaisePinnedWindowsAboveOverlay();
             PromptStatus.Text=item.VideoPath is null?"已在原位贴图":"已在原位贴视频";SetPromptBarHidden(false);
         }
         catch(Exception ex){new PrivacyLogger().Error("PinMedia",ex);PromptStatus.Text=$"贴图失败：{ex.Message}";}
