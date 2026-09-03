@@ -22,6 +22,7 @@ public sealed class PinnedImageWindow : Window
     private MenuItem? _topmostItem, _opacityItem;
     private bool _adjustingSize;
     private readonly PinnedWindowDragController _drag;
+    private readonly IDisposable _captureRegistration;
     private readonly int _initialContentWidthPixels;
     private int _quarterTurns;
 
@@ -30,8 +31,9 @@ public sealed class PinnedImageWindow : Window
         _originalImage=_image=image;_originalRegion=originalRegion;_initialContentWidthPixels=Math.Min(image.PixelWidth,900);_drag=new PinnedWindowDragController(this);Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
         _imageView=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true};
         _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_imageView};
+        _captureRegistration=PinnedImageCaptureRegistry.Register(CreateCaptureSnapshot);
         Content=_frame;Width=_initialContentWidthPixels+ShadowPixels*2;Height=_initialContentWidthPixels*(double)image.PixelHeight/Math.Max(1,image.PixelWidth)+ShadowPixels*2;
-        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();
+        SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Closed+=(_,_)=>_captureRegistration.Dispose();
         SourceInitialized+=(_,_)=>
         {
             var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
@@ -87,7 +89,7 @@ public sealed class PinnedImageWindow : Window
 
     private void UpdateHeightForAspectRatio()
     {
-        if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_image.PixelHeight/_image.PixelWidth+padding;var maximumHeight=Math.Max(180,Math.Min(2400,SystemParameters.WorkArea.Height*.9));_adjustingSize=true;try{if(expected>maximumHeight){Height=maximumHeight;Width=(maximumHeight-padding)*_image.PixelWidth/_image.PixelHeight+padding;}else if(Math.Abs(ActualHeight-expected)>=1)Height=expected;}finally{_adjustingSize=false;}
+        if(_adjustingSize)return;var padding=_frame.Margin.Left*2;var contentWidth=Math.Max(1,ActualWidth-padding);var expected=contentWidth*_image.PixelHeight/_image.PixelWidth+padding;var maximumHeight=PinnedWindowZoomPolicy.GetMaximumHeight(_image.PixelWidth,_image.PixelHeight,padding);_adjustingSize=true;try{if(expected>maximumHeight){Height=maximumHeight;Width=(maximumHeight-padding)*_image.PixelWidth/_image.PixelHeight+padding;}else if(Math.Abs(ActualHeight-expected)>=1)Height=expected;}finally{_adjustingSize=false;}
     }
 
     private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e)
@@ -96,12 +98,22 @@ public sealed class PinnedImageWindow : Window
         if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));
     }
 
+    // Keep an explicit double-click route as a fallback for child visuals
+    // and layered WPF hit testing. The click-count check above handles the
+    // normal route; this event makes the gesture reliable even when a child
+    // marks the second button-down handled.
+    private void OnMouseDoubleClick(object sender,MouseButtonEventArgs e)
+    {
+        if(e.ChangedButton!=MouseButton.Left)return;
+        _drag.End();Unpin();e.Handled=true;
+    }
+
     private void OnMouseLeftButtonUp(object sender,MouseButtonEventArgs e)=>_drag.End();
     private void OnMouseMove(object sender,MouseEventArgs e)=>_drag.Move(e.LeftButton,e.GetPosition(this));
 
     private void OnMouseWheel(object sender,MouseWheelEventArgs e)
     {
-        var factor=e.Delta>0?1.08:.92;var minimumWidth=_frame.Margin.Left*2+1;Width=Math.Clamp(Width*factor,minimumWidth,2400);
+        var factor=e.Delta>0?1.08:.92;var padding=_frame.Margin.Left*2;var minimumWidth=padding+1;var maximumWidth=PinnedWindowZoomPolicy.GetMaximumWidth(_image.PixelWidth,_image.PixelHeight,padding);Width=Math.Clamp(Width*factor,minimumWidth,maximumWidth);e.Handled=true;
     }
 
     private ContextMenu BuildContextMenu()
@@ -122,6 +134,14 @@ public sealed class PinnedImageWindow : Window
     private void UpdateTopmostHeader(){if(_topmostItem is not null)_topmostItem.Header=Topmost?"取消置顶":"置顶";}
     private void ToggleOpacity(){Opacity=Opacity<1?1:.8;if(_opacityItem is not null)_opacityItem.Header=Opacity<1?"100% 不透明度":"80% 透明度";}
     private void RestoreOriginal(){if(_originalRegion is not { } region)return;var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;PlaceAtOriginalSize(handle,region);}
+    private PinnedImageCaptureSnapshot? CreateCaptureSnapshot()
+    {
+        if(!IsVisible||!Topmost||Opacity<=0)return null;
+        var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if(handle==IntPtr.Zero||!NativeMethods.GetWindowRect(handle,out var windowRect))return null;
+        var bounds=new ScreenRect(windowRect.Left+ShadowPixels,windowRect.Top+ShadowPixels,Math.Max(1,windowRect.Right-windowRect.Left-ShadowPixels*2),Math.Max(1,windowRect.Bottom-windowRect.Top-ShadowPixels*2));
+        return new PinnedImageCaptureSnapshot(bounds,_image,Opacity);
+    }
     private void Rotate(int delta)
     {
         var padding=_frame.Margin.Left*2;var oldContentWidth=Math.Max(1,ActualWidth-padding);var oldContentHeight=Math.Max(1,ActualHeight-padding);_quarterTurns=(_quarterTurns+delta)%4;_image=PinnedImageTransform.RotateQuarterTurns(_originalImage,_quarterTurns);_imageView.Source=_image;_adjustingSize=true;try{Width=oldContentHeight+padding;Height=oldContentWidth+padding;}finally{_adjustingSize=false;}UpdateHeightForAspectRatio();

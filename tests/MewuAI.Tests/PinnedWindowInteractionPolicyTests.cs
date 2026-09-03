@@ -15,4 +15,21 @@ public sealed class PinnedWindowInteractionPolicyTests
     {
         Assert.Equal(expected,PinnedWindowInteractionPolicy.ShouldBeginDrag(new Point(startX,startY),new Point(currentX,currentY),4,4));
     }
+
+    [Fact]
+    public void ZoomPolicyDoesNotUseTheOldSmallProductCap()
+    {
+        var maximum=PinnedWindowZoomPolicy.GetMaximumWidth(800,600,24);
+        Assert.True(maximum>2_400);
+        Assert.InRange(maximum,24, PinnedWindowZoomPolicy.MaxWindowDimension);
+    }
+
+    [Fact]
+    public void ZoomPolicyPreservesAspectRatioAtItsSafeBound()
+    {
+        var padding=24d;var width=PinnedWindowZoomPolicy.GetMaximumWidth(2_000,1_000,padding);var height=PinnedWindowZoomPolicy.GetMaximumHeight(2_000,1_000,padding);
+        Assert.InRange(width,2_000, PinnedWindowZoomPolicy.MaxWindowDimension);
+        Assert.InRange(height,1_000, PinnedWindowZoomPolicy.MaxWindowDimension);
+        Assert.True(width-padding>height-padding);
+    }
 }

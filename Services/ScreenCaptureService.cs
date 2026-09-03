@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Forms=System.Windows.Forms;
+using mewu_ai_Assistant.Models;
 namespace mewu_ai_Assistant.Services;
 public sealed class ScreenCaptureService
 {
@@ -32,7 +33,16 @@ public sealed class ScreenCaptureService
                 if(screen!=IntPtr.Zero)ReleaseDC(IntPtr.Zero,screen);
                 graphics.ReleaseHdc(destination);
             }
-            if(includeCursor)DrawCursor(graphics,bounds.Left,bounds.Top);
+        }
+        // Pinned image windows deliberately keep display-affinity enabled, so
+        // BitBlt omits them.  An explicit user screenshot still needs to
+        // include those visible images; merge their immutable sources back
+        // into the frozen frame before drawing the capture cursor.
+        PinnedImageCaptureRegistry.CompositeInto(bitmap,new ScreenRect(bounds.Left,bounds.Top,bounds.Width,bounds.Height));
+        if(includeCursor)
+        {
+            using var cursorGraphics=Graphics.FromImage(bitmap);
+            DrawCursor(cursorGraphics,bounds.Left,bounds.Top);
         }
         return new(bounds.Left,bounds.Top,ToSource(bitmap));
     }
