@@ -49,8 +49,12 @@ internal static class AnnotationBoxRefinementService
         var originalWidth=right-left;var originalHeight=bottom-top;
         if(originalWidth<6||originalHeight<6)return annotation;
 
-        var horizontalRadius=Math.Clamp((int)Math.Round(originalWidth*.14),3,36);
-        var verticalRadius=Math.Clamp((int)Math.Round(originalHeight*.14),3,36);
+        // A model box is a coarse semantic proposal, not an invitation to
+        // search the whole nearby UI.  A wider search regularly selected a
+        // glyph stroke or a neighbouring control border instead of correcting
+        // the intended edge.  Keep this as a small, local refinement only.
+        var horizontalRadius=Math.Clamp((int)Math.Round(originalWidth*.08),3,18);
+        var verticalRadius=Math.Clamp((int)Math.Round(originalHeight*.08),3,18);
         var refinedLeft=FindVerticalEdge(pixels,width,height,stride,left,horizontalRadius,top,bottom);
         var refinedRight=FindVerticalEdge(pixels,width,height,stride,right,horizontalRadius,top,bottom);
         var refinedTop=FindHorizontalEdge(pixels,width,height,stride,top,verticalRadius,left,right);
@@ -72,23 +76,23 @@ internal static class AnnotationBoxRefinementService
         };
     }
 
-    private static bool IsPlausibleSpan(int candidate,int original)=>candidate>=6&&candidate>=original*.72&&candidate<=original*1.28;
+    private static bool IsPlausibleSpan(int candidate,int original)=>candidate>=6&&candidate>=original*.84&&candidate<=original*1.16;
 
     private static int? FindVerticalEdge(byte[] pixels,int width,int height,int stride,int center,int radius,int top,int bottom)
     {
         var from=Math.Max(1,center-radius);var to=Math.Min(width-2,center+radius);
         var inset=Math.Max(1,(bottom-top)/12);var sampleTop=Math.Clamp(top+inset,1,height-2);var sampleBottom=Math.Clamp(bottom-inset,sampleTop+1,height-1);
-        return FindConfidentEdge(from,to,x=>ScoreVertical(pixels,stride,x,sampleTop,sampleBottom));
+        return FindConfidentEdge(from,to,center,x=>ScoreVertical(pixels,stride,x,sampleTop,sampleBottom));
     }
 
     private static int? FindHorizontalEdge(byte[] pixels,int width,int height,int stride,int center,int radius,int left,int right)
     {
         var from=Math.Max(1,center-radius);var to=Math.Min(height-2,center+radius);
         var inset=Math.Max(1,(right-left)/12);var sampleLeft=Math.Clamp(left+inset,1,width-2);var sampleRight=Math.Clamp(right-inset,sampleLeft+1,width-1);
-        return FindConfidentEdge(from,to,y=>ScoreHorizontal(pixels,stride,y,sampleLeft,sampleRight));
+        return FindConfidentEdge(from,to,center,y=>ScoreHorizontal(pixels,stride,y,sampleLeft,sampleRight));
     }
 
-    private static int? FindConfidentEdge(int from,int to,Func<int,(double Average,double Coverage)> score)
+    private static int? FindConfidentEdge(int from,int to,int originalPosition,Func<int,(double Average,double Coverage)> score)
     {
         if(to<from)return null;
         var candidates=new List<(int Position,double Average,double Coverage)>();
@@ -97,9 +101,13 @@ internal static class AnnotationBoxRefinementService
             var value=score(position);candidates.Add((position,value.Average,value.Coverage));
         }
         var best=candidates.OrderByDescending(item=>item.Average).ThenByDescending(item=>item.Coverage).First();
+        var original=candidates.First(item=>item.Position==Math.Clamp(originalPosition,from,to));
         var averages=candidates.Select(item=>item.Average).Order().ToArray();var median=averages[averages.Length/2];
         var mean=averages.Average();var deviation=Math.Sqrt(averages.Sum(value=>(value-mean)*(value-mean))/averages.Length);
-        return best.Coverage>=.28&&best.Average>=median+10&&best.Average>=mean+deviation*1.15?best.Position:null;
+        // Do not move a model edge merely because another line in the search
+        // window is strong.  The replacement needs to beat the current edge
+        // as well as the local distribution, otherwise retain the model box.
+        return best.Coverage>=.36&&best.Average>=median+12&&best.Average>=mean+deviation*1.25&&best.Average>=original.Average+8?best.Position:null;
     }
 
     private static (double Average,double Coverage) ScoreVertical(byte[] pixels,int stride,int x,int top,int bottom)

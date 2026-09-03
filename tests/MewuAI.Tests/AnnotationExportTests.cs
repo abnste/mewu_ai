@@ -35,7 +35,16 @@ public sealed class AnnotationExportTests
         var note=new AiAnnotation(.1,.1,.25,.2,"按钮");var overlay=AnnotationOverlayRenderer.RenderAiOverlay(320,180,[note]);var source=SolidBitmap(320,180,Colors.White);var composite=AnnotationOverlayRenderer.Composite(source,overlay);Assert.True(HasNonWhitePixel(composite));
     }
 
+    [Fact]
+    public void CalloutRendersOneRedTargetOutlineAtItsProtocolGeometry()
+    {
+        var note=new AiAnnotation(.25,.30,.28,.18,"新对话",0,ReferenceHandle:"ref-1",Kind:AiAnnotationKind.Callout);
+        var overlay=AnnotationOverlayRenderer.RenderAiOverlay(200,120,[note]);
+        Assert.True(ContainsRedPixel(overlay,48,34,56,42));
+    }
+
     private static AiAnnotation Timeline(double start,double end)=>new(.1,.2,.2,.2,"目标",0,start,end,[new VideoAnnotationKeyframe(start,.1,.2,.2,.2),new VideoAnnotationKeyframe(end,.2,.25,.2,.2)]);
     private static BitmapSource SolidBitmap(int width,int height,Color color){var pixels=new byte[width*height*4];for(var i=0;i<pixels.Length;i+=4){pixels[i]=color.B;pixels[i+1]=color.G;pixels[i+2]=color.R;pixels[i+3]=color.A;}var bitmap=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,width*4);bitmap.Freeze();return bitmap;}
     private static bool HasNonWhitePixel(BitmapSource image){var pixels=new byte[image.PixelWidth*image.PixelHeight*4];image.CopyPixels(pixels,image.PixelWidth*4,0);for(var i=0;i<pixels.Length;i+=4)if(pixels[i]<245||pixels[i+1]<245||pixels[i+2]<245)return true;return false;}
+    private static bool ContainsRedPixel(BitmapSource image,int left,int top,int right,int bottom){var pixels=new byte[image.PixelWidth*image.PixelHeight*4];image.CopyPixels(pixels,image.PixelWidth*4,0);for(var y=top;y<=bottom;y++)for(var x=left;x<=right;x++){var offset=(y*image.PixelWidth+x)*4;if(pixels[offset+2]>180&&pixels[offset+1]<100&&pixels[offset]<100)return true;}return false;}
 }
