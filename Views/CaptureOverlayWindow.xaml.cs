@@ -1792,7 +1792,7 @@ public partial class CaptureOverlayWindow : Window
     private AnnotationMappingResult MapAnnotations(IReadOnlyList<AiAnnotation> notes)
     {
         var mapped=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>(IReadOnlyList<AiAnnotation>)Array.Empty<AiAnnotation>());var buckets=_lastSentSelections.Distinct().ToDictionary(item=>item,item=>new List<AiAnnotation>());var sentTargets=_lastSentAnnotationTargets.ToArray();var targets=sentTargets.Select(item=>new AnnotationReferenceTarget(item.ReferenceHandle,item.Type==AiAttachmentType.Video)).ToArray();
-        var timelineCandidates=0;var regionMismatch=0;var typeMismatch=0;var durationRejected=0;var singleVideoRemaps=0;var durationClamped=0;var handleMismatches=0;var handleRemaps=0;
+        var timelineCandidates=0;var regionMismatch=0;var typeMismatch=0;var durationRejected=0;var singleVideoRemaps=0;var durationClamped=0;var handleMismatches=0;var handleRemaps=0;var elementAligned=new HashSet<AiAnnotation>();var accessibilityAttempts=0;var overlayHandle=new WindowInteropHelper(this).Handle;
         foreach(var original in notes)
         {
             if(original.IsVideoTimeline)timelineCandidates++;
@@ -1814,6 +1814,16 @@ public partial class CaptureOverlayWindow : Window
                 if(!VideoAnnotationTimeline.TryFitToDuration(note,target.VideoDuration.TotalSeconds,out note,out var clamped)){durationRejected++;continue;}
                 if(clamped)durationClamped++;
             }
+            else if(accessibilityAttempts++<12)
+            {
+                // The model only needs to land near the correct control.  If
+                // the frozen screenshot corresponds to a native/UIA element,
+                // use its actual physical bounds instead of trusting a visual
+                // estimate. This is the same accessibility-first principle
+                // used by computer-use for reliable button/edit targeting.
+                var pixels=ToPixelRect(target.Bounds);var selectionScreen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);var centerX=selectionScreen.X+(int)Math.Round((note.X+note.Width/2)*selectionScreen.Width);var centerY=selectionScreen.Y+(int)Math.Round((note.Y+note.Height/2)*selectionScreen.Height);var control=_windowSnap.FindTopmostTargetAt(centerX,centerY,overlayHandle);
+                if(control is not null&&AccessibilityAnnotationRefinementService.TryRefine(note,selectionScreen,control.Bounds,out var exact)){note=exact;elementAligned.Add(note);}
+            }
             buckets[target].Add(note);
         }
         foreach(var entry in buckets)
@@ -1822,7 +1832,7 @@ public partial class CaptureOverlayWindow : Window
             if(entry.Key.VideoPath is null&&notesForItem.Length>0)
             {
                 var cleanImage=RenderSelectionImage(entry.Key,false,false,false);
-                notesForItem=AnnotationBoxRefinementService.RefineAll(cleanImage,notesForItem).ToArray();
+                notesForItem=notesForItem.Select(note=>elementAligned.Contains(note)?note:AnnotationBoxRefinementService.Refine(cleanImage,note)).ToArray();
             }
             mapped[entry.Key]=notesForItem;
         }
