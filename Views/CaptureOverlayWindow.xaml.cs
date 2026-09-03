@@ -1240,10 +1240,30 @@ public partial class CaptureOverlayWindow : Window
             // hosted by a Canvas and can otherwise keep the previous arranged
             // height for one frame.  Re-measure the composer at render priority
             // so Shift+Enter grows the input row before its second line paints.
+            ResizeQuickPromptToContent();
             QuickPrompt.InvalidateMeasure();
             PromptBar.InvalidateMeasure();
             PositionPromptBar();
         }));
+    }
+    private void ResizeQuickPromptToContent()
+    {
+        var width=QuickPrompt.ActualWidth;
+        if(width<=0)
+        {
+            var border=PromptInputBorder.BorderThickness;var padding=PromptInputBorder.Padding;
+            width=PromptInputBorder.ActualWidth-border.Left-border.Right-padding.Left-padding.Right;
+        }
+        if(!double.IsFinite(width)||width<=0)return;
+        // Measure without the previous arranged height.  With an infinite
+        // vertical constraint WPF reports the wrapped content height; the
+        // explicit MaxHeight still keeps unusually long prompts compact and
+        // lets the TextBox scroll after the bounded expansion.
+        QuickPrompt.Height=double.NaN;
+        QuickPrompt.Measure(new Size(width,double.PositiveInfinity));
+        var desired=QuickPrompt.DesiredSize.Height;
+        if(!double.IsFinite(desired)||desired<=0)return;
+        QuickPrompt.Height=Math.Clamp(desired,CompactQuickPromptMinHeight,CompactQuickPromptMaxHeight);
     }
     private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void UpdatePromptBarHiddenTransform(bool animate)
