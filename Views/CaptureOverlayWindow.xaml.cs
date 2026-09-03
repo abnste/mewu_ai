@@ -161,6 +161,8 @@ public partial class CaptureOverlayWindow : Window
     }
     private sealed record OcrTextLayerState(BitmapSource Image,OcrDocument Document):TextLayerState;
     private sealed record TranslationTextLayerState(BitmapSource Image,IReadOnlyList<OcrLine> Lines,IReadOnlyList<string> Texts):TextLayerState;
+    private sealed record TranslationVisualRow(string Text,double Width);
+    private sealed record TranslationVisualEntry(Rect Bounds,double FontSize,double LineHeight,IReadOnlyList<TranslationVisualRow> Rows,Color BackdropColor);
     private sealed record SelectionSnapshot(
         SelectionItem Item,
         Rect Bounds,
@@ -2509,21 +2511,43 @@ public partial class CaptureOverlayWindow : Window
         }
         catch(Exception ex){Topmost=true;Activate();new PrivacyLogger().Error("OverlaySettings",ex);PromptStatus.Text="无法打开设置，请从托盘重试";}
     }
-    private static void RenderTextOverlays(SelectionItem item,BitmapSource image,IReadOnlyList<OcrLine> lines,IReadOnlyList<string> texts,bool translated)
+    private void RenderTextOverlays(SelectionItem item,BitmapSource image,IReadOnlyList<OcrLine> lines,IReadOnlyList<string> texts,bool translated)
     {
         item.TextLayer=new TranslationTextLayerState(image,lines.ToArray(),texts.ToArray());
         RenderTextOverlaysCore(item,image,lines,texts,translated);
     }
-    private static void RenderTextOverlaysCore(SelectionItem item,BitmapSource image,IReadOnlyList<OcrLine> lines,IReadOnlyList<string> texts,bool translated)
+    private void RenderTextOverlaysCore(SelectionItem item,BitmapSource image,IReadOnlyList<OcrLine> lines,IReadOnlyList<string> texts,bool translated)
     {
-        ClearTextSelection(item);item.TextOverlays.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;
+        ClearTextSelection(item);item.TextOverlays.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;if(!translated)return;
+        var pixelsPerDip=VisualTreeHelper.GetDpi(this).PixelsPerDip;var entries=new List<TranslationVisualEntry>();var selectableLines=new List<OcrLine>();
         for(var index=0;index<lines.Count&&index<texts.Count;index++)
         {
-            var line=lines[index];var width=Math.Max(36,line.Width*scaleX);var baseFont=Math.Clamp(line.Height*scaleY*.78,10,26);var fit=string.IsNullOrWhiteSpace(texts[index])?1:Math.Min(1,width/Math.Max(1,texts[index].Length*baseFont*.56));var fontSize=Math.Clamp(baseFont*fit,8,26);var text=new TextBlock{Text=texts[index],Foreground=translated?Brushes.White:new SolidColorBrush(Color.FromRgb(35,47,67)),FontSize=fontSize,FontWeight=translated?FontWeights.Normal:FontWeights.Normal,TextWrapping=TextWrapping.NoWrap,LineHeight=Math.Clamp(line.Height*scaleY*.9,14,32)};
-            var box=new Border{Child=text,Background=translated?new SolidColorBrush(Color.FromArgb(205,42,48,58)):new SolidColorBrush(Color.FromArgb(228,248,251,255)),BorderBrush=translated?Brushes.Transparent:new SolidColorBrush(Color.FromRgb(78,164,224)),BorderThickness=translated?new Thickness(0):new Thickness(1),CornerRadius=new CornerRadius(5),Padding=new Thickness(3,1,3,1),Width=width,MinHeight=Math.Max(18,line.Height*scaleY),ToolTip=translated?"原位译文":"本地 OCR 文字"};
-            Canvas.SetLeft(box,line.X*scaleX);Canvas.SetTop(box,line.Y*scaleY);item.TextOverlays.Children.Add(box);
+            var line=lines[index];var value=texts[index]?.Trim();if(string.IsNullOrWhiteSpace(value))continue;var lineBounds=new Rect(line.X*scaleX,line.Y*scaleY,Math.Max(1,line.Width*scaleX),Math.Max(1,line.Height*scaleY));var fontSize=Math.Clamp(lineBounds.Height*.78,9,28);var maxTextWidth=Math.Max(24,item.Bounds.Width-TranslationOverlayLayoutService.HorizontalPadding);IReadOnlyList<TranslationVisualRow> rows=[];double lineHeight=0;
+            for(var attempt=0;attempt<5;attempt++)
+            {
+                rows=WrapTranslationText(value,fontSize,maxTextWidth,pixelsPerDip);lineHeight=Math.Max(fontSize*1.18,lineBounds.Height*.9);var requiredHeight=rows.Count*lineHeight+TranslationOverlayLayoutService.VerticalPadding;if(requiredHeight<=item.Bounds.Height||fontSize<=7.1)break;fontSize=Math.Max(7,fontSize*Math.Clamp((item.Bounds.Height-TranslationOverlayLayoutService.VerticalPadding)/requiredHeight,.65,.92));
+            }
+            if(rows.Count==0)continue;var contentWidth=rows.Max(row=>row.Width)+TranslationOverlayLayoutService.HorizontalPadding;var contentHeight=rows.Count*lineHeight+TranslationOverlayLayoutService.VerticalPadding;var placement=TranslationOverlayLayoutService.Place(lineBounds,new Size(item.Bounds.Width,item.Bounds.Height),contentWidth,contentHeight);if(placement.IsEmpty)continue;var pixelRect=TranslationOverlayLayoutService.ToImagePixelRect(placement,image,scaleX,scaleY);var backdropColor=TranslationOverlayLayoutService.GetAverageColor(image,pixelRect);entries.Add(new TranslationVisualEntry(placement,fontSize,lineHeight,rows,backdropColor));
+            for(var rowIndex=0;rowIndex<rows.Count;rowIndex++)
+            {
+                var row=rows[rowIndex];var x=placement.Left+TranslationOverlayLayoutService.HorizontalPadding/2;var y=placement.Top+TranslationOverlayLayoutService.VerticalPadding/2+rowIndex*lineHeight;var width=Math.Min(row.Width,Math.Max(1,placement.Width-TranslationOverlayLayoutService.HorizontalPadding));var bounds=new Rect(x,y,width,Math.Min(lineHeight,Math.Max(1,placement.Bottom-y)));selectableLines.Add(new OcrLine(row.Text,bounds.X,bounds.Y,bounds.Width,bounds.Height,[new OcrWord(row.Text,bounds.X,bounds.Y,bounds.Width,bounds.Height)]));
+            }
         }
+        foreach(var entry in entries){var backdrop=TranslationOverlayLayoutService.CreateBackdrop(image,entry.Bounds,scaleX,scaleY,entry.BackdropColor);Canvas.SetLeft(backdrop,entry.Bounds.Left);Canvas.SetTop(backdrop,entry.Bounds.Top);item.TextOverlays.Children.Add(backdrop);}
+        foreach(var entry in entries)
+        {
+            var luminance=.2126*entry.BackdropColor.R+.7152*entry.BackdropColor.G+.0722*entry.BackdropColor.B;var foreground=new SolidColorBrush(luminance>150?Color.FromRgb(24,31,42):Colors.White);foreground.Freeze();var text=new TextBlock{Text=string.Join("\n",entry.Rows.Select(row=>row.Text)),Foreground=foreground,FontFamily=new FontFamily("Segoe UI"),FontSize=entry.FontSize,FontWeight=FontWeights.Normal,TextWrapping=TextWrapping.NoWrap,LineHeight=entry.LineHeight,Margin=new Thickness(TranslationOverlayLayoutService.HorizontalPadding/2,TranslationOverlayLayoutService.VerticalPadding/2,0,0),ToolTip="原位译文 · 可拖选复制",IsHitTestVisible=false};var host=new Grid{Width=entry.Bounds.Width,Height=entry.Bounds.Height,ClipToBounds=true,IsHitTestVisible=false};host.Children.Add(text);Canvas.SetLeft(host,entry.Bounds.Left);Canvas.SetTop(host,entry.Bounds.Top);item.TextOverlays.Children.Add(host);
+        }
+        if(selectableLines.Count>0)RenderTextSelectionCore(item,selectableLines,1,1,string.Join(Environment.NewLine,texts.Where(text=>!string.IsNullOrWhiteSpace(text))),"可跨行拖动选择译文，Ctrl+C 复制","复制全部译文");
     }
+
+    private static IReadOnlyList<TranslationVisualRow> WrapTranslationText(string value,double fontSize,double maxWidth,double pixelsPerDip)
+    {
+        return TranslationOverlayLayoutService.WrapText(value,maxWidth,text=>MeasureTranslationText(text,fontSize,pixelsPerDip)).Select(text=>new TranslationVisualRow(text,Math.Min(maxWidth,MeasureTranslationText(text,fontSize,pixelsPerDip)))).ToArray();
+    }
+
+    private static double MeasureTranslationText(string value,double fontSize,double pixelsPerDip)=>new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface("Segoe UI"),fontSize,Brushes.Black,pixelsPerDip).WidthIncludingTrailingWhitespace;
+
     private void RenderSelectableText(SelectionItem item,BitmapSource image,OcrDocument document)
     {
         item.TextLayer=new OcrTextLayerState(image,document);
@@ -2531,7 +2555,11 @@ public partial class CaptureOverlayWindow : Window
     }
     private void RenderSelectableTextCore(SelectionItem item,BitmapSource image,OcrDocument document)
     {
-        item.TextOverlays.Children.Clear();ClearTextSelection(item);if(document.Lines.Count==0)return;var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;var layout=OcrSelectionLayout.Build(document.Lines,scaleX,scaleY);if(layout.Count==0)return;
+        item.TextOverlays.Children.Clear();ClearTextSelection(item);if(document.Lines.Count==0)return;var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;RenderTextSelectionCore(item,document.Lines,scaleX,scaleY,document.Text,"可跨行拖动选择文字，Ctrl+C 复制","复制全部识别文字");
+    }
+    private void RenderTextSelectionCore(SelectionItem item,IReadOnlyList<OcrLine> lines,double scaleX,double scaleY,string allText,string toolTip,string copyAllHeader)
+    {
+        var layout=OcrSelectionLayout.Build(lines,scaleX,scaleY);if(layout.Count==0)return;
         var flow=new FlowDocument{PagePadding=new Thickness(0),ColumnGap=0,FontFamily=new FontFamily("Segoe UI"),FontSize=1,LineHeight=1,Foreground=Brushes.Transparent};var pending=new List<(OcrSelectionGlyph Glyph,Run Run)>();
         foreach(var line in layout)
         {
@@ -2539,10 +2567,10 @@ public partial class CaptureOverlayWindow : Window
             foreach(var token in line.Tokens){if(token.Prefix.Length>0)paragraph.Inlines.Add(new Run(token.Prefix));var run=new Run(token.Text);paragraph.Inlines.Add(run);foreach(var glyph in token.Glyphs)pending.Add((glyph,run));}
             flow.Blocks.Add(paragraph);
         }
-        var box=new RichTextBox{Document=flow,IsReadOnly=true,IsReadOnlyCaretVisible=false,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),SelectionBrush=Brushes.Transparent,SelectionTextBrush=Brushes.Transparent,Cursor=Cursors.IBeam,Width=item.Bounds.Width,Height=item.Bounds.Height,VerticalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,ToolTip="可跨行拖动选择文字，Ctrl+C 复制"};
+        var box=new RichTextBox{Document=flow,IsReadOnly=true,IsReadOnlyCaretVisible=false,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),SelectionBrush=Brushes.Transparent,SelectionTextBrush=Brushes.Transparent,Cursor=Cursors.IBeam,Width=item.Bounds.Width,Height=item.Bounds.Height,VerticalScrollBarVisibility=ScrollBarVisibility.Disabled,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,ToolTip=toolTip};
         var highlights=new Canvas{Width=item.Bounds.Width,Height=item.Bounds.Height,IsHitTestVisible=false};var selectable=new List<SelectableGlyph>(pending.Count);
         foreach(var entry in pending){var start=entry.Run.ContentStart.GetPositionAtOffset(entry.Glyph.Utf16Start,LogicalDirection.Forward);var end=entry.Run.ContentStart.GetPositionAtOffset(entry.Glyph.Utf16Start+entry.Glyph.Utf16Length,LogicalDirection.Forward);if(start is not null&&end is not null)selectable.Add(new SelectableGlyph(entry.Glyph.Bounds,start,end));}
-        if(selectable.Count==0)return;box.SelectionChanged+=(_,_)=>{var count=new TextRange(box.Selection.Start,box.Selection.End).Text.Length;if(count>0)PromptStatus.Text=$"已选择 {count} 个字符 · Ctrl+C 复制或右键";};box.ContextMenu=CreateTextContextMenu(box,document.Text);item.TextSelection.Children.Add(highlights);item.TextSelection.Children.Add(box);item.TextSession=new OcrTextSelectionSession(box,highlights,selectable);item.TextSelection.IsHitTestVisible=true;
+        if(selectable.Count==0)return;box.SelectionChanged+=(_,_)=>{var count=new TextRange(box.Selection.Start,box.Selection.End).Text.Length;if(count>0)PromptStatus.Text=$"已选择 {count} 个字符 · Ctrl+C 复制或右键";};box.ContextMenu=CreateTextContextMenu(box,allText,copyAllHeader);item.TextSelection.Children.Add(highlights);item.TextSelection.Children.Add(box);item.TextSession=new OcrTextSelectionSession(box,highlights,selectable);item.TextSelection.IsHitTestVisible=true;
     }
     private void ApplyTextLayerState(SelectionItem item)
     {
@@ -2553,9 +2581,9 @@ public partial class CaptureOverlayWindow : Window
             default:item.TextOverlays.Children.Clear();ClearTextSelection(item);break;
         }
     }
-    private ContextMenu CreateTextContextMenu(RichTextBox box,string allText)
+    private ContextMenu CreateTextContextMenu(RichTextBox box,string allText,string copyAllHeader)
     {
-        var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,"TextSelectionContextMenu");var copy=new MenuItem{Header="复制所选文字"};var copyAll=new MenuItem{Header="复制全部识别文字"};foreach(var entry in new[]{copy,copyAll})entry.SetResourceReference(StyleProperty,"TextSelectionMenuItem");copy.Click+=(_,_)=>CopyTextToClipboard(new TextRange(box.Selection.Start,box.Selection.End).Text.TrimEnd('\r','\n'));copyAll.Click+=(_,_)=>CopyTextToClipboard(allText);var separator=new Separator();separator.SetResourceReference(StyleProperty,"TextSelectionSeparator");menu.Items.Add(copy);menu.Items.Add(separator);menu.Items.Add(copyAll);menu.Opened+=(_,_)=>copy.IsEnabled=!box.Selection.IsEmpty;return menu;
+        var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,"TextSelectionContextMenu");var copy=new MenuItem{Header="复制所选文字"};var copyAll=new MenuItem{Header=copyAllHeader};foreach(var entry in new[]{copy,copyAll})entry.SetResourceReference(StyleProperty,"TextSelectionMenuItem");copy.Click+=(_,_)=>CopyTextToClipboard(new TextRange(box.Selection.Start,box.Selection.End).Text.TrimEnd('\r','\n'));copyAll.Click+=(_,_)=>CopyTextToClipboard(allText);var separator=new Separator();separator.SetResourceReference(StyleProperty,"TextSelectionSeparator");menu.Items.Add(copy);menu.Items.Add(separator);menu.Items.Add(copyAll);menu.Opened+=(_,_)=>copy.IsEnabled=!box.Selection.IsEmpty;return menu;
     }
     private void CopyTextToClipboard(string text){if(text.Length==0)return;PromptStatus.Text=ClipboardService.TrySetText(text,out var error)?"文字已复制":error;}
     private static void ClearTextSelection(SelectionItem item){item.TextSession?.Dispose();item.TextSession=null;item.TextSelection.Children.Clear();item.TextSelection.IsHitTestVisible=false;}
