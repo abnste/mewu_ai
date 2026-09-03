@@ -813,7 +813,7 @@ public sealed class SettingsWindow : Window
         panel.Children.Add(Text("作者：Abner Stephen\nAuthor: Abner Stephen\n版本 / Version："+appVersion+"\nWindows 截图、OCR、标注、录屏与多模态 AI 工作流\nWindows capture, OCR, annotation, recording and multimodal AI workflow", true));
         var updateStatus=Text("从 GitHub Releases 获取正式版本。安装包下载后会校验 SHA-256。\nOfficial releases are checked on GitHub and verified with SHA-256.",true);
         updateStatus.Margin=new Thickness(0,4,0,8);
-        var checkUpdate=ActionButton("检查更新 / Check for updates",true);
+        var checkUpdate=ActionButton("检查更新 / Check for updates");
         checkUpdate.HorizontalAlignment=HorizontalAlignment.Left;
         checkUpdate.Click+=async (_,_)=>await CheckForUpdatesAsync(checkUpdate,updateStatus);
         panel.Children.Add(checkUpdate);
