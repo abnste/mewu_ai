@@ -385,11 +385,13 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
-    public void NearlyFullScreenSelectionCannotPermanentlyHidePromptBar()
+    public void FullScreenSelectionHidesAwayFromPromptAndUsesPromptBoundsAsRevealZone()
     {
-        var monitor=new Rect(0,0,1920,1080);
+        var monitor=new Rect(0,0,1920,1080);var prompt=new Rect(670,900,580,130);var selection=new Rect(0,0,1920,1080);
 
-        Assert.False(CaptureOverlayPolicy.ShouldAutoHidePromptBar(new Point(900,500),Rect.Empty,monitor,[new Rect(0,0,1920,1080)]));
+        Assert.True(CaptureOverlayPolicy.ShouldAutoHidePromptBar(new Point(900,500),prompt,monitor,[selection]));
+        Assert.True(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(true,new Point(900,500),prompt,monitor,[selection]));
+        Assert.False(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(true,new Point(900,950),prompt,monitor,[selection]));
         Assert.True(CaptureOverlayPolicy.ShouldAutoHidePromptBar(new Point(300,250),Rect.Empty,monitor,[new Rect(200,150,500,300)]));
     }
 
