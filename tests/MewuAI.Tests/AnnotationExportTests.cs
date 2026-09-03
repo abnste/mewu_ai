@@ -2,6 +2,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Recording;
+using mewu_ai_Assistant.Services;
 using Xunit;
 
 namespace MewuAI.Tests;
@@ -49,6 +50,14 @@ public sealed class AnnotationExportTests
         var note=new AiAnnotation(.7,.7,.15,.12,"右下目标",ReferenceHandle:"ref-1",Kind:AiAnnotationKind.Callout);var positions=new Dictionary<AiAnnotation,System.Windows.Point>{{note,new(.05,.05)}};
         var overlay=AnnotationOverlayRenderer.RenderAiOverlay(300,180,[note],null,positions);
         Assert.True(ContainsBluePixel(overlay,10,5,105,15));
+    }
+
+    [Fact]
+    public void CrossSurvivesPostProcessingAndRendersBothDiagonalStrokes()
+    {
+        var style=new AiAnnotationStyle("#FF0000",.025);var down=new AiAnnotation(.2,.2,.4,.4,"错误",ReferenceHandle:"ref",Kind:AiAnnotationKind.Pen,Points:[new(.2,.2),new(.6,.6)],Style:style);var up=new AiAnnotation(.2,.2,.4,.4,"错误",ReferenceHandle:"ref",Kind:AiAnnotationKind.Pen,Points:[new(.2,.6),new(.6,.2)],Style:style);
+        var notes=AnnotationPostProcessor.Process([down,up],false,out _);var overlay=AnnotationOverlayRenderer.RenderAiOverlay(200,200,notes);
+        Assert.Equal(2,notes.Count);Assert.True(ContainsRedPixel(overlay,36,36,44,44));Assert.True(ContainsRedPixel(overlay,36,116,44,124));
     }
 
     private static AiAnnotation Timeline(double start,double end)=>new(.1,.2,.2,.2,"目标",0,start,end,[new VideoAnnotationKeyframe(start,.1,.2,.2,.2),new VideoAnnotationKeyframe(end,.2,.25,.2,.2)]);

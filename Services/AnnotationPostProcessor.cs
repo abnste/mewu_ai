@@ -65,6 +65,7 @@ internal static class AnnotationPostProcessor
         if(!targetKinds&&first.Kind!=second.Kind)return false;
         var textSimilarity=TextSimilarity(first.Text,second.Text);
         if(!targetKinds&&textSimilarity<.82)return false;
+        if(IsPathKind(first.Kind)&&IsPathKind(second.Kind))return AreDuplicatePaths(first,second,isVideo);
         if(isVideo)
         {
             if(IsClosePointEvent(first,second))
@@ -97,6 +98,49 @@ internal static class AnnotationPostProcessor
     private static bool IsClosePointEvent(AiAnnotation first,AiAnnotation second)=>first.EndTime!.Value-first.StartTime!.Value<=.05&&second.EndTime!.Value-second.StartTime!.Value<=.05&&Math.Abs(first.StartTime.Value-second.StartTime.Value)<=.12;
 
     private static bool IsTargetMarker(AiAnnotationKind kind)=>kind is AiAnnotationKind.Callout or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse;
+    private static bool IsPathKind(AiAnnotationKind kind)=>kind is AiAnnotationKind.Pen or AiAnnotationKind.Highlighter or AiAnnotationKind.Arrow;
+
+    private static bool AreDuplicatePaths(AiAnnotation first,AiAnnotation second,bool isVideo)
+    {
+        var allowReverse=first.Kind!=AiAnnotationKind.Arrow;
+        if(!isVideo)return AreEquivalentPaths(first.Points,second.Points,allowReverse);
+        if(IsClosePointEvent(first,second))return AreEquivalentPaths(first.Keyframes![0].Points,second.Keyframes![0].Points,allowReverse);
+        if(!TimelineOverlap(first,second,out var from,out var to))return false;
+        var samples=from==to?[from]:new[]{from,(from+to)/2,to};
+        foreach(var sample in samples)
+        {
+            if(!VideoAnnotationTimeline.TryInterpolate(first,sample,out var a)||!VideoAnnotationTimeline.TryInterpolate(second,sample,out var b)||!AreEquivalentPaths(a.Points,b.Points,allowReverse))return false;
+        }
+        return true;
+    }
+
+    private static bool AreEquivalentPaths(IReadOnlyList<AiAnnotationPoint>? first,IReadOnlyList<AiAnnotationPoint>? second,bool allowReverse)
+    {
+        if(first is not {Count:>=2}||second is not {Count:>=2})return false;
+        const int sampleCount=16;const double maximumDistance=.0125;
+        var left=SamplePath(first,sampleCount);var right=SamplePath(second,sampleCount);
+        if(MaximumPointDistance(left,right)<=maximumDistance)return true;
+        if(!allowReverse)return false;
+        Array.Reverse(right);return MaximumPointDistance(left,right)<=maximumDistance;
+    }
+
+    private static AiAnnotationPoint[] SamplePath(IReadOnlyList<AiAnnotationPoint> points,int sampleCount)
+    {
+        var lengths=new double[points.Count];
+        for(var index=1;index<points.Count;index++){var dx=points[index].X-points[index-1].X;var dy=points[index].Y-points[index-1].Y;lengths[index]=lengths[index-1]+Math.Sqrt(dx*dx+dy*dy);}
+        var total=lengths[^1];if(total<=1e-9)return Enumerable.Repeat(points[0],sampleCount).ToArray();
+        var result=new AiAnnotationPoint[sampleCount];var segment=1;
+        for(var sample=0;sample<sampleCount;sample++)
+        {
+            var distance=total*sample/(sampleCount-1);while(segment<lengths.Length-1&&lengths[segment]<distance)segment++;var previous=segment-1;var span=lengths[segment]-lengths[previous];var amount=span<=1e-9?0:(distance-lengths[previous])/span;result[sample]=new AiAnnotationPoint(Lerp(points[previous].X,points[segment].X,amount),Lerp(points[previous].Y,points[segment].Y,amount));
+        }
+        return result;
+    }
+
+    private static double MaximumPointDistance(IReadOnlyList<AiAnnotationPoint> first,IReadOnlyList<AiAnnotationPoint> second)
+    {
+        var maximum=0d;for(var index=0;index<first.Count;index++){var dx=first[index].X-second[index].X;var dy=first[index].Y-second[index].Y;maximum=Math.Max(maximum,Math.Sqrt(dx*dx+dy*dy));}return maximum;
+    }
 
     private static bool IsImplausiblyBroadLocalCallout(AiAnnotation annotation)
     {

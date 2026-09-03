@@ -76,7 +76,32 @@ public sealed class AnnotationPostProcessorTests
         Assert.Equal(VisualAnnotationProtocol.MaximumCallouts,result.Count(note=>note.Kind==AiAnnotationKind.Callout));Assert.Contains(result,note=>note.Kind==AiAnnotationKind.Highlighter);Assert.Equal(3,stats.QualityRejected);
     }
 
+    [Fact]
+    public void PreservesBothIntersectingPenStrokesThatFormACross()
+    {
+        var down=Path("错误",[new(.2,.2),new(.6,.6)]);var up=Path("错误",[new(.2,.6),new(.6,.2)]);
+        var result=AnnotationPostProcessor.Process([down,up],false,out var stats);
+        Assert.Equal(2,result.Count);Assert.Equal(0,stats.DuplicatesRemoved);
+    }
+
+    [Fact]
+    public void RemovesTheSamePenStrokeReturnedInReverseOrder()
+    {
+        var forward=Path("错误",[new(.2,.2),new(.6,.6)]);var reverse=Path("错误",[new(.6,.6),new(.2,.2)]);
+        var result=AnnotationPostProcessor.Process([forward,reverse],false,out var stats);
+        Assert.Single(result);Assert.Equal(1,stats.DuplicatesRemoved);
+    }
+
+    [Fact]
+    public void PreservesOppositeArrowDirectionsOnTheSamePath()
+    {
+        var forward=Path("方向",[new(.2,.2),new(.6,.6)],AiAnnotationKind.Arrow);var reverse=Path("方向",[new(.6,.6),new(.2,.2)],AiAnnotationKind.Arrow);
+        var result=AnnotationPostProcessor.Process([forward,reverse],false,out var stats);
+        Assert.Equal(2,result.Count);Assert.Equal(0,stats.DuplicatesRemoved);
+    }
+
     private static AiAnnotation Image(double x,double y,double width,double height,string text,AiAnnotationKind kind)=>new(x,y,width,height,text,0,ReferenceHandle:"ref-image",Kind:kind);
     private static AiAnnotation Timeline(string text,AiAnnotationKind kind,double offset)=>new(.1+offset,.1,.2,.2,text,0,1,2,[new(1,.1+offset,.1,.2,.2),new(2,.3+offset,.3,.2,.2)],"ref-video",kind);
     private static AiAnnotation PointEvent(string text,AiAnnotationKind kind,double time,double x)=>new(x,.1,.2,.2,text,0,time,time,[new(time,x,.1,.2,.2)],"ref-video",kind);
+    private static AiAnnotation Path(string text,IReadOnlyList<AiAnnotationPoint> points,AiAnnotationKind kind=AiAnnotationKind.Pen)=>new(points.Min(point=>point.X),points.Min(point=>point.Y),points.Max(point=>point.X)-points.Min(point=>point.X),points.Max(point=>point.Y)-points.Min(point=>point.Y),text,0,ReferenceHandle:"ref-image",Kind:kind,Points:points);
 }
