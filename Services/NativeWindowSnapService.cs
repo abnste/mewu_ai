@@ -94,11 +94,22 @@ internal sealed class NativeWindowSnapService
         if (root == IntPtr.Zero || root == excludedWindow)
             return null;
 
+        // `AutomationElement.FromHandle` is not interchangeable for modern
+        // WinUI/WebView applications.  The top-level frame often exposes only
+        // a generic window, while the HWND directly under the pointer owns the
+        // Document/Region branch that contains buttons and editors.  Resolve
+        // that bounded native path first, then use the root only as a fallback.
+        // This mirrors an accessibility-first computer-use hit test without
+        // ever recursively scanning a complete desktop or window tree.
+        var pointedHost = DeepestChildAt(root, screenX, screenY);
+
         // A maximized app is deliberately not a snap rectangle, but it can
         // still contain a precise button, menu item, edit box, etc.
         if (fast is null)
         {
-            var maximizedAutomation = FindAutomationElementAtPoint(screenX, screenY, excludedWindow, root) ?? FindAutomationBranchAt(root, screenX, screenY, excludedWindow);
+            var maximizedAutomation = FindAutomationElementAtPoint(screenX, screenY, excludedWindow, root)
+                ?? FindAutomationBranchAt(pointedHost, screenX, screenY, excludedWindow)
+                ?? (pointedHost != root ? FindAutomationBranchAt(root, screenX, screenY, excludedWindow) : null);
             if (maximizedAutomation is not null)
             {
                 CachePrecise(maximizedAutomation);
@@ -121,7 +132,8 @@ internal sealed class NativeWindowSnapService
         // snapper stop at that host instead of reaching the real control.
         // Always do this one bounded branch walk before accepting the coarse
         // native rectangle.
-        automation = FindAutomationBranchAt(root, screenX, screenY, excludedWindow);
+        automation = FindAutomationBranchAt(pointedHost, screenX, screenY, excludedWindow)
+            ?? (pointedHost != root ? FindAutomationBranchAt(root, screenX, screenY, excludedWindow) : null);
         if (automation is not null)
         {
             CachePrecise(automation);
