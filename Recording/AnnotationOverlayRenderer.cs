@@ -11,15 +11,27 @@ internal static class AnnotationOverlayRenderer
 {
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(42,174,255));
 
-    internal static BitmapSource RenderAiOverlay(int width,int height,IReadOnlyList<AiAnnotation> annotations,double? videoTime=null)
+    internal static DrawingImage CreateAiDrawingImage(int width,int height,IReadOnlyList<AiAnnotation> annotations,double? videoTime=null,IReadOnlyDictionary<AiAnnotation,Point>? calloutPositions=null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width,1);
         ArgumentOutOfRangeException.ThrowIfLessThan(height,1);
-        var visual=new DrawingVisual();
-        using(var drawing=visual.RenderOpen())
+        var group=new DrawingGroup();
+        using(var drawing=group.Open())
         {
-            var cardWidth=Math.Clamp(width*.3,145,360);var font=Math.Clamp(width/70d,11,22);var slots=new List<double>();var calloutCount=0;
+            // Preserve the full annotation coordinate space. Without this
+            // transparent extent DrawingImage stretches only the content
+            // bounds, shifting every exported and live vector annotation.
+            drawing.DrawRectangle(Brushes.Transparent,null,new Rect(0,0,width,height));
+            var cardWidth=Math.Min(Math.Clamp(width*.3,145,360),Math.Max(1,width-10));var font=Math.Clamp(width/70d,11,22);
             var callouts=annotations.Where(annotation=>annotation.Kind==AiAnnotationKind.Callout).ToArray();
+            var calloutFrames=new Dictionary<AiAnnotation,(VideoAnnotationKeyframe Frame,Rect Target,double CardHeight,AnnotationCalloutPlacement Placement)>(ReferenceEqualityComparer.Instance);var calloutOrder=new List<AiAnnotation>();var requests=new List<AnnotationCalloutRequest>();
+            foreach(var annotation in annotations.Take(48))
+            {
+                if(annotation.Kind!=AiAnnotationKind.Callout||calloutOrder.Count>=VisualAnnotationProtocol.MaximumCallouts||string.IsNullOrWhiteSpace(annotation.Text)||annotation.Width<.012||annotation.Height<.012||annotation.Width>.92||annotation.Height>.92)continue;
+                var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
+                var target=new Rect(Math.Clamp(frame.X,0,1)*width,Math.Clamp(frame.Y,0,1)*height,Math.Max(14,Math.Clamp(frame.Width,0,1)*width),Math.Max(14,Math.Clamp(frame.Height,0,1)*height));var cardHeight=Math.Min(Math.Max(font*3.2,MeasureCalloutHeight(annotation.Text,cardWidth,font)),Math.Max(1,height-10));calloutOrder.Add(annotation);requests.Add(new AnnotationCalloutRequest(target,new Size(cardWidth,cardHeight)));calloutFrames[annotation]=(frame,target,cardHeight,default);
+            }
+            var plans=AnnotationLayoutService.PlanCallouts(requests,new Size(width,height));for(var index=0;index<calloutOrder.Count;index++){var note=calloutOrder[index];var current=calloutFrames[note];var placement=plans[index];if(calloutPositions?.TryGetValue(note,out var saved)==true){var left=Math.Clamp(saved.X*width,5,Math.Max(5,width-cardWidth-5));var top=Math.Clamp(saved.Y*height,5,Math.Max(5,height-current.CardHeight-5));var bounds=new Rect(left,top,cardWidth,current.CardHeight);placement=new AnnotationCalloutPlacement(bounds,AnnotationLayoutService.FindConnector(current.Target,bounds));}calloutFrames[note]=(current.Frame,current.Target,current.CardHeight,placement);}
             foreach(var annotation in annotations.Take(48))
             {
                 var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);
@@ -46,15 +58,21 @@ internal static class AnnotationOverlayRenderer
                     case AiAnnotationKind.Number:
                         var diameter=Math.Min(boxWidth,boxHeight);drawing.DrawEllipse(brush,null,new Point(x+diameter/2,y+diameter/2),diameter/2,diameter/2);DrawCenteredText(drawing,(annotation.Number??1).ToString(CultureInfo.InvariantCulture),new Rect(x,y,diameter,diameter),Math.Clamp(diameter*.48,12,52),Contrast(color));break;
                     default:
-                        if(calloutCount++>=6)break;
-                        var target=new Rect(x,y,boxWidth,boxHeight);var targetColor=string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?Color.FromRgb(255,0,0):color;drawing.DrawRoundedRectangle(null,new Pen(new SolidColorBrush(targetColor),stroke),target,3,3);
-                        var cardHeight=Math.Max(font*3.2,font*1.8);var occupied=slots.Select(top=>new Rect(5,top,Math.Max(1,width-10),cardHeight)).ToArray();var placement=AnnotationLayoutService.FindCalloutPlacement(target,new Size(cardWidth,cardHeight),new Size(width,height),occupied);var cardX=placement.CardBounds.Left;var cardY=placement.CardBounds.Top;slots.Add(cardY);var connector=placement.ConnectorPoint;var targetPoint=new Point(connector.X<=target.Left?target.Left:connector.X>=target.Right?target.Right:Math.Clamp(connector.X,target.Left,target.Right),connector.Y<=target.Top?target.Top:connector.Y>=target.Bottom?target.Bottom:Math.Clamp(connector.Y,target.Top,target.Bottom));
+                        if(!calloutFrames.TryGetValue(annotation,out var callout))break;
+                        var target=callout.Target;var targetColor=string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?Color.FromRgb(255,0,0):color;drawing.DrawRoundedRectangle(null,new Pen(new SolidColorBrush(targetColor),stroke),target,3,3);
+                        var cardHeight=callout.CardHeight;var placement=callout.Placement;var cardX=placement.CardBounds.Left;var cardY=placement.CardBounds.Top;var connector=placement.ConnectorPoint;var targetPoint=new Point(connector.X<=target.Left?target.Left:connector.X>=target.Right?target.Right:Math.Clamp(connector.X,target.Left,target.Right),connector.Y<=target.Top?target.Top:connector.Y>=target.Bottom?target.Bottom:Math.Clamp(connector.Y,target.Top,target.Bottom));
                         var linePen=new Pen(Cyan,Math.Max(1,width/1200d));linePen.Freeze();drawing.DrawLine(linePen,targetPoint,connector);drawing.DrawEllipse(Cyan,null,connector,2.5,2.5);
                         drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(248,255,255,255)),new Pen(new SolidColorBrush(Color.FromArgb(145,61,174,242)),1),new Rect(cardX,cardY,cardWidth,cardHeight),8,8);
                         DrawText(drawing,annotation.Text,new Rect(cardX+font*.65,cardY+font*.45,cardWidth-font*1.3,cardHeight-font),font,new SolidColorBrush(Color.FromRgb(35,48,70)));break;
                 }
             }
         }
+        group.Freeze();var image=new DrawingImage(group);image.Freeze();return image;
+    }
+
+    internal static BitmapSource RenderAiOverlay(int width,int height,IReadOnlyList<AiAnnotation> annotations,double? videoTime=null,IReadOnlyDictionary<AiAnnotation,Point>? calloutPositions=null)
+    {
+        var visual=new DrawingVisual();using(var drawing=visual.RenderOpen())drawing.DrawImage(CreateAiDrawingImage(width,height,annotations,videoTime,calloutPositions),new Rect(0,0,width,height));
         var bitmap=new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
 
@@ -66,31 +84,18 @@ internal static class AnnotationOverlayRenderer
 
     internal static BitmapSource ApplyAiMosaics(BitmapSource source,IReadOnlyList<AiAnnotation> annotations,double? videoTime=null)
     {
-        BitmapSource result=source;
+        var regions=new List<Int32Rect>();
         foreach(var annotation in annotations.Where(item=>item.Kind==AiAnnotationKind.Mosaic).Take(16))
         {
             var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);
             if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
             var x=Math.Clamp((int)Math.Floor(frame.X*source.PixelWidth),0,source.PixelWidth-1);var y=Math.Clamp((int)Math.Floor(frame.Y*source.PixelHeight),0,source.PixelHeight-1);var right=Math.Clamp((int)Math.Ceiling((frame.X+frame.Width)*source.PixelWidth),x+1,source.PixelWidth);var bottom=Math.Clamp((int)Math.Ceiling((frame.Y+frame.Height)*source.PixelHeight),y+1,source.PixelHeight);
-            // Always sample the clean source, then composite only this region.
-            // Reading from result would feed an earlier mosaic back into the
-            // next block and progressively destroy detail in overlaps.
-            var pixelated=ImagePixelationService.Pixelate(source,new Int32Rect(x,y,right-x,bottom-y),Math.Clamp((int)Math.Round(12*Math.Max(source.PixelWidth/1280d,source.PixelHeight/720d)),8,40));
-            result=CompositeRegion(result,pixelated,new Int32Rect(x,y,right-x,bottom-y));
+            regions.Add(new Int32Rect(x,y,right-x,bottom-y));
         }
-        return result;
+        return regions.Count==0?source:ImagePixelationService.PixelateMany(source,regions,Math.Clamp((int)Math.Round(12*Math.Max(source.PixelWidth/1280d,source.PixelHeight/720d)),8,40));
     }
 
-    private static BitmapSource CompositeRegion(BitmapSource baseImage,BitmapSource overlay,Int32Rect region)
-    {
-        var visual=new DrawingVisual();using(var drawing=visual.RenderOpen())
-        {
-            var bounds=new Rect(0,0,baseImage.PixelWidth,baseImage.PixelHeight);drawing.DrawImage(baseImage,bounds);drawing.PushClip(new RectangleGeometry(new Rect(region.X,region.Y,region.Width,region.Height)));drawing.DrawImage(overlay,bounds);drawing.Pop();
-        }
-        var bitmap=new RenderTargetBitmap(baseImage.PixelWidth,baseImage.PixelHeight,baseImage.DpiX,baseImage.DpiY,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
-    }
-
-    internal static BitmapSource RenderAiOverlay(BitmapSource source,IReadOnlyList<AiAnnotation> annotations,double? videoTime)
+    internal static BitmapSource RenderAiOverlay(BitmapSource source,IReadOnlyList<AiAnnotation> annotations,double? videoTime,IReadOnlyDictionary<AiAnnotation,Point>? calloutPositions=null)
     {
         var visual=new DrawingVisual();using(var drawing=visual.RenderOpen())
         {
@@ -101,7 +106,7 @@ internal static class AnnotationOverlayRenderer
                 if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
                 var clip=new RectangleGeometry(new Rect(frame.X*source.PixelWidth,frame.Y*source.PixelHeight,frame.Width*source.PixelWidth,frame.Height*source.PixelHeight));drawing.PushClip(clip);drawing.DrawImage(pixelated,bounds);drawing.Pop();
             }
-            drawing.DrawImage(RenderAiOverlay(source.PixelWidth,source.PixelHeight,annotations,videoTime),bounds);
+            drawing.DrawImage(RenderAiOverlay(source.PixelWidth,source.PixelHeight,annotations,videoTime,calloutPositions),bounds);
         }
         var bitmap=new RenderTargetBitmap(source.PixelWidth,source.PixelHeight,96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
@@ -119,6 +124,11 @@ internal static class AnnotationOverlayRenderer
     private static void DrawText(DrawingContext drawing,string value,Rect bounds,double size,Brush brush)
     {
         var text=new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface("Microsoft YaHei UI"),size,brush,1){MaxTextWidth=Math.Max(1,bounds.Width),MaxTextHeight=Math.Max(1,bounds.Height)};drawing.DrawText(text,bounds.TopLeft);
+    }
+
+    private static double MeasureCalloutHeight(string value,double cardWidth,double font)
+    {
+        var text=new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface("Microsoft YaHei UI"),font,Brushes.Black,1){MaxTextWidth=Math.Max(1,cardWidth-font*1.3)};return text.Height+font;
     }
 
     private static void DrawCenteredText(DrawingContext drawing,string value,Rect bounds,double size,Brush brush)

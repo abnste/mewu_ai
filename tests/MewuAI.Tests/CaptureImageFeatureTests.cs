@@ -59,6 +59,14 @@ public sealed class CaptureImageFeatureTests
     }
 
     [Fact]
+    public void MultipleMosaicsShareOneCleanSourcePass()
+    {
+        var pixels=new byte[8*4*4];for(var index=0;index<pixels.Length;index+=4){pixels[index]=(byte)(index/4*7);pixels[index+1]=(byte)(index/4*3);pixels[index+3]=255;}var source=BitmapSource.Create(8,4,96,96,PixelFormats.Bgra32,null,pixels,32);
+        var result=ImagePixelationService.PixelateMany(source,[new Int32Rect(0,0,2,2),new Int32Rect(6,2,2,2)],2);var output=new byte[pixels.Length];result.CopyPixels(output,32,0);
+        Assert.Equal(output[0],output[4]);Assert.Equal(output[(2*8+6)*4],output[(2*8+7)*4]);Assert.Equal(pixels[(1*8+4)*4],output[(1*8+4)*4]);
+    }
+
+    [Fact]
     public void ScrollingFramesDetectOverlapAndComposeNovelRows()
     {
         var first=Frame(64,100,0);var second=Frame(64,100,40);Assert.Equal(40,ScrollingCaptureComposer.EstimateVerticalShift(first,second));var result=ScrollingCaptureComposer.Compose([first,second]);Assert.Equal(64,result.PixelWidth);Assert.Equal(140,result.PixelHeight);

@@ -40,7 +40,11 @@ public static class AnnotationLayoutService
             Fit(target.Right+gap,center.Y-cardHeight/2),
             Fit(target.Left-gap-cardWidth,center.Y-cardHeight/2),
             Fit(center.X-cardWidth/2,target.Bottom+gap),
-            Fit(center.X-cardWidth/2,target.Top-gap-cardHeight)
+            Fit(center.X-cardWidth/2,target.Top-gap-cardHeight),
+            Fit(target.Right+gap,target.Top-gap-cardHeight),
+            Fit(target.Right+gap,target.Bottom+gap),
+            Fit(target.Left-gap-cardWidth,target.Top-gap-cardHeight),
+            Fit(target.Left-gap-cardWidth,target.Bottom+gap)
         };
         var evaluated=candidates.Select((bounds,index)=>new{bounds,index,score=Score(bounds,target,occupied,index),targetOverlap=OverlapArea(bounds,target),occupiedOverlap=occupied.Sum(other=>OverlapArea(bounds,other))}).ToArray();
         // Prefer the conventional right/left/below/above order when a clean
@@ -50,11 +54,27 @@ public static class AnnotationLayoutService
         return new AnnotationCalloutPlacement(chosen,FindConnector(target,chosen));
     }
 
+    public static IReadOnlyList<AnnotationCalloutPlacement> PlanCallouts(IReadOnlyList<AnnotationCalloutRequest> requests,Size canvas,double gap=12,double padding=5)
+    {
+        ArgumentNullException.ThrowIfNull(requests);if(requests.Count==0)return [];
+        var placements=new AnnotationCalloutPlacement[requests.Count];var cards=new List<Rect>(requests.Count);
+        for(var index=0;index<requests.Count;index++)
+        {
+            var targets=requests.Where((_,other)=>other!=index).Select(request=>request.Target).ToArray();
+            // In a fully crowded canvas overlap may be unavoidable. Weight
+            // semantic targets above prior cards so explanatory text covers a
+            // card before it hides the pixels the annotation is pointing at.
+            var occupied=targets.Concat(targets).Concat(targets).Concat(cards).ToArray();
+            var placement=FindCalloutPlacement(requests[index].Target,requests[index].Card,canvas,occupied,gap,padding);placements[index]=placement;cards.Add(placement.CardBounds);
+        }
+        return placements;
+    }
+
     public static bool IsDuplicateTargetMarker(AiAnnotation candidate,IReadOnlyList<AiAnnotation> callouts)
     {
         if(candidate.Kind is not (AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse))return false;
         return callouts.Any(callout=>callout.RegionIndex==candidate.RegionIndex&&string.Equals(callout.ReferenceHandle,candidate.ReferenceHandle,StringComparison.Ordinal)&&
-            Math.Abs(callout.X-candidate.X)<=.006&&Math.Abs(callout.Y-candidate.Y)<=.006&&Math.Abs(callout.Width-candidate.Width)<=.006&&Math.Abs(callout.Height-candidate.Height)<=.006);
+            AnnotationGeometryService.IntersectionOverUnion(AnnotationGeometryService.ToNormalizedRect(callout),AnnotationGeometryService.ToNormalizedRect(candidate))>=.72);
     }
 
     private static double Score(Rect card,Rect target,IReadOnlyCollection<Rect> occupied,int order)
@@ -79,3 +99,4 @@ public static class AnnotationLayoutService
 }
 
 public readonly record struct AnnotationCalloutPlacement(Rect CardBounds,Point ConnectorPoint);
+public readonly record struct AnnotationCalloutRequest(Rect Target,Size Card);
