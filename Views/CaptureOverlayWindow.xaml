@@ -90,8 +90,8 @@
       <Button x:Name="HistoryToggle" AutomationProperties.Name="查看提问和历史对话" ToolTip="查看提问与历史" Style="{StaticResource HistoryToggleButton}" Click="ToggleHistory">
        <Path Width="8" Height="8" Stretch="Uniform" Stroke="#617188" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M2,4 L5.5,7.5 L9,4" RenderTransformOrigin="0.5,0.5"><Path.RenderTransform><RotateTransform x:Name="HistoryChevronRotation" Angle="180"/></Path.RenderTransform></Path>
       </Button>
-      <Border x:Name="HistoryPanel" Visibility="Collapsed" Background="#F3F6FA" BorderBrush="#DFE7F1" BorderThickness="1" CornerRadius="12" Padding="10,8" Margin="6,4,6,2">
-       <ScrollViewer x:Name="HistoryScroll" MaxHeight="210" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <Border x:Name="HistoryPanel" Visibility="Collapsed" Background="#F3F6FA" BorderBrush="#DFE7F1" BorderThickness="1" CornerRadius="12" Padding="8,4" Margin="6,2,6,1">
+       <ScrollViewer x:Name="HistoryScroll" MaxHeight="90" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel x:Name="HistoryItems"/>
        </ScrollViewer>
       </Border>
