@@ -1224,6 +1224,11 @@ public partial class CaptureOverlayWindow : Window
         // pointer could cancel every request before any snap target arrived).
         if(Root.ActualWidth<=0||Root.ActualHeight<=0)return;
         var scaleX=_frame.Image.PixelWidth/Root.ActualWidth;var scaleY=_frame.Image.PixelHeight/Root.ActualHeight;var screenX=_frame.OriginX+(int)Math.Round(point.X*scaleX);var screenY=_frame.OriginY+(int)Math.Round(point.Y*scaleY);var handle=new WindowInteropHelper(this).Handle;
+        // The taskbar is intentionally not a selectable screenshot target.
+        // Stop the in-flight semantic refinement too: otherwise its result
+        // from the previous app position can repaint a stale full-screen box
+        // after the pointer has already entered the taskbar.
+        if(_windowSnap.IsTaskbarAt(screenX,screenY)){_latestSnapProbePointValid=false;CancelSnapProbe();_snapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;return;}
         // Native hit testing is intentionally synchronous and cheap. It gives
         // the user a stable preview immediately while the single UIA probe
         // below refines it to a button/menu/image when the provider exposes
