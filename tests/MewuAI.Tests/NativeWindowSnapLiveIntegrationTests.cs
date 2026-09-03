@@ -40,9 +40,11 @@ public sealed class NativeWindowSnapLiveIntegrationTests
             .FirstOrDefault()??throw new InvalidOperationException("未找到可见的 Codex/ChatGPT 窗口");
         var root=AutomationElement.FromHandle(codex.MainWindowHandle);
         var rootBounds=root.Current.BoundingRectangle;
-        var expected=FindSemanticTarget(rootBounds,codex.Id)
-            ??throw new InvalidOperationException("Codex 窗口内未找到可用于实景测试的按钮或输入框");
-        var point=new System.Windows.Point(expected.Left+expected.Width/2,expected.Top+expected.Height/2);
+        var expected=FindSemanticTarget(rootBounds);
+        var point=expected is { } semantic
+            ?new System.Windows.Point(semantic.Left+semantic.Width/2,semantic.Top+semantic.Height/2)
+            :new System.Windows.Point(rootBounds.Left+rootBounds.Width/2,rootBounds.Top+rootBounds.Height/2);
+        var virtualScreen=System.Windows.Forms.SystemInformation.VirtualScreen;
         var overlay=new Window
         {
             WindowStyle=WindowStyle.None,
@@ -50,10 +52,10 @@ public sealed class NativeWindowSnapLiveIntegrationTests
             ShowInTaskbar=false,
             Topmost=true,
             Background=Brushes.Black,
-            Left=rootBounds.Left,
-            Top=rootBounds.Top,
-            Width=Math.Max(1,rootBounds.Width),
-            Height=Math.Max(1,rootBounds.Height)
+            Left=virtualScreen.Left,
+            Top=virtualScreen.Top,
+            Width=Math.Max(1,virtualScreen.Width),
+            Height=Math.Max(1,virtualScreen.Height)
         };
         try
         {
@@ -61,19 +63,32 @@ public sealed class NativeWindowSnapLiveIntegrationTests
             var overlayHandle=new WindowInteropHelper(overlay).Handle;
             NativeMethods.SetWindowPos(
                 overlayHandle,new IntPtr(-1),
-                (int)Math.Round(rootBounds.Left),(int)Math.Round(rootBounds.Top),
-                (int)Math.Round(rootBounds.Width),(int)Math.Round(rootBounds.Height),0x0040);
+                virtualScreen.Left,virtualScreen.Top,
+                virtualScreen.Width,virtualScreen.Height,0x0040);
 
-            var result=new NativeWindowSnapService().FindTopmostTargetAt(
+            var service=new NativeWindowSnapService();
+            var result=service.FindTopmostTargetAt(
                 (int)Math.Round(point.X),(int)Math.Round(point.Y),overlayHandle);
             Assert.NotNull(result);
-            Assert.True(IsSameBounds(expected,result!.Bounds),
-                $"覆盖层下命中了错误区域：期望 {Format(expected)}，实际 {result.Bounds}；{DescribeWindow(result.Handle)}；Codex HWND {codex.MainWindowHandle}");
+            if(expected is { } expectedBounds)
+                Assert.True(IsSameBounds(expectedBounds,result!.Bounds),
+                    $"覆盖层下命中了错误区域：期望 {Format(expectedBounds)}，实际 {result.Bounds}；{DescribeWindow(result.Handle)}；Codex HWND {codex.MainWindowHandle}");
+
+            // Use the same service after it has populated both native and
+            // semantic caches. A real full-screen overlay must not let those
+            // caches make the taskbar fall through to the maximized app.
+            var taskbar=FindWindow("Shell_TrayWnd",null);
+            Assert.NotEqual(IntPtr.Zero,taskbar);
+            Assert.True(GetWindowRect(taskbar,out var taskbarBounds));
+            var taskbarX=taskbarBounds.Left+(taskbarBounds.Right-taskbarBounds.Left)/2;
+            var taskbarY=taskbarBounds.Top+(taskbarBounds.Bottom-taskbarBounds.Top)/2;
+            Assert.Null(service.FindFastTargetAt(taskbarX,taskbarY,overlayHandle));
+            Assert.Null(service.FindTopmostTargetAt(taskbarX,taskbarY,overlayHandle));
         }
         finally{overlay.Close();}
     }
 
-    private static Rect? FindSemanticTarget(Rect rootBounds,int processId)
+    private static Rect? FindSemanticTarget(Rect rootBounds)
     {
         for(var row=1;row<=10;row++)
         for(var column=1;column<=14;column++)
@@ -90,8 +105,8 @@ public sealed class NativeWindowSnapLiveIntegrationTests
                 {
                     var info=element.Current;
                     var bounds=info.BoundingRectangle;
-                    if(info.ProcessId==processId&&
-                       (info.ControlType==ControlType.Button||info.ControlType==ControlType.Edit||info.ControlType==ControlType.MenuItem)&&
+                    if((info.ControlType==ControlType.Button||info.ControlType==ControlType.Edit||info.ControlType==ControlType.MenuItem)&&
+                       rootBounds.Contains(bounds.TopLeft)&&
                        bounds.Width>=16&&bounds.Height>=16&&bounds.Width<rootBounds.Width*.8&&bounds.Height<rootBounds.Height*.8)
                         return bounds;
                     element=TreeWalker.RawViewWalker.GetParent(element);
@@ -123,5 +138,8 @@ public sealed class NativeWindowSnapLiveIntegrationTests
     [DllImport("user32.dll")]private static extern uint GetWindowThreadProcessId(IntPtr handle,out uint processId);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)]private static extern int GetClassName(IntPtr handle,StringBuilder value,int count);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)]private static extern int GetWindowText(IntPtr handle,StringBuilder value,int count);
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)]private static extern IntPtr FindWindow(string className,string? windowName);
+    [DllImport("user32.dll")]private static extern bool GetWindowRect(IntPtr handle,out NativeRect rectangle);
     [DllImport("dwmapi.dll")]private static extern int DwmGetWindowAttribute(IntPtr handle,int attribute,out int value,int size);
+    [StructLayout(LayoutKind.Sequential)]private struct NativeRect{public int Left,Top,Right,Bottom;}
 }

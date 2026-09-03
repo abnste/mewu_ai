@@ -33,6 +33,7 @@ internal sealed class NativeWindowSnapService
     private const int AutomationTraversalBudgetMs = 120;
     private const int MaxWindowCacheAgeMs = 250;
     private const int MaxPreciseCacheAgeMs = 450;
+    private const int MaxTaskbarCacheAgeMs = 500;
     private const uint ChildWindowSkipInvisible = 0x0001;
     private const uint ChildWindowSkipDisabled = 0x0002;
     private const uint ChildWindowSkipTransparent = 0x0004;
@@ -43,9 +44,13 @@ internal sealed class NativeWindowSnapService
     private readonly object _cacheGate = new();
     private WindowHitCache? _windowCache;
     private PreciseTargetCache? _preciseCache;
+    private TaskbarBoundsCache? _taskbarCache;
 
     internal ScreenRect? FindTopmostWindowAt(int screenX, int screenY, IntPtr excludedWindow)
         => FindTopmostTargetAt(screenX, screenY, excludedWindow)?.Bounds;
+
+    internal bool IsTaskbarAt(int screenX, int screenY)
+        => IsPointOverTaskbar(screenX, screenY);
 
     /// <summary>
     /// Cheap native-only hit test used by the UI thread for the immediate
@@ -53,6 +58,17 @@ internal sealed class NativeWindowSnapService
     /// pointer move.
     /// </summary>
     internal WindowSnapTarget? FindFastTargetAt(int screenX, int screenY, IntPtr excludedWindow)
+    {
+        if (IsPointOverTaskbar(screenX, screenY))
+        {
+            ClearCaches();
+            return null;
+        }
+
+        return FindFastTargetAtCore(screenX, screenY, excludedWindow);
+    }
+
+    private WindowSnapTarget? FindFastTargetAtCore(int screenX, int screenY, IntPtr excludedWindow)
     {
         var root = FindRootWindowAt(screenX, screenY, excludedWindow);
         if (root == IntPtr.Zero)
@@ -86,10 +102,21 @@ internal sealed class NativeWindowSnapService
     /// </summary>
     internal WindowSnapTarget? FindTopmostTargetAt(int screenX, int screenY, IntPtr excludedWindow)
     {
+        // The capture overlay covers the taskbar too, so WindowFromPoint sees
+        // our overlay rather than Shell_TrayWnd. Probe the bounded top-level
+        // window list before consulting either cache. Otherwise a cached
+        // maximized application remains selected while the pointer is over
+        // the taskbar and looks like a sticky full-screen snap target.
+        if (IsPointOverTaskbar(screenX, screenY))
+        {
+            ClearCaches();
+            return null;
+        }
+
         if (TryGetPreciseCache(screenX, screenY, out var cached))
             return cached;
 
-        var fast = FindFastTargetAt(screenX, screenY, excludedWindow);
+        var fast = FindFastTargetAtCore(screenX, screenY, excludedWindow);
         var root = fast is null ? FindRootWindowAt(screenX, screenY, excludedWindow) : GetRootWindow(fast.Handle);
         if (root == IntPtr.Zero || root == excludedWindow)
             return null;
@@ -148,6 +175,8 @@ internal sealed class NativeWindowSnapService
         var point = new NativePoint { X = screenX, Y = screenY };
         var direct = WindowFromPoint(point);
         var directRoot = GetRootWindow(direct);
+        if (IsTaskbarWindow(directRoot))
+            return IntPtr.Zero;
         if (IsSelectableWindow(directRoot, excludedWindow))
         {
             GetWindowThreadProcessId(directRoot, out var directProcess);
@@ -483,6 +512,51 @@ internal sealed class NativeWindowSnapService
         return name is "Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "Windows.UI.Core.CoreWindow";
     }
 
+    private static bool IsTaskbarWindow(IntPtr handle)
+    {
+        if (handle == IntPtr.Zero)
+            return false;
+        Span<char> buffer = stackalloc char[64];
+        var length = GetClassName(handle, ref MemoryMarshal.GetReference(buffer), buffer.Length);
+        if (length <= 0)
+            return false;
+        var name = new string(buffer[..length]);
+        return name is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+    }
+
+    private bool IsPointOverTaskbar(int screenX, int screenY)
+    {
+        var now = Stopwatch.GetTimestamp();
+        lock (_cacheGate)
+        {
+            if (_taskbarCache is { } cached && now <= cached.ExpiresAt)
+                return cached.Bounds.Any(bounds => Contains(bounds, screenX, screenY));
+        }
+
+        var taskbars = new List<ScreenRect>();
+        EnumWindows((handle, _) =>
+        {
+            if (!IsTaskbarWindow(handle) || !IsWindowVisible(handle) || IsIconic(handle) || IsWindowCloaked(handle) ||
+                !TryGetBounds(handle, out var bounds))
+                return true;
+            taskbars.Add(bounds);
+            return true;
+        }, IntPtr.Zero);
+        var snapshot = taskbars.ToArray();
+        lock (_cacheGate)
+            _taskbarCache = new TaskbarBoundsCache(snapshot, now + Stopwatch.Frequency * MaxTaskbarCacheAgeMs / 1000);
+        return snapshot.Any(bounds => Contains(bounds, screenX, screenY));
+    }
+
+    private void ClearCaches()
+    {
+        lock (_cacheGate)
+        {
+            _windowCache = null;
+            _preciseCache = null;
+        }
+    }
+
     private static IntPtr DeepestChildAt(IntPtr root, int screenX, int screenY)
     {
         var current = root;
@@ -501,6 +575,7 @@ internal sealed class NativeWindowSnapService
 
     private sealed record WindowHitCache(IntPtr Handle, ScreenRect Bounds, long ExpiresAt);
     private sealed record PreciseTargetCache(WindowSnapTarget Target, long ExpiresAt);
+    private sealed record TaskbarBoundsCache(IReadOnlyList<ScreenRect> Bounds, long ExpiresAt);
     private sealed record AutomationBranchCandidate(AutomationElement Element,double Area,bool Enabled,bool Actionable);
     private delegate bool EnumWindowsCallback(IntPtr handle, IntPtr parameter);
     [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
