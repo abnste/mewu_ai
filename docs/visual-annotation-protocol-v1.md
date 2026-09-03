@@ -8,6 +8,7 @@
 {
   "annotationProtocol": "mewu.visual-annotations/1",
   "answer": "批改说明",
+  "annotationMode": "append",
   "annotations": [{
     "id": "mark-1",
     "target": { "regionIndex": 0, "referenceHandle": "ref-..." },
@@ -18,6 +19,16 @@
   }]
 }
 ```
+
+## 多轮更新
+
+`annotationMode` 决定本轮结果如何更新已显示的 AI 标注：
+
+- `preserve`：保留已有标注，本轮通常返回空 `annotations`，只继续回答。
+- `append`：保留已有标注，并把本轮 `annotations` 作为新增标注合并、去重。
+- `replace`：模型明确决定重新标注时，用本轮完整标注替换旧标注。
+
+后续提问会把当前已显示标注扁平化进新的图片附件，并在附件清单以 `hasExistingAiAnnotations` 告知模型。空或全部无效的替换结果不会清空已有标注；未被本轮合法标注命中的其他附件也保持原状。旧响应未提供 `annotationMode` 时按 `replace` 兼容，但空标注仍不会擦除当前结果。
 
 ## 目标
 

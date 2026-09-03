@@ -37,7 +37,7 @@ public static class StructuredResponseParser
             if (string.IsNullOrWhiteSpace(answer))
                 return new(string.Empty, [], allReasoning);
 
-            return new(answer, ParseAnnotations(root), allReasoning);
+            return new(answer,ParseAnnotations(root),allReasoning,ParseAnnotationUpdateMode(root));
         }
         catch (JsonException)
         {
@@ -93,6 +93,18 @@ public static class StructuredResponseParser
         }
 
         return result;
+    }
+
+    private static AiAnnotationUpdateMode ParseAnnotationUpdateMode(JsonElement root)
+    {
+        if(!root.TryGetProperty("annotationMode",out var element)||element.ValueKind!=JsonValueKind.String)return AiAnnotationUpdateMode.Replace;
+        return element.GetString()?.Trim().ToLowerInvariant() switch
+        {
+            "preserve"=>AiAnnotationUpdateMode.Preserve,
+            "append"=>AiAnnotationUpdateMode.Append,
+            "replace"=>AiAnnotationUpdateMode.Replace,
+            _=>AiAnnotationUpdateMode.Replace
+        };
     }
 
     private static bool TryParseAnnotation(JsonElement item, out AiAnnotation annotation)

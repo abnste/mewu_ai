@@ -1510,7 +1510,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void ResetAnswerForRequest()
     {
-        foreach(var item in _selections){CancelVideoAnnotationPlayback(item);item.AnnotationNotes.Clear();item.AiAnnotations.Children.Clear();}
+        foreach(var item in _selections)CancelVideoAnnotationPlayback(item);
         _lastSentSelections.Clear();
         _lastSubmittedTurnRecorded=false;
         _lastSentAnnotationTargets.Clear();
@@ -1629,7 +1629,7 @@ public partial class CaptureOverlayWindow : Window
     private async Task<List<AiAttachment>> BuildAttachmentsAsync(IReadOnlyList<SelectionItem> targets,AiProviderCapabilities capabilities,CancellationToken cancellationToken)
     {
         _lastSentSelections=targets.ToList();
-        var prepared=_lastSentSelections.Select(item=>(Item:item,Image:item.VideoPath is null?RenderSelectionImage(item):null)).ToList();var imageCount=prepared.Count(entry=>entry.Image is not null);var rawVideoBytes=prepared.Where(entry=>entry.Item.VideoPath is not null).Sum(entry=>Math.Min(45L*1024*1024,new FileInfo(entry.Item.VideoPath!).Length));var aggregateImageBudget=Math.Max(256L*1024,45L*1024*1024-rawVideoBytes);var perImageBudget=imageCount==0?0:Math.Min(capabilities.MaxImageSize,aggregateImageBudget/imageCount);
+        var prepared=_lastSentSelections.Select(item=>(Item:item,Image:item.VideoPath is null?RenderSelectionImage(item,true,true,true):null)).ToList();var imageCount=prepared.Count(entry=>entry.Image is not null);var rawVideoBytes=prepared.Where(entry=>entry.Item.VideoPath is not null).Sum(entry=>Math.Min(45L*1024*1024,new FileInfo(entry.Item.VideoPath!).Length));var aggregateImageBudget=Math.Max(256L*1024,45L*1024*1024-rawVideoBytes);var perImageBudget=imageCount==0?0:Math.Min(capabilities.MaxImageSize,aggregateImageBudget/imageCount);
         return await Task.Run(()=>
         {
             var attachments=new List<AiAttachment>(prepared.Count);
@@ -1740,7 +1740,7 @@ public partial class CaptureOverlayWindow : Window
         foreach(var (item,index) in targets.Select((item,index)=>(item,index)))
         {
             var pixels=ToPixelRect(item.Bounds);var label=item.IsImplicit?"@当前屏幕":GetReferenceLabel(item);
-            referenceDescriptors.Add(new AttachmentReferenceDescriptor(index,item.ReferenceHandle,label,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,pixels.Width,pixels.Height,item.VideoPath is null?null:item.VideoDuration.TotalSeconds,true));
+            referenceDescriptors.Add(new AttachmentReferenceDescriptor(index,item.ReferenceHandle,label,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,pixels.Width,pixels.Height,item.VideoPath is null?null:item.VideoDuration.TotalSeconds,true,item.AnnotationNotes.Count>0));
         }
         foreach(var (file,index) in uploadedReferences.Select((file,index)=>(file,index)))
         {
@@ -1748,7 +1748,7 @@ public partial class CaptureOverlayWindow : Window
             referenceDescriptors.Add(new AttachmentReferenceDescriptor(targets.Count+index,file.Handle,file.Label,file.Type,dimensions.Width,dimensions.Height,null,false));
         }
         var hasVisualAttachments=totalCount>0;
-        var providerPrompt=hasVisualAttachments?CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors):prompt;
+        var hadExistingAnnotations=targets.Any(item=>item.AnnotationNotes.Count>0);var providerPrompt=hasVisualAttachments?CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors):prompt;
             var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_lastSubmittedPrompt=prompt;_lastSubmittedTurnRecorded=false;_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=hasVisualAttachments?$"正在准备 {totalCount} 个附件…按 Esc 可取消":"正在准备文字请求…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;var previewScheduled=false;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;List<AiAttachment>? repairAttachments=null;
             CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频理解请求":hasVisualAttachments?"屏幕助手：图片理解请求":"屏幕助手：文字对话请求");
         try
@@ -1774,23 +1774,23 @@ public partial class CaptureOverlayWindow : Window
             // operation consume the same validated answer.
             result=NormalizeStructuredResult(result,hasVisualAttachments);
             var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":"图片请求返回空正文，已保留思考与失败状态");return;}
-            ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Markdown=result.Answer;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=await MapAnnotationsAsync(result.Annotations,request.Token);ApplyAnnotationMapping(primaryMapping,true);var renderedAnnotationCount=primaryMapping.RenderedCount;ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
+            ShowAnswer();FinishReasoning(result.Reasoning);AnswerText.Markdown=result.Answer;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();if(CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=await MapAnnotationsAsync(result.Annotations,request.Token);var primaryReturnedAnnotationCount=primaryMapping.RenderedCount;var renderedAnnotationCount=ApplyAnnotationMapping(primaryMapping,result.AnnotationUpdateMode,true);ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             AgentActivityCard.Visibility=Visibility.Collapsed;
             // NormalizeStructuredResult above already handles raw protocol
             // envelopes. Re-parsing the extracted plain answer here discarded
             // its valid annotation list and made diagnostics report zero even
             // though the initial mapping still held annotations.
-            var repairReturnedAnnotationCount=-1;var imageRepair=hasVisualAttachments&&!hasVideo&&CaptureOverlayPolicy.NeedsImageAnnotationRepair(prompt,result.Answer,renderedAnnotationCount,primaryMapping.QualityRejectedCount);
-            if(hasVideo||imageRepair)
+            var repairReturnedAnnotationCount=-1;var imageRepair=hasVisualAttachments&&!hasVideo&&result.AnnotationUpdateMode!=AiAnnotationUpdateMode.Preserve&&CaptureOverlayPolicy.NeedsImageAnnotationRepair(prompt,result.Answer,primaryReturnedAnnotationCount,primaryMapping.QualityRejectedCount);var videoRepair=CaptureOverlayPolicy.ShouldRunVideoAnnotationRepair(hasVideo,hadExistingAnnotations,result.AnnotationUpdateMode);
+            if(videoRepair||imageRepair)
             {
                 PromptStatus.Text=hasVideo?(renderedAnnotationCount==0?"模型未返回时间轴标注，正在自动补标…按 Esc 可取消":"正在核对遗漏片段和定位时间…按 Esc 可取消"):"模型没有返回可执行图片标注，正在自动纠正…按 Esc 可取消";requestStage="provider";
                 CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频批注完整性核验":"屏幕助手：图片批注自动纠正");new PrivacyLogger().Info("ScreenAiAnnotationPhase",$"开始{(hasVideo?"核验":"图片补标")}；初稿有效批注 {renderedAnnotationCount}");
                 try
                 {
-                    var repairPrompt=hasVideo?CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt(providerPrompt,result.Answer):CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt(providerPrompt,result.Answer);var repairRequest=CaptureOverlayPolicy.CreateScreenAiRequest(repairPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),repairAttachments??[],null,agentProgress,usingHermes?HandleOverlayInteractionAsync:null,true);
+                    var repairMode=CaptureOverlayPolicy.GetRepairAnnotationUpdateMode(hadExistingAnnotations,result.AnnotationUpdateMode);var repairPrompt=hasVideo?CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt(providerPrompt,result.Answer,repairMode):CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt(providerPrompt,result.Answer,repairMode);var repairRequest=CaptureOverlayPolicy.CreateScreenAiRequest(repairPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),repairAttachments??[],null,agentProgress,usingHermes?HandleOverlayInteractionAsync:null,true);
                     var repaired=await provider.SendAsync(repairRequest,request.Token);requestStage="render";if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();repaired=NormalizeStructuredResult(repaired,true);repairReturnedAnnotationCount=repaired.Annotations.Count;
                     var repairedMapping=AiResultValidation.GetEmptyAnswerMessage(repaired) is null?await MapAnnotationsAsync(repaired.Annotations,request.Token):await MapAnnotationsAsync([],request.Token);LogAnnotationMapping("核验",repairedMapping);
-                    if(repairedMapping.RenderedCount>0&&(!hasVideo||repairedMapping.RenderedCount>=renderedAnnotationCount)){result=repaired;renderedAnnotationCount=repairedMapping.RenderedCount;ApplyAnnotationMapping(repairedMapping,true);ShowAnswer();FinishReasoning(repaired.Reasoning);AnswerText.Markdown=result.Answer;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();ApplyVideoAnswerActions(result.Answer);}
+                    if(repairedMapping.RenderedCount>0&&(!hasVideo||repairedMapping.RenderedCount>=primaryReturnedAnnotationCount)){result=repaired;renderedAnnotationCount=ApplyAnnotationMapping(repairedMapping,repaired.AnnotationUpdateMode,true);ShowAnswer();FinishReasoning(repaired.Reasoning);AnswerText.Markdown=result.Answer;AnswerScroll.UpdateLayout();AnswerScroll.ScrollToEnd();PromptBar.InvalidateMeasure();PromptBar.UpdateLayout();PositionPromptBar();ApplyVideoAnswerActions(result.Answer);}
                 }
                 catch(OperationCanceledException){throw;}
                 catch(Exception ex){new PrivacyLogger().Error("ScreenAiAnnotationRepair",ex);new PrivacyLogger().Info("ScreenAiAnnotationPhase",$"核验失败；保留初稿有效批注 {renderedAnnotationCount}");requestStage="render";}
@@ -1884,15 +1884,16 @@ public partial class CaptureOverlayWindow : Window
         return new AnnotationMappingResult(mapped,notes.Count,timelineCandidates,regionMismatch,typeMismatch,durationRejected,singleVideoRemaps,durationClamped,handleMismatches,handleRemaps,qualityRejected,duplicatesRemoved,keyframesRemoved);
     }
 
-    private void ApplyAnnotationMapping(AnnotationMappingResult mapping,bool autoJump)
+    private int ApplyAnnotationMapping(AnnotationMappingResult mapping,AiAnnotationUpdateMode mode,bool autoJump)
     {
+        var changedItems=new List<SelectionItem>();
         foreach(var item in _lastSentSelections.Distinct())
         {
-            CancelVideoAnnotationPlayback(item);item.AnnotationNotes.Clear();item.AnnotationCardPositions.Clear();item.AiAnnotations.Children.Clear();
-            if(mapping.BySelection.TryGetValue(item,out var notes))item.AnnotationNotes.AddRange(notes);
-            RenderAnnotationsForItem(item);
+            if(!mapping.BySelection.TryGetValue(item,out var notes))continue;var update=AnnotationUpdateService.Apply(item.AnnotationNotes,notes,mode,item.VideoPath is not null);if(!update.Changed)continue;
+            CancelVideoAnnotationPlayback(item);item.AnnotationNotes.Clear();item.AnnotationNotes.AddRange(update.Annotations);if(update.Replaced)item.AnnotationCardPositions.Clear();var presentationTime=item.VideoPath is not null?item.VideoPreview?.LastPresentedPosition.TotalSeconds:null;RenderAnnotationsForItem(item,presentationTime);changedItems.Add(item);
         }
-        if(autoJump)AutoJumpToFirstVideoMarker(_lastSentSelections);
+        if(autoJump&&changedItems.Count>0)AutoJumpToFirstVideoMarker(changedItems);
+        return _lastSentSelections.Distinct().Sum(item=>item.AnnotationNotes.Count);
     }
 
     private static void LogAnnotationMapping(string phase,AnnotationMappingResult mapping)
