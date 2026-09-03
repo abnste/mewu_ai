@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.Windows;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
@@ -9,7 +10,7 @@ namespace mewu_ai_Assistant.Services;
 public sealed class AppHost : IDisposable
 {
     internal static readonly TimeSpan TempMediaShutdownWait=TimeSpan.FromSeconds(5);
-    private readonly System.Windows.Application _app; private readonly SingleInstanceService _single; private readonly CancellationTokenSource _lifetime=new(); private readonly StartupActivationGate _activationGate=new();
+    private readonly System.Windows.Application _app; private readonly SingleInstanceService _single; private readonly CancellationTokenSource _lifetime=new(); private readonly StartupActivationGate _activationGate=new(); private readonly CultureInfo? _uiCultureOverride;
     private readonly AiProviderFactory _aiProviderFactory=new();
     private readonly HermesRuntimeService _hermesRuntime;
     private readonly HermesReadAloudService _hermesReadAloud;
@@ -24,9 +25,10 @@ public sealed class AppHost : IDisposable
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
-    public AppHost(System.Windows.Application app)
+    public AppHost(System.Windows.Application app,CultureInfo? uiCultureOverride=null)
     {
         _app=app??throw new ArgumentNullException(nameof(app));
+        _uiCultureOverride=uiCultureOverride;
         _hermesRuntime=new HermesRuntimeService();
         _hermesReadAloud=new HermesReadAloudService(_app.Dispatcher);
         _single=new();
@@ -38,6 +40,7 @@ public sealed class AppHost : IDisposable
         CrashDiagnosticsService.InitializePrimary();
         CrashDiagnosticsService.MarkOperation("加载设置");
         _settingsService=new();Settings=_settingsService.Load();
+        LocalizationService.Initialize(_uiCultureOverride is null?Settings.UiLanguage:"system",_uiCultureOverride??CultureInfo.CurrentUICulture);
         _main=new MainWindow(this); _app.MainWindow=_main;
         _hotkey=new GlobalHotkeyService(); _hotkey.Pressed+=BeginCapture; var hotkeyOk=_hotkey.Register(Settings.CaptureHotkey);
         var retention=TimeSpan.FromDays(Math.Clamp(Settings.TempCleanupDays,1,30));new TempFileService().Cleanup(retention);ClipboardService.CleanupStagedFiles(retention);BuildTray();if(!hotkeyOk)Notify("快捷键注册失败，可能已被其他应用占用");_activationGate.MarkStarted(QueueMainWindowActivation);CrashDiagnosticsService.MarkOperation("空闲");return true;

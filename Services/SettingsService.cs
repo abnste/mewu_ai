@@ -193,6 +193,7 @@ public sealed class SettingsService
             settings.CaptureHotkey=new(){Key=System.Windows.Input.Key.S,Modifiers=System.Windows.Input.ModifierKeys.Shift|System.Windows.Input.ModifierKeys.Alt};
         settings.CaptureDelaySeconds=settings.CaptureDelaySeconds is 3 or 5?settings.CaptureDelaySeconds:0;
         settings.DefaultImageFormat=settings.DefaultImageFormat?.Trim().ToLowerInvariant() is "jpg" or "jpeg"?"jpg":"png";
+        settings.UiLanguage=settings.UiLanguage?.Trim() is "zh-CN" or "en-US"?settings.UiLanguage.Trim():"system";
         settings.VoiceLanguage=settings.VoiceLanguage?.Trim() is "zh-CN" or "en-US"?settings.VoiceLanguage.Trim():"system";
         settings.HermesProvider=settings.HermesProvider?.Trim()??string.Empty;
         settings.HermesProfile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();

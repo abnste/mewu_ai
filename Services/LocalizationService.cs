@@ -30,7 +30,7 @@ internal static class LocalizationService
         ["滚轮截长图"]="Scrolling capture",["已采集 1 段"]="1 segment captured",["完成长截图"]="Finish scrolling capture",["取消长截图"]="Cancel scrolling capture",["完成"]="Finish",["取消"]="Cancel",["录制中"]="Recording",["暂停"]="Pause",["暂停或继续录屏"]="Pause or resume recording",["停止并原位预览"]="Stop and preview in place",["停止录屏并原位预览"]="Stop recording and preview in place",
         ["查看提问和历史对话"]="View questions and conversation history",["查看提问与历史"]="View questions and history",["AI 回答"]="AI response",["同时复制为 Excel 表格、Markdown 和图片"]="Copy as an Excel table, Markdown, and an image",["复制识别出的表格"]="Copy recognized table",["复制表格"]="Copy table",["正在思考…"]="Thinking…",["Hermes 运行"]="Hermes activity",
         ["输入文字问题，或先圈选/上传要分析的内容…"]="Ask a question, or select/upload something to analyze…",["继续输入关于引用区域的问题…"]="Ask a follow-up about the referenced regions…",["引用截图或视频"]="Reference an image or video",["上传图片或文件"]="Upload an image or file",["语音输入"]="Voice input",["发送"]="Send",["发送问题"]="Send question",["拖动可连续框选多个区域 · Enter 发送 · Shift+Enter 换行"]="Drag to select multiple regions · Enter to send · Shift+Enter for a new line",
-        ["常规"]="General",["捕获"]="Capture",["录屏"]="Recording",["语音"]="Voice",["隐私"]="Privacy",["关于"]="About",["保存"]="Save",["启动与快捷键"]="Startup and shortcuts",["登录 Windows 后自动启动"]="Start automatically when I sign in to Windows",["全局截图快捷键"]="Global capture shortcut",
+        ["常规"]="General",["捕获"]="Capture",["录屏"]="Recording",["语音"]="Voice",["隐私"]="Privacy",["关于"]="About",["保存"]="Save",["界面语言"]="Display language",["语言设置将在重新启动喵呜AI后生效。"]="Language changes take effect after restarting MewuAI.",["启动与快捷键"]="Startup and shortcuts",["登录 Windows 后自动启动"]="Start automatically when I sign in to Windows",["全局截图快捷键"]="Global capture shortcut",
         ["点击上面的输入框，然后直接按下新的组合键（至少包含 Shift、Alt 或 Ctrl）。"]="Click the field above, then press a new shortcut (include Shift, Alt, or Ctrl).",["恢复默认 Shift + Alt + S"]="Restore Shift + Alt + S",["关闭主窗口不会退出；请使用托盘菜单退出。"]="Closing the main window keeps MewuAI running. Use the tray menu to quit.",
         ["延时截图"]="Capture delay",["默认图片格式"]="Default image format",["选区外暗化程度"]="Dim area outside selection",["截图包含系统鼠标指针"]="Include the system pointer in captures",["截图、OCR、复制和保存均在本地完成。"]="Capture, OCR, copying, and saving are all performed locally.",
         ["MP4 帧率"]="MP4 frame rate",["MP4 质量"]="MP4 quality",["GIF 帧率"]="GIF frame rate",["录屏包含系统鼠标指针"]="Include the system pointer in recordings",["自动清理临时媒体"]="Automatically clean up temporary media",["未保存的录制暂存在本机，并由应用自动清理。"]="Unsaved recordings stay on this device and are cleaned up automatically.",
@@ -83,9 +83,9 @@ internal static class LocalizationService
     internal static bool IsEnglish=>Language==AppLanguage.English;
     internal static string CultureName=>Language==AppLanguage.SimplifiedChinese?"zh-CN":"en-US";
 
-    internal static void Initialize(CultureInfo? systemUiCulture=null)
+    internal static void Initialize(string? preference,CultureInfo? systemUiCulture=null)
     {
-        Language=ResolveLanguage(systemUiCulture??CultureInfo.CurrentUICulture);
+        Language=ResolveLanguagePreference(preference,systemUiCulture??CultureInfo.CurrentUICulture);
         FrameworkElement.LanguageProperty.OverrideMetadata(typeof(FrameworkElement),new FrameworkPropertyMetadata(XmlLanguage.GetLanguage(CultureName)));
         if(IsEnglish)EventManager.RegisterClassHandler(typeof(FrameworkElement),FrameworkElement.LoadedEvent,new RoutedEventHandler(OnElementLoaded));
     }
@@ -111,6 +111,12 @@ internal static class LocalizationService
     }
 
     internal static AppLanguage ResolveLanguage(CultureInfo culture)=>string.Equals(culture.TwoLetterISOLanguageName,"zh",StringComparison.OrdinalIgnoreCase)?AppLanguage.SimplifiedChinese:AppLanguage.English;
+    internal static AppLanguage ResolveLanguagePreference(string? preference,CultureInfo systemUiCulture)=>preference?.Trim() switch
+    {
+        "zh-CN"=>AppLanguage.SimplifiedChinese,
+        "en-US"=>AppLanguage.English,
+        _=>ResolveLanguage(systemUiCulture)
+    };
 
     private static void OnElementLoaded(object sender,RoutedEventArgs args)
     {
