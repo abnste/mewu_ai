@@ -20,7 +20,7 @@ public sealed class PinnedImageWindow : Window
     private readonly ScreenRect? _originalRegion;
     private readonly Border _frame;
     private MenuItem? _topmostItem, _opacityItem;
-    private bool _adjustingSize;
+    private bool _adjustingSize,_doubleClickCloseQueued;
     private readonly PinnedWindowDragController _drag;
     private readonly IDisposable _captureRegistration;
     private readonly int _initialContentWidthPixels;
@@ -94,7 +94,7 @@ public sealed class PinnedImageWindow : Window
 
     private void OnMouseLeftButtonDown(object sender,MouseButtonEventArgs e)
     {
-        if(e.ClickCount>=2){_drag.End();Unpin();e.Handled=true;return;}
+        if(e.ClickCount>=2){QueueCloseFromDoubleClick();e.Handled=true;return;}
         if(e.ButtonState==MouseButtonState.Pressed)_drag.Begin(e.GetPosition(this));
     }
 
@@ -105,7 +105,7 @@ public sealed class PinnedImageWindow : Window
     private void OnMouseDoubleClick(object sender,MouseButtonEventArgs e)
     {
         if(e.ChangedButton!=MouseButton.Left)return;
-        _drag.End();Unpin();e.Handled=true;
+        QueueCloseFromDoubleClick();e.Handled=true;
     }
 
     private void OnMouseLeftButtonUp(object sender,MouseButtonEventArgs e)=>_drag.End();
@@ -124,12 +124,12 @@ public sealed class PinnedImageWindow : Window
     private static MenuItem Add(ContextMenu menu,string text,Action action){var item=new MenuItem{Header=text};item.SetResourceReference(StyleProperty,typeof(MenuItem));item.Click+=(_,_)=>action();menu.Items.Add(item);return item;}
     private static void AddSeparator(ContextMenu menu){var separator=new Separator();separator.SetResourceReference(StyleProperty,typeof(Separator));menu.Items.Add(separator);}
     private void ToggleTopmost(){Topmost=!Topmost;UpdateTopmostHeader();}
-    private void Unpin()
+    private void QueueCloseFromDoubleClick()
     {
-        Topmost=false;
-        var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
-        if(handle!=IntPtr.Zero)NativeMethods.SetWindowPos(handle,new IntPtr(-2),0,0,0,0,0x0001|0x0002|0x0010);
-        UpdateTopmostHeader();
+        _drag.End();
+        if(_doubleClickCloseQueued)return;
+        _doubleClickCloseQueued=true;
+        _=Dispatcher.BeginInvoke(new Action(Close));
     }
     private void UpdateTopmostHeader(){if(_topmostItem is not null)_topmostItem.Header=Topmost?"取消置顶":"置顶";}
     private void ToggleOpacity(){Opacity=Opacity<1?1:.8;if(_opacityItem is not null)_opacityItem.Header=Opacity<1?"100% 不透明度":"80% 透明度";}
