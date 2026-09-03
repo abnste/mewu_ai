@@ -2129,20 +2129,31 @@ public partial class CaptureOverlayWindow : Window
         catch(Exception ex){new PrivacyLogger().Error("SaveImage",ex);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text=$"图片保存失败：{ex.Message}";}
         finally{EndOverlayOperation(imageOperation);}
     }
-    private void Pin(object s,RoutedEventArgs e)
+    private async void Pin(object s,RoutedEventArgs e)
     {
-        if(RejectIfOverlayOperationBusy()||Active is not { } item)return;var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);
+        if(RejectIfOverlayOperationBusy()||Active is not { } item)return;RemoveEmptyDrawingText(item);var pixels=ToPixelRect(item.Bounds);var region=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);CancellationTokenSource? operation=null;TempMediaLease? generatedVideoLease=null;
         try
         {
-            if(item.VideoPath is { } video){var window=new PinnedVideoWindow(video,region);try{window.Show();}catch{window.Close();throw;}}
-            else new PinnedImageWindow(RenderSelectionImage(item),region).Show();
+            if(item.VideoPath is { } video)
+            {
+                if(HasAnyAnnotations(item))
+                {
+                    operation=BeginOverlayOperation("正在生成带标注贴视频…按 Esc 可取消");var annotatedPath=new TempFileService().NewFile(".mp4");generatedVideoLease=TempMediaRegistry.Shared.Acquire(annotatedPath);var manualOverlay=HasManualAnnotations(item)?RenderManualOverlay(item,pixels.Width,pixels.Height):null;
+                    await AnnotatedVideoExportService.ExportAsync(video,annotatedPath,manualOverlay,item.AnnotationNotes.ToArray(),operation.Token,item.AnnotationCardPositions);
+                    if(!IsOverlayOperationActive(operation,item))return;video=annotatedPath;
+                }
+                var window=new PinnedVideoWindow(video,region);try{window.Show();}catch{window.Close();throw;}
+            }
+            else new PinnedImageWindow(RenderSelectionImage(item,true,true,true),region).Show();
             // Capture the protected pin into the frozen desktop frame, then
             // explicitly keep the live pin above the capture controls.
             RefreshDesktopFrameIncludingPinnedWindows();
             RaisePinnedWindowsAboveOverlay();
-            PromptStatus.Text=item.VideoPath is null?"已在原位贴图":"已在原位贴视频";SetPromptBarHidden(false);
+            PromptStatus.Text=item.VideoPath is null?(HasAnyAnnotations(item)?"已在原位贴出带标注图片":"已在原位贴图"):(HasAnyAnnotations(item)?"已在原位贴出带标注视频":"已在原位贴视频");SetPromptBarHidden(false);
         }
+        catch(OperationCanceledException){if(!_closed&&operation is not null&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消生成贴图";}
         catch(Exception ex){new PrivacyLogger().Error("PinMedia",ex);PromptStatus.Text=$"贴图失败：{ex.Message}";}
+        finally{generatedVideoLease?.Dispose();if(operation is not null)EndOverlayOperation(operation);}
     }
     private async void CaptureLongScreenshot(object s,RoutedEventArgs e)
     {
