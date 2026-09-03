@@ -11,6 +11,8 @@
   [![Windows](https://img.shields.io/badge/Windows-10%202004%2B-3A8DDE?style=flat-square&logo=windows11&logoColor=white)](#system-requirements)
   [![.NET](https://img.shields.io/badge/.NET-10-6C4BC1?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
 
+  **v0.1.0 Public Beta · Tested model: MiniMax M3 (MiniMax-M3)**
+
   [**Download installer**](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Setup-0.1.0-win-x64.exe) · [Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.1.0/MewuAI-Portable-0.1.0-win-x64.zip)
 </div>
 
