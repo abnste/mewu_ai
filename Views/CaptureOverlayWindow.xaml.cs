@@ -109,6 +109,7 @@ public partial class CaptureOverlayWindow : Window
     private DrawingElementSpec? _drawingMoveOriginalElement;
     private StrokeDrawingState? _drawingMoveOriginalStroke;
     private Point _drawingMovePointerStart;
+    private Point? _lastEraserPoint;
     private bool _drawingObjectMoving;
     private Border? _drawingSelectionOutline;
     private OverlaySnapshot? _pointerOperationBefore;
@@ -130,7 +131,7 @@ public partial class CaptureOverlayWindow : Window
         // WPF MediaElement/WMP renderer.
         public Image Video { get; }=new(){Stretch=Stretch.Fill,Visibility=Visibility.Collapsed,IsHitTestVisible=false};
         public VideoPreviewSurface? VideoPreview;
-        public InkCanvas Markup { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false,ClipToBounds=true};
+        public InkCanvas Markup { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false,ClipToBounds=true,Focusable=true};
         public Canvas AiAnnotations { get; }=new(){IsHitTestVisible=true};
         public Canvas TextOverlays { get; }=new(){IsHitTestVisible=false};
         public Canvas TextSelection { get; }=new(){IsHitTestVisible=false,Background=Brushes.Transparent};
@@ -2247,7 +2248,12 @@ public partial class CaptureOverlayWindow : Window
     }
     private void SetDrawTool(DrawTool tool)
     {
-        if(Active is not { } item)return;ClearDrawingObjectSelection();_drawTool=tool;item.Markup.EditingMode=tool==DrawTool.Freehand?InkCanvasEditingMode.Ink:InkCanvasEditingMode.None;Cursor=tool switch{DrawTool.Freehand=>Cursors.Pen,DrawTool.Select=>Cursors.SizeAll,_=>Cursors.Cross};
+        if(Active is not { } item)return;ClearDrawingObjectSelection();_drawTool=tool;item.Markup.EditingMode=tool==DrawTool.Freehand?InkCanvasEditingMode.Ink:InkCanvasEditingMode.None;Cursor=tool switch{DrawTool.Freehand=>Cursors.Pen,DrawTool.Select=>Cursors.Arrow,_=>Cursors.Cross};DrawingTextControls.Visibility=tool==DrawTool.Text?Visibility.Visible:Visibility.Collapsed;UpdateDrawingToolVisualState(tool);PositionFloatingBar(DrawingToolbar,item);_=Dispatcher.BeginInvoke(DispatcherPriority.Render,new Action(()=>{if(_drawingMode&&DrawingToolbar.Visibility==Visibility.Visible&&Active is { } active)PositionFloatingBar(DrawingToolbar,active);}));
+    }
+    private void UpdateDrawingToolVisualState(DrawTool tool)
+    {
+        var active=tool switch{DrawTool.Freehand when _drawHighlighter=>DrawingHighlightButton,DrawTool.Freehand=>DrawingPenButton,DrawTool.Rectangle=>DrawingRectangleButton,DrawTool.Ellipse=>DrawingEllipseButton,DrawTool.Arrow=>DrawingArrowButton,DrawTool.Mosaic=>DrawingMosaicButton,DrawTool.Text=>DrawingTextButton,DrawTool.Number=>DrawingNumberButton,DrawTool.Select=>DrawingSelectButton,DrawTool.Eraser=>DrawingEraserButton,_=>DrawingPenButton};
+        foreach(var button in new[]{DrawingSelectButton,DrawingPenButton,DrawingHighlightButton,DrawingRectangleButton,DrawingEllipseButton,DrawingArrowButton,DrawingMosaicButton,DrawingTextButton,DrawingNumberButton,DrawingEraserButton})button.Style=(Style)FindResource(ReferenceEquals(button,active)?"ReferenceIconButton":"ToolbarIconButton");
     }
     private static DrawingAttributes RegularDrawingAttributes(Color color)=>new(){Color=color,Width=4,Height=4,IsHighlighter=false,FitToCurve=true};
     private static DrawingAttributes HighlightDrawingAttributes(Color color)=>new(){Color=color,Width=18,Height=18,IsHighlighter=true,FitToCurve=true};
@@ -2308,16 +2314,20 @@ public partial class CaptureOverlayWindow : Window
     private void MarkupDown(object sender,MouseButtonEventArgs e)
     {
         if(!_drawingMode||sender is not InkCanvas canvas||Active is not { } item||!ReferenceEquals(canvas,item.Markup)||_drawTool==DrawTool.Freehand)return;var point=e.GetPosition(canvas);
-        if(_drawTool==DrawTool.Eraser){canvas.CaptureMouse();EraseDrawingObjectsAt(item,point);e.Handled=true;return;}
-        if(_drawTool==DrawTool.Select){BeginDrawingObjectSelection(item,point,canvas);e.Handled=true;return;}
-        if(_drawTool==DrawTool.Text){AddTextDrawingElement(item,point);e.Handled=true;return;}
+        if(_drawTool==DrawTool.Eraser){canvas.Focus();Keyboard.Focus(canvas);canvas.CaptureMouse();EraseDrawingObjectsAt(item,point);_lastEraserPoint=point;e.Handled=true;return;}
+        if(_drawTool==DrawTool.Select)
+        {
+            if(e.ClickCount>=2&&TryEditDrawingText(item,point,canvas)){e.Handled=true;return;}
+            BeginDrawingObjectSelection(item,point,canvas);e.Handled=true;return;
+        }
+        if(_drawTool==DrawTool.Text){if(!TryEditDrawingText(item,point,canvas))AddTextDrawingElement(item,point);e.Handled=true;return;}
         if(_drawTool==DrawTool.Number){AddNumberDrawingElement(item,point);e.Handled=true;return;}
         _drawStart=point;canvas.CaptureMouse();e.Handled=true;
     }
     private void MarkupMove(object sender,MouseEventArgs e)
     {
         if(!_drawingMode||sender is not InkCanvas canvas||Active is not { } item||!ReferenceEquals(canvas,item.Markup)||e.LeftButton!=MouseButtonState.Pressed||!canvas.IsMouseCaptured)return;
-        if(_drawTool==DrawTool.Eraser){EraseDrawingObjectsAt(item,e.GetPosition(canvas));e.Handled=true;return;}
+        if(_drawTool==DrawTool.Eraser){var point=e.GetPosition(canvas);if(_lastEraserPoint is not { } previous||(point-previous).Length>=12){EraseDrawingObjectsAt(item,point);_lastEraserPoint=point;}e.Handled=true;return;}
         if(_drawTool==DrawTool.Select){MoveSelectedDrawingObject(item,e.GetPosition(canvas),canvas);e.Handled=true;return;}
         if(_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number)return;
         if(_drawPreview is not null)canvas.Strokes.Remove(_drawPreview);_drawPreview=CreateShapeStroke(canvas,_drawStart,e.GetPosition(canvas),_drawTool,Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));canvas.Strokes.Add(_drawPreview);e.Handled=true;
@@ -2325,7 +2335,7 @@ public partial class CaptureOverlayWindow : Window
     private void MarkupUp(object sender,MouseButtonEventArgs e)
     {
         if(sender is not InkCanvas canvas||!canvas.IsMouseCaptured)return;
-        if(_drawTool==DrawTool.Eraser){canvas.ReleaseMouseCapture();e.Handled=true;return;}
+        if(_drawTool==DrawTool.Eraser){_lastEraserPoint=null;canvas.ReleaseMouseCapture();e.Handled=true;return;}
         if(_drawTool==DrawTool.Select){canvas.ReleaseMouseCapture();CommitSelectedDrawingMove();e.Handled=true;return;}
         if(_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number)return;var completed=_drawPreview;_drawPreview=null;canvas.ReleaseMouseCapture();if(Active is { } item&&completed is not null){if(_drawTool==DrawTool.Mosaic){canvas.Strokes.Remove(completed);AddMosaicElement(item,_drawStart,e.GetPosition(canvas));}else{item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();}}_drawingOperationChanged=completed is not null||_drawingOperationChanged;e.Handled=true;
     }
@@ -2333,13 +2343,13 @@ public partial class CaptureOverlayWindow : Window
     {
         if(!_drawingMode||sender is not InkCanvas canvas)return;
         if(_drawTool==DrawTool.Select){CommitSelectedDrawingMove();return;}
-        if(_drawTool==DrawTool.Eraser)return;
+        if(_drawTool==DrawTool.Eraser){_lastEraserPoint=null;return;}
         if(_drawTool is DrawTool.Freehand or DrawTool.Text or DrawTool.Number||_drawPreview is null)return;var completed=_drawPreview;_drawPreview=null;if(ReferenceEquals(canvas,Active?.Markup)&&Active is { } item){if(_drawTool==DrawTool.Mosaic)canvas.Strokes.Remove(completed);else{item.DrawingOrder.Add(new StrokeDrawingAction(completed));item.DrawingRedo.Clear();_drawingOperationChanged=true;}}PromptStatus.Text="标注笔划已保留，可继续编辑";
     }
 
     private void BeginDrawingObjectSelection(SelectionItem item,Point point,InkCanvas canvas)
     {
-        ClearDrawingObjectSelection();
+        ClearDrawingObjectSelection();canvas.Focus();Keyboard.Focus(canvas);
         var element=HitTestDrawingElement(item,point);
         if(element is not null)
         {
@@ -2348,6 +2358,15 @@ public partial class CaptureOverlayWindow : Window
         var stroke=item.Markup.Strokes.Reverse().FirstOrDefault(candidate=>candidate.HitTest(point,8));
         if(stroke is null){PromptStatus.Text="没有命中标注对象";return;}
         _selectedDrawingStroke=stroke;_drawingMoveOriginalStroke=CaptureStrokeState(stroke);_drawingMovePointerStart=point;ShowDrawingObjectSelection(item);canvas.CaptureMouse();PromptStatus.Text="已选择笔迹或形状 · 拖动移动 · Delete 删除";
+    }
+
+    private bool TryEditDrawingText(SelectionItem item,Point point,InkCanvas canvas)
+    {
+        if(HitTestDrawingElement(item,point) is not TextDrawingElement text)return false;
+        if(_drawTool!=DrawTool.Text)SetDrawTool(DrawTool.Text);
+        var editor=FindDrawingElementVisual(item,text.Id) as TextBox;
+        if(editor is null)return false;
+        editor.Focus();Keyboard.Focus(editor);var local=canvas.TranslatePoint(point,editor);var caret=editor.GetCharacterIndexFromPoint(local,true);if(caret>=0)editor.CaretIndex=caret;editor.SelectionLength=0;PromptStatus.Text="正在重新编辑文字 · 点击空白处可新增文本框";return true;
     }
 
     private void MoveSelectedDrawingObject(SelectionItem item,Point point,InkCanvas canvas)
@@ -2399,9 +2418,9 @@ public partial class CaptureOverlayWindow : Window
         {
             item.DrawingElements.Remove(element);item.DrawingOrder.Add(new ElementRemovalDrawingAction(element));item.DrawingRedo.Clear();ClearDrawingObjectSelection();RebuildDrawingElements(item);_drawingOperationChanged=true;PromptStatus.Text="已擦除标注对象";return;
         }
-        var strokes=item.Markup.Strokes.Where(stroke=>stroke.HitTest(point,9)).ToArray();
-        if(strokes.Length==0)return;
-        foreach(var stroke in strokes){item.Markup.Strokes.Remove(stroke);item.DrawingOrder.Add(new StrokeRemovalDrawingAction(stroke));}
+        var stroke=item.Markup.Strokes.Reverse().FirstOrDefault(candidate=>candidate.HitTest(point,9));
+        if(stroke is null)return;
+        item.Markup.Strokes.Remove(stroke);item.DrawingOrder.Add(new StrokeRemovalDrawingAction(stroke));
         item.DrawingRedo.Clear();ClearDrawingObjectSelection();_drawingOperationChanged=true;PromptStatus.Text="已擦除笔迹或形状";
     }
 
