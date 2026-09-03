@@ -220,6 +220,17 @@ internal static class CaptureOverlayPolicy
     internal static bool ShouldPassThroughLongCapturePointer(Rect captureBounds,Rect controlBounds,Point pointer) =>
         !captureBounds.IsEmpty&&captureBounds.Contains(pointer)&&(controlBounds.IsEmpty||!controlBounds.Contains(pointer));
 
+    internal static Rect FitLongCaptureResultBounds(Rect originalBounds,Rect monitorBounds,int pixelWidth,int pixelHeight,double margin=4)
+    {
+        if(originalBounds.IsEmpty||monitorBounds.IsEmpty||pixelWidth<=0||pixelHeight<=0)return Rect.Empty;
+        var availableWidth=Math.Max(1,monitorBounds.Width-margin*2);var availableHeight=Math.Max(1,monitorBounds.Height-margin*2);
+        var width=Math.Min(originalBounds.Width,availableWidth);var height=width*pixelHeight/pixelWidth;
+        if(height>availableHeight){height=availableHeight;width=height*pixelWidth/pixelHeight;}
+        var centerX=originalBounds.Left+originalBounds.Width/2;var left=Math.Clamp(centerX-width/2,monitorBounds.Left+margin,Math.Max(monitorBounds.Left+margin,monitorBounds.Right-margin-width));
+        var bottom=Math.Min(originalBounds.Bottom,monitorBounds.Bottom-margin);var top=bottom-height;if(top<monitorBounds.Top+margin)top=monitorBounds.Top+margin;
+        return new Rect(left,top,width,height);
+    }
+
     internal static bool ShouldFinalizeCanceledAiRequest(
         CancellationTokenSource? activeRequest,
         CancellationTokenSource candidate,

@@ -180,6 +180,14 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void TallLongCaptureResultFitsMonitorWithoutChangingAspectRatio()
+    {
+        var result=CaptureOverlayPolicy.FitLongCaptureResultBounds(new Rect(200,300,1000,500),new Rect(0,0,1920,1080),1000,2500);
+
+        Assert.Equal(1072,result.Height,6);Assert.Equal(428.8,result.Width,6);Assert.Equal(.4,result.Width/result.Height,6);Assert.True(new Rect(0,0,1920,1080).Contains(result));
+    }
+
+    [Fact]
     public void ScreenAiRequestAlwaysRequiresStructuredAnnotations()
     {
         var attachment=new AiAttachment(AiAttachmentType.Image,"image/png",[1,2,3],ProviderOwnsData:false);
