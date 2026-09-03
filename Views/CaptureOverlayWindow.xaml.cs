@@ -38,6 +38,7 @@ public partial class CaptureOverlayWindow : Window
     private const double CompactChipScrollMaxHeight=36;
     private const double CompactQuickPromptMinHeight=30;
     private const double CompactQuickPromptMaxHeight=52;
+    private const string UploadedReferenceDragFormat="MewuAI.UploadedImageReference";
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
     private readonly AppHost _host;
     private CaptureFrame _frame;
@@ -46,6 +47,10 @@ public partial class CaptureOverlayWindow : Window
     private readonly HashSet<SelectionItem> _references=[];
     private readonly List<SelectionItem> _referencePickerCandidates=[];
     private readonly List<UploadedReference> _uploadedReferences=[];
+    private UploadedReference? _uploadedReferenceDragCandidate;
+    private Point _uploadedReferenceDragStart;
+    private bool _uploadedReferenceDragActive;
+    private bool _suppressUploadedReferenceClick;
     private readonly UndoRedoHistory<OverlaySnapshot> _overlayHistory=new();
     private readonly System.Text.StringBuilder _reasoningBuffer=new();
     private List<SelectionItem> _lastSentSelections=[];
@@ -555,7 +560,8 @@ public partial class CaptureOverlayWindow : Window
             else stack.Children.Add(new TextBlock{Text=file.Type==AiAttachmentType.Text?"📄":"🎞",FontSize=22,Margin=new Thickness(0,0,8,0)});
             stack.Children.Add(new StackPanel{Children={new TextBlock{Text=file.Label,FontWeight=FontWeights.SemiBold,Foreground=new SolidColorBrush(Color.FromRgb(82,100,223))},new TextBlock{Text=file.Type==AiAttachmentType.Text?file.Preview:file.Path,FontSize=10.5,Foreground=new SolidColorBrush(Color.FromRgb(126,139,160)),TextTrimming=TextTrimming.CharacterEllipsis,MaxWidth=220}}});
             var button=new Button{HorizontalContentAlignment=HorizontalAlignment.Left,Margin=new Thickness(1),Padding=new Thickness(10,7,10,7),Content=stack};
-            button.Click+=(_,_)=>InsertUploadedMention(file);ReferencePickerItems.Children.Add(button);
+            ConfigureUploadedReferenceDrag(button,file);
+            button.Click+=(_,e)=>{if(_suppressUploadedReferenceClick){e.Handled=true;return;}InsertUploadedMention(file);};ReferencePickerItems.Children.Add(button);
         }
         ReferencePicker.IsOpen=ReferencePickerItems.Children.Count>0;
     }
@@ -563,6 +569,87 @@ public partial class CaptureOverlayWindow : Window
     private void InsertUploadedMention(UploadedReference file)
     {
         var caret=Math.Min(QuickPrompt.CaretIndex,QuickPrompt.Text.Length);var start=Math.Clamp(_referenceMentionStart,0,caret);var label=file.Label+" ";QuickPrompt.Text=QuickPrompt.Text[..start]+label+QuickPrompt.Text[caret..];QuickPrompt.CaretIndex=start+label.Length;ReferencePicker.IsOpen=false;_referenceMentionStart=-1;QuickPrompt.Focus();
+    }
+
+    private void ConfigureUploadedReferenceDrag(Button button,UploadedReference file)
+    {
+        if(file.Type!=AiAttachmentType.Image)return;
+        button.ToolTip=$"{file.Preview}\n拖到屏幕可置顶显示";
+        button.PreviewMouseLeftButtonDown+=(_,e)=>
+        {
+            if(e.ButtonState!=MouseButtonState.Pressed)return;
+            _uploadedReferenceDragCandidate=file;
+            _uploadedReferenceDragStart=button.PointToScreen(e.GetPosition(button));
+            _uploadedReferenceDragActive=false;
+        };
+        button.PreviewMouseMove+=(_,e)=>
+        {
+            if(!ReferenceEquals(_uploadedReferenceDragCandidate,file)||_uploadedReferenceDragActive||e.LeftButton!=MouseButtonState.Pressed)return;
+            var current=button.PointToScreen(e.GetPosition(button));
+            var dpi=VisualTreeHelper.GetDpi(button);
+            if(!PinnedWindowInteractionPolicy.ShouldBeginDrag(_uploadedReferenceDragStart,current,SystemParameters.MinimumHorizontalDragDistance*dpi.DpiScaleX,SystemParameters.MinimumVerticalDragDistance*dpi.DpiScaleY))return;
+            _uploadedReferenceDragActive=true;
+            _suppressUploadedReferenceClick=true;
+            PromptStatus.Text="松开鼠标即可在当前位置置顶图片";
+            var data=new DataObject();data.SetData(UploadedReferenceDragFormat,file);
+            try{DragDrop.DoDragDrop(button,data,DragDropEffects.Copy);}
+            finally
+            {
+                _uploadedReferenceDragCandidate=null;
+                _uploadedReferenceDragActive=false;
+                _=Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=>_suppressUploadedReferenceClick=false));
+            }
+            e.Handled=true;
+        };
+        button.PreviewMouseLeftButtonUp+=(_,_)=>
+        {
+            if(!_uploadedReferenceDragActive)_uploadedReferenceDragCandidate=null;
+        };
+    }
+
+    private void OnUploadedReferenceDragOver(object sender,DragEventArgs e)
+    {
+        e.Effects=e.Data.GetDataPresent(UploadedReferenceDragFormat)&&e.Data.GetData(UploadedReferenceDragFormat) is UploadedReference {Type:AiAttachmentType.Image}
+            ?DragDropEffects.Copy
+            :DragDropEffects.None;
+        e.Handled=true;
+    }
+
+    private void OnUploadedReferenceDrop(object sender,DragEventArgs e)
+    {
+        e.Handled=true;
+        if(e.Data.GetData(UploadedReferenceDragFormat) is not UploadedReference {Type:AiAttachmentType.Image} file||!_uploadedReferences.Contains(file))return;
+        try
+        {
+            var image=LoadUploadedPinnedImage(file.Path);
+            var drop=ScreenCoordinateService.ToScreenPixelPoint(e.GetPosition(Root),Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight,_frame.OriginX,_frame.OriginY);
+            var workingArea=System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(drop.X,drop.Y)).WorkingArea;
+            var region=PinnedImageDropPlacement.Place(new ScreenRect(workingArea.X,workingArea.Y,workingArea.Width,workingArea.Height),drop.X,drop.Y,image.PixelWidth,image.PixelHeight);
+            var window=new PinnedImageWindow(image,region);
+            try{window.Show();}catch{window.Close();throw;}
+            ReferencePicker.IsOpen=false;
+            RefreshDesktopFrameIncludingPinnedWindows();
+            LowerPinnedWindowsForOverlay();
+            PromptStatus.Text=$"{file.Label} 已置顶，可继续框选截图";
+            SetPromptBarHidden(false);
+            e.Effects=DragDropEffects.Copy;
+        }
+        catch(Exception ex)
+        {
+            new PrivacyLogger().Error("UploadedReferencePin",ex);
+            PromptStatus.Text=$"附件贴图失败：{ex.Message}";
+            e.Effects=DragDropEffects.None;
+        }
+    }
+
+    private static BitmapSource LoadUploadedPinnedImage(string path)
+    {
+        using var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read);
+        var frame=BitmapFrame.Create(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);
+        if(frame.PixelWidth<=0||frame.PixelHeight<=0)throw new InvalidDataException("图片尺寸无效");
+        if((long)frame.PixelWidth*frame.PixelHeight>100_000_000)throw new InvalidDataException("图片像素过大，无法安全贴图");
+        frame.Freeze();
+        return frame;
     }
 
     private void InsertReferenceMention(SelectionItem item)
@@ -1606,7 +1693,7 @@ public partial class CaptureOverlayWindow : Window
             var chip=new Border{Background=new SolidColorBrush(Color.FromRgb(241,245,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(214,222,238)),BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(8),Margin=new Thickness(0,0,4,2),Padding=new Thickness(1)};
             var row=new StackPanel{Orientation=Orientation.Horizontal};
             if(file.Type==AiAttachmentType.Image){try{row.Children.Add(new Image{Source=new BitmapImage(new Uri(file.Path)),Width=24,Height=20,Stretch=Stretch.UniformToFill,Margin=new Thickness(2,0,3,0)});}catch{}}
-            var link=new Button{Content=file.Label,ToolTip=file.Preview};link.SetResourceReference(StyleProperty,"ReferenceChipButton");var remove=new Button{Content=CreateCloseIcon(),ToolTip="移除附件"};remove.SetResourceReference(StyleProperty,"ReferenceChipRemoveButton");remove.Click+=(_,_)=>{_uploadedReferences.Remove(file);UpdateReferenceChips();UpdateReferencePicker();};row.Children.Add(link);row.Children.Add(remove);chip.Child=row;ReferenceChips.Children.Add(chip);
+            var link=new Button{Content=file.Label,ToolTip=file.Preview};link.SetResourceReference(StyleProperty,"ReferenceChipButton");ConfigureUploadedReferenceDrag(link,file);var remove=new Button{Content=CreateCloseIcon(),ToolTip="移除附件"};remove.SetResourceReference(StyleProperty,"ReferenceChipRemoveButton");remove.Click+=(_,_)=>{_uploadedReferences.Remove(file);UpdateReferenceChips();UpdateReferencePicker();};row.Children.Add(link);row.Children.Add(remove);chip.Child=row;ReferenceChips.Children.Add(chip);
         }
         ReferenceChips.Visibility=ReferenceChips.Children.Count>0?Visibility.Visible:Visibility.Collapsed;QuickPromptHint.Text=ReferenceChips.Children.Count>0?"继续输入关于引用区域的问题…":"输入文字问题，或先圈选/上传要分析的内容…";_ = Dispatcher.BeginInvoke(PositionPromptBar);
     }
