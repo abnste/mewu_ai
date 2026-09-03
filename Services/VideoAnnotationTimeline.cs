@@ -6,6 +6,7 @@ internal static class VideoAnnotationTimeline
 {
     internal const int MaxAnswerActions=24;
     internal const double DurationOvershootToleranceSeconds=.35;
+    internal const double LiveFrameToleranceSeconds=.12;
 
     internal static bool TryResolveTargetIndex(int regionIndex,bool isTimeline,IReadOnlyList<bool> videoTargets,out int targetIndex,out bool wasSingleVideoRemapped)
     {
@@ -84,6 +85,15 @@ internal static class VideoAnnotationTimeline
             points=leftPoints.Zip(rightPoints,(a,b)=>new AiAnnotationPoint(Lerp(a.X,b.X,amount),Lerp(a.Y,b.Y,amount))).ToArray();
         else points=amount<.5?left.Points:right.Points;
         frame=new VideoAnnotationKeyframe(time,Lerp(left.X,right.X,amount),Lerp(left.Y,right.Y,amount),Lerp(left.Width,right.Width,amount),Lerp(left.Height,right.Height,amount),points);return true;
+    }
+
+    internal static bool TryInterpolateForPresentation(AiAnnotation annotation,double presentedTime,double toleranceSeconds,out VideoAnnotationKeyframe frame)
+    {
+        frame=default!;
+        if(!annotation.IsVideoTimeline||!double.IsFinite(presentedTime)||!double.IsFinite(toleranceSeconds)||toleranceSeconds<0)return false;
+        var start=annotation.StartTime!.Value;var end=annotation.EndTime!.Value;
+        if(presentedTime<start-toleranceSeconds||presentedTime>end+toleranceSeconds)return false;
+        return TryInterpolate(annotation,Math.Clamp(presentedTime,start,end),out frame);
     }
 
     private static double Lerp(double start,double end,double amount)=>start+(end-start)*amount;

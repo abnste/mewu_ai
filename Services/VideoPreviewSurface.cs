@@ -34,6 +34,8 @@ internal sealed class VideoPreviewSurface : IDisposable
     private WriteableBitmap? _displayFrame;
     private byte[]? _latestPixels;
     private long _latestFrameGeneration;
+    private long _latestFramePositionTicks;
+    private long _lastPresentedPositionTicks;
     private long _lastAcceptedFrameTimestamp;
     private long _presentedFrameCount;
     private int _width;
@@ -63,6 +65,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         }
     }
     internal long PresentedFrameCount => Interlocked.Read(ref _presentedFrameCount);
+    internal TimeSpan LastPresentedPosition=>TimeSpan.FromTicks(Math.Max(0,Interlocked.Read(ref _lastPresentedPositionTicks)));
 
     internal event Action? Opened;
     internal event Action<Exception>? Failed;
@@ -132,7 +135,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         _playing = false;
     }
 
-    internal async Task SeekAsync(TimeSpan position,bool pauseAfterSeek,CancellationToken cancellationToken=default)
+    internal async Task<TimeSpan> SeekAsync(TimeSpan position,bool pauseAfterSeek,CancellationToken cancellationToken=default)
     {
         CrashDiagnosticsService.MarkOperation("视频预览：跳转时间轴");
         VerifyDispatcher();
@@ -180,6 +183,7 @@ internal sealed class VideoPreviewSurface : IDisposable
             }
             else if(PresentedFrameCount<=previousFrameCount)
                 await frameReady.Task.WaitAsync(RemainingTimeout(),cancellationToken);
+            return LastPresentedPosition;
         }
         finally
         {
@@ -266,12 +270,18 @@ internal sealed class VideoPreviewSurface : IDisposable
                     return;
 
                 sender.CopyFrameToVideoSurface(_surface);
+                var capturedPositionTicks=Math.Max(0,sender.PlaybackSession.Position.Ticks);
                 pixels = _surface.GetPixelBytes();
                 var required = checked(_width * _height * 4);
                 if (pixels.Length < required) return;
                 generation=Volatile.Read(ref _generation);
                 _latestPixels = pixels;
                 _latestFrameGeneration = generation;
+                // Bind the session position to the pixels at capture time.
+                // Reading Position later on the WPF dispatcher associates a
+                // delayed UI frame with a newer timestamp and visibly shifts
+                // every time-based annotation ahead of the video.
+                _latestFramePositionTicks=capturedPositionTicks;
             }
             ScheduleFrameDispatch(generation);
         }
@@ -301,6 +311,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         byte[]? pixels;
         int width;
         int height;
+        long positionTicks;
         lock (_frameGate)
         {
             // A render callback can outlive a replaced player.  Never let an
@@ -311,11 +322,13 @@ internal sealed class VideoPreviewSurface : IDisposable
                 _latestPixels=null;
                 width=_width;
                 height=_height;
+                positionTicks=_latestFramePositionTicks;
             }
             else
             {
                 pixels=null;
                 width=height=0;
+                positionTicks=0;
             }
         }
         try
@@ -327,8 +340,8 @@ internal sealed class VideoPreviewSurface : IDisposable
                 _displayFrame.WritePixels(new Int32Rect(0,0,width,height),pixels,width*4,0);
                 if(!ReferenceEquals(_view.Source,_displayFrame))_view.Source=_displayFrame;
                 Interlocked.Increment(ref _presentedFrameCount);
-                var player=_player;
-                if(player is not null)FramePresented?.Invoke(player.PlaybackSession.Position);
+                Interlocked.Exchange(ref _lastPresentedPositionTicks,positionTicks);
+                FramePresented?.Invoke(TimeSpan.FromTicks(positionTicks));
             }
         }
         catch(Exception ex)
@@ -385,6 +398,8 @@ internal sealed class VideoPreviewSurface : IDisposable
             _width = _height = 0;
             _latestPixels = null;
             _latestFrameGeneration = 0;
+            _latestFramePositionTicks = 0;
+            Interlocked.Exchange(ref _lastPresentedPositionTicks,0);
             _lastAcceptedFrameTimestamp = 0;
             Interlocked.Exchange(ref _presentedFrameCount,0);
         }

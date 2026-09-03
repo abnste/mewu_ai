@@ -34,6 +34,17 @@ public sealed class VideoAnnotationTimelineTests
         Assert.True(VideoAnnotationTimeline.TryInterpolate(annotation,4.2,out var frame));Assert.Equal(.2,frame.X,8);
     }
 
+    [Theory]
+    [InlineData(4.09,true)]
+    [InlineData(4.31,true)]
+    [InlineData(4.33,false)]
+    public void PointMarkerUsesBoundedLiveFrameTolerance(double presentedTime,bool expected)
+    {
+        var annotation=new AiAnnotation(.2,.3,.1,.1,"点",0,4.2,4.2,[new(4.2,.2,.3,.1,.1)]);
+        var visible=VideoAnnotationTimeline.TryInterpolateForPresentation(annotation,presentedTime,VideoAnnotationTimeline.LiveFrameToleranceSeconds,out var frame);
+        Assert.Equal(expected,visible);if(visible)Assert.Equal(4.2,frame.Time,8);
+    }
+
     [Fact] public void FirstMarkerUsesEarliestKeyframeAcrossAnnotations()
     {
         var later=new AiAnnotation(.1,.1,.2,.2,"later",0,8,10,[new(8,.1,.1,.2,.2),new(10,.2,.2,.2,.2)]);

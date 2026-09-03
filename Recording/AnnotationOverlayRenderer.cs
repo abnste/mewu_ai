@@ -11,7 +11,7 @@ internal static class AnnotationOverlayRenderer
 {
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(42,174,255));
 
-    internal static DrawingImage CreateAiDrawingImage(int width,int height,IReadOnlyList<AiAnnotation> annotations,double? videoTime=null,IReadOnlyDictionary<AiAnnotation,Point>? calloutPositions=null)
+    internal static DrawingImage CreateAiDrawingImage(int width,int height,IReadOnlyList<AiAnnotation> annotations,double? videoTime=null,IReadOnlyDictionary<AiAnnotation,Point>? calloutPositions=null,double presentationToleranceSeconds=0)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(width,1);
         ArgumentOutOfRangeException.ThrowIfLessThan(height,1);
@@ -28,14 +28,14 @@ internal static class AnnotationOverlayRenderer
             foreach(var annotation in annotations.Take(48))
             {
                 if(annotation.Kind!=AiAnnotationKind.Callout||calloutOrder.Count>=VisualAnnotationProtocol.MaximumCallouts||string.IsNullOrWhiteSpace(annotation.Text)||annotation.Width<.012||annotation.Height<.012||annotation.Width>.92||annotation.Height>.92)continue;
-                var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
+                var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);if(annotation.IsVideoTimeline&&(!videoTime.HasValue||!VideoAnnotationTimeline.TryInterpolateForPresentation(annotation,videoTime.Value,presentationToleranceSeconds,out frame)))continue;
                 var target=new Rect(Math.Clamp(frame.X,0,1)*width,Math.Clamp(frame.Y,0,1)*height,Math.Max(14,Math.Clamp(frame.Width,0,1)*width),Math.Max(14,Math.Clamp(frame.Height,0,1)*height));var cardHeight=Math.Min(Math.Max(font*3.2,MeasureCalloutHeight(annotation.Text,cardWidth,font)),Math.Max(1,height-10));calloutOrder.Add(annotation);requests.Add(new AnnotationCalloutRequest(target,new Size(cardWidth,cardHeight)));calloutFrames[annotation]=(frame,target,cardHeight,default);
             }
             var plans=AnnotationLayoutService.PlanCallouts(requests,new Size(width,height));for(var index=0;index<calloutOrder.Count;index++){var note=calloutOrder[index];var current=calloutFrames[note];var placement=plans[index];if(calloutPositions?.TryGetValue(note,out var saved)==true){var left=Math.Clamp(saved.X*width,5,Math.Max(5,width-cardWidth-5));var top=Math.Clamp(saved.Y*height,5,Math.Max(5,height-current.CardHeight-5));var bounds=new Rect(left,top,cardWidth,current.CardHeight);placement=new AnnotationCalloutPlacement(bounds,AnnotationLayoutService.FindConnector(current.Target,bounds));}calloutFrames[note]=(current.Frame,current.Target,current.CardHeight,placement);}
             foreach(var annotation in annotations.Take(48))
             {
                 var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);
-                if(annotation.IsVideoTimeline&&(!videoTime.HasValue||videoTime<annotation.StartTime||videoTime>annotation.EndTime||!VideoAnnotationTimeline.TryInterpolate(annotation,videoTime.Value,out frame)))continue;
+                if(annotation.IsVideoTimeline&&(!videoTime.HasValue||!VideoAnnotationTimeline.TryInterpolateForPresentation(annotation,videoTime.Value,presentationToleranceSeconds,out frame)))continue;
                 if(AnnotationLayoutService.IsDuplicateTargetMarker(annotation,callouts))continue;
                 var x=Math.Clamp(frame.X,0,1)*width;var y=Math.Clamp(frame.Y,0,1)*height;var boxWidth=Math.Max(14,Math.Clamp(frame.Width,0,1)*width);var boxHeight=Math.Max(14,Math.Clamp(frame.Height,0,1)*height);
                 if(annotation.Kind==AiAnnotationKind.Mosaic)continue;

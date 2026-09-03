@@ -1946,8 +1946,8 @@ public partial class CaptureOverlayWindow : Window
         CrashDiagnosticsService.MarkOperation("屏幕助手：视频标记帧跳转");CancelVideoAnnotationPlayback(item);var playback=new CancellationTokenSource();item.VideoAnnotationPlayback=playback;
         try
         {
-            var preview=EnsureVideoPreview(item);var position=TimeSpan.FromSeconds(frame.Time);await preview.SeekAsync(position,pauseAfterSeek:true,playback.Token);
-            if(_closed||!ReferenceEquals(item.VideoAnnotationPlayback,playback)||!_selections.Contains(item))return;item.VideoPlaying=false;RenderAnnotationsForItem(item,frame.Time);PromptStatus.Text=automatic?$"已自动定位到第一个标记 {FormatVideoTime(position)} · 视频已暂停":$"已跳到标记 {FormatVideoTime(position)} · 视频已暂停";
+            var preview=EnsureVideoPreview(item);var requested=TimeSpan.FromSeconds(frame.Time);var presented=await preview.SeekAsync(requested,pauseAfterSeek:true,playback.Token);
+            if(_closed||!ReferenceEquals(item.VideoAnnotationPlayback,playback)||!_selections.Contains(item))return;item.VideoPlaying=false;RenderAnnotationsForItem(item,presented.TotalSeconds);PromptStatus.Text=automatic?$"已自动定位到第一个标记 {FormatVideoTime(presented)} · 视频已暂停":$"已跳到标记 {FormatVideoTime(presented)} · 视频已暂停";
         }
         catch(OperationCanceledException){}
         catch(Exception ex){new PrivacyLogger().Error("VideoAnnotationFrameJump",ex);if(!_closed&&ReferenceEquals(item.VideoAnnotationPlayback,playback))PromptStatus.Text=$"视频标记跳转失败：{ex.Message}";}
@@ -1967,14 +1967,14 @@ public partial class CaptureOverlayWindow : Window
         var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic)&&!AnnotationLayoutService.IsDuplicateTargetMarker(note,callouts)).ToArray();
         if(primitiveNotes.Length>0)
         {
-            var overlay=AnnotationOverlayRenderer.CreateAiDrawingImage(Math.Max(1,(int)Math.Ceiling(w)),Math.Max(1,(int)Math.Ceiling(h)),primitiveNotes,videoTime);item.AiAnnotations.Children.Add(new Image{Source=overlay,Width=w,Height=h,Stretch=Stretch.Fill,IsHitTestVisible=false});
+            var overlay=AnnotationOverlayRenderer.CreateAiDrawingImage(Math.Max(1,(int)Math.Ceiling(w)),Math.Max(1,(int)Math.Ceiling(h)),primitiveNotes,videoTime,null,VideoAnnotationTimeline.LiveFrameToleranceSeconds);item.AiAnnotations.Children.Add(new Image{Source=overlay,Width=w,Height=h,Stretch=Stretch.Fill,IsHitTestVisible=false});
         }
         var calloutTargets=new Dictionary<AiAnnotation,Rect>(ReferenceEqualityComparer.Instance);var targetCount=0;
         foreach(var n in item.AnnotationNotes.Take(48))
         {
             var frame=new VideoAnnotationKeyframe(videoTime??0,n.X,n.Y,n.Width,n.Height);
             if(n.Kind!=AiAnnotationKind.Callout||targetCount>=VisualAnnotationProtocol.MaximumCallouts||string.IsNullOrWhiteSpace(n.Text)||n.Width<0.012||n.Height<0.012||n.Width>0.92||n.Height>0.92)continue;
-            if(n.IsVideoTimeline&&(!videoTime.HasValue||videoTime<n.StartTime||videoTime>n.EndTime||!VideoAnnotationTimeline.TryInterpolate(n,videoTime.Value,out frame)))continue;
+            if(n.IsVideoTimeline&&(!videoTime.HasValue||!VideoAnnotationTimeline.TryInterpolateForPresentation(n,videoTime.Value,VideoAnnotationTimeline.LiveFrameToleranceSeconds,out frame)))continue;
             var x=Math.Clamp(frame.X,0,1)*w;var y=Math.Clamp(frame.Y,0,1)*h;var rw=Math.Max(14,Math.Clamp(frame.Width,0,1)*w);var rh=Math.Max(14,Math.Clamp(frame.Height,0,1)*h);
             calloutTargets[n]=new Rect(x,y,rw,rh);targetCount++;
         }
@@ -1990,7 +1990,7 @@ public partial class CaptureOverlayWindow : Window
             var mosaics=new List<(VideoAnnotationKeyframe Frame,Int32Rect Region)>();
             foreach(var note in item.AnnotationNotes.Where(note=>note.Kind==AiAnnotationKind.Mosaic).Take(16))
             {
-                var frame=new VideoAnnotationKeyframe(videoTime??0,note.X,note.Y,note.Width,note.Height);if(note.IsVideoTimeline&&(!videoTime.HasValue||videoTime<note.StartTime||videoTime>note.EndTime||!VideoAnnotationTimeline.TryInterpolate(note,videoTime.Value,out frame)))continue;
+                var frame=new VideoAnnotationKeyframe(videoTime??0,note.X,note.Y,note.Width,note.Height);if(note.IsVideoTimeline&&(!videoTime.HasValue||!VideoAnnotationTimeline.TryInterpolateForPresentation(note,videoTime.Value,VideoAnnotationTimeline.LiveFrameToleranceSeconds,out frame)))continue;
                 var left=Math.Clamp((int)Math.Floor(frame.X*mosaicSource.PixelWidth),0,mosaicSource.PixelWidth-1);var top=Math.Clamp((int)Math.Floor(frame.Y*mosaicSource.PixelHeight),0,mosaicSource.PixelHeight-1);var right=Math.Clamp((int)Math.Ceiling((frame.X+frame.Width)*mosaicSource.PixelWidth),left+1,mosaicSource.PixelWidth);var bottom=Math.Clamp((int)Math.Ceiling((frame.Y+frame.Height)*mosaicSource.PixelHeight),top+1,mosaicSource.PixelHeight);mosaics.Add((frame,new Int32Rect(left,top,right-left,bottom-top)));
             }
             if(mosaics.Count>0)
@@ -2002,7 +2002,7 @@ public partial class CaptureOverlayWindow : Window
         foreach(var n in item.AnnotationNotes.Take(48))
         {
             var frame=new VideoAnnotationKeyframe(videoTime??0,n.X,n.Y,n.Width,n.Height);
-            if(n.IsVideoTimeline&&(!videoTime.HasValue||videoTime<n.StartTime||videoTime>n.EndTime||!VideoAnnotationTimeline.TryInterpolate(n,videoTime.Value,out frame)))continue;
+            if(n.IsVideoTimeline&&(!videoTime.HasValue||!VideoAnnotationTimeline.TryInterpolateForPresentation(n,videoTime.Value,VideoAnnotationTimeline.LiveFrameToleranceSeconds,out frame)))continue;
             if(n.Kind==AiAnnotationKind.Mosaic)continue;
             if(!calloutTargets.TryGetValue(n,out var target))continue;
             var x=target.Left;var y=target.Top;var rw=target.Width;var rh=target.Height;var style=n.EffectiveStyle;var targetColor=string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?Color.FromRgb(255,0,0):(Color)ColorConverter.ConvertFromString(style.Color);var targetOutline=new Rectangle{Width=rw,Height=rh,Stroke=new SolidColorBrush(targetColor),StrokeThickness=Math.Max(1,style.StrokeWidth*Math.Min(w,h)),RadiusX=3,RadiusY=3,IsHitTestVisible=false};Canvas.SetLeft(targetOutline,x);Canvas.SetTop(targetOutline,y);item.AiAnnotations.Children.Add(targetOutline);
@@ -2029,24 +2029,24 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             var preview=EnsureVideoPreview(item);var start=TimeSpan.FromSeconds(primary.StartTime!.Value);var end=TimeSpan.FromSeconds(primary.EndTime!.Value);
-            await preview.SeekAsync(start,pauseAfterSeek:true,playback.Token);
+            var presentedStart=await preview.SeekAsync(start,pauseAfterSeek:true,playback.Token);
             if(_closed||!ReferenceEquals(item.VideoAnnotationPlayback,playback)||!_selections.Contains(item))return;
-            RenderAnnotationsForItem(item,primary.StartTime.Value);item.VideoPlaying=false;
+            RenderAnnotationsForItem(item,presentedStart.TotalSeconds);item.VideoPlaying=false;
             if(end<=start){PromptStatus.Text=$"已定位到 {FormatVideoTime(start)} · 视频已暂停";return;}
             var completed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             frameHandler=position=>
             {
                 if(!ReferenceEquals(item.VideoAnnotationPlayback,playback)||playback.IsCancellationRequested)return;
-                var seconds=Math.Clamp(position.TotalSeconds,primary.StartTime.Value,primary.EndTime.Value);
-                RenderAnnotationsForItem(item,seconds);
                 if(position+TimeSpan.FromSeconds(.05)<end)return;
-                preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,primary.EndTime.Value);completed.TrySetResult();
+                preview.Pause();item.VideoPlaying=false;completed.TrySetResult();
             };
-            endedHandler=()=>{if(!ReferenceEquals(item.VideoAnnotationPlayback,playback))return;preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,primary.EndTime.Value);completed.TrySetResult();};
+            endedHandler=()=>{if(!ReferenceEquals(item.VideoAnnotationPlayback,playback))return;preview.Pause();item.VideoPlaying=false;completed.TrySetResult();};
             preview.FramePresented+=frameHandler;preview.Ended+=endedHandler;preview.Play();item.VideoPlaying=true;
             PromptStatus.Text=$"正在播放 {FormatVideoTime(start)}–{FormatVideoTime(end)} 的标注过程";
             await completed.Task.WaitAsync(playback.Token);
-            if(ReferenceEquals(item.VideoAnnotationPlayback,playback))PromptStatus.Text=$"已播放至 {FormatVideoTime(end)} · 视频已暂停";
+            if(frameHandler is not null){preview.FramePresented-=frameHandler;frameHandler=null;}if(endedHandler is not null){preview.Ended-=endedHandler;endedHandler=null;}
+            var presentedEnd=await preview.SeekAsync(end,pauseAfterSeek:true,playback.Token);RenderAnnotationsForItem(item,presentedEnd.TotalSeconds);
+            if(ReferenceEquals(item.VideoAnnotationPlayback,playback))PromptStatus.Text=$"已播放至 {FormatVideoTime(presentedEnd)} · 视频已暂停";
         }
         catch(OperationCanceledException){}
         catch(Exception ex){new PrivacyLogger().Error("VideoAnnotationPlayback",ex);if(!_closed&&ReferenceEquals(item.VideoAnnotationPlayback,playback))PromptStatus.Text=$"视频定位失败：{ex.Message}";}
@@ -2714,6 +2714,14 @@ public partial class CaptureOverlayWindow : Window
             new PrivacyLogger().Error("RecordingPreviewDecode",error);
             PromptStatus.Text="录屏已完成，但当前视频无法解码；仍可保存或复制视频";
         };
+        preview.FramePresented+=position=>
+        {
+            if(_closed||!_selections.Contains(item)||item.AnnotationNotes.Count==0)return;
+            // FramePresented carries the timestamp captured together with the
+            // decoded pixels. Keep annotations bound to that actual frame for
+            // ordinary play/pause as well as answer-action playback.
+            RenderAnnotationsForItem(item,position.TotalSeconds);
+        };
         item.VideoPreview=preview;
         return preview;
     }
@@ -2740,9 +2748,8 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             CancelVideoAnnotationPlayback(item);
-            item.AnnotationNotes.RemoveAll(note=>note.IsVideoTimeline);item.AiAnnotations.Children.Clear();
             var preview=EnsureVideoPreview(item);
-            if(item.VideoPlaying){preview.Pause();item.VideoPlaying=false;PromptStatus.Text="视频已暂停";}
+            if(item.VideoPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";}
             else{preview.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";}
         }
         catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewToggle",ex);item.VideoPlaying=false;PromptStatus.Text="视频预览暂不可用；仍可保存或复制视频";}
