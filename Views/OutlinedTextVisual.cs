@@ -29,7 +29,7 @@ internal sealed class OutlinedTextVisual:FrameworkElement
         base.OnRender(drawingContext);var pixelsPerDip=VisualTreeHelper.GetDpi(this).PixelsPerDip;
         for(var index=0;index<_lines.Count;index++)
         {
-            if(string.IsNullOrEmpty(_lines[index]))continue;var formatted=new FormattedText(_lines[index],CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,_typeface,_fontSize,_fill,pixelsPerDip);var geometry=formatted.BuildGeometry(new Point(_left,_top+index*_lineHeight));geometry.Freeze();drawingContext.DrawGeometry(_fill,_outline,geometry);
+            if(string.IsNullOrEmpty(_lines[index]))continue;var formatted=new FormattedText(_lines[index],CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,_typeface,_fontSize,_fill,pixelsPerDip);var geometry=formatted.BuildGeometry(new Point(_left,_top+index*_lineHeight));geometry.Freeze();drawingContext.DrawGeometry(null,_outline,geometry);drawingContext.DrawGeometry(_fill,null,geometry);
         }
     }
 }
