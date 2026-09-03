@@ -13,6 +13,14 @@ namespace MewuAI.Tests;
 public sealed class CaptureImageFeatureTests
 {
     [Fact]
+    public void ExportNamesUseReadableLocalTimestamp()
+    {
+        var timestamp=new DateTime(2026,9,3,18,42,7,DateTimeKind.Local);
+        Assert.Equal("截图_20260903_184207",ExportFileNameService.Screenshot(timestamp));
+        Assert.Equal("录屏_20260903_184207",ExportFileNameService.Recording(timestamp));
+    }
+
+    [Fact]
     public void SemanticButtonWinsOverSmallerFocusableTextChild()
     {
         var text=new WindowSnapTarget(new IntPtr(1),new ScreenRect(120,110,42,18),1);

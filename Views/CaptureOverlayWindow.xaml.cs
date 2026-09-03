@@ -64,6 +64,7 @@ public partial class CaptureOverlayWindow : Window
     private int _activeIndex=-1;
     private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_historyExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_promptBarInputLayoutQueued,_reasoningRenderScheduled;
     private int _promptBarAnimationVersion;
+    private int _systemFileDialogDepth;
     private int _referenceMentionStart=-1;
     private int _nextUploadNumber;
     private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingCountdownRequest,_recordingStopWatchdog,_readAloudRequest,_snapProbeRequest;
@@ -1026,6 +1027,11 @@ public partial class CaptureOverlayWindow : Window
     private void OnActivated(object? s,EventArgs e)
     {
         if(_closed||!_overlayReady)return;
+        // A modal file picker temporarily activates/deactivates its owner.
+        // Capturing the desktop during that transition freezes the picker into
+        // the screenshot. Keep the original clean frame until the modal has
+        // completely unwound on the dispatcher.
+        if(_systemFileDialogDepth>0){RaisePinnedWindowsAboveOverlay();return;}
         // A pin stays above the capture UI so it remains directly movable and
         // closable. Refreshing first also removes a pin that was just closed
         // from the frozen frame, or records its latest position before the
@@ -1077,6 +1083,18 @@ public partial class CaptureOverlayWindow : Window
         if(Active is not { } item||!CaptureOverlayPolicy.IsUsableSelection(item.Bounds.Width,item.Bounds.Height)){RemoveActiveSelection(false);_pointerOperationBefore=null;_pointerOperationLabel="";PromptStatus.Text="框选已中断，请重新拖动选择";}
         else{UpdateSelection(item);PositionPromptBar();ShowToolbar();if(_pointerOperationBefore is { } before)RecordGeometryOperationIfChanged(before,_pointerOperationLabel);_pointerOperationBefore=null;_pointerOperationLabel="";PromptStatus.Text="框选已结束，可继续操作";}
         SetPromptBarHidden(false);
+    }
+
+    private bool? ShowSystemFileDialog(CommonDialog dialog)
+    {
+        _systemFileDialogDepth++;
+        try{return dialog.ShowDialog(this);}
+        finally
+        {
+            // Owner activation can be raised just before or just after
+            // ShowDialog returns. Keep suppression through the next idle pass.
+            _=Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle,new Action(()=>_systemFileDialogDepth=Math.Max(0,_systemFileDialogDepth-1)));
+        }
     }
 
     private SelectionItem CreateSelection(bool implicitFullScreen)
@@ -2030,8 +2048,8 @@ public partial class CaptureOverlayWindow : Window
         RemoveEmptyDrawingText(item);var includeAnnotations=AskWhetherToIncludeAnnotations(item);if(!includeAnnotations.HasValue)return;
         if(item.VideoPath is { } video)
         {
-            var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4|GIF 动图|*.gif",DefaultExt=".mp4",FilterIndex=1,AddExtension=true};
-            if(dialog.ShowDialog(this)!=true)return;
+            var dialog=new SaveFileDialog{Filter="MP4 视频|*.mp4|GIF 动图|*.gif",DefaultExt=".mp4",FilterIndex=1,AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};
+            if(ShowSystemFileDialog(dialog)!=true)return;
             var exportGif=dialog.FilterIndex==2;
             var destination=System.IO.Path.ChangeExtension(dialog.FileName,exportGif?".gif":".mp4");
             var pixels=ToPixelRect(item.Bounds);var manualOverlay=includeAnnotations.Value&&HasManualAnnotations(item)?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var annotations=includeAnnotations.Value?item.AnnotationNotes.ToArray():[];var operation=BeginOverlayOperation(exportGif?"正在导出 GIF…按 Esc 可取消":includeAnnotations.Value?"正在合成带标注 MP4…按 Esc 可取消":"正在保存 MP4…按 Esc 可取消");TempMediaLease? exportLease=null;
@@ -2057,8 +2075,11 @@ public partial class CaptureOverlayWindow : Window
             return;
         }
 
-        var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true};if(imageDialog.ShowDialog(this)!=true)return;
-        var image=RenderSelectionImage(item,includeAnnotations.Value,includeAnnotations.Value,includeAnnotations.Value);var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
+        // Flatten the selected pixels before opening the system picker. The
+        // picker is external visual state and must never become source pixels.
+        var image=RenderSelectionImage(item,includeAnnotations.Value,includeAnnotations.Value,includeAnnotations.Value);
+        var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter="PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg",DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true,FileName=ExportFileNameService.Screenshot(DateTime.Now)};if(ShowSystemFileDialog(imageDialog)!=true)return;
+        var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
         try{await Task.Run(()=>ScreenCaptureService.Save(image,imageDialog.FileName,imageDialog.FilterIndex==2),imageOperation.Token);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="图片已保存";}
         catch(OperationCanceledException){if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="已取消保存图片";}
         catch(Exception ex){new PrivacyLogger().Error("SaveImage",ex);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text=$"图片保存失败：{ex.Message}";}
@@ -2288,7 +2309,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(!_conversationAiAvailable)return;
         var dialog=new OpenFileDialog{Multiselect=true,Filter="图片/视频/文本|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.mp4;*.mov;*.webm;*.txt;*.md;*.json;*.csv|所有文件|*.*"};
-        if(dialog.ShowDialog(this)!=true)return;
+        if(ShowSystemFileDialog(dialog)!=true)return;
         foreach(var path in dialog.FileNames)
         {
             try
