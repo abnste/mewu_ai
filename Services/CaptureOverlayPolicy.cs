@@ -277,7 +277,6 @@ internal static class CaptureOverlayPolicy
         foreach(var selection in explicitSelections)
         {
             if(selection.IsEmpty||!selection.Contains(pointer))continue;
-            if(!monitorBounds.IsEmpty&&CoversMostOfMonitor(selection,monitorBounds))return false;
             return true;
         }
         return false;
@@ -288,8 +287,18 @@ internal static class CaptureOverlayPolicy
         Point pointer,
         Rect promptBounds,
         Rect monitorBounds,
-        IEnumerable<Rect> explicitSelections) =>
-        ShouldAutoHidePromptBar(pointer,currentlyHidden?Rect.Empty:promptBounds,monitorBounds,explicitSelections);
+        IEnumerable<Rect> explicitSelections)
+    {
+        if(!currentlyHidden)return ShouldAutoHidePromptBar(pointer,promptBounds,monitorBounds,explicitSelections);
+        var selections=explicitSelections as IReadOnlyCollection<Rect>??explicitSelections.ToArray();
+        // A full-screen selection has no outside area that can reveal a hidden
+        // composer. In that one case its stable pre-animation bounds become an
+        // intentional reveal zone: entering that zone expands the composer,
+        // while ordinary partial selections still ignore stale prompt bounds
+        // to prevent hide/show oscillation.
+        if(!promptBounds.IsEmpty&&promptBounds.Contains(pointer)&&selections.Any(selection=>selection.Contains(pointer)&&!monitorBounds.IsEmpty&&CoversMostOfMonitor(selection,monitorBounds)))return false;
+        return ShouldAutoHidePromptBar(pointer,Rect.Empty,monitorBounds,selections);
+    }
 
     private static bool CoversMostOfMonitor(Rect selection,Rect monitor)
     {
