@@ -13,6 +13,13 @@ namespace MewuAI.Tests;
 public sealed class CaptureImageFeatureTests
 {
     [Fact]
+    public void LongCaptureRejectsUnprotectedOverlayBeforeReadingScreenPixels()
+    {
+        var capture=new ScreenCaptureService();
+        Assert.Throws<InvalidOperationException>(()=>capture.CaptureRegion(new ScreenRect(0,0,100,100),IntPtr.Zero));
+        Assert.False(mewu_ai_Assistant.Interop.NativeMethods.ExcludeFromCapture(IntPtr.Zero,requireProtection:true));
+    }
+    [Fact]
     public void LongCaptureQueuePreservesFramesAndDirectionWhileConsumerIsBusy()
     {
         var buffer=new LongCaptureSampleBuffer();
