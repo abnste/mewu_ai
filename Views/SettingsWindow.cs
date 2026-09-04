@@ -34,14 +34,14 @@ public sealed class SettingsWindow : Window
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials = new();
-    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
+    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerType = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
     private readonly TextBox _hotkey = new();
-    private readonly TextBox _providerName = new(), _baseUrl = new(), _customHeaders = new();
+    private readonly TextBox _baseUrl = new(), _customHeaders = new();
     private readonly TextBox _requestParameters = new();
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
-    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _recordCursor = new(), _defaultProvider = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
+    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _recordCursor = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
     private readonly System.Windows.Shapes.Ellipse _hermesStatusDot = new();
     private readonly List<AiProviderSettings> _providers;
@@ -64,6 +64,7 @@ public sealed class SettingsWindow : Window
     private readonly int _repairedProviderIdentityCount;
     private bool _loadingProvider;
     private readonly HashSet<AiProviderSettings> _automaticProviderDrafts = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string,AiProviderSettings> _lastProviderByPreset = new();
     private FrameworkElement? _baseUrlField;
     private readonly TextBlock _modelStatus = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9), FontSize = 12 };
     private CancellationTokenSource? _modelLoad;
@@ -419,50 +420,9 @@ public sealed class SettingsWindow : Window
         _aiConfigurationWarning.Margin=new Thickness(0,0,0,12);
         _aiConfigurationWarning.TextWrapping=TextWrapping.Wrap;
         panel.Children.Add(_aiConfigurationWarning);
-        panel.Children.Add(Text("API Key 与敏感 Custom Header 使用 Windows DPAPI 加密，仅保存在本机当前用户目录。", true));
-        panel.Children.Add(Text("Provider 配置", true));
-        var providerRow = new Grid();
-        providerRow.ColumnDefinitions.Add(new ColumnDefinition());
-        providerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        providerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        _providerSelector.DisplayMemberPath = nameof(AiProviderSettings.Name);
-        System.Windows.Automation.AutomationProperties.SetName(_providerSelector, "Provider 配置");
-        _providerSelector.Margin = new Thickness(0, 0, 8, 8);
-        foreach (var configured in _providers)
-        {
-            configured.Name = ProviderPresetPolicy.DisplayName(configured);
-            _providerSelector.Items.Add(configured);
-        }
-        var add = ActionButton("新增");
-        add.Margin = new Thickness(0, 0, 8, 8);
-        add.Click += (_, _) => AddProvider();
-        var remove = ActionButton("删除");
-        remove.Margin = new Thickness(0, 0, 0, 8);
-        remove.Click += (_, _) => RemoveProvider();
-        Grid.SetColumn(add, 1);
-        Grid.SetColumn(remove, 2);
-        providerRow.Children.Add(_providerSelector);
-        providerRow.Children.Add(add);
-        providerRow.Children.Add(remove);
-        panel.Children.Add(providerRow);
-        panel.Children.Add(Labeled("Provider 名称", _providerName));
-        _defaultProvider.Content = "设为默认 Provider";
-        _defaultProvider.Checked+=(_,_)=>
-        {
-            if(_loadingProvider||_selectedProvider is null)return;
-            _defaultProviderId=_selectedProvider.Id;
-            RefreshConfigurationWarnings();
-        };
-        _defaultProvider.Unchecked+=(_,_)=>
-        {
-            if(_loadingProvider||_selectedProvider is null||_defaultProviderId!=_selectedProvider.Id)return;
-            _defaultProviderId=null;
-            RefreshConfigurationWarnings();
-        };
-        panel.Children.Add(_defaultProvider);
         _providerType.SelectedValuePath = "Tag";
         foreach (var preset in ProviderPresetPolicy.All)
-            _providerType.Items.Add(new ComboBoxItem { Content = LocalizationService.T(preset.Name, preset.Id == "Volcengine" ? "Volcengine" : preset.Id == "Custom" ? "Custom / OpenAI compatible" : preset.Name), Tag = preset.Id });
+            _providerType.Items.Add(new ComboBoxItem { Content = LocalizationService.T(preset.Name, preset.Id == "Volcengine" ? "Volcengine" : preset.Id == "Custom" ? "OpenAI compatible" : preset.Name), Tag = preset.Id });
         _providerType.SelectionChanged += ProviderPresetChanged;
         panel.Children.Add(Labeled(LocalizationService.T("提供商", "Provider"), _providerType));
         _baseUrlField = (FrameworkElement)Labeled("Base URL", _baseUrl);
@@ -524,6 +484,7 @@ public sealed class SettingsWindow : Window
         var advancedContent=new StackPanel{Margin=new Thickness(0,8,0,0)};
         Grid.SetColumn(parameterHelp,1);parameterHeader.Children.Add(parameterHelp);advancedContent.Children.Add(parameterHeader);advancedContent.Children.Add(_requestParameters);
         advancedContent.Children.Add(Labeled("Custom Headers JSON（高级，敏感值保存时自动加密）", _customHeaders));
+        advancedContent.Children.Add(Text("API Key 与敏感 Custom Header 使用 Windows DPAPI 加密，仅保存在本机当前用户目录。"));
         panel.Children.Add(new Expander
         {
             Header = LocalizationService.T("高级设置", "Advanced settings"),
@@ -533,9 +494,8 @@ public sealed class SettingsWindow : Window
         var test = ActionButton("测试连接");
         test.Click += async (_, _) => await TestConnectionAsync(test);
         panel.Children.Add(test);
-        _providerSelector.SelectionChanged += ProviderSelectionChanged;
         var initial = _defaultProviderId is null?_providers[0]:_providers.FirstOrDefault(x => x.Id == _defaultProviderId) ?? _providers[0];
-        _providerSelector.SelectedItem = initial;
+        SelectProvider(initial);
         return panel;
     }
 
@@ -964,12 +924,12 @@ public sealed class SettingsWindow : Window
         if (_loadingProvider || provider is null) return;
         _selectedProvider = provider;
         _loadingProvider = true;
-        _providerName.Text = provider.Name;
         _modelLoad?.Cancel();
         _modelLoadDebounce.Stop();
         var preset = ProviderPresetPolicy.Detect(provider);
+        _lastProviderByPreset[preset.Id] = provider;
         _providerType.SelectedValue = preset.Id;
-        if (_baseUrlField is not null) _baseUrlField.Visibility = preset.Id == "Custom" ? Visibility.Visible : Visibility.Collapsed;
+        if (_baseUrlField is not null) _baseUrlField.Visibility = preset.RequiresBaseUrl ? Visibility.Visible : Visibility.Collapsed;
         _baseUrl.Text = provider.BaseUrl;
         _model.Text = provider.Model;
         PopulateModelSuggestions(provider.Model);
@@ -978,7 +938,6 @@ public sealed class SettingsWindow : Window
             ?"屏幕防捕获不可用，Custom Headers 已隐藏。"
             :provider.CustomHeaders.Count == 0 ? "{}" : JsonSerializer.Serialize(provider.CustomHeaders, new JsonSerializerOptions { WriteIndented = true });
         LoadDisplayedApiKey();
-        _defaultProvider.IsChecked = provider.Id == _defaultProviderId;
         _loadingProvider = false;
         UpdateApiKeyStatus();
         ScheduleModelLoad();
@@ -1002,23 +961,22 @@ public sealed class SettingsWindow : Window
         if (!StoreSelectedProvider(true)) { _loadingProvider = true; _providerType.SelectedValue = ProviderPresetPolicy.Detect(_selectedProvider).Id; _loadingProvider = false; return; }
         var previous = _selectedProvider;
         var discardEmptyDraft = _automaticProviderDrafts.Contains(previous) && ProviderPresetPolicy.IsUntouchedDraft(previous, _pendingApiKeys.ContainsKey(previous.Id));
-        var next = _providers.FirstOrDefault(p => !ReferenceEquals(p, _selectedProvider) && ProviderPresetPolicy.Detect(p).Id == preset.Id);
+        var next = _lastProviderByPreset.TryGetValue(preset.Id,out var remembered) && _providers.Contains(remembered)
+            ? remembered : _providers.FirstOrDefault(p => !ReferenceEquals(p, _selectedProvider) && ProviderPresetPolicy.Detect(p).Id == preset.Id);
         if (next is null)
         {
             next = ProviderPresetPolicy.Create(preset);
             _automaticProviderDrafts.Add(next);
             _providers.Add(next);
-            _providerSelector.Items.Add(next);
         }
-        var replaceDefault = _defaultProviderId == _selectedProvider.Id;
-        _providerSelector.SelectedItem = next;
-        if (replaceDefault) _defaultProvider.IsChecked = true;
+        SelectProvider(next);
+        _defaultProviderId = next.Id;
         if (discardEmptyDraft)
         {
             _automaticProviderDrafts.Remove(previous);
             _providers.Remove(previous);
-            _providerSelector.Items.Remove(previous);
         }
+        RefreshConfigurationWarnings();
     }
 
     private void ScheduleModelLoad()
@@ -1083,57 +1041,12 @@ public sealed class SettingsWindow : Window
             if(showValidationError)MessageBox.Show(this,$"Custom Headers 无效：{ex.Message}","Provider 配置无效");
             return false;
         }
-        _selectedProvider.Name = string.IsNullOrWhiteSpace(_providerName.Text) ? "未命名 Provider" : _providerName.Text.Trim();
         _selectedProvider.BaseUrl = _baseUrl.Text.TrimEnd('/');
         _selectedProvider.Model = _model.Text.Trim();
         _selectedProvider.CustomHeaders=headers;
         _selectedProvider.RequestParameters=parameters;
-        if (_defaultProvider.IsChecked == true) _defaultProviderId = _selectedProvider.Id;
-        _providerSelector.Items.Refresh();
+        _defaultProviderId = _selectedProvider.Id;
         return true;
-    }
-
-    private void ProviderSelectionChanged(object sender,SelectionChangedEventArgs e)
-    {
-        if(_loadingProvider)return;
-        var next=_providerSelector.SelectedItem as AiProviderSettings;
-        if(_selectedProvider is not null&&!ReferenceEquals(next,_selectedProvider)&&!StoreSelectedProvider(true))
-        {
-            _loadingProvider=true;_providerSelector.SelectedItem=_selectedProvider;_loadingProvider=false;return;
-        }
-        SelectProvider(next);
-    }
-
-    private void AddProvider()
-    {
-        if(!StoreSelectedProvider(true))return;
-        var provider = new AiProviderSettings { Name = $"MiniMax ({_providers.Count + 1})" };
-        _providers.Add(provider);
-        _providerSelector.Items.Add(provider);
-        _providerSelector.SelectedItem = provider;
-    }
-
-    private void RemoveProvider()
-    {
-        if (_selectedProvider is null) return;
-        if (_providers.Count == 1)
-        {
-            MessageBox.Show(this,"至少保留一个 Provider 配置。", "喵呜AI");
-            return;
-        }
-        var removed=_selectedProvider;var index = _providers.IndexOf(removed);
-        _loadingProvider=true;
-        _providers.Remove(removed);
-        _providerSelector.Items.Remove(removed);
-        _pendingApiKeys.Remove(removed.Id);
-        _apiKeysMarkedForDeletion.Remove(removed.Id);
-        _unavailableSensitiveHeaders.Remove(removed);
-        _hydrationErrors.Remove(removed);
-        var next=_providers[Math.Clamp(index,0,_providers.Count-1)];
-        if(_defaultProviderId==removed.Id)_defaultProviderId=null;
-        _selectedProvider=null;_providerSelector.SelectedItem=next;_loadingProvider=false;
-        SelectProvider(next);
-        RefreshConfigurationWarnings();
     }
 
     private async Task TestConnectionAsync(Button button)
@@ -1201,7 +1114,7 @@ public sealed class SettingsWindow : Window
         catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"Provider 配置无效");return;}
         if(string.IsNullOrWhiteSpace(_defaultProviderId)||_providers.All(provider=>provider.Id!=_defaultProviderId))
         {
-            MessageBox.Show(this,"请在 AI 页选择一个 Provider，并明确勾选“设为默认 Provider”。","无法保存");
+            MewuDialogWindow.ShowMessage(this,LocalizationService.T("无法保存","Cannot save"),LocalizationService.T("请在 AI 页选择提供商。","Select a provider on the AI page."));
             return;
         }
 
@@ -1360,7 +1273,7 @@ public sealed class SettingsWindow : Window
         if(_repairedProviderIdentityCount>0)
             messages.Add($"已在编辑副本中修复 {_repairedProviderIdentityCount} 个空白或重复的 Provider ID，保存后才会写入设置。");
         if(string.IsNullOrWhiteSpace(_defaultProviderId))
-            messages.Add("请选择一个 Provider，并明确勾选“设为默认 Provider”。");
+            messages.Add(LocalizationService.T("请选择提供商，保存后使用当前选择。","Select a provider; saving will apply your selection."));
         var headerWarning=messages.Count==0?string.Empty:$"AI 配置需要确认：{messages[0]}";
         _windowConfigurationWarning.Text=headerWarning;
         _windowConfigurationWarning.ToolTip=messages.Count==0?null:string.Join("\n",messages);

@@ -91,9 +91,20 @@ public sealed class ProviderModelCatalogTests
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     [Fact]
+    public void ExactlyFourProvidersOnlyOpenAiCompatibleRequiresUrl()
+    {
+        Assert.Equal(4,ProviderPresetPolicy.All.Length);
+        Assert.Equal(new[]{"MiniMax (CN)","MiniMax","火山引擎","OpenAI 通用"},ProviderPresetPolicy.All.Select(p=>p.Name));
+        Assert.Equal("Custom",Assert.Single(ProviderPresetPolicy.All,p=>p.RequiresBaseUrl).Id);
+        Assert.All(ProviderPresetPolicy.All.Where(p=>!p.RequiresBaseUrl),p=>Assert.True(Uri.IsWellFormedUriString(p.BaseUrl,UriKind.Absolute)));
+        Assert.Equal("Custom",ProviderPresetPolicy.Detect(new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://api.openai.com/v1"}).Id);
+        Assert.Equal("Custom",ProviderPresetPolicy.Detect(new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://example.test/v1"}).Id);
+    }
+
+    [Fact]
     public void OnlyUntouchedAutomaticallyCreatedDraftsMayBeDiscarded()
     {
-        var draft = ProviderPresetPolicy.Create(ProviderPresetPolicy.All.Single(p => p.Id == "OpenAI"));
+        var draft = ProviderPresetPolicy.Create(ProviderPresetPolicy.All.Single(p => p.Id == "Custom"));
         Assert.True(ProviderPresetPolicy.IsUntouchedDraft(draft, false));
         Assert.False(ProviderPresetPolicy.IsUntouchedDraft(draft, true));
         draft.Model = "chosen-model";

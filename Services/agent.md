@@ -12,6 +12,7 @@
 # Provider 模型目录
 
 - ProviderPresetPolicy 只做界面厂商与现有 Type/BaseUrl 的映射，不增加会让旧配置失效的必填字段；精确地址匹配，非标准 MiniMax 地址仍保留为自定义配置及原有 MiniMax 协议。
+- 提供商目录只保留四项；国内 MiniMax 的稳定内部 ID 仍为 MiniMax、国际仍为 MiniMaxGlobal，不能因显示名改为 MiniMax (CN)/MiniMax 而交换既有凭据。旧 OpenAI 官方和第三方兼容地址统一落入 OpenAI 通用（内部 Custom），仅此项要求 URL；标准厂商隐藏固定 URL。界面不再要求命名或管理连接。
 - ProviderModelCatalogService 统一读取兼容 `/models` 的 `data[].id`。禁止跨域重定向和 Cookie，拒绝同时发送 API Key 与认证 Header；读取无 Content-Length 的流时同样逐块执行 2 MiB 上限，最多保留 4096 个模型，错误不暴露远端响应体。火山沿用对话模型过滤；MiniMax 等不得套用火山前缀白名单。
 - 官方参考：MiniMax `/docs/api-reference/models/openai/list-models` 与微软 WPF ComboBox 模板规范（PART_EditableTextBox、PART_Popup）。2026-09-04 本机真实设置页 MiniMax 返回 8 个模型、火山返回 99 个模型，模型下拉选择已验收；仅请求目录，不发送用户提示词或附件。
 - ProviderApiKeyEditorPolicy 将“显示已保存值”和“用户编辑”分开：前者只供原生 PasswordBox 掩码显示，不能形成待写凭据；后者明确创建替换/删除草稿。未经窗口防捕获确认不解密显示。2026-09-04 本轮 Release 全量 718 项通过，ProviderSmoke 编译零警告，Debug 界面已确认真实密钥逐字符圆点显示，验收不保存用户配置，GitHub 发布仍暂停。
