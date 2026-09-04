@@ -82,6 +82,7 @@ public sealed class ProviderHeaderCredentialService
         Model=source.Model,
         CredentialId=source.CredentialId,
         CustomHeaders=new Dictionary<string,string>(source.CustomHeaders),
+        RequestParameters=source.RequestParameters is null ? null! : new(source.RequestParameters),
         SensitiveHeaderCredentialIds=new Dictionary<string,string>(source.SensitiveHeaderCredentialIds)
     };
 

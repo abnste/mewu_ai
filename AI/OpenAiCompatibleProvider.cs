@@ -49,6 +49,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         ArgumentNullException.ThrowIfNull(sendAsync);
         ArgumentNullException.ThrowIfNull(requestTimeout);
         ProviderHeaderPolicy.EnsureValid(settings.CustomHeaders);
+        ProviderRequestParameterPolicy.Validate(settings.RequestParameters);
         _settings=settings;
         _apiKey=apiKey??throw new ArgumentNullException(nameof(apiKey));
         _baseUri=ProviderEndpointPolicy.NormalizeBaseUri(settings.BaseUrl);
@@ -339,6 +340,8 @@ public class OpenAiCompatibleProvider : IAiProvider
         }
         messages.Add(new{role="user",content});
         var bodyValues=new Dictionary<string,object?>{{"model",_settings.Model},{"messages",messages},{"temperature",.2},{"stream",streaming}};
+        ProviderRequestParameterPolicy.Validate(_settings.RequestParameters);
+        foreach (var parameter in _settings.RequestParameters) bodyValues[parameter.Key] = parameter.Value;
         var miniMaxM3=_settings.Type.Equals("MiniMax",StringComparison.OrdinalIgnoreCase)&&_settings.Model.Equals("MiniMax-M3",StringComparison.OrdinalIgnoreCase);
         if(request.MaxOutputTokens is { } maxTokens)bodyValues[miniMaxM3?"max_completion_tokens":"max_tokens"]=maxTokens;
         if(miniMaxM3)

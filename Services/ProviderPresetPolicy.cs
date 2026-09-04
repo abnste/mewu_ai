@@ -28,7 +28,7 @@ internal static class ProviderPresetPolicy
     {
         var preset = Detect(settings);
         return !hasPendingKey && string.IsNullOrEmpty(settings.CredentialId) &&
-            settings.CustomHeaders.Count == 0 && settings.SensitiveHeaderCredentialIds.Count == 0 &&
+            settings.CustomHeaders.Count == 0 && settings.SensitiveHeaderCredentialIds.Count == 0 && settings.RequestParameters is { Count: 0 } &&
             settings.BaseUrl == preset.BaseUrl && settings.Model == preset.DefaultModel && settings.Name == preset.Name;
     }
 

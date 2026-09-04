@@ -7,6 +7,10 @@ using Xunit;
 
 namespace MewuAI.Tests;
 
+[CollectionDefinition("WPF theme resources", DisableParallelization = true)]
+public sealed class WpfThemeResourceCollection { }
+
+[Collection("WPF theme resources")]
 public sealed class ComboBoxTemplateTests
 {
     [Fact]
@@ -41,7 +45,7 @@ public sealed class ComboBoxTemplateTests
                 Assert.Equal(Visibility.Hidden, editor.Visibility);
             }
             catch (Exception ex) { failure = ex; }
-        });
+        }) { IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(15)));

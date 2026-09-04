@@ -89,6 +89,7 @@ public sealed class SettingsService
             if(!string.Equals(provider.Type,"MiniMax",StringComparison.OrdinalIgnoreCase)&&!string.Equals(provider.Type,"OpenAICompatible",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException($"不支持的 Provider 类型：{provider.Type}");
             if(string.IsNullOrWhiteSpace(provider.Model))throw new InvalidOperationException($"{provider.Name} 的 Model 不能为空");
             _=ProviderEndpointPolicy.NormalizeBaseUri(provider.BaseUrl);
+            ProviderRequestParameterPolicy.Validate(provider.RequestParameters);
             ProviderHeaderPolicy.EnsureSafeToPersist(provider.CustomHeaders??throw new InvalidOperationException($"{provider.Name} 的 Custom Headers 不能为空"));
             if(provider.SensitiveHeaderCredentialIds is null)throw new InvalidOperationException($"{provider.Name} 的敏感 Header 凭据映射不能为空");
             ProviderHeaderPolicy.EnsureCredentialMappingsValid(provider.CustomHeaders,provider.SensitiveHeaderCredentialIds);
