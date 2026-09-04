@@ -1,6 +1,7 @@
 name: Release Windows packages
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -35,11 +36,11 @@ jobs:
       - name: Verify tag and project version
         shell: pwsh
         run: |
-          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v').Trim()
           [xml]$project = Get-Content -LiteralPath 'mewu_ai_Assistant.csproj'
           $versionNode = $project.SelectSingleNode('/Project/PropertyGroup/Version')
           if ($null -eq $versionNode) { throw 'Project Version is missing.' }
           $projectVersion = $versionNode.InnerText.Trim()
+          $tagVersion = if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { $projectVersion } else { $env:GITHUB_REF_NAME.TrimStart('v').Trim() }
           if ($tagVersion -ne $projectVersion) {
             throw "Tag version $tagVersion does not match project version $projectVersion"
           }
@@ -141,7 +142,8 @@ jobs:
       - name: Build portable ZIP
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          [xml]$project = Get-Content -LiteralPath 'mewu_ai_Assistant.csproj'
+          $version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText.Trim()
           New-Item -ItemType Directory -Path '.\artifacts\packages' -Force | Out-Null
           Compress-Archive -Path '.\artifacts\release\win-x64\*' -DestinationPath ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip" -CompressionLevel Optimal
 
@@ -178,6 +180,7 @@ jobs:
           [IO.File]::WriteAllLines((Join-Path (Resolve-Path '.\artifacts\packages') 'SHA256SUMS.txt'), $lines, [Text.UTF8Encoding]::new($false))
 
       - name: Create GitHub Release
+        if: github.event_name == 'push'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
