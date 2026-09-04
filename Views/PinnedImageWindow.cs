@@ -20,6 +20,9 @@ public sealed class PinnedImageWindow : Window
     private readonly Image _imageView;
     private readonly ScreenRect? _originalRegion;
     private readonly Border _frame;
+    private readonly Grid _captureRoot=new(){Background=Brushes.Transparent};
+    private BitmapSource? _captureImage;
+    private (BitmapSource Image,int Width,int Height,double DipWidth,double DipHeight) _captureKey;
     private MenuItem? _topmostItem, _opacityItem;
     private bool _adjustingSize,_doubleClickCloseQueued;
     private readonly PinnedWindowDragController _drag;
@@ -33,7 +36,7 @@ public sealed class PinnedImageWindow : Window
         _imageView=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true};
         _frame=new Border{Background=Brushes.White,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_imageView};
         _captureRegistration=PinnedImageCaptureRegistry.Register(CreateCaptureSnapshot);
-        Content=_frame;Width=_initialContentWidthPixels+ShadowPixels*2;Height=_initialContentWidthPixels*(double)image.PixelHeight/Math.Max(1,image.PixelWidth)+ShadowPixels*2;
+        _captureRoot.Children.Add(_frame);Content=_captureRoot;Width=_initialContentWidthPixels+ShadowPixels*2;Height=_initialContentWidthPixels*(double)image.PixelHeight/Math.Max(1,image.PixelWidth)+ShadowPixels*2;
         SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewKeyDown+=OnPreviewKeyDown;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Closed+=(_,_)=>_captureRegistration.Dispose();
         SourceInitialized+=(_,_)=>
         {
@@ -146,8 +149,15 @@ public sealed class PinnedImageWindow : Window
         if(!IsVisible||!Topmost||Opacity<=0)return null;
         var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
         if(handle==IntPtr.Zero||!NativeMethods.GetWindowRect(handle,out var windowRect))return null;
-        var bounds=new ScreenRect(windowRect.Left+ShadowPixels,windowRect.Top+ShadowPixels,Math.Max(1,windowRect.Right-windowRect.Left-ShadowPixels*2),Math.Max(1,windowRect.Bottom-windowRect.Top-ShadowPixels*2));
-        return new PinnedImageCaptureSnapshot(bounds,_image,Opacity);
+        var bounds=new ScreenRect(windowRect.Left,windowRect.Top,windowRect.Right-windowRect.Left,windowRect.Bottom-windowRect.Top);
+        if(bounds.IsEmpty||_captureRoot.ActualWidth<=0||_captureRoot.ActualHeight<=0)return null;
+        var key=(_image,bounds.Width,bounds.Height,_captureRoot.ActualWidth,_captureRoot.ActualHeight);
+        if(_captureImage is null||_captureKey!=key)
+        {
+            _captureImage=PinnedVisualSnapshotRenderer.Render(_captureRoot,bounds.Width,bounds.Height);
+            _captureKey=key;
+        }
+        return new PinnedImageCaptureSnapshot(bounds,_captureImage,Opacity);
     }
     private void Rotate(int delta)
     {
