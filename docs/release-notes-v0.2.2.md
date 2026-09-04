@@ -14,27 +14,3 @@
 - 应用默认跟随 Windows UI 语言，也可在“常规”中固定简体中文或 English；安装程序自动适配系统语言。 / The app follows the Windows UI language by default and can be pinned to Simplified Chinese or English in General; the installer adapts automatically.
 
 本版本支持 Windows 10 2004（build 19041）或更高版本，x64。安装版和免安装 ZIP 均为自包含发布包。 / Requires Windows 10 version 2004 (build 19041) or newer on x64. Both installer and portable ZIP are self-contained.
-
-**网页原位讲解 / Explain interface controls in place**
-
-![网页标注 / Web annotations](https://raw.githubusercontent.com/abnste/mewu_ai/v0.2.2/docs/images/web-annotations.jpg)
-
-**圈重点、打勾与打叉 / Highlight, check, and cross out**
-
-![AI 标记 / AI marks](https://raw.githubusercontent.com/abnste/mewu_ai/v0.2.2/docs/images/ai-checkmarks.jpg)
-
-**原位翻译，可选中复制 / Translate in place, then select and copy**
-
-![原位翻译 / In-place translation](https://raw.githubusercontent.com/abnste/mewu_ai/v0.2.2/docs/images/in-place-translation.jpg)
-
-**用一句话让 AI 动笔 / Ask AI to draw**
-
-![AI 绘图 / AI drawing](https://raw.githubusercontent.com/abnste/mewu_ai/v0.2.2/docs/images/ai-drawing.jpg)
-
-**代码与步骤可视化讲解 / Visual explanations of code and steps**
-
-![代码讲解 / Code explanation](https://raw.githubusercontent.com/abnste/mewu_ai/v0.2.2/docs/images/code-explanation.jpg)
-
-[视频定位与跟踪演示 / Watch video annotation and tracking](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4)
-
-示例由作者提供并授权发布；AI 结果请核对。 / Examples supplied for publication by the author; please review AI-generated results.
