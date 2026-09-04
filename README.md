@@ -5,11 +5,11 @@
   <p>A Windows screenshot tool with on-screen AI assistance</p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="#in-action">In action</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a></p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.2"><img src="https://img.shields.io/badge/Public_Beta-v0.2.2-7C6CF0?style=flat-square" alt="v0.2.2 Public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.3"><img src="https://img.shields.io/badge/Public_Beta-v0.2.3-7C6CF0?style=flat-square" alt="v0.2.3 Public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later" />
     <img src="https://img.shields.io/badge/Architecture-x64-64748B?style=flat-square" alt="x64" />
   </p>
-  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe"><strong>Download installer</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip">Portable ZIP</a></p>
+  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.3/MewuAI-Setup-0.2.3-win-x64.exe"><strong>Download installer</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.3/MewuAI-Portable-0.2.3-win-x64.zip">Portable ZIP</a></p>
 </div>
 
 <p align="center">
@@ -52,7 +52,7 @@ Record a region or attach a video. Jump to an AI-marked moment, or play an inter
 
 <p align="center">
   <img src="./docs/media/MewuAI-video-annotations.gif" width="880" alt="Looping demo of video seeking and tracking annotations" />
-  <br /><sub>Looping preview · <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4">Watch with audio (MP4)</a></sub>
+  <br /><sub>Looping preview · <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.3/MewuAI-video-annotations.mp4">Watch with audio (MP4)</a></sub>
 </p>
 
 *Examples supplied by the author. AI answers, placement, and timing can be wrong; review important results.*
@@ -111,5 +111,5 @@ The [release workflow](./.github/workflows/release.yml) also builds the smoke-te
 <p align="center">
   Created by <strong>Abner Stephen</strong><br />
   Source available · Commercial use requires the author's authorization<br />
-  <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.2">Release notes</a>
+  <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.3">Release notes</a>
 </p>

@@ -11,3 +11,4 @@
 - 自包含发布前必须单独按 `Release`、`x64`、`win-x64`、`SelfContained=true` 执行锁定还原，再以同样参数 `publish --no-restore`。普通解决方案还原不会保证下载 .NET/WPF Runtime pack；本机已有缓存会掩盖此问题，需用全新包目录验证。v0.2.0 在 CI 因 NETSDK1112 失败，保留原标签不移动，正式包改由 v0.2.1 发布。
 - NuGet 自定义包目录不保证 `NuGetPackageRoot` 带结尾分隔符，许可证路径必须显式加入目录分隔符；全新缓存的发布演练已覆盖该差异，不能只依赖默认用户缓存。
 - `workflow_dispatch` 用于新标签前的完整云端预检：编译、测试、publish 审计和安装包打包全部照常，只跳过 GitHub Release 创建。v0.2.1 被真实录屏取消测试拦住，保留失败标签，后续发布用 v0.2.2。
+- v0.2.3 发布 Hermes 启动兼容补丁；README 继续保留 GIF 与功能图库，发行日志仅列双语修复说明。版本更新需同步 ReleasePreparationTests 及对应发行说明测试夹具。
