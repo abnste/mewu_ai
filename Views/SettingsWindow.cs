@@ -521,12 +521,14 @@ public sealed class SettingsWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(parameterHelp,LocalizationService.T("请求参数帮助","Request parameter help"));
         parameterHelp.ToolTip=new ToolTip{Placement=System.Windows.Controls.Primitives.PlacementMode.Top,Content=new TextBlock{MaxWidth=350,TextWrapping=TextWrapping.Wrap,Text=LocalizationService.T("例如：{\"service_tier\":\"priority\"}。MiniMax M3 优先服务按标准价格的 1.5 倍计费；{} 使用默认服务。也支持 temperature、top_p。", "Example: {\"service_tier\":\"priority\"}. MiniMax M3 priority costs 1.5× the standard rate; {} uses the default tier. Also supports temperature and top_p.")}};
         ToolTipService.SetInitialShowDelay(parameterHelp,200);ToolTipService.SetShowDuration(parameterHelp,60000);
-        Grid.SetColumn(parameterHelp,1);parameterHeader.Children.Add(parameterHelp);panel.Children.Add(parameterHeader);panel.Children.Add(_requestParameters);
+        var advancedContent=new StackPanel{Margin=new Thickness(0,8,0,0)};
+        Grid.SetColumn(parameterHelp,1);parameterHeader.Children.Add(parameterHelp);advancedContent.Children.Add(parameterHeader);advancedContent.Children.Add(_requestParameters);
+        advancedContent.Children.Add(Labeled("Custom Headers JSON（高级，敏感值保存时自动加密）", _customHeaders));
         panel.Children.Add(new Expander
         {
-            Header = LocalizationService.T("高级：自定义请求头", "Advanced: custom headers"),
+            Header = LocalizationService.T("高级设置", "Advanced settings"),
             IsExpanded = false, Margin = new Thickness(0, 8, 0, 12),
-            Content = Labeled("Custom Headers JSON（高级，敏感值保存时自动加密）", _customHeaders)
+            Content = advancedContent
         });
         var test = ActionButton("测试连接");
         test.Click += async (_, _) => await TestConnectionAsync(test);
