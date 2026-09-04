@@ -2,6 +2,7 @@
 
 - 功能实景图与视频介绍只放在英文和中文 README，分别使用自然语言介绍同一组功能；发行日志只列版本更新，不重复功能图库或 GitHub Release 标题。
 - README 首屏使用实际标注图，以使用场景串联五张配图和视频入口；构建命令折叠展示。模型仅作为公测说明，不作为产品定位；明确作者、商用需授权及远程 AI 的数据边界。
+- README 使用居中品牌与下载区、原位标注大图、两列功能图库及内嵌循环 GIF；保留有声 MP4 链接。GIF 从作者视频转换，保持比例和完整时长，解码验证帧延迟与循环；不加入产品依赖。GitHub About 是单一描述字段，维护简洁中英双语，而非宣称会随浏览器语言切换。
 - v0.2.0 的五张 JPG 及视频由用户在发布请求中明确指定并授权公开。除此以外不得上传实际桌面、提示词、设置、日志或 QA 产物；`patent-research-2026-09-02.md` 为用户本地文件，禁止加入发布提交。
 - `docs/images/ai-checkmarks.jpg`、`in-place-translation.jpg`、`ai-drawing.jpg`、`code-explanation.jpg`、`web-annotations.jpg` 保留用户提供的原图，双语说明描述能力而非保证模型正确。
 - 用户视频原编码为 HEVC；`docs/media/MewuAI-video-annotations.mp4` 转为 H.264/yuv420p 并保留原 AAC 音轨，以便普通浏览器和 Windows 播放。转换工具只用于本地文档处理，不进入产品依赖或安装包。
