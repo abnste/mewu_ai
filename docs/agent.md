@@ -1,6 +1,7 @@
 # 发布文档与配图
 
 - 功能实景图与视频介绍只放在英文和中文 README，分别使用自然语言介绍同一组功能；发行日志只列版本更新，不重复功能图库或 GitHub Release 标题。
+- README 首屏使用实际标注图，以使用场景串联五张配图和视频入口；构建命令折叠展示。模型仅作为公测说明，不作为产品定位；明确作者、商用需授权及远程 AI 的数据边界。
 - v0.2.0 的五张 JPG 及视频由用户在发布请求中明确指定并授权公开。除此以外不得上传实际桌面、提示词、设置、日志或 QA 产物；`patent-research-2026-09-02.md` 为用户本地文件，禁止加入发布提交。
 - `docs/images/ai-checkmarks.jpg`、`in-place-translation.jpg`、`ai-drawing.jpg`、`code-explanation.jpg`、`web-annotations.jpg` 保留用户提供的原图，双语说明描述能力而非保证模型正确。
 - 用户视频原编码为 HEVC；`docs/media/MewuAI-video-annotations.mp4` 转为 H.264/yuv420p 并保留原 AAC 音轨，以便普通浏览器和 Windows 播放。转换工具只用于本地文档处理，不进入产品依赖或安装包。

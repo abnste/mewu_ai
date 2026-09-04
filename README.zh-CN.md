@@ -1,95 +1,105 @@
-<div align="center">
-  <img src="./Assets/MewuAI.Icon.png" width="104" alt="喵呜AI 图标" />
+<p align="center">
+  <img src="./Assets/MewuAI.Icon.png" width="80" alt="喵呜AI" />
+</p>
 
-  # 喵呜AI · MewuAI
+# 喵呜AI
 
-  **在 Windows 屏幕原位完成截图、标注与多模态理解。**
+**截下画面，问出问题，让答案直接标在眼前。**
 
-  **简体中文** · [English](./README.md) · [下载](https://github.com/abnste/mewu_ai/releases/latest) · [反馈问题](https://github.com/abnste/mewu_ai/issues)
+一款带 AI 原位标注的 Windows 截图工具。圈重点、翻译文字、讲解图示、定位视频片段，都在当前画面上完成。
 
-  [![Release](https://img.shields.io/badge/版本-v0.2.2-6878F0?style=flat-square)](https://github.com/abnste/mewu_ai/releases/tag/v0.2.2)
-  [![Windows](https://img.shields.io/badge/Windows-10%202004%2B-3A8DDE?style=flat-square&logo=windows11&logoColor=white)](#系统要求)
-  [![.NET](https://img.shields.io/badge/.NET-10-6C4BC1?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+**简体中文** · [English](./README.md) · [下载安装版](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe) · [免安装 ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip) · [视频演示](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4)
 
-  **0.2.2 公测版 · 测试模型：MiniMax M3（MiniMax-M3）**
+Windows 10 2004+ · x64 · v0.2.2 公测版
 
-  [**下载安装版**](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe) · [免安装 ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip)
-</div>
+![AI 在网页上圈出按钮，并连接对应说明](./docs/images/web-annotations.jpg)
 
-<br />
+## 不只回答，也直接标出来
 
-<div align="center">
-  <img src="./docs/images/web-annotations.jpg" width="1000" alt="AI 在 GitHub 页面原位标出按钮并说明用途" />
-</div>
+### 重点在哪，一眼看到
 
-## 关键功能
+让 AI 圈出细节、打勾打叉，或连上一条说明。继续追问时保留已有标注，也可以自己动手补画、移动气泡，最后保存带标注的图片。
 
-- **截图与贴图：** 多屏与混合 DPI 精准框选、智能吸附、长截图、取色与坐标、旋转贴图。
-- **完整标注：** 画笔、高亮、形状、文字、序号、可拖动 AI 气泡和矩形马赛克，统一支持撤销、复制与导出。
-- **OCR 与翻译：** 离线多语言 OCR、跨行选字和原位翻译；译文可随标注一起复制、贴图或保存。
-- **图片与视频 AI：** 用 `@区域N`、`@图片N`、`@视频N` 精确引用，多附件批注映射回各自内容。
-- **录屏与时间轴：** 原位录制 MP4、按需导出 GIF，并跳转或跟踪 AI 标记的视频时刻。
-- **按需接入：** 支持兼容的远程多模态 Provider 与本机 Hermes；未配置可用后端时自动隐藏对应 AI 入口。
+![AI 在视频封面上打勾与打叉](./docs/images/ai-checkmarks.jpg)
 
-## 功能实景
+### 看懂外语，取出文字
 
-**直接标重点。** 让 AI 在截图上圈选、打勾、打叉，或补充说明。
+译文显示在原文位置，支持选中复制。离线 OCR 让截图里的文字可以直接选择；AI 表格识别则把截图中的表格变成可粘贴到 Excel 的单元格。
 
-![AI 打勾与打叉](./docs/images/ai-checkmarks.jpg)
+![评论原位翻译，译文支持选择与复制](./docs/images/in-place-translation.jpg)
 
-**原位翻译。** 在原文位置阅读译文，支持选中与复制。
+### 对着画面讲清楚
 
-![原位翻译与文字选择](./docs/images/in-place-translation.jpg)
+图示、代码、软件界面，让说明连到对应位置。用 `@` 引用多张截图或上传的文件，一起提问、对照理解。
 
-**让 AI 动笔。** 用一句话在截图区域生成可编辑的笔迹和形状。
+![AI 为 Scratch 程序的不同积木添加解释](./docs/images/code-explanation.jpg)
 
-![AI 绘制小猫](./docs/images/ai-drawing.jpg)
+### 让想法落到画面上
 
-**边看边讲解。** 将说明连接到对应的代码块或界面控件。
+让 AI 画一幅草图，或自己使用画笔、形状、箭头、文字和序号。分享前，也可以高亮重点或给矩形区域打马赛克。
 
-![Scratch 代码原位讲解](./docs/images/code-explanation.jpg)
+![AI 在选区中绘制小猫](./docs/images/ai-drawing.jpg)
 
-**定位视频片段。** 跳转到 AI 标记的时刻，或播放指定区间并跟踪标注。[观看简短演示](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4)。
+### 视频里的那一刻，直接跳过去
 
-以上示例由作者提供并授权发布。AI 结果可能有误，重要内容请自行核对。
+录制一个区域，或添加视频后提问。点击时间入口跳到标记位置，也可以播放指定区间并跟踪标注。录屏支持导出 MP4 和 GIF。
 
-> [!IMPORTANT]
-> 截图、贴图、标注、OCR 和录屏均可离线使用。只有你明确发送或翻译时，选中的内容才会交给已配置的后端。
+[观看视频标注演示 →](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4)
 
-## 下载
+*以上实景由作者提供。AI 的回答、标注位置与时间可能有误，分享或使用结果前请核对。*
 
-- [安装版 0.2.2](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe)：按当前用户安装，包含开始菜单、可选桌面快捷方式和卸载入口。
-- [免安装版 0.2.2](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip)：解压后运行 `MewuAI.exe`，无需另装 .NET。
+## 不接 AI，也是一款截图工具
 
-启动后按 <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd> 唤醒屏幕助手（可在设置中修改）。
+- **截图：** 多屏框选、窗口与受支持控件吸附，以及上下双向滚动长截图。
+- **贴图：** 图片置顶、缩放、旋转，带着已有标注一起贴在屏幕上。
+- **编辑：** 绘制、高亮、文字、马赛克与撤销；保存时可选择原件或带标注图片。
+- **提取：** 离线 OCR 选字复制，查看鼠标位置的颜色值和屏幕坐标。
 
-### 系统要求
+截图、贴图、手工标注、OCR 和录屏无需 AI 账号。AI 对话、翻译和表格识别需要配置具备相应能力的后端。
 
-- Windows 10 2004（build 19041）或更高版本，x64。
-- Windows N/KN 版本录制与预览 H.264 时需要 Microsoft Media Feature Pack。
-- AI 与翻译需要可用的兼容 Provider；Hermes 功能需要本机已安装并启用 Hermes。
+## 开始使用
 
-> [!NOTE]
-> 安装包暂未进行 Authenticode 签名，Windows SmartScreen 可能提示“未知发布者”；请核对 Release 中的 SHA-256。
+1. 下载[安装版](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe)，或解压[免安装 ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip) 后运行 `MewuAI.exe`，均无需另装 .NET。
+2. 按 <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd>，框选所需内容，通过选区工具条复制、保存、置顶、标注或识别文字。
+3. 如需 AI，在设置中配置兼容 API，或连接本机 Hermes。用 `@` 添加引用，输入问题后发送。
 
-## 隐私
+应用和安装程序默认跟随 Windows 语言。可在 **设置 → 常规** 中选择简体中文或 English，重启应用后生效；截图快捷键也可在此修改。新版本可通过 **设置 → 关于** 检查更新。
 
-- 产品窗口启用防捕获，屏幕内容不会在未明确发送时上传。
-- API Key 与敏感 Header 使用 Windows DPAPI 加密。
-- 请求结束后清零敏感图片缓冲，历史有界，日志不记录屏幕内容或凭据。
-- 截图、OCR、标注和录屏能力不依赖 AI。
+### AI 接入与隐私
 
-## 从源码构建
+- 支持自行配置兼容 API，或使用本机已有的 Hermes Profile。图片、视频能力取决于所选模型；连接本机 Hermes 不代表它使用的模型服务也在本地运行。
+- 只有主动调用相应 AI 功能时，截图和附件才会发送到所选后端。只发文字问题，**不会自动附带桌面截图**。
+- API Key 和敏感认证 Header 使用 Windows DPAPI 在本机加密；已发送内容的处理方式由相应服务商的数据政策决定。
+- 未配置可用对话后端时，隐藏 AI 对话条和引用入口，离线工具照常使用。
 
-需要 Windows x64 与 .NET 10 SDK。
+本次公测使用 **MiniMax M3** 测试，其他模型与服务组合的效果可能不同。
+
+### 安装须知
+
+支持 **Windows 10 2004（build 19041）或更高版本，x64**。Windows N/KN 版本录制和播放 H.264 需要 Media Feature Pack。安装包暂未代码签名，SmartScreen 可能提示“未知发布者”；请从本仓库的 [Releases](https://github.com/abnste/mewu_ai/releases) 下载，并核对附带的 `SHA256SUMS.txt`。
+
+## 开发
+
+基于 **C# · .NET 10 · WPF**，OCR 在本机运行，录屏使用 Windows 媒体组件。
+
+<details>
+<summary>在 Windows x64 上构建与测试</summary>
+
+安装 .NET 10 SDK，在仓库根目录运行：
 
 ```powershell
-dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64
-dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true -o .\artifacts\release\win-x64
+dotnet restore .\mewu_ai_Assistant.slnx --locked-mode
+dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64 --no-restore
+dotnet restore .\mewu_ai_Assistant.csproj --locked-mode -r win-x64 -p:Configuration=Release -p:Platform=x64 -p:SelfContained=true
+dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -o .\artifacts\release\win-x64
 ```
 
-技术栈：C#、.NET 10、原生 WPF、Windows Media Foundation、ScreenRecorderLib、RapidOcrNet。项目不捆绑 FFmpeg，也不引入 GPL/AGPL 依赖。
+[发布流程](./.github/workflows/release.yml) 还会编译连通性测试项目、审计发布目录，并生成安装 EXE 与免安装 ZIP。
 
----
+</details>
 
-<div align="center">为快速、私密、原位的屏幕理解而生。</div>
+## 作者与使用说明
+
+作者：**Abner Stephen**。项目源代码公开，**商业使用需取得作者授权**。第三方组件遵循各自许可证，详见[第三方声明](./THIRD-PARTY-NOTICES.md)。
+
+[反馈问题或建议](https://github.com/abnste/mewu_ai/issues) · [版本更新记录](https://github.com/abnste/mewu_ai/releases/tag/v0.2.2)
