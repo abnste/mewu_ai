@@ -19,7 +19,7 @@
 <br />
 
 <div align="center">
-  <img src="./docs/images/mewu-capture-annotation.png" width="900" alt="MewuAI in-place capture and AI annotation" />
+  <img src="./docs/images/web-annotations.jpg" width="1000" alt="AI identifies GitHub page controls and explains them in place" />
 </div>
 
 ## Highlights
@@ -31,9 +31,27 @@
 - **Recording and timeline:** in-place MP4 recording, on-demand GIF export, and seekable or tracked AI video moments.
 - **Connect only what you use:** compatible remote multimodal providers and local Hermes; unavailable AI entry points stay hidden until a working backend is configured.
 
-<div align="center">
-  <img src="./docs/images/mewu-features-bilingual.png" width="960" alt="MewuAI bilingual feature overview" />
-</div>
+## See it in action
+
+**Mark what matters.** Ask AI to highlight, check, cross out, or explain items directly on your screenshot.
+
+![AI checkmarks and crosses](./docs/images/ai-checkmarks.jpg)
+
+**Translate in place.** Read translated text where it belongs, then select and copy it.
+
+![In-place translation and text selection](./docs/images/in-place-translation.jpg)
+
+**Draw with AI.** Turn a request into editable strokes and shapes on the captured area.
+
+![AI drawing a cat](./docs/images/ai-drawing.jpg)
+
+**Explain visually.** Connect instructions to the relevant code blocks or interface controls.
+
+![Annotated Scratch code explanation](./docs/images/code-explanation.jpg)
+
+**Follow moments in video.** Jump to an AI-marked moment or play a highlighted interval with tracking annotations. [Watch the short demo](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-video-annotations.mp4).
+
+These examples were supplied for publication by the author. AI output can be incorrect; review important results.
 
 > [!IMPORTANT]
 > Capture, pinning, annotation, OCR, and recording work offline. Selected content is sent only when you explicitly invoke AI or translation.

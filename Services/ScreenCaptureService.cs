@@ -24,6 +24,13 @@ public sealed class ScreenCaptureService
         return CaptureBounds(new Rectangle(region.X,region.Y,region.Width,region.Height),false).Image;
     }
 
+    internal BitmapSource CaptureRegion(ScreenRect region,IntPtr excludedOverlay)
+    {
+        if(!mewu_ai_Assistant.Interop.NativeMethods.IsExcludedFromCapture(excludedOverlay))
+            throw new InvalidOperationException("覆盖层防捕获不可用，无法安全生成长截图");
+        return CaptureRegion(region);
+    }
+
     private static CaptureFrame CaptureBounds(Rectangle bounds,bool includeCursor)
     {
         using var bitmap=new Bitmap(bounds.Width,bounds.Height,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);

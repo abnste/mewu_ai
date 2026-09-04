@@ -181,7 +181,8 @@ jobs:
           $assets = @(
             ".\artifacts\installer\MewuAI-Setup-$version-win-x64.exe",
             ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip",
-            '.\artifacts\packages\SHA256SUMS.txt'
+            '.\artifacts\packages\SHA256SUMS.txt',
+            '.\docs\media\MewuAI-video-annotations.mp4'
           )
           if (gh release view $tag *> $null) {
             gh release upload $tag @assets --clobber

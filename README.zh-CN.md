@@ -19,7 +19,7 @@
 <br />
 
 <div align="center">
-  <img src="./docs/images/mewu-capture-annotation.png" width="900" alt="喵呜AI 原位截图与 AI 标注" />
+  <img src="./docs/images/web-annotations.jpg" width="1000" alt="AI 在 GitHub 页面原位标出按钮并说明用途" />
 </div>
 
 ## 关键功能
@@ -31,9 +31,27 @@
 - **录屏与时间轴：** 原位录制 MP4、按需导出 GIF，并跳转或跟踪 AI 标记的视频时刻。
 - **按需接入：** 支持兼容的远程多模态 Provider 与本机 Hermes；未配置可用后端时自动隐藏对应 AI 入口。
 
-<div align="center">
-  <img src="./docs/images/mewu-features-bilingual.png" width="960" alt="喵呜AI 中英双语功能概览" />
-</div>
+## 功能实景
+
+**直接标重点。** 让 AI 在截图上圈选、打勾、打叉，或补充说明。
+
+![AI 打勾与打叉](./docs/images/ai-checkmarks.jpg)
+
+**原位翻译。** 在原文位置阅读译文，支持选中与复制。
+
+![原位翻译与文字选择](./docs/images/in-place-translation.jpg)
+
+**让 AI 动笔。** 用一句话在截图区域生成可编辑的笔迹和形状。
+
+![AI 绘制小猫](./docs/images/ai-drawing.jpg)
+
+**边看边讲解。** 将说明连接到对应的代码块或界面控件。
+
+![Scratch 代码原位讲解](./docs/images/code-explanation.jpg)
+
+**定位视频片段。** 跳转到 AI 标记的时刻，或播放指定区间并跟踪标注。[观看简短演示](https://github.com/abnste/mewu_ai/releases/download/v0.2.0/MewuAI-video-annotations.mp4)。
+
+以上示例由作者提供并授权发布。AI 结果可能有误，重要内容请自行核对。
 
 > [!IMPORTANT]
 > 截图、贴图、标注、OCR 和录屏均可离线使用。只有你明确发送或翻译时，选中的内容才会交给已配置的后端。

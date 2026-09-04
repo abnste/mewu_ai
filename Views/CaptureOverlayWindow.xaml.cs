@@ -2224,11 +2224,10 @@ public partial class CaptureOverlayWindow : Window
     private async void CaptureLongScreenshot(object s,RoutedEventArgs e)
     {
         if(RejectIfOverlayOperationBusy()||_longCaptureMode||Active is not {IsImplicit:false,VideoPath:null} item)return;
-        if(!_captureExclusionVerified
-#if DEBUG
-            &&!NativeMethods.VisualQaCaptureEnabled
-#endif
-        ){PromptStatus.Text="覆盖层防捕获不可用，无法安全生成长截图";return;}
+        // UI-observation QA must never turn into an export bypass: otherwise
+        // selection borders, glow and previews are baked into every seam.
+        _captureExclusionVerified=NativeMethods.ExcludeFromCapture(new WindowInteropHelper(this).Handle,requireProtection:true);
+        if(!_captureExclusionVerified){PromptStatus.Text="覆盖层防捕获不可用，无法安全生成长截图";return;}
         _longCaptureBefore=CaptureOverlaySnapshot();_longCaptureItem=item;_longCaptureMode=true;_longCaptureFrames.Clear();_longCaptureShifts.Clear();_longCaptureComposite=null;_longCaptureScrollTarget=IntPtr.Zero;_longCaptureSampleVersion=0;
         var sessionVersion=++_longCaptureSessionVersion;
         try
@@ -2240,7 +2239,7 @@ public partial class CaptureOverlayWindow : Window
             if(_closed||!_longCaptureMode||sessionVersion!=_longCaptureSessionVersion)return;
             var pixels=ToPixelRect(item.Bounds);var screen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);_longCaptureWheelScreenBounds=screen;StartLongCaptureWheelMonitoring();var centerX=screen.X+screen.Width/2;var centerY=screen.Y+screen.Height/2;var handle=new WindowInteropHelper(this).Handle;_longCaptureScrollTarget=_windowSnap.FindFastTargetAt(centerX,centerY,handle)?.Handle??IntPtr.Zero;
             if(!_longCaptureSamples.HasCapacity(screen.Width,screen.Height))throw new InvalidOperationException("长截图区域过大，请缩小选区后重试");
-            var frame=new ScreenCaptureService().CaptureRegion(screen);_longCaptureFrames.Add(frame);_longCaptureComposite=frame;UpdateLongCapturePreview(item,frame);LongCaptureProgressText.Text="已采集 1 段";PromptStatus.Text="在区域内向上或向下滚动 · 新内容会按方向拼接";StartLongCapturePolling();_longCaptureInputTimer.Start();UpdateLongCaptureInputRouting();Root.Focus();
+            var frame=new ScreenCaptureService().CaptureRegion(screen,handle);_longCaptureFrames.Add(frame);_longCaptureComposite=frame;UpdateLongCapturePreview(item,frame);LongCaptureProgressText.Text="已采集 1 段";PromptStatus.Text="在区域内向上或向下滚动 · 新内容会按方向拼接";StartLongCapturePolling();_longCaptureInputTimer.Start();UpdateLongCaptureInputRouting();Root.Focus();
         }
         catch(Exception ex)
         {
@@ -2378,6 +2377,8 @@ public partial class CaptureOverlayWindow : Window
     private void ScheduleLongCaptureSample(bool showNoMovement)
     {
         if(_closed||!_longCaptureMode||_longCaptureFinishing||_longCaptureItem is not { } item)return;
+        if(!NativeMethods.IsExcludedFromCapture(new WindowInteropHelper(this).Handle))
+        {CancelLongCaptureSession("覆盖层防捕获不可用，无法安全生成长截图");return;}
         if(_longCaptureFrames.Count>=24){LongCaptureProgressText.Text="已达 24 段上限，请完成";return;}
         var pixels=ToPixelRect(item.Bounds);
         if(!_longCaptureSamples.HasCapacity(pixels.Width,pixels.Height))
@@ -2386,7 +2387,7 @@ public partial class CaptureOverlayWindow : Window
         }
         try
         {
-            var frame=new ScreenCaptureService().CaptureRegion(ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY));
+            var frame=new ScreenCaptureService().CaptureRegion(ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY),new WindowInteropHelper(this).Handle);
             Int32Rect? ignored=null;var pointer=Mouse.GetPosition(Root);
             if(item.Bounds.Contains(pointer))
             {
@@ -2500,6 +2501,15 @@ public partial class CaptureOverlayWindow : Window
 
     private void ResetLongCaptureState()
     {
+#if DEBUG
+        // Restore visual observation only after acquisition has been canceled.
+        // Release contains neither this branch nor a protection bypass.
+        if(_longCaptureMode&&!_closed&&NativeMethods.VisualQaCaptureEnabled)
+        {
+            NativeMethods.ExcludeFromCapture(new WindowInteropHelper(this).Handle);
+            _captureExclusionVerified=false;
+        }
+#endif
         _longCaptureSessionVersion++;
         _longCaptureSamples.Clear();_longCaptureFinishing=false;
         _longCaptureInputTimer.Stop();

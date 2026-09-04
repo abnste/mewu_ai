@@ -17,6 +17,7 @@ internal static class NativeMethods
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool RegisterHotKey(IntPtr hWnd,int id,uint modifiers,uint virtualKey);
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool UnregisterHotKey(IntPtr hWnd,int id);
     [DllImport("user32.dll",SetLastError=true)] private static extern bool SetWindowDisplayAffinity(IntPtr hWnd,uint affinity);
+    [DllImport("user32.dll",SetLastError=true)] private static extern bool GetWindowDisplayAffinity(IntPtr hWnd,out uint affinity);
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool SetWindowPos(IntPtr hWnd,IntPtr insertAfter,int x,int y,int width,int height,uint flags);
     [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(IntPtr hWnd);
     [DllImport("user32.dll",SetLastError=true)] internal static extern int SetWindowRgn(IntPtr hWnd,IntPtr hRgn,bool redraw);
@@ -54,16 +55,19 @@ internal static class NativeMethods
         return previous!=IntPtr.Zero||Marshal.GetLastPInvokeError()==0;
     }
 
-    internal static bool ExcludeFromCapture(IntPtr windowHandle)
+    internal static bool ExcludeFromCapture(IntPtr windowHandle,bool requireProtection=false)
     {
 #if DEBUG
         // Visual QA needs to observe the real overlay hierarchy. This escape hatch is
         // compiled out of Release builds, so production privacy cannot be disabled.
-        if (VisualQaCaptureEnabled)
-            return true;
+        if (VisualQaCaptureEnabled&&!requireProtection)
+            return SetWindowDisplayAffinity(windowHandle,0);
 #endif
-        return SetWindowDisplayAffinity(windowHandle, WdaExcludeFromCapture);
+        return SetWindowDisplayAffinity(windowHandle, WdaExcludeFromCapture)&&(!requireProtection||IsExcludedFromCapture(windowHandle));
     }
+
+    internal static bool IsExcludedFromCapture(IntPtr windowHandle)
+        =>windowHandle!=IntPtr.Zero&&GetWindowDisplayAffinity(windowHandle,out var affinity)&&affinity==WdaExcludeFromCapture;
 
     internal static bool VisualQaCaptureEnabled
     {
