@@ -11,9 +11,9 @@
     <ApplicationIcon>Assets\MewuAI.ico</ApplicationIcon>
     <AssemblyName>MewuAI</AssemblyName>
     <RootNamespace>mewu_ai_Assistant</RootNamespace>
-    <Version>0.2.0</Version>
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
-    <FileVersion>0.2.0.0</FileVersion>
+    <Version>0.2.1</Version>
+    <AssemblyVersion>0.2.1.0</AssemblyVersion>
+    <FileVersion>0.2.1.0</FileVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
     <Platforms>x64</Platforms>
@@ -67,17 +67,17 @@
     <Content Include="Licenses\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- Win2D brings these redistributable Microsoft components transitively.
          Carry their exact package license and NOTICE files in every build. -->
-    <Content Include="$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\LICENSE.txt" Link="Licenses\Microsoft.Web.WebView2-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\NOTICE.txt" Link="Licenses\Microsoft.Web.WebView2-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\license.txt" Link="Licenses\Microsoft.WindowsAppSDK-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\NOTICE.txt" Link="Licenses\Microsoft.WindowsAppSDK-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(NuGetPackageRoot)\microsoft.web.webview2\1.0.2651.64\LICENSE.txt" Link="Licenses\Microsoft.Web.WebView2-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(NuGetPackageRoot)\microsoft.web.webview2\1.0.2651.64\NOTICE.txt" Link="Licenses\Microsoft.Web.WebView2-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(NuGetPackageRoot)\microsoft.windowsappsdk\1.6.241114003\license.txt" Link="Licenses\Microsoft.WindowsAppSDK-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(NuGetPackageRoot)\microsoft.windowsappsdk\1.6.241114003\NOTICE.txt" Link="Licenses\Microsoft.WindowsAppSDK-NOTICE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="ValidateTransitiveMicrosoftLicenseSources" BeforeTargets="PrepareForBuild">
-    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\LICENSE.txt')" Text="Microsoft.Web.WebView2 license source is missing; restore the locked packages before building." />
-    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.web.webview2\1.0.2651.64\NOTICE.txt')" Text="Microsoft.Web.WebView2 NOTICE source is missing; restore the locked packages before building." />
-    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\license.txt')" Text="Microsoft.WindowsAppSDK license source is missing; restore the locked packages before building." />
-    <Error Condition="!Exists('$(NuGetPackageRoot)microsoft.windowsappsdk\1.6.241114003\NOTICE.txt')" Text="Microsoft.WindowsAppSDK NOTICE source is missing; restore the locked packages before building." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)\microsoft.web.webview2\1.0.2651.64\LICENSE.txt')" Text="Microsoft.Web.WebView2 license source is missing; restore the locked packages before building." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)\microsoft.web.webview2\1.0.2651.64\NOTICE.txt')" Text="Microsoft.Web.WebView2 NOTICE source is missing; restore the locked packages before building." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)\microsoft.windowsappsdk\1.6.241114003\license.txt')" Text="Microsoft.WindowsAppSDK license source is missing; restore the locked packages before building." />
+    <Error Condition="!Exists('$(NuGetPackageRoot)\microsoft.windowsappsdk\1.6.241114003\NOTICE.txt')" Text="Microsoft.WindowsAppSDK NOTICE source is missing; restore the locked packages before building." />
   </Target>
 
   <Target Name="PruneRapidOcrBundledV5Models" BeforeTargets="CopyModelsBuild;CopyModelsPublish">
