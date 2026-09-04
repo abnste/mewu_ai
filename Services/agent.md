@@ -13,3 +13,9 @@
 - ProviderModelCatalogService 统一读取兼容 `/models` 的 `data[].id`。禁止跨域重定向和 Cookie，拒绝同时发送 API Key 与认证 Header；读取无 Content-Length 的流时同样逐块执行 2 MiB 上限，最多保留 4096 个模型，错误不暴露远端响应体。火山沿用对话模型过滤；MiniMax 等不得套用火山前缀白名单。
 - 官方参考：MiniMax `/docs/api-reference/models/openai/list-models` 与微软 WPF ComboBox 模板规范（PART_EditableTextBox、PART_Popup）。2026-09-04 本机真实设置页 MiniMax 返回 8 个模型、火山返回 99 个模型，模型下拉选择已验收；仅请求目录，不发送用户提示词或附件。
 - ProviderApiKeyEditorPolicy 将“显示已保存值”和“用户编辑”分开：前者只供原生 PasswordBox 掩码显示，不能形成待写凭据；后者明确创建替换/删除草稿。未经窗口防捕获确认不解密显示。2026-09-04 本轮 Release 全量 718 项通过，ProviderSmoke 编译零警告，Debug 界面已确认真实密钥逐字符圆点显示，验收不保存用户配置，GitHub 发布仍暂停。
+
+# 请求体参数
+
+- RequestParameters 是可选的旧配置兼容字段，所有编辑副本/凭据迁移克隆必须保留；显式 null 或非法字段在保存、Provider 构造与发送前拒绝，不得默默吞掉配置。ProviderRequestParameterPolicy 使用严格 JSON 对象解析，拒绝重复属性，仅允许 service_tier/temperature/top_p 及各自有限取值，禁止凭据和内部协议字段注入。
+- 2026-09-04 官方 M3 最小实测：把 service_tier=priority 放 HTTP Header，响应仍为 standard；放请求体，HTTP 200 且 service_tier 明确回显 priority。两次均通过 MEWU_OK 挑战；短测不能证明整体加速比例。官方 OpenAI SDK 文档说明 priority 为标准价格的 1.5 倍，不得自动启用或因失败自动切收费档。
+- 接入后 Release 全量 732 项通过，包含普通/流式请求体断言、持久化与旧配置兼容；Debug 设置页实际输入 priority JSON，关闭未保存。WPF 全局主题资源测试单独放入禁并行集合，STA 辅助线程为后台线程，避免与录屏等 WPF 测试竞争全局初始化或失败后挂住测试宿主。

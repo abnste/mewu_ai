@@ -50,6 +50,7 @@ internal static class ProviderEditorHydrationPolicy
             BaseUrl = source.BaseUrl ?? string.Empty,
             Model = source.Model ?? string.Empty,
             CredentialId = source.CredentialId ?? string.Empty,
+            RequestParameters = source.RequestParameters is null ? null! : new(source.RequestParameters),
             CustomHeaders = source.CustomHeaders is null
                 ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(source.CustomHeaders, StringComparer.OrdinalIgnoreCase),

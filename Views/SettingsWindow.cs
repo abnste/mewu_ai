@@ -37,6 +37,7 @@ public sealed class SettingsWindow : Window
     private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerSelector = new(), _providerType = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
     private readonly TextBox _hotkey = new();
     private readonly TextBox _providerName = new(), _baseUrl = new(), _customHeaders = new();
+    private readonly TextBox _requestParameters = new();
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
@@ -508,7 +509,19 @@ public sealed class SettingsWindow : Window
         _customHeaders.TextWrapping = TextWrapping.NoWrap;
         _customHeaders.MinHeight = 80;
         _customHeaders.FontFamily = new FontFamily("Cascadia Mono, Consolas");
-        panel.Children.Add(Labeled("Custom Headers JSON（高级，敏感值保存时自动加密）", _customHeaders));
+        _requestParameters.AcceptsReturn = true;
+        _requestParameters.MinHeight = 84;
+        _requestParameters.MaxLength = 16384;
+        _requestParameters.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _requestParameters.FontFamily = new FontFamily("Cascadia Mono, Consolas");
+        panel.Children.Add(Labeled(LocalizationService.T("请求参数 JSON", "Request parameters JSON"), _requestParameters));
+        panel.Children.Add(Text(LocalizationService.T("例如：{\"service_tier\":\"priority\"}。MiniMax M3 优先服务按标准价格的 1.5 倍计费；{} 使用默认服务。也支持 temperature、top_p。", "Example: {\"service_tier\":\"priority\"}. MiniMax M3 priority costs 1.5× the standard rate; {} uses the default tier. Also supports temperature and top_p.")));
+        panel.Children.Add(new Expander
+        {
+            Header = LocalizationService.T("高级：自定义请求头", "Advanced: custom headers"),
+            IsExpanded = false, Margin = new Thickness(0, 8, 0, 12),
+            Content = Labeled("Custom Headers JSON（高级，敏感值保存时自动加密）", _customHeaders)
+        });
         var test = ActionButton("测试连接");
         test.Click += async (_, _) => await TestConnectionAsync(test);
         panel.Children.Add(test);
@@ -952,6 +965,7 @@ public sealed class SettingsWindow : Window
         _baseUrl.Text = provider.BaseUrl;
         _model.Text = provider.Model;
         PopulateModelSuggestions(provider.Model);
+        _requestParameters.Text = JsonSerializer.Serialize(provider.RequestParameters, new JsonSerializerOptions { WriteIndented = true });
         _customHeaders.Text = _captureProtectionAvailable==false
             ?"屏幕防捕获不可用，Custom Headers 已隐藏。"
             :provider.CustomHeaders.Count == 0 ? "{}" : JsonSerializer.Serialize(provider.CustomHeaders, new JsonSerializerOptions { WriteIndented = true });
@@ -1048,6 +1062,13 @@ public sealed class SettingsWindow : Window
     {
         if (_selectedProvider is null || _loadingProvider) return true;
         Dictionary<string,string> headers;
+        Dictionary<string,JsonElement> parameters;
+        try { parameters = ProviderRequestParameterPolicy.Parse(_requestParameters.Text); }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            if (showValidationError) MessageBox.Show(this, ex is JsonException ? LocalizationService.T("请求参数必须是有效的 JSON 对象。", "Request parameters must be a valid JSON object.") : ex.Message, LocalizationService.T("请求参数无效", "Invalid request parameters"));
+            return false;
+        }
         try{headers=_captureProtectionAvailable==false?_selectedProvider.CustomHeaders:ParseHeaders();}
         catch(Exception ex)when(ex is JsonException or InvalidOperationException)
         {
@@ -1058,6 +1079,7 @@ public sealed class SettingsWindow : Window
         _selectedProvider.BaseUrl = _baseUrl.Text.TrimEnd('/');
         _selectedProvider.Model = _model.Text.Trim();
         _selectedProvider.CustomHeaders=headers;
+        _selectedProvider.RequestParameters=parameters;
         if (_defaultProvider.IsChecked == true) _defaultProviderId = _selectedProvider.Id;
         _providerSelector.Items.Refresh();
         return true;
@@ -1118,7 +1140,7 @@ public sealed class SettingsWindow : Window
             if(!StoreSelectedProvider(true))return;
             var existing = _selectedProvider;
             var key = !string.IsNullOrWhiteSpace(_apiKey.Password) ? _apiKey.Password : existing is null||_apiKeysMarkedForDeletion.Contains(existing.Id) ? null : new CredentialService().Read(existing.CredentialId);
-            var settings = new AiProviderSettings { Type = IsMiniMaxTypeSelected() ? "MiniMax" : "OpenAICompatible", BaseUrl = _baseUrl.Text.TrimEnd('/'), Model = _model.Text.Trim(), CustomHeaders = ParseHeaders() };
+            var settings = new AiProviderSettings { Type = IsMiniMaxTypeSelected() ? "MiniMax" : "OpenAICompatible", BaseUrl = _baseUrl.Text.TrimEnd('/'), Model = _model.Text.Trim(), CustomHeaders = ParseHeaders(), RequestParameters = ProviderRequestParameterPolicy.Parse(_requestParameters.Text) };
             ValidateProvider(settings);
             if(!string.IsNullOrWhiteSpace(key)&&settings.CustomHeaders.Keys.Any(ProviderHeaderCredentialService.IsAuthentication))throw new InvalidOperationException("API Key 与认证 Custom Header 不能同时发送。请清除已保存 API Key，或移除认证 Header。");
             if(string.IsNullOrWhiteSpace(key)&&!settings.CustomHeaders.Keys.Any(ProviderHeaderCredentialService.IsAuthentication))throw new InvalidOperationException("请先输入 API Key，或在 Custom Headers 中配置认证字段");
@@ -1256,6 +1278,7 @@ public sealed class SettingsWindow : Window
 
     private static void ValidateProvider(AiProviderSettings provider)
     {
+        ProviderRequestParameterPolicy.Validate(provider.RequestParameters);
         if(string.IsNullOrWhiteSpace(provider.Name))throw new InvalidOperationException("Provider 名称不能为空");
         if(string.IsNullOrWhiteSpace(provider.Model))throw new InvalidOperationException($"{provider.Name} 的 Model 不能为空");
         try{_ = ProviderEndpointPolicy.NormalizeBaseUri(provider.BaseUrl);}
