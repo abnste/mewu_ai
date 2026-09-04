@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace mewu_ai_Assistant.Services;
 
 /// <summary>
-/// Observes physical mouse-wheel input without consuming it. This is used only
+/// Observes user mouse-wheel input without consuming it. This is used only
 /// while the long-screenshot window is mouse-transparent, where ordinary WPF
 /// wheel events correctly reach the application underneath the overlay.
 /// </summary>
@@ -36,13 +36,19 @@ internal sealed class LowLevelMouseWheelMonitor : IDisposable
 
     internal static bool IsInjected(uint flags)=>(flags&LowLevelMouseInjected)!=0;
 
+    internal static bool IsOwnForwardedInput(uint flags,UIntPtr extraInfo)
+        =>IsInjected(flags)&&extraInfo.ToUInt64()==MouseWheelInputService.ForwardedWheelMarker;
+
     private IntPtr HookCallback(int code,IntPtr message,IntPtr data)
     {
         if(code>=0&&unchecked((uint)message.ToInt64())==WmMouseWheel)
         {
             var input=Marshal.PtrToStructure<MouseHookData>(data);
             var delta=DecodeWheelDelta(input.MouseData);
-            if(delta!=0&&!IsInjected(input.Flags))
+            // Mouse utilities, touchpads, accessibility tools and remote input
+            // may inject real user scrolling. Ignore only our own first-wheel
+            // forwarding, not all injected input.
+            if(delta!=0&&!IsOwnForwardedInput(input.Flags,input.ExtraInfo))
             {
                 try{_onPhysicalWheel(input.Point.X,input.Point.Y,delta);}
                 catch

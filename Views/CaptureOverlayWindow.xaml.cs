@@ -84,13 +84,19 @@ public partial class CaptureOverlayWindow : Window
     private OverlaySnapshot? _longCaptureBefore;
     private readonly List<BitmapSource> _longCaptureFrames=[];
     private readonly List<int> _longCaptureShifts=[];
+    private readonly LongCaptureSampleBuffer _longCaptureSamples=new();
+    private bool _longCaptureFinishing;
     private BitmapSource? _longCaptureComposite;
     private IntPtr _longCaptureScrollTarget;
     private LowLevelMouseWheelMonitor? _longCaptureWheelMonitor;
     private ScreenRect _longCaptureWheelScreenBounds;
     private bool _longCaptureWheelForwarding,_longCaptureInputPassThrough;
     private int _longCaptureSampleVersion,_longCapturePreferredDirection;
+    private int _longCaptureSessionVersion;
     private long _longCaptureWheelDirectionTick;
+    private bool _longCaptureOverlapLost;
+    private const int LongCaptureEscapeHotkeyId=0x4C43;
+    private bool _longCaptureEscapeRegistered;
     private bool _recordingItemWasReferenced;
     private HwndSource? _overlaySource;
     private System.Drawing.Rectangle _virtualScreenArea;
@@ -962,6 +968,12 @@ public partial class CaptureOverlayWindow : Window
 
     private IntPtr OverlayWindowMessage(IntPtr hwnd,int message,IntPtr wParam,IntPtr lParam,ref bool handled)
     {
+        if(message==NativeMethods.WmHotkey&&wParam.ToInt32()==LongCaptureEscapeHotkeyId&&_longCaptureMode)
+        {
+            handled=true;
+            _=Dispatcher.BeginInvoke(new Action(()=>{if(_longCaptureMode)CancelLongCaptureSession("已取消长截图");}));
+            return IntPtr.Zero;
+        }
         if(message!=NativeMethods.WmNcHitTest)return IntPtr.Zero;
         if(_recordingCountdownActive)
         {
@@ -2218,12 +2230,17 @@ public partial class CaptureOverlayWindow : Window
 #endif
         ){PromptStatus.Text="覆盖层防捕获不可用，无法安全生成长截图";return;}
         _longCaptureBefore=CaptureOverlaySnapshot();_longCaptureItem=item;_longCaptureMode=true;_longCaptureFrames.Clear();_longCaptureShifts.Clear();_longCaptureComposite=null;_longCaptureScrollTarget=IntPtr.Zero;_longCaptureSampleVersion=0;
+        var sessionVersion=++_longCaptureSessionVersion;
         try
         {
+            _longCaptureEscapeRegistered=NativeMethods.RegisterHotKey(new WindowInteropHelper(this).Handle,LongCaptureEscapeHotkeyId,0,0x1B);
+            if(!_longCaptureEscapeRegistered)throw new InvalidOperationException("无法注册长截图 Esc 退出键，请关闭占用 Esc 的工具后重试");
             Toolbar.Visibility=SizeText.Visibility=PointerInspector.Visibility=PromptBarHost.Visibility=Visibility.Collapsed;HideHandles();SnapPreview.Visibility=Visibility.Collapsed;BeginLongCaptureLiveRegion(item);LongCaptureBar.Visibility=Visibility.Visible;PositionFloatingBar(LongCaptureBar,item);Cursor=Cursors.Arrow;
             await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.Render);await Task.Delay(100);
+            if(_closed||!_longCaptureMode||sessionVersion!=_longCaptureSessionVersion)return;
             var pixels=ToPixelRect(item.Bounds);var screen=ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY);_longCaptureWheelScreenBounds=screen;StartLongCaptureWheelMonitoring();var centerX=screen.X+screen.Width/2;var centerY=screen.Y+screen.Height/2;var handle=new WindowInteropHelper(this).Handle;_longCaptureScrollTarget=_windowSnap.FindFastTargetAt(centerX,centerY,handle)?.Handle??IntPtr.Zero;
-            var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);_longCaptureFrames.Add(frame);_longCaptureComposite=frame;UpdateLongCapturePreview(item,frame);LongCaptureProgressText.Text="已采集 1 段";PromptStatus.Text="在区域内向上或向下滚动 · 新内容会按方向拼接";StartLongCapturePolling();_longCaptureInputTimer.Start();UpdateLongCaptureInputRouting();Root.Focus();
+            if(!_longCaptureSamples.HasCapacity(screen.Width,screen.Height))throw new InvalidOperationException("长截图区域过大，请缩小选区后重试");
+            var frame=new ScreenCaptureService().CaptureRegion(screen);_longCaptureFrames.Add(frame);_longCaptureComposite=frame;UpdateLongCapturePreview(item,frame);LongCaptureProgressText.Text="已采集 1 段";PromptStatus.Text="在区域内向上或向下滚动 · 新内容会按方向拼接";StartLongCapturePolling();_longCaptureInputTimer.Start();UpdateLongCaptureInputRouting();Root.Focus();
         }
         catch(Exception ex)
         {
@@ -2246,6 +2263,7 @@ public partial class CaptureOverlayWindow : Window
         RememberLongCaptureWheelDirection(e.Delta);
         var screen=ScreenCoordinateService.ToScreenPixelPoint(point,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight,_frame.OriginX,_frame.OriginY);var handle=new WindowInteropHelper(this).Handle;var target=_windowSnap.FindFastTargetAt(screen.X,screen.Y,handle)?.Handle??_longCaptureScrollTarget;if(target!=IntPtr.Zero)_longCaptureScrollTarget=target;
         var forwarded=false;
+        var sessionVersion=_longCaptureSessionVersion;
         _longCaptureWheelForwarding=true;
         try
         {
@@ -2257,7 +2275,9 @@ public partial class CaptureOverlayWindow : Window
             // directly without relying on posted WM_MOUSEWHEEL messages.
             if(SetLongCaptureInputPassThrough(true))
             {
+                MouseWheelInputService.ActivateScrollTarget(_longCaptureScrollTarget,handle);
                 await Task.Delay(8);
+                if(_closed||!_longCaptureMode||sessionVersion!=_longCaptureSessionVersion)return;
                 forwarded=MouseWheelInputService.InjectWheel(e.Delta);
             }
             else
@@ -2316,7 +2336,9 @@ public partial class CaptureOverlayWindow : Window
 
         var point=Mouse.GetPosition(Root);
         var barBounds=GetElementBounds(LongCaptureBar);
-        SetLongCaptureInputPassThrough(CaptureOverlayPolicy.ShouldPassThroughLongCapturePointer(item.Bounds,barBounds,point));
+        var passThrough=CaptureOverlayPolicy.ShouldPassThroughLongCapturePointer(item.Bounds,barBounds,point);
+        if(SetLongCaptureInputPassThrough(passThrough)&&passThrough)
+            MouseWheelInputService.ActivateScrollTarget(_longCaptureScrollTarget,new WindowInteropHelper(this).Handle);
     }
 
     private Rect GetElementBounds(FrameworkElement element)
@@ -2346,8 +2368,7 @@ public partial class CaptureOverlayWindow : Window
         {
             while(_longCaptureMode&&ReferenceEquals(request,_longCapturePollRequest))
             {
-                await Task.Delay(500,request.Token);if(!_longCaptureMode||!ReferenceEquals(request,_longCapturePollRequest))return;
-                if(_longCaptureSampleTask is {IsCompleted:false})continue;
+                await Task.Delay(50,request.Token);if(!_longCaptureMode||!ReferenceEquals(request,_longCapturePollRequest))return;
                 ScheduleLongCaptureSample(false);
             }
         }
@@ -2356,22 +2377,85 @@ public partial class CaptureOverlayWindow : Window
 
     private void ScheduleLongCaptureSample(bool showNoMovement)
     {
-        var previous=Interlocked.Exchange(ref _longCaptureSampleRequest,new CancellationTokenSource());if(previous is not null){try{previous.Cancel();}catch(ObjectDisposedException){}previous.Dispose();}var request=_longCaptureSampleRequest!;var version=++_longCaptureSampleVersion;_longCaptureSampleTask=CaptureLongFrameAfterScrollAsync(request,version,showNoMovement);
+        if(_closed||!_longCaptureMode||_longCaptureFinishing||_longCaptureItem is not { } item)return;
+        if(_longCaptureFrames.Count>=24){LongCaptureProgressText.Text="已达 24 段上限，请完成";return;}
+        var pixels=ToPixelRect(item.Bounds);
+        if(!_longCaptureSamples.HasCapacity(pixels.Width,pixels.Height))
+        {
+            LongCaptureProgressText.Text="正在拼接，请放慢滚动";return;
+        }
+        try
+        {
+            var frame=new ScreenCaptureService().CaptureRegion(ScreenCoordinateService.ToScreenRect(pixels,_frame.OriginX,_frame.OriginY));
+            Int32Rect? ignored=null;var pointer=Mouse.GetPosition(Root);
+            if(item.Bounds.Contains(pointer))
+            {
+                var pointerPixels=ScreenCoordinateService.ToScreenPixelPoint(new Point(pointer.X-item.Bounds.X,pointer.Y-item.Bounds.Y),item.Bounds.Width,item.Bounds.Height,pixels.Width,pixels.Height,0,0);
+                var radius=Math.Max(32,(int)Math.Round(96*pixels.Width/Math.Max(1d,item.Bounds.Width)));
+                var left=Math.Max(0,pointerPixels.X-radius);var top=Math.Max(0,pointerPixels.Y-radius);
+                ignored=new Int32Rect(left,top,Math.Max(0,Math.Min(pixels.Width,pointerPixels.X+radius)-left),Math.Max(0,Math.Min(pixels.Height,pointerPixels.Y+radius)-top));
+            }
+            _longCaptureSamples.TryEnqueue(new(frame,ignored,RecentLongCaptureWheelDirection(),showNoMovement));
+            // Never cancel a match for a new wheel event. Capture into a small
+            // FIFO even while matching/composition runs off the UI thread.
+            if(_longCaptureSampleTask is {IsCompleted:false})return;
+            _longCaptureSampleRequest?.Dispose();
+            var request=_longCaptureSampleRequest=new CancellationTokenSource();
+            var version=++_longCaptureSampleVersion;
+            _longCaptureSampleTask=DrainLongCaptureSamplesAsync(request,version);
+        }
+        catch(Exception ex){new PrivacyLogger().Error("LongScreenshotAcquire",ex);LongCaptureProgressText.Text="采集失败，请完成或取消";}
     }
 
-    private async Task CaptureLongFrameAfterScrollAsync(CancellationTokenSource request,int version,bool showNoMovement)
+    private async Task DrainLongCaptureSamplesAsync(CancellationTokenSource request,int version)
+    {
+        while(IsCurrentLongCaptureSample(request,version)&&_longCaptureSamples.TryDequeue(out var sample))
+            await CaptureLongFrameAfterScrollAsync(request,version,sample);
+    }
+
+    private async Task CaptureLongFrameAfterScrollAsync(CancellationTokenSource request,int version,LongCaptureSampleBuffer.Sample sample)
     {
         try
         {
-            await Task.Delay(280,request.Token);if(!_longCaptureMode||_longCaptureItem is not { } item||!ReferenceEquals(request,_longCaptureSampleRequest)||version!=_longCaptureSampleVersion)return;
-            var pixels=ToPixelRect(item.Bounds);var live=new ScreenCaptureService().CaptureDesktop();var frame=ScreenCaptureService.Crop(live.Image,pixels);var previous=_longCaptureFrames[^1];Int32Rect? ignored=null;var pointer=Mouse.GetPosition(Root);if(item.Bounds.Contains(pointer)){var scaleX=pixels.Width/Math.Max(1d,item.Bounds.Width);var scaleY=pixels.Height/Math.Max(1d,item.Bounds.Height);var centerX=(int)Math.Round((pointer.X-item.Bounds.X)*scaleX);var centerY=(int)Math.Round((pointer.Y-item.Bounds.Y)*scaleY);var radiusX=Math.Max(32,(int)Math.Round(96*scaleX));var radiusY=Math.Max(32,(int)Math.Round(96*scaleY));var left=Math.Max(0,centerX-radiusX);var top=Math.Max(0,centerY-radiusY);ignored=new Int32Rect(left,top,Math.Max(0,Math.Min(pixels.Width,centerX+radiusX)-left),Math.Max(0,Math.Min(pixels.Height,centerY+radiusY)-top));}var preferredDirection=RecentLongCaptureWheelDirection();var match=await Task.Run(()=>{var shift=ScrollingCaptureComposer.EstimateVerticalShift(previous,frame,out var score,ignored,preferredDirection);return(Shift:shift,Score:score);},request.Token);var shift=match.Shift;if(shift==0){if(showNoMovement&&_longCaptureMode){PromptStatus.Text="没有检测到新的滚动内容；可能已到边界或滚动过快";new PrivacyLogger().Info("LongScreenshotOverlapMiss",$"最佳匹配误差 {match.Score:F2}");}return;}new PrivacyLogger().Info("LongScreenshotOverlap",$"位移 {match.Shift:+#;-#;0}px，匹配误差 {match.Score:F2}");
-            if(_longCaptureFrames.Count>=24){PromptStatus.Text="已达到 24 段安全上限，请点击完成";return;}
-            _longCaptureFrames.Add(frame);_longCaptureShifts.Add(shift);var frames=_longCaptureFrames.ToArray();var shifts=_longCaptureShifts.ToArray();var composite=await Task.Run(()=>ScrollingCaptureComposer.Compose(frames,shifts),request.Token);if(!_longCaptureMode||!ReferenceEquals(request,_longCaptureSampleRequest)||version!=_longCaptureSampleVersion)return;
-            _longCaptureComposite=composite;UpdateLongCapturePreview(item,composite);LongCaptureProgressText.Text=$"已采集 {_longCaptureFrames.Count} 段 · {composite.PixelHeight}px";PromptStatus.Text=$"已向{(shift<0?"上":"下")}追加 {Math.Abs(shift)}px · 可双向继续滚动或点击完成";if((long)composite.PixelWidth*composite.PixelHeight>=ScrollingCaptureComposer.MaxOutputPixels)PromptStatus.Text="已达到长图像素安全上限，请点击完成";
+            if(!IsCurrentLongCaptureSample(request,version)||_longCaptureItem is not { } item)return;
+            if(_longCaptureFrames.Count>=24){LongCaptureProgressText.Text="已达 24 段上限，请完成";return;}
+            var frame=sample.Image;var previous=_longCaptureFrames[^1];var ignored=sample.IgnoredRegion;var preferredDirection=sample.Direction;
+            var match=await Task.Run(()=>{var shift=ScrollingCaptureComposer.EstimateVerticalShift(previous,frame,out var score,ignored,preferredDirection);return(Shift:shift,Score:score);},request.Token);
+            if(!IsCurrentLongCaptureSample(request,version))return;
+            if(match.Shift==0)
+            {
+                if(match.Score>ScrollingCaptureComposer.MaxMatchError)
+                {
+                    if(!_longCaptureOverlapLost)new PrivacyLogger().Info("LongScreenshotOverlapMiss",$"最佳匹配误差 {match.Score:F2}");
+                    _longCaptureOverlapLost=true;
+                    LongCaptureProgressText.Text=$"已保留 {_longCaptureFrames.Count} 段 · 未接上，请回滚少许";
+                }
+                else if(_longCaptureOverlapLost&&match.Score<=1.5)
+                {
+                    _longCaptureOverlapLost=false;LongCaptureProgressText.Text=$"已回到接点 · {_longCaptureFrames.Count} 段";
+                }
+                else if(sample.ShowNoMovement)PromptStatus.Text="没有检测到新的滚动内容；可能已到边界";
+                return;
+            }
+            // Prepare off-thread, then commit the frame, shift and composite
+            // together. Cancellation cannot leave a frame without its pixels.
+            var frames=_longCaptureFrames.Append(frame).ToArray();var shifts=_longCaptureShifts.Append(match.Shift).ToArray();
+            if((long)frames.Length*frame.PixelWidth*frame.PixelHeight>ScrollingCaptureComposer.MaxOutputPixels||
+                !ScrollingCaptureComposer.FitsOutputBudget(frame.PixelWidth,frame.PixelHeight,shifts))
+            {LongCaptureProgressText.Text="已达图像容量上限，请完成";return;}
+            var composite=await Task.Run(()=>ScrollingCaptureComposer.Compose(frames,shifts),request.Token);
+            if(!IsCurrentLongCaptureSample(request,version))return;
+            _longCaptureFrames.Add(frame);_longCaptureShifts.Add(match.Shift);_longCaptureComposite=composite;_longCaptureOverlapLost=false;
+            new PrivacyLogger().Info("LongScreenshotOverlap",$"位移 {match.Shift:+#;-#;0}px，匹配误差 {match.Score:F2}");
+            UpdateLongCapturePreview(item,composite);LongCaptureProgressText.Text=$"已采集 {_longCaptureFrames.Count} 段 · {composite.PixelHeight}px";
+            PromptStatus.Text=$"已向{(match.Shift<0?"上":"下")}滚动 · 可双向继续滚动或点击完成";
         }
         catch(OperationCanceledException){}
         catch(Exception ex){new PrivacyLogger().Error("LongScreenshotSample",ex);if(_longCaptureMode)PromptStatus.Text=$"本次滚动未能拼接：{ex.Message}";}
     }
+
+    private bool IsCurrentLongCaptureSample(CancellationTokenSource request,int version)
+        =>!_closed&&_longCaptureMode&&!request.IsCancellationRequested&&ReferenceEquals(request,_longCaptureSampleRequest)&&version==_longCaptureSampleVersion;
 
     private void UpdateLongCapturePreview(SelectionItem item,BitmapSource composite)
     {
@@ -2380,7 +2464,26 @@ public partial class CaptureOverlayWindow : Window
 
     private async void FinishLongCapture(object sender,RoutedEventArgs e)
     {
-        if(!_longCaptureMode||_longCaptureItem is not { } item)return;var pending=_longCaptureSampleTask;if(pending is not null&&!pending.IsCompleted)await Task.WhenAny(pending,Task.Delay(650));CancelLongCaptureSample();var result=_longCaptureComposite??_longCaptureFrames.FirstOrDefault();if(result is null){CancelLongCaptureSession("没有采集到可用画面");return;}var before=_longCaptureBefore;var original=item.Bounds;var monitor=MonitorBounds(original);ClearImageOnlyLayers(item);item.CapturedImageOverride=result;item.Bounds=CaptureOverlayPolicy.FitLongCaptureResultBounds(original,monitor,result.PixelWidth,result.PixelHeight);EndLongCaptureSession(item);UpdateSelection(item);if(before is not null)RecordOverlayOperation(before,"滚动长截图");PromptStatus.Text=$"长截图完成 · {result.PixelWidth} × {result.PixelHeight} · 已按原比例显示";
+        if(!_longCaptureMode||_longCaptureFinishing||_longCaptureItem is not { } item)return;
+        var pixels=ToPixelRect(item.Bounds);
+        if(!_longCaptureSamples.HasCapacity(pixels.Width,pixels.Height))
+        {LongCaptureProgressText.Text="仍在拼接，请稍后再完成";return;}
+        ScheduleLongCaptureSample(false);_longCaptureFinishing=true;
+        var sessionVersion=_longCaptureSessionVersion;
+        var pending=_longCaptureSampleTask;
+        if(pending is not null&&!pending.IsCompleted)await Task.WhenAny(pending,Task.Delay(2000));
+        if(_closed||!_longCaptureMode||sessionVersion!=_longCaptureSessionVersion)return;
+        if(pending is {IsCompleted:false})
+        { _longCaptureFinishing=false;LongCaptureProgressText.Text="仍在拼接，请稍后再完成";return; }
+        CancelLongCaptureSample();
+        var result=_longCaptureComposite??_longCaptureFrames.FirstOrDefault();
+        if(result is null){CancelLongCaptureSession("没有采集到可用画面");return;}
+        var before=_longCaptureBefore;var original=item.Bounds;var monitor=MonitorBounds(original);
+        ClearImageOnlyLayers(item);item.CapturedImageOverride=result;
+        item.Bounds=CaptureOverlayPolicy.FitLongCaptureResultBounds(original,monitor,result.PixelWidth,result.PixelHeight);
+        EndLongCaptureSession(item);UpdateSelection(item);
+        if(before is not null)RecordOverlayOperation(before,"滚动长截图");
+        PromptStatus.Text=$"长截图完成 · {result.PixelWidth} × {result.PixelHeight} · 已按原比例显示";
     }
 
     private void CancelLongCapture(object sender,RoutedEventArgs e)=>CancelLongCaptureSession("已取消长截图");
@@ -2397,9 +2500,14 @@ public partial class CaptureOverlayWindow : Window
 
     private void ResetLongCaptureState()
     {
+        _longCaptureSessionVersion++;
+        _longCaptureSamples.Clear();_longCaptureFinishing=false;
         _longCaptureInputTimer.Stop();
+        _longCaptureOverlapLost=false;
         _longCaptureWheelMonitor?.Dispose();_longCaptureWheelMonitor=null;
+        if(_longCaptureEscapeRegistered){NativeMethods.UnregisterHotKey(new WindowInteropHelper(this).Handle,LongCaptureEscapeHotkeyId);_longCaptureEscapeRegistered=false;}
         var interactionRestored=SetLongCaptureInputPassThrough(false);
+        if(_longCaptureMode&&!_closed&&IsVisible)Activate();
         _longCaptureMode=false;_longCaptureItem=null;_longCaptureBefore=null;_longCaptureFrames.Clear();_longCaptureShifts.Clear();_longCaptureComposite=null;_longCaptureScrollTarget=IntPtr.Zero;_longCaptureWheelScreenBounds=default;_longCaptureWheelForwarding=false;Volatile.Write(ref _longCapturePreferredDirection,0);Interlocked.Exchange(ref _longCaptureWheelDirectionTick,0);_longCaptureSampleTask=null;_longCapturePollTask=null;
         if(!interactionRestored&&!_closed)
         {
