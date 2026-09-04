@@ -6,3 +6,10 @@
 - 进程 Exited 可能早于最后 stderr 回调，启动失败前须有界等待输出收尾；取消必须停止 ready 文件轮询。诊断仅记录白名单错误类别，不存储或展示原始日志、提示词、凭据和环境值。未知退出码不能直接声称安装损坏。
 - 参考：Hermes 官方 `apps/desktop/electron/main.ts` 的 createPythonBackend、backend-env.ts，以及微软 Process 异步输出/退出事件说明。朋友电脑问题仍需实际升级验证，不把本机通过当作远端问题已解决。
 - 2026-09-04 兼容补丁验收：Release 全量 701 项通过、ProviderSmoke 编译零警告，显式启用的真实 Hermes 测试走通启动、人格列表与模型列表（不发送提示词）。仅生成本地免安装测试包，版本号和 GitHub 正式发行未改动。
+
+# Provider 模型目录
+
+- ProviderPresetPolicy 只做界面厂商与现有 Type/BaseUrl 的映射，不增加会让旧配置失效的必填字段；精确地址匹配，非标准 MiniMax 地址仍保留为自定义配置及原有 MiniMax 协议。
+- ProviderModelCatalogService 统一读取兼容 `/models` 的 `data[].id`。禁止跨域重定向和 Cookie，拒绝同时发送 API Key 与认证 Header；读取无 Content-Length 的流时同样逐块执行 2 MiB 上限，最多保留 4096 个模型，错误不暴露远端响应体。火山沿用对话模型过滤；MiniMax 等不得套用火山前缀白名单。
+- 官方参考：MiniMax `/docs/api-reference/models/openai/list-models` 与微软 WPF ComboBox 模板规范（PART_EditableTextBox、PART_Popup）。2026-09-04 本机真实设置页 MiniMax 返回 8 个模型、火山返回 99 个模型，模型下拉选择已验收；仅请求目录，不发送用户提示词或附件。
+- ProviderApiKeyEditorPolicy 将“显示已保存值”和“用户编辑”分开：前者只供原生 PasswordBox 掩码显示，不能形成待写凭据；后者明确创建替换/删除草稿。未经窗口防捕获确认不解密显示。2026-09-04 本轮 Release 全量 718 项通过，ProviderSmoke 编译零警告，Debug 界面已确认真实密钥逐字符圆点显示，验收不保存用户配置，GitHub 发布仍暂停。

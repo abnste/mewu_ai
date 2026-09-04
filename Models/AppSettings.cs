@@ -27,7 +27,7 @@ public sealed class HotkeySetting
 }
 public sealed class AiProviderSettings
 {
-    [JsonRequired] public string Id { get; set; } = Guid.NewGuid().ToString("N"); public string Name { get; set; } = "MiniMax M3"; [JsonRequired] public string Type { get; set; } = "MiniMax";
+    [JsonRequired] public string Id { get; set; } = Guid.NewGuid().ToString("N"); public string Name { get; set; } = "MiniMax"; [JsonRequired] public string Type { get; set; } = "MiniMax";
     [JsonRequired] public string BaseUrl { get; set; } = "https://api.minimaxi.com/v1"; [JsonRequired] public string Model { get; set; } = "MiniMax-M3"; public string CredentialId { get; set; } = string.Empty;
     public Dictionary<string,string> CustomHeaders { get; set; } = [];
     public Dictionary<string,string> SensitiveHeaderCredentialIds { get; set; } = [];

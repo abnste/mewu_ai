@@ -62,6 +62,11 @@ public sealed class SettingsWindow : Window
     private string? _defaultProviderId;
     private readonly int _repairedProviderIdentityCount;
     private bool _loadingProvider;
+    private readonly HashSet<AiProviderSettings> _automaticProviderDrafts = new(ReferenceEqualityComparer.Instance);
+    private FrameworkElement? _baseUrlField;
+    private readonly TextBlock _modelStatus = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9), FontSize = 12 };
+    private CancellationTokenSource? _modelLoad;
+    private readonly System.Windows.Threading.DispatcherTimer _modelLoadDebounce = new() { Interval = TimeSpan.FromMilliseconds(600) };
     private bool _loadingHermes;
     private bool _hermesBusy;
     private bool? _captureProtectionAvailable;
@@ -190,13 +195,15 @@ public sealed class SettingsWindow : Window
             var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
             NativeMethods.TryUseSystemRoundedCorners(handle);
             _captureProtectionAvailable=NativeMethods.ExcludeFromCapture(handle);
-            if(_captureProtectionAvailable==true)return;
+            if(_captureProtectionAvailable==true){LoadDisplayedApiKey();return;}
             try{new PrivacyLogger().Error("SettingsCaptureProtection",new InvalidOperationException("设置窗口无法启用防捕获"));}catch{}
             HideSensitiveEditorsAfterCaptureProtectionFailure();
         };
         Loaded += SettingsWindowLoaded;
         Closed += (_, _) =>
         {
+            _modelLoadDebounce.Stop();
+            _modelLoad?.Cancel();
             _windowLifetime.Cancel();
             _connectionTest?.Cancel();
             _hermesConnectionTest?.Cancel();
@@ -420,7 +427,11 @@ public sealed class SettingsWindow : Window
         _providerSelector.DisplayMemberPath = nameof(AiProviderSettings.Name);
         System.Windows.Automation.AutomationProperties.SetName(_providerSelector, "Provider 配置");
         _providerSelector.Margin = new Thickness(0, 0, 8, 8);
-        foreach (var configured in _providers) _providerSelector.Items.Add(configured);
+        foreach (var configured in _providers)
+        {
+            configured.Name = ProviderPresetPolicy.DisplayName(configured);
+            _providerSelector.Items.Add(configured);
+        }
         var add = ActionButton("新增");
         add.Margin = new Thickness(0, 0, 8, 8);
         add.Click += (_, _) => AddProvider();
@@ -449,18 +460,48 @@ public sealed class SettingsWindow : Window
         };
         panel.Children.Add(_defaultProvider);
         _providerType.SelectedValuePath = "Tag";
-        _providerType.Items.Add(new ComboBoxItem { Content = "OpenAI 兼容", Tag = "OpenAICompatible" });
-        _providerType.Items.Add(new ComboBoxItem { Content = "MiniMax M3", Tag = "MiniMax" });
-        panel.Children.Add(Labeled("Provider 类型", _providerType));
-        panel.Children.Add(Labeled("Base URL", _baseUrl));
-        panel.Children.Add(Text("Model",true));var modelRow=new Grid{Margin=new Thickness(0,0,0,9)};modelRow.ColumnDefinitions.Add(new ColumnDefinition());modelRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});_model.IsEditable=true;_model.IsTextSearchEnabled=true;System.Windows.Automation.AutomationProperties.SetName(_model,"Model");var refreshModels=ActionButton("获取火山模型");refreshModels.Margin=new Thickness(8,0,0,0);refreshModels.Click+=async (_,_)=>await RefreshVolcengineModelsAsync(refreshModels);modelRow.Children.Add(_model);Grid.SetColumn(refreshModels,1);modelRow.Children.Add(refreshModels);panel.Children.Add(modelRow);
-        panel.Children.Add(Text("API Key（留空则保留现有密钥）", true));
+        foreach (var preset in ProviderPresetPolicy.All)
+            _providerType.Items.Add(new ComboBoxItem { Content = LocalizationService.T(preset.Name, preset.Id == "Volcengine" ? "Volcengine" : preset.Id == "Custom" ? "Custom / OpenAI compatible" : preset.Name), Tag = preset.Id });
+        _providerType.SelectionChanged += ProviderPresetChanged;
+        panel.Children.Add(Labeled(LocalizationService.T("提供商", "Provider"), _providerType));
+        _baseUrlField = (FrameworkElement)Labeled("Base URL", _baseUrl);
+        panel.Children.Add(_baseUrlField);
+        panel.Children.Add(Text(LocalizationService.T("模型", "Model"), true));
+        var modelRow = new Grid { Margin = new Thickness(0, 0, 0, 9) };
+        modelRow.ColumnDefinitions.Add(new ColumnDefinition());
+        modelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        _model.IsEditable = true;
+        _model.IsTextSearchEnabled = false;
+        _model.StaysOpenOnEdit = true;
+        System.Windows.Automation.AutomationProperties.SetName(_model, "Model");
+        var refreshModels = ActionButton(LocalizationService.T("刷新模型", "Refresh models"));
+        refreshModels.Margin = new Thickness(8, 0, 0, 0);
+        refreshModels.Click += async (_, _) => await RefreshModelsAsync();
+        modelRow.Children.Add(_model);
+        Grid.SetColumn(refreshModels, 1);
+        modelRow.Children.Add(refreshModels);
+        panel.Children.Add(modelRow);
+        _modelStatus.Foreground = SecondaryBrush;
+        panel.Children.Add(_modelStatus);
+        _modelLoadDebounce.Tick += async (_, _) => { _modelLoadDebounce.Stop(); await RefreshModelsAsync(); };
+        _baseUrl.TextChanged += (_, _) => ScheduleModelLoad();
+        _customHeaders.TextChanged += (_, _) => ScheduleModelLoad();
+        _apiKey.LostKeyboardFocus += (_, _) => { if (!_loadingProvider) ScheduleModelLoad(); };
+        _model.Loaded += (_, _) => ScheduleModelLoad();
+        panel.Children.Add(Text("API Key", true));
+        _apiKey.PasswordChar = '\u25CF';
         var apiKeyRow=new Grid{Margin=new Thickness(0,0,0,4)};apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition());apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
         _clearApiKey.Content="清除已保存密钥";_clearApiKey.Padding=new Thickness(14,9,14,9);_clearApiKey.Margin=new Thickness(8,0,0,0);_clearApiKey.SetResourceReference(StyleProperty,"SecondaryButton");_clearApiKey.Click+=(_,_)=>ToggleApiKeyDeletion();
         System.Windows.Automation.AutomationProperties.SetName(_apiKey,"API Key");
         apiKeyRow.Children.Add(_apiKey);Grid.SetColumn(_clearApiKey,1);apiKeyRow.Children.Add(_clearApiKey);panel.Children.Add(apiKeyRow);
         _apiKeyStatus.Foreground=SecondaryBrush;_apiKeyStatus.FontSize=11;_apiKeyStatus.Margin=new Thickness(0,0,0,12);_apiKeyStatus.TextWrapping=TextWrapping.Wrap;panel.Children.Add(_apiKeyStatus);
-        _apiKey.PasswordChanged+=(_,_)=>{if(_loadingProvider)return;if(_apiKey.Password.Length>0&&_selectedProvider is not null)_apiKeysMarkedForDeletion.Remove(_selectedProvider.Id);UpdateApiKeyStatus();};
+        _apiKey.PasswordChanged += (_, _) =>
+        {
+            if (_loadingProvider || _captureProtectionAvailable != true || _selectedProvider is null) return;
+            ProviderApiKeyEditorPolicy.RecordEdit(_selectedProvider.Id, _apiKey.Password, _pendingApiKeys, _apiKeysMarkedForDeletion);
+            UpdateApiKeyStatus();
+            ScheduleModelLoad();
+        };
         _customHeaders.AcceptsReturn = true;
         _customHeaders.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _customHeaders.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
@@ -903,45 +944,104 @@ public sealed class SettingsWindow : Window
         _selectedProvider = provider;
         _loadingProvider = true;
         _providerName.Text = provider.Name;
-        _providerType.SelectedValue = provider.Type.Equals("MiniMax", StringComparison.OrdinalIgnoreCase) ? "MiniMax" : "OpenAICompatible";
+        _modelLoad?.Cancel();
+        _modelLoadDebounce.Stop();
+        var preset = ProviderPresetPolicy.Detect(provider);
+        _providerType.SelectedValue = preset.Id;
+        if (_baseUrlField is not null) _baseUrlField.Visibility = preset.Id == "Custom" ? Visibility.Visible : Visibility.Collapsed;
         _baseUrl.Text = provider.BaseUrl;
         _model.Text = provider.Model;
-        PopulateModelSuggestions(provider.BaseUrl,provider.Model);
+        PopulateModelSuggestions(provider.Model);
         _customHeaders.Text = _captureProtectionAvailable==false
             ?"屏幕防捕获不可用，Custom Headers 已隐藏。"
             :provider.CustomHeaders.Count == 0 ? "{}" : JsonSerializer.Serialize(provider.CustomHeaders, new JsonSerializerOptions { WriteIndented = true });
-        _apiKey.Password = _pendingApiKeys.GetValueOrDefault(provider.Id) ?? string.Empty;
+        LoadDisplayedApiKey();
         _defaultProvider.IsChecked = provider.Id == _defaultProviderId;
         _loadingProvider = false;
         UpdateApiKeyStatus();
+        ScheduleModelLoad();
     }
 
-    private void PopulateModelSuggestions(string baseUrl,string currentModel,IEnumerable<string>? liveModels=null)
+    private void PopulateModelSuggestions(string currentModel,IEnumerable<string>? liveModels=null)
     {
         _model.Items.Clear();var models=new List<string>();
-        try{if(VolcengineModelPolicy.IsEndpoint(ProviderEndpointPolicy.NormalizeBaseUri(baseUrl)))models.AddRange(liveModels??VolcengineModelPolicy.RecommendedModels);}catch(InvalidOperationException){}
+        if (liveModels is not null) models.AddRange(liveModels);
         if(!string.IsNullOrWhiteSpace(currentModel)&&!models.Contains(currentModel,StringComparer.OrdinalIgnoreCase))models.Insert(0,currentModel);
         foreach(var model in models.Distinct(StringComparer.OrdinalIgnoreCase))_model.Items.Add(model);
+        _model.SelectedItem = models.FirstOrDefault(m => m.Equals(currentModel, StringComparison.OrdinalIgnoreCase));
         _model.Text=currentModel;
     }
 
-    private async Task RefreshVolcengineModelsAsync(Button button)
+    private void ProviderPresetChanged(object sender, SelectionChangedEventArgs e)
     {
-        if(_selectedProvider is null||_loadingProvider)return;button.IsEnabled=false;
-        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        if (_loadingProvider || _selectedProvider is null) return;
+        var preset = ProviderPresetPolicy.All.First(p => p.Id == (string)_providerType.SelectedValue);
+        // A vendor switch selects a separate configuration: never send another vendor's saved key/headers.
+        if (!StoreSelectedProvider(true)) { _loadingProvider = true; _providerType.SelectedValue = ProviderPresetPolicy.Detect(_selectedProvider).Id; _loadingProvider = false; return; }
+        var previous = _selectedProvider;
+        var discardEmptyDraft = _automaticProviderDrafts.Contains(previous) && ProviderPresetPolicy.IsUntouchedDraft(previous, _pendingApiKeys.ContainsKey(previous.Id));
+        var next = _providers.FirstOrDefault(p => !ReferenceEquals(p, _selectedProvider) && ProviderPresetPolicy.Detect(p).Id == preset.Id);
+        if (next is null)
+        {
+            next = ProviderPresetPolicy.Create(preset);
+            _automaticProviderDrafts.Add(next);
+            _providers.Add(next);
+            _providerSelector.Items.Add(next);
+        }
+        var replaceDefault = _defaultProviderId == _selectedProvider.Id;
+        _providerSelector.SelectedItem = next;
+        if (replaceDefault) _defaultProvider.IsChecked = true;
+        if (discardEmptyDraft)
+        {
+            _automaticProviderDrafts.Remove(previous);
+            _providers.Remove(previous);
+            _providerSelector.Items.Remove(previous);
+        }
+    }
+
+    private void ScheduleModelLoad()
+    {
+        if (_loadingProvider) return;
+        _modelLoad?.Cancel();
+        _modelLoad = null;
+        _modelLoadDebounce.Stop();
+        _modelStatus.Text = LocalizationService.T("模型可从列表选择，也可手动输入 ID。", "Select a model from the list or enter its ID.");
+        if (_model.IsLoaded && !_windowLifetime.IsCancellationRequested) _modelLoadDebounce.Start();
+    }
+
+    private async Task RefreshModelsAsync()
+    {
+        if (_selectedProvider is null || _loadingProvider || _windowLifetime.IsCancellationRequested) return;
+        _modelLoadDebounce.Stop();
+        _modelLoad?.Cancel();
+        using var operation = CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
+        _modelLoad = operation;
+        operation.CancelAfter(TimeSpan.FromSeconds(30));
+        var provider = _selectedProvider;
+        var endpoint = _baseUrl.Text.TrimEnd('/');
+        bool IsCurrent() => ReferenceEquals(_modelLoad, operation) && ReferenceEquals(provider, _selectedProvider) && !operation.IsCancellationRequested;
         try
         {
-            if(_captureProtectionAvailable==false)throw new InvalidOperationException("系统未能启用设置窗口防捕获，不能读取敏感凭据");
-            if(!StoreSelectedProvider(true))return;
-            var key=!string.IsNullOrWhiteSpace(_apiKey.Password)?_apiKey.Password:_apiKeysMarkedForDeletion.Contains(_selectedProvider.Id)?null:new CredentialService().Read(_selectedProvider.CredentialId);
-            var models=await new VolcengineModelCatalogService().GetChatModelsAsync(_baseUrl.Text.TrimEnd('/'),key??string.Empty,ParseHeaders(),timeout.Token);
-            if(models.Count==0)throw new InvalidOperationException("当前账户没有返回可用的对话模型");
-            PopulateModelSuggestions(_baseUrl.Text,_model.Text,models);button.Content=$"已获取 {models.Count} 个";
+            if (_captureProtectionAvailable != true) return;
+            if (string.IsNullOrWhiteSpace(endpoint)) { _modelStatus.Text = LocalizationService.T("请填写 API 地址。", "Enter an API endpoint."); return; }
+            ValidateSensitiveHeaderAvailability(provider);
+            var headers = ParseHeaders();
+            var key = !string.IsNullOrWhiteSpace(_apiKey.Password) ? _apiKey.Password : _apiKeysMarkedForDeletion.Contains(provider.Id) ? null : new CredentialService().Read(provider.CredentialId);
+            if (string.IsNullOrWhiteSpace(key) && !headers.Keys.Any(ProviderHeaderCredentialService.IsAuthentication) && !ProviderEndpointPolicy.NormalizeBaseUri(endpoint).IsLoopback)
+            { _modelStatus.Text = LocalizationService.T("输入此提供商的 API Key 后自动加载模型。", "Enter this provider's API key to load models automatically."); return; }
+            _modelStatus.Text = LocalizationService.T("正在加载模型…", "Loading models…");
+            var models = await new ProviderModelCatalogService().GetModelsAsync(endpoint, key ?? "", headers, operation.Token);
+            if (!IsCurrent()) return;
+            var currentModel = _model.Text;
+            PopulateModelSuggestions(currentModel, models);
+            _modelStatus.Text = models.Count == 0
+                ? LocalizationService.T("未返回可用模型，可手动输入模型 ID。", "No models returned. Enter a model ID manually.")
+                : LocalizationService.T($"已加载 {models.Count} 个模型；可下拉选择或手动输入。", $"Loaded {models.Count} models. Choose one or enter an ID.");
         }
-        catch(OperationCanceledException)when(_windowLifetime.IsCancellationRequested){}
-        catch(OperationCanceledException){if(IsVisible)MessageBox.Show(this,"获取模型列表超时，请检查网络后重试。","火山模型列表");}
-        catch(Exception ex)when(ex is InvalidOperationException or JsonException or HttpRequestException or IOException){if(IsVisible)MessageBox.Show(this,ex.Message,"火山模型列表");}
-        finally{if(IsVisible)button.IsEnabled=true;}
+        catch (OperationCanceledException) { if (ReferenceEquals(_modelLoad, operation) && !_windowLifetime.IsCancellationRequested) _modelStatus.Text = LocalizationService.T("加载已取消或超时，可刷新重试或手动输入模型 ID。", "Loading canceled or timed out. Retry or enter a model ID."); }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException or HttpRequestException or IOException)
+        { if (IsCurrent()) _modelStatus.Text = ex is InvalidOperationException ? ex.Message : LocalizationService.T("加载模型失败，请检查地址、密钥和网络；可手动输入模型 ID。", "Could not load models. Check the endpoint, key and network, or enter a model ID."); }
+        finally { if (ReferenceEquals(_modelLoad, operation)) _modelLoad = null; }
     }
 
     private bool StoreSelectedProvider(bool showValidationError=false)
@@ -955,14 +1055,9 @@ public sealed class SettingsWindow : Window
             return false;
         }
         _selectedProvider.Name = string.IsNullOrWhiteSpace(_providerName.Text) ? "未命名 Provider" : _providerName.Text.Trim();
-        _selectedProvider.Type = IsMiniMaxTypeSelected() ? "MiniMax" : "OpenAICompatible";
         _selectedProvider.BaseUrl = _baseUrl.Text.TrimEnd('/');
         _selectedProvider.Model = _model.Text.Trim();
-        if (_selectedProvider.Type == "MiniMax" && _selectedProvider.BaseUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase)) _selectedProvider.BaseUrl = "https://api.minimaxi.com/v1";
-        if (_selectedProvider.Type == "MiniMax" && _selectedProvider.Model.StartsWith("gpt-", StringComparison.OrdinalIgnoreCase)) _selectedProvider.Model = "MiniMax-M3";
         _selectedProvider.CustomHeaders=headers;
-        if (!string.IsNullOrWhiteSpace(_apiKey.Password)){_pendingApiKeys[_selectedProvider.Id]=_apiKey.Password;_apiKeysMarkedForDeletion.Remove(_selectedProvider.Id);}
-        else if(!_apiKeysMarkedForDeletion.Contains(_selectedProvider.Id))_pendingApiKeys.Remove(_selectedProvider.Id);
         if (_defaultProvider.IsChecked == true) _defaultProviderId = _selectedProvider.Id;
         _providerSelector.Items.Refresh();
         return true;
@@ -982,7 +1077,7 @@ public sealed class SettingsWindow : Window
     private void AddProvider()
     {
         if(!StoreSelectedProvider(true))return;
-        var provider = new AiProviderSettings { Name = $"Provider {_providers.Count + 1}" };
+        var provider = new AiProviderSettings { Name = $"MiniMax ({_providers.Count + 1})" };
         _providers.Add(provider);
         _providerSelector.Items.Add(provider);
         _providerSelector.SelectedItem = provider;
@@ -1045,7 +1140,7 @@ public sealed class SettingsWindow : Window
     }
 
     private bool IsMiniMaxTypeSelected() =>
-        string.Equals(_providerType.SelectedValue as string, "MiniMax", StringComparison.OrdinalIgnoreCase);
+        string.Equals(_selectedProvider?.Type, "MiniMax", StringComparison.OrdinalIgnoreCase);
 
     private void Save()
     {
@@ -1171,20 +1266,34 @@ public sealed class SettingsWindow : Window
     private void ToggleApiKeyDeletion()
     {
         if(_selectedProvider is null)return;
-        if(_apiKeysMarkedForDeletion.Remove(_selectedProvider.Id)){UpdateApiKeyStatus();return;}
+        if(_apiKeysMarkedForDeletion.Remove(_selectedProvider.Id)){LoadDisplayedApiKey();ScheduleModelLoad();return;}
         var hasSaved=!string.IsNullOrWhiteSpace(_selectedProvider.CredentialId);var hasDraft=!string.IsNullOrWhiteSpace(_apiKey.Password)||_pendingApiKeys.ContainsKey(_selectedProvider.Id);
         if(!hasSaved&&!hasDraft){UpdateApiKeyStatus();return;}
         if(MessageBox.Show(this,"保存设置后将删除此 Provider 的 API Key。Custom Headers 中的独立凭据不会受影响。","清除 API Key",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
-        _apiKeysMarkedForDeletion.Add(_selectedProvider.Id);_pendingApiKeys.Remove(_selectedProvider.Id);_loadingProvider=true;_apiKey.Clear();_loadingProvider=false;UpdateApiKeyStatus();
+        _apiKeysMarkedForDeletion.Add(_selectedProvider.Id);_pendingApiKeys.Remove(_selectedProvider.Id);LoadDisplayedApiKey();ScheduleModelLoad();
+    }
+
+    private void LoadDisplayedApiKey()
+    {
+        if (_selectedProvider is null) return;
+        var wasLoading = _loadingProvider;
+        _loadingProvider = true;
+        try
+        {
+            _apiKey.Password = ProviderApiKeyEditorPolicy.ReadForDisplay(_selectedProvider, _pendingApiKeys,
+                _apiKeysMarkedForDeletion, _captureProtectionAvailable == true, id => new CredentialService().Read(id));
+        }
+        finally { _loadingProvider = wasLoading; }
+        UpdateApiKeyStatus();
     }
 
     private void UpdateApiKeyStatus()
     {
         if(_selectedProvider is null){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text="";return;}
-        if(_captureProtectionAvailable==false){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text="屏幕防捕获不可用，API Key 与敏感 Header 已隐藏。";_apiKeyStatus.Foreground=new SolidColorBrush(Color.FromRgb(196,76,88));return;}
-        var deleting=_apiKeysMarkedForDeletion.Contains(_selectedProvider.Id);var replacement=!string.IsNullOrWhiteSpace(_apiKey.Password);var savedReference=!string.IsNullOrWhiteSpace(_selectedProvider.CredentialId);var saved=savedReference&&!string.IsNullOrWhiteSpace(new CredentialService().Read(_selectedProvider.CredentialId));
+        if(_captureProtectionAvailable!=true){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text="屏幕防捕获不可用，API Key 与敏感 Header 已隐藏。";_apiKeyStatus.Foreground=new SolidColorBrush(Color.FromRgb(196,76,88));return;}
+        var deleting=_apiKeysMarkedForDeletion.Contains(_selectedProvider.Id);var replacement=_pendingApiKeys.ContainsKey(_selectedProvider.Id);var savedReference=!string.IsNullOrWhiteSpace(_selectedProvider.CredentialId);var saved=savedReference&&!string.IsNullOrWhiteSpace(_apiKey.Password);
         _clearApiKey.Content=deleting?"撤销清除":"清除已保存密钥";_clearApiKey.IsEnabled=deleting||replacement||savedReference;
-        _apiKeyStatus.Text=deleting?"保存后将清除现有 API Key；点击“撤销清除”可保留。":replacement?"新 API Key 将在保存后替换现有密钥。":saved?"已有可用的加密 API Key；输入新值可替换，留空会保留。":savedReference?"已保存的 API Key 无法读取，请输入新值后保存。":"尚未保存 API Key，可改用认证 Custom Header。";
+        _apiKeyStatus.Text=deleting?"保存后将清除现有 API Key；点击“撤销清除”可保留。":replacement?LocalizationService.T("密钥已修改，保存后生效。", "Key changed. Save to apply."):saved?LocalizationService.T("已配置密钥；每个圆点代表一个字符。", "Key configured. Each dot represents one character."):savedReference?"已保存的 API Key 无法读取，请输入新值后保存。":LocalizationService.T("未配置 API Key。", "No API key configured.");
         _apiKeyStatus.Foreground=deleting||savedReference&&!saved?new SolidColorBrush(Color.FromRgb(196,76,88)):SecondaryBrush;
     }
 
