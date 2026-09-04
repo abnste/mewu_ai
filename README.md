@@ -1,86 +1,94 @@
+<div align="center">
+  <img src="./Assets/MewuAI.Icon.png" width="88" alt="MewuAI" />
+  <h1>MewuAI · 喵呜AI</h1>
+  <p><strong>Capture your screen. Let AI annotate, translate, and explain it in place.</strong></p>
+  <p>A Windows screenshot tool with on-screen AI assistance</p>
+  <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="#in-action">In action</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a></p>
+  <p>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.2"><img src="https://img.shields.io/badge/Public_Beta-v0.2.2-7C6CF0?style=flat-square" alt="v0.2.2 Public beta" /></a>
+    <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later" />
+    <img src="https://img.shields.io/badge/Architecture-x64-64748B?style=flat-square" alt="x64" />
+  </p>
+  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe"><strong>Download installer</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip">Portable ZIP</a></p>
+</div>
+
 <p align="center">
-  <img src="./Assets/MewuAI.Icon.png" width="80" alt="MewuAI" />
+  <a href="./docs/images/web-annotations.jpg"><img src="./docs/images/web-annotations.jpg" width="100%" alt="AI marks webpage controls and connects them to explanations" /></a>
+  <br /><sub>Answers connected to the content—not just text in a chat.</sub>
 </p>
 
-# MewuAI
+## In action
 
-**Capture your screen. Ask a question. See the answer right on it.**
+<table>
+<tr>
+<td width="50%" valign="top">
+<h3>Mark what matters</h3>
+<p>Ask AI to highlight details and add notes. Keep annotations as you ask follow-up questions.</p>
+<a href="./docs/images/ai-checkmarks.jpg"><img src="./docs/images/ai-checkmarks.jpg" width="100%" alt="Mark what matters" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>Translate where you read</h3>
+<p>Read and copy translations in place, or extract screenshot text with offline OCR.</p>
+<a href="./docs/images/in-place-translation.jpg"><img src="./docs/images/in-place-translation.jpg" width="100%" alt="Translate where you read" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>Explain the details</h3>
+<p>Connect explanations to code, diagrams, or controls. Reference screenshots and attachments with @.</p>
+<a href="./docs/images/code-explanation.jpg"><img src="./docs/images/code-explanation.jpg" width="100%" alt="Explain the details" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>Sketch and annotate</h3>
+<p>AI sketches alongside manual pens, shapes, text, numbered markers, highlights, and pixelation.</p>
+<a href="./docs/images/ai-drawing.jpg"><img src="./docs/images/ai-drawing.jpg" width="100%" alt="Sketch and annotate" /></a>
+</td>
+</tr>
+</table>
 
-A Windows screenshot tool with on-screen AI annotations. Highlight details, translate text, explain a diagram, or find a moment in a video—all without leaving the content you're working with.
+### Video annotations that follow the action
 
-**English** · [简体中文](./README.zh-CN.md) · [Download installer](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe) · [Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip) · [Video demo](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4)
+Record a region or attach a video. Jump to an AI-marked moment, or play an interval with tracking annotations.
 
-Windows 10 2004+ · x64 · v0.2.2 public beta
+<p align="center">
+  <img src="./docs/media/MewuAI-video-annotations.gif" width="880" alt="Looping demo of video seeking and tracking annotations" />
+  <br /><sub>Looping preview · <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4">Watch with audio (MP4)</a></sub>
+</p>
 
-![MewuAI marks controls on a webpage and connects them to explanations](./docs/images/web-annotations.jpg)
+*Examples supplied by the author. AI answers, placement, and timing can be wrong; review important results.*
 
-## Show, don't just tell
+## Everyday capture tools
 
-### Mark up what you see
+- **Capture:** Multi-monitor selection, window and supported-control snapping, and scrolling capture in either direction.
+- **Pin and edit:** Pin, zoom, rotate, move annotations, and undo edits. Save the original or annotated image.
+- **Text and tables:** Offline OCR and AI table recognition. Paste tables into Excel or copy them as Markdown or images.
+- **Record and inspect:** Region recording, MP4/GIF export, and color values and coordinates under the pointer.
 
-Ask AI to circle a detail, add a checkmark or cross, or point something out with a note. Keep asking questions without losing existing annotations. You can also draw by hand, move notes, and save the annotated result.
-
-![AI adds checkmarks and a cross to video thumbnails](./docs/images/ai-checkmarks.jpg)
-
-### Read across languages
-
-Translate text where it appears, then select and copy the translation. Offline OCR makes text in screenshots selectable; AI table recognition turns captured tables into cells you can paste into Excel.
-
-![Translated comments remain in their original positions, with selectable text](./docs/images/in-place-translation.jpg)
-
-### Explain the tricky parts
-
-Connect an explanation to the relevant part of a diagram, code example, or interface. Reference multiple screenshots and uploaded files with `@` to ask about them together.
-
-![Notes explain individual blocks in a Scratch program](./docs/images/code-explanation.jpg)
-
-### Put an idea on the screen
-
-Ask AI to sketch, or use the pen, shapes, arrows, text, and numbered markers yourself. Highlight important details or pixelate a rectangular area before sharing.
-
-![A cat drawn by AI directly inside the selected area](./docs/images/ai-drawing.jpg)
-
-### Find the moment in a video
-
-Record a region or attach a video, then ask about what happens. Click a timestamp to jump to a marked moment, or play an annotated interval with tracking. Export recordings as MP4 or GIF.
-
-[Watch the video annotation demo →](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-video-annotations.mp4)
-
-*Examples supplied by the author. AI answers, placement, and timing can be wrong; review the result before sharing or relying on it.*
-
-## A screenshot tool, even without AI
-
-- **Capture:** select across monitors, snap to windows and supported controls, or stitch a scrolling capture in either direction.
-- **Pin:** keep an image on top, zoom or rotate it, and preserve annotations when pinning.
-- **Edit:** draw, highlight, add text or mosaic, undo changes, and choose between the original and annotated image when saving.
-- **Extract:** select text with offline OCR; inspect the color and screen coordinates under your pointer.
-
-Capture, pinning, manual annotation, OCR, and recording work without an AI account. AI chat, translation, and table recognition require a configured backend with the relevant capabilities.
+> Capture, pinning, manual annotation, OCR, and recording work without an AI account. Chat, translation, and table recognition require a configured backend with the relevant capabilities.
 
 ## Get started
 
-1. Download the [installer](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Setup-0.2.2-win-x64.exe), or extract the [portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.2.2/MewuAI-Portable-0.2.2-win-x64.zip) and run `MewuAI.exe`. Neither needs a separate .NET installation.
-2. Press <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd> and select an area. Use its toolbar to copy, save, pin, annotate, or extract text.
-3. For AI features, configure a compatible API in Settings or connect your local Hermes installation. Add references with `@`, type your request, and send.
+1. **Install or unzip.** Use the installer above, or extract the ZIP and run `MewuAI.exe`. No separate .NET installation needed.
+2. **Select an area.** Press <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd> to capture, copy, save, pin, annotate, or extract text.
+3. **Connect AI if you want it.** Configure a compatible API or connect local Hermes in Settings, then reference content with `@` and ask.
 
-The app and installer follow your Windows language. You can choose English or Simplified Chinese in **Settings → General**; app language changes take effect after a restart. The capture shortcut is customizable there too. Check for new versions in **Settings → About**.
+The app and installer follow your Windows language. **Settings → General** lets you choose English or Simplified Chinese (restart required) and change the shortcut. Check for updates in **Settings → About**.
 
-### AI connections and privacy
+<details>
+<summary>Requirements and installation notes</summary>
 
-- Bring your own compatible API, or use an existing local Hermes profile. Image and video support depends on the selected model; a local Hermes connection may still use cloud services.
-- Screenshots and attachments are sent to the selected backend only when you invoke the relevant AI action. A text-only question does **not** attach your desktop automatically.
-- API keys and sensitive authentication headers are encrypted locally with Windows DPAPI. Your provider's own data policies apply to content you send.
-- AI chat and reference controls stay hidden when no usable chat backend is configured. Offline tools remain available.
+Windows 10 version 2004 (build 19041) or later, x64. Windows N/KN needs the Media Feature Pack for H.264 recording and playback. The installer is not code-signed yet; SmartScreen may show an unknown-publisher warning. Download from this repository's Releases and verify the included `SHA256SUMS.txt`.
 
-Tested model for this public beta: **MiniMax M3**. Other model and provider combinations may behave differently.
+</details>
 
-### Before installing
+<details>
+<summary>AI connections and privacy</summary>
 
-Requires **Windows 10 version 2004 (build 19041) or later, x64**. Windows N/KN editions need the Media Feature Pack for H.264 recording and playback. The installer is not code-signed yet, so SmartScreen may show an unknown-publisher warning. Download from this repository's [Releases](https://github.com/abnste/mewu_ai/releases) and verify the included `SHA256SUMS.txt`.
+- Image and video support depends on the model. This beta was tested with **MiniMax M3**; a local Hermes connection may still use cloud services.
+- Content is sent when you invoke the relevant AI action. Text-only questions do not automatically attach your desktop. Your provider's data policies apply to sent content.
+- API keys and sensitive authentication headers are encrypted locally with Windows DPAPI. Without a usable chat backend, AI chat and reference controls stay hidden; offline tools remain available.
 
-## Development
-
-Built with **C# · .NET 10 · WPF**. OCR runs locally; recording uses Windows media components.
+</details>
 
 <details>
 <summary>Build and test on Windows x64</summary>
@@ -98,8 +106,10 @@ The [release workflow](./.github/workflows/release.yml) also builds the smoke-te
 
 </details>
 
-## Author and use
+---
 
-Created by **Abner Stephen**. Source code is available in this repository; **commercial use requires the author's authorization**. Third-party components retain their own licenses—see [third-party notices](./THIRD-PARTY-NOTICES.md).
-
-[Report a bug or suggest a feature](https://github.com/abnste/mewu_ai/issues) · [Release notes](https://github.com/abnste/mewu_ai/releases/tag/v0.2.2)
+<p align="center">
+  Created by <strong>Abner Stephen</strong><br />
+  Source available · Commercial use requires the author's authorization<br />
+  <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.2">Release notes</a>
+</p>
