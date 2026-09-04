@@ -2,17 +2,19 @@ using mewu_ai_Assistant.Models;
 
 namespace mewu_ai_Assistant.Services;
 
-internal sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string DefaultModel);
+internal sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string DefaultModel)
+{
+    internal bool RequiresBaseUrl => Id == "Custom";
+}
 
 internal static class ProviderPresetPolicy
 {
     internal static readonly ProviderPreset[] All =
     [
-        new("MiniMax", "MiniMax", "MiniMax", "https://api.minimaxi.com/v1", "MiniMax-M3"),
-        new("MiniMaxGlobal", "MiniMax (International)", "MiniMax", "https://api.minimax.io/v1", "MiniMax-M3"),
+        new("MiniMax", "MiniMax (CN)", "MiniMax", "https://api.minimaxi.com/v1", "MiniMax-M3"),
+        new("MiniMaxGlobal", "MiniMax", "MiniMax", "https://api.minimax.io/v1", "MiniMax-M3"),
         new("Volcengine", "火山引擎", "OpenAICompatible", VolcengineModelPolicy.StandardBaseUrl, ""),
-        new("OpenAI", "OpenAI", "OpenAICompatible", "https://api.openai.com/v1", ""),
-        new("Custom", "自定义 / OpenAI compatible", "OpenAICompatible", "", "")
+        new("Custom", "OpenAI 通用", "OpenAICompatible", "", "")
     ];
 
     internal static ProviderPreset Detect(AiProviderSettings settings) => All.FirstOrDefault(p =>
