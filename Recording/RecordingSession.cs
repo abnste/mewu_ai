@@ -11,7 +11,7 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
     private static readonly TimeSpan FileReleaseRetryDelay=TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan DeletedFileStabilityWindow=TimeSpan.FromSeconds(1);
     private static readonly TimeSpan CompletedFileWaitTimeout=TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan RecordingStartupStopTimeout=TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan RecordingStartupStopTimeout=TimeSpan.FromSeconds(20);
     private readonly AppSettings _settings;
     private readonly MewuScreenRect _region;
     private readonly TempFileService _temp=new();
@@ -35,6 +35,7 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
 
     public string VideoPath { get; private set; }=string.Empty;
     public TimeSpan Elapsed { get { lock(_stateGate)return _elapsed.Elapsed; } }
+    internal Task RecordingReady=>_recordingReady.Task;
     public event Action<string>? Completed;
     public event Action<string>? Failed;
     public RecordingSession(AppSettings settings,MewuScreenRect region):this(settings,region,static (component,exception)=>new PrivacyLogger().Error(component,exception),null){}

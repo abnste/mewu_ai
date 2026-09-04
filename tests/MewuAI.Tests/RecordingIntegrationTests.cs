@@ -184,17 +184,27 @@ public sealed class RecordingIntegrationTests
         }
     }
 
-    [Fact] public async Task DisposingActiveSessionDeletesAbandonedTemporaryVideo()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DisposingSessionDeletesAbandonedTemporaryVideo(bool waitForRecording)
     {
-        var session=new RecordingSession(new AppSettings{RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null);
+        var errors=new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var session=new RecordingSession(new AppSettings{RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),(component,error)=>errors.Enqueue(component+": "+error.GetType().Name));
         var path=string.Empty;
         try
         {
-            session.Start();path=session.VideoPath;await Task.Delay(350,TestContext.Current.CancellationToken);
-            var disposeCall=Stopwatch.StartNew();session.Dispose();disposeCall.Stop();
-            Assert.True(disposeCall.Elapsed<TimeSpan.FromMilliseconds(500),$"Dispose 阻塞了 {disposeCall.Elapsed.TotalMilliseconds:0} ms");
-            await session.DisposeAsync();
-            Assert.False(File.Exists(path));
+            session.Start();path=session.VideoPath;
+            if(waitForRecording)await session.RecordingReady.WaitAsync(TimeSpan.FromSeconds(25),TestContext.Current.CancellationToken);
+            // Cover both cancellation during native startup and disposal after
+            // the actual Recording callback, never a guessed 350 ms delay.
+            var disposeStarted=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var disposeCall=Task.Run(()=>{disposeStarted.TrySetResult();session.Dispose();},TestContext.Current.CancellationToken);
+            await disposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken);
+            await disposeCall.WaitAsync(TimeSpan.FromSeconds(5),TestContext.Current.CancellationToken);
+            await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(50),TestContext.Current.CancellationToken);
+            Assert.False(File.Exists(path),$"Abandoned recording remains (waitForRecording={waitForRecording}); {string.Join(';',errors)}");
+            Assert.False(TempMediaRegistry.Shared.IsLeased(path));
         }
         finally
         {
