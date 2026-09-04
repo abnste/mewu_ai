@@ -1,5 +1,5 @@
 #define MyAppName "MewuAI"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.2.1"
 #define MyAppPublisher "abnste"
 #define MyAppURL "https://github.com/abnste/mewu_ai"
 #define PublishDir "..\artifacts\release\win-x64"
@@ -35,7 +35,7 @@ CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=yes
 SetupLogging=yes
-VersionInfoVersion=0.2.0.0
+VersionInfoVersion=0.2.1.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription=MewuAI Windows installer
 VersionInfoProductName=MewuAI

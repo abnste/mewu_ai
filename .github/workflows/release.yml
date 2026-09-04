@@ -102,6 +102,12 @@ jobs:
           dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64 --no-build --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Release tests failed.' }
 
+      - name: Restore self-contained runtime packs
+        shell: pwsh
+        run: |
+          dotnet restore .\mewu_ai_Assistant.csproj --locked-mode -r win-x64 -p:Configuration=Release -p:Platform=x64 -p:SelfContained=true
+          if ($LASTEXITCODE -ne 0) { throw 'Self-contained runtime pack restore failed.' }
+
       - name: Publish self-contained app
         run: dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained true --no-restore -o .\artifacts\release\win-x64
 

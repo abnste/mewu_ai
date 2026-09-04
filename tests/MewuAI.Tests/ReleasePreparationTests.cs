@@ -13,14 +13,14 @@ public sealed class ReleasePreparationTests
     {
         var project=XDocument.Load(Fixture("Product.csproj.xml"));
         var propertyGroup=project.Root!.Elements("PropertyGroup").First();
-        Assert.Equal("0.2.0",propertyGroup.Element("Version")?.Value);
-        Assert.Equal("0.2.0.0",propertyGroup.Element("AssemblyVersion")?.Value);
-        Assert.Equal("0.2.0.0",propertyGroup.Element("FileVersion")?.Value);
+        Assert.Equal("0.2.1",propertyGroup.Element("Version")?.Value);
+        Assert.Equal("0.2.1.0",propertyGroup.Element("AssemblyVersion")?.Value);
+        Assert.Equal("0.2.1.0",propertyGroup.Element("FileVersion")?.Value);
 
         var installer=File.ReadAllText(Fixture("MewuAI.iss.txt"));
-        Assert.Contains("#define MyAppVersion \"0.2.0\"",installer,StringComparison.Ordinal);
-        Assert.Contains("VersionInfoVersion=0.2.0.0",installer,StringComparison.Ordinal);
-        Assert.True(File.Exists(Fixture("release-notes-v0.2.0.md")));
+        Assert.Contains("#define MyAppVersion \"0.2.1\"",installer,StringComparison.Ordinal);
+        Assert.Contains("VersionInfoVersion=0.2.1.0",installer,StringComparison.Ordinal);
+        Assert.True(File.Exists(Fixture("release-notes-v0.2.1.md")));
     }
 
     [Fact]
@@ -33,6 +33,16 @@ public sealed class ReleasePreparationTests
 
         var solution=XDocument.Load(Fixture("Product.slnx.xml"));
         Assert.Contains(solution.Descendants("Project"),project=>string.Equals((string?)project.Attribute("Path"),"tests/MewuAI.ProviderSmoke/MewuAI.ProviderSmoke.csproj",StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RedistributableLicensePathsSupportPackageRootsWithoutTrailingSeparator()
+    {
+        var project=XDocument.Load(Fixture("Product.csproj.xml"));
+        var sources=project.Descendants("Content").Select(element=>(string?)element.Attribute("Include"))
+            .Where(value=>value?.StartsWith("$(NuGetPackageRoot)",StringComparison.Ordinal)==true).ToArray();
+        Assert.Equal(4,sources.Length);
+        foreach(var source in sources)Assert.StartsWith("$(NuGetPackageRoot)\\",source,StringComparison.Ordinal);
     }
 
     [Fact]
