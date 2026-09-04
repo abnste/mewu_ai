@@ -85,6 +85,7 @@ Windows 10 2004（build 19041）及以上，x64。Windows N/KN 录制和播放 H
 <summary>AI 接入与隐私</summary>
 
 - 图片、视频能力取决于所选模型。本次公测使用 **MiniMax M3** 测试；连接本机 Hermes 也可能使用云端模型服务。
+- 提供商可选 OpenAI 通用、MiniMax、MiniMax (CN)、火山引擎；只有 OpenAI 通用需要填写 URL，其余使用固定地址。填写 Key 后选择模型，请求参数按需在高级设置中修改。
 - 主动调用 AI 功能时才发送相应内容；纯文字提问不会自动附带桌面截图。服务商的数据政策适用于已发送内容。
 - API Key 与敏感认证 Header 使用 Windows DPAPI 本地加密。未配置可用对话后端时，隐藏 AI 对话条与引用入口，离线工具仍可使用。
 
