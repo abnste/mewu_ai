@@ -66,6 +66,8 @@ Record a region or attach a video. Jump to an AI-marked moment, or play an inter
 
 > Capture, pinning, manual annotation, OCR, and recording work without an AI account. Chat, translation, and table recognition require a configured backend with the relevant capabilities.
 
+**Tested model:** MiniMax M3 has been tested through both Hermes and direct API connections. Other models have not been verified; please test their compatibility yourself.
+
 ## Get started
 
 1. **Install or unzip.** Use the installer above, or extract the ZIP and run `MewuAI.exe`. No separate .NET installation needed.
@@ -84,7 +86,7 @@ Windows 10 version 2004 (build 19041) or later, x64. Windows N/KN needs the Medi
 <details>
 <summary>AI connections and privacy</summary>
 
-- Image and video support depends on the model. This beta was tested with **MiniMax M3**; a local Hermes connection may still use cloud services.
+- Image and video support depends on the model. A local Hermes connection may still use cloud services.
 - Choose OpenAI compatible, MiniMax, MiniMax (CN), or Volcengine. Only OpenAI compatible requires a URL; the others use fixed endpoints. Enter your API key, then choose a model. Optional request parameters are under Advanced settings.
 - Content is sent when you invoke the relevant AI action. Text-only questions do not automatically attach your desktop. Your provider's data policies apply to sent content.
 - API keys and sensitive authentication headers are encrypted locally with Windows DPAPI. Without a usable chat backend, AI chat and reference controls stay hidden; offline tools remain available.
