@@ -77,17 +77,17 @@ public sealed class HermesLaunchPolicyTests : IDisposable
     }
 
     [Theory]
-    [InlineData("ModuleNotFoundError: No module named 'private-name'", "Python")]
-    [InlineData("Fatal error in launcher: token=private-token", "Python")]
-    [InlineData("PermissionError: C:\\private-path", "拒绝")]
-    [InlineData("UnicodeEncodeError: private-prompt", "编码")]
-    [InlineData("error: unrecognized arguments: private-flag", "参数")]
-    public void DiagnosticsExplainTheCategoryWithoutEchoingPrivateOutput(string input,string expected)
+    [InlineData("ModuleNotFoundError: No module named 'private-name'", "Python", "Python")]
+    [InlineData("Fatal error in launcher: token=private-token", "Python", "Python")]
+    [InlineData("PermissionError: C:\\private-path", "拒绝", "Access denied")]
+    [InlineData("UnicodeEncodeError: private-prompt", "编码", "encoding")]
+    [InlineData("error: unrecognized arguments: private-flag", "参数", "arguments")]
+    public void DiagnosticsExplainTheCategoryWithoutEchoingPrivateOutput(string input,string expectedChinese,string expectedEnglish)
     {
         var diagnostics=new HermesStartupDiagnostics();
         diagnostics.Observe(input);
         var message=diagnostics.Describe(1);
-        Assert.Contains(expected,message,StringComparison.Ordinal);
+        Assert.Contains(LocalizationService.IsEnglish?expectedEnglish:expectedChinese,message,StringComparison.Ordinal);
         Assert.DoesNotContain("private",message,StringComparison.Ordinal);
         Assert.Contains("1",message,StringComparison.Ordinal);
     }
@@ -101,7 +101,7 @@ public sealed class HermesLaunchPolicyTests : IDisposable
         var message=diagnostics.Describe(1);
         Assert.DoesNotContain("private",message,StringComparison.Ordinal);
         Assert.DoesNotContain("Python",message,StringComparison.Ordinal);
-        Assert.Contains("不能仅凭",message,StringComparison.Ordinal);
+        Assert.Contains(LocalizationService.IsEnglish?"exit code alone does not prove":"不能仅凭",message,StringComparison.Ordinal);
     }
 
     public void Dispose(){if(Directory.Exists(_home))Directory.Delete(_home,true);}
