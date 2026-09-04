@@ -65,6 +65,18 @@ internal static class LocalizationService
 
     private static readonly (Regex Pattern,string Replacement)[] EnglishPatterns=
     [
+        (new Regex("^已保留 (\\d+) 段 · 未接上，请回滚少许$",RegexOptions.CultureInvariant),"$1 segments kept · Scroll back slightly to reconnect"),
+        (new Regex("^已回到接点 · (\\d+) 段$",RegexOptions.CultureInvariant),"Overlap restored · $1 segments"),
+        (new Regex("^长截图完成 · (\\d+) × (\\d+) · 已按原比例显示$",RegexOptions.CultureInvariant),"Capture complete · $1 × $2 · Original proportions preserved"),
+        (new Regex("^已向[上下]滚动 · 可双向继续滚动或点击完成$",RegexOptions.CultureInvariant),"Scroll in either direction, or select Finish"),
+        (new Regex("^已达 24 段上限，请完成$",RegexOptions.CultureInvariant),"24-segment limit reached · Select Finish"),
+        (new Regex("^已达图像容量上限，请完成$",RegexOptions.CultureInvariant),"Image size limit reached · Select Finish"),
+        (new Regex("^正在拼接，请放慢滚动$",RegexOptions.CultureInvariant),"Stitching · Please scroll more slowly"),
+        (new Regex("^仍在拼接，请稍后再完成$",RegexOptions.CultureInvariant),"Still stitching · Try Finish again shortly"),
+        (new Regex("^采集失败，请完成或取消$",RegexOptions.CultureInvariant),"Capture failed · Select Finish or Cancel"),
+        (new Regex("^在区域内向上或向下滚动 · 新内容会按方向拼接$",RegexOptions.CultureInvariant),"Scroll up or down inside the region to extend your capture"),
+        (new Regex("^正在等待页面向[上下]滚动完成…$",RegexOptions.CultureInvariant),"Waiting for the page to scroll…"),
+        (new Regex("^没有检测到新的滚动内容；可能已到边界$",RegexOptions.CultureInvariant),"No new content detected · You may have reached the edge"),
         (new Regex("^已采集 1 段$",RegexOptions.CultureInvariant),"1 segment captured"),
         (new Regex("^已采集 (\\d+) 段 · (\\d+)px$",RegexOptions.CultureInvariant),"Captured $1 segments · $2 px"),
         (new Regex("^已采集 (\\d+) 段$",RegexOptions.CultureInvariant),"Captured $1 segments"),

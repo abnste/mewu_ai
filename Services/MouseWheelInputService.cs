@@ -4,6 +4,7 @@ namespace mewu_ai_Assistant.Services;
 
 internal static class MouseWheelInputService
 {
+    internal const uint ForwardedWheelMarker=0x4D455755;
     private const uint WmMouseWheel=0x020A;
     private const uint GetAncestorRoot=2;
     private const uint ChildWindowSkipInvisible=0x0001;
@@ -12,10 +13,20 @@ internal static class MouseWheelInputService
     private const uint ChildWindowFlags=ChildWindowSkipInvisible|ChildWindowSkipDisabled|ChildWindowSkipTransparent;
 
     internal static bool SetCursor(int x,int y)=>SetCursorPos(x,y);
+    internal static bool ActivateScrollTarget(IntPtr target,IntPtr overlay)
+    {
+        if(target==IntPtr.Zero)return false;
+        var root=GetAncestor(target,GetAncestorRoot);if(root==IntPtr.Zero)root=target;
+        var foreground=GetForegroundWindow();
+        if(foreground==root)return true;
+        // Transfer only the capture overlay's foreground ownership. Never
+        // steal focus from another app the user deliberately switched to.
+        return foreground==overlay&&SetForegroundWindow(root);
+    }
     internal static bool InjectWheel(int delta)
     {
         if(delta==0)return true;
-        var input=new Input{Type=0,Mouse=new MouseInput{MouseData=unchecked((uint)delta),Flags=0x0800}};
+        var input=new Input{Type=0,Mouse=new MouseInput{MouseData=unchecked((uint)delta),Flags=0x0800,ExtraInfo=new UIntPtr(ForwardedWheelMarker)}};
         return SendInput(1,[input],Marshal.SizeOf<Input>())==1;
     }
     internal static bool ScrollDown(int amount=720){var input=new Input{Type=0,Mouse=new MouseInput{MouseData=unchecked((uint)-Math.Abs(amount)),Flags=0x0800}};return SendInput(1,[input],Marshal.SizeOf<Input>())==1;}
@@ -75,6 +86,8 @@ internal static class MouseWheelInputService
     [DllImport("user32.dll")]private static extern bool SetCursorPos(int x,int y);
     [DllImport("user32.dll")]private static extern bool PostMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
     [DllImport("user32.dll")]private static extern IntPtr GetAncestor(IntPtr handle,uint flags);
+    [DllImport("user32.dll")]private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")]private static extern bool ScreenToClient(IntPtr handle,ref NativePoint point);
     [DllImport("user32.dll")]private static extern IntPtr ChildWindowFromPointEx(IntPtr parent,NativePoint point,uint flags);
 }

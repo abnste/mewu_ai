@@ -13,6 +13,40 @@ namespace MewuAI.Tests;
 public sealed class CaptureImageFeatureTests
 {
     [Fact]
+    public void LongCaptureQueuePreservesFramesAndDirectionWhileConsumerIsBusy()
+    {
+        var buffer=new LongCaptureSampleBuffer();
+        for(var index=0;index<8;index++)Assert.True(buffer.TryEnqueue(new(Frame(32,40,index),null,index<4?1:-1,false)));
+        Assert.False(buffer.TryEnqueue(new(Frame(32,40,9),null,1,false)));
+        for(var index=0;index<8;index++)
+        {
+            Assert.True(buffer.TryDequeue(out var sample));
+            Assert.Equal(index<4?1:-1,sample.Direction);
+            var actual=new byte[32*40*4];var expected=new byte[actual.Length];
+            sample.Image.CopyPixels(actual,32*4,0);Frame(32,40,index).CopyPixels(expected,32*4,0);
+            Assert.Equal(expected,actual);
+        }
+        Assert.False(buffer.TryDequeue(out _));
+    }
+
+    [Fact]
+    public void LongCaptureQueueClearReleasesCapacityAndRejectsOversize()
+    {
+        var buffer=new LongCaptureSampleBuffer();
+        Assert.False(buffer.HasCapacity(8000,8000));
+        for(var i=0;i<8;i++)Assert.True(buffer.TryEnqueue(new(Frame(32,40,i),null,1,false)));
+        buffer.Clear();Assert.Equal(0,buffer.Count);Assert.True(buffer.HasCapacity(32,40));
+    }
+
+    [Fact]
+    public void LongCaptureBudgetIncludesBothDirectionsWithoutCountingRetracedAreaTwice()
+    {
+        Assert.True(ScrollingCaptureComposer.FitsOutputBudget(8000,5000,[4000,-4000]));
+        Assert.False(ScrollingCaptureComposer.FitsOutputBudget(8000,5000,[4000,-4000,-2000]));
+        Assert.False(ScrollingCaptureComposer.FitsOutputBudget(8000,5000,[int.MinValue]));
+    }
+
+    [Fact]
     public void ExportNamesUseReadableLocalTimestamp()
     {
         var timestamp=new DateTime(2026,9,3,18,42,7,DateTimeKind.Local);
@@ -84,6 +118,53 @@ public sealed class CaptureImageFeatureTests
         var first=Frame(64,100,40);var second=Frame(64,100,80);var third=Frame(64,100,40);var result=ScrollingCaptureComposer.Compose([first,second,third],[40,-40]);Assert.Equal(140,result.PixelHeight);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(-1)]
+    public void LargeScrollKeepsNarrowButValidOverlap(int direction)
+    {
+        var first=Frame(512,720,direction<0?630:0);var second=Frame(512,720,direction<0?0:630);
+        Assert.Equal(direction*630,ScrollingCaptureComposer.EstimateVerticalShift(first,second,out _,null,direction));
+    }
+
+    [Theory]
+    [InlineData(7)]
+    [InlineData(31)]
+    [InlineData(147)]
+    [InlineData(289)]
+    public void SparseCandidateSearchStillResolvesExactPixelDisplacements(int shift)
+    {
+        Assert.Equal(shift,ScrollingCaptureComposer.EstimateVerticalShift(Frame(512,720,0),Frame(512,720,shift)));
+    }
+
+    [Theory]
+    [InlineData(163)]
+    [InlineData(506)]
+    [InlineData(630)]
+    public void RepeatedCardLayoutsUseColorToDisambiguateTheScroll(int shift)
+    {
+        var first=ColoredCardsFrame(720);var second=ColoredCardsFrame(720+shift);
+        Assert.Equal(shift,ScrollingCaptureComposer.EstimateVerticalShift(first,second,out _,null,1));
+        Assert.Equal(-shift,ScrollingCaptureComposer.EstimateVerticalShift(second,first,out _,null,-1));
+    }
+
+    private static BitmapSource ColoredCardsFrame(int top)
+    {
+        const int width=512,height=720;var pixels=new byte[width*height*4];
+        for(var y=0;y<height;y++)for(var x=0;x<width;x++)
+        {
+            var card=(y+top)/137;var row=(y+top)%137;var p=(y*width+x)*4;
+            byte red=245,green=245,blue=245;
+            if(row is >28 and <95&&x is >20 and <390)
+            {
+                red=(byte)(45+card*73%170);green=(byte)(45+card*47%170);blue=(byte)(45+card*109%170);
+            }
+            else if(row is >10 and <17&&x is >20 and <180)red=green=blue=20;
+            pixels[p]=blue;pixels[p+1]=green;pixels[p+2]=red;pixels[p+3]=255;
+        }
+        var image=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,width*4);image.Freeze();return image;
+    }
+
     [Fact]
     public void ScrollingCaptureStopsWhenThePageNoLongerMoves()
     {
@@ -136,6 +217,32 @@ public sealed class CaptureImageFeatureTests
     {
         Assert.False(LowLevelMouseWheelMonitor.IsInjected(0));
         Assert.True(LowLevelMouseWheelMonitor.IsInjected(1));
+    }
+
+    [Fact]
+    public void ExternalInjectedWheelsAreObservedButOwnForwardingIsNot()
+    {
+        Assert.False(LowLevelMouseWheelMonitor.IsOwnForwardedInput(1,UIntPtr.Zero));
+        Assert.False(LowLevelMouseWheelMonitor.IsOwnForwardedInput(1,new UIntPtr(1234)));
+        Assert.True(LowLevelMouseWheelMonitor.IsOwnForwardedInput(1,new UIntPtr(MouseWheelInputService.ForwardedWheelMarker)));
+        Assert.False(LowLevelMouseWheelMonitor.IsOwnForwardedInput(0,new UIntPtr(MouseWheelInputService.ForwardedWheelMarker)));
+    }
+
+    [Fact]
+    public void CaptureRegionKeepsRequestedPhysicalPixelSize()
+    {
+        var desktop=System.Windows.Forms.SystemInformation.VirtualScreen;
+        var frame=new ScreenCaptureService().CaptureRegion(new ScreenRect(desktop.Left+8,desktop.Top+8,160,120));
+        Assert.Equal(160,frame.PixelWidth);Assert.Equal(120,frame.PixelHeight);Assert.True(frame.IsFrozen);
+    }
+
+    [Fact]
+    public void CaptureRegionRejectsEmptyOrOffscreenRectangles()
+    {
+        var capture=new ScreenCaptureService();
+        Assert.Throws<ArgumentOutOfRangeException>(()=>capture.CaptureRegion(default));
+        Assert.Throws<ArgumentOutOfRangeException>(()=>capture.CaptureRegion(new ScreenRect(int.MinValue,0,20,20)));
+        Assert.Throws<ArgumentOutOfRangeException>(()=>capture.CaptureRegion(new ScreenRect(0,0,10000,10000)));
     }
 
     [Theory]

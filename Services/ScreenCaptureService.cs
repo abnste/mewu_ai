@@ -11,6 +11,21 @@ public sealed class ScreenCaptureService
     public CaptureFrame CaptureDesktop(bool includeCursor=false)
     {
         var bounds=Forms.SystemInformation.VirtualScreen;
+        return CaptureBounds(bounds,includeCursor);
+    }
+
+    internal BitmapSource CaptureRegion(ScreenRect region)
+    {
+        if(region.IsEmpty||(long)region.Width*region.Height>80_000_000)
+            throw new ArgumentOutOfRangeException(nameof(region),"截取区域为空或超过像素上限");
+        var desktop=Forms.SystemInformation.VirtualScreen;
+        if(!desktop.Contains(new Rectangle(region.X,region.Y,region.Width,region.Height)))
+            throw new ArgumentOutOfRangeException(nameof(region),"截取区域超出虚拟桌面");
+        return CaptureBounds(new Rectangle(region.X,region.Y,region.Width,region.Height),false).Image;
+    }
+
+    private static CaptureFrame CaptureBounds(Rectangle bounds,bool includeCursor)
+    {
         using var bitmap=new Bitmap(bounds.Width,bounds.Height,System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
         // CAPTUREBLT is important for modern Windows surfaces: layered
         // windows (including WebView2/Chromium browser chrome and translucent
