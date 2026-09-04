@@ -292,6 +292,15 @@ public sealed class HermesDiscoveryService
                (root[2] == Path.DirectorySeparatorChar || root[2] == Path.AltDirectorySeparatorChar);
     }
 
+    internal static bool IsTrustedRuntimePath(string path, bool directory)
+    {
+        var fs = SystemHermesDiscoveryFileSystem.Instance;
+        return TryNormalizeLocalAbsolutePath(path, out var normalized) &&
+            TryGetDriveLetterRoot(normalized, out var root) &&
+            fs.TryGetDriveType(root, out var driveType) && driveType == DriveType.Fixed &&
+            IsTrustedExistingPath(normalized, root, directory, fs);
+    }
+
     private static bool IsTrustedExistingPath(
         string path,
         string expectedDriveRoot,

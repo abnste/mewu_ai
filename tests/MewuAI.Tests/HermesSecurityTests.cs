@@ -32,7 +32,7 @@ public sealed class HermesSecurityTests
         Assert.True(start.CreateNoWindow);
         Assert.True(start.RedirectStandardOutput);
         Assert.True(start.RedirectStandardError);
-        Assert.Equal(["serve","--host","127.0.0.1","--port","0"],start.ArgumentList);
+        Assert.Equal(["-p","default","serve","--host","127.0.0.1","--port","0"],start.ArgumentList);
         Assert.DoesNotContain("--insecure",start.ArgumentList);
         Assert.Equal(installation.HomePath,start.Environment["HERMES_HOME"]);
         Assert.Equal("unit-test-token",start.Environment["HERMES_DASHBOARD_SESSION_TOKEN"]);
