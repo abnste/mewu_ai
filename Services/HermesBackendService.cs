@@ -34,15 +34,21 @@ public sealed partial class HermesBackendService : IDisposable, IAsyncDisposable
             var installation=_discovery.Discover()??throw new InvalidOperationException("未检测到可用的本机 Hermes。请先确认 Hermes 已完整安装。");
             var token=CreateSessionToken();
             var ready=new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var exited=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var outputClosed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var errorClosed=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var diagnostics=new HermesStartupDiagnostics();
             var readyFile=new TempFileService().NewFile(".json");
             var process=new Process{StartInfo=CreateStartInfo(installation,token,readyFile),EnableRaisingEvents=true};
-            DataReceivedEventHandler readyHandler=(_,args)=>
+            void OnLine(string? line,TaskCompletionSource closed)
             {
-                if(TryParseReadyLine(args.Data,out var port))ready.TrySetResult(port);
-            };
-            process.OutputDataReceived+=readyHandler;
-            process.ErrorDataReceived+=readyHandler;
-            process.Exited+=(_,_)=>ready.TrySetException(new InvalidOperationException($"Hermes 本地后端在连接前退出（代码 {SafeExitCode(process)}）。"));
+                if(line is null){closed.TrySetResult();return;}
+                diagnostics.Observe(line);
+                if(TryParseReadyLine(line,out var port))ready.TrySetResult(port);
+            }
+            process.OutputDataReceived+=(_,args)=>OnLine(args.Data,outputClosed);
+            process.ErrorDataReceived+=(_,args)=>OnLine(args.Data,errorClosed);
+            process.Exited+=(_,_)=>exited.TrySetResult();
             try
             {
                 if(!process.Start())throw new InvalidOperationException("Hermes 本地后端未能启动。");
@@ -52,10 +58,14 @@ public sealed partial class HermesBackendService : IDisposable, IAsyncDisposable
                 timeout.CancelAfter(StartupTimeout);
                 var readyFilePoll=PollReadyFileAsync(readyFile,ready,timeout.Token);
                 int port;
-                try{port=await ready.Task.WaitAsync(timeout.Token).ConfigureAwait(false);}
+                try
+                {
+                    port=await WaitForReadyAsync(process,ready.Task,exited.Task,outputClosed.Task,errorClosed.Task,diagnostics,timeout.Token).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
                 catch(OperationCanceledException) when(!cancellationToken.IsCancellationRequested)
                 {throw new TimeoutException("Hermes 本地后端启动超时，请检查 Hermes 安装状态后重试。");}
-                finally{try{await readyFilePoll.ConfigureAwait(false);}catch(OperationCanceledException){}TryDeleteReadyFile(readyFile);}
+                finally{timeout.Cancel();try{await readyFilePoll.ConfigureAwait(false);}catch(OperationCanceledException){}TryDeleteReadyFile(readyFile);}
                 if(port is <1 or >65535)throw new InvalidOperationException("Hermes 本地后端返回了无效端口。");
                 _process=process;
                 _sessionToken=token;
@@ -77,6 +87,21 @@ public sealed partial class HermesBackendService : IDisposable, IAsyncDisposable
     {
         if(_connection is null||string.IsNullOrEmpty(_sessionToken))throw new InvalidOperationException("Hermes 本地后端尚未连接。");
         return _sessionToken;
+    }
+
+    internal static async Task<int> WaitForReadyAsync(Process process,Task<int> ready,Task exited,
+        Task outputClosed,Task errorClosed,HermesStartupDiagnostics diagnostics,CancellationToken cancellationToken)
+    {
+        await Task.WhenAny(ready,exited).WaitAsync(cancellationToken).ConfigureAwait(false);
+        if(process.HasExited)
+        {
+            // Exited can precede the final stderr callback. Descendants can also
+            // retain the pipe, so draining must not wait indefinitely.
+            try{await Task.WhenAll(outputClosed,errorClosed).WaitAsync(TimeSpan.FromSeconds(2),cancellationToken).ConfigureAwait(false);}
+            catch(TimeoutException){}
+            throw new InvalidOperationException(diagnostics.Describe(SafeExitCode(process)));
+        }
+        return await ready.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     internal static ProcessStartInfo CreateStartInfo(HermesInstallation installation,string sessionToken,string? readyFile=null)
@@ -101,6 +126,11 @@ public sealed partial class HermesBackendService : IDisposable, IAsyncDisposable
             StandardOutputEncoding=System.Text.Encoding.UTF8,
             StandardErrorEncoding=System.Text.Encoding.UTF8
         };
+        HermesLaunchPolicy.Configure(start,installation);
+        // Profiles are selected by RPC, not by the machine's sticky CLI profile.
+        // Do not enable HERMES_DESKTOP: it can start a second cron scheduler.
+        start.ArgumentList.Add("-p");
+        start.ArgumentList.Add("default");
         start.ArgumentList.Add("serve");
         start.ArgumentList.Add("--host");
         start.ArgumentList.Add("127.0.0.1");
