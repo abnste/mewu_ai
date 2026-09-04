@@ -272,7 +272,6 @@
                                 <ControlTemplate TargetType="ToggleButton">
                                     <Border x:Name="Shell" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="11">
                                         <Grid>
-                                            <ContentPresenter Margin="11,0,34,0" VerticalAlignment="Center" Content="{Binding SelectionBoxItem,RelativeSource={RelativeSource AncestorType=ComboBox}}"/>
                                             <Path Data="M2,3 L6,7 L10,3" Stroke="#738198" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,13,0"/>
                                         </Grid>
                                     </Border>
@@ -284,6 +283,17 @@
                                 </ControlTemplate>
                             </ToggleButton.Template>
                         </ToggleButton>
+                        <ContentPresenter x:Name="SelectionContent" Margin="11,0,34,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                                          Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"/>
+                        <TextBox x:Name="PART_EditableTextBox" Visibility="Hidden" Margin="11,5,34,5" VerticalContentAlignment="Center"
+                                 Background="Transparent" Foreground="{TemplateBinding Foreground}" BorderThickness="0" Padding="0" MinHeight="0"
+                                 IsReadOnly="{TemplateBinding IsReadOnly}" FocusVisualStyle="{x:Null}">
+                            <TextBox.Template>
+                                <ControlTemplate TargetType="TextBox">
+                                    <ScrollViewer x:Name="PART_ContentHost" Focusable="False" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden"/>
+                                </ControlTemplate>
+                            </TextBox.Template>
+                        </TextBox>
                         <Popup x:Name="PART_Popup" IsOpen="{Binding IsDropDownOpen,RelativeSource={RelativeSource TemplatedParent},Mode=TwoWay}" PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
                             <Border Margin="0,5,0,0" MinWidth="{Binding ActualWidth,RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="280" Background="White" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="11" Padding="4">
                                 <Border.Effect>
@@ -296,6 +306,11 @@
                         </Popup>
                     </Grid>
                     <ControlTemplate.Triggers>
+                        <Trigger Property="IsEditable" Value="True">
+                            <Setter TargetName="SelectionContent" Property="Visibility" Value="Hidden"/>
+                            <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
+                            <Setter Property="IsTabStop" Value="False"/>
+                        </Trigger>
                         <Trigger Property="IsKeyboardFocusWithin" Value="True">
                             <Setter TargetName="Toggle" Property="BorderBrush" Value="{StaticResource Accent}"/>
                         </Trigger>

@@ -335,7 +335,7 @@ public sealed class ServicesTests
             var result=await bootstrap.ImportAndCommitAsync(settingsService,true,TestContext.Current.CancellationToken);
             Assert.True(result.Changed);Assert.Equal("verification-report.json",result.VerificationReportPath);
             var loaded=settingsService.Load();var imported=Assert.Single(loaded.Providers);
-            Assert.Equal(imported.Id,loaded.DefaultProviderId);Assert.Equal("MiniMax M3",imported.Name);Assert.Equal("new-secret",credentials.Read(imported.CredentialId));
+            Assert.Equal(imported.Id,loaded.DefaultProviderId);Assert.Equal("MiniMax",imported.Name);Assert.Equal("new-secret",credentials.Read(imported.CredentialId));
             Assert.Equal("tenant-a",imported.CustomHeaders["X-Tenant"]);
             Assert.Null(credentials.Read("old-key"));Assert.Null(credentials.Read("old-auth"));Assert.NotEqual(original,File.ReadAllText(settingsPath));
         }

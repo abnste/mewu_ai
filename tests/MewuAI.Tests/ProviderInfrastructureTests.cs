@@ -11,7 +11,7 @@ public sealed class ProviderInfrastructureTests
     public void FreshProviderDefaultsToDomesticMiniMaxM3()
     {
         var settings=new AiProviderSettings();
-        Assert.Equal("MiniMax M3",settings.Name);
+        Assert.Equal("MiniMax",settings.Name);
         Assert.Equal("MiniMax",settings.Type);
         Assert.Equal("https://api.minimaxi.com/v1",settings.BaseUrl);
         Assert.Equal("MiniMax-M3",settings.Model);
