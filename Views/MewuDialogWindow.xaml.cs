@@ -23,8 +23,17 @@ public partial class MewuDialogWindow:Window
         var dialog=new MewuDialogWindow(title,message,primaryText,secondaryText,cancelText){Owner=owner,Topmost=owner.Topmost};dialog.ShowDialog();return dialog._result;
     }
 
+    internal static void ShowMessage(Window owner,string title,string message,bool success=false)
+    {
+        var dialog=new MewuDialogWindow(title,message,LocalizationService.T("确定","OK"),string.Empty,string.Empty){Owner=owner,Topmost=owner.Topmost};
+        dialog.DialogSymbol.Text=success?"✓":"!";
+        dialog.PreviewKeyDown+=(_,e)=>{if(e.Key==Key.Escape){e.Handled=true;dialog.Close();}};
+        dialog.ShowDialog();
+    }
+
     private void AddButton(string text,string style,MewuDialogResult result,bool isDefault)
     {
+        if(string.IsNullOrEmpty(text))return;
         var button=new Button{Content=text,Style=(Style)FindResource(style),IsDefault=isDefault};button.Click+=(_,_)=>{_result=result;DialogResult=true;};DialogButtons.Children.Add(button);
     }
     private void CloseClick(object sender,RoutedEventArgs e)=>Close();

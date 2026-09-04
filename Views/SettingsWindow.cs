@@ -514,8 +514,14 @@ public sealed class SettingsWindow : Window
         _requestParameters.MaxLength = 16384;
         _requestParameters.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         _requestParameters.FontFamily = new FontFamily("Cascadia Mono, Consolas");
-        panel.Children.Add(Labeled(LocalizationService.T("请求参数 JSON", "Request parameters JSON"), _requestParameters));
-        panel.Children.Add(Text(LocalizationService.T("例如：{\"service_tier\":\"priority\"}。MiniMax M3 优先服务按标准价格的 1.5 倍计费；{} 使用默认服务。也支持 temperature、top_p。", "Example: {\"service_tier\":\"priority\"}. MiniMax M3 priority costs 1.5× the standard rate; {} uses the default tier. Also supports temperature and top_p.")));
+        var parameterHeader=new Grid();parameterHeader.ColumnDefinitions.Add(new ColumnDefinition());parameterHeader.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+        parameterHeader.Children.Add(Text(LocalizationService.T("请求参数 JSON", "Request parameters JSON"),true));
+        var parameterHelp=new Button{Content="?",Width=22,Height=22,MinWidth=22,MinHeight=22,Padding=new Thickness(0),Margin=new Thickness(0,0,0,4),VerticalAlignment=VerticalAlignment.Center};
+        parameterHelp.SetResourceReference(StyleProperty,"RoundIconButton");
+        System.Windows.Automation.AutomationProperties.SetName(parameterHelp,LocalizationService.T("请求参数帮助","Request parameter help"));
+        parameterHelp.ToolTip=new ToolTip{Placement=System.Windows.Controls.Primitives.PlacementMode.Top,Content=new TextBlock{MaxWidth=350,TextWrapping=TextWrapping.Wrap,Text=LocalizationService.T("例如：{\"service_tier\":\"priority\"}。MiniMax M3 优先服务按标准价格的 1.5 倍计费；{} 使用默认服务。也支持 temperature、top_p。", "Example: {\"service_tier\":\"priority\"}. MiniMax M3 priority costs 1.5× the standard rate; {} uses the default tier. Also supports temperature and top_p.")}};
+        ToolTipService.SetInitialShowDelay(parameterHelp,200);ToolTipService.SetShowDuration(parameterHelp,60000);
+        Grid.SetColumn(parameterHelp,1);parameterHeader.Children.Add(parameterHelp);panel.Children.Add(parameterHeader);panel.Children.Add(_requestParameters);
         panel.Children.Add(new Expander
         {
             Header = LocalizationService.T("高级：自定义请求头", "Advanced: custom headers"),
@@ -1147,10 +1153,10 @@ public sealed class SettingsWindow : Window
             key??=string.Empty;
             IAiProvider provider = settings.Type == "MiniMax" ? new MiniMaxProvider(settings, key) : new OpenAiCompatibleProvider(settings, key);
             var ok = await provider.TestConnectionAsync(test.Token);
-            MessageBox.Show(this,ok ? "连接成功" : "服务返回失败状态", "AI 连接测试");
+            if(IsVisible&&!test.IsCancellationRequested&&ReferenceEquals(_connectionTest,test))MewuDialogWindow.ShowMessage(this,"AI 连接测试",ok ? "连接成功" : "服务返回失败状态",ok);
         }
-        catch(OperationCanceledException) when(test.IsCancellationRequested) { if(IsVisible)MessageBox.Show(this,"连接测试已取消或超时，请检查网络与 Provider 地址。", "AI 连接测试"); }
-        catch (Exception ex) { if(IsVisible)MessageBox.Show(this,ex.Message, "AI 连接测试失败"); }
+        catch(OperationCanceledException) when(test.IsCancellationRequested) { if(IsVisible)MewuDialogWindow.ShowMessage(this,"AI 连接测试","连接测试已取消或超时，请检查网络与 Provider 地址。"); }
+        catch (Exception ex) { if(IsVisible)MewuDialogWindow.ShowMessage(this,"AI 连接测试失败",ex.Message); }
         finally { if(ReferenceEquals(_connectionTest,test))_connectionTest=null;if(IsVisible)button.IsEnabled = true; }
     }
 

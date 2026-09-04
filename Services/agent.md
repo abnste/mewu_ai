@@ -1,5 +1,7 @@
 # Hermes 启动兼容
 
+- `PinnedVisualSnapshotRenderer` 用显式 VisualBrush 视口渲染贴图完整外观；快照最长边 8192px、总像素 1600 万，超大贴图下采样但不改变实际物理目标边界或限制用户缩放。100%、150%、200% DPI 的透明边距、阴影及负坐标桌面合成均有像素回归测试。2026-09-04 本轮 Release 全量 735 项通过，ProviderSmoke 编译零警告。
+
 - Windows Hermes GUI 能对话、CLI `serve` 能启动，并不证明第三方 GUI 启动环境相同。喵呜AI 优先按所发现启动器对应的虚拟环境，用可信本地 `python.exe -m hermes_cli.main` 启动；不得从 PATH 任取系统 Python，也不得混用 `venv` 与 `.venv`。旧纯启动器布局继续兼容。
 - 子进程清理外部 PYTHONHOME/PYTHONPATH/VIRTUAL_ENV，只设置 Hermes 自身模块路径；补齐可信自身 Node、Git、虚拟环境目录并启用 UTF-8，不修改用户/系统环境变量或 Hermes 配置。
 - 后台使用 `-p default serve` 固定机器根配置，具体人格仍按 RPC profile 选择，不能修改 Hermes 全局默认人格。保留 loopback、随机会话令牌和父进程约束，不使用 `--insecure`，不启用会重复调度 cron 的 HERMES_DESKTOP。
