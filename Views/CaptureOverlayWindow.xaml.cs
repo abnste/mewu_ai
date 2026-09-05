@@ -31,7 +31,6 @@ namespace mewu_ai_Assistant.Views;
 public partial class CaptureOverlayWindow : Window
 {
     private const int ReasoningDisplayLimit=12_000;
-    private const double PromptPreferredWidthTight=540;
     private const double PromptEdgeMargin=6;
     private const double PromptFloatingGap=8;
     private const double PromptHiddenOffset=20;
@@ -44,6 +43,7 @@ public partial class CaptureOverlayWindow : Window
     internal bool IsTeachingMode { get; }
     private CaptureFrame _frame;
     private int _desktopFrameVersion;
+    private Rect _lastPositionedPromptMonitor=Rect.Empty;
     private readonly List<SelectionItem> _selections=[];
     private readonly HashSet<SelectionItem> _ownedSelections=[];
     private readonly HashSet<SelectionItem> _references=[];
@@ -1065,7 +1065,7 @@ public partial class CaptureOverlayWindow : Window
         else
         {
             UpdateSnapPreview(p);
-            if(Active is null)PositionPromptBar();
+            if(Active is null&&PromptMonitorBounds()!=_lastPositionedPromptMonitor)PositionPromptBar();
             if(!_forceNewSelection)
             {
                 var hovered=FindSelection(p);
@@ -1465,7 +1465,7 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             var availableWidth=Math.Max(1,monitor.Width-CaptureOverlayPolicy.PromptSideMargin*2);
-            PromptBar.Width=Math.Min(Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,PromptPreferredWidthTight),availableWidth);
+            PromptBar.Width=Math.Min(CaptureOverlayPolicy.PromptPreferredWidth,availableWidth);
             var historyMaxHeight=GetHistoryMaxHeight();
             HistoryPanel.MaxHeight=historyMaxHeight+18;
             HistoryScroll.MaxHeight=historyMaxHeight;
@@ -1473,34 +1473,17 @@ public partial class CaptureOverlayWindow : Window
             // have gained reference chips or an answer since the last pass.
             PromptBar.Height=double.NaN;
             PromptBar.MaxHeight=Math.Max(1,monitor.Height-CaptureOverlayPolicy.PromptTopMargin-CaptureOverlayPolicy.PromptBottomMargin);
-            // The previous compact pass intentionally leaves ResponseScroll at
-            // MaxHeight=0.  Lift that cap before measuring newly visible answer
-            // content, otherwise the zero-height response feeds back into the
-            // next desired size and the first answer can never expand.
+            // Use the same width and height constraints for measurement and
+            // arrangement. Toggling 540 -> 574 DIPs and shrinking/restoring
+            // MaxHeight on each update reformatted the entire long answer.
             ResponseScroll.MaxHeight=CaptureOverlayPolicy.GetPromptResponseMaxHeight(PromptBar.MaxHeight);
+            if(_answerExpanded)AnswerScroll.MaxHeight=CaptureOverlayPolicy.GetAnswerViewportHeight(monitor.Height);
             PromptBar.Measure(new Size(PromptBar.Width,PromptBar.MaxHeight));
-            var desiredHeight=PromptBar.DesiredSize.Height;
-            var bounds=CaptureOverlayPolicy.GetPromptBarBounds(monitor,desiredHeight);
+            var bounds=CaptureOverlayPolicy.GetPromptBarBounds(monitor,PromptBar.DesiredSize.Height);
             if(bounds.IsEmpty)return;
-
-            // Keep the response budget tied to the monitor's usable height.
-            // Feeding the current desired card height back as the next cap
-            // makes every measure pass progressively shrink the answer.
-            ResponseScroll.MaxHeight=CaptureOverlayPolicy.GetPromptResponseMaxHeight(PromptBar.MaxHeight);
-            PromptBar.MaxHeight=bounds.Height;
-            PromptBar.InvalidateMeasure();
-            PromptBar.Measure(new Size(bounds.Width,bounds.Height));
-
-            // DesiredSize can still describe the pre-chip layout during the
-            // SizeChanged callback.  Fit both values now, then run one bounded
-            // render-priority pass using the arranged height below.
-            var measuredHeight=Math.Max(bounds.Height,PromptBar.DesiredSize.Height);
-            bounds=CaptureOverlayPolicy.RefitPromptBarAfterArrange(monitor,bounds,Math.Min(measuredHeight,bounds.Height));
-            PromptBar.Width=bounds.Width;
-            PromptBar.MaxHeight=bounds.Height;
+            _lastPositionedPromptMonitor=monitor;
             Canvas.SetLeft(PromptBarHost,bounds.Left);
             Canvas.SetTop(PromptBarHost,bounds.Top);
-            if(_answerExpanded)AnswerScroll.MaxHeight=CaptureOverlayPolicy.GetAnswerViewportHeight(monitor.Height);
             UpdatePromptBarHiddenTransform(false);
             QueuePromptBarLayoutClamp();
             if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();
@@ -1570,7 +1553,7 @@ public partial class CaptureOverlayWindow : Window
         if(!double.IsFinite(desired)||desired<=0)return;
         QuickPrompt.Height=Math.Clamp(desired,CompactQuickPromptMinHeight,CompactQuickPromptMaxHeight);
     }
-    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;if(!changed)return;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void UpdatePromptBarHiddenTransform(bool animate)
     {
         if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}
@@ -2064,7 +2047,7 @@ public partial class CaptureOverlayWindow : Window
             }
             if(actions.Count>=VideoAnnotationTimeline.MaxAnswerActions)break;
         }
-        if(!_followAnswerTail&&!_answerLayoutQueued)_answerReadingOffset=AnswerScroll.VerticalOffset;
+        if(!_followAnswerTail&&!_answerLayoutQueued)_answerReadingOffset=AnswerText.VerticalOffset;
         AnswerText.SetMarkdownWithActions(answer,actions);
         QueueAnswerLayout();
     }

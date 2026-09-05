@@ -8,3 +8,5 @@
 先退出正常应用再启动，避免和用户正在操作的覆盖层混淆。
 
 运行 `dotnet tests/InteractionHarness/bin/x64/Debug/net10.0-windows10.0.19041.0/InteractionHarness.dll --verify-lifetime` 执行真实覆盖层的资源回收契约检查：创建/删除 60 个区域，在 50 步历史中保留 25 个可撤销区域，验证 redo 与在途请求保护，历史淘汰后确认区域和租约归零。结果仅写入忽略的 `.codex-build/interaction-lifetime.json`，不生成真实媒体文件。
+
+性能回放：Release 构建后以 `--teaching --benchmark` 记录修改前样本，追加 `--after` 记录修改后样本；合成 160 次更新、9010 字正文，结果仅在 `.codex-build/answer-before.json` 和 `answer-after.json`。测量期间不要同时构建、跑测试或做桌面自动化，避免 CPU/GPU 竞争污染结果。该回放展示真实覆盖层并在完成时关闭，不能与用户日常截图混用。

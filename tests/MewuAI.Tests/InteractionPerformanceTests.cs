@@ -110,7 +110,8 @@ public sealed class InteractionPerformanceTests
             var view=new MarkdownAnswerView{Markdown="answer"};var original=view.Document;
             view.SetMarkdownWithActions("answer",[]);Assert.Same(original,view.Document);
             view.SetMarkdownWithActions("answer",[new("marker","marker",()=>{})]);
-            Assert.NotSame(original,view.Document);
+            Assert.Same(original,view.Document);
+            Assert.Single(view.Document.Blocks.OfType<System.Windows.Documents.BlockUIContainer>());
             view.Markdown="answer";
             Assert.Single(view.Document.Blocks);
             Assert.False(view.IsUndoEnabled);

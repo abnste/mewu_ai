@@ -12,6 +12,7 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
 {
     private string _markdown=string.Empty;
     private bool _hasActions;
+    private readonly IncrementalMarkdownRenderer _renderer=new();
     public bool ContainsTable { get; private set; }
     public event EventHandler? MarkdownChanged;
 
@@ -33,12 +34,38 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
         }
     }
 
-    public string PlainText=>Text.TrimEnd('\r','\n');
+    public string PlainText
+    {
+        get
+        {
+            var text=new System.Text.StringBuilder();var start=Document.ContentStart;
+            foreach(var emoji in EmojiInlines)
+            {
+                text.Append(new TextRange(start,emoji.ElementStart).Text);text.Append(emoji.Text);start=emoji.ElementEnd;
+            }
+            text.Append(new TextRange(start,Document.ContentEnd).Text);
+            return text.ToString().TrimEnd('\r','\n');
+        }
+    }
+
+    // This view is read-only and its renderer substitutes only new emoji runs.
+    // The editor's change handler scans individual character insertion positions
+    // and rebuilds its entire Text value on every append, blocking long streams.
+    // WPF TextBoxBase.OnTextChanged only raises this routed event; selection and
+    // the inherited emoji-aware copy handlers remain on their normal paths.
+    protected override void OnTextChanged(TextChangedEventArgs e)=>RaiseEvent(e);
 
     private void RenderMarkdown(string markdown)
     {
-        var document=MarkdownFlowDocumentRenderer.Render(markdown,FontSize>0?FontSize:13,out var containsTable);
-        _markdown=markdown;ContainsTable=containsTable;_hasActions=false;Document=document;
+        FlowDocument document;
+        BeginChange();
+        try
+        {
+            document=_renderer.Update(markdown,FontSize>0?FontSize:13,out var containsTable,_hasActions);
+            _markdown=markdown;ContainsTable=containsTable;_hasActions=false;
+        }
+        finally { EndChange(); }
+        if(!ReferenceEquals(Document,document))Document=document;
         MarkdownChanged?.Invoke(this,EventArgs.Empty);
     }
 

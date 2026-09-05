@@ -13,7 +13,7 @@ public partial class CaptureOverlayWindow
 
     private void RefreshAnswer(string markdown)
     {
-        if (!_followAnswerTail && !_answerLayoutQueued) _answerReadingOffset = AnswerScroll.VerticalOffset;
+        if (!_followAnswerTail && !_answerLayoutQueued) _answerReadingOffset = AnswerText.VerticalOffset;
         AnswerText.Markdown = markdown;
         QueueAnswerLayout();
     }
@@ -28,8 +28,8 @@ public partial class CaptureOverlayWindow
             // Let WPF perform its regular layout pass. Forcing UpdateLayout
             // after every streamed token used to measure the entire card twice.
             PositionPromptBar();
-            if (_followAnswerTail) AnswerScroll.ScrollToEnd();
-            else AnswerScroll.ScrollToVerticalOffset(_answerReadingOffset);
+            if (_followAnswerTail) AnswerText.ScrollToEnd();
+            else AnswerText.ScrollToVerticalOffset(_answerReadingOffset);
             _answerLayoutQueued = false;
             LatestAnswerButton.Visibility = _followAnswerTail ? Visibility.Collapsed : Visibility.Visible;
         }));
@@ -37,18 +37,18 @@ public partial class CaptureOverlayWindow
 
     private void AnswerScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (!ReferenceEquals(e.OriginalSource, AnswerScroll) || _answerLayoutQueued ||
+        if (_answerLayoutQueued ||
             e.ExtentHeightChange != 0 || e.ViewportHeightChange != 0 || e.VerticalChange == 0) return;
-        _answerReadingOffset = AnswerScroll.VerticalOffset;
-        _followAnswerTail = AnswerScroll.ScrollableHeight - AnswerScroll.VerticalOffset <= 24;
+        _answerReadingOffset = AnswerText.VerticalOffset;
+        _followAnswerTail = Math.Max(0,AnswerText.ExtentHeight-AnswerText.ViewportHeight) - AnswerText.VerticalOffset <= 24;
         LatestAnswerButton.Visibility = _followAnswerTail ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void AnswerPreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
-        if (e.Delta <= 0 || AnswerScroll.ScrollableHeight <= 0) return;
+        if (e.Delta <= 0 || Math.Max(0,AnswerText.ExtentHeight-AnswerText.ViewportHeight) <= 0) return;
         _followAnswerTail = false;
-        _answerReadingOffset = AnswerScroll.VerticalOffset;
+        _answerReadingOffset = AnswerText.VerticalOffset;
         LatestAnswerButton.Visibility = Visibility.Visible;
     }
 

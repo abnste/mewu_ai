@@ -61,6 +61,10 @@ internal static class Program
             app.Shutdown();
             return;
         }
+        if(args.Contains("--benchmark"))
+        {
+            BenchmarkAnswer(app,overlay,args.Contains("--after"));app.Run(overlay);return;
+        }
         if(verifyTeaching)
         {
             VerifyTeachingOnLoad(app,host,overlay,background!);
@@ -89,6 +93,32 @@ internal static class Program
             overlay.Closed+=(_,_)=>{timer.Stop();lifetime.Stop();};
         };
         app.Run(overlay);
+    }
+
+    private static void BenchmarkAnswer(Application app,CaptureOverlayWindow overlay,bool after)
+    {
+        overlay.Loaded+=(_,_)=>
+        {
+            var calls=new List<double>();var gaps=new List<double>();var text=new System.Text.StringBuilder();
+            var watch=System.Diagnostics.Stopwatch.StartNew();var previous=watch.Elapsed.TotalMilliseconds;var index=0;var worstGap=0d;var worstGapUpdate=0;
+            var heartbeat=new DispatcherTimer(DispatcherPriority.Input){Interval=TimeSpan.FromMilliseconds(16)};
+            heartbeat.Tick+=(_,_)=>{var now=watch.Elapsed.TotalMilliseconds;var gap=now-previous;gaps.Add(gap);if(gap>worstGap){worstGap=gap;worstGapUpdate=index;}previous=now;};
+            var timer=new DispatcherTimer(DispatcherPriority.Background){Interval=TimeSpan.FromMilliseconds(80)};
+            timer.Tick+=(_,_)=>
+            {
+                var start=watch.Elapsed.TotalMilliseconds;
+                text.Append($"**示例 {index}**：这是合成测试文字，用来测量长回答更新时的输入延迟。保留已显示的段落，继续阅读和选择文字。\n\n");
+                Invoke(overlay,"ShowAnswer");Invoke(overlay,"RefreshAnswer",text.ToString());
+                calls.Add(watch.Elapsed.TotalMilliseconds-start);
+                if(++index<160)return;
+                timer.Stop();heartbeat.Stop();
+                double P95(List<double> values)=>values.Order().ElementAt((int)((values.Count-1)*.95));
+                var result=new {Updates=index,Characters=text.Length,UpdateP95Ms=P95(calls),UpdateMaxMs=calls.Max(),HeartbeatP95Ms=P95(gaps),HeartbeatMaxMs=gaps.Max(),WorstGapAtUpdate=worstGapUpdate,ElapsedMs=watch.Elapsed.TotalMilliseconds};
+                Directory.CreateDirectory(".codex-build");File.WriteAllText(Path.Combine(".codex-build",after?"answer-after.json":"answer-before.json"),System.Text.Json.JsonSerializer.Serialize(result));
+                overlay.Close();app.Shutdown();
+            };
+            heartbeat.Start();timer.Start();
+        };
     }
 
     private static object Native(string name,params object[] args)=>typeof(AppHost).Assembly
