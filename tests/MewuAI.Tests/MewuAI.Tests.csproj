@@ -10,6 +10,6 @@
     <None Include="..\..\mewu_ai_Assistant.slnx" Link="Fixtures\Product.slnx.xml" CopyToOutputDirectory="PreserveNewest"/>
     <None Include="..\..\packages.lock.json" Link="Fixtures\Product.packages.lock.json" CopyToOutputDirectory="PreserveNewest"/>
     <None Include="..\..\THIRD-PARTY-NOTICES.md" Link="Fixtures\THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest"/>
-    <None Include="..\..\docs\release-notes-v0.2.3.md" Link="Fixtures\release-notes-v0.2.3.md" CopyToOutputDirectory="PreserveNewest"/>
+    <None Include="..\..\docs\release-notes-v0.2.4.md" Link="Fixtures\release-notes-v0.2.4.md" CopyToOutputDirectory="PreserveNewest"/>
   </ItemGroup>
 </Project>
