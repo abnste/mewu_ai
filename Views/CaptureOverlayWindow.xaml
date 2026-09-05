@@ -126,8 +126,31 @@
       <Border x:Name="ReasoningPanel" Visibility="Collapsed" Background="#F3F6FA" BorderBrush="#DFE7F1" BorderThickness="1" CornerRadius="12" Padding="12,9" Margin="6,6,6,0"><ScrollViewer x:Name="ReasoningScroll" MaxHeight="100" VerticalScrollBarVisibility="Auto"><TextBlock x:Name="ReasoningText" Foreground="#65748A" FontSize="12.5" LineHeight="19" TextWrapping="Wrap"/></ScrollViewer></Border>
       <Border x:Name="AgentActivityCard" Visibility="Collapsed" Background="#F7F9FD" BorderBrush="#DCE4EF" BorderThickness="1" CornerRadius="12" Padding="10,8" Margin="6,6,6,0"><StackPanel><TextBlock Text="Hermes 运行" FontSize="12.5" FontWeight="SemiBold" Foreground="#3E4D65" Margin="0,0,0,4"/><StackPanel x:Name="AgentActivityItems"/></StackPanel></Border>
       <Border x:Name="AiInteractionCard" Visibility="Collapsed" Background="#FFFCF6" BorderBrush="#ECD3A3" BorderThickness="1" CornerRadius="12" Padding="12,10" Margin="6,6,6,0"><StackPanel x:Name="AiInteractionContent"/></Border>
-      <Border x:Name="AnswerScroll" Visibility="Collapsed" MaxHeight="300" Margin="8,8,8,8"><local:MarkdownAnswerView x:Name="AnswerText" FontSize="13" VerticalScrollBarVisibility="Auto" MaxHeight="{Binding MaxHeight,ElementName=AnswerScroll}" ScrollViewer.ScrollChanged="AnswerScrollChanged" PreviewMouseWheel="AnswerPreviewMouseWheel"/></Border>
-      <Button x:Name="LatestAnswerButton" Visibility="Collapsed" AutomationProperties.Name="回到最新回复" ToolTip="回到最新回复" Click="JumpToLatestAnswer" Style="{StaticResource RoundIconButton}" Width="28" Height="28" HorizontalAlignment="Right" Margin="8,0,8,4"><Path Width="12" Height="12" Stretch="Uniform" Stroke="#617188" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M6,1 L6,11 M2,7 L6,11 L10,7"/></Button>
+      <Border x:Name="AnswerScroll" Visibility="Collapsed" MaxHeight="300" Margin="8,8,8,8">
+       <Grid>
+        <local:MarkdownAnswerView x:Name="AnswerText" FontSize="13" VerticalScrollBarVisibility="Auto" MaxHeight="{Binding MaxHeight,ElementName=AnswerScroll}" ScrollViewer.ScrollChanged="AnswerScrollChanged" PreviewMouseWheel="AnswerPreviewMouseWheel">
+         <local:MarkdownAnswerView.Resources>
+          <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
+           <Style.Triggers><Trigger Property="Orientation" Value="Vertical"><Setter Property="Margin" Value="0,0,0,16"/></Trigger></Style.Triggers>
+          </Style>
+         </local:MarkdownAnswerView.Resources>
+        </local:MarkdownAnswerView>
+        <Button x:Name="LatestAnswerButton" Visibility="Collapsed" AutomationProperties.Name="回到最新回复" ToolTip="回到最新回复" Click="JumpToLatestAnswer" Width="{DynamicResource {x:Static SystemParameters.VerticalScrollBarWidthKey}}" Height="14" HorizontalAlignment="Right" VerticalAlignment="Bottom" Cursor="Hand" FocusVisualStyle="{x:Null}">
+         <Button.Template>
+          <ControlTemplate TargetType="Button">
+           <Border x:Name="ArrowSurface" Background="Transparent" CornerRadius="4">
+            <Path x:Name="ArrowGlyph" Width="7" Height="4" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Uniform" Stroke="#8190A4" StrokeThickness="1.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M1,1 L4,4 L7,1"/>
+           </Border>
+           <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ArrowSurface" Property="Background" Value="#E8EDF5"/><Setter TargetName="ArrowGlyph" Property="Stroke" Value="#5263D9"/></Trigger>
+            <Trigger Property="IsPressed" Value="True"><Setter TargetName="ArrowSurface" Property="Background" Value="#DCE4F2"/></Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ArrowSurface" Property="Background" Value="#E8EDF5"/></Trigger>
+           </ControlTemplate.Triggers>
+          </ControlTemplate>
+         </Button.Template>
+        </Button>
+       </Grid>
+      </Border>
       <Border x:Name="AnswerDivider" Visibility="Collapsed" Height="1" Background="#E1E7F0" Margin="8,0,8,8"/>
      </StackPanel>
     </ScrollViewer>
