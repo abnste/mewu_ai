@@ -7,6 +7,7 @@ using Xunit;
 
 namespace MewuAI.Tests;
 
+[Collection("Emoji WPF")]
 public sealed class MarkdownFlowDocumentRendererTests
 {
     [Fact]

@@ -27,3 +27,5 @@
 - RequestParameters 是可选的旧配置兼容字段，所有编辑副本/凭据迁移克隆必须保留；显式 null 或非法字段在保存、Provider 构造与发送前拒绝，不得默默吞掉配置。ProviderRequestParameterPolicy 使用严格 JSON 对象解析，拒绝重复属性，仅允许 service_tier/temperature/top_p 及各自有限取值，禁止凭据和内部协议字段注入。
 - 2026-09-04 官方 M3 最小实测：把 service_tier=priority 放 HTTP Header，响应仍为 standard；放请求体，HTTP 200 且 service_tier 明确回显 priority。两次均通过 MEWU_OK 挑战；短测不能证明整体加速比例。官方 OpenAI SDK 文档说明 priority 为标准价格的 1.5 倍，不得自动启用或因失败自动切收费档。
 - 接入后 Release 全量 732 项通过，包含普通/流式请求体断言、持久化与旧配置兼容；Debug 设置页实际输入 priority JSON，关闭未保存。WPF 全局主题资源测试单独放入禁并行集合，STA 辅助线程为后台线程，避免与录屏等 WPF 测试竞争全局初始化或失败后挂住测试宿主。
+
+- IncrementalMarkdownRenderer 按 Markdig 顶层块类型与原始跨度保留未变前缀，并在同一 FlowDocument 内替换变化后缀。旧/新正文含方括号时保守全部重建，以正确处理跨块引用、脚注和缩写；动作更新/字号改变也必须清理相应旧状态。新块生成后只替换实际 emoji Run，保留普通正文与代码布局。

@@ -54,7 +54,9 @@ public static class MarkdownFlowDocumentRenderer
         return document;
     }
 
-    private static bool ContainsTable(ContainerBlock container)
+    internal static MarkdownDocument Parse(string markdown)=>Markdown.Parse(markdown,Pipeline);
+
+    internal static bool ContainsTable(ContainerBlock container)
     {
         foreach(var block in container)
         {
@@ -67,7 +69,7 @@ public static class MarkdownFlowDocumentRenderer
     public static string ToPlainText(FlowDocument document)=>
         new TextRange(document.ContentStart,document.ContentEnd).Text.TrimEnd('\r','\n');
 
-    private static void AddBlock(BlockCollection target,MdBlock block,double fontSize)
+    internal static void AddBlock(BlockCollection target,MdBlock block,double fontSize)
     {
         switch(block)
         {
