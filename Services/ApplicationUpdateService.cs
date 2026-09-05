@@ -65,9 +65,19 @@ internal sealed class ApplicationUpdateService
         var installerName=$"MewuAI-Setup-{versionText}-win-x64.exe";
         const string checksumsName="SHA256SUMS.txt";
         var installer=RequireSingleAsset(release.Assets,installerName,MaximumInstallerBytes);
-        var checksums=RequireSingleAsset(release.Assets,checksumsName,MaximumChecksumBytes);
         ValidateReleaseDownloadUri(installer.DownloadUrl,release.TagName,installerName);
-        ValidateReleaseDownloadUri(checksums.DownloadUrl,release.TagName,checksumsName);
+        // GitHub supplies the digest on the exact installer asset. Only an
+        // absent digest may use the legacy checksum file; malformed metadata
+        // must fail closed rather than silently switching verification sources.
+        var expectedHash=installer.Digest is null?null:ParseAssetSha256(installer.Digest);
+        GitHubAsset? checksums=null;
+        if(expectedHash is null)
+        {
+            if(!release.Assets.Any(asset=>string.Equals(asset.Name,checksumsName,StringComparison.Ordinal)))
+                throw new InvalidDataException("暂时无法获取安装包校验信息，请稍后重新检查更新");
+            checksums=RequireSingleAsset(release.Assets,checksumsName,MaximumChecksumBytes);
+            ValidateReleaseDownloadUri(checksums.DownloadUrl,release.TagName,checksumsName);
+        }
 
         // Checking a version never downloads assets or creates files until the
         // caller has accepted the exact validated release above.
@@ -76,9 +86,12 @@ internal sealed class ApplicationUpdateService
             return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,null);
         cancellationToken.ThrowIfCancellationRequested();
 
-        progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在读取更新校验信息…","Downloading update verification data…")));
-        var checksumText=await DownloadStringAsync(checksums,MaximumChecksumBytes,cancellationToken).ConfigureAwait(false);
-        var expectedHash=ParseExpectedSha256(checksumText,installerName);
+        if(expectedHash is null)
+        {
+            progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在读取更新校验信息…","Downloading update verification data…")));
+            var checksumText=await DownloadStringAsync(checksums!,MaximumChecksumBytes,cancellationToken).ConfigureAwait(false);
+            expectedHash=ParseExpectedSha256(checksumText,installerName);
+        }
         var versionDirectory=Path.Combine(_updatesDirectory,versionText);
         Directory.CreateDirectory(versionDirectory);
         var destination=Path.Combine(versionDirectory,installerName);
@@ -301,6 +314,15 @@ internal sealed class ApplicationUpdateService
             throw new InvalidDataException("更新下载被重定向到不受信任的地址");
     }
 
+    internal static string ParseAssetSha256(string digest)
+    {
+        const string prefix="sha256:";
+        if(digest.Length!=prefix.Length+64||!digest.StartsWith(prefix,StringComparison.Ordinal)||
+           !digest.Skip(prefix.Length).All(char.IsAsciiHexDigit))
+            throw new InvalidDataException("GitHub 安装包 SHA-256 校验信息无效，请稍后重新检查更新");
+        return digest[prefix.Length..].ToLowerInvariant();
+    }
+
     internal static string ParseExpectedSha256(string contents,string expectedFileName)
     {
         var matches=new List<string>();
@@ -375,5 +397,6 @@ internal sealed class ApplicationUpdateService
     private sealed record GitHubAsset(
         [property:JsonPropertyName("name")] string Name,
         [property:JsonPropertyName("size")] long? Size,
-        [property:JsonPropertyName("browser_download_url")] string DownloadUrl);
+        [property:JsonPropertyName("browser_download_url")] string DownloadUrl,
+        [property:JsonPropertyName("digest")] string? Digest=null);
 }

@@ -79,7 +79,7 @@
 - 正式版本由 `.github/workflows/release.yml` 在 `v*` 标签上构建：标签版本必须与 csproj `Version` 一致，先运行 Release 全量测试和自包含 publish 审计，再生成 Inno Setup 当前用户安装 EXE、便携 ZIP 与无 BOM `SHA256SUMS.txt`，最后创建 GitHub Release。README 的固定下载链接、双语版本号、安装脚本和 release notes 必须同步更新；发行配图只能使用 Debug 显式 QA 防捕获开关取得的无敏感界面，严禁提交真实提示词、回答、设置、凭据、日志或屏幕附件。
 - 新版本号不得复用 GitHub 已存在的标签；发布还原必须使用提交的 `packages.lock.json` 锁定依赖，CI 同时编译主程序、单元测试和 ProviderSmoke，并将编译警告视为错误。第三方传递依赖的准确 LICENSE/NOTICE 必须随包发布；GitHub Actions 固定到完整提交 SHA，支持的卫星资源仅保留 `en` 与 `zh-Hans`。
 - 界面语言设置持久化为 `system`、`zh-CN` 或 `en-US`，无效旧值安全回退 `system`；单实例仲裁和设置加载完成后、创建首个 WPF 窗口前应用语言。运行中切换不得留下中英混合界面，当前实现统一在重启应用后生效；Debug 的 `MEWU_QA_UI_CULTURE` 仍只用于视觉验收并优先于用户设置。
-- 关于页“检查更新”仅查询 `abnste/mewu_ai` 的正式 GitHub Release，精确匹配版本化 `MewuAI-Setup-*-win-x64.exe` 与 `SHA256SUMS.txt`；REST API 限流时只可回退官方 latest release 重定向，不能接收任意 URL。下载必须有界、原子落盘且 SHA-256 校验通过后才允许启动安装器；用户确认“安装并重启”后静默当前用户安装，安装器必须自动重新启动应用。
+- 关于页“检查更新”仅查询 `abnste/mewu_ai` 的正式 GitHub Release，精确匹配版本化 `MewuAI-Setup-*-win-x64.exe` 并优先使用该资产的 GitHub `digest`（严格 `sha256:` + 64 位 ASCII 十六进制）。只有 digest 缺失/null 时才兼容旧 `SHA256SUMS.txt`；存在但畸形的 digest 不得回退。REST API 限流时只可回退官方 latest release 重定向及旧校验文件，两者都无法取得可信哈希时必须拒绝安装并提示稍后重试，不能接收任意 URL。下载必须有界、原子落盘且 SHA-256 校验通过后才允许启动安装器；用户确认“安装并重启”后静默当前用户安装，安装器必须自动重新启动应用。
 - 并发与租约测试必须用事件明确同步后台任务启动，不能把 `Task.Delay` 或 1 秒以内的线程池调度速度当作正确性条件；GitHub runner 高负载时应仍验证锁、释放通知和有界超时的真实契约，不能靠反复重跑掩盖偶发失败。
 - Windows Hermes 发现必须兼容官方 `%LOCALAPPDATA%\hermes\hermes-agent\bin\hermes.exe`、`venv\Scripts\hermes.exe` 及旧版根 `bin\hermes.exe` 布局；PATH 只允许从这些确定目录反推 `HERMES_HOME`，不得全盘搜索或执行不可信命令探测。
 - AI 入口显隐必须按实际可用后端决定：Hermes 对话仅在已启用且安装可发现时显示，远程 Provider 对话和原位翻译仅在默认 Provider 与凭据可用时显示；没有可用对话后端时隐藏覆盖层对话条和引用入口，离线截图/OCR/标注/录屏仍保持可用。产品不再提供独立文字问答界面或入口。
