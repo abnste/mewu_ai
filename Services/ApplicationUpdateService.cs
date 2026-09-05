@@ -13,7 +13,7 @@ internal sealed record ApplicationUpdatePackage(Version Version,string TagName,s
 
 internal sealed record ApplicationUpdateResult(Version CurrentVersion,Version LatestVersion,string TagName,ApplicationUpdatePackage? Package)
 {
-    internal bool IsUpdateAvailable=>Package is not null;
+    internal bool IsUpdateAvailable=>LatestVersion>CurrentVersion;
 }
 
 internal sealed record ApplicationUpdateProgress(string Message,long BytesReceived=0,long? TotalBytes=null);
@@ -50,7 +50,8 @@ internal sealed class ApplicationUpdateService
     internal async Task<ApplicationUpdateResult> CheckAndDownloadAsync(
         Version currentVersion,
         IProgress<ApplicationUpdateProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<Version,string,CancellationToken,Task<bool>>? confirmDownload=null)
     {
         ArgumentNullException.ThrowIfNull(currentVersion);
         progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在检查 GitHub 更新…","Checking GitHub for updates…")));
@@ -67,6 +68,13 @@ internal sealed class ApplicationUpdateService
         var checksums=RequireSingleAsset(release.Assets,checksumsName,MaximumChecksumBytes);
         ValidateReleaseDownloadUri(installer.DownloadUrl,release.TagName,installerName);
         ValidateReleaseDownloadUri(checksums.DownloadUrl,release.TagName,checksumsName);
+
+        // Checking a version never downloads assets or creates files until the
+        // caller has accepted the exact validated release above.
+        cancellationToken.ThrowIfCancellationRequested();
+        if(confirmDownload is not null&&!await confirmDownload(latestVersion,release.TagName,cancellationToken).ConfigureAwait(false))
+            return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,null);
+        cancellationToken.ThrowIfCancellationRequested();
 
         progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在读取更新校验信息…","Downloading update verification data…")));
         var checksumText=await DownloadStringAsync(checksums,MaximumChecksumBytes,cancellationToken).ConfigureAwait(false);
@@ -114,6 +122,7 @@ internal sealed class ApplicationUpdateService
         };
         foreach(var argument in new[]{"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/NOCANCEL","/SP-"})
             startInfo.ArgumentList.Add(argument);
+        cancellationToken.ThrowIfCancellationRequested();
         if(Process.Start(startInfo) is null)throw new InvalidOperationException("无法启动更新安装程序");
     }
 

@@ -29,3 +29,5 @@
 - 接入后 Release 全量 732 项通过，包含普通/流式请求体断言、持久化与旧配置兼容；Debug 设置页实际输入 priority JSON，关闭未保存。WPF 全局主题资源测试单独放入禁并行集合，STA 辅助线程为后台线程，避免与录屏等 WPF 测试竞争全局初始化或失败后挂住测试宿主。
 
 - IncrementalMarkdownRenderer 按 Markdig 顶层块类型与原始跨度保留未变前缀，并在同一 FlowDocument 内替换变化后缀。旧/新正文含方括号时保守全部重建，以正确处理跨块引用、脚注和缩写；动作更新/字号改变也必须清理相应旧状态。新块生成后只替换实际 emoji Run，保留普通正文与代码布局。
+
+- ApplicationUpdateService 的 confirmDownload 回调在官方版本与附件名称/URL 校验通过后、读取校验文件或写入下载目录之前执行；拒绝时仍返回 IsUpdateAvailable=true，但 Package=null。回调结束后再次检查取消，不能把发现更新等同于已下载。
