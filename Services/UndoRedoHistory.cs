@@ -15,6 +15,17 @@ internal sealed class UndoRedoHistory<T>
     internal int UndoCount=>_undo.Count;
     internal int RedoCount=>_redo.Count;
 
+    // Resource owners must keep both ends of every reachable history entry,
+    // including the redo branch. Expired entries no longer retain resources.
+    internal IEnumerable<T> RetainedStates
+    {
+        get
+        {
+            foreach(var entry in _undo){yield return entry.Before;yield return entry.After;}
+            foreach(var entry in _redo){yield return entry.Before;yield return entry.After;}
+        }
+    }
+
     internal void Record(T before,T after,string label)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(label);

@@ -1,5 +1,10 @@
 # Hermes 启动兼容
 
+- 2026-09-05 性能审查：`BufferedAiStreamProgress` 在 Provider 线程合并已归一化增量，首批排一次 Background 回调，之后约 80ms 刷新；每个请求独享实例，完成前 Flush，取消/替换/关闭后丢弃未渲染批次，渲染异常交回请求失败路径。不得恢复逐 token `Progress<T>` UI 排队或在每次增量中强制 `UpdateLayout`。
+- `SelectionImageCache` 按冻结桌面源对象和物理裁剪矩形复用 WIC 裁剪；样式/引用变化不重建图像，桌面更换、选区变化或资源释放时失效。不得把缓存当作可导出的标注快照。
+- JSONL 历史加载最多读取末尾 8 MiB；从字节边界开始时先跳过不完整首行，再解码 UTF-8，避免截断中文/emoji 让近期记录整体失效。原历史文件不裁剪不重写；仍逐条严格解析 JSON 并执行条数、单条长度和 Provider/Profile 隔离。
+- AI 图片编码在复制出最终附件后必须清零 MemoryStream 的原始缓冲；每次 PNG/JPEG 编码完成都检查取消，再转移缓冲所有权。Dispose MemoryStream 不等于清除其中的屏幕内容。
+
 - `PinnedVisualSnapshotRenderer` 用显式 VisualBrush 视口渲染贴图完整外观；快照最长边 8192px、总像素 1600 万，超大贴图下采样但不改变实际物理目标边界或限制用户缩放。100%、150%、200% DPI 的透明边距、阴影及负坐标桌面合成均有像素回归测试。2026-09-04 本轮 Release 全量 735 项通过，ProviderSmoke 编译零警告。
 
 - Windows Hermes GUI 能对话、CLI `serve` 能启动，并不证明第三方 GUI 启动环境相同。喵呜AI 优先按所发现启动器对应的虚拟环境，用可信本地 `python.exe -m hermes_cli.main` 启动；不得从 PATH 任取系统 Python，也不得混用 `venv` 与 `.venv`。旧纯启动器布局继续兼容。

@@ -19,7 +19,16 @@ internal static class AiImageEncodingService
         var acceptsPng=acceptedMimeTypes.Count==0||acceptedMimeTypes.Contains("image/png");var acceptsJpeg=acceptedMimeTypes.Count==0||acceptedMimeTypes.Contains("image/jpeg");
         if(!acceptsPng&&!acceptsJpeg)throw new NotSupportedException("当前 Provider 不接受 PNG 或 JPEG 屏幕图片");
         token.ThrowIfCancellationRequested();
-        if(acceptsPng){var png=Encode(image,jpegQuality:null);if(png.LongLength<=maxBytes)return new EncodedAiImage(png,"image/png",image.PixelWidth,image.PixelHeight);CryptographicOperations.ZeroMemory(png);}
+        if(acceptsPng)
+        {
+            byte[]? png=Encode(image,jpegQuality:null);
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                if(png.LongLength<=maxBytes){var result=png;png=null;return new EncodedAiImage(result,"image/png",image.PixelWidth,image.PixelHeight);}
+            }
+            finally{if(png is not null)CryptographicOperations.ZeroMemory(png);}
+        }
 
         var minScale=Math.Min(1,960d/Math.Max(image.PixelWidth,image.PixelHeight));var scale=1d;long smallest=long.MaxValue;
         for(var attempt=0;attempt<MaxResizeAttempts;attempt++)
@@ -31,6 +40,7 @@ internal static class AiImageEncodingService
                 {
                     token.ThrowIfCancellationRequested();
                     last=Encode(candidate,quality);
+                    token.ThrowIfCancellationRequested();
                     smallest=Math.Min(smallest,last.LongLength);
                     if(last.LongLength<=maxBytes)
                     {
@@ -45,6 +55,7 @@ internal static class AiImageEncodingService
                 if(acceptsPng&&scale<.999)
                 {
                     last=Encode(candidate,jpegQuality:null);
+                    token.ThrowIfCancellationRequested();
                     smallest=Math.Min(smallest,last.LongLength);
                     if(last.LongLength<=maxBytes)
                     {
@@ -68,6 +79,18 @@ internal static class AiImageEncodingService
                 CryptographicOperations.ZeroMemory(data);
     }
 
-    private static byte[] Encode(BitmapSource image,int? jpegQuality){BitmapEncoder encoder=jpegQuality is { } quality?new JpegBitmapEncoder{QualityLevel=quality}:new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using var stream=new MemoryStream();encoder.Save(stream);return stream.ToArray();}
+    private static byte[] Encode(BitmapSource image,int? jpegQuality)
+    {
+        BitmapEncoder encoder=jpegQuality is { } quality?new JpegBitmapEncoder{QualityLevel=quality}:new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(image));
+        using var stream=new MemoryStream();
+        try{encoder.Save(stream);return stream.ToArray();}
+        finally
+        {
+            // ToArray transfers a copy; MemoryStream.Dispose does not erase
+            // the original encoded screen content retained by its buffer.
+            if(stream.TryGetBuffer(out var buffer))CryptographicOperations.ZeroMemory(buffer.AsSpan());
+        }
+    }
     private static BitmapSource Resize(BitmapSource source,double scale){var transform=new TransformedBitmap(source,new ScaleTransform(scale,scale));transform.Freeze();return transform;}
 }
