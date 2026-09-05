@@ -30,7 +30,17 @@ public static class MarkdownFlowDocumentRenderer
     private static readonly Brush CodeBackground=new SolidColorBrush(Color.FromRgb(243,246,250));
     private static readonly Brush RuleBrush=new SolidColorBrush(Color.FromRgb(220,228,239));
 
+    static MarkdownFlowDocumentRenderer()
+    {
+        // Shared Freezables must be immutable to render safely in separate STA
+        // previews/tests, and need no per-document change notifications.
+        foreach(var brush in new[]{BodyBrush,MutedBrush,LinkBrush,CodeBackground,RuleBrush})brush.Freeze();
+    }
+
     public static FlowDocument Render(string? markdown,double fontSize=13)
+        =>Render(markdown,fontSize,out _);
+
+    internal static FlowDocument Render(string? markdown,double fontSize,out bool containsTable)
     {
         var document=new FlowDocument
         {
@@ -38,9 +48,20 @@ public static class MarkdownFlowDocumentRenderer
             FontSize=fontSize,Foreground=BodyBrush,LineHeight=fontSize*1.54
         };
         var parsed=Markdown.Parse(markdown??string.Empty,Pipeline);
+        containsTable=ContainsTable(parsed);
         foreach(var block in parsed)AddBlock(document.Blocks,block,fontSize);
         if(document.Blocks.Count==0)document.Blocks.Add(new Paragraph());
         return document;
+    }
+
+    private static bool ContainsTable(ContainerBlock container)
+    {
+        foreach(var block in container)
+        {
+            if(block is Markdig.Extensions.Tables.Table)return true;
+            if(block is ContainerBlock child&&ContainsTable(child))return true;
+        }
+        return false;
     }
 
     public static string ToPlainText(FlowDocument document)=>

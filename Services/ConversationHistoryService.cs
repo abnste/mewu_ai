@@ -19,6 +19,7 @@ public sealed class ConversationHistoryService
     private static readonly SemaphoreSlim WriteGate=new(1,1);
     private const int MaxReadRecords=100;
     private const int MaxReadLineCharacters=64*1024;
+    internal const int MaxReadBytes=8*1024*1024;
     private readonly string _path;
     private readonly Action<string,Exception>? _logError;
     private readonly Func<CancellationToken,Task> _beforeCommit;
@@ -68,6 +69,7 @@ public sealed class ConversationHistoryService
             var recent=new Queue<ConversationHistoryEntry>(maxRecords);
             var malformed=0;
             await using var stream=new FileStream(_path,FileMode.Open,FileAccess.Read,FileShare.Read,32*1024,FileOptions.Asynchronous|FileOptions.SequentialScan);
+            await SeekToRecentRecordsAsync(stream,token).ConfigureAwait(false);
             using var reader=new StreamReader(stream,new System.Text.UTF8Encoding(false,true),detectEncodingFromByteOrderMarks:true);
             while(await reader.ReadLineAsync(token).ConfigureAwait(false) is { } line)
             {
@@ -92,6 +94,24 @@ public sealed class ConversationHistoryService
             return recent.ToArray();
         }
         finally{WriteGate.Release();}
+    }
+
+    private static async Task SeekToRecentRecordsAsync(FileStream stream,CancellationToken token)
+    {
+        if(stream.Length<=MaxReadBytes)return;
+        stream.Seek(-MaxReadBytes,SeekOrigin.End);
+        // Find the next complete JSONL line in bytes before decoding UTF-8.
+        // A byte-budget boundary may split either a record or a Chinese/emoji
+        // character. Decoding that partial prefix would corrupt the whole read.
+        var buffer=new byte[4096];
+        int count;
+        while((count=await stream.ReadAsync(buffer,token).ConfigureAwait(false))>0)
+        {
+            var newline=Array.IndexOf(buffer,(byte)'\n',0,count);
+            if(newline<0)continue;
+            stream.Seek(newline+1-count,SeekOrigin.Current);
+            return;
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true,MaxDepth=8};

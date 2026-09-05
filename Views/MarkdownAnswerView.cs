@@ -11,11 +11,13 @@ namespace mewu_ai_Assistant.Views;
 public sealed class MarkdownAnswerView:EmojiRichTextBox
 {
     private string _markdown=string.Empty;
+    private bool _hasActions;
+    public bool ContainsTable { get; private set; }
     public event EventHandler? MarkdownChanged;
 
     public MarkdownAnswerView()
     {
-        IsReadOnly=true;IsReadOnlyCaretVisible=true;IsTabStop=false;IsDocumentEnabled=true;
+        IsReadOnly=true;IsReadOnlyCaretVisible=true;IsTabStop=false;IsDocumentEnabled=true;IsUndoEnabled=false;
         Background=Brushes.Transparent;BorderThickness=new Thickness(0);Padding=new Thickness(0);
         VerticalScrollBarVisibility=ScrollBarVisibility.Disabled;HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled;
     }
@@ -26,17 +28,26 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
         set
         {
             var normalized=value??string.Empty;
-            if(string.Equals(_markdown,normalized,StringComparison.Ordinal))return;
-            _markdown=normalized;Document=MarkdownFlowDocumentRenderer.Render(normalized,FontSize>0?FontSize:13);MarkdownChanged?.Invoke(this,EventArgs.Empty);
+            if(!_hasActions&&string.Equals(_markdown,normalized,StringComparison.Ordinal))return;
+            RenderMarkdown(normalized);
         }
     }
 
     public string PlainText=>Text.TrimEnd('\r','\n');
 
+    private void RenderMarkdown(string markdown)
+    {
+        var document=MarkdownFlowDocumentRenderer.Render(markdown,FontSize>0?FontSize:13,out var containsTable);
+        _markdown=markdown;ContainsTable=containsTable;_hasActions=false;Document=document;
+        MarkdownChanged?.Invoke(this,EventArgs.Empty);
+    }
+
     public void SetMarkdownWithActions(string? markdown,IReadOnlyList<MarkdownAnswerAction> actions)
     {
-        _markdown=markdown??string.Empty;Document=MarkdownFlowDocumentRenderer.Render(_markdown,FontSize>0?FontSize:13);MarkdownChanged?.Invoke(this,EventArgs.Empty);
+        if(actions.Count==0&&!_hasActions){Markdown=markdown??string.Empty;return;}
+        RenderMarkdown(markdown??string.Empty);
         if(actions.Count==0)return;
+        _hasActions=true;
         var chips=new WrapPanel{Margin=new Thickness(0,7,0,2)};
         foreach(var action in actions)
         {

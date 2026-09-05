@@ -1,5 +1,8 @@
 <Solution>
-  <Project Path="mewu_ai_Assistant.csproj" />
-  <Project Path="tests/MewuAI.Tests/MewuAI.Tests.csproj" />
-  <Project Path="tests/MewuAI.ProviderSmoke/MewuAI.ProviderSmoke.csproj" />
+  <Configurations>
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="mewu_ai_Assistant.csproj"><Platform Project="x64" /></Project>
+  <Project Path="tests/MewuAI.Tests/MewuAI.Tests.csproj"><Platform Project="x64" /></Project>
+  <Project Path="tests/MewuAI.ProviderSmoke/MewuAI.ProviderSmoke.csproj"><Platform Project="x64" /></Project>
 </Solution>
