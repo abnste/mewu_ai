@@ -61,6 +61,10 @@ internal static class Program
             app.Shutdown();
             return;
         }
+        if(args.Contains("--verify-answer-alignment"))
+        {
+            VerifyAnswerAlignment(app,overlay);app.Run(overlay);return;
+        }
         if(args.Contains("--benchmark"))
         {
             BenchmarkAnswer(app,overlay,args.Contains("--after"));app.Run(overlay);return;
@@ -93,6 +97,51 @@ internal static class Program
             overlay.Closed+=(_,_)=>{timer.Stop();lifetime.Stop();};
         };
         app.Run(overlay);
+    }
+
+    private static void VerifyAnswerAlignment(Application app,CaptureOverlayWindow overlay)
+    {
+        overlay.Loaded+=(_,_)=>overlay.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle,new Action(()=>
+        {
+            try
+            {
+                Invoke(overlay,"ShowAnswer");
+                Invoke(overlay,"RefreshAnswer",string.Concat(Enumerable.Repeat("用于测量滚动条与小箭头中心的合成回答。\n\n",100)));
+                var answer=(MarkdownAnswerView)overlay.FindName("AnswerText");
+                var button=(System.Windows.Controls.Button)overlay.FindName("LatestAnswerButton");
+                var host=(FrameworkElement)overlay.FindName("PromptBarHost");
+                overlay.UpdateLayout();
+                foreach(var width in new[]{574d,520d,640d})
+                {
+                    host.Width=width;
+                    button.Visibility=Visibility.Visible;
+                    overlay.UpdateLayout();
+                    var bar=Descendants(answer).OfType<System.Windows.Controls.Primitives.ScrollBar>().Single(b=>b.Orientation==System.Windows.Controls.Orientation.Vertical);
+                    var track=(System.Windows.Controls.Primitives.Track)bar.Template.FindName("PART_Track",bar);
+                    var glyph=(FrameworkElement)button.Template.FindName("ArrowGlyph",button);
+                    double Center(FrameworkElement element)=>element.TransformToAncestor(overlay).Transform(new System.Windows.Point(element.ActualWidth/2,element.ActualHeight/2)).X;
+                    Rect Bounds(FrameworkElement element)=>element.TransformToAncestor(overlay).TransformBounds(new Rect(element.RenderSize));
+                    var delta=Math.Abs(Center(track.Thumb)-Center(glyph));
+                    Console.WriteLine($"width={width}; thumbCenter={Center(track.Thumb):F3}; arrowCenter={Center(glyph):F3}; delta={delta:F3} DIP");
+                    if(delta>.1)throw new InvalidOperationException("小箭头与实际滚动滑块中心不一致。");
+                    var beforeAnswer=Bounds(answer);var beforeHost=Bounds(host);
+                    button.Visibility=Visibility.Collapsed;overlay.UpdateLayout();
+                    if(Bounds(answer)!=beforeAnswer||Bounds(host)!=beforeHost)throw new InvalidOperationException("箭头显隐改变正文或对话条布局。");
+                }
+                Console.WriteLine("PASS: arrow alignment and stable layout at three widths.");
+            }
+            catch(Exception ex){Console.Error.WriteLine(ex.Message);Environment.ExitCode=1;}
+            finally {overlay.Close();app.Shutdown();}
+        }));
+    }
+
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++)
+        {
+            var child=VisualTreeHelper.GetChild(root,i);yield return child;
+            foreach(var descendant in Descendants(child))yield return descendant;
+        }
     }
 
     private static void BenchmarkAnswer(Application app,CaptureOverlayWindow overlay,bool after)

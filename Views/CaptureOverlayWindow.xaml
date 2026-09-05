@@ -135,7 +135,7 @@
           </Style>
          </local:MarkdownAnswerView.Resources>
         </local:MarkdownAnswerView>
-        <Button x:Name="LatestAnswerButton" Visibility="Collapsed" AutomationProperties.Name="回到最新回复" ToolTip="回到最新回复" Click="JumpToLatestAnswer" Width="{DynamicResource {x:Static SystemParameters.VerticalScrollBarWidthKey}}" Height="14" HorizontalAlignment="Right" VerticalAlignment="Bottom" Cursor="Hand" FocusVisualStyle="{x:Null}">
+        <Button x:Name="LatestAnswerButton" Visibility="Collapsed" AutomationProperties.Name="回到最新回复" ToolTip="回到最新回复" Click="JumpToLatestAnswer" Width="{DynamicResource {x:Static SystemParameters.VerticalScrollBarWidthKey}}" Height="14" Margin="0" Padding="0" HorizontalAlignment="Right" VerticalAlignment="Bottom" Cursor="Hand" FocusVisualStyle="{x:Null}">
          <Button.Template>
           <ControlTemplate TargetType="Button">
            <Border x:Name="ArrowSurface" Background="Transparent" CornerRadius="4">
