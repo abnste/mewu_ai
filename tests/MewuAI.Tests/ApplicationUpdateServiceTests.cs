@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using mewu_ai_Assistant.Services;
 using Xunit;
 
@@ -8,6 +9,118 @@ namespace MewuAI.Tests;
 
 public sealed class ApplicationUpdateServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GitHubDigestVerifiesInstallerWithoutReadingChecksumAsset(bool includeChecksums)
+    {
+        var root=TestDirectory();
+        try
+        {
+            var installer=Encoding.UTF8.GetBytes("GitHub digest installer");
+            var hash=Convert.ToHexString(SHA256.HashData(installer));var requests=new List<string>();
+            var responses=new Queue<HttpResponseMessage>([
+                JsonResponse(ReleaseJson("v0.1.1",installer.Length,"sha256:"+hash,includeChecksums)),
+                BytesResponse(installer)]);
+            var accepted=false;
+            var service=new ApplicationUpdateService((request,_,_)=>
+            {
+                if(requests.Count>0)Assert.True(accepted);
+                requests.Add(request.RequestUri!.AbsoluteUri);return Task.FromResult(responses.Dequeue());
+            },root);
+            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken,
+                (_,_,_)=>{accepted=true;return Task.FromResult(true);});
+            Assert.True(result.IsUpdateAvailable);
+            Assert.Equal(hash.ToLowerInvariant(),result.Package!.Sha256);
+            Assert.Equal(installer,await File.ReadAllBytesAsync(result.Package.InstallerPath,TestContext.Current.CancellationToken));
+            Assert.Equal(2,requests.Count);
+            Assert.DoesNotContain(requests,url=>url.EndsWith("SHA256SUMS.txt",StringComparison.Ordinal));
+            Assert.Empty(responses);
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Theory]
+    [InlineData("",64,'a')]
+    [InlineData(" ",64,'a')]
+    [InlineData("sha512:",64,'a')]
+    [InlineData("SHA256:",64,'a')]
+    [InlineData("sha256:",64,'g')]
+    [InlineData("sha256:",63,'a')]
+    [InlineData("sha256:",65,'a')]
+    [InlineData("sha256:",64,'ａ')]
+    public async Task InvalidDigestNeverFallsBackOrPrompts(string prefix,int length,char character)
+    {
+        var root=TestDirectory();
+        try
+        {
+            var requests=0;var digest=prefix+new string(character,length);
+            var service=new ApplicationUpdateService((_,_,_)=>
+            {
+                requests++;return Task.FromResult(JsonResponse(ReleaseJson("v0.1.1",20,digest)));
+            },root);
+            await Assert.ThrowsAsync<InvalidDataException>(()=>service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken,
+                (_,_,_)=>throw new InvalidOperationException("Invalid digest must fail before confirmation.")));
+            Assert.Equal(1,requests);Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
+    public async Task DigestMismatchNeverPublishesInstallerOrUsesLegacyHash()
+    {
+        var root=TestDirectory();
+        try
+        {
+            var installer=Encoding.UTF8.GetBytes("tampered payload");
+            var responses=new Queue<HttpResponseMessage>([
+                JsonResponse(ReleaseJson("v0.1.1",installer.Length,"sha256:"+new string('0',64))),
+                BytesResponse(installer)]);
+            var service=new ApplicationUpdateService((_,_,_)=>Task.FromResult(responses.Dequeue()),root);
+            await Assert.ThrowsAsync<InvalidDataException>(()=>service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken));
+            Assert.Empty(responses);
+            Assert.Empty(Directory.EnumerateFiles(root,"*",SearchOption.AllDirectories));
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
+    public async Task MissingDigestAndLegacyChecksumNeverDownloadsUnverifiedInstaller()
+    {
+        var root=TestDirectory();
+        try
+        {
+            var requests=0;
+            var service=new ApplicationUpdateService((_,_,_)=>
+            {
+                requests++;return Task.FromResult(JsonResponse(ReleaseJson("v0.1.1",20,null,false)));
+            },root);
+            await Assert.ThrowsAsync<InvalidDataException>(()=>service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken));
+            Assert.Equal(1,requests);Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
+    public async Task RateLimitedNewReleaseStillSupportsLegacyChecksumVerification()
+    {
+        var root=TestDirectory();
+        try
+        {
+            var installer=Encoding.UTF8.GetBytes("legacy fallback installer");
+            var hash=Convert.ToHexString(SHA256.HashData(installer)).ToLowerInvariant();
+            var responses=new Queue<HttpResponseMessage>([
+                new(HttpStatusCode.TooManyRequests),
+                BytesResponse(Encoding.UTF8.GetBytes($"{hash}  MewuAI-Setup-0.1.1-win-x64.exe\n")),
+                BytesResponse(installer)]);
+            var service=new ApplicationUpdateService((_,_,_)=>Task.FromResult(responses.Dequeue()),root,
+                (_,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.Found){Headers={Location=new Uri("https://github.com/abnste/mewu_ai/releases/tag/v0.1.1")}}));
+            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken);
+            Assert.Equal(hash,result.Package!.Sha256);Assert.Empty(responses);
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
     [Fact]
     public async Task DecliningUpdateDoesNotDownloadAssetsOrCreateUpdateDirectory()
     {
@@ -158,17 +271,21 @@ public sealed class ApplicationUpdateServiceTests
         finally{if(Directory.Exists(root))Directory.Delete(root,true);}
     }
 
-    private static string ReleaseJson(string tag,int installerSize)=>$$"""
+    private static string ReleaseJson(string tag,int installerSize,string? digest=null,bool includeChecksums=true)
     {
-      "tag_name":"{{tag}}",
-      "draft":false,
-      "prerelease":false,
-      "assets":[
-        {"name":"MewuAI-Setup-{{tag[1..]}}-win-x64.exe","size":{{installerSize}},"browser_download_url":"https://github.com/abnste/mewu_ai/releases/download/{{tag}}/MewuAI-Setup-{{tag[1..]}}-win-x64.exe"},
-        {"name":"SHA256SUMS.txt","size":199,"browser_download_url":"https://github.com/abnste/mewu_ai/releases/download/{{tag}}/SHA256SUMS.txt"}
-      ]
+        var assets=new List<object>{new
+        {
+            name=$"MewuAI-Setup-{tag[1..]}-win-x64.exe",size=installerSize,
+            browser_download_url=$"https://github.com/abnste/mewu_ai/releases/download/{tag}/MewuAI-Setup-{tag[1..]}-win-x64.exe",
+            digest
+        }};
+        if(includeChecksums)assets.Add(new
+        {
+            name="SHA256SUMS.txt",size=199,
+            browser_download_url=$"https://github.com/abnste/mewu_ai/releases/download/{tag}/SHA256SUMS.txt"
+        });
+        return JsonSerializer.Serialize(new{tag_name=tag,draft=false,prerelease=false,assets});
     }
-    """;
 
     private static HttpResponseMessage JsonResponse(string json)=>new(HttpStatusCode.OK){Content=new StringContent(json,Encoding.UTF8,"application/json")};
     private static HttpResponseMessage BytesResponse(byte[] bytes)=>new(HttpStatusCode.OK){Content=new ByteArrayContent(bytes)};
