@@ -41,7 +41,7 @@ public sealed class SettingsWindow : Window
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
-    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _recordCursor = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
+    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
     private readonly System.Windows.Shapes.Ellipse _hermesStatusDot = new();
     private readonly List<AiProviderSettings> _providers;
@@ -380,6 +380,10 @@ public sealed class SettingsWindow : Window
         _captureCursor.Content = "截图包含系统鼠标指针";
         _captureCursor.IsChecked = _host.Settings.IncludeCaptureCursor;
         panel.Children.Add(_captureCursor);
+        _teachingMode.Content=LocalizationService.T("教学演示模式（允许屏幕共享看到框选和标注）","Teaching mode (show selections and annotations in screen sharing)");
+        _teachingMode.IsChecked=_host.Settings.TeachingMode;
+        panel.Children.Add(_teachingMode);
+        panel.Children.Add(Text(LocalizationService.T("保存后，下次截图及其贴图生效。请在会议或教学软件中共享整个屏幕。演示时可使用会议软件录制；喵呜AI区域录屏和长截图需关闭此模式。设置和密钥仍受防捕获保护。","Applies to your next capture and its pinned windows. Share the entire screen in your meeting app. Use the meeting app to record lessons; turn this mode off for MewuAI region recording or scrolling captures. Settings and credentials remain protected."),true));
         panel.Children.Add(Text("截图、OCR、复制和保存均在本地完成。", true));
         return panel;
     }
@@ -1156,6 +1160,7 @@ public sealed class SettingsWindow : Window
                 CaptureDelaySeconds=_delay.SelectedIndex switch{1=>3,2=>5,_=>0},
                 DefaultImageFormat=_imageFormat.SelectedIndex==1?"jpg":"png",
                 IncludeCaptureCursor=_captureCursor.IsChecked==true,
+                TeachingMode=_teachingMode.IsChecked==true,
                 RecordingFps=ReadNumericChoice(_recordingFps,30),
                 RecordingQuality=ReadNumericChoice(_recordingQuality,75),
                 GifFps=ReadNumericChoice(_gifFps,15),

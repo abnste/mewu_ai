@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -21,10 +22,13 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        var verifyTeaching=args.Contains("--verify-teaching");
+        var teaching=args.Contains("--teaching")||verifyTeaching;
 #if !DEBUG
-        throw new InvalidOperationException("The interaction harness must use Debug capture protection QA mode.");
+        if(!teaching)throw new InvalidOperationException("Release replay requires explicit --teaching or --verify-teaching.");
 #else
-        Environment.SetEnvironmentVariable("MEWU_QA_CAPTURE_WINDOWS","1");
+        Environment.SetEnvironmentVariable("MEWU_QA_CAPTURE_WINDOWS",teaching?null:"1");
+#endif
         var english=args.Contains("--english");
         typeof(AppHost).Assembly.GetType("mewu_ai_Assistant.Services.LocalizationService")!
             .GetMethod("Initialize",BindingFlags.Static|BindingFlags.NonPublic)!
@@ -32,19 +36,35 @@ internal static class Program
         var app=new Application { ShutdownMode=ShutdownMode.OnMainWindowClose };
         app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source=new Uri("/MewuAI;component/Themes/LightTheme.xaml",UriKind.Relative) });
         var host=new AppHost(app);
+        host.Settings.TeachingMode=teaching;
         var area=System.Windows.Forms.SystemInformation.VirtualScreen;
         var image=CreateSyntheticDesktop(area.Width,area.Height);
+        Window? background=null;
+        if(verifyTeaching)
+        {
+            app.ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            background=new Window { Title="Mewu Teaching QA Background",WindowStyle=WindowStyle.None,WindowState=WindowState.Maximized,Background=Brushes.Lime,ShowInTaskbar=false };
+            background.Show();
+            image=CreateSolidDesktop(area.Width,area.Height,Brushes.Magenta);
+        }
         var overlay=new CaptureOverlayWindow(host);
         Set(overlay,"_frame",new CaptureFrame(area.Left,area.Top,image));
         ((Image)overlay.FindName("DesktopImage")).Source=image;
         Set(overlay,"_conversationAiAvailable",true);
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
+        overlay.ShowInTaskbar=true;
         if(args.Contains("--verify-lifetime"))
         {
             VerifyResourceLifetime(overlay);
             overlay.Close();
             app.Shutdown();
+            return;
+        }
+        if(verifyTeaching)
+        {
+            VerifyTeachingOnLoad(app,host,overlay,background!);
+            app.Run(overlay);
             return;
         }
         overlay.Loaded+=(_,_)=>
@@ -69,7 +89,82 @@ internal static class Program
             overlay.Closed+=(_,_)=>{timer.Stop();lifetime.Stop();};
         };
         app.Run(overlay);
-#endif
+    }
+
+    private static object Native(string name,params object[] args)=>typeof(AppHost).Assembly
+        .GetType("mewu_ai_Assistant.Interop.NativeMethods")!
+        .GetMethod(name,BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,args)!;
+
+    private static void VerifyTeachingOnLoad(Application app,AppHost host,CaptureOverlayWindow overlay,Window background)
+    {
+        overlay.Loaded+=(_,_)=>
+        {
+            var timer=new DispatcherTimer {Interval=TimeSpan.FromMilliseconds(500)};
+            timer.Tick+=(_,_)=>
+            {
+                timer.Stop();
+                var results=new Dictionary<string,object>();
+                void Check(string name,bool passed){results[name]=passed;if(!passed)throw new InvalidOperationException(name);}
+                try
+                {
+                    var handle=new System.Windows.Interop.WindowInteropHelper(overlay).Handle;
+                    var screen=System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+                    var x=screen.Left+screen.Width/2;var y=screen.Top+screen.Height/2;
+                    bool IsGreen(CaptureFrame frame)
+                    {
+                        var pixel=new byte[4];frame.Image.CopyPixels(new Int32Rect(x-frame.OriginX,y-frame.OriginY,1,1),pixel,4,0);
+                        return pixel[1]>240&&pixel[0]<12&&pixel[2]<12;
+                    }
+                    Check("teachingOverlayVisible",(bool)Native("IsVisibleToCapture",handle));
+                    Check("recordingProtectionFalse",!(bool)Get(overlay,"_captureExclusionVerified"));
+                    Native("FlushComposition");
+                    Check("desktopCaptureIncludesOverlay",!IsGreen(new ScreenCaptureService().CaptureDesktop()));
+                    var clean=(CaptureFrame)overlay.GetType().GetMethod("CaptureCleanDesktopForRefresh",Private)!.Invoke(overlay,null)!;
+                    Check("refreshExcludesOwnOverlay",IsGreen(clean));
+                    Check("sharingRestoredAfterRefresh",(bool)Native("IsVisibleToCapture",handle));
+                    Invoke(overlay,"Record",overlay,new RoutedEventArgs());
+                    Check("recordingBlocked",Get(overlay,"_recordingSession") is null&&!(bool)Get(overlay,"_recordingCountdownActive"));
+                    var settings=new SettingsWindow(host);
+                    try
+                    {
+                        var settingsHandle=new System.Windows.Interop.WindowInteropHelper(settings).EnsureHandle();
+                        Check("settingsStillProtected",(bool)Native("IsExcludedFromCapture",settingsHandle));
+                    }
+                    finally { settings.Close(); }
+                    var image=CreateSolidDesktop(80,80,Brushes.SkyBlue);
+                    var pin=new PinnedImageWindow(image,new ScreenRect(screen.Left+80,screen.Top+80,80,80),true);
+                    try
+                    {
+                        pin.Show();
+                        Check("pinVisibleToSharing",(bool)Native("IsVisibleToCapture",new System.Windows.Interop.WindowInteropHelper(pin).Handle));
+                        Check("visiblePinNotCompositedTwice",pin.GetType().GetMethod("CreateCaptureSnapshot",Private)!.Invoke(pin,null) is null);
+                    }
+                    finally { pin.Close(); }
+                    var protectedPin=new PinnedImageWindow(image);
+                    try
+                    {
+                        var pinHandle=new System.Windows.Interop.WindowInteropHelper(protectedPin).EnsureHandle();
+                        Check("ordinaryPinStillProtected",(bool)Native("IsExcludedFromCapture",pinHandle));
+                    }
+                    finally { protectedPin.Close(); }
+                    Check("allPassed",true);
+                }
+                catch(Exception error){results["allPassed"]=false;results["error"]=error.ToString();Environment.ExitCode=1;}
+                finally
+                {
+                    var directory=Path.Combine(Environment.CurrentDirectory,".codex-build");Directory.CreateDirectory(directory);
+                    File.WriteAllText(Path.Combine(directory,"teaching-verification.json"),System.Text.Json.JsonSerializer.Serialize(results,new System.Text.Json.JsonSerializerOptions{WriteIndented=true}),new System.Text.UTF8Encoding(false));
+                    overlay.Close();background.Close();app.Shutdown(Environment.ExitCode);
+                }
+            };
+            timer.Start();
+        };
+    }
+
+    private static BitmapSource CreateSolidDesktop(int width,int height,System.Windows.Media.Brush brush)
+    {
+        var visual=new DrawingVisual();using(var dc=visual.RenderOpen())dc.DrawRectangle(brush,null,new Rect(0,0,width,height));
+        var image=new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32);image.Render(visual);image.Freeze();return image;
     }
 
     private static void Set(object target,string field,object value)=>target.GetType().GetField(field,Private)!.SetValue(target,value);

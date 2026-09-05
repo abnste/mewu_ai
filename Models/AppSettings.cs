@@ -5,6 +5,7 @@ public sealed class AppSettings
 {
     public HotkeySetting CaptureHotkey { get; set; } = new();
     public bool LaunchAtStartup { get; set; }
+    public bool TeachingMode { get; set; }
     public string UiLanguage { get; set; } = "system";
     public double OverlayOpacity { get; set; } = .6; public int CaptureDelaySeconds { get; set; }
     public string DefaultImageFormat { get; set; } = "png"; public bool IncludeCaptureCursor { get; set; }

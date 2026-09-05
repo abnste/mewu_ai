@@ -41,6 +41,7 @@ public partial class CaptureOverlayWindow : Window
     private const string UploadedReferenceDragFormat="MewuAI.UploadedImageReference";
     private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
     private readonly AppHost _host;
+    internal bool IsTeachingMode { get; }
     private CaptureFrame _frame;
     private int _desktopFrameVersion;
     private readonly List<SelectionItem> _selections=[];
@@ -282,7 +283,7 @@ public partial class CaptureOverlayWindow : Window
 
     public CaptureOverlayWindow(AppHost host)
     {
-        _host=host;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=AnswerText.ContainsTable?Visibility.Visible:Visibility.Collapsed;
+        _host=host;IsTeachingMode=host.Settings.TeachingMode;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=AnswerText.ContainsTable?Visibility.Visible:Visibility.Collapsed;
         _history[0]=_history[0] with{Text=_history[0].Text+" 本轮附件清单中的 referenceHandle 是不可变主键；每条批注都必须原样返回它。句柄与 regionIndex 冲突时以句柄为准，禁止按 @图片N 或 @视频N 的显示编号猜测附件顺序。"};
         LoadSessionHistory();
         // Keep the composer fully below the viewport until its first arranged
@@ -295,6 +296,15 @@ public partial class CaptureOverlayWindow : Window
         // only affect WPF rasterisation of the presentation layer.
         UseLayoutRounding=true;SnapsToDevicePixels=true;TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);Root.SnapsToDevicePixels=true;
         ApplyOverlayVisualTuning();
+        TeachingBadge.Visibility=IsTeachingMode?Visibility.Visible:Visibility.Collapsed;
+        TeachingBadgeText.Text=LocalizationService.T("教学演示 · 屏幕共享可见","Teaching · Visible in screen sharing");
+        if(IsTeachingMode)
+        {
+            RecordButton.IsEnabled=LongCaptureButton.IsEnabled=false;
+            RecordButton.ToolTip=LongCaptureButton.ToolTip=TeachingCaptureRestriction;
+            ToolTipService.SetShowOnDisabled(RecordButton,true);
+            ToolTipService.SetShowOnDisabled(LongCaptureButton,true);
+        }
         RefreshAiFeatureAvailability();
         ApplyVoiceAvailability();
         if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
@@ -314,7 +324,16 @@ public partial class CaptureOverlayWindow : Window
             _overlaySource=HwndSource.FromHwnd(hwnd);
             _overlaySource?.AddHook(OverlayWindowMessage);
             NativeMethods.SetWindowPos(hwnd,new IntPtr(-1),area.Left,area.Top,area.Width,area.Height,0x0040);
-            var excluded=NativeMethods.ExcludeFromCapture(hwnd);var nativeError=excluded?0:System.Runtime.InteropServices.Marshal.GetLastWin32Error();_captureExclusionVerified=excluded&&!NativeMethods.VisualQaCaptureEnabled;if(!excluded)new PrivacyLogger().Error("CaptureProtection",new InvalidOperationException($"无法启用覆盖层防捕获，Win32 错误码 {nativeError}"));
+            var applied=NativeMethods.ApplyPresentationCaptureVisibility(hwnd,IsTeachingMode);
+            _captureExclusionVerified=applied&&!IsTeachingMode&&NativeMethods.IsExcludedFromCapture(hwnd);
+            if(!applied)
+            {
+                new PrivacyLogger().Error("CaptureVisibility",new InvalidOperationException($"无法设置覆盖层捕获策略，Win32 错误码 {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}"));
+                if(IsTeachingMode)Dispatcher.BeginInvoke(new Action(()=>
+                {
+                    MewuDialogWindow.ShowMessage(this,"喵呜AI",LocalizationService.T("无法启用教学演示，请重新截图后重试。","Unable to enable teaching mode. Please start a new capture."));Close();
+                }));
+            }
         };
         Loaded+=async (_,_)=>
         {
@@ -674,7 +693,7 @@ public partial class CaptureOverlayWindow : Window
             var drop=ScreenCoordinateService.ToScreenPixelPoint(e.GetPosition(Root),Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight,_frame.OriginX,_frame.OriginY);
             var workingArea=System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(drop.X,drop.Y)).WorkingArea;
             var region=PinnedImageDropPlacement.Place(new ScreenRect(workingArea.X,workingArea.Y,workingArea.Width,workingArea.Height),drop.X,drop.Y,image.PixelWidth,image.PixelHeight);
-            var window=new PinnedImageWindow(image,region);
+            var window=new PinnedImageWindow(image,region,IsTeachingMode);
             try{window.Show();}catch{window.Close();throw;}
             ReferencePicker.IsOpen=false;
             RefreshDesktopFrameIncludingPinnedWindows();
@@ -1131,12 +1150,39 @@ public partial class CaptureOverlayWindow : Window
         NativeMethods.SetWindowPos(handle,insertAfter,0,0,0,0,NoMove|NoSize|NoActivate);
     }
 
+    private static string TeachingCaptureRestriction=>LocalizationService.T("教学演示时请使用会议软件录制；如需区域录屏或长截图，请关闭教学演示模式并重新截图。","Use your meeting app to record lessons. For region recording or scrolling capture, turn off teaching mode and start a new capture.");
+
+    private CaptureFrame CaptureCleanDesktopForRefresh()
+    {
+        if(!IsTeachingMode)return new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor);
+        var handle=new WindowInteropHelper(this).Handle;
+        try
+        {
+            // A shared overlay would capture itself when reactivated or after
+            // pinning. Protect only for this synchronous snapshot, then restore
+            // sharing even when capture fails. Pins remain visible in the frame.
+            if(!NativeMethods.ExcludeFromCapture(handle,requireProtection:true))
+                throw new InvalidOperationException("无法隔离教学覆盖层，已保留原始桌面帧");
+            NativeMethods.FlushComposition();
+            return new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor);
+        }
+        finally
+        {
+            if(!NativeMethods.ApplyPresentationCaptureVisibility(handle,true))
+            {
+                new PrivacyLogger().Error("RestoreTeachingVisibility",new InvalidOperationException("无法恢复教学共享，已关闭覆盖层"));
+                Close();
+            }
+        }
+    }
+
     private void RefreshDesktopFrameIncludingPinnedWindows()
     {
         if(_closed||!_overlayReady)return;
         try
         {
-            var updated=new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor);
+            var updated=CaptureCleanDesktopForRefresh();
+            if(_closed)return;
             if(updated.OriginX!=_frame.OriginX||updated.OriginY!=_frame.OriginY||updated.Image.PixelWidth!=_frame.Image.PixelWidth||updated.Image.PixelHeight!=_frame.Image.PixelHeight)return;
             _frame=updated;
             _desktopFrameVersion++;
@@ -2234,9 +2280,9 @@ public partial class CaptureOverlayWindow : Window
                     await AnnotatedVideoExportService.ExportAsync(video,annotatedPath,manualOverlay,item.AnnotationNotes.ToArray(),operation.Token,item.AnnotationCardPositions);
                     if(!IsOverlayOperationActive(operation,item))return;video=annotatedPath;
                 }
-                var window=new PinnedVideoWindow(video,region);try{window.Show();}catch{window.Close();throw;}
+                var window=new PinnedVideoWindow(video,region,IsTeachingMode);try{window.Show();}catch{window.Close();throw;}
             }
-            else new PinnedImageWindow(RenderSelectionImage(item,true,true,true),region).Show();
+            else new PinnedImageWindow(RenderSelectionImage(item,true,true,true),region,IsTeachingMode).Show();
             // Capture the protected pin into the frozen desktop frame, then
             // explicitly keep the live pin above the capture controls.
             RefreshDesktopFrameIncludingPinnedWindows();
@@ -2251,6 +2297,7 @@ public partial class CaptureOverlayWindow : Window
     private async void CaptureLongScreenshot(object s,RoutedEventArgs e)
     {
         if(RejectIfOverlayOperationBusy()||_longCaptureMode||Active is not {IsImplicit:false,VideoPath:null} item)return;
+        if(IsTeachingMode){SetPromptBarHidden(false);PromptStatus.Text=TeachingCaptureRestriction;return;}
         // UI-observation QA must never turn into an export bypass: otherwise
         // selection borders, glow and previews are baked into every seam.
         _captureExclusionVerified=NativeMethods.ExcludeFromCapture(new WindowInteropHelper(this).Handle,requireProtection:true);
@@ -3137,6 +3184,7 @@ public partial class CaptureOverlayWindow : Window
     private async void Record(object s,RoutedEventArgs e)
     {
         if(RejectIfOverlayOperationBusy())return;
+        if(IsTeachingMode){SetPromptBarHidden(false);PromptStatus.Text=TeachingCaptureRestriction;return;}
         if(!_captureExclusionVerified){SetPromptBarHidden(false);PromptStatus.Text=NativeMethods.VisualQaCaptureEnabled?"视觉验收模式未启用防捕获，已阻止录屏以免录入覆盖控件":"系统未能启用窗口防捕获，为避免录入遮罩和控件，已阻止录屏；请重启软件后重试";return;}
         if(_recordingSession is not null||_recordingCountdownActive||Active is not {IsImplicit:false,VideoPath:null} item)return;
         var countdown=new CancellationTokenSource();_recordingCountdownRequest=countdown;_recordingCountdownActive=true;_recordingItem=item;_recordingItemWasReferenced=_references.Contains(item);

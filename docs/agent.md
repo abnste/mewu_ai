@@ -16,3 +16,5 @@
 - `workflow_dispatch` 用于新标签前的完整云端预检：编译、测试、publish 审计和安装包打包全部照常，只跳过 GitHub Release 创建。v0.2.1 被真实录屏取消测试拦住，保留失败标签，后续发布用 v0.2.2。
 - v0.2.3 包含 Hermes 启动兼容、四提供商简化配置、密钥掩码、请求体参数、统一连接提示及贴图重截图阴影修复；README 继续保留 GIF 与功能图库，发行日志仅列双语修复说明。版本更新需同步 ReleasePreparationTests 及对应发行说明测试夹具。打标签前先通过 workflow_dispatch 全流程预检，正式标签不得复用。
 - GitHub Windows runner 默认英语；诊断文本测试必须按实际产品语言分别断言中英文类别，不能只匹配中文导致本机通过、CI 失败。隐私断言（不泄漏原始输出）与未知退出码不能等同安装损坏的断言仍必须保留，不能通过强制 CI 中文或删测试绕过。
+
+- `teaching-mode-2026-09-05.md` 记录用户明确要求教学共享而新增的正式 `TeachingMode` 例外。验收使用 Release 合成窗口、GDI 像素与 Windows.Graphics.Capture，不得把这些本机证据写成腾讯会议/极域远端实测通过。

@@ -24,6 +24,7 @@
   <Image x:Name="DesktopImage" Stretch="Fill" IsHitTestVisible="False"/>
   <Rectangle x:Name="Dimmer" Fill="#99000000" IsHitTestVisible="False"/>
   <Canvas x:Name="SelectionLayer" IsHitTestVisible="True"/>
+  <Border x:Name="TeachingBadge" Canvas.Left="18" Canvas.Top="18" Panel.ZIndex="80" Background="#F2F7FF" BorderBrush="#AEC5EF" BorderThickness="1" CornerRadius="14" Padding="12,7" IsHitTestVisible="False" Visibility="Collapsed"><TextBlock x:Name="TeachingBadgeText" Foreground="#345A92" FontSize="12"/></Border>
   <Border x:Name="LongCapturePreviewHost" Visibility="Collapsed" Background="#F8FFFFFF" BorderBrush="#7385F2" BorderThickness="2" CornerRadius="12" Padding="4" ClipToBounds="True" IsHitTestVisible="False">
    <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="22" ShadowDepth="5" Opacity="0.25"/></Border.Effect>
    <Image x:Name="LongCapturePreviewImage" Stretch="Uniform" VerticalAlignment="Bottom"/>
