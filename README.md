@@ -52,7 +52,7 @@ Record a region or attach a video. Jump to an AI-marked moment, or play an inter
 
 <p align="center">
   <img src="./docs/media/MewuAI-video-annotations.gif" width="880" alt="Looping demo of video seeking and tracking annotations" />
-  <br /><sub>Looping preview · <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.5/MewuAI-video-annotations.mp4">Watch with audio (MP4)</a></sub>
+  <br /><sub>Looping GIF preview</sub>
 </p>
 
 *Examples supplied by the author. AI answers, placement, and timing can be wrong; review important results.*
