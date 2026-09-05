@@ -856,6 +856,13 @@ public sealed class SettingsWindow : Window
         var checkUpdate=ActionButton(LocalizationService.T("检查更新","Check for updates"));
         checkUpdate.HorizontalAlignment=HorizontalAlignment.Left;
         checkUpdate.Click+=async (_,_)=>await CheckForUpdatesAsync(checkUpdate,updateStatus);
+        async void CheckOnFirstRender(object? sender,EventArgs e)
+        {
+            ContentRendered-=CheckOnFirstRender;
+            if(IsVisible&&!_windowLifetime.IsCancellationRequested)
+                await CheckForUpdatesAsync(checkUpdate,updateStatus);
+        }
+        ContentRendered+=CheckOnFirstRender;
         panel.Children.Add(checkUpdate);
         panel.Children.Add(updateStatus);
         var repo=new TextBlock{Margin=new Thickness(0,8,0,12),TextWrapping=TextWrapping.Wrap};
@@ -867,15 +874,14 @@ public sealed class SettingsWindow : Window
 
     private async Task CheckForUpdatesAsync(Button button,TextBlock status)
     {
-        _updateCheck?.Cancel();
-        _updateCheck?.Dispose();
+        if(_updateCheck is not null||!IsVisible||_windowLifetime.IsCancellationRequested)return;
         _updateCheck=CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
         var operation=_updateCheck;
         button.IsEnabled=false;
         var service=new ApplicationUpdateService();
         var progress=new Progress<ApplicationUpdateProgress>(value=>
         {
-            if(!ReferenceEquals(_updateCheck,operation)||!IsVisible)return;
+            if(!ReferenceEquals(_updateCheck,operation)||operation.IsCancellationRequested||!IsVisible)return;
             status.Text=value.TotalBytes is >0
                 ?$"{value.Message} {Math.Clamp(value.BytesReceived*100d/value.TotalBytes.Value,0,100):0}%"
                 :value.Message;
@@ -883,11 +889,28 @@ public sealed class SettingsWindow : Window
         try
         {
             var current=typeof(SettingsWindow).Assembly.GetName().Version??new Version(0,1,0);
-            var result=await service.CheckAndDownloadAsync(current,progress,operation.Token);
-            if(!ReferenceEquals(_updateCheck,operation)||!IsVisible)return;
+            var result=await service.CheckAndDownloadAsync(current,progress,operation.Token,
+                async (_,tag,token)=>await Dispatcher.InvokeAsync(()=>
+                {
+                    if(token.IsCancellationRequested||!ReferenceEquals(_updateCheck,operation)||!IsVisible)return false;
+                    status.Text=LocalizationService.T($"发现新版本 {tag}",$"New version available: {tag}");
+                    return MewuDialogWindow.ShowChoice(
+                        this,
+                        LocalizationService.T("发现新版本","Update available"),
+                        LocalizationService.T($"当前版本 v{current.ToString(3)}，发现新版本 {tag}。是否下载更新？下载完成后可选择安装并重启。",$"You're using v{current.ToString(3)}. MewuAI {tag} is available. Download the update? You can choose to install and restart after the download."),
+                        LocalizationService.T("下载更新","Download update"),
+                        LocalizationService.T("稍后","Later"))==MewuDialogResult.Primary;
+                },System.Windows.Threading.DispatcherPriority.Normal,token).Task);
+            if(!ReferenceEquals(_updateCheck,operation)||operation.IsCancellationRequested||!IsVisible)return;
             if(!result.IsUpdateAvailable)
             {
                 status.Text=LocalizationService.T($"已是最新版 v{current.ToString(3)}",$"You're up to date (v{current.ToString(3)})");
+                return;
+            }
+
+            if(result.Package is null)
+            {
+                status.Text=LocalizationService.T($"发现新版本 {result.TagName}，可点击“检查更新”继续。",$"{result.TagName} is available. Click Check for updates when you're ready.");
                 return;
             }
 
@@ -898,7 +921,7 @@ public sealed class SettingsWindow : Window
                 LocalizationService.T($"喵呜AI {result.TagName} 已下载并通过 SHA-256 校验。立即安装并自动重启应用吗？",$"MewuAI {result.TagName} has been downloaded and verified with SHA-256. Install it now and restart MewuAI?"),
                 LocalizationService.T("安装并重启","Install and restart"),
                 LocalizationService.T("稍后","Later"));
-            if(choice!=MewuDialogResult.Primary)return;
+            if(choice!=MewuDialogResult.Primary||operation.IsCancellationRequested||!ReferenceEquals(_updateCheck,operation)||!IsVisible)return;
             status.Text=LocalizationService.T("正在启动安装程序…","Starting the installer…");
             await service.LaunchInstallerAsync(result.Package!,operation.Token);
             _host.Exit();

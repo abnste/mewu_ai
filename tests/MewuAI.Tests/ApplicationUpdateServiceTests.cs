@@ -9,6 +9,45 @@ namespace MewuAI.Tests;
 public sealed class ApplicationUpdateServiceTests
 {
     [Fact]
+    public async Task DecliningUpdateDoesNotDownloadAssetsOrCreateUpdateDirectory()
+    {
+        var root=Path.Combine(TestDirectory(),"not-created");
+        try
+        {
+            var requests=0;var prompts=0;
+            var service=new ApplicationUpdateService((_,_,_)=>
+            {
+                requests++;return Task.FromResult(JsonResponse(ReleaseJson("v0.1.1",20)));
+            },root);
+            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken,
+                (version,tag,_)=>{prompts++;Assert.Equal(new Version(0,1,1),version);Assert.Equal("v0.1.1",tag);return Task.FromResult(false);});
+            Assert.True(result.IsUpdateAvailable);
+            Assert.Null(result.Package);
+            Assert.Equal(1,requests);Assert.Equal(1,prompts);
+            Assert.False(Directory.Exists(root));
+        }
+        finally{Directory.Delete(Path.GetDirectoryName(root)!,true);}
+    }
+
+    [Fact]
+    public async Task ClosingWhileConfirmationIsPendingPreventsAllDownloads()
+    {
+        var root=TestDirectory();
+        try
+        {
+            using var cancellation=new CancellationTokenSource();var requests=0;
+            var service=new ApplicationUpdateService((_,_,_)=>
+            {
+                requests++;return Task.FromResult(JsonResponse(ReleaseJson("v0.1.1",20)));
+            },root);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>service.CheckAndDownloadAsync(new Version(0,1,0),null,cancellation.Token,
+                (_,_,_)=>{cancellation.Cancel();return Task.FromResult(true);}));
+            Assert.Equal(1,requests);Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
     public async Task NewOfficialReleaseDownloadsAndVerifiesExactInstaller()
     {
         var root=TestDirectory();
@@ -22,14 +61,16 @@ public sealed class ApplicationUpdateServiceTests
                 BytesResponse(Encoding.UTF8.GetBytes($"{hash}  MewuAI-Setup-0.1.1-win-x64.exe\n")),
                 BytesResponse(installer)
             ]);
-            var requested=new List<Uri>();
+            var requested=new List<Uri>();var accepted=false;
             var service=new ApplicationUpdateService((request,_,_)=>
             {
+                if(requested.Count>0)Assert.True(accepted);
                 requested.Add(request.RequestUri!);
                 return Task.FromResult(responses.Dequeue());
             },root);
 
-            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken);
+            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken,
+                (_,_,_)=>{Assert.Single(requested);accepted=true;return Task.FromResult(true);});
 
             Assert.True(result.IsUpdateAvailable);
             Assert.Equal(new Version(0,1,1),result.LatestVersion);
@@ -54,7 +95,7 @@ public sealed class ApplicationUpdateServiceTests
                 return Task.FromResult(JsonResponse(ReleaseJson("v0.1.0",20)));
             },root);
 
-            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken);
+            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken,(_,_,_)=>throw new InvalidOperationException("最新版不应询问更新"));
 
             Assert.False(result.IsUpdateAvailable);
             Assert.Null(result.Package);
