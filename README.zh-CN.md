@@ -52,7 +52,7 @@
 
 <p align="center">
   <img src="./docs/media/MewuAI-video-annotations.gif" width="880" alt="视频时间定位与跟踪标注的循环演示" />
-  <br /><sub>自动循环演示 · <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.5/MewuAI-video-annotations.mp4">查看有声 MP4</a></sub>
+  <br /><sub>GIF 自动循环演示</sub>
 </p>
 
 *实景素材由作者提供。AI 回答、标注位置与时间可能有误，使用前请核对。*
