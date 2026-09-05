@@ -15,7 +15,7 @@ public partial class MewuDialogWindow:Window
 
     private MewuDialogWindow(string title,string message,string primaryText,string secondaryText,string cancelText)
     {
-        InitializeComponent();Title=DialogTitle.Text=LocalizationService.TranslateUiText(title);DialogMessage.Text=LocalizationService.TranslateUiText(message);AddButton(LocalizationService.TranslateUiText(cancelText),"DialogButton",MewuDialogResult.Cancel,false);AddButton(LocalizationService.TranslateUiText(secondaryText),"DialogButton",MewuDialogResult.Secondary,false);AddButton(LocalizationService.TranslateUiText(primaryText),"PrimaryDialogButton",MewuDialogResult.Primary,true);SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ExcludeFromCapture(handle);};
+        InitializeComponent();Title=DialogTitle.Text=LocalizationService.TranslateUiText(title);DialogMessage.Text=LocalizationService.TranslateUiText(message);AddButton(LocalizationService.TranslateUiText(cancelText),"DialogButton",MewuDialogResult.Cancel,false);AddButton(LocalizationService.TranslateUiText(secondaryText),"DialogButton",MewuDialogResult.Secondary,false);AddButton(LocalizationService.TranslateUiText(primaryText),"PrimaryDialogButton",MewuDialogResult.Primary,true);SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ApplyPresentationCaptureVisibility(handle,Owner is CaptureOverlayWindow {IsTeachingMode:true});};
     }
 
     internal static MewuDialogResult ShowChoice(Window owner,string title,string message,string primaryText,string secondaryText,string cancelText="取消")

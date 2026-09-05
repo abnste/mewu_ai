@@ -59,12 +59,27 @@ internal static class NativeMethods
     {
 #if DEBUG
         // Visual QA needs to observe the real overlay hierarchy. This escape hatch is
-        // compiled out of Release builds, so production privacy cannot be disabled.
+        // compiled out of Release builds. Product teaching visibility uses a separate, explicit API.
         if (VisualQaCaptureEnabled&&!requireProtection)
             return SetWindowDisplayAffinity(windowHandle,0);
 #endif
         return SetWindowDisplayAffinity(windowHandle, WdaExcludeFromCapture)&&(!requireProtection||IsExcludedFromCapture(windowHandle));
     }
+
+    // Only screenshot presentation windows may opt into sharing. Settings and
+    // credentials keep using ExcludeFromCapture independently of this setting.
+    internal static bool ApplyPresentationCaptureVisibility(IntPtr windowHandle,bool teachingMode)
+        =>teachingMode
+            ?windowHandle!=IntPtr.Zero&&SetWindowDisplayAffinity(windowHandle,0)&&IsVisibleToCapture(windowHandle)
+            :ExcludeFromCapture(windowHandle);
+
+    internal static bool IsVisibleToCapture(IntPtr windowHandle)
+        =>windowHandle!=IntPtr.Zero&&GetWindowDisplayAffinity(windowHandle,out var affinity)&&affinity==0;
+
+    [DllImport("dwmapi.dll",PreserveSig=true)]
+    private static extern int DwmFlush();
+
+    internal static void FlushComposition()=>Marshal.ThrowExceptionForHR(DwmFlush());
 
     internal static bool IsExcludedFromCapture(IntPtr windowHandle)
         =>windowHandle!=IntPtr.Zero&&GetWindowDisplayAffinity(windowHandle,out var affinity)&&affinity==WdaExcludeFromCapture;

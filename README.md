@@ -57,6 +57,8 @@ Record a region or attach a video. Jump to an AI-marked moment, or play an inter
 
 *Examples supplied by the author. AI answers, placement, and timing can be wrong; review important results.*
 
+To demonstrate selections and annotations in Tencent Meeting or classroom software, enable **Settings → Capture → Teaching mode**, save, and start a new capture. Share the entire screen. This also makes new pinned images and videos visible; settings remain protected. Use your meeting app to record the lesson; MewuAI region recording and scrolling capture require teaching mode to be off.
+
 ## Everyday capture tools
 
 - **Capture:** Multi-monitor selection, window and supported-control snapping, and scrolling capture in either direction.

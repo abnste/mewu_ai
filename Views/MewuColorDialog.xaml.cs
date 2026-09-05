@@ -13,7 +13,7 @@ public partial class MewuColorDialog:Window
 
     private MewuColorDialog(Color initial)
     {
-        InitializeComponent();SelectedColor=initial;SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ExcludeFromCapture(handle);};Loaded+=(_,_)=>SetChannels(initial.R,initial.G,initial.B);
+        InitializeComponent();SelectedColor=initial;SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ApplyPresentationCaptureVisibility(handle,Owner is CaptureOverlayWindow {IsTeachingMode:true});};Loaded+=(_,_)=>SetChannels(initial.R,initial.G,initial.B);
     }
 
     internal static bool TryChoose(Window owner,Color initial,out Color selected)

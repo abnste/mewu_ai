@@ -8,5 +8,6 @@
     <PlatformTarget>x64</PlatformTarget><Platforms>x64</Platforms><Platform>x64</Platform>
     <ApplicationManifest>../../app.manifest</ApplicationManifest>
   </PropertyGroup>
+  <ItemGroup><Resource Include="../../Assets/MewuAI.Icon.png" Link="Assets/MewuAI.Icon.png" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../../mewu_ai_Assistant.csproj" /></ItemGroup>
 </Project>

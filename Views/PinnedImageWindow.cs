@@ -30,7 +30,7 @@ public sealed class PinnedImageWindow : Window
     private readonly int _initialContentWidthPixels;
     private int _quarterTurns;
 
-    public PinnedImageWindow(BitmapSource image,ScreenRect? originalRegion=null)
+    public PinnedImageWindow(BitmapSource image,ScreenRect? originalRegion=null,bool teachingMode=false)
     {
         _originalImage=_image=image;_originalRegion=originalRegion;_initialContentWidthPixels=Math.Min(image.PixelWidth,900);_drag=new PinnedWindowDragController(this);Title="喵呜AI 贴图";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowActivated=false;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
         _imageView=new Image{Source=image,Stretch=Stretch.Fill,SnapsToDevicePixels=true};
@@ -41,9 +41,9 @@ public sealed class PinnedImageWindow : Window
         SourceInitialized+=(_,_)=>
         {
             var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
-            if(!NativeMethods.ExcludeFromCapture(handle))
+            if(!NativeMethods.ApplyPresentationCaptureVisibility(handle,teachingMode))
             {
-                new PrivacyLogger().Error("PinnedImageCaptureProtection",new InvalidOperationException("无法启用贴图防捕获，已阻止显示贴图"));
+                new PrivacyLogger().Error("PinnedImageCaptureProtection",new InvalidOperationException("无法应用贴图共享/防捕获设置，已阻止显示贴图"));
                 Dispatcher.BeginInvoke(new Action(Close));
                 return;
             }
@@ -148,7 +148,9 @@ public sealed class PinnedImageWindow : Window
     {
         if(!IsVisible||!Topmost||Opacity<=0)return null;
         var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;
-        if(handle==IntPtr.Zero||!NativeMethods.GetWindowRect(handle,out var windowRect))return null;
+        // Visible teaching pins are already in native capture. Compositing
+        // them again would double their opacity, shadows and edges.
+        if(!NativeMethods.IsExcludedFromCapture(handle)||!NativeMethods.GetWindowRect(handle,out var windowRect))return null;
         var bounds=new ScreenRect(windowRect.Left,windowRect.Top,windowRect.Right-windowRect.Left,windowRect.Bottom-windowRect.Top);
         if(bounds.IsEmpty||_captureRoot.ActualWidth<=0||_captureRoot.ActualHeight<=0)return null;
         var key=(_image,bounds.Width,bounds.Height,_captureRoot.ActualWidth,_captureRoot.ActualHeight);
