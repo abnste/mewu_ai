@@ -17,6 +17,8 @@ namespace mewu_ai_Assistant.Views;
 
 public sealed class SettingsWindow : Window
 {
+    private readonly TabItem _aiTab;
+    internal void ShowAiPage()=>_aiTab.IsSelected=true;
     private static readonly (string Value,string Label)[] HermesReasoningChoices=
     [
         ("none","关闭"),("minimal","极少"),("low","较低"),("medium","中等"),
@@ -141,7 +143,8 @@ public sealed class SettingsWindow : Window
         tabs.Items.Add(Tab("常规", General()));
         tabs.Items.Add(Tab("捕获", Capture()));
         tabs.Items.Add(Tab("录屏", Recording()));
-        tabs.Items.Add(Tab("AI", Ai()));
+        _aiTab=Tab("AI", Ai());
+        tabs.Items.Add(_aiTab);
         tabs.Items.Add(Tab("语音", Voice()));
         tabs.Items.Add(Tab("隐私", Privacy()));
         tabs.Items.Add(Tab("关于", About()));

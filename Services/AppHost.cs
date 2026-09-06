@@ -123,7 +123,7 @@ public sealed class AppHost : IDisposable
         return window;
     }
     public void ShowMainWindow() { if(IsExiting||_app.Dispatcher.HasShutdownStarted)return;_app.Dispatcher.Invoke(()=>{if(IsExiting)return;_main??=CreateMainWindow();_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
-    public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);var window=_settingsWindow;window.Closed+=(_,_)=>{if(ReferenceEquals(_settingsWindow,window))_settingsWindow=null;FinishAuxiliary(window);};} PrepareAuxiliary(_settingsWindow);_settingsWindow.Show();_settingsWindow.WindowState=WindowState.Normal;_settingsWindow.Activate();}); }
+    public void ShowSettings(bool showAi=false) { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);var window=_settingsWindow;window.Closed+=(_,_)=>{if(ReferenceEquals(_settingsWindow,window))_settingsWindow=null;FinishAuxiliary(window);};} if(showAi)_settingsWindow.ShowAiPage();PrepareAuxiliary(_settingsWindow);_settingsWindow.Show();_settingsWindow.WindowState=WindowState.Normal;_settingsWindow.Activate();}); }
     public HermesInstallation? DiscoverHermes()=>_hermesRuntime.Discover();
 
     public Task<IReadOnlyList<HermesAgentOption>> GetHermesAgentOptionsAsync(CancellationToken cancellationToken)
