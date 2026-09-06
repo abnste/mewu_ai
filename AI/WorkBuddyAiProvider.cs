@@ -24,7 +24,12 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
     {
         var leases=new List<TempMediaLease>();var paths=new List<string>();
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMinutes(10));var token=timeout.Token;
+        var textOnly=request.Attachments.Count==0;
+        // A plain conversational turn has no local files for the agent to
+        // inspect. Disable extended reasoning there so a short message such as
+        // “在吗” cannot spend minutes emitting thought chunks without an answer.
+        var disableReasoning=request.DisableReasoning||textOnly;
+        timeout.CancelAfter(textOnly?TimeSpan.FromSeconds(90):TimeSpan.FromMinutes(10));var token=timeout.Token;
         WorkBuddyAcpServer? server=null;
         try
         {
@@ -35,7 +40,7 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
             var catalog=await server.NewSessionAsync(token).ConfigureAwait(false);
             var selected=catalog.Models.SingleOrDefault(item=>item.Model==model)
                 ??throw new InvalidOperationException("所选 WorkBuddy 模型当前不可用，请在设置中重新检测并选择。");
-            await server.ConfigureAsync(catalog,model,request.DisableReasoning?"disabled":effort,token).ConfigureAwait(false);
+            await server.ConfigureAsync(catalog,model,disableReasoning?"disabled":effort,token).ConfigureAwait(false);
             if(request.Attachments.Any(item=>item.Type is AiAttachmentType.Image or AiAttachmentType.Video)&&!selected.SupportsImage)
                 throw new InvalidOperationException("当前 WorkBuddy 模型不支持视觉输入。");
             var input=new List<object>();var text=new StringBuilder();
@@ -79,7 +84,7 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
             var finished=false;
             try
             {
-                var response=await server.InvokeAsync("session/prompt",new{sessionId=catalog.SessionId,prompt=input},token,TimeSpan.FromMinutes(10)).ConfigureAwait(false);
+                var response=await server.InvokeAsync("session/prompt",new{sessionId=catalog.SessionId,prompt=input},token,textOnly?TimeSpan.FromSeconds(90):TimeSpan.FromMinutes(10)).ConfigureAwait(false);
                 var result=turn.Finish(response);finished=true;
                 token.ThrowIfCancellationRequested();return result;
             }
@@ -93,7 +98,7 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
                 }
             }
         }
-        catch(OperationCanceledException)when(!cancellationToken.IsCancellationRequested){throw new TimeoutException("WorkBuddy 本轮处理超过 10 分钟，已停止。请缩短视频或拆分问题后重试。");}
+        catch(OperationCanceledException)when(!cancellationToken.IsCancellationRequested){throw new TimeoutException(textOnly?"WorkBuddy 文字请求超过 90 秒，已停止。请检查官方客户端是否已登录并重试。":"WorkBuddy 本轮处理超过 10 分钟，已停止。请缩短视频或拆分问题后重试。");}
         finally
         {
             try{if(server is not null)await server.DisposeAsync().ConfigureAwait(false);}
