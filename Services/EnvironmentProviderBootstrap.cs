@@ -161,6 +161,8 @@ public sealed class EnvironmentProviderBootstrap
             RecordingQuality=source.RecordingQuality,
             GifFps=source.GifFps,
             IncludeRecordingCursor=source.IncludeRecordingCursor,
+            RecordSystemAudio=source.RecordSystemAudio,
+            RecordMicrophone=source.RecordMicrophone,
             TempCleanupDays=source.TempCleanupDays,
             SaveConversationHistory=source.SaveConversationHistory,
             EnableVoiceInput=source.EnableVoiceInput,

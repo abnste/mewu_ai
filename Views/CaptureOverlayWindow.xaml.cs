@@ -2210,18 +2210,25 @@ public partial class CaptureOverlayWindow : Window
     private async void Save(object s,RoutedEventArgs e)
     {
         if(RejectIfOverlayOperationBusy()||Active is not { } item)return;
-        RemoveEmptyDrawingText(item);var includeAnnotations=AskWhetherToIncludeAnnotations(item);if(!includeAnnotations.HasValue)return;
+        RemoveEmptyDrawingText(item);
         if(item.VideoPath is { } video)
         {
-            var dialog=new SaveFileDialog{Filter=LocalizationService.T("MP4 视频|*.mp4|GIF 动图|*.gif","MP4 video|*.mp4|Animated GIF|*.gif"),DefaultExt=".mp4",FilterIndex=1,AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};
+            var dialog=new SaveFileDialog{Filter=VideoExportFormats.Filter,DefaultExt=".mp4",FilterIndex=1,AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};
             if(ShowSystemFileDialog(dialog)!=true)return;
-            var exportGif=dialog.FilterIndex==2;
-            var destination=System.IO.Path.ChangeExtension(dialog.FileName,exportGif?".gif":".mp4");
-            var pixels=ToPixelRect(item.Bounds);var manualOverlay=includeAnnotations.Value&&HasManualAnnotations(item)?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var annotations=includeAnnotations.Value?item.AnnotationNotes.ToArray():[];var operation=BeginOverlayOperation(exportGif?"正在导出 GIF…按 Esc 可取消":includeAnnotations.Value?"正在合成带标注 MP4…按 Esc 可取消":"正在保存 MP4…按 Esc 可取消");TempMediaLease? exportLease=null;
+            var format=VideoExportFormats.FromFilterIndex(dialog.FilterIndex);
+            var exportGif=format==VideoExportFormat.Gif;var exportAudio=format==VideoExportFormat.Mp3;
+            var includeAnnotations=exportAudio?false:AskWhetherToIncludeAnnotations(item);if(!includeAnnotations.HasValue)return;
+            var destination=System.IO.Path.ChangeExtension(dialog.FileName,VideoExportFormats.Extension(format));
+            var pixels=ToPixelRect(item.Bounds);var manualOverlay=includeAnnotations.Value&&HasManualAnnotations(item)?RenderManualOverlay(item,pixels.Width,pixels.Height):null;var annotations=includeAnnotations.Value?item.AnnotationNotes.ToArray():[];var operation=BeginOverlayOperation(exportAudio?LocalizationService.T("正在导出 MP3…按 Esc 可取消","Exporting MP3… Press Esc to cancel"):exportGif?"正在导出 GIF…按 Esc 可取消":includeAnnotations.Value?"正在合成带标注 MP4…按 Esc 可取消":"正在保存 MP4…按 Esc 可取消");TempMediaLease? exportLease=null;
             try
             {
                 exportLease=TempMediaRegistry.Shared.AcquireExistingFile(video);
-                if(exportGif)
+                if(exportAudio)
+                {
+                    await Mp3ExportService.ExportAsync(video,destination,operation.Token);
+                    if(IsOverlayOperationActive(operation,item))PromptStatus.Text=LocalizationService.T("MP3 音频已保存","MP3 audio saved");
+                }
+                else if(exportGif)
                 {
                     var fps=_host.Settings.GifFps;
                     Func<BitmapSource,TimeSpan,BitmapSource>? compositor=includeAnnotations.Value?(frame,time)=>Dispatcher.Invoke(()=>AnnotationOverlayRenderer.Composite(AnnotationOverlayRenderer.ApplyAiMosaics(frame,annotations,time.TotalSeconds),manualOverlay,AnnotationOverlayRenderer.RenderAiOverlay(frame.PixelWidth,frame.PixelHeight,annotations,time.TotalSeconds,item.AnnotationCardPositions))):null;
@@ -2242,7 +2249,8 @@ public partial class CaptureOverlayWindow : Window
 
         // Flatten the selected pixels before opening the system picker. The
         // picker is external visual state and must never become source pixels.
-        var image=RenderSelectionImage(item,includeAnnotations.Value,includeAnnotations.Value,includeAnnotations.Value);
+        var imageAnnotations=AskWhetherToIncludeAnnotations(item);if(!imageAnnotations.HasValue)return;
+        var image=RenderSelectionImage(item,imageAnnotations.Value,imageAnnotations.Value,imageAnnotations.Value);
         var jpeg=_host.Settings.DefaultImageFormat.Equals("jpg",StringComparison.OrdinalIgnoreCase)||_host.Settings.DefaultImageFormat.Equals("jpeg",StringComparison.OrdinalIgnoreCase);var imageDialog=new SaveFileDialog{Filter=LocalizationService.T("PNG 图片|*.png|JPEG 图片|*.jpg;*.jpeg","PNG image|*.png|JPEG image|*.jpg;*.jpeg"),DefaultExt=jpeg?".jpg":".png",FilterIndex=jpeg?2:1,AddExtension=true,FileName=ExportFileNameService.Screenshot(DateTime.Now)};if(ShowSystemFileDialog(imageDialog)!=true)return;
         var imageOperation=BeginOverlayOperation("正在保存图片…按 Esc 可取消");
         try{await Task.Run(()=>ScreenCaptureService.Save(image,imageDialog.FileName,imageDialog.FilterIndex==2),imageOperation.Token);if(IsOverlayOperationActive(imageOperation,item))PromptStatus.Text="图片已保存";}
@@ -3174,6 +3182,13 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             CrashDiagnosticsService.MarkOperation("屏幕助手：区域录屏倒计时");
+            // Hidden previews still render audio. Pause them before loopback
+            // capture so an earlier recording cannot leak into the new one.
+            foreach(var videoItem in _selections.Where(selection=>selection.VideoPreview is not null))
+            {
+                CancelVideoAnnotationPlayback(videoItem);
+                videoItem.VideoPreview!.Pause();videoItem.VideoPlaying=false;
+            }
             EnterRecordingCountdown(item);
             await RunRecordingCountdownAsync(countdown.Token);
             countdown.Token.ThrowIfCancellationRequested();

@@ -30,6 +30,12 @@
           "Microsoft.TestPlatform.TestHost": "18.9.0"
         }
       },
+      "ScreenRecorderLib": {
+        "type": "Direct",
+        "requested": "[7.0.0, )",
+        "resolved": "7.0.0",
+        "contentHash": "BhJYgzsCTMXHr/ysg2fmThqYahhr26SFckCnhUCQdAkS0BDiXjHJaq06rIU3l2ivJPgcNX57ycAa3O3m28HACA=="
+      },
       "xunit.runner.visualstudio": {
         "type": "Direct",
         "requested": "[3.1.5, )",
@@ -183,11 +189,6 @@
           "SkiaSharp": "3.119.1",
           "SkiaSharp.NativeAssets.Linux.NoDependencies": "3.119.1"
         }
-      },
-      "ScreenRecorderLib": {
-        "type": "Transitive",
-        "resolved": "7.0.0",
-        "contentHash": "BhJYgzsCTMXHr/ysg2fmThqYahhr26SFckCnhUCQdAkS0BDiXjHJaq06rIU3l2ivJPgcNX57ycAa3O3m28HACA=="
       },
       "SkiaSharp": {
         "type": "Transitive",

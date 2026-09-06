@@ -8,6 +8,7 @@ using System.Windows.Media.Effects;
 using mewu_ai_Assistant.Interop;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
+using mewu_ai_Assistant.Recording;
 
 namespace mewu_ai_Assistant.Views;
 
@@ -23,6 +24,7 @@ public sealed class PinnedVideoWindow : Window
     private MenuItem? _topmostItem,_playItem,_opacityItem,_copyItem,_saveItem;
     private bool _playing=true,_adjustingSize,_mediaOperationBusy;
     private readonly PinnedWindowDragController _drag;
+    private readonly CancellationTokenSource _lifetime=new();
 
     public PinnedVideoWindow(string videoPath,ScreenRect originalRegion,bool teachingMode=false)
     {
@@ -34,7 +36,7 @@ public sealed class PinnedVideoWindow : Window
             _player=new VideoPreviewSurface(_videoView,Dispatcher);
             _player.Failed+=error=>{_playing=false;if(_playItem is not null)_playItem.Header="播放";new PrivacyLogger().Error("PinnedVideoPreview",error);};
             _frame=new Border{Background=Brushes.Black,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),ClipToBounds=true,Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_videoView};Content=_frame;Width=originalRegion.Width+ShadowPixels*2;Height=originalRegion.Height+ShadowPixels*2;
-            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewKeyDown+=OnPreviewKeyDown;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{try{_player.Dispose();}finally{_videoLease.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(!NativeMethods.ApplyPresentationCaptureVisibility(handle,teachingMode)){new PrivacyLogger().Error("PinnedVideoCaptureProtection",new InvalidOperationException("无法应用贴视频共享/防捕获设置，已阻止显示贴视频"));Dispatcher.BeginInvoke(new Action(Close));return;}PlaceAtOriginalSize(handle);};
+            SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewKeyDown+=OnPreviewKeyDown;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{_lifetime.Cancel();try{_player.Dispose();}finally{_videoLease.Dispose();_lifetime.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(!NativeMethods.ApplyPresentationCaptureVisibility(handle,teachingMode)){new PrivacyLogger().Error("PinnedVideoCaptureProtection",new InvalidOperationException("无法应用贴视频共享/防捕获设置，已阻止显示贴视频"));Dispatcher.BeginInvoke(new Action(Close));return;}PlaceAtOriginalSize(handle);};
         }
         catch
         {
@@ -85,9 +87,19 @@ public sealed class PinnedVideoWindow : Window
     private async Task SaveAsync()
     {
         if(_mediaOperationBusy)return;
-        var dialog=new SaveFileDialog{Filter=LocalizationService.T("MP4 视频|*.mp4","MP4 video|*.mp4"),DefaultExt=".mp4",AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};if(dialog.ShowDialog(this)!=true)return;
+        var dialog=new SaveFileDialog{Filter=VideoExportFormats.Filter,DefaultExt=".mp4",FilterIndex=1,AddExtension=true,FileName=ExportFileNameService.Recording(DateTime.Now)};if(dialog.ShowDialog(this)!=true)return;
         if(!TryBeginMediaOperation())return;
-        try{await Task.Run(()=>AtomicFileService.Copy(_videoPath,dialog.FileName));}
+        try
+        {
+            using var lease=TempMediaRegistry.Shared.AcquireExistingFile(_videoPath);
+            var format=VideoExportFormats.FromFilterIndex(dialog.FilterIndex);
+            var destination=Path.ChangeExtension(dialog.FileName,VideoExportFormats.Extension(format));
+            var token=_lifetime.Token;
+            if(format==VideoExportFormat.Mp3)await Mp3ExportService.ExportAsync(_videoPath,destination,token);
+            else if(format==VideoExportFormat.Gif)await GifExportService.ExportFromVideoAsync(_videoPath,destination,15,token);
+            else await Task.Run(()=>AtomicFileService.Copy(_videoPath,destination),token);
+        }
+        catch(OperationCanceledException){}
         catch(Exception ex){new PrivacyLogger().Error("PinnedVideoSave",ex);ShowOperationError($"视频保存失败：{ex.Message}","保存失败");}
         finally{EndMediaOperation();}
     }
