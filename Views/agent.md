@@ -1,5 +1,7 @@
 # 视图实现备忘
 
+- 主页状态与对话路由使用相同的 Codex → Hermes → API 判断顺序；选中 Codex 时显示 ChatGPT Work · Codex、所选模型和思考程度，不能读取保留的 API 模型冒充当前渠道。保存后仍由 AppHost 刷新主页。
+
 - API、Hermes、Codex 设置页统一使用 `AiSettingsForm`：同一标题/说明、顶部操作按钮、单行状态及纵向全宽字段；不得恢复 Hermes 独立卡片、Codex 大标题或不同字段字号。表单显式重置正文 FontWeight，避免选中 TabItem 的半粗体继承到整页；状态全文用悬浮提示保留。
 
 - 渠道菜单标题必须显式把 TextBlock.Foreground 绑定到 TabItem.Foreground；全局 TextBlock 样式会覆盖隐式文字的颜色继承，不能只设置父 TabItem 的灰色就声称禁用项已变灰。未适配项统一显示灰色 `#929CAF`。

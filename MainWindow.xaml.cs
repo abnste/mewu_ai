@@ -53,28 +53,22 @@ public partial class MainWindow : Window
     {
         ArgumentNullException.ThrowIfNull(settings);
         if(!available)return LocalizationService.T("暂未设置AI功能","AI features are not set up");
-        return settings.HermesEnabled?LocalizationService.T("智能体已接入","Agent connected"):LocalizationService.T("AI模型已接入","AI model connected");
+        return (settings.CodexEnabled||settings.HermesEnabled)?LocalizationService.T("智能体已接入","Agent connected"):LocalizationService.T("AI模型已接入","AI model connected");
     }
 
     internal static string BuildAiStatusText(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        if(settings.CodexEnabled)
+        {
+            var model=string.IsNullOrWhiteSpace(settings.CodexModel)?LocalizationService.T("未选择模型","No model selected"):settings.CodexModel.Trim();
+            return $"ChatGPT Work · Codex · {model} · {BuildReasoningDisplayText(settings.CodexReasoningEffort)}";
+        }
         if(settings.HermesEnabled)
         {
             var profile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
             var model=string.IsNullOrWhiteSpace(settings.HermesModel)?LocalizationService.T("未选择模型","No model selected"):settings.HermesModel.Trim();
-            var reasoning=(settings.HermesReasoningEffort??string.Empty).Trim().ToLowerInvariant() switch
-            {
-                "none"=>LocalizationService.T("关闭思考","reasoning off"),
-                "minimal"=>LocalizationService.T("极简思考","minimal reasoning"),
-                "low"=>LocalizationService.T("低度思考","low reasoning"),
-                "medium"=>LocalizationService.T("中等思考","medium reasoning"),
-                "high"=>LocalizationService.T("高度思考","high reasoning"),
-                "xhigh"=>LocalizationService.T("超高思考","extra-high reasoning"),
-                "max"=>LocalizationService.T("最大思考","maximum reasoning"),
-                "ultra"=>LocalizationService.T("极致思考","ultra reasoning"),
-                _=>LocalizationService.T("思考程度待修复","reasoning setting needs attention")
-            };
+            var reasoning=BuildReasoningDisplayText(settings.HermesReasoningEffort);
             return $"Hermes · {profile} · {model} · {reasoning}";
         }
         if(settings.Providers.Count==0)return LocalizationService.T("未配置 AI 模型","No AI model configured");
@@ -87,6 +81,19 @@ public partial class MainWindow : Window
             _=>BuildProviderDisplayText(matches[0])
         };
     }
+    private static string BuildReasoningDisplayText(string? effort)=>(effort??string.Empty).Trim().ToLowerInvariant() switch
+    {
+        "none"=>LocalizationService.T("关闭思考","reasoning off"),
+        "minimal"=>LocalizationService.T("极简思考","minimal reasoning"),
+        "low"=>LocalizationService.T("低度思考","low reasoning"),
+        "medium"=>LocalizationService.T("中等思考","medium reasoning"),
+        "high"=>LocalizationService.T("高度思考","high reasoning"),
+        "xhigh"=>LocalizationService.T("超高思考","extra-high reasoning"),
+        "max"=>LocalizationService.T("最大思考","maximum reasoning"),
+        "ultra"=>LocalizationService.T("极致思考","ultra reasoning"),
+        _=>LocalizationService.T("思考程度待修复","reasoning setting needs attention")
+    };
+
     private static string BuildProviderDisplayText(AiProviderSettings provider)
     {
         var name=(provider.Name??string.Empty).Trim();
