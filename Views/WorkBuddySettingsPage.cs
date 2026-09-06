@@ -25,7 +25,7 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         Children.Add(form);
         form.AddAction(_test,T("测试连接","Test connection"));
         form.AddAction(_detect,T("刷新模型","Refresh models"));
-        _test.ToolTip=T("发送一条简短验证消息，会使用少量 WorkBuddy 额度。","Sends a short verification message using a small amount of WorkBuddy allowance.");
+        _test.ToolTip=T("只检查 WorkBuddy 后台连接、会话、模型和思考选项，不发送对话。","Checks the WorkBuddy bridge, session, model and reasoning options without sending a turn.");
         form.Fields.Children.Add(AiSettingsForm.Field(T("模型","Model"),_model));
         form.Fields.Children.Add(AiSettingsForm.Field(T("思考程度","Reasoning effort"),_effort));
         if(!string.IsNullOrWhiteSpace(settings.WorkBuddyModel))
@@ -34,7 +34,7 @@ internal sealed class WorkBuddySettingsPage : StackPanel
             _model.Items.Add(saved);_model.SelectedItem=saved;
         }
         SetEfforts([settings.WorkBuddyReasoningEffort],settings.WorkBuddyReasoningEffort);
-        _status.Text=T("打开此页后自动读取模型，测试连接需手动点击。","Models load when this page opens. Click Test connection to verify a response.");
+        _status.Text=T("打开此页后自动读取模型，测试连接只做后台协议检查。","Models load when this page opens. Test connection performs a bridge check without sending a turn.");
         _detect.Click+=async(_,_)=>await DetectAsync();
         _test.Click+=async(_,_)=>await TestAsync();
         Loaded+=async(_,_)=>{if(_loaded)return;_loaded=true;await DetectAsync();};

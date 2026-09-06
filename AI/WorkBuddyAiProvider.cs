@@ -16,20 +16,29 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
 
     public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken)
     {
-        // Connection testing must not inherit the full 90-second text turn
-        // budget. A test only needs a tiny text challenge and should return a
-        // useful failure promptly when the bundled ACP is stuck or offline.
+        // ACP exposes enough state to validate the connection without sending a
+        // model turn. This avoids consuming allowance and avoids waiting for a
+        // generated answer just to test the local bridge.
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        WorkBuddyAcpServer? server=null;
         try
         {
-            var response=await SendAsync(new AiRequest{Prompt="Reply exactly MEWU_OK. Do not use tools.",DisableReasoning=true,MaxOutputTokens=32},timeout.Token).ConfigureAwait(false);
-            return response.Answer.Trim()=="MEWU_OK";
+            server=await WorkBuddyAcpServer.StartAsync(timeout.Token).ConfigureAwait(false);
+            var catalog=await server.NewSessionAsync(timeout.Token).ConfigureAwait(false);
+            var selected=catalog.Models.SingleOrDefault(item=>item.Model==model)
+                ??catalog.Models.FirstOrDefault(item=>item.Model==catalog.CurrentModel)
+                ??catalog.Models[0];
+            var selectedEffort=catalog.Efforts.Contains(effort)?effort:catalog.CurrentEffort;
+            if(!catalog.Efforts.Contains(selectedEffort))selectedEffort=catalog.Efforts[0];
+            await server.ConfigureAsync(catalog,selected.Model,selectedEffort,timeout.Token).ConfigureAwait(false);
+            return true;
         }
         catch(OperationCanceledException) when(!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException("WorkBuddy 连接测试超过 30 秒，已停止。请确认官方客户端已登录后重试。");
+            throw new TimeoutException("WorkBuddy 连接检查超过 30 秒，已停止。请确认官方客户端已登录后重试。");
         }
+        finally{if(server is not null)await server.DisposeAsync().ConfigureAwait(false);}
     }
 
     public async Task<AiResult> SendAsync(AiRequest request,CancellationToken cancellationToken)
