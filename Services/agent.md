@@ -1,5 +1,7 @@
 # Hermes 启动兼容
 
+- 托盘菜单使用自定义固定行高时，WinForms `ToolStripDropDownMenu.TextRectangle` 仍按首选行高计算，不能仅依赖 `TextAlign=MiddleLeft`。渲染文字时保留系统水平布局，改用菜单项自身完整高度并指定 `VerticalCenter | SingleLine`，避免高 DPI 下文字偏上；不要硬编码向下偏移。渲染回归测试覆盖中英文及 100%/125%/150%/200% 字号与行高，断言必须在绘制回调结束后执行，避免 WinForms 将测试失败转成桌面异常弹窗。
+
 - 2026-09-05 性能审查：`BufferedAiStreamProgress` 在 Provider 线程合并已归一化增量，首批排一次 Background 回调，之后约 80ms 刷新；每个请求独享实例，完成前 Flush，取消/替换/关闭后丢弃未渲染批次，渲染异常交回请求失败路径。不得恢复逐 token `Progress<T>` UI 排队或在每次增量中强制 `UpdateLayout`。
 - `SelectionImageCache` 按冻结桌面源对象和物理裁剪矩形复用 WIC 裁剪；样式/引用变化不重建图像，桌面更换、选区变化或资源释放时失效。不得把缓存当作可导出的标注快照。
 - JSONL 历史加载最多读取末尾 8 MiB；从字节边界开始时先跳过不完整首行，再解码 UTF-8，避免截断中文/emoji 让近期记录整体失效。原历史文件不裁剪不重写；仍逐条严格解析 JSON 并执行条数、单条长度和 Provider/Profile 隔离。
