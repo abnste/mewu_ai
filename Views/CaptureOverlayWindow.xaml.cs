@@ -421,9 +421,7 @@ public partial class CaptureOverlayWindow : Window
             ??_conversationChannels.FirstOrDefault(item=>item.Id==$"api:{_host.Settings.DefaultProviderId}")
             ??_conversationChannels.FirstOrDefault();
         if(preferred is not null)_selectedConversationChannelId=preferred.Id;
-        ChannelSelector.Items.Clear();
-        foreach(var channel in _conversationChannels)ChannelSelector.Items.Add(channel);
-        ChannelSelector.SelectedItem=preferred;
+        UpdateChannelPickerItems();
         ChannelButton.Visibility=_conversationChannels.Count>1?Visibility.Visible:Visibility.Collapsed;
         PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
         PromptBarHost.IsHitTestVisible=_conversationAiAvailable&&!_promptBarHidden;
@@ -450,9 +448,12 @@ public partial class CaptureOverlayWindow : Window
         return (configured?.Name??configured?.Id??string.Empty,configured?.Model??string.Empty);
     }
 
-    private void ChannelSelectionChanged(object sender,SelectionChangedEventArgs e)
+    private void SelectConversationChannel(object sender,RoutedEventArgs e)
     {
-        if(ChannelSelector.SelectedItem is not ConversationChannel selected||string.Equals(_selectedConversationChannelId,selected.Id,StringComparison.Ordinal))return;
+        e.Handled=true;
+        ChannelPickerPopup.IsOpen=false;
+        QuickPrompt.Focus();
+        if(sender is not Button {Tag:ConversationChannel selected}||string.Equals(_selectedConversationChannelId,selected.Id,StringComparison.Ordinal))return;
         _selectedConversationChannelId=selected.Id;
         _host.RememberConversationChannel(selected.Id);
         _historyLoadVersion++;
@@ -460,12 +461,51 @@ public partial class CaptureOverlayWindow : Window
         LoadSessionHistory();
         RefreshHistoryPreview();
         PromptStatus.Text=$"已切换到 {selected.DisplayName}";
+        UpdateChannelPickerItems();
+    }
+
+    private void UpdateChannelPickerItems()
+    {
+        ChannelPickerItems.Children.Clear();
+        foreach(var channel in _conversationChannels)
+        {
+            var selected=channel.Id==_selectedConversationChannelId;
+            var row=new Grid();
+            row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(24)});
+            var label=new TextBlock{Text=channel.DisplayName,FontSize=12,TextTrimming=TextTrimming.CharacterEllipsis,VerticalAlignment=VerticalAlignment.Center,Foreground=selected?new SolidColorBrush(Color.FromRgb(82,99,217)):new SolidColorBrush(Color.FromRgb(52,67,90)),FontWeight=selected?FontWeights.SemiBold:FontWeights.Normal};
+            row.Children.Add(label);
+            var check=new System.Windows.Shapes.Path{Data=Geometry.Parse("M1,5 L4,8 L11,1"),Stroke=new SolidColorBrush(Color.FromRgb(82,99,217)),StrokeThickness=1.8,StrokeStartLineCap=PenLineCap.Round,StrokeEndLineCap=PenLineCap.Round,Width=12,Height=10,HorizontalAlignment=HorizontalAlignment.Right,VerticalAlignment=VerticalAlignment.Center,Visibility=selected?Visibility.Visible:Visibility.Hidden};
+            Grid.SetColumn(check,1);row.Children.Add(check);
+            var button=new Button{Tag=channel,Content=row,ToolTip=channel.DisplayName,MinHeight=40,Margin=new Thickness(0,2,0,2),Padding=new Thickness(10,8,10,8),BorderThickness=new Thickness(0),Background=selected?new SolidColorBrush(Color.FromRgb(234,238,255)):Brushes.Transparent,HorizontalContentAlignment=HorizontalAlignment.Stretch};
+            // The shared button template centers its content; give each row a
+            // fixed inner width so the label and current-selection check align.
+            row.Width=250;
+            System.Windows.Automation.AutomationProperties.SetName(button,channel.DisplayName);
+            button.Click+=SelectConversationChannel;
+            ChannelPickerItems.Children.Add(button);
+            if(selected)ChannelButton.ToolTip=LocalizationService.T("切换模型：","Switch model: ")+channel.DisplayName;
+        }
+    }
+
+    private void ChannelPickerKeyDown(object sender,KeyEventArgs e)
+    {
+        if(e.Key==Key.Escape){ChannelPickerPopup.IsOpen=false;ChannelButton.Focus();}
+        if(e.Key is Key.Up or Key.Down&&Keyboard.FocusedElement is Button focused)
+            focused.MoveFocus(new TraversalRequest(e.Key==Key.Up?FocusNavigationDirection.Previous:FocusNavigationDirection.Next));
+        // Do not let popup navigation reach the overlay's capture shortcuts.
+        if(e.Key is not (Key.Tab or Key.Enter or Key.Space))e.Handled=true;
     }
 
     private void ToggleChannelPicker(object sender,RoutedEventArgs e)
     {
         if(_conversationChannels.Count<=1)return;
         ChannelPickerPopup.IsOpen=!ChannelPickerPopup.IsOpen;
+        if(ChannelPickerPopup.IsOpen)
+        {
+            var selected=ChannelPickerItems.Children.OfType<Button>().FirstOrDefault(button=>button.Tag is ConversationChannel channel&&channel.Id==_selectedConversationChannelId);
+            selected?.Focus();
+        }
     }
 
     private void LoadSessionHistory()
@@ -1393,7 +1433,7 @@ public partial class CaptureOverlayWindow : Window
             !_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible?GetPromptInteractionBounds():null);
     }
     private bool IsInteractingWithPrompt(Point point)=>!_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible&&
-        (PromptBarHost.IsMouseOver||PromptBarHost.IsMouseCaptureWithin||_historyCopyMenuOpen||PointerOverPromptBar(point));
+        (PromptBarHost.IsMouseOver||PromptBarHost.IsMouseCaptureWithin||ChannelPickerPopup.IsOpen||_historyCopyMenuOpen||PointerOverPromptBar(point));
     private void ToolbarMouseEnter(object sender,MouseEventArgs e){if(!IsInteractingWithPrompt(e.GetPosition(Root)))SetPromptBarHidden(true,true);}
     private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
@@ -3543,6 +3583,7 @@ public partial class CaptureOverlayWindow : Window
 
     private async void OnPreviewKeyDown(object s,KeyEventArgs e)
     {
+        if(ChannelPickerPopup.IsOpen){ChannelPickerKeyDown(s,e);return;}
         if(e.Key==Key.Escape)
         {
             HandleEscape();
@@ -3594,7 +3635,8 @@ public partial class CaptureOverlayWindow : Window
 
     private void HandleEscape()
     {
-        if(_longCaptureMode)CancelLongCaptureSession("已取消长截图");
+        if(ChannelPickerPopup.IsOpen){ChannelPickerPopup.IsOpen=false;ChannelButton.Focus();}
+        else if(_longCaptureMode)CancelLongCaptureSession("已取消长截图");
         else if(ReferencePicker.IsOpen){ReferencePicker.IsOpen=false;_referenceMentionStart=-1;}
         else if(_recordingCountdownActive){CancelRecordingCountdown();PromptStatus.Text="正在取消录屏倒计时…";}
         else if(_recordingMode)StopRecording(this,new RoutedEventArgs());
