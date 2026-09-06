@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
+// SPDX-License-Identifier: MPL-2.0
 using System;
 using System.Collections.Specialized;
 using System.Runtime.InteropServices;

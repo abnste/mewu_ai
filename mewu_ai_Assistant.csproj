@@ -11,6 +11,9 @@
     <ApplicationIcon>Assets\MewuAI.ico</ApplicationIcon>
     <AssemblyName>MewuAI</AssemblyName>
     <RootNamespace>mewu_ai_Assistant</RootNamespace>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/abnste/mewu_ai</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <Version>0.2.6</Version>
     <AssemblyVersion>0.2.6.0</AssemblyVersion>
     <FileVersion>0.2.6.0</FileVersion>
@@ -64,6 +67,8 @@
     <Content Include="Assets\OcrModels\PP-OCRv6_rec_small.onnx" Link="models\v6\PP-OCRv6_rec_small.onnx" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\OcrModels\ppocrv6_dict.txt" Link="models\v6\ppocrv6_dict.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="SOURCE.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Licenses\**\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- Win2D brings these redistributable Microsoft components transitively.
          Carry their exact package license and NOTICE files in every build. -->

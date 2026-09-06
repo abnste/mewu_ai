@@ -8,6 +8,7 @@
     <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6"><img src="https://img.shields.io/badge/Public_Beta-v0.2.6-7C6CF0?style=flat-square" alt="v0.2.6 Public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later" />
     <img src="https://img.shields.io/badge/Architecture-x64-64748B?style=flat-square" alt="x64" />
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="License: MPL-2.0" /></a>
   </p>
   <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Setup-0.2.6-win-x64.exe"><strong>Download installer</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Portable-0.2.6-win-x64.zip">Portable ZIP</a></p>
 </div>
@@ -115,6 +116,7 @@ The [release workflow](./.github/workflows/release.yml) also builds the smoke-te
 
 <p align="center">
   Created by <strong>Abner Stephen</strong><br />
-  Source available · Commercial use requires the author's authorization<br />
+  Licensed under <a href="./LICENSE">MPL-2.0</a> · Commercial use permitted under the license<br />
+  <a href="./SOURCE.md">License scope and source code availability</a><br />
   <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6">Release notes</a>
 </p>

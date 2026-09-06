@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
+// SPDX-License-Identifier: MPL-2.0
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 namespace mewu_ai_Assistant.Services;
