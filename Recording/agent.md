@@ -20,3 +20,7 @@
 - 原生启动期间的停止最多等待 20 秒的真实 Recording/终态事件；不能在高负载机器上 5 秒后就向尚未就绪的 Media Foundation sink 强行 Stop。释放集成测试分别覆盖立即取消与真实 Recording 回调后的取消，不再以固定 350ms 睡眠冒充“已启动”；失败信息只记录阶段与异常类型，不含录屏内容或路径。
 
 - 真实 MP4/GIF/带标注导出集成测试必须等待 RecordingReady 后再计录制时长，并在进入预览与导出前确认源 MP4 至少覆盖 0.8 秒批注时间轴。v0.2.4 的标签构建在首次 GIF 导出处抛 ArgumentException，暴露旧夹具从 Start 开始固定等 1200ms 的启动竞态；不得依靠重跑绿灯或减少 GIF/时长/源哈希断言过关。
+
+- 录屏默认启用电脑声音（WASAPI loopback），麦克风必须由设置单独开启；ScreenRecorderLib 7 使用 `AudioOptions.AudioSources` 的 `LoopbackAudioSource` / `CaptureAudioSource`，不能使用旧版音频设备开关。所选设备缺失必须明确提示，不能静默生成无声音轨；双源各 0.5 音量保留混音余量。
+- 保存格式统一为默认 MP4、可选 MP3 / GIF；MP3 通过 Windows MediaTranscoder 原生编码并独立持有源租约，5 分钟超时、先临时输出再原子替换，禁止覆盖源视频。无音轨时必须提示重新开启声音录制；GIF 明示无声，仍只从最终 MP4 按需生成。
+- 音频回归需要把带声音样本的 MP3 和带标注 MP4 解码到 PCM，断言实际非静音采样并核对源哈希。`MEWU_AUDIO_LIVE=1` 单独启用交互桌面的真实电脑声音录制测试，普通 CI 的视觉录屏夹具显式禁音，不依赖 Runner 声卡。测试结束后的 WinRT 转码包装器可能保留原生读取器直到回收，只有夹具清理可以主动回收，产品不得强制 GC。

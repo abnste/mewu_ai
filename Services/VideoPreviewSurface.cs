@@ -86,7 +86,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         Interlocked.Exchange(ref _failureGeneration,-1);
         var player = new WinMediaPlayer
         {
-            IsMuted = true,
+            IsMuted = false,
             AutoPlay = false,
             IsLoopingEnabled = true
         };

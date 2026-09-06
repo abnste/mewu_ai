@@ -43,6 +43,7 @@ public sealed class SettingsWindow : Window
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
     private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
+    private readonly CheckBox _recordSystemAudio = new(), _recordMicrophone = new();
     private readonly System.Windows.Shapes.Ellipse _hermesStatusDot = new();
     private readonly List<AiProviderSettings> _providers;
     private readonly Dictionary<string, string> _pendingApiKeys = [];
@@ -406,6 +407,12 @@ public sealed class SettingsWindow : Window
         _recordCursor.Content = "录屏包含系统鼠标指针";
         _recordCursor.IsChecked = _host.Settings.IncludeRecordingCursor;
         panel.Children.Add(_recordCursor);
+        _recordSystemAudio.Content=LocalizationService.T("录制电脑声音","Record computer audio");
+        _recordSystemAudio.IsChecked=_host.Settings.RecordSystemAudio;
+        panel.Children.Add(_recordSystemAudio);
+        _recordMicrophone.Content=LocalizationService.T("同时录制麦克风","Record microphone audio");
+        _recordMicrophone.IsChecked=_host.Settings.RecordMicrophone;
+        panel.Children.Add(_recordMicrophone);
         panel.Children.Add(Text("自动清理临时媒体", true));
         AddNumericChoices(_tempCleanup,SettingsChoicePolicy.IncludeCurrent(new[] { 1, 3, 7, 14, 30 },_host.Settings.TempCleanupDays),_host.Settings.TempCleanupDays,"天");
         System.Windows.Automation.AutomationProperties.SetName(_tempCleanup, "临时媒体保留天数");
@@ -1188,6 +1195,8 @@ public sealed class SettingsWindow : Window
                 RecordingQuality=ReadNumericChoice(_recordingQuality,75),
                 GifFps=ReadNumericChoice(_gifFps,15),
                 IncludeRecordingCursor=_recordCursor.IsChecked==true,
+                RecordSystemAudio=_recordSystemAudio.IsChecked==true,
+                RecordMicrophone=_recordMicrophone.IsChecked==true,
                 TempCleanupDays=ReadNumericChoice(_tempCleanup,_host.Settings.TempCleanupDays),
                 SaveConversationHistory=_history.IsChecked==true,
                 EnableVoiceInput=_voice.IsChecked==true,

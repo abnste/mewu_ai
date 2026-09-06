@@ -115,7 +115,7 @@ public sealed class RecordingIntegrationTests
                 ? RecordingRuntimePolicy.StartupMinimumFreeSpaceBytes
                 : RecordingRuntimePolicy.RuntimeMinimumFreeSpaceBytes
         };
-        var session=new RecordingSession(new AppSettings{RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null,options);
+        var session=new RecordingSession(new AppSettings{RecordSystemAudio=false,RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null,options);
         try
         {
             session.Failed+=message=>{Interlocked.Increment(ref failedCount);failed.TrySetResult(message);};
@@ -139,7 +139,7 @@ public sealed class RecordingIntegrationTests
 
     [Fact] public async Task RecordsSmallRegionToRealMp4()
     {
-        var session=new RecordingSession(new AppSettings{RecordingFps=10,GifFps=2,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null);var done=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);session.Completed+=p=>done.TrySetResult(p);session.Failed+=e=>done.TrySetException(new InvalidOperationException(e));
+        var session=new RecordingSession(new AppSettings{RecordSystemAudio=false,RecordingFps=10,GifFps=2,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null);var done=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);session.Completed+=p=>done.TrySetResult(p);session.Failed+=e=>done.TrySetException(new InvalidOperationException(e));
         var gifPath=Path.Combine(Path.GetTempPath(),$"mewu-recording-{Guid.NewGuid():N}.gif");
         var annotatedGifPath=Path.Combine(Path.GetTempPath(),$"mewu-recording-annotated-{Guid.NewGuid():N}.gif");
         var annotatedPath=Path.Combine(Path.GetTempPath(),$"mewu-recording-annotated-{Guid.NewGuid():N}.mp4");
@@ -178,7 +178,7 @@ public sealed class RecordingIntegrationTests
 
     [Fact] public async Task ElapsedTimeExcludesPausedInterval()
     {
-        var session=new RecordingSession(new AppSettings{RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null);var done=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);session.Completed+=path=>done.TrySetResult(path);session.Failed+=error=>done.TrySetException(new InvalidOperationException(error));
+        var session=new RecordingSession(new AppSettings{RecordSystemAudio=false,RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null);var done=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);session.Completed+=path=>done.TrySetResult(path);session.Failed+=error=>done.TrySetException(new InvalidOperationException(error));
         try
         {
             var token=TestContext.Current.CancellationToken;session.Start();await Task.Delay(400,token);session.Pause();var beforePause=session.Elapsed;await Task.Delay(500,token);var duringPause=session.Elapsed;session.Resume();await Task.Delay(400,token);var afterResume=session.Elapsed;session.Stop();await done.Task.WaitAsync(TimeSpan.FromSeconds(20),token);
@@ -200,7 +200,7 @@ public sealed class RecordingIntegrationTests
     public async Task DisposingSessionDeletesAbandonedTemporaryVideo(bool waitForRecording)
     {
         var errors=new System.Collections.Concurrent.ConcurrentQueue<string>();
-        var session=new RecordingSession(new AppSettings{RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),(component,error)=>errors.Enqueue(component+": "+error.GetType().Name));
+        var session=new RecordingSession(new AppSettings{RecordSystemAudio=false,RecordingFps=10,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),(component,error)=>errors.Enqueue(component+": "+error.GetType().Name));
         var path=string.Empty;
         try
         {
