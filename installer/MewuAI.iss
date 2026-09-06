@@ -2,7 +2,9 @@
 #define MyAppVersion "0.2.5"
 #define MyAppPublisher "abnste"
 #define MyAppURL "https://github.com/abnste/mewu_ai"
-#define PublishDir "..\artifacts\release\win-x64"
+#ifndef PublishDir
+  #define PublishDir "..\artifacts\release\win-x64"
+#endif
 
 [Setup]
 AppId={{D9760D1F-112A-4DC7-97F4-8F2D905C1A36}
@@ -60,5 +62,9 @@ Name: "{autoprograms}\{cm:AppDisplayName}"; Filename: "{app}\MewuAI.exe"; Workin
 Name: "{autodesktop}\{cm:AppDisplayName}"; Filename: "{app}\MewuAI.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\MewuAI.exe"; Description: "{cm:LaunchProgram,MewuAI}"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\MewuAI.exe"; Flags: nowait skipifnotsilent
+; On Windows 11 26100, direct children of Inno 6.7.1 inherit RedirectionGuard.
+; uv-managed Python junctions then fail with error 448. Hand off to the user's
+; desktop shell so the application gets normal desktop process state, while
+; Setup keeps its own RedirectionGuard protection throughout installation.
+Filename: "{win}\explorer.exe"; Parameters: """{app}\MewuAI.exe"""; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,MewuAI}"; Flags: nowait runasoriginaluser postinstall skipifsilent
+Filename: "{win}\explorer.exe"; Parameters: """{app}\MewuAI.exe"""; WorkingDir: "{app}"; Flags: nowait runasoriginaluser skipifnotsilent

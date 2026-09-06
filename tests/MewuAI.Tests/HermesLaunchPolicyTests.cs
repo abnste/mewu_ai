@@ -104,5 +104,32 @@ public sealed class HermesLaunchPolicyTests : IDisposable
         Assert.Contains(LocalizationService.IsEnglish?"exit code alone does not prove":"不能仅凭",message,StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("  Caused by: uncategorized error (os error 448)")]
+    [InlineData("OSError: [WinError 448] private-path private-token")]
+    public void InstallerInheritedGuardFailureHasAnActionablePrivateDiagnostic(string error)
+    {
+        var diagnostics=new HermesStartupDiagnostics();
+        diagnostics.Observe("error: uv trampoline failed to spawn Python child process");
+        diagnostics.Observe(error);
+        var message=diagnostics.Describe(1);
+        Assert.Contains("448",message,StringComparison.Ordinal);
+        Assert.Contains(LocalizationService.IsEnglish?"Start":"开始菜单",message,StringComparison.Ordinal);
+        Assert.DoesNotContain("private",message,StringComparison.Ordinal);
+        Assert.DoesNotContain(LocalizationService.IsEnglish?"No safely reportable":"未收到可安全显示",message,StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("OSError: [WinError 50] private-path")]
+    [InlineData("OSError: [WinError 4480] private-path")]
+    [InlineData("os error 4480")]
+    public void ErrorCodePrefixesDoNotInventADifferentFailure(string error)
+    {
+        var diagnostics=new HermesStartupDiagnostics();
+        diagnostics.Observe(error);
+        var message=diagnostics.Describe(1);
+        Assert.Contains(LocalizationService.IsEnglish?"No safely reportable":"未收到可安全显示",message,StringComparison.Ordinal);
+    }
+
     public void Dispose(){if(Directory.Exists(_home))Directory.Delete(_home,true);}
 }
