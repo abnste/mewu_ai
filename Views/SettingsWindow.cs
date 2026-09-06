@@ -20,6 +20,7 @@ namespace mewu_ai_Assistant.Views;
 public sealed class SettingsWindow : Window
 {
     private readonly TabItem _aiTab;
+    private CodexSettingsPage _codexSettings=null!;
     internal void ShowAiPage()=>_aiTab.IsSelected=true;
     private static readonly (string Value,string Label)[] HermesReasoningChoices=
     [
@@ -427,7 +428,11 @@ public sealed class SettingsWindow : Window
 
     private UIElement Ai()
     {
-        return new AiSettingsTabs(Api(),HermesCard()){Margin=new Thickness(12,12,12,4)};
+        _codexSettings=new CodexSettingsPage(_host.Settings,_windowLifetime.Token);
+        var hermes=HermesCard();
+        _codexSettings.EnabledChoice.Checked+=(_,_)=>_hermesEnabled.IsChecked=false;
+        _hermesEnabled.Checked+=(_,_)=>_codexSettings.EnabledChoice.IsChecked=false;
+        return new AiSettingsTabs(Api(),hermes,_codexSettings){Margin=new Thickness(12,12,12,4)};
     }
 
     private UIElement Api()
@@ -1138,6 +1143,12 @@ public sealed class SettingsWindow : Window
     {
         if(!StoreSelectedProvider(true))return;
         var hermesEnabled=_hermesEnabled.IsChecked==true;
+        var codexEnabled=_codexSettings.IsEnabledForConversation;
+        var unchangedCodex=_host.Settings.CodexEnabled&&_codexSettings.SelectedModel?.Model==_host.Settings.CodexModel&&_codexSettings.SelectedEffort==_host.Settings.CodexReasoningEffort;
+        if(codexEnabled&&((!_codexSettings.ConnectionVerified&&!unchangedCodex)||_codexSettings.SelectedModel is null))
+        {
+            MessageBox.Show(this,"请先在 Codex 页检测连接并选择可用模型。","无法保存");return;
+        }
         var hermesAgent=_hermesAgentSelector.SelectedItem as HermesAgentOption;
         var hermesSelection=_hermesModelSelector.SelectedItem as HermesModelOption;
         var hermesReasoning=ReadHermesReasoning();
@@ -1175,7 +1186,7 @@ public sealed class SettingsWindow : Window
             :_apiKeysMarkedForDeletion.Contains(defaultProvider.Id)
                 ?null
                 :credentials.Read(defaultProvider.CredentialId);
-        if(!hermesEnabled)
+        if(!hermesEnabled&&!codexEnabled)
         {
             try{ProviderAuthenticationPolicy.EnsureUsableCredentials(defaultProvider,effectiveDefaultKey);}
             catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"默认 Provider 无法使用");return;}
@@ -1218,6 +1229,10 @@ public sealed class SettingsWindow : Window
                 AutomaticallyStartListening=_voice.IsChecked==true&&_autoVoice.IsChecked==true,
                 VoiceLanguage=(_voiceLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system",
                 HermesEnabled=hermesEnabled,
+                CodexEnabled=codexEnabled,
+                CodexModel=_codexSettings.SelectedModel?.Model??_host.Settings.CodexModel,
+                CodexReasoningEffort=_codexSettings.SelectedEffort,
+                CodexSupportsImage=_codexSettings.SelectedModel?.SupportsImage??_host.Settings.CodexSupportsImage,
                 HermesProfile=hermesAgent?.Name??_host.Settings.HermesProfile,
                 HermesProvider=hermesSelection?.Provider??_host.Settings.HermesProvider,
                 HermesModel=hermesSelection?.Model??_host.Settings.HermesModel,

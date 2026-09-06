@@ -11,13 +11,14 @@ public partial class AiSettingsTabs : UserControl
 {
     internal TabControl Tabs=>BackendTabs;
 
-    public AiSettingsTabs(UIElement api,UIElement hermes)
+    public AiSettingsTabs(UIElement api,UIElement hermes,UIElement? codex=null)
     {
         InitializeComponent();
         System.Windows.Automation.AutomationProperties.SetName(BackendTabs,LocalizationService.T("AI 接入方式","AI integrations"));
         AddPage("API",api);
         AddPage("Hermes",hermes);
-        foreach(var name in new[]{"Codex","OpenClaw","Claude Code","WorkBuddy"})AddPage(name,ComingSoon(name));
+        AddPage("Codex",codex??ComingSoon("Codex"));
+        foreach(var name in new[]{"OpenClaw","Claude Code","WorkBuddy"})AddPage(name,ComingSoon(name));
         BackendTabs.SelectedIndex=0;
     }
 

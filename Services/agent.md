@@ -1,3 +1,10 @@
+# Codex 官方接口
+
+- 2026-09-06 本机 Codex CLI 0.153.4 使用官方 app-server stdio 接入，登录/模型读取不提交 turn。认证由官方客户端管理，只接受 ChatGPT 登录，不读取 token 文件、不回退 API Key。详情与官方来源见 `../docs/codex-work-integration.md`。
+- 每轮独立 ephemeral 会话和临时工作目录，输入只取明确附件及有界历史；文字、图片关闭本机工具，视频在进程启动时开启本机命令与看图，允许工作目录写入并禁工具网络。Hooks、插件、MCP、记忆和收费快速档不得继承；不修改全局 Codex 配置。CLI 参数优先级高于 thread config，不能在启动禁工具后仅靠 thread config 恢复视频工具。
+- 本机 0.153.4 虽在生成的 Schema 保留 `untrusted`，运行已拒绝，使用 `on-request`。thread config 点分键不是 CLI TOML 文本，不可把引号写入 MCP 键名；无法安全表示的名称拒绝启动会话。
+- 真实最小文字、合成图片及合成视频挑战通过：视频由 Codex 自行调用本机工具正确识别红→蓝时间顺序，源视频哈希不变。响应必须绑定 thread/turn、收到完整最终正文与成功终态；取消、仅思考、失败和 EOF 不得成为历史成功记录。临时文件通过租约清理，后台原始 stdout/stderr 不落日志。
+
 # Hermes 启动兼容
 
 - 2026-09-06 已定位安装/自动更新后 Hermes 退出码 1 的根因：Windows 11 26100 上，Inno Setup 6.7.1 直接启动的喵呜AI继承 `ProcessRedirectionTrustPolicy=1`，uv 的 Python trampoline 再启动位于 junction 下的真实解释器时返回 `os error 448`。当天 09:17:17 的安装日志与故障进程创建时间吻合。最小 Inno 对照与真实 `App` / `SettingsWindow.ConnectHermesAsync(true)` 重放均证明旧链路失败、经 Windows 桌面交接的新链路成功（1 个 Agent、38 个模型）；不是 Python 依赖损坏或 stdin 问题。
