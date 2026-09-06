@@ -566,19 +566,21 @@ public partial class CaptureOverlayWindow : Window
         var content=new StackPanel();
         var roleColor=new SolidColorBrush(current?Color.FromRgb(79,95,207):Color.FromRgb(96,112,135));
         content.Children.Add(new TextBlock{Text=LocalizationService.T("用户","You"),Foreground=roleColor,FontSize=10.5,FontWeight=FontWeights.SemiBold});
-        content.Children.Add(new TextBlock{Text=LimitHistoryText(prompt),Foreground=new SolidColorBrush(Color.FromRgb(47,61,82)),FontSize=12,LineHeight=18,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,2,0,5)});
+        content.Children.Add(CreateHistoryText(prompt,new Thickness(0,2,0,5)));
         content.Children.Add(new Border{Height=1,Background=new SolidColorBrush(current?Color.FromRgb(205,214,246):Color.FromRgb(230,235,242)),Margin=new Thickness(0,0,0,5)});
         content.Children.Add(new TextBlock{Text="AI",Foreground=roleColor,FontSize=10.5,FontWeight=FontWeights.SemiBold});
-        content.Children.Add(new TextBlock{Text=LimitHistoryText(answer),Foreground=new SolidColorBrush(Color.FromRgb(47,61,82)),FontSize=12,LineHeight=18,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,2,0,0)});
+        content.Children.Add(CreateHistoryText(answer,new Thickness(0,2,0,0)));
         card.Child=content;
         HistoryItems.Children.Add(card);
     }
 
-    private static string LimitHistoryText(string? text)
+    private bool _historyCopyMenuOpen;
+    private HistoryTextBox CreateHistoryText(string text,Thickness margin)
     {
-        var value=(text??string.Empty).Trim();
-        const int maxCharacters=900;
-        return value.Length<=maxCharacters?value:value[..maxCharacters]+"…";
+        var box=new HistoryTextBox(text,CopyTextToClipboard){Margin=margin};
+        box.ContextMenu.Opened+=(_,_)=>_historyCopyMenuOpen=true;
+        box.ContextMenu.Closed+=(_,_)=>_historyCopyMenuOpen=false;
+        return box;
     }
 
     private double GetHistoryMaxHeight()
@@ -1064,6 +1066,7 @@ public partial class CaptureOverlayWindow : Window
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
         else
         {
+            if(IsInteractingWithPrompt(p)){PointerInspector.Visibility=Visibility.Collapsed;return;}
             UpdateSnapPreview(p);
             if(Active is null&&PromptMonitorBounds()!=_lastPositionedPromptMonitor)PositionPromptBar();
             if(!_forceNewSelection)
@@ -1323,14 +1326,17 @@ public partial class CaptureOverlayWindow : Window
         return CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(_promptBarHidden,p,promptBounds,PromptMonitorBounds(),_selections.Where(item=>!item.IsImplicit).Select(item=>item.Bounds));
     }
     private bool PointerOverPromptBar(Point point)
+        =>GetPromptInteractionBounds().Contains(point);
+    private Rect GetPromptInteractionBounds()
     {
         var left=Canvas.GetLeft(PromptBarHost);var top=Canvas.GetTop(PromptBarHost);
         var width=PromptBar.ActualWidth>0?PromptBar.ActualWidth:PromptBar.DesiredSize.Width;
         var height=PromptBar.ActualHeight>0?PromptBar.ActualHeight:PromptBar.DesiredSize.Height;
-        return double.IsFinite(left)&&double.IsFinite(top)&&width>0&&height>0&&new Rect(left,top,width,height).Contains(point);
+        return double.IsFinite(left)&&double.IsFinite(top)&&width>0&&height>0?new Rect(left,top,width,height):Rect.Empty;
     }
     private bool PointerInToolbarInteractionZone(Point point)
     {
+        if(IsInteractingWithPrompt(point))return false;
         if(Toolbar.Visibility!=Visibility.Visible)return false;
         var left=Canvas.GetLeft(Toolbar);var top=Canvas.GetTop(Toolbar);
         var width=Toolbar.ActualWidth>0?Toolbar.ActualWidth:Toolbar.DesiredSize.Width;
@@ -1340,9 +1346,12 @@ public partial class CaptureOverlayWindow : Window
             :Rect.Empty;
         // Include the selection-to-toolbar gap so the prompt cannot reappear
         // during the short pointer transit into a toolbar placed below/above.
-        return CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(point,bounds,PromptFloatingGap+2);
+        return CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(point,bounds,PromptFloatingGap+2,
+            !_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible?GetPromptInteractionBounds():null);
     }
-    private void ToolbarMouseEnter(object sender,MouseEventArgs e)=>SetPromptBarHidden(true,true);
+    private bool IsInteractingWithPrompt(Point point)=>!_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible&&
+        (PromptBarHost.IsMouseOver||PromptBarHost.IsMouseCaptureWithin||_historyCopyMenuOpen||PointerOverPromptBar(point));
+    private void ToolbarMouseEnter(object sender,MouseEventArgs e){if(!IsInteractingWithPrompt(e.GetPosition(Root)))SetPromptBarHidden(true,true);}
     private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
 
