@@ -43,6 +43,39 @@ public sealed class HistoryInteractionTests
         Assert.True(CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(new Point(295,450),new Rect(280,430,50,40),12,prompt));
     }
 
+    [Fact]
+    public void UnchangedHistoryReusesControlsAndKeepsSelectionWhenANewTurnArrives()
+    {
+        RunSta(()=>
+        {
+            var panel=new HistoryPreviewPanel();var created=0;
+            UIElement Create(HistoryPreviewEntry entry){created++;return new HistoryTextBox(entry.Answer,_=>{});}
+            var entries=Enumerable.Range(0,6).Select(i=>new HistoryPreviewEntry($"Q{i}",$"回答{i}内容",false)).ToArray();
+            panel.UpdateRows(entries,Create);
+            var selected=(HistoryTextBox)panel.Children[2];selected.Select(1,3);
+            var originalSelection=selected.SelectedText;
+            var allocatedBefore=GC.GetAllocatedBytesForCurrentThread();
+            for(var i=0;i<1000;i++)panel.UpdateRows(entries,Create);
+            var allocated=GC.GetAllocatedBytesForCurrentThread()-allocatedBefore;
+            Assert.Equal(6,created);Assert.Same(selected,panel.Children[2]);Assert.Equal(originalSelection,selected.SelectedText);
+            panel.UpdateRows(entries.Skip(1).Append(new HistoryPreviewEntry("Q6","回答6内容",true)).ToArray(),Create);
+            Assert.Equal(7,created);Assert.Same(selected,panel.Children[1]);Assert.Equal(originalSelection,selected.SelectedText);
+            TestContext.Current.TestOutputHelper!.WriteLine($"1000 unchanged refreshes: {allocated} allocated bytes, 0 new controls.");
+        });
+    }
+
+    [Fact]
+    public void DuplicateHistoryRowsHaveIndependentControlsAndEmptyHistoryRemovesOldContent()
+    {
+        RunSta(()=>
+        {
+            var panel=new HistoryPreviewPanel();var same=new HistoryPreviewEntry("same","same",false);
+            panel.UpdateRows([same,same],entry=>new HistoryTextBox(entry.Answer,_=>{}));
+            Assert.NotSame(panel.Children[0],panel.Children[1]);
+            panel.UpdateRows([],entry=>throw new InvalidOperationException());Assert.Empty(panel.Children);
+        });
+    }
+
     private static void RunSta(Action action)
     {
         Exception? error=null;

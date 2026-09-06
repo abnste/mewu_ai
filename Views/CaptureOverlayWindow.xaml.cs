@@ -505,14 +505,16 @@ public partial class CaptureOverlayWindow : Window
 
     private static string CreateHistoryPairKey(string prompt,string answer)=>prompt+"\u001f"+answer;
 
+    private bool _historyOpenedOnce;
     private void ToggleHistory(object sender,RoutedEventArgs e)
     {
         _historyExpanded=!_historyExpanded;
         RefreshHistoryPreview();
-        if(_historyExpanded)
+        if(_historyExpanded&&!_historyOpenedOnce)
         {
             HistoryScroll.UpdateLayout();
             HistoryScroll.ScrollToEnd();
+            _historyOpenedOnce=true;
         }
         PositionPromptBar();
         e.Handled=true;
@@ -529,15 +531,16 @@ public partial class CaptureOverlayWindow : Window
         var latestPairIndex=pairs.Length-1;
         var currentIsInHistory=_lastSubmittedTurnRecorded&&!string.IsNullOrWhiteSpace(_lastSubmittedPrompt)&&latestPairIndex>=0&&string.Equals(pairs[latestPairIndex].Prompt,_lastSubmittedPrompt,StringComparison.Ordinal);
 
-        HistoryItems.Children.Clear();
+        var previewRows=new List<HistoryPreviewEntry>(pairs.Length+1);
         for(var pairIndex=0;pairIndex<pairs.Length;pairIndex++)
         {
             var pair=pairs[pairIndex];
             var isCurrent=currentIsInHistory&&pairIndex==latestPairIndex;
-            AddHistoryPair(pair.Prompt,pair.Answer,isCurrent);
+            previewRows.Add(new HistoryPreviewEntry(pair.Prompt,pair.Answer,isCurrent));
         }
         if(!string.IsNullOrWhiteSpace(_lastSubmittedPrompt)&&!currentIsInHistory)
-            AddHistoryPair(_lastSubmittedPrompt,_request is null?LocalizationService.T("未收到 AI 回复","No AI response"):LocalizationService.T("正在生成回答…","Generating response…"),true);
+            previewRows.Add(new HistoryPreviewEntry(_lastSubmittedPrompt,_request is null?LocalizationService.T("未收到 AI 回复","No AI response"):LocalizationService.T("正在生成回答…","Generating response…"),true));
+        HistoryItems.UpdateRows(previewRows,entry=>CreateHistoryPair(entry.Prompt,entry.Answer,entry.IsCurrent));
         if(HistoryItems.Children.Count==0)
         {
             HistoryItems.Children.Add(new TextBlock{Text=LocalizationService.T("暂无历史对话","No conversation yet"),Foreground=new SolidColorBrush(Color.FromRgb(127,141,161)),FontSize=12,Margin=new Thickness(2,2,2,2)});
@@ -552,7 +555,7 @@ public partial class CaptureOverlayWindow : Window
         HistoryScroll.MaxHeight=GetHistoryMaxHeight();
     }
 
-    private void AddHistoryPair(string prompt,string answer,bool current)
+    private Border CreateHistoryPair(string prompt,string answer,bool current)
     {
         var card=new Border
         {
@@ -571,7 +574,7 @@ public partial class CaptureOverlayWindow : Window
         content.Children.Add(new TextBlock{Text="AI",Foreground=roleColor,FontSize=10.5,FontWeight=FontWeights.SemiBold});
         content.Children.Add(CreateHistoryText(answer,new Thickness(0,2,0,0)));
         card.Child=content;
-        HistoryItems.Children.Add(card);
+        return card;
     }
 
     private bool _historyCopyMenuOpen;
@@ -1051,6 +1054,7 @@ public partial class CaptureOverlayWindow : Window
         if(RejectIfOverlayOperationBusy())return;
         _pointerOperationBefore=CaptureOverlaySnapshot();
         var p=e.GetPosition(Root);var addNew=_forceNewSelection||Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);_forceNewSelection=false;
+        ResetSnapPreview();
         var hit=addNew?-1:FindSelection(p);
         if(hit>=0){Select(hit);_moving=true;_pointerOperationLabel="移动截图区域";_moveStart=p;_moveOrigin=Active!.Bounds;}
         else{RemoveImplicitSelections();var item=CreateSelection(false);_selections.Add(item);_references.Add(item);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();_selecting=true;_pointerOperationLabel="新建截图区域";_start=p;var immediate=ProbeSnapRect(p);_pendingAutoSelection=!addNew&&!immediate.IsEmpty&&immediate.Contains(p)?immediate:null;item.Bounds=new Rect(p,p);SnapPreview.Visibility=Visibility.Collapsed;}
@@ -1066,7 +1070,7 @@ public partial class CaptureOverlayWindow : Window
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
         else
         {
-            if(IsInteractingWithPrompt(p)){PointerInspector.Visibility=Visibility.Collapsed;return;}
+            if(IsInteractingWithPrompt(p)){PointerInspector.Visibility=Visibility.Collapsed;ResetSnapPreview();return;}
             UpdateSnapPreview(p);
             if(Active is null&&PromptMonitorBounds()!=_lastPositionedPromptMonitor)PositionPromptBar();
             if(!_forceNewSelection)
@@ -1187,7 +1191,7 @@ public partial class CaptureOverlayWindow : Window
             var updated=CaptureCleanDesktopForRefresh();
             if(_closed)return;
             if(updated.OriginX!=_frame.OriginX||updated.OriginY!=_frame.OriginY||updated.Image.PixelWidth!=_frame.Image.PixelWidth||updated.Image.PixelHeight!=_frame.Image.PixelHeight)return;
-            _frame=updated;
+            _frame=updated;_pointerSampleImage=null;
             _desktopFrameVersion++;
             DesktopImage.Source=updated.Image;
             foreach(var item in _selections)UpdateSelection(item);
@@ -1355,6 +1359,10 @@ public partial class CaptureOverlayWindow : Window
     private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
 
+    private BitmapSource? _pointerSampleImage;
+    private int _pointerSampleX=-1,_pointerSampleY=-1;
+    private Color? _pointerSampleColor;
+    private readonly SolidColorBrush _pointerSampleBrush=new();
     private void UpdatePointerInspector(Point point)
     {
         if((!_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible&&PointerOverPromptBar(point))||PointerInToolbarInteractionZone(point))
@@ -1364,14 +1372,27 @@ public partial class CaptureOverlayWindow : Window
         }
         if(Root.ActualWidth<=0||Root.ActualHeight<=0||point.X<0||point.Y<0||point.X>=Root.ActualWidth||point.Y>=Root.ActualHeight){PointerInspector.Visibility=Visibility.Collapsed;return;}
         var pixelX=Math.Clamp((int)Math.Floor(point.X*_frame.Image.PixelWidth/Root.ActualWidth),0,_frame.Image.PixelWidth-1);var pixelY=Math.Clamp((int)Math.Floor(point.Y*_frame.Image.PixelHeight/Root.ActualHeight),0,_frame.Image.PixelHeight-1);
-        if(!ScreenPixelSampler.TrySample(_frame.Image,pixelX,pixelY,out var color)){PointerInspector.Visibility=Visibility.Collapsed;return;}
-        PointerColorSwatch.Fill=new SolidColorBrush(color);PointerColorText.Text=$"#{color.R:X2}{color.G:X2}{color.B:X2}";PointerCoordinateText.Text=$"X {_frame.OriginX+pixelX}  Y {_frame.OriginY+pixelY}";PointerInspector.Visibility=Visibility.Visible;PointerInspector.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));
+        if(!ReferenceEquals(_pointerSampleImage,_frame.Image)||_pointerSampleX!=pixelX||_pointerSampleY!=pixelY)
+        {
+            if(!ScreenPixelSampler.TrySample(_frame.Image,pixelX,pixelY,out var color)){PointerInspector.Visibility=Visibility.Collapsed;return;}
+            _pointerSampleImage=_frame.Image;_pointerSampleX=pixelX;_pointerSampleY=pixelY;
+            if(_pointerSampleColor!=color)
+            {
+                _pointerSampleColor=color;_pointerSampleBrush.Color=color;PointerColorSwatch.Fill=_pointerSampleBrush;
+                PointerColorText.Text=$"#{color.R:X2}{color.G:X2}{color.B:X2}";
+            }
+            PointerCoordinateText.Text=$"X {_frame.OriginX+pixelX}  Y {_frame.OriginY+pixelY}";
+        }
+        PointerInspector.Visibility=Visibility.Visible;
+        if(!PointerInspector.IsMeasureValid)PointerInspector.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));
         var width=Math.Max(1,PointerInspector.DesiredSize.Width);var height=Math.Max(1,PointerInspector.DesiredSize.Height);const double gap=16;var left=point.X+gap;var top=point.Y+gap;if(left+width>Root.ActualWidth-4)left=point.X-width-gap;if(top+height>Root.ActualHeight-4)top=point.Y-height-gap;Canvas.SetLeft(PointerInspector,Math.Clamp(left,4,Math.Max(4,Root.ActualWidth-width-4)));Canvas.SetTop(PointerInspector,Math.Clamp(top,4,Math.Max(4,Root.ActualHeight-height-4)));
     }
     private static Rect Normalize(Rect r)=>new(Math.Min(r.Left,r.Right),Math.Min(r.Top,r.Bottom),Math.Abs(r.Width),Math.Abs(r.Height));
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
     private async void UpdateSnapPreview(Point point)
     {
+        if(_closed||_selecting||_moving||_recordingMode||_recordingCountdownActive||_drawingMode||_longCaptureMode||IsInteractingWithPrompt(point)||PointerInToolbarInteractionZone(point))
+        {ResetSnapPreview();return;}
         _latestSnapProbePoint=point;_latestSnapProbePointValid=true;
         if(PointerOverSelection(point)){_latestSnapProbePointValid=false;CancelSnapProbe();SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=_stableSnapCandidate=Rect.Empty;return;}
         // UI Automation can take longer than a pointer move.  Keep one probe
@@ -1403,6 +1424,9 @@ public partial class CaptureOverlayWindow : Window
             // documented UIA threading model and probe from an MTA worker.
             var bounds=await Task.Run(()=>_windowSnap.FindTopmostTargetAt(screenX,screenY,handle),request.Token);
             if(_closed||request.IsCancellationRequested||!ReferenceEquals(_snapProbeRequest,request))return;
+            var currentPointer=Mouse.GetPosition(Root);
+            if(_selecting||_moving||_recordingMode||_recordingCountdownActive||_drawingMode||_longCaptureMode||IsInteractingWithPrompt(currentPointer)||PointerInToolbarInteractionZone(currentPointer))
+            {ResetSnapPreview();return;}
             // Do not paint a result for a stale pointer location.  The latest
             // location is scheduled once this bounded probe is released.
             if(!_latestSnapProbePointValid||!_latestSnapProbePoint.Equals(probePoint))return;
@@ -1414,16 +1438,29 @@ public partial class CaptureOverlayWindow : Window
         catch(Exception ex){new PrivacyLogger().Error("SmartSelectionProbe",ex);if(!_closed&&ReferenceEquals(_snapProbeRequest,request)){_snapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;}}
         finally
         {
+            var wasCanceled=request.IsCancellationRequested;
             var ownsRequest=ReferenceEquals(Interlocked.CompareExchange(ref _snapProbeRequest,null,request),request);request.Dispose();
-            if(ownsRequest&&!_closed&&_latestSnapProbePointValid&&!_latestSnapProbePoint.Equals(probePoint))
+            if(ownsRequest&&!_closed&&_latestSnapProbePointValid&&(wasCanceled||!_latestSnapProbePoint.Equals(probePoint)))
             {
                 _lastSnapProbeTicks=0;
                 var nextPoint=_latestSnapProbePoint;
-                _=Dispatcher.BeginInvoke(DispatcherPriority.Input,new Action(()=>UpdateSnapPreview(nextPoint)));
+                _=Dispatcher.BeginInvoke(DispatcherPriority.Input,new Action(()=>{if(_latestSnapProbePointValid&&nextPoint==_latestSnapProbePoint)UpdateSnapPreview(nextPoint);}));
             }
         }
     }
-    private void CancelSnapProbe(){var request=Interlocked.Exchange(ref _snapProbeRequest,null);if(request is null)return;try{request.Cancel();}catch(ObjectDisposedException){}request.Dispose();}
+    private void CancelSnapProbe()
+    {
+        // Native/UIA work cannot be interrupted by cancelling a token. Keep
+        // its slot occupied until finally releases it, so pointer transitions
+        // cannot accumulate overlapping background probes.
+        var request=_snapProbeRequest;if(request is null)return;
+        try{request.Cancel();}catch(ObjectDisposedException){}
+    }
+    private void ResetSnapPreview()
+    {
+        _latestSnapProbePointValid=false;CancelSnapProbe();
+        _snapCandidate=_stableSnapCandidate=Rect.Empty;SnapPreview.Visibility=Visibility.Collapsed;
+    }
     private void ShowSnapPreview(Rect candidate)
     {
         if(candidate.IsEmpty){SnapPreview.Visibility=Visibility.Collapsed;return;}
