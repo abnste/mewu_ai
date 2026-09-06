@@ -22,16 +22,14 @@ public sealed class AiSettingsTabsTests
             var tabs=view.Tabs;
             Assert.Equal(new[]{"API","Hermes","Codex","OpenClaw","Claude Code","WorkBuddy"},tabs.Items.Cast<TabItem>().Select(t=>t.Header));
             Assert.Equal(0,tabs.SelectedIndex);
-            for(var i=1;i<tabs.Items.Count;i++)
+            for(var i=1;i<3;i++)
             {
                 tabs.SelectedIndex=i;
                 view.Measure(new Size(500,350));view.Arrange(new Rect(0,0,500,350));view.UpdateLayout();
-                if(i>=3)
-                {
-                    var placeholder=Assert.IsType<StackPanel>(Assert.IsType<ScrollViewer>(((TabItem)tabs.SelectedItem).Content).Content);
-                    Assert.All(placeholder.Children.Cast<UIElement>(),element=>Assert.IsType<TextBlock>(element));
-                }
+                Assert.Equal(i,view.SelectedBackendIndex);
+                Assert.Single(tabs.Items.Cast<TabItem>(),item=>item.IsSelected);
             }
+            Assert.All(tabs.Items.Cast<TabItem>().Skip(3),item=>{Assert.False(item.IsEnabled);Assert.NotNull(item.ToolTip);});
             tabs.SelectedIndex=0;
             Assert.Same(api,((ScrollViewer)((TabItem)tabs.SelectedItem).Content).Content);
             Assert.Equal("unsaved-model-id",api.Text);Assert.Equal(2,api.SelectionStart);Assert.Equal(5,api.SelectionLength);
@@ -41,6 +39,29 @@ public sealed class AiSettingsTabsTests
             tabs.SelectedIndex=2;
             Assert.Same(codex,((ScrollViewer)((TabItem)tabs.SelectedItem).Content).Content);
             Assert.Equal("unsaved-codex-model",codex.Text);
+        });
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void OpensOnSavedBackendAndIgnoresNestedModelSelection(int savedBackend)
+    {
+        RunSta(()=>
+        {
+            var models=new ComboBox();models.Items.Add("first");models.Items.Add("second");
+            var view=new AiSettingsTabs(models,new TextBox(),new TextBox(),savedBackend);
+            view.Measure(new Size(500,350));view.Arrange(new Rect(0,0,500,350));view.UpdateLayout();
+            Assert.Equal(savedBackend,view.SelectedBackendIndex);
+            var changes=0;view.BackendChanged+=(_,_)=>changes++;
+            view.Tabs.SelectedIndex=0;
+            var beforeModelSelection=changes;models.SelectedIndex=1;
+            Assert.Equal(beforeModelSelection,changes);
+            view.Tabs.SelectedIndex=2;
+            Assert.Equal(beforeModelSelection+1,changes);
+            Assert.Equal(2,view.SelectedBackendIndex);
+            view.Tabs.SelectedIndex=0;Assert.Equal("second",models.SelectedItem);
         });
     }
 
