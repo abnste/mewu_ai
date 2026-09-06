@@ -42,6 +42,7 @@
 - 2026-09-06 MiniMax Code 适配走官方桌面版会话：从 `%APPDATA%\MiniMax\minimax-agent-cn-config.json` 读取桌面客户端当前 access token，仅在内存中用于官方 Messages 流式接口；不要求用户安装 CLI、不调用 `mcode login`，设置页提供打开桌面客户端和刷新状态按钮。未发现登录会话时隐藏可用渠道并给出可操作提示，令牌不得写入设置、日志或仓库。
 
 - 2026-09-06 对话渠道改为按本轮选择：API 列表中的每个接入点、Hermes、Codex、WorkBuddy 可同时保留配置。覆盖层仅在存在多个可用渠道时显示渠道选择器，历史按渠道与模型隔离；切换渠道不得把请求回退到默认 Provider。
+- WorkBuddy 旧设置可能只有有效 `WorkBuddyModel`（例如 `auto`）而缺少或关闭 `WorkBuddyEnabled`；只要模型配置和官方 ACP 可发现，就应显示并允许选择该渠道，不能让旧开关把已配置后端隐藏。
 - 2026-09-06 纯文字请求不得携带视觉标注系统提示或附件清单；WorkBuddy 纯文字轮次自动关闭扩展思考并设置 90 秒有界超时，避免简单问候陷入无限思考。
 
 - ProviderPresetPolicy 只做界面厂商与现有 Type/BaseUrl 的映射，不增加会让旧配置失效的必填字段；精确地址匹配，非标准 MiniMax 地址仍保留为自定义配置及原有 MiniMax 协议。

@@ -171,7 +171,7 @@ public sealed class AppHost : IDisposable
         {
             try{CodexSettingsPolicy.Validate(Settings);channels.Add(new("codex-work",$"ChatGPT Work · {Settings.CodexModel}","codex-work",Settings.CodexModel,ConversationChannelKind.Codex,Settings.CodexSupportsImage,Settings.CodexSupportsImage));}catch(InvalidOperationException){}
         }
-        if(Settings.WorkBuddyEnabled&&WorkBuddyAcpServer.Discover() is not null)
+        if((Settings.WorkBuddyEnabled||!string.IsNullOrWhiteSpace(Settings.WorkBuddyModel))&&WorkBuddyAcpServer.Discover() is not null)
         {
             try{WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);channels.Add(new("workbuddy",$"WorkBuddy · {Settings.WorkBuddyModel}","workbuddy",Settings.WorkBuddyModel,ConversationChannelKind.WorkBuddy,Settings.WorkBuddySupportsImage,Settings.WorkBuddySupportsImage));}catch(InvalidOperationException){}
         }
@@ -252,7 +252,7 @@ public sealed class AppHost : IDisposable
         {
             try
             {
-                if(!settings.WorkBuddyEnabled)throw new InvalidOperationException("WorkBuddy 当前未启用，请在设置中完成配置。");
+                if(!settings.WorkBuddyEnabled&&string.IsNullOrWhiteSpace(settings.WorkBuddyModel))throw new InvalidOperationException("WorkBuddy 当前未启用，请在设置中完成配置。");
                 WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
                 if(WorkBuddyAcpServer.Discover() is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
                 return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage);
