@@ -330,7 +330,7 @@ public sealed class SettingsWindow : Window
         _hotkey.GotKeyboardFocus += (_, _) => _hotkey.SelectAll();
         System.Windows.Automation.AutomationProperties.SetName(_hotkey, "全局截图快捷键按键");
         panel.Children.Add(_hotkey);
-        panel.Children.Add(Text("点击上面的输入框，然后直接按下新的组合键（至少包含 Shift、Alt 或 Ctrl）。", true));
+        panel.Children.Add(Text(LocalizationService.T("点击输入框后按组合键设置（至少包含 Shift、Alt 或 Ctrl），按 Delete 清空；保存后生效。", "Click the field and press a shortcut with Shift, Alt or Ctrl; press Delete to clear. Changes take effect after saving."), true));
         var restore = ActionButton("恢复默认 Shift + Alt + S");
         restore.Click += (_, _) => SetCapturedHotkey(System.Windows.Input.Key.S, System.Windows.Input.ModifierKeys.Shift | System.Windows.Input.ModifierKeys.Alt);
         panel.Children.Add(restore);
@@ -340,6 +340,7 @@ public sealed class SettingsWindow : Window
 
     private static string FormatHotkey(System.Windows.Input.Key key, System.Windows.Input.ModifierKeys modifiers)
     {
+        if(key==System.Windows.Input.Key.None)return string.Empty;
         var parts = new List<string>();
         if (modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control)) parts.Add("Ctrl");
         if (modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift)) parts.Add("Shift");
@@ -358,6 +359,11 @@ public sealed class SettingsWindow : Window
     {
         e.Handled = true;
         var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
+        if(key==System.Windows.Input.Key.Delete)
+        {
+            SetCapturedHotkey(System.Windows.Input.Key.None,System.Windows.Input.ModifierKeys.None);
+            return;
+        }
         if (key is System.Windows.Input.Key.LeftCtrl or System.Windows.Input.Key.RightCtrl or System.Windows.Input.Key.LeftShift or System.Windows.Input.Key.RightShift or System.Windows.Input.Key.LeftAlt or System.Windows.Input.Key.RightAlt) return;
         var modifiers = System.Windows.Input.Keyboard.Modifiers & (System.Windows.Input.ModifierKeys.Control | System.Windows.Input.ModifierKeys.Shift | System.Windows.Input.ModifierKeys.Alt);
         if (modifiers == System.Windows.Input.ModifierKeys.None) return;
@@ -1097,7 +1103,7 @@ public sealed class SettingsWindow : Window
         }
         var modifiers = _capturedHotkeyModifiers;
         var parsed = _capturedHotkeyKey;
-        if (modifiers == System.Windows.Input.ModifierKeys.None) { MessageBox.Show(this,"快捷键至少需要 Ctrl、Shift 或 Alt 中的一个修饰键。", "无法保存"); return; }
+        if (parsed != System.Windows.Input.Key.None && modifiers == System.Windows.Input.ModifierKeys.None) { MessageBox.Show(this,"快捷键至少需要 Ctrl、Shift 或 Alt 中的一个修饰键。", "无法保存"); return; }
         try{foreach(var provider in _providers){ValidateProvider(provider);ValidateSensitiveHeaderAvailability(provider);}}
         catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"Provider 配置无效");return;}
         if(string.IsNullOrWhiteSpace(_defaultProviderId)||_providers.All(provider=>provider.Id!=_defaultProviderId))
