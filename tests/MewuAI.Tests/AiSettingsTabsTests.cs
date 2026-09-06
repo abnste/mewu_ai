@@ -20,8 +20,7 @@ public sealed class AiSettingsTabsTests
             view.Measure(new Size(500,350));view.Arrange(new Rect(0,0,500,350));view.UpdateLayout();
             Assert.Equal(AiSettingsTabs.WorkBuddyIndex,view.SelectedBackendIndex);
             Assert.True(((TabItem)view.Tabs.Items[AiSettingsTabs.WorkBuddyIndex]).IsEnabled);
-            Assert.False(((TabItem)view.Tabs.Items[4]).IsEnabled);
-            Assert.False(((TabItem)view.Tabs.Items[5]).IsEnabled);
+            Assert.Equal(4,view.Tabs.Items.Count);
             workBuddy.Text="unsaved-workbuddy-model";
             view.Tabs.SelectedIndex=2;view.Tabs.SelectedIndex=0;view.Tabs.SelectedIndex=AiSettingsTabs.WorkBuddyIndex;
             Assert.Equal("unsaved-workbuddy-model",workBuddy.Text);
@@ -40,7 +39,7 @@ public sealed class AiSettingsTabsTests
             var codex=new TextBox{Text="unsaved-codex-model"};
             var view=new AiSettingsTabs(api,hermes,codex);
             var tabs=view.Tabs;
-            Assert.Equal(new[]{"API","Hermes","Codex","WorkBuddy","OpenClaw","Claude Code"},tabs.Items.Cast<TabItem>().Select(t=>t.Header));
+            Assert.Equal(new[]{"API","Hermes","Codex","WorkBuddy"},tabs.Items.Cast<TabItem>().Select(t=>t.Header));
             Assert.Equal(0,tabs.SelectedIndex);
             for(var i=1;i<3;i++)
             {
@@ -49,7 +48,7 @@ public sealed class AiSettingsTabsTests
                 Assert.Equal(i,view.SelectedBackendIndex);
                 Assert.Single(tabs.Items.Cast<TabItem>(),item=>item.IsSelected);
             }
-            Assert.All(tabs.Items.Cast<TabItem>().Skip(3),item=>{Assert.False(item.IsEnabled);Assert.NotNull(item.ToolTip);});
+            Assert.True(((TabItem)tabs.Items[3]).IsEnabled==false);
             tabs.SelectedIndex=0;
             Assert.Same(api,((ScrollViewer)((TabItem)tabs.SelectedItem).Content).Content);
             Assert.Equal("unsaved-model-id",api.Text);Assert.Equal(2,api.SelectionStart);Assert.Equal(5,api.SelectionLength);

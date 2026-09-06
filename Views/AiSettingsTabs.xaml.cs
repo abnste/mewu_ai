@@ -28,7 +28,6 @@ public partial class AiSettingsTabs : UserControl
         AddPage("Codex",codex??ComingSoon("Codex"));
         AddPage("WorkBuddy",workBuddy??ComingSoon("WorkBuddy"),workBuddy is not null);
         if(miniMaxCode is not null)AddPage("MiniMax Code",miniMaxCode);
-        foreach(var name in new[]{"OpenClaw","Claude Code"})AddPage(name,ComingSoon(name),false);
         BackendTabs.SelectedIndex=selectedBackendIndex is >=ApiIndex and <=CodexIndex||selectedBackendIndex==WorkBuddyIndex&&workBuddy is not null||selectedBackendIndex==MiniMaxCodeIndex&&miniMaxCode is not null?selectedBackendIndex:ApiIndex;
         BackendTabs.SelectionChanged+=(_,e)=>
         {
