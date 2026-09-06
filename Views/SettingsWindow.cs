@@ -51,7 +51,6 @@ public sealed class SettingsWindow : Window
     private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
     private readonly CheckBox _recordSystemAudio = new(), _recordMicrophone = new();
-    private readonly System.Windows.Shapes.Ellipse _hermesStatusDot = new();
     private readonly List<AiProviderSettings> _providers;
     private readonly Dictionary<string, string> _pendingApiKeys = [];
     private readonly HashSet<string> _apiKeysMarkedForDeletion = [];
@@ -431,7 +430,7 @@ public sealed class SettingsWindow : Window
     private UIElement Ai()
     {
         _codexSettings=new CodexSettingsPage(_host.Settings,_windowLifetime.Token);
-        var hermes=HermesCard();
+        var hermes=HermesPage();
         var selected=_host.Settings.CodexEnabled?2:_host.Settings.HermesEnabled?1:0;
         _backendSelector=new AiSettingsTabs(Api(),hermes,_codexSettings,selected){Margin=new Thickness(12,12,12,4)};
         _backendSelector.BackendChanged+=(_,_)=>UpdateHermesControls();
@@ -441,7 +440,8 @@ public sealed class SettingsWindow : Window
 
     private UIElement Api()
     {
-        var panel = new StackPanel{Margin=new Thickness(6,0,6,6)};
+        var form=new AiSettingsForm("API",LocalizationService.T("连接 OpenAI 兼容服务，使用 API Key 进行身份验证。","Connect to an OpenAI-compatible service using an API key."),_modelStatus);
+        var panel=form.Fields;
         _aiConfigurationWarning.Foreground=new SolidColorBrush(Color.FromRgb(185,93,32));
         _aiConfigurationWarning.Background=new SolidColorBrush(Color.FromRgb(255,247,235));
         _aiConfigurationWarning.Padding=new Thickness(12,9,12,9);
@@ -452,37 +452,27 @@ public sealed class SettingsWindow : Window
         foreach (var preset in ProviderPresetPolicy.All)
             _providerType.Items.Add(new ComboBoxItem { Content = LocalizationService.T(preset.Name, preset.Id == "Volcengine" ? "Volcengine" : preset.Id == "Custom" ? "OpenAI compatible" : preset.Name), Tag = preset.Id });
         _providerType.SelectionChanged += ProviderPresetChanged;
-        panel.Children.Add(Labeled(LocalizationService.T("提供商", "Provider"), _providerType));
-        _baseUrlField = (FrameworkElement)Labeled("Base URL", _baseUrl);
+        panel.Children.Add(AiSettingsForm.Field(LocalizationService.T("提供商", "Provider"), _providerType));
+        _baseUrlField = AiSettingsForm.Field("Base URL", _baseUrl);
         panel.Children.Add(_baseUrlField);
-        panel.Children.Add(Text(LocalizationService.T("模型", "Model"), true));
-        var modelRow = new Grid { Margin = new Thickness(0, 0, 0, 9) };
-        modelRow.ColumnDefinitions.Add(new ColumnDefinition());
-        modelRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _model.IsEditable = true;
         _model.IsTextSearchEnabled = false;
         _model.StaysOpenOnEdit = true;
         System.Windows.Automation.AutomationProperties.SetName(_model, "Model");
         var refreshModels = ActionButton(LocalizationService.T("刷新模型", "Refresh models"));
-        refreshModels.Margin = new Thickness(8, 0, 0, 0);
         refreshModels.Click += async (_, _) => await RefreshModelsAsync();
-        modelRow.Children.Add(_model);
-        Grid.SetColumn(refreshModels, 1);
-        modelRow.Children.Add(refreshModels);
-        panel.Children.Add(modelRow);
-        _modelStatus.Foreground = SecondaryBrush;
-        panel.Children.Add(_modelStatus);
+        panel.Children.Add(AiSettingsForm.Field(LocalizationService.T("模型", "Model"),_model));
         _modelLoadDebounce.Tick += async (_, _) => { _modelLoadDebounce.Stop(); await RefreshModelsAsync(); };
         _baseUrl.TextChanged += (_, _) => ScheduleModelLoad();
         _customHeaders.TextChanged += (_, _) => ScheduleModelLoad();
         _apiKey.LostKeyboardFocus += (_, _) => { if (!_loadingProvider) ScheduleModelLoad(); };
         _model.Loaded += ApiModelLoaded;
-        panel.Children.Add(Text("API Key", true));
         _apiKey.PasswordChar = '\u25CF';
-        var apiKeyRow=new Grid{Margin=new Thickness(0,0,0,4)};apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition());apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
-        _clearApiKey.Content="清除已保存密钥";_clearApiKey.Padding=new Thickness(14,9,14,9);_clearApiKey.Margin=new Thickness(8,0,0,0);_clearApiKey.SetResourceReference(StyleProperty,"SecondaryButton");_clearApiKey.Click+=(_,_)=>ToggleApiKeyDeletion();
+        var apiKeyRow=new Grid();apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition());apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
+        AiSettingsForm.PrepareEditor(_apiKey);
+        _clearApiKey.Content="清除已保存密钥";_clearApiKey.FontSize=12;_clearApiKey.FontWeight=FontWeights.Normal;_clearApiKey.MinHeight=38;_clearApiKey.Padding=new Thickness(13,7,13,7);_clearApiKey.Margin=new Thickness(8,0,0,0);_clearApiKey.SetResourceReference(StyleProperty,"SecondaryButton");_clearApiKey.Click+=(_,_)=>ToggleApiKeyDeletion();
         System.Windows.Automation.AutomationProperties.SetName(_apiKey,"API Key");
-        apiKeyRow.Children.Add(_apiKey);Grid.SetColumn(_clearApiKey,1);apiKeyRow.Children.Add(_clearApiKey);panel.Children.Add(apiKeyRow);
+        apiKeyRow.Children.Add(_apiKey);Grid.SetColumn(_clearApiKey,1);apiKeyRow.Children.Add(_clearApiKey);panel.Children.Add(AiSettingsForm.Field("API Key",apiKeyRow));
         _apiKeyStatus.Foreground=SecondaryBrush;_apiKeyStatus.FontSize=11;_apiKeyStatus.Margin=new Thickness(0,0,0,12);_apiKeyStatus.TextWrapping=TextWrapping.Wrap;panel.Children.Add(_apiKeyStatus);
         _apiKey.PasswordChanged += (_, _) =>
         {
@@ -521,45 +511,20 @@ public sealed class SettingsWindow : Window
         });
         var test = ActionButton("测试连接");
         test.Click += async (_, _) => await TestConnectionAsync(test);
-        panel.Children.Add(test);
+        form.AddAction(test,LocalizationService.T("测试连接","Test connection"));
+        form.AddAction(refreshModels,LocalizationService.T("刷新模型","Refresh models"));
         var initial = _defaultProviderId is null?_providers[0]:_providers.FirstOrDefault(x => x.Id == _defaultProviderId) ?? _providers[0];
         SelectProvider(initial);
-        return panel;
+        return form;
     }
 
-    private UIElement HermesCard()
+    private UIElement HermesPage()
     {
         _loadingHermes=true;
 
-        var badge=new Border
-        {
-            Width=34,Height=34,CornerRadius=new CornerRadius(11),
-            Background=new SolidColorBrush(Color.FromRgb(228,243,255)),
-            BorderBrush=new SolidColorBrush(Color.FromRgb(199,226,248)),BorderThickness=new Thickness(1),
-            Child=new TextBlock{Text="H",FontSize=16,FontWeight=FontWeights.Bold,Foreground=new SolidColorBrush(Color.FromRgb(31,126,200)),HorizontalAlignment=HorizontalAlignment.Center,VerticalAlignment=VerticalAlignment.Center}
-        };
-        var heading=new StackPanel{Margin=new Thickness(10,0,0,0),VerticalAlignment=VerticalAlignment.Center};
-        heading.Children.Add(new TextBlock{Text="本机 Hermes",FontSize=14.5,FontWeight=FontWeights.SemiBold});
-        heading.Children.Add(new TextBlock{Text="普通对话与屏幕对话",FontSize=11,Foreground=SecondaryBrush,Margin=new Thickness(0,2,0,0)});
-        var header=new Grid();
-        header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
-        header.ColumnDefinitions.Add(new ColumnDefinition());
-        header.Children.Add(badge);Grid.SetColumn(heading,1);header.Children.Add(heading);
-
-        _hermesStatusDot.Width=8;_hermesStatusDot.Height=8;_hermesStatusDot.Margin=new Thickness(0,0,8,0);_hermesStatusDot.VerticalAlignment=VerticalAlignment.Center;
-        _hermesStatus.FontSize=11.5;_hermesStatus.Foreground=SecondaryBrush;_hermesStatus.TextWrapping=TextWrapping.NoWrap;_hermesStatus.TextTrimming=TextTrimming.CharacterEllipsis;_hermesStatus.VerticalAlignment=VerticalAlignment.Center;
-        var statusContent=new Grid{VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(0,0,12,0)};
-        statusContent.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});statusContent.ColumnDefinitions.Add(new ColumnDefinition());
-        statusContent.Children.Add(_hermesStatusDot);Grid.SetColumn(_hermesStatus,1);statusContent.Children.Add(_hermesStatus);
-
-        ConfigureHermesActionButton(_hermesDetect,"重新检测");
-        ConfigureHermesActionButton(_hermesTest,"连接测试");
-        _hermesTest.Margin=new Thickness(8,0,0,0);
-        var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
-        actions.Children.Add(_hermesDetect);actions.Children.Add(_hermesTest);
-        var statusRow=new Grid{Margin=new Thickness(1,13,0,12)};
-        statusRow.ColumnDefinitions.Add(new ColumnDefinition());statusRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
-        statusRow.Children.Add(statusContent);Grid.SetColumn(actions,1);statusRow.Children.Add(actions);
+        var form=new AiSettingsForm("Hermes",LocalizationService.T("连接本机 Hermes，沿用所选人格的模型与会话。","Connect to local Hermes using the selected profile’s model and conversation."),_hermesStatus);
+        form.AddAction(_hermesTest,LocalizationService.T("测试连接","Test connection"));
+        form.AddAction(_hermesDetect,LocalizationService.T("重新检测","Detect again"));
 
         _hermesAgentSelector.DisplayMemberPath=nameof(HermesAgentOption.Label);
         _hermesAgentSelector.MinWidth=0;
@@ -572,30 +537,17 @@ public sealed class SettingsWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(_hermesReasoning,"Hermes 思考程度");
         EnsureStoredHermesModelItem();
         PopulateHermesReasoningChoices(_host.Settings.HermesReasoningEffort);
-        var agentField=new StackPanel{Margin=new Thickness(0,0,0,10)};
-        agentField.Children.Add(HermesFieldLabel("Agent / 人格"));agentField.Children.Add(_hermesAgentSelector);
-        var selectors=new Grid{Margin=new Thickness(0,0,0,7)};
-        selectors.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(2,GridUnitType.Star)});
-        selectors.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(12)});
-        selectors.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(1,GridUnitType.Star)});
-        var modelField=new StackPanel();modelField.Children.Add(HermesFieldLabel("模型"));modelField.Children.Add(_hermesModelSelector);
-        var reasoningField=new StackPanel();reasoningField.Children.Add(HermesFieldLabel("思考程度"));reasoningField.Children.Add(_hermesReasoning);
-        selectors.Children.Add(modelField);Grid.SetColumn(reasoningField,2);selectors.Children.Add(reasoningField);
+        form.Fields.Children.Add(AiSettingsForm.Field(LocalizationService.T("Agent / 人格","Agent / Profile"),_hermesAgentSelector));
+        form.Fields.Children.Add(AiSettingsForm.Field(LocalizationService.T("模型","Model"),_hermesModelSelector));
+        form.Fields.Children.Add(AiSettingsForm.Field(LocalizationService.T("思考程度","Reasoning effort"),_hermesReasoning));
 
         _hermesAutoReadAloud.Content="回复后自动朗读";
         _hermesAutoReadAloud.IsChecked=_host.Settings.HermesAutoReadAloud;
         _hermesAutoReadAloud.Margin=new Thickness(0,5,0,0);
         System.Windows.Automation.AutomationProperties.SetName(_hermesAutoReadAloud,"Hermes 回复后自动朗读");
 
-        var body=new StackPanel();body.Children.Add(header);body.Children.Add(statusRow);body.Children.Add(agentField);body.Children.Add(selectors);body.Children.Add(_hermesAutoReadAloud);
-        var card=new Border
-        {
-            CornerRadius=new CornerRadius(15),Padding=new Thickness(16),Margin=new Thickness(0,0,0,14),
-            Background=new SolidColorBrush(Color.FromRgb(248,251,255)),
-            BorderBrush=new SolidColorBrush(Color.FromRgb(217,230,244)),BorderThickness=new Thickness(1),
-            Child=body
-        };
-        card.Loaded+=HermesPageLoaded;
+        form.Fields.Children.Add(_hermesAutoReadAloud);
+        form.Loaded+=HermesPageLoaded;
 
         _hermesAgentSelector.SelectionChanged+=async (_,_)=>
         {
@@ -613,19 +565,7 @@ public sealed class SettingsWindow : Window
         _loadingHermes=false;
         DetectHermes();
         UpdateHermesControls();
-        return card;
-    }
-
-    private static TextBlock HermesFieldLabel(string text)=>new()
-    {
-        Text=text,FontSize=11,Foreground=SecondaryBrush,Margin=new Thickness(1,0,0,6)
-    };
-
-    private static void ConfigureHermesActionButton(Button button,string text)
-    {
-        button.Content=text;button.Padding=new Thickness(13,7,13,7);button.Cursor=System.Windows.Input.Cursors.Hand;
-        button.SetResourceReference(StyleProperty,"SecondaryButton");
-        System.Windows.Automation.AutomationProperties.SetName(button,text);
+        return form;
     }
 
     private void ApiModelLoaded(object sender,RoutedEventArgs e)
@@ -792,7 +732,7 @@ public sealed class SettingsWindow : Window
             HermesStatusTone.Working=>Color.FromRgb(221,143,50),
             _=>Color.FromRgb(201,78,91)
         };
-        var brush=new SolidColorBrush(color);_hermesStatusDot.Fill=brush;_hermesStatus.Foreground=brush;
+        var brush=new SolidColorBrush(color);_hermesStatus.Foreground=brush;
     }
 
     private enum HermesStatusTone { Ready,Connected,Working,Error }
