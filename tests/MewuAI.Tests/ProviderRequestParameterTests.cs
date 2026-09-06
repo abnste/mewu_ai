@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
+// SPDX-License-Identifier: MPL-2.0
 using System.Net;
 using System.Text.Json;
 using mewu_ai_Assistant.AI;

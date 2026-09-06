@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
+// SPDX-License-Identifier: MPL-2.0
 namespace mewu_ai_Assistant.Models;
 public sealed record OcrWord(string Text,double X,double Y,double Width,double Height);
 public sealed record OcrLine(string Text,double X,double Y,double Width,double Height,IReadOnlyList<OcrWord> Words);

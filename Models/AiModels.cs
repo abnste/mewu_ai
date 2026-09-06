@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
+// SPDX-License-Identifier: MPL-2.0
 namespace mewu_ai_Assistant.Models;
 public enum AiAttachmentType { Image,Video,Text }
 public sealed record AiAttachment(

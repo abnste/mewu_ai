@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
+// SPDX-License-Identifier: MPL-2.0
 using System.Net.Http;
 using System.Text.Json;
 using System.Windows;
@@ -878,7 +880,7 @@ public sealed class SettingsWindow : Window
         var repo=new TextBlock{Margin=new Thickness(0,8,0,12),TextWrapping=TextWrapping.Wrap};
         var link=new Hyperlink(new Run(LocalizationService.T("GitHub 开源仓库 · github.com/abnste/mewu_ai","Open-source repository · github.com/abnste/mewu_ai"))){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
         link.RequestNavigate+=(_,e)=>{try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri){UseShellExecute=true});}catch{};e.Handled=true;};repo.Inlines.Add(link);panel.Children.Add(repo);
-        panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text=LocalizationService.T("许可说明\n本项目除第三方依赖外的源代码按仓库许可证开放。将本软件用于商业产品、商业部署或商业服务前，需要取得作者的商业授权。个人学习、研究和非商业使用请遵守仓库中的开源许可与第三方许可。","License\nThe project source is open under the licenses in the repository, excluding third-party components. Commercial products, deployments, and services require separate authorization from the author. Personal, research, and non-commercial use must comply with the repository and third-party licenses."),TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
+        panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text=LocalizationService.T("许可说明 · MPL-2.0\n本项目自有源代码采用 Mozilla Public License 2.0，允许遵守协议的商业使用。对外分发时须按协议提供受 MPL 覆盖的源代码及修改，并保留版权和许可声明。源码：github.com/abnste/mewu_ai；完整条款见随附 LICENSE，第三方组件保留各自许可证。","License · MPL-2.0\nProject-owned source code uses the Mozilla Public License 2.0, which permits compliant commercial use. Distribution requires providing MPL-covered source and modifications and preserving copyright and license notices under the license. Source: github.com/abnste/mewu_ai. See the bundled LICENSE for full terms; third-party components retain their own licenses."),TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
         return panel;
     }
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MPL-2.0
 name: Release Windows packages
 
 on:
@@ -126,6 +127,8 @@ jobs:
             throw 'Release payload contains private or development files.'
           }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'MewuAI.exe'))) { throw 'MewuAI.exe is missing.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $publish 'LICENSE'))) { throw 'MPL-2.0 license is missing.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $publish 'SOURCE.md'))) { throw 'Source availability notice is missing.' }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'THIRD-PARTY-NOTICES.md'))) { throw 'Third-party notices are missing.' }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'Licenses\DotNet-Windows-Library-License.txt'))) { throw 'Runtime license is missing.' }
           foreach ($license in @(

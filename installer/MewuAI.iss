@@ -1,3 +1,4 @@
+; SPDX-License-Identifier: MPL-2.0
 #define MyAppName "MewuAI"
 #define MyAppVersion "0.2.6"
 #define MyAppPublisher "abnste"

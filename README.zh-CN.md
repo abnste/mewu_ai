@@ -8,6 +8,7 @@
     <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6"><img src="https://img.shields.io/badge/公测版-v0.2.6-7C6CF0?style=flat-square" alt="v0.2.6 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later" />
     <img src="https://img.shields.io/badge/Architecture-x64-64748B?style=flat-square" alt="x64" />
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="许可证：MPL-2.0" /></a>
   </p>
   <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Setup-0.2.6-win-x64.exe"><strong>下载安装版</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Portable-0.2.6-win-x64.zip">免安装 ZIP</a></p>
 </div>
@@ -115,6 +116,7 @@ dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 
 
 <p align="center">
   作者 <strong>Abner Stephen</strong><br />
-  源代码公开 · 商业使用需作者授权<br />
+  采用 <a href="./LICENSE">MPL-2.0</a> 开源协议 · 允许遵守协议的商业使用<br />
+  <a href="./SOURCE.md">许可范围与源代码获取说明</a><br />
   <a href="./THIRD-PARTY-NOTICES.md">第三方声明</a> · <a href="https://github.com/abnste/mewu_ai/issues">反馈与建议</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6">更新记录</a>
 </p>
