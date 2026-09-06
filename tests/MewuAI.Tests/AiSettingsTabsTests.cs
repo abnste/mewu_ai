@@ -17,7 +17,8 @@ public sealed class AiSettingsTabsTests
         {
             var api=new TextBox{Text="unsaved-model-id"};api.Select(2,5);
             var hermes=new TextBox{Text="unsaved-profile"};
-            var view=new AiSettingsTabs(api,hermes);
+            var codex=new TextBox{Text="unsaved-codex-model"};
+            var view=new AiSettingsTabs(api,hermes,codex);
             var tabs=view.Tabs;
             Assert.Equal(new[]{"API","Hermes","Codex","OpenClaw","Claude Code","WorkBuddy"},tabs.Items.Cast<TabItem>().Select(t=>t.Header));
             Assert.Equal(0,tabs.SelectedIndex);
@@ -25,7 +26,7 @@ public sealed class AiSettingsTabsTests
             {
                 tabs.SelectedIndex=i;
                 view.Measure(new Size(500,350));view.Arrange(new Rect(0,0,500,350));view.UpdateLayout();
-                if(i>=2)
+                if(i>=3)
                 {
                     var placeholder=Assert.IsType<StackPanel>(Assert.IsType<ScrollViewer>(((TabItem)tabs.SelectedItem).Content).Content);
                     Assert.All(placeholder.Children.Cast<UIElement>(),element=>Assert.IsType<TextBlock>(element));
@@ -37,6 +38,9 @@ public sealed class AiSettingsTabsTests
             tabs.SelectedIndex=1;
             Assert.Same(hermes,((ScrollViewer)((TabItem)tabs.SelectedItem).Content).Content);
             Assert.Equal("unsaved-profile",hermes.Text);
+            tabs.SelectedIndex=2;
+            Assert.Same(codex,((ScrollViewer)((TabItem)tabs.SelectedItem).Content).Content);
+            Assert.Equal("unsaved-codex-model",codex.Text);
         });
     }
 

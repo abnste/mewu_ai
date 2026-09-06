@@ -170,6 +170,16 @@ public sealed class AppHost : IDisposable
             return null;
         }
         var settings=settingsAccessor();
+        if(settings.CodexEnabled)
+        {
+            try
+            {
+                CodexSettingsPolicy.Validate(settings);
+                if(CodexAppServer.Discover() is null)throw new InvalidOperationException("未找到本机 Codex，请安装并登录官方 ChatGPT 桌面应用。");
+                return new CodexAiProvider(settings.CodexModel,settings.CodexReasoningEffort,settings.CodexSupportsImage);
+            }
+            catch(InvalidOperationException ex){error=ex.Message;return null;}
+        }
         if(!settings.HermesEnabled)return aiProviderFactory.Create(settings,out error);
         try
         {
@@ -198,6 +208,12 @@ public sealed class AppHost : IDisposable
     public bool IsConversationAvailable(out string? error)
     {
         error=null;
+        if(Settings.CodexEnabled)
+        {
+            try{CodexSettingsPolicy.Validate(Settings);if(CodexAppServer.Discover() is not null)return true;error="已启用 Codex，但未找到本机官方客户端。";}
+            catch(InvalidOperationException ex){error=ex.Message;}
+            return false;
+        }
         if(Settings.HermesEnabled)
         {
             if(_hermesRuntime.Discover() is not null)return true;
@@ -211,7 +227,7 @@ public sealed class AppHost : IDisposable
     public bool IsScreenAiAvailable(out string? error)
     {
         error=null;
-        if(Settings.HermesEnabled)return IsConversationAvailable(out error);
+        if(Settings.HermesEnabled||Settings.CodexEnabled)return IsConversationAvailable(out error);
         var provider=_aiProviderFactory.Create(Settings,out error);
         // The overlay also hosts clean text-only turns. A text model may
         // therefore expose the composer, while SendAsync still blocks visual

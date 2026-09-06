@@ -102,9 +102,10 @@ public sealed class SettingsService
         // so the settings document can be saved.  The Provider entry remains
         // structurally valid for features that still use it, but its
         // authentication is checked only when that route is active.
-        if(!settings.HermesEnabled)
+        if(!settings.HermesEnabled&&!settings.CodexEnabled)
             ProviderAuthenticationPolicy.EnsureStoredCredentialReferences(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId));
         ValidateHermesForSave(settings);
+        CodexSettingsPolicy.Validate(settings);
     }
 
     private void SaveCore(AppSettings settings)
@@ -184,6 +185,7 @@ public sealed class SettingsService
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))settings.ConfigurationErrors.Add("尚未选择默认 AI Provider");
         else if(settings.Providers.All(provider=>provider.Id!=settings.DefaultProviderId))settings.ConfigurationErrors.Add("默认 AI Provider 已不存在，请重新选择");
         AppendHermesConfigurationErrors(settings);
+        try{CodexSettingsPolicy.Validate(settings);}catch(InvalidOperationException ex){settings.ConfigurationErrors.Add(ex.Message);}
     }
 
     private static AppSettings NormalizeCommon(AppSettings settings)
