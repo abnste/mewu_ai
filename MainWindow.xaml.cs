@@ -39,6 +39,8 @@ public partial class MainWindow : Window
     public void RefreshStatus()
     {
         var available=_host.IsConversationAvailable(out var error);
+        var statusColor=available?Color.FromRgb(53,201,138):Color.FromRgb(228,87,87);
+        AiStatusDot.Fill=new SolidColorBrush(statusColor);AiStatusGlow.Color=statusColor;
         AiStatusTitle.Text=BuildAiStatusTitle(_host.Settings,available);
         ProviderText.Text=available?BuildAiStatusText(_host.Settings):LocalizationService.T("截图、OCR、标注和录屏可用","Capture, OCR, annotation, and recording are available");
         var screenAiAvailable=_host.IsScreenAiAvailable(out _);
@@ -94,7 +96,7 @@ public partial class MainWindow : Window
         return string.Equals(normalizedName,normalizedModel,StringComparison.OrdinalIgnoreCase)?name:$"{name} · {model}";
     }
     private void StartCapture(object sender,RoutedEventArgs e){Hide();_host.BeginCapture();}
-    private void OpenSettings(object sender,RoutedEventArgs e)=>_host.ShowSettings();
+    private void OpenSettings(object sender,RoutedEventArgs e)=>_host.ShowSettings(showAi:true);
     private void DragWindow(object sender,MouseButtonEventArgs e){if(e.ButtonState==MouseButtonState.Pressed&&!IsInsideButton(e.OriginalSource))DragMove();}
     private static bool IsInsideButton(object? source)
     {
