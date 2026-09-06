@@ -1,6 +1,6 @@
 # 2026-09-05 项目审查与优化
 
-审查基线：`master` / `39964da`，开始工作前已 fetch，确认与 `origin/master` 无差异。实现分支：`codex/interaction-performance-review`。版本保持 0.2.3，本轮为本地开发提交，未发布、未改动用户设置和凭据。
+审查基线：`master` / `39964da`，开始工作前已 fetch，确认与 `origin/master` 无差异。审查开始时版本保持 0.2.3，本轮为本地开发提交，未发布、未改动用户设置和凭据。
 
 ## 判断
 

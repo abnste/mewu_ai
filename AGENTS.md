@@ -1,4 +1,5 @@
 # 喵呜AI 开发约束
+- 当前维护分支为 `master`；不要自动创建或推送以 AI 工具名命名的开发分支。
 - 解决方案 `.slnx` 必须显式声明 x64 平台，并为主程序、测试和 ProviderSmoke 映射 `Platform Project="x64"`；只改 csproj 不能阻止解决方案构建下传 AnyCPU。根目录 `dotnet build -c Release --no-restore -warnaserror` 必须可用。
 - Windows-only，保持 C#、WPF 与现代 .NET，不迁移到其他 UI 技术。
 - Capture 与 Presentation 分层；离线基础能力不得依赖 AI。
