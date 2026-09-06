@@ -28,7 +28,9 @@ public sealed class AppSettings
     public string WorkBuddyReasoningEffort { get; set; } = "enabled";
     public bool WorkBuddySupportsImage { get; set; }
     public bool MiniMaxCodeEnabled { get; set; }
-    public string MiniMaxCodeModel { get; set; } = "minimax/MiniMax-M3";
+    // Empty means the desktop channel has not been configured yet. The
+    // settings page offers MiniMax-M3 as the first selectable model.
+    public string MiniMaxCodeModel { get; set; } = string.Empty;
     public string HermesProfile { get; set; } = "default";
     public string HermesProvider { get; set; } = string.Empty;
     public string HermesModel { get; set; } = string.Empty;

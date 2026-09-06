@@ -55,7 +55,7 @@ public partial class MainWindow : Window
         if(!available)return LocalizationService.T("暂未设置AI功能","AI features are not set up");
         var selected=settings.ConversationChannelId?.Trim()??string.Empty;
         var selectedAgent=selected.Equals("workbuddy",StringComparison.OrdinalIgnoreCase)||selected.Equals("codex-work",StringComparison.OrdinalIgnoreCase)||selected.Equals("hermes",StringComparison.OrdinalIgnoreCase)||selected.Equals("minimax-code",StringComparison.OrdinalIgnoreCase);
-        return selectedAgent||((string.IsNullOrWhiteSpace(selected))&&(settings.WorkBuddyEnabled||settings.CodexEnabled||settings.HermesEnabled||settings.MiniMaxCodeEnabled))
+        return selectedAgent||((string.IsNullOrWhiteSpace(selected))&&(settings.WorkBuddyEnabled||settings.CodexEnabled||settings.HermesEnabled||!string.IsNullOrWhiteSpace(settings.WorkBuddyModel)||!string.IsNullOrWhiteSpace(settings.CodexModel)||!string.IsNullOrWhiteSpace(settings.HermesModel)||settings.MiniMaxCodeEnabled&&MiniMaxCodeRuntime.TryGetDesktopSession() is not null))
             ?LocalizationService.T("智能体已接入","Agent connected")
             :LocalizationService.T("AI模型已接入","AI model connected");
     }
@@ -73,13 +73,13 @@ public partial class MainWindow : Window
             var configured=settings.Providers.FirstOrDefault(provider=>provider.Id==selected[4..]);
             if(configured is not null)return BuildProviderDisplayText(configured);
         }
-        if(settings.WorkBuddyEnabled)
+        if(!string.IsNullOrWhiteSpace(settings.WorkBuddyModel))
             return BuildWorkBuddyStatus(settings);
-        if(settings.CodexEnabled)
+        if(!string.IsNullOrWhiteSpace(settings.CodexModel))
             return BuildCodexStatus(settings);
-        if(settings.HermesEnabled)
+        if(!string.IsNullOrWhiteSpace(settings.HermesModel))
             return BuildHermesStatus(settings);
-        if(settings.MiniMaxCodeEnabled)
+        if(settings.MiniMaxCodeEnabled&&MiniMaxCodeRuntime.TryGetDesktopSession() is not null)
             return BuildMiniMaxCodeStatus(settings);
         if(settings.Providers.Count==0)return LocalizationService.T("未配置 AI 模型","No AI model configured");
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))return LocalizationService.T("默认 Provider 未选择 · AI 不可用","Choose a default provider to enable AI");

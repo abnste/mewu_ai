@@ -454,7 +454,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(ChannelSelector.SelectedItem is not ConversationChannel selected||string.Equals(_selectedConversationChannelId,selected.Id,StringComparison.Ordinal))return;
         _selectedConversationChannelId=selected.Id;
-        _host.Settings.ConversationChannelId=selected.Id;
+        _host.RememberConversationChannel(selected.Id);
         _historyLoadVersion++;
         _history.Clear();_history.Add(new("system",VisualAnnotationProtocol.SystemInstruction));
         LoadSessionHistory();

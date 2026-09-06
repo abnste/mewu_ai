@@ -102,7 +102,8 @@ public sealed class SettingsService
         // so the settings document can be saved.  The Provider entry remains
         // structurally valid for features that still use it, but its
         // authentication is checked only when that route is active.
-        if(!settings.HermesEnabled&&!settings.CodexEnabled&&!settings.WorkBuddyEnabled&&!settings.MiniMaxCodeEnabled)
+        var hasConfiguredLocalChannel=!string.IsNullOrWhiteSpace(settings.HermesModel)||!string.IsNullOrWhiteSpace(settings.CodexModel)||!string.IsNullOrWhiteSpace(settings.WorkBuddyModel)||!string.IsNullOrWhiteSpace(settings.MiniMaxCodeModel);
+        if(!hasConfiguredLocalChannel)
             ProviderAuthenticationPolicy.EnsureStoredCredentialReferences(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId));
         ValidateHermesForSave(settings);
         CodexSettingsPolicy.Validate(settings);
