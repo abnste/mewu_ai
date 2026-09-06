@@ -59,12 +59,12 @@ internal sealed class MiniMaxCodeSettingsPage : StackPanel
         try
         {
             var ok=await new MiniMaxCodeAiProvider(model.Model).TestConnectionAsync(_token);_token.ThrowIfCancellationRequested();
-            SetStatus(ok?"已连接 MiniMax Code":"未返回验证标记，请检查桌面登录状态和额度。",!ok);
+            SetStatus(ok?"已连接 MiniMax Code":"未返回验证标记，请检查桌面登录状态和额度。",!ok,ok);
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
         catch(Exception ex)when(ex is IOException or InvalidOperationException or TimeoutException or System.Net.Http.HttpRequestException or System.Text.Json.JsonException){SetStatus(ex.Message,true);}
         finally{_test.IsEnabled=true;_refresh.IsEnabled=true;_open.IsEnabled=true;_model.IsEnabled=true;}
     }
 
-    private void SetStatus(string text,bool error){_status.Text=text;_status.Foreground=error?Brushes.Firebrick:Brushes.SlateGray;}
+    private void SetStatus(string text,bool error,bool success=false){_status.Text=text;_status.Foreground=error?Brushes.Firebrick:success?Brushes.SeaGreen:Brushes.SlateGray;}
 }

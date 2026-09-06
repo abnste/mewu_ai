@@ -1085,6 +1085,8 @@ public sealed class SettingsWindow : Window
         _connectionTest=test;
         try
         {
+            _modelStatus.Foreground=SecondaryBrush;
+            _modelStatus.Text=LocalizationService.T("正在测试连接…","Testing connection…");
             if(_captureProtectionAvailable==false)throw new InvalidOperationException("系统未能启用设置窗口防捕获，敏感凭据已隐藏。请重启应用后再测试连接。");
             if(!StoreSelectedProvider(true))return;
             var existing = _selectedProvider;
@@ -1096,10 +1098,14 @@ public sealed class SettingsWindow : Window
             key??=string.Empty;
             IAiProvider provider = settings.Type == "MiniMax" ? new MiniMaxProvider(settings, key) : new OpenAiCompatibleProvider(settings, key);
             var ok = await provider.TestConnectionAsync(test.Token);
-            if(IsVisible&&!test.IsCancellationRequested&&ReferenceEquals(_connectionTest,test))MewuDialogWindow.ShowMessage(this,"AI 连接测试",ok ? "连接成功" : "服务返回失败状态",ok);
+            if(IsVisible&&!test.IsCancellationRequested&&ReferenceEquals(_connectionTest,test))
+            {
+                _modelStatus.Text=ok?LocalizationService.T("已连接","Connected"):LocalizationService.T("服务返回失败状态，请检查配置。","The service returned a failure. Check the configuration.");
+                _modelStatus.Foreground=ok?Brushes.SeaGreen:Brushes.Firebrick;
+            }
         }
-        catch(OperationCanceledException) when(test.IsCancellationRequested) { if(IsVisible)MewuDialogWindow.ShowMessage(this,"AI 连接测试","连接测试已取消或超时，请检查网络与 Provider 地址。"); }
-        catch (Exception ex) { if(IsVisible)MewuDialogWindow.ShowMessage(this,"AI 连接测试失败",ex.Message); }
+        catch(OperationCanceledException) when(test.IsCancellationRequested) { if(IsVisible){_modelStatus.Text=LocalizationService.T("连接测试已取消或超时，请检查网络与 Provider 地址。","Connection test canceled or timed out. Check the endpoint and network.");_modelStatus.Foreground=Brushes.Firebrick;} }
+        catch (Exception ex) { if(IsVisible){_modelStatus.Text=ex.Message;_modelStatus.Foreground=Brushes.Firebrick;} }
         finally { if(ReferenceEquals(_connectionTest,test))_connectionTest=null;if(IsVisible)button.IsEnabled = true; }
     }
 
