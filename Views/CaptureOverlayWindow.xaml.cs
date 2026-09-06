@@ -424,7 +424,7 @@ public partial class CaptureOverlayWindow : Window
         ChannelSelector.Items.Clear();
         foreach(var channel in _conversationChannels)ChannelSelector.Items.Add(channel);
         ChannelSelector.SelectedItem=preferred;
-        ChannelPickerHost.Visibility=_conversationChannels.Count>1?Visibility.Visible:Visibility.Collapsed;
+        ChannelButton.Visibility=_conversationChannels.Count>1?Visibility.Visible:Visibility.Collapsed;
         PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
         PromptBarHost.IsHitTestVisible=_conversationAiAvailable&&!_promptBarHidden;
         ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
@@ -460,6 +460,12 @@ public partial class CaptureOverlayWindow : Window
         LoadSessionHistory();
         RefreshHistoryPreview();
         PromptStatus.Text=$"已切换到 {selected.DisplayName}";
+    }
+
+    private void ToggleChannelPicker(object sender,RoutedEventArgs e)
+    {
+        if(_conversationChannels.Count<=1)return;
+        ChannelPickerPopup.IsOpen=!ChannelPickerPopup.IsOpen;
     }
 
     private void LoadSessionHistory()
