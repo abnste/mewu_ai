@@ -185,6 +185,7 @@ public sealed class EnvironmentProviderBootstrap
             HermesReasoningEffort=source.HermesReasoningEffort,
             HermesAutoReadAloud=source.HermesAutoReadAloud,
             DefaultProviderId=source.DefaultProviderId,
+            ConversationChannelId=source.ConversationChannelId,
             Providers=(source.Providers??[]).Where(provider=>provider is not null).Select(CloneProvider).ToList(),
             HasSensitiveCredentialErrors=source.HasSensitiveCredentialErrors
         };

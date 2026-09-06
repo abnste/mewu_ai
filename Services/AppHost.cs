@@ -137,12 +137,11 @@ public sealed class AppHost : IDisposable
     public Task<bool> TestHermesConnectionAsync(string? profile,CancellationToken cancellationToken)
         =>_hermesRuntime.TestConnectionAsync(profile,cancellationToken);
 
-    /// <summary>
-    /// Selects the only permitted backend for a conversation. Once local
-    /// Hermes is enabled, configuration or connection failures remain Hermes
-    /// failures and can never silently leak the prompt to a remote Provider.
-    /// </summary>
+    /// <summary>Creates the provider chosen for the current conversation.</summary>
     public IAiProvider? CreateConversationProvider(HermesConversationKind kind,out string? error)
+        =>CreateConversationProvider(kind,Settings.ConversationChannelId,out error);
+
+    public IAiProvider? CreateConversationProvider(HermesConversationKind kind,string? channelId,out string? error)
     {
         error=null;
         if(Volatile.Read(ref _disposed)!=0||IsExiting)
@@ -150,14 +149,52 @@ public sealed class AppHost : IDisposable
             error="喵呜AI 正在退出，无法开始新的对话。";
             return null;
         }
-        return CreateConversationProviderCore(kind,()=>Settings,_hermesRuntime,_aiProviderFactory,out error);
+        return CreateConversationProviderCore(kind,()=>Settings,_hermesRuntime,_aiProviderFactory,channelId,out error);
     }
+
+    internal IReadOnlyList<ConversationChannel> GetConversationChannels()
+    {
+        var channels=new List<ConversationChannel>();
+        foreach(var provider in Settings.Providers ?? [])
+        {
+            if(provider is null)continue;
+            var api=_aiProviderFactory.Create(Settings,provider.Id,out _);
+            if(api is null)continue;
+            channels.Add(new($"api:{provider.Id}",BuildApiChannelName(provider),provider.Id,provider.Model,ConversationChannelKind.Api,api.Capabilities.SupportsImage,api.Capabilities.SupportsVideo));
+        }
+        if(Settings.HermesEnabled&&_hermesRuntime.Discover() is not null)
+        {
+            if(!string.IsNullOrWhiteSpace(Settings.HermesProfile)&&!string.IsNullOrWhiteSpace(Settings.HermesModel))
+                channels.Add(new("hermes",$"Hermes · {Settings.HermesProfile}","hermes",Settings.HermesModel??string.Empty,ConversationChannelKind.Hermes,true,true));
+        }
+        if(Settings.CodexEnabled&&CodexAppServer.Discover() is not null)
+        {
+            try{CodexSettingsPolicy.Validate(Settings);channels.Add(new("codex-work",$"ChatGPT Work · {Settings.CodexModel}","codex-work",Settings.CodexModel,ConversationChannelKind.Codex,Settings.CodexSupportsImage,Settings.CodexSupportsImage));}catch(InvalidOperationException){}
+        }
+        if(Settings.WorkBuddyEnabled&&WorkBuddyAcpServer.Discover() is not null)
+        {
+            try{WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);channels.Add(new("workbuddy",$"WorkBuddy · {Settings.WorkBuddyModel}","workbuddy",Settings.WorkBuddyModel,ConversationChannelKind.WorkBuddy,Settings.WorkBuddySupportsImage,Settings.WorkBuddySupportsImage));}catch(InvalidOperationException){}
+        }
+        return channels;
+    }
+
+    private static string BuildApiChannelName(AiProviderSettings provider)
+        =>string.IsNullOrWhiteSpace(provider.Name)?$"API · {provider.Model}":$"API · {provider.Name} · {provider.Model}";
 
     internal static IAiProvider? CreateConversationProviderCore(
         HermesConversationKind kind,
         Func<AppSettings> settingsAccessor,
         HermesRuntimeService hermesRuntime,
         AiProviderFactory aiProviderFactory,
+        out string? error)
+        =>CreateConversationProviderCore(kind,settingsAccessor,hermesRuntime,aiProviderFactory,null,out error);
+
+    internal static IAiProvider? CreateConversationProviderCore(
+        HermesConversationKind kind,
+        Func<AppSettings> settingsAccessor,
+        HermesRuntimeService hermesRuntime,
+        AiProviderFactory aiProviderFactory,
+        string? channelId,
         out string? error)
     {
         ArgumentNullException.ThrowIfNull(settingsAccessor);
@@ -170,28 +207,49 @@ public sealed class AppHost : IDisposable
             return null;
         }
         var settings=settingsAccessor();
-        if(settings.WorkBuddyEnabled)
+        channelId=string.IsNullOrWhiteSpace(channelId)?null:channelId.Trim();
+        if(channelId is not null&&channelId.StartsWith("api:",StringComparison.Ordinal))
+            return aiProviderFactory.Create(settings,channelId[4..],out error);
+        if(channelId is not null&&!channelId.Equals("hermes",StringComparison.Ordinal)&&!channelId.Equals("codex-work",StringComparison.Ordinal)&&!channelId.Equals("workbuddy",StringComparison.Ordinal))
+        {
+            error="所选 AI 渠道不存在，请重新选择。";
+            return null;
+        }
+        var selectedKind=channelId switch
+        {
+            "hermes"=>ConversationChannelKind.Hermes,
+            "codex-work"=>ConversationChannelKind.Codex,
+            "workbuddy"=>ConversationChannelKind.WorkBuddy,
+            _=>ConversationChannelKind.Api
+        };
+        if(channelId is null)
+        {
+            selectedKind=settings.WorkBuddyEnabled?ConversationChannelKind.WorkBuddy:settings.CodexEnabled?ConversationChannelKind.Codex:settings.HermesEnabled?ConversationChannelKind.Hermes:ConversationChannelKind.Api;
+        }
+        if(selectedKind==ConversationChannelKind.WorkBuddy)
         {
             try
             {
-                if(settings.HermesEnabled||settings.CodexEnabled)throw new InvalidOperationException("只能选择一个 AI 渠道，请重新选择。");
+                if(!settings.WorkBuddyEnabled)throw new InvalidOperationException("WorkBuddy 当前未启用，请在设置中完成配置。");
                 WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
                 if(WorkBuddyAcpServer.Discover() is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
                 return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage);
             }
             catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
-        if(settings.CodexEnabled)
+        if(selectedKind==ConversationChannelKind.Codex)
         {
             try
             {
+                if(!settings.CodexEnabled)throw new InvalidOperationException("Codex 当前未启用，请在设置中完成配置。");
                 CodexSettingsPolicy.Validate(settings);
                 if(CodexAppServer.Discover() is null)throw new InvalidOperationException("未找到本机 Codex，请安装并登录官方 ChatGPT 桌面应用。");
                 return new CodexAiProvider(settings.CodexModel,settings.CodexReasoningEffort,settings.CodexSupportsImage);
             }
             catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
-        if(!settings.HermesEnabled)return aiProviderFactory.Create(settings,out error);
+        if(selectedKind==ConversationChannelKind.Api)return aiProviderFactory.Create(settings,out error);
+        if(!settings.HermesEnabled){error="Hermes 当前未启用，请在设置中完成配置。";return null;}
         try
         {
             // This runtime and provider live for the whole AppHost lifetime.
@@ -219,32 +277,16 @@ public sealed class AppHost : IDisposable
     public bool IsConversationAvailable(out string? error)
     {
         error=null;
-        if(Settings.WorkBuddyEnabled)
-        {
-            try{if(Settings.CodexEnabled||Settings.HermesEnabled)throw new InvalidOperationException("只能选择一个 AI 渠道，请重新选择。");WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);if(WorkBuddyAcpServer.Discover() is not null)return true;error="已启用 WorkBuddy，但未找到本机官方客户端。";}
-            catch(InvalidOperationException ex){error=ex.Message;}
-            return false;
-        }
-        if(Settings.CodexEnabled)
-        {
-            try{CodexSettingsPolicy.Validate(Settings);if(CodexAppServer.Discover() is not null)return true;error="已启用 Codex，但未找到本机官方客户端。";}
-            catch(InvalidOperationException ex){error=ex.Message;}
-            return false;
-        }
-        if(Settings.HermesEnabled)
-        {
-            if(_hermesRuntime.Discover() is not null)return true;
-            error="已启用本机 Hermes，但未找到可用的 Windows Hermes 安装。";
-            return false;
-        }
-
-        return IsTranslationAvailable(out error);
+        var channels=GetConversationChannels();
+        if(channels.Count>0)return true;
+        error="没有可用的 AI 渠道，请先在设置中完成配置。";
+        return false;
     }
 
     public bool IsScreenAiAvailable(out string? error)
     {
         error=null;
-        if(Settings.HermesEnabled||Settings.CodexEnabled||Settings.WorkBuddyEnabled)return IsConversationAvailable(out error);
+        if(GetConversationChannels() is {Count:>0} channels)return true;
         var provider=_aiProviderFactory.Create(Settings,out error);
         // The overlay also hosts clean text-only turns. A text model may
         // therefore expose the composer, while SendAsync still blocks visual

@@ -136,7 +136,7 @@ public sealed class WorkBuddyIntegrationTests
     }
 
     [Fact]
-    public void SettingsPersistWorkBuddyWithoutApiCredentialAndRejectMultipleChannels()
+    public void SettingsPersistWorkBuddyWithoutApiCredentialAndAllowMultipleChannels()
     {
         var directory=Path.Combine(Path.GetTempPath(),"MewuAI.Tests",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);
         try
@@ -145,7 +145,8 @@ public sealed class WorkBuddyIntegrationTests
             var service=new SettingsService(Path.Combine(directory,"settings.json"));service.Save(settings);
             var loaded=service.Load();Assert.True(loaded.WorkBuddyEnabled);Assert.Equal("auto",loaded.WorkBuddyModel);Assert.Equal("low",loaded.WorkBuddyReasoningEffort);Assert.True(loaded.WorkBuddySupportsImage);
             settings.CodexEnabled=true;settings.CodexModel="codex-model";
-            Assert.Throws<InvalidOperationException>(()=>service.Save(settings));
+            service.Save(settings);
+            Assert.True(service.Load().CodexEnabled);
         }
         finally{Directory.Delete(directory,true);}
     }

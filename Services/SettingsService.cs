@@ -192,7 +192,6 @@ public sealed class SettingsService
     private static void ValidateWorkBuddy(AppSettings settings)
     {
         if(!settings.WorkBuddyEnabled)return;
-        if(settings.CodexEnabled||settings.HermesEnabled)throw new InvalidOperationException("只能选择一个 AI 渠道，请重新选择。");
         WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
     }
 
@@ -213,6 +212,7 @@ public sealed class SettingsService
         settings.DefaultImageFormat=settings.DefaultImageFormat?.Trim().ToLowerInvariant() is "jpg" or "jpeg"?"jpg":"png";
         settings.UiLanguage=settings.UiLanguage?.Trim() is "zh-CN" or "en-US"?settings.UiLanguage.Trim():"system";
         settings.VoiceLanguage=settings.VoiceLanguage?.Trim() is "zh-CN" or "en-US"?settings.VoiceLanguage.Trim():"system";
+        settings.ConversationChannelId=settings.ConversationChannelId?.Trim()??string.Empty;
         settings.HermesProvider=settings.HermesProvider?.Trim()??string.Empty;
         settings.HermesProfile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
         settings.HermesModel=settings.HermesModel?.Trim()??string.Empty;
