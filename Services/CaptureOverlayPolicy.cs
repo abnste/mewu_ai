@@ -365,8 +365,9 @@ internal static class CaptureOverlayPolicy
         return new(left,fallback,FloatingBarSide.AboveFallback);
     }
 
-    internal static bool IsPointerInFloatingBarInteractionZone(Point pointer,Rect barBounds,double transitionPadding)
+    internal static bool IsPointerInFloatingBarInteractionZone(Point pointer,Rect barBounds,double transitionPadding,Rect? foregroundBounds=null)
     {
+        if(foregroundBounds is {IsEmpty:false} foreground&&foreground.Contains(pointer))return false;
         if(barBounds.IsEmpty||!double.IsFinite(barBounds.Left)||!double.IsFinite(barBounds.Top)||
            !double.IsFinite(barBounds.Width)||!double.IsFinite(barBounds.Height)||barBounds.Width<=0||barBounds.Height<=0)
             return false;
