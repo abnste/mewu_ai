@@ -115,7 +115,7 @@
       </Button>
       <Border x:Name="HistoryPanel" Visibility="Collapsed" Background="#F3F6FA" BorderBrush="#DFE7F1" BorderThickness="1" CornerRadius="12" Padding="10,8" Margin="6,4,6,2">
        <ScrollViewer x:Name="HistoryScroll" MaxHeight="210" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel x:Name="HistoryItems"/>
+        <local:HistoryPreviewPanel x:Name="HistoryItems"/>
        </ScrollViewer>
       </Border>
      </StackPanel>
