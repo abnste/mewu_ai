@@ -42,3 +42,4 @@
 - 更新器优先使用精确安装包资产的 `digest`，严格接受 `sha256:` + 64 位 ASCII 十六进制并归一为小写；不能使用 ZIP 等其他资产的哈希。digest 非空但非法时在询问/下载前失败，不得回退校验文件掩盖异常。只有字段缺失或 null 才允许旧校验文件，覆盖 GitHub REST 限流后官方 latest 重定向的兼容路径；无可信校验值则失败，不得无校验安装。
 
 - Windows Restart Manager / 会话结束会直接销毁窗口，必须在 App.OnSessionEnding 未取消时先调用 AppHost.BeginShutdown；主窗口真正 Closed 也进入退出状态。辅助窗口关闭恢复和排队主窗口激活必须再次检查退出状态，不能在安装器关闭设置页时重新 Show 已销毁的主窗口。
+- EditableShapeStroke 将形状类型存入 Stroke.PropertyData，使 Clone 和覆盖层快照后仍能识别可编辑箭头；箭头前两个 StylusPoint 固定为起点、终点，端点调整重建箭头头部，重合端点保持有限坐标。四角缩放直接变换原始点而不缩放 DrawingAttributes，固定对角、限制在画布范围内并防止拖过对角产生倒置。几何 Stroke 始终关闭 FitToCurve。

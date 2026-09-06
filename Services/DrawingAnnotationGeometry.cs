@@ -24,4 +24,15 @@ internal static class DrawingAnnotationGeometry
     }
 
     private static bool IsFinite(double value)=>double.IsFinite(value);
+
+    internal static Rect ResizeCorner(Rect original,int corner,Point pointer,Size canvas)
+    {
+        if(original.IsEmpty||corner is <0 or >3||!double.IsFinite(pointer.X)||!double.IsFinite(pointer.Y))return original;
+        var left=corner is 0 or 3;var top=corner is 0 or 1;
+        var anchor=new Point(left?original.Right:original.Left,top?original.Bottom:original.Top);
+        var x=Math.Clamp(pointer.X,0,Math.Max(0,canvas.Width));var y=Math.Clamp(pointer.Y,0,Math.Max(0,canvas.Height));
+        x=left?Math.Min(x,Math.Max(0,anchor.X-2)):Math.Max(x,Math.Min(canvas.Width,anchor.X+2));
+        y=top?Math.Min(y,Math.Max(0,anchor.Y-2)):Math.Max(y,Math.Min(canvas.Height,anchor.Y+2));
+        return new Rect(anchor,new Point(x,y));
+    }
 }
