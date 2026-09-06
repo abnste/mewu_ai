@@ -119,6 +119,21 @@ internal static class CaptureOverlayPolicy
         return referenced.Count > 0 ? referenced : eligible;
     }
 
+    /// <summary>
+    /// Visual protocol instructions are request-scoped. Keeping them in the
+    /// overlay's long-lived history made text-only turns look like image tasks
+    /// to local agents and caused them to emit image-analysis instructions.
+    /// </summary>
+    internal static IReadOnlyList<AiMessage> CreateRequestHistory(
+        IEnumerable<AiMessage> history,
+        bool includeVisualProtocol)
+    {
+        var bounded=ConversationContextPolicy.CreateBoundedHistory(history.ToArray());
+        return includeVisualProtocol
+            ? bounded
+            : bounded.Where(message=>!string.Equals(message.Role,"system",StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
+
     // Kept as a compatibility seam for callers compiled against older
     // versions. A plain text turn must never manufacture a desktop image.
     internal static bool ShouldCreateImplicitScreenSelection(bool hasUploadedReferences,bool hasExplicitSelections)=>false;
@@ -197,7 +212,8 @@ internal static class CaptureOverlayPolicy
         IProgress<AiStreamDelta>? streamingProgress,
         IProgress<AiAgentEvent>? agentProgress=null,
         Func<AiInteractionRequest,CancellationToken,Task<AiInteractionResponse>>? interactionHandler=null,
-        bool expectStructuredResponse=true) => new()
+        bool expectStructuredResponse=true,
+        bool disableReasoning=false) => new()
     {
         Prompt=prompt,
         History=[..history],
@@ -206,6 +222,7 @@ internal static class CaptureOverlayPolicy
         AgentProgress=agentProgress,
         InteractionHandler=interactionHandler,
         ExpectStructuredResponse=expectStructuredResponse,
+        DisableReasoning=disableReasoning,
         MaxOutputTokens=8192
     };
 

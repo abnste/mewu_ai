@@ -221,6 +221,30 @@ public sealed class CaptureOverlayPolicyTests
     }
 
     [Fact]
+    public void TextOnlyRequestHistoryOmitsVisualSystemInstructions()
+    {
+        var history=CaptureOverlayPolicy.CreateRequestHistory([
+            new AiMessage("system",VisualAnnotationProtocol.SystemInstruction),
+            new AiMessage("user","在吗"),
+            new AiMessage("assistant","在的")
+        ],includeVisualProtocol:false);
+
+        Assert.DoesNotContain(history,message=>message.Role=="system");
+        Assert.Equal(["user","assistant"],history.Select(message=>message.Role));
+    }
+
+    [Fact]
+    public void VisualRequestHistoryRetainsVisualSystemInstructions()
+    {
+        var system=new AiMessage("system",VisualAnnotationProtocol.SystemInstruction);
+        var history=CaptureOverlayPolicy.CreateRequestHistory([system],includeVisualProtocol:true);
+
+        var retained=Assert.Single(history);
+        Assert.Equal(system.Role,retained.Role);
+        Assert.Equal(system.Text,retained.Text);
+    }
+
+    [Fact]
     public void ReferenceAwarePromptBindsVisibleLabelsToActualAttachmentIndexesAndHandles()
     {
         var prompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt("比较 @图片1 和 @图片3",[

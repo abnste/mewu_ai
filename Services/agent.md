@@ -39,6 +39,7 @@
 # Provider 模型目录
 
 - 2026-09-06 对话渠道改为按本轮选择：API 列表中的每个接入点、Hermes、Codex、WorkBuddy 可同时保留配置。覆盖层仅在存在多个可用渠道时显示渠道选择器，历史按渠道与模型隔离；切换渠道不得把请求回退到默认 Provider。
+- 2026-09-06 纯文字请求不得携带视觉标注系统提示或附件清单；WorkBuddy 纯文字轮次自动关闭扩展思考并设置 90 秒有界超时，避免简单问候陷入无限思考。
 
 - ProviderPresetPolicy 只做界面厂商与现有 Type/BaseUrl 的映射，不增加会让旧配置失效的必填字段；精确地址匹配，非标准 MiniMax 地址仍保留为自定义配置及原有 MiniMax 协议。
 - 提供商目录只保留四项；国内 MiniMax 的稳定内部 ID 仍为 MiniMax、国际仍为 MiniMaxGlobal，不能因显示名改为 MiniMax (CN)/MiniMax 而交换既有凭据。旧 OpenAI 官方和第三方兼容地址统一落入 OpenAI 通用（内部 Custom），仅此项要求 URL；标准厂商隐藏固定 URL。界面不再要求命名或管理连接。
