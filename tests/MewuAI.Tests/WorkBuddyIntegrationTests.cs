@@ -67,6 +67,15 @@ public sealed class WorkBuddyIntegrationTests
     }
 
     [Fact]
+    public void TextOnlyTurnUnwrapsUnexpectedVisualProtocolEnvelope()
+    {
+        var turn=new WorkBuddyTurnCollector("ours",new(){ExpectStructuredResponse=false},CancellationToken.None);
+        turn.Receive("session/update",Chunk("ours","agent_message_chunk","{\"annotationProtocol\":\"mewu.visual-annotations/1\",\"answer\":\"正文\",\"annotationMode\":\"preserve\",\"annotations\":[]}"));
+        var result=turn.Finish(Json("""{"stopReason":"end_turn"}"""));
+        Assert.Equal("正文",result.Answer);Assert.Empty(result.Annotations);
+    }
+
+    [Fact]
     public void RecoveredToolErrorWithFinalAnswerIsNotATruncatedTurn()
     {
         var turn=new WorkBuddyTurnCollector("ours",new(),CancellationToken.None);

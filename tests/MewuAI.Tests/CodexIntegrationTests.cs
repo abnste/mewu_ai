@@ -52,6 +52,17 @@ public sealed class CodexIntegrationTests
         Assert.Equal("finished",(await turn.Completion).Answer);
     }
 
+    [Fact]
+    public async Task TextOnlyTurnUnwrapsUnexpectedVisualProtocolEnvelope()
+    {
+        var turn=new CodexTurnCollector("ours",new(){ExpectStructuredResponse=false},CancellationToken.None);Start(turn);
+        turn.Receive("item/completed",Json("""{"threadId":"ours","turnId":"turn1","item":{"type":"agentMessage","phase":"final_answer","text":"{\"annotationProtocol\":\"mewu.visual-annotations/1\",\"answer\":\"我是基于 GPT-6 的 Codex 助手。\",\"annotationMode\":\"preserve\",\"annotations\":[]}"}}"""));
+        Complete(turn);
+        var result=await turn.Completion;
+        Assert.Equal("我是基于 GPT-6 的 Codex 助手。",result.Answer);
+        Assert.Empty(result.Annotations);
+    }
+
     [Theory]
     [InlineData("failed")]
     [InlineData("interrupted")]

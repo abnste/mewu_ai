@@ -1980,12 +1980,13 @@ public partial class CaptureOverlayWindow : Window
         // transport layer. Re-parsing a plain answer would discard its valid
         // annotations, so only inspect responses that still look like a raw
         // structured root and have not yielded annotations yet.
-        if(!expectStructuredResponse||result.Annotations.Count>0)return result;
+        if(result.Annotations.Count>0)return result;
         var value=result.Answer?.TrimStart()??string.Empty;
         if(value.StartsWith('{')||value.StartsWith('[')||value.StartsWith("```",StringComparison.OrdinalIgnoreCase)||value.StartsWith("json",StringComparison.OrdinalIgnoreCase))
         {
-            var parsed=StructuredResponseParser.Parse(value,result.Reasoning,true);
-            if(!string.IsNullOrWhiteSpace(parsed.Answer)||value.Length==0)return parsed;
+            var parsed=StructuredResponseParser.Parse(value,result.Reasoning,expectStructuredResponse);
+            if(!string.IsNullOrWhiteSpace(parsed.Answer)||value.Length==0)
+                return expectStructuredResponse?parsed:new(parsed.Answer,[],parsed.Reasoning,AiAnnotationUpdateMode.Preserve);
         }
         return result;
     }
