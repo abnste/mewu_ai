@@ -1,6 +1,8 @@
 # Hermes 启动兼容
 
-- 2026-09-06 实际安装版出现持续的 Hermes 子进程退出码 1；Windows 进程事件确认启动了 `python.exe`，原始失败的具体 stderr 未取得。重启后，安装目录中的 Release 诊断构建多次取得人格列表，并走通设置页 `ConnectHermesAsync(true)` 的人格与模型加载；这证明当次连接恢复，不证明原始根因已修复。临时诊断代码已移除，安装目录恢复正常构建。后续验收必须包含实际 GUI 进程与设置页流程，不能仅以独立控制台启动成功结案。
+- 2026-09-06 已定位安装/自动更新后 Hermes 退出码 1 的根因：Windows 11 26100 上，Inno Setup 6.7.1 直接启动的喵呜AI继承 `ProcessRedirectionTrustPolicy=1`，uv 的 Python trampoline 再启动位于 junction 下的真实解释器时返回 `os error 448`。当天 09:17:17 的安装日志与故障进程创建时间吻合。最小 Inno 对照与真实 `App` / `SettingsWindow.ConnectHermesAsync(true)` 重放均证明旧链路失败、经 Windows 桌面交接的新链路成功（1 个 Agent、38 个模型）；不是 Python 依赖损坏或 stdin 问题。
+- 安装器的交互/静默两条 `[Run]` 都必须通过绝对路径 `{win}\explorer.exe` 打开正确引用的 `{app}\MewuAI.exe`，不能恢复直接 `Exec`、只加 `runasoriginaluser` 或 `shellexec`，后三者本机仍继承保护并失败。保持安装器 RedirectionGuard 开启，不修改全局安全策略或用户的 uv junction；安装验证必须包含安装器到 GUI 再到 Hermes 的链路。
+- Hermes 诊断必须识别 `uv trampoline failed to spawn Python child process` 及精确 `WinError 448` / `os error 448`，给出退出后从开始菜单重开的可操作提示；不得将 4480、50 等相似前缀误报为 448、5。只保留固定类别，不存储或展示原始输出中的路径、凭据或环境值。此次 Release 构建零警告、786 项单元测试通过。
 - 启动输出的临时诊断也必须串行、无异常地消费 stdout/stderr；并发直接追加同一文件会产生共享冲突，输出事件中抛出的异常会终止主程序。诊断不得记录凭据、提示词或屏幕内容，临时诊断构建不能留在用户安装目录中。
 
 - 托盘菜单使用自定义固定行高时，WinForms `ToolStripDropDownMenu.TextRectangle` 仍按首选行高计算，不能仅依赖 `TextAlign=MiddleLeft`。渲染文字时保留系统水平布局，改用菜单项自身完整高度并指定 `VerticalCenter | SingleLine`，避免高 DPI 下文字偏上；不要硬编码向下偏移。渲染回归测试覆盖中英文及 100%/125%/150%/200% 字号与行高，断言必须在绘制回调结束后执行，避免 WinForms 将测试失败转成桌面异常弹窗。
