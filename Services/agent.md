@@ -1,5 +1,7 @@
 # Codex 官方接口
 
+- 截图快捷键 `Key.None` 是持久化的禁用状态，加载/保存归一化不得替换成默认组合键；注册服务必须注销旧热键并拒绝禁用后的迟到 WM_HOTKEY。保存失败仍通过 AppHost 原有回滚恢复旧注册。
+
 - 2026-09-06 本机 Codex CLI 0.153.4 使用官方 app-server stdio 接入，登录/模型读取不提交 turn。认证由官方客户端管理，只接受 ChatGPT 登录，不读取 token 文件、不回退 API Key。详情与官方来源见 `../docs/codex-work-integration.md`。
 - 每轮独立 ephemeral 会话和临时工作目录，输入只取明确附件及有界历史；文字、图片关闭本机工具，视频在进程启动时开启本机命令与看图，允许工作目录写入并禁工具网络。Hooks、插件、MCP、记忆和收费快速档不得继承；不修改全局 Codex 配置。CLI 参数优先级高于 thread config，不能在启动禁工具后仅靠 thread config 恢复视频工具。
 - 本机 0.153.4 虽在生成的 Schema 保留 `untrusted`，运行已拒绝，使用 `on-request`。thread config 点分键不是 CLI TOML 文本，不可把引号写入 MCP 键名；无法安全表示的名称拒绝启动会话。

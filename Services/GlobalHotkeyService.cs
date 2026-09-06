@@ -17,6 +17,11 @@ public sealed class GlobalHotkeyService : IDisposable
     public bool Register(HotkeySetting hotkey)
     {
         ArgumentNullException.ThrowIfNull(hotkey);
+        if(hotkey.Key==Key.None)
+        {
+            if(_current is not null&&!NativeMethods.UnregisterHotKey(_source.Handle,_currentId))return false;
+            _current=null;_currentId=0;return true;
+        }
         if(_current is not null&&_current.Key==hotkey.Key&&_current.Modifiers==hotkey.Modifiers)return true;
         var candidateId=_current is null?PrimaryId:_currentId==PrimaryId?SecondaryId:PrimaryId;
         var modifiers=(uint)hotkey.Modifiers | 0x4000u;
@@ -24,6 +29,6 @@ public sealed class GlobalHotkeyService : IDisposable
         if(_current is not null)NativeMethods.UnregisterHotKey(_source.Handle,_currentId);
         _currentId=candidateId;_current=new HotkeySetting{Key=hotkey.Key,Modifiers=hotkey.Modifiers};return true;
     }
-    private IntPtr WndProc(IntPtr hwnd,int msg,IntPtr wParam,IntPtr lParam,ref bool handled) { if(msg==NativeMethods.WmHotkey&&wParam.ToInt32()==_currentId){handled=true;Pressed?.Invoke();} return IntPtr.Zero; }
+    private IntPtr WndProc(IntPtr hwnd,int msg,IntPtr wParam,IntPtr lParam,ref bool handled) { if(_current is not null&&msg==NativeMethods.WmHotkey&&wParam.ToInt32()==_currentId){handled=true;Pressed?.Invoke();} return IntPtr.Zero; }
     public void Dispose() { if(_current is not null)NativeMethods.UnregisterHotKey(_source.Handle,_currentId); _source.RemoveHook(WndProc); _source.Dispose(); }
 }
