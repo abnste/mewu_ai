@@ -1,5 +1,8 @@
 # Hermes 启动兼容
 
+- 2026-09-06 实际安装版出现持续的 Hermes 子进程退出码 1；Windows 进程事件确认启动了 `python.exe`，原始失败的具体 stderr 未取得。重启后，安装目录中的 Release 诊断构建多次取得人格列表，并走通设置页 `ConnectHermesAsync(true)` 的人格与模型加载；这证明当次连接恢复，不证明原始根因已修复。临时诊断代码已移除，安装目录恢复正常构建。后续验收必须包含实际 GUI 进程与设置页流程，不能仅以独立控制台启动成功结案。
+- 启动输出的临时诊断也必须串行、无异常地消费 stdout/stderr；并发直接追加同一文件会产生共享冲突，输出事件中抛出的异常会终止主程序。诊断不得记录凭据、提示词或屏幕内容，临时诊断构建不能留在用户安装目录中。
+
 - 托盘菜单使用自定义固定行高时，WinForms `ToolStripDropDownMenu.TextRectangle` 仍按首选行高计算，不能仅依赖 `TextAlign=MiddleLeft`。渲染文字时保留系统水平布局，改用菜单项自身完整高度并指定 `VerticalCenter | SingleLine`，避免高 DPI 下文字偏上；不要硬编码向下偏移。渲染回归测试覆盖中英文及 100%/125%/150%/200% 字号与行高，断言必须在绘制回调结束后执行，避免 WinForms 将测试失败转成桌面异常弹窗。
 
 - 2026-09-05 性能审查：`BufferedAiStreamProgress` 在 Provider 线程合并已归一化增量，首批排一次 Background 回调，之后约 80ms 刷新；每个请求独享实例，完成前 Flush，取消/替换/关闭后丢弃未渲染批次，渲染异常交回请求失败路径。不得恢复逐 token `Progress<T>` UI 排队或在每次增量中强制 `UpdateLayout`。
