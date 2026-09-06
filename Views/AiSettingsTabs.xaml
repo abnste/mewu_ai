@@ -1,0 +1,62 @@
+<!-- SPDX-FileCopyrightText: 2026 Abner Stephen and contributors -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<UserControl x:Class="mewu_ai_Assistant.Views.AiSettingsTabs"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <UserControl.Resources>
+        <Style x:Key="BackendTab" TargetType="TabItem">
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Foreground" Value="#637089"/>
+            <Setter Property="Padding" Value="9,8"/>
+            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Pill" CornerRadius="7" Background="Transparent"
+                                BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Pill" Property="Background" Value="#E8EDF5"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Pill" Property="Background" Value="White"/>
+                                <Setter TargetName="Pill" Property="BorderBrush" Value="#DCE3F0"/>
+                                <Setter Property="Foreground" Value="#5865C8"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Pill" Property="BorderBrush" Value="#7180DE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+    <TabControl x:Name="BackendTabs" SelectedIndex="0" TabStripPlacement="Top"
+                Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource BackendTab}">
+        <TabControl.Template>
+            <ControlTemplate TargetType="TabControl">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Background="#F2F5FA" CornerRadius="10" Padding="3">
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                                      CanContentScroll="False" Focusable="False">
+                            <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="0"/>
+                        </ScrollViewer>
+                    </Border>
+                    <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" Margin="0,12,0,0"
+                                      ContentSource="SelectedContent"/>
+                </Grid>
+            </ControlTemplate>
+        </TabControl.Template>
+    </TabControl>
+</UserControl>
