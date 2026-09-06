@@ -50,9 +50,16 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
             var hasVideo=request.Attachments.Any(item=>item.Type==AiAttachmentType.Video);
             server=await WorkBuddyAcpServer.StartAsync(token,hasVideo).ConfigureAwait(false);
             var catalog=await server.NewSessionAsync(token).ConfigureAwait(false);
+            // WorkBuddy can change model IDs and thought-level options after an
+            // desktop update. Keep a stale saved value from blocking a turn:
+            // select the current session model/effort and let the settings page
+            // refresh the persisted choice on the next save.
             var selected=catalog.Models.SingleOrDefault(item=>item.Model==model)
-                ??throw new InvalidOperationException("所选 WorkBuddy 模型当前不可用，请在设置中重新检测并选择。");
-            await server.ConfigureAsync(catalog,model,disableReasoning?"disabled":effort,token).ConfigureAwait(false);
+                ??catalog.Models.FirstOrDefault(item=>item.Model==catalog.CurrentModel)
+                ??catalog.Models[0];
+            var effectiveEffort=disableReasoning?"disabled":catalog.Efforts.Contains(effort)?effort:catalog.CurrentEffort;
+            if(!catalog.Efforts.Contains(effectiveEffort))effectiveEffort=catalog.Efforts[0];
+            await server.ConfigureAsync(catalog,selected.Model,effectiveEffort,token).ConfigureAwait(false);
             if(request.Attachments.Any(item=>item.Type is AiAttachmentType.Image or AiAttachmentType.Video)&&!selected.SupportsImage)
                 throw new InvalidOperationException("当前 WorkBuddy 模型不支持视觉输入。");
             var input=new List<object>();var text=new StringBuilder();
