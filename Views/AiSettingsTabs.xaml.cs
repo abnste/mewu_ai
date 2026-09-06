@@ -13,7 +13,7 @@ public partial class AiSettingsTabs : UserControl
     internal int SelectedBackendIndex=>BackendTabs.SelectedIndex;
     internal event EventHandler? BackendChanged;
 
-    public AiSettingsTabs(UIElement api,UIElement hermes,UIElement? codex=null,int selectedBackendIndex=0)
+    public AiSettingsTabs(UIElement api,UIElement hermes,UIElement? codex=null,int selectedBackendIndex=0,UIElement? workBuddy=null)
     {
         InitializeComponent();
         ChannelPrompt.Text=LocalizationService.T("请选择AI渠道：","Choose an AI channel:");
@@ -21,8 +21,9 @@ public partial class AiSettingsTabs : UserControl
         AddPage("API",api);
         AddPage("Hermes",hermes);
         AddPage("Codex",codex??ComingSoon("Codex"));
-        foreach(var name in new[]{"OpenClaw","Claude Code","WorkBuddy"})AddPage(name,ComingSoon(name),false);
-        BackendTabs.SelectedIndex=selectedBackendIndex is >=0 and <=2?selectedBackendIndex:0;
+        foreach(var name in new[]{"OpenClaw","Claude Code"})AddPage(name,ComingSoon(name),false);
+        AddPage("WorkBuddy",workBuddy??ComingSoon("WorkBuddy"),workBuddy is not null);
+        BackendTabs.SelectedIndex=selectedBackendIndex is >=0 and <=2||selectedBackendIndex==5&&workBuddy is not null?selectedBackendIndex:0;
         BackendTabs.SelectionChanged+=(_,e)=>
         {
             if(ReferenceEquals(e.Source,BackendTabs))BackendChanged?.Invoke(this,EventArgs.Empty);

@@ -53,12 +53,18 @@ public partial class MainWindow : Window
     {
         ArgumentNullException.ThrowIfNull(settings);
         if(!available)return LocalizationService.T("暂未设置AI功能","AI features are not set up");
-        return (settings.CodexEnabled||settings.HermesEnabled)?LocalizationService.T("智能体已接入","Agent connected"):LocalizationService.T("AI模型已接入","AI model connected");
+        return (settings.WorkBuddyEnabled||settings.CodexEnabled||settings.HermesEnabled)?LocalizationService.T("智能体已接入","Agent connected"):LocalizationService.T("AI模型已接入","AI model connected");
     }
 
     internal static string BuildAiStatusText(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        if(settings.WorkBuddyEnabled)
+        {
+            var model=string.IsNullOrWhiteSpace(settings.WorkBuddyModel)?LocalizationService.T("未选择模型","No model selected"):settings.WorkBuddyModel.Trim();
+            var effort=settings.WorkBuddyReasoningEffort switch{"enabled"=>LocalizationService.T("默认思考","default reasoning"),"disabled"=>BuildReasoningDisplayText("none"),_=>BuildReasoningDisplayText(settings.WorkBuddyReasoningEffort)};
+            return $"WorkBuddy · {model} · {effort}";
+        }
         if(settings.CodexEnabled)
         {
             var model=string.IsNullOrWhiteSpace(settings.CodexModel)?LocalizationService.T("未选择模型","No model selected"):settings.CodexModel.Trim();
