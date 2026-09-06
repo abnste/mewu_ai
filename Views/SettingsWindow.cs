@@ -21,6 +21,8 @@ public sealed class SettingsWindow : Window
 {
     private readonly TabItem _aiTab;
     private CodexSettingsPage _codexSettings=null!;
+    private AiSettingsTabs _backendSelector=null!;
+    private bool HermesSelected=>_backendSelector?.SelectedBackendIndex==1;
     internal void ShowAiPage()=>_aiTab.IsSelected=true;
     private static readonly (string Value,string Label)[] HermesReasoningChoices=
     [
@@ -46,7 +48,7 @@ public sealed class SettingsWindow : Window
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new();
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
-    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesEnabled = new(), _hermesAutoReadAloud = new();
+    private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
     private readonly CheckBox _recordSystemAudio = new(), _recordMicrophone = new();
     private readonly System.Windows.Shapes.Ellipse _hermesStatusDot = new();
@@ -430,9 +432,11 @@ public sealed class SettingsWindow : Window
     {
         _codexSettings=new CodexSettingsPage(_host.Settings,_windowLifetime.Token);
         var hermes=HermesCard();
-        _codexSettings.EnabledChoice.Checked+=(_,_)=>_hermesEnabled.IsChecked=false;
-        _hermesEnabled.Checked+=(_,_)=>_codexSettings.EnabledChoice.IsChecked=false;
-        return new AiSettingsTabs(Api(),hermes,_codexSettings){Margin=new Thickness(12,12,12,4)};
+        var selected=_host.Settings.CodexEnabled?2:_host.Settings.HermesEnabled?1:0;
+        _backendSelector=new AiSettingsTabs(Api(),hermes,_codexSettings,selected){Margin=new Thickness(12,12,12,4)};
+        _backendSelector.BackendChanged+=(_,_)=>UpdateHermesControls();
+        UpdateHermesControls();
+        return _backendSelector;
     }
 
     private UIElement Api()
@@ -526,10 +530,6 @@ public sealed class SettingsWindow : Window
     private UIElement HermesCard()
     {
         _loadingHermes=true;
-        _hermesEnabled.Content="使用本机 Hermes";
-        _hermesEnabled.IsChecked=_host.Settings.HermesEnabled;
-        _hermesEnabled.FontWeight=FontWeights.SemiBold;
-        System.Windows.Automation.AutomationProperties.SetName(_hermesEnabled,"使用本机 Hermes");
 
         var badge=new Border
         {
@@ -544,8 +544,7 @@ public sealed class SettingsWindow : Window
         var header=new Grid();
         header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
         header.ColumnDefinitions.Add(new ColumnDefinition());
-        header.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
-        header.Children.Add(badge);Grid.SetColumn(heading,1);header.Children.Add(heading);Grid.SetColumn(_hermesEnabled,2);header.Children.Add(_hermesEnabled);
+        header.Children.Add(badge);Grid.SetColumn(heading,1);header.Children.Add(heading);
 
         _hermesStatusDot.Width=8;_hermesStatusDot.Height=8;_hermesStatusDot.Margin=new Thickness(0,0,8,0);_hermesStatusDot.VerticalAlignment=VerticalAlignment.Center;
         _hermesStatus.FontSize=11.5;_hermesStatus.Foreground=SecondaryBrush;_hermesStatus.TextWrapping=TextWrapping.NoWrap;_hermesStatus.TextTrimming=TextTrimming.CharacterEllipsis;_hermesStatus.VerticalAlignment=VerticalAlignment.Center;
@@ -598,11 +597,9 @@ public sealed class SettingsWindow : Window
         };
         card.Loaded+=HermesPageLoaded;
 
-        _hermesEnabled.Checked+=HermesEnabledChanged;
-        _hermesEnabled.Unchecked+=HermesEnabledChanged;
         _hermesAgentSelector.SelectionChanged+=async (_,_)=>
         {
-            if(_loadingHermes||!IsLoaded||_hermesEnabled.IsChecked!=true)return;
+            if(_loadingHermes||!IsLoaded||!HermesSelected)return;
             _hermesModelSelector.Items.Clear();
             await ConnectHermesAsync(false);
         };
@@ -610,7 +607,7 @@ public sealed class SettingsWindow : Window
         _hermesDetect.Click+=async (_,_)=>
         {
             DetectHermes();
-            if(_hermesEnabled.IsChecked==true&&_hermesInstallation is not null)await ConnectHermesAsync(true);
+            if(HermesSelected&&_hermesInstallation is not null)await ConnectHermesAsync(true);
         };
         _hermesTest.Click+=async (_,_)=>await ConnectHermesAsync(true);
         _loadingHermes=false;
@@ -641,17 +638,8 @@ public sealed class SettingsWindow : Window
     {
         if(sender is FrameworkElement page)page.Loaded-=HermesPageLoaded;
         DetectHermes();
-        if(_hermesEnabled.IsChecked==true&&_hermesInstallation is not null)
+        if(HermesSelected&&_hermesInstallation is not null)
             await ConnectHermesAsync(false);
-    }
-
-    private void HermesEnabledChanged(object sender,RoutedEventArgs e)
-    {
-        if(_loadingHermes)return;
-        DetectHermes();
-        UpdateHermesControls();
-        if(IsLoaded&&_hermesEnabled.IsChecked==true&&_hermesInstallation is not null)
-            _=ConnectHermesAsync(false);
     }
 
     private void DetectHermes()
@@ -785,7 +773,7 @@ public sealed class SettingsWindow : Window
 
     private void UpdateHermesControls()
     {
-        var enabled=_hermesEnabled.IsChecked==true;
+        var enabled=HermesSelected;
         _hermesDetect.IsEnabled=!_hermesBusy;
         _hermesTest.IsEnabled=!_hermesBusy&&_hermesInstallation is not null;
         _hermesAgentSelector.IsEnabled=enabled&&!_hermesBusy&&_hermesAgentSelector.Items.Count>0;
@@ -1142,8 +1130,8 @@ public sealed class SettingsWindow : Window
     private void Save()
     {
         if(!StoreSelectedProvider(true))return;
-        var hermesEnabled=_hermesEnabled.IsChecked==true;
-        var codexEnabled=_codexSettings.IsEnabledForConversation;
+        var hermesEnabled=HermesSelected;
+        var codexEnabled=_backendSelector.SelectedBackendIndex==2;
         var unchangedCodex=_host.Settings.CodexEnabled&&_codexSettings.SelectedModel?.Model==_host.Settings.CodexModel&&_codexSettings.SelectedEffort==_host.Settings.CodexReasoningEffort;
         if(codexEnabled&&((!_codexSettings.ConnectionVerified&&!unchangedCodex)||_codexSettings.SelectedModel is null))
         {

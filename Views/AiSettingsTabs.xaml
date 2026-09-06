@@ -32,6 +32,11 @@
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="Pill" Property="BorderBrush" Value="#7180DE"/>
                             </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#929CAF"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter TargetName="Pill" Property="Background" Value="Transparent"/>
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>

@@ -10,31 +10,40 @@ namespace mewu_ai_Assistant.Views;
 public partial class AiSettingsTabs : UserControl
 {
     internal TabControl Tabs=>BackendTabs;
+    internal int SelectedBackendIndex=>BackendTabs.SelectedIndex;
+    internal event EventHandler? BackendChanged;
 
-    public AiSettingsTabs(UIElement api,UIElement hermes,UIElement? codex=null)
+    public AiSettingsTabs(UIElement api,UIElement hermes,UIElement? codex=null,int selectedBackendIndex=0)
     {
         InitializeComponent();
         System.Windows.Automation.AutomationProperties.SetName(BackendTabs,LocalizationService.T("AI 接入方式","AI integrations"));
         AddPage("API",api);
         AddPage("Hermes",hermes);
         AddPage("Codex",codex??ComingSoon("Codex"));
-        foreach(var name in new[]{"OpenClaw","Claude Code","WorkBuddy"})AddPage(name,ComingSoon(name));
-        BackendTabs.SelectedIndex=0;
+        foreach(var name in new[]{"OpenClaw","Claude Code","WorkBuddy"})AddPage(name,ComingSoon(name),false);
+        BackendTabs.SelectedIndex=selectedBackendIndex is >=0 and <=2?selectedBackendIndex:0;
+        BackendTabs.SelectionChanged+=(_,e)=>
+        {
+            if(ReferenceEquals(e.Source,BackendTabs))BackendChanged?.Invoke(this,EventArgs.Empty);
+        };
     }
 
-    private void AddPage(string name,UIElement content)
+    private void AddPage(string name,UIElement content,bool available=true)
     {
         // Each page owns its existing controls and scroll position. Switching
-        // tabs must not rebuild editors, discard drafts, or activate a backend.
+        // backends must not rebuild editors or discard other backend drafts.
         var tab=new TabItem
         {
             Header=name,
+            IsEnabled=available,
+            ToolTip=available?null:LocalizationService.T("陆续适配中","Integration coming soon"),
             Content=new ScrollViewer
             {
                 Content=content,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,Padding=new Thickness(2)
             }
         };
+        ToolTipService.SetShowOnDisabled(tab,true);
         System.Windows.Automation.AutomationProperties.SetName(tab,name);
         BackendTabs.Items.Add(tab);
     }

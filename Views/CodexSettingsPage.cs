@@ -10,7 +10,6 @@ namespace mewu_ai_Assistant.Views;
 
 internal sealed class CodexSettingsPage : StackPanel
 {
-    internal CheckBox EnabledChoice {get;}=new();
     private readonly ComboBox _model=new(),_effort=new();
     private readonly TextBlock _status=new(){TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,12,0,12)};
     private readonly Button _detect=new();
@@ -19,7 +18,6 @@ internal sealed class CodexSettingsPage : StackPanel
     private bool _loaded;
     internal CodexModelOption? SelectedModel=>_model.SelectedItem as CodexModelOption;
     internal string SelectedEffort=>(_effort.SelectedItem as EffortChoice)?.Value??_settings.CodexReasoningEffort;
-    internal bool IsEnabledForConversation=>EnabledChoice.IsChecked==true;
     internal bool ConnectionVerified {get;private set;}
 
     internal CodexSettingsPage(AppSettings settings,CancellationToken token)
@@ -27,7 +25,6 @@ internal sealed class CodexSettingsPage : StackPanel
         _settings=settings;_token=token;Margin=new Thickness(6,0,6,6);
         Children.Add(new TextBlock{Text="ChatGPT Work · Codex",FontSize=21,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,8,0,10)});
         Children.Add(new TextBlock{Text=T("沿用本机 ChatGPT 登录，无需 API Key。使用 Work / Codex 额度，具体积分消耗以账号套餐为准。","Uses your local ChatGPT sign-in without an API key. Uses Work / Codex allowance; credit charges depend on your plan."),TextWrapping=TextWrapping.Wrap,Foreground=Brushes.SlateGray,FontSize=12,Margin=new Thickness(0,0,0,18)});
-        EnabledChoice.Content=T("用于屏幕 AI 对话","Use for screen AI conversations");EnabledChoice.IsChecked=settings.CodexEnabled;Children.Add(EnabledChoice);
         Children.Add(_status);
         AddField(T("模型","Model"),_model);AddField(T("思考程度","Reasoning effort"),_effort);
         _model.SelectionChanged+=(_,_)=>UpdateEfforts();
