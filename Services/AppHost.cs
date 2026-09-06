@@ -348,13 +348,29 @@ public sealed class AppHost : IDisposable
     }
     private static void DisposeSafely(IDisposable? resource,string component){try{resource?.Dispose();}catch(Exception ex){try{new PrivacyLogger().Error(component,ex);}catch{}}}
 
-    private sealed class LightTrayMenuRenderer : Forms.ToolStripProfessionalRenderer
+    internal sealed class LightTrayMenuRenderer : Forms.ToolStripProfessionalRenderer
     {
         private static readonly Color Background=Color.FromArgb(250,251,253);
         private static readonly Color Border=Color.FromArgb(215,222,233);
         private static readonly Color Hover=Color.FromArgb(237,242,250);
 
         internal LightTrayMenuRenderer():base(new LightTrayMenuColorTable()){RoundedEdges=true;}
+
+        protected override void OnRenderItemText(Forms.ToolStripItemTextRenderEventArgs e)
+        {
+            if(e.Item is Forms.ToolStripMenuItem&&e.ToolStrip is Forms.ContextMenuStrip)
+            {
+                // DropDownMenu shares a preferred-height TextRectangle between
+                // rows, even when AutoSize=false gives each row a taller height.
+                // Keep its horizontal layout, but center in the actual local row
+                // on every paint so DPI/font changes cannot leave a stale offset.
+                var textBounds=e.TextRectangle;
+                e.TextRectangle=new Rectangle(textBounds.X,0,textBounds.Width,e.Item.Height);
+                e.TextFormat=(e.TextFormat&~Forms.TextFormatFlags.Bottom)
+                    |Forms.TextFormatFlags.VerticalCenter|Forms.TextFormatFlags.SingleLine;
+            }
+            base.OnRenderItemText(e);
+        }
 
         protected override void OnRenderToolStripBackground(Forms.ToolStripRenderEventArgs e)
         {
