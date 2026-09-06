@@ -8,6 +8,12 @@ public partial class App : System.Windows.Application
     private AppHost? _host;
     private readonly PrivacyLogger _logger=new();
 
+    protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
+    {
+        base.OnSessionEnding(e);
+        if(!e.Cancel)_host?.BeginShutdown();
+    }
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         System.Globalization.CultureInfo? qaUiCulture=null;

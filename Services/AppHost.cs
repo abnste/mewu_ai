@@ -41,7 +41,7 @@ public sealed class AppHost : IDisposable
         CrashDiagnosticsService.MarkOperation("加载设置");
         _settingsService=new();Settings=_settingsService.Load();
         LocalizationService.Initialize(_uiCultureOverride is null?Settings.UiLanguage:"system",_uiCultureOverride??CultureInfo.CurrentUICulture);
-        _main=new MainWindow(this); _app.MainWindow=_main;
+        _main=CreateMainWindow(); _app.MainWindow=_main;
         _hotkey=new GlobalHotkeyService(); _hotkey.Pressed+=BeginCapture; var hotkeyOk=_hotkey.Register(Settings.CaptureHotkey);
         var retention=TimeSpan.FromDays(Math.Clamp(Settings.TempCleanupDays,1,30));new TempFileService().Cleanup(retention);ClipboardService.CleanupStagedFiles(retention);BuildTray();if(!hotkeyOk)Notify("快捷键注册失败，可能已被其他应用占用");_activationGate.MarkStarted(QueueMainWindowActivation);CrashDiagnosticsService.MarkOperation("空闲");return true;
     }
@@ -116,7 +116,13 @@ public sealed class AppHost : IDisposable
             if(!token.IsCancellationRequested&&!IsExiting)try{Notify("无法开始截图，请重试");}catch{}
         }
     }
-    public void ShowMainWindow() { _app.Dispatcher.Invoke(()=>{_main??=new MainWindow(this);_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
+    private MainWindow CreateMainWindow()
+    {
+        var window=new MainWindow(this);
+        window.Closed+=(_,_)=>BeginShutdown();
+        return window;
+    }
+    public void ShowMainWindow() { if(IsExiting||_app.Dispatcher.HasShutdownStarted)return;_app.Dispatcher.Invoke(()=>{if(IsExiting)return;_main??=CreateMainWindow();_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
     public void ShowSettings() { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);var window=_settingsWindow;window.Closed+=(_,_)=>{if(ReferenceEquals(_settingsWindow,window))_settingsWindow=null;FinishAuxiliary(window);};} PrepareAuxiliary(_settingsWindow);_settingsWindow.Show();_settingsWindow.WindowState=WindowState.Normal;_settingsWindow.Activate();}); }
     public HermesInstallation? DiscoverHermes()=>_hermesRuntime.Discover();
 
@@ -281,6 +287,7 @@ public sealed class AppHost : IDisposable
     {
         var index=_auxiliaryWindows.LastIndexOf(window);if(index<0)return;
         var wasTop=index==_auxiliaryWindows.Count-1;_auxiliaryWindows.RemoveAt(index);if(!wasTop)return;
+        if(IsExiting||_app.Dispatcher.HasShutdownStarted){_restoreMainAfterAuxiliary=false;return;}
         while(_auxiliaryWindows.Count>0)
         {
             var previous=_auxiliaryWindows[^1];
@@ -321,7 +328,12 @@ public sealed class AppHost : IDisposable
         return true;
     }
     public void Notify(string message){_tray?.ShowBalloonTip(1500,"MewuAI",LocalizationService.TranslateUiText(message),Forms.ToolTipIcon.Info);}
-    public void Exit() { CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;_app.Shutdown(); }
+    internal void BeginShutdown()
+    {
+        if(IsExiting)return;
+        CrashDiagnosticsService.MarkOperation("正在退出");IsExiting=true;_lifetime.Cancel();if(_tray is not null)_tray.Visible=false;
+    }
+    public void Exit() { BeginShutdown();_app.Shutdown(); }
     public void Dispose()
     {
         if(Interlocked.Exchange(ref _disposed,1)!=0)return;
