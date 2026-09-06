@@ -9,7 +9,7 @@
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Foreground" Value="#637089"/>
             <Setter Property="Padding" Value="9,8"/>
-            <Setter Property="Margin" Value="1,0"/>
+            <Setter Property="Margin" Value="2,2"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template">
@@ -43,7 +43,14 @@
             </Setter>
         </Style>
     </UserControl.Resources>
-    <TabControl x:Name="BackendTabs" SelectedIndex="0" TabStripPlacement="Top"
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="ChannelPrompt" FontSize="13" FontWeight="Medium"
+                   Foreground="#39465E" Margin="2,0,2,9"/>
+    <TabControl x:Name="BackendTabs" Grid.Row="1" SelectedIndex="0" TabStripPlacement="Top"
                 Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource BackendTab}">
         <TabControl.Template>
             <ControlTemplate TargetType="TabControl">
@@ -52,11 +59,10 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Border Background="#F2F5FA" CornerRadius="10" Padding="3">
-                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
-                                      CanContentScroll="False" Focusable="False">
-                            <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="0"/>
-                        </ScrollViewer>
+                    <Border Background="#F2F5FA" CornerRadius="10" Padding="5" Margin="2,0"
+                            SnapsToDevicePixels="True">
+                        <WrapPanel IsItemsHost="True" KeyboardNavigation.TabIndex="0"
+                                   Orientation="Horizontal"/>
                     </Border>
                     <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" Margin="0,12,0,0"
                                       ContentSource="SelectedContent"/>
@@ -64,4 +70,5 @@
             </ControlTemplate>
         </TabControl.Template>
     </TabControl>
+    </Grid>
 </UserControl>
