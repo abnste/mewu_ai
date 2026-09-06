@@ -157,9 +157,9 @@
     </ScrollViewer>
       <StackPanel Grid.Row="2" Margin="0,8,0,0">
        <p:Popup x:Name="ChannelPickerPopup" PlacementTarget="{Binding ElementName=ChannelButton}" Placement="Top" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
-        <Border Width="250" Background="#FFFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="14" Padding="8" Margin="0,0,0,6">
+        <Border Width="300" Background="#FFFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="14" Padding="6" Margin="0,0,0,6" PreviewKeyDown="ChannelPickerKeyDown">
          <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="22" ShadowDepth="5" Opacity="0.22"/></Border.Effect>
-         <StackPanel><TextBlock Text="选择 AI 渠道" Foreground="#52637A" FontSize="12" FontWeight="SemiBold" Margin="7,3,7,6"/><ComboBox x:Name="ChannelSelector" MinHeight="32" BorderThickness="1" Background="#F7F9FC" Foreground="#3E4D65" FontSize="12" Padding="6,0" VerticalContentAlignment="Center" SelectionChanged="ChannelSelectionChanged" AutomationProperties.Name="选择AI渠道"/></StackPanel>
+         <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="ChannelPickerItems" KeyboardNavigation.TabNavigation="Cycle"/></ScrollViewer>
         </Border>
        </p:Popup>
        <Grid>
