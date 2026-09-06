@@ -162,20 +162,25 @@ public sealed class AppHost : IDisposable
             if(api is null)continue;
             channels.Add(new($"api:{provider.Id}",BuildApiChannelName(provider),provider.Id,provider.Model,ConversationChannelKind.Api,api.Capabilities.SupportsImage,api.Capabilities.SupportsVideo));
         }
-        if(Settings.HermesEnabled&&_hermesRuntime.Discover() is not null)
+        if(_hermesRuntime.Discover() is not null)
         {
             if(!string.IsNullOrWhiteSpace(Settings.HermesProfile)&&!string.IsNullOrWhiteSpace(Settings.HermesModel))
                 channels.Add(new("hermes",$"Hermes · {Settings.HermesProfile}","hermes",Settings.HermesModel??string.Empty,ConversationChannelKind.Hermes,true,true));
         }
-        if(Settings.CodexEnabled&&CodexAppServer.Discover() is not null)
+        if(!string.IsNullOrWhiteSpace(Settings.CodexModel)&&CodexAppServer.Discover() is not null)
         {
-            try{CodexSettingsPolicy.Validate(Settings);channels.Add(new("codex-work",$"ChatGPT Work · {Settings.CodexModel}","codex-work",Settings.CodexModel,ConversationChannelKind.Codex,Settings.CodexSupportsImage,Settings.CodexSupportsImage));}catch(InvalidOperationException){}
+            try
+            {
+                if(Settings.CodexModel.Length>160||Settings.CodexModel.Any(char.IsControl)||!new[]{"none","minimal","low","medium","high","xhigh","max","ultra"}.Contains(Settings.CodexReasoningEffort,StringComparer.Ordinal))throw new InvalidOperationException();
+                channels.Add(new("codex-work",$"ChatGPT Work · {Settings.CodexModel}","codex-work",Settings.CodexModel,ConversationChannelKind.Codex,Settings.CodexSupportsImage,Settings.CodexSupportsImage));
+            }
+            catch(InvalidOperationException){}
         }
-        if((Settings.WorkBuddyEnabled||!string.IsNullOrWhiteSpace(Settings.WorkBuddyModel))&&WorkBuddyAcpServer.Discover() is not null)
+        if(!string.IsNullOrWhiteSpace(Settings.WorkBuddyModel)&&WorkBuddyAcpServer.Discover() is not null)
         {
             try{WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);channels.Add(new("workbuddy",$"WorkBuddy · {Settings.WorkBuddyModel}","workbuddy",Settings.WorkBuddyModel,ConversationChannelKind.WorkBuddy,Settings.WorkBuddySupportsImage,Settings.WorkBuddySupportsImage));}catch(InvalidOperationException){}
         }
-        if(Settings.MiniMaxCodeEnabled&&MiniMaxCodeRuntime.TryGetDesktopSession() is not null)
+        if(!string.IsNullOrWhiteSpace(Settings.MiniMaxCodeModel)&&MiniMaxCodeRuntime.TryGetDesktopSession() is not null)
         {
             try
             {
@@ -241,7 +246,6 @@ public sealed class AppHost : IDisposable
         {
             try
             {
-                if(!settings.MiniMaxCodeEnabled)throw new InvalidOperationException("MiniMax Code 当前未启用，请在设置中完成配置。");
                 MiniMaxCodeRuntime.ValidateModel(settings.MiniMaxCodeModel);
                 if(MiniMaxCodeRuntime.TryGetDesktopSession() is null)throw new InvalidOperationException("未发现 MiniMax Code 桌面版登录会话，请点击设置页的“打开 MiniMax Code”完成登录。");
                 return new MiniMaxCodeAiProvider(settings.MiniMaxCodeModel);
@@ -252,7 +256,7 @@ public sealed class AppHost : IDisposable
         {
             try
             {
-                if(!settings.WorkBuddyEnabled&&string.IsNullOrWhiteSpace(settings.WorkBuddyModel))throw new InvalidOperationException("WorkBuddy 当前未启用，请在设置中完成配置。");
+                if(string.IsNullOrWhiteSpace(settings.WorkBuddyModel))throw new InvalidOperationException("WorkBuddy 尚未完成配置，请在设置中选择模型。");
                 WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
                 if(WorkBuddyAcpServer.Discover() is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
                 return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage);
@@ -263,15 +267,14 @@ public sealed class AppHost : IDisposable
         {
             try
             {
-                if(!settings.CodexEnabled)throw new InvalidOperationException("Codex 当前未启用，请在设置中完成配置。");
-                CodexSettingsPolicy.Validate(settings);
+                if(string.IsNullOrWhiteSpace(settings.CodexModel)||settings.CodexModel.Length>160||settings.CodexModel.Any(char.IsControl)||!new[]{"none","minimal","low","medium","high","xhigh","max","ultra"}.Contains(settings.CodexReasoningEffort,StringComparer.Ordinal))throw new InvalidOperationException("请在 Codex 页重新选择可用模型和思考程度。");
                 if(CodexAppServer.Discover() is null)throw new InvalidOperationException("未找到本机 Codex，请安装并登录官方 ChatGPT 桌面应用。");
                 return new CodexAiProvider(settings.CodexModel,settings.CodexReasoningEffort,settings.CodexSupportsImage);
             }
             catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
         if(selectedKind==ConversationChannelKind.Api)return aiProviderFactory.Create(settings,out error);
-        if(!settings.HermesEnabled){error="Hermes 当前未启用，请在设置中完成配置。";return null;}
+        if(string.IsNullOrWhiteSpace(settings.HermesProfile)||string.IsNullOrWhiteSpace(settings.HermesModel)){error="Hermes 尚未完成配置，请在设置中选择人格和模型。";return null;}
         try
         {
             // This runtime and provider live for the whole AppHost lifetime.
@@ -346,6 +349,13 @@ public sealed class AppHost : IDisposable
             if(_sessionConversationHistory.Count>maxEntries)
                 _sessionConversationHistory.RemoveRange(0,_sessionConversationHistory.Count-maxEntries);
         }
+    }
+
+    internal void RememberConversationChannel(string channelId)
+    {
+        if(string.IsNullOrWhiteSpace(channelId))return;
+        Settings.ConversationChannelId=channelId.Trim();
+        try{_settingsService?.Save(Settings);}catch(Exception ex){try{new PrivacyLogger().Error("ConversationChannelSave",ex);}catch{}}
     }
 
     internal void ClearSessionConversationHistory()

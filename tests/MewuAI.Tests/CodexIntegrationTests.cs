@@ -28,12 +28,12 @@ public sealed class CodexIntegrationTests
         Assert.Equal(LocalizationService.T("智能体已接入","Agent connected"),mewu_ai_Assistant.MainWindow.BuildAiStatusTitle(settings,true));
         Assert.Equal(LocalizationService.T("ChatGPT Work · Codex · gpt-5.4-mini · 高度思考","ChatGPT Work · Codex · gpt-5.4-mini · high reasoning"),mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
         settings.CodexModel=" ";
-        Assert.Contains(LocalizationService.T("未选择模型","No model selected"),mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
+        Assert.Contains("Hermes",mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
         Assert.DoesNotContain("MiniMax",mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
         settings.CodexEnabled=false;settings.HermesEnabled=true;
         Assert.StartsWith("Hermes · teaching · hermes-model",mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
         settings.HermesEnabled=false;
-        Assert.Equal("MiniMax · MiniMax-M3",mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
+        Assert.Contains("Hermes",mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
         settings.CodexEnabled=true;settings.CodexModel="gpt-5.4-mini";
         Assert.Contains("Codex · gpt-5.4-mini",mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
         Assert.Equal(LocalizationService.T("暂未设置AI功能","AI features are not set up"),mewu_ai_Assistant.MainWindow.BuildAiStatusTitle(settings,false));
