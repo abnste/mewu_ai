@@ -16,14 +16,14 @@ public sealed class AiSettingsTabsTests
         RunSta(()=>
         {
             var workBuddy=new TextBox{Text="saved-workbuddy-model"};
-            var view=new AiSettingsTabs(new TextBox(),new TextBox(),new TextBox(),5,workBuddy);
+            var view=new AiSettingsTabs(new TextBox(),new TextBox(),new TextBox(),AiSettingsTabs.WorkBuddyIndex,workBuddy);
             view.Measure(new Size(500,350));view.Arrange(new Rect(0,0,500,350));view.UpdateLayout();
-            Assert.Equal(5,view.SelectedBackendIndex);
-            Assert.True(((TabItem)view.Tabs.Items[5]).IsEnabled);
-            Assert.False(((TabItem)view.Tabs.Items[3]).IsEnabled);
+            Assert.Equal(AiSettingsTabs.WorkBuddyIndex,view.SelectedBackendIndex);
+            Assert.True(((TabItem)view.Tabs.Items[AiSettingsTabs.WorkBuddyIndex]).IsEnabled);
             Assert.False(((TabItem)view.Tabs.Items[4]).IsEnabled);
+            Assert.False(((TabItem)view.Tabs.Items[5]).IsEnabled);
             workBuddy.Text="unsaved-workbuddy-model";
-            view.Tabs.SelectedIndex=2;view.Tabs.SelectedIndex=0;view.Tabs.SelectedIndex=5;
+            view.Tabs.SelectedIndex=2;view.Tabs.SelectedIndex=0;view.Tabs.SelectedIndex=AiSettingsTabs.WorkBuddyIndex;
             Assert.Equal("unsaved-workbuddy-model",workBuddy.Text);
             Assert.Same(workBuddy,((ScrollViewer)((TabItem)view.Tabs.SelectedItem).Content).Content);
             Assert.Single(view.Tabs.Items.Cast<TabItem>(),item=>item.IsSelected);
@@ -40,7 +40,7 @@ public sealed class AiSettingsTabsTests
             var codex=new TextBox{Text="unsaved-codex-model"};
             var view=new AiSettingsTabs(api,hermes,codex);
             var tabs=view.Tabs;
-            Assert.Equal(new[]{"API","Hermes","Codex","OpenClaw","Claude Code","WorkBuddy"},tabs.Items.Cast<TabItem>().Select(t=>t.Header));
+            Assert.Equal(new[]{"API","Hermes","Codex","WorkBuddy","OpenClaw","Claude Code"},tabs.Items.Cast<TabItem>().Select(t=>t.Header));
             Assert.Equal(0,tabs.SelectedIndex);
             for(var i=1;i<3;i++)
             {

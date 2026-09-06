@@ -9,6 +9,10 @@ namespace mewu_ai_Assistant.Views;
 
 public partial class AiSettingsTabs : UserControl
 {
+    internal const int ApiIndex=0;
+    internal const int HermesIndex=1;
+    internal const int CodexIndex=2;
+    internal const int WorkBuddyIndex=3;
     internal TabControl Tabs=>BackendTabs;
     internal int SelectedBackendIndex=>BackendTabs.SelectedIndex;
     internal event EventHandler? BackendChanged;
@@ -21,9 +25,9 @@ public partial class AiSettingsTabs : UserControl
         AddPage("API",api);
         AddPage("Hermes",hermes);
         AddPage("Codex",codex??ComingSoon("Codex"));
-        foreach(var name in new[]{"OpenClaw","Claude Code"})AddPage(name,ComingSoon(name),false);
         AddPage("WorkBuddy",workBuddy??ComingSoon("WorkBuddy"),workBuddy is not null);
-        BackendTabs.SelectedIndex=selectedBackendIndex is >=0 and <=2||selectedBackendIndex==5&&workBuddy is not null?selectedBackendIndex:0;
+        foreach(var name in new[]{"OpenClaw","Claude Code"})AddPage(name,ComingSoon(name),false);
+        BackendTabs.SelectedIndex=selectedBackendIndex is >=ApiIndex and <=CodexIndex||selectedBackendIndex==WorkBuddyIndex&&workBuddy is not null?selectedBackendIndex:ApiIndex;
         BackendTabs.SelectionChanged+=(_,e)=>
         {
             if(ReferenceEquals(e.Source,BackendTabs))BackendChanged?.Invoke(this,EventArgs.Empty);

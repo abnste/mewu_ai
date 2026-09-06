@@ -23,7 +23,7 @@ public sealed class SettingsWindow : Window
     private CodexSettingsPage _codexSettings=null!;
     private WorkBuddySettingsPage _workBuddySettings=null!;
     private AiSettingsTabs _backendSelector=null!;
-    private bool HermesSelected=>_backendSelector?.SelectedBackendIndex==1;
+    private bool HermesSelected=>_backendSelector?.SelectedBackendIndex==AiSettingsTabs.HermesIndex;
     internal void ShowAiPage()=>_aiTab.IsSelected=true;
     private static readonly (string Value,string Label)[] HermesReasoningChoices=
     [
@@ -439,7 +439,7 @@ public sealed class SettingsWindow : Window
         _codexSettings=new CodexSettingsPage(_host.Settings,_windowLifetime.Token);
         _workBuddySettings=new WorkBuddySettingsPage(_host.Settings,_windowLifetime.Token);
         var hermes=HermesPage();
-        var selected=_host.Settings.WorkBuddyEnabled?5:_host.Settings.CodexEnabled?2:_host.Settings.HermesEnabled?1:0;
+        var selected=_host.Settings.WorkBuddyEnabled?AiSettingsTabs.WorkBuddyIndex:_host.Settings.CodexEnabled?AiSettingsTabs.CodexIndex:_host.Settings.HermesEnabled?AiSettingsTabs.HermesIndex:AiSettingsTabs.ApiIndex;
         _backendSelector=new AiSettingsTabs(Api(),hermes,_codexSettings,selected,_workBuddySettings){Margin=new Thickness(12,12,12,4)};
         _backendSelector.BackendChanged+=(_,_)=>UpdateHermesControls();
         UpdateHermesControls();
@@ -1079,8 +1079,8 @@ public sealed class SettingsWindow : Window
     {
         if(!StoreSelectedProvider(true))return;
         var hermesEnabled=HermesSelected;
-        var codexEnabled=_backendSelector.SelectedBackendIndex==2;
-        var workBuddyEnabled=_backendSelector.SelectedBackendIndex==5;
+        var codexEnabled=_backendSelector.SelectedBackendIndex==AiSettingsTabs.CodexIndex;
+        var workBuddyEnabled=_backendSelector.SelectedBackendIndex==AiSettingsTabs.WorkBuddyIndex;
         if(workBuddyEnabled&&_workBuddySettings.SelectedModel is null)
         {
             MewuDialogWindow.ShowMessage(this,LocalizationService.T("无法保存","Cannot save"),LocalizationService.T("请先在 WorkBuddy 页检测并选择可用模型。","Detect and select an available model on the WorkBuddy page first."));return;
