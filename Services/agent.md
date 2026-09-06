@@ -3,6 +3,7 @@
 - 2026-09-06 使用本机 WorkBuddy 5.5.3 自带 CLI 的官方 ACP stdio，通过 WorkBuddy.exe 的 ELECTRON_RUN_AS_NODE 模式运行；沿用官方 `.workbuddy` 登录，不读凭据、不调用会登出的 authenticate，也不调用包含 token 的 getUserInfo。模型和思考选项来自真实 session/new，检测不发收费 prompt；测试连接必须验证 MEWU_OK。
 - WorkBuddy 是可调用工具的 Agent；视频交接为租约保护的 MP4 副本及附件索引，由 Agent 自行分析，不得因为 ACP 没有 video 内容块而判定不支持视频。视频启动即开放限定本机工具并验证沙箱生效，补齐它自己的 Python/Node/Git 路径；不下载或捆绑 FFmpeg，不修改用户 WorkBuddy 配置。禁继承 hooks、插件、MCP、记忆和项目设置，拒绝扩权请求。
 - WorkBuddy 的 PARTIAL_SUCCESS 是运行统计：即使后续成功，只要中途工具报错也会出现。必须有 end_turn、非空最终正文且无终端 errorMessage 才能接受；真正失败、取消、截断、空正文及仅工具前说明必须拒绝。工具调用前的说明不进入最终正文，子 Agent 和压缩内部消息不能混入回答。详见 `../docs/workbuddy-integration.md`。
+- WorkBuddy 设置页“测试连接”只发送关闭思考/工具的 `MEWU_OK` 短文本挑战，独立使用 30 秒有界超时；不要复用完整文字轮次的 90 秒等待，否则 ACP 卡住时用户会误以为应用死循环。
 
 # Codex 官方接口
 

@@ -16,8 +16,20 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
 
     public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken)
     {
-        var response=await SendAsync(new AiRequest{Prompt="Reply exactly MEWU_OK. Do not use tools."},cancellationToken).ConfigureAwait(false);
-        return response.Answer.Trim()=="MEWU_OK";
+        // Connection testing must not inherit the full 90-second text turn
+        // budget. A test only needs a tiny text challenge and should return a
+        // useful failure promptly when the bundled ACP is stuck or offline.
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        try
+        {
+            var response=await SendAsync(new AiRequest{Prompt="Reply exactly MEWU_OK. Do not use tools.",DisableReasoning=true,MaxOutputTokens=32},timeout.Token).ConfigureAwait(false);
+            return response.Answer.Trim()=="MEWU_OK";
+        }
+        catch(OperationCanceledException) when(!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("WorkBuddy 连接测试超过 30 秒，已停止。请确认官方客户端已登录后重试。");
+        }
     }
 
     public async Task<AiResult> SendAsync(AiRequest request,CancellationToken cancellationToken)
