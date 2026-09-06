@@ -5,11 +5,11 @@
   <p>Windows 截图与原位 AI 助手</p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="#功能实景">功能实景</a> · <a href="https://github.com/abnste/mewu_ai/issues">反馈建议</a></p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.5"><img src="https://img.shields.io/badge/公测版-v0.2.5-7C6CF0?style=flat-square" alt="v0.2.5 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6"><img src="https://img.shields.io/badge/公测版-v0.2.6-7C6CF0?style=flat-square" alt="v0.2.6 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later" />
     <img src="https://img.shields.io/badge/Architecture-x64-64748B?style=flat-square" alt="x64" />
   </p>
-  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.5/MewuAI-Setup-0.2.5-win-x64.exe"><strong>下载安装版</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.5/MewuAI-Portable-0.2.5-win-x64.zip">免安装 ZIP</a></p>
+  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Setup-0.2.6-win-x64.exe"><strong>下载安装版</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Portable-0.2.6-win-x64.zip">免安装 ZIP</a></p>
 </div>
 
 <p align="center">
@@ -81,7 +81,7 @@
 <details>
 <summary>系统要求与安装提示</summary>
 
-Windows 10 2004（build 19041）及以上，x64。Windows N/KN 录制和播放 H.264 需要 Media Feature Pack。安装包暂未代码签名，SmartScreen 可能提示未知发布者；请从本仓库 Releases 下载，并核对附带的 `SHA256SUMS.txt`。
+Windows 10 2004（build 19041）及以上，x64。Windows N/KN 录制和播放 H.264 需要 Media Feature Pack。安装包暂未代码签名，SmartScreen 可能提示未知发布者；请从本仓库 Releases 下载，并核对 GitHub 为安装包显示的 SHA-256。
 
 </details>
 
@@ -116,5 +116,5 @@ dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 
 <p align="center">
   作者 <strong>Abner Stephen</strong><br />
   源代码公开 · 商业使用需作者授权<br />
-  <a href="./THIRD-PARTY-NOTICES.md">第三方声明</a> · <a href="https://github.com/abnste/mewu_ai/issues">反馈与建议</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.5">更新记录</a>
+  <a href="./THIRD-PARTY-NOTICES.md">第三方声明</a> · <a href="https://github.com/abnste/mewu_ai/issues">反馈与建议</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6">更新记录</a>
 </p>
