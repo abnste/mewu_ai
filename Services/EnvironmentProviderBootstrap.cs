@@ -173,6 +173,8 @@ public sealed class EnvironmentProviderBootstrap
             HermesEnabled=source.HermesEnabled,
             CodexEnabled=source.CodexEnabled,
             WorkBuddyEnabled=source.WorkBuddyEnabled,
+            MiniMaxCodeEnabled=source.MiniMaxCodeEnabled,
+            MiniMaxCodeModel=source.MiniMaxCodeModel,
             WorkBuddyModel=source.WorkBuddyModel,
             WorkBuddyReasoningEffort=source.WorkBuddyReasoningEffort,
             WorkBuddySupportsImage=source.WorkBuddySupportsImage,

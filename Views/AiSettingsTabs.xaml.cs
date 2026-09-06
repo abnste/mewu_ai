@@ -13,11 +13,12 @@ public partial class AiSettingsTabs : UserControl
     internal const int HermesIndex=1;
     internal const int CodexIndex=2;
     internal const int WorkBuddyIndex=3;
+    internal const int MiniMaxCodeIndex=4;
     internal TabControl Tabs=>BackendTabs;
     internal int SelectedBackendIndex=>BackendTabs.SelectedIndex;
     internal event EventHandler? BackendChanged;
 
-    public AiSettingsTabs(UIElement api,UIElement hermes,UIElement? codex=null,int selectedBackendIndex=0,UIElement? workBuddy=null)
+    public AiSettingsTabs(UIElement api,UIElement hermes,UIElement? codex=null,int selectedBackendIndex=0,UIElement? workBuddy=null,UIElement? miniMaxCode=null)
     {
         InitializeComponent();
         ChannelPrompt.Text=LocalizationService.T("请选择AI渠道：","Choose an AI channel:");
@@ -26,8 +27,9 @@ public partial class AiSettingsTabs : UserControl
         AddPage("Hermes",hermes);
         AddPage("Codex",codex??ComingSoon("Codex"));
         AddPage("WorkBuddy",workBuddy??ComingSoon("WorkBuddy"),workBuddy is not null);
+        if(miniMaxCode is not null)AddPage("MiniMax Code",miniMaxCode);
         foreach(var name in new[]{"OpenClaw","Claude Code"})AddPage(name,ComingSoon(name),false);
-        BackendTabs.SelectedIndex=selectedBackendIndex is >=ApiIndex and <=CodexIndex||selectedBackendIndex==WorkBuddyIndex&&workBuddy is not null?selectedBackendIndex:ApiIndex;
+        BackendTabs.SelectedIndex=selectedBackendIndex is >=ApiIndex and <=CodexIndex||selectedBackendIndex==WorkBuddyIndex&&workBuddy is not null||selectedBackendIndex==MiniMaxCodeIndex&&miniMaxCode is not null?selectedBackendIndex:ApiIndex;
         BackendTabs.SelectionChanged+=(_,e)=>
         {
             if(ReferenceEquals(e.Source,BackendTabs))BackendChanged?.Invoke(this,EventArgs.Empty);

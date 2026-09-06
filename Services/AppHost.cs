@@ -175,6 +175,16 @@ public sealed class AppHost : IDisposable
         {
             try{WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);channels.Add(new("workbuddy",$"WorkBuddy · {Settings.WorkBuddyModel}","workbuddy",Settings.WorkBuddyModel,ConversationChannelKind.WorkBuddy,Settings.WorkBuddySupportsImage,Settings.WorkBuddySupportsImage));}catch(InvalidOperationException){}
         }
+        if(Settings.MiniMaxCodeEnabled&&MiniMaxCodeRuntime.TryGetDesktopSession() is not null)
+        {
+            try
+            {
+                MiniMaxCodeRuntime.ValidateModel(Settings.MiniMaxCodeModel);
+                var model=MiniMaxCodeRuntime.KnownModels.First(item=>item.Model.Equals(Settings.MiniMaxCodeModel,StringComparison.OrdinalIgnoreCase));
+                channels.Add(new("minimax-code",$"MiniMax Code · {model.Name}","minimax-code",model.Model,ConversationChannelKind.MiniMaxCode,model.SupportsVision,model.SupportsVision));
+            }
+            catch(InvalidOperationException){}
+        }
         return channels;
     }
 
@@ -210,7 +220,7 @@ public sealed class AppHost : IDisposable
         channelId=string.IsNullOrWhiteSpace(channelId)?null:channelId.Trim();
         if(channelId is not null&&channelId.StartsWith("api:",StringComparison.Ordinal))
             return aiProviderFactory.Create(settings,channelId[4..],out error);
-        if(channelId is not null&&!channelId.Equals("hermes",StringComparison.Ordinal)&&!channelId.Equals("codex-work",StringComparison.Ordinal)&&!channelId.Equals("workbuddy",StringComparison.Ordinal))
+        if(channelId is not null&&!channelId.Equals("hermes",StringComparison.Ordinal)&&!channelId.Equals("codex-work",StringComparison.Ordinal)&&!channelId.Equals("workbuddy",StringComparison.Ordinal)&&!channelId.Equals("minimax-code",StringComparison.Ordinal))
         {
             error="所选 AI 渠道不存在，请重新选择。";
             return null;
@@ -220,11 +230,23 @@ public sealed class AppHost : IDisposable
             "hermes"=>ConversationChannelKind.Hermes,
             "codex-work"=>ConversationChannelKind.Codex,
             "workbuddy"=>ConversationChannelKind.WorkBuddy,
+            "minimax-code"=>ConversationChannelKind.MiniMaxCode,
             _=>ConversationChannelKind.Api
         };
         if(channelId is null)
         {
-            selectedKind=settings.WorkBuddyEnabled?ConversationChannelKind.WorkBuddy:settings.CodexEnabled?ConversationChannelKind.Codex:settings.HermesEnabled?ConversationChannelKind.Hermes:ConversationChannelKind.Api;
+            selectedKind=settings.MiniMaxCodeEnabled?ConversationChannelKind.MiniMaxCode:settings.WorkBuddyEnabled?ConversationChannelKind.WorkBuddy:settings.CodexEnabled?ConversationChannelKind.Codex:settings.HermesEnabled?ConversationChannelKind.Hermes:ConversationChannelKind.Api;
+        }
+        if(selectedKind==ConversationChannelKind.MiniMaxCode)
+        {
+            try
+            {
+                if(!settings.MiniMaxCodeEnabled)throw new InvalidOperationException("MiniMax Code 当前未启用，请在设置中完成配置。");
+                MiniMaxCodeRuntime.ValidateModel(settings.MiniMaxCodeModel);
+                if(MiniMaxCodeRuntime.TryGetDesktopSession() is null)throw new InvalidOperationException("未发现 MiniMax Code 桌面版登录会话，请点击设置页的“打开 MiniMax Code”完成登录。");
+                return new MiniMaxCodeAiProvider(settings.MiniMaxCodeModel);
+            }
+            catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
         if(selectedKind==ConversationChannelKind.WorkBuddy)
         {

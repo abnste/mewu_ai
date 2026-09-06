@@ -7,7 +7,8 @@ internal enum ConversationChannelKind
     Api,
     Hermes,
     Codex,
-    WorkBuddy
+    WorkBuddy,
+    MiniMaxCode
 }
 
 /// <summary>A concrete, currently usable route for one screen-assistant turn.</summary>

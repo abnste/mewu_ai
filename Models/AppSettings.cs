@@ -27,6 +27,8 @@ public sealed class AppSettings
     public string WorkBuddyModel { get; set; } = string.Empty;
     public string WorkBuddyReasoningEffort { get; set; } = "enabled";
     public bool WorkBuddySupportsImage { get; set; }
+    public bool MiniMaxCodeEnabled { get; set; }
+    public string MiniMaxCodeModel { get; set; } = "minimax/MiniMax-M3";
     public string HermesProfile { get; set; } = "default";
     public string HermesProvider { get; set; } = string.Empty;
     public string HermesModel { get; set; } = string.Empty;
