@@ -122,7 +122,6 @@ public partial class MainWindow : Window
         }
         return false;
     }
-    private void MinimizeWindow(object sender,RoutedEventArgs e)=>WindowState=WindowState.Minimized;
     private void HideWindow(object sender,RoutedEventArgs e)=>Hide();
     private void OnClosing(object? sender,CancelEventArgs e) { if(_host.IsExiting)return; e.Cancel=true; Hide(); }
 }
