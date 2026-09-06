@@ -53,30 +53,31 @@ public partial class MainWindow : Window
     {
         ArgumentNullException.ThrowIfNull(settings);
         if(!available)return LocalizationService.T("暂未设置AI功能","AI features are not set up");
-        return (settings.WorkBuddyEnabled||settings.CodexEnabled||settings.HermesEnabled)?LocalizationService.T("智能体已接入","Agent connected"):LocalizationService.T("AI模型已接入","AI model connected");
+        var selected=settings.ConversationChannelId?.Trim()??string.Empty;
+        var selectedAgent=selected.Equals("workbuddy",StringComparison.OrdinalIgnoreCase)||selected.Equals("codex-work",StringComparison.OrdinalIgnoreCase)||selected.Equals("hermes",StringComparison.OrdinalIgnoreCase);
+        return selectedAgent||((string.IsNullOrWhiteSpace(selected))&&(settings.WorkBuddyEnabled||settings.CodexEnabled||settings.HermesEnabled))
+            ?LocalizationService.T("智能体已接入","Agent connected")
+            :LocalizationService.T("AI模型已接入","AI model connected");
     }
 
     internal static string BuildAiStatusText(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        var selected=settings.ConversationChannelId?.Trim()??string.Empty;
+        if(selected.Equals("workbuddy",StringComparison.OrdinalIgnoreCase))return BuildWorkBuddyStatus(settings);
+        if(selected.Equals("codex-work",StringComparison.OrdinalIgnoreCase))return BuildCodexStatus(settings);
+        if(selected.Equals("hermes",StringComparison.OrdinalIgnoreCase))return BuildHermesStatus(settings);
+        if(selected.StartsWith("api:",StringComparison.Ordinal))
+        {
+            var configured=settings.Providers.FirstOrDefault(provider=>provider.Id==selected[4..]);
+            if(configured is not null)return BuildProviderDisplayText(configured);
+        }
         if(settings.WorkBuddyEnabled)
-        {
-            var model=string.IsNullOrWhiteSpace(settings.WorkBuddyModel)?LocalizationService.T("未选择模型","No model selected"):settings.WorkBuddyModel.Trim();
-            var effort=settings.WorkBuddyReasoningEffort switch{"enabled"=>LocalizationService.T("默认思考","default reasoning"),"disabled"=>BuildReasoningDisplayText("none"),_=>BuildReasoningDisplayText(settings.WorkBuddyReasoningEffort)};
-            return $"WorkBuddy · {model} · {effort}";
-        }
+            return BuildWorkBuddyStatus(settings);
         if(settings.CodexEnabled)
-        {
-            var model=string.IsNullOrWhiteSpace(settings.CodexModel)?LocalizationService.T("未选择模型","No model selected"):settings.CodexModel.Trim();
-            return $"ChatGPT Work · Codex · {model} · {BuildReasoningDisplayText(settings.CodexReasoningEffort)}";
-        }
+            return BuildCodexStatus(settings);
         if(settings.HermesEnabled)
-        {
-            var profile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
-            var model=string.IsNullOrWhiteSpace(settings.HermesModel)?LocalizationService.T("未选择模型","No model selected"):settings.HermesModel.Trim();
-            var reasoning=BuildReasoningDisplayText(settings.HermesReasoningEffort);
-            return $"Hermes · {profile} · {model} · {reasoning}";
-        }
+            return BuildHermesStatus(settings);
         if(settings.Providers.Count==0)return LocalizationService.T("未配置 AI 模型","No AI model configured");
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))return LocalizationService.T("默认 Provider 未选择 · AI 不可用","Choose a default provider to enable AI");
         var matches=settings.Providers.Where(provider=>provider.Id==settings.DefaultProviderId).Take(2).ToList();
@@ -86,6 +87,23 @@ public partial class MainWindow : Window
             >1=>LocalizationService.T("Provider ID 重复 · AI 不可用","Duplicate provider IDs · AI unavailable"),
             _=>BuildProviderDisplayText(matches[0])
         };
+    }
+    private static string BuildWorkBuddyStatus(AppSettings settings)
+    {
+        var model=string.IsNullOrWhiteSpace(settings.WorkBuddyModel)?LocalizationService.T("未选择模型","No model selected"):settings.WorkBuddyModel.Trim();
+        var effort=settings.WorkBuddyReasoningEffort switch{"enabled"=>LocalizationService.T("默认思考","default reasoning"),"disabled"=>BuildReasoningDisplayText("none"),_=>BuildReasoningDisplayText(settings.WorkBuddyReasoningEffort)};
+        return $"WorkBuddy · {model} · {effort}";
+    }
+    private static string BuildCodexStatus(AppSettings settings)
+    {
+        var model=string.IsNullOrWhiteSpace(settings.CodexModel)?LocalizationService.T("未选择模型","No model selected"):settings.CodexModel.Trim();
+        return $"ChatGPT Work · Codex · {model} · {BuildReasoningDisplayText(settings.CodexReasoningEffort)}";
+    }
+    private static string BuildHermesStatus(AppSettings settings)
+    {
+        var profile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
+        var model=string.IsNullOrWhiteSpace(settings.HermesModel)?LocalizationService.T("未选择模型","No model selected"):settings.HermesModel.Trim();
+        return $"Hermes · {profile} · {model} · {BuildReasoningDisplayText(settings.HermesReasoningEffort)}";
     }
     private static string BuildReasoningDisplayText(string? effort)=>(effort??string.Empty).Trim().ToLowerInvariant() switch
     {

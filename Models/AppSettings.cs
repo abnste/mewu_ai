@@ -16,6 +16,8 @@ public sealed class AppSettings
     public bool RecordMicrophone { get; set; }
     public bool SaveConversationHistory { get; set; } public bool EnableVoiceInput { get; set; } public bool AutomaticallyStartListening { get; set; }
     public string VoiceLanguage { get; set; } = "system"; public string? DefaultProviderId { get; set; }
+    /// <summary>Last conversation channel selected in the screen assistant.</summary>
+    public string ConversationChannelId { get; set; } = string.Empty;
     public bool HermesEnabled { get; set; }
     public bool CodexEnabled { get; set; }
     public string CodexModel { get; set; } = string.Empty;

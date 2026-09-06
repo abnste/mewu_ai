@@ -42,12 +42,12 @@ public sealed class SettingsWindow : Window
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials = new();
-    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerType = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
+    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _providerType = new(), _providerList = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
     private readonly TextBox _hotkey = new();
     private readonly TextBox _baseUrl = new(), _customHeaders = new();
     private readonly TextBox _requestParameters = new();
     private readonly PasswordBox _apiKey = new();
-    private readonly Button _clearApiKey = new();
+    private readonly Button _clearApiKey = new(), _addProvider = new(), _deleteProvider = new();
     private readonly TextBlock _apiKeyStatus = new(), _windowConfigurationWarning = new(), _aiConfigurationWarning = new(), _hermesStatus = new();
     private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
@@ -456,6 +456,17 @@ public sealed class SettingsWindow : Window
         _aiConfigurationWarning.Margin=new Thickness(0,0,0,12);
         _aiConfigurationWarning.TextWrapping=TextWrapping.Wrap;
         panel.Children.Add(_aiConfigurationWarning);
+        _providerList.DisplayMemberPath=nameof(AiProviderSettings.Name);
+        _providerList.MinWidth=0;
+        System.Windows.Automation.AutomationProperties.SetName(_providerList,"API接入列表");
+        _providerList.SelectionChanged+=(_,_)=>{if(!_loadingProvider&&_providerList.SelectedItem is AiProviderSettings provider){_defaultProviderId=provider.Id;SelectProvider(provider);}};
+        var providerActions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Left};
+        _addProvider.Content=LocalizationService.T("新增接入点","Add endpoint");_deleteProvider.Content=LocalizationService.T("删除接入点","Remove endpoint");
+        foreach(var button in new[]{_addProvider,_deleteProvider}){button.FontSize=12;button.MinHeight=32;button.Padding=new Thickness(12,6,12,6);button.Margin=new Thickness(0,0,8,0);button.SetResourceReference(StyleProperty,"SecondaryButton");}
+        _addProvider.Click+=(_,_)=>AddApiProvider();_deleteProvider.Click+=(_,_)=>RemoveApiProvider();
+        providerActions.Children.Add(_addProvider);providerActions.Children.Add(_deleteProvider);
+        var providerListPanel=new StackPanel();providerListPanel.Children.Add(_providerList);providerListPanel.Children.Add(providerActions);
+        panel.Children.Add(AiSettingsForm.Field(LocalizationService.T("API 接入列表","API endpoints"),providerListPanel));
         _providerType.SelectedValuePath = "Tag";
         foreach (var preset in ProviderPresetPolicy.All)
             _providerType.Items.Add(new ComboBoxItem { Content = LocalizationService.T(preset.Name, preset.Id == "Volcengine" ? "Volcengine" : preset.Id == "Custom" ? "OpenAI compatible" : preset.Name), Tag = preset.Id });
@@ -522,8 +533,31 @@ public sealed class SettingsWindow : Window
         form.AddAction(test,LocalizationService.T("测试连接","Test connection"));
         form.AddAction(refreshModels,LocalizationService.T("刷新模型","Refresh models"));
         var initial = _defaultProviderId is null?_providers[0]:_providers.FirstOrDefault(x => x.Id == _defaultProviderId) ?? _providers[0];
+        RefreshProviderList(initial);
         SelectProvider(initial);
         return form;
+    }
+
+    private void RefreshProviderList(AiProviderSettings? selected=null)
+    {
+        _loadingProvider=true;_providerList.Items.Clear();foreach(var provider in _providers)_providerList.Items.Add(provider);_providerList.SelectedItem=selected??_selectedProvider??_providers.FirstOrDefault();_loadingProvider=false;
+        _deleteProvider.IsEnabled=_providers.Count>1;
+    }
+
+    private void AddApiProvider()
+    {
+        if(!StoreSelectedProvider(true))return;
+        var provider=ProviderPresetPolicy.Create(ProviderPresetPolicy.All.First(item=>item.Id=="Custom"));
+        provider.Name=$"API 接入点 {_providers.Count+1}";_providers.Add(provider);_defaultProviderId=provider.Id;RefreshProviderList(provider);SelectProvider(provider);
+    }
+
+    private void RemoveApiProvider()
+    {
+        if(_providerList.SelectedItem is not AiProviderSettings provider||_providers.Count<=1)return;
+        if(MessageBox.Show(this,LocalizationService.T($"确定删除“{provider.Name}”吗？","Delete this API endpoint?"),LocalizationService.T("删除接入点","Delete endpoint"),MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
+        _providers.Remove(provider);_pendingApiKeys.Remove(provider.Id);_apiKeysMarkedForDeletion.Remove(provider.Id);_automaticProviderDrafts.Remove(provider);
+        if(string.Equals(_defaultProviderId,provider.Id,StringComparison.Ordinal))_defaultProviderId=_providers[0].Id;
+        var next=_providers.FirstOrDefault(item=>item.Id==_defaultProviderId)??_providers[0];RefreshProviderList(next);SelectProvider(next);
     }
 
     private UIElement HermesPage()
@@ -914,6 +948,7 @@ public sealed class SettingsWindow : Window
         if (_loadingProvider || provider is null) return;
         _selectedProvider = provider;
         _loadingProvider = true;
+        _providerList.SelectedItem=provider;
         _modelLoad?.Cancel();
         _modelLoadDebounce.Stop();
         var preset = ProviderPresetPolicy.Detect(provider);
@@ -959,6 +994,7 @@ public sealed class SettingsWindow : Window
             _automaticProviderDrafts.Add(next);
             _providers.Add(next);
         }
+        RefreshProviderList(next);
         SelectProvider(next);
         _defaultProviderId = next.Id;
         if (discardEmptyDraft)
@@ -1078,9 +1114,12 @@ public sealed class SettingsWindow : Window
     private void Save()
     {
         if(!StoreSelectedProvider(true))return;
-        var hermesEnabled=HermesSelected;
-        var codexEnabled=_backendSelector.SelectedBackendIndex==AiSettingsTabs.CodexIndex;
-        var workBuddyEnabled=_backendSelector.SelectedBackendIndex==AiSettingsTabs.WorkBuddyIndex;
+        // Visiting a settings tab configures that channel; saving another tab
+        // must not silently disable an already configured route.  The screen
+        // assistant chooses between all usable channels at send time.
+        var hermesEnabled=_host.Settings.HermesEnabled||HermesSelected;
+        var codexEnabled=_host.Settings.CodexEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.CodexIndex;
+        var workBuddyEnabled=_host.Settings.WorkBuddyEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.WorkBuddyIndex;
         if(workBuddyEnabled&&_workBuddySettings.SelectedModel is null)
         {
             MewuDialogWindow.ShowMessage(this,LocalizationService.T("无法保存","Cannot save"),LocalizationService.T("请先在 WorkBuddy 页检测并选择可用模型。","Detect and select an available model on the WorkBuddy page first."));return;
@@ -1169,6 +1208,7 @@ public sealed class SettingsWindow : Window
                 EnableVoiceInput=_voice.IsChecked==true,
                 AutomaticallyStartListening=_voice.IsChecked==true&&_autoVoice.IsChecked==true,
                 VoiceLanguage=(_voiceLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system",
+                ConversationChannelId=_host.Settings.ConversationChannelId,
                 HermesEnabled=hermesEnabled,
                 CodexEnabled=codexEnabled,
                 WorkBuddyEnabled=workBuddyEnabled,

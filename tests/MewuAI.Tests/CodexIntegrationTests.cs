@@ -40,6 +40,18 @@ public sealed class CodexIntegrationTests
     }
 
     [Fact]
+    public void HomeStatusUsesPersistedConversationChannelWhenSeveralAreConfigured()
+    {
+        var settings=new AppSettings
+        {
+            WorkBuddyEnabled=true,WorkBuddyModel="work-model",
+            ConversationChannelId="api:second",DefaultProviderId="first",
+            Providers=[new(){Id="first",Name="First",Model="MiniMax-M3"},new(){Id="second",Name="Second",Model="MiniMax-M3"}]
+        };
+        Assert.Contains("Second",mewu_ai_Assistant.MainWindow.BuildAiStatusText(settings));
+    }
+
+    [Fact]
     public async Task CompletionRequiresOwnedFinalMessageAndTerminalEvent()
     {
         var turn=new CodexTurnCollector("ours",new(),CancellationToken.None);Start(turn);
@@ -110,10 +122,10 @@ public sealed class CodexIntegrationTests
     }
 
     [Fact]
-    public void BackendsAreExclusiveAndIncompleteCodexSettingsFailClosed()
+    public void MultipleAgentChannelsAreAllowedButIncompleteCodexSettingsFailClosed()
     {
         Assert.Throws<InvalidOperationException>(()=>CodexSettingsPolicy.Validate(new(){CodexEnabled=true}));
-        Assert.Throws<InvalidOperationException>(()=>CodexSettingsPolicy.Validate(new(){CodexEnabled=true,HermesEnabled=true,CodexModel="model"}));
+        CodexSettingsPolicy.Validate(new(){CodexEnabled=true,HermesEnabled=true,CodexModel="model"});
         CodexSettingsPolicy.Validate(new(){CodexEnabled=true,CodexModel="model"});
     }
 

@@ -117,6 +117,8 @@ public partial class CaptureOverlayWindow : Window
     private Color _drawColor=Colors.Red;
     private bool _drawHighlighter,_drawTextHighlight,_restoringDrawingAction,_drawingFontsLoaded;
     private bool _conversationAiAvailable,_translationAiAvailable;
+    private IReadOnlyList<ConversationChannel> _conversationChannels=[];
+    private string _selectedConversationChannelId=string.Empty;
     private bool _lastSubmittedTurnRecorded;
     private readonly NativeWindowSnapService _windowSnap=new();
     private Rect _snapCandidate=Rect.Empty;
@@ -290,7 +292,7 @@ public partial class CaptureOverlayWindow : Window
     {
         _host=host;IsTeachingMode=host.Settings.TeachingMode;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=AnswerText.ContainsTable?Visibility.Visible:Visibility.Collapsed;
         _history[0]=_history[0] with{Text=_history[0].Text+" 本轮附件清单中的 referenceHandle 是不可变主键；每条批注都必须原样返回它。句柄与 regionIndex 冲突时以句柄为准，禁止按 @图片N 或 @视频N 的显示编号猜测附件顺序。"};
-        LoadSessionHistory();
+        _selectedConversationChannelId=host.Settings.ConversationChannelId??string.Empty;
         // Keep the composer fully below the viewport until its first arranged
         // frame.  Starting visible here lets WPF paint one terminal frame
         // before Loaded can start the entrance animation.
@@ -311,6 +313,7 @@ public partial class CaptureOverlayWindow : Window
             ToolTipService.SetShowOnDisabled(LongCaptureButton,true);
         }
         RefreshAiFeatureAvailability();
+        LoadSessionHistory();
         ApplyVoiceAvailability();
         if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
         DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
@@ -411,8 +414,18 @@ public partial class CaptureOverlayWindow : Window
 
     private void RefreshAiFeatureAvailability()
     {
-        _conversationAiAvailable=_host.IsScreenAiAvailable(out _);
+        _conversationChannels=_host.GetConversationChannels();
+        _conversationAiAvailable=_conversationChannels.Count>0;
         _translationAiAvailable=_host.IsTranslationAvailable(out _);
+        var preferred=_conversationChannels.FirstOrDefault(item=>item.Id==_selectedConversationChannelId)
+            ??_conversationChannels.FirstOrDefault(item=>item.Id==_host.Settings.ConversationChannelId)
+            ??_conversationChannels.FirstOrDefault(item=>item.Id==$"api:{_host.Settings.DefaultProviderId}")
+            ??_conversationChannels.FirstOrDefault();
+        if(preferred is not null)_selectedConversationChannelId=preferred.Id;
+        ChannelSelector.Items.Clear();
+        foreach(var channel in _conversationChannels)ChannelSelector.Items.Add(channel);
+        ChannelSelector.SelectedItem=preferred;
+        ChannelPickerHost.Visibility=_conversationChannels.Count>1?Visibility.Visible:Visibility.Collapsed;
         PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
         PromptBarHost.IsHitTestVisible=_conversationAiAvailable&&!_promptBarHidden;
         ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;
@@ -426,14 +439,27 @@ public partial class CaptureOverlayWindow : Window
         QuickPrompt.CaretBrush=new SolidColorBrush(Color.FromRgb(91,108,235));
     }
 
-    private (string Provider,string Model) GetHistoryScope()
+    private (string Provider,string Model) GetHistoryScope(string? channelId=null)
     {
-        if(_host.Settings.WorkBuddyEnabled)return ("WorkBuddy",_host.Settings.WorkBuddyModel);
-        if(_host.Settings.CodexEnabled)return ("ChatGPT Work · Codex",_host.Settings.CodexModel);
-        if(_host.Settings.HermesEnabled)
-            return ($"本机 Hermes · {_host.Settings.HermesProfile}",_host.Settings.HermesModel??string.Empty);
-        var configured=_host.Settings.Providers.FirstOrDefault(item=>item.Id==_host.Settings.DefaultProviderId);
+        var selected=_conversationChannels.FirstOrDefault(item=>item.Id==(channelId??_selectedConversationChannelId));
+        if(selected is {Kind:ConversationChannelKind.WorkBuddy})return ("WorkBuddy",selected.Model);
+        if(selected is {Kind:ConversationChannelKind.Codex})return ("ChatGPT Work · Codex",selected.Model);
+        if(selected is {Kind:ConversationChannelKind.Hermes})return ($"本机 Hermes · {_host.Settings.HermesProfile}",selected.Model);
+        var providerId=selected is {Kind:ConversationChannelKind.Api} api?api.ProviderId:_host.Settings.DefaultProviderId;
+        var configured=_host.Settings.Providers.FirstOrDefault(item=>item.Id==providerId);
         return (configured?.Name??configured?.Id??string.Empty,configured?.Model??string.Empty);
+    }
+
+    private void ChannelSelectionChanged(object sender,SelectionChangedEventArgs e)
+    {
+        if(ChannelSelector.SelectedItem is not ConversationChannel selected||string.Equals(_selectedConversationChannelId,selected.Id,StringComparison.Ordinal))return;
+        _selectedConversationChannelId=selected.Id;
+        _host.Settings.ConversationChannelId=selected.Id;
+        _historyLoadVersion++;
+        _history.Clear();_history.Add(new("system",VisualAnnotationProtocol.SystemInstruction));
+        LoadSessionHistory();
+        RefreshHistoryPreview();
+        PromptStatus.Text=$"已切换到 {selected.DisplayName}";
     }
 
     private void LoadSessionHistory()
@@ -1872,7 +1898,7 @@ public partial class CaptureOverlayWindow : Window
 
     private async Task SendAsync(bool useDefaultPrompt,string? explicitPrompt=null,SelectionItem? onlyTarget=null,bool tableRecognition=false)
     {
-        if(!_conversationAiAvailable||_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;StopOverlayReadAloud();var usingHermes=_host.Settings.HermesEnabled;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
+        if(!_conversationAiAvailable||_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;StopOverlayReadAloud();var selectedChannel=_conversationChannels.FirstOrDefault(item=>item.Id==_selectedConversationChannelId)??_conversationChannels.FirstOrDefault();if(selectedChannel is null){PromptStatus.Text="请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}var usingHermes=selectedChannel.Kind==ConversationChannelKind.Hermes;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,selectedChannel.Id,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
         var uploadedReferences=onlyTarget is null?_uploadedReferences.ToArray():[];
         // A missing explicit attachment is a deliberate text-only turn. Do
         // not manufacture a full-screen screenshot: the user must explicitly
@@ -1938,7 +1964,7 @@ public partial class CaptureOverlayWindow : Window
                     if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;
                     lastPreview=preview;ShowAnswer();RefreshAnswer(preview);PromptStatus.Text="正在整理回答…";
                 }):null;
-            var agentProgress=(usingHermes||_host.Settings.CodexEnabled||_host.Settings.WorkBuddyEnabled)?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,streamProgress,agentProgress,(usingHermes||_host.Settings.CodexEnabled||_host.Settings.WorkBuddyEnabled)?HandleOverlayInteractionAsync:null,hasVisualAttachments);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamProgress?.Flush();streamProgress?.ThrowIfFaulted();streamProgress?.Dispose();streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
+            var usingAgent=selectedChannel.Kind is ConversationChannelKind.Hermes or ConversationChannelKind.Codex or ConversationChannelKind.WorkBuddy;var agentProgress=usingAgent?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),attachments,streamProgress,agentProgress,usingAgent?HandleOverlayInteractionAsync:null,hasVisualAttachments);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamProgress?.Flush();streamProgress?.ThrowIfFaulted();streamProgress?.Dispose();streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
             // Normalize the protocol before touching the answer card, mapping
             // annotations, or writing history. This prevents a complete JSON
             // envelope from flashing in the UI and makes every downstream
@@ -1958,7 +1984,7 @@ public partial class CaptureOverlayWindow : Window
                 CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频批注完整性核验":"屏幕助手：图片批注自动纠正");new PrivacyLogger().Info("ScreenAiAnnotationPhase",$"开始{(hasVideo?"核验":"图片补标")}；初稿有效批注 {renderedAnnotationCount}");
                 try
                 {
-                    var repairMode=CaptureOverlayPolicy.GetRepairAnnotationUpdateMode(hadExistingAnnotations,result.AnnotationUpdateMode);var repairPrompt=hasVideo?CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt(providerPrompt,result.Answer,repairMode):CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt(providerPrompt,result.Answer,repairMode);var repairRequest=CaptureOverlayPolicy.CreateScreenAiRequest(repairPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),repairAttachments??[],null,agentProgress,(usingHermes||_host.Settings.CodexEnabled||_host.Settings.WorkBuddyEnabled)?HandleOverlayInteractionAsync:null,true);
+                    var repairMode=CaptureOverlayPolicy.GetRepairAnnotationUpdateMode(hadExistingAnnotations,result.AnnotationUpdateMode);var repairPrompt=hasVideo?CaptureOverlayPolicy.CreateVideoAnnotationRepairPrompt(providerPrompt,result.Answer,repairMode):CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt(providerPrompt,result.Answer,repairMode);var repairRequest=CaptureOverlayPolicy.CreateScreenAiRequest(repairPrompt,ConversationContextPolicy.CreateBoundedHistory(_history),repairAttachments??[],null,agentProgress,usingAgent?HandleOverlayInteractionAsync:null,true);
                     var repaired=await provider.SendAsync(repairRequest,request.Token);requestStage="render";if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();repaired=NormalizeStructuredResult(repaired,true);repairReturnedAnnotationCount=repaired.Annotations.Count;
                     var repairedMapping=AiResultValidation.GetEmptyAnswerMessage(repaired) is null?await MapAnnotationsAsync(repaired.Annotations,request.Token):await MapAnnotationsAsync([],request.Token);LogAnnotationMapping("核验",repairedMapping);
                     if(repairedMapping.RenderedCount>0&&(!hasVideo||repairedMapping.RenderedCount>=primaryReturnedAnnotationCount)){result=repaired;renderedAnnotationCount=ApplyAnnotationMapping(repairedMapping,repaired.AnnotationUpdateMode,true);ShowAnswer();FinishReasoning(repaired.Reasoning);RefreshAnswer(result.Answer);ApplyVideoAnswerActions(result.Answer);}
@@ -1967,7 +1993,7 @@ public partial class CaptureOverlayWindow : Window
                 catch(Exception ex){new PrivacyLogger().Error("ScreenAiAnnotationRepair",ex);new PrivacyLogger().Info("ScreenAiAnnotationPhase",$"核验失败；保留初稿有效批注 {renderedAnnotationCount}");requestStage="render";}
             }
             new PrivacyLogger().Info("ScreenAiResult",$"附件 {totalCount}，视频 {targets.Count(item=>item.VideoPath is not null)+uploadedReferences.Count(file=>file.Type==AiAttachmentType.Video)}，最终模型批注 {result.Annotations.Count}，补标返回 {repairReturnedAnnotationCount}，有效批注 {renderedAnnotationCount}");
-            var configured=_host.Settings.Providers.FirstOrDefault(x=>x.Id==provider.Id);var historyProvider=_host.Settings.WorkBuddyEnabled?"WorkBuddy":_host.Settings.CodexEnabled?"ChatGPT Work · Codex":usingHermes?$"本机 Hermes · {_host.Settings.HermesProfile}":configured?.Name??provider.Id;var historyModel=_host.Settings.WorkBuddyEnabled?_host.Settings.WorkBuddyModel:_host.Settings.CodexEnabled?_host.Settings.CodexModel:usingHermes?_host.Settings.HermesModel:configured?.Model??string.Empty;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(historyProvider,historyModel,turnPrompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_host.RememberConversationHistory(new ConversationHistoryEntry(DateTimeOffset.UtcNow,historyProvider,historyModel,turnPrompt,result.Answer));_history.Add(new("user",turnPrompt));_history.Add(new("assistant",result.Answer));_lastSubmittedTurnRecorded=true;ConversationContextPolicy.TrimInPlace(_history);RefreshHistoryPreview();RecordOverlayOperation(before,tableRecognition?"AI 表格识别":"AI 识图");var tableCount=TableClipboardService.Parse(result.Answer).Count;PromptStatus.Text=tableRecognition?(tableCount>0?$"已识别 {tableCount} 个表格 · 点击回答上方的“复制表格”":"没有识别到完整表格，可调整选区后重试"):hasVideo?CaptureOverlayPolicy.GetVideoCompletionStatus(true,renderedAnnotationCount):renderedAnnotationCount>0?$"已在 {_lastSentSelections.Count(item=>item.VideoPath is null)} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";if(usingHermes&&_host.Settings.HermesAutoReadAloud&&!tableRecognition)_=BeginOverlayReadAloudAsync(result.Answer);
+            var (historyProvider,historyModel)=GetHistoryScope(selectedChannel.Id);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(historyProvider,historyModel,turnPrompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_host.RememberConversationHistory(new ConversationHistoryEntry(DateTimeOffset.UtcNow,historyProvider,historyModel,turnPrompt,result.Answer));_history.Add(new("user",turnPrompt));_history.Add(new("assistant",result.Answer));_lastSubmittedTurnRecorded=true;ConversationContextPolicy.TrimInPlace(_history);RefreshHistoryPreview();RecordOverlayOperation(before,tableRecognition?"AI 表格识别":"AI 识图");var tableCount=TableClipboardService.Parse(result.Answer).Count;PromptStatus.Text=tableRecognition?(tableCount>0?$"已识别 {tableCount} 个表格 · 点击回答上方的“复制表格”":"没有识别到完整表格，可调整选区后重试"):hasVideo?CaptureOverlayPolicy.GetVideoCompletionStatus(true,renderedAnnotationCount):renderedAnnotationCount>0?$"已在 {_lastSentSelections.Count(item=>item.VideoPath is null)} 个引用区域中标出重点 · 可继续提问":"完成 · 可继续提问";if(usingHermes&&_host.Settings.HermesAutoReadAloud&&!tableRecognition)_=BeginOverlayReadAloudAsync(result.Answer);
         }
         catch(OperationCanceledException){new PrivacyLogger().Info("ScreenAiAnnotationPhase",primaryApplied?"核验或后续处理已取消；保留已显示的初稿":"初稿请求已取消；恢复发送前状态");if(!_closed&&ReferenceEquals(_request,request)){if(primaryApplied)PromptStatus.Text="已停止核验，保留初稿和已显示标注";else{ApplyOverlaySnapshot(before);PromptStatus.Text="已取消";}}}
         catch(Exception ex){new PrivacyLogger().Error(requestStage=="render"?"ScreenAiRender":"ScreenAiRequest",ex);if(!_closed&&ReferenceEquals(_request,request)){var message=request.IsCancellationRequested?"已取消":$"请求失败：{ex.Message}";if(request.IsCancellationRequested)ApplyOverlaySnapshot(before);else{CloseReasoning("思考过程 · 请求失败",Color.FromRgb(214,120,120));ShowAnswer();AnswerText.Markdown=message;}PromptStatus.Text=message;}}

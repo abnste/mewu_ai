@@ -38,6 +38,8 @@
 
 # Provider 模型目录
 
+- 2026-09-06 对话渠道改为按本轮选择：API 列表中的每个接入点、Hermes、Codex、WorkBuddy 可同时保留配置。覆盖层仅在存在多个可用渠道时显示渠道选择器，历史按渠道与模型隔离；切换渠道不得把请求回退到默认 Provider。
+
 - ProviderPresetPolicy 只做界面厂商与现有 Type/BaseUrl 的映射，不增加会让旧配置失效的必填字段；精确地址匹配，非标准 MiniMax 地址仍保留为自定义配置及原有 MiniMax 协议。
 - 提供商目录只保留四项；国内 MiniMax 的稳定内部 ID 仍为 MiniMax、国际仍为 MiniMaxGlobal，不能因显示名改为 MiniMax (CN)/MiniMax 而交换既有凭据。旧 OpenAI 官方和第三方兼容地址统一落入 OpenAI 通用（内部 Custom），仅此项要求 URL；标准厂商隐藏固定 URL。界面不再要求命名或管理连接。
 - ProviderModelCatalogService 统一读取兼容 `/models` 的 `data[].id`。禁止跨域重定向和 Cookie，拒绝同时发送 API Key 与认证 Header；读取无 Content-Length 的流时同样逐块执行 2 MiB 上限，最多保留 4096 个模型，错误不暴露远端响应体。火山沿用对话模型过滤；MiniMax 等不得套用火山前缀白名单。
