@@ -102,11 +102,12 @@ public sealed class SettingsService
         // so the settings document can be saved.  The Provider entry remains
         // structurally valid for features that still use it, but its
         // authentication is checked only when that route is active.
-        if(!settings.HermesEnabled&&!settings.CodexEnabled&&!settings.WorkBuddyEnabled)
+        if(!settings.HermesEnabled&&!settings.CodexEnabled&&!settings.WorkBuddyEnabled&&!settings.MiniMaxCodeEnabled)
             ProviderAuthenticationPolicy.EnsureStoredCredentialReferences(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId));
         ValidateHermesForSave(settings);
         CodexSettingsPolicy.Validate(settings);
         ValidateWorkBuddy(settings);
+        ValidateMiniMaxCode(settings);
     }
 
     private void SaveCore(AppSettings settings)
@@ -186,13 +187,19 @@ public sealed class SettingsService
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))settings.ConfigurationErrors.Add("尚未选择默认 AI Provider");
         else if(settings.Providers.All(provider=>provider.Id!=settings.DefaultProviderId))settings.ConfigurationErrors.Add("默认 AI Provider 已不存在，请重新选择");
         AppendHermesConfigurationErrors(settings);
-        try{CodexSettingsPolicy.Validate(settings);ValidateWorkBuddy(settings);}catch(InvalidOperationException ex){settings.ConfigurationErrors.Add(ex.Message);}
+        try{CodexSettingsPolicy.Validate(settings);ValidateWorkBuddy(settings);ValidateMiniMaxCode(settings);}catch(InvalidOperationException ex){settings.ConfigurationErrors.Add(ex.Message);}
     }
 
     private static void ValidateWorkBuddy(AppSettings settings)
     {
         if(!settings.WorkBuddyEnabled)return;
         WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
+    }
+
+    private static void ValidateMiniMaxCode(AppSettings settings)
+    {
+        if(!settings.MiniMaxCodeEnabled)return;
+        MiniMaxCodeRuntime.ValidateModel(settings.MiniMaxCodeModel);
     }
 
     private static AppSettings NormalizeCommon(AppSettings settings)
@@ -213,6 +220,7 @@ public sealed class SettingsService
         settings.UiLanguage=settings.UiLanguage?.Trim() is "zh-CN" or "en-US"?settings.UiLanguage.Trim():"system";
         settings.VoiceLanguage=settings.VoiceLanguage?.Trim() is "zh-CN" or "en-US"?settings.VoiceLanguage.Trim():"system";
         settings.ConversationChannelId=settings.ConversationChannelId?.Trim()??string.Empty;
+        settings.MiniMaxCodeModel=string.IsNullOrWhiteSpace(settings.MiniMaxCodeModel)?"minimax/MiniMax-M3":settings.MiniMaxCodeModel.Trim();
         settings.HermesProvider=settings.HermesProvider?.Trim()??string.Empty;
         settings.HermesProfile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
         settings.HermesModel=settings.HermesModel?.Trim()??string.Empty;

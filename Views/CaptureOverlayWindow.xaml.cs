@@ -442,6 +442,7 @@ public partial class CaptureOverlayWindow : Window
     {
         var selected=_conversationChannels.FirstOrDefault(item=>item.Id==(channelId??_selectedConversationChannelId));
         if(selected is {Kind:ConversationChannelKind.WorkBuddy})return ("WorkBuddy",selected.Model);
+        if(selected is {Kind:ConversationChannelKind.MiniMaxCode})return ("MiniMax Code",selected.Model);
         if(selected is {Kind:ConversationChannelKind.Codex})return ("ChatGPT Work · Codex",selected.Model);
         if(selected is {Kind:ConversationChannelKind.Hermes})return ($"本机 Hermes · {_host.Settings.HermesProfile}",selected.Model);
         var providerId=selected is {Kind:ConversationChannelKind.Api} api?api.ProviderId:_host.Settings.DefaultProviderId;
@@ -1963,7 +1964,7 @@ public partial class CaptureOverlayWindow : Window
                     if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;
                     lastPreview=preview;ShowAnswer();RefreshAnswer(preview);PromptStatus.Text="正在整理回答…";
                 }):null;
-            var usingAgent=selectedChannel.Kind is ConversationChannelKind.Hermes or ConversationChannelKind.Codex or ConversationChannelKind.WorkBuddy;var agentProgress=usingAgent?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var disableReasoning=selectedChannel.Kind==ConversationChannelKind.WorkBuddy&&!hasVisualAttachments;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,CaptureOverlayPolicy.CreateRequestHistory(_history,hasVisualAttachments),attachments,streamProgress,agentProgress,usingAgent?HandleOverlayInteractionAsync:null,hasVisualAttachments,disableReasoning);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamProgress?.Flush();streamProgress?.ThrowIfFaulted();streamProgress?.Dispose();streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
+            var usingAgent=selectedChannel.Kind is ConversationChannelKind.Hermes or ConversationChannelKind.Codex or ConversationChannelKind.WorkBuddy or ConversationChannelKind.MiniMaxCode;var agentProgress=usingAgent?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var disableReasoning=selectedChannel.Kind==ConversationChannelKind.WorkBuddy&&!hasVisualAttachments;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,CaptureOverlayPolicy.CreateRequestHistory(_history,hasVisualAttachments),attachments,streamProgress,agentProgress,usingAgent?HandleOverlayInteractionAsync:null,hasVisualAttachments,disableReasoning);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamProgress?.Flush();streamProgress?.ThrowIfFaulted();streamProgress?.Dispose();streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
             // Normalize the protocol before touching the answer card, mapping
             // annotations, or writing history. This prevents a complete JSON
             // envelope from flashing in the UI and makes every downstream

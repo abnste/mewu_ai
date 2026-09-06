@@ -22,6 +22,7 @@ public sealed class SettingsWindow : Window
     private readonly TabItem _aiTab;
     private CodexSettingsPage _codexSettings=null!;
     private WorkBuddySettingsPage _workBuddySettings=null!;
+    private MiniMaxCodeSettingsPage _miniMaxCodeSettings=null!;
     private AiSettingsTabs _backendSelector=null!;
     private bool HermesSelected=>_backendSelector?.SelectedBackendIndex==AiSettingsTabs.HermesIndex;
     internal void ShowAiPage()=>_aiTab.IsSelected=true;
@@ -438,9 +439,10 @@ public sealed class SettingsWindow : Window
     {
         _codexSettings=new CodexSettingsPage(_host.Settings,_windowLifetime.Token);
         _workBuddySettings=new WorkBuddySettingsPage(_host.Settings,_windowLifetime.Token);
+        _miniMaxCodeSettings=new MiniMaxCodeSettingsPage(_host.Settings,_windowLifetime.Token);
         var hermes=HermesPage();
-        var selected=_host.Settings.WorkBuddyEnabled?AiSettingsTabs.WorkBuddyIndex:_host.Settings.CodexEnabled?AiSettingsTabs.CodexIndex:_host.Settings.HermesEnabled?AiSettingsTabs.HermesIndex:AiSettingsTabs.ApiIndex;
-        _backendSelector=new AiSettingsTabs(Api(),hermes,_codexSettings,selected,_workBuddySettings){Margin=new Thickness(12,12,12,4)};
+        var selected=_host.Settings.MiniMaxCodeEnabled?AiSettingsTabs.MiniMaxCodeIndex:_host.Settings.WorkBuddyEnabled?AiSettingsTabs.WorkBuddyIndex:_host.Settings.CodexEnabled?AiSettingsTabs.CodexIndex:_host.Settings.HermesEnabled?AiSettingsTabs.HermesIndex:AiSettingsTabs.ApiIndex;
+        _backendSelector=new AiSettingsTabs(Api(),hermes,_codexSettings,selected,_workBuddySettings,_miniMaxCodeSettings){Margin=new Thickness(12,12,12,4)};
         _backendSelector.BackendChanged+=(_,_)=>UpdateHermesControls();
         UpdateHermesControls();
         return _backendSelector;
@@ -1120,6 +1122,7 @@ public sealed class SettingsWindow : Window
         var hermesEnabled=_host.Settings.HermesEnabled||HermesSelected;
         var codexEnabled=_host.Settings.CodexEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.CodexIndex;
         var workBuddyEnabled=_host.Settings.WorkBuddyEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.WorkBuddyIndex;
+        var miniMaxCodeEnabled=_host.Settings.MiniMaxCodeEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.MiniMaxCodeIndex;
         if(workBuddyEnabled&&_workBuddySettings.SelectedModel is null)
         {
             MewuDialogWindow.ShowMessage(this,LocalizationService.T("无法保存","Cannot save"),LocalizationService.T("请先在 WorkBuddy 页检测并选择可用模型。","Detect and select an available model on the WorkBuddy page first."));return;
@@ -1166,7 +1169,7 @@ public sealed class SettingsWindow : Window
             :_apiKeysMarkedForDeletion.Contains(defaultProvider.Id)
                 ?null
                 :credentials.Read(defaultProvider.CredentialId);
-        if(!hermesEnabled&&!codexEnabled&&!workBuddyEnabled)
+        if(!hermesEnabled&&!codexEnabled&&!workBuddyEnabled&&!miniMaxCodeEnabled)
         {
             try{ProviderAuthenticationPolicy.EnsureUsableCredentials(defaultProvider,effectiveDefaultKey);}
             catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"默认 Provider 无法使用");return;}
@@ -1212,6 +1215,8 @@ public sealed class SettingsWindow : Window
                 HermesEnabled=hermesEnabled,
                 CodexEnabled=codexEnabled,
                 WorkBuddyEnabled=workBuddyEnabled,
+                MiniMaxCodeEnabled=miniMaxCodeEnabled,
+                MiniMaxCodeModel=_miniMaxCodeSettings.SelectedModel?.Model??_host.Settings.MiniMaxCodeModel,
                 WorkBuddyModel=_workBuddySettings.SelectedModel?.Model??_host.Settings.WorkBuddyModel,
                 WorkBuddyReasoningEffort=_workBuddySettings.SelectedEffort,
                 WorkBuddySupportsImage=_workBuddySettings.SelectedModel?.SupportsImage??_host.Settings.WorkBuddySupportsImage,
