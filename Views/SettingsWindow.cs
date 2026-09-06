@@ -139,13 +139,13 @@ public sealed class SettingsWindow : Window
             Margin = new Thickness(16, 8, 16, 14),
             TabStripPlacement = Dock.Left,
             Padding = new Thickness(0, 0, 0, 14),
-            MinWidth = 680,
+            MinWidth = 0,
             ClipToBounds = false
         };
         tabs.Items.Add(Tab("常规", General()));
         tabs.Items.Add(Tab("捕获", Capture()));
         tabs.Items.Add(Tab("录屏", Recording()));
-        _aiTab=Tab("AI", Ai());
+        _aiTab=Tab("AI", Ai(),scroll:false);
         tabs.Items.Add(_aiTab);
         tabs.Items.Add(Tab("语音", Voice()));
         tabs.Items.Add(Tab("隐私", Privacy()));
@@ -207,7 +207,6 @@ public sealed class SettingsWindow : Window
             try{new PrivacyLogger().Error("SettingsCaptureProtection",new InvalidOperationException("设置窗口无法启用防捕获"));}catch{}
             HideSensitiveEditorsAfterCaptureProtectionFailure();
         };
-        Loaded += SettingsWindowLoaded;
         Closed += (_, _) =>
         {
             _modelLoadDebounce.Stop();
@@ -220,21 +219,21 @@ public sealed class SettingsWindow : Window
         };
     }
 
-    private static TabItem Tab(string header, UIElement content) => new()
+    private static TabItem Tab(string header, UIElement content,bool scroll=true) => new()
     {
         Header = header,
         Height = 46,
         MinHeight = 46,
         Margin = new Thickness(0, 2, 8, 6),
         Padding = new Thickness(14, 9, 14, 9),
-        Content = new ScrollViewer
+        Content = scroll?new ScrollViewer
         {
             Content = content,
             Background = PanelBrush,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Padding = new Thickness(3)
-        }
+        }:content
     };
 
     private static TextBlock Text(string text, bool secondary = false) => new()
@@ -428,8 +427,12 @@ public sealed class SettingsWindow : Window
 
     private UIElement Ai()
     {
-        var panel = Panel();
-        panel.Children.Add(HermesCard());
+        return new AiSettingsTabs(Api(),HermesCard()){Margin=new Thickness(12,12,12,4)};
+    }
+
+    private UIElement Api()
+    {
+        var panel = new StackPanel{Margin=new Thickness(6,0,6,6)};
         _aiConfigurationWarning.Foreground=new SolidColorBrush(Color.FromRgb(185,93,32));
         _aiConfigurationWarning.Background=new SolidColorBrush(Color.FromRgb(255,247,235));
         _aiConfigurationWarning.Padding=new Thickness(12,9,12,9);
@@ -464,7 +467,7 @@ public sealed class SettingsWindow : Window
         _baseUrl.TextChanged += (_, _) => ScheduleModelLoad();
         _customHeaders.TextChanged += (_, _) => ScheduleModelLoad();
         _apiKey.LostKeyboardFocus += (_, _) => { if (!_loadingProvider) ScheduleModelLoad(); };
-        _model.Loaded += (_, _) => ScheduleModelLoad();
+        _model.Loaded += ApiModelLoaded;
         panel.Children.Add(Text("API Key", true));
         _apiKey.PasswordChar = '\u25CF';
         var apiKeyRow=new Grid{Margin=new Thickness(0,0,0,4)};apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition());apiKeyRow.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});
@@ -555,12 +558,12 @@ public sealed class SettingsWindow : Window
         statusRow.Children.Add(statusContent);Grid.SetColumn(actions,1);statusRow.Children.Add(actions);
 
         _hermesAgentSelector.DisplayMemberPath=nameof(HermesAgentOption.Label);
-        _hermesAgentSelector.MinWidth=240;
+        _hermesAgentSelector.MinWidth=0;
         System.Windows.Automation.AutomationProperties.SetName(_hermesAgentSelector,"Hermes Agent / 人格");
         EnsureStoredHermesAgentItem();
 
         _hermesModelSelector.DisplayMemberPath=nameof(HermesModelOption.DisplayName);
-        _hermesModelSelector.MinWidth=240;
+        _hermesModelSelector.MinWidth=0;
         System.Windows.Automation.AutomationProperties.SetName(_hermesModelSelector,"Hermes 模型");
         System.Windows.Automation.AutomationProperties.SetName(_hermesReasoning,"Hermes 思考程度");
         EnsureStoredHermesModelItem();
@@ -588,6 +591,7 @@ public sealed class SettingsWindow : Window
             BorderBrush=new SolidColorBrush(Color.FromRgb(217,230,244)),BorderThickness=new Thickness(1),
             Child=body
         };
+        card.Loaded+=HermesPageLoaded;
 
         _hermesEnabled.Checked+=HermesEnabledChanged;
         _hermesEnabled.Unchecked+=HermesEnabledChanged;
@@ -622,9 +626,15 @@ public sealed class SettingsWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(button,text);
     }
 
-    private async void SettingsWindowLoaded(object sender,RoutedEventArgs e)
+    private void ApiModelLoaded(object sender,RoutedEventArgs e)
     {
-        Loaded-=SettingsWindowLoaded;
+        _model.Loaded-=ApiModelLoaded;
+        ScheduleModelLoad();
+    }
+
+    private async void HermesPageLoaded(object sender,RoutedEventArgs e)
+    {
+        if(sender is FrameworkElement page)page.Loaded-=HermesPageLoaded;
         DetectHermes();
         if(_hermesEnabled.IsChecked==true&&_hermesInstallation is not null)
             await ConnectHermesAsync(false);
