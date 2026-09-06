@@ -5,11 +5,11 @@
   <p>A Windows screenshot tool with on-screen AI assistance</p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="#in-action">In action</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a></p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.5"><img src="https://img.shields.io/badge/Public_Beta-v0.2.5-7C6CF0?style=flat-square" alt="v0.2.5 Public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6"><img src="https://img.shields.io/badge/Public_Beta-v0.2.6-7C6CF0?style=flat-square" alt="v0.2.6 Public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later" />
     <img src="https://img.shields.io/badge/Architecture-x64-64748B?style=flat-square" alt="x64" />
   </p>
-  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.5/MewuAI-Setup-0.2.5-win-x64.exe"><strong>Download installer</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.5/MewuAI-Portable-0.2.5-win-x64.zip">Portable ZIP</a></p>
+  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Setup-0.2.6-win-x64.exe"><strong>Download installer</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Portable-0.2.6-win-x64.zip">Portable ZIP</a></p>
 </div>
 
 <p align="center">
@@ -81,7 +81,7 @@ The app and installer follow your Windows language. **Settings → General** let
 <details>
 <summary>Requirements and installation notes</summary>
 
-Windows 10 version 2004 (build 19041) or later, x64. Windows N/KN needs the Media Feature Pack for H.264 recording and playback. The installer is not code-signed yet; SmartScreen may show an unknown-publisher warning. Download from this repository's Releases and verify the included `SHA256SUMS.txt`.
+Windows 10 version 2004 (build 19041) or later, x64. Windows N/KN needs the Media Feature Pack for H.264 recording and playback. The installer is not code-signed yet; SmartScreen may show an unknown-publisher warning. Download from this repository's Releases and verify the SHA-256 shown by GitHub for the asset.
 
 </details>
 
@@ -116,5 +116,5 @@ The [release workflow](./.github/workflows/release.yml) also builds the smoke-te
 <p align="center">
   Created by <strong>Abner Stephen</strong><br />
   Source available · Commercial use requires the author's authorization<br />
-  <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.5">Release notes</a>
+  <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6">Release notes</a>
 </p>
