@@ -207,7 +207,7 @@ internal sealed class CodexTurnCollector(string threadId,AiRequest request,Cance
                 var status=CodexAppServer.Text(turn,"status");
                 if(status!="completed")_completion.TrySetException(new InvalidOperationException(status=="interrupted"?"Codex 本轮已中断。":"Codex 本轮失败，请检查官方客户端中的可用额度、模型及本机工具状态。"));
                 else if(string.IsNullOrWhiteSpace(_final))_completion.TrySetException(new InvalidDataException("Codex 已结束，但没有完整的最终回答。"));
-                else _completion.TrySetResult(request.ExpectStructuredResponse?StructuredResponseParser.Parse(_final,_reasoning.ToString(),true):new(_final,[],_reasoning.ToString()));
+                else _completion.TrySetResult(StructuredResponseParser.Parse(_final,_reasoning.ToString(),request.ExpectStructuredResponse));
                 break;
         }
     }

@@ -191,7 +191,7 @@ internal sealed class WorkBuddyTurnCollector(string session,AiRequest request,Ca
             }
             var text=_answer.ToString();
             if(string.IsNullOrWhiteSpace(text))throw new InvalidDataException("WorkBuddy 没有返回完整正文。");
-            return request.ExpectStructuredResponse?StructuredResponseParser.Parse(text,_reasoning.ToString(),true):new(text,[],_reasoning.ToString());
+            return StructuredResponseParser.Parse(text,_reasoning.ToString(),request.ExpectStructuredResponse);
         }
     }
 }
