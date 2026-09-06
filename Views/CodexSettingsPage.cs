@@ -22,27 +22,24 @@ internal sealed class CodexSettingsPage : StackPanel
 
     internal CodexSettingsPage(AppSettings settings,CancellationToken token)
     {
-        _settings=settings;_token=token;Margin=new Thickness(6,0,6,6);
-        Children.Add(new TextBlock{Text="ChatGPT Work · Codex",FontSize=21,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,8,0,10)});
-        Children.Add(new TextBlock{Text=T("沿用本机 ChatGPT 登录，无需 API Key。使用 Work / Codex 额度，具体积分消耗以账号套餐为准。","Uses your local ChatGPT sign-in without an API key. Uses Work / Codex allowance; credit charges depend on your plan."),TextWrapping=TextWrapping.Wrap,Foreground=Brushes.SlateGray,FontSize=12,Margin=new Thickness(0,0,0,18)});
-        Children.Add(_status);
-        AddField(T("模型","Model"),_model);AddField(T("思考程度","Reasoning effort"),_effort);
+        _settings=settings;_token=token;
+        var form=new AiSettingsForm("Codex",T("沿用本机 ChatGPT 登录，使用 Work / Codex 额度，消耗以账号套餐为准。","Uses your local ChatGPT sign-in and Work / Codex allowance. Usage depends on your plan."),_status);
+        Children.Add(form);
+        _status.Text=T("打开此页后自动检测登录与模型。","Sign-in and models are checked when this page opens.");
+        form.Fields.Children.Add(AiSettingsForm.Field(T("模型","Model"),_model));
+        form.Fields.Children.Add(AiSettingsForm.Field(T("思考程度","Reasoning effort"),_effort));
         _model.SelectionChanged+=(_,_)=>UpdateEfforts();
         if(!string.IsNullOrWhiteSpace(settings.CodexModel))
         {
             var saved=new CodexModelOption(settings.CodexModel,settings.CodexModel,false,settings.CodexSupportsImage,settings.CodexReasoningEffort,[settings.CodexReasoningEffort]);
             _model.Items.Add(saved);_model.SelectedItem=saved;
         }
-        _detect.Content=T("检测连接","Check connection");_detect.HorizontalAlignment=HorizontalAlignment.Left;_detect.Margin=new Thickness(0,10,0,8);
-        _detect.Click+=async(_,_)=>await DetectAsync();Children.Add(_detect);
-        Children.Add(new TextBlock{Text=T("支持文字、截图和本机视频分析。视频由 Codex 调用本机工具处理；检测连接不会发送问题或附件。","Supports text, screenshots and local video analysis. Codex uses local tools for video. Connection checks do not send prompts or attachments."),TextWrapping=TextWrapping.Wrap,Foreground=Brushes.SlateGray,FontSize=12,Margin=new Thickness(0,8,0,0)});
+        form.AddAction(_detect,T("测试连接","Test connection"));
+        _detect.ToolTip=T("检测登录与模型，不发送问题或附件。","Checks sign-in and models without sending prompts or attachments.");
+        _detect.Click+=async(_,_)=>await DetectAsync();
         Loaded+=async(_,_)=>{if(_loaded)return;_loaded=true;await DetectAsync();};
     }
 
-    private void AddField(string label,Control control)
-    {
-        Children.Add(new TextBlock{Text=label,Margin=new Thickness(0,12,0,6)});control.MinWidth=0;control.HorizontalAlignment=HorizontalAlignment.Stretch;Children.Add(control);
-    }
     private void UpdateEfforts()
     {
         var previous=SelectedEffort;_effort.Items.Clear();
