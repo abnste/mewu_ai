@@ -102,10 +102,11 @@ public sealed class SettingsService
         // so the settings document can be saved.  The Provider entry remains
         // structurally valid for features that still use it, but its
         // authentication is checked only when that route is active.
-        if(!settings.HermesEnabled&&!settings.CodexEnabled)
+        if(!settings.HermesEnabled&&!settings.CodexEnabled&&!settings.WorkBuddyEnabled)
             ProviderAuthenticationPolicy.EnsureStoredCredentialReferences(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId));
         ValidateHermesForSave(settings);
         CodexSettingsPolicy.Validate(settings);
+        ValidateWorkBuddy(settings);
     }
 
     private void SaveCore(AppSettings settings)
@@ -185,7 +186,14 @@ public sealed class SettingsService
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))settings.ConfigurationErrors.Add("尚未选择默认 AI Provider");
         else if(settings.Providers.All(provider=>provider.Id!=settings.DefaultProviderId))settings.ConfigurationErrors.Add("默认 AI Provider 已不存在，请重新选择");
         AppendHermesConfigurationErrors(settings);
-        try{CodexSettingsPolicy.Validate(settings);}catch(InvalidOperationException ex){settings.ConfigurationErrors.Add(ex.Message);}
+        try{CodexSettingsPolicy.Validate(settings);ValidateWorkBuddy(settings);}catch(InvalidOperationException ex){settings.ConfigurationErrors.Add(ex.Message);}
+    }
+
+    private static void ValidateWorkBuddy(AppSettings settings)
+    {
+        if(!settings.WorkBuddyEnabled)return;
+        if(settings.CodexEnabled||settings.HermesEnabled)throw new InvalidOperationException("只能选择一个 AI 渠道，请重新选择。");
+        WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
     }
 
     private static AppSettings NormalizeCommon(AppSettings settings)

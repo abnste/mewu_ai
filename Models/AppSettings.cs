@@ -21,6 +21,10 @@ public sealed class AppSettings
     public string CodexModel { get; set; } = string.Empty;
     public string CodexReasoningEffort { get; set; } = "medium";
     public bool CodexSupportsImage { get; set; }
+    public bool WorkBuddyEnabled { get; set; }
+    public string WorkBuddyModel { get; set; } = string.Empty;
+    public string WorkBuddyReasoningEffort { get; set; } = "enabled";
+    public bool WorkBuddySupportsImage { get; set; }
     public string HermesProfile { get; set; } = "default";
     public string HermesProvider { get; set; } = string.Empty;
     public string HermesModel { get; set; } = string.Empty;

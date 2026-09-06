@@ -4,13 +4,15 @@
 
 - 主界面标题栏仅保留关闭叉号，不提供最小化按钮；关闭仍隐藏到托盘，真正退出使用托盘退出入口。
 
-- 主页状态与对话路由使用相同的 Codex → Hermes → API 判断顺序；选中 Codex 时显示 ChatGPT Work · Codex、所选模型和思考程度，不能读取保留的 API 模型冒充当前渠道。保存后仍由 AppHost 刷新主页。
+- 主页状态与对话路由使用相同的 WorkBuddy → Codex → Hermes → API 判断顺序，并校验后端互斥；选中 Agent 时显示其名称、所选模型和思考程度，不能读取保留的 API 模型冒充当前渠道。保存后仍由 AppHost 刷新主页。
 
-- API、Hermes、Codex 设置页统一使用 `AiSettingsForm`：同一标题/说明、顶部操作按钮、单行状态及纵向全宽字段；不得恢复 Hermes 独立卡片、Codex 大标题或不同字段字号。表单显式重置正文 FontWeight，避免选中 TabItem 的半粗体继承到整页；状态全文用悬浮提示保留。
+- API、Hermes、Codex、WorkBuddy 设置页统一使用 `AiSettingsForm`：同一标题/说明、顶部操作按钮、单行状态及纵向全宽字段；不得恢复独立卡片、大标题或不同字段字号。表单显式重置正文 FontWeight，避免选中 TabItem 的半粗体继承到整页；状态全文用悬浮提示保留。
 
 - 渠道菜单标题必须显式把 TextBlock.Foreground 绑定到 TabItem.Foreground；全局 TextBlock 样式会覆盖隐式文字的颜色继承，不能只设置父 TabItem 的灰色就声称禁用项已变灰。未适配项统一显示灰色 `#929CAF`。
 
-- AI 设置顶部 API、Hermes、Codex 是当前对话后端的唯一单选入口，禁止恢复页内独立“启用”勾选。打开时选中已保存的后端，全新配置默认 API；统一保存时从顶部选中项生成互斥的 HermesEnabled/CodexEnabled 兼容字段。各页控件与配置草稿复用，切换不能清空其他后端的模型、密钥、人格或思考设置。后三个适配占位项保持禁用，悬浮提示“陆续适配中”，不能选中成为当前后端。顶部固定、内容独立滚动；标题明确显示“请选择AI渠道：”。渠道项使用有内外安全边距的 WrapPanel，窄窗口自动换行，不得用横向裁切或挤压选中边框隐藏末项。
+- AI 设置顶部 API、Hermes、Codex、WorkBuddy 是当前对话后端的唯一单选入口，禁止恢复页内独立“启用”勾选。打开时选中已保存的后端，全新配置默认 API；统一保存时从顶部选中项生成互斥的 HermesEnabled/CodexEnabled/WorkBuddyEnabled 兼容字段。各页控件与配置草稿复用，切换不能清空其他后端的模型、密钥、人格或思考设置。OpenClaw、Claude Code 保持禁用并灰显，悬浮提示“陆续适配中”。顶部固定、内容独立滚动；标题明确显示“请选择AI渠道：”。渠道项使用有内外安全边距的 WrapPanel，窄窗口自动换行，不得裁切末项。
+- WorkBuddy 页首次显示自动读取模型，重选不重复初始化，不自动提交测试消息；刷新不等同已验证登录，只有挑战回复通过才显示连接成功。保留原顺序，WorkBuddy 为索引 5；主页、配置克隆、历史作用域、工具活动提示和视频完整性核验须同时接上该后端。2026-09-06 合成设置窗验证了 598/758/1100 DIP 宽度及 100%–200% 渲染比例，四页操作区对齐，草稿切换保留。
+- 需要 Dispatcher 泵的独立设置页验收应创建普通 WPF Application 并加载 LightTheme，不得仅以“不调用 Run”为理由实例化产品 App：首次 Dispatcher.PushFrame 仍会触发 App.OnStartup、单实例仲裁和 Shutdown。测试 AppHost 不调用 Start，不读取/保存真实设置；本机 WorkBuddy 页实际 DetectAsync 已在这种隔离宿主下返回 15 个模型。
 - Codex 页仅提供 ChatGPT Work / Codex，用户明确不要 Chat 页。首次显示时检测官方登录及真实模型目录，检测不提交 turn；模型对应思考程度动态绑定。修改其他设置时不能强迫已保存且未修改的 Codex 配置重新连接。历史使用独立 `ChatGPT Work · Codex` / 模型作用域，不混入 API 或 Hermes 历史。
 - Hermes 自动连接只在首次显示其编辑页时执行，重选标签不反复连接；API 模型列表也只在首次加载编辑器时自动初始化，后续仍由配置变更/手动刷新触发。所有页面仍沿用设置窗口的凭据防捕获、统一保存与关闭取消逻辑。
 

@@ -170,6 +170,17 @@ public sealed class AppHost : IDisposable
             return null;
         }
         var settings=settingsAccessor();
+        if(settings.WorkBuddyEnabled)
+        {
+            try
+            {
+                if(settings.HermesEnabled||settings.CodexEnabled)throw new InvalidOperationException("只能选择一个 AI 渠道，请重新选择。");
+                WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
+                if(WorkBuddyAcpServer.Discover() is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
+                return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage);
+            }
+            catch(InvalidOperationException ex){error=ex.Message;return null;}
+        }
         if(settings.CodexEnabled)
         {
             try
@@ -208,6 +219,12 @@ public sealed class AppHost : IDisposable
     public bool IsConversationAvailable(out string? error)
     {
         error=null;
+        if(Settings.WorkBuddyEnabled)
+        {
+            try{if(Settings.CodexEnabled||Settings.HermesEnabled)throw new InvalidOperationException("只能选择一个 AI 渠道，请重新选择。");WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);if(WorkBuddyAcpServer.Discover() is not null)return true;error="已启用 WorkBuddy，但未找到本机官方客户端。";}
+            catch(InvalidOperationException ex){error=ex.Message;}
+            return false;
+        }
         if(Settings.CodexEnabled)
         {
             try{CodexSettingsPolicy.Validate(Settings);if(CodexAppServer.Discover() is not null)return true;error="已启用 Codex，但未找到本机官方客户端。";}
@@ -227,7 +244,7 @@ public sealed class AppHost : IDisposable
     public bool IsScreenAiAvailable(out string? error)
     {
         error=null;
-        if(Settings.HermesEnabled||Settings.CodexEnabled)return IsConversationAvailable(out error);
+        if(Settings.HermesEnabled||Settings.CodexEnabled||Settings.WorkBuddyEnabled)return IsConversationAvailable(out error);
         var provider=_aiProviderFactory.Create(Settings,out error);
         // The overlay also hosts clean text-only turns. A text model may
         // therefore expose the composer, while SendAsync still blocks visual

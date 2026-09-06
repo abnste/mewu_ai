@@ -11,6 +11,26 @@ namespace MewuAI.Tests;
 public sealed class AiSettingsTabsTests
 {
     [Fact]
+    public void WorkBuddyUsesSingleSelectionAndRetainsDraftWhenSwitching()
+    {
+        RunSta(()=>
+        {
+            var workBuddy=new TextBox{Text="saved-workbuddy-model"};
+            var view=new AiSettingsTabs(new TextBox(),new TextBox(),new TextBox(),5,workBuddy);
+            view.Measure(new Size(500,350));view.Arrange(new Rect(0,0,500,350));view.UpdateLayout();
+            Assert.Equal(5,view.SelectedBackendIndex);
+            Assert.True(((TabItem)view.Tabs.Items[5]).IsEnabled);
+            Assert.False(((TabItem)view.Tabs.Items[3]).IsEnabled);
+            Assert.False(((TabItem)view.Tabs.Items[4]).IsEnabled);
+            workBuddy.Text="unsaved-workbuddy-model";
+            view.Tabs.SelectedIndex=2;view.Tabs.SelectedIndex=0;view.Tabs.SelectedIndex=5;
+            Assert.Equal("unsaved-workbuddy-model",workBuddy.Text);
+            Assert.Same(workBuddy,((ScrollViewer)((TabItem)view.Tabs.SelectedItem).Content).Content);
+            Assert.Single(view.Tabs.Items.Cast<TabItem>(),item=>item.IsSelected);
+        });
+    }
+
+    [Fact]
     public void SwitchingBackendsAndPlaceholdersPreservesUnsavedEditorInstancesAndValues()
     {
         RunSta(()=>

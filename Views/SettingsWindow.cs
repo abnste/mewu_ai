@@ -21,6 +21,7 @@ public sealed class SettingsWindow : Window
 {
     private readonly TabItem _aiTab;
     private CodexSettingsPage _codexSettings=null!;
+    private WorkBuddySettingsPage _workBuddySettings=null!;
     private AiSettingsTabs _backendSelector=null!;
     private bool HermesSelected=>_backendSelector?.SelectedBackendIndex==1;
     internal void ShowAiPage()=>_aiTab.IsSelected=true;
@@ -436,9 +437,10 @@ public sealed class SettingsWindow : Window
     private UIElement Ai()
     {
         _codexSettings=new CodexSettingsPage(_host.Settings,_windowLifetime.Token);
+        _workBuddySettings=new WorkBuddySettingsPage(_host.Settings,_windowLifetime.Token);
         var hermes=HermesPage();
-        var selected=_host.Settings.CodexEnabled?2:_host.Settings.HermesEnabled?1:0;
-        _backendSelector=new AiSettingsTabs(Api(),hermes,_codexSettings,selected){Margin=new Thickness(12,12,12,4)};
+        var selected=_host.Settings.WorkBuddyEnabled?5:_host.Settings.CodexEnabled?2:_host.Settings.HermesEnabled?1:0;
+        _backendSelector=new AiSettingsTabs(Api(),hermes,_codexSettings,selected,_workBuddySettings){Margin=new Thickness(12,12,12,4)};
         _backendSelector.BackendChanged+=(_,_)=>UpdateHermesControls();
         UpdateHermesControls();
         return _backendSelector;
@@ -1078,6 +1080,11 @@ public sealed class SettingsWindow : Window
         if(!StoreSelectedProvider(true))return;
         var hermesEnabled=HermesSelected;
         var codexEnabled=_backendSelector.SelectedBackendIndex==2;
+        var workBuddyEnabled=_backendSelector.SelectedBackendIndex==5;
+        if(workBuddyEnabled&&_workBuddySettings.SelectedModel is null)
+        {
+            MewuDialogWindow.ShowMessage(this,LocalizationService.T("无法保存","Cannot save"),LocalizationService.T("请先在 WorkBuddy 页检测并选择可用模型。","Detect and select an available model on the WorkBuddy page first."));return;
+        }
         var unchangedCodex=_host.Settings.CodexEnabled&&_codexSettings.SelectedModel?.Model==_host.Settings.CodexModel&&_codexSettings.SelectedEffort==_host.Settings.CodexReasoningEffort;
         if(codexEnabled&&((!_codexSettings.ConnectionVerified&&!unchangedCodex)||_codexSettings.SelectedModel is null))
         {
@@ -1120,7 +1127,7 @@ public sealed class SettingsWindow : Window
             :_apiKeysMarkedForDeletion.Contains(defaultProvider.Id)
                 ?null
                 :credentials.Read(defaultProvider.CredentialId);
-        if(!hermesEnabled&&!codexEnabled)
+        if(!hermesEnabled&&!codexEnabled&&!workBuddyEnabled)
         {
             try{ProviderAuthenticationPolicy.EnsureUsableCredentials(defaultProvider,effectiveDefaultKey);}
             catch(InvalidOperationException ex){MessageBox.Show(this,ex.Message,"默认 Provider 无法使用");return;}
@@ -1164,6 +1171,10 @@ public sealed class SettingsWindow : Window
                 VoiceLanguage=(_voiceLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system",
                 HermesEnabled=hermesEnabled,
                 CodexEnabled=codexEnabled,
+                WorkBuddyEnabled=workBuddyEnabled,
+                WorkBuddyModel=_workBuddySettings.SelectedModel?.Model??_host.Settings.WorkBuddyModel,
+                WorkBuddyReasoningEffort=_workBuddySettings.SelectedEffort,
+                WorkBuddySupportsImage=_workBuddySettings.SelectedModel?.SupportsImage??_host.Settings.WorkBuddySupportsImage,
                 CodexModel=_codexSettings.SelectedModel?.Model??_host.Settings.CodexModel,
                 CodexReasoningEffort=_codexSettings.SelectedEffort,
                 CodexSupportsImage=_codexSettings.SelectedModel?.SupportsImage??_host.Settings.CodexSupportsImage,
