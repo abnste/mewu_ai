@@ -17,7 +17,9 @@
                     <ControlTemplate TargetType="TabItem">
                         <Border x:Name="Pill" CornerRadius="7" Background="Transparent"
                                 BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <TextBlock Text="{TemplateBinding Header}" Foreground="{TemplateBinding Foreground}"
+                                       FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
