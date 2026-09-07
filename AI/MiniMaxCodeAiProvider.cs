@@ -39,8 +39,9 @@ internal sealed class MiniMaxCodeAiProvider(string model) : IAiProvider
             using var response=await Client.SendAsync(message,HttpCompletionOption.ResponseHeadersRead,timeout.Token).ConfigureAwait(false);
             if(!response.IsSuccessStatusCode)
             {
-                var detail=await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-                throw new InvalidOperationException(response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden?"MiniMax Code 桌面登录已失效，请点击“打开 MiniMax Code”重新登录。":$"MiniMax Code 请求失败（HTTP {(int)response.StatusCode}）。{TrimError(detail)}");
+                if(response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                    throw new InvalidOperationException("MiniMax Code 桌面登录已失效，请点击“打开 MiniMax Code”重新登录。");
+                throw await ProviderHttpError.ReadAsync(response,request.Attachments.Any(item=>item.Type==AiAttachmentType.Video),timeout.Token).ConfigureAwait(false);
             }
             var answer=new StringBuilder();var reasoning=new StringBuilder();var sawStop=false;
             await using var stream=await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
@@ -103,5 +104,4 @@ internal sealed class MiniMaxCodeAiProvider(string model) : IAiProvider
     }
     private static byte[] ReadBytes(AiAttachment attachment)=>attachment.Data is { } bytes?(byte[])bytes.Clone():File.ReadAllBytes(attachment.FilePath??throw new InvalidOperationException("附件已不可用。"));
     private static string Text(JsonElement element,string key)=>element.ValueKind==JsonValueKind.Object&&element.TryGetProperty(key,out var value)&&value.ValueKind==JsonValueKind.String?value.GetString()??string.Empty:string.Empty;
-    private static string TrimError(string text)=>string.IsNullOrWhiteSpace(text)?string.Empty:$" {text[..Math.Min(text.Length,300)]}";
 }
