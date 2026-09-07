@@ -134,7 +134,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         finally{CryptographicOperations.ZeroMemory(serialized.Body);}
         using(response)
         {
-        if(!response.IsSuccessStatusCode)throw new InvalidOperationException($"AI 请求失败（HTTP {(int)response.StatusCode}）");
+        if(!response.IsSuccessStatusCode)throw await ProviderHttpError.ReadAsync(response,request.Attachments.Any(item=>item.Type==AiAttachmentType.Video),token).ConfigureAwait(false);
         EnsureDeclaredResponseBodySize(response.Content);
 
         if(streaming)
