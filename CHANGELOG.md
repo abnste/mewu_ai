@@ -2,6 +2,15 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.3.1 — 视频请求诊断 / Video request diagnostics
+
+- 视频请求失败时显示实际渠道、可识别的失败原因、服务代码和安全的追踪编号，不再只显示笼统的 HTTP 状态。
+- 对 MiniMax 返回的“视频内容被拒绝”也给出明确提示，避免误导用户反复压缩一个本身未超限的文件。
+- 错误处理不会回显服务端可能包含的提示词、媒体数据或认证信息。
+- 统一 API 与 MiniMax Code 的非成功响应处理，并补齐视频 422 的安全回归测试。
+
+[完整双语说明 / Full notes](./docs/release-notes-v0.3.1.md) · [Release](https://github.com/abnste/mewu_ai/releases/tag/v0.3.1) · [v0.3.0 → v0.3.1](https://github.com/abnste/mewu_ai/compare/v0.3.0...v0.3.1)
+
 ## 0.3.0 — 多渠道 AI 与模型切换 / Multiple AI channels
 
 - 新增 ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面接入；保留 API、Hermes。
