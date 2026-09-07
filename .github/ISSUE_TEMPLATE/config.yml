@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report / 安全漏洞
+    url: https://github.com/abnste/mewu_ai/security/advisories/new
+    about: 请使用私密安全报告，不要公开漏洞细节 / Use private reporting for vulnerabilities.
+  - name: Questions / 使用问题
+    url: https://github.com/abnste/mewu_ai/discussions
+    about: 一般使用问题和想法可以在 Discussions 交流 / Ask general questions in Discussions.
