@@ -107,6 +107,9 @@ internal static class ProviderHttpError
             return LocalizationService.T("服务端无法读取视频，请重新录制，或将文件转换为 H.264 编码的 MP4 后重试。","The service cannot read this video. Record it again or convert it to H.264 MP4 and retry.");
         if(text.Contains("invalid base64")||text.Contains("base64 decoding")||text.Contains("base64 编码")||text.Contains("base64解码"))
             return LocalizationService.T("服务端未能解析附件编码，请重新添加附件后重试。","The service could not parse the attachment encoding. Add the attachment again and retry.");
+        if((text.Contains("video")||text.Contains("视频")||text.Contains("media")||text.Contains("媒体"))&&
+           (text.Contains("content")||text.Contains("内容")))
+            return LocalizationService.T("服务端拒绝了这段视频内容，未提供更具体的原因。请换一段不含敏感信息的短视频，或切换到其他可用 AI 渠道重试。","The service rejected this video's content without a more specific reason. Try a short video without sensitive information, or switch to another available AI channel.");
         return string.Empty;
     }
 

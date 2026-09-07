@@ -47,6 +47,17 @@ public sealed class ProviderHttpErrorTests
         Assert.DoesNotContain("secret",error.Message);
     }
 
+    [Fact]
+    public void VideoContentRejectionUsesContentGuidanceWithoutEchoingProviderText()
+    {
+        var error=ProviderHttpError.Create(422,true,Encoding.UTF8.GetBytes("""
+            {"error":{"type":"invalid_request_error","message":"video content was rejected by the service"}}
+            """));
+        Assert.Contains("视频内容",error.Message);
+        Assert.Contains("其他可用 AI 渠道",error.Message);
+        Assert.DoesNotContain("rejected by the service",error.Message);
+    }
+
     [Theory]
     [InlineData("1039","视频和历史内容")]
     [InlineData("2013","请求参数")]
