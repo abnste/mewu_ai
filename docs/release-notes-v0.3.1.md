@@ -13,6 +13,11 @@
 - MiniMax M3 的 OpenAI-compatible 视频请求继续使用官方支持的 `video_url`、Base64、MP4、`fps: 2`、流式回答和思考参数。
 - 已用 27 秒、1128×632、H.264/AAC 的合成 MP4 走完整流式请求验证；这项检查不会上传用户的录屏。
 
+### 原位翻译
+
+- 翻译现在会兼容常见的 JSON 包装和 OCR 产生的空白行，同时仍严格保持每一行的顺序。
+- 模型没有按原行数返回完整译文时，软件会自动用更明确的格式要求重试一次；第二次仍不完整才提示重新尝试或切换渠道。
+
 [全部提交变化](https://github.com/abnste/mewu_ai/compare/v0.3.0...v0.3.1) · [完整版本记录](https://github.com/abnste/mewu_ai/blob/master/CHANGELOG.md)
 
 ---
@@ -31,5 +36,10 @@ This update makes video-request failures understandable. Previously, an HTTP 422
 
 - MiniMax M3 video requests continue to use its supported OpenAI-compatible `video_url`, Base64, MP4, `fps: 2`, streaming, and thinking parameters.
 - A synthetic 27-second, 1128×632 H.264/AAC MP4 completed the full streaming request. This check did not upload a user's recording.
+
+### In-place translation
+
+- Translation now accepts common JSON wrappers and blank OCR lines while still preserving the exact source-line order.
+- If a model does not return a complete translation for every source line, the app retries that batch once with stricter output instructions before offering a retry or channel switch.
 
 [Full comparison](https://github.com/abnste/mewu_ai/compare/v0.3.0...v0.3.1) · [Release history](https://github.com/abnste/mewu_ai/blob/master/CHANGELOG.md)

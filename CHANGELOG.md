@@ -8,6 +8,7 @@
 - 对 MiniMax 返回的“视频内容被拒绝”也给出明确提示，避免误导用户反复压缩一个本身未超限的文件。
 - 错误处理不会回显服务端可能包含的提示词、媒体数据或认证信息。
 - 统一 API 与 MiniMax Code 的非成功响应处理，并补齐视频 422 的安全回归测试。
+- 原位翻译可识别常见的 JSON 包装和空白 OCR 行；未按原行数返回时会自动重试一次，再给出可操作的提示。
 
 [完整双语说明 / Full notes](./docs/release-notes-v0.3.1.md) · [Release](https://github.com/abnste/mewu_ai/releases/tag/v0.3.1) · [v0.3.0 → v0.3.1](https://github.com/abnste/mewu_ai/compare/v0.3.0...v0.3.1)
 
