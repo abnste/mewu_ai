@@ -171,17 +171,6 @@ jobs:
           if (-not (Test-Path -LiteralPath $compiler)) { throw 'Inno Setup compiler was not installed.' }
           & $compiler '.\installer\MewuAI.iss'
 
-      - name: Generate SHA-256 checksums
-        shell: pwsh
-        run: |
-          $files = Get-ChildItem '.\artifacts\installer\*.exe','.\artifacts\packages\*.zip' -File | Sort-Object Name
-          if ($files.Count -ne 2) { throw "Expected one installer and one portable ZIP, found $($files.Count)." }
-          $lines = foreach ($file in $files) {
-            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $($file.Name)"
-          }
-          [IO.File]::WriteAllLines((Join-Path (Resolve-Path '.\artifacts\packages') 'SHA256SUMS.txt'), $lines, [Text.UTF8Encoding]::new($false))
-
       - name: Create GitHub Release
         if: github.event_name == 'push'
         shell: pwsh
@@ -192,8 +181,7 @@ jobs:
           $version = $tag.TrimStart('v')
           $assets = @(
             ".\artifacts\installer\MewuAI-Setup-$version-win-x64.exe",
-            ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip",
-            '.\artifacts\packages\SHA256SUMS.txt'
+            ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip"
           )
           if (gh release view $tag *> $null) {
             gh release upload $tag @assets --clobber
