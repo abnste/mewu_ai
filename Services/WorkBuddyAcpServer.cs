@@ -135,7 +135,7 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
         {
             var process=Process.Start(CreateStartInfo(installation,directory,videoTools))??throw new InvalidOperationException("无法启动 WorkBuddy 本机接口。");
             server=new(process,directory,videoTools);
-            var result=await server.InvokeAsync("initialize",new{protocolVersion=1,clientCapabilities=new{},clientInfo=new{name="MewuAI",version="0.2.6"}},token).ConfigureAwait(false);
+            var result=await server.InvokeAsync("initialize",new{protocolVersion=1,clientCapabilities=new{},clientInfo=new{name="MewuAI",version=typeof(WorkBuddyAcpServer).Assembly.GetName().Version?.ToString(3)??"0.0.0"}},token).ConfigureAwait(false);
             if(!result.TryGetProperty("protocolVersion",out var version)||version.GetInt32()!=1)throw new InvalidDataException("WorkBuddy ACP 版本不兼容，请更新官方客户端。");
             server.SupportsImages=result.TryGetProperty("agentCapabilities",out var capabilities)&&capabilities.TryGetProperty("promptCapabilities",out var prompt)&&prompt.TryGetProperty("image",out var image)&&image.ValueKind==JsonValueKind.True;
             return server;
