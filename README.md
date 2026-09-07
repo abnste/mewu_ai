@@ -118,5 +118,6 @@ The [release workflow](./.github/workflows/release.yml) also builds the smoke-te
   Created by <strong>Abner Stephen</strong><br />
   Licensed under <a href="./LICENSE">MPL-2.0</a> · Commercial use permitted under the license<br />
   <a href="./SOURCE.md">License scope and source code availability</a><br />
-  <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6">Release notes</a>
+  <a href="./THIRD-PARTY-NOTICES.md">Third-party notices</a> · <a href="./CODE_OF_CONDUCT.md">Community standards</a> · <a href="./CONTRIBUTING.md">Contributing</a> · <a href="./SECURITY.md">Security</a><br />
+  <a href="https://github.com/abnste/mewu_ai/issues">Feedback</a> · <a href="https://github.com/abnste/mewu_ai/releases">Releases</a>
 </p>

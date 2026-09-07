@@ -12,9 +12,10 @@
 - README 使用居中品牌与下载区、原位标注大图、两列功能图库及内嵌循环 GIF；不再提供有声 MP4 入口。GIF 从作者视频转换，保持比例和完整时长，解码验证帧延迟与循环；不加入产品依赖。GitHub About 是单一描述字段，维护简洁中英双语，而非宣称会随浏览器语言切换。
 - v0.2.0 的五张 JPG 及视频由用户在发布请求中明确指定并授权公开。除此以外不得上传实际桌面、提示词、设置、日志或 QA 产物；`patent-research-2026-09-02.md` 为用户本地文件，禁止加入发布提交。
 - `docs/images/ai-checkmarks.jpg`、`in-place-translation.jpg`、`ai-drawing.jpg`、`code-explanation.jpg`、`web-annotations.jpg` 保留用户提供的原图，双语说明描述能力而非保证模型正确。
-- 用户视频原编码为 HEVC；`docs/media/MewuAI-video-annotations.mp4` 转为 H.264/yuv420p 并保留原 AAC 音轨，以便普通浏览器和 Windows 播放。转换工具只用于本地文档处理，不进入产品依赖或安装包。
+- 用户视频原编码为 HEVC；演示素材已转换为仓库内 GIF，仅用于 README 展示。源 MP4 不再纳入仓库、安装包或 GitHub Release。
 - 用户明确要求演示只使用 README 内嵌 GIF。Release 只上传安装 EXE、便携 ZIP 与 SHA256SUMS.txt，禁止再次附带演示 MP4；应用 EXE/ZIP 也不得携带文档图片和视频。SHA256SUMS 只覆盖两个版本化安装/便携资产。
 - README 配图与 GIF 使用仓库内相对路径，不链接 Release 演示 MP4；README、安装包、csproj 与发布说明必须版本一致。
+- GitHub Community Standards 由根目录的 `CODE_OF_CONDUCT.md`、`CONTRIBUTING.md`、`SECURITY.md`、`SUPPORT.md` 以及 `.github` 下的 Issue/PR 模板覆盖；README 中提供中英文入口。
 - 自包含发布前必须单独按 `Release`、`x64`、`win-x64`、`SelfContained=true` 执行锁定还原，再以同样参数 `publish --no-restore`。普通解决方案还原不会保证下载 .NET/WPF Runtime pack；本机已有缓存会掩盖此问题，需用全新包目录验证。v0.2.0 在 CI 因 NETSDK1112 失败，保留原标签不移动，正式包改由 v0.2.1 发布。
 - NuGet 自定义包目录不保证 `NuGetPackageRoot` 带结尾分隔符，许可证路径必须显式加入目录分隔符；全新缓存的发布演练已覆盖该差异，不能只依赖默认用户缓存。
 - `workflow_dispatch` 用于新标签前的完整云端预检：编译、测试、publish 审计和安装包打包全部照常，只跳过 GitHub Release 创建。v0.2.1 被真实录屏取消测试拦住，保留失败标签，后续发布用 v0.2.2。
