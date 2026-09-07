@@ -13,7 +13,7 @@
 - v0.2.0 的五张 JPG 及视频由用户在发布请求中明确指定并授权公开。除此以外不得上传实际桌面、提示词、设置、日志或 QA 产物；`patent-research-2026-09-02.md` 为用户本地文件，禁止加入发布提交。
 - `docs/images/ai-checkmarks.jpg`、`in-place-translation.jpg`、`ai-drawing.jpg`、`code-explanation.jpg`、`web-annotations.jpg` 保留用户提供的原图，双语说明描述能力而非保证模型正确。
 - 用户视频原编码为 HEVC；演示素材已转换为仓库内 GIF，仅用于 README 展示。源 MP4 不再纳入仓库、安装包或 GitHub Release。
-- 用户明确要求演示只使用 README 内嵌 GIF。Release 只上传安装 EXE、便携 ZIP 与 SHA256SUMS.txt，禁止再次附带演示 MP4；应用 EXE/ZIP 也不得携带文档图片和视频。SHA256SUMS 只覆盖两个版本化安装/便携资产。
+- 用户明确要求演示只使用 README 内嵌 GIF。Release 只上传安装 EXE 与便携 ZIP，禁止再次附带演示 MP4 或 SHA256SUMS.txt；GitHub 资产页提供原生 SHA-256 digest。应用 EXE/ZIP 也不得携带文档图片和视频。
 - README 配图与 GIF 使用仓库内相对路径，不链接 Release 演示 MP4；README、安装包、csproj 与发布说明必须版本一致。
 - GitHub Community Standards 由根目录的 `CODE_OF_CONDUCT.md`、`CONTRIBUTING.md`、`SECURITY.md`、`SUPPORT.md` 以及 `.github` 下的 Issue/PR 模板覆盖；README 中提供中英文入口。
 - 自包含发布前必须单独按 `Release`、`x64`、`win-x64`、`SelfContained=true` 执行锁定还原，再以同样参数 `publish --no-restore`。普通解决方案还原不会保证下载 .NET/WPF Runtime pack；本机已有缓存会掩盖此问题，需用全新包目录验证。v0.2.0 在 CI 因 NETSDK1112 失败，保留原标签不移动，正式包改由 v0.2.1 发布。
@@ -34,6 +34,6 @@
 
 - 2026-09-06 用户要求移除 v0.2.5 的 MewuAI-video-annotations.mp4 资产；同步删除中英文 README 的 MP4 入口及 release.yml 的 MP4 上传项，保留现有 GIF。既有安装 EXE、ZIP 和校验文件不得重新构建或替换，不为文档与附件清理重打版本标签。
 
-- 2026-09-06 用户要求改用 GitHub 自带 SHA-256。新更新器已支持仅安装包资产 digest、无需 SHA256SUMS.txt 的版本，同时保留旧发布/REST 限流兼容。已发布的 0.2.5 及更早客户端仍硬性查找最新版 Release 的校验文件，因此迁移版本仍需携带兼容文件，不能提前从现有发布或发布流程移除导致旧客户端升级失败；本次只更新代码，不复用 0.2.5 标签或替换已发布二进制。
-- v0.2.6 是原生 GitHub digest 更新器的迁移发布，整合录屏音频与 MP3 导出、Hermes 安装器启动交接、历史复制/收纳、后台探测与取色优化及标注直接编辑。双语 README 指向 GitHub 原生 SHA-256；该版本校验文件仅保留旧客户端升级兼容，不上传演示 MP4。发布说明和安装版本统一 0.2.6，先完成相同提交的云端全流程预检再创建新标签。
-- v0.2.6 已于 2026-09-06 发布：标签提交 `8888fdb`，预检 `34014657105`、正式发布 `34014864784` 均全流程成功，本地 Release 807 项通过、1 项需要真实音频设备的显式验收跳过。GitHub latest 已指向 v0.2.6；安装 EXE 92,750,527 字节、便携 ZIP 122,754,086 字节及兼容校验文件均上传完成，未附带演示 MP4。原生 digest 与校验文件一致，新更新器以 0.2.5 为当前版本实际下载完整安装器并通过 SHA-256 校验；验收未运行安装器。后续文档记录提交不移动正式标签。
+- 2026-09-06 用户要求改用 GitHub 自带 SHA-256。更新器已支持仅安装包资产 digest，无需 SHA256SUMS.txt；后续 Release 只上传安装 EXE 与便携 ZIP。
+- v0.2.6 是原生 GitHub digest 更新器的迁移发布，整合录屏音频与 MP3 导出、Hermes 安装器启动交接、历史复制/收纳、后台探测与取色优化及标注直接编辑。双语 README 指向 GitHub 原生 SHA-256，不上传演示 MP4。发布说明和安装版本统一 0.2.6，先完成相同提交的云端全流程预检再创建新标签。
+- v0.2.6 已于 2026-09-06 发布：标签提交 `8888fdb`，预检 `34014657105`、正式发布 `34014864784` 均全流程成功，本地 Release 807 项通过、1 项需要真实音频设备的显式验收跳过。GitHub latest 已指向 v0.2.6；安装 EXE 与便携 ZIP 已上传完成，未附带演示 MP4 或 SHA256SUMS.txt，校验使用 GitHub 原生 digest。后续文档记录提交不移动正式标签。
