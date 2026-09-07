@@ -53,18 +53,18 @@ public sealed class ProviderHttpErrorTests
         var error=ProviderHttpError.Create(422,true,Encoding.UTF8.GetBytes("""
             {"error":{"type":"invalid_request_error","message":"video content was rejected by the service"}}
             """));
-        Assert.Contains("视频内容",error.Message);
-        Assert.Contains("其他可用 AI 渠道",error.Message);
+        Assert.Contains(LocalizationService.T("视频内容","video's content"),error.Message);
+        Assert.Contains(LocalizationService.T("其他可用 AI 渠道","other available AI channels"),error.Message);
         Assert.DoesNotContain("rejected by the service",error.Message);
     }
 
     [Theory]
-    [InlineData("1039","视频和历史内容")]
-    [InlineData("2013","请求参数")]
-    public void KnownMiniMaxCodesHaveSafeActionableGuidance(string code,string expected)
+    [InlineData("1039","视频和历史内容","video and history")]
+    [InlineData("2013","请求参数","request parameters")]
+    public void KnownMiniMaxCodesHaveSafeActionableGuidance(string code,string expectedChinese,string expectedEnglish)
     {
         var error=ProviderHttpError.Create(422,true,Encoding.UTF8.GetBytes("{\"base_resp\":{\"status_code\":"+code+"}}"));
-        Assert.Contains(expected,error.Message);
+        Assert.Contains(LocalizationService.T(expectedChinese,expectedEnglish),error.Message);
         Assert.Contains(code,error.Message);
     }
 
