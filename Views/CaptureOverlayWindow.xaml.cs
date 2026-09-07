@@ -3244,28 +3244,47 @@ public partial class CaptureOverlayWindow : Window
             {
                 if(!IsOverlayOperationActive(operation,item))return;
                 var batch=batches[batchIndex];var batchNumber=batchIndex+1;
-                PromptStatus.Text=$"{document.Engine} 已识别 {document.Lines.Count} 行 · 正在翻译 {batchNumber}/{batches.Count}…按 Esc 可取消";
-                var prompt=LocalizationService.T("将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource=","Translate every item in translationsSource into natural English. Preserve the exact array length and order. Return JSON only: {\"translations\":[\"translation 1\",\"translation 2\"]}. translationsSource=")+System.Text.Json.JsonSerializer.Serialize(batch.Lines);
-                using var networkTimeout=CancellationTokenSource.CreateLinkedTokenSource(operation.Token);networkTimeout.CancelAfter(TimeSpan.FromSeconds(75));var received=false;var batchOpen=true;
-                var progress=new Progress<AiStreamDelta>(delta=>{if(!batchOpen||!IsOverlayOperationActive(operation,item))return;if(!received&&(delta.Content.Length>0||delta.ReasoningContent.Length>0)){received=true;PromptStatus.Text=$"{document.Engine} · 正在接收译文 {batchNumber}/{batches.Count}…按 Esc 可取消";}});
-                AiResult result;
-                try
+                IReadOnlyList<string>? translated=null;
+                for(var attempt=0;attempt<2&&translated is null;attempt++)
                 {
-                    result=await provider.SendAsync(new AiRequest{Prompt=prompt,StreamingProgress=progress,StreamingCompletionPredicate=value=>TranslationResponseParser.TryParse(value,batch.Lines.Count,out _),DisableReasoning=true,MaxOutputTokens=batch.MaxOutputTokens},networkTimeout.Token);
+                    var retry=attempt>0;
+                    PromptStatus.Text=retry
+                        ?LocalizationService.Format("{0} · 正在重新整理译文 {1}/{2}…按 Esc 可取消","{0} · Reformatting translation {1}/{2}… Press Esc to cancel",document.Engine,batchNumber,batches.Count)
+                        :$"{document.Engine} 已识别 {document.Lines.Count} 行 · 正在翻译 {batchNumber}/{batches.Count}…按 Esc 可取消";
+                    using var networkTimeout=CancellationTokenSource.CreateLinkedTokenSource(operation.Token);networkTimeout.CancelAfter(TimeSpan.FromSeconds(retry?45:75));var received=false;var batchOpen=true;
+                    var progress=new Progress<AiStreamDelta>(delta=>{if(!batchOpen||!IsOverlayOperationActive(operation,item))return;if(!received&&(delta.Content.Length>0||delta.ReasoningContent.Length>0)){received=true;PromptStatus.Text=$"{document.Engine} · 正在接收译文 {batchNumber}/{batches.Count}…按 Esc 可取消";}});
+                    AiResult? result=null;
+                    try
+                    {
+                        result=await provider.SendAsync(new AiRequest{Prompt=CreateTranslationPrompt(batch.Lines,retry),StreamingProgress=progress,StreamingCompletionPredicate=value=>TranslationResponseParser.TryParse(value,batch.Lines,out _),DisableReasoning=true,MaxOutputTokens=batch.MaxOutputTokens},networkTimeout.Token);
+                    }
+                    catch(OperationCanceledException) when(!operation.IsCancellationRequested)
+                    {
+                        throw new TimeoutException($"翻译第 {batchNumber}/{batches.Count} 批超时，请检查 Provider 后重试");
+                    }
+                    catch(InvalidDataException) when(!operation.IsCancellationRequested)
+                    {
+                        if(retry){PromptStatus.Text=LocalizationService.Format("翻译第 {0}/{1} 批未收到完整译文，请重试或切换 AI 渠道","Translation batch {0}/{1} did not return a complete result. Retry or switch AI channel.",batchNumber,batches.Count);return;}
+                    }
+                    finally{batchOpen=false;}
+                    if(!IsOverlayOperationActive(operation,item))return;
+                    if(result is not null&&TranslationResponseParser.TryParse(result.Answer,batch.Lines,out var parsed))translated=parsed;
                 }
-                catch(OperationCanceledException) when(!operation.IsCancellationRequested)
-                {
-                    throw new TimeoutException($"翻译第 {batchNumber}/{batches.Count} 批超时，请检查 Provider 后重试");
-                }
-                finally{batchOpen=false;}
-                if(!IsOverlayOperationActive(operation,item))return;
-                if(!TranslationResponseParser.TryParse(result.Answer,batch.Lines.Count,out var translated)){PromptStatus.Text=$"翻译第 {batchNumber}/{batches.Count} 批结果格式异常，请重试";return;}
+                if(translated is null){PromptStatus.Text=LocalizationService.Format("翻译第 {0}/{1} 批未按原行数返回译文，已自动重试一次；请重试或切换 AI 渠道","Translation batch {0}/{1} did not return one result per source line after an automatic retry. Retry or switch AI channel.",batchNumber,batches.Count);return;}
                 for(var offset=0;offset<translated.Count;offset++)translations[batch.StartIndex+offset]=translated[offset];
             }
             if(!IsOverlayOperationActive(operation,item))return;
             RenderTextOverlays(item,image,document.Lines,translations,true);RecordOverlayOperation(before,"原位翻译");PromptStatus.Text=$"{document.Engine} · 已在原位翻译 {translations.Length} 行";
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消翻译";}catch(TimeoutException ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=ex.Message;}catch(Exception ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+    }
+
+    private static string CreateTranslationPrompt(IReadOnlyList<string> lines,bool strict)
+    {
+        var instruction=strict
+            ?LocalizationService.T("上一轮返回无法读取。现在只能返回一个有效 JSON 对象，不要 Markdown、说明、代码块或思考内容。键必须为 translations；数组必须与 translationsSource 长度和顺序完全一致，每项必须是 JSON 字符串，原文空项对应空字符串。translationsSource=","The previous response could not be read. Return exactly one valid JSON object, with no Markdown, explanation, code fence, or thinking. Its key must be translations; the array must match translationsSource exactly in length and order, every item must be a JSON string, and a blank source item must stay blank. translationsSource=")
+            :LocalizationService.T("将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，原文空项也必须返回空字符串。只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource=","Translate every item in translationsSource into natural English. Preserve the exact array length and order, including blank source items as empty strings. Return JSON only: {\"translations\":[\"translation 1\",\"translation 2\"]}. translationsSource=");
+        return instruction+System.Text.Json.JsonSerializer.Serialize(lines);
     }
 
     private async void Ocr(object s,RoutedEventArgs e)
