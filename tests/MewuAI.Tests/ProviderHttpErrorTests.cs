@@ -54,7 +54,7 @@ public sealed class ProviderHttpErrorTests
             {"error":{"type":"invalid_request_error","message":"video content was rejected by the service"}}
             """));
         Assert.Contains(LocalizationService.T("视频内容","video's content"),error.Message);
-        Assert.Contains(LocalizationService.T("其他可用 AI 渠道","other available AI channels"),error.Message);
+        Assert.Contains(LocalizationService.T("其他可用 AI 渠道","another available AI channel"),error.Message);
         Assert.DoesNotContain("rejected by the service",error.Message);
     }
 
