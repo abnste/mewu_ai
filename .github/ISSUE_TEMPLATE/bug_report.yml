@@ -12,7 +12,7 @@ body:
     id: version
     attributes:
       label: MewuAI version / 版本
-      placeholder: v0.2.6
+      placeholder: v0.3.0
     validations:
       required: true
   - type: input
@@ -40,4 +40,3 @@ body:
     attributes:
       label: Redacted logs / 脱敏日志
       description: 删除密钥、token、路径中的个人信息和屏幕内容后再粘贴。
-

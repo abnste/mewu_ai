@@ -5,18 +5,25 @@
   <p>Windows 截图与原位 AI 助手</p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="#功能实景">功能实景</a> · <a href="https://github.com/abnste/mewu_ai/issues">反馈建议</a></p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6"><img src="https://img.shields.io/badge/公测版-v0.2.6-7C6CF0?style=flat-square" alt="v0.2.6 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.3.0"><img src="https://img.shields.io/badge/公测版-v0.3.0-7C6CF0?style=flat-square" alt="v0.3.0 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later" />
     <img src="https://img.shields.io/badge/Architecture-x64-64748B?style=flat-square" alt="x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="许可证：MPL-2.0" /></a>
   </p>
-  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Setup-0.2.6-win-x64.exe"><strong>下载安装版</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.2.6/MewuAI-Portable-0.2.6-win-x64.zip">免安装 ZIP</a></p>
+  <p><a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.0/MewuAI-Setup-0.3.0-win-x64.exe"><strong>下载安装版</strong></a> &nbsp; · &nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.0/MewuAI-Portable-0.3.0-win-x64.zip">免安装 ZIP</a></p>
+  <p><a href="./docs/release-notes-v0.3.0.md">0.3.0 本次更新</a> · <a href="./CHANGELOG.md">完整版本历史</a></p>
 </div>
 
 <p align="center">
   <a href="./docs/images/web-annotations.jpg"><img src="./docs/images/web-annotations.jpg" width="100%" alt="AI 在网页上圈出按钮并连接说明" /></a>
   <br /><sub>答案不只在对话里，也在你正在看的画面上。</sub>
 </p>
+
+## 0.3.0 有什么新变化
+
+新增 **ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面版**接入，与 API、Hermes 一起使用。API 可保存多个接入点；点击对话条上传按钮后面的圆形模型按钮，直接在一层列表中切换。默认记住上次选择，各渠道配置保留，历史按渠道和模型区分。
+
+同时修复纯文字聊天被塞入识图提示、回答显示原始 JSON、WorkBuddy 思考长时间不结束等问题。WorkBuddy 测试连接改为有超时限制的协议检查，不发送推理对话。项目自有源码正式采用 MPL-2.0。查看[完整更新说明](./docs/release-notes-v0.3.0.md)与[历次版本记录](./CHANGELOG.md)。
 
 ## 功能实景
 
@@ -65,19 +72,33 @@
 - **截图与长截图：** 多屏框选、窗口与受支持控件吸附、上下双向滚动拼接。
 - **贴图与编辑：** 置顶、缩放、旋转，移动标注、撤销修改，保存原件或带标注图片。
 - **文字与表格：** 离线 OCR、AI 表格识别；表格可粘贴到 Excel，也可复制为 Markdown 或图片。
-- **录屏与取色：** 区域录屏、MP4 / GIF 导出，鼠标位置颜色值与屏幕坐标。
+- **录屏与取色：** 默认录制电脑声音，可另开麦克风；默认导出 MP4，也可导出 MP3 音频或 GIF 动图。取色提示可见时按 C 复制 RGB。
 
 > 截图、贴图、手工标注、OCR 和录屏无需 AI 账号。AI 对话、翻译与表格识别需要配置具备相应能力的后端。
 
-**已测试模型：** MiniMax M3 已通过 Hermes 和 API 两种接入渠道测试。其他模型尚未验证，请自行测试兼容性。
+## AI 渠道
+
+| 渠道 | 接入与配置方式 |
+| --- | --- |
+| API | 列表中保存多个命名接入点，每项独立设置模型和凭据；支持 OpenAI 通用、MiniMax、MiniMax (CN)、火山引擎。 |
+| Hermes | 选择本机已有 Profile，以及对应模型和思考设置。 |
+| ChatGPT Work / Codex | 通过官方 `codex app-server` 沿用本机登录，选择真实模型与思考程度；只接入 Work，用量遵循官方账号规则。 |
+| WorkBuddy | 使用桌面版自带 ACP 运行时与登录；读取模型和思考选项，连接测试不发送对话。 |
+| MiniMax Code 桌面版 | 复用已安装桌面版的会话，可打开客户端、刷新状态、测试模型，无需另装 CLI。 |
+
+顶部标签用于编辑配置，已配置且满足使用条件的渠道均可在对话条中选择，切换标签不再关闭其他渠道。API 模型列表只列保存的接入点与模型，不把服务商提供的全部模型当成已接入。OpenClaw、Claude Code 未适配占位已移除；本版尚未包含豆包工作桌面接入。
+
+**验证范围：** MiniMax M3 已通过 API 和 Hermes 测试；Codex、WorkBuddy 已有本机文字、合成图片和合成视频验证记录（[Codex](./docs/codex-work-integration.md)、[WorkBuddy](./docs/workbuddy-integration.md)），不代表所有模型、账户或电脑均已验证。它们由 Agent 调用本机已有工具分析视频；MiniMax Code 当前通过桌面会话兼容接入，与上述 Agent 接口不同，客户端升级可能影响兼容性。
 
 ## 三步开始
 
 1. **安装或解压。** 下载上方安装版，或解压 ZIP 后运行 `MewuAI.exe`，无需另装 .NET。
 2. **框选内容。** 按 <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd>，通过选区工具条复制、保存、置顶、标注或识别。
-3. **按需接入 AI。** 在设置中配置兼容 API，或连接本机 Hermes；用 `@` 引用内容后提问。
+3. **按需接入 AI。** 打开 **设置 → AI** 配置并保存渠道；在对话条上传按钮后选择模型，直接输入文字，或用 `@` 引用内容后提问。
 
-应用与安装程序跟随 Windows 语言；**设置 → 常规** 可切换简体中文 / English（重启生效）或修改快捷键。**设置 → 关于** 可检查更新。
+应用与安装程序跟随 Windows 语言；**设置 → 常规** 可切换简体中文 / English（重启生效）或修改快捷键，在快捷键框内按 Delete 可清空停用。打开设置自动检查更新，有新版本时询问；**设置 → 关于** 也可手动检查。
+
+**从 v0.2.5 及更早版本升级：** 请用上方安装器手动升级。旧更新器依赖校验附件，而新 Release 已不再提供；v0.2.6 起支持 GitHub 资产自带 SHA-256。
 
 <details>
 <summary>系统要求与安装提示</summary>
@@ -90,7 +111,8 @@ Windows 10 2004（build 19041）及以上，x64。Windows N/KN 录制和播放 H
 <summary>AI 接入与隐私</summary>
 
 - 图片、视频能力取决于所选模型；连接本机 Hermes 也可能使用云端模型服务。
-- 提供商可选 OpenAI 通用、MiniMax、MiniMax (CN)、火山引擎；只有 OpenAI 通用需要填写 URL，其余使用固定地址。填写 Key 后选择模型，请求参数按需在高级设置中修改。
+- 在 API 列表中添加接入点；只有 OpenAI 通用需要填写 URL，其余预设使用固定地址。为每项填写凭据并选择模型，请求参数按需在高级设置中修改。
+- Codex 与 WorkBuddy 使用官方本机协议接口；MiniMax Code 兼容接入会在本机读取桌面会话用于请求认证。本机客户端仍可能访问云端，所选模型、登录状态及额度影响可用性。
 - 主动调用 AI 功能时才发送相应内容；纯文字提问不会自动附带桌面截图。服务商的数据政策适用于已发送内容。
 - API Key 与敏感认证 Header 使用 Windows DPAPI 本地加密。未配置可用对话后端时，隐藏 AI 对话条与引用入口，离线工具仍可使用。
 
@@ -119,5 +141,5 @@ dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 
   采用 <a href="./LICENSE">MPL-2.0</a> 开源协议 · 允许遵守协议的商业使用<br />
   <a href="./SOURCE.md">许可范围与源代码获取说明</a><br />
   <a href="./THIRD-PARTY-NOTICES.md">第三方声明</a> · <a href="./CODE_OF_CONDUCT.md">社区行为准则</a> · <a href="./CONTRIBUTING.md">参与贡献</a> · <a href="./SECURITY.md">安全策略</a><br />
-  <a href="https://github.com/abnste/mewu_ai/issues">反馈与建议</a> · <a href="https://github.com/abnste/mewu_ai/releases">Releases</a>
+  <a href="https://github.com/abnste/mewu_ai/issues">反馈与建议</a> · <a href="./CHANGELOG.md">版本历史</a> · <a href="https://github.com/abnste/mewu_ai/releases">Releases</a>
 </p>
