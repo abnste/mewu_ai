@@ -157,9 +157,15 @@
     </ScrollViewer>
       <StackPanel Grid.Row="2" Margin="0,8,0,0">
        <p:Popup x:Name="ChannelPickerPopup" PlacementTarget="{Binding ElementName=ChannelButton}" Placement="Top" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade">
-        <Border Width="300" Background="#FFFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="14" Padding="6" Margin="0,0,0,6" PreviewKeyDown="ChannelPickerKeyDown">
-         <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="22" ShadowDepth="5" Opacity="0.22"/></Border.Effect>
-         <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="ChannelPickerItems" KeyboardNavigation.TabNavigation="Cycle"/></ScrollViewer>
+        <Border Background="Transparent" Padding="12" Margin="0,0,0,2" PreviewKeyDown="ChannelPickerKeyDown">
+         <Grid Width="300">
+          <Border Background="White" CornerRadius="14" IsHitTestVisible="False">
+           <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="18" ShadowDepth="3" Opacity="0.24"/></Border.Effect>
+          </Border>
+         <Border Width="300" Background="#FFFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="14" Padding="6">
+          <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><StackPanel x:Name="ChannelPickerItems" KeyboardNavigation.TabNavigation="Cycle"/></ScrollViewer>
+         </Border>
+         </Grid>
         </Border>
        </p:Popup>
        <Grid>
