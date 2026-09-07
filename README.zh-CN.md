@@ -118,5 +118,6 @@ dotnet publish .\mewu_ai_Assistant.csproj -c Release -p:Platform=x64 -r win-x64 
   作者 <strong>Abner Stephen</strong><br />
   采用 <a href="./LICENSE">MPL-2.0</a> 开源协议 · 允许遵守协议的商业使用<br />
   <a href="./SOURCE.md">许可范围与源代码获取说明</a><br />
-  <a href="./THIRD-PARTY-NOTICES.md">第三方声明</a> · <a href="https://github.com/abnste/mewu_ai/issues">反馈与建议</a> · <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.2.6">更新记录</a>
+  <a href="./THIRD-PARTY-NOTICES.md">第三方声明</a> · <a href="./CODE_OF_CONDUCT.md">社区行为准则</a> · <a href="./CONTRIBUTING.md">参与贡献</a> · <a href="./SECURITY.md">安全策略</a><br />
+  <a href="https://github.com/abnste/mewu_ai/issues">反馈与建议</a> · <a href="https://github.com/abnste/mewu_ai/releases">Releases</a>
 </p>

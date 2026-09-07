@@ -1,0 +1,43 @@
+name: Bug report / Bug 报告
+description: 报告可复现的问题 / Report a reproducible problem
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认没有提交 API Key、Cookie、凭据、个人数据或真实屏幕内容。
+        Please redact secrets, credentials, personal data, and real screen content.
+  - type: input
+    id: version
+    attributes:
+      label: MewuAI version / 版本
+      placeholder: v0.2.6
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version / 系统版本
+      placeholder: Windows 11 24H2 x64
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps / 复现步骤
+      description: 请按顺序描述触发问题的操作和实际结果。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs / 脱敏日志
+      description: 删除密钥、token、路径中的个人信息和屏幕内容后再粘贴。
+
