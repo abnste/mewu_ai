@@ -35,9 +35,22 @@ internal static class CaptureHoverReplay
                 Require(toolbar.Visibility==Visibility.Visible&&Hidden(),$"Selection hover did not show tools and hide composer: toolbar={toolbar.Visibility}, hidden={Hidden()}, pointer={Mouse.GetPosition(root)}, active={Get("_activeIndex")}, prompt={Invoke("GetPromptInteractionBounds")}, promptHover={Invoke("IsInteractingWithPrompt",Mouse.GetPosition(root))}");
                 checks.Add("selection-hover-shows-tools");
 
+                var initialBounds=new Rect(Canvas.GetLeft(toolbar),Canvas.GetTop(toolbar),toolbar.ActualWidth,toolbar.ActualHeight);
+                foreach(var point in new[]{new Point(initialBounds.Left-20,initialBounds.Top-20),new Point(initialBounds.Right+20,initialBounds.Top-20),new Point(initialBounds.Left-20,initialBounds.Bottom+20),new Point(initialBounds.Right+20,initialBounds.Bottom+20)})
+                {
+                    await Move(point);
+                    Require(toolbar.Visibility==Visibility.Visible&&(int)Get("_activeIndex")==0,"Toolbar lost its owner in surrounding tolerance space");
+                }
+                checks.Add("toolbar-tolerates-all-four-outer-corners");
+
                 await Move(new Point(20,450));
+                Require(toolbar.Visibility==Visibility.Visible&&!Hidden(),"Toolbar disappeared without a departure grace period");
+                await Move(new Point(200,220));
+                Require(!((DispatcherTimer)Get("_toolbarHideTimer")).IsEnabled,"Re-entry failed to cancel delayed hiding");
+                await Move(new Point(20,450));
+                await ExpireHide();
                 Require(toolbar.Visibility!=Visibility.Visible&&!Hidden(),"Leaving all regions left toolbar visible or composer hidden");
-                checks.Add("leave-selection-hides-tools-and-restores-composer");
+                checks.Add("leave-has-grace-reentry-cancels-and-timeout-hides");
 
                 await Move(new Point(200,220));overlay.UpdateLayout();
                 var bounds=new Rect(Canvas.GetLeft(toolbar),Canvas.GetTop(toolbar),toolbar.ActualWidth,toolbar.ActualHeight);
@@ -50,6 +63,7 @@ internal static class CaptureHoverReplay
                 {
                     Set("_overlayRequest",pending);
                     await Move(new Point(20,450));
+                    await ExpireHide();
                     Require(!Hidden()&&toolbar.Visibility!=Visibility.Visible,"Pending translation locked composer hidden");
                     await Move(new Point(200,220));
                     Require(Hidden(),"Pending translation no longer respects selection hover");
@@ -59,10 +73,12 @@ internal static class CaptureHoverReplay
 
                 var promptBounds=(Rect)Invoke("GetPromptInteractionBounds")!;
                 var promptPoint=new Point(promptBounds.Left+promptBounds.Width/2,promptBounds.Top+promptBounds.Height/2);
+                Require(toolbar.Visibility==Visibility.Visible&&((DispatcherTimer)Get("_toolbarHideTimer")).IsEnabled,"Prompt entry test requires a pending toolbar departure");
                 a.GetType().GetField("Bounds")!.SetValue(a,promptBounds);Invoke("UpdateSelection",a);
                 await Move(promptPoint);
                 Invoke("RefreshToolbar",promptPoint);Invoke("PositionPromptBar");
                 Require(!Hidden()&&toolbar.Visibility!=Visibility.Visible,"Prompt hover or late layout revived selection tools");
+                Require(!((DispatcherTimer)Get("_toolbarHideTimer")).IsEnabled,"Prompt hover left a delayed toolbar callback running");
                 for(var i=0;i<5;i++)await Move(promptPoint);
                 Require(!Hidden()&&toolbar.Visibility!=Visibility.Visible,"Stationary prompt hover oscillated");
                 checks.Add("prompt-hover-wins-and-late-layout-cannot-revive-tools");
@@ -88,6 +104,16 @@ internal static class CaptureHoverReplay
                 {
                     Invoke("UpdatePointerInteraction",point);overlay.UpdateLayout();
                     return Task.CompletedTask;
+                }
+                async Task ExpireHide()
+                {
+                    var timer=(DispatcherTimer)Get("_toolbarHideTimer");
+                    Require(timer.IsEnabled,"Toolbar did not schedule its departure timeout");
+                    var fired=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    EventHandler handler=(_,_)=>fired.TrySetResult();timer.Tick+=handler;
+                    try{await fired.Task.WaitAsync(TimeSpan.FromSeconds(5));}
+                    catch(TimeoutException){throw new InvalidOperationException($"Toolbar timer did not expire: enabled={timer.IsEnabled}, toolbar={toolbar.Visibility}, pointer={Get("_lastToolbarPointer")}, nativePointer={Mouse.GetPosition(root)}");}
+                    finally{timer.Tick-=handler;}
                 }
                 bool Hidden()=>(bool)Get("_promptBarHidden");
             }
