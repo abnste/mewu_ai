@@ -3500,6 +3500,14 @@ public partial class CaptureOverlayWindow : Window
         var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,"TextSelectionContextMenu");var copy=new MenuItem{Header="复制所选文字"};var copyAll=new MenuItem{Header=copyAllHeader};foreach(var entry in new[]{copy,copyAll})entry.SetResourceReference(StyleProperty,"TextSelectionMenuItem");copy.Click+=(_,_)=>CopyTextToClipboard(new TextRange(box.Selection.Start,box.Selection.End).Text.TrimEnd('\r','\n'));copyAll.Click+=(_,_)=>CopyTextToClipboard(allText);var separator=new Separator();separator.SetResourceReference(StyleProperty,"TextSelectionSeparator");menu.Items.Add(copy);menu.Items.Add(separator);menu.Items.Add(copyAll);menu.Opened+=(_,_)=>copy.IsEnabled=!box.Selection.IsEmpty;return menu;
     }
     private void CopyTextToClipboard(string text){if(text.Length==0)return;PromptStatus.Text=ClipboardService.TrySetText(text,out var error)?"文字已复制":error;}
+    private void AnswerPreviewKeyDown(object sender,KeyEventArgs e)
+    {
+        if(e.Key==Key.C&&Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            CopyTextToClipboard(AnswerText.PlainText);
+            e.Handled=true;
+        }
+    }
     private static void ClearTextSelection(SelectionItem item)
     {
         // Removing the focused RichTextBox otherwise leaves keyboard events
@@ -3648,6 +3656,8 @@ public partial class CaptureOverlayWindow : Window
             _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
             {
                 if (_closed || !_conversationAiAvailable) return;
+                Activate();
+                SetPromptBarHidden(false);
                 QuickPrompt.Focus();
                 QuickPrompt.CaretIndex = QuickPrompt.Text.Length;
             }));

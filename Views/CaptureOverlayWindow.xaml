@@ -130,7 +130,7 @@
       <Border x:Name="AiInteractionCard" Visibility="Collapsed" Background="#FFFCF6" BorderBrush="#ECD3A3" BorderThickness="1" CornerRadius="12" Padding="12,10" Margin="6,6,6,0"><StackPanel x:Name="AiInteractionContent"/></Border>
       <Border x:Name="AnswerScroll" Visibility="Collapsed" MaxHeight="300" Margin="8,8,8,8">
        <Grid>
-        <local:MarkdownAnswerView x:Name="AnswerText" FontSize="13" VerticalScrollBarVisibility="Auto" MaxHeight="{Binding MaxHeight,ElementName=AnswerScroll}" ScrollViewer.ScrollChanged="AnswerScrollChanged" PreviewMouseWheel="AnswerPreviewMouseWheel">
+        <local:MarkdownAnswerView x:Name="AnswerText" FontSize="13" VerticalScrollBarVisibility="Auto" MaxHeight="{Binding MaxHeight,ElementName=AnswerScroll}" ScrollViewer.ScrollChanged="AnswerScrollChanged" PreviewMouseWheel="AnswerPreviewMouseWheel" PreviewKeyDown="AnswerPreviewKeyDown">
          <local:MarkdownAnswerView.Resources>
           <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
            <Style.Triggers><Trigger Property="Orientation" Value="Vertical"><Setter Property="Margin" Value="0,0,0,16"/></Trigger></Style.Triggers>
