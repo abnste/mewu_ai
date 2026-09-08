@@ -35,6 +35,30 @@ internal static class CaptureHoverReplay
                 Require(toolbar.Visibility==Visibility.Visible&&Hidden(),$"Selection hover did not show tools and hide composer: toolbar={toolbar.Visibility}, hidden={Hidden()}, pointer={Mouse.GetPosition(root)}, active={Get("_activeIndex")}, prompt={Invoke("GetPromptInteractionBounds")}, promptHover={Invoke("IsInteractingWithPrompt",Mouse.GetPosition(root))}");
                 checks.Add("selection-hover-shows-tools");
 
+                var c=Add(new Rect(100,410,360,120));
+                var sent=(IList)Get("_lastSentSelections");sent.Clear();sent.Add(a);sent.Add(b);sent.Add(c);
+                using(var pendingAnswer=new CancellationTokenSource())
+                {
+                    Set("_request",pendingAnswer);
+                    foreach(var phase in new[]{"waiting-for-answer","answer-visible-with-request-running","request-finished"})
+                    {
+                        if(phase=="answer-visible-with-request-running"){Invoke("ShowAnswer");Invoke("RefreshAnswer","Synthetic answer for hover verification.");}
+                        if(phase=="request-finished")Set("_request",null);
+                        Require((bool)Invoke("RejectIfOverlayOperationBusy")! == (phase!="request-finished"),"Hover fix changed the in-flight geometry guard");
+                        foreach(var (index,point) in new[]{(1,new Point(720,220)),(2,new Point(200,460)),(0,new Point(200,220))})
+                        {
+                            await Move(point);
+                            Require((int)Get("_activeIndex")==index&&toolbar.Visibility==Visibility.Visible,$"{phase}: region {index+1} did not receive its toolbar");
+                            Require(ReferenceEquals(sent,Get("_lastSentSelections"))&&sent.Count==3&&ReferenceEquals(sent[0],a)&&ReferenceEquals(sent[1],b)&&ReferenceEquals(sent[2],c),"Hover changed the submitted attachment order");
+                            Require(!pendingAnswer.IsCancellationRequested,"Hover canceled the answer request");
+                        }
+                        checks.Add("all-regions-show-tools-"+phase);
+                    }
+                }
+                // Keep the remaining original hover scenarios in their compact
+                // composer layout after verifying an expanded answer above.
+                Invoke("ResetAnswerForRequest");Invoke("PositionPromptBar");await Move(new Point(200,220));
+
                 var initialBounds=new Rect(Canvas.GetLeft(toolbar),Canvas.GetTop(toolbar),toolbar.ActualWidth,toolbar.ActualHeight);
                 foreach(var point in new[]{new Point(initialBounds.Left-20,initialBounds.Top-20),new Point(initialBounds.Right+20,initialBounds.Top-20),new Point(initialBounds.Left-20,initialBounds.Bottom+20),new Point(initialBounds.Right+20,initialBounds.Bottom+20)})
                 {
