@@ -65,3 +65,4 @@
 
 - Windows Restart Manager / 会话结束会直接销毁窗口，必须在 App.OnSessionEnding 未取消时先调用 AppHost.BeginShutdown；主窗口真正 Closed 也进入退出状态。辅助窗口关闭恢复和排队主窗口激活必须再次检查退出状态，不能在安装器关闭设置页时重新 Show 已销毁的主窗口。
 - EditableShapeStroke 将形状类型存入 Stroke.PropertyData，使 Clone 和覆盖层快照后仍能识别可编辑箭头；箭头前两个 StylusPoint 固定为起点、终点，端点调整重建箭头头部，重合端点保持有限坐标。四角缩放直接变换原始点而不缩放 DrawingAttributes，固定对角、限制在画布范围内并防止拖过对角产生倒置。几何 Stroke 始终关闭 FitToCurve。
+- 冻结的 BitmapFrame 仍可能引用 UI 线程的 BitmapDecoder；OCR 工作线程中的 FormatConvertedBitmap 仅在本线程 CopyPixels 使用，不得再次 Freeze 递归访问原解码器而导致错误降级。回归应包含从 PNG 解码后跨线程转换的输入。

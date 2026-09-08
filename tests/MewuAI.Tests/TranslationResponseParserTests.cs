@@ -16,4 +16,15 @@ public sealed class TranslationResponseParserTests
     [Fact] public void SourceLinesAllowOnlyMatchingBlankTranslations(){Assert.True(TranslationResponseParser.TryParse("{\"translations\":[\"\",\"译文\"]}",["","visible"],out var values));Assert.Equal(["","译文"],values);Assert.False(TranslationResponseParser.TryParse("{\"translations\":[\"\",\"\"]}",["","visible"],out _));}
     [Fact] public void RejectsMalformedJsonForTheCallerToRetry(){Assert.False(TranslationResponseParser.TryParse("{\"translations\":[\"译文\",]}",1,out _));}
     [Fact] public void RejectsNegativeExpectedCount(){Assert.False(TranslationResponseParser.TryParse("[]",-1,out _));}
+    [Fact] public void IndexedTranslationsAreRestoredToSourceOrder(){Assert.True(TranslationResponseParser.TryParse("{\"translations\":{\"1\":\"第二行\",\"0\":\"第一行\"}}",2,out var values));Assert.Equal(["第一行","第二行"],values);}
+    [Theory]
+    [InlineData("{\"translations\":{\"0\":\"一\",\"0\":\"二\"}}")]
+    [InlineData("{\"translations\":{\"0\":\"一\",\"2\":\"二\"}}")]
+    [InlineData("{\"translations\":{\"00\":\"一\",\"1\":\"二\"}}")]
+    public void RejectsDuplicateMissingOrAmbiguousLineIds(string value){Assert.False(TranslationResponseParser.TryParse(value,2,out _));}
+    [Theory]
+    [InlineData("{\"translations\":[\"译文\"]")]
+    [InlineData("{\"example\":[\"这不是译文\"],\"translations\":")]
+    [InlineData("{\"example\":[\"这不是译文\"]}")]
+    public void DoesNotCompleteFromNestedOrTruncatedJson(string value){Assert.False(TranslationResponseParser.TryParse(value,1,out _));}
 }

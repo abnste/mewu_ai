@@ -37,7 +37,7 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.Windows.SDK.NET.Ref" />
-    <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="tests\**\*.cs;promo-video\**\*.cs" />
     <Content Remove="tests\**\*" />
     <EmbeddedResource Remove="tests\**\*" />
     <None Remove="tests\**\*" />

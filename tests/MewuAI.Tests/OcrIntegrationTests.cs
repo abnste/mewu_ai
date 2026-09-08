@@ -11,6 +11,13 @@ using Xunit;
 namespace MewuAI.Tests;
 public sealed class OcrIntegrationTests
 {
+    [Fact] public async Task FrozenDecodedPngCanBeConvertedOnAnOcrWorker()
+    {
+        var image=RenderText("DECODED IMAGE 123","Segoe UI","en-US");
+        using var stream=new System.IO.MemoryStream();var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));encoder.Save(stream);stream.Position=0;
+        var frame=BitmapFrame.Create(stream,BitmapCreateOptions.None,BitmapCacheOption.OnLoad);frame.Freeze();
+        await Task.Run(()=>{using var pixels=WindowsOcrService.CreateSkBitmap(frame);Assert.Equal(frame.PixelWidth,pixels.Width);Assert.Equal(frame.PixelHeight,pixels.Height);},TestContext.Current.CancellationToken);
+    }
     [Fact] public async Task PaddleOcrRecognizesRenderedEnglishTextWithPixelBounds()
     {
         var bitmap=RenderText("HELLO SCREEN 123","Segoe UI","en-US");var result=await new WindowsOcrService(null).RecognizeAsync(bitmap,TestContext.Current.CancellationToken);Assert.Equal("PP-OCRv6 本地 OCR",result.Engine);Assert.Contains("HELLO",result.Text,StringComparison.OrdinalIgnoreCase);Assert.All(result.Lines,line=>{Assert.True(line.Width>0);Assert.True(line.Height>0);Assert.NotEmpty(line.Words);});

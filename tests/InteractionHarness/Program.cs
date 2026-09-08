@@ -24,6 +24,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if(args.Contains("--capture-input-foreground")){CaptureInputReplay.RunForegroundHelper();return;}
         var verifyTeaching=args.Contains("--verify-teaching");
         var teaching=args.Contains("--teaching")||verifyTeaching;
 #if !DEBUG
@@ -56,6 +57,10 @@ internal static class Program
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
         overlay.ShowInTaskbar=true;
+        if(args.Contains("--verify-capture-input"))
+        {
+            CaptureInputReplay.Run(app,host,overlay);app.Run();return;
+        }
         if(args.Contains("--verify-lifetime"))
         {
             VerifyResourceLifetime(overlay);

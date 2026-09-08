@@ -14,6 +14,20 @@ public sealed class ProviderRequestParameterTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task OutputLimitCannotTurnAnIncompleteAnswerIntoSuccess(bool streaming)
+    {
+        var provider=new OpenAiCompatibleProvider(new AiProviderSettings(),"test",(_,_,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content=new StringContent(streaming
+                ?"data: {\"choices\":[{\"delta\":{\"content\":\"unfinished\"},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n"
+                :"{\"choices\":[{\"message\":{\"content\":\"unfinished\"},\"finish_reason\":\"length\"}]}")
+        }),_=>TimeSpan.FromSeconds(10));
+        await Assert.ThrowsAsync<InvalidDataException>(()=>provider.SendAsync(new AiRequest{Prompt="test",StreamingProgress=streaming?new Progress<AiStreamDelta>():null},TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task PriorityIsSentInBodyForBothRequestPaths(bool stream)
     {
         var settings = new AiProviderSettings { RequestParameters = ProviderRequestParameterPolicy.Parse("{\"service_tier\":\"priority\",\"temperature\":0.7,\"top_p\":0.9}") };
