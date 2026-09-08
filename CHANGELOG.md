@@ -2,6 +2,10 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 未发布 / Unreleased
+
+- 教学演示模式支持录屏和长截图，控制条与预览自动避开采集区。全屏没有空位时可用 F8 停止/完成，倒计时中可取消。/ Teaching mode now supports recording and scrolling capture. Controls and previews stay outside the capture area; F8 stops or finishes capture and cancels the countdown.
+
 ## 0.3.1 — 视频请求诊断 / Video request diagnostics
 
 - 视频请求失败时显示实际渠道、可识别的失败原因、服务代码和安全的追踪编号，不再只显示笼统的 HTTP 状态。

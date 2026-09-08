@@ -26,9 +26,12 @@ public sealed class ScreenCaptureService
         return CaptureBounds(new Rectangle(region.X,region.Y,region.Width,region.Height),false).Image;
     }
 
-    internal BitmapSource CaptureRegion(ScreenRect region,IntPtr excludedOverlay)
+    internal BitmapSource CaptureRegion(ScreenRect region,IntPtr excludedOverlay,bool teachingMode=false)
     {
-        if(!mewu_ai_Assistant.Interop.NativeMethods.IsExcludedFromCapture(excludedOverlay))
+        var safe=teachingMode
+            ?mewu_ai_Assistant.Interop.NativeMethods.IsVisibleToCapture(excludedOverlay)&&mewu_ai_Assistant.Interop.NativeMethods.IsCaptureRegionClear(excludedOverlay,region)
+            :mewu_ai_Assistant.Interop.NativeMethods.IsExcludedFromCapture(excludedOverlay);
+        if(!safe)
             throw new InvalidOperationException("覆盖层防捕获不可用，无法安全生成长截图");
         return CaptureRegion(region);
     }

@@ -403,6 +403,17 @@ internal static class CaptureOverlayPolicy
         return barBounds.Contains(pointer);
     }
 
+    internal static Rect FindCaptureControlSpace(Rect monitor,Rect capture,double width,double height,Rect? occupied=null)
+    {
+        if(monitor.IsEmpty||capture.IsEmpty||!double.IsFinite(width)||!double.IsFinite(height)||width<=0||height<=0||width>monitor.Width-12||height>monitor.Height-12)return Rect.Empty;
+        var x=Math.Clamp(capture.Left,monitor.Left+6,monitor.Right-width-6);
+        var y=Math.Clamp(capture.Top,monitor.Top+6,monitor.Bottom-height-6);
+        Rect[] candidates=[new(x,capture.Top-height-8,width,height),new(x,capture.Bottom+8,width,height),new(capture.Left-width-8,y,width,height),new(capture.Right+8,y,width,height)];
+        foreach(var candidate in candidates)
+            if(monitor.Contains(candidate)&&!candidate.IntersectsWith(capture)&&(occupied is not { } obstruction||obstruction.IsEmpty||!candidate.IntersectsWith(obstruction)))return candidate;
+        return Rect.Empty;
+    }
+
     internal static int FindTopmostHoveredSelection<T>(
         Point pointer,
         IReadOnlyList<T> selections,

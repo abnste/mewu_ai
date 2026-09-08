@@ -1,5 +1,7 @@
 # 教学共享修复（2026-09-05）
 
+> 下文保留 2026-09-05 首次实现及当时验证记录。2026-09-08 已解除教学模式下录屏/长截图的限制，当前实现见本文末尾。
+
 基于 `a47040b` 继续修改，已核对 origin/master 当前无新增提交；本轮未发布或修改版本号。
 
 ## 问题与修改
@@ -24,3 +26,15 @@ Windows `WDA_EXCLUDEFROMCAPTURE` 会让会议、课堂广播等使用系统捕�
 
 - [SetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity)：`WDA_NONE` 允许捕获，`WDA_EXCLUDEFROMCAPTURE` 排除窗口。
 - [DwmFlush](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmflush)：等待当前应用已排队的 DirectX 更新提交。
+
+## 2026-09-08：教学共享与本机采集共存
+
+用户明确要求教学模式保持开启，同时使用内置录屏和长截图，取代首次实现的一律禁用策略。默认防捕获和设置/凭据窗口的保护保持原有行为。
+
+教学采集期间保持 `WDA_NONE`；通过 `SetWindowRgn` 从覆盖层实际 HWND 区域排除完整采集矩形，让底层实时画面与鼠标交互通过。采集开始前以 `GetWindowRgn` / `RectInRegion` 验证没有覆盖层像素落入采集区；长截图每次取帧及录屏计时回调继续验证，失败时停止。普通模式沿用窗口防捕获，不能用此路径绕过 Debug QA 的录屏限制。
+
+选区外保留指示框，控制条和长截图预览有限次寻找区外空位，并避免互相覆盖。全屏等无空位时隐藏控件，使用会话期间注册的全局 F8 停止录屏或完成长截图；倒计时期间 F8 取消，长截图仍支持 Esc 取消。热键占用时不启动采集，所有取消、失败与关闭路径恢复窗口区域并释放热键。
+
+验证使用自有彩色滚动页面，不加载用户配置或调用 AI。Release 全量测试 902 项通过、1 项真实音频设备测试跳过；普通模式走通长截图启动/取消、录屏倒计时/停止和 MP4 首中末帧像素检查。教学模式额外验证共享保持可见、无孔洞时拒绝采集、滚动追加、取消恢复、F8 取消倒计时，以及全屏长截图完成和全屏录屏停止。共享回归继续验证背景刷新、设置页保护、教学贴图可见和普通贴图防捕获。这些是本机证据，不代表腾讯会议或极域的远端接收端已实测。
+
+官方依据：[SetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowrgn) 明确窗口区域外不会绘制；[GetWindowRgn](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrgn) 与 [RectInRegion](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-rectinregion) 用于验证实际裁剪范围。所有坐标仍统一经 ScreenCoordinateService 处理。

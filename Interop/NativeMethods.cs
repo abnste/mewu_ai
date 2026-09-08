@@ -23,6 +23,8 @@ internal static class NativeMethods
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool SetWindowPos(IntPtr hWnd,IntPtr insertAfter,int x,int y,int width,int height,uint flags);
     [DllImport("user32.dll")] internal static extern uint GetDpiForWindow(IntPtr hWnd);
     [DllImport("user32.dll",SetLastError=true)] internal static extern int SetWindowRgn(IntPtr hWnd,IntPtr hRgn,bool redraw);
+    [DllImport("user32.dll",SetLastError=true)] private static extern int GetWindowRgn(IntPtr hWnd,IntPtr hRgn);
+    [DllImport("gdi32.dll")] private static extern bool RectInRegion(IntPtr region,ref WindowRect rectangle);
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool GetWindowRect(IntPtr hWnd,out WindowRect rect);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern IntPtr CreateRectRgn(int left,int top,int right,int bottom);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern int CombineRgn(IntPtr destination,IntPtr source1,IntPtr source2,int mode);
@@ -85,6 +87,25 @@ internal static class NativeMethods
 
     internal static bool IsExcludedFromCapture(IntPtr windowHandle)
         =>windowHandle!=IntPtr.Zero&&GetWindowDisplayAffinity(windowHandle,out var affinity)&&affinity==WdaExcludeFromCapture;
+
+    // A teaching overlay stays visible to screen sharing. Its native region
+    // must exclude every pixel we acquire; WPF transparency alone is not proof.
+    internal static bool IsCaptureRegionClear(IntPtr windowHandle,mewu_ai_Assistant.Models.ScreenRect capture)
+    {
+        if(windowHandle==IntPtr.Zero||capture.IsEmpty||!GetWindowRect(windowHandle,out var bounds))return false;
+        var relative=mewu_ai_Assistant.Services.ScreenCoordinateService.ToWindowRelativePixelRect(
+            new System.Windows.Int32Rect(0,0,capture.Width,capture.Height),capture.X,capture.Y,
+            new mewu_ai_Assistant.Models.ScreenRect(bounds.Left,bounds.Top,bounds.Right-bounds.Left,bounds.Bottom-bounds.Top));
+        if(relative.IsEmpty)return true;
+        var region=CreateRectRgn(0,0,0,0);if(region==IntPtr.Zero)return false;
+        try
+        {
+            if(GetWindowRgn(windowHandle,region)==0)return false;
+            var rectangle=new WindowRect{Left=relative.X,Top=relative.Y,Right=relative.Right,Bottom=relative.Bottom};
+            return !RectInRegion(region,ref rectangle);
+        }
+        finally{DeleteObject(region);}
+    }
 
     internal static bool VisualQaCaptureEnabled
     {

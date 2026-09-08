@@ -1,6 +1,7 @@
 # 录屏实现备忘
 
 - 录屏使用 ScreenRecorderLib + Windows Media Foundation，输出文件由 `RecordingSession.VideoPath` 统一管理。
+- 教学模式与录屏共存：保持 WDA_NONE，SetWindowRgn 孔洞包含完整采集矩形，不能沿用普通模式的 5px 边沿保留或将控制条并回孔洞。录制前和录制期间校验实际原生区域没有覆盖采集像素；控制条只放区外，无空位用会话级 F8 停止。取消倒计时、停止、失败、关闭都释放 F8 并恢复窗口区域。验收必须检查真实 MP4 首中末帧及全屏无控制条时的停止路径，不能只验证按钮变亮。
 - 覆盖层录制时，选区内部从冻结桌面/遮罩中挖空；窗口原生区域同步排除选区内部，使其他进程的窗口可以继续播放并接收鼠标输入。
 - 录制完成回调返回的最终路径必须先同步到 `VideoPath` 并转移 `TempMediaRegistry` 租约；完成事件要等待文件大小稳定，覆盖层保持“处理中”直到录制会话释放 Media Foundation 句柄，再退出录制模式并启动同一覆盖层内的 WinRT `VideoPreviewSurface` 原位自动播放，避免先露出空白预览。
 - 录制期间 `SetWindowRgn` 的挖空区域必须按实时 HWND 外框计算相对坐标，统一使用 `ScreenCoordinateService.ToWindowRelativePixelRect` 处理虚拟桌面负坐标、窗口原点偏移和边缘裁剪；从 `WM_NCHITTEST.lParam` 读取真实屏幕点，布局短暂无效时保留上一次穿透区域，避免底层视频被遮回。
