@@ -50,6 +50,23 @@ internal static class CaptureInputReplay
                 Invoke(first,"UpdatePointerInteraction",p);
                 Require((int)Get(first,"_activeIndex")==0,"Toolbar switched to the region underneath");checks.Add("overlapping-toolbar-keeps-owner");
 
+                var prompt=(TextBox)first.FindName("QuickPrompt");
+                first.Activate();root.Focus();prompt.Text="草稿";
+                Set(first,"_selecting",true);
+                Invoke(first,"OnMouseUp",root,new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=UIElement.MouseLeftButtonUpEvent,Source=root});
+                Require(prompt.IsKeyboardFocused&&!(bool)Get(first,"_promptBarHidden"),"Completing selection did not focus the visible composer");
+                Invoke(first,"UpdatePointerInteraction",new Point(200,180));
+                Require(prompt.IsKeyboardFocused&&!(bool)Get(first,"_promptBarHidden"),"Selection hover stole automatic typing focus");
+                prompt.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice,new TextComposition(InputManager.Current,prompt,"c")){RoutedEvent=TextCompositionManager.TextInputEvent});
+                Require(prompt.Text=="草稿c","Typed text did not append to the draft");
+                checks.Add("selection-completion-focuses-composer-and-hover-keeps-typing");
+                Invoke(first,"SetPromptBarHidden",true,false);
+                Require(root.IsKeyboardFocused&&!(bool)Get(first,"_selectionPromptFocus"),"A new gesture could not release automatic input focus");
+                Set(first,"_conversationAiAvailable",false);Invoke(first,"FocusPromptAfterSelection");
+                Require(!prompt.IsKeyboardFocused,"Offline capture focused an unavailable composer");
+                Set(first,"_conversationAiAvailable",true);prompt.Clear();
+                checks.Add("explicit-gesture-and-offline-mode-release-automatic-focus");
+
                 var selection=(Canvas)a.GetType().GetProperty("TextSelection")!.GetValue(a)!;
                 var box=new RichTextBox{IsReadOnly=true,Width=100,Height=70};selection.Children.Add(box);selection.IsHitTestVisible=true;
                 first.Activate();box.Focus();Require(box.IsKeyboardFocused,"OCR focus setup failed");
@@ -67,7 +84,8 @@ internal static class CaptureInputReplay
                 Invoke(first,"RenderTextOverlays",a,source,Array.Empty<mewu_ai_Assistant.Models.OcrLine>(),Array.Empty<string>(),true);
                 textLayer.Children.Add(new System.Windows.Shapes.Rectangle{Width=50,Height=50,Fill=Brushes.Lime});
                 first.UpdateLayout();
-                ((System.Windows.Controls.Button)first.FindName("ChannelButton")).Focus();
+                Invoke(first,"FocusPromptAfterSelection");
+                Require(prompt.IsKeyboardFocused,"Empty automatic prompt was not focused before Enter");
                 RaiseKey(first,Key.Enter);
                 Require((bool)Get(first,"_closed"),"Enter did not close the screenshot");
                 var copied=Clipboard.GetImage();Require(copied is not null&&copied.PixelWidth>0,"Enter did not copy an image");

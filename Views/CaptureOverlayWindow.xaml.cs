@@ -43,6 +43,7 @@ public partial class CaptureOverlayWindow : Window
     private static readonly Brush Cyan=AnnotationPalette.Accent;
     private readonly AppHost _host;
     internal bool IsTeachingMode { get; }
+    private bool _selectionPromptFocus;
     private CaptureFrame _frame;
     private int _desktopFrameVersion;
     private Rect _lastPositionedPromptMonitor=Rect.Empty;
@@ -293,6 +294,7 @@ public partial class CaptureOverlayWindow : Window
     public CaptureOverlayWindow(AppHost host)
     {
         _host=host;IsTeachingMode=host.Settings.TeachingMode;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=AnswerText.ContainsTable?Visibility.Visible:Visibility.Collapsed;
+        QuickPrompt.LostKeyboardFocus+=(_,_)=>_selectionPromptFocus=false;
         _selectedConversationChannelId=host.Settings.ConversationChannelId??string.Empty;
         // Keep the composer fully below the viewport until its first arranged
         // frame.  Starting visible here lets WPF paint one terminal frame
@@ -1209,6 +1211,15 @@ public partial class CaptureOverlayWindow : Window
         if(Active is not { } item||!CaptureOverlayPolicy.IsUsableSelection(item.Bounds.Width,item.Bounds.Height)){RemoveActiveSelection(false);_pointerOperationBefore=null;_pointerOperationLabel="";if(Active is not null)ShowToolbar();SetPromptBarHidden(false);return;}
         UpdateSelection(item);PositionPromptBar();ShowToolbar();SetPromptBarHidden(PointerOverSelection(e.GetPosition(Root)));PromptStatus.Text=$"已选择 {_selections.Count} 个区域 · 可继续拖动添加";e.Handled=true;
         if(_pointerOperationBefore is { } before)RecordGeometryOperationIfChanged(before,_pointerOperationLabel);_pointerOperationBefore=null;_pointerOperationLabel="";
+        FocusPromptAfterSelection();
+    }
+
+    private void FocusPromptAfterSelection()
+    {
+        if(_closed||!IsActive||!_conversationAiAvailable||_selecting||_moving||_drawingMode||_recordingMode||_recordingCountdownActive||_longCaptureMode||Active is not {IsImplicit:false,VideoPath:null})return;
+        SetPromptBarHidden(false,true);
+        QuickPrompt.CaretIndex=QuickPrompt.Text.Length;
+        _selectionPromptFocus=ReferenceEquals(Keyboard.Focus(QuickPrompt),QuickPrompt);
     }
 
     private void OnLostMouseCapture(object s,MouseEventArgs e)=>FinishInterruptedPointerInteraction();
@@ -1751,7 +1762,18 @@ public partial class CaptureOverlayWindow : Window
         if(!double.IsFinite(desired)||desired<=0)return;
         QuickPrompt.Height=Math.Clamp(desired,CompactQuickPromptMinHeight,CompactQuickPromptMaxHeight);
     }
-    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){if(PromptBarHost.IsKeyboardFocusWithin)Root.Focus();PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;if(!changed)return;if(hidden&&PromptBarHost.IsKeyboardFocusWithin)Root.Focus();_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false)
+    {
+        if(!_conversationAiAvailable){_selectionPromptFocus=false;if(PromptBarHost.IsKeyboardFocusWithin)Root.Focus();PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}
+        // Hover must not take away the typing focus granted when a selection
+        // finishes. Explicit drawing/move/resize gestures still hide the bar.
+        if(hidden&&preserveToolbarPlacement&&_selectionPromptFocus&&QuickPrompt.IsKeyboardFocusWithin)return;
+        if(hidden)_selectionPromptFocus=false;
+        var changed=_promptBarHidden!=hidden;if(!changed)return;
+        if(hidden&&PromptBarHost.IsKeyboardFocusWithin)Root.Focus();
+        _promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);
+        if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();
+    }
     private void UpdatePromptBarHiddenTransform(bool animate)
     {
         if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}
@@ -1981,7 +2003,7 @@ public partial class CaptureOverlayWindow : Window
     private void PositionHandles(Rect r){var list=new[]{Nw,N,Ne,W,E,Sw,S,Se};foreach(var t in list){t.Width=t.Height=10;t.Background=Cyan;t.Visibility=Visibility.Visible;}Set(Nw,r.Left,r.Top);Set(N,r.Left+r.Width/2,r.Top);Set(Ne,r.Right,r.Top);Set(W,r.Left,r.Top+r.Height/2);Set(E,r.Right,r.Top+r.Height/2);Set(Sw,r.Left,r.Bottom);Set(S,r.Left+r.Width/2,r.Bottom);Set(Se,r.Right,r.Bottom);static void Set(Thumb t,double x,double y){Canvas.SetLeft(t,x-5);Canvas.SetTop(t,y-5);}}
     private void HideHandles(){foreach(var t in new[]{Nw,N,Ne,W,E,Sw,S,Se})t.Visibility=Visibility.Collapsed;}
     private void ResizeDelta(object sender,DragDeltaEventArgs e){if(RejectIfOverlayOperationBusy()||sender is not Thumb t||Active is not {IsImplicit:false} item)return;_resizeOperationBefore??=CaptureOverlaySnapshot();SetPromptBarHidden(true);var d=t.Tag?.ToString()??"";var l=item.Bounds.Left;var top=item.Bounds.Top;var r=item.Bounds.Right;var b=item.Bounds.Bottom;if(d.Contains('W'))l=Math.Clamp(l+e.HorizontalChange,0,r-12);if(d.Contains('E'))r=Math.Clamp(r+e.HorizontalChange,l+12,Root.ActualWidth);if(d.Contains('N'))top=Math.Clamp(top+e.VerticalChange,0,b-12);if(d.Contains('S'))b=Math.Clamp(b+e.VerticalChange,top+12,Root.ActualHeight);var next=new Rect(new Point(l,top),new Point(r,b));var snapTarget=ProbeSnapRect(Mouse.GetPosition(Root),precise:false);if(!snapTarget.IsEmpty)next=SelectionSnapPolicy.SnapResize(next,d,snapTarget,9);if(CaptureOverlayPolicy.HasContentGeometryChanged(item.Bounds,next))InvalidateImageDerivedLayers(item);item.Bounds=next;UpdateSelection(item);ShowToolbar();e.Handled=true;}
-    private void ResizeCompleted(object sender,DragCompletedEventArgs e){if(_resizeOperationBefore is { } before)RecordGeometryOperationIfChanged(before,"调整截图区域");_resizeOperationBefore=null;PositionPromptBar();if(Active is not null)ShowToolbar();SetPromptBarHidden(PointerOverSelection(Mouse.GetPosition(Root)));e.Handled=true;}
+    private void ResizeCompleted(object sender,DragCompletedEventArgs e){if(_resizeOperationBefore is { } before)RecordGeometryOperationIfChanged(before,"调整截图区域");_resizeOperationBefore=null;PositionPromptBar();if(Active is not null)ShowToolbar();SetPromptBarHidden(PointerOverSelection(Mouse.GetPosition(Root)));if(!e.Canceled)FocusPromptAfterSelection();e.Handled=true;}
 
     private void AddRegion(object s,RoutedEventArgs e){if(RejectIfOverlayOperationBusy())return;_forceNewSelection=true;Toolbar.Visibility=Visibility.Collapsed;HideHandles();PromptStatus.Text="拖动以添加另一个区域 · 可与现有区域重叠";SetPromptBarHidden(false);}
     private void ReferenceRegion(object s,RoutedEventArgs e)
@@ -3697,7 +3719,7 @@ public partial class CaptureOverlayWindow : Window
         }
         if(_longCaptureMode){e.Handled=true;return;}
         if(e.Key==Key.Enter&&Keyboard.Modifiers==ModifierKeys.None&&
-            Keyboard.FocusedElement is not TextBoxBase {IsReadOnly:false}&&
+            (Keyboard.FocusedElement is not TextBoxBase {IsReadOnly:false}||_selectionPromptFocus&&QuickPrompt.IsKeyboardFocused&&string.IsNullOrWhiteSpace(QuickPrompt.Text))&&
             !_recordingCountdownActive&&!_recordingMode)
         {
             e.Handled=true;CopyCurrentScreenshotAndClose();return;
