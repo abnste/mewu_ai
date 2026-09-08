@@ -1,5 +1,7 @@
 # 覆盖层交互验收
 
+- `--teaching --verify-prompt-reveal-focus` 专门验证对话条弹出焦点：首次、收纳后重现、Visibility 隐藏后恢复、重复恢复、保留草稿/光标、已显示回答的选择、隐藏/关闭时撤销迟到焦点及离线不可见时不聚焦。只运行这个焦点夹具，不启动默认滚动演示；合成界面有验收标识，结束后自动关闭。最后关闭窗口的测试要保持 `ShutdownMode.OnExplicitShutdown`，避免在断言及写报告前提前退出 Dispatcher。
+
 - 视频问题使用 `--teaching --verify-video-workflow --live-provider`（明确的真实 MiniMax 合成内容请求），走实际录制、两次变色、停止/暂停焦点、原位发送、批注时间及源哈希链路；不得启动默认滚动演示冒充视频验收。`--teaching --video-background-only` 只提供合成色块背景，供安装版 GUI 录制验证；不得上传背景之外的屏幕。
 
 - 所有测试窗口必须明确显示验收标识，不能让用户把夹具误认为正式软件；运行可见验收前说明会短暂出现测试画面，结束后关闭全部夹具窗口。

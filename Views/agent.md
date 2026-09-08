@@ -1,5 +1,8 @@
 # 视图实现备忘
 
+- 用户要求：对话条每次弹出都把输入焦点给 QuickPrompt。统一由 `SetPromptBarHidden(false)` 的隐藏→显示状态变化及 `PromptBarHost.IsVisibleChanged(true)` 的可见性恢复排队执行；已经显示时重复定位/流式刷新不再次聚焦，以保留光标位置及回答选择。使用递增版本使后续收纳、隐藏或关闭撤销迟到焦点回调；离线、采集、拖拽/绘图及模态操作仍不聚焦不可用输入框。
+- 所有可用对话条弹出都应获得输入焦点，包括首次唤醒、收纳后重现和录屏/绘图/长截图结束后重新显示。一般弹出只恢复焦点，框选/录制完成仍通过 `_selectionPromptFocus` 专门保留悬浮期间的打字焦点；不得为了统一焦点让普通鼠标悬浮的收纳行为失效。录制完成的聚焦由同一 `QueuePromptBarRevealFocus(protectFromHover:true)` 执行。
+
 - 录制完成/暂停原位预览后，输入框恢复焦点时必须同时设置 `_selectionPromptFocus`，沿用框选后打字保护；只反复调用 Focus/Activate 会被视频悬浮收纳立刻撤销。显式新手势仍可释放保护。视频时长从播放器真实 NaturalDuration 更新，不能长期把 Stopwatch 当媒体时长。
 - 覆盖层的键盘预览必须为所有 TextBoxBase（包括 MarkdownAnswerView）让行；只在子控件补 Copy CommandBinding 无法绕过窗口先吞 Ctrl+C。回答有选择复制所选，无选择复制全文，Emoji 矢量内联必须恢复 Unicode，流式/后台核验期间同样可用。
 
