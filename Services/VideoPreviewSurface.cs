@@ -240,7 +240,16 @@ internal sealed class VideoPreviewSurface : IDisposable
             var generation=Volatile.Read(ref _generation);
             RaiseOnUi(() =>
             {
-                if (IsCurrentPlayer(sender,generation)) Opened?.Invoke();
+                if (!IsCurrentPlayer(sender,generation)) return;
+                // Some Windows builds ignore Play() issued before MediaOpened
+                // when frame-server mode is enabled. Re-issue it once the
+                // source is ready so the first preview frame is not left
+                // frozen while the UI claims that playback started.
+                if (_playing)
+                {
+                    try { sender.Play(); } catch (Exception ex) { RaiseFailed(sender, ex); return; }
+                }
+                Opened?.Invoke();
             });
         }
         catch (Exception ex)
