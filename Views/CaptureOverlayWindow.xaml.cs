@@ -1180,7 +1180,9 @@ public partial class CaptureOverlayWindow : Window
             var busy=_overlayRequest is not null||_request is not null;
             if(busy)ResetSnapPreview();else UpdateSnapPreview(p);
             if(Active is null&&PromptMonitorBounds()!=_lastPositionedPromptMonitor)PositionPromptBar();
-            if(!busy&&!_forceNewSelection)
+            // AI attachments and annotation targets are bound to the request,
+            // not Active. Hover may move the toolbar while geometry stays locked.
+            if(_overlayRequest is null&&!_forceNewSelection)
             {
                 var hovered=FindSelection(p);
                 if(hovered>=0&&hovered!=_activeIndex)
@@ -1190,8 +1192,8 @@ public partial class CaptureOverlayWindow : Window
                     RefreshToolbar(p);
                 }
             }
-            // Network work freezes selection ownership, never the visibility
-            // of the composer. Re-entering the same selection must also bring
+            // Network work freezes geometry, never toolbar ownership or the
+            // visibility of the composer. Re-entering a selection must bring
             // its toolbar back after a previous mouse leave.
             SetPromptBarHidden(PointerOverSelection(p),true);
             if(ShouldShowSelectionToolbar(p))
