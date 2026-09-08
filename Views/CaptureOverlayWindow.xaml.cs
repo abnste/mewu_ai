@@ -69,6 +69,7 @@ public partial class CaptureOverlayWindow : Window
     private int _activeIndex=-1;
     private bool _selecting,_moving,_forceNewSelection,_promptBarHidden=true,_promptBarVisibilityAnimating,_promptBarEntranceStarted,_answerExpanded,_historyExpanded,_reasoningExpanded,_recordingMode,_recordingCountdownActive,_drawingMode,_drawingModalOpen,_longCaptureMode,_recordingPaused,_recordingStopping,_captureExclusionVerified,_autoVoiceStarted,_closed,_positioningPromptBar,_promptBarLayoutPassQueued,_promptBarInputLayoutQueued,_reasoningRenderScheduled;
     private int _promptBarAnimationVersion;
+    private int _promptBarRevealFocusVersion;
     private int _systemFileDialogDepth;
     private int _referenceMentionStart=-1;
     private int _nextUploadNumber;
@@ -298,6 +299,15 @@ public partial class CaptureOverlayWindow : Window
     {
         _host=host;IsTeachingMode=host.Settings.TeachingMode;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=AnswerText.ContainsTable?Visibility.Visible:Visibility.Collapsed;
         QuickPrompt.LostKeyboardFocus+=(_,_)=>_selectionPromptFocus=false;
+        PromptBarHost.IsVisibleChanged+=(_,e)=>
+        {
+            if(e.NewValue is true&&!_promptBarHidden&&_conversationAiAvailable)QueuePromptBarRevealFocus();
+            else if(e.NewValue is false)
+            {
+                ++_promptBarRevealFocusVersion;
+                if(PromptBarHost.IsKeyboardFocusWithin&&Root.IsVisible)Root.Focus();
+            }
+        };
         _selectedConversationChannelId=host.Settings.ConversationChannelId??string.Empty;
         // Keep the composer fully below the viewport until its first arranged
         // frame.  Starting visible here lets WPF paint one terminal frame
@@ -1775,8 +1785,10 @@ public partial class CaptureOverlayWindow : Window
         if(hidden&&preserveToolbarPlacement&&_selectionPromptFocus&&QuickPrompt.IsKeyboardFocusWithin)return;
         if(hidden)_selectionPromptFocus=false;
         var changed=_promptBarHidden!=hidden;if(!changed)return;
+        if(hidden)++_promptBarRevealFocusVersion;
         if(hidden&&PromptBarHost.IsKeyboardFocusWithin)Root.Focus();
         _promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);
+        if(!hidden)QueuePromptBarRevealFocus();
         if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();
     }
     private void UpdatePromptBarHiddenTransform(bool animate)
@@ -3659,23 +3671,33 @@ public partial class CaptureOverlayWindow : Window
         catch(Exception ex){FailRecording(session,item,ex.Message);}
     }
 
+    private void QueuePromptBarRevealFocus(bool protectFromHover=false)
+    {
+        var version=++_promptBarRevealFocusVersion;
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input,new Action(() =>
+        {
+            // Only an actual reveal grants focus. A later hide/visibility
+            // change invalidates this callback; already visible layout and
+            // streaming updates must not interrupt selecting/copying answers.
+            if(_closed||!IsLoaded||!IsVisible||!_conversationAiAvailable||_promptBarHidden||!PromptBarHost.IsVisible||version!=_promptBarRevealFocusVersion)return;
+            if(_selecting||_moving||_drawingMode||_recordingMode||_recordingCountdownActive||_longCaptureMode||_drawingModalOpen||_systemFileDialogDepth>0)return;
+            if(!IsActive)Activate();
+            if(!QuickPrompt.IsKeyboardFocusWithin)
+            {
+                FocusManager.SetFocusedElement(this,QuickPrompt);
+                Keyboard.Focus(QuickPrompt);
+                QuickPrompt.CaretIndex=QuickPrompt.Text.Length;
+                QuickPrompt.Select(QuickPrompt.Text.Length,0);
+            }
+            if(protectFromHover&&QuickPrompt.IsKeyboardFocusWithin)_selectionPromptFocus=true;
+        }));
+    }
+
     private void FocusQuickPromptAfterRecording()
     {
-        // Restore after native capture/preview layout, and keep the same typing
-        // ownership used after selection. Otherwise the pointer still over the
-        // video immediately hides the bar and sends focus back to Root.
-        void FocusPrompt()
-        {
-            if (_closed || !_conversationAiAvailable) return;
-            Activate();
-            SetPromptBarHidden(false);
-            FocusManager.SetFocusedElement(this, QuickPrompt);
-            _selectionPromptFocus=ReferenceEquals(Keyboard.Focus(QuickPrompt),QuickPrompt);
-            QuickPrompt.CaretIndex = QuickPrompt.Text.Length;
-            QuickPrompt.Select(QuickPrompt.Text.Length, 0);
-        }
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(FocusPrompt));
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(FocusPrompt));
+        if(_closed||!_conversationAiAvailable)return;
+        SetPromptBarHidden(false);
+        QueuePromptBarRevealFocus(protectFromHover:true);
     }
     private void StartVideoPreview(SelectionItem item)
     {

@@ -69,8 +69,12 @@ internal static class Program
         Set(overlay,"_conversationAiAvailable",true);
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
-        MarkReplayWindow(overlay,"自动化验收窗口 · 非当前软件设置");
+        MarkReplayWindow(overlay,args.Contains("--verify-prompt-reveal-focus")?"对话条弹出焦点验收 · 完成后自动关闭":"自动化验收窗口 · 非当前软件设置");
         overlay.ShowInTaskbar=true;
+        if(args.Contains("--verify-prompt-reveal-focus"))
+        {
+            PromptRevealFocusReplay.Run(app,overlay);app.Run(overlay);return;
+        }
         if(args.Contains("--verify-hover"))
         {
             CaptureHoverReplay.Run(app,overlay);app.Run();return;
