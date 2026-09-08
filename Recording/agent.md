@@ -1,6 +1,7 @@
 # 录屏实现备忘
 
 - 2026-09-08 视频时间验收复现：27 秒合成视频在约 13 秒变色，M3 对原 30fps 视频却报 0.9 秒。MiniMax 的分析副本统一用 VideoAnalysisTimebaseService 按源时间采样，编码帧率与 API fps 同为 2；禁止把所有小于 1 秒的批注猜成比例放大。原视频、预览及导出不变，副本使用独立租约并限时、限大小，解码样本在 Processed/结束时清零。
+- 27d14a6 已安装至本机正式目录并校验全部 341 文件。正式 PID 20124 的 28.4333 秒合成录屏经解码在 4.5/8.5 秒变色，M3 正文给约 5/9 秒，原件 SHA-256 在回答完成前后保持；实际 Ctrl+A/C 复制成功，另一次 2 秒真实录制停止后未经点击输入框直接键入成功。Release 全量 907 通过、1 项音频现场测试按开关跳过；补充时间/复制测试 28 通过。该验收仅证明这些合成片段及当前安装，不保证模型对任意视频逐帧精确。
 - Windows 文件转码直接降低帧率会移动车景变化，且省略 TrimStopTime 时本机 27 秒输出会补成 41 秒。使用 MediaStreamSource 提供带明确 Timestamp/Duration 的源帧，Baseline H.264 与显式 TrimStopTime；必须同时校验实际帧率/时长、源及副本首中末事件颜色、原文件哈希，不能只看模型一次答对。参考微软 MediaStreamSource.SampleRequested、MediaStreamSample.Processed 文档。模型时间仍受 0.5 秒采样与语义判断精度影响，不承诺逐帧精确。
 
 - 录屏使用 ScreenRecorderLib + Windows Media Foundation，输出文件由 `RecordingSession.VideoPath` 统一管理。
