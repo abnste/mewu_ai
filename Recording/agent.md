@@ -24,3 +24,6 @@
 - 录屏默认启用电脑声音（WASAPI loopback），麦克风必须由设置单独开启；ScreenRecorderLib 7 使用 `AudioOptions.AudioSources` 的 `LoopbackAudioSource` / `CaptureAudioSource`，不能使用旧版音频设备开关。所选设备缺失必须明确提示，不能静默生成无声音轨；双源各 0.5 音量保留混音余量。
 - 保存格式统一为默认 MP4、可选 MP3 / GIF；MP3 通过 Windows MediaTranscoder 原生编码并独立持有源租约，5 分钟超时、先临时输出再原子替换，禁止覆盖源视频。无音轨时必须提示重新开启声音录制；GIF 明示无声，仍只从最终 MP4 按需生成。
 - 音频回归需要把带声音样本的 MP3 和带标注 MP4 解码到 PCM，断言实际非静音采样并核对源哈希。`MEWU_AUDIO_LIVE=1` 单独启用交互桌面的真实电脑声音录制测试，普通 CI 的视觉录屏夹具显式禁音，不依赖 Runner 声卡。测试结束后的 WinRT 转码包装器可能保留原生读取器直到回收，只有夹具清理可以主动回收，产品不得强制 GC。
+# 跨区域关联导出
+
+- 当前单张截图的带标注复制/保存/贴图，包含该图作为起点或终点的关联目标框与“来源 → 目标”说明。跨截图完整曲线属于覆盖层全局坐标，不能把另一张图的坐标当作本图像素；干净原件导出必须排除所有关联内容。CrossRegionConnectionRenderer 与普通批注统一使用 AnnotationPalette。

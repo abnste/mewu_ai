@@ -162,11 +162,27 @@ public static class StructuredResponseParser
 
         if(item.TryGetProperty("timeline",out var timeline))
         {
+            if(kind==AiAnnotationKind.Connection)return false;
             if(timeline.ValueKind!=JsonValueKind.Object||!TryParseVisualTimeline(timeline,kind,out var start,out var end,out var keyframes))return false;
             var first=keyframes[0];annotation=new(first.X,first.Y,first.Width,first.Height,text,regionIndex,start,end,keyframes,referenceHandle,kind,first.Points,style,number);return true;
         }
         if(!item.TryGetProperty("geometry",out var geometry)||geometry.ValueKind!=JsonValueKind.Object||!TryParseGeometry(geometry,kind,out var x,out var y,out var width,out var height,out var points))return false;
-        annotation=new(x,y,width,height,text,regionIndex,ReferenceHandle:referenceHandle,Kind:kind,Points:points,Style:style,Number:number);return true;
+        AiAnnotationDestination? destination=null;
+        if(kind==AiAnnotationKind.Connection)
+        {
+            if(!item.TryGetProperty("destination",out var endpoint)||endpoint.ValueKind!=JsonValueKind.Object||
+               !endpoint.TryGetProperty("target",out var endTarget)||endTarget.ValueKind!=JsonValueKind.Object||
+               !endTarget.TryGetProperty("regionIndex",out var endIndex)||endIndex.ValueKind!=JsonValueKind.Number||!endIndex.TryGetInt32(out var destinationIndex)||destinationIndex<0||
+               !endTarget.TryGetProperty("referenceHandle",out var endHandle)||endHandle.ValueKind!=JsonValueKind.String)return false;
+            var destinationHandle=endHandle.GetString()?.Trim()??string.Empty;
+            if(destinationHandle.Length is 0 or >80||destinationHandle==referenceHandle||destinationHandle.Any(ch=>!char.IsAsciiLetterOrDigit(ch)&&ch is not '-' and not '_'))return false;
+            if(!endpoint.TryGetProperty("geometry",out var endGeometry)||endGeometry.ValueKind!=JsonValueKind.Object||
+               !endGeometry.TryGetProperty("coordinateSpace",out var space)||space.ValueKind!=JsonValueKind.String||space.GetString()!="normalized"||
+               !TryParseGeometry(endGeometry,AiAnnotationKind.Rectangle,out var dx,out var dy,out var dw,out var dh,out _))return false;
+            if(!geometry.TryGetProperty("coordinateSpace",out var sourceSpace)||sourceSpace.ValueKind!=JsonValueKind.String||sourceSpace.GetString()!="normalized")return false;
+            destination=new(destinationIndex,destinationHandle,dx,dy,dw,dh);
+        }
+        annotation=new(x,y,width,height,text,regionIndex,ReferenceHandle:referenceHandle,Kind:kind,Points:points,Style:style,Number:number,Destination:destination);return true;
     }
 
     private static bool TryParseKind(string? value,out AiAnnotationKind kind)
@@ -175,7 +191,7 @@ public static class StructuredResponseParser
         {
             "callout"=>AiAnnotationKind.Callout,"pen"=>AiAnnotationKind.Pen,"highlighter"=>AiAnnotationKind.Highlighter,
             "rectangle"=>AiAnnotationKind.Rectangle,"ellipse"=>AiAnnotationKind.Ellipse,"arrow"=>AiAnnotationKind.Arrow,
-            "text"=>AiAnnotationKind.Text,"number"=>AiAnnotationKind.Number,"mosaic"=>AiAnnotationKind.Mosaic,_=>(AiAnnotationKind)(-1)
+            "text"=>AiAnnotationKind.Text,"number"=>AiAnnotationKind.Number,"mosaic"=>AiAnnotationKind.Mosaic,"connection"=>AiAnnotationKind.Connection,_=>(AiAnnotationKind)(-1)
         };
         return Enum.IsDefined(kind);
     }

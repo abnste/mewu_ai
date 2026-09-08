@@ -11,7 +11,7 @@ namespace mewu_ai_Assistant.Recording;
 
 internal static class AnnotationOverlayRenderer
 {
-    private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(42,174,255));
+    private static readonly Brush Cyan=AnnotationPalette.Accent;
 
     internal static DrawingImage CreateAiDrawingImage(int width,int height,IReadOnlyList<AiAnnotation> annotations,double? videoTime=null,IReadOnlyDictionary<AiAnnotation,Point>? calloutPositions=null,double presentationToleranceSeconds=0)
     {
@@ -41,7 +41,7 @@ internal static class AnnotationOverlayRenderer
                 if(AnnotationLayoutService.IsDuplicateTargetMarker(annotation,callouts))continue;
                 var x=Math.Clamp(frame.X,0,1)*width;var y=Math.Clamp(frame.Y,0,1)*height;var boxWidth=Math.Max(14,Math.Clamp(frame.Width,0,1)*width);var boxHeight=Math.Max(14,Math.Clamp(frame.Height,0,1)*height);
                 if(annotation.Kind==AiAnnotationKind.Mosaic)continue;
-                var style=annotation.EffectiveStyle;var colorName=annotation.Kind is AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse&&string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?"#FF0000":style.Color;var color=ParseColor(colorName,style.Opacity);var brush=new SolidColorBrush(color);var stroke=Math.Clamp(style.StrokeWidth*Math.Min(width,height),1,48);var pen=new Pen(brush,annotation.Kind==AiAnnotationKind.Highlighter?Math.Max(5,stroke):stroke){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round,LineJoin=PenLineJoin.Round};
+                var style=annotation.EffectiveStyle;var color=ParseColor(AnnotationPalette.ResolveColor(style.Color),style.Opacity);var brush=new SolidColorBrush(color);var stroke=Math.Clamp(style.StrokeWidth*Math.Min(width,height),1,48);var pen=new Pen(brush,annotation.Kind==AiAnnotationKind.Highlighter?Math.Max(5,stroke):stroke){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round,LineJoin=PenLineJoin.Round};
                 var points=(frame.Points??annotation.Points)?.Select(point=>new Point(point.X*width,point.Y*height)).ToArray();
                 switch(annotation.Kind)
                 {
@@ -61,7 +61,7 @@ internal static class AnnotationOverlayRenderer
                         var diameter=Math.Min(boxWidth,boxHeight);drawing.DrawEllipse(brush,null,new Point(x+diameter/2,y+diameter/2),diameter/2,diameter/2);DrawCenteredText(drawing,(annotation.Number??1).ToString(CultureInfo.InvariantCulture),new Rect(x,y,diameter,diameter),Math.Clamp(diameter*.48,12,52),Contrast(color));break;
                     default:
                         if(!calloutFrames.TryGetValue(annotation,out var callout))break;
-                        var target=callout.Target;var targetColor=string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?Color.FromRgb(255,0,0):color;drawing.DrawRoundedRectangle(null,new Pen(new SolidColorBrush(targetColor),stroke),target,3,3);
+                        var target=callout.Target;drawing.DrawRoundedRectangle(null,new Pen(brush,stroke),target,5,5);
                         var cardHeight=callout.CardHeight;var placement=callout.Placement;var cardX=placement.CardBounds.Left;var cardY=placement.CardBounds.Top;var connector=placement.ConnectorPoint;var targetPoint=new Point(connector.X<=target.Left?target.Left:connector.X>=target.Right?target.Right:Math.Clamp(connector.X,target.Left,target.Right),connector.Y<=target.Top?target.Top:connector.Y>=target.Bottom?target.Bottom:Math.Clamp(connector.Y,target.Top,target.Bottom));
                         var linePen=new Pen(Cyan,Math.Max(1,width/1200d));linePen.Freeze();drawing.DrawLine(linePen,targetPoint,connector);drawing.DrawEllipse(Cyan,null,connector,2.5,2.5);
                         drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromArgb(248,255,255,255)),new Pen(new SolidColorBrush(Color.FromArgb(145,61,174,242)),1),new Rect(cardX,cardY,cardWidth,cardHeight),8,8);

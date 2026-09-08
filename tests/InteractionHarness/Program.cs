@@ -57,6 +57,10 @@ internal static class Program
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
         overlay.ShowInTaskbar=true;
+        if(args.Contains("--verify-connections"))
+        {
+            CaptureConnectionReplay.Run(app,overlay);app.Run();return;
+        }
         if(args.Contains("--verify-capture-input"))
         {
             CaptureInputReplay.Run(app,host,overlay);app.Run();return;
