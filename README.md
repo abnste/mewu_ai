@@ -103,7 +103,7 @@ Screenshots, annotations, pinned images, text recognition, and recording are ava
 <details>
 <summary>Why are my selections and annotations missing from a screen share?</summary>
 
-Enable **Settings → Capture → Teaching mode**, save, and start a new capture. Share your entire screen in your meeting or classroom app.
+Teaching mode is on by default. Share your entire screen in your meeting or classroom app. You can turn it off or back on under **Settings → Capture → Teaching mode**; save and start a new capture to apply the change.
 
 This makes selections, annotations, and newly pinned images and videos visible to viewers. You can also use MewuAI's recording and scrolling capture while teaching mode is on. Controls stay outside the capture area; when there is no room, such as a full-screen capture, they are hidden. Press **F8** to stop recording or finish scrolling capture. During the recording countdown, F8 cancels it.
 

@@ -13,7 +13,7 @@
 - 重大修改必须构建和测试，仓库始终保持可运行、可回滚。
 - 区域 MP4 使用 MIT 的 ScreenRecorderLib + Windows Media Foundation；不要改为捆绑 GPL FFmpeg。
 - .NET 10 WPF `GifBitmapEncoder` 会把帧延迟写成 0；GIF 导出后必须按 GIF 块结构校正 Graphic Control Extension，并用解码测试验证播放时长。
-- 产品默认使用 `NativeMethods.ExcludeFromCapture` 防捕获。用户明确开启持久化 `TeachingMode` 后，下次截图覆盖层、它创建的贴图/贴视频及原位颜色/保存对话框通过独立 `ApplyPresentationCaptureVisibility` 允许教学共享；设置和凭据窗口不得受该设置影响。模式在覆盖层创建时固定。教学模式支持自带区域录屏与长截图，采集期间保持共享可见，以 SetWindowRgn 排除全部采集像素并校验实际原生区域，控制条和预览避开采集区；无空位时隐藏控件，由会话级全局 F8 停止/完成，倒计时中 F8 取消，所有结束路径释放热键和恢复窗口区域。Debug 的 `MEWU_QA_CAPTURE_WINDOWS=1` 仅供自动化验收，Release 必须继续编译掉该环境开关，不能让它改变任何窗口的保护。
+- 教学演示 `TeachingMode` 默认开启，新安装及未保存此字段的旧配置均使用开启值；保留用户已保存的显式关闭选择。截图覆盖层不显示教学状态标识。教学模式下，下次截图覆盖层、它创建的贴图/贴视频及原位颜色/保存对话框通过独立 `ApplyPresentationCaptureVisibility` 允许教学共享；设置和凭据窗口不得受该设置影响。模式在覆盖层创建时固定。教学模式支持自带区域录屏与长截图，采集期间保持共享可见，以 SetWindowRgn 排除全部采集像素并校验实际原生区域，控制条和预览避开采集区；无空位时隐藏控件，由会话级全局 F8 停止/完成，倒计时中 F8 取消，所有结束路径释放热键和恢复窗口区域。Debug 的 `MEWU_QA_CAPTURE_WINDOWS=1` 仅供自动化验收，Release 必须继续编译掉该环境开关，不能让它改变任何窗口的保护。
 - 全屏截图根画布必须保持 `Background="Transparent"` 才能接收空白区域命中；拖选期间鼠标必须由 `Root` 捕获和释放，不能由窗口捕获后让挂在根画布上的移动/松开事件断路。
 - InkCanvas 的画笔可使用 `FitToCurve`，矩形和箭头等几何标注必须在生成 Stroke 时关闭曲线拟合，否则直角和箭头轮廓会被平滑变形。
 - 默认 AI Provider 固定为 MiniMax M3：国内 OpenAI-compatible 地址 `https://api.minimaxi.com/v1`，模型 ID `MiniMax-M3`。M3 原生接受 `image_url` 与 `video_url`，图片单张最大 10 MB，URL/Base64 视频单文件最大 50 MB、整个内联请求体最大 64 MB，视频抽帧率范围 0.2–5 FPS；50 MB 原视频经 Base64 展开会超过请求体上限，必须提前提示压缩至约 47 MB 或改用 Files API 的 `mm_file://` 引用。不得自动回退或重新默认到火山方舟。

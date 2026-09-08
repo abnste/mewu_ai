@@ -10,10 +10,10 @@ namespace MewuAI.Tests;
 public sealed class TeachingModeTests
 {
     [Fact]
-    public void ExistingSettingsWithoutTeachingModeKeepCaptureProtection()
+    public void ExistingSettingsWithoutTeachingModeUseDefaultSharing()
     {
         var settings=JsonSerializer.Deserialize<AppSettings>("{\"OverlayOpacity\":0.5}")!;
-        Assert.False(settings.TeachingMode);
+        Assert.True(settings.TeachingMode);
         Assert.Equal(.5,settings.OverlayOpacity);
     }
 
@@ -28,6 +28,7 @@ public sealed class TeachingModeTests
             var path=Path.Combine(directory,"settings.json");
             var service=new SettingsService(path);
             var settings=service.Load();
+            Assert.True(settings.TeachingMode);
             settings.Providers[0].CredentialId="synthetic-test-credential-reference";
             settings.TeachingMode=enabled;
             service.Save(settings);

@@ -61,8 +61,7 @@ internal static class Program
         Set(overlay,"_conversationAiAvailable",true);
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
-        ((FrameworkElement)overlay.FindName("TeachingBadge")).Visibility=Visibility.Visible;
-        ((TextBlock)overlay.FindName("TeachingBadgeText")).Text="自动化验收窗口 · 非当前软件设置";
+        MarkReplayWindow(overlay,"自动化验收窗口 · 非当前软件设置");
         overlay.ShowInTaskbar=true;
         if(args.Contains("--verify-hover"))
         {
@@ -190,6 +189,13 @@ internal static class Program
             };
             heartbeat.Start();timer.Start();
         };
+    }
+
+    internal static void MarkReplayWindow(CaptureOverlayWindow overlay,string text)
+    {
+        var badge=new Border{Background=Brushes.AliceBlue,CornerRadius=new CornerRadius(14),Padding=new Thickness(12,7,12,7),IsHitTestVisible=false,Child=new TextBlock{Text=text,Foreground=Brushes.DarkSlateBlue,FontSize=12}};
+        Canvas.SetLeft(badge,18);Canvas.SetTop(badge,18);System.Windows.Controls.Panel.SetZIndex(badge,80);
+        ((Canvas)overlay.FindName("Root")).Children.Add(badge);
     }
 
     private static object Native(string name,params object[] args)=>typeof(AppHost).Assembly
