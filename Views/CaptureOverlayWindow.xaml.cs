@@ -1142,16 +1142,23 @@ public partial class CaptureOverlayWindow : Window
         Toolbar.Visibility=Visibility.Collapsed;SetPromptBarHidden(true);Root.CaptureMouse();e.Handled=true;
     }
 
-    private void OnMouseMove(object s,MouseEventArgs e)
+    private void OnMouseMove(object s,MouseEventArgs e)=>UpdatePointerInteraction(e.GetPosition(Root));
+    private void UpdatePointerInteraction(Point p)
     {
-        var p=e.GetPosition(Root);
         if(_recordingMode||_drawingMode||_longCaptureMode){PointerInspector.Visibility=Visibility.Collapsed;return;}
         UpdatePointerInspector(p);
         if(_selecting&&Active is { } created){if(_pendingAutoSelection is not null&&Math.Abs(p.X-_start.X)<SystemParameters.MinimumHorizontalDragDistance&&Math.Abs(p.Y-_start.Y)<SystemParameters.MinimumVerticalDragDistance)return;_pendingAutoSelection=null;created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(moved.Bounds,next))InvalidateImageDerivedLayers(moved);moved.Bounds=next;UpdateSelection(moved);}
         else
         {
-            if(IsInteractingWithPrompt(p)){PointerInspector.Visibility=Visibility.Collapsed;ResetSnapPreview();return;}
+            if(IsInteractingWithPrompt(p)||CanRevealPromptAtScreenEdge(p))
+            {
+                Toolbar.Visibility=Visibility.Collapsed;PointerInspector.Visibility=Visibility.Collapsed;
+                SetPromptBarHidden(false,true);ResetSnapPreview();return;
+            }
+            // Preview input also reaches us during thumb drags. Keep geometry
+            // ownership with the captured handle instead of hover-selecting.
+            if(Mouse.Captured is Thumb handle&&ReferenceEquals(VisualTreeHelper.GetParent(handle),Root))return;
             // The floating toolbar owns its whole hit zone, including the gap.
             // Resolve it before selecting any screenshot beneath it.
             if(PointerInToolbarInteractionZone(p))
@@ -1159,21 +1166,28 @@ public partial class CaptureOverlayWindow : Window
                 PointerInspector.Visibility=Visibility.Collapsed;ResetSnapPreview();
                 SetPromptBarHidden(true,true);return;
             }
-            if(_overlayRequest is not null||_request is not null)return;
-            UpdateSnapPreview(p);
+            var busy=_overlayRequest is not null||_request is not null;
+            if(busy)ResetSnapPreview();else UpdateSnapPreview(p);
             if(Active is null&&PromptMonitorBounds()!=_lastPositionedPromptMonitor)PositionPromptBar();
-            if(!_forceNewSelection)
+            if(!busy&&!_forceNewSelection)
             {
                 var hovered=FindSelection(p);
                 if(hovered>=0&&hovered!=_activeIndex)
                 {
                     Select(hovered);
                     PositionPromptBar();
-                    ShowToolbar();
+                    RefreshToolbar(p);
                 }
             }
-            var preserveToolbarPlacement=PointerInToolbarInteractionZone(p);
-            SetPromptBarHidden(preserveToolbarPlacement||PointerOverSelection(p),preserveToolbarPlacement);
+            // Network work freezes selection ownership, never the visibility
+            // of the composer. Re-entering the same selection must also bring
+            // its toolbar back after a previous mouse leave.
+            SetPromptBarHidden(PointerOverSelection(p),true);
+            if(ShouldShowSelectionToolbar(p))
+            {
+                if(Toolbar.Visibility!=Visibility.Visible)RefreshToolbar(p);
+            }
+            else Toolbar.Visibility=Visibility.Collapsed;
             return;
         }
     }
@@ -1447,8 +1461,20 @@ public partial class CaptureOverlayWindow : Window
             !_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible?GetPromptInteractionBounds():null);
     }
     private bool IsInteractingWithPrompt(Point point)=>!_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible&&
-        (PromptBarHost.IsMouseOver||PromptBarHost.IsMouseCaptureWithin||ChannelPickerPopup.IsOpen||_historyCopyMenuOpen||PointerOverPromptBar(point));
-    private void ToolbarMouseEnter(object sender,MouseEventArgs e){if(!IsInteractingWithPrompt(e.GetPosition(Root)))SetPromptBarHidden(true,true);}
+        (PromptBarHost.IsMouseCaptureWithin||ChannelPickerPopup.IsOpen||_historyCopyMenuOpen||PointerOverPromptBar(point));
+    private void ToolbarMouseEnter(object sender,MouseEventArgs e)
+    {
+        var point=e.GetPosition(Root);
+        if(IsInteractingWithPrompt(point)||CanRevealPromptAtScreenEdge(point)){Toolbar.Visibility=Visibility.Collapsed;SetPromptBarHidden(false,true);return;}
+        SetPromptBarHidden(true,true);
+    }
+    private bool CanRevealPromptAtScreenEdge(Point point)=>
+        _conversationAiAvailable&&PromptBarHost.Visibility==Visibility.Visible&&
+        CaptureOverlayPolicy.IsPointerInPromptRevealZone(point,GetPromptInteractionBounds(),PromptMonitorBounds());
+    private bool ShouldShowSelectionToolbar(Point point)=>
+        !_selecting&&!_moving&&!_drawingMode&&!_recordingMode&&!_longCaptureMode&&
+        Active is {IsImplicit:false} item&&!IsInteractingWithPrompt(point)&&!CanRevealPromptAtScreenEdge(point)&&
+        (item.Bounds.Contains(point)||PointerInToolbarInteractionZone(point)||Toolbar.IsMouseCaptureWithin);
     private static bool IsInside(DependencyObject? source,DependencyObject parent){while(source is not null){if(ReferenceEquals(source,parent))return true;source=VisualTreeHelper.GetParent(source);}return false;}
     private Int32Rect ToPixelRect(Rect r)=>ScreenCoordinateService.ToPixelRect(r,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
 
@@ -1578,9 +1604,10 @@ public partial class CaptureOverlayWindow : Window
         return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     }
 
-    private void ShowToolbar()
+    private void ShowToolbar()=>RefreshToolbar(Mouse.GetPosition(Root));
+    private void RefreshToolbar(Point pointer)
     {
-        if(Active is not {IsImplicit:false} item||_recordingMode||_longCaptureMode){Toolbar.Visibility=Visibility.Collapsed;return;}
+        if(Active is not {IsImplicit:false} item||!ShouldShowSelectionToolbar(pointer)){Toolbar.Visibility=Visibility.Collapsed;return;}
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
         var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;TableButton.Visibility=!isVideo&&_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);

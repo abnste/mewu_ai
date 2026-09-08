@@ -320,7 +320,7 @@ internal static class CaptureOverlayPolicy
         Rect monitorBounds,
         IEnumerable<Rect> explicitSelections)
     {
-        if(!promptBounds.IsEmpty&&promptBounds.Contains(pointer))return false;
+        if(!promptBounds.IsEmpty&&promptBounds.Contains(pointer)||IsPointerInPromptRevealZone(pointer,promptBounds,monitorBounds))return false;
         foreach(var selection in explicitSelections)
         {
             if(selection.IsEmpty||!selection.Contains(pointer))continue;
@@ -336,6 +336,7 @@ internal static class CaptureOverlayPolicy
         Rect monitorBounds,
         IEnumerable<Rect> explicitSelections)
     {
+        if(IsPointerInPromptRevealZone(pointer,promptBounds,monitorBounds))return false;
         if(!currentlyHidden)return ShouldAutoHidePromptBar(pointer,promptBounds,monitorBounds,explicitSelections);
         var selections=explicitSelections as IReadOnlyCollection<Rect>??explicitSelections.ToArray();
         // A full-screen selection has no outside area that can reveal a hidden
@@ -346,6 +347,13 @@ internal static class CaptureOverlayPolicy
         if(!promptBounds.IsEmpty&&promptBounds.Contains(pointer)&&selections.Any(selection=>selection.Contains(pointer)&&!monitorBounds.IsEmpty&&CoversMostOfMonitor(selection,monitorBounds)))return false;
         return ShouldAutoHidePromptBar(pointer,Rect.Empty,monitorBounds,selections);
     }
+
+    // A narrow, stable screen-edge target remains reachable even when several
+    // partial selections cover the whole bottom of a monitor. It is independent
+    // of the animated host and does not revive its stale occupied rectangle.
+    internal static bool IsPointerInPromptRevealZone(Point pointer,Rect prompt,Rect monitor)=>
+        !prompt.IsEmpty&&!monitor.IsEmpty&&monitor.Contains(pointer)&&
+        pointer.X>=prompt.Left&&pointer.X<=prompt.Right&&pointer.Y>=monitor.Bottom-24;
 
     private static bool CoversMostOfMonitor(Rect selection,Rect monitor)
     {

@@ -477,6 +477,23 @@ public sealed class CaptureOverlayPolicyTests
         Assert.True(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(true,pointer,prompt,monitor,[selection]));
     }
 
+    [Theory]
+    [InlineData(0,0)]
+    [InlineData(-1920,-200)]
+    public void BottomEdgeRevealsComposerAcrossPartialSelectionsWithoutOscillating(double left,double top)
+    {
+        var monitor=new Rect(left,top,1920,1080);
+        var prompt=new Rect(left+670,top+850,574,190);
+        Rect[] selections=[new(left+400,top+700,600,380),new(left+1000,top+700,700,380)];
+        var pointer=new Point(left+900,top+1075);
+        Assert.True(CaptureOverlayPolicy.IsPointerInPromptRevealZone(pointer,prompt,monitor));
+        Assert.False(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(true,pointer,prompt,monitor,selections));
+        Assert.False(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(false,pointer,prompt,monitor,selections));
+        Assert.True(CaptureOverlayPolicy.ShouldKeepPromptBarHiddenOverSelection(true,new Point(left+900,top+900),prompt,monitor,selections));
+        Assert.False(CaptureOverlayPolicy.IsPointerInPromptRevealZone(new Point(left+1300,top+1075),prompt,monitor));
+        Assert.False(CaptureOverlayPolicy.IsPointerInPromptRevealZone(new Point(left+900,top+1085),prompt,monitor));
+    }
+
     [Fact]
     public void FloatingToolbarWrapsToTheMonitorWidthInsteadOfOverflowing()
     {

@@ -25,7 +25,6 @@ using RichTextBox=System.Windows.Controls.RichTextBox;
 internal static class CaptureInputReplay
 {
     private const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic|BindingFlags.DeclaredOnly;
-    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x,int y);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window,out uint processId);
     [DllImport("user32.dll")] private static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
@@ -43,14 +42,12 @@ internal static class CaptureInputReplay
                 var root=(Canvas)first.FindName("Root");
                 var a=AddSelection(first,new Rect(100,100,360,180));
                 var b=AddSelection(first,new Rect(80,285,700,170));
-                Invoke(first,"Select",0);Invoke(first,"ShowToolbar");first.UpdateLayout();
+                Invoke(first,"Select",0);Invoke(first,"RefreshToolbar",new Point(200,180));first.UpdateLayout();
                 var toolbar=(FrameworkElement)first.FindName("Toolbar");
                 var toolbarBounds=new Rect(Canvas.GetLeft(toolbar),Canvas.GetTop(toolbar),toolbar.ActualWidth,toolbar.ActualHeight);
                 SetPublic(b,"Bounds",toolbarBounds);Invoke(first,"UpdateSelection",b);Invoke(first,"Select",0);
                 var p=new Point(toolbarBounds.Left+toolbarBounds.Width/2,toolbarBounds.Top+toolbarBounds.Height/2);
-                var screen=root.PointToScreen(p);SetCursorPos((int)screen.X,(int)screen.Y);
-                await Yield();
-                Invoke(first,"OnMouseMove",root,new System.Windows.Input.MouseEventArgs(Mouse.PrimaryDevice,Environment.TickCount));
+                Invoke(first,"UpdatePointerInteraction",p);
                 Require((int)Get(first,"_activeIndex")==0,"Toolbar switched to the region underneath");checks.Add("overlapping-toolbar-keeps-owner");
 
                 var selection=(Canvas)a.GetType().GetProperty("TextSelection")!.GetValue(a)!;
