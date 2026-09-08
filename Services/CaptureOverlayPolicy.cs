@@ -205,6 +205,18 @@ internal static class CaptureOverlayPolicy
 
     internal static CancellationTokenSource CreateManualAiRequestCancellation() => new();
 
+    internal const string ReplyLanguageInstruction="中文回答默认使用简体中文，正文及你生成的批注说明均保持简体，不要无故混入繁体或异体字。用户明确指定其他语言、繁体或逐字引用时遵从用户要求；原文引用、代码、文件名和标识符保持原样。";
+
+    private static List<AiMessage> CreateReplyHistory(IEnumerable<AiMessage> history)
+    {
+        var messages=history.ToList();
+        if(messages.Count>0&&string.Equals(messages[0].Role,"system",StringComparison.OrdinalIgnoreCase))
+            messages[0]=new AiMessage("system",ReplyLanguageInstruction+"\n"+messages[0].Text);
+        else
+            messages.Insert(0,new AiMessage("system",ReplyLanguageInstruction));
+        return [..ConversationContextPolicy.CreateBoundedHistory(messages)];
+    }
+
     internal static AiRequest CreateScreenAiRequest(
         string prompt,
         IEnumerable<AiMessage> history,
@@ -216,7 +228,7 @@ internal static class CaptureOverlayPolicy
         bool disableReasoning=false) => new()
     {
         Prompt=prompt,
-        History=[..history],
+        History=CreateReplyHistory(history),
         Attachments=attachments,
         StreamingProgress=streamingProgress,
         AgentProgress=agentProgress,

@@ -39,6 +39,7 @@ internal static class VideoAnalysisTimebaseService
             var metadata=await source.Properties.GetVideoPropertiesAsync().AsTask(cancellation).ConfigureAwait(false);
             var duration=metadata.Duration;
             if(original.Video is null||duration<=TimeSpan.Zero||duration>TimeSpan.FromMinutes(30))throw new InvalidDataException("视频时长无效或超过 30 分钟，请分段后发送");
+            var encodedDuration=GetEncodedDuration(duration);
             var profile=MediaEncodingProfile.CreateMp4(VideoEncodingQuality.HD720p);
             var scale=Math.Min(1,1280d/Math.Max(original.Video.Width,original.Video.Height));
             profile.Video.Width=(uint)Math.Max(2,(int)(original.Video.Width*scale)&~1);
@@ -53,12 +54,12 @@ internal static class VideoAnalysisTimebaseService
             var output=await folder.CreateFileAsync(Path.GetFileName(outputPath),CreationCollisionOption.FailIfExists).AsTask(cancellation).ConfigureAwait(false);
             // Explicit end time prevents Media Foundation's low-FPS encoder
             // from padding the final GOP (27s otherwise became 41s locally).
-            var transcoder=new MediaTranscoder{HardwareAccelerationEnabled=false,TrimStopTime=duration};
+            var transcoder=new MediaTranscoder{HardwareAccelerationEnabled=false,TrimStopTime=encodedDuration};
             // Feeding explicit source-time samples avoids the file transcoder's
             // frame-rate converter shifting scene changes in short videos.
             var clip=await MediaClip.CreateFromFileAsync(source).AsTask(cancellation).ConfigureAwait(false);
             var composition=new MediaComposition();composition.Clips.Add(clip);
-            using(var frames=new TimestampedFrames(composition,profile.Video.Width,profile.Video.Height,duration,cancellation))
+            using(var frames=new TimestampedFrames(composition,profile.Video.Width,profile.Video.Height,duration,encodedDuration,cancellation))
             using(var destination=await output.OpenAsync(FileAccessMode.ReadWrite).AsTask(cancellation).ConfigureAwait(false))
             {
                 var prepared=await transcoder.PrepareMediaStreamSourceTranscodeAsync(frames.Source,destination,profile).AsTask(cancellation).ConfigureAwait(false);
@@ -73,7 +74,8 @@ internal static class VideoAnalysisTimebaseService
             var actual=await MediaEncodingProfile.CreateFromStreamAsync(encoded).AsTask(cancellation).ConfigureAwait(false);
             var actualMetadata=await output.Properties.GetVideoPropertiesAsync().AsTask(cancellation).ConfigureAwait(false);
             EnsureTimebase(actual.Video?.FrameRate.Numerator??0,actual.Video?.FrameRate.Denominator??0,duration,actualMetadata.Duration);
-            return new(outputLease,actualMetadata.Duration);
+            // Report source time, never the repeated transport-only tail.
+            return new(outputLease,duration);
         }
         catch(OperationCanceledException)when(!token.IsCancellationRequested)
         {outputLease.Dispose();TryDelete(outputPath);throw new TimeoutException("视频时间轴校准超时或副本过大，请缩短视频后重试");}
@@ -81,9 +83,21 @@ internal static class VideoAnalysisTimebaseService
         finally{if(attachment.FilePath is null)TryDelete(inputPath);}
     }
 
+    internal static TimeSpan GetEncodedDuration(TimeSpan sourceDuration)
+    {
+        if(sourceDuration<=TimeSpan.Zero||sourceDuration>TimeSpan.FromMinutes(30))throw new ArgumentOutOfRangeException(nameof(sourceDuration));
+        // M3 uses temporal patches of two frames. Its API rejects odd sample
+        // counts with 2013; a partial final sample can also be dropped by MF.
+        // Complete the final pair with the last source frame, without moving
+        // any earlier event or extending the user's original recording.
+        const long frameTicks=TimeSpan.TicksPerSecond/FramesPerSecond;
+        var frames=(sourceDuration.Ticks+frameTicks-1)/frameTicks;
+        return TimeSpan.FromTicks(((frames+1)/2*2)*frameTicks);
+    }
+
     internal static void EnsureTimebase(uint numerator,uint denominator,TimeSpan sourceDuration,TimeSpan actualDuration)
     {
-        if(denominator==0||Math.Abs(numerator/(double)denominator-FramesPerSecond)>.001||actualDuration<=TimeSpan.Zero||Math.Abs((sourceDuration-actualDuration).TotalSeconds)>1d/FramesPerSecond+.1)
+        if(denominator==0||Math.Abs(numerator/(double)denominator-FramesPerSecond)>.001||actualDuration<=TimeSpan.Zero||Math.Abs((GetEncodedDuration(sourceDuration)-actualDuration).TotalSeconds)>.05)
             throw new InvalidDataException($"视频时间轴校准验证失败，已停止发送（帧率 {numerator}/{denominator}，时长 {sourceDuration.TotalSeconds:0.###}/{actualDuration.TotalSeconds:0.###} 秒）");
     }
     internal static void TryDelete(string path){try{File.Delete(path);}catch(IOException){}catch(UnauthorizedAccessException){}}
@@ -103,7 +117,7 @@ internal static class VideoAnalysisTimebaseService
     {
         private readonly MediaComposition _composition;
         private readonly uint _width,_height;
-        private readonly TimeSpan _duration;
+        private readonly TimeSpan _duration,_sourceDuration;
         private readonly CancellationToken _token;
         private readonly object _gate=new();
         private readonly HashSet<byte[]> _buffers=[];
@@ -111,9 +125,9 @@ internal static class VideoAnalysisTimebaseService
         private bool _disposed;
         internal MediaStreamSource Source {get;}
         internal Exception? Failure {get;private set;}
-        internal TimestampedFrames(MediaComposition composition,uint width,uint height,TimeSpan duration,CancellationToken token)
+        internal TimestampedFrames(MediaComposition composition,uint width,uint height,TimeSpan sourceDuration,TimeSpan duration,CancellationToken token)
         {
-            _composition=composition;_width=width;_height=height;_duration=duration;_token=token;
+            _composition=composition;_width=width;_height=height;_sourceDuration=sourceDuration;_duration=duration;_token=token;
             var raw=VideoEncodingProperties.CreateUncompressed(MediaEncodingSubtypes.Bgra8,width,height);
             raw.FrameRate.Numerator=FramesPerSecond;raw.FrameRate.Denominator=1;
             Source=new MediaStreamSource(new VideoStreamDescriptor(raw)){Duration=duration,BufferTime=TimeSpan.Zero,CanSeek=false};
@@ -128,7 +142,8 @@ internal static class VideoAnalysisTimebaseService
                 _token.ThrowIfCancellationRequested();
                 var time=TimeSpan.FromSeconds(Interlocked.Increment(ref _index)-1d)/FramesPerSecond;
                 if(time>=_duration)return;
-                using var thumbnail=await _composition.GetThumbnailAsync(time,(int)_width,(int)_height,VideoFramePrecision.NearestFrame).AsTask(_token).ConfigureAwait(false);
+                var sourceTime=time<_sourceDuration?time:TimeSpan.FromTicks(_sourceDuration.Ticks-1);
+                using var thumbnail=await _composition.GetThumbnailAsync(sourceTime,(int)_width,(int)_height,VideoFramePrecision.NearestFrame).AsTask(_token).ConfigureAwait(false);
                 var decoder=await BitmapDecoder.CreateAsync(thumbnail).AsTask(_token).ConfigureAwait(false);
                 bytes=(await decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8,BitmapAlphaMode.Ignore,new BitmapTransform(),ExifOrientationMode.IgnoreExifOrientation,ColorManagementMode.DoNotColorManage).AsTask(_token).ConfigureAwait(false)).DetachPixelData();
                 lock(_gate)
@@ -137,7 +152,7 @@ internal static class VideoAnalysisTimebaseService
                     if(_buffers.Count>=16)throw new InvalidOperationException("视频编码缓冲超出限制");
                     _buffers.Add(bytes);
                     var owned=bytes;var sample=MediaStreamSample.CreateFromBuffer(owned.AsBuffer(),time);
-                    sample.Duration=_duration-time<TimeSpan.FromSeconds(1d/FramesPerSecond)?_duration-time:TimeSpan.FromSeconds(1d/FramesPerSecond);sample.KeyFrame=true;
+                    sample.Duration=TimeSpan.FromSeconds(1d/FramesPerSecond);sample.KeyFrame=true;
                     sample.Processed+=(_,_)=>{lock(_gate){if(_buffers.Remove(owned))CryptographicOperations.ZeroMemory(owned);}};
                     args.Request.Sample=sample;bytes=null;
                 }
