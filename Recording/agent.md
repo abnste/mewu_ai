@@ -1,5 +1,8 @@
 # 录屏实现备忘
 
+- 2026-09-08 视频时间验收复现：27 秒合成视频在约 13 秒变色，M3 对原 30fps 视频却报 0.9 秒。MiniMax 的分析副本统一用 VideoAnalysisTimebaseService 按源时间采样，编码帧率与 API fps 同为 2；禁止把所有小于 1 秒的批注猜成比例放大。原视频、预览及导出不变，副本使用独立租约并限时、限大小，解码样本在 Processed/结束时清零。
+- Windows 文件转码直接降低帧率会移动车景变化，且省略 TrimStopTime 时本机 27 秒输出会补成 41 秒。使用 MediaStreamSource 提供带明确 Timestamp/Duration 的源帧，Baseline H.264 与显式 TrimStopTime；必须同时校验实际帧率/时长、源及副本首中末事件颜色、原文件哈希，不能只看模型一次答对。参考微软 MediaStreamSource.SampleRequested、MediaStreamSample.Processed 文档。模型时间仍受 0.5 秒采样与语义判断精度影响，不承诺逐帧精确。
+
 - 录屏使用 ScreenRecorderLib + Windows Media Foundation，输出文件由 `RecordingSession.VideoPath` 统一管理。
 - 教学模式与录屏共存：保持 WDA_NONE，SetWindowRgn 孔洞包含完整采集矩形，不能沿用普通模式的 5px 边沿保留或将控制条并回孔洞。录制前和录制期间校验实际原生区域没有覆盖采集像素；控制条只放区外，无空位用会话级 F8 停止。取消倒计时、停止、失败、关闭都释放 F8 并恢复窗口区域。验收必须检查真实 MP4 首中末帧及全屏无控制条时的停止路径，不能只验证按钮变亮。
 - 覆盖层录制时，选区内部从冻结桌面/遮罩中挖空；窗口原生区域同步排除选区内部，使其他进程的窗口可以继续播放并接收鼠标输入。

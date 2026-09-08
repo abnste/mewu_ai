@@ -58,6 +58,7 @@ internal sealed class VideoPreviewSurface : IDisposable
     }
 
     internal bool IsPlaying => _playing;
+    internal TimeSpan Duration=>_player?.PlaybackSession.NaturalDuration??TimeSpan.Zero;
     internal TimeSpan Position
     {
         get

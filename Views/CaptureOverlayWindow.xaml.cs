@@ -3504,7 +3504,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(e.Key==Key.C&&Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
         {
-            CopyTextToClipboard(AnswerText.PlainText);
+            CopyTextToClipboard(AnswerText.Selection.IsEmpty?AnswerText.PlainText:AnswerText.SelectedPlainText);
             e.Handled=true;
         }
     }
@@ -3661,16 +3661,16 @@ public partial class CaptureOverlayWindow : Window
 
     private void FocusQuickPromptAfterRecording()
     {
-        // Completion can race the Media Foundation callback and the layout pass
-        // that reopens the prompt bar. Retry at two input boundaries so the
-        // caret ends up in the actual editor, rather than on the video surface.
+        // Restore after native capture/preview layout, and keep the same typing
+        // ownership used after selection. Otherwise the pointer still over the
+        // video immediately hides the bar and sends focus back to Root.
         void FocusPrompt()
         {
             if (_closed || !_conversationAiAvailable) return;
             Activate();
             SetPromptBarHidden(false);
             FocusManager.SetFocusedElement(this, QuickPrompt);
-            Keyboard.Focus(QuickPrompt);
+            _selectionPromptFocus=ReferenceEquals(Keyboard.Focus(QuickPrompt),QuickPrompt);
             QuickPrompt.CaretIndex = QuickPrompt.Text.Length;
             QuickPrompt.Select(QuickPrompt.Text.Length, 0);
         }
@@ -3701,6 +3701,11 @@ public partial class CaptureOverlayWindow : Window
     {
         if(item.VideoPreview is not null)return item.VideoPreview;
         var preview=new VideoPreviewSurface(item.Video,Dispatcher);
+        preview.Opened+=()=>
+        {
+            if(_closed||!_selections.Contains(item)||preview.Duration<=TimeSpan.Zero)return;
+            item.VideoDuration=preview.Duration;
+        };
         preview.Failed+=error=>
         {
             if(_closed||!_selections.Contains(item))return;
@@ -3747,7 +3752,7 @@ public partial class CaptureOverlayWindow : Window
         {
             CancelVideoAnnotationPlayback(item);
             var preview=EnsureVideoPreview(item);
-            if(preview.IsPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";SetVideoPlaybackVisual(false);}
+            if(preview.IsPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";SetVideoPlaybackVisual(false);FocusQuickPromptAfterRecording();}
             else{preview.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";SetVideoPlaybackVisual(true);}
         }
         catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewToggle",ex);item.VideoPlaying=false;PromptStatus.Text="视频预览暂不可用；仍可保存或复制视频";}
@@ -3802,7 +3807,9 @@ public partial class CaptureOverlayWindow : Window
         {
             if(e.Key==Key.C&&Keyboard.Modifiers.HasFlag(ModifierKeys.Control)&&!richTextBox.Selection.IsEmpty){CopyTextToClipboard(new TextRange(richTextBox.Selection.Start,richTextBox.Selection.End).Text.TrimEnd('\r','\n'));e.Handled=true;}return;
         }
-        if(Keyboard.FocusedElement is TextBox or ButtonBase)return;
+        // Read-only answers are RichTextBoxes too. Let their preview handlers
+        // and editing commands run before the capture shortcuts / busy guard.
+        if(Keyboard.FocusedElement is TextBoxBase or ButtonBase)return;
         if(e.Key==Key.C&&Keyboard.Modifiers==ModifierKeys.None&&!_drawingMode&&!_recordingCountdownActive&&!_recordingMode&&PointerInspector.Visibility==Visibility.Visible)
         {
             UpdatePointerInspector(Mouse.GetPosition(Root));

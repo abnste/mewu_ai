@@ -27,7 +27,7 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
             (_, e) =>
             {
                 if (Selection.IsEmpty) return;
-                ClipboardService.TrySetText(new TextRange(Selection.Start, Selection.End).Text.TrimEnd('\r', '\n'), out string? _);
+                ClipboardService.TrySetText(SelectedPlainText, out string? _);
                 e.Handled = true;
             },
             (_, e) => { e.CanExecute = !Selection.IsEmpty; e.Handled = true; }));
@@ -44,18 +44,18 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
         }
     }
 
-    public string PlainText
+    public string PlainText=>GetPlainText(Document.ContentStart,Document.ContentEnd);
+    public string SelectedPlainText=>GetPlainText(Selection.Start,Selection.End);
+
+    private string GetPlainText(TextPointer rangeStart,TextPointer rangeEnd)
     {
-        get
-        {
-            var text=new System.Text.StringBuilder();var start=Document.ContentStart;
-            foreach(var emoji in EmojiInlines)
+            var text=new System.Text.StringBuilder();var start=rangeStart;
+            foreach(var emoji in EmojiInlines.Where(emoji=>emoji.ElementStart.CompareTo(rangeStart)>=0&&emoji.ElementEnd.CompareTo(rangeEnd)<=0))
             {
                 text.Append(new TextRange(start,emoji.ElementStart).Text);text.Append(emoji.Text);start=emoji.ElementEnd;
             }
-            text.Append(new TextRange(start,Document.ContentEnd).Text);
+            text.Append(new TextRange(start,rangeEnd).Text);
             return text.ToString().TrimEnd('\r','\n');
-        }
     }
 
     // This view is read-only and its renderer substitutes only new emoji runs.

@@ -56,6 +56,10 @@ public sealed class MarkdownFlowDocumentRendererTests
             Assert.Equal(3,view.EmojiInlines.Count());
             Assert.Equal("彩色 👋🏽 🧑‍💻 🇨🇳",view.PlainText);
             Assert.All(view.EmojiInlines,emoji=>Assert.NotNull(emoji.Child.Source));
+            view.SelectAll();Assert.Equal(view.PlainText,view.SelectedPlainText);
+            var firstEmoji=view.EmojiInlines.First();
+            view.Selection.Select(firstEmoji.ElementStart,firstEmoji.ElementEnd);
+            Assert.Equal("👋🏽",view.SelectedPlainText);
         });
     }
 
