@@ -3661,6 +3661,13 @@ public partial class CaptureOverlayWindow : Window
                 QuickPrompt.Focus();
                 QuickPrompt.CaretIndex = QuickPrompt.Text.Length;
             }));
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+            {
+                if (_closed || !_conversationAiAvailable) return;
+                Activate();
+                Keyboard.Focus(QuickPrompt);
+                QuickPrompt.CaretIndex = QuickPrompt.Text.Length;
+            }));
             if(item.VideoPath is not null)PromptStatus.Text=$"录屏完成 {item.VideoDuration:mm\\:ss} · 已引用为 @视频{_selections.IndexOf(item)+1}";
         }
         catch(Exception ex){FailRecording(session,item,ex.Message);}
