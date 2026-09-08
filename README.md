@@ -105,7 +105,7 @@ Screenshots, annotations, pinned images, text recognition, and recording are ava
 
 Enable **Settings → Capture → Teaching mode**, save, and start a new capture. Share your entire screen in your meeting or classroom app.
 
-This makes selections, annotations, and newly pinned images and videos visible to viewers. Use your meeting app to record the lesson. Turn teaching mode off before using MewuAI's own recording or scrolling capture.
+This makes selections, annotations, and newly pinned images and videos visible to viewers. You can also use MewuAI's recording and scrolling capture while teaching mode is on. Controls stay outside the capture area; when there is no room, such as a full-screen capture, they are hidden. Press **F8** to stop recording or finish scrolling capture. During the recording countdown, F8 cancels it.
 
 </details>
 

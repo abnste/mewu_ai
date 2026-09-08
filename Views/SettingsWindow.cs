@@ -398,7 +398,7 @@ public sealed class SettingsWindow : Window
         _teachingMode.Content=LocalizationService.T("教学演示模式（允许屏幕共享看到框选和标注）","Teaching mode (show selections and annotations in screen sharing)");
         _teachingMode.IsChecked=_host.Settings.TeachingMode;
         panel.Children.Add(_teachingMode);
-        panel.Children.Add(Text(LocalizationService.T("保存后，下次截图及其贴图生效。请在会议或教学软件中共享整个屏幕。演示时可使用会议软件录制；喵呜AI区域录屏和长截图需关闭此模式。设置和密钥仍受防捕获保护。","Applies to your next capture and its pinned windows. Share the entire screen in your meeting app. Use the meeting app to record lessons; turn this mode off for MewuAI region recording or scrolling captures. Settings and credentials remain protected."),true));
+        panel.Children.Add(Text(LocalizationService.T("保存后，下次截图及其贴图生效。请在会议或教学软件中共享整个屏幕。支持同时使用区域录屏和滚动长截图，采集区域内会让出实时画面，操作控件放在区域外；F8 停止录屏或完成长截图。设置和密钥仍受防捕获保护。","Applies to your next capture and pinned windows. Share your entire screen in the meeting app. Region recording and scrolling capture remain available: the capture area shows live content, with controls placed outside it. Press F8 to stop recording or finish scrolling capture. Settings and credentials remain protected."),true));
         panel.Children.Add(Text("截图、OCR、复制和保存均在本地完成。", true));
         return panel;
     }

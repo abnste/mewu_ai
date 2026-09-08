@@ -28,7 +28,6 @@ internal static class Program
         var verifyCaptureTools=args.Contains("--verify-capture-tools");
         var verifyTeaching=args.Contains("--verify-teaching");
         var teaching=args.Contains("--teaching")||verifyTeaching;
-        if(verifyCaptureTools&&teaching)throw new InvalidOperationException("Capture tool verification requires normal protected mode.");
 #if !DEBUG
         if(!teaching&&!verifyCaptureTools)throw new InvalidOperationException("Release replay requires explicit --teaching, --verify-teaching or --verify-capture-tools.");
 #else
@@ -224,8 +223,7 @@ internal static class Program
                     var clean=(CaptureFrame)overlay.GetType().GetMethod("CaptureCleanDesktopForRefresh",Private)!.Invoke(overlay,null)!;
                     Check("refreshExcludesOwnOverlay",IsGreen(clean));
                     Check("sharingRestoredAfterRefresh",(bool)Native("IsVisibleToCapture",handle));
-                    Invoke(overlay,"Record",overlay,new RoutedEventArgs());
-                    Check("recordingBlocked",Get(overlay,"_recordingSession") is null&&!(bool)Get(overlay,"_recordingCountdownActive"));
+                    Check("captureToolsEnabled",((System.Windows.Controls.Button)overlay.FindName("RecordButton")).IsEnabled&&((System.Windows.Controls.Button)overlay.FindName("LongCaptureButton")).IsEnabled);
                     var settings=new SettingsWindow(host);
                     try
                     {
