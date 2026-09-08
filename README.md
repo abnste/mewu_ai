@@ -3,14 +3,14 @@
   <h1>MewuAI</h1>
   <p>A Windows screenshot tool with screen recording, pinned images, text recognition, and AI annotations.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.3.1"><img src="https://img.shields.io/badge/Public_Beta-v0.3.1-7C6CF0?style=flat-square" alt="v0.3.1 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.3.2"><img src="https://img.shields.io/badge/Public_Beta-v0.3.2-7C6CF0?style=flat-square" alt="v0.3.2 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.1/MewuAI-Setup-0.3.1-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.2/MewuAI-Setup-0.3.2-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.1/MewuAI-Portable-0.3.1-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.2/MewuAI-Portable-0.3.2-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -124,6 +124,8 @@ API keys are stored encrypted on your PC. A connected desktop AI app may also us
 Opening Settings checks for updates automatically. You can also check manually in **Settings → About**.
 
 If you use v0.2.5 or earlier, download the installer from this page to upgrade manually. See the [changelog](./CHANGELOG.md) for previous versions and their release notes.
+
+The release page includes a `SHA256SUMS.txt` file for verifying the installer and portable ZIP.
 
 </details>
 

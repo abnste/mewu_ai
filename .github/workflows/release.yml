@@ -171,6 +171,23 @@ jobs:
           if (-not (Test-Path -LiteralPath $compiler)) { throw 'Inno Setup compiler was not installed.' }
           & $compiler '.\installer\MewuAI.iss'
 
+      - name: Create SHA-256 checksums
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content -LiteralPath 'mewu_ai_Assistant.csproj'
+          $version = $project.SelectSingleNode('/Project/PropertyGroup/Version').InnerText.Trim()
+          $assets = @(
+            ".\artifacts\installer\MewuAI-Setup-$version-win-x64.exe",
+            ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip"
+          )
+          $checksums = @($assets | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $([IO.Path]::GetFileName($_))"
+          })
+          $checksumPath = '.\artifacts\packages\SHA256SUMS.txt'
+          [IO.File]::WriteAllText((Join-Path $PWD $checksumPath), (($checksums -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+          if ([IO.File]::ReadAllBytes((Join-Path $PWD $checksumPath))[0] -gt 127) { throw 'Checksum file must start with an ASCII hash.' }
+
       - name: Create GitHub Release
         if: github.event_name == 'push'
         shell: pwsh
@@ -181,7 +198,8 @@ jobs:
           $version = $tag.TrimStart('v')
           $assets = @(
             ".\artifacts\installer\MewuAI-Setup-$version-win-x64.exe",
-            ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip"
+            ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip",
+            '.\artifacts\packages\SHA256SUMS.txt'
           )
           if (gh release view $tag *> $null) {
             gh release upload $tag @assets --clobber
