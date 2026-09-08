@@ -3645,6 +3645,12 @@ public partial class CaptureOverlayWindow : Window
             try{await session.DisposeAsync();}catch(Exception ex){new PrivacyLogger().Error("RecordingDispose",ex);}
             if(!IsCurrentRecording(session,item)||_closed||!_selections.Contains(item))return;
             _references.Add(item);ExitRecordingMode(item);StartVideoPreview(item);_recordingSession=null;_recordingItem=null;_recordingItemWasReferenced=false;
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+            {
+                if (_closed || !_conversationAiAvailable) return;
+                QuickPrompt.Focus();
+                QuickPrompt.CaretIndex = QuickPrompt.Text.Length;
+            }));
             if(item.VideoPath is not null)PromptStatus.Text=$"录屏完成 {item.VideoDuration:mm\\:ss} · 已引用为 @视频{_selections.IndexOf(item)+1}";
         }
         catch(Exception ex){FailRecording(session,item,ex.Message);}

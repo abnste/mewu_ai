@@ -25,6 +25,17 @@ internal static class VideoAnnotationTimeline
         fitted=default!;wasClamped=false;
         if(!annotation.IsVideoTimeline||!double.IsFinite(durationSeconds)||durationSeconds<=0)return false;
         var start=annotation.StartTime!.Value;var end=annotation.EndTime!.Value;
+        var sourceFrames=annotation.Keyframes!;
+        var maxTime=Math.Max(end,sourceFrames.Max(frame=>frame.Time));
+        if(maxTime<=1.01&&durationSeconds>2)
+        {
+            start*=durationSeconds; end*=durationSeconds;
+            annotation=annotation with
+            {
+                StartTime=start, EndTime=end,
+                Keyframes=sourceFrames.Select(frame=>frame with{Time=frame.Time*durationSeconds}).ToArray()
+            };
+        }
         if(start>durationSeconds+DurationOvershootToleranceSeconds||end>durationSeconds+DurationOvershootToleranceSeconds)return false;
         var fittedStart=Math.Min(start,durationSeconds);var fittedEnd=Math.Min(end,durationSeconds);
         var frames=new List<VideoAnnotationKeyframe>();
