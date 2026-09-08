@@ -60,7 +60,10 @@ internal static class VideoAnalysisTimebaseService
             // frame-rate converter shifting scene changes in short videos.
             var clip=await MediaClip.CreateFromFileAsync(source).AsTask(cancellation).ConfigureAwait(false);
             var composition=new MediaComposition();composition.Clips.Add(clip);
-            using(var frames=new TimestampedFrames(composition,profile.Video.Width,profile.Video.Height,duration,encodedDuration,cancellation))
+            var sourceFrameDuration=original.Video.FrameRate.Numerator>0&&original.Video.FrameRate.Denominator>0
+                ?TimeSpan.FromSeconds(original.Video.FrameRate.Denominator/(double)original.Video.FrameRate.Numerator)
+                :TimeSpan.FromSeconds(1d/FramesPerSecond);
+            using(var frames=new TimestampedFrames(composition,profile.Video.Width,profile.Video.Height,sourceFrameDuration,encodedDuration,cancellation))
             using(var destination=await output.OpenAsync(FileAccessMode.ReadWrite).AsTask(cancellation).ConfigureAwait(false))
             {
                 stage="prepare-transcoder";
@@ -68,7 +71,7 @@ internal static class VideoAnalysisTimebaseService
                 if(!prepared.CanTranscode)throw new InvalidOperationException("无法准备视频时间轴校准，请换用 MP4 后重试");
                 stage="transcode";
                 try{await prepared.TranscodeAsync().AsTask(cancellation,new OutputBudget(outputPath,timeout)).ConfigureAwait(false);}
-                catch(Exception)when(frames.Failure is not null){throw new InvalidDataException($"视频采样失败（阶段 {frames.FailureStage}，错误码 0x{frames.Failure.HResult:X8}）",frames.Failure);}
+                catch(Exception)when(!cancellation.IsCancellationRequested&&frames.Failure is not null){throw new InvalidDataException($"视频采样失败（阶段 {frames.FailureStage}，错误码 0x{frames.Failure.HResult:X8}）",frames.Failure);}
                 if(frames.Failure is { } failure)throw new InvalidDataException("无法提取视频时间采样帧",failure);
             }
             stage="verify-output";
@@ -107,6 +110,17 @@ internal static class VideoAnalysisTimebaseService
         if(denominator==0||Math.Abs(numerator/(double)denominator-FramesPerSecond)>.001||actualDuration<=TimeSpan.Zero||Math.Abs((GetEncodedDuration(sourceDuration)-actualDuration).TotalSeconds)>.05)
             throw new InvalidDataException($"视频时间轴校准验证失败，已停止发送（帧率 {numerator}/{denominator}，时长 {sourceDuration.TotalSeconds:0.###}/{actualDuration.TotalSeconds:0.###} 秒）");
     }
+
+    internal static TimeSpan GetSourceSampleTime(TimeSpan sampleTime,TimeSpan compositionDuration,TimeSpan sourceFrameDuration)
+    {
+        if(compositionDuration<=TimeSpan.Zero||sourceFrameDuration<=TimeSpan.Zero||sampleTime<TimeSpan.Zero)throw new ArgumentOutOfRangeException(nameof(sampleTime));
+        // Container duration may include fractional frame padding. Requesting
+        // duration minus one tick can still round to EOF in NearestFrame mode
+        // (E_INVALIDARG on Windows Server). Stay inside the last source frame
+        // using the decoder's timeline, not the shell's container duration.
+        var lastFrameStart=TimeSpan.FromTicks(Math.Max(0,compositionDuration.Ticks-sourceFrameDuration.Ticks));
+        return sampleTime<lastFrameStart?sampleTime:lastFrameStart;
+    }
     internal static void TryDelete(string path){try{File.Delete(path);}catch(IOException){}catch(UnauthorizedAccessException){}}
 
     private sealed class OutputBudget(string path,CancellationTokenSource timeout):IProgress<double>
@@ -124,7 +138,7 @@ internal static class VideoAnalysisTimebaseService
     {
         private readonly MediaComposition _composition;
         private readonly uint _width,_height;
-        private readonly TimeSpan _duration,_sourceDuration;
+        private readonly TimeSpan _duration,_sourceFrameDuration;
         private readonly CancellationToken _token;
         private readonly object _gate=new();
         private readonly HashSet<byte[]> _buffers=[];
@@ -133,9 +147,9 @@ internal static class VideoAnalysisTimebaseService
         internal MediaStreamSource Source {get;}
         internal Exception? Failure {get;private set;}
         internal string FailureStage {get;private set;}=string.Empty;
-        internal TimestampedFrames(MediaComposition composition,uint width,uint height,TimeSpan sourceDuration,TimeSpan duration,CancellationToken token)
+        internal TimestampedFrames(MediaComposition composition,uint width,uint height,TimeSpan sourceFrameDuration,TimeSpan duration,CancellationToken token)
         {
-            _composition=composition;_width=width;_height=height;_sourceDuration=sourceDuration;_duration=duration;_token=token;
+            _composition=composition;_width=width;_height=height;_sourceFrameDuration=sourceFrameDuration;_duration=duration;_token=token;
             var raw=VideoEncodingProperties.CreateUncompressed(MediaEncodingSubtypes.Bgra8,width,height);
             raw.FrameRate.Numerator=FramesPerSecond;raw.FrameRate.Denominator=1;
             Source=new MediaStreamSource(new VideoStreamDescriptor(raw)){Duration=duration,BufferTime=TimeSpan.Zero,CanSeek=false};
@@ -151,7 +165,7 @@ internal static class VideoAnalysisTimebaseService
                 _token.ThrowIfCancellationRequested();
                 var time=TimeSpan.FromSeconds(Interlocked.Increment(ref _index)-1d)/FramesPerSecond;
                 if(time>=_duration)return;
-                var sourceTime=time<_sourceDuration?time:TimeSpan.FromTicks(_sourceDuration.Ticks-1);
+                var sourceTime=GetSourceSampleTime(time,_composition.Duration,_sourceFrameDuration);
                 stage="thumbnail";
                 using var thumbnail=await _composition.GetThumbnailAsync(sourceTime,(int)_width,(int)_height,VideoFramePrecision.NearestFrame).AsTask(_token).ConfigureAwait(false);
                 stage="decode-thumbnail";

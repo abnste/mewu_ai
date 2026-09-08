@@ -15,6 +15,17 @@ namespace MewuAI.Tests;
 public sealed class VideoAnalysisTimebaseTests
 {
     [Theory]
+    [InlineData(0,6,30,0)]
+    [InlineData(2.5,6,30,2.5)]
+    [InlineData(5.5,5.5,30,5.4666667)]
+    [InlineData(6,6,30,5.9666667)]
+    [InlineData(6.5,6,30,5.9666667)]
+    [InlineData(.5,.2,30,.1666667)]
+    [InlineData(.5,.02,30,0)]
+    public void PaddedSamplesStayInsideTheLastDecodedFrame(double sample,double duration,double fps,double expected)
+        =>Assert.Equal(expected,VideoAnalysisTimebaseService.GetSourceSampleTime(TimeSpan.FromSeconds(sample),TimeSpan.FromSeconds(duration),TimeSpan.FromSeconds(1/fps)).TotalSeconds,6);
+
+    [Theory]
     [InlineData(30,1,27)]
     [InlineData(2,1,41)]
     [InlineData(2,0,27)]
