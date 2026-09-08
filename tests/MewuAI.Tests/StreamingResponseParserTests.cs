@@ -27,6 +27,11 @@ public sealed class StreamingResponseParserTests
         Assert.False(done);
     }
     [Fact] public void IgnoresMalformedEvent(){Assert.False(StreamingResponseParser.TryParse("data: not-json",out _,out _));}
+    [Fact] public void ReportsOutputLimitWithoutDiscardingTheFinalDelta()
+    {
+        Assert.True(StreamingResponseParser.TryParse("data: {\"choices\":[{\"delta\":{\"content\":\"最后一段\"},\"finish_reason\":\"length\"}]}",out var delta,out var done,out var truncated));
+        Assert.True(done);Assert.True(truncated);Assert.Equal("最后一段",delta.Content);
+    }
 
     [Fact]
     public void Accumulator_DeduplicatesMiniMaxCumulativeContentAndReportsOnlyNewText()

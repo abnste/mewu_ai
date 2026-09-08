@@ -90,7 +90,8 @@ public sealed class WindowsOcrService
         if(input.Format!=PixelFormats.Bgra32)
         {
             var converted=new FormatConvertedBitmap(input,PixelFormats.Bgra32,null,0);
-            converted.Freeze();
+            // Used only on this worker. Freezing walks BitmapFrame's decoder,
+            // which may still belong to the UI thread even for a frozen frame.
             input=converted;
         }
 

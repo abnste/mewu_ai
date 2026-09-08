@@ -8,14 +8,18 @@ namespace mewu_ai_Assistant.AI;
 public static class StreamingResponseParser
 {
     public static bool TryParse(string line,out AiStreamDelta delta,out bool done)
+        =>TryParse(line,out delta,out done,out _);
+
+    public static bool TryParse(string line,out AiStreamDelta delta,out bool done,out bool truncated)
     {
-        delta=new(string.Empty,string.Empty);done=false;
+        delta=new(string.Empty,string.Empty);done=false;truncated=false;
         if(!line.StartsWith("data:",StringComparison.OrdinalIgnoreCase))return false;
         var payload=line[5..].Trim();if(payload=="[DONE]"){done=true;return true;}
         try
         {
             using var document=JsonDocument.Parse(payload);var choices=document.RootElement.GetProperty("choices");if(choices.GetArrayLength()==0)return true;
             var choice=choices[0];done=choice.TryGetProperty("finish_reason",out var finish)&&finish.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(finish.GetString());
+            truncated=done&&string.Equals(finish.GetString(),"length",StringComparison.OrdinalIgnoreCase);
             if(!choice.TryGetProperty("delta",out var value)||value.ValueKind!=JsonValueKind.Object)return done;
             var content=ReadString(value,"content");var reasoning=ReadString(value,"reasoning_content");var cumulative=false;
             if(reasoning.Length==0)reasoning=ReadString(value,"thinking_content");

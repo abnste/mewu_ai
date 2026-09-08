@@ -381,6 +381,7 @@ public partial class CaptureOverlayWindow : Window
         _longCaptureInputTimer.Tick+=(_,_)=>UpdateLongCaptureInputRouting();
         Activated+=OnActivated;
         Closed+=OnClosed;
+        _inactiveEscapeTimer.Tick+=CheckInactiveEscape;
     }
 
     private void ApplyOverlayVisualTuning()
@@ -812,6 +813,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnClosed(object? sender,EventArgs e)
     {
         _closed=true;
+        _inactiveEscapeTimer.Stop();
         _longCaptureInputTimer.Stop();
         if(IsInitialized)NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);
         if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
@@ -1150,6 +1152,14 @@ public partial class CaptureOverlayWindow : Window
         else
         {
             if(IsInteractingWithPrompt(p)){PointerInspector.Visibility=Visibility.Collapsed;ResetSnapPreview();return;}
+            // The floating toolbar owns its whole hit zone, including the gap.
+            // Resolve it before selecting any screenshot beneath it.
+            if(PointerInToolbarInteractionZone(p))
+            {
+                PointerInspector.Visibility=Visibility.Collapsed;ResetSnapPreview();
+                SetPromptBarHidden(true,true);return;
+            }
+            if(_overlayRequest is not null||_request is not null)return;
             UpdateSnapPreview(p);
             if(Active is null&&PromptMonitorBounds()!=_lastPositionedPromptMonitor)PositionPromptBar();
             if(!_forceNewSelection)
@@ -1182,11 +1192,14 @@ public partial class CaptureOverlayWindow : Window
     {
         FinishInterruptedPointerInteraction();
         if(_drawingMode&&!_drawingModalOpen)FinishInterruptedDrawingMode();
+        if(!_closed){_inactiveEscapeHeld=IsEscapePressed();_inactiveEscapeTimer.Start();}
     }
 
     private void OnActivated(object? s,EventArgs e)
     {
+        _inactiveEscapeTimer.Stop();
         if(_closed||!_overlayReady)return;
+        if(!IsKeyboardFocusWithin&&!_drawingModalOpen&&_systemFileDialogDepth==0)Root.Focus();
         if(_longCaptureMode){RaisePinnedWindowsAboveOverlay();return;}
         // A modal file picker temporarily activates/deactivates its owner.
         // Capturing the desktop during that transition freezes the picker into
@@ -1678,7 +1691,7 @@ public partial class CaptureOverlayWindow : Window
         if(!double.IsFinite(desired)||desired<=0)return;
         QuickPrompt.Height=Math.Clamp(desired,CompactQuickPromptMinHeight,CompactQuickPromptMaxHeight);
     }
-    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;if(!changed)return;_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
+    private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false){if(!_conversationAiAvailable){if(PromptBarHost.IsKeyboardFocusWithin)Root.Focus();PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}var changed=_promptBarHidden!=hidden;if(!changed)return;if(hidden&&PromptBarHost.IsKeyboardFocusWithin)Root.Focus();_promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();}
     private void UpdatePromptBarHiddenTransform(bool animate)
     {
         if(PromptBarHost.RenderTransform is not TranslateTransform transform){transform=new TranslateTransform();PromptBarHost.RenderTransform=transform;}
@@ -2320,7 +2333,7 @@ public partial class CaptureOverlayWindow : Window
         if(RejectIfOverlayOperationBusy()||Active is not { } item)return;
         if(item.VideoPath is not { } video)
         {
-            var copied=ClipboardService.TrySetImage(RenderSelectionImage(item),out var copyError);
+            var copied=ClipboardService.TrySetImage(RenderSelectionImage(item,true,true,true),out var copyError);
             PromptStatus.Text=copied?"图片已复制":copyError;SetPromptBarHidden(false);return;
         }
 
@@ -3238,53 +3251,18 @@ public partial class CaptureOverlayWindow : Window
             if(!IsOverlayOperationActive(operation,item))return;
             if(document.Lines.Count==0){PromptStatus.Text=$"{document.Engine} 未识别到文字";return;}
             var provider=_host.CreateTranslationProvider(out var providerError);if(provider is null){PromptStatus.Text=providerError??"翻译需要先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
-            var batches=CaptureOverlayPolicy.CreateTranslationBatches(document.Lines.Select(line=>line.Text).ToArray());
-            var translations=new string[document.Lines.Count];
-            for(var batchIndex=0;batchIndex<batches.Count;batchIndex++)
+            var progress=new Progress<TranslationProgress>(state=>
             {
                 if(!IsOverlayOperationActive(operation,item))return;
-                var batch=batches[batchIndex];var batchNumber=batchIndex+1;
-                IReadOnlyList<string>? translated=null;
-                for(var attempt=0;attempt<2&&translated is null;attempt++)
-                {
-                    var retry=attempt>0;
-                    PromptStatus.Text=retry
-                        ?LocalizationService.Format("{0} · 正在重新整理译文 {1}/{2}…按 Esc 可取消","{0} · Reformatting translation {1}/{2}… Press Esc to cancel",document.Engine,batchNumber,batches.Count)
-                        :$"{document.Engine} 已识别 {document.Lines.Count} 行 · 正在翻译 {batchNumber}/{batches.Count}…按 Esc 可取消";
-                    using var networkTimeout=CancellationTokenSource.CreateLinkedTokenSource(operation.Token);networkTimeout.CancelAfter(TimeSpan.FromSeconds(retry?45:75));var received=false;var batchOpen=true;
-                    var progress=new Progress<AiStreamDelta>(delta=>{if(!batchOpen||!IsOverlayOperationActive(operation,item))return;if(!received&&(delta.Content.Length>0||delta.ReasoningContent.Length>0)){received=true;PromptStatus.Text=$"{document.Engine} · 正在接收译文 {batchNumber}/{batches.Count}…按 Esc 可取消";}});
-                    AiResult? result=null;
-                    try
-                    {
-                        result=await provider.SendAsync(new AiRequest{Prompt=CreateTranslationPrompt(batch.Lines,retry),StreamingProgress=progress,StreamingCompletionPredicate=value=>TranslationResponseParser.TryParse(value,batch.Lines,out _),DisableReasoning=true,MaxOutputTokens=batch.MaxOutputTokens},networkTimeout.Token);
-                    }
-                    catch(OperationCanceledException) when(!operation.IsCancellationRequested)
-                    {
-                        throw new TimeoutException($"翻译第 {batchNumber}/{batches.Count} 批超时，请检查 Provider 后重试");
-                    }
-                    catch(InvalidDataException) when(!operation.IsCancellationRequested)
-                    {
-                        if(retry){PromptStatus.Text=LocalizationService.Format("翻译第 {0}/{1} 批未收到完整译文，请重试或切换 AI 渠道","Translation batch {0}/{1} did not return a complete result. Retry or switch AI channel.",batchNumber,batches.Count);return;}
-                    }
-                    finally{batchOpen=false;}
-                    if(!IsOverlayOperationActive(operation,item))return;
-                    if(result is not null&&TranslationResponseParser.TryParse(result.Answer,batch.Lines,out var parsed))translated=parsed;
-                }
-                if(translated is null){PromptStatus.Text=LocalizationService.Format("翻译第 {0}/{1} 批未按原行数返回译文，已自动重试一次；请重试或切换 AI 渠道","Translation batch {0}/{1} did not return one result per source line after an automatic retry. Retry or switch AI channel.",batchNumber,batches.Count);return;}
-                for(var offset=0;offset<translated.Count;offset++)translations[batch.StartIndex+offset]=translated[offset];
-            }
+                PromptStatus.Text=state.IsRetry
+                    ?LocalizationService.Format("{0} · 正在补译 {1}/{2} 行…按 Esc 退出","{0} · Retrying translation {1}/{2} lines… Press Esc to exit",document.Engine,state.CompletedLines,state.TotalLines)
+                    :LocalizationService.Format("{0} · 正在翻译 {1}/{2} 行…按 Esc 退出","{0} · Translating {1}/{2} lines… Press Esc to exit",document.Engine,state.CompletedLines,state.TotalLines);
+            });
+            var translations=await new InPlaceTranslationService().TranslateAsync(provider,document.Lines.Select(line=>line.Text).ToArray(),LocalizationService.T("Simplified Chinese","English"),progress,operation.Token);
             if(!IsOverlayOperationActive(operation,item))return;
-            RenderTextOverlays(item,image,document.Lines,translations,true);RecordOverlayOperation(before,"原位翻译");PromptStatus.Text=$"{document.Engine} · 已在原位翻译 {translations.Length} 行";
+            RenderTextOverlays(item,image,document.Lines,translations,true);RecordOverlayOperation(before,"原位翻译");PromptStatus.Text=$"{document.Engine} · 已在原位翻译 {translations.Count} 行";
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消翻译";}catch(TimeoutException ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=ex.Message;}catch(Exception ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
-    }
-
-    private static string CreateTranslationPrompt(IReadOnlyList<string> lines,bool strict)
-    {
-        var instruction=strict
-            ?LocalizationService.T("上一轮返回无法读取。现在只能返回一个有效 JSON 对象，不要 Markdown、说明、代码块或思考内容。键必须为 translations；数组必须与 translationsSource 长度和顺序完全一致，每项必须是 JSON 字符串，原文空项对应空字符串。translationsSource=","The previous response could not be read. Return exactly one valid JSON object, with no Markdown, explanation, code fence, or thinking. Its key must be translations; the array must match translationsSource exactly in length and order, every item must be a JSON string, and a blank source item must stay blank. translationsSource=")
-            :LocalizationService.T("将 translationsSource 中的每一项翻译成简体中文。保持数组长度和顺序完全一致，原文空项也必须返回空字符串。只返回 JSON：{\"translations\":[\"译文1\",\"译文2\"]}。translationsSource=","Translate every item in translationsSource into natural English. Preserve the exact array length and order, including blank source items as empty strings. Return JSON only: {\"translations\":[\"translation 1\",\"translation 2\"]}. translationsSource=");
-        return instruction+System.Text.Json.JsonSerializer.Serialize(lines);
     }
 
     private async void Ocr(object s,RoutedEventArgs e)
@@ -3394,7 +3372,13 @@ public partial class CaptureOverlayWindow : Window
         var menu=new ContextMenu();menu.SetResourceReference(StyleProperty,"TextSelectionContextMenu");var copy=new MenuItem{Header="复制所选文字"};var copyAll=new MenuItem{Header=copyAllHeader};foreach(var entry in new[]{copy,copyAll})entry.SetResourceReference(StyleProperty,"TextSelectionMenuItem");copy.Click+=(_,_)=>CopyTextToClipboard(new TextRange(box.Selection.Start,box.Selection.End).Text.TrimEnd('\r','\n'));copyAll.Click+=(_,_)=>CopyTextToClipboard(allText);var separator=new Separator();separator.SetResourceReference(StyleProperty,"TextSelectionSeparator");menu.Items.Add(copy);menu.Items.Add(separator);menu.Items.Add(copyAll);menu.Opened+=(_,_)=>copy.IsEnabled=!box.Selection.IsEmpty;return menu;
     }
     private void CopyTextToClipboard(string text){if(text.Length==0)return;PromptStatus.Text=ClipboardService.TrySetText(text,out var error)?"文字已复制":error;}
-    private static void ClearTextSelection(SelectionItem item){item.TextSession?.Dispose();item.TextSession=null;item.TextSelection.Children.Clear();item.TextSelection.IsHitTestVisible=false;}
+    private static void ClearTextSelection(SelectionItem item)
+    {
+        // Removing the focused RichTextBox otherwise leaves keyboard events
+        // routed to a detached subtree, beyond the window's PreviewKeyDown.
+        if(item.TextSelection.IsKeyboardFocusWithin&&Window.GetWindow(item.TextSelection) is CaptureOverlayWindow owner&&!owner._closed)owner.Root.Focus();
+        item.TextSession?.Dispose();item.TextSession=null;item.TextSelection.Children.Clear();item.TextSelection.IsHitTestVisible=false;
+    }
     private async void Record(object s,RoutedEventArgs e)
     {
         if(RejectIfOverlayOperationBusy())return;
@@ -3600,7 +3584,7 @@ public partial class CaptureOverlayWindow : Window
         catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewToggle",ex);item.VideoPlaying=false;PromptStatus.Text="视频预览暂不可用；仍可保存或复制视频";}
     }
 
-    private async void OnPreviewKeyDown(object s,KeyEventArgs e)
+    private void OnPreviewKeyDown(object s,KeyEventArgs e)
     {
         if(ChannelPickerPopup.IsOpen){ChannelPickerKeyDown(s,e);return;}
         if(e.Key==Key.Escape)
@@ -3609,6 +3593,12 @@ public partial class CaptureOverlayWindow : Window
             e.Handled=true;return;
         }
         if(_longCaptureMode){e.Handled=true;return;}
+        if(e.Key==Key.Enter&&Keyboard.Modifiers==ModifierKeys.None&&
+            Keyboard.FocusedElement is not TextBoxBase {IsReadOnly:false}&&
+            !_recordingCountdownActive&&!_recordingMode)
+        {
+            e.Handled=true;CopyCurrentScreenshotAndClose();return;
+        }
         if(_drawingMode&&Keyboard.FocusedElement is not TextBoxBase&&e.Key==Key.Delete)
         {
             if(!DeleteSelectedDrawingObject())PromptStatus.Text="请先点击选择要删除的标注";
@@ -3649,7 +3639,7 @@ public partial class CaptureOverlayWindow : Window
         if(e.Key is Key.Left or Key.Right or Key.Up or Key.Down){var before=CaptureOverlaySnapshot();var next=ClampSelection(new Rect(item.Bounds.X+(e.Key==Key.Left?-step:e.Key==Key.Right?step:0),item.Bounds.Y+(e.Key==Key.Up?-step:e.Key==Key.Down?step:0),item.Bounds.Width,item.Bounds.Height));if(CaptureOverlayPolicy.HasContentGeometryChanged(item.Bounds,next))InvalidateImageDerivedLayers(item);item.Bounds=next;UpdateSelection(item);RecordGeometryOperationIfChanged(before,"移动截图区域");PositionPromptBar();ShowToolbar();e.Handled=true;return;}
         if(Keyboard.Modifiers!=ModifierKeys.None)return;
         if(item.VideoPath is not null&&(e.Key==Key.T||e.Key==Key.O)){PromptStatus.Text="视频区域不支持 OCR/翻译，请先选择截图区域";e.Handled=true;return;}
-        if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.R)Record(s,new());else if(e.Key==Key.Enter){e.Handled=true;await SendAsync(true);return;}else return;e.Handled=true;
+        if(e.Key==Key.C)Copy(s,new());else if(e.Key==Key.S)Save(s,new());else if(e.Key==Key.P)Pin(s,new());else if(e.Key==Key.D)Draw(s,new());else if(e.Key==Key.T)Translate(s,new());else if(e.Key==Key.O)Ocr(s,new());else if(e.Key==Key.R)Record(s,new());else return;e.Handled=true;
     }
 
     private void HandleEscape()
@@ -3661,15 +3651,8 @@ public partial class CaptureOverlayWindow : Window
         else if(_recordingMode)StopRecording(this,new RoutedEventArgs());
         else if(_drawingMode)ExitDrawingMode();
         else if(_activeInteraction is not null){ResolveOverlayInteractionWithFallback();PromptStatus.Text="已取消本次 Hermes 交互";}
-        else if(_overlayRequest is not null){if(!_overlayRequest.IsCancellationRequested)_overlayRequest.Cancel();PromptStatus.Text="正在取消当前操作…";}
-        else if(_request is not null){if(!_request.IsCancellationRequested)_request.Cancel();PromptStatus.Text="正在取消 AI 分析…";}
-        else
-        {
-            var focused=Keyboard.FocusedElement as DependencyObject;
-            var textSelection=_selections.FirstOrDefault(item=>item.TextSelection.IsHitTestVisible&&focused is not null&&IsInside(focused,item.TextSelection))
-                ??(Active is { } active&&active.TextSelection.IsHitTestVisible?active:null)
-                ??_selections.FirstOrDefault(item=>item.TextSelection.IsHitTestVisible);
-            if(textSelection is not null){ClearTextSelection(textSelection);PromptStatus.Text="已退出文字选择";}else Close();
-        }
+        // Closing owns cancellation and rejects late OCR/provider completions.
+        // Never wait for a network task or clear several OCR regions one by one.
+        else Close();
     }
 }

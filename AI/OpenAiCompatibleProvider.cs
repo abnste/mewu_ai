@@ -146,8 +146,10 @@ public class OpenAiCompatibleProvider : IAiProvider
             var completed=false;
             while(await reader.ReadLineAsync(token).ConfigureAwait(false) is { } line)
             {
-                if(!StreamingResponseParser.TryParse(line,out var delta,out var done))continue;
-                if(accumulator.Accept(delta,done,request.StreamingProgress,request.StreamingCompletionPredicate)){completed=true;break;}
+                if(!StreamingResponseParser.TryParse(line,out var delta,out var done,out var truncated))continue;
+                var accepted=accumulator.Accept(delta,done&&!truncated,request.StreamingProgress,request.StreamingCompletionPredicate);
+                if(truncated&&!accepted)throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
+                if(accepted){completed=true;break;}
             }
             if(!completed)throw new InvalidDataException("AI 流式响应意外中断，请重试");
             return accumulator.BuildResult();
@@ -155,6 +157,8 @@ public class OpenAiCompatibleProvider : IAiProvider
 
         var json=await ReadResponseBodyAsStringAsync(response.Content,token).ConfigureAwait(false);
         using var document=JsonDocument.Parse(json);
+        if(document.RootElement.GetProperty("choices")[0].TryGetProperty("finish_reason",out var finishReason)&&finishReason.ValueKind==JsonValueKind.String&&finishReason.GetString()=="length")
+            throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
         var message=document.RootElement.GetProperty("choices")[0].GetProperty("message");
         var answerText=ReadString(message,"content");
         var reasoningText=ReadString(message,"reasoning_content");

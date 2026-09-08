@@ -52,12 +52,13 @@ public static class TranslationResponseParser
                     var reader=new Utf8JsonReader(utf8.AsSpan(offset),isFinalBlock:true,state:default);
                     using var document=JsonDocument.ParseValue(ref reader);
                     if(TryReadTranslations(document.RootElement,expectedCount,allowsEmpty,0,out translations))return true;
+                    offset+=checked((int)reader.BytesConsumed)-1;
                 }
                 catch(JsonException)
                 {
-                    // A response may contain prose, a first unrelated JSON
-                    // value, or a partially streamed candidate before the
-                    // final object. Continue looking for the translation root.
+                    // Never accept a nested array (or text inside a string)
+                    // from an incomplete outer JSON value as a finished reply.
+                    return false;
                 }
             }
             return false;
@@ -88,6 +89,19 @@ public static class TranslationResponseParser
             if(TryGetProperty(root,TranslationPropertyNames,out var value))root=value;
             else if(wrapperDepth==0&&TryGetProperty(root,WrapperPropertyNames,out var wrapped))return TryReadTranslations(wrapped,expectedCount,allowsEmpty,wrapperDepth+1,out translations);
             else return false;
+        }
+        if(root.ValueKind==JsonValueKind.Object)
+        {
+            var ordered=new string[expectedCount];var seen=new bool[expectedCount];var count=0;
+            foreach(var property in root.EnumerateObject())
+            {
+                if(!int.TryParse(property.Name,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out var index)||
+                    index<0||index>=expectedCount||property.Name!=index.ToString(System.Globalization.CultureInfo.InvariantCulture)||seen[index]||property.Value.ValueKind!=JsonValueKind.String)return false;
+                ordered[index]=property.Value.GetString()??string.Empty;seen[index]=true;count++;
+                if(string.IsNullOrWhiteSpace(ordered[index])&&!allowsEmpty(index))return false;
+            }
+            if(count!=expectedCount)return false;
+            translations=ordered;return true;
         }
         if(root.ValueKind!=JsonValueKind.Array)return false;
         var values=new List<string>();
