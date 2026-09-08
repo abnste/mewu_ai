@@ -63,12 +63,24 @@ public sealed class VideoAnalysisTimebaseTests
             var profile=MediaEncodingProfile.CreateMp4(VideoEncodingQuality.HD720p);profile.Video.Width=320;profile.Video.Height=180;profile.Video.FrameRate.Numerator=30;profile.Video.FrameRate.Denominator=1;profile.Audio=null;
             Assert.Equal(Windows.Media.Transcoding.TranscodeFailureReason.None,await composition.RenderToFileAsync(source,MediaTrimmingPreference.Precise,profile).AsTask(token));
             var before=SHA256.HashData(await File.ReadAllBytesAsync(source.Path,token));
+            var sourceProperties=await source.Properties.GetVideoPropertiesAsync().AsTask(token);
             using(var prepared=await VideoAnalysisTimebaseService.CreateAsync(new(AiAttachmentType.Video,"video/mp4",FilePath:source.Path),token))
             {
                 preparedPath=prepared.Path;Assert.InRange(prepared.Duration.TotalSeconds,4+tailSeconds-.05,4+tailSeconds+.05);
+                Assert.Equal(sourceProperties.Duration,prepared.Duration);
                 var result=await StorageFile.GetFileFromPathAsync(prepared.Path).AsTask(token);
                 var encodedProperties=await result.Properties.GetVideoPropertiesAsync().AsTask(token);
-                Assert.InRange(encodedProperties.Duration.TotalSeconds,5.95,6.05);
+                // Media Foundation on Server can encode a nominal 6s fixture
+                // slightly longer than 6s. Check complete frame pairs against
+                // the actual source, not the requested fixture duration.
+                var padding=encodedProperties.Duration-sourceProperties.Duration;
+                Assert.True(padding>=TimeSpan.Zero&&padding<TimeSpan.FromSeconds(1),$"Unexpected tail padding: {padding.TotalSeconds}s");
+                Assert.Equal(0,encodedProperties.Duration.Ticks%TimeSpan.TicksPerSecond);
+                using(var encodedStream=await result.OpenReadAsync().AsTask(token))
+                {
+                    var encodedProfile=await MediaEncodingProfile.CreateFromStreamAsync(encodedStream).AsTask(token);
+                    Assert.Equal(2d,encodedProfile.Video.FrameRate.Numerator/(double)encodedProfile.Video.FrameRate.Denominator,6);
+                }
                 var clip=await MediaClip.CreateFromFileAsync(result).AsTask(token);var output=new MediaComposition();output.Clips.Add(clip);
                 var sourceClip=await MediaClip.CreateFromFileAsync(source).AsTask(token);var input=new MediaComposition();input.Clips.Add(sourceClip);
                 foreach(var (seconds,channel) in new[]{(.5,2),(2.5,0),(4.5,1),(5.4,1)})
