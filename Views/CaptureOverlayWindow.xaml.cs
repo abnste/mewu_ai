@@ -304,8 +304,6 @@ public partial class CaptureOverlayWindow : Window
         // only affect WPF rasterisation of the presentation layer.
         UseLayoutRounding=true;SnapsToDevicePixels=true;TextOptions.SetTextFormattingMode(this,TextFormattingMode.Display);Root.SnapsToDevicePixels=true;
         ApplyOverlayVisualTuning();
-        TeachingBadge.Visibility=IsTeachingMode?Visibility.Visible:Visibility.Collapsed;
-        TeachingBadgeText.Text=LocalizationService.T("教学演示 · 屏幕共享可见","Teaching · Visible in screen sharing");
         if(IsTeachingMode)
         {
             RecordButton.ToolTip=LocalizationService.T("区域录屏 · F8 停止（倒计时中取消）","Record region · F8 to stop (cancel during countdown)");

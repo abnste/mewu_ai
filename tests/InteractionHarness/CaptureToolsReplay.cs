@@ -45,8 +45,7 @@ internal static class CaptureToolsReplay
                 background.UpdateLayout();await Dispatcher.Yield(DispatcherPriority.Background);
                 Require(IsWindowVisible(new WindowInteropHelper(background).Handle),"Synthetic background is hidden; run this interactive replay without hidden-window startup");
                 overlay=new CaptureOverlayWindow(host);overlay.Show();overlay.UpdateLayout();
-                ((FrameworkElement)overlay.FindName("TeachingBadge")).Visibility=Visibility.Visible;
-                ((TextBlock)overlay.FindName("TeachingBadgeText")).Text="功能验收窗口 · 完成后自动关闭";
+                Program.MarkReplayWindow(overlay,"功能验收窗口 · 完成后自动关闭");
                 var item=Invoke("CreateSelection",false)!;item.GetType().GetField("Bounds")!.SetValue(item,new Rect(100,150,360,240));
                 ((IList)Get("_selections")).Add(item);Invoke("Select",0);Invoke("UpdatePointerInteraction",new Point(200,220));overlay.UpdateLayout();
                 state=new{protectedWindow=Get("_captureExclusionVerified"),recordEnabled=((Button)overlay.FindName("RecordButton")).IsEnabled,longEnabled=((Button)overlay.FindName("LongCaptureButton")).IsEnabled};
