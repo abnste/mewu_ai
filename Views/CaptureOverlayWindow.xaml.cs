@@ -3658,8 +3658,8 @@ public partial class CaptureOverlayWindow : Window
         try
         {
             EnsureVideoPreview(item).Load(path,autoplay:true);
-            item.VideoPlaying=true;
-            SetVideoPlaybackVisual(true);
+            item.VideoPlaying=item.VideoPreview?.IsPlaying==true;
+            SetVideoPlaybackVisual(item.VideoPlaying);
         }
         catch(Exception ex)
         {
@@ -3719,7 +3719,7 @@ public partial class CaptureOverlayWindow : Window
         {
             CancelVideoAnnotationPlayback(item);
             var preview=EnsureVideoPreview(item);
-            if(preview.IsPlaying||item.VideoPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";SetVideoPlaybackVisual(false);}
+            if(preview.IsPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";SetVideoPlaybackVisual(false);}
             else{preview.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";SetVideoPlaybackVisual(true);}
         }
         catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewToggle",ex);item.VideoPlaying=false;PromptStatus.Text="视频预览暂不可用；仍可保存或复制视频";}
