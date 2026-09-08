@@ -96,6 +96,14 @@ internal static class CaptureToolsReplay
                 await Until(()=>item.GetType().GetProperty("VideoPath")?.GetValue(item) is string||item.GetType().GetField("VideoPath")?.GetValue(item) is string,"Recording did not produce video",30);
                 checks.Add("recording-stops-and-produces-video");
                 var video=(string)(item.GetType().GetProperty("VideoPath")?.GetValue(item)??item.GetType().GetField("VideoPath")!.GetValue(item))!;
+                await Until(()=>item.GetType().GetField("VideoPreview")!.GetValue(item) is not null,"Video preview surface was not created");
+                await Task.Delay(200);
+                Invoke("RefreshToolbar",new Point(200,220));overlay.UpdateLayout();
+                Click("VideoPlayButton");
+                Require(!(bool)Get("_recordingMode")&&!(bool)item.GetType().GetField("VideoPlaying")!.GetValue(item)!,"Video pause button did not pause the preview");
+                Click("VideoPlayButton");
+                await Until(()=>{var player=item.GetType().GetField("VideoPreview")!.GetValue(item)!;return (long)player.GetType().GetProperty("PresentedFrameCount",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(player)!>0;},"Video play button did not resume the preview");
+                checks.Add("video-play-pause-button-controls-in-place-preview");
                 var clip=await MediaClip.CreateFromFileAsync(await StorageFile.GetFileFromPathAsync(video));
                 var composition=new MediaComposition();composition.Clips.Add(clip);
                 foreach(var fraction in new[]{0.05,0.5,0.9})

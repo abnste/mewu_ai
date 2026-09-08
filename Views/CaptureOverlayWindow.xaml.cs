@@ -3648,6 +3648,7 @@ public partial class CaptureOverlayWindow : Window
         {
             EnsureVideoPreview(item).Load(path,autoplay:true);
             item.VideoPlaying=true;
+            SetVideoPlaybackVisual(true);
         }
         catch(Exception ex)
         {
@@ -3699,15 +3700,25 @@ public partial class CaptureOverlayWindow : Window
     }
     private void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
-        if(RejectIfOverlayOperationBusy()||Active is not {VideoPath:not null} item)return;
+        // AI answer/annotation work may still be finishing while the video
+        // toolbar is visible. Playback is independent of that request; only
+        // an in-place OCR/translation operation owns the toolbar itself.
+        if(_overlayRequest is not null||Active is not {VideoPath:not null} item)return;
         try
         {
             CancelVideoAnnotationPlayback(item);
             var preview=EnsureVideoPreview(item);
-            if(item.VideoPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";}
-            else{preview.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";}
+            if(preview.IsPlaying||item.VideoPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";SetVideoPlaybackVisual(false);}
+            else{preview.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";SetVideoPlaybackVisual(true);}
         }
         catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewToggle",ex);item.VideoPlaying=false;PromptStatus.Text="视频预览暂不可用；仍可保存或复制视频";}
+    }
+
+    private void SetVideoPlaybackVisual(bool playing)
+    {
+        if(VideoPlayIcon is null)return;
+        VideoPlayIcon.Data=Geometry.Parse(playing?"M3,2 L7,2 L7,16 L3,16 Z M11,2 L15,2 L15,16 L11,16 Z":"M4,2 L16,9 L4,16 Z");
+        VideoPlayButton.ToolTip=playing?"暂停视频":"播放视频";
     }
 
     private void OnPreviewKeyDown(object s,KeyEventArgs e)
