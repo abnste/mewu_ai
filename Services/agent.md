@@ -1,5 +1,7 @@
 # WorkBuddy 官方接口
 
+- 2026-09-09 AI Markdown 正文必须沿用界面的 `Segoe UI Variable Text, Microsoft YaHei UI, Segoe UI` 字体链，代码字体链也需包含 `Microsoft YaHei UI`。FlowDocument 是 FrameworkContentElement，应显式设置当前界面 Language，不能仅依赖 FrameworkElement 的全局默认。中文默认简体由请求级 system 说明约束，保留用户明确的语言要求、原文引用及代码；不得在渲染/复制阶段强制繁简转换。实际 GlyphRun 检查已确认中文落到 MSYH/MSYHBD，流式追加后复制仍保留简体、原文繁体及 emoji。
+
 - 2026-09-06 使用本机 WorkBuddy 5.5.3 自带 CLI 的官方 ACP stdio，通过 WorkBuddy.exe 的 ELECTRON_RUN_AS_NODE 模式运行；沿用官方 `.workbuddy` 登录，不读凭据、不调用会登出的 authenticate，也不调用包含 token 的 getUserInfo。模型和思考选项来自真实 session/new；连接测试只做 initialize、session/new 和配置协商，不发送收费 prompt。
 - WorkBuddy 是可调用工具的 Agent；视频交接为租约保护的 MP4 副本及附件索引，由 Agent 自行分析，不得因为 ACP 没有 video 内容块而判定不支持视频。视频启动即开放限定本机工具并验证沙箱生效，补齐它自己的 Python/Node/Git 路径；不下载或捆绑 FFmpeg，不修改用户 WorkBuddy 配置。禁继承 hooks、插件、MCP、记忆和项目设置，拒绝扩权请求。
 - WorkBuddy 的 PARTIAL_SUCCESS 是运行统计：即使后续成功，只要中途工具报错也会出现。必须有 end_turn、非空最终正文且无终端 errorMessage 才能接受；真正失败、取消、截断、空正文及仅工具前说明必须拒绝。工具调用前的说明不进入最终正文，子 Agent 和压缩内部消息不能混入回答。详见 `../docs/workbuddy-integration.md`。

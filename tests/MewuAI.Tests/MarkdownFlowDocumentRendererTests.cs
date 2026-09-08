@@ -13,6 +13,25 @@ namespace MewuAI.Tests;
 public sealed class MarkdownFlowDocumentRendererTests
 {
     [Fact]
+    public void ChineseReplyUsesExplicitChineseFontAndKeepsOriginalCharactersWhenCopied()
+    {
+        RunSta(() =>
+        {
+            const string text="视频发生强烈闪光，随后扩散。原文：影片發生強烈閃光。 👋🏽";
+            var view=new mewu_ai_Assistant.Views.MarkdownAnswerView{Markdown=text};
+            Assert.Contains("Microsoft YaHei UI",view.Document.FontFamily.Source);
+            Assert.Equal(LocalizationService.CultureName,view.Document.Language.IetfLanguageTag,StringComparer.OrdinalIgnoreCase);
+            view.Markdown=text+"\n\n`变量 = \"原文\"`";
+            view.SelectAll();
+            Assert.Contains(text,view.SelectedPlainText);
+            Assert.Contains("变量 = \"原文\"",view.SelectedPlainText);
+            foreach(var block in view.Document.Blocks.OfType<Paragraph>())
+                foreach(var run in block.Inlines.OfType<Run>().Where(run=>!MarkdownFlowDocumentRenderer.IsEmoji(run.Text)))
+                    Assert.Contains("Microsoft YaHei UI",run.FontFamily.Source);
+        });
+    }
+
+    [Fact]
     public void RendersCommonMarkdownAsSelectableDocumentText()
     {
         RunSta(() =>

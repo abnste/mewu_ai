@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Text;
 using System.Windows;
 using System.Windows.Documents;
+using System.Windows.Markup;
 using System.Windows.Media;
 using Markdig;
 using Markdig.Extensions.Tables;
@@ -23,9 +24,9 @@ public static class MarkdownFlowDocumentRenderer
         .UseAdvancedExtensions()
         .UseEmojiAndSmiley()
         .Build();
-    private static readonly FontFamily BodyFont=new("Segoe UI");
+    private static readonly FontFamily BodyFont=new("Segoe UI Variable Text, Microsoft YaHei UI, Segoe UI");
     private static readonly FontFamily EmojiFont=new("Segoe UI Emoji");
-    private static readonly FontFamily CodeFont=new("Cascadia Mono, Consolas");
+    private static readonly FontFamily CodeFont=new("Cascadia Mono, Consolas, Microsoft YaHei UI");
     private static readonly Brush BodyBrush=new SolidColorBrush(Color.FromRgb(38,52,74));
     private static readonly Brush MutedBrush=new SolidColorBrush(Color.FromRgb(91,106,128));
     private static readonly Brush LinkBrush=new SolidColorBrush(Color.FromRgb(78,98,218));
@@ -47,6 +48,7 @@ public static class MarkdownFlowDocumentRenderer
         var document=new FlowDocument
         {
             PagePadding=new Thickness(0),ColumnGap=0,FontFamily=BodyFont,
+            Language=XmlLanguage.GetLanguage(LocalizationService.CultureName),
             FontSize=fontSize,Foreground=BodyBrush,LineHeight=fontSize*1.54
         };
         var parsed=Markdown.Parse(markdown??string.Empty,Pipeline);

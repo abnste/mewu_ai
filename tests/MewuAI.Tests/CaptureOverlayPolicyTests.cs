@@ -220,6 +220,25 @@ public sealed class CaptureOverlayPolicyTests
         Assert.Equal("请总结上一轮对话",request.Prompt);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReplyLanguageAppliesToTextAndVisualRequestsWithoutChangingUserContent(bool visual)
+    {
+        var history=new List<AiMessage>();
+        if(visual)history.Add(new("system",VisualAnnotationProtocol.SystemInstruction));
+        history.Add(new("user","原文：繁體"));history.Add(new("assistant","原文：繁體"));
+        const string prompt="请翻译成繁体中文，保留变量名稱";
+        var request=CaptureOverlayPolicy.CreateScreenAiRequest(prompt,history,[],null,expectStructuredResponse:visual);
+        ConversationContextPolicy.EnsureValidForProvider(request.History);
+        var system=Assert.Single(request.History,message=>message.Role=="system");
+        Assert.StartsWith(CaptureOverlayPolicy.ReplyLanguageInstruction,system.Text);
+        Assert.Equal(visual,system.Text.Contains(VisualAnnotationProtocol.Version));
+        Assert.Equal(prompt,request.Prompt);
+        Assert.Equal(history.Where(message=>message.Role!="system"),request.History.Skip(1));
+        Assert.Equal(visual?3:2,history.Count);
+    }
+
     [Fact]
     public void TextOnlyRequestHistoryOmitsVisualSystemInstructions()
     {

@@ -68,11 +68,14 @@ public sealed class ProviderHttpErrorTests
         Assert.Contains(code,error.Message);
     }
 
-    [Fact]
-    public async Task SafeTraceIdIsShownButUnsafeHeaderIsNot()
+    [Theory]
+    [InlineData("trace_id")]
+    [InlineData("Trace-Id")]
+    [InlineData("X-Mm-Request-Id")]
+    public async Task SafeTraceIdIsShownButUnsafeHeaderIsNot(string header)
     {
         using var response=new HttpResponseMessage((HttpStatusCode)422){Content=new StringContent("{}")};
-        response.Headers.Add("trace_id","trace_2026-09-07");
+        response.Headers.Add(header,"trace_2026-09-07");
         response.Headers.Add("x-request-id","secret value");
         var error=await ProviderHttpError.ReadAsync(response,true,TestContext.Current.CancellationToken);
         Assert.Contains("trace_2026-09-07",error.Message);

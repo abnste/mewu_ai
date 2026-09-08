@@ -139,7 +139,7 @@ internal static class ProviderHttpError
     }
     private static string ReadTraceId(HttpResponseMessage response)
     {
-        foreach(var name in new[]{"trace_id","x-trace-id","x-request-id","request-id"})
+        foreach(var name in new[]{"trace_id","trace-id","x-trace-id","x-request-id","request-id","x-mm-request-id"})
             if(response.Headers.TryGetValues(name,out var values))
                 foreach(var value in values)
                     if(value.Length is >0 and <=128&&value.All(character=>char.IsAsciiLetterOrDigit(character)||character is '-' or '_' or '.'))return value;
