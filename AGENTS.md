@@ -1,5 +1,6 @@
 # 喵呜AI 开发约束
 - 当前维护分支为 `master`；不要自动创建或推送以 AI 工具名命名的开发分支。
+- 本机命令环境与 Windows 桌面宿主可能对同一个绝对配置路径呈现不同内容。2026-09-08 已确认命令侧 `TeachingMode=false`、宿主侧及正式进程内存为 `true`；排查安装版时必须核对正式 PID、实际加载版本和宿主读取结果，不能用独立验收进程或命令侧设置代替正式状态。诊断只输出白名单布尔状态/版本，不落完整内存转储、配置或凭据。
 - 项目自有源代码正式采用 MPL-2.0。新 C#/XAML 源码保持 SPDX 标识，根 LICENSE 必须保持 Mozilla 官方协议原文；SOURCE.md、双语 README 与关于页须一致说明允许合规商用、对外分发时提供受覆盖源码并保留声明，不得恢复“商用必须另行授权”或添加强制通知/界面署名条件。第三方条款保持独立，后续发布包必须携带 LICENSE 和 SOURCE.md。依赖禁用 GPL/AGPL 的开发约束不改变标准 MPL 的条款。
 - 解决方案 `.slnx` 必须显式声明 x64 平台，并为主程序、测试和 ProviderSmoke 映射 `Platform Project="x64"`；只改 csproj 不能阻止解决方案构建下传 AnyCPU。根目录 `dotnet build -c Release --no-restore -warnaserror` 必须可用。
 - Windows-only，保持 C#、WPF 与现代 .NET，不迁移到其他 UI 技术。
