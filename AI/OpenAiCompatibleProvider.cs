@@ -35,6 +35,7 @@ public class OpenAiCompatibleProvider : IAiProvider
     protected virtual bool StreamingContentIsCumulative=>false;
     protected virtual int MaxAttachmentCount=>AttachmentCountLimit;
     protected virtual long MaxRequestBodySize=>RequestBodySizeLimit;
+    protected virtual int VideoSamplingFramesPerSecond=>2;
 
     public OpenAiCompatibleProvider(AiProviderSettings settings,string apiKey)
         :this(settings,apiKey,Client.SendAsync,ProviderRequestTimeoutPolicy.For)
@@ -334,7 +335,7 @@ public class OpenAiCompatibleProvider : IAiProvider
             var dataUrl=$"data:{attachment.MimeType};base64,{Convert.ToBase64String(loaded.Bytes)}";
             token.ThrowIfCancellationRequested();
             if(attachment.Type==AiAttachmentType.Image)content.Add(new{type="image_url",image_url=new{url=dataUrl}});
-            else if(attachment.Type==AiAttachmentType.Video)content.Add(new{type="video_url",video_url=new{url=dataUrl,fps=2}});
+            else if(attachment.Type==AiAttachmentType.Video)content.Add(new{type="video_url",video_url=new{url=dataUrl,fps=VideoSamplingFramesPerSecond}});
             else content.Add(new{type="text",text=System.Text.Encoding.UTF8.GetString(loaded.Bytes)});
         }
 

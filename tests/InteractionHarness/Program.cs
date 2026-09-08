@@ -41,6 +41,14 @@ internal static class Program
         app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source=new Uri("/MewuAI;component/Themes/LightTheme.xaml",UriKind.Relative) });
         var host=new AppHost(app);
         host.Settings.TeachingMode=teaching;
+        if(args.Contains("--video-background-only"))
+        {
+            VideoWorkflowReplay.RunBackground(app);return;
+        }
+        if(args.Contains("--verify-video-workflow"))
+        {
+            VideoWorkflowReplay.Run(app,host,args.Contains("--live-provider"));return;
+        }
         var area=System.Windows.Forms.SystemInformation.VirtualScreen;
         var image=CreateSyntheticDesktop(area.Width,area.Height);
         Window? background=null;
