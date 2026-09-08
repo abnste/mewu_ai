@@ -111,6 +111,8 @@ public partial class CaptureOverlayWindow : Window
     private int _recordingHoleRetryCount;
     private int _recordingRegionResetRetryCount;
     private (int WindowLeft,int WindowTop,int WindowWidth,int WindowHeight,int HoleLeft,int HoleTop,int HoleRight,int HoleBottom,int BarLeft,int BarTop,int BarRight,int BarBottom)? _recordingWindowRegionKey;
+    private readonly DispatcherTimer _toolbarHideTimer=new(){Interval=TimeSpan.FromMilliseconds(300)};
+    private Point _lastToolbarPointer;
     private readonly DispatcherTimer _recordingTimer=new(){Interval=TimeSpan.FromMilliseconds(150)};
     private readonly DispatcherTimer _longCaptureInputTimer=new(){Interval=TimeSpan.FromMilliseconds(32)};
     private DrawTool _drawTool=DrawTool.Freehand;
@@ -377,6 +379,7 @@ public partial class CaptureOverlayWindow : Window
         DpiChanged+=(_,_)=>ApplyOverlayDpiLayout(area);
         SizeChanged+=(_,_)=>{DesktopImage.Width=Dimmer.Width=SelectionLayer.Width=Root.ActualWidth;DesktopImage.Height=Dimmer.Height=SelectionLayer.Height=Root.ActualHeight;UpdateRecordingVisualHole();if(_longCaptureMode&&_longCaptureItem is { } item){BeginLongCaptureLiveRegion(item);PositionFloatingBar(LongCaptureBar,item);if(_longCaptureComposite is { } composite)UpdateLongCapturePreview(item,composite);}PositionPromptBar();};
         RecordingBar.SizeChanged+=(_,_)=>{if(_recordingMode)UpdateRecordingVisualHole();};
+        _toolbarHideTimer.Tick+=(_,_)=>CompleteToolbarHide();
         _recordingTimer.Tick+=(_,_)=>RecordingTick();
         _longCaptureInputTimer.Tick+=(_,_)=>UpdateLongCaptureInputRouting();
         Activated+=OnActivated;
@@ -812,6 +815,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void OnClosed(object? sender,EventArgs e)
     {
+        _toolbarHideTimer.Stop();
         _closed=true;
         _inactiveEscapeTimer.Stop();
         _longCaptureInputTimer.Stop();
@@ -1145,6 +1149,7 @@ public partial class CaptureOverlayWindow : Window
     private void OnMouseMove(object s,MouseEventArgs e)=>UpdatePointerInteraction(e.GetPosition(Root));
     private void UpdatePointerInteraction(Point p)
     {
+        _lastToolbarPointer=p;
         if(_recordingMode||_drawingMode||_longCaptureMode){PointerInspector.Visibility=Visibility.Collapsed;return;}
         UpdatePointerInspector(p);
         if(_selecting&&Active is { } created){if(_pendingAutoSelection is not null&&Math.Abs(p.X-_start.X)<SystemParameters.MinimumHorizontalDragDistance&&Math.Abs(p.Y-_start.Y)<SystemParameters.MinimumVerticalDragDistance)return;_pendingAutoSelection=null;created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
@@ -1153,7 +1158,7 @@ public partial class CaptureOverlayWindow : Window
         {
             if(IsInteractingWithPrompt(p)||CanRevealPromptAtScreenEdge(p))
             {
-                Toolbar.Visibility=Visibility.Collapsed;PointerInspector.Visibility=Visibility.Collapsed;
+                HideToolbarImmediately();PointerInspector.Visibility=Visibility.Collapsed;
                 SetPromptBarHidden(false,true);ResetSnapPreview();return;
             }
             // Preview input also reaches us during thumb drags. Keep geometry
@@ -1163,6 +1168,7 @@ public partial class CaptureOverlayWindow : Window
             // Resolve it before selecting any screenshot beneath it.
             if(PointerInToolbarInteractionZone(p))
             {
+                _toolbarHideTimer.Stop();
                 PointerInspector.Visibility=Visibility.Collapsed;ResetSnapPreview();
                 SetPromptBarHidden(true,true);return;
             }
@@ -1185,9 +1191,10 @@ public partial class CaptureOverlayWindow : Window
             SetPromptBarHidden(PointerOverSelection(p),true);
             if(ShouldShowSelectionToolbar(p))
             {
+                _toolbarHideTimer.Stop();
                 if(Toolbar.Visibility!=Visibility.Visible)RefreshToolbar(p);
             }
-            else Toolbar.Visibility=Visibility.Collapsed;
+            else ScheduleToolbarHide();
             return;
         }
     }
@@ -1457,7 +1464,7 @@ public partial class CaptureOverlayWindow : Window
             :Rect.Empty;
         // Include the selection-to-toolbar gap so the prompt cannot reappear
         // during the short pointer transit into a toolbar placed below/above.
-        return CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(point,bounds,PromptFloatingGap+2,
+        return CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(point,bounds,24,
             !_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible?GetPromptInteractionBounds():null);
     }
     private bool IsInteractingWithPrompt(Point point)=>!_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible&&
@@ -1465,8 +1472,21 @@ public partial class CaptureOverlayWindow : Window
     private void ToolbarMouseEnter(object sender,MouseEventArgs e)
     {
         var point=e.GetPosition(Root);
-        if(IsInteractingWithPrompt(point)||CanRevealPromptAtScreenEdge(point)){Toolbar.Visibility=Visibility.Collapsed;SetPromptBarHidden(false,true);return;}
+        if(IsInteractingWithPrompt(point)||CanRevealPromptAtScreenEdge(point)){HideToolbarImmediately();SetPromptBarHidden(false,true);return;}
+        _toolbarHideTimer.Stop();
         SetPromptBarHidden(true,true);
+    }
+    private void HideToolbarImmediately(){_toolbarHideTimer.Stop();Toolbar.Visibility=Visibility.Collapsed;}
+    private void ScheduleToolbarHide()
+    {
+        // Start only once per departure: continued mouse movement must not
+        // postpone hiding forever. Re-entering the tolerance zone cancels it.
+        if(Toolbar.Visibility==Visibility.Visible&&!_toolbarHideTimer.IsEnabled)_toolbarHideTimer.Start();
+    }
+    private void CompleteToolbarHide()
+    {
+        _toolbarHideTimer.Stop();
+        if(_closed||!ShouldShowSelectionToolbar(_lastToolbarPointer))Toolbar.Visibility=Visibility.Collapsed;
     }
     private bool CanRevealPromptAtScreenEdge(Point point)=>
         _conversationAiAvailable&&PromptBarHost.Visibility==Visibility.Visible&&
@@ -1604,10 +1624,14 @@ public partial class CaptureOverlayWindow : Window
         return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     }
 
-    private void ShowToolbar()=>RefreshToolbar(Mouse.GetPosition(Root));
+    // During a departure, layout refreshes must respect the latest routed
+    // pointer event instead of cancelling the grace timer with a stale query.
+    private void ShowToolbar()=>RefreshToolbar(_toolbarHideTimer.IsEnabled?_lastToolbarPointer:Mouse.GetPosition(Root));
     private void RefreshToolbar(Point pointer)
     {
-        if(Active is not {IsImplicit:false} item||!ShouldShowSelectionToolbar(pointer)){Toolbar.Visibility=Visibility.Collapsed;return;}
+        if(Active is not {IsImplicit:false} item||_selecting||_moving||_drawingMode||_recordingMode||_longCaptureMode||IsInteractingWithPrompt(pointer)||CanRevealPromptAtScreenEdge(pointer)){HideToolbarImmediately();return;}
+        if(!ShouldShowSelectionToolbar(pointer)){ScheduleToolbarHide();return;}
+        _toolbarHideTimer.Stop();
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
         var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;TableButton.Visibility=!isVideo&&_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
