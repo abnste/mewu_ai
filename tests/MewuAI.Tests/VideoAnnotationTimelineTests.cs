@@ -86,6 +86,15 @@ public sealed class VideoAnnotationTimelineTests
         Assert.False(VideoAnnotationTimeline.TryFitToDuration(annotation,10,out _,out _));
     }
 
+    [Fact] public void FractionalTimelineValuesAreExpandedFromVideoProgressToSeconds()
+    {
+        var annotation=new AiAnnotation(.2,.3,.1,.1,"爆炸",0,.7,1.0,[new(.7,.2,.3,.1,.1),new(1.0,.2,.3,.1,.1)]);
+        Assert.True(VideoAnnotationTimeline.TryFitToDuration(annotation,10,out var fitted,out _));
+        Assert.Equal(7.0,fitted.StartTime!.Value,6);
+        Assert.Equal(10.0,fitted.EndTime!.Value,6);
+        Assert.Equal(new[]{7.0,10.0},fitted.Keyframes!.Select(frame=>frame.Time));
+    }
+
     [Fact] public void SingleVideoAcceptsTimelineAnnotationWithWrongModelIndex()
     {
         Assert.True(VideoAnnotationTimeline.TryResolveTargetIndex(1,true,[true],out var target,out var remapped));

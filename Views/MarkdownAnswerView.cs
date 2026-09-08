@@ -20,9 +20,17 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
 
     public MarkdownAnswerView()
     {
-        IsReadOnly=true;IsReadOnlyCaretVisible=true;IsTabStop=false;IsDocumentEnabled=true;IsUndoEnabled=false;
+        IsReadOnly=true;IsReadOnlyCaretVisible=true;IsTabStop=true;Focusable=true;IsDocumentEnabled=true;IsUndoEnabled=false;
         Background=Brushes.Transparent;BorderThickness=new Thickness(0);Padding=new Thickness(0);
         VerticalScrollBarVisibility=ScrollBarVisibility.Disabled;HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled;
+        CommandBindings.Add(new CommandBinding(ApplicationCommands.Copy,
+            (_, e) =>
+            {
+                if (Selection.IsEmpty) return;
+                ClipboardService.TrySetText(new TextRange(Selection.Start, Selection.End).Text.TrimEnd('\r', '\n'), out string? _);
+                e.Handled = true;
+            },
+            (_, e) => { e.CanExecute = !Selection.IsEmpty; e.Handled = true; }));
     }
 
     public string Markdown
