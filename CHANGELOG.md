@@ -2,7 +2,12 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
-## 未发布 / Unreleased
+## 0.3.2 — 视频时间、对话输入与中文显示 / Video timing, input, and Chinese text
+
+- 修复 MiniMax 视频时间压缩为零点几秒，以及末尾帧不完整引发的 HTTP 400；保留原视频。/ Fixed compressed MiniMax timestamps and HTTP 400 errors caused by incomplete final frame groups, preserving the original video.
+- 修复视频播放/暂停状态、对话条弹出焦点、录制后直接输入和 Ctrl+C 复制回答。/ Fixed playback controls, input focus when the bar appears, typing after recording, and Ctrl+C copying.
+- 统一中文回复字体，默认简体中文，保留明确的语言要求、引用与代码。/ Unified Chinese reply fonts and defaulted Chinese answers to Simplified Chinese while preserving explicit language requests, quotations, and code.
+- 新增跨截图关联箭头，改善多选区工具条显隐与逐行翻译。/ Added cross-screenshot connection arrows and improved selection toolbars and line-by-line translation.
 
 - 修复首轮回答显示后继续提问仍长时间停在“AI 正在分析”的问题；后台补标会被安全取消并让出请求。/ Fixed follow-up questions remaining stuck on “AI is analyzing” after the first answer; background annotation repair now yields to the new request safely.
 
@@ -13,6 +18,8 @@
 - 教学演示默认开启，移除截图左上角的共享状态标识；仍可在设置中关闭。/ Teaching mode is on by default, without a sharing-status badge on the capture overlay. It can still be turned off in Settings.
 
 - 教学演示模式支持录屏和长截图，控制条与预览自动避开采集区。全屏没有空位时可用 F8 停止/完成，倒计时中可取消。/ Teaching mode now supports recording and scrolling capture. Controls and previews stay outside the capture area; F8 stops or finishes capture and cancels the countdown.
+
+[完整双语说明 / Full notes](./docs/release-notes-v0.3.2.md) · [Release](https://github.com/abnste/mewu_ai/releases/tag/v0.3.2) · [v0.3.1 → v0.3.2](https://github.com/abnste/mewu_ai/compare/v0.3.1...v0.3.2)
 
 ## 0.3.1 — 视频请求诊断 / Video request diagnostics
 

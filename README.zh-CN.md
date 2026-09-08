@@ -3,14 +3,14 @@
   <h1>喵呜AI</h1>
   <p>Windows 截图工具，支持录屏、贴图、文字识别和 AI 标注。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.3.1"><img src="https://img.shields.io/badge/公测版-v0.3.1-7C6CF0?style=flat-square" alt="v0.3.1 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.3.2"><img src="https://img.shields.io/badge/公测版-v0.3.2-7C6CF0?style=flat-square" alt="v0.3.2 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.1/MewuAI-Setup-0.3.1-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.2/MewuAI-Setup-0.3.2-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.1/MewuAI-Portable-0.3.1-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.2/MewuAI-Portable-0.3.2-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -124,6 +124,8 @@ API Key 在电脑上加密保存。连接已安装的 AI 客户端也可能使�
 打开设置会自动检查更新，也可以在 **设置 → 关于** 中手动检查。
 
 使用 v0.2.5 及更早版本时，请从本页下载安装器手动升级。已发布的版本和每次更新内容都可以在[更新日志](./CHANGELOG.md)中查看。
+
+发行页提供 `SHA256SUMS.txt`，可用于校验安装器和免安装 ZIP。
 
 </details>
 
