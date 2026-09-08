@@ -39,11 +39,12 @@ public sealed class AnnotationExportTests
     }
 
     [Fact]
-    public void CalloutRendersOneRedTargetOutlineAtItsProtocolGeometry()
+    public void CalloutRendersBlueTargetOutlineAtItsProtocolGeometry()
     {
         var note=new AiAnnotation(.25,.30,.28,.18,"新对话",0,ReferenceHandle:"ref-1",Kind:AiAnnotationKind.Callout);
         var overlay=AnnotationOverlayRenderer.RenderAiOverlay(200,120,[note]);
-        Assert.True(ContainsRedPixel(overlay,48,34,56,42));
+        Assert.True(ContainsBluePixel(overlay,48,34,56,42));
+        Assert.False(ContainsRedPixel(overlay,0,0,199,119));
     }
 
     [Fact]

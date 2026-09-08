@@ -40,7 +40,7 @@ public partial class CaptureOverlayWindow : Window
     private const double CompactQuickPromptMinHeight=30;
     private const double CompactQuickPromptMaxHeight=52;
     private const string UploadedReferenceDragFormat="MewuAI.UploadedImageReference";
-    private static readonly Brush Cyan=new SolidColorBrush(Color.FromRgb(67,198,255));
+    private static readonly Brush Cyan=AnnotationPalette.Accent;
     private readonly AppHost _host;
     internal bool IsTeachingMode { get; }
     private CaptureFrame _frame;
@@ -1403,9 +1403,10 @@ public partial class CaptureOverlayWindow : Window
 
     private void UpdateSelection(SelectionItem item)
     {
+        QueueCrossRegionConnections();
         var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.Markup.Width=item.TextOverlays.Width=item.AiAnnotations.Width=item.TextSelection.Width=r.Width;item.Markup.Height=item.TextOverlays.Height=item.AiAnnotations.Height=item.TextSelection.Height=r.Height;
         var px=ToPixelRect(r);if(px.Width>0&&px.Height>0&&item.VideoPath is null)item.Image.Source=item.ImageCache.Get(_frame.Image,px,item.CapturedImageOverride);
-        var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?new SolidColorBrush(Color.FromRgb(102,112,235)):new SolidColorBrush(Color.FromArgb(185,67,168,255));item.Outline.BorderThickness=new Thickness(active?2.5:referenced?2:1.5);item.Outline.Effect=active&&!item.IsImplicit?new DropShadowEffect{Color=Color.FromRgb(39,157,255),BlurRadius=18,ShadowDepth=0,Opacity=.85}:null;item.Badge.Background=new SolidColorBrush(referenced?Color.FromArgb(238,91,101,226):Color.FromArgb(230,29,119,224));item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
+        var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?AnnotationPalette.Referenced:AnnotationPalette.Inactive;item.Outline.BorderThickness=new Thickness(active?1.8:1.2);item.Outline.Effect=active&&!item.IsImplicit?AnnotationPalette.SelectionGlow:null;item.Badge.Background=AnnotationPalette.Accent;item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
         if(active&&!item.IsImplicit){SizeTextLabel.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":$"视频 · {item.VideoDuration:mm\\:ss}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
     }
 
@@ -1855,10 +1856,18 @@ public partial class CaptureOverlayWindow : Window
     private BitmapSource CurrentImage(){if(Active is null)throw new InvalidOperationException("请先选择区域");return RenderSelectionImage(Active,false,false,false);}
     private BitmapSource RenderSelectionImage(SelectionItem item,bool includeManualAnnotations=true,bool includeAiAnnotations=false,bool includeTranslation=true)
     {
-        var pixels=ToPixelRect(item.Bounds);var source=item.CapturedImageOverride??ScreenCaptureService.Crop(_frame.Image,pixels);var width=source.PixelWidth;var height=source.PixelHeight;var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;if(!hasManual&&!hasAi&&!hasTranslation)return source;var manual=hasManual?RenderManualOverlay(item,width,height):null;var translation=hasTranslation?RenderTranslationOverlay(item,width,height):null;var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(width,height,item.AnnotationNotes,null,item.AnnotationCardPositions):null;var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;return AnnotationOverlayRenderer.Composite(background,manual,translation,ai);
+        var pixels=ToPixelRect(item.Bounds);var source=item.CapturedImageOverride??ScreenCaptureService.Crop(_frame.Image,pixels);var width=source.PixelWidth;var height=source.PixelHeight;
+        var links=includeAiAnnotations?GetCrossRegionConnections().Where(link=>link.Annotation.ReferenceHandle==item.ReferenceHandle||link.Annotation.Destination?.ReferenceHandle==item.ReferenceHandle).ToArray():[];
+        var hasManual=includeManualAnnotations&&HasManualAnnotations(item);var hasAi=includeAiAnnotations&&item.AnnotationNotes.Any(note=>!note.IsVideoTimeline);var hasTranslation=includeTranslation&&item.TextLayer is TranslationTextLayerState;
+        if(!hasManual&&!hasAi&&!hasTranslation&&links.Length==0)return source;
+        var manual=hasManual?RenderManualOverlay(item,width,height):null;var translation=hasTranslation?RenderTranslationOverlay(item,width,height):null;
+        var ai=hasAi?AnnotationOverlayRenderer.RenderAiOverlay(width,height,item.AnnotationNotes,null,item.AnnotationCardPositions):null;
+        var connectionPorts=links.Length>0?CrossRegionConnectionRenderer.RenderRegion(width,height,item.Bounds,item.ReferenceHandle,links):null;
+        var background=hasAi?AnnotationOverlayRenderer.ApplyAiMosaics(source,item.AnnotationNotes):source;
+        return AnnotationOverlayRenderer.Composite(background,manual,translation,ai,connectionPorts);
     }
     private static bool HasManualAnnotations(SelectionItem item)=>item.Markup.Strokes.Count>0||item.DrawingElements.Count>0;
-    private static bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||item.AnnotationNotes.Count>0||item.TextLayer is TranslationTextLayerState;
+    private bool HasAnyAnnotations(SelectionItem item)=>HasManualAnnotations(item)||HasAiAnnotations(item)||item.TextLayer is TranslationTextLayerState;
     private static BitmapSource RenderManualOverlay(SelectionItem item,int pixelWidth,int pixelHeight)
     {
         var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixelWidth/Math.Max(1,item.Bounds.Width),pixelHeight/Math.Max(1,item.Bounds.Height)));drawing.DrawRectangle(new VisualBrush(item.Markup),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixelWidth),Math.Max(1,pixelHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
@@ -1934,6 +1943,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void RemoveActiveSelection(bool updateUi)
     {
+        if(Active is {} removed)RemoveConnectionsTouching(removed);
         if(Active is not { } item)return;CancelVideoAnnotationPlayback(item);_references.Remove(item);SelectionLayer.Children.Remove(item.Host);_selections.RemoveAt(_activeIndex);_activeIndex=_selections.Count-1;RefreshSelectionNumbers();if(Active is { } next)UpdateSelection(next);else{HideHandles();SizeText.Visibility=Toolbar.Visibility=Visibility.Collapsed;}if(updateUi){PromptStatus.Text=_selections.Count==0?"拖动可连续框选多个区域":$"剩余 {_selections.Count} 个区域";if(Active is not null)ShowToolbar();}
     }
     private void RefreshSelectionNumbers()=>UpdateReferenceChips();
@@ -1985,7 +1995,7 @@ public partial class CaptureOverlayWindow : Window
         foreach(var (item,index) in targets.Select((item,index)=>(item,index)))
         {
             var pixels=ToPixelRect(item.Bounds);var label=item.IsImplicit?"@当前屏幕":GetReferenceLabel(item);
-            referenceDescriptors.Add(new AttachmentReferenceDescriptor(index,item.ReferenceHandle,label,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,pixels.Width,pixels.Height,item.VideoPath is null?null:item.VideoDuration.TotalSeconds,true,item.AnnotationNotes.Count>0));
+            referenceDescriptors.Add(new AttachmentReferenceDescriptor(index,item.ReferenceHandle,label,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,pixels.Width,pixels.Height,item.VideoPath is null?null:item.VideoDuration.TotalSeconds,true,HasAiAnnotations(item)));
         }
         foreach(var (file,index) in uploadedReferences.Select((file,index)=>(file,index)))
         {
@@ -1993,7 +2003,7 @@ public partial class CaptureOverlayWindow : Window
             referenceDescriptors.Add(new AttachmentReferenceDescriptor(targets.Count+index,file.Handle,file.Label,file.Type,dimensions.Width,dimensions.Height,null,false));
         }
         var turnPrompt=tableRecognition?"识别当前区域中的表格":prompt;var hasVisualAttachments=hasImage||hasVideo;
-        var hadExistingAnnotations=targets.Any(item=>item.AnnotationNotes.Count>0);var providerPrompt=hasVisualAttachments?CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors):prompt;
+        var hadExistingAnnotations=targets.Any(HasAiAnnotations);var providerPrompt=hasVisualAttachments?CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors):prompt;
             var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_lastSubmittedPrompt=turnPrompt;_lastSubmittedTurnRecorded=false;_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=tableRecognition?"正在识别表格结构…按 Esc 可取消":hasVisualAttachments?$"正在准备 {totalCount} 个附件…按 Esc 可取消":"正在准备文字请求…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;BufferedAiStreamProgress? streamProgress=null;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;List<AiAttachment>? repairAttachments=null;
             CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频理解请求":hasVisualAttachments?"屏幕助手：图片理解请求":"屏幕助手：文字对话请求");
         try
@@ -2082,6 +2092,14 @@ public partial class CaptureOverlayWindow : Window
         var timelineCandidates=0;var regionMismatch=0;var typeMismatch=0;var durationRejected=0;var singleVideoRemaps=0;var durationClamped=0;var handleMismatches=0;var handleRemaps=0;var qualityRejected=0;var duplicatesRemoved=0;var keyframesRemoved=0;var elementAligned=new HashSet<AiAnnotation>();var accessibilityAttempts=0;var overlayHandle=new WindowInteropHelper(this).Handle;
         foreach(var original in notes)
         {
+            if(original.Kind==AiAnnotationKind.Connection)
+            {
+                if(!CrossRegionConnectionService.TryResolve(original,targets,out var connection,out var sourceIndex,out var destinationIndex)||
+                    sentTargets[sourceIndex].Selection is not {} sourceSelection||sentTargets[destinationIndex].Selection is not {} destinationSelection||
+                    !_selections.Contains(sourceSelection)||!_selections.Contains(destinationSelection))
+                {handleMismatches++;continue;}
+                buckets[sourceSelection].Add(connection);continue;
+            }
             if(original.IsVideoTimeline)timelineCandidates++;
             var resolution=CaptureOverlayPolicy.ResolveAnnotationTarget(original.RegionIndex,original.ReferenceHandle,original.IsVideoTimeline,targets);
             if(!resolution.Success)
@@ -2133,7 +2151,7 @@ public partial class CaptureOverlayWindow : Window
                     notesForItem=OcrAnnotationRefinementService.RefineAll(document,cleanImage.PixelWidth,cleanImage.PixelHeight,notesForItem,out var ocrRefined).ToArray();
                     if(ocrRefined>0)new PrivacyLogger().Info("AiAnnotationOcrRefinement",$"OCR 语义锚定 {ocrRefined} 个图片批注框");
                 }
-                notesForItem=notesForItem.Select((note,index)=>elementAligned.Contains(beforeOcr[index])||!Equals(note,beforeOcr[index])?note:AnnotationBoxRefinementService.Refine(cleanImage,note)).ToArray();
+                notesForItem=notesForItem.Select((note,index)=>note.Kind==AiAnnotationKind.Connection||elementAligned.Contains(beforeOcr[index])||!Equals(note,beforeOcr[index])?note:AnnotationBoxRefinementService.Refine(cleanImage,note)).ToArray();
             }
             notesForItem=AnnotationPostProcessor.Process(notesForItem,entry.Key.VideoPath is not null,out var postProcess).ToArray();qualityRejected+=postProcess.QualityRejected;duplicatesRemoved+=postProcess.DuplicatesRemoved;keyframesRemoved+=postProcess.KeyframesRemoved;
             mapped[entry.Key]=notesForItem;
@@ -2143,6 +2161,7 @@ public partial class CaptureOverlayWindow : Window
 
     private int ApplyAnnotationMapping(AnnotationMappingResult mapping,AiAnnotationUpdateMode mode,bool autoJump)
     {
+        QueueCrossRegionConnections();
         var changedItems=new List<SelectionItem>();
         foreach(var item in _lastSentSelections.Distinct())
         {
@@ -2220,9 +2239,7 @@ public partial class CaptureOverlayWindow : Window
         // Callout boxes are laid out against the same normalized geometry below.
         // Do not render a second primitive rectangle/ellipse layer: it is the
         // source of the offset blue duplicate boxes on dense pages.
-        // Render protocol rectangles/ellipses in the same primitive layer as
-        // the other AI tools. The old callout-only path silently dropped these
-        // accurate red boxes while a separate blue approximation remained.
+        // Protocol rectangles/ellipses share the primitive renderer and palette.
         var callouts=item.AnnotationNotes.Where(note=>note.Kind==AiAnnotationKind.Callout).ToArray();
         var primitiveNotes=item.AnnotationNotes.Where(note=>note.Kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Mosaic)&&!AnnotationLayoutService.IsDuplicateTargetMarker(note,callouts)).ToArray();
         if(primitiveNotes.Length>0)
@@ -2265,7 +2282,7 @@ public partial class CaptureOverlayWindow : Window
             if(n.IsVideoTimeline&&(!videoTime.HasValue||!VideoAnnotationTimeline.TryInterpolateForPresentation(n,videoTime.Value,VideoAnnotationTimeline.LiveFrameToleranceSeconds,out frame)))continue;
             if(n.Kind==AiAnnotationKind.Mosaic)continue;
             if(!calloutTargets.TryGetValue(n,out var target))continue;
-            var x=target.Left;var y=target.Top;var rw=target.Width;var rh=target.Height;var style=n.EffectiveStyle;var targetColor=string.Equals(style.Color,"#2AAEFF",StringComparison.OrdinalIgnoreCase)?Color.FromRgb(255,0,0):(Color)ColorConverter.ConvertFromString(style.Color);var targetOutline=new Rectangle{Width=rw,Height=rh,Stroke=new SolidColorBrush(targetColor),StrokeThickness=Math.Max(1,style.StrokeWidth*Math.Min(w,h)),RadiusX=3,RadiusY=3,IsHitTestVisible=false};Canvas.SetLeft(targetOutline,x);Canvas.SetTop(targetOutline,y);item.AiAnnotations.Children.Add(targetOutline);
+            var x=target.Left;var y=target.Top;var rw=target.Width;var rh=target.Height;var style=n.EffectiveStyle;var targetColor=AnnotationPalette.Resolve(style.Color);var targetOutline=new Rectangle{Width=rw,Height=rh,Stroke=new SolidColorBrush(targetColor),Opacity=style.Opacity,StrokeThickness=Math.Max(1,style.StrokeWidth*Math.Min(w,h)),RadiusX=5,RadiusY=5,IsHitTestVisible=false};Canvas.SetLeft(targetOutline,x);Canvas.SetTop(targetOutline,y);item.AiAnnotations.Children.Add(targetOutline);
             var line=new Line{Stroke=Cyan,StrokeThickness=Math.Max(1,w/1200),IsHitTestVisible=false};var dot=new Ellipse{Width=5,Height=5,Fill=Cyan,IsHitTestVisible=false};var view=calloutCards[n];var card=view.Card;var cardHeight=view.Height;var cardX=view.Placement.CardBounds.Left;var cardY=view.Placement.CardBounds.Top;if(item.AnnotationCardPositions.TryGetValue(n,out var saved)){cardX=Math.Clamp(saved.X*w,5,Math.Max(5,w-cardWidth-5));cardY=Math.Clamp(saved.Y*h,5,Math.Max(5,h-cardHeight-5));}
             void PositionCard(double left,double top)
             {
@@ -3564,8 +3581,8 @@ public partial class CaptureOverlayWindow : Window
         try{item.VideoPreview?.CloseSource();}catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewReset",ex);}
         item.Video.Visibility=Visibility.Collapsed;item.Image.Visibility=Visibility.Visible;item.VideoLease?.Dispose();item.VideoLease=null;item.VideoPath=null;item.VideoDuration=TimeSpan.Zero;item.VideoPlaying=false;
     }
-    private static void ClearImageOnlyLayers(SelectionItem item){item.Markup.Strokes.Clear();item.Markup.Children.Clear();item.DrawingElements.Clear();item.DrawingOrder.Clear();item.DrawingRedo.Clear();item.NextDrawingNumber=1;item.TextLayer=NoTextLayerState.Instance;item.AnnotationNotes.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
-    private static void InvalidateImageDerivedLayers(SelectionItem item){if(item.VideoPath is not null)return;ClearImageOnlyLayers(item);}
+    private void ClearImageOnlyLayers(SelectionItem item){RemoveConnectionsTouching(item);item.Markup.Strokes.Clear();item.Markup.Children.Clear();item.DrawingElements.Clear();item.DrawingOrder.Clear();item.DrawingRedo.Clear();item.NextDrawingNumber=1;item.TextLayer=NoTextLayerState.Instance;item.AnnotationNotes.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
+    private void InvalidateImageDerivedLayers(SelectionItem item){if(item.VideoPath is not null)return;ClearImageOnlyLayers(item);}
     private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)
     {

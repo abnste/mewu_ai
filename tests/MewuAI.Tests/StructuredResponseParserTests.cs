@@ -40,7 +40,7 @@ public sealed class StructuredResponseParserTests
         ]}
         """;
         var result=StructuredResponseParser.Parse(value);
-        Assert.Equal(8,result.Annotations.Count);Assert.Equal(Enum.GetValues<AiAnnotationKind>().Where(kind=>kind!=AiAnnotationKind.Callout),result.Annotations.Select(note=>note.Kind));
+        Assert.Equal(8,result.Annotations.Count);Assert.Equal(Enum.GetValues<AiAnnotationKind>().Where(kind=>kind is not (AiAnnotationKind.Callout or AiAnnotationKind.Connection)),result.Annotations.Select(note=>note.Kind));
         Assert.Equal("#E53935",result.Annotations[0].EffectiveStyle.Color);Assert.Equal("这里应为 42",result.Annotations[5].Text);Assert.Equal(3,result.Annotations[6].Number);
     }
 

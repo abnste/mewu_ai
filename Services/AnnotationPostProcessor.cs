@@ -41,8 +41,8 @@ internal static class AnnotationPostProcessor
             if(kept.Any(existing=>AreDuplicates(candidate.Annotation,existing.Annotation,isVideo))){duplicates++;continue;}
             kept.Add(candidate);
         }
-        var ordered=kept.OrderBy(item=>item.Index).Select(item=>item.Annotation).ToArray();var calloutCount=0;var bounded=new List<AiAnnotation>(ordered.Length);
-        foreach(var annotation in ordered){if(annotation.Kind==AiAnnotationKind.Callout&&calloutCount++>=VisualAnnotationProtocol.MaximumCallouts){qualityRejected++;continue;}bounded.Add(annotation);}
+        var ordered=kept.OrderBy(item=>item.Index).Select(item=>item.Annotation).ToArray();var calloutCount=0;var connectionCount=0;var bounded=new List<AiAnnotation>(ordered.Length);
+        foreach(var annotation in ordered){if(annotation.Kind==AiAnnotationKind.Callout&&calloutCount++>=VisualAnnotationProtocol.MaximumCallouts||annotation.Kind==AiAnnotationKind.Connection&&connectionCount++>=CrossRegionConnectionService.MaximumConnections){qualityRejected++;continue;}bounded.Add(annotation);}
         stats=new(qualityRejected,duplicates,keyframesRemoved);return bounded;
     }
 
@@ -63,6 +63,12 @@ internal static class AnnotationPostProcessor
     private static bool AreDuplicates(AiAnnotation first,AiAnnotation second,bool isVideo)
     {
         if(first.RegionIndex!=second.RegionIndex||!string.Equals(first.ReferenceHandle,second.ReferenceHandle,StringComparison.Ordinal))return false;
+        if(first.Kind==AiAnnotationKind.Connection||second.Kind==AiAnnotationKind.Connection)
+        {
+            if(first.Kind!=second.Kind||first.Destination is not {} a||second.Destination is not {} b||a.ReferenceHandle!=b.ReferenceHandle)return false;
+            return AnnotationGeometryService.IntersectionOverUnion(new Rect(a.X,a.Y,a.Width,a.Height),new Rect(b.X,b.Y,b.Width,b.Height))>=DuplicateIou&&
+                AnnotationGeometryService.IntersectionOverUnion(AnnotationGeometryService.ToNormalizedRect(first),AnnotationGeometryService.ToNormalizedRect(second))>=DuplicateIou&&TextSimilarity(first.Text,second.Text)>=.82;
+        }
         var targetKinds=IsTargetMarker(first.Kind)&&IsTargetMarker(second.Kind);
         if(!targetKinds&&first.Kind!=second.Kind)return false;
         var textSimilarity=TextSimilarity(first.Text,second.Text);
