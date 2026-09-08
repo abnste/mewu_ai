@@ -25,12 +25,14 @@ internal static class Program
     private static void Main(string[] args)
     {
         if(args.Contains("--capture-input-foreground")){CaptureInputReplay.RunForegroundHelper();return;}
+        var verifyCaptureTools=args.Contains("--verify-capture-tools");
         var verifyTeaching=args.Contains("--verify-teaching");
         var teaching=args.Contains("--teaching")||verifyTeaching;
+        if(verifyCaptureTools&&teaching)throw new InvalidOperationException("Capture tool verification requires normal protected mode.");
 #if !DEBUG
-        if(!teaching)throw new InvalidOperationException("Release replay requires explicit --teaching or --verify-teaching.");
+        if(!teaching&&!verifyCaptureTools)throw new InvalidOperationException("Release replay requires explicit --teaching, --verify-teaching or --verify-capture-tools.");
 #else
-        Environment.SetEnvironmentVariable("MEWU_QA_CAPTURE_WINDOWS",teaching?null:"1");
+        Environment.SetEnvironmentVariable("MEWU_QA_CAPTURE_WINDOWS",teaching||verifyCaptureTools?null:"1");
 #endif
         var english=args.Contains("--english");
         typeof(AppHost).Assembly.GetType("mewu_ai_Assistant.Services.LocalizationService")!
@@ -50,12 +52,18 @@ internal static class Program
             background.Show();
             image=CreateSolidDesktop(area.Width,area.Height,Brushes.Magenta);
         }
+        if(verifyCaptureTools)
+        {
+            CaptureToolsReplay.Run(app,host);return;
+        }
         var overlay=new CaptureOverlayWindow(host);
         Set(overlay,"_frame",new CaptureFrame(area.Left,area.Top,image));
         ((Image)overlay.FindName("DesktopImage")).Source=image;
         Set(overlay,"_conversationAiAvailable",true);
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
+        ((FrameworkElement)overlay.FindName("TeachingBadge")).Visibility=Visibility.Visible;
+        ((TextBlock)overlay.FindName("TeachingBadgeText")).Text="自动化验收窗口 · 非当前软件设置";
         overlay.ShowInTaskbar=true;
         if(args.Contains("--verify-hover"))
         {
