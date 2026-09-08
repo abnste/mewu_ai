@@ -73,6 +73,9 @@ public partial class CaptureOverlayWindow : Window
     private int _referenceMentionStart=-1;
     private int _nextUploadNumber;
     private CancellationTokenSource? _speechRequest,_request,_overlayRequest,_recordingCountdownRequest,_recordingStopWatchdog,_readAloudRequest,_snapProbeRequest;
+    // Once the primary answer is visible, a follow-up may replace the
+    // optional annotation repair request instead of being blocked by it.
+    private bool _requestAnswerReady;
     private CancellationTokenSource? _longCaptureSampleRequest;
     private Task? _longCaptureSampleTask;
     private CancellationTokenSource? _longCapturePollRequest;
@@ -2050,7 +2053,15 @@ public partial class CaptureOverlayWindow : Window
 
     private async Task SendAsync(bool useDefaultPrompt,string? explicitPrompt=null,SelectionItem? onlyTarget=null,bool tableRecognition=false)
     {
-        if(!_conversationAiAvailable||_closed||RejectIfOverlayOperationBusy()||_request is {IsCancellationRequested:false})return;StopOverlayReadAloud();var selectedChannel=_conversationChannels.FirstOrDefault(item=>item.Id==_selectedConversationChannelId)??_conversationChannels.FirstOrDefault();if(selectedChannel is null){PromptStatus.Text="请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}var usingHermes=selectedChannel.Kind==ConversationChannelKind.Hermes;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,selectedChannel.Id,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
+        if(!_conversationAiAvailable||_closed)return;
+        if(_request is { } previous)
+        {
+            if(!_requestAnswerReady&&!previous.IsCancellationRequested){PromptStatus.Text="AI 正在分析 · 按 Esc 可取消后再提问";return;}
+            try{previous.Cancel();}catch{}
+            _request=null;_requestAnswerReady=false;SendButton.IsEnabled=true;
+        }
+        if(RejectIfOverlayOperationBusy())return;
+        StopOverlayReadAloud();var selectedChannel=_conversationChannels.FirstOrDefault(item=>item.Id==_selectedConversationChannelId)??_conversationChannels.FirstOrDefault();if(selectedChannel is null){PromptStatus.Text="请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}var usingHermes=selectedChannel.Kind==ConversationChannelKind.Hermes;var provider=_host.CreateConversationProvider(HermesConversationKind.Screen,selectedChannel.Id,out var providerError);if(provider is null){PromptStatus.Text=providerError??"请先配置可用的 AI Provider";RefreshAiFeatureAvailability();return;}
         var uploadedReferences=onlyTarget is null?_uploadedReferences.ToArray():[];
         // A missing explicit attachment is a deliberate text-only turn. Do
         // not manufacture a full-screen screenshot: the user must explicitly
@@ -2087,7 +2098,7 @@ public partial class CaptureOverlayWindow : Window
         }
         var turnPrompt=tableRecognition?"识别当前区域中的表格":prompt;var hasVisualAttachments=hasImage||hasVideo;
         var hadExistingAnnotations=targets.Any(HasAiAnnotations);var providerPrompt=hasVisualAttachments?CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors):prompt;
-            var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_lastSubmittedPrompt=turnPrompt;_lastSubmittedTurnRecorded=false;_request=request;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=tableRecognition?"正在识别表格结构…按 Esc 可取消":hasVisualAttachments?$"正在准备 {totalCount} 个附件…按 Esc 可取消":"正在准备文字请求…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;BufferedAiStreamProgress? streamProgress=null;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;List<AiAttachment>? repairAttachments=null;
+            var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_lastSubmittedPrompt=turnPrompt;_lastSubmittedTurnRecorded=false;_request=request;_requestAnswerReady=false;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=tableRecognition?"正在识别表格结构…按 Esc 可取消":hasVisualAttachments?$"正在准备 {totalCount} 个附件…按 Esc 可取消":"正在准备文字请求…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;BufferedAiStreamProgress? streamProgress=null;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;List<AiAttachment>? repairAttachments=null;
             CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频理解请求":hasVisualAttachments?"屏幕助手：图片理解请求":"屏幕助手：文字对话请求");
         try
         {
@@ -2123,7 +2134,7 @@ public partial class CaptureOverlayWindow : Window
             // operation consume the same validated answer.
             result=NormalizeStructuredResult(result,hasVisualAttachments);
             var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":hasVisualAttachments?"图片请求返回空正文，已保留思考与失败状态":"文字请求返回空正文，已保留思考与失败状态");return;}
-            ShowAnswer();FinishReasoning(result.Reasoning);RefreshAnswer(result.Answer);if(!tableRecognition&&CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=await MapAnnotationsAsync(result.Annotations,request.Token);var primaryReturnedAnnotationCount=primaryMapping.RenderedCount;var renderedAnnotationCount=ApplyAnnotationMapping(primaryMapping,result.AnnotationUpdateMode,true);ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
+            ShowAnswer();FinishReasoning(result.Reasoning);RefreshAnswer(result.Answer);_requestAnswerReady=true;if(!tableRecognition&&CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=await MapAnnotationsAsync(result.Annotations,request.Token);var primaryReturnedAnnotationCount=primaryMapping.RenderedCount;var renderedAnnotationCount=ApplyAnnotationMapping(primaryMapping,result.AnnotationUpdateMode,true);ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             AgentActivityCard.Visibility=Visibility.Collapsed;
             // NormalizeStructuredResult above already handles raw protocol
             // envelopes. Re-parsing the extracted plain answer here discarded
@@ -2149,7 +2160,7 @@ public partial class CaptureOverlayWindow : Window
         }
         catch(OperationCanceledException){new PrivacyLogger().Info("ScreenAiAnnotationPhase",primaryApplied?"核验或后续处理已取消；保留已显示的初稿":"初稿请求已取消；恢复发送前状态");if(!_closed&&ReferenceEquals(_request,request)){if(primaryApplied)PromptStatus.Text="已停止核验，保留初稿和已显示标注";else{ApplyOverlaySnapshot(before);PromptStatus.Text="已取消";}}}
         catch(Exception ex){new PrivacyLogger().Error(requestStage=="render"?"ScreenAiRender":"ScreenAiRequest",ex);if(!_closed&&ReferenceEquals(_request,request)){var message=request.IsCancellationRequested?"已取消":$"请求失败（{selectedChannel.DisplayName}）：{ex.Message}";if(request.IsCancellationRequested)ApplyOverlaySnapshot(before);else{CloseReasoning("思考过程 · 请求失败",Color.FromRgb(214,120,120));ShowAnswer();AnswerText.Markdown=message;}PromptStatus.Text=message;}}
-        finally{streamOpen=false;streamProgress?.Dispose();if(attachments is not null)AiImageEncodingService.ClearAttachmentBuffers(attachments);if(repairAttachments is not null)AiImageEncodingService.ClearAttachmentBuffers(repairAttachments);foreach(var lease in attachmentLeases)lease.Dispose();var ownsRequest=ReferenceEquals(_request,request);if(CaptureOverlayPolicy.ShouldFinalizeCanceledAiRequest(_request,request,_closed)){CloseReasoning(primaryApplied?"思考过程 · 核验已停止":"思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text=primaryApplied?"已停止核验，保留初稿和已显示标注":"已取消";}request.Dispose();if(ownsRequest){_request=null;if(!_closed){SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}if(!_closed){QueueSelectionResourceCleanup();CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");}}
+        finally{streamOpen=false;streamProgress?.Dispose();if(attachments is not null)AiImageEncodingService.ClearAttachmentBuffers(attachments);if(repairAttachments is not null)AiImageEncodingService.ClearAttachmentBuffers(repairAttachments);foreach(var lease in attachmentLeases)lease.Dispose();var ownsRequest=ReferenceEquals(_request,request);if(ownsRequest)_requestAnswerReady=false;if(CaptureOverlayPolicy.ShouldFinalizeCanceledAiRequest(_request,request,_closed)){CloseReasoning(primaryApplied?"思考过程 · 核验已停止":"思考过程 · 已取消",Color.FromRgb(142,153,169));PromptStatus.Text=primaryApplied?"已停止核验，保留初稿和已显示标注":"已取消";}request.Dispose();if(ownsRequest){_request=null;if(!_closed){SendButton.IsEnabled=true;_ = Dispatcher.BeginInvoke(PositionPromptBar);}}if(!_closed){QueueSelectionResourceCleanup();CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");}}
     }
 
     private static AiResult NormalizeStructuredResult(AiResult result,bool expectStructuredResponse=true)

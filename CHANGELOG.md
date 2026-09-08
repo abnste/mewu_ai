@@ -4,6 +4,8 @@
 
 ## 未发布 / Unreleased
 
+- 修复首轮回答显示后继续提问仍长时间停在“AI 正在分析”的问题；后台补标会被安全取消并让出请求。/ Fixed follow-up questions remaining stuck on “AI is analyzing” after the first answer; background annotation repair now yields to the new request safely.
+
 - 修复多区域提问期间工具条只响应一个选区的问题，等待回答和后台补标时也能悬停切换。/ Fixed toolbars responding to only one region during multi-region questions, including while waiting for an answer or additional annotations.
 
 - 截图框选、移动或缩放完成后自动聚焦对话输入，鼠标悬停不再打断刚开始的输入。/ The conversation input receives focus after selecting, moving or resizing a screenshot, and hovering no longer interrupts typing.
