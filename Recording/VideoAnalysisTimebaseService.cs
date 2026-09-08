@@ -30,6 +30,7 @@ internal static class VideoAnalysisTimebaseService
         using var inputLease=attachment.FilePath is null?TempMediaRegistry.Shared.Acquire(inputPath):TempMediaRegistry.Shared.AcquireExistingFile(inputPath);
         var outputPath=temporary.NewFile(".mp4");
         var outputLease=TempMediaRegistry.Shared.Acquire(outputPath);
+        var stage="read-source";
         try
         {
             if(attachment.FilePath is null)await File.WriteAllBytesAsync(inputPath,attachment.Data??throw new InvalidDataException("视频内容为空"),cancellation).ConfigureAwait(false);
@@ -62,11 +63,15 @@ internal static class VideoAnalysisTimebaseService
             using(var frames=new TimestampedFrames(composition,profile.Video.Width,profile.Video.Height,duration,encodedDuration,cancellation))
             using(var destination=await output.OpenAsync(FileAccessMode.ReadWrite).AsTask(cancellation).ConfigureAwait(false))
             {
+                stage="prepare-transcoder";
                 var prepared=await transcoder.PrepareMediaStreamSourceTranscodeAsync(frames.Source,destination,profile).AsTask(cancellation).ConfigureAwait(false);
                 if(!prepared.CanTranscode)throw new InvalidOperationException("无法准备视频时间轴校准，请换用 MP4 后重试");
-                await prepared.TranscodeAsync().AsTask(cancellation,new OutputBudget(outputPath,timeout)).ConfigureAwait(false);
+                stage="transcode";
+                try{await prepared.TranscodeAsync().AsTask(cancellation,new OutputBudget(outputPath,timeout)).ConfigureAwait(false);}
+                catch(Exception)when(frames.Failure is not null){throw new InvalidDataException($"视频采样失败（阶段 {frames.FailureStage}，错误码 0x{frames.Failure.HResult:X8}）",frames.Failure);}
                 if(frames.Failure is { } failure)throw new InvalidDataException("无法提取视频时间采样帧",failure);
             }
+            stage="verify-output";
             cancellation.ThrowIfCancellationRequested();
             var size=new FileInfo(outputPath).Length;
             if(size<=0||size>MaximumOutputBytes)throw new InvalidDataException("视频分析副本大小无效，请缩短视频后重试");
@@ -79,6 +84,8 @@ internal static class VideoAnalysisTimebaseService
         }
         catch(OperationCanceledException)when(!token.IsCancellationRequested)
         {outputLease.Dispose();TryDelete(outputPath);throw new TimeoutException("视频时间轴校准超时或副本过大，请缩短视频后重试");}
+        catch(System.Runtime.InteropServices.COMException ex)
+        {outputLease.Dispose();TryDelete(outputPath);throw new InvalidDataException($"视频时间轴校准失败（阶段 {stage}，错误码 0x{ex.HResult:X8}）",ex);}
         catch{outputLease.Dispose();TryDelete(outputPath);throw;}
         finally{if(attachment.FilePath is null)TryDelete(inputPath);}
     }
@@ -125,6 +132,7 @@ internal static class VideoAnalysisTimebaseService
         private bool _disposed;
         internal MediaStreamSource Source {get;}
         internal Exception? Failure {get;private set;}
+        internal string FailureStage {get;private set;}=string.Empty;
         internal TimestampedFrames(MediaComposition composition,uint width,uint height,TimeSpan sourceDuration,TimeSpan duration,CancellationToken token)
         {
             _composition=composition;_width=width;_height=height;_sourceDuration=sourceDuration;_duration=duration;_token=token;
@@ -137,13 +145,16 @@ internal static class VideoAnalysisTimebaseService
         private async void SampleRequested(MediaStreamSource source,MediaStreamSourceSampleRequestedEventArgs args)
         {
             var deferral=args.Request.GetDeferral();byte[]? bytes=null;
+            var stage="request";
             try
             {
                 _token.ThrowIfCancellationRequested();
                 var time=TimeSpan.FromSeconds(Interlocked.Increment(ref _index)-1d)/FramesPerSecond;
                 if(time>=_duration)return;
                 var sourceTime=time<_sourceDuration?time:TimeSpan.FromTicks(_sourceDuration.Ticks-1);
+                stage="thumbnail";
                 using var thumbnail=await _composition.GetThumbnailAsync(sourceTime,(int)_width,(int)_height,VideoFramePrecision.NearestFrame).AsTask(_token).ConfigureAwait(false);
+                stage="decode-thumbnail";
                 var decoder=await BitmapDecoder.CreateAsync(thumbnail).AsTask(_token).ConfigureAwait(false);
                 bytes=(await decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8,BitmapAlphaMode.Ignore,new BitmapTransform(),ExifOrientationMode.IgnoreExifOrientation,ColorManagementMode.DoNotColorManage).AsTask(_token).ConfigureAwait(false)).DetachPixelData();
                 lock(_gate)
@@ -154,11 +165,11 @@ internal static class VideoAnalysisTimebaseService
                     var owned=bytes;var sample=MediaStreamSample.CreateFromBuffer(owned.AsBuffer(),time);
                     sample.Duration=TimeSpan.FromSeconds(1d/FramesPerSecond);sample.KeyFrame=true;
                     sample.Processed+=(_,_)=>{lock(_gate){if(_buffers.Remove(owned))CryptographicOperations.ZeroMemory(owned);}};
-                    args.Request.Sample=sample;bytes=null;
+                    stage="deliver-sample";args.Request.Sample=sample;bytes=null;
                 }
             }
-            catch(Exception ex){Failure=ex;try{source.NotifyError(MediaStreamSourceErrorStatus.Other);}catch{}}
-            finally{if(bytes is not null)CryptographicOperations.ZeroMemory(bytes);try{deferral.Complete();}catch(Exception ex){Failure??=ex;}}
+            catch(Exception ex){Failure=ex;FailureStage=stage;try{source.NotifyError(MediaStreamSourceErrorStatus.Other);}catch{}}
+            finally{if(bytes is not null)CryptographicOperations.ZeroMemory(bytes);try{deferral.Complete();}catch(Exception ex){if(Failure is null){Failure=ex;FailureStage="complete-request";}}}
         }
         public void Dispose()
         {
