@@ -2,6 +2,15 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.3.3 — 视频置顶、思考光效与开源许可 / Pinned videos, activity glow, and license notices
+
+- 修复带标注视频置顶后的闪退。/ Fixed crashes after pinning annotated videos.
+- 新增可开关、可调 RGB 颜色的底部思考光效，修复任务栏区域截断。/ Added a configurable AI activity glow that reaches the full display edge.
+- 统一历史与最新回复的复制菜单，修复阴影裁切，保留完整内容和表情。/ Unified reply copy menus, fixed clipped shadows, and preserved full text and emoji.
+- 关于页新增第三方组件与完整许可的离线查看入口。/ Added offline access to third-party components and full license notices in About.
+
+[完整双语说明 / Full notes](./docs/release-notes-v0.3.3.md) · [Release](https://github.com/abnste/mewu_ai/releases/tag/v0.3.3) · [v0.3.2 → v0.3.3](https://github.com/abnste/mewu_ai/compare/v0.3.2...v0.3.3)
+
 ## 0.3.2 — 视频时间、对话输入与中文显示 / Video timing, input, and Chinese text
 
 - 修复 MiniMax 视频时间压缩为零点几秒，以及末尾帧不完整引发的 HTTP 400；保留原视频。/ Fixed compressed MiniMax timestamps and HTTP 400 errors caused by incomplete final frame groups, preserving the original video.
