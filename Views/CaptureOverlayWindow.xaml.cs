@@ -223,6 +223,7 @@ public partial class CaptureOverlayWindow : Window
         IReadOnlyList<SelectionSnapshot> Selections,
         SelectionItem? Active,
         string AnswerMarkdown,
+        IReadOnlyList<string> LocalReplyImageSources,
         bool AnswerExpanded,
         IReadOnlyList<AiMessage> History,
         IReadOnlyList<SelectionItem> LastSentSelections,
@@ -1381,6 +1382,7 @@ public partial class CaptureOverlayWindow : Window
             item.AnnotationNotes.ToArray())).ToArray(),
         Active,
         AnswerText.Markdown,
+        AnswerText.LocalReplyImageSources,
         _answerExpanded,
         _history.ToArray(),
         _lastSentSelections.ToArray(),
@@ -1425,7 +1427,7 @@ public partial class CaptureOverlayWindow : Window
         _lastSubmittedPrompt=snapshot.LastSubmittedPrompt;
         _lastSentSelections=[..snapshot.LastSentSelections.Where(targetItems.Contains)];
         _lastSentAnnotationTargets=[.._lastSentSelections.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item))];
-        _answerExpanded=false;_historyExpanded=false;AnswerText.Markdown=snapshot.AnswerMarkdown;
+        _answerExpanded=false;_historyExpanded=false;AnswerText.SetLocalReplyImageSources(snapshot.LocalReplyImageSources);AnswerText.Markdown=snapshot.AnswerMarkdown;
         ResponseScroll.Visibility=Visibility.Collapsed;AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;
         if(snapshot.AnswerExpanded&&snapshot.AnswerMarkdown.Length>0)ShowAnswer();
         _reasoningBuffer.Clear();ReasoningText.Text="";ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;
@@ -1861,6 +1863,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void ResetAnswerForRequest()
     {
+        AnswerText.SetLocalReplyImageSources([]);
         _followAnswerTail=true;LatestAnswerButton.Visibility=Visibility.Collapsed;
         foreach(var item in _selections)CancelVideoAnnotationPlayback(item);
         _lastSentSelections.Clear();
@@ -2156,6 +2159,7 @@ public partial class CaptureOverlayWindow : Window
             // operation consume the same validated answer.
             result=NormalizeStructuredResult(result,hasVisualAttachments);
             var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":hasVisualAttachments?"图片请求返回空正文，已保留思考与失败状态":"文字请求返回空正文，已保留思考与失败状态");return;}
+            AnswerText.SetLocalReplyImageSources(usingHermes?result.LocalReplyImageSources:[]);
             ShowAnswer();FinishReasoning(result.Reasoning);RefreshAnswer(result.Answer);_requestAnswerReady=true;if(!tableRecognition&&CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=await MapAnnotationsAsync(result.Annotations,request.Token);var primaryReturnedAnnotationCount=primaryMapping.RenderedCount;var renderedAnnotationCount=ApplyAnnotationMapping(primaryMapping,result.AnnotationUpdateMode,true);ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             AgentActivityCard.Visibility=Visibility.Collapsed;
             // NormalizeStructuredResult above already handles raw protocol

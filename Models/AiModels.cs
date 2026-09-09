@@ -49,7 +49,12 @@ public sealed record AiProviderCapabilities(bool SupportsImage,bool SupportsVide
     };
 }
 public enum AiAnnotationUpdateMode{Preserve,Append,Replace}
-public sealed record AiResult(string Answer,IReadOnlyList<AiAnnotation> Annotations,string Reasoning="",AiAnnotationUpdateMode AnnotationUpdateMode=AiAnnotationUpdateMode.Replace);
+public sealed record AiResult(string Answer,IReadOnlyList<AiAnnotation> Annotations,string Reasoning="",AiAnnotationUpdateMode AnnotationUpdateMode=AiAnnotationUpdateMode.Replace)
+{
+    // Only the local Hermes adapter can authorize exact generated image files.
+    // Keep bytes out of Markdown, model context and persisted conversation text.
+    public IReadOnlyList<string> LocalReplyImageSources { get; init; }=[];
+}
 public enum AiAnnotationKind{Callout,Pen,Highlighter,Rectangle,Ellipse,Arrow,Text,Number,Mosaic,Connection}
 public sealed record AiAnnotationDestination(int RegionIndex,string ReferenceHandle,double X,double Y,double Width,double Height);
 public sealed record AiAnnotationPoint(double X,double Y);

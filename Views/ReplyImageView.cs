@@ -37,12 +37,18 @@ internal sealed class ReplyImageView : Border
         var operation=new CancellationTokenSource();_loading=operation;
         try
         {
-            var image=await ReplyImageService.LoadAsync(_source,operation.Token);
+            var local=ReplyImageService.TryGetLocalPath(_source,out _);
+            if(local&&_owner?.CanLoadLocalReplyImage(_source)!=true)
+            {
+                _status.Text=LocalizationService.T("此回复未提供可读取的本地图片","This reply did not provide an accessible local image");_finished=true;return;
+            }
+            var image=await ReplyImageService.LoadAsync(_source,operation.Token,local);
             if(!ReferenceEquals(_loading,operation)||operation.IsCancellationRequested||!IsLoaded)return;
             _image.Source=image;_status.Visibility=Visibility.Collapsed;_finished=true;
         }
         catch(OperationCanceledException){if(ReferenceEquals(_loading,operation)&&IsLoaded){_status.Text=LocalizationService.T("图片加载超时","Image loading timed out");_finished=true;}}
-        catch(Exception ex)when(ex is System.IO.IOException or HttpRequestException or FormatException or NotSupportedException or ArgumentException or InvalidOperationException or System.Net.WebException or System.Runtime.InteropServices.COMException)
+        catch(Exception ex)when(ex is System.IO.FileNotFoundException or System.IO.DirectoryNotFoundException){if(ReferenceEquals(_loading,operation)&&IsLoaded){_status.Text=LocalizationService.T("Hermes 返回的图片文件已不存在，请让它重新生成或发送图片","The image file returned by Hermes no longer exists. Ask Hermes to generate or send it again.");_finished=true;}}
+        catch(Exception ex)when(ex is System.IO.IOException or UnauthorizedAccessException or System.Security.SecurityException or HttpRequestException or FormatException or NotSupportedException or ArgumentException or InvalidOperationException or System.Net.WebException or System.Runtime.InteropServices.COMException)
         {
             if(ReferenceEquals(_loading,operation)&&IsLoaded){_status.Text=LocalizationService.T("图片暂时无法显示","Image unavailable");_finished=true;}
         }

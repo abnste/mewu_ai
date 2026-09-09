@@ -194,7 +194,7 @@ public static class MarkdownFlowDocumentRenderer
                     var alt=new Span{Foreground=MutedBrush};AddInlines(alt.Inlines,link.FirstChild,fontSize);
                     var description=new TextRange(alt.ContentStart,alt.ContentEnd).Text;
                     target.Add(new Run(LocalizationService.T($"[图片：{description}]",$"[Image: {description}]")){Foreground=MutedBrush});
-                    if(ReplyImageService.TryGetWebUri(link.Url,out _)||link.Url?.StartsWith("data:image/",StringComparison.OrdinalIgnoreCase)==true)
+                    if(ReplyImageService.TryGetWebUri(link.Url,out _)||ReplyImageService.TryGetLocalPath(link.Url,out _)||link.Url?.StartsWith("data:image/",StringComparison.OrdinalIgnoreCase)==true)
                         target.Add(new InlineUIContainer(new mewu_ai_Assistant.Views.ReplyImageView(link.Url!,description)){BaselineAlignment=BaselineAlignment.Center});
                     break;
                 }

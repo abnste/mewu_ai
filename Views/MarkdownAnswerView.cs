@@ -16,6 +16,17 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
     private bool _hasActions;
     private readonly IncrementalMarkdownRenderer _renderer=new();
     private readonly HashSet<ReplyImageView> _replyImages=[];
+    private readonly HashSet<string> _localReplyImageSources=new(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyList<string> LocalReplyImageSources=>_localReplyImageSources.ToArray();
+    public void SetLocalReplyImageSources(IReadOnlyList<string> sources)
+    {
+        var next=sources.Take(16).Select(source=>ReplyImageService.TryGetLocalPath(source,out var path)?path:null).OfType<string>().ToArray();
+        if(_localReplyImageSources.SetEquals(next))return;
+        _localReplyImageSources.Clear();
+        foreach(var path in next)_localReplyImageSources.Add(path);
+        if(_markdown.Length>0)RenderMarkdown(_markdown);
+    }
+    internal bool CanLoadLocalReplyImage(string source)=>ReplyImageService.TryGetLocalPath(source,out var path)&&_localReplyImageSources.Contains(path);
     internal bool RegisterReplyImage(ReplyImageView image)=>_replyImages.Contains(image)||(_replyImages.Count<16&&_replyImages.Add(image));
     internal void ReleaseReplyImage(ReplyImageView image)=>_replyImages.Remove(image);
     public bool ContainsTable { get; private set; }

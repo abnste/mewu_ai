@@ -109,8 +109,9 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
             if(terminal.Status.Equals("interrupted",StringComparison.OrdinalIgnoreCase))throw new OperationCanceledException("Hermes 会话已中断。",cancellationToken);
             if(terminal.Status.Equals("error",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException(string.IsNullOrWhiteSpace(terminal.Error)?"Hermes 会话执行失败。":terminal.Error);
             if(!terminal.Status.Equals("complete",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Hermes 返回了无法确认的会话终态。");
-            if(string.IsNullOrWhiteSpace(terminal.Text))throw new InvalidOperationException("Hermes 已结束本轮，但没有生成可显示的正文。");
-            return StructuredResponseParser.Parse(terminal.Text,terminal.Reasoning,request.ExpectStructuredResponse);
+            var reply=HermesReplyMediaService.Complete(StructuredResponseParser.Parse(terminal.Text,terminal.Reasoning,request.ExpectStructuredResponse),turn.GeneratedImages.ToArray());
+            if(string.IsNullOrWhiteSpace(reply.Answer))throw new InvalidOperationException("Hermes 已结束本轮，但没有生成可显示的正文或图片。");
+            return reply;
         }
         catch(OperationCanceledException) when(cancellationToken.IsCancellationRequested)
         {
@@ -234,6 +235,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
         ActiveTurn? turn;
         lock(_activeGate)turn=_active;
         if(turn is null)return;
+        if(turn.CancellationToken.IsCancellationRequested||turn.Completion.Task.IsCompleted)return;
         var isCurrentSession=string.Equals(turn.SessionId,message.SessionId,StringComparison.Ordinal);
         if(!isCurrentSession&&!(message.Type=="error"&&string.IsNullOrEmpty(message.SessionId)))return;
         try
@@ -280,6 +282,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
                     ReportAgent(turn,AiAgentEventKind.ToolProgress,ToolTitle(message.Payload),ToolDetail(message.Payload));
                     break;
                 case "tool.complete":
+                    foreach(var image in HermesReplyMediaService.ReadGeneratedImages(message.Payload))if(turn.GeneratedImages.Count<16)turn.GeneratedImages.Add(image);
                     ReportAgent(turn,AiAgentEventKind.ToolCompleted,ToolTitle(message.Payload),ToolDetail(message.Payload),ReadString(message.Payload,"status",string.Empty)=="error");
                     break;
                 case "subagent.start":
@@ -569,6 +572,7 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
         public string SessionId { get; }=sessionId;
         public AiRequest Request { get; }=request;
         public CancellationToken CancellationToken { get; }=cancellationToken;
+        public List<string> GeneratedImages { get; }=[];
         public TaskCompletionSource<HermesTerminalMessage> Completion { get; }=new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
     private sealed record HermesTerminalMessage(string Text,string Reasoning,string Status,string Error);
