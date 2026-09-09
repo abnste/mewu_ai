@@ -281,6 +281,12 @@ internal sealed class VideoPreviewSurface : IDisposable
                 if (_disposed || !ReferenceEquals(_player, sender) || _surface is null || _width <= 0 || _height <= 0)
                     return;
 
+                // MediaPlayer is outside Win2D and does not acquire its
+                // device lock. Our per-preview gate cannot protect the shared
+                // device from other previews or native resource cleanup.
+                // Hold Win2D's lock across the external copy and readback;
+                // otherwise annotated pin + GC can crash the GPU driver.
+                using var deviceLock=_device!.Lock();
                 sender.CopyFrameToVideoSurface(_surface);
                 var capturedPositionTicks=Math.Max(0,sender.PlaybackSession.Position.Ticks);
                 pixels = _surface.GetPixelBytes();

@@ -1,5 +1,7 @@
 # WorkBuddy 官方接口
 
+- 2026-09-09 安装版 v0.3.2 的带标注贴视频闪退已用合成录屏稳定复现：贴出后强制测试 GC，原生异常 `c0000005 / 00007ffe00000020`，调用栈位于 `amdxx64.dll` 工作线程，与实际安装版的故障签名相同。`MediaPlayer.CopyFrameToVideoSurface` 是 Win2D 外部访问，必须以 `_device.Lock()` 包住帧拷贝和 `GetPixelBytes`；每个预览自己的 `_frameGate` 不能保护进程共享绘图设备与资源回收。保留硬件加速，不销毁共享 CanvasDevice，不在产品路径强制 GC。依据：微软 Win2D CanvasDevice.Lock 文档 https://microsoft.github.io/Win2D/WinUI2/html/M_Microsoft_Graphics_Canvas_CanvasDevice_Lock.htm 。
+
 - 2026-09-09 AI Markdown 正文必须沿用界面的 `Segoe UI Variable Text, Microsoft YaHei UI, Segoe UI` 字体链，代码字体链也需包含 `Microsoft YaHei UI`。FlowDocument 是 FrameworkContentElement，应显式设置当前界面 Language，不能仅依赖 FrameworkElement 的全局默认。中文默认简体由请求级 system 说明约束，保留用户明确的语言要求、原文引用及代码；不得在渲染/复制阶段强制繁简转换。实际 GlyphRun 检查已确认中文落到 MSYH/MSYHBD，流式追加后复制仍保留简体、原文繁体及 emoji。
 
 - 2026-09-06 使用本机 WorkBuddy 5.5.3 自带 CLI 的官方 ACP stdio，通过 WorkBuddy.exe 的 ELECTRON_RUN_AS_NODE 模式运行；沿用官方 `.workbuddy` 登录，不读凭据、不调用会登出的 authenticate，也不调用包含 token 的 getUserInfo。模型和思考选项来自真实 session/new；连接测试只做 initialize、session/new 和配置协商，不发送收费 prompt。

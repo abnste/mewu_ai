@@ -45,9 +45,9 @@ internal static class Program
         {
             VideoWorkflowReplay.RunBackground(app);return;
         }
-        if(args.Contains("--verify-video-workflow"))
+        if(args.Contains("--verify-video-workflow")||args.Contains("--verify-video-pin"))
         {
-            VideoWorkflowReplay.Run(app,host,args.Contains("--live-provider"));return;
+            VideoWorkflowReplay.Run(app,host,args.Contains("--live-provider"),args.Contains("--verify-video-pin"));return;
         }
         var area=System.Windows.Forms.SystemInformation.VirtualScreen;
         var image=CreateSyntheticDesktop(area.Width,area.Height);
