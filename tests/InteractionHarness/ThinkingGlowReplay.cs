@@ -14,6 +14,7 @@ using Application=System.Windows.Application;
 using TextBox=System.Windows.Controls.TextBox;
 using CheckBox=System.Windows.Controls.CheckBox;
 using Button=System.Windows.Controls.Button;
+using Point=System.Windows.Point;
 
 internal static class ThinkingGlowReplay
 {
@@ -38,6 +39,19 @@ internal static class ThinkingGlowReplay
                 Check("working-visible-without-answer-or-focus-change",glow.Visibility==Visibility.Visible&&answer.Visibility==Visibility.Collapsed&&prompt.IsKeyboardFocused&&prompt.CaretIndex==3);
                 Check("visual-does-not-hit-test",!glow.IsHitTestVisible&&!glow.Focusable);
                 Check("positioned-at-screen-bottom",glow.Width>0&&glow.Height>0&&double.IsFinite(Canvas.GetTop(glow)));
+                var screen=(System.Windows.Forms.Screen)typeof(CaptureOverlayWindow).GetMethod("PromptMonitor",Private)!.Invoke(overlay,null)!;
+                var frame=(CaptureFrame)typeof(CaptureOverlayWindow).GetField("_frame",Private)!.GetValue(overlay)!;
+                var root=(FrameworkElement)overlay.FindName("Root");
+                var display=screen.Bounds;
+                var full=ScreenCoordinateService.ToLocalDipRect(new mewu_ai_Assistant.Models.ScreenRect(display.X,display.Y,display.Width,display.Height),frame.OriginX,frame.OriginY,root.ActualWidth,root.ActualHeight,frame.Image.PixelWidth,frame.Image.PixelHeight);
+                Check("glow-reaches-full-display-edge-including-taskbar",Math.Abs(Canvas.GetTop(glow)+glow.Height-full.Bottom)<.01&&Math.Abs(Canvas.GetLeft(glow)-full.Left)<.01&&Math.Abs(glow.Width-full.Width)<.01);
+                var work=(Rect)typeof(CaptureOverlayWindow).GetMethod("PromptMonitorBounds",Private)!.Invoke(overlay,null)!;
+                var composer=(FrameworkElement)overlay.FindName("PromptBarHost");
+                Check("composer-still-avoids-taskbar",Canvas.GetTop(composer)+composer.ActualHeight<=work.Bottom+1);
+                var edge=new Point(full.Left+full.Width/2,full.Bottom-2);
+                var lit=Sample(root,edge);
+                glow.Visibility=Visibility.Collapsed;var unlit=Sample(root,edge);glow.Visibility=Visibility.Visible;
+                Check("bottom-edge-pixels-contain-glow",lit!=unlit);
                 await Task.Delay(1900);Save(glow.Parent as FrameworkElement??overlay,"thinking-glow-blue.png");
                 first.Cancel();
                 using var second=new CancellationTokenSource();host.Settings.ThinkingGlowColor="#FFB8D0";Start(second);
@@ -99,6 +113,11 @@ internal static class ThinkingGlowReplay
     {
         var bitmap=new RenderTargetBitmap((int)Math.Ceiling(element.ActualWidth),(int)Math.Ceiling(element.ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(element);
         var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));Directory.CreateDirectory(".codex-build");using var stream=File.Create(Path.Combine(".codex-build",name));encoder.Save(stream);
+    }
+    private static int Sample(FrameworkElement element,Point point)
+    {
+        var bitmap=new RenderTargetBitmap((int)Math.Ceiling(element.ActualWidth),(int)Math.Ceiling(element.ActualHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(element);
+        var pixel=new byte[4];bitmap.CopyPixels(new Int32Rect((int)point.X,(int)point.Y,1,1),pixel,4,0);return BitConverter.ToInt32(pixel);
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
     {

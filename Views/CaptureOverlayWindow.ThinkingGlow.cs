@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.Windows;
 using System.Windows.Controls;
+using mewu_ai_Assistant.Models;
+using mewu_ai_Assistant.Services;
 
 namespace mewu_ai_Assistant.Views;
 
@@ -29,7 +31,13 @@ public partial class CaptureOverlayWindow
     }
     private void PositionThinkingGlow()
     {
-        var monitor=PromptMonitorBounds();if(monitor.IsEmpty)return;
+        // The composer avoids the taskbar, but the ambient glow must continue
+        // to the physical display edge. Using WorkingArea leaves a hard band
+        // across the taskbar and makes the effect look clipped behind it.
+        var bounds=PromptMonitor().Bounds;
+        var monitor=ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),
+            _frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
+        if(monitor.IsEmpty)return;
         BottomThinkingGlow.Width=monitor.Width;
         BottomThinkingGlow.Height=Math.Min(220,monitor.Height*.24);
         Canvas.SetLeft(BottomThinkingGlow,monitor.Left);
