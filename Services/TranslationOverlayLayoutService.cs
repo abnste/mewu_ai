@@ -15,6 +15,58 @@ internal static class TranslationOverlayLayoutService
     internal const double HorizontalPadding=6;
     internal const double VerticalPadding=2;
 
+    // XY-cut partitions the selection at whitespace between OCR bounds. Every
+    // leaf has its own cell, so translated paragraphs cannot paint over siblings.
+    // An explicit stack and median fallback also bound malformed/overlapping OCR.
+    internal static IReadOnlyList<Rect> AllocateCells(IReadOnlyList<Rect> source,Size canvas)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var cells=Enumerable.Repeat(Rect.Empty,source.Count).ToArray();
+        if(!IsFinitePositive(canvas.Width)||!IsFinitePositive(canvas.Height))return cells;
+        var area=new Rect(canvas);var clipped=source.Select(rect=>!rect.IsEmpty&&double.IsFinite(rect.Left)&&double.IsFinite(rect.Top)&&double.IsFinite(rect.Right)&&double.IsFinite(rect.Bottom)?Rect.Intersect(rect,area):Rect.Empty).ToArray();
+        var indices=Enumerable.Range(0,source.Count).Where(i=>!clipped[i].IsEmpty&&IsFinitePositive(clipped[i].Width)&&IsFinitePositive(clipped[i].Height)).ToArray();
+        if(indices.Length==0)return cells;
+        var pending=new Stack<(int[] Items,Rect Cell)>();pending.Push((indices,area));
+        while(pending.TryPop(out var node))
+        {
+            if(node.Items.Length==1){cells[node.Items[0]]=node.Cell;continue;}
+            var bestGap=0d;var cut=0d;var vertical=false;int[]? order=null;var split=0;
+            foreach(var xAxis in new[]{false,true})
+            {
+                var sorted=node.Items.OrderBy(i=>xAxis?clipped[i].Left:clipped[i].Top).ThenBy(i=>i).ToArray();
+                var edge=xAxis?clipped[sorted[0]].Right:clipped[sorted[0]].Bottom;
+                for(var position=1;position<sorted.Length;position++)
+                {
+                    var next=xAxis?clipped[sorted[position]].Left:clipped[sorted[position]].Top;
+                    if(next-edge>bestGap){bestGap=next-edge;cut=(next+edge)/2;vertical=xAxis;order=sorted;split=position;}
+                    edge=Math.Max(edge,xAxis?clipped[sorted[position]].Right:clipped[sorted[position]].Bottom);
+                }
+            }
+            if(order is null)
+            {
+                vertical=node.Items.Max(i=>clipped[i].Left+clipped[i].Width/2)-node.Items.Min(i=>clipped[i].Left+clipped[i].Width/2)>
+                    node.Items.Max(i=>clipped[i].Top+clipped[i].Height/2)-node.Items.Min(i=>clipped[i].Top+clipped[i].Height/2);
+                order=node.Items.OrderBy(i=>vertical?clipped[i].Left+clipped[i].Width/2:clipped[i].Top+clipped[i].Height/2).ThenBy(i=>i).ToArray();
+                split=order.Length/2;
+                cut=vertical?node.Cell.Left+node.Cell.Width*split/order.Length:node.Cell.Top+node.Cell.Height*split/order.Length;
+            }
+            var low=vertical?node.Cell.Left:node.Cell.Top;var length=vertical?node.Cell.Width:node.Cell.Height;
+            cut=Math.Clamp(cut,low+length*.0001,low+length*.9999);
+            var first=vertical?new Rect(node.Cell.Left,node.Cell.Top,cut-node.Cell.Left,node.Cell.Height):new Rect(node.Cell.Left,node.Cell.Top,node.Cell.Width,cut-node.Cell.Top);
+            var second=vertical?new Rect(cut,node.Cell.Top,node.Cell.Right-cut,node.Cell.Height):new Rect(node.Cell.Left,cut,node.Cell.Width,node.Cell.Bottom-cut);
+            pending.Push((order[..split],first));pending.Push((order[split..],second));
+        }
+        return cells;
+    }
+
+    internal static Rect PlaceWithin(Rect source,Rect cell,double width,double height)
+    {
+        if(cell.IsEmpty||!IsFinitePositive(width)||!IsFinitePositive(height))return Rect.Empty;
+        width=Math.Min(Math.Max(width,source.Width),cell.Width);height=Math.Min(Math.Max(height,source.Height),cell.Height);
+        return new Rect(Math.Clamp(source.Left,cell.Left,cell.Right-width),
+            Math.Clamp(source.Top-(height-source.Height)/2,cell.Top,cell.Bottom-height),width,height);
+    }
+
     internal static Rect Place(Rect source,Size canvas,double contentWidth,double contentHeight)
     {
         if(!IsFinitePositive(canvas.Width)||!IsFinitePositive(canvas.Height))return Rect.Empty;

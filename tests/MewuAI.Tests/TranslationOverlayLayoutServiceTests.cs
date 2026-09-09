@@ -14,6 +14,42 @@ namespace MewuAI.Tests;
 public sealed class TranslationOverlayLayoutServiceTests
 {
     [Fact]
+    public void DenseTranslatedRowsCannotOverlapEvenWhenTheyGrow()
+    {
+        var lines=Enumerable.Range(0,12).Select(i=>new Rect(20,10+i*19,130,16)).ToArray();
+        var cells=TranslationOverlayLayoutService.AllocateCells(lines,new Size(400,260));
+        var placements=lines.Select((line,i)=>TranslationOverlayLayoutService.PlaceWithin(line,cells[i],360,60)).ToArray();
+        AssertDisjoint(placements,new Rect(0,0,400,260));
+        Assert.All(Enumerable.Range(0,lines.Length),i=>Assert.True(cells[i].Contains(lines[i])));
+    }
+
+    [Fact]
+    public void ColumnsStaySeparateAndUnsortedOcrKeepsItsIdentity()
+    {
+        Rect[] lines=[new(310,60,160,18),new(20,20,150,18),new(310,20,160,18),new(20,60,150,18)];
+        var cells=TranslationOverlayLayoutService.AllocateCells(lines,new Size(520,120));
+        AssertDisjoint(cells,new Rect(0,0,520,120));
+        Assert.All(Enumerable.Range(0,lines.Length),i=>Assert.True(cells[i].Contains(lines[i])));
+        Assert.True(cells[1].Right<=cells[2].Left);Assert.True(cells[2].Bottom<=cells[0].Top);
+    }
+
+    [Fact]
+    public void DuplicateAndOverlappingOcrTerminatesWithDisjointCells()
+    {
+        var lines=Enumerable.Repeat(new Rect(10,10,80,20),128).ToArray();
+        AssertDisjoint(TranslationOverlayLayoutService.AllocateCells(lines,new Size(400,300)),new Rect(0,0,400,300));
+    }
+
+    private static void AssertDisjoint(IReadOnlyList<Rect> rectangles,Rect bounds)
+    {
+        for(var i=0;i<rectangles.Count;i++)
+        {
+            Assert.False(rectangles[i].IsEmpty);Assert.True(bounds.Contains(rectangles[i]));
+            for(var j=0;j<i;j++){var overlap=Rect.Intersect(rectangles[i],rectangles[j]);Assert.True(overlap.IsEmpty||overlap.Width*overlap.Height<.00001);}
+        }
+    }
+
+    [Fact]
     public void TranslationExpandsBeyondTheOriginalOcrLineInsteadOfClippingText()
     {
         var result=TranslationOverlayLayoutService.Place(new Rect(20,30,60,20),new Size(500,300),240,24);
@@ -49,6 +85,14 @@ public sealed class TranslationOverlayLayoutServiceTests
             var source=Checkerboard(160,60);var bounds=new Rect(20,10,120,36);var region=TranslationOverlayLayoutService.ToImagePixelRect(bounds,source,1,1);var average=TranslationOverlayLayoutService.GetAverageColor(source,region);var backdrop=TranslationOverlayLayoutService.CreateBackdrop(source,bounds,1,1,average);var canvas=Assert.IsType<Canvas>(Assert.Single(backdrop.Children));var image=Assert.IsType<Image>(canvas.Children[0]);var blur=Assert.IsType<BlurEffect>(image.Effect);Assert.Equal(KernelType.Gaussian,blur.KernelType);Assert.True(blur.Radius>=8);Assert.DoesNotContain(canvas.Children.Cast<UIElement>(),element=>element is Border);
             backdrop.Measure(new Size(bounds.Width,bounds.Height));backdrop.Arrange(new Rect(0,0,bounds.Width,bounds.Height));var rendered=new RenderTargetBitmap((int)bounds.Width,(int)bounds.Height,96,96,PixelFormats.Pbgra32);rendered.Render(backdrop);var pixel=new byte[4];rendered.CopyPixels(new Int32Rect((int)bounds.Width/2,(int)bounds.Height/2,1,1),pixel,4,0);Assert.True(pixel[3]>0);Assert.InRange(pixel[0],25,230);Assert.InRange(pixel[1],25,230);Assert.InRange(pixel[2],25,230);
         });
+    }
+
+    [Fact]
+    public void InvalidOcrBoundsDoNotAffectValidTranslationCells()
+    {
+        var cells=TranslationOverlayLayoutService.AllocateCells([Rect.Empty,new Rect(double.NaN,0,10,10),new Rect(0,0,double.PositiveInfinity,10),new Rect(10,10,40,20)],new Size(200,100));
+        Assert.All(cells.Take(3),cell=>Assert.True(cell.IsEmpty));
+        Assert.Equal(new Rect(0,0,200,100),cells[3]);
     }
 
     private static BitmapSource Checkerboard(int width,int height)

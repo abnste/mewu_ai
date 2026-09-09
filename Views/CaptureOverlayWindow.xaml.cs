@@ -3456,14 +3456,24 @@ public partial class CaptureOverlayWindow : Window
     {
         ClearTextSelection(item);item.TextOverlays.Children.Clear();var scaleX=item.Bounds.Width/image.PixelWidth;var scaleY=item.Bounds.Height/image.PixelHeight;if(!translated)return;
         var pixelsPerDip=VisualTreeHelper.GetDpi(this).PixelsPerDip;var entries=new List<TranslationVisualEntry>();var selectableLines=new List<OcrLine>();
+        var sourceBounds=lines.Take(texts.Count).Select(line=>new Rect(line.X*scaleX,line.Y*scaleY,Math.Max(1,line.Width*scaleX),Math.Max(1,line.Height*scaleY))).ToArray();
+        var cells=TranslationOverlayLayoutService.AllocateCells(sourceBounds,new Size(item.Bounds.Width,item.Bounds.Height));
         for(var index=0;index<lines.Count&&index<texts.Count;index++)
         {
-            var line=lines[index];var value=texts[index]?.Trim();if(string.IsNullOrWhiteSpace(value))continue;var lineBounds=new Rect(line.X*scaleX,line.Y*scaleY,Math.Max(1,line.Width*scaleX),Math.Max(1,line.Height*scaleY));var fontSize=Math.Clamp(lineBounds.Height*.78,9,28);var maxTextWidth=Math.Max(24,item.Bounds.Width-TranslationOverlayLayoutService.HorizontalPadding);IReadOnlyList<TranslationVisualRow> rows=[];double lineHeight=0;
-            for(var attempt=0;attempt<5;attempt++)
+            var value=texts[index]?.Trim();if(string.IsNullOrWhiteSpace(value))continue;var lineBounds=sourceBounds[index];var cell=cells[index];
+            if(cell.IsEmpty||cell.Width<=TranslationOverlayLayoutService.HorizontalPadding||cell.Height<=TranslationOverlayLayoutService.VerticalPadding)continue;
+            var fontSize=Math.Clamp(lineBounds.Height*.78,9,28);var maxTextWidth=cell.Width-TranslationOverlayLayoutService.HorizontalPadding;IReadOnlyList<TranslationVisualRow> rows=[];double lineHeight=0;
+            var low=.1;var high=fontSize;
+            for(var attempt=0;attempt<14;attempt++)
             {
-                rows=WrapTranslationText(value,fontSize,maxTextWidth,pixelsPerDip);lineHeight=Math.Max(fontSize*1.18,lineBounds.Height*.9);var requiredHeight=rows.Count*lineHeight+TranslationOverlayLayoutService.VerticalPadding;if(requiredHeight<=item.Bounds.Height||fontSize<=7.1)break;fontSize=Math.Max(7,fontSize*Math.Clamp((item.Bounds.Height-TranslationOverlayLayoutService.VerticalPadding)/requiredHeight,.65,.92));
+                rows=WrapTranslationText(value,fontSize,maxTextWidth,pixelsPerDip);
+                lineHeight=Math.Max(fontSize*1.18,new FormattedText("国Ag",CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface(TranslationFontFamily),fontSize,Brushes.Black,pixelsPerDip).Height+2);
+                var fits=rows.Count*lineHeight+TranslationOverlayLayoutService.VerticalPadding<=cell.Height&&rows.All(row=>row.Width<=maxTextWidth);
+                if(attempt==0&&fits)break;
+                if(fits)low=fontSize;else high=fontSize;
+                if(attempt==12)fontSize=low;else if(attempt<12)fontSize=(low+high)/2;
             }
-            if(rows.Count==0)continue;var contentWidth=rows.Max(row=>row.Width)+TranslationOverlayLayoutService.HorizontalPadding;var contentHeight=rows.Count*lineHeight+TranslationOverlayLayoutService.VerticalPadding;var placement=TranslationOverlayLayoutService.Place(lineBounds,new Size(item.Bounds.Width,item.Bounds.Height),contentWidth,contentHeight);if(placement.IsEmpty)continue;var pixelRect=TranslationOverlayLayoutService.ToImagePixelRect(placement,image,scaleX,scaleY);var backdropColor=TranslationOverlayLayoutService.GetAverageColor(image,pixelRect);entries.Add(new TranslationVisualEntry(placement,fontSize,lineHeight,rows,backdropColor));
+            if(rows.Count==0)continue;var contentWidth=rows.Max(row=>row.Width)+TranslationOverlayLayoutService.HorizontalPadding;var contentHeight=rows.Count*lineHeight+TranslationOverlayLayoutService.VerticalPadding;var placement=TranslationOverlayLayoutService.PlaceWithin(lineBounds,cell,contentWidth,contentHeight);if(placement.IsEmpty)continue;var pixelRect=TranslationOverlayLayoutService.ToImagePixelRect(placement,image,scaleX,scaleY);var backdropColor=TranslationOverlayLayoutService.GetAverageColor(image,pixelRect);entries.Add(new TranslationVisualEntry(placement,fontSize,lineHeight,rows,backdropColor));
             for(var rowIndex=0;rowIndex<rows.Count;rowIndex++)
             {
                 var row=rows[rowIndex];var x=placement.Left+TranslationOverlayLayoutService.HorizontalPadding/2;var y=placement.Top+TranslationOverlayLayoutService.VerticalPadding/2+rowIndex*lineHeight;var width=Math.Min(row.Width,Math.Max(1,placement.Width-TranslationOverlayLayoutService.HorizontalPadding));var bounds=new Rect(x,y,width,Math.Min(lineHeight,Math.Max(1,placement.Bottom-y)));selectableLines.Add(new OcrLine(row.Text,bounds.X,bounds.Y,bounds.Width,bounds.Height,[new OcrWord(row.Text,bounds.X,bounds.Y,bounds.Width,bounds.Height)]));
@@ -3472,17 +3482,18 @@ public partial class CaptureOverlayWindow : Window
         foreach(var entry in entries){var backdrop=TranslationOverlayLayoutService.CreateBackdrop(image,entry.Bounds,scaleX,scaleY,entry.BackdropColor);Canvas.SetLeft(backdrop,entry.Bounds.Left);Canvas.SetTop(backdrop,entry.Bounds.Top);item.TextOverlays.Children.Add(backdrop);}
         foreach(var entry in entries)
         {
-            var luminance=.2126*entry.BackdropColor.R+.7152*entry.BackdropColor.G+.0722*entry.BackdropColor.B;var lightBackground=luminance>150;var text=new OutlinedTextVisual(entry.Rows.Select(row=>row.Text).ToArray(),"Segoe UI",entry.FontSize,entry.LineHeight,lightBackground?Color.FromRgb(24,31,42):Colors.White,lightBackground?Colors.White:Colors.Black,TranslationOverlayLayoutService.HorizontalPadding/2,TranslationOverlayLayoutService.VerticalPadding/2){Width=entry.Bounds.Width,Height=entry.Bounds.Height,ToolTip="原位译文 · 可拖选复制"};var host=new Grid{Width=entry.Bounds.Width,Height=entry.Bounds.Height,ClipToBounds=true,IsHitTestVisible=false};host.Children.Add(text);Canvas.SetLeft(host,entry.Bounds.Left);Canvas.SetTop(host,entry.Bounds.Top);item.TextOverlays.Children.Add(host);
+            var luminance=.2126*entry.BackdropColor.R+.7152*entry.BackdropColor.G+.0722*entry.BackdropColor.B;var lightBackground=luminance>150;var text=new OutlinedTextVisual(entry.Rows.Select(row=>row.Text).ToArray(),TranslationFontFamily,entry.FontSize,entry.LineHeight,lightBackground?Color.FromRgb(24,31,42):Colors.White,lightBackground?Colors.White:Colors.Black,TranslationOverlayLayoutService.HorizontalPadding/2,TranslationOverlayLayoutService.VerticalPadding/2){Width=entry.Bounds.Width,Height=entry.Bounds.Height,ToolTip="原位译文 · 可拖选复制"};var host=new Grid{Width=entry.Bounds.Width,Height=entry.Bounds.Height,ClipToBounds=true,IsHitTestVisible=false};host.Children.Add(text);Canvas.SetLeft(host,entry.Bounds.Left);Canvas.SetTop(host,entry.Bounds.Top);item.TextOverlays.Children.Add(host);
         }
         if(selectableLines.Count>0)RenderTextSelectionCore(item,selectableLines,1,1,string.Join(Environment.NewLine,texts.Where(text=>!string.IsNullOrWhiteSpace(text))),"可跨行拖动选择译文，Ctrl+C 复制","复制全部译文");
     }
 
     private static IReadOnlyList<TranslationVisualRow> WrapTranslationText(string value,double fontSize,double maxWidth,double pixelsPerDip)
     {
-        return TranslationOverlayLayoutService.WrapText(value,maxWidth,text=>MeasureTranslationText(text,fontSize,pixelsPerDip)).Select(text=>new TranslationVisualRow(text,Math.Min(maxWidth,MeasureTranslationText(text,fontSize,pixelsPerDip)))).ToArray();
+        return TranslationOverlayLayoutService.WrapText(value,maxWidth,text=>MeasureTranslationText(text,fontSize,pixelsPerDip)).Select(text=>new TranslationVisualRow(text,MeasureTranslationText(text,fontSize,pixelsPerDip))).ToArray();
     }
 
-    private static double MeasureTranslationText(string value,double fontSize,double pixelsPerDip)=>new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface("Segoe UI"),fontSize,Brushes.Black,pixelsPerDip).WidthIncludingTrailingWhitespace;
+    private const string TranslationFontFamily="Segoe UI Variable Text, Microsoft YaHei UI, Segoe UI";
+    private static double MeasureTranslationText(string value,double fontSize,double pixelsPerDip)=>new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface(TranslationFontFamily),fontSize,Brushes.Black,pixelsPerDip).WidthIncludingTrailingWhitespace;
 
     private void RenderSelectableText(SelectionItem item,BitmapSource image,OcrDocument document)
     {

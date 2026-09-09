@@ -83,7 +83,7 @@ public sealed class MarkdownFlowDocumentRendererTests
     }
 
     [Fact]
-    public void DoesNotExecuteHtmlOrLoadRemoteImages()
+    public void DoesNotExecuteHtmlAndDefersImageLoadingUntilDisplay()
     {
         RunSta(() =>
         {
@@ -92,6 +92,8 @@ public sealed class MarkdownFlowDocumentRendererTests
 
             Assert.Contains("<script>alert('x')</script>",text);
             Assert.Contains("[图片：示意图]",text);
+            var image=Assert.Single(document.Blocks.OfType<Paragraph>().SelectMany(paragraph=>paragraph.Inlines.OfType<InlineUIContainer>()));
+            Assert.False(Assert.IsAssignableFrom<FrameworkElement>(image.Child).IsLoaded);
         });
     }
 

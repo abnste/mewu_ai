@@ -15,6 +15,9 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
     private string _markdown=string.Empty;
     private bool _hasActions;
     private readonly IncrementalMarkdownRenderer _renderer=new();
+    private readonly HashSet<ReplyImageView> _replyImages=[];
+    internal bool RegisterReplyImage(ReplyImageView image)=>_replyImages.Contains(image)||(_replyImages.Count<16&&_replyImages.Add(image));
+    internal void ReleaseReplyImage(ReplyImageView image)=>_replyImages.Remove(image);
     public bool ContainsTable { get; private set; }
     public event EventHandler? MarkdownChanged;
 
