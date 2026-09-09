@@ -19,7 +19,7 @@ internal sealed class ReplyImageView : Border
     internal ReplyImageView(string source,string description)
     {
         _source=source;Description=description;Width=400;MaxWidth=400;MinHeight=32;Margin=new Thickness(0,5,0,5);
-        CornerRadius=new CornerRadius(8);Background=new SolidColorBrush(Color.FromRgb(245,247,251));
+        CornerRadius=new CornerRadius(8);Background=Brushes.Transparent;
         var content=new Grid();content.Children.Add(_image);content.Children.Add(_status);Child=content;
         _status.Text=LocalizationService.T("图片加载中…","Loading image…");
         ToolTip=description;Loaded+=OnLoaded;Unloaded+=(_,_)=>{_loading?.Cancel();_loading=null;_owner?.ReleaseReplyImage(this);if(_owner is not null)_owner.SizeChanged-=OwnerSizeChanged;_owner=null;};
