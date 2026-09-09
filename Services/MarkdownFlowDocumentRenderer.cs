@@ -71,7 +71,22 @@ public static class MarkdownFlowDocumentRenderer
     }
 
     public static string ToPlainText(FlowDocument document)=>
-        new TextRange(document.ContentStart,document.ContentEnd).Text.TrimEnd('\r','\n');
+        TextWithImageDescriptions(document.ContentStart,document.ContentEnd).TrimEnd('\r','\n');
+
+    internal static string TextWithImageDescriptions(TextPointer rangeStart,TextPointer rangeEnd)
+    {
+        var text=new StringBuilder();var start=rangeStart;
+        for(var pointer=rangeStart;pointer is not null&&pointer.CompareTo(rangeEnd)<0;pointer=pointer.GetNextContextPosition(LogicalDirection.Forward))
+        {
+            if(pointer.GetPointerContext(LogicalDirection.Forward)!=TextPointerContext.ElementStart||
+                pointer.GetAdjacentElement(LogicalDirection.Forward) is not InlineUIContainer {Child:mewu_ai_Assistant.Views.ReplyImageView image} inline||
+                inline.ElementStart.CompareTo(start)<0||inline.ElementEnd.CompareTo(rangeEnd)>0)continue;
+            text.Append(new TextRange(start,inline.ElementStart).Text);
+            text.Append(LocalizationService.T($"[图片：{image.Description}]",$"[Image: {image.Description}]"));
+            start=inline.ElementEnd;
+        }
+        text.Append(new TextRange(start,rangeEnd).Text);return text.ToString();
+    }
 
     internal static void AddBlock(BlockCollection target,MdBlock block,double fontSize)
     {
@@ -193,9 +208,7 @@ public static class MarkdownFlowDocumentRenderer
                 {
                     var alt=new Span{Foreground=MutedBrush};AddInlines(alt.Inlines,link.FirstChild,fontSize);
                     var description=new TextRange(alt.ContentStart,alt.ContentEnd).Text;
-                    target.Add(new Run(LocalizationService.T($"[图片：{description}]",$"[Image: {description}]")){Foreground=MutedBrush});
-                    if(ReplyImageService.TryGetWebUri(link.Url,out _)||ReplyImageService.TryGetLocalPath(link.Url,out _)||link.Url?.StartsWith("data:image/",StringComparison.OrdinalIgnoreCase)==true)
-                        target.Add(new InlineUIContainer(new mewu_ai_Assistant.Views.ReplyImageView(link.Url!,description)){BaselineAlignment=BaselineAlignment.Center});
+                    target.Add(new InlineUIContainer(new mewu_ai_Assistant.Views.ReplyImageView(link.Url??string.Empty,description)){BaselineAlignment=BaselineAlignment.Center});
                     break;
                 }
                 case LinkInline link:

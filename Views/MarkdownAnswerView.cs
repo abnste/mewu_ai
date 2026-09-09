@@ -68,9 +68,9 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
             var text=new System.Text.StringBuilder();var start=rangeStart;
             foreach(var emoji in EmojiInlines.Where(emoji=>emoji.ElementStart.CompareTo(rangeStart)>=0&&emoji.ElementEnd.CompareTo(rangeEnd)<=0))
             {
-                text.Append(new TextRange(start,emoji.ElementStart).Text);text.Append(emoji.Text);start=emoji.ElementEnd;
+                text.Append(MarkdownFlowDocumentRenderer.TextWithImageDescriptions(start,emoji.ElementStart));text.Append(emoji.Text);start=emoji.ElementEnd;
             }
-            text.Append(new TextRange(start,rangeEnd).Text);
+            text.Append(MarkdownFlowDocumentRenderer.TextWithImageDescriptions(start,rangeEnd));
             return text.ToString().TrimEnd('\r','\n');
     }
 

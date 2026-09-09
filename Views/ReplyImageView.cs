@@ -22,6 +22,7 @@ internal sealed class ReplyImageView : Border
         CornerRadius=new CornerRadius(8);Background=Brushes.Transparent;
         var content=new Grid();content.Children.Add(_image);content.Children.Add(_status);Child=content;
         _status.Text=LocalizationService.T("图片加载中…","Loading image…");
+        System.Windows.Automation.AutomationProperties.SetName(this,description);
         ToolTip=description;Loaded+=OnLoaded;Unloaded+=(_,_)=>{_loading?.Cancel();_loading=null;_owner?.ReleaseReplyImage(this);if(_owner is not null)_owner.SizeChanged-=OwnerSizeChanged;_owner=null;};
     }
     internal string Description {get;}

@@ -92,8 +92,21 @@ public sealed class MarkdownFlowDocumentRendererTests
 
             Assert.Contains("<script>alert('x')</script>",text);
             Assert.Contains("[图片：示意图]",text);
+            Assert.DoesNotContain("[图片：",new TextRange(document.ContentStart,document.ContentEnd).Text);
             var image=Assert.Single(document.Blocks.OfType<Paragraph>().SelectMany(paragraph=>paragraph.Inlines.OfType<InlineUIContainer>()));
             Assert.False(Assert.IsAssignableFrom<FrameworkElement>(image.Child).IsLoaded);
+        });
+    }
+
+    [Fact]
+    public void ImageDescriptionIsCopyOnlyAndKeepsSurroundingEmojiOrder()
+    {
+        RunSta(() =>
+        {
+            var view=new mewu_ai_Assistant.Views.MarkdownAnswerView{Markdown="前 👋 ![画像](https://example.invalid/a.png) 后 🎉"};
+            Assert.Equal("前 👋 [图片：画像] 后 🎉",view.PlainText);
+            view.SelectAll();Assert.Equal(view.PlainText,view.SelectedPlainText);
+            Assert.DoesNotContain("[图片：",new TextRange(view.Document.ContentStart,view.Document.ContentEnd).Text);
         });
     }
 
