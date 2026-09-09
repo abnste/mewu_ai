@@ -2,6 +2,14 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.3.4 — 对话图片与翻译排版 / Reply images and translation layout
+
+- 修复 AI 回复图片不显示，接入 Hermes 本地图片、MEDIA 引用及图片工具结果。/ Fixed missing reply images, including local images, MEDIA references, and image-tool results from Hermes.
+- 去掉图片的灰色底板和程序标签，复制时保留说明、文字与表情。/ Removed gray image backdrops and app-added labels while preserving descriptions, text, and emoji when copying.
+- 修复长译文及双栏译文重叠，统一显示、选择和导出布局。/ Fixed overlapping translations across lines and columns, with consistent display, selection, and export layouts.
+
+[完整双语说明 / Full notes](./docs/release-notes-v0.3.4.md) · [Release](https://github.com/abnste/mewu_ai/releases/tag/v0.3.4) · [v0.3.3 → v0.3.4](https://github.com/abnste/mewu_ai/compare/v0.3.3...v0.3.4)
+
 ## 0.3.3 — 视频置顶、思考光效与开源许可 / Pinned videos, activity glow, and license notices
 
 - 修复带标注视频置顶后的闪退。/ Fixed crashes after pinning annotated videos.
