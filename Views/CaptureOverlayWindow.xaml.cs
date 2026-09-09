@@ -1643,13 +1643,19 @@ public partial class CaptureOverlayWindow : Window
     }
     private Rect MonitorBounds(Rect selection)
     {
-        var pixels=ToPixelRect(selection);var center=new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2);var bounds=System.Windows.Forms.Screen.FromPoint(center).WorkingArea;
+        var bounds=SelectionMonitor(selection).WorkingArea;
         return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     }
+    private System.Windows.Forms.Screen SelectionMonitor(Rect selection)
+    {
+        var pixels=ToPixelRect(selection);
+        return System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(_frame.OriginX+pixels.X+pixels.Width/2,_frame.OriginY+pixels.Y+pixels.Height/2));
+    }
+    private System.Windows.Forms.Screen PromptMonitor()=>Active is {IsImplicit:false} item
+        ?SelectionMonitor(item.Bounds):System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position);
     private Rect PromptMonitorBounds()
     {
-        if(Active is {IsImplicit:false} item)return MonitorBounds(item.Bounds);
-        var bounds=System.Windows.Forms.Screen.FromPoint(System.Windows.Forms.Cursor.Position).WorkingArea;
+        var bounds=PromptMonitor().WorkingArea;
         return ScreenCoordinateService.ToLocalDipRect(new ScreenRect(bounds.X,bounds.Y,bounds.Width,bounds.Height),_frame.OriginX,_frame.OriginY,Root.ActualWidth,Root.ActualHeight,_frame.Image.PixelWidth,_frame.Image.PixelHeight);
     }
 
