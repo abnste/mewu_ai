@@ -23,6 +23,8 @@ public sealed class MarkdownAnswerView:EmojiRichTextBox
         IsReadOnly=true;IsReadOnlyCaretVisible=true;IsTabStop=true;Focusable=true;IsDocumentEnabled=true;IsUndoEnabled=false;
         Background=Brushes.Transparent;BorderThickness=new Thickness(0);Padding=new Thickness(0);
         VerticalScrollBarVisibility=ScrollBarVisibility.Disabled;HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled;
+        ContextMenu=TextSelectionMenu.Create(()=>Selection.IsEmpty?string.Empty:SelectedPlainText,()=>PlainText,
+            text=>ClipboardService.TrySetText(text,out string? _));
         CommandBindings.Add(new CommandBinding(ApplicationCommands.Copy,
             (_, e) =>
             {

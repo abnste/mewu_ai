@@ -71,6 +71,10 @@ internal static class Program
         overlay.Title="Mewu Interaction QA";
         MarkReplayWindow(overlay,args.Contains("--verify-prompt-reveal-focus")?"对话条弹出焦点验收 · 完成后自动关闭":"自动化验收窗口 · 非当前软件设置");
         overlay.ShowInTaskbar=true;
+        if(args.Contains("--verify-answer-menus"))
+        {
+            AnswerMenuReplay.Run(app,overlay);app.Run(overlay);return;
+        }
         if(args.Contains("--verify-thinking-glow"))
         {
             ThinkingGlowReplay.Run(app,host,overlay);app.Run(overlay);return;
