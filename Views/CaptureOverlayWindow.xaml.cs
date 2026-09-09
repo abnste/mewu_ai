@@ -1497,7 +1497,7 @@ public partial class CaptureOverlayWindow : Window
             !_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible?GetPromptInteractionBounds():null);
     }
     private bool IsInteractingWithPrompt(Point point)=>!_promptBarHidden&&PromptBarHost.Visibility==Visibility.Visible&&
-        (PromptBarHost.IsMouseCaptureWithin||ChannelPickerPopup.IsOpen||_historyCopyMenuOpen||PointerOverPromptBar(point));
+        (PromptBarHost.IsMouseCaptureWithin||ChannelPickerPopup.IsOpen||_historyCopyMenuOpen||AnswerText.ContextMenu?.IsOpen==true||PointerOverPromptBar(point));
     private void ToolbarMouseEnter(object sender,MouseEventArgs e)
     {
         var point=e.GetPosition(Root);

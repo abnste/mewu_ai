@@ -415,6 +415,28 @@
         </Setter>
     </Style>
 
+    <Style x:Key="TextSelectionContextMenu" TargetType="ContextMenu">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="HasDropShadow" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Grid Background="Transparent" SnapsToDevicePixels="True">
+                        <!-- Popup bounds must include the entire shadow. Keep text off the effect layer. -->
+                        <Border x:Name="MenuShadow" Margin="28" Background="White" CornerRadius="12" IsHitTestVisible="False">
+                            <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="22" ShadowDepth="5" Opacity=".22"/></Border.Effect>
+                        </Border>
+                        <Border x:Name="MenuSurface" Margin="28" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="12" Padding="6">
+                            <ItemsPresenter/>
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="ContextMenu">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
@@ -558,4 +580,5 @@
             </Setter.Value>
         </Setter>
     </Style>
+<Style x:Key="TextSelectionMenuItem" TargetType="MenuItem" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Setter Property="Foreground" Value="#34435A" /><Setter Property="Background" Value="Transparent" /><Setter Property="Padding" Value="12,8" /><Setter Property="MinWidth" Value="178" /><Setter Property="FontSize" Value="13" /><Setter Property="Cursor" Value="Hand" /><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem"><Border x:Name="Item" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}"><ContentPresenter ContentSource="Header" VerticalAlignment="Center" /></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Item" Property="Background" Value="#EAF1FA" /></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.42" /></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
 </ResourceDictionary>
