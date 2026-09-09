@@ -68,10 +68,10 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 See correct, incorrect and uncertain answers marked on the original page. Review the reading, expected answer and verdict, or adjust an answer box. Collect several submissions to build practice from their reviewed shared errors. [Explore the teaching workflow](./docs/teaching-workflow.md).
 
 <p align="center">
-  <a href="./docs/images/teaching-review-en.png"><img src="./docs/images/teaching-review-en.png" width="100%" alt="Paper annotations beside the review panel: incorrect, correct and uncertain answers on the left, editable readings and expected answers on the right" /></a>
+  <a href="./docs/images/teaching-review-en.png"><img src="./docs/images/teaching-review-en.png" width="100%" alt="Official 2025 TSA exam excerpt with recorded MiniMax annotations and the question-by-question review panel" /></a>
 </p>
 
-*Actual interface with demo answers. Teachers should review grading results and generated exercises.*
+*Source: [HKEAA 2025 TSA Secondary 3 Mathematics 9MC2, page 11](https://www.bca.hkeaa.edu.hk/web/Common/res/2025secPaper/S3Math/TSA2025_9MC2_Q.pdf#page=11). The original exam layout is preserved. Blue answers are simulated; annotations and verdicts are from the recorded MiniMax evaluation and still require teacher review. Exam copyright belongs to its original owner.*
 
 ### Video analysis
 
