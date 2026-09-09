@@ -3,14 +3,14 @@
   <h1>MewuAI</h1>
   <p>A Windows screenshot tool with screen recording, pinned images, text recognition, and AI annotations.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.3.4"><img src="https://img.shields.io/badge/Public_Beta-v0.3.4-7C6CF0?style=flat-square" alt="v0.3.4 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/Public_Beta-v0.4.0-7C6CF0?style=flat-square" alt="v0.4.0 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.4/MewuAI-Setup-0.3.4-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Setup-0.4.0-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.4/MewuAI-Portable-0.3.4-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Portable-0.4.0-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -22,6 +22,8 @@ Select something on your screen and ask AI to translate it, explain it, or highl
 </p>
 
 ## Features
+
+- **Papers and assignments:** Import selected PDF pages or collect screenshots across capture sessions. Review per-page grading, compare shared errors across submissions, and edit/export separate practice questions and answers. Teacher confirmation remains required. [Workflow guide](./docs/teaching-workflow.md).
 
 - **Screenshots and scrolling capture:** Select a region or window, capture across monitors, and scroll up or down to capture long pages.
 - **Annotations and pinned images:** Add pen strokes, highlights, arrows, shapes, text, numbered markers, and pixelation. Drag annotations to adjust them, or pin a screenshot on your desktop for reference.

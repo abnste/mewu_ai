@@ -3,14 +3,14 @@
   <h1>喵呜AI</h1>
   <p>Windows 截图工具，支持录屏、贴图、文字识别和 AI 标注。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.3.4"><img src="https://img.shields.io/badge/公测版-v0.3.4-7C6CF0?style=flat-square" alt="v0.3.4 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/公测版-v0.4.0-7C6CF0?style=flat-square" alt="v0.4.0 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.4/MewuAI-Setup-0.3.4-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Setup-0.4.0-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.3.4/MewuAI-Portable-0.3.4-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Portable-0.4.0-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -22,6 +22,8 @@
 </p>
 
 ## 功能
+
+- **试卷与作业**：导入 PDF 指定页或跨次收集截图，逐页辅助批改与人工核对；汇总多份作答的共同问题，编辑并导出分开的练习和答案。[使用说明](./docs/teaching-workflow.md)。
 
 - **截图与长截图**：框选区域、选择窗口、多屏截图，支持上下滚动截取长页面。
 - **标注与贴图**：画笔、高亮、箭头、形状、文字、序号和马赛克；拖动调整已有标注，把截图置顶在桌面上参考。

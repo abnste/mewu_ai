@@ -16,6 +16,7 @@ internal static class LocalizationService
 {
     private static readonly Dictionary<string,string> English=new(StringComparer.Ordinal)
     {
+        ["试卷与作业"]="Papers and assignments",
         ["喵呜AI"]="MewuAI",["喵呜AI 屏幕助手"]="MewuAI Screen Assistant",["喵呜AI 设置"]="MewuAI Settings",["喵呜AI 贴图"]="MewuAI Pinned Image",["喵呜AI 贴视频"]="MewuAI Pinned Video",
         ["设置"]="Settings",["打开主界面"]="Open MewuAI",["退出"]="Quit",["最小化"]="Minimize",["隐藏到托盘"]="Hide to tray",["关闭设置"]="Close settings",["关闭设置窗口"]="Close the Settings window",
         ["屏幕助手"]="Screen Assistant",["圈选并直接分析"]="Select an area and analyze it",["截图、OCR、标注和录屏"]="Capture, OCR, annotate, and record",["截图、OCR、标注和录屏可用"]="Capture, OCR, annotation, and recording are available",

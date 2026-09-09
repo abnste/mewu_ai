@@ -2,12 +2,15 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
-## 未发布 / Unreleased
+## 0.4.0 — 教学批改与多页作业 / Reviewed grading and multi-page assignments
 
+- 新增 PDF 选页导入、跨次截图收集、身份去重、双阶段逐题批改与老师核对。/ Added selected PDF imports, cross-capture collections, identity checks, two-stage grading and teacher review.
+- 支持共同错题统计、练习编辑及标注页/表格/分离答案的教学包导出。/ Added shared-error summaries, editable practice and teaching-pack export.
+- PDF 渲染使用独立有界进程，修复本机 AMD 驱动退出异常。/ Isolated PDF rendering to avoid the reproduced AMD shutdown crash.
 - 修复试卷批改中同数字题干抢占答案批注位置，保留数学正负号并限制 OCR 校准范围。/ Prevented repeated text in exam questions from pulling annotations away from student answers.
 - 保留回复列表中的原始题号，修正显示与复制从 1 重新编号的问题。/ Preserved original question numbers in displayed and copied lists.
 - 补充教学任务的证据、评分与出题规则，明确未生成批注的状态。/ Added evidence and scoring guidance for teaching tasks and clear feedback when annotations are missing.
-- 新增公开试卷真实调用评估记录；模型符号漏读、手写链路及长输出失败仍作为待解决项。/ Added public-exam evaluations, retaining model recognition and backend failures as open limitations.
+- 双卷最终实测 8 项符合参考、4 项进入待核；手写识读仍须核对，视觉渠道不可用时明确失败。/ The final live two-page replay yielded eight matching states and four uncertain states; handwriting and provider availability still require review.
 
 ## 0.3.4 — 对话图片与翻译排版 / Reply images and translation layout
 
