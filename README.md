@@ -125,7 +125,7 @@ Opening Settings checks for updates automatically. You can also check manually i
 
 If you use v0.2.5 or earlier, download the installer from this page to upgrade manually. See the [changelog](./CHANGELOG.md) for previous versions and their release notes.
 
-The release page includes a `SHA256SUMS.txt` file for verifying the installer and portable ZIP.
+The release page shows a SHA-256 digest in each asset's details for verifying the installer and portable ZIP. A separate checksum file is not provided.
 
 </details>
 

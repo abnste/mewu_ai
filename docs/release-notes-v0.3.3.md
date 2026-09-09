@@ -21,7 +21,7 @@
 
 ### 下载与升级
 
-- 提供 Windows x64 安装 EXE、便携 ZIP 和无 BOM 的 SHA256SUMS.txt；安装包包含所需运行时与第三方许可证。
+- 提供 Windows x64 安装 EXE 与便携 ZIP；安装包包含所需运行时与第三方许可证。使用 GitHub 下载文件详情中的 SHA-256 校验值，不再单独附带校验文件。
 - 可在设置中检查更新；v0.2.5 及更早版本建议从发行页手动下载安装器升级。
 
 [全部提交变化](https://github.com/abnste/mewu_ai/compare/v0.3.2...v0.3.3) · [完整版本记录](https://github.com/abnste/mewu_ai/blob/master/CHANGELOG.md)
@@ -51,7 +51,7 @@ This update fixes crashes when pinning videos, adds a customizable glow while AI
 
 ### Download and update
 
-- Windows x64 installer EXE, portable ZIP, and a BOM-free SHA256SUMS.txt are provided. Required runtimes and third-party licenses are included.
+- Windows x64 installer EXE and portable ZIP are provided, including required runtimes and third-party licenses. Use the SHA-256 digest in each GitHub asset's details; no separate checksum file is included.
 - Check for updates in Settings. Users on v0.2.5 or earlier should download the installer manually from the release page.
 
 [Full comparison](https://github.com/abnste/mewu_ai/compare/v0.3.2...v0.3.3) · [Release history](https://github.com/abnste/mewu_ai/blob/master/CHANGELOG.md)
