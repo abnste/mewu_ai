@@ -31,7 +31,7 @@ internal static class VideoWorkflowReplay
     {
         var scene=new Border{Background=Brushes.Red};
         var label=new TextBlock{Text="视频验收：红 → 蓝 → 绿",FontSize=32,Foreground=Brushes.White,Margin=new Thickness(40)};scene.Child=label;
-        var window=new Window{Title="视频验收背景（仅合成内容）",WindowState=WindowState.Maximized,WindowStyle=WindowStyle.None,Content=scene};
+        var window=new Window{Title="视频验收背景（仅合成内容）",WindowState=WindowState.Maximized,WindowStyle=WindowStyle.None,Content=scene,Topmost=true};
         var clock=Stopwatch.StartNew();var timer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(100)};
         timer.Tick+=(_,_)=>{var time=clock.Elapsed.TotalSeconds%12;scene.Background=time<4?Brushes.Red:time<8?Brushes.Blue:Brushes.Lime;label.Text=$"视频验收 · 合成色块 · 每四秒变色 · {time:0.0}";};
         window.KeyDown+=(_,e)=>{if(e.Key==Key.Escape)window.Close();};window.Closed+=(_,_)=>timer.Stop();timer.Start();app.Run(window);
