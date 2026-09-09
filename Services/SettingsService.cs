@@ -219,6 +219,7 @@ public sealed class SettingsService
         settings.CaptureDelaySeconds=settings.CaptureDelaySeconds is 3 or 5?settings.CaptureDelaySeconds:0;
         settings.DefaultImageFormat=settings.DefaultImageFormat?.Trim().ToLowerInvariant() is "jpg" or "jpeg"?"jpg":"png";
         settings.UiLanguage=settings.UiLanguage?.Trim() is "zh-CN" or "en-US"?settings.UiLanguage.Trim():"system";
+        settings.ThinkingGlowColor=ThinkingGlowAppearance.NormalizeColor(settings.ThinkingGlowColor);
         settings.VoiceLanguage=settings.VoiceLanguage?.Trim() is "zh-CN" or "en-US"?settings.VoiceLanguage.Trim():"system";
         settings.ConversationChannelId=settings.ConversationChannelId?.Trim()??string.Empty;
         settings.MiniMaxCodeModel=string.IsNullOrWhiteSpace(settings.MiniMaxCodeModel)?"minimax/MiniMax-M3":settings.MiniMaxCodeModel.Trim();

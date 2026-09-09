@@ -17,7 +17,7 @@ using mewu_ai_Assistant.Interop;
 
 namespace mewu_ai_Assistant.Views;
 
-public sealed class SettingsWindow : Window
+public sealed partial class SettingsWindow : Window
 {
     private readonly TabItem _aiTab;
     private CodexSettingsPage _codexSettings=null!;
@@ -315,6 +315,7 @@ public sealed class SettingsWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(_uiLanguage,"界面语言");
         panel.Children.Add(_uiLanguage);
         panel.Children.Add(Text("语言设置将在重新启动喵呜AI后生效。",true));
+        panel.Children.Add(ThinkingGlowSettings());
         panel.Children.Add(Text("启动与快捷键", true));
         _startup.Content = "登录 Windows 后自动启动";
         _startup.IsChecked = _host.Settings.LaunchAtStartup;
@@ -1201,6 +1202,8 @@ public sealed class SettingsWindow : Window
                 CaptureHotkey=new HotkeySetting{Key=parsed,Modifiers=modifiers},
                 LaunchAtStartup=_startup.IsChecked==true,
                 UiLanguage=(_uiLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system",
+                ThinkingGlowEnabled=_thinkingGlowEnabled.IsChecked==true,
+                ThinkingGlowColor=_thinkingGlowColor,
                 OverlayOpacity=overlayOpacityPercent/100d,
                 CaptureDelaySeconds=_delay.SelectedIndex switch{1=>3,2=>5,_=>0},
                 DefaultImageFormat=_imageFormat.SelectedIndex==1?"jpg":"png",
