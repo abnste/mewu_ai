@@ -63,6 +63,16 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 </tr>
 </table>
 
+### Paper grading
+
+See correct, incorrect and uncertain answers marked on the original page. Review the reading, expected answer and verdict, or adjust an answer box. Collect several submissions to build practice from their reviewed shared errors. [Explore the teaching workflow](./docs/teaching-workflow.md).
+
+<p align="center">
+  <a href="./docs/images/teaching-review-en.png"><img src="./docs/images/teaching-review-en.png" width="100%" alt="Paper annotations beside the review panel: incorrect, correct and uncertain answers on the left, editable readings and expected answers on the right" /></a>
+</p>
+
+*Actual interface with demo answers. Teachers should review grading results and generated exercises.*
+
 ### Video analysis
 
 Record a short demonstration or attach an existing video, then ask a question. Time buttons in the answer take you to the relevant scene. Annotations can follow the subject while a marked segment plays.

@@ -73,6 +73,10 @@ internal static class Program
         Set(overlay,"_conversationAiAvailable",true);
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
+        if(args.Contains("--readme-teaching-demo"))
+        {
+            TeachingReadmeDemo.Run(app,host,overlay,english);app.Run(overlay);return;
+        }
         MarkReplayWindow(overlay,args.Contains("--verify-prompt-reveal-focus")?"对话条弹出焦点验收 · 完成后自动关闭":"自动化验收窗口 · 非当前软件设置");
         overlay.ShowInTaskbar=true;
         if(args.Contains("--verify-hermes-reply-images"))
