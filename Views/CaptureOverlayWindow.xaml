@@ -20,6 +20,7 @@
  <Canvas x:Name="Root" Background="Transparent" Focusable="True" KeyboardNavigation.IsTabStop="False" AllowDrop="True" PreviewDragOver="OnUploadedReferenceDragOver" PreviewDrop="OnUploadedReferenceDrop" PreviewMouseWheel="OnPreviewMouseWheel" MouseLeftButtonDown="OnMouseDown" PreviewMouseMove="OnMouseMove" MouseLeftButtonUp="OnMouseUp" LostMouseCapture="OnLostMouseCapture">
   <Image x:Name="DesktopImage" Stretch="Fill" IsHitTestVisible="False"/>
   <Rectangle x:Name="Dimmer" Fill="#99000000" IsHitTestVisible="False"/>
+  <local:ThinkingGlow x:Name="BottomThinkingGlow"/>
   <Canvas x:Name="SelectionLayer" IsHitTestVisible="True"/>
   <Image x:Name="CrossRegionConnections" IsHitTestVisible="False" Stretch="Fill"/>
   <Border x:Name="LongCapturePreviewHost" Visibility="Collapsed" Background="#F8FFFFFF" BorderBrush="#7385F2" BorderThickness="2" CornerRadius="12" Padding="4" ClipToBounds="True" IsHitTestVisible="False">

@@ -155,6 +155,8 @@ public sealed class EnvironmentProviderBootstrap
             CaptureHotkey=new(){Key=source.CaptureHotkey?.Key??System.Windows.Input.Key.A,Modifiers=source.CaptureHotkey?.Modifiers??(System.Windows.Input.ModifierKeys.Control|System.Windows.Input.ModifierKeys.Shift)},
             LaunchAtStartup=source.LaunchAtStartup,
             UiLanguage=source.UiLanguage,
+            ThinkingGlowEnabled=source.ThinkingGlowEnabled,
+            ThinkingGlowColor=source.ThinkingGlowColor,
             OverlayOpacity=source.OverlayOpacity,
             CaptureDelaySeconds=source.CaptureDelaySeconds,
             DefaultImageFormat=source.DefaultImageFormat,

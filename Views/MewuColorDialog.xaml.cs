@@ -18,9 +18,9 @@ public partial class MewuColorDialog:Window
         InitializeComponent();SelectedColor=initial;SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ApplyPresentationCaptureVisibility(handle,Owner is CaptureOverlayWindow {IsTeachingMode:true});};Loaded+=(_,_)=>SetChannels(initial.R,initial.G,initial.B);
     }
 
-    internal static bool TryChoose(Window owner,Color initial,out Color selected)
+    internal static bool TryChoose(Window owner,Color initial,out Color selected,string? title=null)
     {
-        var dialog=new MewuColorDialog(initial){Owner=owner,Topmost=owner.Topmost};var accepted=dialog.ShowDialog()==true;selected=accepted?dialog.SelectedColor:initial;return accepted;
+        var dialog=new MewuColorDialog(initial){Owner=owner,Topmost=owner.Topmost};if(title is not null)dialog.Title=title;var accepted=dialog.ShowDialog()==true;selected=accepted?dialog.SelectedColor:initial;return accepted;
     }
 
     private void SliderChanged(object sender,RoutedPropertyChangedEventArgs<double> e){if(!_updating&&IsLoaded)SetChannels((byte)Math.Round(RedSlider.Value),(byte)Math.Round(GreenSlider.Value),(byte)Math.Round(BlueSlider.Value));}
