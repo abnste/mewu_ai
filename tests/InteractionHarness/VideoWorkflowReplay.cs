@@ -36,9 +36,11 @@ internal static class VideoWorkflowReplay
         timer.Tick+=(_,_)=>{var time=clock.Elapsed.TotalSeconds%12;scene.Background=time<4?Brushes.Red:time<8?Brushes.Blue:Brushes.Lime;label.Text=$"视频验收 · 合成色块 · 每四秒变色 · {time:0.0}";};
         window.KeyDown+=(_,e)=>{if(e.Key==Key.Escape)window.Close();};window.Closed+=(_,_)=>timer.Stop();timer.Start();app.Run(window);
     }
-    internal static void Run(Application app,AppHost host,bool liveProvider)
+    internal static void Run(Application app,AppHost host,bool liveProvider,bool verifyPin=false)
     {
         app.ShutdownMode=ShutdownMode.OnExplicitShutdown;
+        Directory.CreateDirectory(".codex-build");
+        File.WriteAllText(".codex-build/video-workflow-result.json",JsonSerializer.Serialize(new{checks=Array.Empty<string>(),failure="Replay has not completed"}));
         if(liveProvider)
         {
             using var json=JsonDocument.Parse(File.ReadAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","settings.json")));
@@ -80,6 +82,7 @@ internal static class VideoWorkflowReplay
                 Require(prompt.IsKeyboardFocused&&!(bool)Get("_promptBarHidden")!,"pause preview lost focus");checks.Add("pause-preview-focus");
                 var video=(string)item.GetType().GetField("VideoPath")!.GetValue(item)!;
                 var before=SHA256.HashData(await File.ReadAllBytesAsync(video));
+                if(verifyPin){await VideoPinReplay.VerifyAsync(overlay,item,video);checks.Add("raw-annotated-pin-play-resize-topmost-close-source-unchanged");}
                 // Pause here only for the explicit GUI keyboard/clipboard check.
                 prompt.Text="请分别说明画面何时从红变蓝、从蓝变绿，时间必须为视频开头起算的秒数，并为这两个变色事件各返回一条单点时间轴批注。";
                 if(liveProvider)
@@ -107,6 +110,7 @@ internal static class VideoWorkflowReplay
             finally
             {
                 Directory.CreateDirectory(".codex-build");File.WriteAllText(".codex-build/video-workflow-result.json",JsonSerializer.Serialize(new{checks,failure}));
+                foreach(var pin in Application.Current.Windows.OfType<PinnedVideoWindow>().ToArray())pin.Close();
                 overlay?.Close();background.Close();app.Shutdown(Environment.ExitCode);
             }
             object? Get(string name)=>typeof(CaptureOverlayWindow).GetField(name,Private)!.GetValue(overlay);
