@@ -91,8 +91,9 @@ public sealed class MarkdownFlowDocumentRendererTests
             var text=MarkdownFlowDocumentRenderer.ToPlainText(document);
 
             Assert.Contains("<script>alert('x')</script>",text);
-            Assert.Contains("[图片：示意图]",text);
+            Assert.Contains(LocalizationService.IsEnglish?"[Image: 示意图]":"[图片：示意图]",text);
             Assert.DoesNotContain("[图片：",new TextRange(document.ContentStart,document.ContentEnd).Text);
+            Assert.DoesNotContain("[Image:",new TextRange(document.ContentStart,document.ContentEnd).Text);
             var image=Assert.Single(document.Blocks.OfType<Paragraph>().SelectMany(paragraph=>paragraph.Inlines.OfType<InlineUIContainer>()));
             Assert.False(Assert.IsAssignableFrom<FrameworkElement>(image.Child).IsLoaded);
         });
@@ -104,9 +105,10 @@ public sealed class MarkdownFlowDocumentRendererTests
         RunSta(() =>
         {
             var view=new mewu_ai_Assistant.Views.MarkdownAnswerView{Markdown="前 👋 ![画像](https://example.invalid/a.png) 后 🎉"};
-            Assert.Equal("前 👋 [图片：画像] 后 🎉",view.PlainText);
+            Assert.Equal(LocalizationService.IsEnglish?"前 👋 [Image: 画像] 后 🎉":"前 👋 [图片：画像] 后 🎉",view.PlainText);
             view.SelectAll();Assert.Equal(view.PlainText,view.SelectedPlainText);
             Assert.DoesNotContain("[图片：",new TextRange(view.Document.ContentStart,view.Document.ContentEnd).Text);
+            Assert.DoesNotContain("[Image:",new TextRange(view.Document.ContentStart,view.Document.ContentEnd).Text);
         });
     }
 
