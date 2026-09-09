@@ -13,6 +13,21 @@ namespace MewuAI.Tests;
 public sealed class MarkdownFlowDocumentRendererTests
 {
     [Fact]
+    public void ExamQuestionNumbersKeepTheirOrderedListStartInRenderingAndCopy()
+    {
+        RunSta(()=>
+        {
+            var view=new mewu_ai_Assistant.Views.MarkdownAnswerView{Markdown="24. 方程正确\n25. 负指数错误"};
+            var list=Assert.Single(view.Document.Blocks.OfType<System.Windows.Documents.List>());
+            Assert.Equal(24,list.StartIndex);
+            view.SelectAll();Assert.Contains("24.",view.SelectedPlainText);Assert.Contains("25.",view.SelectedPlainText);
+            view.Markdown+="\n26. 科学记数法正确";
+            Assert.Equal(24,Assert.Single(view.Document.Blocks.OfType<System.Windows.Documents.List>()).StartIndex);
+            view.SelectAll();Assert.Contains("26.",view.SelectedPlainText);
+        });
+    }
+
+    [Fact]
     public void ChineseReplyUsesExplicitChineseFontAndKeepsOriginalCharactersWhenCopied()
     {
         RunSta(() =>

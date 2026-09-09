@@ -53,6 +53,42 @@ public sealed class OcrAnnotationRefinementServiceTests
         Assert.Equal(original,refined);
     }
 
+    [Fact]
+    public void GradingExplanationCannotPullNegativeAnswerOntoQuestion()
+    {
+        var document=new OcrDocument("",[Line("25. 求 (-5)^-1 的值",30,200,210,28),Line("−5",495,250,35,31)]);
+        var original=Note(.48,.32,.07,.07,"「-5」✗ 应为 −1/5：负指数取倒数，求 (-5)^-1 的值");
+        var refined=Assert.Single(OcrAnnotationRefinementService.RefineAll(document,1010,740,[original],out var count));
+        Assert.Equal(1,count);Assert.InRange(refined.X,.47,.5);Assert.InRange(refined.Y,.32,.35);
+    }
+
+    [Fact]
+    public void MissingShortAnswerOcrDoesNotSnapToDistantMatchingQuestion()
+    {
+        var original=Note(.48,.32,.07,.07,"「-5」✗ 应为 −1/5：负指数取倒数");
+        var document=new OcrDocument("",[Line("25. 求 (-5)^-1 的值",30,200,210,28)]);
+        Assert.Equal(original,Assert.Single(OcrAnnotationRefinementService.RefineAll(document,1010,740,[original],out var count)));
+        Assert.Equal(0,count);
+    }
+
+    [Fact]
+    public void QuotedSingleDigitUsesNearbyAnswerRatherThanAnotherStudentsDigit()
+    {
+        var original=Note(.48,.32,.07,.07,"「2」正确");
+        var document=new OcrDocument("",[Line("2",40,250,20,30),Line("2",495,250,20,30)]);
+        var refined=Assert.Single(OcrAnnotationRefinementService.RefineAll(document,1010,740,[original],out var count));
+        Assert.Equal(1,count);Assert.InRange(refined.X,.48,.5);
+    }
+
+    [Fact]
+    public void UnquotedCorrectionCannotMoveAnAnswerMarkToTheQuestionColumn()
+    {
+        var original=Note(.47,.87,.16,.07,"4x²+1 错：完全平方缺中间项，应为 4x²+4x+1");
+        var document=new OcrDocument("",[Line("29. 展开 (2x+1)²",30,610,230,30),Line("4x^2 + 1",495,650,145,34)]);
+        var refined=Assert.Single(OcrAnnotationRefinementService.RefineAll(document,1010,740,[original],out _));
+        Assert.InRange(refined.X,.45,.52);Assert.InRange(refined.Y,.85,.9);
+    }
+
     private static OcrLine Line(string text,double x,double y,double width,double height)=>new(text,x,y,width,height,[new OcrWord(text,x,y,width,height)]);
     private static AiAnnotation Note(double x,double y,double width,double height,string text)=>new(x,y,width,height,text,ReferenceHandle:"ref-image",Kind:AiAnnotationKind.Callout);
 }

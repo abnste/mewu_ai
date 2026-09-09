@@ -32,7 +32,7 @@ internal static class OcrAnnotationRefinementService
         var lines=document.Lines
             .Where(IsUsable)
             .Select((line,index)=>new CandidateLine(index,line,Normalize(line.Text)))
-            .Where(candidate=>candidate.Normalized.Length>=2)
+            .Where(candidate=>candidate.Normalized.Length>=1)
             .Take(256)
             .ToArray();
         if(lines.Length==0)return annotations;
@@ -48,8 +48,9 @@ internal static class OcrAnnotationRefinementService
                 continue;
             }
 
-            var label=Normalize(annotation.Text);
-            if(label.Length<2)
+            var quotedTarget=ReadQuotedTarget(annotation.Text);
+            var label=Normalize(quotedTarget??annotation.Text);
+            if(label.Length<(quotedTarget is null?2:1))
             {
                 result[index]=annotation;
                 continue;
@@ -58,7 +59,7 @@ internal static class OcrAnnotationRefinementService
             var coarseCenterX=(annotation.X+annotation.Width/2)*imageWidth;
             var coarseCenterY=(annotation.Y+annotation.Height/2)*imageHeight;
             var ranked=lines
-                .Select(line=>Score(label,line,coarseCenterX,coarseCenterY,imageWidth,imageHeight,usedLines.Contains(line.Index)))
+                .Select(line=>Score(label,line,coarseCenterX,coarseCenterY,imageWidth,imageHeight,usedLines.Contains(line.Index),quotedTarget is not null,annotation.Width*imageWidth,annotation.Height*imageHeight))
                 .Where(match=>match.SemanticStrength>0)
                 .OrderByDescending(match=>match.TotalScore)
                 .ThenBy(match=>match.Distance)
@@ -89,10 +90,20 @@ internal static class OcrAnnotationRefinementService
         return result;
     }
 
-    private static Match Score(string label,CandidateLine line,double centerX,double centerY,int width,int height,bool used)
+    private static Match Score(string label,CandidateLine line,double centerX,double centerY,int width,int height,bool used,bool quotedTarget,double coarseWidth,double coarseHeight)
     {
+        // A quoted answer is the target, while the explanation can repeat the
+        // question and the correct answer elsewhere on the page. Never use
+        // that explanation to pull a short mark across to a different column.
+        // Even a long explanation may exactly match a different question.
+        // The candidate must touch a bounded neighbourhood of the model box;
+        // a broad coarse box still permits substantial local correction.
+        var gapX=Math.Max(0,Math.Max(line.Line.X-centerX,centerX-line.Line.X-line.Line.Width));
+        var gapY=Math.Max(0,Math.Max(line.Line.Y-centerY,centerY-line.Line.Y-line.Line.Height));
+        if(gapX>Math.Max(24,coarseWidth*.6)||gapY>Math.Max(16,coarseHeight))
+            return new Match(line,0,double.MaxValue,double.MinValue,false);
         var (commonLength,_,_)=LongestCommonSubstring(label,line.Normalized);
-        if(commonLength<2)return new Match(line,0,double.MaxValue,double.MinValue,false);
+        if(commonLength<(quotedTarget?1:2)||quotedTarget&&!line.Normalized.Contains(label,StringComparison.Ordinal))return new Match(line,0,double.MaxValue,double.MinValue,false);
         var shorter=Math.Max(1,Math.Min(label.Length,line.Normalized.Length));
         var coverage=(double)commonLength/shorter;
         var commonBigrams=CommonBigramCount(label,line.Normalized);
@@ -161,11 +172,26 @@ internal static class OcrAnnotationRefinementService
         foreach(var rune in value.EnumerateRunes())
         {
             if(builder.Length>=MaximumTextLength)break;
+            if(rune.Value is '-' or 0x2212 or 0xFF0D){builder.Append('-');continue;}
+            if(rune.Value is '+' or '=' or '/' or '^'){builder.Append(rune.ToString());continue;}
             var category=Rune.GetUnicodeCategory(rune);
             if(category is not (UnicodeCategory.UppercaseLetter or UnicodeCategory.LowercaseLetter or UnicodeCategory.TitlecaseLetter or UnicodeCategory.ModifierLetter or UnicodeCategory.OtherLetter or UnicodeCategory.DecimalDigitNumber))continue;
             builder.Append(rune.ToString().ToUpperInvariant());
         }
         return builder.ToString();
+    }
+
+    private static string? ReadQuotedTarget(string text)
+    {
+        var limit=Math.Min(text.Length,MaximumTextLength);
+        for(var index=0;index<limit;index++)
+        {
+            var closing=text[index] switch{'「'=>'」','“'=>'”','"'=>'"',_=>'\0'};
+            if(closing=='\0')continue;
+            var end=text.IndexOf(closing,index+1,limit-index-1);
+            if(end>index+1&&end-index<=80)return text[(index+1)..end];
+        }
+        return null;
     }
 
     private static bool IsUsable(OcrLine line)=>line is not null&&!string.IsNullOrWhiteSpace(line.Text)&&double.IsFinite(line.X)&&double.IsFinite(line.Y)&&double.IsFinite(line.Width)&&double.IsFinite(line.Height)&&line.Width>1&&line.Height>1;

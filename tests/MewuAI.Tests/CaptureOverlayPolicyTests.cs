@@ -398,8 +398,23 @@ public sealed class CaptureOverlayPolicyTests
         Assert.False(CaptureOverlayPolicy.NeedsImageAnnotationRepair("这是什么", "这是设置窗口", 0));
         Assert.False(CaptureOverlayPolicy.NeedsImageAnnotationRepair("请框选按钮", "完成", 1));
         Assert.True(CaptureOverlayPolicy.NeedsImageAnnotationRepair("请框选按钮", "完成", 2,1));
+        Assert.True(CaptureOverlayPolicy.NeedsImageAnnotationRepair("请批改这张试卷", "完成", 0));
+        Assert.True(CaptureOverlayPolicy.NeedsImageAnnotationRepair("帮我改卷", "完成", 0));
+        Assert.True(CaptureOverlayPolicy.NeedsImageAnnotationRepair("Grade these papers", "Done", 0));
         var repair=CaptureOverlayPolicy.CreateImageAnnotationRepairPrompt("请框选新对话", "左 10 px");
         Assert.Contains("callout",repair);Assert.Contains("annotationMode 必须为 replace",repair);Assert.Contains("请框选新对话",repair);Assert.Contains("左 10 px",repair);
+    }
+
+    [Fact]
+    public void ImageCompletionDoesNotClaimGradingAnnotationsWhenNoneExist()
+    {
+        var missing=CaptureOverlayPolicy.GetImageCompletionStatus(true,true,0,true);
+        var uploaded=CaptureOverlayPolicy.GetImageCompletionStatus(true,false,0,true);
+        var done=CaptureOverlayPolicy.GetImageCompletionStatus(true,true,1,true);
+        Assert.Contains(LocalizationService.IsEnglish?"no on-image annotations":"未生成原卷批注",missing);
+        Assert.Contains(LocalizationService.IsEnglish?"Open the uploaded file":"上传文件暂无原位批注层",uploaded);
+        Assert.Contains("1",done);
+        Assert.Equal(CaptureOverlayPolicy.GetImageCompletionStatus(false,false,0,false),CaptureOverlayPolicy.GetImageCompletionStatus(true,true,0,false));
     }
 
     [Fact]

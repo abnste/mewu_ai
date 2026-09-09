@@ -27,6 +27,15 @@ internal static class CaptureOverlayPolicy
                 ? "视频理解与时间轴标注完成 · 可继续提问"
                 : "已回答，但模型没有返回可定位的视频时间轴标注；请重试或明确要定位的目标";
 
+    internal static string GetImageCompletionStatus(bool hasImages,bool hasRenderableImages,int annotatedRegionCount,bool requestedAnnotations)
+    {
+        if(annotatedRegionCount>0)return LocalizationService.T($"已在 {annotatedRegionCount} 个引用区域中标出重点 · 可继续提问",$"Annotated {annotatedRegionCount} referenced regions · Ask a follow-up");
+        if(!hasImages||!requestedAnnotations)return LocalizationService.T("完成 · 可继续提问","Done · Ask a follow-up");
+        return hasRenderableImages
+            ?LocalizationService.T("已回答文字，但未生成原卷批注 · 请核对视觉渠道或重试","Text received, but no on-image annotations · Check the vision channel or retry")
+            :LocalizationService.T("已回答文字 · 上传文件暂无原位批注层，请先打开并截图","Text received · Open the uploaded file and capture it to annotate in place");
+    }
+
     internal static string CreateVideoAnnotationRepairPrompt(string originalPrompt,string draftAnswer="",AiAnnotationUpdateMode mode=AiAnnotationUpdateMode.Replace)
     {
         const int draftLimit=4_000;var boundedDraft=draftAnswer.Length<=draftLimit?draftAnswer:draftAnswer[..draftLimit]+"…";
@@ -40,7 +49,7 @@ internal static class CaptureOverlayPolicy
     {
         if(renderedAnnotationCount>0&&qualityRejectedCount==0)return false;
         var value=(userPrompt+"\n"+answer).ToLowerInvariant();
-        return new[]{"标注","框选","画框","红框","圈出","圈起来","定位","标记","哪里","哪个","找出","高亮","马赛克","annotation","highlight","circle","box","locate","where"}.Any(value.Contains);
+        return new[]{"标注","框选","画框","红框","圈出","圈起来","定位","标记","哪里","哪个","找出","高亮","马赛克","批改","改卷","阅卷","批阅","annotation","highlight","circle","box","locate","where","grade this","grade these","mark this paper","mark these papers"}.Any(value.Contains);
     }
 
     internal static string CreateImageAnnotationRepairPrompt(string originalPrompt,string draftAnswer="",AiAnnotationUpdateMode mode=AiAnnotationUpdateMode.Replace)
@@ -83,7 +92,7 @@ internal static class CaptureOverlayPolicy
             coordinateHandles=new{topLeft=new[]{0,0},topRight=new[]{1,0},bottomLeft=new[]{0,1},bottomRight=new[]{1,1}}
         }),new JsonSerializerOptions{Encoder=JavaScriptEncoder.UnsafeRelaxedJsonEscaping});
         return "请按系统消息中的 mewu.visual-annotations/1 协议返回。以下是本轮附件引用清单。它按实际发送顺序生成，优先于用户文字中的数字。视频 durationSeconds 是真实播放时长；所有 startTime、endTime、keyframes[].time 以及 answer 正文中的时间必须是从视频开头起算的真实秒数。禁止输出 0 到 1 的百分比、归一化比例、帧序号或毫秒数作为时间；如果目标位于视频的 70% 位置，必须先乘以 durationSeconds 换算后再写真实秒数。回答前用 durationSeconds 逐项校验，正文与 JSON 必须使用同一套真实秒数，不能出现两套时间。每条批注的 target 必须同时原样返回对应的 regionIndex 和 referenceHandle；用户点名 @图片N、@视频N 或 @文件N 时，只能使用同 label 的条目，禁止按显示编号猜测 regionIndex。坐标以各附件自身为准，四角句柄定义了 0 到 1 的归一化坐标空间。只有 canRenderAnnotations=true 的截图区域可以返回可执行批注；上传文件用于理解和引用，不能把批注画到不存在的覆盖层区域。hasExistingAiAnnotations=true 表示本轮图片已把上一轮 AI 标注扁平化进像素：不改标注用 preserve，新增标注用 append，只在明确重做时用 replace。图片框必须贴紧目标最外缘：先按 pixelWidth/pixelHeight 独立核对左、上、右、下四条边的像素位置，再换算成归一化几何；禁止用大致中心框或把阴影和邻近对象包进去。需要框选/圈出/定位时，callout.geometry.rect 就是目标框，label 是气泡内容；目标含文字时，label 必须原样包含一段最短且唯一的可见文字，再补充简短说明，供本地 OCR 二次校准。只返回一个 callout，禁止再为同一目标重复 rectangle；answer 只写结论，绝不写像素坐标、归一化坐标或“画框”说明。数学试卷、代码审阅等任务可以组合使用画笔、高亮、形状、箭头、文字和序号；仅在用户要求遮挡或确有隐私内容时使用马赛克。\n"+
-                "attachmentReferences="+manifest+"\n用户问题："+userPrompt;
+                EducationPromptPolicy.Instruction+"\nattachmentReferences="+manifest+"\n用户问题："+userPrompt;
     }
 
     internal static AnnotationTargetResolution ResolveAnnotationTarget(

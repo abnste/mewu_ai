@@ -2,6 +2,13 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 未发布 / Unreleased
+
+- 修复试卷批改中同数字题干抢占答案批注位置，保留数学正负号并限制 OCR 校准范围。/ Prevented repeated text in exam questions from pulling annotations away from student answers.
+- 保留回复列表中的原始题号，修正显示与复制从 1 重新编号的问题。/ Preserved original question numbers in displayed and copied lists.
+- 补充教学任务的证据、评分与出题规则，明确未生成批注的状态。/ Added evidence and scoring guidance for teaching tasks and clear feedback when annotations are missing.
+- 新增公开试卷真实调用评估记录；模型符号漏读、手写链路及长输出失败仍作为待解决项。/ Added public-exam evaluations, retaining model recognition and backend failures as open limitations.
+
 ## 0.3.4 — 对话图片与翻译排版 / Reply images and translation layout
 
 - 修复 AI 回复图片不显示，接入 Hermes 本地图片、MEDIA 引用及图片工具结果。/ Fixed missing reply images, including local images, MEDIA references, and image-tool results from Hermes.

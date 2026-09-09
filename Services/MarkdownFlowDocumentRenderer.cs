@@ -109,6 +109,7 @@ public static class MarkdownFlowDocumentRenderer
                 var result=new System.Windows.Documents.List
                 {
                     MarkerStyle=list.IsOrdered?TextMarkerStyle.Decimal:TextMarkerStyle.Disc,
+                    StartIndex=list.IsOrdered&&int.TryParse(list.OrderedStart,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out var start)&&start>0?start:1,
                     Margin=new Thickness(19,0,0,7),Padding=new Thickness(0)
                 };
                 foreach(var child in list)

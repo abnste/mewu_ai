@@ -79,6 +79,10 @@ internal static class Program
         {
             HermesReplyImagesReplay.Run(app,overlay,args.Contains("--live-hermes-reply"));app.Run(overlay);return;
         }
+        if(args.Contains("--evaluate-exams"))
+        {
+            ExamEvaluationReplay.Run(app,host,overlay,args);app.Run(overlay);return;
+        }
         if(args.Contains("--verify-issue-two"))
         {
             IssueTwoReplay.Run(app,overlay);app.Run(overlay);return;
