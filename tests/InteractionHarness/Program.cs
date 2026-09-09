@@ -77,7 +77,7 @@ internal static class Program
         overlay.ShowInTaskbar=true;
         if(args.Contains("--verify-hermes-reply-images"))
         {
-            HermesReplyImagesReplay.Run(app,overlay);app.Run(overlay);return;
+            HermesReplyImagesReplay.Run(app,overlay,args.Contains("--live-hermes-reply"));app.Run(overlay);return;
         }
         if(args.Contains("--verify-issue-two"))
         {

@@ -10,6 +10,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Views;
+using mewu_ai_Assistant.Services;
 using Application=System.Windows.Application;
 using Image=System.Windows.Controls.Image;
 using Brushes=System.Windows.Media.Brushes;
@@ -18,7 +19,7 @@ using Point=System.Windows.Point;
 internal static class HermesReplyImagesReplay
 {
     private const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
-    internal static void Run(Application app,CaptureOverlayWindow overlay)
+    internal static void Run(Application app,CaptureOverlayWindow overlay,bool liveHermes=false)
     {
         app.ShutdownMode=ShutdownMode.OnExplicitShutdown;
         Program.MarkReplayWindow(overlay,"Hermes 图片交付验收 · 合成画面");
@@ -42,6 +43,22 @@ internal static class HermesReplyImagesReplay
                 AiResult Complete(string markdown,IReadOnlyList<string> images)=>(AiResult)service.GetMethod("Complete",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,[new AiResult(markdown,[]),images])!;
                 var answer=(MarkdownAnswerView)overlay.FindName("AnswerText");
                 Invoke("ShowAnswer");
+                if(liveHermes)
+                {
+                    await using var runtime=new HermesRuntimeService();
+                    using var deadline=new CancellationTokenSource(TimeSpan.FromMinutes(3));
+                    var profiles=await runtime.GetAgentOptionsAsync(deadline.Token);
+                    if(!profiles.Any(profile=>profile.Name=="default"))throw new InvalidOperationException("Requested Hermes profile unavailable");
+                    var models=await runtime.GetModelOptionsAsync("default",false,deadline.Token);var current=models.First(model=>model.IsCurrent);
+                    var settings=new AppSettings{HermesEnabled=true,HermesProfile="default",HermesProvider=current.Provider,HermesModel=current.Model,HermesReasoningEffort=current.ReasoningEfforts.Contains("low")?"low":current.ReasoningEfforts[0]};
+                    var provider=runtime.GetConversationProvider(HermesConversationKind.Screen,()=>settings);
+                    var live=await provider.SendAsync(new AiRequest{Prompt=$"这是喵呜AI图片显示验收。图片已生成在本机 {file}。请把这张现成测试图片发给我，直接回复一行 MEDIA:{file} 即可，不调用工具，不生成新图片，不读写其他文件。"},deadline.Token);
+                    Check("real-hermes-response-authorizes-generated-image",live.LocalReplyImageSources.Contains(file,StringComparer.OrdinalIgnoreCase));
+                    answer.SetLocalReplyImageSources(live.LocalReplyImageSources);answer.Markdown=live.Answer;Invoke("PositionPromptBar");await WaitForImage();
+                    Check("real-hermes-response-image-visible",Images().Any(image=>image.Source is not null&&image.ActualWidth>100&&image.ActualHeight>100));
+                    Save(answer,Path.Combine(folder,"real-hermes-reply.png"));
+                    answer.Markdown=string.Empty;answer.SetLocalReplyImageSources([]);
+                }
                 // A streamed local path was previously rendered as an unreadable placeholder.
                 answer.Markdown=$"![自画像](<{new Uri(file).AbsoluteUri}>)";
                 await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
