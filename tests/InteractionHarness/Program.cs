@@ -41,6 +41,10 @@ internal static class Program
         app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source=new Uri("/MewuAI;component/Themes/LightTheme.xaml",UriKind.Relative) });
         var host=new AppHost(app);
         host.Settings.TeachingMode=teaching;
+        if(args.Contains("--verify-license-notices"))
+        {
+            LicenseNoticesReplay.Run(app,host);return;
+        }
         if(args.Contains("--video-background-only"))
         {
             VideoWorkflowReplay.RunBackground(app);return;

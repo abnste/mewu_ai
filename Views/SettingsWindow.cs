@@ -869,6 +869,10 @@ public sealed partial class SettingsWindow : Window
         var link=new Hyperlink(new Run(LocalizationService.T("GitHub 开源仓库 · github.com/abnste/mewu_ai","Open-source repository · github.com/abnste/mewu_ai"))){NavigateUri=new Uri("https://github.com/abnste/mewu_ai")};
         link.RequestNavigate+=(_,e)=>{try{System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(e.Uri.AbsoluteUri){UseShellExecute=true});}catch{};e.Handled=true;};repo.Inlines.Add(link);panel.Children.Add(repo);
         panel.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),BorderBrush=ControlBorderBrush,BorderThickness=new Thickness(1),CornerRadius=new CornerRadius(10),Padding=new Thickness(14,12,14,12),Child=new TextBlock{Text=LocalizationService.T("许可说明 · MPL-2.0\n本项目自有源代码采用 Mozilla Public License 2.0，允许遵守协议的商业使用。对外分发时须按协议提供受 MPL 覆盖的源代码及修改，并保留版权和许可声明。源码：github.com/abnste/mewu_ai；完整条款见随附 LICENSE，第三方组件保留各自许可证。","License · MPL-2.0\nProject-owned source code uses the Mozilla Public License 2.0, which permits compliant commercial use. Distribution requires providing MPL-covered source and modifications and preserving copyright and license notices under the license. Source: github.com/abnste/mewu_ai. See the bundled LICENSE for full terms; third-party components retain their own licenses."),TextWrapping=TextWrapping.Wrap,Foreground=SecondaryBrush,LineHeight=20}});
+        var notices=ActionButton(LocalizationService.T("开源许可与第三方声明","Open-source licenses and third-party notices"));
+        notices.HorizontalAlignment=HorizontalAlignment.Stretch;notices.Margin=new Thickness(0,12,0,0);
+        notices.Click+=(_,_)=>new LicenseNoticesWindow{Owner=this,Topmost=Topmost}.ShowDialog();
+        panel.Children.Add(notices);
         return panel;
     }
 
