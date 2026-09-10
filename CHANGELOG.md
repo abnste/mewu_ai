@@ -2,6 +2,12 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.4.2 — 原卷批注与数学排版 / On-paper feedback and math typesetting
+
+- 错因与正确公式在原卷旁显示、避让作答和密集文字，并随带标注试卷导出。 / Place and export feedback beside answers while avoiding other handwriting and dense text.
+- 新增整页查看、公式预览与原文编辑；AI 回复支持常用 LaTeX 公式，复制保留原文。 / Add full-page viewing, formula previews, source editing and copyable LaTeX in replies.
+- 修正英文演示知识点，强化批改内容语言要求；随包添加数学组件及字体许可。 / Correct English knowledge points, clarify grading output language and package math/font licenses.
+
 ## 0.4.1 — 多步计算与批改说明 / Calculation steps and review explanations
 
 - 修复计算步骤挤在同一行，保留换行并支持回车、自动折行和滚动。 / Preserve calculation step breaks with multiline editing, wrapping and scrolling.

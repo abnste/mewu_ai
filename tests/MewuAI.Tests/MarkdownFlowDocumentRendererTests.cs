@@ -12,6 +12,69 @@ namespace MewuAI.Tests;
 [Collection("Emoji WPF")]
 public sealed class MarkdownFlowDocumentRendererTests
 {
+    [Theory]
+    [InlineData(false)][InlineData(true)]
+    public void PaperFeedbackAvoidsAnswersAndCrowdedInkAndExportPreservesOriginal(bool crowded)
+    {
+        RunSta(()=>
+        {
+            const int width=800,height=1100;
+            var pixels=Enumerable.Repeat(crowded?(byte)0:(byte)255,width*height*4).ToArray();for(var p=3;p<pixels.Length;p+=4)pixels[p]=255;
+            var image=System.Windows.Media.Imaging.BitmapSource.Create(width,height,96,96,System.Windows.Media.PixelFormats.Bgra32,null,pixels,width*4);image.Freeze();
+            var item=new GradingItem("1","x¹³/y¹⁷","x¹¹/y¹⁷",GradingVerdict.Incorrect,"12−1 is 11.","Laws of indices",.15,.2,.28,.2){Confirmed=true};
+            var page=new TeachingPage("paper","A",1,image,"public-fixture"){Items=[item]};var notes=TeachingSession.Annotations(page,"handle");
+            var text=Assert.Single(notes,n=>n.Kind==mewu_ai_Assistant.Models.AiAnnotationKind.Text);
+            Assert.Equal("handle",text.ReferenceHandle);Assert.InRange(text.X,0,1-text.Width);Assert.InRange(text.Y,0,1-text.Height);
+            Assert.False(new Rect(item.X,item.Y,item.Width,item.Height).IntersectsWith(new Rect(text.X,text.Y,text.Width,text.Height)));
+            if(crowded)Assert.DoesNotContain(item.Reason,text.Text);else{Assert.Contains(item.Reason,text.Text);Assert.Contains(item.Expected,text.Text);}
+            var composite=mewu_ai_Assistant.Recording.AnnotationOverlayRenderer.ApplyAiAnnotations(image,notes);
+            var original=new byte[pixels.Length];image.CopyPixels(original,width*4,0);Assert.Equal(pixels,original);
+            var rendered=new byte[pixels.Length];composite.CopyPixels(rendered,width*4,0);Assert.False(rendered.SequenceEqual(original));
+        });
+    }
+    [Fact]
+    public void FormulasRenderAsVectorsAndCopyPreservesLatexAcrossStreaming()
+    {
+        RunSta(()=>
+        {
+            const string formula=@"\frac{x^{11}}{y^{17}}";
+            var view=new mewu_ai_Assistant.Views.MarkdownAnswerView{Markdown="Answer: $"+formula+"$"};
+            var paragraph=Assert.IsType<Paragraph>(view.Document.Blocks.FirstBlock);
+            var inline=Assert.Single(paragraph.Inlines.OfType<InlineUIContainer>());
+            var image=Assert.IsType<mewu_ai_Assistant.Views.MathFormulaView>(inline.Child);
+            Assert.InRange(image.Height,20,100);Assert.InRange(image.Width,10,150);
+            view.SelectAll();Assert.Contains("$"+formula+"$",view.SelectedPlainText);
+            view.Markdown+="\n\n$$\n\\sqrt{x^2+1}\n$$";
+            view.SelectAll();Assert.Contains(formula,view.SelectedPlainText);Assert.Contains(@"\sqrt{x^2+1}",view.SelectedPlainText);
+            Assert.Equal(2,view.Document.Blocks.OfType<Paragraph>().SelectMany(p=>p.Inlines.OfType<InlineUIContainer>()).Count());
+        });
+    }
+    [Fact]
+    public void BracketMathAndAlignedStepsRenderWhileCodeKeepsLiteralDelimiters()
+    {
+        RunSta(()=>
+        {
+            const string inline=@"\(\frac{a}{b}\)";
+            const string block=@"\[\begin{aligned} x+1 &= 2 \\ x &= 1 \end{aligned}\]";
+            var document=MarkdownFlowDocumentRenderer.Render(inline+"\n\n"+block+"\n\n`"+inline+"`");
+            var formulas=document.Blocks.OfType<Paragraph>().SelectMany(p=>p.Inlines.OfType<InlineUIContainer>()).ToArray();Assert.Equal(2,formulas.Length);
+            var text=MarkdownFlowDocumentRenderer.ToPlainText(document);Assert.Contains(inline,text);Assert.Contains(block,text);
+            Assert.Contains(document.Blocks.OfType<Paragraph>().Last().Inlines.OfType<Run>(),r=>r.Text==inline);
+        });
+    }
+    [Fact]
+    public void UnsupportedFormulaIsReadableAndDoesNotExecuteOrDisappear()
+    {
+        RunSta(()=>
+        {
+            const string input=@"$\input{private}$";
+            var document=MarkdownFlowDocumentRenderer.Render(input);
+            Assert.Contains(input,MarkdownFlowDocumentRenderer.ToPlainText(document));
+            Assert.Null(MathFormulaRenderer.Create(input,18,System.Windows.Media.Brushes.Black));
+            Assert.False(MathFormulaRenderer.IsBoundedFormula(new string('{',17)+"x"+new string('}',17)));
+            Assert.Null(MathFormulaRenderer.Create("$"+new string('x',3000)+"$",18,System.Windows.Media.Brushes.Black));
+        });
+    }
     [Fact]
     public void ExamQuestionNumbersKeepTheirOrderedListStartInRenderingAndCopy()
     {

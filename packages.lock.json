@@ -61,6 +61,15 @@
         "resolved": "10.0.11",
         "contentHash": "25EiYjCzE5CLx5CkOOum40bg8EBnVBNqklyEyn1KJT872eEh3ZakJppgunMqC2Hz1lJv9Mp7YbCC6LI1Ceemdw=="
       },
+      "WpfMath": {
+        "type": "Direct",
+        "requested": "[2.1.0, )",
+        "resolved": "2.1.0",
+        "contentHash": "216GtCBYFMPw5SaArNcuTgemgAWw985LihSEf7mtOjJYTN04X4BVFGPrkJ2Fiv1ffL8gX2xiRw/o+q1SC5oSAA==",
+        "dependencies": {
+          "XamlMath.Shared": "2.1.0"
+        }
+      },
       "Clipper2": {
         "type": "Transitive",
         "resolved": "2.0.0",
@@ -138,6 +147,11 @@
         "type": "Transitive",
         "resolved": "9.0.0",
         "contentHash": "hyJB4UlpAi19Xr9AXzu2NuagKC4lPfHObNMEAA0HmqFz2rX7wKgzeYzO/jM/eBHDhnUGFFEjk5cOoJaxqg5J4A=="
+      },
+      "XamlMath.Shared": {
+        "type": "Transitive",
+        "resolved": "2.1.0",
+        "contentHash": "p7W78KZc2EWuVqAd704m4yGWg0HtxahjNYRVxDWhw7npf8oMD8C7EUc1pjkjZIcmk5PxXJ+t5FE2Fs3gBYjv1A=="
       }
     },
     "net10.0-windows10.0.19041/win-x64": {

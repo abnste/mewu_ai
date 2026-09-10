@@ -9,6 +9,7 @@ using System.Windows.Markup;
 using System.Windows.Media;
 using Markdig;
 using Markdig.Extensions.Tables;
+using Markdig.Extensions.Mathematics;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using MdBlock=Markdig.Syntax.Block;
@@ -20,10 +21,12 @@ namespace mewu_ai_Assistant.Services;
 /// <summary>Turns untrusted AI Markdown into native, selectable WPF content.</summary>
 public static class MarkdownFlowDocumentRenderer
 {
-    private static readonly MarkdownPipeline Pipeline=new MarkdownPipelineBuilder()
-        .UseAdvancedExtensions()
-        .UseEmojiAndSmiley()
-        .Build();
+    private static readonly MarkdownPipeline Pipeline=CreatePipeline();
+    private static MarkdownPipeline CreatePipeline()
+    {
+        var builder=new MarkdownPipelineBuilder().UseAdvancedExtensions().UseEmojiAndSmiley();
+        builder.InlineParsers.Insert(0,new BracketMathInlineParser());return builder.Build();
+    }
     private static readonly FontFamily BodyFont=new("Segoe UI Variable Text, Microsoft YaHei UI, Segoe UI");
     private static readonly FontFamily EmojiFont=new("Segoe UI Emoji");
     private static readonly FontFamily CodeFont=new("Cascadia Mono, Consolas, Microsoft YaHei UI");
@@ -79,10 +82,17 @@ public static class MarkdownFlowDocumentRenderer
         for(var pointer=rangeStart;pointer is not null&&pointer.CompareTo(rangeEnd)<0;pointer=pointer.GetNextContextPosition(LogicalDirection.Forward))
         {
             if(pointer.GetPointerContext(LogicalDirection.Forward)!=TextPointerContext.ElementStart||
-                pointer.GetAdjacentElement(LogicalDirection.Forward) is not InlineUIContainer {Child:mewu_ai_Assistant.Views.ReplyImageView image} inline||
+                pointer.GetAdjacentElement(LogicalDirection.Forward) is not InlineUIContainer inline||
                 inline.ElementStart.CompareTo(start)<0||inline.ElementEnd.CompareTo(rangeEnd)>0)continue;
+            var description=inline.Child switch
+            {
+                mewu_ai_Assistant.Views.ReplyImageView image=>LocalizationService.T($"[图片：{image.Description}]",$"[Image: {image.Description}]"),
+                mewu_ai_Assistant.Views.MathFormulaView formula=>formula.OriginalText,
+                _=>null
+            };
+            if(description is null)continue;
             text.Append(new TextRange(start,inline.ElementStart).Text);
-            text.Append(LocalizationService.T($"[图片：{image.Description}]",$"[Image: {image.Description}]"));
+            text.Append(description);
             start=inline.ElementEnd;
         }
         text.Append(new TextRange(start,rangeEnd).Text);return text.ToString();
@@ -92,6 +102,9 @@ public static class MarkdownFlowDocumentRenderer
     {
         switch(block)
         {
+            case MathBlock math:
+                var formulaParagraph=new Paragraph{Margin=new Thickness(0,4,0,8)};
+                AddFormula(formulaParagraph.Inlines,"$$"+math.Lines.ToString()+"$$",fontSize+3);target.Add(formulaParagraph);break;
             case HeadingBlock heading:
                 target.Add(CreateParagraph(heading.Inline,fontSize+Math.Max(1,7-heading.Level)*1.15,FontWeights.SemiBold,new Thickness(0,heading.Level==1?2:5,0,4)));
                 break;
@@ -193,6 +206,7 @@ public static class MarkdownFlowDocumentRenderer
         {
             switch(current)
             {
+                case MathInline math:AddFormula(target,math is BracketMathInline bracket?bracket.SourceText:new string('$',Math.Max(1,math.DelimiterCount))+math.Content+new string('$',Math.Max(1,math.DelimiterCount)),fontSize);break;
                 case LiteralInline literal:AddTextRuns(target,literal.Content.ToString(),fontSize);break;
                 case LineBreakInline:target.Add(new LineBreak());break;
                 case CodeInline code:
@@ -237,6 +251,13 @@ public static class MarkdownFlowDocumentRenderer
                     AddTextRuns(target,current.ToString()??string.Empty,fontSize);break;
             }
         }
+    }
+
+    private static void AddFormula(InlineCollection target,string source,double fontSize)
+    {
+        if(MathFormulaRenderer.Create(source,fontSize,BodyBrush,false) is { } image)
+            target.Add(new InlineUIContainer(new mewu_ai_Assistant.Views.MathFormulaView(source,image,copyMenu:false)){BaselineAlignment=BaselineAlignment.Center});
+        else target.Add(new Run(source));
     }
 
     private static void AddTextRuns(InlineCollection target,string text,double fontSize)

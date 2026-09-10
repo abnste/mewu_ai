@@ -11,7 +11,7 @@ internal static class TeachingCalculationLayout
     {
         // Explicit model/teacher line breaks are authoritative. This is not a
         // mathematical parser, OCR reconstruction, or answer normalization.
-        if(text.Length>600||text.IndexOfAny(['\r','\n'])>=0)return text;
+        if(text.Length>600||text.IndexOfAny(['\r','\n','$','\\'])>=0)return text;
         var brackets=new Stack<char>();var equals=new List<int>();
         for(var index=0;index<text.Length;index++)
         {

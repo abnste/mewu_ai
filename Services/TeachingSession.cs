@@ -56,11 +56,5 @@ internal sealed class TeachingSession
         GradingVerdict.Correct=>LocalizationService.T("正确","Correct"),GradingVerdict.Incorrect=>LocalizationService.T("错误","Incorrect"),
         GradingVerdict.Blank=>LocalizationService.T("未作答","Blank"),_=>LocalizationService.T("待核","Uncertain")
     };
-    internal static IReadOnlyList<AiAnnotation> Annotations(TeachingPage page,string handle)=>page.Items.SelectMany(item=>
-    {
-        var color=item.Verdict==GradingVerdict.Correct?"#20966C":item.Verdict==GradingVerdict.Uncertain?"#B77713":"#D74655";
-        var marker=item.Verdict switch{GradingVerdict.Correct=>"✓",GradingVerdict.Incorrect=>"×",GradingVerdict.Blank=>"—",_=>"?"};
-        return new[]{new AiAnnotation(item.X,item.Y,item.Width,item.Height,"",ReferenceHandle:handle,Kind:AiAnnotationKind.Rectangle,Style:new AiAnnotationStyle(color,.0015)),
-            new AiAnnotation(Math.Max(0,item.X-.09),Math.Max(0,item.Y-.004),.085,.024,$"{item.Question} {marker}{(item.Confirmed||item.Verdict==GradingVerdict.Uncertain?"":"?")}",ReferenceHandle:handle,Kind:AiAnnotationKind.Text,Style:new AiAnnotationStyle(color,FontSize:.016))};
-    }).ToArray();
+    internal static IReadOnlyList<AiAnnotation> Annotations(TeachingPage page,string handle)=>TeachingFeedbackLayout.Annotations(page,handle);
 }

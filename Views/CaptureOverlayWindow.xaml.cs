@@ -1565,7 +1565,7 @@ public partial class CaptureOverlayWindow : Window
     private Rect ClampSelection(Rect value){var width=Math.Min(value.Width,Root.ActualWidth);var height=Math.Min(value.Height,Root.ActualHeight);return new Rect(Math.Clamp(value.X,0,Math.Max(0,Root.ActualWidth-width)),Math.Clamp(value.Y,0,Math.Max(0,Root.ActualHeight-height)),width,height);}
     private async void UpdateSnapPreview(Point point)
     {
-        if(_closed||_selecting||_moving||_recordingMode||_recordingCountdownActive||_drawingMode||_longCaptureMode||IsInteractingWithPrompt(point)||PointerInToolbarInteractionZone(point))
+        if(_closed||_teachingPage is not null||_selecting||_moving||_recordingMode||_recordingCountdownActive||_drawingMode||_longCaptureMode||IsInteractingWithPrompt(point)||PointerInToolbarInteractionZone(point))
         {ResetSnapPreview();return;}
         _latestSnapProbePoint=point;_latestSnapProbePointValid=true;
         if(PointerOverSelection(point)){_latestSnapProbePointValid=false;CancelSnapProbe();SnapPreview.Visibility=Visibility.Collapsed;_snapCandidate=_stableSnapCandidate=Rect.Empty;return;}
@@ -1599,7 +1599,7 @@ public partial class CaptureOverlayWindow : Window
             var bounds=await Task.Run(()=>_windowSnap.FindTopmostTargetAt(screenX,screenY,handle),request.Token);
             if(_closed||request.IsCancellationRequested||!ReferenceEquals(_snapProbeRequest,request))return;
             var currentPointer=Mouse.GetPosition(Root);
-            if(_selecting||_moving||_recordingMode||_recordingCountdownActive||_drawingMode||_longCaptureMode||IsInteractingWithPrompt(currentPointer)||PointerInToolbarInteractionZone(currentPointer))
+            if(_teachingPage is not null||_selecting||_moving||_recordingMode||_recordingCountdownActive||_drawingMode||_longCaptureMode||IsInteractingWithPrompt(currentPointer)||PointerInToolbarInteractionZone(currentPointer))
             {ResetSnapPreview();return;}
             // Do not paint a result for a stale pointer location.  The latest
             // location is scheduled once this bounded probe is released.

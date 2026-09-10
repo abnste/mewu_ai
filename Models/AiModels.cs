@@ -77,6 +77,8 @@ public sealed record AiAnnotation(
     int? Number=null,
     AiAnnotationDestination? Destination=null)
 {
+    // Set only by the local teaching layout; never accepted from provider JSON.
+    internal bool IsTeachingFeedback { get; init; }
     public bool IsVideoTimeline=>StartTime.HasValue&&EndTime.HasValue&&Keyframes is {Count:>0};
     public AiAnnotationStyle EffectiveStyle=>Style??new();
 }

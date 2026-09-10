@@ -13,6 +13,22 @@ namespace MewuAI.Tests;
 public sealed class TeachingWorkflowTests
 {
     [Theory]
+    [InlineData("x¹¹/y¹⁷",@"\frac{x^{11}}{y^{17}}")]
+    [InlineData("x^(12−1)",@"x^{\left(12 - 1\right)}")]
+    [InlineData("= x¹³/y¹⁷",@"= \frac{x^{13}}{y^{17}}")]
+    public void LegacyFormulaTypesettingKeepsIncorrectPowersAndDoesNotEvaluate(string source,string latex)
+    {
+        Assert.True(PlainMathNotation.TryConvert(source,out var actual));Assert.Equal(latex,actual);
+    }
+    [Theory]
+    [InlineData("Answer 12 is wrong")][InlineData("第 1 题")][InlineData("a = [b)")][InlineData("1.2.3")][InlineData("1/2x")][InlineData("12 34")][InlineData("is 11")][InlineData("a=1\nb=2")]
+    public void PlainTextIsNotGuessedToBeMath(string source)=>Assert.False(PlainMathNotation.TryConvert(source,out _));
+    [Fact] public void EnglishGradingRequestsEnglishKnowledgePointsAndPreservesObservedLanguage()
+    {
+        var instruction=TeachingGradingService.OutputInstructions(true);
+        Assert.Contains("reason, skill",instruction);Assert.Contains("Laws of indices",instruction);Assert.Contains("Preserve the student's original language",instruction);
+    }
+    [Theory]
     [InlineData("= x¹²y⁻¹⁵ / (xy²) = x¹³y⁻¹⁷ = x¹³/y¹⁷","= x¹²y⁻¹⁵ / (xy²)\n= x¹³y⁻¹⁷\n= x¹³/y¹⁷")]
     [InlineData("a = b = c","a = b\n= c")]
     [InlineData("x = 2","x = 2")]
@@ -22,6 +38,7 @@ public sealed class TeachingWorkflowTests
     [InlineData("a == b == c","a == b == c")]
     [InlineData("x = 1 → y = 2","x = 1 → y = 2")]
     [InlineData("a = [b) = c","a = [b) = c")]
+    [InlineData(@"$\begin{aligned}x&=1\\y&=2\end{aligned}$",@"$\begin{aligned}x&=1\\y&=2\end{aligned}$")]
     public void CalculationLayoutPreservesSymbolsAndExplicitLines(string input,string expected)
     {
         var result=TeachingCalculationLayout.Format(input);Assert.Equal(expected,result);

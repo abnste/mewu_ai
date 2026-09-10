@@ -9,6 +9,7 @@
 | Stfu | 0.1.1 | WTFPL-2.0 | https://github.com/samhocevar/stfu |
 | Typography.OpenFont / Typography.GlyphLayout（由 Emoji.Wpf 携带） | Emoji.Wpf 0.3.4 内置版本 | MIT 及上游第三方条款 | https://github.com/LayoutFarm/Typography |
 | Markdig | 1.3.2 | BSD-2-Clause | https://github.com/xoofx/markdig |
+| WpfMath / XamlMath.Shared | 2.1.0 | MIT；内置字体 Knuth License / OFL-1.1 | https://github.com/ForNeVeR/xaml-math/tree/v2.1.0 |
 | RapidOcrNet | 4.1.0 | Apache-2.0（含上游 NOTICE） | https://github.com/BobLd/RapidOcrNet |
 | PaddleOCR PP-OCRv5/PP-OCRv6 模型及字典 | 随仓库资源 | Apache-2.0 | https://github.com/PaddlePaddle/PaddleOCR |
 | Microsoft.ML.OnnxRuntime / Managed | 1.29.0 | MIT 及第三方条款 | https://github.com/microsoft/onnxruntime |

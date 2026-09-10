@@ -132,6 +132,19 @@
         "resolved": "10.0.11",
         "contentHash": "25EiYjCzE5CLx5CkOOum40bg8EBnVBNqklyEyn1KJT872eEh3ZakJppgunMqC2Hz1lJv9Mp7YbCC6LI1Ceemdw=="
       },
+      "WpfMath": {
+        "type": "Transitive",
+        "resolved": "2.1.0",
+        "contentHash": "216GtCBYFMPw5SaArNcuTgemgAWw985LihSEf7mtOjJYTN04X4BVFGPrkJ2Fiv1ffL8gX2xiRw/o+q1SC5oSAA==",
+        "dependencies": {
+          "XamlMath.Shared": "2.1.0"
+        }
+      },
+      "XamlMath.Shared": {
+        "type": "Transitive",
+        "resolved": "2.1.0",
+        "contentHash": "p7W78KZc2EWuVqAd704m4yGWg0HtxahjNYRVxDWhw7npf8oMD8C7EUc1pjkjZIcmk5PxXJ+t5FE2Fs3gBYjv1A=="
+      },
       "MewuAI": {
         "type": "Project",
         "dependencies": {
@@ -141,7 +154,8 @@
           "Microsoft.Graphics.Win2D": "[1.3.1, )",
           "RapidOcrNet": "[4.1.0, )",
           "ScreenRecorderLib": "[7.0.0, )",
-          "System.Speech": "[10.0.11, )"
+          "System.Speech": "[10.0.11, )",
+          "WpfMath": "[2.1.0, )"
         }
       }
     }

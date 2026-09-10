@@ -19,6 +19,7 @@ namespace mewu_ai_Assistant.Views;
 public partial class CaptureOverlayWindow
 {
     private Border? _teachingPanel;
+    private Button? _teachingReturnButton;
     private StackPanel? _teachingContent;
     private CancellationTokenSource? _teachingRequest;
     private SelectionItem? _teachingPreview;
@@ -33,6 +34,7 @@ public partial class CaptureOverlayWindow
 
     private void ToggleTeaching(object sender,RoutedEventArgs e)
     {
+        if(_teachingReturnButton is not null)_teachingReturnButton.Visibility=Visibility.Collapsed;
         if(_teachingPanel is {Visibility:Visibility.Visible}){_teachingPanel.Visibility=Visibility.Collapsed;SetPromptBarHidden(false);return;}
         if(_request is not null||_overlayRequest is not null||_recordingMode||_drawingMode||_longCaptureMode)return;
         if(_teachingPanel is null)
@@ -46,7 +48,7 @@ public partial class CaptureOverlayWindow
         _teachingPanel.MaxHeight=Math.Max(220,Root.ActualHeight-180);Canvas.SetLeft(_teachingPanel,Math.Max(12,Root.ActualWidth-_teachingPanel.Width-20));Canvas.SetTop(_teachingPanel,20);
         _teachingPanel.Visibility=Visibility.Visible;BuildTeachingPanel();Toolbar.Visibility=Visibility.Collapsed;
     }
-    private bool IsTeachingControl(DependencyObject? source)=>_teachingPanel is {Visibility:Visibility.Visible}&&IsInside(source,_teachingPanel);
+    private bool IsTeachingControl(DependencyObject? source)=>(_teachingPanel is {Visibility:Visibility.Visible}&&IsInside(source,_teachingPanel))||(_teachingReturnButton is {Visibility:Visibility.Visible}&&IsInside(source,_teachingReturnButton));
     private void TeachingMessage(string text){if(_closed)return;if(_teachingStatus is not null)_teachingStatus.Text=text;PromptStatus.Text=text;}
     private void BuildTeachingPanel()
     {
@@ -130,7 +132,9 @@ public partial class CaptureOverlayWindow
     {
         var (identity,number)=TeachingIdentity();
         if(Teaching.Pages.Any(p=>!ReferenceEquals(p,page)&&p.Submission==identity&&(p.PageNumber==number||p.Fingerprint==page.Fingerprint)))throw new InvalidOperationException(L("该作答中已有此页或相同图片。","This submission already has this page or image."));
-        page.Submission=identity;page.PageNumber=number;foreach(var i in page.Items)i.Confirmed=false;Teaching.InvalidatePractice();BuildTeachingPanel();RefreshTeachingPreview();
+        page.Submission=identity;page.PageNumber=number;foreach(var i in page.Items)i.Confirmed=false;
+        if(page.Items.Count>0)page.Status=L("作答身份已修改，请重新核对","Submission identity changed; review again");
+        Teaching.InvalidatePractice();BuildTeachingPanel();RefreshTeachingPreview();
     }
     private async Task ImportTeachingAsync()
     {
@@ -162,13 +166,14 @@ public partial class CaptureOverlayWindow
     }
     private void ClearTeachingPreview()
     {
+        if(_teachingReturnButton is not null)_teachingReturnButton.Visibility=Visibility.Collapsed;
         CancelTeachingReposition();
         if(_teachingPreview is { } old){_selections.Remove(old);_references.Remove(old);SelectionLayer.Children.Remove(old.Host);ReleaseSelectionResources(old);_activeIndex=_selections.Count-1;}
         _teachingPreview=null;_teachingPage=null;UpdateReferenceChips();QueueSelectionResourceCleanup();
     }
     private void ShowTeachingPage(TeachingPage page)
     {
-        if(_closed)return;ClearTeachingPreview();_teachingPage=page;
+        if(_closed)return;ClearTeachingPreview();_teachingPage=page;ResetSnapPreview();
         var item=CreateSelection(false);item.CapturedImageOverride=page.Image;
         var width=Math.Max(100,Root.ActualWidth-460);var height=Math.Max(100,Root.ActualHeight-230);var scale=Math.Min(width/page.Image.PixelWidth,height/page.Image.PixelHeight);
         item.Bounds=new Rect(20,25,page.Image.PixelWidth*scale,page.Image.PixelHeight*scale);
@@ -225,6 +230,21 @@ public partial class CaptureOverlayWindow
         AddText(panel,L("逐题核对 · ","Review · ")+page.Label,15,true);
         var scored=page.Items.Where(i=>i.Confirmed&&i.Verdict!=GradingVerdict.Uncertain&&i.Score.HasValue&&i.Maximum.HasValue).ToArray();
         AddText(panel,L($"已核对 {page.Items.Count(i=>i.Confirmed)}/{page.Items.Count} 题",$"Reviewed {page.Items.Count(i=>i.Confirmed)}/{page.Items.Count}"));
+        AddButton(panel,L("查看原卷批注","View annotations on paper"),()=>
+        {
+            if(_teachingPreview is not { } preview)return;
+            _teachingPanel!.Visibility=Visibility.Collapsed;
+            var scale=Math.Min((Root.ActualWidth-60)/page.Image.PixelWidth,(Root.ActualHeight-90)/page.Image.PixelHeight);
+            preview.Bounds=new Rect((Root.ActualWidth-page.Image.PixelWidth*scale)/2,25,page.Image.PixelWidth*scale,page.Image.PixelHeight*scale);
+            UpdateSelection(preview);RefreshTeachingPreview();SetPromptBarHidden(true,false);
+            if(_teachingReturnButton is null)
+            {
+                _teachingReturnButton=new Button{Content=L("返回逐题核对","Back to review"),Padding=new Thickness(14,8,14,8)};
+                _teachingReturnButton.Click+=(_,_)=>{if(_teachingPage is not { } current)return;_teachingReturnButton.Visibility=Visibility.Collapsed;_teachingPanel!.Visibility=Visibility.Visible;ShowTeachingPage(current);};
+                Root.Children.Add(_teachingReturnButton);Panel.SetZIndex(_teachingReturnButton,601);
+            }
+            Canvas.SetTop(_teachingReturnButton,25);Canvas.SetLeft(_teachingReturnButton,Math.Min(Root.ActualWidth-170,preview.Bounds.Right+14));_teachingReturnButton.Visibility=Visibility.Visible;
+        });
         if(scored.Length>0)AddText(panel,L($"已核对且有细则的题：{scored.Sum(i=>i.Score)}/{scored.Sum(i=>i.Maximum)} 分（{scored.Length}题）",$"Rubric-scored subset: {scored.Sum(i=>i.Score)}/{scored.Sum(i=>i.Maximum)} ({scored.Length} questions)"));
         foreach(var original in page.Items)
         {
@@ -232,10 +252,11 @@ public partial class CaptureOverlayWindow
             AddText(card,original.Question+" · "+TeachingSession.VerdictText(original.Verdict),14,true);
             AddButton(card,L("重新框出作答位置","Adjust answer box"),()=>{CancelTeachingReposition();_teachingRepositionQuestion=original.Question;TeachingMessage(L("在左侧原卷上拖动，重新框出这道题的作答。","Drag on the original page to outline this answer."));});
             AddText(card,L("识读 / 正确答案","Read answer / Expected answer"));
-            var observed=CreateTeachingAnswerEditor(original.Observed);var expected=CreateTeachingAnswerEditor(original.Expected);card.Children.Add(observed);card.Children.Add(expected);
-            AddText(card,L("批改说明","Review explanation"));var reason=CreateTeachingAnswerEditor(original.Reason,800,false);card.Children.Add(reason);
+            var observed=CreateTeachingAnswerEditor(original.Observed);var expected=CreateTeachingAnswerEditor(original.Expected);
+            AddTeachingFormulaEditor(card,observed);AddTeachingFormulaEditor(card,expected);
+            AddText(card,L("批改说明","Review explanation"));var reason=CreateTeachingAnswerEditor(original.Reason,800,false);AddTeachingFormulaEditor(card,reason);
             var verdict=new ComboBox{ItemsSource=Enum.GetValues<GradingVerdict>().Select(v=>new KeyValuePair<GradingVerdict,string>(v,TeachingSession.VerdictText(v))),DisplayMemberPath="Value",SelectedValuePath="Key",SelectedValue=original.Verdict,Margin=new Thickness(0,5,0,5)};card.Children.Add(verdict);
-            var skill=new TextBox{Text=original.Skill,MaxLength=80,ToolTip=L("统一知识点名称用于共性统计","Use consistent skill names for shared-error grouping")};card.Children.Add(skill);
+            AddText(card,L("知识点","Knowledge point"));var skill=new TextBox{Text=original.Skill,MaxLength=80,ToolTip=L("统一知识点名称用于共性统计","Use consistent skill names for shared-error grouping")};card.Children.Add(skill);
             var score=new TextBox{Text=original.Score?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"",ToolTip=L("得分（有评分细则时）","Score (requires rubric)")};
             var maximum=new TextBox{Text=original.Maximum?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"",ToolTip=L("该题满分","Maximum score")};
             if(Teaching.Rubric.Length>0){AddText(card,L("得分 / 满分（可留空）","Score / Maximum (optional)"));card.Children.Add(score);card.Children.Add(maximum);}
@@ -249,7 +270,11 @@ public partial class CaptureOverlayWindow
                 if(decision==GradingVerdict.Uncertain){s=null;m=null;}
                 if(decision==GradingVerdict.Blank&&observed.Text.Trim().Length>0)throw new InvalidOperationException(L("未作答题的识读内容应为空。","A blank response must have no recognized answer."));
                 var revised=original with{Observed=observed.Text.Trim(),Expected=expected.Text.Trim(),Reason=reason.Text.Trim(),Verdict=decision,Skill=skill.Text.Trim(),Score=s,Maximum=m,Confirmed=true};
-                page.Items=page.Items.Select(i=>ReferenceEquals(i,original)?revised:i).ToArray();Teaching.InvalidatePractice();RefreshTeachingPreview();BuildTeachingPanel();
+                page.Items=page.Items.Select(i=>ReferenceEquals(i,original)?revised:i).ToArray();
+                page.Status=page.Items.All(i=>i.Confirmed)
+                    ?(page.Items.Any(i=>i.Verdict==GradingVerdict.Uncertain)?L("已查看全部题，仍有待核项","All questions viewed; uncertain items remain"):L("已完成逐题核对","Review complete"))
+                    :L($"已核对 {page.Items.Count(i=>i.Confirmed)}/{page.Items.Count} 题",$"Reviewed {page.Items.Count(i=>i.Confirmed)}/{page.Items.Count}");
+                Teaching.InvalidatePractice();RefreshTeachingPreview();BuildTeachingPanel();
             });
         }
     }
@@ -259,6 +284,34 @@ public partial class CaptureOverlayWindow
         MinLines=1,MaxLines=10,MaxHeight=240,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,
         HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,VerticalContentAlignment=VerticalAlignment.Top
     };
+    private void AddTeachingFormulaEditor(Panel panel,TextBox editor)
+    {
+        // The editable source remains authoritative for copy, review and export.
+        var preview=new StackPanel{Margin=new Thickness(8,6,8,6)};
+        void RefreshPreview()
+        {
+            preview.Children.Clear();var lines=editor.Text.Replace("\r","").Split('\n');
+            if(lines.Length>1&&MathFormulaRenderer.Create(editor.Text,18,Brushes.DarkSlateGray) is { } whole)
+            {preview.Children.Add(new MathFormulaView(editor.Text,whole));return;}
+            foreach(var line in lines.Take(24))
+            {
+                if(MathFormulaRenderer.Create(line,18,Brushes.DarkSlateGray) is { } image)preview.Children.Add(new MathFormulaView(line,image));
+                else preview.Children.Add(new TextBlock{Text=line,TextWrapping=TextWrapping.Wrap});
+            }
+            if(lines.Length>24)preview.Children.Add(new TextBlock{Text=L("更多内容请点击编辑原文查看。","Use Edit source to view the remaining lines."),TextWrapping=TextWrapping.Wrap});
+        }
+        RefreshPreview();
+        var rendered=new Border{Background=new SolidColorBrush(Color.FromRgb(247,249,253)),CornerRadius=new CornerRadius(10),Padding=new Thickness(8),Margin=new Thickness(0,2,0,4),
+            Child=new ScrollViewer{Content=preview,HorizontalScrollBarVisibility=ScrollBarVisibility.Auto,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,MaxHeight=300}};
+        panel.Children.Add(rendered);editor.Visibility=Visibility.Collapsed;panel.Children.Add(editor);
+        var button=AddButton(panel,L("编辑原文","Edit source"),()=>{});
+        button.Click+=(_,_)=>
+        {
+            if(_teachingRequest is not null)return;
+            var edit=editor.Visibility!=Visibility.Visible;editor.Visibility=edit?Visibility.Visible:Visibility.Collapsed;rendered.Visibility=edit?Visibility.Collapsed:Visibility.Visible;
+            button.Content=edit?L("预览公式","Preview formulas"):L("编辑原文","Edit source");if(edit)editor.Focus();else RefreshPreview();
+        };
+    }
     private bool TeachingRepositionDown(System.Windows.Point point)
     {
         if(_teachingRepositionQuestion is null||_teachingPreview is null)return false;
