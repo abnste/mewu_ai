@@ -68,10 +68,6 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 See correct, incorrect and uncertain answers marked on the original page. Review the reading, expected answer and verdict, or adjust an answer box. Collect several submissions to build practice from their reviewed shared errors. [Explore the teaching workflow](./docs/teaching-workflow.md).
 
 <p align="center">
-  <a href="./docs/images/hkdse-2025-on-paper-en.png"><img src="./docs/images/hkdse-2025-on-paper-en.png" width="620" alt="In-place feedback and typeset formulas on a real handwritten exam" /></a>
-</p>
-
-<p align="center">
   <a href="./docs/images/hkdse-2025-inplace-math-en.png"><img src="./docs/images/hkdse-2025-inplace-math-en.png" width="100%" alt="Reviewed official HKDSE handwritten script with two marked errors, separate calculation steps and an editable review explanation" /></a>
 </p>
 

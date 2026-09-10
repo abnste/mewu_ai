@@ -68,10 +68,6 @@
 在原卷上查看勾叉和待核标记，逐题核对识读、正确答案与判定，也可以重新框出作答位置。收集多份作答后，可根据已确认的共同错题生成巩固练习。[查看教学流程](./docs/teaching-workflow.md)。
 
 <p align="center">
-  <a href="./docs/images/hkdse-2025-on-paper-zh.png"><img src="./docs/images/hkdse-2025-on-paper-zh.png" width="620" alt="真实手写试卷原位批注与数学公式" /></a>
-</p>
-
-<p align="center">
   <a href="./docs/images/hkdse-2025-inplace-math-zh.png"><img src="./docs/images/hkdse-2025-inplace-math-zh.png" width="100%" alt="2025 HKDSE 真实手写答卷完成逐题核对，显示两处错误标注、分行计算和批改说明" /></a>
 </p>
 
