@@ -30,10 +30,10 @@ internal static class TeachingReadmeDemo
                 string L(string zh,string en)=>english?en:zh;
                 var folder=Path.GetFullPath(".codex-build/teaching-evaluation");
                 using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                var page=(await TeachingImportService.ImportAsync(Path.Combine(folder,"student-A.png"),L("模拟作答 A","Simulated A"),"",11,deadline.Token)).Single();
-                using var saved=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(folder,"workflow-api-A.json")));
+                var page=(await TeachingImportService.ImportAsync(Path.Combine(folder,"real-handwriting-level2.pdf"),L("HKDSE 公开手写答卷","HKDSE handwritten script"),"3",1,deadline.Token)).Single();
+                using var saved=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(folder,"workflow-api-handwriting-Official handwriting.json")));
                 var rows=System.Text.Json.JsonSerializer.Deserialize<GradingItem[]>(saved.RootElement.GetProperty("Items"))??throw new InvalidDataException("Missing actual grading results");
-                if(rows.Length!=6||!rows.Select(r=>r.Question).SequenceEqual(new[]{"24","25","26","27","28","29"}))throw new InvalidDataException("Expected the measured TSA page excerpt");
+                if(rows.Length!=2||!rows.Select(r=>r.Question).SequenceEqual(new[]{"1","2"}))throw new InvalidDataException("Expected the measured HKDSE handwritten script");
                 page.Items=await mewu_ai_Assistant.AI.TeachingGradingService.RefineBoundsAsync(page,rows,deadline.Token);
                 page.Selected=false;page.Status=L("MiniMax 实测结果 · 待老师确认","Recorded MiniMax grading · Teacher review required");host.Teaching.AddRange([page]);
                 Invoke("ToggleTeaching",overlay,new RoutedEventArgs());Invoke("ShowTeachingPage",page);Invoke("SetPromptBarHidden",true,false);
@@ -42,14 +42,14 @@ internal static class TeachingReadmeDemo
                 var content=(StackPanel)scroll.Content;
                 var review=content.Children.OfType<TextBlock>().First(t=>t.Text.StartsWith(L("逐题核对","Review"),StringComparison.Ordinal));
                 scroll.ScrollToVerticalOffset(review.TranslatePoint(new Point(),content).Y);overlay.UpdateLayout();
-                // Capture the official TSA excerpt with the actual saved MiniMax grading output.
-                // Blue answers are explicitly simulated; no model verdicts are invented here.
+                // Preserve the full official scan, including genuine handwriting and page number.
+                // Keep the actual model uncertainty; do not add answers or invent verdicts.
                 // Original PDF and raw response files remain outside the repository.
                 ((FrameworkElement)overlay.FindName("PointerInspector")).Visibility=Visibility.Collapsed;
                 ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Collapsed;
                 var height=(int)Math.Min(overlay.ActualHeight,Canvas.GetTop(panel)+panel.ActualHeight+24);
-                var image=new RenderTargetBitmap((int)overlay.ActualWidth,height,96,96,PixelFormats.Pbgra32);image.Render(overlay);
-                var path=Path.GetFullPath("docs/images/tsa-2025-official-grading-"+(english?"en":"zh")+".png");Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                var image=new RenderTargetBitmap((int)overlay.ActualWidth*2,height*2,192,192,PixelFormats.Pbgra32);image.Render(overlay);
+                var path=Path.GetFullPath("docs/images/hkdse-2025-handwritten-script-"+(english?"en":"zh")+".png");Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using var output=File.Create(path);encoder.Save(output);
             }
             catch(Exception ex){Environment.ExitCode=1;Directory.CreateDirectory(".codex-build");File.WriteAllText(".codex-build/teaching-readme-error.txt",ex.ToString());}

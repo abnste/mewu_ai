@@ -68,10 +68,10 @@
 在原卷上查看勾叉和待核标记，逐题核对识读、正确答案与判定，也可以重新框出作答位置。收集多份作答后，可根据已确认的共同错题生成巩固练习。[查看教学流程](./docs/teaching-workflow.md)。
 
 <p align="center">
-  <a href="./docs/images/tsa-2025-official-grading-zh.png"><img src="./docs/images/tsa-2025-official-grading-zh.png" width="100%" alt="2025 TSA 真实试卷节选及 MiniMax 实测批注，右侧逐题核对识读和正确答案" /></a>
+  <a href="./docs/images/hkdse-2025-handwritten-script-zh.png"><img src="./docs/images/hkdse-2025-handwritten-script-zh.png" width="100%" alt="2025 HKDSE 官方公开手写答卷整页，保留原始笔迹与页码，旁边显示 AI 待核结果" /></a>
 </p>
 
-*试卷来源：[香港考评局 2025 TSA 中三数学 9MC2，第 11 页](https://www.bca.hkeaa.edu.hk/web/Common/res/2025secPaper/S3Math/TSA2025_9MC2_Q.pdf#page=11)。保留真实原题版式，蓝字为模拟作答，标注与判定来自 MiniMax 实测结果，仍需老师核对；原题版权归原机构。*
+*原卷：[香港考评局 2025 HKDSE 数学必修部分公开答卷示例](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3)（PDF 第 3 页，卷面页码 2）。截图保留整页扫描和真实手写，没有添加模拟答案；旁边是此前 MiniMax 实测的待核结果，识读和判分仍需老师复核。原卷版权归原机构。*
 
 ### 视频分析
 
