@@ -68,7 +68,7 @@
 在原卷上查看勾叉和待核标记，逐题核对识读、正确答案与判定，也可以重新框出作答位置。收集多份作答后，可根据已确认的共同错题生成巩固练习。[查看教学流程](./docs/teaching-workflow.md)。
 
 <p align="center">
-  <a href="./docs/images/teaching-review-zh.png"><img src="./docs/images/teaching-review-zh.png" width="100%" alt="2025 TSA 真实试卷节选及 MiniMax 实测批注，右侧逐题核对识读和正确答案" /></a>
+  <a href="./docs/images/tsa-2025-official-grading-zh.png"><img src="./docs/images/tsa-2025-official-grading-zh.png" width="100%" alt="2025 TSA 真实试卷节选及 MiniMax 实测批注，右侧逐题核对识读和正确答案" /></a>
 </p>
 
 *试卷来源：[香港考评局 2025 TSA 中三数学 9MC2，第 11 页](https://www.bca.hkeaa.edu.hk/web/Common/res/2025secPaper/S3Math/TSA2025_9MC2_Q.pdf#page=11)。保留真实原题版式，蓝字为模拟作答，标注与判定来自 MiniMax 实测结果，仍需老师核对；原题版权归原机构。*

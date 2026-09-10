@@ -49,7 +49,7 @@ internal static class TeachingReadmeDemo
                 ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Collapsed;
                 var height=(int)Math.Min(overlay.ActualHeight,Canvas.GetTop(panel)+panel.ActualHeight+24);
                 var image=new RenderTargetBitmap((int)overlay.ActualWidth,height,96,96,PixelFormats.Pbgra32);image.Render(overlay);
-                var path=Path.GetFullPath("docs/images/teaching-review-"+(english?"en":"zh")+".png");Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                var path=Path.GetFullPath("docs/images/tsa-2025-official-grading-"+(english?"en":"zh")+".png");Directory.CreateDirectory(Path.GetDirectoryName(path)!);
                 var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using var output=File.Create(path);encoder.Save(output);
             }
             catch(Exception ex){Environment.ExitCode=1;Directory.CreateDirectory(".codex-build");File.WriteAllText(".codex-build/teaching-readme-error.txt",ex.ToString());}
