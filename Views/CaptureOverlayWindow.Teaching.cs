@@ -232,7 +232,8 @@ public partial class CaptureOverlayWindow
             AddText(card,original.Question+" · "+TeachingSession.VerdictText(original.Verdict),14,true);
             AddButton(card,L("重新框出作答位置","Adjust answer box"),()=>{CancelTeachingReposition();_teachingRepositionQuestion=original.Question;TeachingMessage(L("在左侧原卷上拖动，重新框出这道题的作答。","Drag on the original page to outline this answer."));});
             AddText(card,L("识读 / 正确答案","Read answer / Expected answer"));
-            var observed=new TextBox{Text=original.Observed,MaxLength=600};var expected=new TextBox{Text=original.Expected,MaxLength=600};card.Children.Add(observed);card.Children.Add(expected);AddText(card,original.Reason);
+            var observed=CreateTeachingAnswerEditor(original.Observed);var expected=CreateTeachingAnswerEditor(original.Expected);card.Children.Add(observed);card.Children.Add(expected);
+            AddText(card,L("批改说明","Review explanation"));var reason=CreateTeachingAnswerEditor(original.Reason,800,false);card.Children.Add(reason);
             var verdict=new ComboBox{ItemsSource=Enum.GetValues<GradingVerdict>().Select(v=>new KeyValuePair<GradingVerdict,string>(v,TeachingSession.VerdictText(v))),DisplayMemberPath="Value",SelectedValuePath="Key",SelectedValue=original.Verdict,Margin=new Thickness(0,5,0,5)};card.Children.Add(verdict);
             var skill=new TextBox{Text=original.Skill,MaxLength=80,ToolTip=L("统一知识点名称用于共性统计","Use consistent skill names for shared-error grouping")};card.Children.Add(skill);
             var score=new TextBox{Text=original.Score?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"",ToolTip=L("得分（有评分细则时）","Score (requires rubric)")};
@@ -247,11 +248,17 @@ public partial class CaptureOverlayWindow
                 var decision=(GradingVerdict)verdict.SelectedValue;
                 if(decision==GradingVerdict.Uncertain){s=null;m=null;}
                 if(decision==GradingVerdict.Blank&&observed.Text.Trim().Length>0)throw new InvalidOperationException(L("未作答题的识读内容应为空。","A blank response must have no recognized answer."));
-                var revised=original with{Observed=observed.Text.Trim(),Expected=expected.Text.Trim(),Verdict=decision,Skill=skill.Text.Trim(),Score=s,Maximum=m,Confirmed=true};
+                var revised=original with{Observed=observed.Text.Trim(),Expected=expected.Text.Trim(),Reason=reason.Text.Trim(),Verdict=decision,Skill=skill.Text.Trim(),Score=s,Maximum=m,Confirmed=true};
                 page.Items=page.Items.Select(i=>ReferenceEquals(i,original)?revised:i).ToArray();Teaching.InvalidatePractice();RefreshTeachingPreview();BuildTeachingPanel();
             });
         }
     }
+    private static TextBox CreateTeachingAnswerEditor(string text,int limit=600,bool calculation=true)=>new()
+    {
+        Text=calculation?TeachingCalculationLayout.Format(text):text,MaxLength=limit,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,
+        MinLines=1,MaxLines=10,MaxHeight=240,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,VerticalContentAlignment=VerticalAlignment.Top
+    };
     private bool TeachingRepositionDown(System.Windows.Point point)
     {
         if(_teachingRepositionQuestion is null||_teachingPreview is null)return false;

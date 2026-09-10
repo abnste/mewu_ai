@@ -2,6 +2,12 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.4.1 — 多步计算与批改说明 / Calculation steps and review explanations
+
+- 修复计算步骤挤在同一行，保留换行并支持回车、自动折行和滚动。 / Preserve calculation step breaks with multiline editing, wrapping and scrolling.
+- 批改说明可编辑、确认并随逐题 CSV 导出，避免改判后仍显示旧说明。 / Edit and export explanations together with reviewed verdicts.
+- README 展示官方真实手写答卷经逐题核对后的完整流程。 / Show the reviewed workflow on an official handwritten exam script.
+
 ## 0.4.0 — 教学批改与多页作业 / Reviewed grading and multi-page assignments
 
 - 新增 PDF 选页导入、跨次截图收集、身份去重、双阶段逐题批改与老师核对。/ Added selected PDF imports, cross-capture collections, identity checks, two-stage grading and teacher review.

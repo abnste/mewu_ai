@@ -51,9 +51,9 @@ internal static class TeachingExportService
             using(var zip=new ZipArchive(stream,ZipArchiveMode.Create))
             {
                 if(session.Practice.Count>0){Write("questions.html",PracticeHtml(session.Practice,false));Write("answers.html",PracticeHtml(session.Practice,true));}
-                var csv=new StringBuilder("Submission,Page,Question,Observed,Expected,Verdict,Score,Maximum,Knowledge,Confirmed\r\n");
+                var csv=new StringBuilder("Submission,Page,Question,Observed,Expected,Verdict,Score,Maximum,Knowledge,Reason,Confirmed\r\n");
                 foreach(var page in session.Pages)foreach(var item in page.Items)
-                    csv.AppendLine(string.Join(',',new[]{page.Submission,page.PageNumber.ToString(),item.Question,item.Observed,item.Expected,TeachingSession.VerdictText(item.Verdict),item.Score?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"",item.Maximum?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"",item.Skill,item.Confirmed?"yes":"no"}.Select(Csv)));
+                    csv.AppendLine(string.Join(',',new[]{page.Submission,page.PageNumber.ToString(),item.Question,item.Observed,item.Expected,TeachingSession.VerdictText(item.Verdict),item.Score?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"",item.Maximum?.ToString(System.Globalization.CultureInfo.InvariantCulture)??"",item.Skill,item.Reason,item.Confirmed?"yes":"no"}.Select(Csv)));
                 Write("review.csv",csv.ToString());
                 foreach(var (name,data) in annotatedPages){using var target=zip.CreateEntry(name,CompressionLevel.Fastest).Open();target.Write(data);}
                 void Write(string name,string text){using var writer=new StreamWriter(zip.CreateEntry(name).Open(),new UTF8Encoding(false));writer.Write(text);}

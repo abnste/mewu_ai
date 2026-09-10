@@ -3,14 +3,14 @@
   <h1>喵呜AI</h1>
   <p>Windows 截图工具，支持录屏、贴图、文字识别和 AI 标注。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/公测版-v0.4.0-7C6CF0?style=flat-square" alt="v0.4.0 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.1"><img src="https://img.shields.io/badge/公测版-v0.4.1-7C6CF0?style=flat-square" alt="v0.4.1 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Setup-0.4.0-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.1/MewuAI-Setup-0.4.1-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Portable-0.4.0-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.1/MewuAI-Portable-0.4.1-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -68,10 +68,10 @@
 在原卷上查看勾叉和待核标记，逐题核对识读、正确答案与判定，也可以重新框出作答位置。收集多份作答后，可根据已确认的共同错题生成巩固练习。[查看教学流程](./docs/teaching-workflow.md)。
 
 <p align="center">
-  <a href="./docs/images/hkdse-2025-handwritten-script-zh.png"><img src="./docs/images/hkdse-2025-handwritten-script-zh.png" width="100%" alt="2025 HKDSE 官方公开手写答卷整页，保留原始笔迹与页码，旁边显示 AI 待核结果" /></a>
+  <a href="./docs/images/hkdse-2025-reviewed-steps-zh.png"><img src="./docs/images/hkdse-2025-reviewed-steps-zh.png" width="100%" alt="2025 HKDSE 真实手写答卷完成逐题核对，显示两处错误标注、分行计算和批改说明" /></a>
 </p>
 
-*原卷：[香港考评局 2025 HKDSE 数学必修部分公开答卷示例](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3)（PDF 第 3 页，卷面页码 2）。截图保留整页扫描和真实手写，没有添加模拟答案；旁边是此前 MiniMax 实测的待核结果，识读和判分仍需老师复核。原卷版权归原机构。*
+*原卷：[香港考评局 2025 HKDSE 数学必修部分公开答卷示例](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3)（PDF 第 3 页，卷面页码 2）。截图保留整页真实手写，展示 AI 初稿经人工逐题核对、修正识读与作答框后的完成状态。计算分步显示，批改说明可编辑；这不是未经审核的自动判分结果。原卷版权归原机构。*
 
 ### 视频分析
 

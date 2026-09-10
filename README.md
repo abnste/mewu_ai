@@ -3,14 +3,14 @@
   <h1>MewuAI</h1>
   <p>A Windows screenshot tool with screen recording, pinned images, text recognition, and AI annotations.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.0"><img src="https://img.shields.io/badge/Public_Beta-v0.4.0-7C6CF0?style=flat-square" alt="v0.4.0 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.1"><img src="https://img.shields.io/badge/Public_Beta-v0.4.1-7C6CF0?style=flat-square" alt="v0.4.1 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Setup-0.4.0-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.1/MewuAI-Setup-0.4.1-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.0/MewuAI-Portable-0.4.0-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.1/MewuAI-Portable-0.4.1-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -68,10 +68,10 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 See correct, incorrect and uncertain answers marked on the original page. Review the reading, expected answer and verdict, or adjust an answer box. Collect several submissions to build practice from their reviewed shared errors. [Explore the teaching workflow](./docs/teaching-workflow.md).
 
 <p align="center">
-  <a href="./docs/images/hkdse-2025-handwritten-script-en.png"><img src="./docs/images/hkdse-2025-handwritten-script-en.png" width="100%" alt="A complete official 2025 HKDSE sample script page with genuine handwriting and page number, beside AI results requiring review" /></a>
+  <a href="./docs/images/hkdse-2025-reviewed-steps-en.png"><img src="./docs/images/hkdse-2025-reviewed-steps-en.png" width="100%" alt="Reviewed official HKDSE handwritten script with two marked errors, separate calculation steps and an editable review explanation" /></a>
 </p>
 
-*Original: [HKEAA 2025 HKDSE Mathematics Compulsory Part sample script](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3) (PDF page 3, printed page 2). The complete scan and genuine handwriting are preserved, with no simulated answers added. The panel shows uncertain results from the recorded MiniMax evaluation; readings and judgments require teacher review. Copyright belongs to the original owner.*
+*Original: [HKEAA 2025 HKDSE Mathematics Compulsory Part sample script](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3) (PDF page 3, printed page 2). The complete handwritten scan is preserved. The screenshot shows the AI draft after a reviewer checked both questions and corrected readings and answer boxes. Calculation steps appear on separate lines and explanations are editable; this is a reviewed result, not unattended grading. Copyright belongs to the original owner.*
 
 ### Video analysis
 

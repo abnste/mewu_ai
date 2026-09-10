@@ -12,6 +12,40 @@ namespace MewuAI.Tests;
 
 public sealed class TeachingWorkflowTests
 {
+    [Theory]
+    [InlineData("= x¹²y⁻¹⁵ / (xy²) = x¹³y⁻¹⁷ = x¹³/y¹⁷","= x¹²y⁻¹⁵ / (xy²)\n= x¹³y⁻¹⁷\n= x¹³/y¹⁷")]
+    [InlineData("a = b = c","a = b\n= c")]
+    [InlineData("x = 2","x = 2")]
+    [InlineData("= a\n= b","= a\n= b")]
+    [InlineData("(a = b) = (c = d)","(a = b) = (c = d)")]
+    [InlineData("x = 1, y = 2","x = 1, y = 2")]
+    [InlineData("a == b == c","a == b == c")]
+    [InlineData("x = 1 → y = 2","x = 1 → y = 2")]
+    [InlineData("a = [b) = c","a = [b) = c")]
+    public void CalculationLayoutPreservesSymbolsAndExplicitLines(string input,string expected)
+    {
+        var result=TeachingCalculationLayout.Format(input);Assert.Equal(expected,result);
+        Assert.Equal(string.Concat(input.Where(c=>!char.IsWhiteSpace(c))),string.Concat(result.Where(c=>!char.IsWhiteSpace(c))));
+    }
+    [Fact] public void GradingJsonPreservesOriginalStepBreaks()
+    {
+        const string steps="= x¹²y⁻¹⁵ / (xy²)\n= x¹³y⁻¹⁷\n= x¹³/y¹⁷";
+        Assert.Equal(steps,TeachingGradingService.Parse(Response(observed:steps),"page-a",false)[0].Observed);
+    }
+    [Fact] public void ReviewExportKeepsStepBreaksAndCorrectedExplanation()
+    {
+        var directory=Path.Combine(Path.GetTempPath(),"MewuStepExport-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);
+        try
+        {
+            var image=BitmapSource.Create(2,2,96,96,PixelFormats.Bgra32,null,new byte[16],8);image.Freeze();
+            var row=TeachingGradingService.Parse(Response(observed:"= a\n= b\n= c"),"page-a",false)[0] with{Reason="Check the denominator.\nKeep the plus sign.",Confirmed=true};
+            var page=new TeachingPage("a","A",1,image,"a"){Items=[row]};var session=new TeachingSession();session.AddRange([page]);
+            var path=Path.Combine(directory,"review.zip");TeachingExportService.Export(path,session,[]);
+            using var zip=System.IO.Compression.ZipFile.OpenRead(path);using var reader=new StreamReader(zip.GetEntry("review.csv")!.Open());var csv=reader.ReadToEnd();
+            Assert.Contains("Knowledge,Reason,Confirmed",csv);Assert.Contains("\"'= a\n= b\n= c\"",csv);Assert.Contains("\"Check the denominator.\nKeep the plus sign.\"",csv);
+        }
+        finally{Directory.Delete(directory,true);}
+    }
     private static string Response(string verdict="incorrect",string observed="5.6e4",decimal? score=null,decimal? maximum=null)=>JsonSerializer.Serialize(new
     {
         schema="mewu.grading/1",pageId="page-a",complete=true,items=new[]{new{question="26",observed,expected="5.6e-4",verdict,reason="Exponent sign",skill="Scientific notation",rect=new[]{.6,.2,.2,.1},score,maximum}}
