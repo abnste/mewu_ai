@@ -12,6 +12,19 @@ namespace MewuAI.Tests;
 public sealed class ProviderHttpErrorTests
 {
     [Theory]
+    [InlineData("{\"error\":{\"code\":\"context_length_exceeded\"}}")]
+    [InlineData("{\"error\":{\"message\":\"maximum context length exceeded secret\"}}")]
+    [InlineData("{\"base_resp\":{\"status_code\":1039}}")]
+    public void TextContextErrorsHaveMachineReadableCategoryAndNoVideoGuidance(string body)
+    {
+        var error=ProviderHttpError.Create(400,false,Encoding.UTF8.GetBytes(body));
+        Assert.True(ProviderHttpError.IsContextLimit(error));
+        Assert.DoesNotContain("视频",error.Message);Assert.DoesNotContain("video",error.Message);
+        Assert.DoesNotContain("secret",error.Message);
+        Assert.False(ProviderHttpError.IsContextLimit(ProviderHttpError.Create(401,false,Encoding.UTF8.GetBytes(body))));
+    }
+
+    [Theory]
     [InlineData("<html>secret</html>")]
     [InlineData("{\"error\":")]
     [InlineData("null")]
