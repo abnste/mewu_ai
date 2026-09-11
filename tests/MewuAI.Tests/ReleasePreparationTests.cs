@@ -8,6 +8,20 @@ namespace MewuAI.Tests;
 
 public sealed class ReleasePreparationTests
 {
+    [Fact]
+    public void PromptInputKeepsFlexibleSpaceWithoutOverlappingActionButtons()
+    {
+        var document=XDocument.Load(Fixture("CaptureOverlayWindow.xaml.xml"));
+        XNamespace names="http://schemas.microsoft.com/winfx/2006/xaml";
+        var input=document.Descendants().Single(element=>(string?)element.Attribute(names+"Name")=="PromptInputBorder");
+        var grid=input.Parent!;var column=int.Parse(input.Attribute("Grid.Column")!.Value,System.Globalization.CultureInfo.InvariantCulture);
+        var definitions=grid.Elements().Single(element=>element.Name.LocalName=="Grid.ColumnDefinitions").Elements().ToArray();
+        Assert.InRange(column,0,definitions.Length-1);
+        Assert.True(definitions[column].Attribute("Width") is null||(string?)definitions[column].Attribute("Width")=="*");
+        var occupied=grid.Elements().Where(element=>element.Attribute("Grid.Column") is not null).Select(element=>(string)element.Attribute("Grid.Column")!).ToArray();
+        Assert.Equal(occupied.Length,occupied.Distinct().Count());
+    }
+
     private static string Fixture(string name)=>Path.Combine(AppContext.BaseDirectory,"Fixtures",name);
 
     [Fact]
@@ -15,14 +29,14 @@ public sealed class ReleasePreparationTests
     {
         var project=XDocument.Load(Fixture("Product.csproj.xml"));
         var propertyGroup=project.Root!.Elements("PropertyGroup").First();
-        Assert.Equal("0.4.2",propertyGroup.Element("Version")?.Value);
-        Assert.Equal("0.4.2.0",propertyGroup.Element("AssemblyVersion")?.Value);
-        Assert.Equal("0.4.2.0",propertyGroup.Element("FileVersion")?.Value);
+        Assert.Equal("0.4.3",propertyGroup.Element("Version")?.Value);
+        Assert.Equal("0.4.3.0",propertyGroup.Element("AssemblyVersion")?.Value);
+        Assert.Equal("0.4.3.0",propertyGroup.Element("FileVersion")?.Value);
 
         var installer=File.ReadAllText(Fixture("MewuAI.iss.txt"));
-        Assert.Contains("#define MyAppVersion \"0.4.2\"",installer,StringComparison.Ordinal);
-        Assert.Contains("VersionInfoVersion=0.4.2.0",installer,StringComparison.Ordinal);
-        Assert.True(File.Exists(Fixture("release-notes-v0.4.2.md")));
+        Assert.Contains("#define MyAppVersion \"0.4.3\"",installer,StringComparison.Ordinal);
+        Assert.Contains("VersionInfoVersion=0.4.3.0",installer,StringComparison.Ordinal);
+        Assert.True(File.Exists(Fixture("release-notes-v0.4.3.md")));
     }
 
     [Fact]

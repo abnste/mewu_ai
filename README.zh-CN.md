@@ -3,14 +3,14 @@
   <h1>喵呜AI</h1>
   <p>Windows 截图工具，支持录屏、贴图、文字识别和 AI 标注。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.2"><img src="https://img.shields.io/badge/公测版-v0.4.2-7C6CF0?style=flat-square" alt="v0.4.2 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.3"><img src="https://img.shields.io/badge/公测版-v0.4.3-7C6CF0?style=flat-square" alt="v0.4.3 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.2/MewuAI-Setup-0.4.2-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Setup-0.4.3-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.2/MewuAI-Portable-0.4.2-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Portable-0.4.3-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -23,7 +23,7 @@
 
 ## 功能
 
-- **试卷与作业**：导入 PDF 指定页或跨次收集截图，逐页辅助批改与人工核对；汇总多份作答的共同问题，编辑并导出分开的练习和答案。[使用说明](./docs/teaching-workflow.md)。
+- **试卷与作业**：像普通截图一样引用试卷，直接让 AI 讲解、批注；引用多张截图分析共同问题并生成练习，识读与判分仍需人工核对。
 
 - **截图与长截图**：框选区域、选择窗口、多屏截图，支持上下滚动截取长页面。
 - **标注与贴图**：画笔、高亮、箭头、形状、文字、序号和马赛克；拖动调整已有标注，把截图置顶在桌面上参考。
@@ -65,7 +65,7 @@
 
 ### 试卷批改
 
-在原卷上查看勾叉和待核标记，逐题核对识读、正确答案与判定，也可以重新框出作答位置。收集多份作答后，可根据已确认的共同错题生成巩固练习。[查看教学流程](./docs/teaching-workflow.md)。
+框选试卷后，在原有对话条中提出批改、讲解或出题要求；可引用多张截图一起分析。下图为 0.4.2 的真实答卷人工复核演示，保留用于展示原位批注与数学排版；当前版本已移除独立试卷入口，统一使用普通截图问答。
 
 <p align="center">
   <a href="./docs/images/hkdse-2025-inplace-math-zh.png"><img src="./docs/images/hkdse-2025-inplace-math-zh.png" width="100%" alt="2025 HKDSE 真实手写答卷完成逐题核对，显示两处错误标注、分行计算和批改说明" /></a>

@@ -3,14 +3,14 @@
   <h1>MewuAI</h1>
   <p>A Windows screenshot tool with screen recording, pinned images, text recognition, and AI annotations.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.2"><img src="https://img.shields.io/badge/Public_Beta-v0.4.2-7C6CF0?style=flat-square" alt="v0.4.2 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.3"><img src="https://img.shields.io/badge/Public_Beta-v0.4.3-7C6CF0?style=flat-square" alt="v0.4.3 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.2/MewuAI-Setup-0.4.2-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Setup-0.4.3-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.2/MewuAI-Portable-0.4.2-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Portable-0.4.3-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -23,7 +23,7 @@ Select something on your screen and ask AI to translate it, explain it, or highl
 
 ## Features
 
-- **Papers and assignments:** Import selected PDF pages or collect screenshots across capture sessions. Review per-page grading, compare shared errors across submissions, and edit/export separate practice questions and answers. Teacher confirmation remains required. [Workflow guide](./docs/teaching-workflow.md).
+- **Papers and assignments:** Reference exam screenshots in the ordinary conversation bar for explanations and annotations. Reference multiple screenshots to discuss shared problems and generate practice questions; readings and grading still need human review.
 
 - **Screenshots and scrolling capture:** Select a region or window, capture across monitors, and scroll up or down to capture long pages.
 - **Annotations and pinned images:** Add pen strokes, highlights, arrows, shapes, text, numbered markers, and pixelation. Drag annotations to adjust them, or pin a screenshot on your desktop for reference.
@@ -65,7 +65,7 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 
 ### Paper grading
 
-See correct, incorrect and uncertain answers marked on the original page. Review the reading, expected answer and verdict, or adjust an answer box. Collect several submissions to build practice from their reviewed shared errors. [Explore the teaching workflow](./docs/teaching-workflow.md).
+Select an exam region and ask for grading, explanations or practice in the existing conversation bar; reference multiple screenshots to analyze them together. The image below is a human-reviewed demonstration from 0.4.2, retained to show in-place annotations and math typesetting. The current version uses ordinary screenshot conversations and no longer has a separate paper workflow entry.
 
 <p align="center">
   <a href="./docs/images/hkdse-2025-inplace-math-en.png"><img src="./docs/images/hkdse-2025-inplace-math-en.png" width="100%" alt="Reviewed official HKDSE handwritten script with two marked errors, separate calculation steps and an editable review explanation" /></a>

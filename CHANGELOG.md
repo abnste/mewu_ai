@@ -2,6 +2,13 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.4.3 — 表格识别与回复容量 / Table recognition and response capacity
+
+- MiniMax-M3 问答使用官方最大输出并保留思考，移除固定 8192 token 限制。 / Use M3's documented maximum output while retaining thinking, removing the fixed 8192-token limit.
+- 精简表格请求，保留原批注，完整回复后呈现表格；翻译超限和长行自动拆分补译。 / Simplify table requests, preserve annotations and display completed tables; recover translation limit failures with smaller sections.
+- 移除独立试卷入口，沿用普通截图问答；更新双语说明。 / Remove the separate paper workflow entry and use ordinary screenshot conversations.
+- [完整说明 / Full notes](./docs/release-notes-v0.4.3.md)
+
 ## 0.4.2 — 原卷批注与数学排版 / On-paper feedback and math typesetting
 
 - 错因与正确公式在原卷旁显示、避让作答和密集文字，并随带标注试卷导出。 / Place and export feedback beside answers while avoiding other handwriting and dense text.
