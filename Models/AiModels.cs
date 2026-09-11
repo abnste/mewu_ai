@@ -36,6 +36,7 @@ public sealed class AiRequest
     public bool ExpectStructuredResponse { get; init; }
     public bool DisableReasoning { get; init; }
     public int? MaxOutputTokens { get; init; }
+    public bool UseModelMaximumOutputTokens { get; init; }
 }
 public sealed record AiProviderCapabilities(bool SupportsImage,bool SupportsVideo,bool SupportsStreaming,long MaxImageSize,long MaxVideoSize,TimeSpan MaxVideoDuration,IReadOnlySet<string> AcceptedMimeTypes)
 {

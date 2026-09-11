@@ -39,7 +39,7 @@ public sealed class MiniMaxProvider : OpenAiCompatibleProvider
                 attachments.Add(attachment with{Data=null,FilePath=copy.Path,Duration=copy.Duration,ProviderOwnsData=false});
                 metadata.Append(System.Globalization.CultureInfo.InvariantCulture,$"\n视频附件 {index}：实际时长 {copy.Duration.TotalSeconds:0.###} 秒；编码与采样均为 {VideoAnalysisTimebaseService.FramesPerSecond} FPS，时间标签已经是实际秒数，不要再乘百分比或比例。事件时间精度不应超出采样间隔；不确定时写约或时间范围。");
             }
-            var calibrated=new AiRequest{Prompt=request.Prompt+metadata,Attachments=attachments,History=request.History,StreamingProgress=request.StreamingProgress,AgentProgress=request.AgentProgress,InteractionHandler=request.InteractionHandler,StreamingCompletionPredicate=request.StreamingCompletionPredicate,ExpectStructuredResponse=request.ExpectStructuredResponse,DisableReasoning=request.DisableReasoning,MaxOutputTokens=request.MaxOutputTokens};
+            var calibrated=new AiRequest{Prompt=request.Prompt+metadata,Attachments=attachments,History=request.History,StreamingProgress=request.StreamingProgress,AgentProgress=request.AgentProgress,InteractionHandler=request.InteractionHandler,StreamingCompletionPredicate=request.StreamingCompletionPredicate,ExpectStructuredResponse=request.ExpectStructuredResponse,DisableReasoning=request.DisableReasoning,MaxOutputTokens=request.MaxOutputTokens,UseModelMaximumOutputTokens=request.UseModelMaximumOutputTokens};
             return await base.SendAsync(calibrated,token).ConfigureAwait(false);
         }
         finally{foreach(var copy in copies)copy.Dispose();AiImageEncodingService.ClearAttachmentBuffers(request.Attachments.Where(item=>item is not null));}

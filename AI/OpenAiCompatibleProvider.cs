@@ -350,7 +350,11 @@ public class OpenAiCompatibleProvider : IAiProvider
         ProviderRequestParameterPolicy.Validate(_settings.RequestParameters);
         foreach (var parameter in _settings.RequestParameters) bodyValues[parameter.Key] = parameter.Value;
         var miniMaxM3=_settings.Type.Equals("MiniMax",StringComparison.OrdinalIgnoreCase)&&_settings.Model.Equals("MiniMax-M3",StringComparison.OrdinalIgnoreCase);
-        if(request.MaxOutputTokens is { } maxTokens)bodyValues[miniMaxM3?"max_completion_tokens":"max_tokens"]=maxTokens;
+        // MiniMax's published M3 hard output maximum is 524288. A screen
+        // request must not impose the old 8192-token ceiling on reasoning + answer.
+        // Unknown models retain their backend configuration, never an invented maximum.
+        var maxOutputTokens=request.UseModelMaximumOutputTokens&&miniMaxM3?524288:request.MaxOutputTokens;
+        if(maxOutputTokens is { } maxTokens)bodyValues[miniMaxM3?"max_completion_tokens":"max_tokens"]=maxTokens;
         if(miniMaxM3)
         {
             bodyValues["reasoning_split"]=true;

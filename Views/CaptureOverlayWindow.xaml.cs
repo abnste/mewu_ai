@@ -2125,7 +2125,7 @@ public partial class CaptureOverlayWindow : Window
             referenceDescriptors.Add(new AttachmentReferenceDescriptor(targets.Count+index,file.Handle,file.Label,file.Type,dimensions.Width,dimensions.Height,null,false));
         }
         var turnPrompt=tableRecognition?"识别当前区域中的表格":prompt;var hasVisualAttachments=hasImage||hasVideo;
-        var hadExistingAnnotations=targets.Any(HasAiAnnotations);var providerPrompt=hasVisualAttachments?CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors):prompt;
+        var hadExistingAnnotations=targets.Any(HasAiAnnotations);var providerPrompt=tableRecognition?prompt+"\nReturn one JSON object: {\"answer\":\"complete Markdown tables\",\"annotationMode\":\"preserve\",\"annotations\":[]}. Transcribe all visible rows; do not abbreviate with ellipses or a summary.":hasVisualAttachments?CaptureOverlayPolicy.CreateReferenceAwarePrompt(prompt,referenceDescriptors):prompt;
             var request=CaptureOverlayPolicy.CreateManualAiRequestCancellation();_lastSubmittedPrompt=turnPrompt;_lastSubmittedTurnRecorded=false;_request=request;_requestAnswerReady=false;SendButton.IsEnabled=false;ResetAnswerForRequest();_lastSentAnnotationTargets=[..targets.Select(item=>new SentAnnotationTarget(item.ReferenceHandle,item.VideoPath is null?AiAttachmentType.Image:AiAttachmentType.Video,item)),..uploadedReferences.Select(file=>new SentAnnotationTarget(file.Handle,file.Type,null))];PromptStatus.Text=tableRecognition?"正在识别表格结构…按 Esc 可取消":hasVisualAttachments?$"正在准备 {totalCount} 个附件…按 Esc 可取消":"正在准备文字请求…按 Esc 可取消";var requestStage="provider";var streamOpen=true;var primaryApplied=false;var streamedContent=new System.Text.StringBuilder();var lastPreview=string.Empty;BufferedAiStreamProgress? streamProgress=null;var attachmentLeases=new List<TempMediaLease>();List<AiAttachment>? attachments=null;List<AiAttachment>? repairAttachments=null;
             CrashDiagnosticsService.MarkOperation(hasVideo?"屏幕助手：视频理解请求":hasVisualAttachments?"屏幕助手：图片理解请求":"屏幕助手：文字对话请求");
         try
@@ -2149,19 +2149,26 @@ public partial class CaptureOverlayWindow : Window
                 ()=>CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed,streamOpen),
                 delta=>
                 {
+                    // A table prefix can look valid while rows are still missing.
+                    // Only the completed response becomes visible/copyable.
                     if(delta.ReasoningContent.Length>0)ShowReasoning(delta.ReasoningContent,request);
+                    if(tableRecognition)return;
                     if(delta.Content.Length==0)return;
                     streamedContent.Append(delta.Content);
                     var preview=StructuredResponseParser.GetStreamingAnswerPreview(streamedContent.ToString());
                     if(preview.Length==0||string.Equals(preview,lastPreview,StringComparison.Ordinal))return;
                     lastPreview=preview;ShowAnswer();RefreshAnswer(preview);PromptStatus.Text="正在整理回答…";
                 }):null;
-            var usingAgent=selectedChannel.Kind is ConversationChannelKind.Hermes or ConversationChannelKind.Codex or ConversationChannelKind.WorkBuddy or ConversationChannelKind.MiniMaxCode;var agentProgress=usingAgent?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var disableReasoning=selectedChannel.Kind==ConversationChannelKind.WorkBuddy&&!hasVisualAttachments;var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,CaptureOverlayPolicy.CreateRequestHistory(_history,hasVisualAttachments),attachments,streamProgress,agentProgress,usingAgent?HandleOverlayInteractionAsync:null,hasVisualAttachments,disableReasoning);var result=await provider.SendAsync(aiRequest,request.Token);requestStage="render";streamProgress?.Flush();streamProgress?.ThrowIfFaulted();streamProgress?.Dispose();streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
+            var usingAgent=selectedChannel.Kind is ConversationChannelKind.Hermes or ConversationChannelKind.Codex or ConversationChannelKind.WorkBuddy or ConversationChannelKind.MiniMaxCode;var agentProgress=usingAgent?new Progress<AiAgentEvent>(update=>UpdateOverlayAgentActivity(update,request)):null;var disableReasoning=selectedChannel.Kind==ConversationChannelKind.WorkBuddy&&!hasVisualAttachments;
+            var aiRequest=CaptureOverlayPolicy.CreateScreenAiRequest(providerPrompt,CaptureOverlayPolicy.CreateRequestHistory(_history,hasVisualAttachments),attachments,streamProgress,agentProgress,usingAgent?HandleOverlayInteractionAsync:null,hasVisualAttachments,disableReasoning,tableRecognition);
+            var result=await provider.SendAsync(aiRequest,request.Token);
+            requestStage="render";streamProgress?.Flush();streamProgress?.ThrowIfFaulted();streamProgress?.Dispose();streamOpen=false;if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();
             // Normalize the protocol before touching the answer card, mapping
             // annotations, or writing history. This prevents a complete JSON
             // envelope from flashing in the UI and makes every downstream
             // operation consume the same validated answer.
             result=NormalizeStructuredResult(result,hasVisualAttachments);
+            if(tableRecognition)result=result with{Annotations=[],AnnotationUpdateMode=AiAnnotationUpdateMode.Preserve};
             var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":hasVisualAttachments?"图片请求返回空正文，已保留思考与失败状态":"文字请求返回空正文，已保留思考与失败状态");return;}
             AnswerText.SetLocalReplyImageSources(usingHermes?result.LocalReplyImageSources:[]);
             ShowAnswer();FinishReasoning(result.Reasoning);RefreshAnswer(result.Answer);_requestAnswerReady=true;if(!tableRecognition&&CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=await MapAnnotationsAsync(result.Annotations,request.Token);var primaryReturnedAnnotationCount=primaryMapping.RenderedCount;var renderedAnnotationCount=ApplyAnnotationMapping(primaryMapping,result.AnnotationUpdateMode,true);ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);

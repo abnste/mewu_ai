@@ -234,17 +234,18 @@ internal static class CaptureOverlayPolicy
         IProgress<AiAgentEvent>? agentProgress=null,
         Func<AiInteractionRequest,CancellationToken,Task<AiInteractionResponse>>? interactionHandler=null,
         bool expectStructuredResponse=true,
-        bool disableReasoning=false) => new()
+        bool disableReasoning=false,
+        bool tableRecognition=false) => new()
     {
         Prompt=prompt,
-        History=CreateReplyHistory(history),
+        History=CreateReplyHistory(tableRecognition?[]:history),
         Attachments=attachments,
         StreamingProgress=streamingProgress,
         AgentProgress=agentProgress,
         InteractionHandler=interactionHandler,
         ExpectStructuredResponse=expectStructuredResponse,
         DisableReasoning=disableReasoning,
-        MaxOutputTokens=8192
+        UseModelMaximumOutputTokens=true
     };
 
     internal static bool CanAcceptAiUpdate(
