@@ -27,6 +27,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check private files and credentials
+        shell: pwsh
+        run: ./scripts/Test-Privacy.ps1
+
       - name: Set up .NET 10
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -117,15 +121,8 @@ jobs:
         shell: pwsh
         run: |
           $publish = (Resolve-Path '.\artifacts\release\win-x64').Path
-          $forbidden = Get-ChildItem -LiteralPath $publish -Recurse -File | Where-Object {
-            $_.Extension -in '.pdb','.log','.jsonl','.tmp','.png','.jpg','.jpeg','.gif','.mp4','.webm','.avi','.mkv','.mov' -or
-            $_.Name -in 'settings.json','.env' -or
-            $_.FullName -match '[\\/](Credentials|Logs|History|Temp|Clipboard|Screenshots|Recordings)[\\/]'
-          }
-          if ($forbidden) {
-            $forbidden.FullName | ForEach-Object { Write-Error "Forbidden release file: $_" }
-            throw 'Release payload contains private or development files.'
-          }
+          & './scripts/Test-Privacy.ps1' -Mode Publish -PublishDirectory $publish
+          if ($LASTEXITCODE -ne 0) { throw 'Publish privacy check failed.' }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'MewuAI.exe'))) { throw 'MewuAI.exe is missing.' }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'LICENSE'))) { throw 'MPL-2.0 license is missing.' }
           if (-not (Test-Path -LiteralPath (Join-Path $publish 'SOURCE.md'))) { throw 'Source availability notice is missing.' }

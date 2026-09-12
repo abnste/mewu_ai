@@ -20,6 +20,10 @@
 
 ## 本地验证
 
+内部研发备忘、agent 指令、用户配置、凭据、原始调试记录及宣传制作目录仅保留本地，不进入提交或发行包。提交使用 GitHub 提供的隐私邮箱；不要把个人邮箱或电脑名写入 Git 作者信息。第三方许可证和必要作者署名必须保留。
+
+提交前运行 `pwsh -NoProfile -File ./scripts/Test-Privacy.ps1`。检查会拒绝私有文件，并使用固定版本、校验过哈希的 Gitleaks 扫描提交历史；检测结果不输出凭据原值。首次运行需要从官方 GitHub 下载扫描器。相同检查会在 Pull Request、主分支更新和正式发布前运行。
+
 ```powershell
 dotnet restore .\mewu_ai_Assistant.slnx --locked-mode
 dotnet build .\mewu_ai_Assistant.slnx -c Release -p:Platform=x64 --no-restore -warnaserror
@@ -27,4 +31,3 @@ dotnet test .\tests\MewuAI.Tests\MewuAI.Tests.csproj -c Release -p:Platform=x64 
 ```
 
 English contributors are welcome. Please include the same environment, reproduction, privacy, and validation details in English when possible.
-

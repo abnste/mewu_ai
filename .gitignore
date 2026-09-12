@@ -10,6 +10,7 @@
 [Cc][Ll][Aa][Uu][Dd][Ee].[Mm][Dd]
 [Gg][Ee][Mm][Ii][Nn][Ii].[Mm][Dd]
 /.private/
+/promo-video/
 /docs/codex-work-integration.md
 /docs/workbuddy-integration.md
 /docs/interaction-latency-*.md
@@ -315,6 +316,14 @@ node_modules/
 .env.*
 !.env.example
 *.secret
+*.pem
+*.key
+*.p12
+*.p8
+*.dmp
+*.dump
+*.sqlite
+*.sqlite3
 secrets.json
 MewuAI/Temp/
 MewuAI/Logs/
