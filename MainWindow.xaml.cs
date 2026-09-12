@@ -6,7 +6,6 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using mewu_ai_Assistant.Services;
-using mewu_ai_Assistant.Interop;
 using System.Windows.Input;
 using System.Windows.Threading;
 using mewu_ai_Assistant.Models;
@@ -15,7 +14,11 @@ public partial class MainWindow : Window
 {
     private const double ShellCornerRadius = 14;
     private readonly AppHost _host;
-    public MainWindow(AppHost host) { _host=host; InitializeComponent(); RefreshStatus();SourceInitialized+=(_,_)=>NativeMethods.ExcludeFromCapture(new System.Windows.Interop.WindowInteropHelper(this).Handle); }
+    // The launcher contains navigation and connection status, not credential
+    // editors or screen content. A protected, persistent launcher HWND also
+    // blocks NVIDIA desktop replay after this window is hidden to the tray.
+    // Sensitive settings windows apply their own capture protection.
+    public MainWindow(AppHost host) { _host=host; InitializeComponent(); RefreshStatus(); }
     private void OnLoaded(object sender,RoutedEventArgs e)=>UpdateShellClip();
     private void OnSizeChanged(object sender,SizeChangedEventArgs e)=>UpdateShellClip();
     private void OnDpiChanged(object sender,DpiChangedEventArgs e)
