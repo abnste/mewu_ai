@@ -61,10 +61,22 @@ internal static class TranslationOverlayLayoutService
 
     internal static Rect PlaceWithin(Rect source,Rect cell,double width,double height)
     {
+        cell=AnchorCell(source,cell);
         if(cell.IsEmpty||!IsFinitePositive(width)||!IsFinitePositive(height))return Rect.Empty;
-        width=Math.Min(Math.Max(width,source.Width),cell.Width);height=Math.Min(Math.Max(height,source.Height),cell.Height);
-        return new Rect(Math.Clamp(source.Left,cell.Left,cell.Right-width),
-            Math.Clamp(source.Top-(height-source.Height)/2,cell.Top,cell.Bottom-height),width,height);
+        width=Math.Min(Math.Max(width,source.Right-cell.Left+HorizontalPadding/2),cell.Width);
+        height=Math.Min(Math.Max(height,source.Bottom-cell.Top+VerticalPadding/2),cell.Height);
+        return new Rect(cell.Left,cell.Top,width,height);
+    }
+
+    // Grow from the OCR origin toward available space. Giving the renderer
+    // the entire XY-cut cell allowed a long label near the right edge to move
+    // hundreds of pixels left; vertically centering wrapped text moved it up.
+    internal static Rect AnchorCell(Rect source,Rect cell)
+    {
+        if(source.IsEmpty||cell.IsEmpty)return Rect.Empty;
+        var left=Math.Clamp(source.Left-HorizontalPadding/2,cell.Left,cell.Right);
+        var top=Math.Clamp(source.Top-VerticalPadding/2,cell.Top,cell.Bottom);
+        return new Rect(left,top,cell.Right-left,cell.Bottom-top);
     }
 
     internal static Rect Place(Rect source,Size canvas,double contentWidth,double contentHeight)

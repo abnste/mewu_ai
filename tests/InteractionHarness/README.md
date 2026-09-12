@@ -1,5 +1,7 @@
 # 覆盖层交互回放
 
+翻译专项：Release 构建后运行 `dotnet tests/InteractionHarness/bin/x64/Release/net10.0-windows10.0.19041.0/InteractionHarness.dll --teaching --verify-translation`，用实际 PP-OCRv6 识别合成双栏材料，再检验原位锚点和导出像素。加 `--live-translation` 会使用当前默认翻译 API，发送同一合成文本比较并发与串行耗时；不发送桌面、不修改设置。报告及合成图仅保存在 `.codex-build/translation`。
+
 窗口问题回归：Release 构建后运行 `dotnet tests/InteractionHarness/bin/x64/Release/net10.0-windows10.0.19041.0/InteractionHarness.dll --teaching --verify-window-issues`。仅显示合成窗口，检查 Issue #3 的主界面/设置页原生防捕获标记，以及 Issue #4 在普通/教学两种模式下的连续截图、贴图区域鼠标命中、实际贴图命令和退出后的贴图状态。结果写入忽略目录 `.codex-build/issue-3-4/window-replay.json`，失败退出码为 1；NVIDIA 硬件仍需单独验收。
 
 仅本机 Debug 验收：`dotnet run --project tests/InteractionHarness/InteractionHarness.csproj -c Debug -p:Platform=x64`。

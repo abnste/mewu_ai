@@ -13,6 +13,30 @@ namespace MewuAI.Tests;
 
 public sealed class TranslationOverlayLayoutServiceTests
 {
+    [Theory]
+    [InlineData(.5)]
+    [InlineData(1)]
+    [InlineData(1.75)]
+    public void LongRightHandLabelKeepsItsOriginalTextOrigin(double scale)
+    {
+        var source=new Rect(430*scale,40*scale,60*scale,20*scale);
+        var cell=TranslationOverlayLayoutService.AnchorCell(source,new Rect(0,0,500*scale,240*scale));
+        var placement=TranslationOverlayLayoutService.PlaceWithin(source,cell,220*scale,75*scale);
+        Assert.Equal(source.Left,placement.Left+TranslationOverlayLayoutService.HorizontalPadding/2,8);
+        Assert.Equal(source.Top,placement.Top+TranslationOverlayLayoutService.VerticalPadding/2,8);
+        Assert.True(placement.Contains(source));
+        Assert.True(placement.Right<=500*scale);
+    }
+
+    [Fact]
+    public void BottomAndRightEdgeTextUsesRemainingSpaceInsteadOfMovingToAnotherLine()
+    {
+        var source=new Rect(470,275,30,25);
+        var placement=TranslationOverlayLayoutService.PlaceWithin(source,new Rect(0,0,500,300),350,100);
+        Assert.Equal(467,placement.Left);Assert.Equal(274,placement.Top);
+        Assert.Equal(500,placement.Right);Assert.Equal(300,placement.Bottom);
+    }
+
     [Fact]
     public void DenseTranslatedRowsCannotOverlapEvenWhenTheyGrow()
     {

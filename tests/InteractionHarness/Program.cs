@@ -99,6 +99,10 @@ internal static class Program
         {
             IssueTwoReplay.Run(app,overlay);app.Run(overlay);return;
         }
+        if(args.Contains("--verify-translation"))
+        {
+            TranslationReplay.Run(app,overlay,args.Contains("--live-translation"));app.Run(overlay);return;
+        }
         if(args.Contains("--verify-answer-menus"))
         {
             AnswerMenuReplay.Run(app,overlay);app.Run(overlay);return;

@@ -12,6 +12,22 @@ namespace MewuAI.Tests;
 public sealed class OutlinedTextVisualTests
 {
     [Theory]
+    [InlineData("Translation")]
+    [InlineData("翻译文字")]
+    public void VisibleGlyphsStartAtTheRequestedInkOrigin(string text)
+    {
+        RunSta(()=>
+        {
+            var visual=new OutlinedTextVisual([text],"Segoe UI, Microsoft YaHei UI",24,32,Colors.Black,Colors.Black,10,10){Width=260,Height=50};
+            visual.Measure(new Size(260,50));visual.Arrange(new Rect(0,0,260,50));
+            var image=new RenderTargetBitmap(260,50,96,96,PixelFormats.Pbgra32);image.Render(visual);
+            var pixels=new byte[260*50*4];image.CopyPixels(pixels,260*4,0);var left=260;var top=50;
+            for(var y=0;y<50;y++)for(var x=0;x<260;x++)if(pixels[(y*260+x)*4+3]>100){left=Math.Min(left,x);top=Math.Min(top,y);}
+            Assert.InRange(left,9,11);Assert.InRange(top,9,11);
+        });
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void TranslationTextUsesTheOppositeOutlineAndRendersBothTones(bool whiteText)

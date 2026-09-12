@@ -8,6 +8,68 @@ namespace MewuAI.Tests;
 
 public sealed class InPlaceTranslationServiceTests
 {
+    [Fact]
+    public async Task TwoBatchesOverlapAndOutOfOrderCompletionKeepsOriginalLineIdentity()
+    {
+        var provider=new GatedProvider();
+        var source=Enumerable.Range(0,36).Select(i=>$"source-{i}").ToArray();
+        var task=new InPlaceTranslationService().TranslateAsync(provider,source,"English",null,TestContext.Current.CancellationToken);
+        var first=await provider.Next();var second=await provider.Next();
+        Assert.Equal(2,provider.Calls);Assert.False(task.IsCompleted);
+        second.Completion.SetResult(Echo(second.Request));
+        var third=await provider.Next();
+        Assert.Equal(3,provider.Calls);Assert.False(first.Completion.Task.IsCompleted);
+        third.Completion.SetResult(Echo(third.Request));first.Completion.SetResult(Echo(first.Request));
+        Assert.Equal(source,await task.WaitAsync(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task FailedBatchCancelsItsSiblingWithoutStartingMoreBatches()
+    {
+        var provider=new GatedProvider();
+        var task=new InPlaceTranslationService().TranslateAsync(provider,Enumerable.Repeat("row",36).ToArray(),"English",null,TestContext.Current.CancellationToken);
+        var first=await provider.Next();var second=await provider.Next();
+        first.Completion.SetException(ProviderHttpError.Create(401,false,"{}"u8.ToArray()));
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>task.WaitAsync(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken));
+        Assert.True(second.Token.IsCancellationRequested);Assert.Equal(2,provider.Calls);
+    }
+
+    [Fact]
+    public async Task CancellingConcurrentBatchesRejectsTheirResults()
+    {
+        using var cancellation=new CancellationTokenSource();var provider=new GatedProvider();
+        var task=new InPlaceTranslationService().TranslateAsync(provider,Enumerable.Repeat("row",36).ToArray(),"English",null,cancellation.Token);
+        var first=await provider.Next();var second=await provider.Next();cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>task.WaitAsync(TimeSpan.FromSeconds(10),TestContext.Current.CancellationToken));
+        first.Completion.TrySetResult(Echo(first.Request));second.Completion.TrySetResult(Echo(second.Request));
+        Assert.Equal(2,provider.Calls);
+    }
+
+    private static AiResult Echo(AiRequest request)
+    {
+        using var document=System.Text.Json.JsonDocument.Parse(request.Prompt[(request.Prompt.IndexOf("source=",StringComparison.Ordinal)+7)..]);
+        return new(System.Text.Json.JsonSerializer.Serialize(new{translations=document.RootElement}),[]);
+    }
+
+    private sealed record Pending(AiRequest Request,CancellationToken Token,TaskCompletionSource<AiResult> Completion);
+    private sealed class GatedProvider:IAiProvider
+    {
+        private readonly System.Threading.Channels.Channel<Pending> _pending=System.Threading.Channels.Channel.CreateUnbounded<Pending>();
+        private int _calls;
+        public int Calls=>Volatile.Read(ref _calls);
+        public string Id=>"gated-translation";
+        public AiProviderCapabilities Capabilities=>new(false,false,true,0,0,TimeSpan.Zero,new HashSet<string>());
+        public Task<Pending> Next()=>_pending.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        public async Task<AiResult> SendAsync(AiRequest request,CancellationToken token)
+        {
+            Interlocked.Increment(ref _calls);
+            var completion=new TaskCompletionSource<AiResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await _pending.Writer.WriteAsync(new(request,token,completion),token);
+            return await completion.Task.WaitAsync(token);
+        }
+        public Task<bool> TestConnectionAsync(CancellationToken cancellationToken)=>Task.FromResult(true);
+    }
+
     [Theory]
     [InlineData("context")]
     [InlineData("length")]
@@ -64,7 +126,7 @@ public sealed class InPlaceTranslationServiceTests
         });
         var result=await new InPlaceTranslationService().TranslateAsync(provider,[source,"last row"],"English",null,TestContext.Current.CancellationToken);
         Assert.Equal(2,result.Count);Assert.Equal("last row",result[1]);
-        Assert.Equal(source,string.Concat(seen.Take(seen.Count-1)));
+        Assert.Equal(source,string.Concat(seen.Where(value=>value!="last row")));
         Assert.DoesNotContain('\uFFFD',result[0]);
     }
 
@@ -147,7 +209,7 @@ public sealed class InPlaceTranslationServiceTests
         public List<AiRequest> Requests {get;}=[];
         public string Id=>"test";
         public AiProviderCapabilities Capabilities=>new(false,false,true,0,0,TimeSpan.Zero,new HashSet<string>());
-        public Task<AiResult> SendAsync(AiRequest request,CancellationToken cancellationToken){Requests.Add(request);return Task.FromResult(reply(request,Requests.Count));}
+        public Task<AiResult> SendAsync(AiRequest request,CancellationToken cancellationToken){lock(Requests){Requests.Add(request);return Task.FromResult(reply(request,Requests.Count));}}
         public Task<bool> TestConnectionAsync(CancellationToken cancellationToken)=>Task.FromResult(true);
     }
 }

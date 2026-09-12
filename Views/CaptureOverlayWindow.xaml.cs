@@ -1980,7 +1980,11 @@ public partial class CaptureOverlayWindow : Window
     }
     private static BitmapSource RenderTranslationOverlay(SelectionItem item,int pixelWidth,int pixelHeight)
     {
-        var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixelWidth/Math.Max(1,item.Bounds.Width),pixelHeight/Math.Max(1,item.Bounds.Height)));drawing.DrawRectangle(new VisualBrush(item.TextOverlays),null,new Rect(0,0,item.Bounds.Width,item.Bounds.Height));drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixelWidth),Math.Max(1,pixelHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
+        // A default VisualBrush stretches the *painted content bounds*, losing
+        // empty margins and moving every translation during copy/pin/export.
+        var bounds=new Rect(0,0,item.Bounds.Width,item.Bounds.Height);
+        var brush=new VisualBrush(item.TextOverlays){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=bounds,Stretch=Stretch.Fill};
+        var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.PushTransform(new ScaleTransform(pixelWidth/Math.Max(1,item.Bounds.Width),pixelHeight/Math.Max(1,item.Bounds.Height)));drawing.DrawRectangle(brush,null,bounds);drawing.Pop();}var bitmap=new RenderTargetBitmap(Math.Max(1,pixelWidth),Math.Max(1,pixelHeight),96,96,PixelFormats.Pbgra32);bitmap.Render(visual);bitmap.Freeze();return bitmap;
     }
     private bool? AskWhetherToIncludeAnnotations(SelectionItem item)
     {
@@ -3469,7 +3473,7 @@ public partial class CaptureOverlayWindow : Window
         var cells=TranslationOverlayLayoutService.AllocateCells(sourceBounds,new Size(item.Bounds.Width,item.Bounds.Height));
         for(var index=0;index<lines.Count&&index<texts.Count;index++)
         {
-            var value=texts[index]?.Trim();if(string.IsNullOrWhiteSpace(value))continue;var lineBounds=sourceBounds[index];var cell=cells[index];
+            var value=texts[index]?.Trim();if(string.IsNullOrWhiteSpace(value))continue;var lineBounds=sourceBounds[index];var cell=TranslationOverlayLayoutService.AnchorCell(lineBounds,cells[index]);
             if(cell.IsEmpty||cell.Width<=TranslationOverlayLayoutService.HorizontalPadding||cell.Height<=TranslationOverlayLayoutService.VerticalPadding)continue;
             var fontSize=Math.Clamp(lineBounds.Height*.78,9,28);var maxTextWidth=cell.Width-TranslationOverlayLayoutService.HorizontalPadding;IReadOnlyList<TranslationVisualRow> rows=[];double lineHeight=0;
             var low=.1;var high=fontSize;
