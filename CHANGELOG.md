@@ -2,6 +2,13 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.4.4 — 原位翻译与窗口交互 / In-place translation and window interaction
+
+- 翻译批次并行处理，改善原文与译文的定位及复制、贴图、导出一致性。 / Process translation batches concurrently and improve placement across the overlay, copies, pinned images and exports.
+- 修复贴图后的截图层级，调整主界面防捕获以减少录屏冲突。 / Fix capture stacking over pinned images and adjust main-window capture protection.
+- 双语 README 改为六宫格演示，并加强源码与发行包隐私检查。 / Add a six-cell bilingual preview gallery and strengthen repository and package privacy checks.
+- [完整说明 / Full notes](./docs/release-notes-v0.4.4.md)
+
 ## 0.4.3 — 表格识别与回复容量 / Table recognition and response capacity
 
 - MiniMax-M3 问答使用官方最大输出并保留思考，移除固定 8192 token 限制。 / Use M3's documented maximum output while retaining thinking, removing the fixed 8192-token limit.

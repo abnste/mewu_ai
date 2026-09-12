@@ -3,14 +3,14 @@
   <h1>喵呜AI</h1>
   <p>Windows 截图工具，支持录屏、贴图、文字识别和 AI 标注。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.3"><img src="https://img.shields.io/badge/公测版-v0.4.3-7C6CF0?style=flat-square" alt="v0.4.3 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.4"><img src="https://img.shields.io/badge/公测版-v0.4.4-7C6CF0?style=flat-square" alt="v0.4.4 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Setup-0.4.3-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.4/MewuAI-Setup-0.4.4-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Portable-0.4.3-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.4/MewuAI-Portable-0.4.4-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -61,25 +61,28 @@
 <a href="./docs/images/ai-drawing.jpg"><img src="./docs/images/ai-drawing.jpg" width="100%" alt="截图上的 AI 绘图与批注" /></a>
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+<h3>试卷批注</h3>
+<p>引用试卷截图进行讲解和批注；多张截图可一起分析共同问题、生成练习。</p>
+<a href="./docs/images/hkdse-2025-inplace-math-zh.png"><img src="./docs/images/hkdse-2025-inplace-math-zh.png" width="100%" alt="真实 HKDSE 手写答卷经人工复核后的原位批注与数学排版演示" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>视频分析</h3>
+<p>点击回答中的时间跳到相关画面；播放标记片段时，批注跟随目标移动。</p>
+<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="点击回答定位视频片段，播放时标注跟随目标移动" /></a>
+</td>
+</tr>
 </table>
 
-### 试卷批改
+<details>
+<summary>试卷演示与原卷来源</summary>
 
-框选试卷后，在原有对话条中提出批改、讲解或出题要求；可引用多张截图一起分析。下图为 0.4.2 的真实答卷人工复核演示，保留用于展示原位批注与数学排版；当前版本已移除独立试卷入口，统一使用普通截图问答。
+试卷配图为 0.4.2 的真实答卷人工复核演示，用于展示原位批注与数学排版。当前版本统一使用普通截图、多区域引用和原有对话条，没有独立试卷入口。识读与判分仍需人工核对。
 
-<p align="center">
-  <a href="./docs/images/hkdse-2025-inplace-math-zh.png"><img src="./docs/images/hkdse-2025-inplace-math-zh.png" width="100%" alt="2025 HKDSE 真实手写答卷完成逐题核对，显示两处错误标注、分行计算和批改说明" /></a>
-</p>
+原卷：[香港考评局 2025 HKDSE 数学必修部分公开答卷示例](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3)（PDF 第 3 页，卷面页码 2）。截图保留整页真实手写，展示人工逐题核对、修正识读与作答框后的结果。原卷版权归原机构。
 
-*原卷：[香港考评局 2025 HKDSE 数学必修部分公开答卷示例](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3)（PDF 第 3 页，卷面页码 2）。截图保留整页真实手写，展示 AI 初稿经人工逐题核对、修正识读与作答框后的完成状态。原卷作答旁直接显示错因和正确公式；侧栏的分数、上下标、根式及多步计算按数学格式显示，可切换编辑原文。批改说明可编辑；这不是未经审核的自动判分结果。原卷版权归原机构。*
-
-### 视频分析
-
-录一段操作过程，或上传已有视频，直接提问。回答中的时间按钮可以跳到相关画面；播放标记的片段时，批注会跟随画面变化。
-
-<p align="center">
-  <img src="./docs/media/MewuAI-video-annotations.gif" width="880" alt="点击回答中的时间定位视频，播放时标注跟随目标移动" />
-</p>
+</details>
 
 ## 开始使用
 

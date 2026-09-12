@@ -3,14 +3,14 @@
   <h1>MewuAI</h1>
   <p>A Windows screenshot tool with screen recording, pinned images, text recognition, and AI annotations.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.3"><img src="https://img.shields.io/badge/Public_Beta-v0.4.3-7C6CF0?style=flat-square" alt="v0.4.3 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.4"><img src="https://img.shields.io/badge/Public_Beta-v0.4.4-7C6CF0?style=flat-square" alt="v0.4.4 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Setup-0.4.3-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.4/MewuAI-Setup-0.4.4-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.3/MewuAI-Portable-0.4.3-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.4/MewuAI-Portable-0.4.4-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -61,25 +61,28 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 <a href="./docs/images/ai-drawing.jpg"><img src="./docs/images/ai-drawing.jpg" width="100%" alt="AI drawings and annotations on a screenshot" /></a>
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+<h3>Annotate papers</h3>
+<p>Reference exam screenshots for explanations and annotations, or compare several pages to discuss shared errors and create practice.</p>
+<a href="./docs/images/hkdse-2025-inplace-math-en.png"><img src="./docs/images/hkdse-2025-inplace-math-en.png" width="100%" alt="Human-reviewed annotations and math typesetting on a genuine HKDSE handwritten script" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>Analyze videos</h3>
+<p>Click a time in an answer to jump to a scene. Annotations follow the subject while a marked segment plays.</p>
+<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="Jumping to a video scene from an answer and playing it with tracking annotations" /></a>
+</td>
+</tr>
 </table>
 
-### Paper grading
+<details>
+<summary>About the paper demonstration and its source</summary>
 
-Select an exam region and ask for grading, explanations or practice in the existing conversation bar; reference multiple screenshots to analyze them together. The image below is a human-reviewed demonstration from 0.4.2, retained to show in-place annotations and math typesetting. The current version uses ordinary screenshot conversations and no longer has a separate paper workflow entry.
+The paper image is a human-reviewed demonstration from 0.4.2, showing in-place annotations and math typesetting. The current version uses ordinary screenshot conversations, multiple region references and the existing conversation bar, with no separate paper workflow entry. Readings and grading still need human review.
 
-<p align="center">
-  <a href="./docs/images/hkdse-2025-inplace-math-en.png"><img src="./docs/images/hkdse-2025-inplace-math-en.png" width="100%" alt="Reviewed official HKDSE handwritten script with two marked errors, separate calculation steps and an editable review explanation" /></a>
-</p>
+Original: [HKEAA 2025 HKDSE Mathematics Compulsory Part sample script](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3) (PDF page 3, printed page 2). The complete handwritten page is preserved. The screenshot shows a result after a reviewer checked each question and corrected readings and answer boxes. Copyright belongs to the original owner.
 
-*Original: [HKEAA 2025 HKDSE Mathematics Compulsory Part sample script](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3) (PDF page 3, printed page 2). The complete handwritten scan is preserved. The screenshot shows the AI draft after a reviewer checked both questions and corrected readings and answer boxes. Feedback and correct formulas appear beside the handwriting. The review panel typesets fractions, scripts, roots and separate calculation steps, with editable source and explanations; this is a reviewed result, not unattended grading. Copyright belongs to the original owner.*
-
-### Video analysis
-
-Record a short demonstration or attach an existing video, then ask a question. Time buttons in the answer take you to the relevant scene. Annotations can follow the subject while a marked segment plays.
-
-<p align="center">
-  <img src="./docs/media/MewuAI-video-annotations.gif" width="880" alt="Jumping to a scene from an answer and playing a video with tracking annotations" />
-</p>
+</details>
 
 ## Get started
 
