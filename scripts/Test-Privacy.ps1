@@ -44,6 +44,12 @@ try {
     $privateHistory = @($historyPaths | Where-Object { $_ -and $_ -notmatch '(^|/)\.env\.example$' -and (Test-PrivatePath $_) })
     if ($privateHistory.Count) { throw 'Private files remain in the selected history. Keep original backups local.' }
 
+    $emails = @(git log --format='%ae%n%ce' $RevisionRange)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect commit identities.' }
+    if (@($emails | Where-Object { $_ -notmatch '^[^@\s]+@users\.noreply\.github\.com$|^noreply@github\.com$' }).Count) {
+        throw 'Commit metadata contains a non-private email. Use the GitHub privacy email for the corresponding author; preserve author names.'
+    }
+
     $toolDirectory = Join-Path $repositoryRoot '.codex-build/privacy-tools'
     New-Item -ItemType Directory -Path $toolDirectory -Force | Out-Null
     $archive = Join-Path $toolDirectory 'gitleaks-8.30.1.zip'
@@ -62,6 +68,12 @@ try {
     Expand-Archive -LiteralPath $archive -DestinationPath $toolDirectory -Force
     & (Join-Path $toolDirectory 'gitleaks.exe') git $repositoryRoot "--log-opts=$RevisionRange" --redact=100 --no-banner --timeout=180
     if ($LASTEXITCODE -ne 0) { throw 'Credential scan failed. Review the redacted findings locally.' }
+    $staged = git diff --cached --no-ext-diff --no-color
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect staged changes.' }
+    if ($staged) {
+        $staged | & (Join-Path $toolDirectory 'gitleaks.exe') stdin --redact=100 --no-banner --timeout=180
+        if ($LASTEXITCODE -ne 0) { throw 'Staged credential scan failed. Review the redacted findings locally.' }
+    }
     Write-Output 'Repository privacy check passed.'
 } finally {
     Pop-Location
