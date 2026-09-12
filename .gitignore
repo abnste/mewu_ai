@@ -4,6 +4,22 @@
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 # User-specific files
+# Local agent instructions and private development records must not be published.
+[Aa][Gg][Ee][Nn][Tt].[Mm][Dd]
+[Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]
+[Cc][Ll][Aa][Uu][Dd][Ee].[Mm][Dd]
+[Gg][Ee][Mm][Ii][Nn][Ii].[Mm][Dd]
+/.private/
+/docs/codex-work-integration.md
+/docs/workbuddy-integration.md
+/docs/interaction-latency-*.md
+/docs/optimization-review-*.md
+/docs/teaching-evaluation-*.md
+/docs/teaching-mode-*.md
+/docs/translation-fix-*.md
+/docs/window-issues-*.md
+/docs/patent-research-*.md
+
 *.rsuser
 *.suo
 *.user
