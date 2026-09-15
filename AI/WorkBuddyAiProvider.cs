@@ -8,7 +8,7 @@ using mewu_ai_Assistant.Services;
 
 namespace mewu_ai_Assistant.AI;
 
-internal sealed class WorkBuddyAiProvider(string model,string effort,bool supportsImage) : IAiProvider
+internal sealed class WorkBuddyAiProvider(string model,string effort,bool supportsImage,string? executablePath=null) : IAiProvider
 {
     internal const long ImageLimit=20L*1024*1024,VideoLimit=512L*1024*1024;
     public string Id=>"workbuddy";
@@ -24,7 +24,7 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
         WorkBuddyAcpServer? server=null;
         try
         {
-            server=await WorkBuddyAcpServer.StartAsync(timeout.Token).ConfigureAwait(false);
+            server=await WorkBuddyAcpServer.StartAsync(timeout.Token,false,executablePath).ConfigureAwait(false);
             var catalog=await server.NewSessionAsync(timeout.Token).ConfigureAwait(false);
             var selected=catalog.Models.SingleOrDefault(item=>item.Model==model)
                 ??catalog.Models.FirstOrDefault(item=>item.Model==catalog.CurrentModel)
@@ -57,7 +57,7 @@ internal sealed class WorkBuddyAiProvider(string model,string effort,bool suppor
             Validate(request,supportsImage);
             token.ThrowIfCancellationRequested();
             var hasVideo=request.Attachments.Any(item=>item.Type==AiAttachmentType.Video);
-            server=await WorkBuddyAcpServer.StartAsync(token,hasVideo).ConfigureAwait(false);
+            server=await WorkBuddyAcpServer.StartAsync(token,hasVideo,executablePath).ConfigureAwait(false);
             var catalog=await server.NewSessionAsync(token).ConfigureAwait(false);
             // WorkBuddy can change model IDs and thought-level options after an
             // desktop update. Keep a stale saved value from blocking a turn:

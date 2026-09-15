@@ -13,6 +13,8 @@ internal sealed class CodexSettingsPage : StackPanel
     private readonly ComboBox _model=new(),_effort=new();
     private readonly TextBlock _status=new(){TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,12,0,12)};
     private readonly Button _detect=new();
+    private readonly TextBox _path=new();
+    internal string Path=>_path.Text.Trim();
     private readonly CancellationToken _token;
     private readonly AppSettings _settings;
     private bool _loaded;
@@ -27,6 +29,11 @@ internal sealed class CodexSettingsPage : StackPanel
         Children.Add(form);
         _status.Text=T("打开此页后自动检测登录与模型。","Sign-in and models are checked when this page opens.");
         form.Fields.Children.Add(AiSettingsForm.Field(T("模型","Model"),_model));
+        _path.Text=settings.CodexExecutablePath;_path.IsReadOnly=true;
+        var browse=new Button{Content=T("选择 codex.exe","Choose codex.exe"),Margin=new Thickness(8,0,0,0)};
+        browse.Click+=(_,_)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex executable|codex.exe"};if(d.ShowDialog()==true)_path.Text=d.FileName;};
+        var row=new Grid();row.ColumnDefinitions.Add(new ColumnDefinition());row.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});row.Children.Add(_path);Grid.SetColumn(browse,1);row.Children.Add(browse);
+        form.Fields.Children.Add(AiSettingsForm.Field(T("Codex 程序路径（可选）","Codex executable path (optional)"),row));
         form.Fields.Children.Add(AiSettingsForm.Field(T("思考程度","Reasoning effort"),_effort));
         _model.SelectionChanged+=(_,_)=>UpdateEfforts();
         if(!string.IsNullOrWhiteSpace(settings.CodexModel))
@@ -54,7 +61,7 @@ internal sealed class CodexSettingsPage : StackPanel
         _detect.IsEnabled=false;ConnectionVerified=false;_status.Foreground=Brushes.SlateGray;_status.Text=T("正在检测本机登录和可用模型…","Checking local sign-in and available models…");
         try
         {
-            await using var server=await CodexAppServer.StartAsync(_token);
+            await using var server=await CodexAppServer.StartAsync(_token,false,Path);
             var models=await server.ReadModelsAsync(_token);_token.ThrowIfCancellationRequested();
             var selected=SelectedModel?.Model??_settings.CodexModel;
             _model.Items.Clear();foreach(var model in models)_model.Items.Add(model);

@@ -175,7 +175,7 @@ public sealed class AppHost : IDisposable
             if(!string.IsNullOrWhiteSpace(Settings.HermesProfile)&&!string.IsNullOrWhiteSpace(Settings.HermesModel))
                 channels.Add(new("hermes",$"Hermes · {Settings.HermesProfile}","hermes",Settings.HermesModel??string.Empty,ConversationChannelKind.Hermes,true,true));
         }
-        if(!string.IsNullOrWhiteSpace(Settings.CodexModel)&&CodexAppServer.Discover() is not null)
+        if(!string.IsNullOrWhiteSpace(Settings.CodexModel)&&CodexAppServer.Discover(Settings.CodexExecutablePath) is not null)
         {
             try
             {
@@ -184,7 +184,7 @@ public sealed class AppHost : IDisposable
             }
             catch(InvalidOperationException){}
         }
-        if(!string.IsNullOrWhiteSpace(Settings.WorkBuddyModel)&&WorkBuddyAcpServer.Discover() is not null)
+        if(!string.IsNullOrWhiteSpace(Settings.WorkBuddyModel)&&WorkBuddyAcpServer.Discover(Settings.WorkBuddyExecutablePath) is not null)
         {
             try{WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);channels.Add(new("workbuddy",$"WorkBuddy · {Settings.WorkBuddyModel}","workbuddy",Settings.WorkBuddyModel,ConversationChannelKind.WorkBuddy,Settings.WorkBuddySupportsImage,Settings.WorkBuddySupportsImage));}catch(InvalidOperationException){}
         }
@@ -266,8 +266,8 @@ public sealed class AppHost : IDisposable
             {
                 if(string.IsNullOrWhiteSpace(settings.WorkBuddyModel))throw new InvalidOperationException("WorkBuddy 尚未完成配置，请在设置中选择模型。");
                 WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
-                if(WorkBuddyAcpServer.Discover() is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
-                return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage);
+                if(WorkBuddyAcpServer.Discover(settings.WorkBuddyExecutablePath) is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
+                return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage,settings.WorkBuddyExecutablePath);
             }
             catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
@@ -276,8 +276,8 @@ public sealed class AppHost : IDisposable
             try
             {
                 if(string.IsNullOrWhiteSpace(settings.CodexModel)||settings.CodexModel.Length>160||settings.CodexModel.Any(char.IsControl)||!new[]{"none","minimal","low","medium","high","xhigh","max","ultra"}.Contains(settings.CodexReasoningEffort,StringComparer.Ordinal))throw new InvalidOperationException("请在 Codex 页重新选择可用模型和思考程度。");
-                if(CodexAppServer.Discover() is null)throw new InvalidOperationException("未找到本机 Codex，请安装并登录官方 ChatGPT 桌面应用。");
-                return new CodexAiProvider(settings.CodexModel,settings.CodexReasoningEffort,settings.CodexSupportsImage);
+                if(CodexAppServer.Discover(settings.CodexExecutablePath) is null)throw new InvalidOperationException("未找到本机 Codex，请安装并登录官方 ChatGPT 桌面应用。");
+                return new CodexAiProvider(settings.CodexModel,settings.CodexReasoningEffort,settings.CodexSupportsImage,settings.CodexExecutablePath);
             }
             catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
