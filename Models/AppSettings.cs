@@ -22,10 +22,12 @@ public sealed class AppSettings
     public string ConversationChannelId { get; set; } = string.Empty;
     public bool HermesEnabled { get; set; }
     public bool CodexEnabled { get; set; }
+    public string CodexExecutablePath { get; set; } = string.Empty;
     public string CodexModel { get; set; } = string.Empty;
     public string CodexReasoningEffort { get; set; } = "medium";
     public bool CodexSupportsImage { get; set; }
     public bool WorkBuddyEnabled { get; set; }
+    public string WorkBuddyExecutablePath { get; set; } = string.Empty;
     public string WorkBuddyModel { get; set; } = string.Empty;
     public string WorkBuddyReasoningEffort { get; set; } = "enabled";
     public bool WorkBuddySupportsImage { get; set; }

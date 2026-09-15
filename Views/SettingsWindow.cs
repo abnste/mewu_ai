@@ -1131,6 +1131,8 @@ public sealed partial class SettingsWindow : Window
                 HermesEnabled=hermesEnabled,
                 CodexEnabled=codexEnabled,
                 WorkBuddyEnabled=workBuddyEnabled,
+                CodexExecutablePath=_host.Settings.CodexExecutablePath,
+                WorkBuddyExecutablePath=_host.Settings.WorkBuddyExecutablePath,
                 MiniMaxCodeEnabled=miniMaxCodeEnabled,
                 MiniMaxCodeModel=_miniMaxCodeSettings.SelectedModel?.Model??_host.Settings.MiniMaxCodeModel,
                 WorkBuddyModel=_workBuddySettings.SelectedModel?.Model??_host.Settings.WorkBuddyModel,
