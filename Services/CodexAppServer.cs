@@ -83,7 +83,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
 
     internal static Dictionary<string,object> SafeConfig(bool videoTools=false)=>new()
     {
-        ["model_provider"]="openai",["approval_policy"]="on-request",["approvals_reviewer"]="user",["sandbox_mode"]=videoTools?"workspace-write":"read-only",
+        ["approval_policy"]="on-request",["approvals_reviewer"]="user",["sandbox_mode"]=videoTools?"workspace-write":"read-only",
         ["history.persistence"]="none",["project_doc_max_bytes"]=0,["web_search"]="disabled",
         ["features.shell_tool"]=videoTools,["features.unified_exec"]=videoTools,["features.apps"]=false,
         ["features.plugins"]=false,["features.memories"]=false,["features.js_repl"]=false,
@@ -119,7 +119,6 @@ internal sealed class CodexAppServer : IAsyncDisposable
     {
         if(!result.TryGetProperty("account",out var account)||account.ValueKind!=JsonValueKind.Object)
             throw new InvalidOperationException("Codex 尚未登录，请在官方 ChatGPT 桌面应用或 Codex CLI 中完成登录，再重新检测。");
-        if(Text(account,"type")!="chatgpt")throw new InvalidOperationException("此入口需要 ChatGPT 账号登录；当前 Codex 使用其他认证方式。请在官方客户端切换为 ChatGPT 登录。");
     }
 
     internal async Task<Dictionary<string,object>> ReadIsolatedThreadConfigAsync(CancellationToken token)
