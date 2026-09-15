@@ -135,6 +135,11 @@ internal static class ProviderModelPolicy
             else if (openAi && IsLatestOpenAi(model)) maximum = 128000;
             else if (IsOfficial(endpoint, "api.deepseek.com") && (IsDeepSeekVision(model) || model == "deepseek-v4-pro")) maximum = 393216;
         }
+        // Screen/vision requests only need a bounded structured answer. A
+        // provider maximum intended for long text generation can otherwise
+        // spend minutes in hidden reasoning before producing JSON.
+        if (maximum is { } visualMaximum && request.ExpectStructuredResponse && request.Attachments.Any(item => item?.Type == AiAttachmentType.Image || item?.Type == AiAttachmentType.Video))
+            maximum = Math.Min(visualMaximum, 32768);
         if (maximum is { } tokens)
         {
             var completionBudget = miniMax || openAi && UsesOpenAiCompletionBudget(model) ||
@@ -150,6 +155,16 @@ internal static class ProviderModelPolicy
         else if (request.DisableReasoning && VolcengineModelPolicy.IsEndpoint(endpoint))
         {
             body["thinking"] = new { type = "disabled" };
+            body["reasoning_effort"] = "minimal";
+        }
+        else if (request.DisableReasoning && IsOfficial(endpoint, "api.deepseek.com"))
+        {
+            body["thinking"] = new { type = "disabled" };
+        }
+        else if (request.DisableReasoning && openAi && UsesOpenAiCompletionBudget(model))
+        {
+            // OpenAI reasoning models do not expose a true off switch; minimal
+            // is the supported latency-oriented setting.
             body["reasoning_effort"] = "minimal";
         }
     }
