@@ -250,12 +250,12 @@ public sealed class ProviderInfrastructureTests
     [Fact]
     public void RequestTimeoutPolicyAllowsMoreTimeForVideoUploads()
     {
-        Assert.Equal(TimeSpan.FromMinutes(5),ProviderRequestTimeoutPolicy.For(new AiRequest{Prompt="text"}));
-        Assert.Equal(TimeSpan.FromMinutes(5),ProviderRequestTimeoutPolicy.For(new AiRequest
+        Assert.Equal(TimeSpan.FromMinutes(10),ProviderRequestTimeoutPolicy.For(new AiRequest{Prompt="text"}));
+        Assert.Equal(TimeSpan.FromMinutes(10),ProviderRequestTimeoutPolicy.For(new AiRequest
         {
             Attachments=[new AiAttachment(AiAttachmentType.Image,"image/png",[1])]
         }));
-        Assert.Equal(TimeSpan.FromMinutes(10),ProviderRequestTimeoutPolicy.For(new AiRequest
+        Assert.Equal(TimeSpan.FromMinutes(15),ProviderRequestTimeoutPolicy.For(new AiRequest
         {
             Attachments=[new AiAttachment(AiAttachmentType.Video,"video/mp4",[1])]
         }));

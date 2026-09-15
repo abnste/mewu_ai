@@ -143,8 +143,10 @@ public class OpenAiCompatibleProvider : IAiProvider
             using var reader=new StreamReader(limitedStream,Encoding.UTF8,true,4096,false);
             var accumulator=new StreamingResponseAccumulator(StreamingContentIsCumulative,request.ExpectStructuredResponse);
             var completed=false;
-            while(await reader.ReadLineAsync(token).ConfigureAwait(false) is { } line)
+            var firstChunk=true;
+            while(await reader.ReadLineAsync(token).AsTask().WaitAsync(firstChunk?ProviderRequestTimeoutPolicy.FirstResponse:ProviderRequestTimeoutPolicy.InterChunk,token).ConfigureAwait(false) is { } line)
             {
+                firstChunk=false;
                 if(!StreamingResponseParser.TryParse(line,out var delta,out var done,out var truncated))continue;
                 // Only MiniMax's documented reasoning_details is cumulative.
                 // OpenRouter and other compatible streams send actual deltas,
