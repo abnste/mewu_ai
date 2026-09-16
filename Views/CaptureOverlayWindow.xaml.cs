@@ -588,8 +588,7 @@ public partial class CaptureOverlayWindow : Window
     private void ToggleHistory(object sender,RoutedEventArgs e)
     {
         _historyExpanded=!_historyExpanded;
-                _persistedHistory=entries.Where(entry=>string.Equals(entry.Provider,provider,StringComparison.Ordinal)&&string.Equals(entry.Model,model,StringComparison.Ordinal)).TakeLast(24).ToArray();
-                RefreshHistoryPreview();
+        RefreshHistoryPreview();
         if(_historyExpanded&&!_historyOpenedOnce)
         {
             HistoryScroll.UpdateLayout();
