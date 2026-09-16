@@ -553,7 +553,9 @@ public partial class CaptureOverlayWindow : Window
             {
                 if(_closed||operation.IsCancellationRequested||version!=Volatile.Read(ref _historyLoadVersion))return;
                 var (provider,model)=GetHistoryScope();
-                MergeHistoryEntries(entries.Where(entry=>string.Equals(entry.Provider,provider,StringComparison.Ordinal)&&string.Equals(entry.Model,model,StringComparison.Ordinal)));
+                // Persisted records are displayed/retained on disk, but must not
+                // be injected into a newly opened conversation context. Use the
+                // explicit "新会话" action to control context boundaries.
                 RefreshHistoryPreview();
             },DispatcherPriority.Background);
         }
@@ -582,10 +584,12 @@ public partial class CaptureOverlayWindow : Window
     }
 
     private bool _historyOpenedOnce;
+    private IReadOnlyList<ConversationHistoryEntry> _persistedHistory=[];
     private void ToggleHistory(object sender,RoutedEventArgs e)
     {
         _historyExpanded=!_historyExpanded;
-        RefreshHistoryPreview();
+                _persistedHistory=entries.Where(entry=>string.Equals(entry.Provider,provider,StringComparison.Ordinal)&&string.Equals(entry.Model,model,StringComparison.Ordinal)).TakeLast(24).ToArray();
+                RefreshHistoryPreview();
         if(_historyExpanded&&!_historyOpenedOnce)
         {
             HistoryScroll.UpdateLayout();
@@ -596,6 +600,32 @@ public partial class CaptureOverlayWindow : Window
         e.Handled=true;
     }
 
+    private void StartNewConversation(object sender,RoutedEventArgs e)
+    {
+        if(_closed)return;
+        ResolveOverlayInteractionWithFallback();
+        if(_request is not null)
+        {
+            PromptStatus.Text=LocalizationService.T("当前请求仍在处理中，请稍候。","The current request is still running. Please wait.");
+            return;
+        }
+        _history.Clear();
+        _history.Add(new AiMessage("system",VisualAnnotationProtocol.SystemInstruction));
+        _lastSubmittedPrompt=string.Empty;
+        _lastSubmittedTurnRecorded=false;
+        AnswerText.Markdown=string.Empty;
+        ResponseScroll.Visibility=Visibility.Collapsed;
+        AnswerHeader.Visibility=AnswerScroll.Visibility=AnswerDivider.Visibility=Visibility.Collapsed;
+        _reasoningBuffer.Clear();ReasoningText.Text=string.Empty;
+        ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;
+        _historyExpanded=false;
+        PromptStatus.Text=LocalizationService.T("已开始新会话，之前的历史不会带入本次请求。","New conversation started. Previous history will not be sent with this request.");
+        RefreshHistoryPreview();
+        PositionPromptBar();
+        QuickPrompt.Focus();
+        e.Handled=true;
+    }
+
     private void RefreshHistoryPreview()
     {
         if(!IsInitialized||HistoryItems is null)return;
@@ -603,7 +633,9 @@ public partial class CaptureOverlayWindow : Window
         var messages=_history
             .Where(message=>message is not null&&(string.Equals(message.Role,"user",StringComparison.OrdinalIgnoreCase)||string.Equals(message.Role,"assistant",StringComparison.OrdinalIgnoreCase)))
             .ToArray();
-        var pairs=ConversationHistoryPairing.Pair(messages).TakeLast(6).ToArray();
+        var currentPairs=ConversationHistoryPairing.Pair(messages);
+        var persistedPairs=_persistedHistory.Select(entry=>new ConversationHistoryPair(entry.Prompt,entry.Answer));
+        var pairs=persistedPairs.Concat(currentPairs).GroupBy(pair=>$"{pair.Prompt}\n{pair.Answer}",StringComparer.Ordinal).Select(group=>group.Last()).TakeLast(6).ToArray();
         var latestPairIndex=pairs.Length-1;
         var currentIsInHistory=_lastSubmittedTurnRecorded&&!string.IsNullOrWhiteSpace(_lastSubmittedPrompt)&&latestPairIndex>=0&&string.Equals(pairs[latestPairIndex].Prompt,_lastSubmittedPrompt,StringComparison.Ordinal);
 
