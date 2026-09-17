@@ -38,7 +38,16 @@ public static class StreamingResponseParser
 
     internal static (string Content,string Reasoning) ReadContentParts(JsonElement value)
     {
-        if(value.ValueKind!=JsonValueKind.Object||!value.TryGetProperty("content",out var content))return (string.Empty,string.Empty);
+        if(value.ValueKind!=JsonValueKind.Object)return (string.Empty,string.Empty);
+        if(!value.TryGetProperty("content",out var content))
+        {
+            // A few OpenAI-compatible gateways put their final text in these
+            // aliases.  They are accepted only as explicit text fields; no
+            // reasoning field is ever promoted into an answer.
+            var outputText=ReadString(value,"output_text");
+            if(outputText.Length==0)outputText=ReadString(value,"text");
+            return (outputText,string.Empty);
+        }
         if(content.ValueKind==JsonValueKind.String)return (content.GetString()??string.Empty,string.Empty);
         if(content.ValueKind==JsonValueKind.Object)
         {

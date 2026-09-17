@@ -479,7 +479,8 @@ public partial class CaptureOverlayWindow : Window
         _host.RememberConversationChannel(selected.Id);
         _historyLoadVersion++;
         _history.Clear();_history.Add(new("system",VisualAnnotationProtocol.SystemInstruction));
-        LoadSessionHistory();
+        _persistedHistory=[];LoadSessionHistory();
+        _=LoadPersistedHistoryAsync();
         RefreshHistoryPreview();
         PromptStatus.Text=$"已切换到 {selected.DisplayName}";
         UpdateChannelPickerItems();
@@ -532,10 +533,12 @@ public partial class CaptureOverlayWindow : Window
     private void LoadSessionHistory()
     {
         var (provider,model)=GetHistoryScope();
-        if(string.IsNullOrWhiteSpace(provider))return;
+        if(string.IsNullOrWhiteSpace(provider)){_sessionHistoryPreview=[];return;}
         var entries=_host.GetSessionConversationHistory(provider,model);
-        if(entries.Count==0)return;
-        MergeHistoryEntries(entries);
+        // A new overlay may display turns made earlier in this application
+        // run, but those turns are history only.  Replaying them into _history
+        // silently grows the next request's context and defeats “新会话”.
+        _sessionHistoryPreview=entries.TakeLast(24).ToArray();
     }
 
     private async Task LoadPersistedHistoryAsync()
@@ -556,6 +559,11 @@ public partial class CaptureOverlayWindow : Window
                 // Persisted records are displayed/retained on disk, but must not
                 // be injected into a newly opened conversation context. Use the
                 // explicit "新会话" action to control context boundaries.
+                _persistedHistory=entries
+                    .Where(entry=>string.Equals(entry.Provider,provider,StringComparison.Ordinal)
+                        &&string.Equals(entry.Model,model,StringComparison.Ordinal))
+                    .TakeLast(24)
+                    .ToArray();
                 RefreshHistoryPreview();
             },DispatcherPriority.Background);
         }
@@ -585,6 +593,7 @@ public partial class CaptureOverlayWindow : Window
 
     private bool _historyOpenedOnce;
     private IReadOnlyList<ConversationHistoryEntry> _persistedHistory=[];
+    private IReadOnlyList<ConversationHistoryEntry> _sessionHistoryPreview=[];
     private void ToggleHistory(object sender,RoutedEventArgs e)
     {
         _historyExpanded=!_historyExpanded;
@@ -633,8 +642,8 @@ public partial class CaptureOverlayWindow : Window
             .Where(message=>message is not null&&(string.Equals(message.Role,"user",StringComparison.OrdinalIgnoreCase)||string.Equals(message.Role,"assistant",StringComparison.OrdinalIgnoreCase)))
             .ToArray();
         var currentPairs=ConversationHistoryPairing.Pair(messages);
-        var persistedPairs=_persistedHistory.Select(entry=>new ConversationHistoryPair(entry.Prompt,entry.Answer));
-        var pairs=persistedPairs.Concat(currentPairs).GroupBy(pair=>$"{pair.Prompt}\n{pair.Answer}",StringComparer.Ordinal).Select(group=>group.Last()).TakeLast(6).ToArray();
+        var persistedPairs=_persistedHistory.Concat(_sessionHistoryPreview).Select(entry=>new ConversationHistoryPair(entry.Prompt,entry.Answer));
+        var pairs=persistedPairs.Concat(currentPairs).GroupBy(pair=>$"{pair.Prompt}\n{pair.Answer}",StringComparer.Ordinal).Select(group=>group.Last()).TakeLast(12).ToArray();
         var latestPairIndex=pairs.Length-1;
         var currentIsInHistory=_lastSubmittedTurnRecorded&&!string.IsNullOrWhiteSpace(_lastSubmittedPrompt)&&latestPairIndex>=0&&string.Equals(pairs[latestPairIndex].Prompt,_lastSubmittedPrompt,StringComparison.Ordinal);
 
@@ -657,6 +666,9 @@ public partial class CaptureOverlayWindow : Window
         HistoryToggle.ToolTip=conversationCount>0
             ?LocalizationService.T($"查看提问与历史（{conversationCount}）",$"Prompt & history ({conversationCount})")
             :LocalizationService.T("查看提问与历史","Prompt & history");
+        HistoryToggleLabel.Text=conversationCount>0
+            ?LocalizationService.T($"历史对话 · {conversationCount}",$"History · {conversationCount}")
+            :LocalizationService.T("历史对话","History");
         HistoryPanel.Visibility=_historyExpanded?Visibility.Visible:Visibility.Collapsed;
         HistoryChevronRotation.Angle=_historyExpanded?0:180;
         HistoryScroll.MaxHeight=GetHistoryMaxHeight();
@@ -2225,7 +2237,7 @@ public partial class CaptureOverlayWindow : Window
             // operation consume the same validated answer.
             result=NormalizeStructuredResult(result,hasVisualAttachments);
             if(tableRecognition)result=result with{Annotations=[],AnnotationUpdateMode=AiAnnotationUpdateMode.Preserve};
-            var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=emptyAnswer;PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":hasVisualAttachments?"图片请求返回空正文，已保留思考与失败状态":"文字请求返回空正文，已保留思考与失败状态");return;}
+            var emptyAnswer=AiResultValidation.GetEmptyAnswerMessage(result);if(emptyAnswer is not null){var guidance=AiResultValidation.GetEmptyAnswerGuidance(result);FinishReasoning(result.Reasoning);ShowAnswer();AnswerText.Markdown=string.IsNullOrWhiteSpace(guidance)?emptyAnswer:$"{emptyAnswer}\n\n> {guidance}";PromptStatus.Text=emptyAnswer;new PrivacyLogger().Info("ScreenAiEmptyAnswer",hasVideo?"视频请求返回空正文，已保留思考与失败状态":hasVisualAttachments?"图片请求返回空正文，已保留思考与失败状态":"文字请求返回空正文，已保留思考与失败状态");return;}
             AnswerText.SetLocalReplyImageSources(usingHermes?result.LocalReplyImageSources:[]);
             ShowAnswer();FinishReasoning(result.Reasoning);RefreshAnswer(result.Answer);_requestAnswerReady=true;if(!tableRecognition&&CaptureOverlayPolicy.ShouldClearDraft(QuickPrompt.Text,sentDraft))QuickPrompt.Clear();var primaryMapping=await MapAnnotationsAsync(result.Annotations,request.Token);var primaryReturnedAnnotationCount=primaryMapping.RenderedCount;var renderedAnnotationCount=ApplyAnnotationMapping(primaryMapping,result.AnnotationUpdateMode,true);ApplyVideoAnswerActions(result.Answer);primaryApplied=true;LogAnnotationMapping("初稿",primaryMapping);
             AgentActivityCard.Visibility=Visibility.Collapsed;

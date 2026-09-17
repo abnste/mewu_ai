@@ -428,7 +428,17 @@ public sealed class AppHost : IDisposable
     {
         error=null;warning=null;var previous=Settings;var startupChanged=candidate.LaunchAtStartup!=previous.LaunchAtStartup;
         var hotkeyChanged=candidate.CaptureHotkey.Key!=previous.CaptureHotkey.Key||candidate.CaptureHotkey.Modifiers!=previous.CaptureHotkey.Modifiers;
-        if(_hotkey?.Register(candidate.CaptureHotkey)==false){error="该快捷键可能已被其他应用占用，旧快捷键仍然有效。";return false;}
+        // A global hotkey belongs to the operating system, while Providers and
+        // their credentials are ordinary application settings.  Do not make a
+        // collision in the former discard edits to the latter.  Register uses
+        // a spare hotkey id first, so a false result leaves the old binding in
+        // place; persist that old binding as well and explain the downgrade.
+        if(hotkeyChanged&&_hotkey?.Register(candidate.CaptureHotkey)==false)
+        {
+            candidate.CaptureHotkey=new HotkeySetting { Key=previous.CaptureHotkey.Key,Modifiers=previous.CaptureHotkey.Modifiers };
+            hotkeyChanged=false;
+            warning="快捷键已被其他应用占用：Provider 和其他设置已保存，仍在使用原快捷键。请修改快捷键后再保存。";
+        }
         try
         {
             if(startupChanged)StartupService.SetEnabled(candidate.LaunchAtStartup);
