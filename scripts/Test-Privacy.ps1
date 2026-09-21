@@ -44,9 +44,20 @@ try {
     $privateHistory = @($historyPaths | Where-Object { $_ -and $_ -notmatch '(^|/)\.env\.example$' -and (Test-PrivatePath $_) })
     if ($privateHistory.Count) { throw 'Private files remain in the selected history. Keep original backups local.' }
 
-    $emails = @(git log --format='%ae%n%ce' $RevisionRange)
+    $privateEmailPattern = '^[^@\s]+@users\.noreply\.github\.com$|^noreply@github\.com$'
+    $identities = @(git log --format='%H%x09%P%x09%ae%x09%ce' $RevisionRange)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect commit identities.' }
-    if (@($emails | Where-Object { $_ -notmatch '^[^@\s]+@users\.noreply\.github\.com$|^noreply@github\.com$' }).Count) {
+    $invalidIdentities = @($identities | Where-Object {
+        $fields = $_ -split "`t", 4
+        if ($fields.Count -ne 4) { return $true }
+        $parents = @($fields[1] -split ' ' | Where-Object { $_ })
+        $authorEmail = $fields[2]
+        $committerEmail = $fields[3]
+        $githubMergeCommit = $parents.Count -gt 1 -and $committerEmail -eq 'noreply@github.com'
+        return $committerEmail -notmatch $privateEmailPattern -or
+            (-not $githubMergeCommit -and $authorEmail -notmatch $privateEmailPattern)
+    })
+    if ($invalidIdentities.Count) {
         throw 'Commit metadata contains a non-private email. Use the GitHub privacy email for the corresponding author; preserve author names.'
     }
 
