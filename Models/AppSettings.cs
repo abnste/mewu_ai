@@ -18,16 +18,16 @@ public sealed class AppSettings
     public bool RecordMicrophone { get; set; }
     public bool SaveConversationHistory { get; set; } public bool EnableVoiceInput { get; set; } public bool AutomaticallyStartListening { get; set; }
     public string VoiceLanguage { get; set; } = "system"; public string? DefaultProviderId { get; set; }
+    public string NetworkProxyMode { get; set; } = "system";
+    public string NetworkProxyUrl { get; set; } = string.Empty;
     /// <summary>Last conversation channel selected in the screen assistant.</summary>
     public string ConversationChannelId { get; set; } = string.Empty;
     public bool HermesEnabled { get; set; }
     public bool CodexEnabled { get; set; }
-    public string CodexExecutablePath { get; set; } = string.Empty;
     public string CodexModel { get; set; } = string.Empty;
     public string CodexReasoningEffort { get; set; } = "medium";
     public bool CodexSupportsImage { get; set; }
     public bool WorkBuddyEnabled { get; set; }
-    public string WorkBuddyExecutablePath { get; set; } = string.Empty;
     public string WorkBuddyModel { get; set; } = string.Empty;
     public string WorkBuddyReasoningEffort { get; set; } = "enabled";
     public bool WorkBuddySupportsImage { get; set; }
@@ -52,6 +52,17 @@ public sealed class AiProviderSettings
 {
     [JsonRequired] public string Id { get; set; } = Guid.NewGuid().ToString("N"); public string Name { get; set; } = "MiniMax"; [JsonRequired] public string Type { get; set; } = "MiniMax";
     [JsonRequired] public string BaseUrl { get; set; } = "https://api.minimaxi.com/v1"; [JsonRequired] public string Model { get; set; } = "MiniMax-M3"; public string CredentialId { get; set; } = string.Empty;
+    /// <summary>Wire protocol used by the upstream. Auto keeps legacy behavior and detects official endpoints.</summary>
+    public string ApiFormat { get; set; } = "auto";
+    /// <summary>Authentication policy: auto, bearer, api_key, anthropic_api_key, anthropic_auth_token, none.</summary>
+    public string AuthMode { get; set; } = "auto";
+    /// <summary>Optional complete request path (for regional gateways and plan endpoints).</summary>
+    public string RequestPath { get; set; } = string.Empty;
+    /// <summary>Optional provider region/plan labels retained for routing and diagnostics.</summary>
+    public string Region { get; set; } = string.Empty;
+    public string Plan { get; set; } = string.Empty;
+    /// <summary>Optional account/organization header value (stored as a credential reference when sensitive).</summary>
+    public string AccountIdHeader { get; set; } = string.Empty;
     public Dictionary<string,string> CustomHeaders { get; set; } = [];
     public Dictionary<string,System.Text.Json.JsonElement> RequestParameters { get; set; } = [];
     public Dictionary<string,string> SensitiveHeaderCredentialIds { get; set; } = [];

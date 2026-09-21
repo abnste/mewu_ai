@@ -7,7 +7,7 @@ namespace mewu_ai_Assistant.Services;
 internal enum ProviderPresetGroup { China, Global, Custom }
 
 internal sealed record ProviderPreset(string Id, string Name, string Type, string BaseUrl, string DefaultModel,
-    ProviderPresetGroup Group = ProviderPresetGroup.China, string EnglishName = "", string SearchTerms = "")
+    ProviderPresetGroup Group = ProviderPresetGroup.China, string EnglishName = "", string SearchTerms = "",string ApiFormat="auto",string AuthMode="auto",string Region="",string Plan="")
 {
     internal bool RequiresBaseUrl => Id == "Custom";
     internal string LocalizedName => LocalizationService.T(Name, string.IsNullOrEmpty(EnglishName) ? Name : EnglishName);
@@ -29,7 +29,9 @@ internal static class ProviderPresetPolicy
         new("Baidu", "百度千帆", "OpenAICompatible", "https://qianfan.baidubce.com/v2", "", EnglishName: "Baidu Qianfan", SearchTerms: "文心 ERNIE"),
         new("SiliconFlow", "硅基流动", "OpenAICompatible", "https://api.siliconflow.cn/v1", "", EnglishName: "SiliconFlow China"),
         new("OpenAI", "OpenAI", "OpenAICompatible", "https://api.openai.com/v1", "", ProviderPresetGroup.Global, SearchTerms: "ChatGPT GPT"),
-        new("Anthropic", "Anthropic Claude", "OpenAICompatible", "https://api.anthropic.com/v1", "", ProviderPresetGroup.Global),
+        new("Anthropic", "Anthropic Claude", "OpenAICompatible", "https://api.anthropic.com/v1", "", ProviderPresetGroup.Global,ApiFormat:"anthropic",AuthMode:"api_key"),
+        new("AnthropicBearer", "Anthropic 兼容中转", "OpenAICompatible", "http://localhost", "", ProviderPresetGroup.Custom, "Anthropic relay", "Claude Messages Bearer proxy",ApiFormat:"anthropic",AuthMode:"bearer"),
+        new("OpenAIResponses", "OpenAI Responses", "OpenAICompatible", "https://api.openai.com/v1", "", ProviderPresetGroup.Global,SearchTerms:"Responses GPT o-series",ApiFormat:"responses",AuthMode:"bearer"),
         new("Google", "Google Gemini", "OpenAICompatible", "https://generativelanguage.googleapis.com/v1beta/openai", "", ProviderPresetGroup.Global),
         new("xAI", "xAI Grok", "OpenAICompatible", "https://api.x.ai/v1", "", ProviderPresetGroup.Global),
         new("OpenRouter", "OpenRouter", "OpenAICompatible", "https://openrouter.ai/api/v1", "", ProviderPresetGroup.Global),
@@ -48,13 +50,15 @@ internal static class ProviderPresetPolicy
         // Recognize existing addresses without rewriting saved settings or credentials.
         if (settings.Type.Equals("MiniMax", StringComparison.OrdinalIgnoreCase) &&
             endpoint.Equals("https://api.minimaxi.com/v1", StringComparison.OrdinalIgnoreCase)) return All[0];
+        var format=string.IsNullOrWhiteSpace(settings.BaseUrl)?"chat":ProviderProtocolPolicy.ApiFormat(settings);
         return All.FirstOrDefault(p => p.Id != "Custom" && p.Type.Equals(settings.Type, StringComparison.OrdinalIgnoreCase) &&
-            p.BaseUrl.Equals(endpoint, StringComparison.OrdinalIgnoreCase)) ?? All[^1];
+            p.BaseUrl.Equals(endpoint, StringComparison.OrdinalIgnoreCase) && ProviderProtocolPolicy.ApiFormat(new AiProviderSettings{Type=p.Type,BaseUrl=string.IsNullOrWhiteSpace(p.BaseUrl)?"https://localhost":p.BaseUrl,ApiFormat=p.ApiFormat})==format) ?? All[^1];
     }
 
     internal static AiProviderSettings Create(ProviderPreset preset) => new()
     {
-        Name = preset.LocalizedName, Type = preset.Type, BaseUrl = preset.BaseUrl, Model = preset.DefaultModel
+        Name = preset.LocalizedName, Type = preset.Type, BaseUrl = preset.BaseUrl, Model = preset.DefaultModel,
+        ApiFormat=preset.ApiFormat,AuthMode=preset.AuthMode,Region=preset.Region,Plan=preset.Plan
     };
 
     internal static bool IsUntouchedDraft(AiProviderSettings settings, bool hasPendingKey)

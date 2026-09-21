@@ -15,6 +15,7 @@ public sealed class StreamingResponseParserTests
     [Fact] public void RecognizesDoneSentinel(){Assert.True(StreamingResponseParser.TryParse("data: [DONE]",out var delta,out var done));Assert.Empty(delta.Content);Assert.Empty(delta.ReasoningContent);Assert.True(done);}
     [Fact] public void RecognizesFinishReasonWithoutDoneSentinel(){Assert.True(StreamingResponseParser.TryParse("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}",out _,out var done));Assert.True(done);}
     [Fact] public void RecognizesFinishReasonWhenProviderOmitsFinalDelta(){Assert.True(StreamingResponseParser.TryParse("data: {\"choices\":[{\"finish_reason\":\"stop\"}]}",out var delta,out var done));Assert.True(done);Assert.Empty(delta.Content);Assert.Empty(delta.ReasoningContent);}
+    [Fact] public void ParsesResponsesApiTextDeltaAndCompletion(){Assert.True(StreamingResponseParser.TryParse("data: {\"type\":\"response.output_text.delta\",\"delta\":\"答案\"}",out var delta,out var done));Assert.Equal("答案",delta.Content);Assert.False(done);Assert.True(StreamingResponseParser.TryParse("data: {\"type\":\"response.completed\"}",out _,out done));Assert.True(done);}
     [Theory]
     [InlineData("\"\"")]
     [InlineData("\"   \"")]

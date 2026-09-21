@@ -35,12 +35,8 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
         _reader=ReadAsync();_stderr=DrainErrorsAsync();
     }
 
-    internal static WorkBuddyInstallation? Discover(string? preferredPath=null)
+    internal static WorkBuddyInstallation? Discover()
     {
-        if(!string.IsNullOrWhiteSpace(preferredPath)&&File.Exists(preferredPath)){
-            var dir=Path.GetDirectoryName(Path.GetFullPath(preferredPath))!;var cli=Path.Combine(dir,"resources","app.asar.unpacked","cli","bin","codebuddy");
-            if(File.Exists(cli))return new(preferredPath,cli);
-        }
         var roots=new List<string>
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"WorkBuddy"),
@@ -128,10 +124,10 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
         info.Environment["PATH"]=string.Join(Path.PathSeparator,paths);
     }
 
-    internal static async Task<WorkBuddyAcpServer> StartAsync(CancellationToken token,bool videoTools=false,string? preferredPath=null)
+    internal static async Task<WorkBuddyAcpServer> StartAsync(CancellationToken token,bool videoTools=false)
     {
         token.ThrowIfCancellationRequested();
-        var installation=Discover(preferredPath)??throw new InvalidOperationException("未找到本机 WorkBuddy，请选择 WorkBuddy.exe。");
+        var installation=Discover()??throw new InvalidOperationException("未找到本机 WorkBuddy，请先安装并打开官方 WorkBuddy 完成登录。");
         var directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","WorkBuddyWorkspace",Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         WorkBuddyAcpServer? server=null;

@@ -17,6 +17,7 @@ internal static class ProviderAuthenticationPolicy
     internal static void EnsureUsableCredentials(AiProviderSettings provider,string? apiKey)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        if (ProviderProtocolPolicy.AuthMode(provider)=="none") return;
         var hasPrimary=!string.IsNullOrWhiteSpace(apiKey);
         var hasHeader=provider.CustomHeaders.Any(pair=>ProviderHeaderCredentialService.IsAuthentication(pair.Key)&&!string.IsNullOrWhiteSpace(pair.Value));
         EnsureExclusive(provider.Name,hasPrimary,hasHeader);

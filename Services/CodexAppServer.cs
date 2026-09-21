@@ -33,16 +33,14 @@ internal sealed class CodexAppServer : IAsyncDisposable
         _reader=ReadAsync();_stderr=DrainErrorsAsync();
     }
 
-    internal static string? Discover(string? preferredPath=null)
+    internal static string? Discover()
     {
-        if(!string.IsNullOrWhiteSpace(preferredPath)&&File.Exists(preferredPath)&&Path.GetFileName(preferredPath).Equals("codex.exe",StringComparison.OrdinalIgnoreCase))return Path.GetFullPath(preferredPath);
         var local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var candidates=new List<string>();
         foreach(var entry in (Environment.GetEnvironmentVariable("PATH")??"").Split(Path.PathSeparator))
         {
             var directory=entry.Trim().Trim('"');
             if(Path.IsPathFullyQualified(directory))candidates.Add(Path.Combine(directory,"codex.exe"));
-            if(File.Exists(Path.Combine(directory,"codex.cmd")))candidates.Add(Path.Combine(directory,"node_modules","@openai","codex","node_modules","@openai","codex-win32-x64","vendor","x86_64-pc-windows-msvc","bin","codex.exe"));
         }
         foreach(var product in new[]{"Codex","ChatGPT"})
         {
@@ -60,10 +58,10 @@ internal sealed class CodexAppServer : IAsyncDisposable
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    internal static async Task<CodexAppServer> StartAsync(CancellationToken token,bool videoTools=false,string? preferredPath=null)
+    internal static async Task<CodexAppServer> StartAsync(CancellationToken token,bool videoTools=false)
     {
         token.ThrowIfCancellationRequested();
-        var executable=Discover(preferredPath)??throw new InvalidOperationException("未找到本机 Codex，请选择原生 codex.exe。");
+        var executable=Discover()??throw new InvalidOperationException("未找到本机 Codex，请先安装并登录官方 ChatGPT 桌面应用或 Codex CLI。");
         var directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","CodexWorkspace",Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var info=new ProcessStartInfo(executable){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,WorkingDirectory=directory};
@@ -85,7 +83,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
 
     internal static Dictionary<string,object> SafeConfig(bool videoTools=false)=>new()
     {
-        ["approval_policy"]="on-request",["approvals_reviewer"]="user",["sandbox_mode"]=videoTools?"workspace-write":"read-only",
+        ["model_provider"]="openai",["approval_policy"]="on-request",["approvals_reviewer"]="user",["sandbox_mode"]=videoTools?"workspace-write":"read-only",
         ["history.persistence"]="none",["project_doc_max_bytes"]=0,["web_search"]="disabled",
         ["features.shell_tool"]=videoTools,["features.unified_exec"]=videoTools,["features.apps"]=false,
         ["features.plugins"]=false,["features.memories"]=false,["features.js_repl"]=false,
@@ -121,6 +119,7 @@ internal sealed class CodexAppServer : IAsyncDisposable
     {
         if(!result.TryGetProperty("account",out var account)||account.ValueKind!=JsonValueKind.Object)
             throw new InvalidOperationException("Codex 尚未登录，请在官方 ChatGPT 桌面应用或 Codex CLI 中完成登录，再重新检测。");
+        if(Text(account,"type")!="chatgpt")throw new InvalidOperationException("此入口需要 ChatGPT 账号登录；当前 Codex 使用其他认证方式。请在官方客户端切换为 ChatGPT 登录。");
     }
 
     internal async Task<Dictionary<string,object>> ReadIsolatedThreadConfigAsync(CancellationToken token)

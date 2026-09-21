@@ -48,18 +48,6 @@ public sealed partial class SettingsWindow
         RefreshMaximizeAction();
         actions.Children.Add(maximize);
 
-        var minimize = CreateWindowActionButton("SettingsMinimizeButton");
-        minimize.Content = new System.Windows.Shapes.Path
-        {
-            Data = Geometry.Parse("M2,7 H12"), Width = 14, Height = 14,
-            Stretch = Stretch.Uniform, Stroke = Foreground, StrokeThickness = 1.4,
-            StrokeStartLineCap = PenLineCap.Square, StrokeEndLineCap = PenLineCap.Square
-        };
-        minimize.ToolTip = LocalizationService.T("隐藏设置窗口", "Minimize settings window");
-        AutomationProperties.SetName(minimize, minimize.ToolTip.ToString());
-        minimize.Click += (_, _) => SystemCommands.MinimizeWindow(this);
-        actions.Children.Insert(actions.Children.Count - 1, minimize);
-
         var close = CreateWindowActionButton("SettingsCloseButton");
         close.Content = CloseIcon();
         close.ToolTip = LocalizationService.T("关闭设置", "Close settings");

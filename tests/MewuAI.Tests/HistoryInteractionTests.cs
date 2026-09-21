@@ -78,6 +78,26 @@ public sealed class HistoryInteractionTests
         });
     }
 
+    [Fact]
+    public void ConversationArchiveGroupsTurnsBySessionAndKeepsProviderScope()
+    {
+        var first=new ConversationHistoryEntry(DateTimeOffset.UtcNow.AddMinutes(-2),"MiniMax","M3","第一问","第一答")
+        {
+            SessionId="session-a",SessionTitle="研究计划"
+        };
+        var second=first with { Timestamp=DateTimeOffset.UtcNow,Prompt="第二问",Answer="第二答" };
+        var other=first with { SessionId="session-b",SessionTitle="另一会话",Provider="Hermes" };
+
+        var archives=ConversationHistoryService.CreateSessionArchive([first,second,other]);
+
+        Assert.Equal(2,archives.Count);
+        var current=Assert.Single(archives,archive=>archive.Id=="session-a");
+        Assert.Equal("研究计划",current.Title);
+        Assert.Equal(2,current.TurnCount);
+        Assert.Equal("MiniMax",current.Provider);
+        Assert.Equal("第二问",current.LastPrompt);
+    }
+
     private static void RunSta(Action action)
     {
         Exception? error=null;

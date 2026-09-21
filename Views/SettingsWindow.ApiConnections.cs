@@ -78,6 +78,17 @@ public sealed partial class SettingsWindow
         _requestParameters.FontFamily = new FontFamily("Cascadia Mono, Consolas");
         var advancedContent = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
         advancedContent.Children.Add(AiSettingsForm.Field(LocalizationService.T("API 地址", "API endpoint"), _baseUrl));
+        _apiFormat.IsEditable=true;_apiFormat.ItemsSource=new[]{"auto","chat","responses","anthropic"};
+        _authMode.IsEditable=true;_authMode.ItemsSource=new[]{"auto","bearer","api_key","none"};
+        AiSettingsForm.PrepareEditor(_apiFormat); AiSettingsForm.PrepareEditor(_authMode);
+        AiSettingsForm.PrepareEditor(_requestPath); AiSettingsForm.PrepareEditor(_region); AiSettingsForm.PrepareEditor(_plan);
+        var protocolRow=new Grid();protocolRow.ColumnDefinitions.Add(new ColumnDefinition());protocolRow.ColumnDefinitions.Add(new ColumnDefinition());
+        var formatField=AiSettingsForm.Field("API 格式",_apiFormat); Grid.SetColumn(formatField,0); protocolRow.Children.Add(formatField);
+        var authField=AiSettingsForm.Field("认证模式",_authMode); Grid.SetColumn(authField,1); protocolRow.Children.Add(authField); advancedContent.Children.Add(protocolRow);
+        var routingRow=new Grid();routingRow.ColumnDefinitions.Add(new ColumnDefinition());routingRow.ColumnDefinitions.Add(new ColumnDefinition());
+        var pathField=AiSettingsForm.Field("请求路径（可选）",_requestPath); Grid.SetColumn(pathField,0); routingRow.Children.Add(pathField);
+        var regionField=AiSettingsForm.Field("地区（可选）",_region); Grid.SetColumn(regionField,1); routingRow.Children.Add(regionField); advancedContent.Children.Add(routingRow);
+        advancedContent.Children.Add(AiSettingsForm.Field("Plan / 套餐标识（可选）",_plan));
         var parameterHeader = new Grid();
         parameterHeader.ColumnDefinitions.Add(new ColumnDefinition());
         parameterHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -115,6 +126,12 @@ public sealed partial class SettingsWindow
         _baseUrl.TextChanged += (_, _) => { InvalidateConnectionTest(); ScheduleModelLoad(); };
         _customHeaders.TextChanged += (_, _) => { InvalidateConnectionTest(); ScheduleModelLoad(); };
         _requestParameters.TextChanged += (_, _) => InvalidateConnectionTest();
+        _apiFormat.SelectionChanged += (_, _) => { InvalidateConnectionTest(); ScheduleModelLoad(); };
+        _authMode.SelectionChanged += (_, _) => { InvalidateConnectionTest(); ScheduleModelLoad(); };
+        _apiFormat.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => { InvalidateConnectionTest(); ScheduleModelLoad(); }));
+        _authMode.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => { InvalidateConnectionTest(); ScheduleModelLoad(); }));
+        _requestPath.TextChanged += (_, _) => { InvalidateConnectionTest(); ScheduleModelLoad(); };
+        _region.TextChanged += (_, _) => InvalidateConnectionTest();_plan.TextChanged += (_, _) => InvalidateConnectionTest();
         _model.AddHandler(TextBox.TextChangedEvent, new TextChangedEventHandler((_, _) => InvalidateConnectionTest()));
         _model.Loaded += ApiModelLoaded;
         _apiKey.PasswordChanged += (_, _) =>
@@ -200,7 +217,7 @@ public sealed partial class SettingsWindow
         _providerDrafts[_selectedProvider] = new ApiConnectionDraft(
             _baseUrl.Text, _model.Text,
             _captureProtectionAvailable == false ? ApiConnectionDraft.FromProvider(_selectedProvider).HeadersJson : _customHeaders.Text,
-            _requestParameters.Text);
+            _requestParameters.Text,_apiFormat.Text,_authMode.Text,_requestPath.Text,_region.Text,_plan.Text);
         // Titles may summarize unsaved model/endpoint changes, while raw JSON
         // stays in the draft until an explicit save or connection test.
         _selectedProvider.BaseUrl = _baseUrl.Text.TrimEnd('/');

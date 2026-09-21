@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
 // SPDX-License-Identifier: MPL-2.0
 using System.Windows.Controls;
-using System.Windows;
 using System.Windows.Media;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
@@ -13,8 +12,6 @@ internal sealed class WorkBuddySettingsPage : StackPanel
     private readonly ComboBox _model=new(),_effort=new();
     private readonly TextBlock _status=new();
     private readonly Button _detect=new(),_test=new();
-    private readonly TextBox _path=new();
-    internal string Path=>_path.Text.Trim();
     private readonly CancellationToken _token;
     private readonly AppSettings _settings;
     private bool _loaded;
@@ -30,11 +27,6 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         form.AddAction(_detect,T("刷新模型","Refresh models"));
         _test.ToolTip=T("只检查 WorkBuddy 后台连接、会话、模型和思考选项，不发送对话。","Checks the WorkBuddy bridge, session, model and reasoning options without sending a turn.");
         form.Fields.Children.Add(AiSettingsForm.Field(T("模型","Model"),_model));
-        _path.Text=settings.WorkBuddyExecutablePath;_path.IsReadOnly=true;
-        var browse=new Button{Content=T("选择 WorkBuddy.exe","Choose WorkBuddy.exe"),Margin=new Thickness(8,0,0,0)};
-        browse.Click+=(_,_)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="WorkBuddy executable|WorkBuddy.exe"};if(d.ShowDialog()==true)_path.Text=d.FileName;};
-        var row=new Grid();row.ColumnDefinitions.Add(new ColumnDefinition());row.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});row.Children.Add(_path);Grid.SetColumn(browse,1);row.Children.Add(browse);
-        form.Fields.Children.Add(AiSettingsForm.Field(T("WorkBuddy 程序路径（可选）","WorkBuddy executable path (optional)"),row));
         form.Fields.Children.Add(AiSettingsForm.Field(T("思考程度","Reasoning effort"),_effort));
         if(!string.IsNullOrWhiteSpace(settings.WorkBuddyModel))
         {
@@ -59,7 +51,7 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         _status.Text=T("正在读取 WorkBuddy 模型…","Reading WorkBuddy models…");
         try
         {
-            await using var server=await WorkBuddyAcpServer.StartAsync(_token,false,Path);
+            await using var server=await WorkBuddyAcpServer.StartAsync(_token);
             var catalog=await server.NewSessionAsync(_token);_token.ThrowIfCancellationRequested();
             var previousModel=SelectedModel?.Model??_settings.WorkBuddyModel;var previousEffort=SelectedEffort;
             _model.Items.Clear();foreach(var model in catalog.Models)_model.Items.Add(model);
@@ -78,7 +70,7 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         _status.Foreground=Brushes.SlateGray;_status.Text=T("正在验证 WorkBuddy 回复…","Verifying a WorkBuddy response…");
         try
         {
-            if(!await new WorkBuddyAiProvider(model.Model,SelectedEffort,model.SupportsImage,Path).TestConnectionAsync(_token))throw new InvalidOperationException(T("WorkBuddy 未返回验证标记，请检查登录与额度。","WorkBuddy did not return the verification marker. Check sign-in and allowance."));
+            if(!await new WorkBuddyAiProvider(model.Model,SelectedEffort,model.SupportsImage).TestConnectionAsync(_token))throw new InvalidOperationException(T("WorkBuddy 未返回验证标记，请检查登录与额度。","WorkBuddy did not return the verification marker. Check sign-in and allowance."));
             _token.ThrowIfCancellationRequested();_status.Text=T("已连接 WorkBuddy","Connected to WorkBuddy");_status.Foreground=Brushes.SeaGreen;
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}

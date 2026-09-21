@@ -22,12 +22,15 @@ public class OpenAiCompatibleProvider : IAiProvider
     internal const int AttachmentCountLimit=16;
     internal const long RequestBodySizeLimit=64L*1024*1024;
     internal const long ResponseBodySizeLimit=8L*1024*1024;
+    internal static readonly TimeSpan ReasoningOnlyRetryDelay=TimeSpan.FromMilliseconds(250);
+    internal static readonly TimeSpan InterruptedStreamRetryDelay=TimeSpan.FromMilliseconds(250);
+    internal static readonly TimeSpan PrematureTerminalGracePeriod=TimeSpan.FromMilliseconds(1500);
     private const long JsonStructureBudget=4096;
-    private static readonly HttpClient Client=new(new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false}){Timeout=Timeout.InfiniteTimeSpan};
     private readonly AiProviderSettings _settings;
     private readonly string _apiKey;
     private readonly Uri _baseUri;
     private readonly Func<HttpRequestMessage,HttpCompletionOption,CancellationToken,Task<HttpResponseMessage>> _sendAsync;
+    private readonly HttpClient _httpClient;
     private readonly Func<AiRequest,TimeSpan> _requestTimeout;
 
     public string Id=>_settings.Id;
@@ -36,27 +39,39 @@ public class OpenAiCompatibleProvider : IAiProvider
     protected virtual int MaxAttachmentCount=>AttachmentCountLimit;
     protected virtual long MaxRequestBodySize=>ProviderModelPolicy.MaximumRequestBytes(_settings);
     protected virtual int VideoSamplingFramesPerSecond=>2;
+    private string Protocol=>ProviderProtocolPolicy.ApiFormat(_settings);
 
     public OpenAiCompatibleProvider(AiProviderSettings settings,string apiKey)
-        :this(settings,apiKey,Client.SendAsync,ProviderRequestTimeoutPolicy.For)
+        :this(settings,apiKey,NetworkHttpClientFactory.Create(),null,ProviderRequestTimeoutPolicy.For)
     {
     }
 
     internal OpenAiCompatibleProvider(
         AiProviderSettings settings,
         string apiKey,
-        Func<HttpRequestMessage,HttpCompletionOption,CancellationToken,Task<HttpResponseMessage>> sendAsync,
+        Func<HttpRequestMessage,HttpCompletionOption,CancellationToken,Task<HttpResponseMessage>>? sendAsync,
+        Func<AiRequest,TimeSpan> requestTimeout)
+        :this(settings,apiKey,NetworkHttpClientFactory.Create(),sendAsync,requestTimeout)
+    {
+    }
+
+    private OpenAiCompatibleProvider(
+        AiProviderSettings settings,
+        string apiKey,
+        HttpClient httpClient,
+        Func<HttpRequestMessage,HttpCompletionOption,CancellationToken,Task<HttpResponseMessage>>? sendAsync,
         Func<AiRequest,TimeSpan> requestTimeout)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(sendAsync);
         ArgumentNullException.ThrowIfNull(requestTimeout);
         ProviderHeaderPolicy.EnsureValid(settings.CustomHeaders);
+        ProviderProtocolPolicy.Validate(settings);
         ProviderModelPolicy.ValidateRequestParameters(settings);
         _settings=settings;
         _apiKey=apiKey??throw new ArgumentNullException(nameof(apiKey));
+        _httpClient=httpClient??throw new ArgumentNullException(nameof(httpClient));
         _baseUri=ProviderEndpointPolicy.NormalizeBaseUri(settings.BaseUrl);
-        _sendAsync=sendAsync;
+        _sendAsync=sendAsync??httpClient.SendAsync;
         _requestTimeout=requestTimeout;
         Capabilities=ProviderModelPolicy.GetCapabilities(settings);
     }
@@ -83,7 +98,62 @@ public class OpenAiCompatibleProvider : IAiProvider
             if(timeout<=TimeSpan.Zero||timeout==Timeout.InfiniteTimeSpan)throw new InvalidOperationException("Provider 请求超时必须是有限的正数");
             using var timeoutSource=CancellationTokenSource.CreateLinkedTokenSource(token);
             timeoutSource.CancelAfter(timeout);
-            try{return await SendCoreAsync(request,timeoutSource.Token).ConfigureAwait(false);}
+            try
+            {
+                AiResult result;
+                try
+                {
+                    result=await SendCoreAsync(request,timeoutSource.Token).ConfigureAwait(false);
+                }
+                catch(InvalidDataException exception) when(IsUnexpectedStreamInterruption(exception)&&request.StreamingCompletionPredicate is null)
+                {
+                    // A proxy can close an SSE connection without sending the
+                    // final [DONE]/finish_reason event.  Retry once as a
+                    // regular (non-streaming) completion so a complete answer
+                    // can still be recovered without duplicating live UI text.
+                    new PrivacyLogger().Info("OpenAiStreamRecovery",
+                        $"流式连接在终止事件前结束；provider={_settings.Type};model={_settings.Model};准备非流式兜底重试");
+                    await Task.Delay(InterruptedStreamRetryDelay,timeoutSource.Token).ConfigureAwait(false);
+                    try
+                    {
+                        var recovered=await SendCoreAsync(CreateInterruptedStreamRecoveryRequest(request),timeoutSource.Token).ConfigureAwait(false);
+                        if(!string.IsNullOrWhiteSpace(recovered.Answer))
+                        {
+                            new PrivacyLogger().Info("OpenAiStreamRecovery",
+                                $"非流式兜底重试成功；answerChars={recovered.Answer.Length}");
+                            return recovered;
+                        }
+                    }
+                    catch(Exception retryException) when(retryException is not OperationCanceledException)
+                    {
+                        new PrivacyLogger().Info("OpenAiStreamRecovery",
+                            $"非流式兜底重试失败；error={retryException.GetType().Name}");
+                    }
+                    throw;
+                }
+                if(!ShouldRetryReasoningOnly(result))return result;
+
+                new PrivacyLogger().Info("ReasoningOnlyRecovery",
+                    $"初次响应只有思考内容；provider={_settings.Type};model={_settings.Model};reasoningChars={result.Reasoning.Length};structured={request.ExpectStructuredResponse};准备一次正文兜底重试");
+                await Task.Delay(ReasoningOnlyRetryDelay,timeoutSource.Token).ConfigureAwait(false);
+                var retryRequest=CreateReasoningRecoveryRequest(request);
+                var retried=await SendCoreAsync(retryRequest,timeoutSource.Token).ConfigureAwait(false);
+                if(!string.IsNullOrWhiteSpace(retried.Answer))
+                {
+                    // Preserve the first pass in the UI's reasoning card while
+                    // letting the recovered answer be rendered normally.
+                    retried=retried with { Reasoning=MergeReasoning(result.Reasoning,retried.Reasoning) };
+                    new PrivacyLogger().Info("ReasoningOnlyRecovery",
+                        $"正文兜底重试成功；answerChars={retried.Answer.Length};reasoningChars={retried.Reasoning.Length}");
+                    return retried;
+                }
+
+                // Keep the original reasoning-only result so the UI does not
+                // replace a useful first-pass trace with an empty retry trace.
+                new PrivacyLogger().Info("ReasoningOnlyRecovery",
+                    $"正文兜底重试仍无正文；retryReasoningChars={retried.Reasoning.Length}");
+                return result;
+            }
             catch(OperationCanceledException exception) when(token.IsCancellationRequested)
             {
                 throw new OperationCanceledException("AI 请求已取消",exception,token);
@@ -95,7 +165,93 @@ public class OpenAiCompatibleProvider : IAiProvider
         }
         finally
         {
+            // Attachment buffers belong to the caller only after the whole
+            // request (including reasoning-only / interrupted-stream recovery)
+            // has completed. Clearing them here made the retry serialize a
+            // zeroed image and caused otherwise valid DeepSeek vision retries
+            // to fail with HTTP 400.
             ClearOwnedAttachmentData(request.Attachments);
+        }
+    }
+
+    private static bool ShouldRetryReasoningOnly(AiResult result)
+        =>string.IsNullOrWhiteSpace(result.Answer)
+            &&!string.IsNullOrWhiteSpace(result.Reasoning);
+
+    private static bool IsUnexpectedStreamInterruption(InvalidDataException exception)=>
+        exception.Message.Contains("AI 流式响应意外中断",StringComparison.Ordinal);
+
+    private static bool IsErrorStreamEvent(string line)
+    {
+        var trimmed=line.Trim();
+        if(trimmed.StartsWith("data",StringComparison.OrdinalIgnoreCase))
+        {
+            var colon=trimmed.IndexOf(':');
+            if(colon<0)return false;
+            trimmed=trimmed[(colon+1)..].Trim();
+        }
+        if(trimmed.Length==0||!trimmed.StartsWith('{'))return false;
+        try
+        {
+            using var document=JsonDocument.Parse(trimmed);
+            var type=document.RootElement.TryGetProperty("type",out var property)&&property.ValueKind==JsonValueKind.String
+                ?property.GetString()??string.Empty:string.Empty;
+            return type.Equals("error",StringComparison.OrdinalIgnoreCase)||type.Equals("response.error",StringComparison.OrdinalIgnoreCase)||type.Equals("response.failed",StringComparison.OrdinalIgnoreCase);
+        }
+        catch(JsonException){return false;}
+    }
+
+    private static AiRequest CreateInterruptedStreamRecoveryRequest(AiRequest request)
+        =>new()
+        {
+            Prompt=request.Prompt+"\n\nRecovery instruction: the previous streaming connection ended before its terminal event. Return the complete final answer now.",
+            History=request.History,
+            Attachments=request.Attachments,
+            // Switch to a normal response body. This avoids repeating partial
+            // content in the live stream and bypasses a broken SSE proxy.
+            StreamingProgress=null,
+            AgentProgress=request.AgentProgress,
+            InteractionHandler=request.InteractionHandler,
+            StreamingCompletionPredicate=null,
+            ExpectStructuredResponse=request.ExpectStructuredResponse,
+            DisableReasoning=request.DisableReasoning,
+            MaxOutputTokens=request.MaxOutputTokens,
+            UseModelMaximumOutputTokens=request.UseModelMaximumOutputTokens
+        };
+
+    private static AiRequest CreateReasoningRecoveryRequest(AiRequest request)
+        =>new()
+        {
+            Prompt=request.Prompt+"\n\nRecovery instruction: the previous response contained reasoning only and no final answer. Do not output reasoning. Return the complete final answer now. If a structured response was requested, return one complete valid JSON object with the required answer field.",
+            History=request.History,
+            Attachments=request.Attachments,
+            // Keep the transport mode unchanged for providers that only expose
+            // streaming, but suppress retry reasoning from the UI. The first
+            // pass already rendered that trace and the final result will merge
+            // it back into the completed response if an answer arrives.
+            StreamingProgress=request.StreamingProgress is null?null:new AnswerOnlyProgress(request.StreamingProgress),
+            AgentProgress=request.AgentProgress,
+            InteractionHandler=request.InteractionHandler,
+            StreamingCompletionPredicate=null,
+            ExpectStructuredResponse=request.ExpectStructuredResponse,
+            DisableReasoning=true,
+            MaxOutputTokens=request.MaxOutputTokens,
+            UseModelMaximumOutputTokens=request.UseModelMaximumOutputTokens
+        };
+
+    private static string MergeReasoning(string first,string second)
+    {
+        first=first.Trim();second=second.Trim();
+        if(first.Length==0)return second;
+        if(second.Length==0||second.StartsWith(first,StringComparison.Ordinal))return first.Length>=second.Length?first:second;
+        return $"{first}\n\n{second}";
+    }
+
+    private sealed class AnswerOnlyProgress(IProgress<AiStreamDelta> inner):IProgress<AiStreamDelta>
+    {
+        public void Report(AiStreamDelta value)
+        {
+            if(value.Content.Length>0)inner.Report(new AiStreamDelta(value.Content,string.Empty));
         }
     }
 
@@ -104,6 +260,7 @@ public class OpenAiCompatibleProvider : IAiProvider
         token.ThrowIfCancellationRequested();
         ValidateRequest(request);
         var streaming=request.StreamingProgress is not null&&Capabilities.SupportsStreaming;
+        var startedAt=System.Diagnostics.Stopwatch.GetTimestamp();
         var attachments=await LoadAttachmentsAsync(request.Attachments,token).ConfigureAwait(false);
         SerializedRequest serialized;
         try
@@ -118,17 +275,32 @@ public class OpenAiCompatibleProvider : IAiProvider
         }
         finally
         {
+            // Do not clear caller-owned in-memory bytes here: the outer
+            // SendAsync finally performs that exactly once after all retries.
+            // File-loaded temporary buffers remain provider-owned and can be
+            // wiped as soon as serialization has copied them into JSON.
             foreach(var attachment in attachments)
-                if(attachment.OwnsBytes)CryptographicOperations.ZeroMemory(attachment.Bytes);
+                if(attachment.OwnsBytes && attachment.Attachment.Data is null)
+                    CryptographicOperations.ZeroMemory(attachment.Bytes);
         }
 
         HttpResponseMessage response;
         try
         {
-            using var httpRequest=Create(HttpMethod.Post,"chat/completions");
+            using var httpRequest=Create(HttpMethod.Post,Protocol switch{"anthropic"=>"messages","responses"=>"responses",_=>"chat/completions"});
             httpRequest.Content=new ByteArrayContent(serialized.Body);
             httpRequest.Content.Headers.ContentType=new MediaTypeHeaderValue("application/json"){CharSet="utf-8"};
+            new PrivacyLogger().Info("OpenAiRequestStarted",
+                $"provider={_settings.Type};model={_settings.Model};host={httpRequest.RequestUri?.Host};path={httpRequest.RequestUri?.AbsolutePath};protocol={Protocol};stream={streaming};requestBytes={serialized.Body.Length}");
             response=await _sendAsync(httpRequest,HttpCompletionOption.ResponseHeadersRead,token).ConfigureAwait(false);
+            new PrivacyLogger().Info("OpenAiRequestHeaders",
+                $"provider={_settings.Type};host={httpRequest.RequestUri?.Host};path={httpRequest.RequestUri?.AbsolutePath};protocol={Protocol};stream={streaming};requestBytes={serialized.Body.Length};elapsedMs={ElapsedMilliseconds(startedAt)};status={(int)response.StatusCode}");
+        }
+        catch(OperationCanceledException) when(token.IsCancellationRequested)
+        {
+            new PrivacyLogger().Info("OpenAiRequestCanceled",
+                $"provider={_settings.Type};host={_baseUri.Host};protocol={Protocol};stream={streaming};requestBytes={serialized.Body.Length};elapsedMs={ElapsedMilliseconds(startedAt)}");
+            throw;
         }
         finally{CryptographicOperations.ZeroMemory(serialized.Body);}
         using(response)
@@ -143,25 +315,128 @@ public class OpenAiCompatibleProvider : IAiProvider
             using var reader=new StreamReader(limitedStream,Encoding.UTF8,true,4096,false);
             var accumulator=new StreamingResponseAccumulator(StreamingContentIsCumulative,request.ExpectStructuredResponse);
             var completed=false;
-            while(await reader.ReadLineAsync(token).ConfigureAwait(false) is { } line)
+            var terminalSeen=false;
+            var linesRead=0;
+            var parsedEvents=0;
+            var ignoredLines=0;
+            CancellationTokenSource? terminalGrace=null;
+            try
             {
-                if(!StreamingResponseParser.TryParse(line,out var delta,out var done,out var truncated))continue;
-                // Only MiniMax's documented reasoning_details is cumulative.
-                // OpenRouter and other compatible streams send actual deltas,
-                // including repeated words that must not be deduplicated.
-                if(delta.ReasoningIsCumulative&&!StreamingContentIsCumulative)delta=delta with{ReasoningIsCumulative=false};
-                var accepted=accumulator.Accept(delta,done&&!truncated,request.StreamingProgress,request.StreamingCompletionPredicate);
-                if(truncated&&!accepted)throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
-                if(accepted){completed=true;break;}
+                while(true)
+                {
+                    string? line;
+                    try
+                    {
+                        line=await reader.ReadLineAsync(terminalGrace?.Token??token).ConfigureAwait(false);
+                    }
+                    catch(OperationCanceledException) when(terminalGrace is {IsCancellationRequested:true}&&!token.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    if(line is null)break;
+                    linesRead++;
+                    if(IsErrorStreamEvent(line))throw new InvalidDataException("AI 流式响应返回了错误事件，请检查模型、套餐和 API 配置后重试");
+                    if(!StreamingResponseParser.TryParse(line,out var delta,out var done,out var truncated))
+                    {
+                        ignoredLines++;
+                        continue;
+                    }
+                    parsedEvents++;
+                    // Only MiniMax's documented reasoning_details is cumulative.
+                    // OpenRouter and other compatible streams send actual deltas,
+                    // including repeated words that must not be deduplicated.
+                    if(delta.ReasoningIsCumulative&&!StreamingContentIsCumulative)delta=delta with{ReasoningIsCumulative=false};
+                    var accepted=accumulator.Accept(delta,done&&!truncated,request.StreamingProgress,request.StreamingCompletionPredicate);
+                    if(truncated&&!accepted)throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
+
+                    // Some gateways mark a reasoning event as terminal before
+                    // sending the final content event. Keep the connection open
+                    // for a short grace window so a late answer is not discarded.
+                    if(done&&accumulator.RawAnswer.Length==0)
+                    {
+                        terminalSeen=true;
+                        terminalGrace??=CancellationTokenSource.CreateLinkedTokenSource(token);
+                        terminalGrace.CancelAfter(PrematureTerminalGracePeriod);
+                        continue;
+                    }
+                    if(accumulator.RawAnswer.Length>0&&terminalGrace is not null)
+                    {
+                        terminalGrace.Dispose();terminalGrace=null;terminalSeen=false;
+                    }
+                    if(accepted){completed=true;break;}
+                }
             }
-            if(!completed)throw new InvalidDataException("AI 流式响应意外中断，请重试");
+            finally
+            {
+                terminalGrace?.Dispose();
+            }
+            if(!completed&&!terminalSeen)
+            {
+                new PrivacyLogger().Info("OpenAiStreamInterrupted",
+                    $"连接在终止事件前结束；provider={_settings.Type};model={_settings.Model};lines={linesRead};parsed={parsedEvents};ignored={ignoredLines};answerChars={accumulator.RawAnswer.Length};reasoningChars={accumulator.RawReasoning.Length}");
+                throw new InvalidDataException("AI 流式响应意外中断，请重试");
+            }
+            if(terminalSeen)
+                new PrivacyLogger().Info("OpenAiStreamTerminal",
+                    $"终止事件后正文仍为空；provider={_settings.Type};model={_settings.Model};reasoningChars={accumulator.RawReasoning.Length};graceMs={(int)PrematureTerminalGracePeriod.TotalMilliseconds}");
             token.ThrowIfCancellationRequested();
             return BuildProviderResult(accumulator.RawAnswer,accumulator.RawReasoning,request.ExpectStructuredResponse);
         }
 
         var json=await ReadResponseBodyAsStringAsync(response.Content,token).ConfigureAwait(false);
-        using var document=JsonDocument.Parse(json);
-        if(document.RootElement.GetProperty("choices")[0].TryGetProperty("finish_reason",out var finishReason)&&finishReason.ValueKind==JsonValueKind.String&&finishReason.GetString()=="length")
+        JsonDocument document;
+        try{document=JsonDocument.Parse(json);}
+        catch(JsonException) when(TryParseBufferedStream(json,request.ExpectStructuredResponse,out var recovered))
+        {
+            return recovered;
+        }
+        using(document)
+        {
+        // Each wire protocol has a different terminal/length shape. Never
+        // probe `choices` before selecting the protocol: Anthropic and
+        // Responses bodies are valid JSON but do not contain that property.
+        if(Protocol=="anthropic")
+        {
+            var answer=new StringBuilder();var reasoning=new StringBuilder();
+            if(document.RootElement.TryGetProperty("content",out var blocks)&&blocks.ValueKind==JsonValueKind.Array)
+                foreach(var block in blocks.EnumerateArray())
+                {
+                    var type=ReadString(block,"type");var text=ReadString(block,"text");
+                    if(type.Contains("thinking",StringComparison.OrdinalIgnoreCase)||type.Contains("reasoning",StringComparison.OrdinalIgnoreCase))
+                    {
+                        if(text.Length==0)text=ReadString(block,"thinking");
+                        reasoning.Append(text);
+                    }
+                    else if(type is "text" or "output_text")answer.Append(text);
+                }
+            if(answer.Length==0)answer.Append(ReadString(document.RootElement,"output_text"));
+            if(string.Equals(ReadString(document.RootElement,"stop_reason"),"max_tokens",StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
+            token.ThrowIfCancellationRequested();
+            return BuildProviderResult(answer.ToString(),reasoning.ToString(),request.ExpectStructuredResponse);
+        }
+        if(Protocol=="responses"&&!document.RootElement.TryGetProperty("choices",out _))
+        {
+            var answer=ReadString(document.RootElement,"output_text");
+            var reasoning=new StringBuilder();
+            if(answer.Length==0&&document.RootElement.TryGetProperty("output",out var output)&&output.ValueKind==JsonValueKind.Array)
+                foreach(var item in output.EnumerateArray())
+                    if(item.TryGetProperty("content",out var content)&&content.ValueKind==JsonValueKind.Array)
+                        foreach(var part in content.EnumerateArray())
+                        {
+                            var partType=ReadString(part,"type");var partText=ReadString(part,"text");
+                            if(partType.Contains("reasoning",StringComparison.OrdinalIgnoreCase)||partType.Contains("summary",StringComparison.OrdinalIgnoreCase))reasoning.Append(partText);
+                            else if(partType is "output_text" or "text"||partType.Length==0)answer+=partText;
+                        }
+            var status=ReadString(document.RootElement,"status");
+            if(status.Equals("incomplete",StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
+            token.ThrowIfCancellationRequested();
+            return BuildProviderResult(answer,reasoning.ToString(),request.ExpectStructuredResponse);
+        }
+        if(!document.RootElement.TryGetProperty("choices",out var choices)||choices.ValueKind!=JsonValueKind.Array||choices.GetArrayLength()==0)
+            throw new InvalidDataException("AI 返回了无法识别的响应格式");
+        if(choices[0].TryGetProperty("finish_reason",out var finishReason)&&finishReason.ValueKind==JsonValueKind.String&&finishReason.GetString()=="length")
             throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
         var message=document.RootElement.GetProperty("choices")[0].GetProperty("message");
         var (answerText,typedReasoning)=StreamingResponseParser.ReadContentParts(message);
@@ -173,6 +448,27 @@ public class OpenAiCompatibleProvider : IAiProvider
         token.ThrowIfCancellationRequested();
         return BuildProviderResult(answerText,reasoningText,request.ExpectStructuredResponse);
         }
+    }
+
+    }
+
+    private static bool TryParseBufferedStream(string body,bool expectStructuredResponse,out AiResult result)
+    {
+        result=new(string.Empty,[]);
+        var accumulator=new StreamingResponseAccumulator(false,expectStructuredResponse);
+        var parsed=false;
+        var terminal=false;
+        foreach(var line in body.Split(new[]{"\r\n","\n","\r"},StringSplitOptions.None))
+        {
+            if(!StreamingResponseParser.TryParse(line,out var delta,out var done,out var truncated))continue;
+            parsed=true;
+            terminal|=done;
+            if(truncated)throw new InvalidDataException("AI 回复达到输出长度限制，未收到完整内容，请缩小范围后重试");
+            accumulator.Accept(delta,done,null,null);
+        }
+        if(!parsed||!terminal)return false;
+        result=accumulator.BuildResult();
+        return !string.IsNullOrWhiteSpace(result.Answer)||!string.IsNullOrWhiteSpace(result.Reasoning);
     }
 
     private AiResult BuildProviderResult(string rawContent,string rawReasoning,bool expectStructuredResponse)
@@ -273,13 +569,19 @@ public class OpenAiCompatibleProvider : IAiProvider
 
     protected HttpRequestMessage Create(HttpMethod method,string relative)
     {
-        var request=new HttpRequestMessage(method,new Uri(_baseUri,relative.TrimStart('/')));
+        var request=new HttpRequestMessage(method,ProviderProtocolPolicy.BuildRequestUri(_settings,"/"+relative));
         var hasCustomAuthorization=_settings.CustomHeaders.Keys.Any(name=>name.Equals("Authorization",StringComparison.OrdinalIgnoreCase));
-        if(!hasCustomAuthorization&&!string.IsNullOrWhiteSpace(_apiKey))request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_apiKey);
+        if(!hasCustomAuthorization&&!string.IsNullOrWhiteSpace(_apiKey)&&ProviderProtocolPolicy.AuthMode(_settings)!="none")
+        {
+            if(ProviderProtocolPolicy.AuthMode(_settings)=="api_key")request.Headers.TryAddWithoutValidation("x-api-key",_apiKey);
+            else request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_apiKey);
+        }
         foreach(var header in _settings.CustomHeaders)
             if(!request.Headers.TryAddWithoutValidation(header.Key,header.Value))throw new InvalidOperationException($"无法添加 Provider 请求头：{header.Key}");
-        if(ProviderModelPolicy.NeedsAnthropicVersion(_settings)&&!request.Headers.Contains("anthropic-version"))
+        if((Protocol=="anthropic"||ProviderModelPolicy.NeedsAnthropicVersion(_settings))&&!request.Headers.Contains("anthropic-version"))
             request.Headers.TryAddWithoutValidation("anthropic-version","2023-06-01");
+        if(Protocol=="anthropic"&&!request.Headers.Contains("anthropic-beta"))request.Headers.TryAddWithoutValidation("anthropic-beta","prompt-caching-2024-07-31");
+        if(!string.IsNullOrWhiteSpace(_settings.AccountIdHeader)&&!request.Headers.Contains("ChatGPT-Account-Id"))request.Headers.TryAddWithoutValidation("ChatGPT-Account-Id",_settings.AccountIdHeader);
         return request;
     }
 
@@ -354,6 +656,8 @@ public class OpenAiCompatibleProvider : IAiProvider
     private SerializedRequest SerializeRequest(AiRequest request,IReadOnlyList<LoadedAttachment> attachments,bool streaming,CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        if(Protocol=="anthropic")return SerializeAnthropicRequest(request,attachments,streaming,token);
+        if(Protocol=="responses")return SerializeResponsesRequest(request,attachments,streaming,token);
         var content=new List<object>();
         if(!string.IsNullOrWhiteSpace(request.Prompt))content.Add(new{type="text",text=request.Prompt});
         foreach(var loaded in attachments)
@@ -400,7 +704,56 @@ public class OpenAiCompatibleProvider : IAiProvider
         }
     }
 
+    private SerializedRequest SerializeAnthropicRequest(AiRequest request,IReadOnlyList<LoadedAttachment> attachments,bool streaming,CancellationToken token)
+    {
+        var messages=new List<object>();
+        var history=RequestHistory(request.History);
+        var system=string.Join("\n\n",history.Where(item=>item.Role.Equals("system",StringComparison.OrdinalIgnoreCase)).Select(item=>item.Text).Where(text=>!string.IsNullOrWhiteSpace(text)));
+        foreach(var message in history.Where(item=>item.Role is "user" or "assistant"))
+        {
+            var messageContent=message.Role.Equals("assistant",StringComparison.OrdinalIgnoreCase)
+                ? message.ProviderContent??message.Text : message.Text;
+            messages.Add(new{role=message.Role,content=messageContent});
+        }
+        var content=new List<object>();if(!string.IsNullOrWhiteSpace(request.Prompt))content.Add(new{type="text",text=request.Prompt});
+        foreach(var loaded in attachments)
+        {
+            token.ThrowIfCancellationRequested();var item=loaded.Attachment;var data=Convert.ToBase64String(loaded.Bytes);
+            if(item.Type==AiAttachmentType.Image)content.Add(new{type="image",source=new{type="base64",media_type=item.MimeType,data}});
+            else if(item.Type==AiAttachmentType.Text)content.Add(new{type="text",text=Encoding.UTF8.GetString(loaded.Bytes)});
+            else throw new NotSupportedException("Anthropic Messages API 不支持视频附件");
+        }
+        messages.Add(new{role="user",content});
+        var body=new Dictionary<string,object?>{{"model",_settings.Model},{"messages",messages},{"max_tokens",request.MaxOutputTokens??8192},{"stream",streaming}};
+        if(system.Length>0)body["system"]=system;
+        if(request.DisableReasoning)body["thinking"]=new{type="disabled"};
+        ProviderModelPolicy.ApplyRequestParameters(body,_settings,request);
+        return new(JsonSerializer.SerializeToUtf8Bytes(body));
+    }
+
+    private SerializedRequest SerializeResponsesRequest(AiRequest request,IReadOnlyList<LoadedAttachment> attachments,bool streaming,CancellationToken token)
+    {
+        var input=new List<object>();
+        var history=RequestHistory(request.History);
+        var instructions=string.Join("\n\n",history.Where(item=>item.Role.Equals("system",StringComparison.OrdinalIgnoreCase)).Select(item=>item.Text).Where(text=>!string.IsNullOrWhiteSpace(text)));
+        foreach(var message in history.Where(item=>item.Role is "user" or "assistant"))
+        {
+            var text=message.Role.Equals("assistant",StringComparison.OrdinalIgnoreCase)?message.ProviderContent??message.Text:message.Text;
+            input.Add(new{role=message.Role,content=new[]{new{type=message.Role=="assistant"?"output_text":"input_text",text}}});
+        }
+        var content=new List<object>();if(!string.IsNullOrWhiteSpace(request.Prompt))content.Add(new{type="input_text",text=request.Prompt});
+        foreach(var loaded in attachments){token.ThrowIfCancellationRequested();if(loaded.Attachment.Type==AiAttachmentType.Image)content.Add(new{type="input_image",image_url=$"data:{loaded.Attachment.MimeType};base64,{Convert.ToBase64String(loaded.Bytes)}"});else if(loaded.Attachment.Type==AiAttachmentType.Text)content.Add(new{type="input_text",text=Encoding.UTF8.GetString(loaded.Bytes)});else throw new NotSupportedException("OpenAI Responses API 不支持视频附件");}
+        input.Add(new{role="user",content});
+        var body=new Dictionary<string,object?>{{"model",_settings.Model},{"input",input},{"stream",streaming}};
+        if(instructions.Length>0)body["instructions"]=instructions;
+        if(request.MaxOutputTokens is { } max)body["max_output_tokens"]=max;
+        if(request.DisableReasoning)body["reasoning"]=new{effort="minimal"};
+        foreach(var parameter in _settings.RequestParameters)body[parameter.Key]=parameter.Value;
+        return new(JsonSerializer.SerializeToUtf8Bytes(body));
+    }
+
     private static string FormatTimeout(TimeSpan timeout)=>timeout.TotalMinutes>=1?$"{timeout.TotalMinutes:0.#} 分钟":$"{timeout.TotalSeconds:0.#} 秒";
+    private static long ElapsedMilliseconds(long startedAt)=>checked((long)(System.Diagnostics.Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds));
     private static string FormatMegabytes(long bytes)=>bytes==long.MaxValue?"超大":(bytes/(1024d*1024d)).ToString("0.##",System.Globalization.CultureInfo.InvariantCulture);
     private static void EnsureDeclaredResponseBodySize(HttpContent content)
     {

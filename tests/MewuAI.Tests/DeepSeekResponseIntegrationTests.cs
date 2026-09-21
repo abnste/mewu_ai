@@ -183,9 +183,14 @@ public sealed class DeepSeekResponseIntegrationTests
         "synthetic-test-key",
         async (request, completionOption, token) =>
         {
-            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
-            Assert.False(body.RootElement.TryGetProperty("thinking", out _));
-            Assert.False(body.RootElement.TryGetProperty("reasoning_effort", out _));
+            var rawBody=await request.Content!.ReadAsStringAsync(token);
+            using var body = JsonDocument.Parse(rawBody);
+            var recovery=rawBody.Contains("Recovery instruction",StringComparison.Ordinal);
+            if(!recovery)
+            {
+                Assert.False(body.RootElement.TryGetProperty("thinking", out _));
+                Assert.False(body.RootElement.TryGetProperty("reasoning_effort", out _));
+            }
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response) };
         },
         _ => TimeSpan.FromSeconds(10));

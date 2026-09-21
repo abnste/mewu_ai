@@ -62,6 +62,8 @@ public partial class CaptureOverlayWindow : Window
     private List<SentAnnotationTarget> _lastSentAnnotationTargets=[];
     private readonly List<AiMessage> _history=[new("system",VisualAnnotationProtocol.SystemInstruction)];
     private string _lastSubmittedPrompt=string.Empty;
+    private string _conversationSessionId=Guid.NewGuid().ToString("N");
+    private string _conversationSessionTitle="新会话";
     private CancellationTokenSource? _historyLoadRequest;
     private int _historyLoadVersion;
     private Point _start,_moveStart;
@@ -126,6 +128,7 @@ public partial class CaptureOverlayWindow : Window
     private IReadOnlyList<ConversationChannel> _conversationChannels=[];
     private string _selectedConversationChannelId=string.Empty;
     private bool _lastSubmittedTurnRecorded;
+    private sealed record ConversationSessionSummary(string Id,string Title,DateTimeOffset LastUpdated,int TurnCount);
     private readonly NativeWindowSnapService _windowSnap=new();
     private Rect _snapCandidate=Rect.Empty;
     private Rect _stableSnapCandidate=Rect.Empty;
@@ -299,7 +302,7 @@ public partial class CaptureOverlayWindow : Window
 
     private SelectionItem? Active=>_activeIndex>=0&&_activeIndex<_selections.Count?_selections[_activeIndex]:null;
 
-    public CaptureOverlayWindow(AppHost host)
+    public CaptureOverlayWindow(AppHost host,ConversationSessionArchive? restoredSession=null)
     {
         _host=host;IsTeachingMode=host.Settings.TeachingMode;_frame=new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=AnswerText.ContainsTable?Visibility.Visible:Visibility.Collapsed;
         QuickPrompt.LostKeyboardFocus+=(_,_)=>_selectionPromptFocus=false;
@@ -330,6 +333,7 @@ public partial class CaptureOverlayWindow : Window
         }
         RefreshAiFeatureAvailability();
         LoadSessionHistory();
+        RestoreConversationSession(restoredSession);
         ApplyVoiceAvailability();
         if(NativeMethods.VisualQaCaptureEnabled)ShowInTaskbar=true;
         DesktopImage.Source=_frame.Image;Dimmer.Fill=new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(host.Settings.OverlayOpacity,.4,.75)*255),0,0,0));
@@ -404,6 +408,32 @@ public partial class CaptureOverlayWindow : Window
         _inactiveEscapeTimer.Tick+=CheckInactiveEscape;
     }
 
+    private void RestoreConversationSession(ConversationSessionArchive? session)
+    {
+        if(session is null||session.Entries.Count==0)return;
+        var matching=_conversationChannels.FirstOrDefault(channel=>HistoryScopeMatches(channel,session.Provider,session.Model));
+        if(matching is not null)
+        {
+            _selectedConversationChannelId=matching.Id;
+            _host.RememberConversationChannel(matching.Id);
+            UpdateChannelPickerItems();
+            LoadSessionHistory();
+        }
+        _conversationSessionId=string.IsNullOrWhiteSpace(session.Id)?Guid.NewGuid().ToString("N"):session.Id;
+        _conversationSessionTitle=session.Title;
+        _history.Clear();_history.Add(new AiMessage("system",VisualAnnotationProtocol.SystemInstruction));
+        MergeHistoryEntries(session.Entries);
+        _persistedHistory=session.Entries;
+        _lastSubmittedPrompt=string.Empty;_lastSubmittedTurnRecorded=false;
+        PromptStatus.Text=LocalizationService.T($"已打开历史会话：{session.Title}",$"Opened conversation: {session.Title}");
+    }
+
+    private bool HistoryScopeMatches(ConversationChannel channel,string provider,string model)
+    {
+        var scope=GetHistoryScope(channel.Id);
+        return string.Equals(scope.Provider,provider,StringComparison.Ordinal)&&string.Equals(scope.Model,model,StringComparison.Ordinal);
+    }
+
     private void ApplyOverlayVisualTuning()
     {
         Toolbar.Padding=new Thickness(5);
@@ -460,12 +490,8 @@ public partial class CaptureOverlayWindow : Window
     private (string Provider,string Model) GetHistoryScope(string? channelId=null)
     {
         var selected=_conversationChannels.FirstOrDefault(item=>item.Id==(channelId??_selectedConversationChannelId));
-        if(selected is {Kind:ConversationChannelKind.WorkBuddy})return ("WorkBuddy",selected.Model);
-        if(selected is {Kind:ConversationChannelKind.MiniMaxCode})return ("MiniMax Code",selected.Model);
-        if(selected is {Kind:ConversationChannelKind.Codex})return ("ChatGPT Work · Codex",selected.Model);
-        if(selected is {Kind:ConversationChannelKind.Hermes})return ($"本机 Hermes · {_host.Settings.HermesProfile}",selected.Model);
-        var providerId=selected is {Kind:ConversationChannelKind.Api} api?api.ProviderId:_host.Settings.DefaultProviderId;
-        var configured=_host.Settings.Providers.FirstOrDefault(item=>item.Id==providerId);
+        if(selected is not null)return _host.GetConversationHistoryScope(selected);
+        var configured=_host.Settings.Providers.FirstOrDefault(item=>item.Id==_host.Settings.DefaultProviderId);
         return (configured?.Name??configured?.Id??string.Empty,configured?.Model??string.Empty);
     }
 
@@ -535,9 +561,6 @@ public partial class CaptureOverlayWindow : Window
         var (provider,model)=GetHistoryScope();
         if(string.IsNullOrWhiteSpace(provider)){_sessionHistoryPreview=[];return;}
         var entries=_host.GetSessionConversationHistory(provider,model);
-        // A new overlay may display turns made earlier in this application
-        // run, but those turns are history only.  Replaying them into _history
-        // silently grows the next request's context and defeats “新会话”.
         _sessionHistoryPreview=entries.TakeLast(24).ToArray();
     }
 
@@ -556,9 +579,8 @@ public partial class CaptureOverlayWindow : Window
             {
                 if(_closed||operation.IsCancellationRequested||version!=Volatile.Read(ref _historyLoadVersion))return;
                 var (provider,model)=GetHistoryScope();
-                // Persisted records are displayed/retained on disk, but must not
-                // be injected into a newly opened conversation context. Use the
-                // explicit "新会话" action to control context boundaries.
+                // Keep disk history visible without silently injecting it into
+                // the next request's context. “新会话” remains the boundary.
                 _persistedHistory=entries
                     .Where(entry=>string.Equals(entry.Provider,provider,StringComparison.Ordinal)
                         &&string.Equals(entry.Model,model,StringComparison.Ordinal))
@@ -594,6 +616,61 @@ public partial class CaptureOverlayWindow : Window
     private bool _historyOpenedOnce;
     private IReadOnlyList<ConversationHistoryEntry> _persistedHistory=[];
     private IReadOnlyList<ConversationHistoryEntry> _sessionHistoryPreview=[];
+    private static string SessionKey(ConversationHistoryEntry entry)=>string.IsNullOrWhiteSpace(entry.SessionId)?"legacy":entry.SessionId;
+    private IReadOnlyList<ConversationHistoryEntry> ArchiveEntries()=>_persistedHistory.Concat(_sessionHistoryPreview)
+        .GroupBy(entry=>$"{SessionKey(entry)}\n{entry.Prompt}\n{entry.Answer}",StringComparer.Ordinal)
+        .Select(group=>group.OrderBy(entry=>entry.Timestamp).Last()).OrderBy(entry=>entry.Timestamp).ToArray();
+    private static string TitleFor(ConversationHistoryEntry entry)
+    {
+        if(!string.IsNullOrWhiteSpace(entry.SessionTitle))return entry.SessionTitle;
+        if(string.IsNullOrWhiteSpace(entry.SessionId))return "旧记录";
+        return CreateSessionTitle(entry.Prompt);
+    }
+    private static string CreateSessionTitle(string? prompt)
+    {
+        var value=(prompt??string.Empty).Replace('\r',' ').Replace('\n',' ').Trim();
+        while(value.Contains("  ",StringComparison.Ordinal))value=value.Replace("  "," ",StringComparison.Ordinal);
+        return value.Length==0?"新会话":value[..Math.Min(28,value.Length)];
+    }
+    private void ToggleSessionArchive(object sender,RoutedEventArgs e)
+    {
+        RefreshSessionArchive();SessionArchivePopup.IsOpen=!SessionArchivePopup.IsOpen;e.Handled=true;
+    }
+    private void RefreshSessionArchive()
+    {
+        if(!IsInitialized||SessionArchiveItems is null)return;
+        var summaries=ArchiveEntries().GroupBy(SessionKey).Select(group=>
+        {
+            var latest=group.OrderBy(entry=>entry.Timestamp).Last();
+            return new ConversationSessionSummary(group.Key,TitleFor(latest),latest.Timestamp,group.Count());
+        }).OrderByDescending(summary=>summary.LastUpdated).Take(24).ToList();
+        if(!summaries.Any(summary=>string.Equals(summary.Id,_conversationSessionId,StringComparison.Ordinal)))
+            summaries.Insert(0,new ConversationSessionSummary(_conversationSessionId,_conversationSessionTitle,DateTimeOffset.UtcNow,0));
+        SessionArchiveItems.Children.Clear();
+        foreach(var summary in summaries)
+        {
+            var current=string.Equals(summary.Id,_conversationSessionId,StringComparison.Ordinal);
+            var content=new StackPanel();
+            content.Children.Add(new TextBlock{Text=summary.Title,TextTrimming=TextTrimming.CharacterEllipsis,FontWeight=current?FontWeights.SemiBold:FontWeights.Normal,Foreground=new SolidColorBrush(current?Color.FromRgb(75,91,202):Color.FromRgb(50,65,90))});
+            content.Children.Add(new TextBlock{Text=summary.TurnCount==0?"尚无消息":$"{summary.TurnCount} 轮 · {summary.LastUpdated.LocalDateTime:MM-dd HH:mm}",FontSize=10.5,Foreground=new SolidColorBrush(Color.FromRgb(119,135,157)),Margin=new Thickness(0,3,0,0)});
+            var button=new Button{Tag=summary,Content=content,ToolTip=summary.Title,HorizontalContentAlignment=HorizontalAlignment.Left,Padding=new Thickness(9,7,9,7),Margin=new Thickness(0,2,0,2),Background=current?new SolidColorBrush(Color.FromRgb(234,238,255)):Brushes.Transparent,BorderThickness=new Thickness(0)};
+            button.Click+=SelectConversationSession;SessionArchiveItems.Children.Add(button);
+        }
+    }
+    private void SelectConversationSession(object sender,RoutedEventArgs e)
+    {
+        if(sender is not Button {Tag:ConversationSessionSummary summary}||_closed)return;
+        if(_request is not null){PromptStatus.Text="当前请求仍在处理中，请稍候。";return;}
+        var records=ArchiveEntries().Where(entry=>string.Equals(SessionKey(entry),summary.Id,StringComparison.Ordinal)).ToArray();
+        var legacy=summary.Id=="legacy";
+        _conversationSessionId=legacy?Guid.NewGuid().ToString("N"):summary.Id;_conversationSessionTitle=summary.Title;
+        _history.Clear();_history.Add(new AiMessage("system",VisualAnnotationProtocol.SystemInstruction));
+        MergeHistoryEntries(records);
+        _lastSubmittedPrompt=string.Empty;_lastSubmittedTurnRecorded=false;_historyExpanded=false;
+        SessionArchivePopup.IsOpen=false;RefreshHistoryPreview();
+        PromptStatus.Text=legacy?"已打开旧记录；继续提问将创建独立的新会话。":$"已打开会话：{summary.Title}";
+        QuickPrompt.Focus();e.Handled=true;
+    }
     private void ToggleHistory(object sender,RoutedEventArgs e)
     {
         _historyExpanded=!_historyExpanded;
@@ -619,6 +696,8 @@ public partial class CaptureOverlayWindow : Window
         }
         _history.Clear();
         _history.Add(new AiMessage("system",VisualAnnotationProtocol.SystemInstruction));
+        _conversationSessionId=Guid.NewGuid().ToString("N");
+        _conversationSessionTitle="新会话";
         _lastSubmittedPrompt=string.Empty;
         _lastSubmittedTurnRecorded=false;
         AnswerText.Markdown=string.Empty;
@@ -627,6 +706,9 @@ public partial class CaptureOverlayWindow : Window
         _reasoningBuffer.Clear();ReasoningText.Text=string.Empty;
         ReasoningToggle.Visibility=ReasoningPanel.Visibility=Visibility.Collapsed;
         _historyExpanded=false;
+        // The archive is display-only here. A new ID prevents this turn from
+        // being appended to any older conversation.
+        LoadSessionHistory();RefreshSessionArchive();
         PromptStatus.Text=LocalizationService.T("已开始新会话，之前的历史不会带入本次请求。","New conversation started. Previous history will not be sent with this request.");
         RefreshHistoryPreview();
         PositionPromptBar();
@@ -642,7 +724,7 @@ public partial class CaptureOverlayWindow : Window
             .Where(message=>message is not null&&(string.Equals(message.Role,"user",StringComparison.OrdinalIgnoreCase)||string.Equals(message.Role,"assistant",StringComparison.OrdinalIgnoreCase)))
             .ToArray();
         var currentPairs=ConversationHistoryPairing.Pair(messages);
-        var persistedPairs=_persistedHistory.Concat(_sessionHistoryPreview).Select(entry=>new ConversationHistoryPair(entry.Prompt,entry.Answer));
+        var persistedPairs=ArchiveEntries().Where(entry=>string.Equals(SessionKey(entry),_conversationSessionId,StringComparison.Ordinal)).Select(entry=>new ConversationHistoryPair(entry.Prompt,entry.Answer));
         var pairs=persistedPairs.Concat(currentPairs).GroupBy(pair=>$"{pair.Prompt}\n{pair.Answer}",StringComparer.Ordinal).Select(group=>group.Last()).TakeLast(12).ToArray();
         var latestPairIndex=pairs.Length-1;
         var currentIsInHistory=_lastSubmittedTurnRecorded&&!string.IsNullOrWhiteSpace(_lastSubmittedPrompt)&&latestPairIndex>=0&&string.Equals(pairs[latestPairIndex].Prompt,_lastSubmittedPrompt,StringComparison.Ordinal);
@@ -659,7 +741,7 @@ public partial class CaptureOverlayWindow : Window
         HistoryItems.UpdateRows(previewRows,entry=>CreateHistoryPair(entry.Prompt,entry.Answer,entry.IsCurrent));
         if(HistoryItems.Children.Count==0)
         {
-            HistoryItems.Children.Add(new TextBlock{Text=LocalizationService.T("暂无历史对话","No conversation yet"),Foreground=new SolidColorBrush(Color.FromRgb(127,141,161)),FontSize=12,Margin=new Thickness(2,2,2,2)});
+            HistoryItems.Children.Add(new TextBlock{Text=LocalizationService.T("本次会话暂无上文","No previous context in this conversation"),Foreground=new SolidColorBrush(Color.FromRgb(127,141,161)),FontSize=12,Margin=new Thickness(2,2,2,2)});
         }
 
         var conversationCount=pairs.Length+(!currentIsInHistory&&!string.IsNullOrWhiteSpace(_lastSubmittedPrompt)?1:0);
@@ -669,6 +751,7 @@ public partial class CaptureOverlayWindow : Window
         HistoryToggleLabel.Text=conversationCount>0
             ?LocalizationService.T($"历史对话 · {conversationCount}",$"History · {conversationCount}")
             :LocalizationService.T("历史对话","History");
+        RefreshSessionArchive();
         HistoryPanel.Visibility=_historyExpanded?Visibility.Visible:Visibility.Collapsed;
         HistoryChevronRotation.Angle=_historyExpanded?0:180;
         HistoryScroll.MaxHeight=GetHistoryMaxHeight();
@@ -2263,7 +2346,7 @@ public partial class CaptureOverlayWindow : Window
             new PrivacyLogger().Info("ScreenAiResult",$"附件 {totalCount}，视频 {targets.Count(item=>item.VideoPath is not null)+uploadedReferences.Count(file=>file.Type==AiAttachmentType.Video)}，最终模型批注 {result.Annotations.Count}，补标返回 {repairReturnedAnnotationCount}，有效批注 {renderedAnnotationCount}");
             var continuation=result.ContinuationMessage is {ProviderContent:not null} complete&&string.Equals(complete.Role,"assistant",StringComparison.OrdinalIgnoreCase)
                 ?complete with {Text=result.Answer}:null;
-            var (historyProvider,historyModel)=GetHistoryScope(selectedChannel.Id);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(historyProvider,historyModel,turnPrompt,result.Answer,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_host.RememberConversationHistory(new ConversationHistoryEntry(DateTimeOffset.UtcNow,historyProvider,historyModel,turnPrompt,result.Answer){ContinuationMessage=continuation});_history.Add(new("user",turnPrompt));_history.Add(continuation??new AiMessage("assistant",result.Answer));_lastSubmittedTurnRecorded=true;ConversationContextPolicy.TrimInPlace(_history);RefreshHistoryPreview();RecordOverlayOperation(before,tableRecognition?"AI 表格识别":"AI 识图");var tableCount=TableClipboardService.Parse(result.Answer).Count;PromptStatus.Text=tableRecognition?(tableCount>0?$"已识别 {tableCount} 个表格 · 点击回答上方的“复制表格”":"没有识别到完整表格，可调整选区后重试"):hasVideo?CaptureOverlayPolicy.GetVideoCompletionStatus(true,renderedAnnotationCount):CaptureOverlayPolicy.GetImageCompletionStatus(hasImage,targets.Any(item=>item.VideoPath is null),targets.Count(item=>item.VideoPath is null&&HasAiAnnotations(item)),CaptureOverlayPolicy.NeedsImageAnnotationRepair(prompt,string.Empty,0));if(usingHermes&&_host.Settings.HermesAutoReadAloud&&!tableRecognition)_=BeginOverlayReadAloudAsync(result.Answer);
+            var (historyProvider,historyModel)=GetHistoryScope(selectedChannel.Id);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();if(_conversationSessionTitle=="新会话")_conversationSessionTitle=CreateSessionTitle(turnPrompt);var historyEntry=new ConversationHistoryEntry(DateTimeOffset.UtcNow,historyProvider,historyModel,turnPrompt,result.Answer){ContinuationMessage=continuation,SessionId=_conversationSessionId,SessionTitle=_conversationSessionTitle};if(_host.Settings.SaveConversationHistory)await new ConversationHistoryService().TryAppendAsync(historyProvider,historyModel,turnPrompt,result.Answer,_conversationSessionId,_conversationSessionTitle,request.Token);if(!CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))return;request.Token.ThrowIfCancellationRequested();_host.RememberConversationHistory(historyEntry);LoadSessionHistory();_history.Add(new("user",turnPrompt));_history.Add(continuation??new AiMessage("assistant",result.Answer));_lastSubmittedTurnRecorded=true;ConversationContextPolicy.TrimInPlace(_history);RefreshHistoryPreview();RecordOverlayOperation(before,tableRecognition?"AI 表格识别":"AI 识图");var tableCount=TableClipboardService.Parse(result.Answer).Count;PromptStatus.Text=tableRecognition?(tableCount>0?$"已识别 {tableCount} 个表格 · 点击回答上方的“复制表格”":"没有识别到完整表格，可调整选区后重试"):hasVideo?CaptureOverlayPolicy.GetVideoCompletionStatus(true,renderedAnnotationCount):CaptureOverlayPolicy.GetImageCompletionStatus(hasImage,targets.Any(item=>item.VideoPath is null),targets.Count(item=>item.VideoPath is null&&HasAiAnnotations(item)),CaptureOverlayPolicy.NeedsImageAnnotationRepair(prompt,string.Empty,0));if(usingHermes&&_host.Settings.HermesAutoReadAloud&&!tableRecognition)_=BeginOverlayReadAloudAsync(result.Answer);
         }
         catch(OperationCanceledException){new PrivacyLogger().Info("ScreenAiAnnotationPhase",primaryApplied?"核验或后续处理已取消；保留已显示的初稿":"初稿请求已取消；恢复发送前状态");if(!_closed&&ReferenceEquals(_request,request)){if(primaryApplied)PromptStatus.Text="已停止核验，保留初稿和已显示标注";else{ApplyOverlaySnapshot(before);PromptStatus.Text="已取消";}}}
         catch(Exception ex){new PrivacyLogger().Error(requestStage=="render"?"ScreenAiRender":"ScreenAiRequest",ex);if(!_closed&&ReferenceEquals(_request,request)){var message=request.IsCancellationRequested?"已取消":$"请求失败（{selectedChannel.DisplayName}）：{ex.Message}";if(request.IsCancellationRequested)ApplyOverlaySnapshot(before);else{CloseReasoning("思考过程 · 请求失败",Color.FromRgb(214,120,120));ShowAnswer();AnswerText.Markdown=message;}PromptStatus.Text=message;}}

@@ -14,13 +14,13 @@ internal sealed class ProviderModelCatalogService
     internal const int MaximumTotalResponseBytes = 8 * 1024 * 1024;
     internal const int MaximumPages = 32;
     internal const int MaximumModels = 4096;
-    private static readonly HttpClient SharedClient = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = Timeout.InfiniteTimeSpan };
+    private static readonly HttpClient SharedClient = NetworkHttpClientFactory.Create();
     private readonly HttpClient _client;
     internal string? LastSuccessfulBaseUrl { get; private set; }
     internal ProviderModelCatalogService(HttpClient? client = null) => _client = client ?? SharedClient;
 
     internal async Task<IReadOnlyList<string>> GetModelsAsync(string baseUrl, string apiKey,
-        IReadOnlyDictionary<string, string> customHeaders, CancellationToken token)
+        IReadOnlyDictionary<string, string> customHeaders, CancellationToken token, string authMode="bearer")
     {
         LastSuccessfulBaseUrl = null;
         var uri = ProviderEndpointPolicy.NormalizeBaseUri(baseUrl);
@@ -31,7 +31,7 @@ internal sealed class ProviderModelCatalogService
             token.ThrowIfCancellationRequested();
             try
             {
-                var models = await GetModelsAtEndpointAsync(candidate.AbsoluteUri, apiKey, customHeaders, token).ConfigureAwait(false);
+                var models = await GetModelsAtEndpointAsync(candidate.AbsoluteUri, apiKey, customHeaders, token, authMode).ConfigureAwait(false);
                 LastSuccessfulBaseUrl = candidate.AbsoluteUri;
                 return models;
             }
@@ -82,16 +82,21 @@ internal sealed class ProviderModelCatalogService
          invalidOperation.Message.Contains("Could not load models", StringComparison.Ordinal));
 
     private async Task<IReadOnlyList<string>> GetModelsAtEndpointAsync(string baseUrl, string apiKey,
-        IReadOnlyDictionary<string, string> customHeaders, CancellationToken token)
+        IReadOnlyDictionary<string, string> customHeaders, CancellationToken token, string authMode)
     {
         var uri = ProviderEndpointPolicy.NormalizeBaseUri(baseUrl);
         ProviderHeaderPolicy.EnsureValid(customHeaders);
         if (!string.IsNullOrWhiteSpace(apiKey) && customHeaders.Keys.Any(ProviderHeaderCredentialService.IsAuthentication))
             throw new InvalidOperationException(LocalizationService.T("API Key 与认证 Custom Header 不能同时发送", "Use either an API key or an authentication header, not both."));
+        var normalizedAuth=(authMode??"bearer").Trim().ToLowerInvariant();
+        if(normalizedAuth is "auto" or "")normalizedAuth="bearer";
+        if(normalizedAuth is "none" or "anonymous")normalizedAuth="none";
+        else if(normalizedAuth is "api_key" or "api-key" or "x-api-key" or "anthropic_api_key")normalizedAuth="api_key";
+        else normalizedAuth="bearer";
         AuthenticationHeaderValue? authorization = null;
         try
         {
-            if (!string.IsNullOrWhiteSpace(apiKey)) authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+            if (normalizedAuth=="bearer"&&!string.IsNullOrWhiteSpace(apiKey)) authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
         catch (FormatException)
         {
@@ -116,6 +121,7 @@ internal sealed class ProviderModelCatalogService
             token.ThrowIfCancellationRequested();
             using var request = new HttpRequestMessage(HttpMethod.Get, GetPageUri(uri, kind, page, cursor));
             if (authorization is not null) request.Headers.Authorization = authorization;
+            if(normalizedAuth=="api_key"&&!string.IsNullOrWhiteSpace(apiKey))request.Headers.TryAddWithoutValidation("x-api-key",apiKey);
             foreach (var header in customHeaders)
                 if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value))
                     throw new InvalidOperationException(LocalizationService.T("无法添加模型列表请求头", "Could not add a model-list request header."));

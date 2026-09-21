@@ -60,6 +60,80 @@ public sealed class ProviderInfrastructureTests
     }
 
     [Fact]
+    public async Task PrematureReasoningTerminalKeepsReadingForALateAnswer()
+    {
+        const string response=
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先思考\"},\"finish_reason\":\"stop\"}]}\n\n"+
+            "data: {\"choices\":[{\"delta\":{\"content\":\"最终答案\"},\"finish_reason\":\"stop\"}]}\n\n";
+        var provider=new OpenAiCompatibleProvider(
+            new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://example.invalid/v1",Model="model"},
+            "unused",
+            (_,_,_)=>Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK){Content=new StringContent(response)}),
+            _=>TimeSpan.FromSeconds(10));
+
+        var result=await provider.SendAsync(new AiRequest
+        {
+            Prompt="test",
+            StreamingProgress=new InlineProgress()
+        },TestContext.Current.CancellationToken);
+
+        Assert.Equal("最终答案",result.Answer);
+        Assert.Equal("先思考",result.Reasoning);
+    }
+
+    [Fact]
+    public async Task ReasoningOnlyResponseGetsOneFinalAnswerRecoveryAttempt()
+    {
+        var calls=0;
+        var provider=new OpenAiCompatibleProvider(
+            new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://example.invalid/v1",Model="model"},
+            "unused",
+            (_,_,_) =>
+            {
+                calls++;
+                var body=calls==1
+                    ?"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先思考\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+                    :"data: {\"choices\":[{\"delta\":{\"content\":\"恢复后的正文\"},\"finish_reason\":\"stop\"}]}\n\n";
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK){Content=new StringContent(body)});
+            },
+            _=>TimeSpan.FromSeconds(10));
+
+        var result=await provider.SendAsync(new AiRequest
+        {
+            Prompt="test",
+            StreamingProgress=new InlineProgress()
+        },TestContext.Current.CancellationToken);
+
+        Assert.Equal(2,calls);
+        Assert.Equal("恢复后的正文",result.Answer);
+        Assert.Contains("先思考",result.Reasoning);
+    }
+
+    [Fact]
+    public async Task ReasoningRecoveryPreservesOwnedImageBytesUntilRetryCompletes()
+    {
+        var calls=0; string? secondBody=null;
+        var provider=new OpenAiCompatibleProvider(
+            new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://api.deepseek.com/v1",Model="deepseek-flash"},
+            "unused",
+            async (request,_,_)=>
+            {
+                calls++;
+                if(calls==2)secondBody=await request.Content!.ReadAsStringAsync();
+                var body=calls==1
+                    ?"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先思考\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+                    :"data: {\"choices\":[{\"delta\":{\"content\":\"恢复后的正文\"},\"finish_reason\":\"stop\"}]}\n\n";
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK){Content=new StringContent(body)};
+            },
+            _=>TimeSpan.FromSeconds(10));
+        var data=new byte[]{1,2,3,4};
+        var result=await provider.SendAsync(new AiRequest{Prompt="test",Attachments=[new AiAttachment(AiAttachmentType.Image,"image/png",data)],StreamingProgress=new InlineProgress()},TestContext.Current.CancellationToken);
+        Assert.Equal("恢复后的正文",result.Answer);
+        Assert.Contains("AQIDBA",secondBody,StringComparison.Ordinal);
+        Assert.All(data,value=>Assert.Equal(0,value));
+    }
+
+    [Fact]
     public async Task NonStreamingResponseCombinesReasoningDetailsText()
     {
         var provider=new OpenAiCompatibleProvider(
@@ -327,6 +401,33 @@ public sealed class ProviderInfrastructureTests
         Assert.Collection(progress.Values,item=>Assert.Equal("半段回答",item.Content));
     }
 
+    [Fact]
+    public async Task InterruptedStreamingResponseFallsBackToNonStreamingCompletion()
+    {
+        var calls=0;
+        var provider=new OpenAiCompatibleProvider(
+            new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://example.invalid/v1",Model="model"},
+            "unused",
+            (_,_,_) =>
+            {
+                calls++;
+                var body=calls==1
+                    ?"data: {\"choices\":[{\"finish_reason\":null,\"delta\":{\"content\":\"半段\"}}]}\n\n"
+                    :"{\"choices\":[{\"message\":{\"content\":\"完整答案\"},\"finish_reason\":\"stop\"}]}";
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK){Content=new StringContent(body)});
+            },
+            _=>TimeSpan.FromSeconds(10));
+
+        var result=await provider.SendAsync(new AiRequest
+        {
+            Prompt="test",
+            StreamingProgress=new InlineProgress()
+        },TestContext.Current.CancellationToken);
+
+        Assert.Equal(2,calls);
+        Assert.Equal("完整答案",result.Answer);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -488,6 +589,29 @@ public sealed class ProviderInfrastructureTests
         var error=await Assert.ThrowsAsync<InvalidOperationException>(()=>provider.SendAsync(request,TestContext.Current.CancellationToken));
 
         Assert.Contains("16",error.Message,StringComparison.Ordinal);Assert.False(transportCalled);
+    }
+
+    [Fact]
+    public async Task BareOpenAiCompatibleHostUsesV1ForModelsThatExposeOnlyVersionedRoutes()
+    {
+        Uri? actualUri=null;
+        var provider=new OpenAiCompatibleProvider(
+            new AiProviderSettings{Type="OpenAICompatible",BaseUrl="https://gateway.example",Model="gpt-5.6-sol"},
+            "test-key",
+            (request,_,_)=>
+            {
+                actualUri=request.RequestUri;
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content=new StringContent("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}",System.Text.Encoding.UTF8,"application/json")
+                });
+            },
+            _=>TimeSpan.FromSeconds(10));
+
+        var result=await provider.SendAsync(new AiRequest{Prompt="test"},TestContext.Current.CancellationToken);
+
+        Assert.Equal("ok",result.Answer);
+        Assert.Equal("https://gateway.example/v1/chat/completions",actualUri!.AbsoluteUri);
     }
 
     [Theory]

@@ -18,6 +18,28 @@ public sealed record ConversationHistoryEntry(
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public AiMessage? ContinuationMessage { get; init; }
+    /// <summary>Stable archive key. Empty values are legacy flat records.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SessionId { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? SessionTitle { get; init; }
+}
+
+/// <summary>
+/// A conversation-level projection used by archive surfaces. Keeping the
+/// grouping and fallback title policy in the history service ensures the
+/// launcher and capture overlay present the same sessions.
+/// </summary>
+public sealed record ConversationSessionArchive(
+    string Id,
+    string Title,
+    DateTimeOffset LastUpdated,
+    string Provider,
+    string Model,
+    IReadOnlyList<ConversationHistoryEntry> Entries)
+{
+    public int TurnCount=>Entries.Count;
+    public string LastPrompt=>Entries.Count==0?string.Empty:Entries[^1].Prompt;
 }
 
 public sealed class ConversationHistoryService
@@ -38,21 +60,30 @@ public sealed class ConversationHistoryService
         _beforeCommit=beforeCommit??(static _=>Task.CompletedTask);
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
     }
-    public async Task AppendAsync(string provider,string model,string prompt,string answer,CancellationToken token=default)
+    public Task AppendAsync(string provider,string model,string prompt,string answer,CancellationToken token=default)
+        =>AppendAsync(provider,model,prompt,answer,null,null,token);
+
+    public async Task AppendAsync(string provider,string model,string prompt,string answer,string? sessionId,string? sessionTitle,CancellationToken token=default)
     {
-        var record=new{timestamp=DateTimeOffset.UtcNow,provider,model,prompt,answer};
+        var record=new ConversationHistoryEntry(DateTimeOffset.UtcNow,provider,model,prompt,answer)
+        {
+            SessionId=NormalizeSessionId(sessionId),SessionTitle=NormalizeSessionTitle(sessionTitle)
+        };
         await WriteGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
             await _beforeCommit(token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
-            await File.AppendAllTextAsync(_path,JsonSerializer.Serialize(record)+Environment.NewLine,new System.Text.UTF8Encoding(false),CancellationToken.None).ConfigureAwait(false);
+            await File.AppendAllTextAsync(_path,JsonSerializer.Serialize(record,JsonOptions)+Environment.NewLine,new System.Text.UTF8Encoding(false),CancellationToken.None).ConfigureAwait(false);
         }
         finally{WriteGate.Release();}
     }
-    public async Task<bool> TryAppendAsync(string provider,string model,string prompt,string answer,CancellationToken token=default)
+    public Task<bool> TryAppendAsync(string provider,string model,string prompt,string answer,CancellationToken token=default)
+        =>TryAppendAsync(provider,model,prompt,answer,null,null,token);
+
+    public async Task<bool> TryAppendAsync(string provider,string model,string prompt,string answer,string? sessionId,string? sessionTitle,CancellationToken token=default)
     {
-        try{await AppendAsync(provider,model,prompt,answer,token).ConfigureAwait(false);return true;}
+        try{await AppendAsync(provider,model,prompt,answer,sessionId,sessionTitle,token).ConfigureAwait(false);return true;}
         catch(OperationCanceledException){return false;}
         catch(Exception ex){Log("ConversationHistory",ex);return false;}
     }
@@ -102,6 +133,59 @@ public sealed class ConversationHistoryService
         finally{WriteGate.Release();}
     }
 
+    public async Task<IReadOnlyList<ConversationSessionArchive>> ReadSessionsAsync(int maxSessions=24,CancellationToken token=default)
+    {
+        maxSessions=Math.Clamp(maxSessions,1,48);
+        // ReadRecentAsync is intentionally bounded, so the launcher remains
+        // fast even if an older installation has accumulated a large JSONL.
+        var records=await ReadRecentAsync(MaxReadRecords,token).ConfigureAwait(false);
+        return CreateSessionArchive(records,maxSessions);
+    }
+
+    internal static IReadOnlyList<ConversationSessionArchive> CreateSessionArchive(
+        IEnumerable<ConversationHistoryEntry> records,
+        int maxSessions=24)
+    {
+        ArgumentNullException.ThrowIfNull(records);
+        maxSessions=Math.Clamp(maxSessions,1,48);
+        var normalized=records
+            .Where(static entry=>entry is not null)
+            .GroupBy(static entry=>$"{ArchiveKey(entry)}\n{entry.Prompt}\n{entry.Answer}",StringComparer.Ordinal)
+            .Select(static group=>group.OrderByDescending(static entry=>entry.Timestamp).First());
+        return normalized
+            .GroupBy(static entry=>ArchiveKey(entry),StringComparer.Ordinal)
+            .Select(static group=>
+            {
+                var entries=group.OrderBy(static entry=>entry.Timestamp).ToArray();
+                var latest=entries[^1];
+                return new ConversationSessionArchive(
+                    NormalizeArchiveId(latest),
+                    BuildArchiveTitle(latest),
+                    latest.Timestamp,
+                    latest.Provider,
+                    latest.Model,
+                    entries);
+            })
+            .OrderByDescending(static session=>session.LastUpdated)
+            .Take(maxSessions)
+            .ToArray();
+    }
+
+    private static string ArchiveKey(ConversationHistoryEntry entry)
+        =>string.IsNullOrWhiteSpace(entry.SessionId)
+            ?$"legacy\n{entry.Provider}\n{entry.Model}"
+            :$"session\n{entry.Provider}\n{entry.Model}\n{entry.SessionId.Trim()}";
+    private static string NormalizeArchiveId(ConversationHistoryEntry entry)
+        =>string.IsNullOrWhiteSpace(entry.SessionId)?string.Empty:entry.SessionId.Trim();
+    private static string BuildArchiveTitle(ConversationHistoryEntry entry)
+    {
+        var title=string.IsNullOrWhiteSpace(entry.SessionTitle)?entry.Prompt:entry.SessionTitle;
+        var value=(title??string.Empty).Replace('\r',' ').Replace('\n',' ').Trim();
+        while(value.Contains("  ",StringComparison.Ordinal))value=value.Replace("  "," ",StringComparison.Ordinal);
+        if(value.Length==0)return LocalizationService.T("未命名会话","Untitled conversation");
+        return value[..Math.Min(48,value.Length)];
+    }
+
     private static async Task SeekToRecentRecordsAsync(FileStream stream,CancellationToken token)
     {
         if(stream.Length<=MaxReadBytes)return;
@@ -120,7 +204,9 @@ public sealed class ConversationHistoryService
         }
     }
 
-    private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true,MaxDepth=8};
+    private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true,PropertyNamingPolicy=JsonNamingPolicy.CamelCase,MaxDepth=8};
+    private static string? NormalizeSessionId(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim()[..Math.Min(96,value.Trim().Length)];
+    private static string? NormalizeSessionTitle(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim()[..Math.Min(120,value.Trim().Length)];
     public async Task ClearAsync(CancellationToken token=default)
     {
         await WriteGate.WaitAsync(token).ConfigureAwait(false);
