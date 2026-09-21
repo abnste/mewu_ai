@@ -18,6 +18,7 @@ namespace mewu_ai_Assistant.Views;
 
 public sealed partial class SettingsWindow : Window
 {
+    private const int MaxDisplayedProviderModels=256;
     private readonly TabItem _aiTab;
     private CodexSettingsPage _codexSettings=null!;
     private WorkBuddySettingsPage _workBuddySettings=null!;
@@ -43,8 +44,11 @@ public sealed partial class SettingsWindow : Window
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials = new();
     private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new();
+    private readonly ComboBox _proxyMode = new();
+    private readonly TextBox _proxyUrl = new();
     private readonly TextBox _hotkey = new();
-    private readonly TextBox _baseUrl = new(), _customHeaders = new();
+    private readonly TextBox _baseUrl = new(), _customHeaders = new(), _requestPath = new(), _region = new(), _plan = new();
+    private readonly ComboBox _apiFormat = new(), _authMode = new();
     private readonly TextBox _requestParameters = new();
     private readonly PasswordBox _apiKey = new();
     private readonly Button _clearApiKey = new(), _testApiConnection = new();
@@ -677,6 +681,17 @@ public sealed partial class SettingsWindow : Window
     private UIElement Privacy()
     {
         var panel = Panel();
+        panel.Children.Add(Text("网络代理", true));
+        _proxyMode.Items.Clear();
+        _proxyMode.Items.Add(new ComboBoxItem{Content="跟随系统代理",Tag="system"});
+        _proxyMode.Items.Add(new ComboBoxItem{Content="不使用代理",Tag="direct"});
+        _proxyMode.Items.Add(new ComboBoxItem{Content="自定义代理",Tag="custom"});
+        _proxyMode.SelectedItem=_proxyMode.Items.OfType<ComboBoxItem>().FirstOrDefault(x=>string.Equals(x.Tag?.ToString(),_host.Settings.NetworkProxyMode,StringComparison.OrdinalIgnoreCase))??_proxyMode.Items[0];
+        _proxyUrl.Text=_host.Settings.NetworkProxyUrl;
+        _proxyUrl.ToolTip="例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080";
+        _proxyUrl.Margin=new Thickness(0,6,0,0);
+        panel.Children.Add(_proxyMode);panel.Children.Add(_proxyUrl);
+        panel.Children.Add(Text("自定义代理支持 http、https、socks5；留空时使用系统代理。", true));
         _history.Content = "在本地保存 AI 对话历史";
         _history.IsChecked = _host.Settings.SaveConversationHistory;
         panel.Children.Add(_history);
@@ -833,6 +848,8 @@ public sealed partial class SettingsWindow : Window
         {
             var draft = _providerDrafts.GetValueOrDefault(provider) ?? ApiConnectionDraft.FromProvider(provider);
             _baseUrl.Text = draft.BaseUrl;
+            _requestPath.Text=draft.RequestPath;_region.Text=draft.Region;_plan.Text=draft.Plan;
+            _apiFormat.Text=draft.ApiFormat;_authMode.Text=draft.AuthMode;
             PopulateModelSuggestions(draft.Model);
             _requestParameters.Text = draft.ParametersJson;
             _customHeaders.Text = _captureProtectionAvailable == false
@@ -855,7 +872,12 @@ public sealed partial class SettingsWindow : Window
         _model.Items.Clear();var models=new List<string>();
         if (liveModels is not null) models.AddRange(liveModels);
         if(!string.IsNullOrWhiteSpace(currentModel)&&!models.Contains(currentModel,StringComparer.OrdinalIgnoreCase))models.Insert(0,currentModel);
-        foreach(var model in models.Distinct(StringComparer.OrdinalIgnoreCase))_model.Items.Add(model);
+        // A compatible gateway may expose hundreds or thousands of models.
+        // Feeding the complete catalog into a WPF editable ComboBox performs
+        // expensive layout/filter work on the dispatcher and can make the
+        // settings window appear frozen. Keep the current model plus a bounded
+        // deterministic prefix; users can still type any model ID manually.
+        foreach(var model in models.Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxDisplayedProviderModels))_model.Items.Add(model);
         _model.SelectedItem = models.FirstOrDefault(m => m.Equals(currentModel, StringComparison.OrdinalIgnoreCase));
         _model.Text=currentModel;
         }
@@ -871,7 +893,11 @@ public sealed partial class SettingsWindow : Window
         _modelLoadDebounce.Stop();
         _modelStatus.Text = LocalizationService.T("模型可从列表选择，也可手动输入 ID。", "Select a model from the list or enter its ID.");
         _modelLoadPending = !_model.IsLoaded;
-        if (!_modelLoadPending && !_windowLifetime.IsCancellationRequested) _modelLoadDebounce.Start();
+        // Model discovery is an explicit user action. Some gateways return a
+        // very large catalog and performing network I/O while the user is
+        // typing makes the settings dispatcher look frozen. The refresh icon
+        // remains available and manual model IDs are always accepted.
+        _modelLoadDebounce.Stop();
     }
 
     private async Task RefreshModelsAsync()
@@ -897,7 +923,12 @@ public sealed partial class SettingsWindow : Window
             { _modelStatus.Text = LocalizationService.T("输入此提供商的 API Key 后自动加载模型。", "Enter this provider's API key to load models automatically."); return; }
             _modelStatus.Text = LocalizationService.T("正在加载模型…", "Loading models…");
             var catalog = new ProviderModelCatalogService();
-            var models = await catalog.GetModelsAsync(endpoint, key ?? "", headers, operation.Token);
+            var catalogSettings = CloneProvider(provider);
+            catalogSettings.BaseUrl = endpoint;
+            catalogSettings.ApiFormat = _apiFormat.Text;
+            catalogSettings.AuthMode = _authMode.Text;
+            var catalogAuthMode = ProviderProtocolPolicy.AuthMode(catalogSettings);
+            var models = await catalog.GetModelsAsync(endpoint, key ?? "", headers, operation.Token, catalogAuthMode);
             if (!IsCurrent()) return;
             var correctedEndpoint = catalog.LastSuccessfulBaseUrl?.TrimEnd('/');
             var endpointWasCorrected = !string.IsNullOrWhiteSpace(correctedEndpoint) &&
@@ -917,8 +948,8 @@ public sealed partial class SettingsWindow : Window
             _modelStatus.Text = models.Count == 0
                 ? LocalizationService.T("未返回对话模型，可手动输入模型 ID。", "No chat models returned. Enter a model ID manually.")
                 : endpointWasCorrected
-                    ? LocalizationService.T($"地址已自动修正为 {correctedEndpoint}，加载了 {models.Count} 个对话模型；保存后生效。", $"The endpoint was corrected to {correctedEndpoint}; loaded {models.Count} chat models. Save to apply it.")
-                    : LocalizationService.T($"已从服务商加载 {models.Count} 个对话模型；可选择或手动输入。", $"Loaded {models.Count} chat models from the service. Choose one or enter an ID.");
+                    ? LocalizationService.T($"地址已自动修正为 {correctedEndpoint}，加载了 {models.Count} 个对话模型；下拉框显示前 {Math.Min(models.Count,MaxDisplayedProviderModels)} 个，保存后生效。", $"The endpoint was corrected to {correctedEndpoint}; loaded {models.Count} chat models. The first {Math.Min(models.Count,MaxDisplayedProviderModels)} are shown; save to apply it.")
+                    : LocalizationService.T($"已从服务商加载 {models.Count} 个对话模型；下拉框显示前 {Math.Min(models.Count,MaxDisplayedProviderModels)} 个，可手动输入任意 ID。", $"Loaded {models.Count} chat models. The first {Math.Min(models.Count,MaxDisplayedProviderModels)} are shown; any ID can still be entered manually.");
         }
         catch (OperationCanceledException) { if (ReferenceEquals(_modelLoad, operation) && !_windowLifetime.IsCancellationRequested) _modelStatus.Text = LocalizationService.T("加载已取消或超时，可刷新重试或手动输入模型 ID。", "Loading canceled or timed out. Retry or enter a model ID."); }
         catch (InvalidDataException) when (ReferenceEquals(_modelLoad, operation) && !operation.IsCancellationRequested)
@@ -1127,12 +1158,12 @@ public sealed partial class SettingsWindow : Window
                 EnableVoiceInput=_voice.IsChecked==true,
                 AutomaticallyStartListening=_voice.IsChecked==true&&_autoVoice.IsChecked==true,
                 VoiceLanguage=(_voiceLanguage.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"system",
+                NetworkProxyMode=(_proxyMode.SelectedItem as ComboBoxItem)?.Tag?.ToString()??_host.Settings.NetworkProxyMode,
+                NetworkProxyUrl=_proxyUrl.Text.Trim(),
                 ConversationChannelId=_host.Settings.ConversationChannelId,
                 HermesEnabled=hermesEnabled,
                 CodexEnabled=codexEnabled,
                 WorkBuddyEnabled=workBuddyEnabled,
-                CodexExecutablePath=_host.Settings.CodexExecutablePath,
-                WorkBuddyExecutablePath=_host.Settings.WorkBuddyExecutablePath,
                 MiniMaxCodeEnabled=miniMaxCodeEnabled,
                 MiniMaxCodeModel=_miniMaxCodeSettings.SelectedModel?.Model??_host.Settings.MiniMaxCodeModel,
                 WorkBuddyModel=_workBuddySettings.SelectedModel?.Model??_host.Settings.WorkBuddyModel,

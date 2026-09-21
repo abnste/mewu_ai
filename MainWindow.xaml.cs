@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.ComponentModel;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
@@ -14,12 +15,14 @@ public partial class MainWindow : Window
 {
     private const double ShellCornerRadius = 14;
     private readonly AppHost _host;
+    private CancellationTokenSource? _historyArchiveLoad;
     // The launcher contains navigation and connection status, not credential
     // editors or screen content. A protected, persistent launcher HWND also
     // blocks NVIDIA desktop replay after this window is hidden to the tray.
     // Sensitive settings windows apply their own capture protection.
     public MainWindow(AppHost host) { _host=host; InitializeComponent(); RefreshStatus(); }
     private void OnLoaded(object sender,RoutedEventArgs e)=>UpdateShellClip();
+    private void OnActivated(object? sender,EventArgs e)=>_ = LoadHistoryArchiveAsync();
     private void OnSizeChanged(object sender,SizeChangedEventArgs e)=>UpdateShellClip();
     private void OnDpiChanged(object sender,DpiChangedEventArgs e)
     {
@@ -141,6 +144,72 @@ public partial class MainWindow : Window
     }
     private void StartCapture(object sender,RoutedEventArgs e){Hide();_host.BeginCapture();}
     private void OpenSettings(object sender,RoutedEventArgs e)=>_host.ShowSettings(showAi:true);
+    private async void ToggleHistoryArchive(object sender,RoutedEventArgs e)
+    {
+        e.Handled=true;
+        if(HistoryArchivePopup.IsOpen){HistoryArchivePopup.IsOpen=false;return;}
+        HistoryArchivePopup.IsOpen=true;
+        await LoadHistoryArchiveAsync();
+    }
+    private async Task LoadHistoryArchiveAsync()
+    {
+        if(!IsInitialized||!IsVisible)return;
+        var operation=new CancellationTokenSource();
+        var previous=Interlocked.Exchange(ref _historyArchiveLoad,operation);previous?.Cancel();previous?.Dispose();
+        HistoryArchiveStatus.Visibility=Visibility.Visible;HistoryArchiveStatusText.Text=LocalizationService.T("正在读取历史会话…","Loading conversation history…");
+        HistoryArchiveScroll.Visibility=Visibility.Collapsed;
+        try
+        {
+            var diskEntries=_host.Settings.SaveConversationHistory
+                ?await new ConversationHistoryService().ReadRecentAsync(100,operation.Token)
+                :Array.Empty<ConversationHistoryEntry>();
+            var sessions=ConversationHistoryService.CreateSessionArchive(
+                diskEntries.Concat(_host.GetAllSessionConversationHistory()),24);
+            if(operation.IsCancellationRequested)return;
+            RenderHistoryArchive(sessions);
+        }
+        catch(OperationCanceledException) when(operation.IsCancellationRequested){}
+        catch(Exception ex)
+        {
+            try{new PrivacyLogger().Error("MainHistoryArchiveLoad",ex);}catch{}
+            if(!operation.IsCancellationRequested){HistoryArchiveStatus.Visibility=Visibility.Visible;HistoryArchiveStatusText.Text=LocalizationService.T("暂时无法读取历史会话。","Conversation history is temporarily unavailable.");}
+        }
+        finally{if(ReferenceEquals(Interlocked.CompareExchange(ref _historyArchiveLoad,null,operation),operation))operation.Dispose();}
+    }
+    private void RenderHistoryArchive(IReadOnlyList<ConversationSessionArchive> sessions)
+    {
+        HistoryArchiveItems.Children.Clear();
+        HistoryButtonText.Text=sessions.Count==0?LocalizationService.T("历史会话","History"):LocalizationService.T($"历史会话 · {sessions.Count}",$"History · {sessions.Count}");
+        if(sessions.Count==0)
+        {
+            HistoryArchiveScroll.Visibility=Visibility.Collapsed;HistoryArchiveStatus.Visibility=Visibility.Visible;
+            HistoryArchiveStatusText.Text=_host.Settings.SaveConversationHistory
+                ?LocalizationService.T("还没有保存的会话。完成一次 AI 对话后，会显示在这里。","No saved conversations yet. Completed AI conversations will appear here.")
+                :LocalizationService.T("历史保存已关闭。可在设置中开启“在本地保存 AI 对话历史”。","History saving is off. Enable local AI conversation history in Settings.");
+            return;
+        }
+        HistoryArchiveStatus.Visibility=Visibility.Collapsed;HistoryArchiveScroll.Visibility=Visibility.Visible;
+        foreach(var session in sessions)
+        {
+            var text=new StackPanel();
+            text.Children.Add(new TextBlock{Text=session.Title,FontSize=13,FontWeight=FontWeights.SemiBold,TextTrimming=TextTrimming.CharacterEllipsis});
+            text.Children.Add(new TextBlock{Text=$"{session.TurnCount} 轮 · {session.LastUpdated.LocalDateTime:MM-dd HH:mm} · {session.Provider}",FontSize=10.5,Foreground=(Brush)FindResource("SecondaryText"),Margin=new Thickness(0,3,0,0),TextTrimming=TextTrimming.CharacterEllipsis});
+            text.Children.Add(new TextBlock{Text=session.LastPrompt,FontSize=11.5,Foreground=(Brush)FindResource("SecondaryText"),Margin=new Thickness(0,5,0,0),TextTrimming=TextTrimming.CharacterEllipsis});
+            var button=new Button{Tag=session,Content=text,HorizontalContentAlignment=HorizontalAlignment.Stretch,Padding=new Thickness(11,9,11,9),Margin=new Thickness(0,2,0,2),MinHeight=58};
+            System.Windows.Automation.AutomationProperties.SetName(button,session.Title);
+            button.Click+=OpenHistorySession;HistoryArchiveItems.Children.Add(button);
+        }
+    }
+    private void OpenHistorySession(object sender,RoutedEventArgs e)
+    {
+        if(sender is not Button {Tag:ConversationSessionArchive session})return;
+        HistoryArchivePopup.IsOpen=false;
+        if(!_host.CanOpenConversationSession(session))
+            MessageBox.Show(this,LocalizationService.T("该会话对应的 AI 渠道当前不可用，请先在设置中完成配置。","The AI channel for this conversation is unavailable. Complete its setup in Settings first."),"喵呜AI",MessageBoxButton.OK,MessageBoxImage.Information);
+        else if(!_host.BeginConversationSession(session))
+            MessageBox.Show(this,LocalizationService.T("屏幕助手正在运行，请先完成或关闭当前操作。","Screen Assistant is already running. Finish or close it first."),"喵呜AI",MessageBoxButton.OK,MessageBoxImage.Information);
+    }
+    private void HistoryArchiveClosed(object sender,EventArgs e){_historyArchiveLoad?.Cancel();if(IsVisible&&IsActive)HistoryButton.Focus();}
     private void DragWindow(object sender,MouseButtonEventArgs e){if(e.ButtonState==MouseButtonState.Pressed&&!IsInsideButton(e.OriginalSource))DragMove();}
     private static bool IsInsideButton(object? source)
     {
@@ -158,5 +227,5 @@ public partial class MainWindow : Window
         return false;
     }
     private void HideWindow(object sender,RoutedEventArgs e)=>Hide();
-    private void OnClosing(object? sender,CancelEventArgs e) { if(_host.IsExiting)return; e.Cancel=true; Hide(); }
+    private void OnClosing(object? sender,CancelEventArgs e) { if(_host.IsExiting)return; e.Cancel=true;_historyArchiveLoad?.Cancel();HistoryArchivePopup.IsOpen=false;Hide(); }
 }

@@ -104,7 +104,7 @@ internal static class ProviderModelPolicy
         ProviderRequestParameterPolicy.Validate(settings.RequestParameters);
         var endpoint = ProviderEndpointPolicy.NormalizeBaseUri(settings.BaseUrl);
         var model = ModelName(settings.Model);
-        if (IsOfficial(endpoint, "api.openai.com") && ProviderModelCatalogService.IsOpenAiResponsesOnly(settings.Model))
+        if (IsOfficial(endpoint, "api.openai.com") && ProviderProtocolPolicy.ApiFormat(settings)!="responses" && ProviderModelCatalogService.IsOpenAiResponsesOnly(settings.Model))
             throw new InvalidOperationException(LocalizationService.T(
                 $"{settings.Model} 仅支持 OpenAI Responses API。当前连接使用 Chat Completions，请选择支持该接口的模型，例如 gpt-6-astra。",
                 $"{settings.Model} requires the OpenAI Responses API. This connection uses Chat Completions; choose a compatible model such as gpt-6-astra."));

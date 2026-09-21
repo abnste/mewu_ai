@@ -91,6 +91,7 @@ public sealed class SettingsService
             if(!string.Equals(provider.Type,"MiniMax",StringComparison.OrdinalIgnoreCase)&&!string.Equals(provider.Type,"OpenAICompatible",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException($"不支持的 Provider 类型：{provider.Type}");
             if(string.IsNullOrWhiteSpace(provider.Model))throw new InvalidOperationException($"{provider.Name} 的 Model 不能为空");
             _=ProviderEndpointPolicy.NormalizeBaseUri(provider.BaseUrl);
+            ProviderProtocolPolicy.Validate(provider);
             ProviderRequestParameterPolicy.Validate(provider.RequestParameters);
             ProviderHeaderPolicy.EnsureSafeToPersist(provider.CustomHeaders??throw new InvalidOperationException($"{provider.Name} 的 Custom Headers 不能为空"));
             if(provider.SensitiveHeaderCredentialIds is null)throw new InvalidOperationException($"{provider.Name} 的敏感 Header 凭据映射不能为空");
@@ -103,7 +104,7 @@ public sealed class SettingsService
         // structurally valid for features that still use it, but its
         // authentication is checked only when that route is active.
         var hasConfiguredLocalChannel=!string.IsNullOrWhiteSpace(settings.HermesModel)||!string.IsNullOrWhiteSpace(settings.CodexModel)||!string.IsNullOrWhiteSpace(settings.WorkBuddyModel)||!string.IsNullOrWhiteSpace(settings.MiniMaxCodeModel);
-        if(!hasConfiguredLocalChannel)
+        if(!hasConfiguredLocalChannel && ProviderProtocolPolicy.AuthMode(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId))!="none")
             ProviderAuthenticationPolicy.EnsureStoredCredentialReferences(settings.Providers.Single(provider=>provider.Id==settings.DefaultProviderId));
         ValidateHermesForSave(settings);
         CodexSettingsPolicy.Validate(settings);
@@ -153,6 +154,7 @@ public sealed class SettingsService
                     continue;
                 }
                 provider.Id??=string.Empty;provider.Name??="Provider";provider.Type??=string.Empty;provider.BaseUrl??=string.Empty;provider.Model??=string.Empty;provider.CredentialId??=string.Empty;provider.CustomHeaders??=[];provider.SensitiveHeaderCredentialIds??=[];
+                provider.ApiFormat??="auto";provider.AuthMode??="auto";provider.RequestPath??=string.Empty;provider.Region??=string.Empty;provider.Plan??=string.Empty;provider.AccountIdHeader??=string.Empty;
                 providers.Add(provider);
             }
             settings.Providers=providers;
@@ -184,6 +186,8 @@ public sealed class SettingsService
                 catch(InvalidOperationException){settings.ConfigurationErrors.Add($"{name} 的 Base URL 无效");}
             }
             if(string.IsNullOrWhiteSpace(provider.Model))settings.ConfigurationErrors.Add($"{name} 的 Model 不能为空");
+            try { ProviderProtocolPolicy.Validate(provider); }
+            catch (InvalidOperationException ex) { settings.ConfigurationErrors.Add($"{name}：{ex.Message}"); }
         }
         if(string.IsNullOrWhiteSpace(settings.DefaultProviderId))settings.ConfigurationErrors.Add("尚未选择默认 AI Provider");
         else if(settings.Providers.All(provider=>provider.Id!=settings.DefaultProviderId))settings.ConfigurationErrors.Add("默认 AI Provider 已不存在，请重新选择");

@@ -9,7 +9,7 @@ namespace mewu_ai_Assistant.Services;
 /// Keeps the editor's original text, including incomplete JSON, while another
 /// connection is open. Validation only happens when the draft is applied.
 /// </summary>
-internal sealed record ApiConnectionDraft(string BaseUrl, string Model, string HeadersJson, string ParametersJson)
+internal sealed record ApiConnectionDraft(string BaseUrl, string Model, string HeadersJson, string ParametersJson,string ApiFormat="auto",string AuthMode="auto",string RequestPath="",string Region="",string Plan="")
 {
     private static readonly JsonSerializerOptions DisplayJsonOptions = new() { WriteIndented = true };
 
@@ -18,7 +18,7 @@ internal sealed record ApiConnectionDraft(string BaseUrl, string Model, string H
         ArgumentNullException.ThrowIfNull(provider);
         return new(provider.BaseUrl, provider.Model,
             JsonSerializer.Serialize(provider.CustomHeaders, DisplayJsonOptions),
-            JsonSerializer.Serialize(provider.RequestParameters, DisplayJsonOptions));
+            JsonSerializer.Serialize(provider.RequestParameters, DisplayJsonOptions),provider.ApiFormat,provider.AuthMode,provider.RequestPath,provider.Region,provider.Plan);
     }
 
     internal void ApplyTo(AiProviderSettings provider)
@@ -37,5 +37,11 @@ internal sealed record ApiConnectionDraft(string BaseUrl, string Model, string H
         provider.Model = model;
         provider.CustomHeaders = headers;
         provider.RequestParameters = parameters;
+        provider.ApiFormat=ApiFormat.Trim().ToLowerInvariant();
+        provider.AuthMode=AuthMode.Trim().ToLowerInvariant();
+        provider.RequestPath=RequestPath.Trim();
+        provider.Region=Region.Trim();
+        provider.Plan=Plan.Trim();
+        ProviderProtocolPolicy.Validate(provider);
     }
 }
