@@ -3646,9 +3646,27 @@ public partial class CaptureOverlayWindow : Window
         if(Active is not { } item||!CaptureOverlayPolicy.CanRunImageOnlyCommand(item.IsImplicit,item.VideoPath)){if(Active?.VideoPath is not null)PromptStatus.Text="视频区域不支持 OCR，请先选择截图区域";else PromptStatus.Text="请先框选截图区域";return;}var before=CaptureOverlaySnapshot();var image=CurrentImage();var operation=BeginOverlayOperation("正在本地识别当前区域…");
         try
         {
-            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!IsOverlayOperationActive(operation,item))return;if(document.Lines.Count==0){item.TextLayer=NoTextLayerState.Instance;item.TextOverlays.Children.Clear();ClearTextSelection(item);}else RenderSelectableText(item,image,document);RecordOverlayOperation(before,"原位文字识别");PromptStatus.Text=document.Lines.Count==0?$"{document.Engine} 未识别到文字":$"{document.Engine} 已识别 {document.Lines.Count} 行 · 可直接拖选并按 Ctrl+C";
+            var document=await new WindowsOcrService().RecognizeAsync(image,operation.Token);if(!IsOverlayOperationActive(operation,item))return;if(document.Lines.Count==0){item.TextLayer=NoTextLayerState.Instance;item.TextOverlays.Children.Clear();ClearTextSelection(item);}else RenderSelectableText(item,image,document);ShowScreenEntityActions(document.Text);RecordOverlayOperation(before,"原位文字识别");PromptStatus.Text=document.Lines.Count==0?$"{document.Engine} 未识别到文字":$"{document.Engine} 已识别 {document.Lines.Count} 行 · 可直接拖选并按 Ctrl+C";
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消文字识别";}catch(Exception ex){new PrivacyLogger().Error("OverlayOcr",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"OCR 失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+    }
+
+    private void ShowScreenEntityActions(string text)
+    {
+        ScreenEntityActionItems.Children.Clear();
+        var entities=ScreenEntityRecognitionService.Extract(text);
+        if(entities.Count==0){ScreenEntityActionCard.Visibility=Visibility.Collapsed;return;}
+        ResponseScroll.Visibility=Visibility.Visible;
+        foreach(var entity in entities)
+        {
+            var row=new StackPanel{Orientation=Orientation.Horizontal,Margin=new Thickness(0,2,0,0)};
+            var label=new TextBlock{Text=entity.Type==ScreenEntityType.Url?$"URL：{entity.Value}":$"邮箱：{entity.Value}",TextTrimming=TextTrimming.CharacterEllipsis,Width=230,VerticalAlignment=VerticalAlignment.Center,ToolTip=entity.Value};
+            var action=new Button{Padding=new Thickness(8,3,8,3),Margin=new Thickness(6,0,0,0),Background=new SolidColorBrush(Color.FromRgb(232,238,255)),BorderBrush=new SolidColorBrush(Color.FromRgb(204,215,246)),Foreground=new SolidColorBrush(Color.FromRgb(65,83,170)),Cursor=Cursors.Hand};
+            if(entity.Type==ScreenEntityType.Url){action.Content="用浏览器打开";action.ToolTip="通过本地浏览器打开此 URL";action.Click+=(_,_)=>PromptStatus.Text=ScreenEntityMcpService.OpenUrl(entity.Value)?"已通过本地浏览器打开 URL":"无法打开此 URL";}
+            else {action.Content=entity.MailProvider is null?"写邮件":$"打开{entity.DisplayProvider}";action.ToolTip=$"已复制收件人，可在{entity.DisplayProvider}中写邮件";action.Click+=(_,_)=>PromptStatus.Text=ScreenEntityMcpService.OpenMailProvider(entity)?$"已复制 {entity.Value}，已打开{entity.DisplayProvider}":"无法打开邮箱页面";}
+            row.Children.Add(label);row.Children.Add(action);ScreenEntityActionItems.Children.Add(row);
+        }
+        ScreenEntityActionCard.Visibility=Visibility.Visible;
     }
 
     private bool RejectIfOverlayOperationBusy()
