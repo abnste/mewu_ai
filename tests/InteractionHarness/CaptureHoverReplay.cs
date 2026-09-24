@@ -21,12 +21,83 @@ internal static class CaptureHoverReplay
         // Replay coordinates directly through the production pointer handler;
         // live desktop mouse movement must not race the regression scenarios.
         app.ShutdownMode=ShutdownMode.OnExplicitShutdown;overlay.IsHitTestVisible=false;overlay.Show();
+        Program.MarkReplayWindow(overlay,"对话条拖动验收 · 合成内容 · 自动关闭");
         app.Dispatcher.BeginInvoke(DispatcherPriority.Normal,new Action(async()=>
         {
             var checks=new List<string>();string? failure=null;
             try
             {
                 var root=(Canvas)overlay.FindName("Root");
+                var dragHandle=(System.Windows.Controls.Primitives.Thumb)overlay.FindName("PromptDragHandle");
+                var dockHint=(FrameworkElement)overlay.FindName("PromptDockHint");
+                Invoke("SetPromptBarHidden",false,false);Invoke("PositionPromptBar");overlay.UpdateLayout();
+                var dockHost=(FrameworkElement)overlay.FindName("PromptBarHost");
+                var dockPoint=new Point(Canvas.GetLeft(dockHost),Canvas.GetTop(dockHost));
+                var originalHeight=dockHost.ActualHeight;
+                dragHandle.Visibility=Visibility.Collapsed;overlay.UpdateLayout();
+                Require(Math.Abs(dockHost.ActualHeight-originalHeight)<.1,"Invisible drag target adds a layout row");
+                dragHandle.Visibility=Visibility.Visible;overlay.UpdateLayout();
+                Require(System.Windows.Media.VisualTreeHelper.GetParent(dragHandle)==dockHost,"Drag target occupies the content stack");
+                checks.Add("invisible-drag-target-adds-no-height-or-content-row");
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragStartedEventArgs(0,0){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragStartedEvent});
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(0,-20){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragDeltaEvent});
+                Require(dockHint.Visibility==Visibility.Visible&&!dockHint.IsHitTestVisible,"Dock hint missing or intercepting input during drag");
+                Require(Math.Abs(Canvas.GetLeft(dockHint)-dockPoint.X)<1&&Math.Abs(Canvas.GetTop(dockHint)-dockPoint.Y)<1,"Dock hint does not mark the real snap target");
+                Require(!(bool)Get("_promptDetached"),"Small drag detached the composer");
+                Require(!(bool)Get("_historyExpanded"),"Small drag expanded the conversation");
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(0,-120){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragDeltaEvent});
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragCompletedEventArgs(0,-120,false){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragCompletedEvent});
+                Require((bool)Get("_promptDetached"),"Large drag did not detach the composer");
+                Require((bool)Get("_historyExpanded")&&((FrameworkElement)overlay.FindName("HistoryPanel")).IsVisible,"Detaching did not expand the conversation");
+                checks.Add("detaching-expands-inplace-conversation-but-small-drag-does-not");
+                Require(dockHint.Visibility==Visibility.Collapsed,"Dock hint remained after drag completion");
+                checks.Add("dock-hint-marks-snap-target-without-intercepting-input-and-clears-on-release");
+                var floatingPoint=new Point(Canvas.GetLeft(dockHost),Canvas.GetTop(dockHost));
+                Invoke("SetPromptBarHidden",true,true);Invoke("PositionPromptBar");overlay.UpdateLayout();
+                Require(!(bool)Get("_promptBarHidden")&&Math.Abs(Canvas.GetTop(dockHost)-floatingPoint.Y)<1,"Floating composer hid or moved during layout");
+                checks.Add("drag-threshold-detaches-and-floating-composer-resists-hide-and-layout");
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragStartedEventArgs(0,0){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragStartedEvent});
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(30,-30){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragDeltaEvent});
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragCompletedEventArgs(30,-30,true){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragCompletedEvent});
+                Require((bool)Get("_promptDetached")&&(new Point(Canvas.GetLeft(dockHost),Canvas.GetTop(dockHost))-floatingPoint).Length<1,"Canceled drag lost floating position");
+                checks.Add("canceled-floating-drag-restores-position");
+                var work=(Rect)Get("_promptDragMonitor");var screen=(Rect)Get("_promptDragScreen");
+                Require(screen.Contains(work),"Full screen does not contain its work area");
+                var bar=(FrameworkElement)overlay.FindName("PromptBar");
+                // Exercise all screen edges, including whichever edge owns the taskbar.
+                foreach(var target in new[]{screen.TopLeft,new Point(screen.Right-bar.DesiredSize.Width,screen.Top),
+                    new Point(screen.Left,screen.Bottom-bar.DesiredSize.Height),new Point(screen.Right-bar.DesiredSize.Width,screen.Bottom-bar.DesiredSize.Height),
+                    new Point(screen.Left+(screen.Width-bar.DesiredSize.Width)/2,screen.Bottom-bar.DesiredSize.Height)})
+                {
+                    dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragStartedEventArgs(0,0){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragStartedEvent});
+                    var start=new Point(Canvas.GetLeft(dockHost),Canvas.GetTop(dockHost));var delta=target-start;
+                    dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(delta.X,delta.Y){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragDeltaEvent});
+                    dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragCompletedEventArgs(delta.X,delta.Y,false){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragCompletedEvent});
+                    Invoke("PositionPromptBar");overlay.UpdateLayout();await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Require((bool)Get("_promptDetached")&&(new Point(Canvas.GetLeft(dockHost),Canvas.GetTop(dockHost))-target).Length<1,"Screen-edge position was clamped back into the work area or redocked");
+                    Require((bool)Get("_historyExpanded"),"Repeated dragging collapsed the conversation");
+                }
+                checks.Add("floating-conversation-reaches-full-screen-edges-and-stays-after-layout");
+                floatingPoint=new Point(Canvas.GetLeft(dockHost),Canvas.GetTop(dockHost));
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragStartedEventArgs(0,0){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragStartedEvent});
+                dockPoint=new Point(Canvas.GetLeft(dockHint),Canvas.GetTop(dockHint));
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(dockPoint.X-floatingPoint.X,dockPoint.Y-floatingPoint.Y){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragDeltaEvent});
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragCompletedEventArgs(0,0,false){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragCompletedEvent});
+                Require(!(bool)Get("_promptDetached"),"Dragging home did not redock");
+                var animationDeadline=DateTime.UtcNow+TimeSpan.FromSeconds(3);
+                while((bool)Get("_promptDockAnimating")&&DateTime.UtcNow<animationDeadline)await Task.Delay(30);
+                Require(!(bool)Get("_promptDockAnimating"),"Dock animation did not finish");
+                Invoke("SetHistoryExpanded",false);overlay.UpdateLayout();
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragStartedEventArgs(0,0){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragStartedEvent});
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragDeltaEventArgs(0,-180){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragDeltaEvent});
+                Require((bool)Get("_historyExpanded"),"Canceled detachment scenario never expanded");
+                dragHandle.RaiseEvent(new System.Windows.Controls.Primitives.DragCompletedEventArgs(0,-180,true){RoutedEvent=System.Windows.Controls.Primitives.Thumb.DragCompletedEvent});
+                overlay.UpdateLayout();
+                Require(!(bool)Get("_promptDetached")&&!(bool)Get("_historyExpanded"),"Canceled detachment did not restore docked and collapsed state");
+                checks.Add("cancel-detachment-restores-collapsed-docked-state");
+                Set("_selectionPromptFocus",false);Invoke("SetPromptBarHidden",true,true);
+                Require((bool)Get("_promptBarHidden"),"Redocked composer no longer auto-hides");
+                checks.Add("drag-home-springs-back-and-restores-auto-hide");
                 var toolbar=(FrameworkElement)overlay.FindName("Toolbar");
                 var prompt=(FrameworkElement)overlay.FindName("PromptBarHost");
                 var a=Add(new Rect(100,150,360,180));var b=Add(new Rect(650,150,180,180));

@@ -62,6 +62,8 @@ internal sealed class ApplicationUpdateService
         if(release.Draft||release.Prerelease)throw new InvalidDataException("GitHub 最新版本不是正式 Release");
         if(latestVersion<=currentVersion)
             return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,null);
+        if(release.Assets.Count==0)
+            throw new InvalidDataException("已发现新版本，但 GitHub 暂时限制更新信息请求，无法取得可信安装包校验值。请稍后重试，或从项目官方 Releases 页面下载；未下载或安装任何未经校验的文件。");
 
         var versionText=release.TagName[1..];
         var installerName=$"MewuAI-Setup-{versionText}-win-x64.exe";
@@ -157,7 +159,7 @@ internal sealed class ApplicationUpdateService
         {
             // Shared networks can exhaust GitHub's unauthenticated REST quota.
             // The official latest-release redirect has a distinct limit and
-            // still lets us constrain the tag and assets to this repository.
+            // still lets us detect the version, but cannot prove asset metadata.
             return await GetLatestReleaseFromRedirectAsync(cancellationToken).ConfigureAwait(false);
         }
     }
@@ -177,12 +179,9 @@ internal sealed class ApplicationUpdateService
             throw new InvalidDataException("GitHub 最新版本跳转地址无效");
         var tagName=target.AbsolutePath[(target.AbsolutePath.LastIndexOf('/')+1)..];
         ParseReleaseVersion(tagName);
-        var versionText=tagName[1..];
-        return new GitHubRelease(tagName,false,false,
-        [
-            new GitHubAsset($"MewuAI-Setup-{versionText}-win-x64.exe",null,$"https://github.com/{RepositoryOwner}/{RepositoryName}/releases/download/{tagName}/MewuAI-Setup-{versionText}-win-x64.exe"),
-            new GitHubAsset("SHA256SUMS.txt",null,$"https://github.com/{RepositoryOwner}/{RepositoryName}/releases/download/{tagName}/SHA256SUMS.txt")
-        ]);
+        // A redirect proves only the version, not which assets exist or their hashes.
+        // Never invent a legacy checksum asset: current releases omit that file.
+        return new GitHubRelease(tagName,false,false,[]);
     }
 
     private async Task<string> DownloadStringAsync(GitHubAsset asset,long maximumBytes,CancellationToken cancellationToken)

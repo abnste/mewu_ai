@@ -56,7 +56,7 @@ internal static class AnnotationOverlayRenderer
                     case AiAnnotationKind.Arrow:
                         if(points is {Length:>=2})DrawArrow(drawing,pen,points[0],points[^1],Math.Clamp(stroke*4,10,42));break;
                     case AiAnnotationKind.Text:
-                        DrawText(drawing,annotation.Text,new Rect(x,y,boxWidth,boxHeight),Math.Clamp(style.FontSize*height,annotation.IsTeachingFeedback?4:10,96),brush,annotation.IsTeachingFeedback);break;
+                        DrawText(drawing,annotation.Text,new Rect(x,y,boxWidth,boxHeight),Math.Clamp(style.FontSize*height,annotation.IsTeachingFeedback?4:10,96),brush,annotation.IsTeachingFeedback,fit:true);break;
                     case AiAnnotationKind.Number:
                         var diameter=Math.Min(boxWidth,boxHeight);drawing.DrawEllipse(brush,null,new Point(x+diameter/2,y+diameter/2),diameter/2,diameter/2);DrawCenteredText(drawing,(annotation.Number??1).ToString(CultureInfo.InvariantCulture),new Rect(x,y,diameter,diameter),Math.Clamp(diameter*.48,12,52),Contrast(color));break;
                     default:
@@ -123,21 +123,44 @@ internal static class AnnotationOverlayRenderer
         drawing.DrawLine(pen,start,end);var angle=Math.Atan2(end.Y-start.Y,end.X-start.X);var first=new Point(end.X-head*Math.Cos(angle-Math.PI/6),end.Y-head*Math.Sin(angle-Math.PI/6));var second=new Point(end.X-head*Math.Cos(angle+Math.PI/6),end.Y-head*Math.Sin(angle+Math.PI/6));drawing.DrawLine(pen,end,first);drawing.DrawLine(pen,end,second);
     }
 
-    private static void DrawText(DrawingContext drawing,string value,Rect bounds,double size,Brush brush,bool teaching=false)
+    private static void DrawText(DrawingContext drawing,string value,Rect bounds,double size,Brush brush,bool teaching=false,bool fit=false)
     {
-        if(teaching)
+        if(AnnotationFormulaLayout.TryCreate(value,bounds.Width,size,brush,teaching) is {} formula)
+        {
+            var scale=Math.Min(1,bounds.Height/formula.Height);
+            drawing.PushClip(new RectangleGeometry(bounds));
+            drawing.DrawImage(formula,new Rect(bounds.X,bounds.Y,formula.Width*scale,formula.Height*scale));drawing.Pop();
+        }
+        else if(teaching)
         {
             var image=TeachingFeedbackLayout.DrawText(value,Math.Max(1,bounds.Width),size,brush,halo:true);
             drawing.PushClip(new RectangleGeometry(bounds));drawing.DrawImage(image,new Rect(bounds.X,bounds.Y,image.Width,image.Height));drawing.Pop();
         }
         else
         {
-            var text=new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface("Microsoft YaHei UI"),size,brush,1){MaxTextWidth=Math.Max(1,bounds.Width),MaxTextHeight=Math.Max(1,bounds.Height)};drawing.DrawText(text,bounds.TopLeft);
+            var text=new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface("Microsoft YaHei UI"),size,brush,1){MaxTextWidth=Math.Max(1,bounds.Width)};
+            // MaxTextHeight can hide the entire first line when the model's
+            // requested font is as tall as its rectangle. Fit text with a
+            // bounded search before clipping, so short answers and ticks stay
+            // visible in both the live vector layer and exported images.
+            if(fit&&text.Height>bounds.Height)
+            {
+                var low=.1;var high=size;
+                for(var index=0;index<16;index++)
+                {
+                    var candidate=(low+high)/2;text.SetFontSize(candidate);
+                    if(text.Height<=bounds.Height)low=candidate;else high=candidate;
+                }
+                text.SetFontSize(low);
+            }
+            text.MaxTextHeight=Math.Max(1,bounds.Height);
+            drawing.PushClip(new RectangleGeometry(bounds));drawing.DrawText(text,bounds.TopLeft);drawing.Pop();
         }
     }
 
     private static double MeasureCalloutHeight(string value,double cardWidth,double font)
     {
+        if(AnnotationFormulaLayout.TryCreate(value,cardWidth-font*1.3,font,Brushes.Black) is {} formula)return formula.Height+font;
         var text=new FormattedText(value,CultureInfo.CurrentUICulture,FlowDirection.LeftToRight,new Typeface("Microsoft YaHei UI"),font,Brushes.Black,1){MaxTextWidth=Math.Max(1,cardWidth-font*1.3)};return text.Height+font;
     }
 

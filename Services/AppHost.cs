@@ -24,8 +24,13 @@ public sealed class AppHost : IDisposable
     // filtered by provider/model before they are exposed to another overlay.
     private readonly object _sessionHistoryGate=new();
     private readonly List<ConversationHistoryEntry> _sessionConversationHistory=[];
-    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive;
-    private ConversationSessionArchive? _pendingConversationSession;
+    // Kept separately from the active request context. Starting a new
+    // conversation must clear what is sent to the provider, while the
+    // history picker still needs to show sessions created earlier in this
+    // host lifetime when disk history is disabled.
+    private readonly List<ConversationHistoryEntry> _conversationArchive=[];
+    private GlobalHotkeyService? _hotkey; private Forms.NotifyIcon? _tray; private Forms.ContextMenuStrip? _trayMenu; private Icon? _ownedTrayIcon; private Font? _ownedTrayMenuFont; private MainWindow? _main; private SettingsWindow? _settingsWindow; private readonly List<Window> _auxiliaryWindows=[]; private bool _restoreMainAfterAuxiliary; private int _captureActive; private CaptureOverlayWindow? _activeCaptureOverlay;
+    private Action? _restoreHiddenConversationSessions;
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
@@ -91,20 +96,38 @@ public sealed class AppHost : IDisposable
         var item=new Forms.ToolStripMenuItem(text){AutoSize=false,Width=Math.Max(156,menu.MinimumSize.Width-menu.Padding.Horizontal),Height=36,Margin=new Forms.Padding(0,1,0,1),Padding=new Forms.Padding(12,0,14,0),TextAlign=ContentAlignment.MiddleLeft};item.Click+=onClick;menu.Items.Add(item);return item;
     }
     public void BeginCapture(){if(!IsExiting&&Volatile.Read(ref _disposed)==0)_=BeginCaptureAsync();}
-    private async Task BeginCaptureAsync()
+    private async Task BeginCaptureAsync(ConversationSessionArchive? restoredSession=null)
     {
         if(Interlocked.CompareExchange(ref _captureActive,1,0)!=0)return;
         CrashDiagnosticsService.MarkOperation("启动屏幕助手");
         var token=_lifetime.Token;
+        Action? restoreConversationSessions=null;
         try
         {
             // A capture can be triggered from the tray or the global hotkey
             // while the launcher is still visible.  Hide it before the frame
             // is frozen so the assistant never captures its own launcher and
             // the overlay remains the single, clean surface the user sees.
+            var hiddenConversationSessions=new List<Window>();
+            var restoredConversationSessions=false;
+            void RestoreConversationSessions()
+            {
+                if(restoredConversationSessions)return;
+                restoredConversationSessions=true;
+                foreach(var window in hiddenConversationSessions)
+                {
+                    try{if(!window.IsVisible)window.Show();}catch(Exception ex){try{new PrivacyLogger().Error("ConversationWindowRestore",ex);}catch{}}
+                }
+            }
+            restoreConversationSessions=RestoreConversationSessions;
+            _restoreHiddenConversationSessions=RestoreConversationSessions;
             void HideLauncher()
             {
                 if (_main?.IsVisible == true){_main.Hide();NativeMethods.FlushComposition();}
+                foreach(var widget in _app.Windows.OfType<ConversationFloatingWidget>().Where(window=>window.IsVisible).ToArray())
+                {
+                    hiddenConversationSessions.Add(widget);widget.Hide();
+                }
             }
             if(_app.Dispatcher.CheckAccess())HideLauncher();
             else await _app.Dispatcher.InvokeAsync(HideLauncher);
@@ -113,8 +136,7 @@ public sealed class AppHost : IDisposable
             void ShowCapture()
             {
                 token.ThrowIfCancellationRequested();
-                var pending=Interlocked.Exchange(ref _pendingConversationSession,null);
-                var overlay=new CaptureOverlayWindow(this,pending);overlay.Closed+=(_,_)=>{Interlocked.Exchange(ref _captureActive,0);CrashDiagnosticsService.MarkOperation("空闲");};overlay.Show();overlay.Activate();
+                var overlay=new CaptureOverlayWindow(this,restoredSession);_activeCaptureOverlay=overlay;overlay.Closed+=(_,_)=>{OnCaptureOverlayClosed(overlay);RestoreConversationSessions();};overlay.Show();overlay.Activate();
             }
             // Hotkeys already arrive on the UI thread. Freeze that moment
             // directly; don't queue two extra turns before taking the frame.
@@ -128,6 +150,12 @@ public sealed class AppHost : IDisposable
             CrashDiagnosticsService.MarkOperation("截图启动失败后空闲");
             if(!token.IsCancellationRequested&&!IsExiting)try{Notify("无法开始截图，请重试");}catch{}
         }
+        finally
+        {
+            // If the capture was cancelled or failed before an overlay could
+            // be shown, do not leave minimized conversation widgets hidden.
+            if(_activeCaptureOverlay is null){restoreConversationSessions?.Invoke();_restoreHiddenConversationSessions=null;}
+        }
     }
     private MainWindow CreateMainWindow()
     {
@@ -135,48 +163,29 @@ public sealed class AppHost : IDisposable
         window.Closed+=(_,_)=>BeginShutdown();
         return window;
     }
-    public void ShowMainWindow() { if(IsExiting||_app.Dispatcher.HasShutdownStarted)return;_app.Dispatcher.Invoke(()=>{if(IsExiting)return;_main??=CreateMainWindow();_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
+    internal IReadOnlyList<ConversationHistoryEntry> GetAllSessionConversationHistory()
+    {
+        lock(_sessionHistoryGate)
+        {
+            return _conversationArchive
+                .Concat(_sessionConversationHistory)
+                .GroupBy(entry=>$"{entry.SessionId}\n{entry.Timestamp:O}\n{entry.Provider}\n{entry.Model}\n{entry.Prompt}\n{entry.Answer}",StringComparer.Ordinal)
+                .Select(group=>group.First())
+                .OrderBy(entry=>entry.Timestamp)
+                .ToArray();
+        }
+    }
+    internal bool CanOpenConversationSession(ConversationSessionArchive session)
+        =>GetConversationChannels().Any(channel=>ConversationArchivePolicy.Matches(session,channel,Settings));
     public bool BeginConversationSession(ConversationSessionArchive session)
     {
         ArgumentNullException.ThrowIfNull(session);
-        if(IsExiting||Volatile.Read(ref _disposed)!=0||session.Entries.Count==0||!CanOpenConversationSession(session))return false;
-        Interlocked.Exchange(ref _pendingConversationSession,session);
-        if(Interlocked.CompareExchange(ref _captureActive,1,0)!=0)
-        {
-            Interlocked.Exchange(ref _pendingConversationSession,null);
-            return false;
-        }
-        HideMainForCapture();
-        CrashDiagnosticsService.MarkOperation("打开历史会话");
-        _=BeginPreparedCaptureAsync();
+        if(!_app.Dispatcher.CheckAccess())return _app.Dispatcher.Invoke(()=>BeginConversationSession(session));
+        if(IsExiting||Volatile.Read(ref _disposed)!=0||IsCaptureActive||!CanOpenConversationSession(session)||ConversationArchivePolicy.Entries(session).Count==0)return false;
+        _=BeginCaptureAsync(session);
         return true;
     }
-
-    private void HideMainForCapture()
-    {
-        void HideLauncher(){if(_main?.IsVisible==true){_main.Hide();NativeMethods.FlushComposition();}}
-        if(_app.Dispatcher.CheckAccess())HideLauncher();else _app.Dispatcher.Invoke(HideLauncher);
-    }
-
-    private async Task BeginPreparedCaptureAsync()
-    {
-        var token=_lifetime.Token;
-        try
-        {
-            // Let the launcher popup finish closing and the transparent shell
-            // commit one compositor frame before freezing the desktop image.
-            await Task.Delay(60,token).ConfigureAwait(true);
-            void ShowCapture()
-            {
-                token.ThrowIfCancellationRequested();
-                var pending=Interlocked.Exchange(ref _pendingConversationSession,null);
-                var overlay=new CaptureOverlayWindow(this,pending);overlay.Closed+=(_,_)=>{Interlocked.Exchange(ref _captureActive,0);CrashDiagnosticsService.MarkOperation("空闲");};overlay.Show();overlay.Activate();
-            }
-            if(_app.Dispatcher.CheckAccess())ShowCapture();else await _app.Dispatcher.InvokeAsync(ShowCapture);
-        }
-        catch(OperationCanceledException) when(token.IsCancellationRequested){Interlocked.Exchange(ref _pendingConversationSession,null);Interlocked.Exchange(ref _captureActive,0);CrashDiagnosticsService.MarkOperation("空闲");}
-        catch(Exception ex){Interlocked.Exchange(ref _pendingConversationSession,null);Interlocked.Exchange(ref _captureActive,0);new PrivacyLogger().Error("ConversationArchiveOpen",ex);ShowMainWindow();}
-    }
+    public void ShowMainWindow() { if(IsExiting||_app.Dispatcher.HasShutdownStarted)return;_app.Dispatcher.Invoke(()=>{if(IsExiting)return;_main??=CreateMainWindow();_main.Show();_main.WindowState=WindowState.Normal;_main.Activate();}); }
     public void ShowSettings(bool showAi=false) { _app.Dispatcher.Invoke(()=>{ if(_settingsWindow is null){_settingsWindow=new SettingsWindow(this);var window=_settingsWindow;window.Closed+=(_,_)=>{if(ReferenceEquals(_settingsWindow,window))_settingsWindow=null;FinishAuxiliary(window);};} if(showAi)_settingsWindow.ShowAiPage();PrepareAuxiliary(_settingsWindow);_settingsWindow.Show();_settingsWindow.WindowState=WindowState.Normal;_settingsWindow.Activate();}); }
     public HermesInstallation? DiscoverHermes()=>_hermesRuntime.Discover();
 
@@ -219,7 +228,7 @@ public sealed class AppHost : IDisposable
             if(!string.IsNullOrWhiteSpace(Settings.HermesProfile)&&!string.IsNullOrWhiteSpace(Settings.HermesModel))
                 channels.Add(new("hermes",$"Hermes · {Settings.HermesProfile}","hermes",Settings.HermesModel??string.Empty,ConversationChannelKind.Hermes,true,true));
         }
-        if(!string.IsNullOrWhiteSpace(Settings.CodexModel)&&CodexAppServer.Discover() is not null)
+        if(!string.IsNullOrWhiteSpace(Settings.CodexModel)&&CodexAppServer.Discover(Settings.CodexExecutablePath) is not null)
         {
             try
             {
@@ -228,7 +237,7 @@ public sealed class AppHost : IDisposable
             }
             catch(InvalidOperationException){}
         }
-        if(!string.IsNullOrWhiteSpace(Settings.WorkBuddyModel)&&WorkBuddyAcpServer.Discover() is not null)
+        if(!string.IsNullOrWhiteSpace(Settings.WorkBuddyModel)&&WorkBuddyAcpServer.Discover(Settings.WorkBuddyExecutablePath) is not null)
         {
             try{WorkBuddySettingsPolicy.Validate(Settings.WorkBuddyModel,Settings.WorkBuddyReasoningEffort);channels.Add(new("workbuddy",$"WorkBuddy · {Settings.WorkBuddyModel}","workbuddy",Settings.WorkBuddyModel,ConversationChannelKind.WorkBuddy,Settings.WorkBuddySupportsImage,Settings.WorkBuddySupportsImage));}catch(InvalidOperationException){}
         }
@@ -244,33 +253,6 @@ public sealed class AppHost : IDisposable
         }
         return channels;
     }
-
-    internal (string Provider,string Model) GetConversationHistoryScope(ConversationChannel channel)
-    {
-        ArgumentNullException.ThrowIfNull(channel);
-        return channel.Kind switch
-        {
-            ConversationChannelKind.WorkBuddy=>("WorkBuddy",channel.Model),
-            ConversationChannelKind.MiniMaxCode=>("MiniMax Code",channel.Model),
-            ConversationChannelKind.Codex=>("ChatGPT Work · Codex",channel.Model),
-            ConversationChannelKind.Hermes=>($"本机 Hermes · {Settings.HermesProfile}",channel.Model),
-            _=>
-            (
-                Settings.Providers.FirstOrDefault(provider=>provider.Id==channel.ProviderId)?.Name
-                    ??Settings.Providers.FirstOrDefault(provider=>provider.Id==channel.ProviderId)?.Id
-                    ??string.Empty,
-                channel.Model
-            )
-        };
-    }
-
-    internal bool CanOpenConversationSession(ConversationSessionArchive session)
-        =>GetConversationChannels().Any(channel=>
-        {
-            var scope=GetConversationHistoryScope(channel);
-            return string.Equals(scope.Provider,session.Provider,StringComparison.Ordinal)
-                &&string.Equals(scope.Model,session.Model,StringComparison.Ordinal);
-        });
 
     private static string BuildApiChannelName(AiProviderSettings provider)
         =>string.IsNullOrWhiteSpace(provider.Name)?$"API · {provider.Model}":$"API · {provider.Name} · {provider.Model}";
@@ -337,8 +319,8 @@ public sealed class AppHost : IDisposable
             {
                 if(string.IsNullOrWhiteSpace(settings.WorkBuddyModel))throw new InvalidOperationException("WorkBuddy 尚未完成配置，请在设置中选择模型。");
                 WorkBuddySettingsPolicy.Validate(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort);
-                if(WorkBuddyAcpServer.Discover() is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
-                return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage);
+                if(WorkBuddyAcpServer.Discover(settings.WorkBuddyExecutablePath) is null)throw new InvalidOperationException("未找到本机 WorkBuddy，请安装并登录官方客户端。");
+                return new WorkBuddyAiProvider(settings.WorkBuddyModel,settings.WorkBuddyReasoningEffort,settings.WorkBuddySupportsImage,settings.WorkBuddyExecutablePath);
             }
             catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
@@ -347,8 +329,8 @@ public sealed class AppHost : IDisposable
             try
             {
                 if(string.IsNullOrWhiteSpace(settings.CodexModel)||settings.CodexModel.Length>160||settings.CodexModel.Any(char.IsControl)||!new[]{"none","minimal","low","medium","high","xhigh","max","ultra"}.Contains(settings.CodexReasoningEffort,StringComparer.Ordinal))throw new InvalidOperationException("请在 Codex 页重新选择可用模型和思考程度。");
-                if(CodexAppServer.Discover() is null)throw new InvalidOperationException("未找到本机 Codex，请安装并登录官方 ChatGPT 桌面应用。");
-                return new CodexAiProvider(settings.CodexModel,settings.CodexReasoningEffort,settings.CodexSupportsImage);
+                if(CodexAppServer.Discover(settings.CodexExecutablePath) is null)throw new InvalidOperationException("未找到本机 Codex，请安装并登录官方 ChatGPT 桌面应用。");
+                return new CodexAiProvider(settings.CodexModel,settings.CodexReasoningEffort,settings.CodexSupportsImage,settings.CodexExecutablePath);
             }
             catch(InvalidOperationException ex){error=ex.Message;return null;}
         }
@@ -418,11 +400,6 @@ public sealed class AppHost : IDisposable
         }
     }
 
-    internal IReadOnlyList<ConversationHistoryEntry> GetAllSessionConversationHistory()
-    {
-        lock(_sessionHistoryGate)return _sessionConversationHistory.ToArray();
-    }
-
     internal void RememberConversationHistory(ConversationHistoryEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
@@ -434,9 +411,13 @@ public sealed class AppHost : IDisposable
         lock(_sessionHistoryGate)
         {
             _sessionConversationHistory.Add(entry);
+            _conversationArchive.Add(entry);
             const int maxEntries=100;
             if(_sessionConversationHistory.Count>maxEntries)
                 _sessionConversationHistory.RemoveRange(0,_sessionConversationHistory.Count-maxEntries);
+            const int maxArchiveEntries=200;
+            if(_conversationArchive.Count>maxArchiveEntries)
+                _conversationArchive.RemoveRange(0,_conversationArchive.Count-maxArchiveEntries);
         }
     }
 
@@ -447,10 +428,45 @@ public sealed class AppHost : IDisposable
         try{_settingsService?.Save(Settings);}catch(Exception ex){try{new PrivacyLogger().Error("ConversationChannelSave",ex);}catch{}}
     }
 
+    internal void ClearSessionConversationHistory(string provider,string model)
+    {
+        lock(_sessionHistoryGate)
+            _sessionConversationHistory.RemoveAll(entry=>string.Equals(entry.Provider,provider,StringComparison.Ordinal)&&string.Equals(entry.Model,model,StringComparison.Ordinal));
+    }
+
     internal void ClearSessionConversationHistory()
     {
         lock(_sessionHistoryGate)_sessionConversationHistory.Clear();
-        Teaching.Clear();
+    }
+
+    private void OnCaptureOverlayClosed(CaptureOverlayWindow overlay)
+    {
+        if(ReferenceEquals(_activeCaptureOverlay,overlay))
+        {
+            _activeCaptureOverlay=null;
+            Interlocked.Exchange(ref _captureActive,0);
+            CrashDiagnosticsService.MarkOperation("空闲");
+        }
+    }
+
+    internal void ReleaseCaptureForMinimizedOverlay(CaptureOverlayWindow overlay)
+    {
+        _restoreHiddenConversationSessions?.Invoke();
+        _restoreHiddenConversationSessions=null;
+        if(ReferenceEquals(_activeCaptureOverlay,overlay))
+        {
+            _activeCaptureOverlay=null;
+            Interlocked.Exchange(ref _captureActive,0);
+        }
+    }
+
+    internal bool TryReacquireCaptureForOverlay(CaptureOverlayWindow overlay)
+    {
+        if(IsExiting||Volatile.Read(ref _disposed)!=0)return false;
+        if(ReferenceEquals(_activeCaptureOverlay,overlay))return true;
+        if(Interlocked.CompareExchange(ref _captureActive,1,0)!=0)return false;
+        _activeCaptureOverlay=overlay;
+        return true;
     }
 
     /// <summary>
@@ -503,18 +519,10 @@ public sealed class AppHost : IDisposable
     public bool TryApplySettings(AppSettings candidate,out string? error,out string? warning)
     {
         error=null;warning=null;var previous=Settings;var startupChanged=candidate.LaunchAtStartup!=previous.LaunchAtStartup;
+        try{NetworkHttpClientFactory.Validate(candidate.NetworkProxyMode,candidate.NetworkProxyUrl);}
+        catch(InvalidOperationException ex){error=ex.Message;return false;}
         var hotkeyChanged=candidate.CaptureHotkey.Key!=previous.CaptureHotkey.Key||candidate.CaptureHotkey.Modifiers!=previous.CaptureHotkey.Modifiers;
-        // A global hotkey belongs to the operating system, while Providers and
-        // their credentials are ordinary application settings. Do not make a
-        // collision in the former discard edits to the latter. Register uses
-        // a spare hotkey id first, so a false result leaves the old binding in
-        // place; persist that old binding as well and explain the downgrade.
-        if(hotkeyChanged&&_hotkey?.Register(candidate.CaptureHotkey)==false)
-        {
-            candidate.CaptureHotkey=new HotkeySetting { Key=previous.CaptureHotkey.Key,Modifiers=previous.CaptureHotkey.Modifiers };
-            hotkeyChanged=false;
-            warning="快捷键已被其他应用占用：Provider 和其他设置已保存，仍在使用原快捷键。请修改快捷键后再保存。";
-        }
+        if(_hotkey?.Register(candidate.CaptureHotkey)==false){error="该快捷键可能已被其他应用占用，旧快捷键仍然有效。";return false;}
         try
         {
             if(startupChanged)StartupService.SetEnabled(candidate.LaunchAtStartup);
@@ -548,7 +556,9 @@ public sealed class AppHost : IDisposable
     {
         if(Interlocked.Exchange(ref _disposed,1)!=0)return;
         var shouldCleanupTemp=_single.IsPrimary;
-        IsExiting=true;_lifetime.Cancel();Interlocked.Exchange(ref _captureActive,0);
+        IsExiting=true;_lifetime.Cancel();Interlocked.Exchange(ref _captureActive,0);_activeCaptureOverlay=null;
+        foreach(var overlay in _app.Windows.OfType<CaptureOverlayWindow>().ToArray())try{overlay.Close();}catch(Exception ex){try{new PrivacyLogger().Error("CaptureOverlayCloseOnExit",ex);}catch{}}
+        foreach(var widget in _app.Windows.OfType<ConversationFloatingWidget>().ToArray())try{widget.CloseForOwnerExit();}catch(Exception ex){try{new PrivacyLogger().Error("ConversationWidgetCloseOnExit",ex);}catch{}}
         // Drain speech first, then stop the runtime and only afterwards clean
         // temporary media. This prevents deleting an audio file still opened
         // by WPF or disposing Hermes while synthesis is still in flight.

@@ -48,9 +48,13 @@ internal static class CaptureOverlayPolicy
     internal static bool NeedsImageAnnotationRepair(string userPrompt,string answer,int renderedAnnotationCount,int qualityRejectedCount=0)
     {
         if(renderedAnnotationCount>0&&qualityRejectedCount==0)return false;
+        if(ClaimsImageAnnotations(answer))return true;
         var value=(userPrompt+"\n"+answer).ToLowerInvariant();
         return new[]{"标注","框选","画框","红框","圈出","圈起来","定位","标记","哪里","哪个","找出","高亮","马赛克","批改","改卷","阅卷","批阅","annotation","highlight","circle","box","locate","where","grade this","grade these","mark this paper","mark these papers"}.Any(value.Contains);
     }
+
+    internal static bool ClaimsImageAnnotations(string answer)=>
+        new[]{"已写在","已标在","已画在","已标出","已添加到图片","已在图片","已在图中","已在空白处","完整解答已写"}.Any(answer.Contains);
 
     internal static string CreateImageAnnotationRepairPrompt(string originalPrompt,string draftAnswer="",AiAnnotationUpdateMode mode=AiAnnotationUpdateMode.Replace)
     {

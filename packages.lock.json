@@ -36,6 +36,12 @@
           "Microsoft.WindowsAppSDK": "1.6.241114003"
         }
       },
+      "QRCoder": {
+        "type": "Direct",
+        "requested": "[1.6.0, )",
+        "resolved": "1.6.0",
+        "contentHash": "XmPA81eo+oRxBuyVdswsSkTGTE1d3thfF11Z1PdD7oB56A6HU4G4AAOdySmGRMb/cljwlFTMWUtosGEnwpS6GA=="
+      },
       "RapidOcrNet": {
         "type": "Direct",
         "requested": "[4.1.0, )",

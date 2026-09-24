@@ -45,9 +45,13 @@ public static class StreamingResponseParser
                 return TryParseResponsesEvent(document.RootElement,out delta,out done,out truncated);
             if(choices.ValueKind!=JsonValueKind.Array)return false;
             if(choices.GetArrayLength()==0)return true;
-            var choice=choices[0];done=choice.TryGetProperty("finish_reason",out var finish)&&finish.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(finish.GetString());
-            truncated=done&&string.Equals(finish.GetString(),"length",StringComparison.OrdinalIgnoreCase);
-            if(!choice.TryGetProperty("delta",out var value)||value.ValueKind!=JsonValueKind.Object)
+            var choice=choices[0];
+            var hasFinish=choice.TryGetProperty("finish_reason",out var finish)&&finish.ValueKind==JsonValueKind.String&&!string.IsNullOrWhiteSpace(finish.GetString());
+            var candidateDone=hasFinish;
+            var candidateTruncated=candidateDone&&string.Equals(finish.GetString(),"length",StringComparison.OrdinalIgnoreCase);
+            if(!choice.TryGetProperty("delta",out var value))
+                { done=candidateDone;truncated=candidateTruncated;return candidateDone; }
+            if(value.ValueKind!=JsonValueKind.Object)
             {
                 // If the endpoint ignored `stream:true`, it can return one
                 // complete chat-completion object in the stream body.
@@ -60,14 +64,14 @@ public static class StreamingResponseParser
                     if(messageReasoning.Length==0)messageReasoning=messageTypedReasoning;
                     delta=new(messageContent,messageReasoning);done=true;return true;
                 }
-                return done;
+                return false;
             }
             var (content,typedReasoning)=ReadContentParts(value);var reasoning=ReadString(value,"reasoning_content");var cumulative=false;
             if(reasoning.Length==0)reasoning=ReadString(value,"thinking_content");
             if(reasoning.Length==0)reasoning=ReadString(value,"reasoning");
             if(reasoning.Length==0)reasoning=typedReasoning;
             if(reasoning.Length==0){reasoning=ReadReasoningDetails(value);cumulative=reasoning.Length>0;}
-            delta=new(content,reasoning,cumulative);return true;
+            delta=new(content,reasoning,cumulative);done=candidateDone;truncated=candidateTruncated;return true;
         }
         catch(JsonException){return false;}
         catch(KeyNotFoundException){return false;}

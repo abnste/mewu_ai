@@ -4,6 +4,135 @@
 
 ## 未发布 / Unreleased
 
+- **抓取 v4：OCR 误读链接自动纠错 + 清晰报错 + 未装 Scrapling 的内置基础抓取**：定位到此前"反复失败"的真正元凶——圈选识别用的本地 OCR 把微信文章 key 里的大写 `I` 认成小写 `l`（I/l/1、O/0 互混），30 次抓取里 19 次用了错误 URL；微信对无效 key 返回 HTTP 200 + "Parameter error" 错误页，与"封锁纯 HTTP"无关（实测有效 key 的纯 HTTP Fetcher 直接返回全文 1377 字）。v4 抓取脚本：微信 /s/ 链接返回错误页时**自动生成易混字符变体（全局 + 逐位替换，最多探测 24 个）并用轻量 Fetcher 探测**，命中即用纠正后的 URL 抓取并在结果/保存文件中注明；错误页不再当正文透传，而是返回结构化错误码（`weixin_error_page` / `network_unreachable`）并由界面翻译成明确提示（链接无效/需要代理/网络不可达）；非微信站点疑似被拦截（知乎 403）时升级隐身浏览器。**未安装 Scrapling 的用户**：新增内置基础抓取（`BasicHttpCrawlService`，纯 C# HttpClient + Chrome 头 + 剥标签抽正文，零依赖），静态页面直接出结果，动态页面（微信/知乎）失败后再引导一键安装；抓取子进程会剔除格式损坏的代理环境变量（如 `http://http://…`）但保留合法代理。实测：误读 URL `…clH…` 自动纠正为 `…IH…` 并抓到 1035 字正文；知乎回答（纯 HTTP 403）经隐身浏览器抓到全文；无效 key 返回清晰中文报错。/ **Crawl v4: auto-correcting OCR-misread links + clear errors + built-in basic fetch when Scrapling is absent**: the real culprit behind the repeated failures was the local OCR misreading uppercase `I` as lowercase `l` in WeChat article keys (19 of 30 attempts used a wrong URL); WeChat serves an HTTP 200 "Parameter error" stub only for invalid keys — a valid key returns the full article even over plain HTTP. v4 now generates bounded character-confusion variants (global + per-position, ≤24 probes) when a WeChat /s/ link returns the error stub, verifies them with the lightweight Fetcher, and crawls the corrected URL (noted in the result); error stubs are no longer relayed as content — structured error codes (`weixin_error_page` / `network_unreachable`) are translated into clear guidance (invalid link / proxy needed / unreachable); non-WeChat sites escalate to the stealth browser on block pages (Zhihu 403). Users without Scrapling get a new built-in basic fetch (`BasicHttpCrawlService`, pure C# HttpClient + Chrome headers + tag-stripping, zero dependencies) that handles static pages directly and falls back to the one-click install prompt for dynamic pages; malformed proxy env vars are stripped from the crawl subprocess while valid proxies are kept. Verified: the misread URL `…clH…` was auto-corrected to `…IH…` yielding the full 1035-char article; the Zhihu answer (plain HTTP 403) was fetched via the stealth browser; an invalid key returns a clear localized error.
+
+- **修复微信文章抓取返回 "Parameter error" 噪声**（v3 stealthy-wechat）：日志与实测确认微信对纯 HTTP 请求（`Fetcher.get`，无 JS 渲染）返回 HTTP 200 + "Parameter error" 错误页，而此前的 passthrough 版本把该错误页全文直接透传给用户。现抓取脚本改为：**微信 URL 直接走 StealthyFetcher（隐身浏览器）**，从 `#js_content` 容器抽正文、`#activity-name` 取标题；非微信站点先快速 Fetcher、疑似错误页（含 "parameter error" 或正文 <80 字）再升级 StealthyFetcher。本机实测 `https://mp.weixin.qq.com/s/5svePaascIHkohiGhxZQiw` 抓到完整正文 1035 字 + 标题「金秋有约｜CURA阿迪达斯中国大学生路跑活动，等你来跑！」。/ **Fixed WeChat crawl returning "Parameter error" noise** (v3): WeChat serves an HTTP 200 "Parameter error" stub to plain HTTP fetches, which the passthrough build relayed verbatim. The fetch script now goes straight to StealthyFetcher for WeChat URLs (extraction via `#js_content` / `#activity-name`), and for other sites escalates from Fetcher to StealthyFetcher when the page looks like an error stub. Verified locally: full 1035-char body + title captured for the sample article.
+
+- Scrapling 一键安装链路（v13）：圈选链接后点"安装 Scrapling 并爬取"会弹出对话框，mewuAI 自动探测 PATH 里的 Python 3.10+（`py` 启动器 / python3 / python），在 `%LOCALAPPDATA%\MewuAI\scrapling` 建 venv、pip install scrapling、scrapling install 下载隐身浏览器，实时上报进度（每一步都通过 PromptStatus 反馈）。完成后立即开始抓取，不需要再点一次。一键安装失败时显示错误并提供"复制手动安装步骤"按钮，把 `py -3.13 -m venv / pip install scrapling / scrapling install` 命令复制到剪贴板。未安装 Scrapling 时按钮显示为"安装 Scrapling 并爬取"，安装后变回"Scrapling 爬取"。/ Scrapling one-click install (v13): selecting a link and pressing "Install Scrapling & crawl" opens a dialog that detects Python 3.10+, creates a venv under `%LOCALAPPDATA%\MewuAI\scrapling`, runs pip install scrapling + scrapling install with live progress, then crawls automatically. A "Copy manual steps" button is offered on failure.
+
+- 网易邮箱发件链路**改为强制 SMTP 授权码通道**：网页扫码拿到的 webmail 临时会话经实测会被服务端沙箱化（mbox:compose 返回 S_OK 但“已发送”箱查不到副本），因此扫码授权**仅用于读取邮件上下文**，不再代发邮件；`mewu-mail-send` 路由时若 SMTP 未配置则直接提示用户去 网页端 设置 → POP3/SMTP/IMAP 生成授权码后再发。/ NetEase Mail sending **now strictly requires the SMTP authorization code**: the web scan session is sandboxed by NetEase (S_OK without a Sent-folder copy), so QR authorization enables context-fetching, not sending. `mewu-mail-send` drafts without the SMTP code prompt the user to generate one in web Settings → POP3/SMTP/IMAP first.
+- Scrapling 自动探测新增**快捷方式解析**（`ShellLinkResolver`）：不再只盯死 D:/scrapling_app 等已知路径，而是从桌面“爬虫”目录里扫所有 `.lnk` 快捷方式、解析其中的 UTF-16 LE 路径串，命中后直接定位到 scrapling 安装根目录（如 `D:\scrapling（爬虫）`），再检查 `venv\Scripts\python.exe` 是否存在。本机测试 `C:\Users\86152\Desktop\爬虫\scrapling启动桌面应用（快捷）.lnk` → `D:\scrapling（爬虫）\venv\Scripts\python.exe` 已存在，链路跑通。/ Scrapling now auto-detects via shortcut parsing: scans all `.lnk` files under the desktop “爬虫” folder, extracts the UTF-16 LE path inside, and returns the install root if `venv\Scripts\python.exe` exists. Verified locally: `C:\Users\86152\Desktop\爬虫\scrapling启动桌面应用（快捷）.lnk` → `D:\scrapling（爬虫）` (venv present).
+
+- 修复网易邮箱网页扫码发件“UI 显示成功但实际未投递”误报：S_OK 后再查 fid=3 “已发送”箱，匹配主题+收件人+时间窗确认服务端真的写入了副本；若未在“已发送”箱找到副本，则返回明确的警告并强提示在 设置 → MCP → 网易邮箱 填写 SMTP 授权码通道获取可靠回执（不再误报“邮件已发送”）。/ NetEase web scan send no longer falsely reports "sent": after S_OK, the Sent folder (fid=3) is checked; if no copy is found, the warning explicitly tells the user to configure the SMTP authorization code for reliable delivery.
+- 加固 Scrapling 抓取微信公众号：抓取脚本强制只取 #js_content 元素（不再 fallback 到 `get_all_text` 抓取页面 UI），增加启发式判别“看起来不像正文”（含 ≥2 个微信 UI 关键词、轻点赞/在看/分享/评论/Video/Mini Program/Parameter error 等、或文本 < 200 字符），自动探测路径增加桌面"爬虫"\scrapling、D:\爬虫\scrapling 等位置，让没装在 D 盘 scrapling_app 的用户也能直接用。/ Scrapling WeChat fetching tightened: only the #js_content container is now extracted, a UI-only heuristic discards residual UI text, and additional install paths are scanned (Desktop\爬虫\scrapling, D:\爬虫\scrapling).
+
+- 网易邮箱新增网页版扫码授权（与 QQ 邮箱体验对齐）：点击“扫码授权”后本地渲染二维码（QRCoder，内容不经过第三方二维码服务），用手机“网易邮箱大师”App 扫码并确认，即取得网易网页登录会话（复刻 mail.163.com 登录页 mailscanlogin 协议：getqrcodeid → ngxqrcodeauthstatus 轮询 → qrcodeauth → ticketlogin），无需 IMAP/SMTP 授权码；会话（sid+Cookie）仅以 DPAPI 保存在本机。授权后 QQ 邮箱未授权时自动改用网易通道拉取收件箱实时上下文并代发邮件（网页接口 mbox:listMessages / mbox:compose），`mewu-mail-send` 草稿在未配置 SMTP 授权码时自动走网页发件；SMTP 授权码保留为备用发件通道。社区项目 netease-mail-mcp/NetEaseEmailConnector 因依赖 IMAP/SMTP 授权码、不支持纯二维码登录而未采纳。/ NetEase Mail now supports web QR-code authorization (matching the QQ Mail experience): “Scan QR code to authorize” renders the QR code locally (QRCoder; the payload never touches third-party QR services) and the user confirms with the NetEase Mailmaster mobile app, obtaining a webmail session by replicating the mail.163.com login page protocol (getqrcodeid → ngxqrcodeauthstatus polling → qrcodeauth → ticketlogin) — no IMAP/SMTP code needed; the session (sid+cookies) is stored locally with DPAPI only. When QQ Mail is not authorized the assistant now pulls live NetEase inbox context and sends confirmed mail through the web gateway (mbox:listMessages / mbox:compose), and `mewu-mail-send` drafts fall back to web sending when no SMTP code is configured; the SMTP code remains a fallback sending channel. The community projects netease-mail-mcp/NetEaseEmailConnector were evaluated but not adopted because they require IMAP/SMTP codes and offer no QR-only login.
+- 修复 WorkBuddy 自动检测超时：桥接层从 stdio ACP（`--acp`，当前 CLI 版本在 session/new 上会因内部 HTTP 服务未启动而无限挂起）重写为 CLI 的本地 HTTP ACP 端点（`--serve` 模式 + `POST /api/v1/acp`，SSE/NDJSON 流），连接与模型读取实测约 3 秒完成；同时清洗继承的坏代理环境变量（如 `http://http://…`，此前会让 CLI 认证刷新永远失败）、记录 CLI stderr 诊断前缀、检测成功后固化 WorkBuddy.exe 路径。/ WorkBuddy auto-detection no longer times out: the bridge was rewritten from stdio ACP (whose `session/new` deadlocks in current CLI builds) to the CLI's local HTTP ACP endpoint (`--serve` + `POST /api/v1/acp`, SSE/NDJSON) — connection and model loading complete in ~3 seconds; inherited malformed proxy variables (e.g. `http://http://…`, which wedged the CLI's auth refresh) are now repaired, CLI stderr diagnostics are logged, and the discovered WorkBuddy.exe path is persisted.
+- WorkBuddy 未配置不再阻塞其他设置保存：检测失败时，已配置过的沿用上次模型，从未配置的自动跳过 WorkBuddy 并以非阻断提示告知，邮箱、钉钉、飞书、Obsidian 等其余设置照常保存；检测失败时设置页仍提供兜底模型（上次保存值或 auto）供选择。/ A missing WorkBuddy configuration no longer blocks saving other settings: on detection failure previously-configured setups keep their saved model, never-configured ones skip WorkBuddy for that save with a non-blocking warning, while mail/DingTalk/Feishu/Obsidian settings save normally; the settings page also offers a fallback model (last saved value or auto) when detection fails.
+
+- 修复卡顿：打开链接或邮件发送成功后自动收起识屏浮层（全屏冻结帧不再遮挡新窗口），AI 应答进行中则只收起工具栏不中断对话。/ Performance fix: after opening a recognized link or sending an email the capture overlay now dismisses itself (the frozen full-screen frame no longer covers the newly opened window); while an AI answer is in flight only the toolbar is hidden so the turn is not interrupted.
+- 新增网易邮箱代发（MCP 栏目）：填入网易邮箱账号与 SMTP 授权码（网页端 设置 → POP3/SMTP/IMAP 生成，DPAPI 加密保存）后，识别到 163/126/yeah 等网易后缀地址即可直接撰写发送；QQ 邮箱未授权时也可用它给任意地址代发。AI 对话中的 `mewu-mail-send` 草稿会按收件人后缀自动选择 QQ 邮箱 MCP 或网易 SMTP 通道。/ New NetEase Mail sending (MCP tab): enter the mailbox account and SMTP authorization code (generated from web settings → POP3/SMTP/IMAP, stored with DPAPI) to email recognized 163/126/yeah addresses directly; any address can be reached when QQ Mail is not authorized. `mewu-mail-send` drafts from AI conversations auto-route between QQ Mail MCP and NetEase SMTP by recipient domain.
+- 新增钉钉分享（MCP 栏目）：配置企业内部应用（AppKey/AppSecret/AgentId，Secret 加密保存）后，圈选截图的工具栏出现「钉钉」按钮，图片经工作通知发送给指定 userid 联系人。/ New DingTalk sharing (MCP tab): after configuring an enterprise app (AppKey/AppSecret/AgentId, secret encrypted locally), a DingTalk button appears on the selection toolbar and sends the captured image to the configured userids as a work notification.
+- 新增飞书分享（MCP 栏目）：配置自建应用（AppId/AppSecret，需 im:message、im:chat 权限）后，圈选截图的工具栏出现「飞书」按钮，图片上传后发送到指定群或联系人；「测试连接」可拉取群列表直接挑选。/ New Feishu sharing (MCP tab): after configuring a self-built app (AppId/AppSecret with im:message and im:chat scopes), a Feishu button appears on the selection toolbar and uploads + sends the image to a chosen chat or contact; “Test connection” lists your chats for one-click selection.
+- 新增 Obsidian 截图笔记（MCP 栏目）：自动检测本机 vault，圈选截图的工具栏出现「Obsidian」按钮，把图片存入附件目录并生成引用它的 Markdown 笔记（可选自动在 Obsidian 打开）。纯本地文件操作，无凭据。/ New Obsidian screenshot notes (MCP tab): local vaults are auto-detected; an Obsidian button appears on the selection toolbar, saving the image into the attachments folder and creating a Markdown note that embeds it (optionally opened in Obsidian). Fully local file operations, no credentials.
+
+- 设置新增顶级「MCP」栏目（与「AI」「常规」等并列），QQ 邮箱从「AI 接入方式」移入该栏目。/ A new top-level “MCP” settings tab (alongside “AI”, “General” and others) now hosts QQ Mail, which moved out of the AI integrations tabs.
+- 新增屏幕实体动作悬浮条：选区完成后自动提取其文本（窗口吸附选择走 UIA 无障碍文本，普通拖选走本地 OCR），识别到链接或邮箱时在选区旁弹出操作条——点击「打开链接」直接用默认浏览器打开；点击「发邮件给 …」弹出撰写窗口，经 QQ 邮箱 MCP 两阶段确认后发送（未授权则复制地址并打开网页邮箱，同时提示可扫码授权）。此前屏幕文本快照从未被填充导致 URL/邮箱识别失效的问题就此修复。/ New screen-entity action bar: right after a selection is made its text is extracted automatically (UIA accessibility text for window-snapped selections, local OCR for dragged regions); when a link or email address is recognized, a floating action bar appears next to the selection — “Open link” opens it in the default browser, and “Email …” opens a compose window that sends via QQ Mail MCP with two-phase confirmation (unauthorized users get the address copied and webmail opened, with a hint to authorize). This also fixes the long-standing issue that the screen text snapshot was never populated, which had disabled URL/email recognition.
+- QQ 邮箱上下文注入改进：已授权发件但未识别到收件人地址时，明确告知模型可以代发、需先向用户询问收件人，避免模型臆断“当前环境不支持代发邮件”。/ Improved QQ Mail context injection: when sending is authorized but no recipient address was recognized, the model is now explicitly told it CAN send and should ask the user for the recipient, instead of hallucinating “sending is not supported in this environment”.
+- 新增 QQ 邮箱 MCP 集成：接入官方 `api.mail.qq.com/mcp`（Streamable HTTP JSON-RPC），在设置的「AI → QQ 邮箱」页启用后，屏幕助手中出现邮件相关提问（含未读、收件箱、QQ 邮箱地址等意图）会自动拉取实时收件箱上下文注入提示词，任意对话渠道均可使用；拉取失败不影响正常对话。/ New QQ Mail MCP integration: connects to the official `api.mail.qq.com/mcp` (Streamable HTTP JSON-RPC). Once enabled on the AI → QQ Mail settings page, mail-related prompts in the screen assistant (unread, inbox, QQ addresses and similar intents) automatically fetch live inbox context into the prompt for any conversation channel; fetch failures never block the normal chat flow.
+- QQ 邮箱改为独立扫码授权：每个用户在设置的「QQ 邮箱」页点击「扫码授权」，应用通过腾讯 OAuth 2.0（授权码 + PKCE，RFC 7591 动态注册）打开授权页，用手机 QQ 邮箱 App 扫码确认，即可以自己的账号获得独立令牌；令牌仅以 DPAPI 加密保存在本机，过期自动用 refresh token 刷新，不再读取或导入任何第三方客户端（含 WorkBuddy）的凭据。/ QQ Mail now uses its own QR-code authorization: each user clicks “Scan QR code to authorize” on the QQ Mail settings page; the app opens the Tencent authorization page via OAuth 2.0 (authorization code + PKCE, RFC 7591 dynamic registration) and the user confirms by scanning the QR code with the QQ Mail mobile app to obtain an independent token for their own account. Tokens are stored locally with DPAPI encryption, auto-refresh via refresh token, and no third-party client credentials (including WorkBuddy) are ever read or imported.
+- 新增「识别邮箱即可代发」：提示词或屏幕/引用文本中识别到邮箱地址且用户明确要求发邮件时，模型输出 `mewu-mail-send` 草稿标记块，应用解析后遵循 QQ 邮箱 MCP 的两阶段确认协议——先展示发件人、收件人、主题与正文摘要，用户在对话框中点「确认发送」后才真正发送；收件人地址需通过实体校验，取消或失败均如实告知。/ Recognize-an-address-to-send: when an email address is recognized in the prompt or on-screen/referenced text and the user clearly asks to send, the model emits a `mewu-mail-send` draft block; the app parses it and follows the QQ Mail MCP two-phase confirmation protocol — showing from/to/subject/body first, sending only after the user clicks “Confirm send”. Recipient addresses must pass entity validation, and cancellations or failures are reported honestly.
+
+## 0.5.9 — 录制交互重构与阴影修复 / Recording interaction redesign and shadow fixes
+
+发行说明 / Release notes: [0.5.9](https://github.com/abnste/mewu_ai/releases/tag/v0.5.9)
+
+- 录制期间不再安装全局鼠标钩子或重注入事件；遮罩和录制边框保持可见，覆盖层通过系统鼠标穿透把控制条之外的点击、滚轮和拖动直接交给底层应用，拖动经过控制条时也不中断。全屏无安全控制条时保留 F8 停止。 / Remove global mouse hooks and event re-injection during recording; keep the dimmer and recording border visible while system mouse transparency sends clicks, wheel input, and dragging outside the control strip directly to the underlying app, including drags crossing the strip. Full-screen captures with no safe control space retain F8 to stop.
+- 停止录制继续使用有限超时恢复，避免停止或 Esc 后永久停在“处理中”。 / Keep a bounded stop timeout and restore path so stopping or pressing Esc cannot remain on “Processing” indefinitely.
+- 控制条阴影使用无重复描边的独立图层；AI 标注文本卡为阴影预留独立透明边距，避免阴影裁切、白边和文字发虚。 / Render control-strip shadows on independent layers without duplicate borders, and give AI annotation cards dedicated transparent shadow padding to avoid clipping, white halos, and blurred text.
+- 框选预览复用冻结截图，减少拖动期间重复创建裁剪位图的开销；最终截图保持原始像素。 / Selection previews reuse the frozen desktop image to avoid repeated bitmap crops while dragging; final captures retain their original pixels.
+
+完整的双语发行说明见 [docs/release-notes-v0.5.9.md](./docs/release-notes-v0.5.9.md)。 / See the full bilingual notes in [docs/release-notes-v0.5.9.md](./docs/release-notes-v0.5.9.md).
+
+## 0.5.8 — 全屏录制启动与输入稳定性 / Full-screen recording startup and input stability
+
+发行说明 / Release notes: [0.5.8](https://github.com/abnste/mewu_ai/releases/tag/v0.5.8)
+
+- 修复全屏录制倒计时结束后回退到普通截图工具条的问题；无安全空位的教学全屏采集隐藏控制条并保留 F8 完成/停止。 / Fix full-screen recording falling back to the screenshot toolbar after the countdown; teaching captures with no safe control space hide the bar and retain F8 to finish or stop.
+- 录制输入转发不再吞掉和重注入每个鼠标移动事件，避免区外点击拖垮全局输入；普通录制即使低级钩子不可用也不会被误取消。 / Stop consuming and re-injecting every mouse move during recording so clicks outside the region cannot stall global input; ordinary recording no longer gets canceled when the low-level hook is unavailable.
+- 录制窗口区域恢复增加无效 HWND 防护，避免录制结束时错误地关闭覆盖层。 / Guard region restoration against an invalid HWND so the overlay is not closed spuriously after recording.
+
+完整的双语发行说明见 [docs/release-notes-v0.5.8.md](./docs/release-notes-v0.5.8.md)。 / See the full bilingual notes in [docs/release-notes-v0.5.8.md](./docs/release-notes-v0.5.8.md).
+
+## 0.5.7 — 全屏录制输入与控件视觉修复 / Full-screen recording input and control visuals
+
+发行说明 / Release notes: [0.5.7](https://github.com/abnste/mewu_ai/releases/tag/v0.5.7)
+
+- 录制期间把控制条之外的鼠标移动、点击和滚轮输入转发到下层应用；控制条仍保持可暂停、继续和停止。 / While recording, forward mouse movement, clicks, and wheel input outside the control bar to the application underneath while keeping pause, resume, and stop controls interactive.
+- 将录制、标注和截图工具条的阴影拆成独立图层，避免阴影裁切和文字模糊。 / Render recording, annotation, and capture-toolbar shadows in separate layers so shadows are not clipped and text stays sharp.
+- 录屏倒计时、原位录制和结束后的窗口恢复继续通过 Release 录屏回放验证。 / Keep the countdown, in-place recording, and post-recording interaction restoration covered by the Release recording replay.
+
+完整的双语发行说明见 [docs/release-notes-v0.5.7.md](./docs/release-notes-v0.5.7.md)。 / See the full bilingual notes in [docs/release-notes-v0.5.7.md](./docs/release-notes-v0.5.7.md).
+
+## 0.5.3 — 流畅框选预览与录屏稳定性 / Smooth selection preview and recording stability
+
+- 框选拖动期间复用冻结截图，减少重复裁剪造成的卡顿。 / Reuse the frozen desktop image while dragging to reduce selection-preview stutter.
+- 改用更稳定的软件 H.264 编码路径，改善录屏播放的帧时间稳定性。 / Use the more stable software H.264 path to improve recording playback cadence.
+
+## 0.5.2 — 多 API 协议、代理与历史会话 / Multi-API protocols, proxy and conversation history
+
+发行说明 / Release notes: [0.5.2](https://github.com/abnste/mewu_ai/releases/tag/v0.5.2)
+
+完整的双语发行说明见 [docs/release-notes-v0.5.2.md](./docs/release-notes-v0.5.2.md)。 / See the full bilingual notes in [docs/release-notes-v0.5.2.md](./docs/release-notes-v0.5.2.md).
+
+
+## 0.5.1 — 公式、标注反馈与 README 演示 / Formula rendering, annotation feedback and README demos
+
+发行说明 / Release notes: [0.5.1](https://github.com/abnste/mewu_ai/releases/tag/v0.5.1)
+
+完整的双语发行说明见 [docs/release-notes-v0.5.1.md](./docs/release-notes-v0.5.1.md)。 / See the full bilingual notes in [docs/release-notes-v0.5.1.md](./docs/release-notes-v0.5.1.md).
+
+
+- 历史 AI 回复使用与当前回复相同的 Markdown/公式渲染，重新截图加载历史后仍显示公式；取消历史回复的900字符显示截断，保留完整公式和复制内容。 / Render historical assistant replies with the same Markdown and math view as current replies, preserving formulas after reopening capture and removing the 900-character display truncation.
+
+- 修复含二项式系数 `\binom` 的公式显示为源码的问题，覆盖流式最新回答及标注公式。 / Render binomial coefficients (`\binom`) in streamed replies and annotations.
+
+- 标注气泡和原位文字标注支持公式排版及文字混排，长公式按框宽缩放，带标注导出保留相同公式效果。 / Typeset formulas alongside text in annotation cards and in-place labels, fit long formulas to their width, and preserve typesetting in annotated exports.
+
+- 修复部分模型返回的公式因 `\_`、重复转义的 `\\,` 或常见希腊字母命令而显示成原始 LaTeX；现在会直接排版显示，同时复制仍保留原公式文本。 / Render formulas containing `\_`, double-escaped `\\,`, or common Greek-letter commands instead of exposing raw LaTeX, while preserving the original formula when copied.
+
+- 最小化会话悬浮窗支持拖动：按住并移动可重新摆放，轻点仍恢复对话，关闭按钮保留独立点击行为。 / Minimized conversation widgets can be dragged to reposition; a click still restores the conversation and the close button keeps its own action.
+
+- 最小化会话右侧显示旋转点环（悬停时由同位置的关闭按钮覆盖），回答成功完成后显示绿点；原“点击恢复对话”位置实时预览最新思考片段，没有思考内容时显示最新回答。取消与失败使用独立状态，多个会话分别更新。 / Show a rotating dotted indicator on the right of minimized conversations, covered by the close button on hover, and a green dot on successful completion. Preview the latest reasoning, or answer text when reasoning is unavailable, in place of “Click to restore”. Keep cancellation, failure and each conversation's state distinct.
+
+- 扩大对话条拖动范围，顶部、底部及内容之间的空白均可拖动；输入框、按钮、滚动条与回答文字保留原有操作。 / Allow dragging from blank space at the top, bottom and between conversation content while preserving input, buttons, scrollbars and text selection.
+
+- 对话条拖离底部后自动原位展开；浮动时可拖到包含任务栏的完整屏幕范围，拖回原位仍可吸附，取消拖动恢复原来的位置与展开状态。 / Automatically expand the conversation in place when detached from the bottom; floating conversations can reach the full screen including the taskbar area, retain docking, and restore their previous position and expansion state on cancellation.
+
+- 扩大上拉箭头的透明点击区域，使其覆盖顶部拖动区而不改变现有视觉样式；拖动把手其余区域仍可正常拖动。 / Expand the history toggle's transparent hit area into the top drag zone without changing its visual appearance; the remaining drag handle stays draggable.
+
+- 修复气泡对话仍分成历史和当前回复两块的问题：上拉菜单共用一个消息滚动区，实时回答完成后不重复显示，发送下一轮保留历史展开状态；移除没有实际回答时的“未收到 AI 回复”占位气泡。 / Use one message scroller for expanded conversations, keep the live answer only once after completion, preserve expanded history on subsequent sends, and remove fabricated empty-answer placeholder bubbles.
+
+- 将上拉菜单中的对话统一为左右气泡：用户消息靠右、AI 消息靠左，当前回复使用同一套气泡表面；原位展开增加轻量位移动画，不再把历史和当前回复显示成两种卡片。 / Unify expanded conversations as left/right bubbles: user messages align right, AI messages align left, and the current reply uses the same bubble surface; in-place expansion now uses a light slide animation instead of two unrelated card styles.
+
+- 修复历史对话悬停提示及模型/截图引用下拉层的阴影裁切：所有 Popup 现在为阴影预留透明边界，并在 100% / 175% / 200% 缩放及四个提示方向下通过实际渲染回放。 / Fix clipped shadows on the history hover tip and model / screenshot-reference popups: every Popup now reserves transparent shadow space and passes real render replays at 100%, 175%, and 200% scale in all four tooltip directions.
+
+- 移除重复的独立对话窗口，拖动和展开历史始终保留原上拉菜单；右上角可最小化为悬浮按钮，恢复原冻结截图、标注和聊天，多个会话分别保留。气泡移除“你”和“AI”标签。 / Remove the separate chat window: dragging and expanding history retain the original conversation panel. Its top-right minimize button preserves the frozen screenshot, annotations and chat in independently restorable widgets. Remove speaker labels from bubbles.
+
+- 重做教学批改为普通截图对话：移除旧的独立教学批改面板、页面收集器和侧栏核对入口。框选或上传内容后，用户可以直接在原有对话条用自然语言要求批改试卷、讲题、填答案、备课、解释材料或检查图形化编程 / Python；同一套提示覆盖语文、数学、英语及其他学科和非学科知识。公式按可复制 LaTeX 输出，代码保留语言标记和缩进，必要的短批注仍原位返回。 / Rework teaching review as ordinary screenshot conversation: remove the old teaching panel, page collector and side review entry. After selecting or uploading content, users can ask in the existing composer to grade papers, explain questions, fill answers, prepare lessons, explain materials, or review Scratch / Python code. The same guidance covers Chinese, mathematics, English and other subject or non-subject knowledge. Formulas use copyable LaTeX, code keeps language tags and indentation, and only necessary short annotations are placed in the original content.
+
+- 将“新对话”移入对话条上拉菜单的标题区；收起时不再占用一行，展开后与对话记录标题和历史列表保持统一圆角浅色布局，并通过中英文、滚动和窄宽度回放验证。 / Move “New chat” into the expanded composer menu header. It no longer consumes a row when collapsed, keeps the same light rounded layout as the conversation history and list when expanded, and is verified in Chinese and English at normal, scrolled, and narrow widths.
+
+- 对话条新增显式「新会话」边界（[PR #10](https://github.com/abnste/mewu_ai/pull/10)，shuziyuxingxing-stack）：一键开启空白会话，请求处理中会提示并拒绝；磁盘对话历史继续在历史面板展示，但不再注入新请求的上下文。补修：本机 Hermes 渠道同步重置服务端持久会话并清理当前渠道的应用内会话记忆，避免切换渠道后旧上下文回流；切换渠道时按新作用域重载历史展示。 / Add an explicit new-conversation boundary to the composer ([PR #10](https://github.com/abnste/mewu_ai/pull/10), shuziyuxingxing-stack): start a blank conversation in one click, with a clear refusal while a request is running; persisted history stays visible in the panel but is no longer injected into new request context. Follow-up: the local Hermes channel now resets its server-side persistent session and clears the in-app per-channel memory so stale context cannot return after switching channels, and switching channels reloads the history panel for the new scope.
+
+## 0.5.0 — 可拖动对话条与截图交互 / Floating composer and capture interactions
+
+发行说明 / Release notes: [0.5.0](https://github.com/abnste/mewu_ai/releases/tag/v0.5.0)
+
+- 移除隐藏拖动横条残留的空行，恢复对话条原高度；透明拖动区复用现有顶部边距。 / Remove the empty drag-grip row and restore the composer height, reusing its existing top padding for dragging.
+
+- 隐去对话条的可见拖动横条，保留顶部空白拖动区；拖动时显示原位虚线框，接近吸附范围时高亮，松手后消失。 / Hide the visible drag grip; show a non-interactive dashed docking target while dragging, highlighted within snap range.
+
+- 对话条新增顶部拖动把手：越过拖动阈值后可在当前屏幕内固定摆放，不再自动收纳；拖回底部原位附近松手，以弹性动画吸附并恢复自动隐藏。 / Drag the composer handle past the detachment threshold to keep it visible at a floating position; release near its original bottom dock to spring back and restore auto-hide.
+
+- 修复更新接口限流时误请求不存在的校验文件而返回 404；无法获取可信校验值时明确提示重试，不绕过校验。框选后的输入焦点保护现在会在鼠标主动移动后解除，恢复选区与工具条悬浮收纳。 / Stop requesting invented checksum assets after GitHub rate limits; retain verification requirements and explain retry options. Release post-selection typing protection on deliberate pointer movement so selection and toolbar hover hide the composer again.
+
+- 修复新截图被旧贴图遮挡：旧贴图保持在本轮截图下方，本轮新贴图仍显示在上方；改善文字标注暂时失焦后的连续编辑与样式修改。 / Keep existing pins below a new capture while allowing newly created pins above it; preserve annotation editing and style selection across temporary window deactivation.
+
+- 基于 [PR #10 第【2】项](https://github.com/abnste/mewu_ai/pull/10) 中 shuziyuxingxing-stack 的 JSON 防护贡献，接入响应字段与类型校验；拒绝畸形流式终态，规范非流式错误，并修复本机代理缺字段及畸形 RPC 错误包的异常收尾。 / Integrate shuziyuxingxing-stack’s JSON guards from PR #10 item 2: validate response fields and types, reject malformed stream termination, report invalid non-streaming responses, and safely handle missing fields and malformed local-agent RPC errors.
+
+- 采纳并补修 [PR #10](https://github.com/abnste/mewu_ai/pull/10)：Codex / WorkBuddy 支持手动选择本机可执行文件，设置窗口支持最小化；修复所选路径保存及环境 Provider 导入时的路径保留；Codex 可沿用本机 ChatGPT 或 API Key / CCSwitch 登录配置，不再强制覆盖为官方 OpenAI Provider。 / Adopt and complete [PR #10](https://github.com/abnste/mewu_ai/pull/10): allow manually selecting local Codex / WorkBuddy executables and minimizing the settings window; persist selected paths across saves and environment-provider imports; and let Codex inherit local ChatGPT or API-key / CCSwitch authentication instead of forcing the official OpenAI provider.
+
 ## 0.4.8 — Issue #9 API 地址与 DeepSeek 状态 / Issue #9 endpoint recovery and DeepSeek states
 
 - 修复 [Issue #9](https://github.com/abnste/mewu_ai/issues/9) 中 API 模型目录在裸地址返回网页或错误 JSON 时设置页可能崩溃的问题。现在有限尝试原地址、`/v1` 和 `/api/v1`；成功后把可用地址显示为未保存草稿，保存后用于后续请求，全部失败才提示 API 错误。 / Fix [Issue #9](https://github.com/abnste/mewu_ai/issues/9): recover model catalogs when a bare endpoint returns HTML or invalid JSON. Try the original address, `/v1`, and `/api/v1` within a bounded sequence; show a successful endpoint as an unsaved draft for later requests, and report an API error only after all candidates fail.

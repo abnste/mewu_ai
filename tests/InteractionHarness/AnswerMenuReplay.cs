@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using mewu_ai_Assistant.Views;
@@ -63,6 +64,48 @@ internal static class AnswerMenuReplay
                 open.IsOpen=false;
                 history.Select(0,0);await Open(history,"answer-menu-history-unselected.png");
                 Check("history-empty-selection-disabled",!((MenuItem)open!.Items[0]).IsEnabled);
+                open.IsOpen=false;
+                const string providerFormula=@"$$\frac{1}{\sqrt{\pi}} \int\_{-\infty}^{x} \frac{1}{2\sqrt{t-\tau}}\\, e^{-\frac{(x+\xi)^2}{4(t-\tau)}}\\, \frac{1}{2\sqrt{t-\tau}}\\, d\xi$$";
+                answer.Markdown=providerFormula;overlay.UpdateLayout();await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                var formula=answer.Document.Blocks.OfType<System.Windows.Documents.Paragraph>()
+                    .SelectMany(block=>block.Inlines.OfType<System.Windows.Documents.InlineUIContainer>())
+                    .Select(inline=>inline.Child).OfType<MathFormulaView>().Single();
+                Check("provider-escaped-formula-renders-as-vector",formula.Width>20&&formula.Height>15);
+                answer.SelectAll();Check("formula-copy-keeps-original-latex",answer.SelectedPlainText.Contains(providerFormula,StringComparison.Ordinal));
+                SaveElement(answer,"formula-provider-escapes.png");
+                const string binomial=@"$$(x+a)^{2}=\sum\_{k=0}^{n}\binom{n}{k}x^{k}a^{n-k}$$";
+                for(var end=1;end<binomial.Length;end+=5)answer.Markdown=binomial[..end];
+                answer.Markdown=binomial;overlay.UpdateLayout();await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                Check("latest-streamed-binomial-is-typeset",answer.Document.Blocks.OfType<System.Windows.Documents.Paragraph>().SelectMany(block=>block.Inlines.OfType<System.Windows.Documents.InlineUIContainer>()).Any(inline=>inline.Child is MathFormulaView));
+                SaveElement(answer,"formula-binomial.png");
+                var fixturePath=Path.GetFullPath(Path.Combine(".codex-build","formula-history-"+Guid.NewGuid().ToString("N")+".jsonl"));
+                var historyStore=new mewu_ai_Assistant.Services.ConversationHistoryService(fixturePath);
+                await historyStore.AppendAsync("formula-fixture","offline","识别公式",binomial);
+                var restoredEntry=(await historyStore.ReadRecentAsync()).Single();File.Delete(fixturePath);
+                Check("history-storage-keeps-formula-verbatim",restoredEntry.Answer==binomial);
+                var historyBubble=(Border)typeof(CaptureOverlayWindow).GetMethod("CreateHistoryPair",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(overlay,[restoredEntry.Prompt,restoredEntry.Answer,false])!;
+                var historyStream=(StackPanel)historyBubble.Child;
+                var replyBubble=(Border)historyStream.Children[1];
+                var restoredReply=(MarkdownAnswerView)((StackPanel)replyBubble.Child).Children[0];
+                root.Children.Add(historyBubble);Canvas.SetLeft(historyBubble,60);Canvas.SetTop(historyBubble,100);overlay.UpdateLayout();
+                Check("reloaded-history-typesets-binomial",restoredReply.Document.Blocks.OfType<System.Windows.Documents.Paragraph>().SelectMany(block=>block.Inlines.OfType<System.Windows.Documents.InlineUIContainer>()).Any(inline=>inline.Child is MathFormulaView));
+                restoredReply.SelectAll();Check("reloaded-history-copy-preserves-formula",restoredReply.SelectedPlainText.Contains(binomial,StringComparison.Ordinal));
+                SaveElement(historyBubble,"history-binomial.png");root.Children.Remove(historyBubble);
+                var selection=typeof(CaptureOverlayWindow).GetMethod("CreateSelection",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(overlay,[false])!;
+                selection.GetType().GetField("Bounds")!.SetValue(selection,new Rect(60,220,900,480));
+                var notes=(List<mewu_ai_Assistant.Models.AiAnnotation>)selection.GetType().GetProperty("AnnotationNotes")!.GetValue(selection)!;
+                notes.Add(new(.1,.1,.2,.15,"识别结果：\n"+providerFormula+"\n请核对积分上限。",Kind:mewu_ai_Assistant.Models.AiAnnotationKind.Callout));
+                typeof(CaptureOverlayWindow).GetMethod("RenderAnnotationsForItem",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[selection,null]);
+                var annotations=(Canvas)selection.GetType().GetProperty("AiAnnotations")!.GetValue(selection)!;
+                var formulaCard=annotations.Children.OfType<Border>().Single(card=>card.Child is System.Windows.Controls.Image);
+                var formulaShadow=annotations.Children.OfType<Border>().Single(card=>card.Child is Border);
+                formulaCard.Measure(new System.Windows.Size(900,480));formulaCard.Arrange(new Rect(new System.Windows.Point(),formulaCard.DesiredSize));
+                Check("annotation-card-typesets-formula-and-keeps-drag-cursor",formulaCard.Cursor==System.Windows.Input.Cursors.SizeAll&&((System.Windows.Controls.Image)formulaCard.Child).Source is DrawingImage);
+                Check("annotation-card-shadow-has-independent-padding",formulaShadow.IsHitTestVisible==false&&formulaShadow.Width==formulaCard.Width+16&&formulaShadow.Height==formulaCard.Height+16&&formulaShadow.Child is Border {Effect:DropShadowEffect});
+                SaveElement(formulaCard,"annotation-formula-card.png");
+                SaveElement(annotations,"annotation-shadow-layer.png");
+                var exported=mewu_ai_Assistant.Recording.AnnotationOverlayRenderer.RenderAiOverlay(900,480,notes);
+                var exportEncoder=new PngBitmapEncoder();exportEncoder.Frames.Add(BitmapFrame.Create(exported));using(var exportFile=File.Create(".codex-build/annotation-formula-export.png"))exportEncoder.Save(exportFile);
             }
             catch(Exception ex){failure=ex.ToString();Environment.ExitCode=1;}
             finally
@@ -97,6 +140,12 @@ internal static class AnswerMenuReplay
                 open.IsOpen=false;
             }
             void Check(string name,bool valid){if(!valid)throw new InvalidOperationException(name);checks.Add(name);}
+            static void SaveElement(FrameworkElement element,string file)
+            {
+                element.UpdateLayout();var width=Math.Max(1,(int)Math.Ceiling(element.ActualWidth));var height=Math.Max(1,(int)Math.Ceiling(element.ActualHeight));
+                var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.DrawRectangle(System.Windows.Media.Brushes.White,null,new Rect(0,0,width,height));drawing.DrawRectangle(new VisualBrush(element),null,new Rect(0,0,width,height));}
+                var bitmap=new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32);bitmap.Render(visual);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));using var stream=File.Create(Path.Combine(".codex-build",file));encoder.Save(stream);
+            }
         }));
     }
 }

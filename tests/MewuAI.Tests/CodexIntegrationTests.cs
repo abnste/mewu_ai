@@ -11,6 +11,7 @@ namespace MewuAI.Tests;
 
 public sealed class CodexIntegrationTests
 {
+    private sealed class InlineProgress(ICollection<AiAgentEvent> events):IProgress<AiAgentEvent>{public void Report(AiAgentEvent value)=>events.Add(value);}
     private static JsonElement Json(string value)=>JsonSerializer.Deserialize<JsonElement>(value);
     private static void Start(CodexTurnCollector turn)=>turn.Receive("turn/started",Json("""{"threadId":"ours","turn":{"id":"turn1"}}"""));
     private static void Complete(CodexTurnCollector turn,string status="completed")=>turn.Receive("turn/completed",JsonSerializer.SerializeToElement(new{threadId="ours",turn=new{id="turn1",status}}));
@@ -65,6 +66,16 @@ public sealed class CodexIntegrationTests
     }
 
     [Fact]
+    public void AttachmentToolCompletionClosesAgentActivity()
+    {
+        var events=new List<AiAgentEvent>();
+        var turn=new CodexTurnCollector("ours",new(){AgentProgress=new InlineProgress(events)},CancellationToken.None);Start(turn);
+        turn.Receive("item/started",Json("""{"threadId":"ours","turnId":"turn1","item":{"type":"commandExecution","id":"cmd1"}}"""));
+        turn.Receive("item/completed",Json("""{"threadId":"ours","turnId":"turn1","item":{"type":"commandExecution","status":"completed"}}"""));
+        Assert.Contains(events,item=>item.Kind==AiAgentEventKind.ToolCompleted);
+    }
+
+    [Fact]
     public async Task TextOnlyTurnUnwrapsUnexpectedVisualProtocolEnvelope()
     {
         var turn=new CodexTurnCollector("ours",new(){ExpectStructuredResponse=false},CancellationToken.None);Start(turn);
@@ -95,13 +106,15 @@ public sealed class CodexIntegrationTests
         Assert.False(stopped.Completion.IsCompleted);
     }
 
-    [Theory]
-    [InlineData("{\"account\":null}")]
-    [InlineData("{\"account\":{\"type\":\"apiKey\"}}")]
-    public void RefusesMissingLoginOrSeparateApiBilling(string value)=>Assert.Throws<InvalidOperationException>(()=>CodexAppServer.EnsureChatGptAccount(Json(value)));
+    [Fact]
+    public void RefusesMissingLogin()=>Assert.Throws<InvalidOperationException>(()=>CodexAppServer.EnsureChatGptAccount(Json("{\"account\":null}")));
 
     [Fact]
-    public void ExistingChatGptLoginIsAcceptedWithoutCredentials()=>CodexAppServer.EnsureChatGptAccount(Json("""{"account":{"type":"chatgpt"}}"""));
+    public void ChatGptAndApiKeyLoginsAreAcceptedWithoutLocalCredentials()
+    {
+        CodexAppServer.EnsureChatGptAccount(Json("""{"account":{"type":"chatgpt"}}"""));
+        CodexAppServer.EnsureChatGptAccount(Json("""{"account":{"type":"apiKey"}}"""));
+    }
 
     [Fact]
     public async Task RpcFramingHandlesSplitUtf8AndMultipleEvents()

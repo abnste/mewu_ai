@@ -57,6 +57,28 @@ public sealed class WindowVisualStructureTests
         Assert.Same(host,content.Parent);
     }
 
+    [Theory]
+    [InlineData("Toolbar","ToolbarShadow","ToolbarSurface")]
+    [InlineData("DrawingToolbar","DrawingToolbarShadow","DrawingToolbarSurface")]
+    [InlineData("LongCaptureBar","LongCaptureBarShadow","LongCaptureBarSurface")]
+    [InlineData("RecordingBar","RecordingBarShadow","RecordingBarSurface")]
+    public void CaptureToolbarsKeepShadowSeparateFromVisibleBorder(string hostName,string shadowName,string surfaceName)
+    {
+        var path=Path.Combine(AppContext.BaseDirectory,"Fixtures","CaptureOverlayWindow.xaml.xml");
+        var document=XDocument.Load(path,LoadOptions.SetLineInfo);
+        XNamespace presentation="http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        XNamespace x="http://schemas.microsoft.com/winfx/2006/xaml";
+        XElement FindNamed(string name)=>document.Descendants().Single(element=>string.Equals((string?)element.Attribute(x+"Name"),name,StringComparison.Ordinal));
+
+        var host=FindNamed(hostName);var shadow=FindNamed(shadowName);var surface=FindNamed(surfaceName);
+        Assert.Equal("False",(string?)host.Attribute("ClipToBounds"));
+        Assert.Equal("False",(string?)shadow.Attribute("IsHitTestVisible"));
+        Assert.Equal("0",(string?)shadow.Attribute("BorderThickness"));
+        Assert.NotNull(shadow.Element(presentation+"Border.Effect")?.Element(presentation+"DropShadowEffect"));
+        Assert.Null(surface.Element(presentation+"Border.Effect"));
+        Assert.Same(host,shadow.Parent);Assert.Same(host,surface.Parent);
+    }
+
     [Fact]
     public void CaptureOverlayHasNamedReasoningScrollAndNonInteractiveRecordingCountdown()
     {
@@ -87,8 +109,11 @@ public sealed class WindowVisualStructureTests
         Assert.Equal(new[]
         {
             "ReferenceButton","DrawButton","OcrButton","TranslateButton","TableButton",
-            "LongCaptureButton","RecordButton","VideoPlayButton","CopyButton","SaveButton","PinButton"
+            "LongCaptureButton","RecordButton","VideoPlayButton","CopyButton","SaveButton","PinButton",
+            // MCP 分享按钮（钉钉/飞书/Obsidian/IMA）在配置后隐藏显示，但结构上始终存在。
+            "DingTalkButton","FeishuButton","ObsidianButton","ImaButton"
         },names);
-        Assert.Equal(3,toolbar.Descendants(presentation+"Border").Count(border=>string.Equals((string?)border.Attribute("Style"),"{StaticResource ToolbarSeparator}",StringComparison.Ordinal)));
+        // MCP 分享按钮（钉钉/飞书/Obsidian/IMA）自带第 4 个分组分隔符。
+        Assert.Equal(4,toolbar.Descendants(presentation+"Border").Count(border=>string.Equals((string?)border.Attribute("Style"),"{StaticResource ToolbarSeparator}",StringComparison.Ordinal)));
     }
 }

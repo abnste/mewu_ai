@@ -104,21 +104,18 @@ public sealed class ApplicationUpdateServiceTests
     }
 
     [Fact]
-    public async Task RateLimitedNewReleaseStillSupportsLegacyChecksumVerification()
+    public async Task RateLimitedNewReleaseNeverInventsChecksumAssets()
     {
         var root=TestDirectory();
         try
         {
-            var installer=Encoding.UTF8.GetBytes("legacy fallback installer");
-            var hash=Convert.ToHexString(SHA256.HashData(installer)).ToLowerInvariant();
             var responses=new Queue<HttpResponseMessage>([
-                new(HttpStatusCode.TooManyRequests),
-                BytesResponse(Encoding.UTF8.GetBytes($"{hash}  MewuAI-Setup-0.1.1-win-x64.exe\n")),
-                BytesResponse(installer)]);
+                new(HttpStatusCode.TooManyRequests)]);
             var service=new ApplicationUpdateService((_,_,_)=>Task.FromResult(responses.Dequeue()),root,
                 (_,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.Found){Headers={Location=new Uri("https://github.com/abnste/mewu_ai/releases/tag/v0.1.1")}}));
-            var result=await service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken);
-            Assert.Equal(hash,result.Package!.Sha256);Assert.Empty(responses);
+            var error=await Assert.ThrowsAsync<InvalidDataException>(()=>service.CheckAndDownloadAsync(new Version(0,1,0),null,TestContext.Current.CancellationToken));
+            Assert.Contains("限制",error.Message);Assert.DoesNotContain("404",error.Message);
+            Assert.Empty(responses);Assert.Empty(Directory.EnumerateFileSystemEntries(root));
         }
         finally{Directory.Delete(root,true);}
     }

@@ -55,11 +55,15 @@ internal static class CaptureInputReplay
                 Set(first,"_selecting",true);
                 Invoke(first,"OnMouseUp",root,new MouseButtonEventArgs(Mouse.PrimaryDevice,Environment.TickCount,MouseButton.Left){RoutedEvent=UIElement.MouseLeftButtonUpEvent,Source=root});
                 Require(prompt.IsKeyboardFocused&&!(bool)Get(first,"_promptBarHidden"),"Completing selection did not focus the visible composer");
+                Set(first,"_selectionPromptFocusPointer",new Point(200,180));
                 Invoke(first,"UpdatePointerInteraction",new Point(200,180));
                 Require(prompt.IsKeyboardFocused&&!(bool)Get(first,"_promptBarHidden"),"Selection hover stole automatic typing focus");
                 prompt.RaiseEvent(new TextCompositionEventArgs(Keyboard.PrimaryDevice,new TextComposition(InputManager.Current,prompt,"c")){RoutedEvent=TextCompositionManager.TextInputEvent});
                 Require(prompt.Text=="草稿c","Typed text did not append to the draft");
                 checks.Add("selection-completion-focuses-composer-and-hover-keeps-typing");
+                Invoke(first,"UpdatePointerInteraction",new Point(220,180));
+                Require((bool)Get(first,"_promptBarHidden")&&!(bool)Get(first,"_selectionPromptFocus"),"Deliberate pointer movement did not release hover protection");
+                checks.Add("pointer-movement-releases-selection-focus-protection-and-hides-composer");
                 Invoke(first,"SetPromptBarHidden",true,false);
                 Require(root.IsKeyboardFocused&&!(bool)Get(first,"_selectionPromptFocus"),"A new gesture could not release automatic input focus");
                 Set(first,"_conversationAiAvailable",false);Invoke(first,"FocusPromptAfterSelection");

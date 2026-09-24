@@ -17,7 +17,7 @@ public partial class MewuDialogWindow:Window
 
     private MewuDialogWindow(string title,string message,string primaryText,string secondaryText,string cancelText)
     {
-        InitializeComponent();Title=DialogTitle.Text=LocalizationService.TranslateUiText(title);DialogMessage.Text=LocalizationService.TranslateUiText(message);AddButton(LocalizationService.TranslateUiText(cancelText),"DialogButton",MewuDialogResult.Cancel,false);AddButton(LocalizationService.TranslateUiText(secondaryText),"DialogButton",MewuDialogResult.Secondary,false);AddButton(LocalizationService.TranslateUiText(primaryText),"PrimaryDialogButton",MewuDialogResult.Primary,true);SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ApplyPresentationCaptureVisibility(handle,Owner is CaptureOverlayWindow {IsTeachingMode:true});};
+        InitializeComponent();Title=DialogTitle.Text=LocalizationService.TranslateUiText(title);DialogMessage.Text=LocalizationService.TranslateUiText(message);AddButton(LocalizationService.TranslateUiText(cancelText),"DialogButton",MewuDialogResult.Cancel,false);AddButton(LocalizationService.TranslateUiText(secondaryText),"DialogButton",MewuDialogResult.Secondary,false);AddButton(LocalizationService.TranslateUiText(primaryText),"PrimaryDialogButton",MewuDialogResult.Primary,true);SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);if(Owner is CaptureOverlayWindow{IsTeachingMode:true})NativeMethods.ApplyPresentationCaptureVisibility(handle,true);};
     }
 
     internal static MewuDialogResult ShowChoice(Window owner,string title,string message,string primaryText,string secondaryText,string cancelText="取消")
@@ -36,7 +36,7 @@ public partial class MewuDialogWindow:Window
     private void AddButton(string text,string style,MewuDialogResult result,bool isDefault)
     {
         if(string.IsNullOrEmpty(text))return;
-        var button=new Button{Content=text,Style=(Style)FindResource(style),IsDefault=isDefault};button.Click+=(_,_)=>{_result=result;DialogResult=true;};DialogButtons.Children.Add(button);
+        var button=new Button{Content=text,Style=(Style)FindResource(style),IsDefault=isDefault};button.Click+=(_,_)=>{_result=result;Close();};DialogButtons.Children.Add(button);
     }
     private void CloseClick(object sender,RoutedEventArgs e)=>Close();
     private void TitleMouseDown(object sender,MouseButtonEventArgs e){if(e.ChangedButton==MouseButton.Left)DragMove();}

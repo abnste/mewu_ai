@@ -157,6 +157,55 @@ public sealed class HermesSecurityTests
     }
 
     [Fact]
+    public void SharedConversationProviderExposesTheNewConversationReset()
+    {
+        using var runtime=new HermesRuntimeService();
+        var settings=new AppSettings{HermesEnabled=true,HermesProfile="default",HermesReasoningEffort="medium"};
+        var provider=Assert.IsAssignableFrom<IConversationSessionReset>(runtime.GetConversationProvider(HermesConversationKind.Screen,()=>settings));
+
+        Assert.True(provider.TryResetSession());
+        Assert.True(provider.TryResetSession());
+    }
+
+    [Fact]
+    public void NewConversationResetDropsRememberedSessionIdentifiers()
+    {
+        using var runtime=new HermesRuntimeService();
+        using var provider=new HermesAiProvider(runtime,HermesConversationKind.Text,()=>new AppSettings());
+        SetSessionField(provider,"_sessionId","session-1");
+        SetSessionField(provider,"_storedSessionId","stored-1");
+
+        Assert.True(((IConversationSessionReset)provider).TryResetSession());
+
+        Assert.Null(SessionField(provider,"_sessionId"));
+        Assert.Null(SessionField(provider,"_storedSessionId"));
+    }
+
+    [Fact]
+    public void NewConversationResetIsRejectedWhileATurnIsRunning()
+    {
+        using var runtime=new HermesRuntimeService();
+        using var provider=new HermesAiProvider(runtime,HermesConversationKind.Text,()=>new AppSettings());
+        var gate=Assert.IsType<SemaphoreSlim>(SessionField(provider,"_turnGate"));
+        gate.Wait(TestContext.Current.CancellationToken);
+
+        try{Assert.False(((IConversationSessionReset)provider).TryResetSession());}
+        finally{gate.Release();}
+
+        Assert.True(((IConversationSessionReset)provider).TryResetSession());
+    }
+
+    private static object? SessionField(HermesAiProvider provider,string name)=>
+        typeof(HermesAiProvider).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)
+            is { } field?field.GetValue(provider):throw new Xunit.Sdk.XunitException($"Missing session field {name}.");
+
+    private static void SetSessionField(HermesAiProvider provider,string name,object? value)
+    {
+        if(typeof(HermesAiProvider).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic) is not { } field)throw new Xunit.Sdk.XunitException($"Missing session field {name}.");
+        field.SetValue(provider,value);
+    }
+
+    [Fact]
     public async Task HermesProviderClearsOwnedAttachmentEvenWhenAlreadyCancelled()
     {
         using var runtime=new HermesRuntimeService();

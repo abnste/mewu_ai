@@ -11,6 +11,18 @@ namespace MewuAI.Tests;
 
 public sealed class AnnotationExportTests
 {
+    [Theory]
+    [InlineData("✓")]
+    [InlineData("✗")]
+    [InlineData("答案 42")]
+    public void TextWithFontAsTallAsItsBoxStillRendersInsideBox(string text)
+    {
+        var note=new AiAnnotation(.2,.2,.2,.04,text,Kind:AiAnnotationKind.Text,Style:new("#FF0000",FontSize:.04));
+        var overlay=AnnotationOverlayRenderer.RenderAiOverlay(600,800,[note]);
+        Assert.True(ContainsRedPixel(overlay,120,160,239,191));
+        Assert.False(ContainsRedPixel(overlay,0,192,599,799));
+    }
+
     [Fact]
     public void UnifiedDrawingPrimitivesAndMosaicRenderIntoImage()
     {

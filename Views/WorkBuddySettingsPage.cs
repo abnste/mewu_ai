@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
 // SPDX-License-Identifier: MPL-2.0
 using System.Windows.Controls;
+using System.Windows;
 using System.Windows.Media;
 using mewu_ai_Assistant.AI;
 using mewu_ai_Assistant.Models;
@@ -12,6 +13,8 @@ internal sealed class WorkBuddySettingsPage : StackPanel
     private readonly ComboBox _model=new(),_effort=new();
     private readonly TextBlock _status=new();
     private readonly Button _detect=new(),_test=new();
+    private readonly TextBox _path=new();
+    internal string Path=>_path.Text.Trim();
     private readonly CancellationToken _token;
     private readonly AppSettings _settings;
     private bool _loaded;
@@ -27,6 +30,11 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         form.AddAction(_detect,T("刷新模型","Refresh models"));
         _test.ToolTip=T("只检查 WorkBuddy 后台连接、会话、模型和思考选项，不发送对话。","Checks the WorkBuddy bridge, session, model and reasoning options without sending a turn.");
         form.Fields.Children.Add(AiSettingsForm.Field(T("模型","Model"),_model));
+        _path.Text=settings.WorkBuddyExecutablePath;_path.IsReadOnly=true;
+        var browse=new Button{Content=T("选择 WorkBuddy.exe","Choose WorkBuddy.exe"),Margin=new Thickness(8,0,0,0)};
+        browse.Click+=(_,_)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="WorkBuddy executable|WorkBuddy.exe"};if(d.ShowDialog()==true)_path.Text=d.FileName;};
+        var row=new Grid();row.ColumnDefinitions.Add(new ColumnDefinition());row.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});row.Children.Add(_path);Grid.SetColumn(browse,1);row.Children.Add(browse);
+        form.Fields.Children.Add(AiSettingsForm.Field(T("WorkBuddy 程序路径（可选）","WorkBuddy executable path (optional)"),row));
         form.Fields.Children.Add(AiSettingsForm.Field(T("思考程度","Reasoning effort"),_effort));
         if(!string.IsNullOrWhiteSpace(settings.WorkBuddyModel))
         {
@@ -51,16 +59,19 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         _status.Text=T("正在读取 WorkBuddy 模型…","Reading WorkBuddy models…");
         try
         {
-            await using var server=await WorkBuddyAcpServer.StartAsync(_token);
+            await using var server=await WorkBuddyAcpServer.StartAsync(_token,false,Path);
             var catalog=await server.NewSessionAsync(_token);_token.ThrowIfCancellationRequested();
             var previousModel=SelectedModel?.Model??_settings.WorkBuddyModel;var previousEffort=SelectedEffort;
             _model.Items.Clear();foreach(var model in catalog.Models)_model.Items.Add(model);
             _model.SelectedItem=catalog.Models.FirstOrDefault(item=>item.Model==previousModel)??catalog.Models.FirstOrDefault(item=>item.Model==catalog.CurrentModel)??catalog.Models[0];
             SetEfforts(catalog.Efforts,catalog.Efforts.Contains(previousEffort)?previousEffort:catalog.CurrentEffort);
+            // Persist the discovered executable so later launches skip the
+            // filesystem scan and probe this install directly.
+            if(!string.IsNullOrWhiteSpace(server.ExecutablePath)&&!string.Equals(server.ExecutablePath,Path,StringComparison.OrdinalIgnoreCase))_path.Text=server.ExecutablePath;
             _status.Text=T($"已读取 {catalog.Models.Count} 个模型 · 可测试连接",$"Loaded {catalog.Models.Count} models · ready to test");
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
-        catch(Exception ex)when(ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException or KeyNotFoundException or UnauthorizedAccessException){ShowError(ex);}
+        catch(Exception ex){new PrivacyLogger().Error("WorkBuddySettingsDetect",ex);ShowError(ex);EnsureFallbackModel();}
         finally{_detect.IsEnabled=true;_test.IsEnabled=true;}
     }
     private async Task TestAsync()
@@ -70,11 +81,11 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         _status.Foreground=Brushes.SlateGray;_status.Text=T("正在验证 WorkBuddy 回复…","Verifying a WorkBuddy response…");
         try
         {
-            if(!await new WorkBuddyAiProvider(model.Model,SelectedEffort,model.SupportsImage).TestConnectionAsync(_token))throw new InvalidOperationException(T("WorkBuddy 未返回验证标记，请检查登录与额度。","WorkBuddy did not return the verification marker. Check sign-in and allowance."));
+            if(!await new WorkBuddyAiProvider(model.Model,SelectedEffort,model.SupportsImage,Path).TestConnectionAsync(_token))throw new InvalidOperationException(T("WorkBuddy 未返回验证标记，请检查登录与额度。","WorkBuddy did not return the verification marker. Check sign-in and allowance."));
             _token.ThrowIfCancellationRequested();_status.Text=T("已连接 WorkBuddy","Connected to WorkBuddy");_status.Foreground=Brushes.SeaGreen;
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
-        catch(Exception ex)when(ex is IOException or InvalidOperationException or TimeoutException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException or KeyNotFoundException or UnauthorizedAccessException){ShowError(ex);}
+        catch(Exception ex){new PrivacyLogger().Error("WorkBuddySettingsTest",ex);ShowError(ex);}
         finally{_test.IsEnabled=true;_detect.IsEnabled=true;_model.IsEnabled=true;_effort.IsEnabled=true;}
     }
     private void ShowError(Exception error)
@@ -82,6 +93,18 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         if(_token.IsCancellationRequested)return;
         _status.Text=error is System.ComponentModel.Win32Exception or UnauthorizedAccessException?T("无法启动 WorkBuddy，请打开官方客户端并重试。","Cannot start WorkBuddy. Open the official client and retry."):error.Message;
         _status.Foreground=Brushes.Firebrick;
+    }
+
+    // Detection fallback: when the bridge cannot be reached, still offer a
+    // usable model choice (the previously saved one, or "auto") so the user
+    // can save settings and let the send path retry the connection.
+    private void EnsureFallbackModel()
+    {
+        if(_model.SelectedItem is not null)return;
+        var model=string.IsNullOrWhiteSpace(_settings.WorkBuddyModel)?"auto":_settings.WorkBuddyModel;
+        var option=new WorkBuddyModelOption(model,model=="auto"?T("自动（兜底）","Auto (fallback)"):model,_settings.WorkBuddySupportsImage);
+        _model.Items.Add(option);_model.SelectedItem=option;
+        _status.Text+=T("　已提供兜底模型，保存后发送时会重新连接验证。"," A fallback model is offered; sending will reconnect and verify.");
     }
     private static string T(string zh,string en)=>LocalizationService.T(zh,en);
     private sealed record EffortChoice(string Value)

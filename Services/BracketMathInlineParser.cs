@@ -13,9 +13,10 @@ internal sealed class BracketMathInline:MathInline
 }
 internal sealed class BracketMathInlineParser:InlineParser
 {
-    internal BracketMathInlineParser()=>OpeningCharacters=['\\'];
+    internal BracketMathInlineParser()=>OpeningCharacters=['\\','$'];
     public override bool Match(InlineProcessor processor,ref StringSlice slice)
     {
+        if(slice.CurrentChar=='$')return MatchDollar(processor,ref slice);
         var open=slice.PeekChar(1);if(open is not ('(' or '['))return false;
         var end=open=='('?')':']';var scan=slice;var start=scan.Start;
         scan.NextChar();scan.NextChar();var body=scan.Start;
@@ -25,6 +26,33 @@ internal sealed class BracketMathInlineParser:InlineParser
             var close=scan.Start;scan.NextChar();scan.NextChar();
             var content=slice;content.Start=body;content.End=close-1;
             var source=slice;source.End=scan.Start-1;
+            processor.Inline=new BracketMathInline{SourceText=source.ToString(),Content=content,
+                Span=new SourceSpan(processor.GetSourcePosition(start,out var line,out var column),processor.GetSourcePosition(scan.Start-1)),Line=line,Column=column};
+            slice=scan;return true;
+        }
+        return false;
+    }
+
+    private static bool MatchDollar(InlineProcessor processor,ref StringSlice slice)
+    {
+        var count=slice.PeekChar(1)=='$'?2:1;
+        var scan=slice;var start=scan.Start;
+        for(var i=0;i<count;i++)scan.NextChar();
+        var body=scan.Start;
+        for(var length=0;length<2048&&scan.CurrentChar!='\0';length++,scan.NextChar())
+        {
+            if(scan.CurrentChar is '\r' or '\n')return false;
+            if(scan.CurrentChar=='\\'&&scan.PeekChar(1)=='$'){scan.NextChar();continue;}
+            if(scan.CurrentChar!='$')continue;
+            if(count==2&&scan.PeekChar(1)!='$')return false;
+            if(scan.Start==body)return false;
+            var content=slice;content.Start=body;content.End=scan.Start-1;
+            for(var i=0;i<count;i++)scan.NextChar();
+            var source=slice;source.End=scan.Start-1;
+            // Leave currency and unsupported input to the normal Markdown parser.
+            var value=content.ToString();
+            if(char.IsWhiteSpace(value[0])||char.IsWhiteSpace(value[^1])||
+                value.Any(c=>c>127&&!"。、，：（）".Contains(c))||!MathFormulaRenderer.IsBoundedFormula(value))return false;
             processor.Inline=new BracketMathInline{SourceText=source.ToString(),Content=content,
                 Span=new SourceSpan(processor.GetSourcePosition(start,out var line,out var column),processor.GetSourcePosition(scan.Start-1)),Line=line,Column=column};
             slice=scan;return true;

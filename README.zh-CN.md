@@ -3,14 +3,14 @@
   <h1>喵呜AI（MewuAI）— Windows AI 截图标注软件</h1>
   <p>开源截图工具，支持 AI 原位标注、离线 OCR、截图翻译、长截图和录屏。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.8"><img src="https://img.shields.io/badge/公测版-v0.4.8-7C6CF0?style=flat-square" alt="v0.4.8 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.5.9"><img src="https://img.shields.io/badge/公测版-v0.5.9-7C6CF0?style=flat-square" alt="v0.5.9 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.8/MewuAI-Setup-0.4.8-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.9/MewuAI-Setup-0.5.9-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.8/MewuAI-Portable-0.4.8-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.9/MewuAI-Portable-0.5.9-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -56,55 +56,53 @@
 <a href="./docs/images/ai-checkmarks.jpg"><img src="./docs/images/ai-checkmarks.jpg" width="100%" alt="AI 在截图中圈出重点并添加勾选标记" /></a>
 </td>
 <td width="50%" valign="top">
+<h3>表格识别</h3>
+<p>把截图中的表格识别成行列清晰的回答，点击“复制表格”即可粘贴到 Excel。</p>
+<a href="./docs/images/table-recognition.png"><img src="./docs/images/table-recognition.png" width="100%" alt="表格截图识别为结构化行列，回答上方提供复制表格按钮" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>视频分析</h3>
+<p>点击回答中的时间跳到相关画面；播放标记片段时，批注跟随目标移动。</p>
+<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="点击回答定位视频片段，播放时标注跟随目标移动" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>数据标注</h3>
+<p>让 AI 识别并圈出图片中的目标，例如交通画面里可辨认的车辆。</p>
+<a href="./docs/images/data-annotations.png"><img src="./docs/images/data-annotations.png" width="100%" alt="AI 圈出交通画面中可辨认的车辆，并说明识别范围" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 <h3>截图翻译</h3>
 <p>在原文的位置阅读译文，选中文字即可复制。</p>
 <a href="./docs/images/in-place-translation.jpg"><img src="./docs/images/in-place-translation.jpg" width="100%" alt="译文显示在截图原文的位置" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>绘图与批注</h3>
+<p>让 AI 添加图示，或自己用画笔、形状和文字补充说明。</p>
+<a href="./docs/images/draw-and-annotate-latest.jpg"><img src="./docs/images/draw-and-annotate-latest.jpg" width="100%" alt="截图上的 AI 绘图与批注" /></a>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 <h3>代码讲解</h3>
 <p>框选看不懂的代码，让 AI 对着具体位置解释。</p>
-<a href="./docs/images/code-explanation.jpg"><img src="./docs/images/code-explanation.jpg" width="100%" alt="代码截图旁的解释与对应代码位置相连" /></a>
+<a href="./docs/images/understand-code-20260921.png"><img src="./docs/images/understand-code-20260921.png" width="100%" alt="代码截图旁的解释与对应代码位置相连" /></a>
 </td>
-<td width="50%" valign="top">
-<h3>绘图与批注</h3>
-<p>让 AI 添加图示，或自己用画笔、形状和文字补充说明。</p>
-<a href="./docs/images/ai-drawing.jpg"><img src="./docs/images/ai-drawing.jpg" width="100%" alt="截图上的 AI 绘图与批注" /></a>
-</td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 <h3>试卷批注</h3>
 <p>引用试卷截图进行讲解和批注；多张截图可一起分析共同问题、生成练习。</p>
-<a href="./docs/images/hkdse-2025-inplace-math-zh.png"><img src="./docs/images/hkdse-2025-inplace-math-zh.png" width="100%" alt="真实 HKDSE 手写答卷经人工复核后的原位批注与数学排版演示" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>视频分析</h3>
-<p>点击回答中的时间跳到相关画面；播放标记片段时，批注跟随目标移动。</p>
-<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="点击回答定位视频片段，播放时标注跟随目标移动" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>数据标注</h3>
-<p>让 AI 识别并圈出图片中的目标，例如交通画面里可辨认的车辆。</p>
-<a href="./docs/images/data-annotations.png"><img src="./docs/images/data-annotations.png" width="100%" alt="AI 圈出交通画面中可辨认的车辆，并说明识别范围" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>表格识别</h3>
-<p>把截图中的表格识别成行列清晰的回答，点击“复制表格”即可粘贴到 Excel。</p>
-<a href="./docs/images/table-recognition.png"><img src="./docs/images/table-recognition.png" width="100%" alt="表格截图识别为结构化行列，回答上方提供复制表格按钮" /></a>
+<a href="./docs/images/exam-annotation-latest.jpg"><img src="./docs/images/exam-annotation-latest.jpg" width="100%" alt="几何试题截图上的解答与原位批注演示" /></a>
 </td>
 </tr>
 </table>
 
 <details>
-<summary>试卷演示与原卷来源</summary>
+<summary>试卷演示说明</summary>
 
-试卷配图为 0.4.2 的真实答卷人工复核演示，用于展示原位批注与数学排版。当前版本统一使用普通截图、多区域引用和原有对话条，没有独立试卷入口。识读与判分仍需人工核对。
-
-原卷：[香港考评局 2025 HKDSE 数学必修部分公开答卷示例](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3)（PDF 第 3 页，卷面页码 2）。截图保留整页真实手写，展示人工逐题核对、修正识读与作答框后的结果。原卷版权归原机构。
+配图展示几何试题的讲解与原位批注。AI 回答与批注请结合原题核对。
 
 </details>
 
@@ -189,6 +187,10 @@ Windows N / KN 版本需要安装 Media Feature Pack 才能录制和播放视频
 
 ## 开源协议
 
-作者：**Abner Stephen**。
+作者：[**Abner Stephen**](https://github.com/abnste)、[**Yandi**](https://github.com/pyxyd) 和 [**数字星星**](https://github.com/shuziyuxingxing-stack)。
 
 项目自有源码采用 [MPL-2.0](./LICENSE)，允许遵守协议的商业使用。对外分发时，请按协议提供受覆盖的源代码并保留版权和许可声明。详见[许可与源码说明](./SOURCE.md)；第三方依赖另见[第三方声明](./THIRD-PARTY-NOTICES.md)。
+
+## 致谢
+
+感谢**林文杰老师**提供学科帮助，**张文彪老师**提供功能开发建议，以及 [**blueling0**](https://github.com/blueling0) 协助测试。

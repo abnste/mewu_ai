@@ -169,6 +169,32 @@ internal static class ManualDrawingReplay
                     "Redoing a text-style change discarded text typed after that change");
                 checks.Add("text-style-undo-redo-preserves-later-typed-content");
 
+                SelectDrawingObject(overlay,item,new Point(55,85));
+                Invoke(overlay,"MoveSelectedDrawingObject",item,new Point(95,115),markup);
+                Invoke(overlay,"CommitSelectedDrawingMove");
+                markup.ReleaseMouseCapture();
+                Invoke(overlay,"OnDeactivated",overlay,EventArgs.Empty);
+                Require((bool)Get(overlay,"_drawingMode"),"Temporary deactivation exited drawing mode");
+                Invoke(overlay,"SetDrawColor",Colors.Blue);
+                Invoke(overlay,"ToggleTextHighlight",overlay,new RoutedEventArgs());
+                sizes.SelectedItem=40d;
+                Require(Property<string>(ById(elements,textId),"Text")=="abcd","Moving/styling lost text");
+                Require(Property<double>(ById(elements,textId),"FontSize")==40,"Deactivation lost the style target");
+                overlay.UpdateLayout();
+                Invoke(overlay,"ShowDrawingObjectSelection",item);
+                var textHandles=(IList)Get(overlay,"_drawingObjectHandles");
+                var textCorner=(Point)textHandles[2]!;
+                Require((bool)Invoke(overlay,"TryBeginDrawingResize",item,textCorner,markup)!,"Text resize handle unavailable");
+                Invoke(overlay,"ResizeSelectedDrawingObject",item,textCorner+new Vector(35,18),markup);
+                Invoke(overlay,"CommitSelectedDrawingMove");
+                markup.ReleaseMouseCapture();
+                Require(Property<string>(ById(elements,textId),"Text")=="abcd","Resizing lost text");
+                Invoke(overlay,"ExitDrawingMode");
+                Require(Property<string>(ById(elements,textId),"Text")=="abcd","Completion lost text");
+                Require(CountColor(Render(overlay,item),Blue)>0,"Completed text missing from export");
+                checks.Add("text-move-deactivate-style-and-complete-preserves-content-and-export");
+                Invoke(overlay,"EnterDrawingMode");
+
                 foreach (var selector in new[] { sizes, fonts })
                 {
                     selector.IsDropDownOpen = true;

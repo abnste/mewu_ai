@@ -8,7 +8,7 @@ using mewu_ai_Assistant.Services;
 
 namespace mewu_ai_Assistant.AI;
 
-internal sealed class CodexAiProvider(string model,string effort,bool supportsImage) : IAiProvider
+internal sealed class CodexAiProvider(string model,string effort,bool supportsImage,string? executablePath=null) : IAiProvider
 {
     internal const long ImageLimit=20L*1024*1024,VideoLimit=512L*1024*1024;
     public string Id=>"codex-work";
@@ -16,7 +16,7 @@ internal sealed class CodexAiProvider(string model,string effort,bool supportsIm
 
     public async Task<bool> TestConnectionAsync(CancellationToken cancellationToken)
     {
-        await using var server=await CodexAppServer.StartAsync(cancellationToken).ConfigureAwait(false);
+        await using var server=await CodexAppServer.StartAsync(cancellationToken,false,executablePath).ConfigureAwait(false);
         return (await server.ReadModelsAsync(cancellationToken).ConfigureAwait(false)).Any(item=>item.Model==model);
     }
 
@@ -31,7 +31,7 @@ internal sealed class CodexAiProvider(string model,string effort,bool supportsIm
             Validate(request,supportsImage);
             token.ThrowIfCancellationRequested();
             var hasVideo=request.Attachments.Any(item=>item.Type==AiAttachmentType.Video);
-            server=await CodexAppServer.StartAsync(token,hasVideo).ConfigureAwait(false);
+            server=await CodexAppServer.StartAsync(token,hasVideo,executablePath).ConfigureAwait(false);
             var selected=(await server.ReadModelsAsync(token).ConfigureAwait(false)).SingleOrDefault(item=>item.Model==model)
                 ??throw new InvalidOperationException("所选 Codex 模型当前不可用，请在设置中重新检测并选择。");
             if(!selected.Efforts.Contains(effort,StringComparer.Ordinal))throw new InvalidOperationException("所选 Codex 模型不支持当前思考程度，请重新选择。");
@@ -194,7 +194,12 @@ internal sealed class CodexTurnCollector(string threadId,AiRequest request,Cance
                 if(type=="commandExecution")request.AgentProgress?.Report(new(AiAgentEventKind.ToolStarted,"Codex 正在分析本机附件"));break;
             case "item/completed":
                 var completed=data.GetProperty("item");
-                if(CodexAppServer.Text(completed,"type")=="agentMessage")
+                var completedType=CodexAppServer.Text(completed,"type");
+                if(completedType=="commandExecution")
+                {
+                    request.AgentProgress?.Report(new(AiAgentEventKind.ToolCompleted,"Codex 正在分析本机附件",CodexAppServer.Text(completed,"status")));
+                }
+                if(completedType=="agentMessage")
                 {
                     var final=CodexAppServer.Text(completed,"text");
                     if(final.Length>2_000_000)throw new InvalidDataException("Codex 回答超过安全限制。");

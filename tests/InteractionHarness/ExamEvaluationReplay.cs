@@ -29,7 +29,7 @@ internal static class ExamEvaluationReplay
         {
             var folder=Path.GetFullPath(".codex-build/teaching-evaluation");
             Directory.CreateDirectory(folder);
-            var run=(args.Contains("--api")?"api-":"")+(args.Contains("--handwriting-only")?"handwriting-":"")+(args.Contains("--after")?"after":"baseline");
+            var run=DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+(args.Contains("--api")?"api-":"")+(args.Contains("--handwriting-only")?"handwriting-":"")+(args.Contains("--after")?"after":"baseline");
             var records=new List<object>();string? failure=null;
             File.WriteAllText(Path.Combine(folder,run+"-result.json"),JsonSerializer.Serialize(new{records,failure="Evaluation is running"}));
             using var deadline=new CancellationTokenSource(TimeSpan.FromMinutes(10));
@@ -72,6 +72,29 @@ internal static class ExamEvaluationReplay
                     await Send("handwriting","请批改这张考试机构公开的真实手写数学答卷中的第1、2题，核对每一步，指出最早出现的错误，特别留意指数和分母正负号；在原作答处直接批注。没有评分细则时不编造具体扣分。用简体中文回答，可以使用 Hermes 既有视觉工具读取本次附件，但不要访问无关文件、联网找答案或生成图片。");
                     return;
                 }
+                if(args.FirstOrDefault(arg=>arg.StartsWith("--learning-case=",StringComparison.Ordinal)) is {} caseArgument)
+                {
+                    var caseName=caseArgument["--learning-case=".Length..];
+                    if(caseName!=Path.GetFileName(caseName)||caseName.IndexOfAny(Path.GetInvalidFileNameChars())>=0)throw new ArgumentException("Invalid case name");
+                    using var spec=JsonDocument.Parse(File.ReadAllText(Path.Combine(folder,caseName+".json")));
+                    var fixtures=spec.RootElement.GetProperty("images").EnumerateArray().Select(value=>value.GetString()!).ToArray();
+                    if(fixtures.Length is <1 or >2)throw new ArgumentException("Use one or two public or synthetic fixtures");
+                    for(var index=0;index<fixtures.Length;index++)
+                    {
+                        if(fixtures[index]!=Path.GetFileName(fixtures[index]))throw new ArgumentException("Invalid fixture name");
+                        Add(fixtures[index],index);
+                    }
+                    await Send(caseName,spec.RootElement.GetProperty("prompt").GetString()!,spec.RootElement.TryGetProperty("requireAnnotations",out var requireAnnotations)&&requireAnnotations.GetBoolean());
+                    if(spec.RootElement.TryGetProperty("followup",out var followup))
+                    {
+                        var before=JsonSerializer.Serialize(items.Select(Notes));
+                        await Send(caseName+"-followup",followup.GetString()!,false);
+                        var followupPreserved=before==JsonSerializer.Serialize(items.Select(Notes));
+                        records.Add(new{scenario=caseName+"-followup-preserves-annotations",passed=followupPreserved});
+                        if(!followupPreserved)throw new InvalidOperationException("Explanation changed annotations");
+                    }
+                    return;
+                }
                 Add("student-A",0);
                 if(!args.Contains("--comparison-only"))await Send("single","请批改这张数学试卷，蓝字是学生作答。逐题判断对错、说明错因，在原卷对应作答上直接标注。用简体中文回答；只分析这张试卷，可以使用 Hermes 既有视觉工具读取本次附件，但不要访问无关文件、联网找答案或生成图片。");
                 // Send clean image pixels. Hermes intentionally retains its
@@ -85,7 +108,7 @@ internal static class ExamEvaluationReplay
                 var preserved=beforeFollowup==JsonSerializer.Serialize(items.Select(Notes));
                 records.Add(new{scenario="followup-preserves-annotations",passed=preserved});
                 if(!preserved)throw new InvalidOperationException("Follow-up changed grading annotations");
-                async Task Send(string scenario,string prompt)
+                async Task Send(string scenario,string prompt,bool requireAnnotations=true)
                 {
                     var elapsed=System.Diagnostics.Stopwatch.StartNew();
                     File.WriteAllText(Path.Combine(folder,run+"-progress.txt"),scenario);
@@ -106,8 +129,10 @@ internal static class ExamEvaluationReplay
                         Save((BitmapSource)Invoke("RenderSelectionImage",item,true,true,true)!,Path.Combine(folder,$"{run}-{scenario}-paper-{i}.png"));
                     }
                     records.Add(new{scenario,status,answerLength=answer.PlainText.Length,annotations=annotations.Select(a=>a.notes.Length).ToArray(),model,elapsedSeconds=elapsed.Elapsed.TotalSeconds});
-                    if(answer.PlainText.Length==0||!items.Any(i=>Notes(i).Count>0))throw new InvalidOperationException("Live exam request produced no answer or no mapped annotations: "+status);
+                    if(answer.PlainText.Length==0||requireAnnotations&&!items.Any(i=>Notes(i).Count>0))throw new InvalidOperationException("Live exam request produced no answer or no mapped annotations: "+status);
                     await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    var snapshot=new RenderTargetBitmap((int)Math.Ceiling(overlay.ActualWidth),(int)Math.Ceiling(overlay.ActualHeight),96,96,PixelFormats.Pbgra32);
+                    snapshot.Render(overlay);Save(snapshot,Path.Combine(folder,$"{run}-{scenario}-overlay.png"));
                 }
             }
             catch(Exception ex){failure=ex.GetType().Name+": "+ex.Message;Environment.ExitCode=1;}

@@ -16,6 +16,8 @@ internal static class LocalizationService
 {
     private static readonly Dictionary<string,string> English=new(StringComparer.Ordinal)
     {
+        ["新对话"]="New chat",["开始新对话"]="Start a new chat",["对话记录"]="Conversation history",
+        ["开始一个空白会话，不携带之前的对话上下文"]="Start a blank conversation without previous context",
         ["直线"]="Line",["直线标注工具"]="Line tool",
         ["外环选择颜色"]="Choose a hue on the ring",["色板调整深浅"]="Choose a shade on the color plane",
         ["色相环"]="Hue ring",["颜色深浅色板"]="Saturation and brightness palette",["十六进制颜色"]="Hex color",
@@ -24,7 +26,6 @@ internal static class LocalizationService
         ["矩形；按 Shift 绘制正方形"]="Rectangle; hold Shift for a square",
         ["拖动移动 · 工具条修改样式 · Delete 删除"]="Drag to move · Edit style in the toolbar · Delete to remove",
         ["文字使用荧光底色"]="Text highlight enabled",["文字使用普通颜色"]="Text highlight disabled",
-        ["试卷与作业"]="Papers and assignments",
         ["喵呜AI"]="MewuAI",["喵呜AI 屏幕助手"]="MewuAI Screen Assistant",["喵呜AI 设置"]="MewuAI Settings",["喵呜AI 贴图"]="MewuAI Pinned Image",["喵呜AI 贴视频"]="MewuAI Pinned Video",
         ["设置"]="Settings",["打开主界面"]="Open MewuAI",["退出"]="Quit",["最小化"]="Minimize",["隐藏到托盘"]="Hide to tray",["关闭设置"]="Close settings",["关闭设置窗口"]="Close the Settings window",
         ["屏幕助手"]="Screen Assistant",["圈选并直接分析"]="Select an area and analyze it",["截图、OCR、标注和录屏"]="Capture, OCR, annotate, and record",["截图、OCR、标注和录屏可用"]="Capture, OCR, annotation, and recording are available",

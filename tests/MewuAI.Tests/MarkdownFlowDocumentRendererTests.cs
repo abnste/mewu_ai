@@ -13,6 +13,34 @@ namespace MewuAI.Tests;
 public sealed class MarkdownFlowDocumentRendererTests
 {
     [Theory]
+    [InlineData(@"AD\perp CE")]
+    [InlineData(@"\mathbf a=\overrightarrow{AB}")]
+    [InlineData(@"\boxed{\frac1{15}}")]
+    [InlineData(@"\mathbf a\cdot\mathbf c=\frac{8^{2}+3^{2}-7^{2}}2=12,\qquad \mathbf b\cdot\mathbf c=\frac{5^{2}+3^{2}-5^{2}}2=\frac92.")]
+    [InlineData(@"\overrightarrow{CE}=\frac38\mathbf a-\mathbf b")]
+    [InlineData(@"\overrightarrow{AD}\cdot\overrightarrow{CE}=\frac38\times12-\frac92=0,")]
+    [InlineData(@"|\mathbf u|=\sqrt{25-\frac{20^{2}}{64}}=\frac{5\sqrt3}{2},\qquad |\mathbf v|=\sqrt{9-\frac{12^{2}}{64}}=\frac{3\sqrt3}{2}.")]
+    public void GeometryReplyFormulasRenderInAnswerAndAnnotation(string formula)
+    {
+        RunSta(()=>
+        {
+            Assert.NotNull(MathFormulaRenderer.Create("$"+formula+"$",18,System.Windows.Media.Brushes.Black,false));
+            Assert.NotNull(AnnotationFormulaLayout.TryCreate("$"+formula+"$",400,18,System.Windows.Media.Brushes.Black));
+        });
+    }
+    [Fact]
+    public void NestedCosineAngleFormulaRenders()
+    {
+        RunSta(()=>
+        {
+            const string formula=@"$$\cos\angle(C-AB-D)=\frac{\frac34}{\sqrt{\frac{75}{4}}\sqrt{\frac{27}{4}}}=\frac1{15}.$$";
+            var view=new mewu_ai_Assistant.Views.MarkdownAnswerView{Markdown=formula};
+            var image=Assert.Single(view.Document.Blocks.OfType<Paragraph>().SelectMany(p=>p.Inlines.OfType<InlineUIContainer>())).Child;
+            Assert.IsType<mewu_ai_Assistant.Views.MathFormulaView>(image);
+            Assert.NotNull(AnnotationFormulaLayout.TryCreate(formula,420,18,System.Windows.Media.Brushes.Black));
+        });
+    }
+    [Theory]
     [InlineData(false)][InlineData(true)]
     public void PaperFeedbackAvoidsAnswersAndCrowdedInkAndExportPreservesOriginal(bool crowded)
     {
@@ -60,6 +88,77 @@ public sealed class MarkdownFlowDocumentRendererTests
             var formulas=document.Blocks.OfType<Paragraph>().SelectMany(p=>p.Inlines.OfType<InlineUIContainer>()).ToArray();Assert.Equal(2,formulas.Length);
             var text=MarkdownFlowDocumentRenderer.ToPlainText(document);Assert.Contains(inline,text);Assert.Contains(block,text);
             Assert.Contains(document.Blocks.OfType<Paragraph>().Last().Inlines.OfType<Run>(),r=>r.Text==inline);
+        });
+    }
+
+    [Fact]
+    public void CommonProviderEscapesAndGreekVariablesStillRenderAsFormula()
+    {
+        RunSta(() =>
+        {
+            const string input = @"$$\frac{1}{\sqrt{\pi}} \int\_{-\infty}^{x} \frac{1}{2\sqrt{t-\tau}}\\, e^{-\frac{(x+\xi)^2}{4(t-\tau)}}\\, \frac{1}{2\sqrt{t-\tau}}\\, d\xi$$";
+            var view = new mewu_ai_Assistant.Views.MarkdownAnswerView { Markdown = input };
+            var formula = Assert.Single(view.Document.Blocks.OfType<Paragraph>().SelectMany(block => block.Inlines.OfType<InlineUIContainer>()));
+            var image = Assert.IsType<mewu_ai_Assistant.Views.MathFormulaView>(formula.Child);
+            Assert.InRange(image.Width, 20, 1200);
+            Assert.Contains(@"\tau", image.OriginalText);
+            Assert.Contains(@"\xi", image.OriginalText);
+        });
+    }
+    [Fact]
+    public void CommonVisionReplyEscapesAndShorthandFractionsRender()
+    {
+        RunSta(() =>
+        {
+            const string input = "(1) 切线方程：$y=\\frac{x-1}{e}$。\\n(2) 参数范围：$a\\in[\\frac1e,+\\infty)$。必要性由$x\\to1^+$得$a(\\ln a+1)\\ge0$。";
+            var view = new mewu_ai_Assistant.Views.MarkdownAnswerView { Markdown = input };
+            Assert.NotNull(MathFormulaRenderer.Create(@"$a\in[\frac1e,+\infty)$", 13, System.Windows.Media.Brushes.Black));
+            Assert.NotNull(MathFormulaRenderer.Create(@"$x\to1^+$", 13, System.Windows.Media.Brushes.Black));
+            Assert.NotNull(MathFormulaRenderer.Create(@"$a(\ln a+1)\ge0$", 13, System.Windows.Media.Brushes.Black));
+            var formulas = view.Document.Blocks.OfType<Paragraph>().SelectMany(block => block.Inlines.OfType<InlineUIContainer>()).ToArray();
+            Assert.Equal(4, formulas.Length);
+            Assert.All(formulas, formula => Assert.IsType<mewu_ai_Assistant.Views.MathFormulaView>(formula.Child));
+            for(var end=1;end<input.Length;end+=5)view.Markdown=input[..end];
+            view.Markdown=input;
+            Assert.Equal(4,view.Document.Blocks.OfType<Paragraph>().SelectMany(p=>p.Inlines.OfType<InlineUIContainer>()).Count());
+            Assert.DoesNotContain(@"\n(2)",view.PlainText);
+            Assert.Contains(@"$a\in[\frac1e,+\infty)$",view.PlainText);
+            Assert.NotNull(AnnotationFormulaLayout.TryCreate(@"$a\in[\frac1e,+\infty)$",240,18,System.Windows.Media.Brushes.Black));
+            var literal=MarkdownFlowDocumentRenderer.Render("`"+input+"`");
+            Assert.Empty(literal.Blocks.OfType<Paragraph>().SelectMany(p=>p.Inlines.OfType<InlineUIContainer>()));
+            Assert.Contains(input,MarkdownFlowDocumentRenderer.ToPlainText(literal));
+        });
+    }
+    [Fact]
+    public void AnnotationFormulaLayoutSupportsMixedTextAndExportWithoutChangingSource()
+    {
+        RunSta(()=>
+        {
+            const string text=@"识别结果：$$\frac{1}{\sqrt{\pi}}\int\_{-\infty}^{x}e^{-\frac{(x+\xi)^2}{4(t-\tau)}}\\,d\xi$$请核对积分上限。";
+            var image=AnnotationFormulaLayout.TryCreate(text,180,18,System.Windows.Media.Brushes.Red);
+            Assert.NotNull(image);Assert.True(image.IsFrozen);Assert.Equal(180,image.Width);Assert.InRange(image.Height,30,180);
+            Assert.Null(AnnotationFormulaLayout.TryCreate("普通说明文字",180,18,System.Windows.Media.Brushes.Black));
+            Assert.Null(AnnotationFormulaLayout.TryCreate(@"$\input{private}$",180,18,System.Windows.Media.Brushes.Black));
+            var note=new mewu_ai_Assistant.Models.AiAnnotation(.1,.1,.4,.3,text,Kind:mewu_ai_Assistant.Models.AiAnnotationKind.Text);
+            var exported=mewu_ai_Assistant.Recording.AnnotationOverlayRenderer.RenderAiOverlay(600,400,[note]);
+            Assert.Equal(text,note.Text);Assert.True(exported.IsFrozen);
+            var pixels=new byte[600*400*4];exported.CopyPixels(pixels,2400,0);Assert.Contains(pixels,value=>value!=0);
+        });
+    }
+    [Fact]
+    public void BinomialReplyRendersDuringStreamingAndInAnnotations()
+    {
+        RunSta(()=>
+        {
+            const string formula=@"$$(x+a)^{2}=\sum\_{k=0}^{n}\binom{n}{k}x^{k}a^{n-k}$$";
+            const string reply="图中公式为二项式定理：\n"+formula+"\n说明：\n"+@"右侧 $\sum\_{k=0}^{n}\binom{n}{k}x^{k}a^{n-k}$ 是 $(x+a)^{n}$，其中 $\binom{n}{k}=\frac{n!}{k!(n-k)!}$。"+"\n\n"+@"$$(x+a)^{n}=\sum\_{k=0}^{n}\binom{n}{k}x^{k}a^{n-k}$$";
+            var view=new mewu_ai_Assistant.Views.MarkdownAnswerView();
+            for(var end=1;end<reply.Length;end+=7)view.Markdown=reply[..end];
+            view.Markdown=reply;
+            Assert.Equal(5,view.Document.Blocks.OfType<Paragraph>().SelectMany(p=>p.Inlines.OfType<InlineUIContainer>()).Count());
+            view.SelectAll();Assert.Contains(formula,view.SelectedPlainText);
+            Assert.NotNull(AnnotationFormulaLayout.TryCreate(formula,240,18,System.Windows.Media.Brushes.Black));
+            Assert.NotNull(MathFormulaRenderer.Create(@"$\binom{n}{k}$",18,System.Windows.Media.Brushes.Black));
         });
     }
     [Fact]

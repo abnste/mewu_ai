@@ -3,14 +3,14 @@
   <h1>MewuAI — AI Screenshot Annotation for Windows</h1>
   <p>Open-source screen capture with in-place AI annotations, offline OCR, screenshot translation, and screen recording.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.4.8"><img src="https://img.shields.io/badge/Public_Beta-v0.4.8-7C6CF0?style=flat-square" alt="v0.4.8 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.5.9"><img src="https://img.shields.io/badge/Public_Beta-v0.5.9-7C6CF0?style=flat-square" alt="v0.5.9 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.8/MewuAI-Setup-0.4.8-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.9/MewuAI-Setup-0.5.9-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.4.8/MewuAI-Portable-0.4.8-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.9/MewuAI-Portable-0.5.9-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -58,55 +58,53 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 <a href="./docs/images/ai-checkmarks.jpg"><img src="./docs/images/ai-checkmarks.jpg" width="100%" alt="AI highlights details and adds checkmarks to a screenshot" /></a>
 </td>
 <td width="50%" valign="top">
+<h3>Recognize tables</h3>
+<p>Turn a table screenshot into a structured answer, then use Copy table to paste it into Excel.</p>
+<a href="./docs/images/table-recognition.png"><img src="./docs/images/table-recognition.png" width="100%" alt="A table screenshot recognized as rows and columns with a Copy table button" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<h3>Analyze videos</h3>
+<p>Click a time in an answer to jump to a scene. Annotations follow the subject while a marked segment plays.</p>
+<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="Jumping to a video scene from an answer and playing it with tracking annotations" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>Annotate data</h3>
+<p>Ask AI to identify and mark objects in an image, such as visible vehicles in a traffic scene.</p>
+<a href="./docs/images/data-annotations.png"><img src="./docs/images/data-annotations.png" width="100%" alt="AI circles visible vehicles in a traffic image and explains the limits of recognition" /></a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 <h3>Translate screenshots</h3>
 <p>Read translations where the original text appears, then select text to copy it.</p>
 <a href="./docs/images/in-place-translation.jpg"><img src="./docs/images/in-place-translation.jpg" width="100%" alt="Translated text appears in the original positions within a screenshot" /></a>
+</td>
+<td width="50%" valign="top">
+<h3>Draw and annotate</h3>
+<p>Ask AI to add a diagram, or add your own notes with pens, shapes, and text.</p>
+<a href="./docs/images/draw-and-annotate-latest.jpg"><img src="./docs/images/draw-and-annotate-latest.jpg" width="100%" alt="AI drawings and annotations on a screenshot" /></a>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 <h3>Understand code</h3>
 <p>Select a piece of code and ask for an explanation tied to the lines you are reading.</p>
-<a href="./docs/images/code-explanation.jpg"><img src="./docs/images/code-explanation.jpg" width="100%" alt="Explanations beside a code screenshot point to the relevant lines" /></a>
+<a href="./docs/images/understand-code-20260921.png"><img src="./docs/images/understand-code-20260921.png" width="100%" alt="Explanations beside a code screenshot point to the relevant lines" /></a>
 </td>
-<td width="50%" valign="top">
-<h3>Draw and annotate</h3>
-<p>Ask AI to add a diagram, or add your own notes with pens, shapes, and text.</p>
-<a href="./docs/images/ai-drawing.jpg"><img src="./docs/images/ai-drawing.jpg" width="100%" alt="AI drawings and annotations on a screenshot" /></a>
-</td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 <h3>Annotate papers</h3>
 <p>Reference exam screenshots for explanations and annotations, or compare several pages to discuss shared errors and create practice.</p>
-<a href="./docs/images/hkdse-2025-inplace-math-en.png"><img src="./docs/images/hkdse-2025-inplace-math-en.png" width="100%" alt="Human-reviewed annotations and math typesetting on a genuine HKDSE handwritten script" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>Analyze videos</h3>
-<p>Click a time in an answer to jump to a scene. Annotations follow the subject while a marked segment plays.</p>
-<a href="./docs/media/MewuAI-video-annotations.gif"><img src="./docs/media/MewuAI-video-annotations.gif" width="100%" alt="Jumping to a video scene from an answer and playing it with tracking annotations" /></a>
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<h3>Annotate data</h3>
-<p>Ask AI to identify and mark objects in an image, such as visible vehicles in a traffic scene.</p>
-<a href="./docs/images/data-annotations.png"><img src="./docs/images/data-annotations.png" width="100%" alt="AI circles visible vehicles in a traffic image and explains the limits of recognition" /></a>
-</td>
-<td width="50%" valign="top">
-<h3>Recognize tables</h3>
-<p>Turn a table screenshot into a structured answer, then use Copy table to paste it into Excel.</p>
-<a href="./docs/images/table-recognition.png"><img src="./docs/images/table-recognition.png" width="100%" alt="A table screenshot recognized as rows and columns with a Copy table button" /></a>
+<a href="./docs/images/exam-annotation-latest.jpg"><img src="./docs/images/exam-annotation-latest.jpg" width="100%" alt="Geometry explanations and in-place annotations on an exam screenshot" /></a>
 </td>
 </tr>
 </table>
 
 <details>
-<summary>About the paper demonstration and its source</summary>
+<summary>About the paper demonstration</summary>
 
-The paper image is a human-reviewed demonstration from 0.4.2, showing in-place annotations and math typesetting. The current version uses ordinary screenshot conversations, multiple region references and the existing conversation bar, with no separate paper workflow entry. Readings and grading still need human review.
-
-Original: [HKEAA 2025 HKDSE Mathematics Compulsory Part sample script](https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/math/2025-Sample-MATH-CP-Level2-E-A756.pdf#page=3) (PDF page 3, printed page 2). The complete handwritten page is preserved. The screenshot shows a result after a reviewer checked each question and corrected readings and answer boxes. Copyright belongs to the original owner.
+The example shows explanations and in-place annotations for a geometry question. Check AI answers and annotations against the original question.
 
 </details>
 
@@ -191,6 +189,10 @@ Bug reports, suggestions, code, and documentation improvements are welcome. See 
 
 ## License
 
-Created by **Abner Stephen** & **Yandi**.
+Created by [**Abner Stephen**](https://github.com/abnste), [**Yandi**](https://github.com/pyxyd), and [**shuziyuxingxing-stack**](https://github.com/shuziyuxingxing-stack).
 
 Project-owned source is licensed under [MPL-2.0](./LICENSE). Commercial use is permitted under the license. When distributing covered software, provide the covered source and retain copyright and license notices as required. See [license and source information](./SOURCE.md) and the separate [third-party notices](./THIRD-PARTY-NOTICES.md).
+
+## Acknowledgments
+
+Thanks to teachers **Lin Wenjie** for subject-matter guidance and **Zhang Wenbiao** for feature development suggestions, and to [**blueling0**](https://github.com/blueling0) for testing assistance.

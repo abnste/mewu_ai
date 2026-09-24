@@ -94,15 +94,36 @@ public sealed class WorkBuddyIntegrationTests
         var video=WorkBuddyAcpServer.CreateStartInfo(installation,@"C:\MewuAI-Test",true);
         Assert.Equal("",text.ArgumentList[text.ArgumentList.IndexOf("--tools")+1]);
         Assert.Equal("Read,Bash,PowerShell",video.ArgumentList[video.ArgumentList.IndexOf("--tools")+1]);
-        Assert.Contains("--no-session-persistence",video.ArgumentList);
+        Assert.DoesNotContain("--no-session-persistence",video.ArgumentList);
         Assert.Contains("--strict-mcp-config",video.ArgumentList);
         Assert.DoesNotContain("--dangerously-skip-permissions",video.ArgumentList);
+        Assert.Equal("default",video.ArgumentList[video.ArgumentList.IndexOf("--permission-mode")+1]);
         using var settings=JsonDocument.Parse(video.ArgumentList[video.ArgumentList.IndexOf("--settings")+1]);
         Assert.True(settings.RootElement.GetProperty("disableAllHooks").GetBoolean());
         var sandbox=settings.RootElement.GetProperty("sandbox");
         Assert.True(sandbox.GetProperty("enabled").GetBoolean());
         Assert.False(sandbox.GetProperty("allowUnsandboxedCommands").GetBoolean());
         Assert.Empty(sandbox.GetProperty("network").GetProperty("allowedDomains").EnumerateArray());
+    }
+
+    [Fact]
+    public void DiscoverFindsCustomDriveInstallAndRequiresBundledCli()
+    {
+        var root=Path.Combine(Path.GetTempPath(),"MewuAI.Tests",Guid.NewGuid().ToString("N"));
+        var executable=Path.Combine(root,"workbuddy","WorkBuddy.exe");
+        var cli=Path.Combine(root,"workbuddy","resources","app.asar.unpacked","cli","bin","codebuddy");
+        Directory.CreateDirectory(Path.GetDirectoryName(cli)!);
+        try
+        {
+            File.WriteAllBytes(executable,[]);
+            Assert.Null(WorkBuddyAcpServer.InstallationFromRoot(Path.GetDirectoryName(executable)!));
+            File.WriteAllBytes(cli,[]);
+            var installation=WorkBuddyAcpServer.InstallationFromRoot(Path.GetDirectoryName(executable)!);
+            Assert.NotNull(installation);
+            Assert.Equal(executable,installation.Executable);
+            Assert.Equal(cli,installation.Cli);
+        }
+        finally{try{Directory.Delete(root,true);}catch(IOException){}}
     }
 
     [Fact]

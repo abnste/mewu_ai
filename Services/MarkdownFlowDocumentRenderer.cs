@@ -61,6 +61,14 @@ public static class MarkdownFlowDocumentRenderer
         return document;
     }
 
+    private static string NormalizeProviderEscapedNewlines(string value)
+    {
+        // Some providers return JSON-escaped line breaks after the JSON has
+        // already been decoded. Only treat \n before a new item/number as a
+        // line break so LaTeX commands such as \\nu remain untouched.
+        return System.Text.RegularExpressions.Regex.Replace(value, @"\\n(?=\s*(?:\(?\d+[.)]|[（(]|[-•*]))", "\n", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+    }
+
     internal static MarkdownDocument Parse(string markdown)=>Markdown.Parse(markdown,Pipeline);
 
     internal static bool ContainsTable(ContainerBlock container)
@@ -207,7 +215,8 @@ public static class MarkdownFlowDocumentRenderer
             switch(current)
             {
                 case MathInline math:AddFormula(target,math is BracketMathInline bracket?bracket.SourceText:new string('$',Math.Max(1,math.DelimiterCount))+math.Content+new string('$',Math.Max(1,math.DelimiterCount)),fontSize);break;
-                case LiteralInline literal:AddTextRuns(target,literal.Content.ToString(),fontSize);break;
+                case LiteralInline literal:AddTextRuns(target,NormalizeProviderEscapedNewlines(literal.Content.ToString()),fontSize);break;
+                case HtmlEntityInline entity:AddTextRuns(target,entity.Transcoded.ToString(),fontSize);break;
                 case LineBreakInline:target.Add(new LineBreak());break;
                 case CodeInline code:
                     target.Add(new Run(code.Content){FontFamily=CodeFont,FontSize=Math.Max(11,fontSize-1),Background=CodeBackground});break;

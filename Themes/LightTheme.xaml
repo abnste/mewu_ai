@@ -297,15 +297,15 @@
                                 </ControlTemplate>
                             </TextBox.Template>
                         </TextBox>
-                        <Popup x:Name="PART_Popup" IsOpen="{Binding IsDropDownOpen,RelativeSource={RelativeSource TemplatedParent},Mode=TwoWay}" PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
-                            <Border Margin="0,5,0,0" MinWidth="{Binding ActualWidth,RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="280" Background="White" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="11" Padding="4">
-                                <Border.Effect>
-                                    <DropShadowEffect Color="#55657A" BlurRadius="22" ShadowDepth="6" Opacity=".2"/>
-                                </Border.Effect>
-                                <ScrollViewer>
-                                    <ItemsPresenter/>
-                                </ScrollViewer>
-                            </Border>
+                        <Popup x:Name="PART_Popup" IsOpen="{Binding IsDropDownOpen,RelativeSource={RelativeSource TemplatedParent},Mode=TwoWay}" PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}" Placement="Bottom" HorizontalOffset="-28" VerticalOffset="-23" StaysOpen="False" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                            <Grid Background="Transparent">
+                                <Border Margin="28" Background="White" CornerRadius="11" IsHitTestVisible="False">
+                                    <Border.Effect><DropShadowEffect Color="#55657A" BlurRadius="22" ShadowDepth="6" Opacity=".2"/></Border.Effect>
+                                </Border>
+                                <Border x:Name="DropDownSurface" Margin="28" MinWidth="{Binding ActualWidth,RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="280" Background="White" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="11" Padding="4">
+                                    <ScrollViewer><ItemsPresenter/></ScrollViewer>
+                                </Border>
+                            </Grid>
                         </Popup>
                     </Grid>
                     <ControlTemplate.Triggers>
@@ -465,15 +465,24 @@
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="0"/>
+        <Setter Property="HasDropShadow" Value="False"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ToolTip">
-                    <Border Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="8" Padding="8,5">
-                        <Border.Effect>
-                            <DropShadowEffect Color="#334762" BlurRadius="16" ShadowDepth="4" Opacity=".18"/>
-                        </Border.Effect>
-                        <ContentPresenter/>
-                    </Border>
+                    <!-- A Popup clips its child to the native bounds. Reserve the
+                         complete effect area instead of putting the shadow on the
+                         surface itself, otherwise the history hover card loses its
+                         outer shadow at the popup edge. -->
+                    <Grid Background="Transparent" SnapsToDevicePixels="True">
+                        <Border x:Name="ToolTipShadow" Margin="24" Background="White" CornerRadius="8" IsHitTestVisible="False">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#334762" BlurRadius="16" ShadowDepth="4" Opacity=".18"/>
+                            </Border.Effect>
+                        </Border>
+                        <Border x:Name="ToolTipSurface" Margin="24" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="8" Padding="8,5">
+                            <ContentPresenter/>
+                        </Border>
+                    </Grid>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>

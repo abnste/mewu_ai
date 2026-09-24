@@ -29,13 +29,4 @@ public static class AiResultValidation
             EmptyAnswerKind.ReasoningOnly => "模型只返回了思考内容，未返回最终回答，请重试",
             _ => null
         };
-
-    /// <summary>Safe, user-facing detail for an incomplete provider response.</summary>
-    public static string? GetEmptyAnswerGuidance(AiResult result)
-        => ClassifyEmptyAnswer(result) switch
-        {
-            EmptyAnswerKind.ReasoningOnly => "回复不完整：模型/API 返回了推理字段，但未提供最终正文。本轮不会写入对话历史或后续上下文；可直接重试，或更换支持当前输入的模型。",
-            EmptyAnswerKind.NoContent => "回复不完整：模型/API 没有提供可显示的正文。本轮不会写入对话历史或后续上下文；请重试并检查模型与 API 配置。",
-            _ => null
-        };
 }

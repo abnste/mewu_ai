@@ -17,6 +17,7 @@ public partial class CaptureOverlayWindow
     {
         if (!_followAnswerTail && !_answerLayoutQueued) _answerReadingOffset = AnswerText.VerticalOffset;
         AnswerText.Markdown = markdown;
+        if(_request is { } request)UpdateConversationProgress(request,markdown);
         QueueAnswerLayout();
     }
 
@@ -30,7 +31,8 @@ public partial class CaptureOverlayWindow
             // Let WPF perform its regular layout pass. Forcing UpdateLayout
             // after every streamed token used to measure the entire card twice.
             PositionPromptBar();
-            if (_followAnswerTail) AnswerText.ScrollToEnd();
+            if(UnifiedConversation){if(_followAnswerTail)HistoryScroll.ScrollToEnd();}
+            else if (_followAnswerTail) AnswerText.ScrollToEnd();
             else AnswerText.ScrollToVerticalOffset(_answerReadingOffset);
             _answerLayoutQueued = false;
             LatestAnswerButton.Visibility = _followAnswerTail ? Visibility.Collapsed : Visibility.Visible;
@@ -39,6 +41,7 @@ public partial class CaptureOverlayWindow
 
     private void AnswerScrollChanged(object sender, ScrollChangedEventArgs e)
     {
+        if(UnifiedConversation)return;
         if (_answerLayoutQueued ||
             e.ExtentHeightChange != 0 || e.ViewportHeightChange != 0 || e.VerticalChange == 0) return;
         _answerReadingOffset = AnswerText.VerticalOffset;

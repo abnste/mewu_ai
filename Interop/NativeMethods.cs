@@ -27,6 +27,7 @@ internal static class NativeMethods
     [DllImport("user32.dll",SetLastError=true)] private static extern int GetWindowRgn(IntPtr hWnd,IntPtr hRgn);
     [DllImport("gdi32.dll")] private static extern bool RectInRegion(IntPtr region,ref WindowRect rectangle);
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool GetWindowRect(IntPtr hWnd,out WindowRect rect);
+    [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr hWnd);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern IntPtr CreateRectRgn(int left,int top,int right,int bottom);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern int CombineRgn(IntPtr destination,IntPtr source1,IntPtr source2,int mode);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern bool DeleteObject(IntPtr handle);

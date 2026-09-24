@@ -8,7 +8,7 @@ using mewu_ai_Assistant.Services;
 
 namespace mewu_ai_Assistant.AI;
 
-public sealed class HermesAiProvider : IAiProvider,IDisposable
+public sealed class HermesAiProvider : IAiProvider,IConversationSessionReset,IDisposable
 {
     private const long MaxImageBytes=25L*1024*1024;
     private const long MaxVideoBytes=512L*1024*1024;
@@ -44,6 +44,22 @@ public sealed class HermesAiProvider : IAiProvider,IDisposable
     public AiProviderCapabilities Capabilities { get; }=new(true,true,true,MaxImageBytes,MaxVideoBytes,TimeSpan.FromHours(4),AcceptedMimeTypes);
 
     public Task<bool> TestConnectionAsync(CancellationToken cancellationToken)=>_runtime.TestConnectionAsync(cancellationToken);
+
+    public bool TryResetSession()
+    {
+        if(Volatile.Read(ref _disposed)!=0)return false;
+        // SendAsync holds the turn gate for the whole request, so a failed
+        // zero-timeout acquire means another entry point (overlay or text chat)
+        // is mid-turn and the shared session must be left untouched.
+        if(!_turnGate.Wait(0))return false;
+        try
+        {
+            _sessionId=null;
+            _storedSessionId=null;
+            return true;
+        }
+        finally{_turnGate.Release();}
+    }
 
     public async Task<AiResult> SendAsync(AiRequest request,CancellationToken cancellationToken)
     {

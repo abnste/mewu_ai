@@ -100,10 +100,6 @@ internal static class Program
         Set(overlay,"_conversationAiAvailable",true);
         ((FrameworkElement)overlay.FindName("PromptBarHost")).Visibility=Visibility.Visible;
         overlay.Title="Mewu Interaction QA";
-        if(args.Contains("--readme-teaching-demo"))
-        {
-            TeachingReadmeDemo.Run(app,host,overlay,english);app.Run(overlay);return;
-        }
         MarkReplayWindow(overlay,args.Contains("--verify-prompt-reveal-focus")?"对话条弹出焦点验收 · 完成后自动关闭":"自动化验收窗口 · 非当前软件设置");
         overlay.ShowInTaskbar=true;
         if(args.Contains("--verify-manual-drawing"))
@@ -117,10 +113,6 @@ internal static class Program
         if(args.Contains("--verify-hermes-reply-images"))
         {
             HermesReplyImagesReplay.Run(app,overlay,args.Contains("--live-hermes-reply"));app.Run(overlay);return;
-        }
-        if(args.Contains("--verify-teaching-workflow"))
-        {
-            TeachingWorkflowReplay.Run(app,host,overlay,args);app.Run(overlay);return;
         }
         if(args.Contains("--evaluate-exams"))
         {
@@ -137,6 +129,18 @@ internal static class Program
         if(args.Contains("--verify-answer-menus"))
         {
             AnswerMenuReplay.Run(app,overlay);app.Run(overlay);return;
+        }
+        if(args.Contains("--verify-history-menu"))
+        {
+            HistoryMenuReplay.Run(app,overlay,english);app.Run(overlay);return;
+        }
+        if(args.Contains("--verify-popup-shadows"))
+        {
+            PopupShadowReplay.Run(app,overlay);app.Run(overlay);return;
+        }
+        if(args.Contains("--verify-conversation-workspace"))
+        {
+            ConversationWorkspaceReplay.Run(app,host,overlay);app.Run();return;
         }
         if(args.Contains("--verify-thinking-glow"))
         {

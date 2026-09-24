@@ -55,7 +55,7 @@ internal static class WindowIssuesReplay
                 using var suppressUpdate=new CancellationTokenSource();
                 typeof(SettingsWindow).GetField("_updateCheck",Private)!.SetValue(settings,suppressUpdate);
                 settings.Show();await Idle();
-                Check("settings-still-excluded",Affinity(settings)==NativeMethods.WdaExcludeFromCapture);
+                Check("settings-capture-allowed-as-requested",Affinity(settings)==0);
                 var settingsHandle=Handle(settings);settings.Close();await Idle();
                 Check("closed-settings-no-protected-hwnd",!GetWindowDisplayAffinity(settingsHandle,out _));
 
@@ -85,8 +85,8 @@ internal static class WindowIssuesReplay
                         Program.MarkReplayWindow(overlay,"置顶验收 · 再次截图在已有贴图下方 · 完成后自动关闭");
                         overlay.Show();overlay.Activate();await Idle();
                         var label=$"{prefix}-{round}";
-                        Check(label+"-later-overlay-below-both-pins",Above(pin,overlay)&&Above(second,overlay));
-                        Check(label+"-pin-area-input-goes-to-pin",WindowFromPoint(new NativePoint{X=area.Left+200,Y=area.Top+210})==Handle(pin));
+                        Check(label+"-later-overlay-above-both-old-pins",Above(overlay,pin)&&Above(overlay,second));
+                        Check(label+"-old-pin-area-input-goes-to-overlay",WindowFromPoint(new NativePoint{X=area.Left+200,Y=area.Top+210})==Handle(overlay));
                         Check(label+"-existing-pin-order-retained",Above(second,pin)==secondWasAbove);
                         Check(label+"-overlay-protection",Affinity(overlay)==(teaching?0:NativeMethods.WdaExcludeFromCapture));
                         Check(label+"-pins-retain-topmost",pin.Topmost&&second.Topmost&&pin.IsVisible&&second.IsVisible);
@@ -97,7 +97,7 @@ internal static class WindowIssuesReplay
                         Check(label+"-pin-pixels-preserved-in-frozen-desktop",sample[2]>sample[1]&&sample[1]>sample[0]);
                         Array.Clear(sample);
                         second.Activate();await Idle();overlay.Activate();await Idle();
-                        Check(label+"-reactivation-keeps-overlay-below-pins",Above(pin,overlay)&&Above(second,overlay));
+                        Check(label+"-reactivation-keeps-overlay-above-old-pins",Above(overlay,pin)&&Above(overlay,second));
                         // Exercise the actual pin command in this same overlay,
                         // including its desktop refresh and focus restoration.
                         var created=PinSelection(app,overlay);
@@ -106,6 +106,8 @@ internal static class WindowIssuesReplay
                         Check(label+"-new-pin-above-current-overlay",Above(created,overlay));
                         Check(label+"-new-pin-receives-input",HitsCenter(created));
                         Check(label+"-new-pin-preserved",created.IsVisible&&created.Topmost);
+                        pin.Activate();await Idle();overlay.Activate();await Idle();
+                        Check(label+"-mixed-generation-reactivation",Above(created,overlay)&&Above(overlay,pin)&&Above(overlay,second));
                         overlay.Close();await Idle();
                         Check(label+"-closing-overlay-preserves-pins",pin.IsVisible&&second.IsVisible&&created.IsVisible&&pin.Topmost&&second.Topmost);
                         created.Close();
