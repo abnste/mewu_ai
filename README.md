@@ -3,14 +3,14 @@
   <h1>MewuAI — AI Screenshot Annotation for Windows</h1>
   <p>Open-source screen capture with in-place AI annotations, offline OCR, screenshot translation, and screen recording.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.5.10"><img src="https://img.shields.io/badge/Public_Beta-v0.5.10-7C6CF0?style=flat-square" alt="v0.5.10 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/Public_Beta-v0.6.0-7C6CF0?style=flat-square" alt="v0.6.0 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.10/MewuAI-Setup-0.5.10-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.6.0/MewuAI-Setup-0.6.0-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.10/MewuAI-Portable-0.5.10-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.6.0/MewuAI-Portable-0.6.0-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>

@@ -2,6 +2,12 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.6.0 — 0.5.3 以来的累计更新与录屏兼容性 / Cumulative updates since 0.5.3 and recording compatibility
+
+发行说明 / Release notes: [0.6.0](https://github.com/abnste/mewu_ai/releases/tag/v0.6.0)
+
+完整的双语发行说明见 [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md)。 / See the consolidated bilingual notes in [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md).
+
 ## 0.5.10 — 0.5.3 以来的累计更新与录屏声音稳定性 / Cumulative updates since 0.5.3 and recording-audio stability
 
 发行说明 / Release notes: [0.5.10](https://github.com/abnste/mewu_ai/releases/tag/v0.5.10)
@@ -10,11 +16,7 @@
 
 ## 未发布 / Unreleased
 
-- 修复可能中断 NVIDIA 即时重放的残留防捕获标记：教学／屏幕共享模式刷新桌面时临时隐藏覆盖层而不启用防捕获，弹窗继承所属窗口的捕获策略，公开许可证窗口不再防捕获；关闭共享模式时仍保留截图及贴图的防捕获保护。 / Remove remaining capture-protection flags that can interrupt NVIDIA Instant Replay: temporarily cloak the overlay during shared desktop refresh instead of changing display affinity, inherit the owner's capture policy in dialogs, and allow capture of public license notices. Screenshot and pinned windows retain protection when sharing mode is disabled.
-- 修复部分混合显卡或虚拟显示驱动环境中，截屏后录屏约一秒就停止的问题：显示器采集显式使用 Windows Graphics Capture，避免默认 Desktop Duplication 返回不支持错误；录屏失败原因写入隐私日志。 / Fix region recordings stopping after about one second on some hybrid-GPU or virtual-display systems: explicitly use Windows Graphics Capture instead of the unsupported Desktop Duplication path, and retain recording failures in the privacy log.
-- 修复启用电脑声音录制时，无声桌面可能在约 3 秒后使成片停留在旧画面的问题；保持声音采集时钟连续，并增加超过 12 秒的动态录制、暂停恢复和有声／无声切换验收。 / Fix recordings freezing on an old frame after roughly three seconds when computer audio is enabled on a silent desktop; keep the audio capture clock running and cover sustained dynamic recording, pause/resume, and sound/silence transitions.
-- 录制期间隐藏冻结桌面层，只保留区外实时暗化遮罩和选区边框；底层窗口移动、点击和拖动会继续实时进入录屏，录制结束后恢复录制前的原始冻结截图。/ Hide the frozen desktop layer while recording and keep only a live outside-region dimmer and selection border; moved, clicked, and dragged windows remain live in the recording, and the original pre-recording frozen screenshot is restored afterward.
-- 录屏视频编码改为按选区尺寸、帧率和画质计算 H.264 高配置文件可变码率，并保留固定帧率与硬件编码能力；动态回放加入连续帧重复检查。/ Select H.264 High-profile VBR bitrate from capture size, frame rate, and quality while retaining fixed cadence and hardware encoding support; add consecutive-frame duplicate checks to the dynamic replay.
+暂无。/ None.
 
 ## 0.5.9 — 录制交互重构与阴影修复 / Recording interaction redesign and shadow fixes
 
