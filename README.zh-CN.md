@@ -187,7 +187,7 @@ Windows N / KN 版本需要安装 Media Feature Pack 才能录制和播放视频
 
 ## 开源协议
 
-作者：[**Abner Stephen**](https://github.com/abnste)、[**Yandi**](https://github.com/pyxyd) 和 [**数字星星**](https://github.com/shuziyuxingxing-stack)。
+<img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb">
 
 项目自有源码采用 [MPL-2.0](./LICENSE)，允许遵守协议的商业使用。对外分发时，请按协议提供受覆盖的源代码并保留版权和许可声明。详见[许可与源码说明](./SOURCE.md)；第三方依赖另见[第三方声明](./THIRD-PARTY-NOTICES.md)。
 
