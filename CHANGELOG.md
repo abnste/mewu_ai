@@ -2,11 +2,11 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
-## 0.6.0 — 0.5.3 以来的累计更新与录屏兼容性 / Cumulative updates since 0.5.3 and recording compatibility
+## 0.6.0 — 基于 0.5.10 的录屏兼容修复 / Recording compatibility after 0.5.10
 
 发行说明 / Release notes: [0.6.0](https://github.com/abnste/mewu_ai/releases/tag/v0.6.0)
 
-完整的双语发行说明见 [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md)。 / See the consolidated bilingual notes in [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md).
+完整的双语发行说明见 [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md)。 / See the bilingual notes in [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md).
 
 ## 0.5.10 — 0.5.3 以来的累计更新与录屏声音稳定性 / Cumulative updates since 0.5.3 and recording-audio stability
 
