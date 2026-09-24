@@ -28,9 +28,13 @@ public sealed class RecordingAudioLiveIntegrationTests
             using var player=new SoundPlayer(tone);player.Load();
             session.Start();
             await session.RecordingReady.WaitAsync(TimeSpan.FromSeconds(25),token);
+            // Cross the idle-loopback stall boundary before and after real sound.
+            await Task.Delay(TimeSpan.FromSeconds(4),token);
             player.PlayLooping();
             try{await Task.Delay(TimeSpan.FromSeconds(3),token);}
             finally{player.Stop();}
+            session.Pause();await Task.Delay(TimeSpan.FromSeconds(1),token);session.Resume();
+            await Task.Delay(TimeSpan.FromSeconds(4),token);
             session.Stop();var source=await done.Task.WaitAsync(TimeSpan.FromSeconds(25),token);
             using var retained=session.RetainCompletedVideo();await session.DisposeAsync();
             var originalHash=SHA256.HashData(await File.ReadAllBytesAsync(source,token));

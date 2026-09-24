@@ -34,7 +34,6 @@ public sealed class AppHost : IDisposable
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
-    internal TeachingSession Teaching { get; }=new();
     public AppHost(System.Windows.Application app,CultureInfo? uiCultureOverride=null)
     {
         _app=app??throw new ArgumentNullException(nameof(app));

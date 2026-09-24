@@ -3,6 +3,7 @@
 using System.Collections;
 using System.IO;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -56,7 +57,7 @@ internal static class CaptureToolsReplay
         CaptureOverlayWindow? overlay=null;
         app.Dispatcher.BeginInvoke(DispatcherPriority.Normal,new Action(async()=>
         {
-            var checks=new List<string>();string? failure=null;object? state=null;
+            var checks=new List<string>();string? failure=null;object? state=null;var motionDistinct=0;var largestMotion=0d;var actualFps=0d;uint actualBitrate=0;var movingSampleCount=0;var longestMovingDuplicateRun=0;
             try
             {
                 background.UpdateLayout();await Dispatcher.Yield(DispatcherPriority.Background);
@@ -143,10 +144,23 @@ internal static class CaptureToolsReplay
                 finally{SetCursorPos(savedCursor.X,savedCursor.Y);Invoke("UpdateRecordingInputRouting");}
                 checks.Add("recording-window-region-leaves-desktop-interactive");
                 if(host.Settings.TeachingMode)Require((bool)Native("IsVisibleToCapture",new WindowInteropHelper(overlay).Handle)&&(bool)Invoke("IsTeachingAcquisitionClear",item)!,"Recording changed sharing or covered acquired pixels");
-                await Task.Delay(1300);
+                var selectionOrigin=overlay.PointToScreen(new Point(100,300));var selectionEnd=overlay.PointToScreen(new Point(460,540));
+                var motionFromDevice=PresentationSource.FromVisual(dragTarget)!.CompositionTarget!.TransformFromDevice;
+                var motionStartX=selectionOrigin.X-260;var motionEndX=selectionEnd.X+40;var motionY=selectionOrigin.Y+80;
+                for(var step=0;step<=36;step++)
+                {
+                    var physical=new Point(motionStartX+(motionEndX-motionStartX)*step/36d,motionY);
+                    var logical=motionFromDevice.Transform(physical);dragTarget.Left=logical.X;dragTarget.Top=logical.Y;dragTarget.UpdateLayout();
+                    await Dispatcher.Yield(DispatcherPriority.Render);await Task.Delay(30);
+                }
+                checks.Add("recording-renders-moving-window-through-selection");
+                await Task.Delay(650);
                 if(host.Settings.TeachingMode)Require(PostMessage(new WindowInteropHelper(overlay).Handle,0x312,new IntPtr(0x6D38),IntPtr.Zero),"F8 dispatch failed");
                 else Invoke("StopRecording",overlay,new RoutedEventArgs());
                 await Until(()=>item.GetType().GetProperty("VideoPath")?.GetValue(item) is string||item.GetType().GetField("VideoPath")?.GetValue(item) is string,"Recording did not produce video",30);
+                await Until(()=>!(bool)Get("_recordingMode"),"Recording UI did not restore the frozen screenshot after completion",30);
+                Require(desktopImage.Visibility==Visibility.Visible&&ReferenceEquals(frozenDesktop,desktopImage.Source),"Recording completion did not restore the original frozen desktop");
+                checks.Add("recording-completion-restores-original-frozen-desktop");
                 checks.Add("recording-stops-and-produces-video");
                 var video=(string)(item.GetType().GetProperty("VideoPath")?.GetValue(item)??item.GetType().GetField("VideoPath")!.GetValue(item))!;
                 await Until(()=>item.GetType().GetField("VideoPreview")!.GetValue(item) is not null,"Video preview surface was not created");
@@ -159,13 +173,29 @@ internal static class CaptureToolsReplay
                 checks.Add("video-play-pause-button-controls-in-place-preview");
                 var clip=await MediaClip.CreateFromFileAsync(await StorageFile.GetFileFromPathAsync(video));
                 var composition=new MediaComposition();composition.Clips.Add(clip);
-                foreach(var fraction in new[]{0.05,0.5,0.9})
+                foreach(var fraction in new[]{0.05,0.95})
                 {
                     using var thumbnail=await composition.GetThumbnailAsync(TimeSpan.FromSeconds(clip.OriginalDuration.TotalSeconds*fraction),expected.PixelWidth,expected.PixelHeight,VideoFramePrecision.NearestFrame);
                     using var stream=thumbnail.AsStreamForRead();var decoder=BitmapDecoder.Create(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);
                     ComparePixels(expected,decoder.Frames[0],"Video contains overlay pixels");
                 }
-                composition.Clips.Clear();checks.Add("video-first-middle-last-frames-clean");
+                var movingHashes=new HashSet<string>(StringComparer.Ordinal);var sampledHashes=new List<string>();
+                // Sample the whole clip at the requested cadence.  The final
+                // part is intentionally static after the fixture stops moving,
+                // so duplicate-run validation is limited to the first 70%.
+                const int sampleTotal=45;
+                for(var sample=0;sample<sampleTotal;sample++)
+                {
+                    var fraction=.08+.84*sample/(sampleTotal-1d);
+                    using var thumbnail=await composition.GetThumbnailAsync(TimeSpan.FromSeconds(clip.OriginalDuration.TotalSeconds*fraction),expected.PixelWidth,expected.PixelHeight,VideoFramePrecision.NearestFrame);
+                    using var stream=thumbnail.AsStreamForRead();var decoder=BitmapDecoder.Create(stream,BitmapCreateOptions.PreservePixelFormat,BitmapCacheOption.OnLoad);var recorded=decoder.Frames[0];
+                    var hash=PixelHash(recorded);sampledHashes.Add(hash);if(sample<sampleTotal*.7){movingSampleCount++;movingHashes.Add(hash);}largestMotion=Math.Max(largestMotion,ChangedPixelFraction(expected,recorded));
+                }
+                var currentRun=1;for(var sample=1;sample<sampledHashes.Count*.7;sample++){if(sampledHashes[sample]==sampledHashes[sample-1])currentRun++;else currentRun=1;longestMovingDuplicateRun=Math.Max(longestMovingDuplicateRun,currentRun);}
+                var properties=clip.GetVideoEncodingProperties();actualFps=properties.FrameRate.Denominator==0?0:properties.FrameRate.Numerator/(double)properties.FrameRate.Denominator;actualBitrate=properties.Bitrate;motionDistinct=movingHashes.Count;
+                Require(motionDistinct>=12&&largestMotion>.08&&longestMovingDuplicateRun<=3,$"Recorded motion is missing or stuttering (distinct={motionDistinct}, changed={largestMotion:F3}, duplicateRun={longestMovingDuplicateRun})");
+                Require(actualFps>=Math.Clamp(host.Settings.RecordingFps,10,60)-.5,$"Recorded cadence is too low ({actualFps:F2} fps)");
+                composition.Clips.Clear();checks.Add("video-endpoints-clean-and-moving-window-captured");
                 if(host.Settings.TeachingMode)
                 {
                     Require(!(bool)Get("_teachingCaptureFinishRegistered"),"F8 was not released after recording");
@@ -224,12 +254,30 @@ internal static class CaptureToolsReplay
     private static void Require(bool condition,string message){if(!condition)throw new InvalidOperationException(message);}
     private static void ComparePixels(BitmapSource expected,BitmapSource actual,string message)
     {
-        Require(expected.PixelWidth==actual.PixelWidth&&expected.PixelHeight==actual.PixelHeight,message+": dimensions differ");
+        var changed=ChangedPixelFraction(expected,actual);
+        Require(changed<.035,message+$": changed fraction {changed:F4}");
+    }
+    private static double ChangedPixelFraction(BitmapSource expected,BitmapSource actual)
+    {
+        Require(expected.PixelWidth==actual.PixelWidth&&expected.PixelHeight==actual.PixelHeight,"Compared video frame dimensions differ");
         var a=new FormatConvertedBitmap(expected,PixelFormats.Bgra32,null,0);var b=new FormatConvertedBitmap(actual,PixelFormats.Bgra32,null,0);
         var first=new byte[a.PixelWidth*a.PixelHeight*4];var second=new byte[first.Length];a.CopyPixels(first,a.PixelWidth*4,0);b.CopyPixels(second,b.PixelWidth*4,0);
-        var different=0;
-        for(var i=0;i<first.Length;i+=4)if(Math.Abs(first[i]-second[i])>35||Math.Abs(first[i+1]-second[i+1])>35||Math.Abs(first[i+2]-second[i+2])>35)different++;
-        Require(different/(double)(a.PixelWidth*a.PixelHeight)<.035,message+$": changed fraction {different/(double)(a.PixelWidth*a.PixelHeight):F4}");
+        var different=0;for(var i=0;i<first.Length;i+=4)if(Math.Abs(first[i]-second[i])>35||Math.Abs(first[i+1]-second[i+1])>35||Math.Abs(first[i+2]-second[i+2])>35)different++;
+        return different/(double)(a.PixelWidth*a.PixelHeight);
+    }
+    private static string PixelHash(BitmapSource source)
+    {
+        var frame=new FormatConvertedBitmap(source,PixelFormats.Bgra32,null,0);var pixels=new byte[frame.PixelWidth*frame.PixelHeight*4];frame.CopyPixels(pixels,frame.PixelWidth*4,0);return Convert.ToHexString(SHA256.HashData(pixels));
+    }
+    private static void SaveRecordingBar(CaptureOverlayWindow overlay,FrameworkElement bar,string file)
+    {
+        var root=(Canvas)overlay.FindName("Root");root.UpdateLayout();
+        var full=new RenderTargetBitmap(Math.Max(1,(int)Math.Ceiling(root.ActualWidth)),Math.Max(1,(int)Math.Ceiling(root.ActualHeight)),96,96,PixelFormats.Pbgra32);full.Render(root);
+        var origin=bar.TranslatePoint(new Point(0,0),root);const int margin=28;
+        var left=Math.Max(0,(int)Math.Floor(origin.X)-margin);var top=Math.Max(0,(int)Math.Floor(origin.Y)-margin);
+        var right=Math.Min(full.PixelWidth,(int)Math.Ceiling(origin.X+bar.ActualWidth)+margin);var bottom=Math.Min(full.PixelHeight,(int)Math.Ceiling(origin.Y+bar.ActualHeight)+margin);
+        var crop=new CroppedBitmap(full,new Int32Rect(left,top,Math.Max(1,right-left),Math.Max(1,bottom-top)));crop.Freeze();
+        Directory.CreateDirectory(".codex-build");var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(crop));using var stream=File.Create(Path.Combine(".codex-build",file));encoder.Save(stream);
     }
     private static void SaveRecordingBar(CaptureOverlayWindow overlay,FrameworkElement bar,string file)
     {

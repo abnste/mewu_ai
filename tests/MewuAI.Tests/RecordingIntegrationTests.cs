@@ -139,6 +139,41 @@ public sealed class RecordingIntegrationTests
         }
     }
 
+    [Fact] public async Task RegionRecordingSurvivesStartupAndProducesSeveralSecondsOfVideo()
+    {
+        var display=System.Windows.Forms.Screen.PrimaryScreen!.Bounds;
+        var region=new ScreenRect(display.X,display.Y,Math.Min(1280,display.Width),Math.Min(720,display.Height));
+        var session=new RecordingSession(new AppSettings{RecordSystemAudio=false,IncludeRecordingCursor=false},region,null);
+        var done=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.Completed+=path=>done.TrySetResult(path);
+        session.Failed+=error=>done.TrySetException(new InvalidOperationException(error));
+        try
+        {
+            var token=TestContext.Current.CancellationToken;
+            session.Start();
+            // Surface a native startup failure immediately instead of hiding
+            // DXGI_ERROR_UNSUPPORTED behind a RecordingReady timeout.
+            var startup=await Task.WhenAny(session.RecordingReady,done.Task).WaitAsync(TimeSpan.FromSeconds(25),token);
+            await startup;
+            Assert.False(done.Task.IsCompleted,"Recording ended before it became ready.");
+            await Task.Delay(TimeSpan.FromSeconds(4),token);
+            Assert.False(done.Task.IsCompleted,"Recording ended without a stop request.");
+            session.Stop();
+            var path=await done.Task.WaitAsync(TimeSpan.FromSeconds(20),token);
+            using var retained=session.RetainCompletedVideo();
+            await session.DisposeAsync();
+            var clip=await MediaClip.CreateFromFileAsync(await StorageFile.GetFileFromPathAsync(path)).AsTask(token);
+            Assert.True(clip.OriginalDuration>=TimeSpan.FromSeconds(3),$"Recording lasted only {clip.OriginalDuration.TotalSeconds:0.00} seconds.");
+        }
+        finally
+        {
+            await session.DisposeAsync();
+            // A native startup failure can leave the sink locked until process
+            // exit. Do not replace the original failure with a cleanup error.
+            try{if(File.Exists(session.VideoPath))File.Delete(session.VideoPath);}catch(IOException){}
+        }
+    }
+
     [Fact] public async Task RecordsSmallRegionToRealMp4()
     {
         var session=new RecordingSession(new AppSettings{RecordSystemAudio=false,RecordingFps=10,GifFps=2,IncludeRecordingCursor=false},new ScreenRect(0,0,128,128),null);var done=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);session.Completed+=p=>done.TrySetResult(p);session.Failed+=e=>done.TrySetException(new InvalidOperationException(e));

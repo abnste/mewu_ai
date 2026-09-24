@@ -2,6 +2,18 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.6.0 — 基于 0.5.10 的录屏兼容修复 / Recording compatibility after 0.5.10
+
+发行说明 / Release notes: [0.6.0](https://github.com/abnste/mewu_ai/releases/tag/v0.6.0)
+
+完整的双语发行说明见 [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md)。 / See the bilingual notes in [docs/release-notes-v0.6.0.md](./docs/release-notes-v0.6.0.md).
+
+## 0.5.10 — 0.5.3 以来的累计更新与录屏声音稳定性 / Cumulative updates since 0.5.3 and recording-audio stability
+
+发行说明 / Release notes: [0.5.10](https://github.com/abnste/mewu_ai/releases/tag/v0.5.10)
+
+完整的双语发行说明见 [docs/release-notes-v0.5.10.md](./docs/release-notes-v0.5.10.md)。 / See the consolidated bilingual notes in [docs/release-notes-v0.5.10.md](./docs/release-notes-v0.5.10.md).
+
 ## 未发布 / Unreleased
 
 - **抓取 v4：OCR 误读链接自动纠错 + 清晰报错 + 未装 Scrapling 的内置基础抓取**：定位到此前"反复失败"的真正元凶——圈选识别用的本地 OCR 把微信文章 key 里的大写 `I` 认成小写 `l`（I/l/1、O/0 互混），30 次抓取里 19 次用了错误 URL；微信对无效 key 返回 HTTP 200 + "Parameter error" 错误页，与"封锁纯 HTTP"无关（实测有效 key 的纯 HTTP Fetcher 直接返回全文 1377 字）。v4 抓取脚本：微信 /s/ 链接返回错误页时**自动生成易混字符变体（全局 + 逐位替换，最多探测 24 个）并用轻量 Fetcher 探测**，命中即用纠正后的 URL 抓取并在结果/保存文件中注明；错误页不再当正文透传，而是返回结构化错误码（`weixin_error_page` / `network_unreachable`）并由界面翻译成明确提示（链接无效/需要代理/网络不可达）；非微信站点疑似被拦截（知乎 403）时升级隐身浏览器。**未安装 Scrapling 的用户**：新增内置基础抓取（`BasicHttpCrawlService`，纯 C# HttpClient + Chrome 头 + 剥标签抽正文，零依赖），静态页面直接出结果，动态页面（微信/知乎）失败后再引导一键安装；抓取子进程会剔除格式损坏的代理环境变量（如 `http://http://…`）但保留合法代理。实测：误读 URL `…clH…` 自动纠正为 `…IH…` 并抓到 1035 字正文；知乎回答（纯 HTTP 403）经隐身浏览器抓到全文；无效 key 返回清晰中文报错。/ **Crawl v4: auto-correcting OCR-misread links + clear errors + built-in basic fetch when Scrapling is absent**: the real culprit behind the repeated failures was the local OCR misreading uppercase `I` as lowercase `l` in WeChat article keys (19 of 30 attempts used a wrong URL); WeChat serves an HTTP 200 "Parameter error" stub only for invalid keys — a valid key returns the full article even over plain HTTP. v4 now generates bounded character-confusion variants (global + per-position, ≤24 probes) when a WeChat /s/ link returns the error stub, verifies them with the lightweight Fetcher, and crawls the corrected URL (noted in the result); error stubs are no longer relayed as content — structured error codes (`weixin_error_page` / `network_unreachable`) are translated into clear guidance (invalid link / proxy needed / unreachable); non-WeChat sites escalate to the stealth browser on block pages (Zhihu 403). Users without Scrapling get a new built-in basic fetch (`BasicHttpCrawlService`, pure C# HttpClient + Chrome headers + tag-stripping, zero dependencies) that handles static pages directly and falls back to the one-click install prompt for dynamic pages; malformed proxy env vars are stripped from the crawl subprocess while valid proxies are kept. Verified: the misread URL `…clH…` was auto-corrected to `…IH…` yielding the full 1035-char article; the Zhihu answer (plain HTTP 403) was fetched via the stealth browser; an invalid key returns a clear localized error.

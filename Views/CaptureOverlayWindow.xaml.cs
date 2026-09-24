@@ -33,6 +33,7 @@ namespace mewu_ai_Assistant.Views;
 
 public partial class CaptureOverlayWindow : Window
 {
+    private static string L(string zh,string en)=>LocalizationService.T(zh,en);
     private const int ReasoningDisplayLimit=12_000;
     private const double PromptEdgeMargin=6;
     private const double RecordingBarTopMargin=18;
@@ -1001,14 +1002,13 @@ public partial class CaptureOverlayWindow : Window
     }
 
     /// <summary>
-    /// During a recording the selected rectangle is a live pass-through hole.
-    /// The desktop frame and dimmer remain visible everywhere else, while the
-    /// native hit-test hook sends pointer input in the hole to the window below
-    /// (for example, a full-screen browser video).
+    /// During recording the frozen desktop is hidden completely. The selected
+    /// rectangle stays clear while a translucent dimmer remains outside it, so
+    /// every part of the real desktop continues to update under the overlay.
     /// </summary>
     private bool UpdateRecordingVisualHole(bool requireNativeRegion=false)
     {
-        var item=_recordingMode?_recordingItem:IsTeachingMode&&_longCaptureMode?_longCaptureItem:null;
+        var item=_recordingMode||_recordingCountdownActive?_recordingItem:IsTeachingMode&&_longCaptureMode?_longCaptureItem:null;
         if(item is null)
         {
             ClearRecordingVisualHole();
@@ -1039,18 +1039,34 @@ public partial class CaptureOverlayWindow : Window
 
         var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));
         var hole=new RectangleGeometry(Normalize(item.Bounds));
-        // Use an exclude geometry instead of an opacity mask so the pixels
-        // under the selection are genuinely transparent and can receive input.
-        DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);
+        // A recording must show the live desktop on both sides of the selected
+        // rectangle. Keeping the frozen DesktopImage outside the hole made
+        // click-through work technically while leaving the user to click a
+        // stale picture. Long capture still uses the frozen frame separately.
+        if(_recordingMode||_recordingCountdownActive)
+        {
+            DesktopImage.Visibility=Visibility.Collapsed;
+            DesktopImage.Clip=null;
+        }
+        else
+        {
+            DesktopImage.Visibility=Visibility.Visible;
+            DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);
+        }
         Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);
         item.Image.Visibility=Visibility.Collapsed;
         UpdateTeachingLiveOutline(item);
-        return ApplyRecordingWindowRegion(item);
+        // Countdown input is intentionally whole-window transparent; do not
+        // install the recording hole until the countdown has fully finished.
+        return _recordingCountdownActive&&!_recordingMode
+            ? _recordingWindowRegionApplied
+            : ApplyRecordingWindowRegion(item);
     }
 
     private void ClearRecordingVisualHole()
     {
         _recordingHoleRetryCount=0;
+        DesktopImage.Visibility=Visibility.Visible;
         DesktopImage.Clip=null;
         Dimmer.Clip=null;
         ResetRecordingWindowRegion();
@@ -1416,17 +1432,16 @@ public partial class CaptureOverlayWindow : Window
         var handle=new WindowInteropHelper(this).Handle;
         try
         {
-            // A shared overlay would capture itself when reactivated or after
-            // pinning. Protect only for this synchronous snapshot, then restore
-            // sharing even when capture fails. Pins remain visible in the frame.
-            if(!NativeMethods.ExcludeFromCapture(handle,requireProtection:true))
-                throw new InvalidOperationException("无法隔离教学覆盖层，已保留原始桌面帧");
-            NativeMethods.FlushComposition();
-            return new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor);
+            // A shared overlay would capture itself on reactivation/pinning.
+            // Cloak it only for this snapshot without ever enabling capture
+            // protection, which can stop third-party desktop recording.
+            // Pins are independent windows and remain in the captured frame.
+            return NativeMethods.WithWindowCloaked(handle,
+                ()=>new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor));
         }
         finally
         {
-            if(!NativeMethods.ApplyPresentationCaptureVisibility(handle,true))
+            if(!NativeMethods.IsWindowUncloaked(handle))
             {
                 new PrivacyLogger().Error("RestoreTeachingVisibility",new InvalidOperationException("无法恢复教学共享，已关闭覆盖层"));
                 Close();
@@ -4148,10 +4163,15 @@ public partial class CaptureOverlayWindow : Window
     private void EnterRecordingCountdown(SelectionItem selected)
     {
         if(!NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,true))throw new InvalidOperationException("无法启用倒计时期间的鼠标穿透，请重新截图");
-        Cursor=Cursors.Arrow;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=PointerInspector.Visibility=RecordingBar.Visibility=Visibility.Collapsed;HideHandles();
+        Cursor=Cursors.Arrow;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=PointerInspector.Visibility=RecordingBar.Visibility=CrossRegionConnections.Visibility=Visibility.Collapsed;HideHandles();
         foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
         selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
-        var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));var hole=new RectangleGeometry(Normalize(selected.Bounds));DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);
+        // The frozen frame is not part of the countdown either.  The real
+        // desktop remains visible under the dimmer, so a window moved before
+        // recording starts is already in the correct live position when the
+        // first captured frame arrives.
+        DesktopImage.Visibility=Visibility.Collapsed;DesktopImage.Clip=null;
+        var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));var hole=new RectangleGeometry(Normalize(selected.Bounds));Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);
         Canvas.SetLeft(RecordingCountdown,selected.Bounds.Left+(selected.Bounds.Width-RecordingCountdown.Width)/2);Canvas.SetTop(RecordingCountdown,selected.Bounds.Top+(selected.Bounds.Height-RecordingCountdown.Height)/2);RecordingCountdown.Visibility=Visibility.Visible;
     }
 
@@ -4185,7 +4205,7 @@ public partial class CaptureOverlayWindow : Window
     {
         _recordingMode=true;_recordingPaused=_recordingStopping=false;Cursor=Cursors.Arrow;
         if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
-        Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=Visibility.Collapsed;HideHandles();
+        Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=CrossRegionConnections.Visibility=Visibility.Collapsed;HideHandles();
         foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
         selected.Video.Visibility=Visibility.Collapsed;
         selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
