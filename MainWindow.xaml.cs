@@ -19,7 +19,7 @@ public partial class MainWindow : Window
     // The launcher contains navigation and connection status, not credential
     // editors or screen content. A protected, persistent launcher HWND also
     // blocks NVIDIA desktop replay after this window is hidden to the tray.
-    // Sensitive settings windows apply their own capture protection.
+    // Settings are also capture-visible, with credential fields masked.
     public MainWindow(AppHost host) { _host=host; InitializeComponent(); RefreshStatus(); }
     private void OnLoaded(object sender,RoutedEventArgs e)=>UpdateShellClip();
     private void OnActivated(object? sender,EventArgs e)=>_ = LoadHistoryArchiveAsync();

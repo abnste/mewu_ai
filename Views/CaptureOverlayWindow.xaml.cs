@@ -1411,17 +1411,16 @@ public partial class CaptureOverlayWindow : Window
         var handle=new WindowInteropHelper(this).Handle;
         try
         {
-            // A shared overlay would capture itself when reactivated or after
-            // pinning. Protect only for this synchronous snapshot, then restore
-            // sharing even when capture fails. Pins remain visible in the frame.
-            if(!NativeMethods.ExcludeFromCapture(handle,requireProtection:true))
-                throw new InvalidOperationException("无法隔离教学覆盖层，已保留原始桌面帧");
-            NativeMethods.FlushComposition();
-            return new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor);
+            // A shared overlay would capture itself on reactivation/pinning.
+            // Cloak it only for this snapshot without ever enabling capture
+            // protection, which can stop third-party desktop recording.
+            // Pins are independent windows and remain in the captured frame.
+            return NativeMethods.WithWindowCloaked(handle,
+                ()=>new ScreenCaptureService().CaptureDesktop(_host.Settings.IncludeCaptureCursor));
         }
         finally
         {
-            if(!NativeMethods.ApplyPresentationCaptureVisibility(handle,true))
+            if(!NativeMethods.IsWindowUncloaked(handle))
             {
                 new PrivacyLogger().Error("RestoreTeachingVisibility",new InvalidOperationException("无法恢复教学共享，已关闭覆盖层"));
                 Close();

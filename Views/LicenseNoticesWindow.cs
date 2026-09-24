@@ -44,7 +44,9 @@ internal sealed class LicenseNoticesWindow : Window
         Grid.SetRow(surface,2);root.Children.Add(surface);Content=root;
         _text.ContextMenu=TextSelectionMenu.Create(()=>_text.SelectedText,()=>_text.Text,text=>ClipboardService.TrySetText(text,out string? _));
         _documents.SelectionChanged+=(_,_)=>ShowDocument();
-        SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ExcludeFromCapture(handle);};
+        // Public license text needs no capture protection; protected windows
+        // can interrupt desktop recording even when their content is harmless.
+        SourceInitialized+=(_,_)=>NativeMethods.TryUseSystemRoundedCorners(new WindowInteropHelper(this).Handle);
         PreviewKeyDown+=(_,e)=>{if(e.Key==Key.Escape){Close();e.Handled=true;}};
         LoadDocuments();
     }

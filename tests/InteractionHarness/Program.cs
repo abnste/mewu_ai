@@ -55,7 +55,7 @@ internal static class Program
         if(args.Contains("--verify-pinned-zoom")){PinnedZoomReplay.Run(app);return;}
         if(args.Contains("--verify-window-issues"))
         {
-            WindowIssuesReplay.Run(app,host);return;
+            WindowIssuesReplay.Run(app,host,args.Contains("--shared-only"));return;
         }
         host.Settings.TeachingMode=teaching;
         if(verifyRecordingDuration){RecordingDurationReplay.Run(app,host,args);return;}

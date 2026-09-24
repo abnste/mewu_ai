@@ -32,11 +32,39 @@ internal static class NativeMethods
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern int CombineRgn(IntPtr destination,IntPtr source1,IntPtr source2,int mode);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern bool DeleteObject(IntPtr handle);
     [DllImport("dwmapi.dll",PreserveSig=true)] private static extern int DwmSetWindowAttribute(IntPtr windowHandle,int attribute,ref int value,int valueSize);
+    [DllImport("dwmapi.dll",PreserveSig=true)] private static extern int DwmGetWindowAttribute(IntPtr windowHandle,int attribute,out int value,int valueSize);
     [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW",SetLastError=true)] private static extern IntPtr GetWindowLongPtr(IntPtr windowHandle,int index);
     [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW",SetLastError=true)] private static extern IntPtr SetWindowLongPtr(IntPtr windowHandle,int index,IntPtr value);
 
     private const int DwmWindowCornerPreference=33;
     private const int DwmCornerRound=2;
+    private const int DwmWindowCloak=13,DwmWindowCloaked=14,DwmCloakedApp=1;
+
+    // Hide only for a synchronous desktop snapshot. Changing display affinity,
+    // even briefly, can stop NVIDIA Instant Replay for the whole desktop.
+    internal static T WithWindowCloaked<T>(IntPtr windowHandle,Func<T> capture)
+    {
+        ArgumentNullException.ThrowIfNull(capture);
+        Marshal.ThrowExceptionForHR(DwmGetWindowAttribute(windowHandle,DwmWindowCloaked,out var original,sizeof(int)));
+        var cloaked=1;
+        Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(windowHandle,DwmWindowCloak,ref cloaked,sizeof(int)));
+        try
+        {
+            FlushComposition();
+            return capture();
+        }
+        finally
+        {
+            // Preserve an existing app cloak, including nested snapshot calls.
+            // Shell/inherited cloaks are controlled independently by Windows.
+            var restore=(original&DwmCloakedApp)!=0?1:0;
+            Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(windowHandle,DwmWindowCloak,ref restore,sizeof(int)));
+            FlushComposition();
+        }
+    }
+
+    internal static bool IsWindowUncloaked(IntPtr windowHandle)
+        =>DwmGetWindowAttribute(windowHandle,DwmWindowCloaked,out var value,sizeof(int))>=0&&(value&DwmCloakedApp)==0;
 
     internal static bool TryUseSystemRoundedCorners(IntPtr windowHandle)
     {
@@ -75,12 +103,18 @@ internal static class NativeMethods
       internal static bool SetWindowCaptureVisibleForDiagnostics(IntPtr windowHandle)
           =>windowHandle!=IntPtr.Zero&&SetWindowDisplayAffinity(windowHandle,0);
 
-    // Only screenshot presentation windows may opt into sharing. Settings and
-    // credentials keep using ExcludeFromCapture independently of this setting.
+    // Presentation windows follow the explicit teaching/screen-sharing setting.
     internal static bool ApplyPresentationCaptureVisibility(IntPtr windowHandle,bool teachingMode)
         =>teachingMode
             ?windowHandle!=IntPtr.Zero&&SetWindowDisplayAffinity(windowHandle,0)&&IsVisibleToCapture(windowHandle)
             :ExcludeFromCapture(windowHandle);
+
+    // Dialogs follow their actual owner's capture policy, including settings
+    // and nested dialogs. Missing/unknown owners retain capture protection.
+    internal static bool ApplyOwnedWindowCaptureVisibility(IntPtr windowHandle,IntPtr ownerHandle)
+        =>IsVisibleToCapture(ownerHandle)
+            ?ApplyPresentationCaptureVisibility(windowHandle,true)
+            :ExcludeFromCapture(windowHandle,requireProtection:true);
 
     internal static bool IsVisibleToCapture(IntPtr windowHandle)
         =>windowHandle!=IntPtr.Zero&&GetWindowDisplayAffinity(windowHandle,out var affinity)&&affinity==0;
