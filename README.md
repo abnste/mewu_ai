@@ -188,8 +188,7 @@ Windows N / KN editions need the Media Feature Pack to record and play video. Fo
 Bug reports, suggestions, code, and documentation improvements are welcome. See the [contributing guide](./CONTRIBUTING.md) for development setup and build instructions, the [code of conduct](./CODE_OF_CONDUCT.md) for community guidelines, and the [security policy](./SECURITY.md) for vulnerability reports.
 
 ## License
-
-Created by [**Abner Stephen**](https://github.com/abnste), [**Yandi**](https://github.com/pyxyd), and [**shuziyuxingxing-stack**](https://github.com/shuziyuxingxing-stack).
+<img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb">
 
 Project-owned source is licensed under [MPL-2.0](./LICENSE). Commercial use is permitted under the license. When distributing covered software, provide the covered source and retain copyright and license notices as required. See [license and source information](./SOURCE.md) and the separate [third-party notices](./THIRD-PARTY-NOTICES.md).
 
