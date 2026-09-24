@@ -48,6 +48,20 @@ Read the [AI screenshot annotation guide](./docs/ai-screenshot-annotation.md) fo
 
 Screenshots, manual annotations, pinned images, text recognition, and recording work without an AI account. Translation, table extraction, and AI questions require a connected service.
 
+## In development / TODO
+
+- Computer-Use integration.
+- AI-controlled screenshot regions and macro-code creation and execution.
+- More AI tool integrations.
+- Faster responses with lower token consumption.
+- Multimodal generation capabilities.
+- Audio understanding capabilities.
+- Intelligent recognition of QR codes, hyperlinks, and other actionable content.
+- Jev decision-model integration.
+- AIGC canvas editing.
+- More language support.
+- Cross-platform support.
+
 ## Preview
 
 <table>
@@ -188,7 +202,7 @@ Windows N / KN editions need the Media Feature Pack to record and play video. Fo
 Bug reports, suggestions, code, and documentation improvements are welcome. See the [contributing guide](./CONTRIBUTING.md) for development setup and build instructions, the [code of conduct](./CODE_OF_CONDUCT.md) for community guidelines, and the [security policy](./SECURITY.md) for vulnerability reports.
 
 ## License
-<img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb">
+<a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"></a><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"></a><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"></a><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb"></a>
 
 Project-owned source is licensed under [MPL-2.0](./LICENSE). Commercial use is permitted under the license. When distributing covered software, provide the covered source and retain copyright and license notices as required. See [license and source information](./SOURCE.md) and the separate [third-party notices](./THIRD-PARTY-NOTICES.md).
 

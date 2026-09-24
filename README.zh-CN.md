@@ -46,6 +46,20 @@
 
 截图、手工标注、贴图、文字识别和录屏无需配置 AI。翻译、表格提取及 AI 问答需要连接相应服务。
 
+## 开发中 / TODO
+
+- 接入 Computer-Use。
+- AI 自动控制截图区域，并创建、运行宏代码。
+- 接入更多 AI 工具。
+- 更快的响应速度与更低的 token 消耗。
+- 多模态生成能力。
+- 音频理解能力。
+- 智能识别二维码、超链接和其他可操作内容。
+- 接入 Jev 决策模型。
+- AIGC 画布编辑。
+- 支持更多语言。
+- 跨平台支持。
+
 ## 功能演示
 
 <table>
@@ -187,7 +201,7 @@ Windows N / KN 版本需要安装 Media Feature Pack 才能录制和播放视频
 
 ## 开源协议
 
-<img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb">
+<a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"></a><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"></a><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"></a><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb"></a>
 
 项目自有源码采用 [MPL-2.0](./LICENSE)，允许遵守协议的商业使用。对外分发时，请按协议提供受覆盖的源代码并保留版权和许可声明。详见[许可与源码说明](./SOURCE.md)；第三方依赖另见[第三方声明](./THIRD-PARTY-NOTICES.md)。
 
