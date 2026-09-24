@@ -57,6 +57,11 @@
     <Button x:Name="CopyButton" ToolTip="复制 (C)" AutomationProperties.Name="复制当前区域" Click="Copy" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#52637A" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M6,6 L16,6 L16,16 L6,16 Z M3,12 L3,3 L12,3"/></Button>
     <Button x:Name="SaveButton" ToolTip="保存 (S)" AutomationProperties.Name="保存当前区域" Click="Save" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#52637A" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M3,2 L14,2 L17,5 L17,17 L3,17 Z M6,2 L6,7 L13,7 L13,2 M6,17 L6,11 L14,11 L14,17"/></Button>
     <Button x:Name="PinButton" ToolTip="贴图 (P)" AutomationProperties.Name="原位贴图或贴视频" Click="Pin" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#52637A" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M6,2 L14,2 L12,7 L16,11 L10.5,11 L10,17 L8.5,11 L3,11 L7,7 Z"/></Button>
+    <Border Style="{StaticResource ToolbarSeparator}"/>
+    <Button x:Name="DingTalkButton" ToolTip="发送到钉钉" AutomationProperties.Name="把当前区域发送给钉钉联系人" Click="SendToDingTalk" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#2F9BFF" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,3 L16,3 L16,12 L9,12 L5,16 L5,12 L2,12 Z M6,6.5 L11,6.5"/></Button>
+    <Button x:Name="FeishuButton" ToolTip="发送到飞书" AutomationProperties.Name="把当前区域发送到飞书" Click="SendToFeishu" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#4A67F2" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M2,9 L16,3 L10,16 L8,10 Z M8,10 L16,3"/></Button>
+    <Button x:Name="ObsidianButton" ToolTip="存入 Obsidian 笔记" AutomationProperties.Name="把当前区域保存为 Obsidian 笔记" Click="SaveToObsidian" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#8B6CEF" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M3,2 L13,2 L16,5 L16,17 L3,17 Z M13,2 L13,5 L16,5 M6,9 L12,9 M6,12.5 L11,12.5"/></Button>
+    <Button x:Name="ImaButton" ToolTip="归档到 ima 知识库" AutomationProperties.Name="把当前区域归档到 ima 知识库" Click="SaveToIma" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stroke="#31C46F" StrokeThickness="1.7" StrokeLineJoin="Round" Data="M3,4 L7.5,2 L11,4 L15,2.5 L15,13 L11,14.5 L7.5,12.5 L3,14.5 Z M7.5,4 L7.5,12.5 M11,4 L11,14.5"/></Button>
    </WrapPanel>
    </Border>
   </Grid>
@@ -82,6 +87,7 @@
     <Button x:Name="DrawingTextButton" ToolTip="文本框" AutomationProperties.Name="文本框标注工具" Click="DrawTextTool" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="T" FontFamily="Segoe UI Variable Display" FontSize="18" FontWeight="Bold"/></Button>
     <Button x:Name="DrawingNumberButton" ToolTip="自动递增实心序号" AutomationProperties.Name="序号标注工具" Click="DrawNumberTool" Style="{StaticResource ToolbarIconButton}"><Border Width="20" Height="20" CornerRadius="10" Background="#52637A"><TextBlock Text="1" Foreground="White" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></Button>
     <Button x:Name="DrawingMosaicButton" ToolTip="矩形马赛克" AutomationProperties.Name="矩形马赛克工具" Click="DrawMosaicTool" Style="{StaticResource ToolbarIconButton}"><Grid Width="18" Height="18"><Rectangle Fill="#D6DEE9" RadiusX="2"/><Path Stroke="#8796AA" StrokeThickness="1" Data="M0,6 L18,6 M0,12 L18,12 M6,0 L6,18 M12,0 L12,18"/></Grid></Button>
+    <Button x:Name="DrawingMarkButton" ToolTip="五彩标记：拖动圈选方框，整块上色；标记锚定内容，滚动/翻页不错位" AutomationProperties.Name="五彩方框标记工具" Click="DrawMarkTool" Style="{StaticResource ToolbarIconButton}"><Grid Width="18" Height="18"><Rectangle Width="16" Height="11" RadiusX="2.5" Fill="#66FFC800" Stroke="#C9A50B" StrokeThickness="1.2" StrokeDashArray="3 2"/><Path Stroke="#8B6F00" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,16 L13,5 M11,3.5 L14.5,3.5 L14.5,7"/></Grid></Button>
     <Button x:Name="DrawingEraserButton" ToolTip="橡皮；每次只擦除最上层对象" AutomationProperties.Name="橡皮擦工具" Click="DrawEraser" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M4,13 L10,4 L17,11 L11,17 L4,17 L2,15 Z M8,15 L14,9"/></Button>
     <Border Style="{StaticResource ToolbarSeparator}"/>
     </StackPanel>
@@ -108,6 +114,9 @@
   </Grid>
   <Border x:Name="ApplicationSnapshotFeedback" Visibility="Collapsed" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="12" Padding="12,8" IsHitTestVisible="False" Panel.ZIndex="90">
    <TextBlock x:Name="ApplicationSnapshotFeedbackText" Foreground="#52637A" FontSize="12" TextWrapping="Wrap" MaxWidth="380"/>
+  </Border>
+  <Border x:Name="ScreenEntityBar" Visibility="Collapsed" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="12" Padding="8,5" Panel.ZIndex="91">
+   <StackPanel x:Name="ScreenEntityBarContent" Orientation="Horizontal"/>
   </Border>
   <Grid x:Name="LongCaptureBar" Visibility="Collapsed" ClipToBounds="False">
    <Border x:Name="LongCaptureBarShadow" Background="#FFFFFFFF" BorderBrush="Transparent" BorderThickness="0" CornerRadius="18" IsHitTestVisible="False">
@@ -244,7 +253,13 @@
      <Button x:Name="SendButton" Grid.Column="4" VerticalAlignment="Bottom" ToolTip="发送" AutomationProperties.Name="发送问题" Click="QuickSend" Style="{StaticResource SendRoundButton}"><Path Width="17" Height="17" Stretch="Uniform" Fill="White" Data="M2,3 L22,12 L2,21 L2,14 L16,12 L2,10 Z"/></Button>
        </Grid>
       </StackPanel>
-      <TextBlock x:Name="PromptStatus" Grid.Row="3" Text="拖动可连续框选多个区域 · Enter 发送 · Shift+Enter 换行" Foreground="#65748A" FontSize="10.5" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,0"/>
+      <StackPanel Grid.Row="3" HorizontalAlignment="Center">
+      <Border x:Name="PhoneActionsPanel" Visibility="Collapsed" Background="#F2FFFFFF" BorderBrush="#C9D6E8" BorderThickness="1" CornerRadius="12" Padding="6,4" Margin="0,4,0,0" HorizontalAlignment="Center">
+       <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="12" ShadowDepth="2" Opacity="0.16"/></Border.Effect>
+       <WrapPanel x:Name="PhoneActionsItems" MaxWidth="560" HorizontalAlignment="Center"/>
+      </Border>
+      <TextBlock x:Name="PromptStatus" Text="拖动可连续框选多个区域 · Enter 发送 · Shift+Enter 换行" Foreground="#65748A" FontSize="10.5" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,0"/>
+      </StackPanel>
    </Grid>
    </Border>
    <Thumb x:Name="PromptDragHandle" Height="7" Margin="20,1,20,0" VerticalAlignment="Top" Cursor="SizeAll" Focusable="False" ToolTip="拖离底部以固定显示，拖回原位恢复自动隐藏" AutomationProperties.Name="拖动对话条" DragStarted="PromptDragStarted" DragDelta="PromptDragDelta" DragCompleted="PromptDragCompleted">

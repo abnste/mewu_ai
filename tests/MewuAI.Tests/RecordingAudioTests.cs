@@ -11,6 +11,25 @@ namespace MewuAI.Tests;
 public sealed class RecordingAudioTests
 {
     [Fact]
+    public async Task MissingLoopbackClockEndpointFailsPromptlyAndCanBeDisposedTwice()
+    {
+        var runtimeFailures=0;
+        var source=new LoopbackSilenceSource("mewu-invalid-audio-endpoint",_=>Interlocked.Increment(ref runtimeFailures));
+        try
+        {
+            var error=Assert.ThrowsAny<Exception>(source.WaitUntilReady);
+            Assert.IsNotType<TimeoutException>(error);
+            Assert.Same(error,source.Failure);
+            Assert.Equal(0,runtimeFailures);
+        }
+        finally
+        {
+            await source.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5),CancellationToken.None);
+            await source.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5),CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public void ExistingSettingsDefaultToComputerAudioWithoutOpeningMicrophone()
     {
         var settings=JsonSerializer.Deserialize<AppSettings>("{}")!;

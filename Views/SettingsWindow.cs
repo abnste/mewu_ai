@@ -22,6 +22,12 @@ public sealed partial class SettingsWindow : Window
     private CodexSettingsPage _codexSettings=null!;
     private WorkBuddySettingsPage _workBuddySettings=null!;
     private MiniMaxCodeSettingsPage _miniMaxCodeSettings=null!;
+    private QqMailSettingsPage _qqMailSettings=null!;
+    private NetEaseMailSettingsPage _netEaseMailSettings=null!;
+    private DingTalkSettingsPage _dingTalkSettings=null!;
+    private FeishuSettingsPage _feishuSettings=null!;
+    private ObsidianSettingsPage _obsidianSettings=null!;
+    private ImaSettingsPage _imaSettings=null!;
     private AiSettingsTabs _backendSelector=null!;
     private bool HermesSelected=>_backendSelector?.SelectedBackendIndex==AiSettingsTabs.HermesIndex;
     internal void ShowAiPage()=>_aiTab.IsSelected=true;
@@ -76,6 +82,7 @@ public sealed partial class SettingsWindow : Window
     private bool _loadingProvider;
     private readonly TextBlock _modelStatus = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9), FontSize = 12 };
     private CancellationTokenSource? _modelLoad;
+    private int _apiKeyLoadGeneration;
     private bool _modelLoadPending;
     private readonly System.Windows.Threading.DispatcherTimer _modelLoadDebounce = new() { Interval = TimeSpan.FromMilliseconds(600) };
     private bool _loadingHermes;
@@ -86,6 +93,7 @@ public sealed partial class SettingsWindow : Window
 
     public SettingsWindow(AppHost host)
     {
+        var initialization=System.Diagnostics.Stopwatch.StartNew();
         _host = host;
         _providers=[];
         var unavailableByProvider=new List<(AiProviderSettings Provider,HashSet<string> Headers)>();
@@ -152,6 +160,7 @@ public sealed partial class SettingsWindow : Window
         tabs.Items.Add(Tab("录屏", Recording()));
         _aiTab=Tab("AI", Ai(),scroll:false);
         tabs.Items.Add(_aiTab);
+        tabs.Items.Add(Tab("MCP", Mcp()));
         tabs.Items.Add(Tab("语音", Voice()));
         tabs.Items.Add(Tab("隐私", Privacy()));
         tabs.Items.Add(Tab("关于", About()));
@@ -208,7 +217,7 @@ public sealed partial class SettingsWindow : Window
             // Settings are intentionally screenshotable so UI issues can be
             // reported. Sensitive values remain masked by the PasswordBox.
             _captureProtectionAvailable=NativeMethods.SetWindowCaptureVisibleForDiagnostics(handle);
-            if(_captureProtectionAvailable==true){LoadDisplayedApiKey();return;}
+            if(_captureProtectionAvailable==true){_=LoadDisplayedApiKeyAsync();return;}
             HideSensitiveEditorsAfterCaptureProtectionFailure();
         };
         Closed += (_, _) =>
@@ -220,6 +229,12 @@ public sealed partial class SettingsWindow : Window
             _hermesConnectionTest?.Cancel();
             _updateCheck?.Cancel();
             _windowLifetime.Dispose();
+        };
+        Loaded+=(_,_)=>
+        {
+            initialization.Stop();
+            if(initialization.ElapsedMilliseconds>=500)
+                new PrivacyLogger().Info("SettingsWindowReady",$"初始化至首帧耗时 {initialization.ElapsedMilliseconds} ms");
         };
     }
 
@@ -384,7 +399,7 @@ public sealed partial class SettingsWindow : Window
         _teachingMode.Content=LocalizationService.T("教学演示模式（允许屏幕共享看到框选和标注）","Teaching mode (show selections and annotations in screen sharing)");
         _teachingMode.IsChecked=_host.Settings.TeachingMode;
         panel.Children.Add(_teachingMode);
-        panel.Children.Add(Text(LocalizationService.T("保存后，下次截图及其贴图生效。请在会议或教学软件中共享整个屏幕。支持同时使用区域录屏和滚动长截图，采集区域内会让出实时画面，操作控件放在区域外；F8 停止录屏或完成长截图。设置和密钥仍受防捕获保护。","Applies to your next capture and pinned windows. Share your entire screen in the meeting app. Region recording and scrolling capture remain available: the capture area shows live content, with controls placed outside it. Press F8 to stop recording or finish scrolling capture. Settings and credentials remain protected."),true));
+        panel.Children.Add(Text(LocalizationService.T("保存后，下次截图及其贴图生效。请在会议或教学软件中共享整个屏幕。支持同时使用区域录屏和滚动长截图，采集区域内会让出实时画面，操作控件放在区域外；F8 停止录屏或完成长截图。使用 NVIDIA 即时重放时请开启此模式；关闭后，截图和贴图的防捕获保护可能中断第三方桌面录屏。设置窗口可被捕获，密钥以掩码显示。","Applies to your next capture and pinned windows. Share your entire screen in the meeting app. Region recording and scrolling capture remain available: the capture area shows live content, with controls placed outside it. Press F8 to stop recording or finish scrolling capture. Enable this mode when using NVIDIA Instant Replay; disabling it protects screenshot and pinned windows from capture, which may interrupt third-party desktop recording. Settings can be captured; credentials are masked."),true));
         panel.Children.Add(Text("截图、OCR、复制和保存均在本地完成。", true));
         return panel;
     }
@@ -432,6 +447,32 @@ public sealed partial class SettingsWindow : Window
         _backendSelector.BackendChanged+=(_,_)=>UpdateHermesControls();
         UpdateHermesControls();
         return _backendSelector;
+    }
+
+    /// <summary>顶级「MCP」栏目：承载 QQ 邮箱、网易邮箱、钉钉、飞书、Obsidian
+    /// 等外部服务，与 AI 渠道解耦。</summary>
+    private UIElement Mcp()
+    {
+        _qqMailSettings=new QqMailSettingsPage(_host.Settings,_windowLifetime.Token);
+        _netEaseMailSettings=new NetEaseMailSettingsPage(_host.Settings,_windowLifetime.Token);
+        _dingTalkSettings=new DingTalkSettingsPage(_host.Settings,_windowLifetime.Token);
+        _feishuSettings=new FeishuSettingsPage(_host.Settings,_windowLifetime.Token);
+        _obsidianSettings=new ObsidianSettingsPage(_host.Settings,_windowLifetime.Token);
+        _imaSettings=new ImaSettingsPage(_host.Settings,_windowLifetime.Token);
+        var panel=new StackPanel{Margin=new Thickness(4,8,4,4)};
+        var header=new TextBlock
+        {
+            Text=LocalizationService.T("MCP 服务：为屏幕助手接入外部能力（邮箱代发、截图分享、笔记归档）。凭据只保存在本机，任意对话渠道均可使用。","MCP services: external capabilities for the screen assistant (mail sending, screenshot sharing, notes). Credentials stay on this machine and work with every conversation channel."),
+            TextWrapping=TextWrapping.Wrap,Foreground=new SolidColorBrush(Color.FromRgb(101,116,138)),FontSize=12,Margin=new Thickness(8,0,8,10)
+        };
+        panel.Children.Add(header);
+        panel.Children.Add(_qqMailSettings);
+        panel.Children.Add(_netEaseMailSettings);
+        panel.Children.Add(_dingTalkSettings);
+        panel.Children.Add(_feishuSettings);
+        panel.Children.Add(_obsidianSettings);
+        panel.Children.Add(_imaSettings);
+        return panel;
     }
 
 
@@ -726,12 +767,12 @@ public sealed partial class SettingsWindow : Window
         updateStatus.Margin=new Thickness(0,4,0,8);
         var checkUpdate=ActionButton(LocalizationService.T("检查更新","Check for updates"));
         checkUpdate.HorizontalAlignment=HorizontalAlignment.Left;
-        checkUpdate.Click+=async (_,_)=>await CheckForUpdatesAsync(checkUpdate,updateStatus);
+        checkUpdate.Click+=async (_,_)=>await CheckForUpdatesAsync(checkUpdate,updateStatus,prompt:true);
         async void CheckOnFirstRender(object? sender,EventArgs e)
         {
             ContentRendered-=CheckOnFirstRender;
             if(IsVisible&&!_windowLifetime.IsCancellationRequested)
-                await CheckForUpdatesAsync(checkUpdate,updateStatus);
+                await CheckForUpdatesAsync(checkUpdate,updateStatus,prompt:false);
         }
         ContentRendered+=CheckOnFirstRender;
         panel.Children.Add(checkUpdate);
@@ -747,7 +788,10 @@ public sealed partial class SettingsWindow : Window
         return panel;
     }
 
-    private async Task CheckForUpdatesAsync(Button button,TextBlock status)
+    // prompt=false: silent background check on settings open — never blocks the UI with a
+    // modal dialog (an invisible modal here reads as a dead settings window). Only a manual
+    // "Check for updates" click (prompt=true) may ask the user via ShowChoice.
+    private async Task CheckForUpdatesAsync(Button button,TextBlock status,bool prompt=false)
     {
         if(_updateCheck is not null||!IsVisible||_windowLifetime.IsCancellationRequested)return;
         _updateCheck=CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
@@ -768,6 +812,7 @@ public sealed partial class SettingsWindow : Window
                 async (_,tag,token)=>await Dispatcher.InvokeAsync(()=>
                 {
                     if(token.IsCancellationRequested||!ReferenceEquals(_updateCheck,operation)||!IsVisible)return false;
+                    if(!prompt)return false;
                     status.Text=LocalizationService.T($"发现新版本 {tag}",$"New version available: {tag}");
                     return MewuDialogWindow.ShowChoice(
                         this,
@@ -842,10 +887,9 @@ public sealed partial class SettingsWindow : Window
                 ? "屏幕防捕获不可用，Custom Headers 已隐藏。" : draft.HeadersJson;
             _apiAdvanced.IsExpanded = ProviderPresetPolicy.Detect(provider).RequiresBaseUrl &&
                 string.IsNullOrWhiteSpace(draft.BaseUrl);
-            LoadDisplayedApiKey();
         }
         finally { _loadingProvider = false; }
-        UpdateApiKeyStatus();
+        _=LoadDisplayedApiKeyAsync();
         ScheduleModelLoad();
     }
 
@@ -1030,9 +1074,20 @@ public sealed partial class SettingsWindow : Window
         var codexEnabled=_host.Settings.CodexEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.CodexIndex;
         var workBuddyEnabled=_host.Settings.WorkBuddyEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.WorkBuddyIndex;
         var miniMaxCodeEnabled=_host.Settings.MiniMaxCodeEnabled||_backendSelector.SelectedBackendIndex==AiSettingsTabs.MiniMaxCodeIndex;
+        // WorkBuddy detection failures must never block saving the rest of the
+        // settings (QQ Mail, NetEase, DingTalk, Feishu, Obsidian, providers…).
+        // Already-configured setups keep their previous model; never-configured
+        // ones simply skip WorkBuddy for this save with a non-blocking warning.
+        string? workBuddyWarning=null;
         if(workBuddyEnabled&&_workBuddySettings.SelectedModel is null)
         {
-            MewuDialogWindow.ShowMessage(this,LocalizationService.T("无法保存","Cannot save"),LocalizationService.T("请先在 WorkBuddy 页检测并选择可用模型。","Detect and select an available model on the WorkBuddy page first."));return;
+            if(_host.Settings.WorkBuddyEnabled&&!string.IsNullOrWhiteSpace(_host.Settings.WorkBuddyModel))
+                workBuddyWarning=LocalizationService.T("WorkBuddy 本页未检测成功，已沿用上次保存的模型配置；其余设置均正常保存。","WorkBuddy detection failed on this page; the previously saved model is kept. All other settings were saved.");
+            else
+            {
+                workBuddyEnabled=false;
+                workBuddyWarning=LocalizationService.T("WorkBuddy 未配置成功，本次保存已跳过 WorkBuddy；其余设置（邮箱、钉钉、飞书、Obsidian 等）均正常保存。","WorkBuddy is not configured and was skipped for this save; all other settings (mail, DingTalk, Feishu, Obsidian…) were saved.");
+            }
         }
         var unchangedCodex=_host.Settings.CodexEnabled&&_codexSettings.SelectedModel?.Model==_host.Settings.CodexModel&&_codexSettings.SelectedEffort==_host.Settings.CodexReasoningEffort;
         if(codexEnabled&&((!_codexSettings.ConnectionVerified&&!unchangedCodex)||_codexSettings.SelectedModel is null))
@@ -1140,6 +1195,27 @@ public sealed partial class SettingsWindow : Window
                 WorkBuddyExecutablePath=_workBuddySettings.Path,
                 MiniMaxCodeEnabled=miniMaxCodeEnabled,
                 MiniMaxCodeModel=_miniMaxCodeSettings.SelectedModel?.Model??_host.Settings.MiniMaxCodeModel,
+                QqMailMcpEnabled=_qqMailSettings.Enabled,
+                NetEaseMailEnabled=_netEaseMailSettings.Enabled,
+                NetEaseMailAccount=_netEaseMailSettings.Account,
+                NetEaseMailFromName=_netEaseMailSettings.FromName,
+                DingTalkEnabled=_dingTalkSettings.Enabled,
+                DingTalkAppKey=_dingTalkSettings.AppKey,
+                DingTalkAgentId=_dingTalkSettings.AgentId,
+                DingTalkTargetUsers=_dingTalkSettings.TargetUsers,
+                FeishuEnabled=_feishuSettings.Enabled,
+                FeishuAppId=_feishuSettings.AppId,
+                FeishuTargetId=_feishuSettings.TargetId,
+                FeishuTargetType=_feishuSettings.TargetType,
+                ObsidianEnabled=_obsidianSettings.Enabled,
+                ObsidianVaultPath=_obsidianSettings.VaultPath,
+                ObsidianAttachFolder=_obsidianSettings.AttachFolder,
+                ObsidianNoteFolder=_obsidianSettings.NoteFolder,
+                ObsidianOpenAfterSave=_obsidianSettings.OpenAfterSave,
+                ImaEnabled=_imaSettings.Enabled,
+                ImaClientId=_imaSettings.ClientId,
+                ImaKnowledgeBaseId=_imaSettings.KnowledgeBaseId,
+                ImaKnowledgeBaseName=_imaSettings.KnowledgeBaseName,
                 WorkBuddyModel=_workBuddySettings.SelectedModel?.Model??_host.Settings.WorkBuddyModel,
                 WorkBuddyReasoningEffort=_workBuddySettings.SelectedEffort,
                 WorkBuddySupportsImage=_workBuddySettings.SelectedModel?.SupportsImage??_host.Settings.WorkBuddySupportsImage,
@@ -1156,6 +1232,7 @@ public sealed partial class SettingsWindow : Window
             };
             if(!_host.TryApplySettings(candidate,out var error,out var warning))throw new InvalidOperationException(error??"设置保存失败");
             committed=true;applyWarning=warning;
+            if(workBuddyWarning is not null)applyWarning=applyWarning is null?workBuddyWarning:$"{applyWarning}\n{workBuddyWarning}";
         }
         catch (Exception ex)
         {
@@ -1187,28 +1264,47 @@ public sealed partial class SettingsWindow : Window
         ProviderHeaderPolicy.EnsureValid(provider.CustomHeaders);
     }
 
-    private void ToggleApiKeyDeletion()
+    private async Task ToggleApiKeyDeletionAsync()
     {
         if(_selectedProvider is null)return;
-        if(_apiKeysMarkedForDeletion.Remove(_selectedProvider.Id)){InvalidateConnectionTest();LoadDisplayedApiKey();ScheduleModelLoad();return;}
+        if(_apiKeysMarkedForDeletion.Remove(_selectedProvider.Id)){InvalidateConnectionTest();await LoadDisplayedApiKeyAsync();ScheduleModelLoad();return;}
         var hasSaved=!string.IsNullOrWhiteSpace(_selectedProvider.CredentialId);var hasDraft=!string.IsNullOrWhiteSpace(_apiKey.Password)||_pendingApiKeys.ContainsKey(_selectedProvider.Id);
         if(!hasSaved&&!hasDraft){UpdateApiKeyStatus();return;}
         if(MessageBox.Show(this,"保存设置后将删除此 Provider 的 API Key。Custom Headers 中的独立凭据不会受影响。","清除 API Key",MessageBoxButton.YesNo,MessageBoxImage.Warning)!=MessageBoxResult.Yes)return;
-        InvalidateConnectionTest();_apiKeysMarkedForDeletion.Add(_selectedProvider.Id);_pendingApiKeys.Remove(_selectedProvider.Id);LoadDisplayedApiKey();ScheduleModelLoad();
+        InvalidateConnectionTest();_apiKeysMarkedForDeletion.Add(_selectedProvider.Id);_pendingApiKeys.Remove(_selectedProvider.Id);await LoadDisplayedApiKeyAsync();ScheduleModelLoad();
     }
 
-    private void LoadDisplayedApiKey()
+    private async Task LoadDisplayedApiKeyAsync()
     {
         if (_selectedProvider is null) return;
+        if(_captureProtectionAvailable!=true){UpdateApiKeyStatus();return;}
+        var provider=_selectedProvider;
+        var generation=Interlocked.Increment(ref _apiKeyLoadGeneration);
+        var pending=new Dictionary<string,string>(_pendingApiKeys,StringComparer.Ordinal);
+        var deleting=new HashSet<string>(_apiKeysMarkedForDeletion,StringComparer.Ordinal);
         var wasLoading = _loadingProvider;
         _loadingProvider = true;
+        try{_apiKey.Clear();}
+        finally{_loadingProvider = wasLoading;}
+        _clearApiKey.IsEnabled=false;
+        _apiKeyStatus.Text=LocalizationService.T("正在安全读取已保存的 API Key…","Securely reading the saved API key…");
         try
         {
-            _apiKey.Password = ProviderApiKeyEditorPolicy.ReadForDisplay(_selectedProvider, _pendingApiKeys,
-                _apiKeysMarkedForDeletion, _captureProtectionAvailable == true, id => new CredentialService().Read(id));
+            var password=await Task.Run(()=>ProviderApiKeyEditorPolicy.ReadForDisplay(provider,pending,
+                deleting,true,id=>new CredentialService().Read(id)),_windowLifetime.Token);
+            if(_windowLifetime.IsCancellationRequested||generation!=Volatile.Read(ref _apiKeyLoadGeneration)||!ReferenceEquals(provider,_selectedProvider))return;
+            wasLoading=_loadingProvider;_loadingProvider=true;
+            try{_apiKey.Password=password;}
+            finally{_loadingProvider=wasLoading;}
+            UpdateApiKeyStatus();
         }
-        finally { _loadingProvider = wasLoading; }
-        UpdateApiKeyStatus();
+        catch(OperationCanceledException)when(_windowLifetime.IsCancellationRequested){}
+        catch(Exception ex)
+        {
+            if(generation!=Volatile.Read(ref _apiKeyLoadGeneration)||!ReferenceEquals(provider,_selectedProvider))return;
+            new PrivacyLogger().Info("ApiKeyDisplayRead",ex.GetType().Name);
+            UpdateApiKeyStatus();
+        }
     }
 
     private void UpdateApiKeyStatus()

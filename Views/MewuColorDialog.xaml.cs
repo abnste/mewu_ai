@@ -22,7 +22,7 @@ public partial class MewuColorDialog:Window
     private MewuColorDialog(Color initial)
     {
         InitializeComponent();SelectedColor=initial;_hsv=ColorSpectrumMath.FromRgb(initial);HueRing.Source=RingBitmap.Value;
-        SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ApplyPresentationCaptureVisibility(handle,Owner is CaptureOverlayWindow {IsTeachingMode:true});};
+        SourceInitialized+=(_,_)=>{var handle=new WindowInteropHelper(this).Handle;NativeMethods.TryUseSystemRoundedCorners(handle);NativeMethods.ApplyOwnedWindowCaptureVisibility(handle,Owner is null?IntPtr.Zero:new WindowInteropHelper(Owner).Handle);};
         Loaded+=(_,_)=>SetChannels(initial.R,initial.G,initial.B);
         Closed+=(_,_)=>{if(HueRing.IsMouseCaptured)HueRing.ReleaseMouseCapture();if(SaturationValuePlane.IsMouseCaptured)SaturationValuePlane.ReleaseMouseCapture();};
     }

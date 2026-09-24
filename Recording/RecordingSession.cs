@@ -26,6 +26,7 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
     private readonly RecordingRuntimeGuardOptions _runtimeGuardOptions;
     private readonly RecordingTerminalState _terminalState=new();
     private Recorder? _recorder;
+    private LoopbackSilenceSource? _loopbackSilence;
     private TempMediaLease? _videoLease;
     private RecordingRuntimeGuard? _runtimeGuard;
     private bool _paused;
@@ -114,10 +115,17 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
         // bridge can complete with a zero-byte FileStream on current .NET;
         // no custom stream sharing is needed because cleanup happens only
         // after the recorder has stopped and been disposed.
+        if(_loopbackSilence?.Failure is { } clockFailure)throw new InvalidOperationException(LoopbackFailureMessage,clockFailure);
         _recorder.Record(VideoPath);
         Volatile.Write(ref _recordingStarted,1);
+        // Cover a device failure between the check above and Record returning.
+        // Never Stop a recorder that has not been started yet.
+        if(_loopbackSilence?.Failure is not null)StopForRuntimeFailure(LoopbackFailureMessage);
         StartRuntimeGuard();
     }
+    private static string LoopbackFailureMessage=>LocalizationService.T(
+        "无法保持电脑声音采集，录屏已停止；请检查扬声器或耳机，或关闭“录制电脑声音”后重试。",
+        "Computer audio capture is unavailable; recording has stopped. Check your speakers or headphones, or turn off computer audio and try again.");
     private void StartRuntimeGuard()
     {
         var runtimeGuard=new RecordingRuntimeGuard(
@@ -154,6 +162,7 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
     private bool TryReportFailure(string error)
     {
         if(!_terminalState.TryFail())return false;
+        Log("RecordingFailed",new InvalidOperationException(error));
         try{Failed?.Invoke(error);}
         catch(Exception ex){Log("RecordingFailedHandler",ex);}
         return true;
@@ -237,6 +246,12 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
         catch(Exception ex){Log("RecordingDispose",ex);}
         finally
         {
+            if(_loopbackSilence is { } silence)
+            {
+                _loopbackSilence=null;
+                try{await silence.DisposeAsync().ConfigureAwait(false);}
+                catch(Exception ex){Log("RecordingLoopbackClockDispose",ex);}
+            }
             try{await DeleteIncompleteOutputAsync().ConfigureAwait(false);}
             finally{Interlocked.Exchange(ref _videoLease,null)?.Dispose();}
         }

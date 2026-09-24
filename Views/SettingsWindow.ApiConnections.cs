@@ -112,7 +112,7 @@ public sealed partial class SettingsWindow
         _clearApiKey.Padding = new Thickness(12, 6, 12, 6);
         _clearApiKey.HorizontalAlignment = HorizontalAlignment.Left;
         _clearApiKey.SetResourceReference(StyleProperty, "SecondaryButton");
-        _clearApiKey.Click += (_, _) => ToggleApiKeyDeletion();
+        _clearApiKey.Click += async (_, _) => await ToggleApiKeyDeletionAsync();
         advancedContent.Children.Add(_clearApiKey);
         advancedContent.Children.Add(Text(LocalizationService.T("密钥和敏感 Header 仅加密保存在本机。", "Keys and sensitive headers are encrypted and stored on this computer only."), true));
         _apiAdvanced = new Expander
@@ -137,6 +137,7 @@ public sealed partial class SettingsWindow
         _apiKey.PasswordChanged += (_, _) =>
         {
             if (_loadingProvider || _captureProtectionAvailable != true || _selectedProvider is null) return;
+            Interlocked.Increment(ref _apiKeyLoadGeneration);
             ProviderApiKeyEditorPolicy.RecordEdit(_selectedProvider.Id, _apiKey.Password, _pendingApiKeys, _apiKeysMarkedForDeletion);
             UpdateApiKeyStatus();
             InvalidateConnectionTest();

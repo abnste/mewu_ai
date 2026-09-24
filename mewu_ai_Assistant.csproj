@@ -55,6 +55,9 @@
     <PackageReference Include="Concentus.Oggfile" Version="1.0.7" />
     <PackageReference Include="Emoji.Wpf" Version="0.3.4" />
     <PackageReference Include="Markdig" Version="1.3.2" />
+    <!-- Renders the NetEase mail web-login QR code locally so the scan URL
+         never leaves the machine through a third-party QR image service. -->
+    <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="RapidOcrNet" Version="4.1.0" ExcludeAssets="contentFiles" />
     <PackageReference Include="ScreenRecorderLib" Version="7.0.0" />
     <PackageReference Include="System.Speech" Version="10.0.11" />

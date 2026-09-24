@@ -31,15 +31,16 @@ internal static class Program
         if(args.Contains("--snapshot-web-background")){ApplicationSnapshotReplay.RunBackground(true);return;}
         if(args.Contains("--capture-input-foreground")){CaptureInputReplay.RunForegroundHelper();return;}
         var verifyCaptureTools=args.Contains("--verify-capture-tools");
+        var verifyRecordingDuration=args.Contains("--verify-recording-duration")||args.Any(a=>a.StartsWith("--inspect-recording=",StringComparison.Ordinal));
         var verifyColorPalette=args.Contains("--verify-color-palette");
         var verifyProviderTemplates=args.Contains("--verify-provider-templates");
         var verifySettingsEditing=args.Contains("--verify-settings-editing");
         var verifyTeaching=args.Contains("--verify-teaching");
         var teaching=args.Contains("--teaching")||verifyTeaching;
 #if !DEBUG
-        if(!teaching&&!verifyCaptureTools&&!verifyColorPalette&&!verifyProviderTemplates&&!verifySettingsEditing)throw new InvalidOperationException("Release replay requires an explicit capture replay, palette, provider-template or settings-editing mode.");
+        if(!teaching&&!verifyCaptureTools&&!verifyRecordingDuration&&!verifyColorPalette&&!verifyProviderTemplates&&!verifySettingsEditing)throw new InvalidOperationException("Release replay requires an explicit capture replay, palette, provider-template or settings-editing mode.");
 #else
-        Environment.SetEnvironmentVariable("MEWU_QA_CAPTURE_WINDOWS",teaching||verifyCaptureTools||verifyColorPalette||verifyProviderTemplates||verifySettingsEditing?null:"1");
+        Environment.SetEnvironmentVariable("MEWU_QA_CAPTURE_WINDOWS",teaching||verifyCaptureTools||verifyRecordingDuration||verifyColorPalette||verifyProviderTemplates||verifySettingsEditing?null:"1");
 #endif
         var english=args.Contains("--english");
         typeof(AppHost).Assembly.GetType("mewu_ai_Assistant.Services.LocalizationService")!
@@ -54,9 +55,10 @@ internal static class Program
         if(args.Contains("--verify-pinned-zoom")){PinnedZoomReplay.Run(app);return;}
         if(args.Contains("--verify-window-issues"))
         {
-            WindowIssuesReplay.Run(app,host);return;
+            WindowIssuesReplay.Run(app,host,args.Contains("--shared-only"));return;
         }
         host.Settings.TeachingMode=teaching;
+        if(verifyRecordingDuration){RecordingDurationReplay.Run(app,host,args);return;}
         if(args.Contains("--verify-pointer-pass-through")){PointerPassThroughReplay.Run(app,host);return;}
         if(args.FirstOrDefault(argument=>argument.StartsWith("--snapshot-window=",StringComparison.Ordinal)) is { } selectedWindow)
         {
