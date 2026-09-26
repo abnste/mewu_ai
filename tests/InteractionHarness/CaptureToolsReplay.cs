@@ -68,6 +68,8 @@ internal static class CaptureToolsReplay
                 ((IList)Get("_selections")).Add(item);Invoke("Select",0);Invoke("UpdatePointerInteraction",new Point(200,360));overlay.UpdateLayout();
                 state=new{protectedWindow=Get("_captureExclusionVerified"),recordEnabled=((Button)overlay.FindName("RecordButton")).IsEnabled,longEnabled=((Button)overlay.FindName("LongCaptureButton")).IsEnabled};
                 var frame=(CaptureFrame)Get("_frame");
+                var desktopImage=(System.Windows.Controls.Image)overlay.FindName("DesktopImage");
+                var frozenDesktop=frame.Image;
                 var pixels=(Int32Rect)Invoke("ToPixelRect",new Rect(100,300,360,240))!;
                 var expected=ScreenCaptureService.Crop(frame.Image,pixels);
                 if(host.Settings.TeachingMode)Require(!(bool)Invoke("IsTeachingAcquisitionClear",item)!,"Teaching capture was considered safe without a native hole");
@@ -268,16 +270,6 @@ internal static class CaptureToolsReplay
     private static string PixelHash(BitmapSource source)
     {
         var frame=new FormatConvertedBitmap(source,PixelFormats.Bgra32,null,0);var pixels=new byte[frame.PixelWidth*frame.PixelHeight*4];frame.CopyPixels(pixels,frame.PixelWidth*4,0);return Convert.ToHexString(SHA256.HashData(pixels));
-    }
-    private static void SaveRecordingBar(CaptureOverlayWindow overlay,FrameworkElement bar,string file)
-    {
-        var root=(Canvas)overlay.FindName("Root");root.UpdateLayout();
-        var full=new RenderTargetBitmap(Math.Max(1,(int)Math.Ceiling(root.ActualWidth)),Math.Max(1,(int)Math.Ceiling(root.ActualHeight)),96,96,PixelFormats.Pbgra32);full.Render(root);
-        var origin=bar.TranslatePoint(new Point(0,0),root);const int margin=28;
-        var left=Math.Max(0,(int)Math.Floor(origin.X)-margin);var top=Math.Max(0,(int)Math.Floor(origin.Y)-margin);
-        var right=Math.Min(full.PixelWidth,(int)Math.Ceiling(origin.X+bar.ActualWidth)+margin);var bottom=Math.Min(full.PixelHeight,(int)Math.Ceiling(origin.Y+bar.ActualHeight)+margin);
-        var crop=new CroppedBitmap(full,new Int32Rect(left,top,Math.Max(1,right-left),Math.Max(1,bottom-top)));crop.Freeze();
-        Directory.CreateDirectory(".codex-build");var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(crop));using var stream=File.Create(Path.Combine(".codex-build",file));encoder.Save(stream);
     }
     private static void SaveRecordingBar(CaptureOverlayWindow overlay,FrameworkElement bar,string file)
     {
