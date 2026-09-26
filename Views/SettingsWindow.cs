@@ -469,19 +469,22 @@ public sealed partial class SettingsWindow : Window
         panel.Children.Add(McpGroup(
             LocalizationService.T("邮箱", "Email"),
             LocalizationService.T("收件箱上下文与确认后邮件发送。", "Inbox context and confirmed mail sending."),
-            _qqMailSettings, _netEaseMailSettings));
+            (LocalizationService.T("QQ 邮箱","QQ Mail"),LocalizationService.T("扫码授权 · 收件箱与发信","QR authorization · inbox and sending"),_qqMailSettings),
+            (LocalizationService.T("网易邮箱","NetEase Mail"),LocalizationService.T("邮箱账号 · SMTP 发信","Mail account · SMTP sending"),_netEaseMailSettings)));
         panel.Children.Add(McpGroup(
             LocalizationService.T("消息与分享", "Messaging and sharing"),
             LocalizationService.T("把截图发送到团队消息或群聊。", "Share screenshots with team messaging and chats."),
-            _dingTalkSettings, _feishuSettings));
+            (LocalizationService.T("钉钉","DingTalk"),LocalizationService.T("应用连接 · 截图分享","App connection · screenshot sharing"),_dingTalkSettings),
+            (LocalizationService.T("飞书","Feishu"),LocalizationService.T("应用连接 · 群聊与联系人","App connection · chats and contacts"),_feishuSettings)));
         panel.Children.Add(McpGroup(
             LocalizationService.T("知识库与笔记", "Knowledge and notes"),
             LocalizationService.T("保存截图到本地笔记库或 ima 知识库。", "Save screenshots to a local notes vault or ima knowledge base."),
-            _obsidianSettings, _imaSettings));
+            ("Obsidian",LocalizationService.T("本地笔记库 · 截图归档","Local vault · screenshot archive"),_obsidianSettings),
+            ("ima",LocalizationService.T("知识库 · 截图保存","Knowledge base · screenshot saving"),_imaSettings)));
         return panel;
     }
 
-    private static Border McpGroup(string title,string description,params UIElement[] pages)
+    private static Border McpGroup(string title,string description,params (string Name,string Summary,UIElement Page)[] entries)
     {
         var content=new StackPanel();
         content.Children.Add(new TextBlock
@@ -500,7 +503,22 @@ public sealed partial class SettingsWindow : Window
             Foreground=SecondaryBrush,
             Margin=new Thickness(0,0,0,10)
         });
-        foreach(var page in pages)content.Children.Add(page);
+        foreach(var entry in entries)
+        {
+            var label=new StackPanel{Margin=new Thickness(4,2,0,2)};
+            label.Children.Add(new TextBlock{Text=entry.Name,FontSize=13,FontWeight=FontWeights.Medium,Foreground=new SolidColorBrush(Color.FromRgb(23,32,51))});
+            label.Children.Add(new TextBlock{Text=entry.Summary,FontSize=11,Foreground=SecondaryBrush,Margin=new Thickness(0,2,0,0)});
+            content.Children.Add(new Expander
+            {
+                Header=label,
+                Content=entry.Page,
+                IsExpanded=false,
+                HorizontalContentAlignment=HorizontalAlignment.Stretch,
+                BorderBrush=ControlBorderBrush,
+                BorderThickness=new Thickness(0,1,0,0),
+                Padding=new Thickness(0,4,0,4)
+            });
+        }
         return new Border
         {
             Background=PanelBrush,
