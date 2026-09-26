@@ -20,4 +20,4 @@
 
 [安装版 EXE](https://github.com/abnste/mewu_ai/releases/download/v0.6.1/MewuAI-Setup-0.6.1-win-x64.exe) 或 [便携版 ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.6.1/MewuAI-Portable-0.6.1-win-x64.zip)。支持 Windows 10 2004 及以上 x64 系统，无需另装 .NET。SHA-256 可在 GitHub 下载资产详情中查看。/ [Installer EXE](https://github.com/abnste/mewu_ai/releases/download/v0.6.1/MewuAI-Setup-0.6.1-win-x64.exe) or [portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.6.1/MewuAI-Portable-0.6.1-win-x64.zip). Requires Windows 10 2004 or later, x64; no separate .NET installation is needed. SHA-256 digests are available in the GitHub asset details.
 
-完整历史见 [CHANGELOG.md](https://github.com/abnste/mewu_ai/blob/v0.6.1/CHANGELOG.md)。/ See [CHANGELOG.md](https://github.com/abnste/mewu_ai/blob/v0.6.1/CHANGELOG.md) for the full history.
+完整历史见 [CHANGELOG.md](https://github.com/abnste/mewu_ai/blob/master/CHANGELOG.md)。/ See [CHANGELOG.md](https://github.com/abnste/mewu_ai/blob/master/CHANGELOG.md) for the full history.
