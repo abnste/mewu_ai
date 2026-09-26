@@ -29,13 +29,13 @@ public sealed class ReleasePreparationTests
     {
         var project=XDocument.Load(Fixture("Product.csproj.xml"));
         var propertyGroup=project.Root!.Elements("PropertyGroup").First();
-        Assert.Equal("0.6.0",propertyGroup.Element("Version")?.Value);
-        Assert.Equal("0.6.0.0",propertyGroup.Element("AssemblyVersion")?.Value);
-        Assert.Equal("0.6.0.0",propertyGroup.Element("FileVersion")?.Value);
+        Assert.Equal("0.6.1",propertyGroup.Element("Version")?.Value);
+        Assert.Equal("0.6.1.0",propertyGroup.Element("AssemblyVersion")?.Value);
+        Assert.Equal("0.6.1.0",propertyGroup.Element("FileVersion")?.Value);
 
         var installer=File.ReadAllText(Fixture("MewuAI.iss.txt"));
-        Assert.Contains("#define MyAppVersion \"0.6.0\"",installer,StringComparison.Ordinal);
-        Assert.Contains("VersionInfoVersion=0.6.0.0",installer,StringComparison.Ordinal);
+        Assert.Contains("#define MyAppVersion \"0.6.1\"",installer,StringComparison.Ordinal);
+        Assert.Contains("VersionInfoVersion=0.6.1.0",installer,StringComparison.Ordinal);
         Assert.True(File.Exists(Fixture("release-notes-v0.6.0.md")));
     }
 
