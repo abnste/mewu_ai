@@ -3,14 +3,14 @@
   <h1>喵呜AI（MewuAI）— Windows AI 截图标注软件</h1>
   <p>开源截图工具，支持 AI 原位标注、离线 OCR、截图翻译、长截图和录屏。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/公测版-v0.6.0-7C6CF0?style=flat-square" alt="v0.6.0 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.6.1"><img src="https://img.shields.io/badge/公测版-v0.6.1-7C6CF0?style=flat-square" alt="v0.6.1 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.6.0/MewuAI-Setup-0.6.0-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.6.1/MewuAI-Setup-0.6.1-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.6.0/MewuAI-Portable-0.6.0-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.6.1/MewuAI-Portable-0.6.1-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>

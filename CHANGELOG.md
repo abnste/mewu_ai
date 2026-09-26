@@ -2,6 +2,12 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.6.1 — MCP 设置分组 / Grouped MCP settings
+
+发行说明 / Release notes: [0.6.1](https://github.com/abnste/mewu_ai/releases/tag/v0.6.1)
+
+完整的双语发行说明见 [docs/release-notes-v0.6.1.md](./docs/release-notes-v0.6.1.md)。 / See the bilingual notes in [docs/release-notes-v0.6.1.md](./docs/release-notes-v0.6.1.md).
+
 ## 0.6.0 — 基于 0.5.10 的录屏兼容修复 / Recording compatibility after 0.5.10
 
 发行说明 / Release notes: [0.6.0](https://github.com/abnste/mewu_ai/releases/tag/v0.6.0)
