@@ -466,13 +466,51 @@ public sealed partial class SettingsWindow : Window
             TextWrapping=TextWrapping.Wrap,Foreground=new SolidColorBrush(Color.FromRgb(101,116,138)),FontSize=12,Margin=new Thickness(8,0,8,10)
         };
         panel.Children.Add(header);
-        panel.Children.Add(_qqMailSettings);
-        panel.Children.Add(_netEaseMailSettings);
-        panel.Children.Add(_dingTalkSettings);
-        panel.Children.Add(_feishuSettings);
-        panel.Children.Add(_obsidianSettings);
-        panel.Children.Add(_imaSettings);
+        panel.Children.Add(McpGroup(
+            LocalizationService.T("邮箱", "Email"),
+            LocalizationService.T("收件箱上下文与确认后邮件发送。", "Inbox context and confirmed mail sending."),
+            _qqMailSettings, _netEaseMailSettings));
+        panel.Children.Add(McpGroup(
+            LocalizationService.T("消息与分享", "Messaging and sharing"),
+            LocalizationService.T("把截图发送到团队消息或群聊。", "Share screenshots with team messaging and chats."),
+            _dingTalkSettings, _feishuSettings));
+        panel.Children.Add(McpGroup(
+            LocalizationService.T("知识库与笔记", "Knowledge and notes"),
+            LocalizationService.T("保存截图到本地笔记库或 ima 知识库。", "Save screenshots to a local notes vault or ima knowledge base."),
+            _obsidianSettings, _imaSettings));
         return panel;
+    }
+
+    private static Border McpGroup(string title,string description,params UIElement[] pages)
+    {
+        var content=new StackPanel();
+        content.Children.Add(new TextBlock
+        {
+            Text=title,
+            FontSize=15,
+            FontWeight=FontWeights.SemiBold,
+            Foreground=new SolidColorBrush(Color.FromRgb(23,32,51)),
+            Margin=new Thickness(0,0,0,3)
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text=description,
+            TextWrapping=TextWrapping.Wrap,
+            FontSize=11.5,
+            Foreground=SecondaryBrush,
+            Margin=new Thickness(0,0,0,10)
+        });
+        foreach(var page in pages)content.Children.Add(page);
+        return new Border
+        {
+            Background=PanelBrush,
+            BorderBrush=ControlBorderBrush,
+            BorderThickness=new Thickness(1),
+            CornerRadius=new CornerRadius(10),
+            Padding=new Thickness(15,13,15,3),
+            Margin=new Thickness(4,0,4,12),
+            Child=content
+        };
     }
 
 
