@@ -34,6 +34,37 @@ public sealed class AppSettings
     public string WorkBuddyReasoningEffort { get; set; } = "enabled";
     public bool WorkBuddySupportsImage { get; set; }
     public bool MiniMaxCodeEnabled { get; set; }
+    /// <summary>QQ 邮箱 MCP 上下文注入开关。令牌本身经 CredentialService（DPAPI）单独保存，不落入设置文件。</summary>
+    public bool QqMailMcpEnabled { get; set; }
+    /// <summary>网易邮箱（163/126 等）SMTP 代发开关。授权码经 CredentialService（DPAPI）单独保存。</summary>
+    public bool NetEaseMailEnabled { get; set; }
+    public string NetEaseMailAccount { get; set; } = string.Empty;
+    public string NetEaseMailFromName { get; set; } = string.Empty;
+    /// <summary>钉钉（企业内部应用）图片分享开关。AppSecret 经 CredentialService（DPAPI）单独保存。</summary>
+    public bool DingTalkEnabled { get; set; }
+    public string DingTalkAppKey { get; set; } = string.Empty;
+    public string DingTalkAgentId { get; set; } = string.Empty;
+    public string DingTalkTargetUsers { get; set; } = string.Empty;
+    /// <summary>飞书（自建应用）图片分享开关。AppSecret 经 CredentialService（DPAPI）单独保存。</summary>
+    public bool FeishuEnabled { get; set; }
+    public string FeishuAppId { get; set; } = string.Empty;
+    public string FeishuTargetId { get; set; } = string.Empty;
+    public string FeishuTargetType { get; set; } = "chat_id";
+    /// <summary>Obsidian 截图笔记开关与目标 vault（纯本地文件操作，无凭据）。</summary>
+    public bool ObsidianEnabled { get; set; }
+    public string ObsidianVaultPath { get; set; } = string.Empty;
+    public string ObsidianAttachFolder { get; set; } = "attachments";
+    public string ObsidianNoteFolder { get; set; } = "MewuAI";
+    public bool ObsidianOpenAfterSave { get; set; } = true;
+    /// <summary>腾讯 ima 知识库截图归档开关。API Key 经 CredentialService（DPAPI）单独保存，
+    /// 凭证在 ima.qq.com/agent-interface 生成（ima 未向第三方开放扫码授权）。</summary>
+    public bool ImaEnabled { get; set; }
+    public string ImaClientId { get; set; } = string.Empty;
+    public string ImaKnowledgeBaseId { get; set; } = string.Empty;
+    public string ImaKnowledgeBaseName { get; set; } = string.Empty;
+    /// <summary>Scrapling 爬虫（无头抓取 URL 内容）的安装目录。留空时自动探测
+    /// 常见位置（D:\scrapling_app、D:\scrapling（爬虫）等）；目录内需含 venv\Scripts\python.exe。</summary>
+    public string ScraplingPath { get; set; } = string.Empty;
     // Empty means the desktop channel has not been configured yet. The
     // settings page offers MiniMax-M3 as the first selectable model.
     public string MiniMaxCodeModel { get; set; } = string.Empty;

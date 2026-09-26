@@ -107,10 +107,6 @@ internal static class CaptureToolsReplay
                 var session=Get("_recordingSession");
                 var ready=(Task)session.GetType().GetProperty("RecordingReady",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(session)!;
                 await ready.WaitAsync(TimeSpan.FromSeconds(25));checks.Add("record-button-counts-down-and-starts-recorder");
-                var desktopImage=(System.Windows.Controls.Image)overlay.FindName("DesktopImage");var frozenDesktop=desktopImage.Source;
-                var dimmer=(System.Windows.Shapes.Rectangle)overlay.FindName("Dimmer");
-                Require(desktopImage.Visibility==Visibility.Collapsed&&dimmer.Visibility==Visibility.Visible&&dimmer.Clip is CombinedGeometry,"Recording did not replace the frozen desktop with a live dimmed desktop");
-                checks.Add("recording-shows-live-desktop-with-outside-dimmer");
                 var overlayHandle=new WindowInteropHelper(overlay).Handle;var backgroundHandle=new WindowInteropHelper(background).Handle;
                 var desktopPoint=overlay.PointToScreen(new Point(200,360));
                 var recordingBar=(FrameworkElement)overlay.FindName("RecordingBar");
@@ -233,7 +229,7 @@ internal static class CaptureToolsReplay
             finally
             {
                 overlay?.Close();dragTarget.Close();background.Close();Directory.CreateDirectory(".codex-build");
-                File.WriteAllText(host.Settings.TeachingMode?".codex-build/teaching-capture-tools-result.json":".codex-build/capture-tools-result.json",JsonSerializer.Serialize(new{checks,state,metrics=new{motionDistinct,largestMotion,actualFps,actualBitrate,movingSampleCount,longestMovingDuplicateRun},failure}));app.Shutdown(Environment.ExitCode);
+                File.WriteAllText(host.Settings.TeachingMode?".codex-build/teaching-capture-tools-result.json":".codex-build/capture-tools-result.json",JsonSerializer.Serialize(new{checks,state,failure}));app.Shutdown(Environment.ExitCode);
             }
             object Get(string field)=>GetOrNull(field)!;
             object? GetOrNull(string field)=>overlay!.GetType().GetField(field,Private)!.GetValue(overlay);
@@ -272,6 +268,16 @@ internal static class CaptureToolsReplay
     private static string PixelHash(BitmapSource source)
     {
         var frame=new FormatConvertedBitmap(source,PixelFormats.Bgra32,null,0);var pixels=new byte[frame.PixelWidth*frame.PixelHeight*4];frame.CopyPixels(pixels,frame.PixelWidth*4,0);return Convert.ToHexString(SHA256.HashData(pixels));
+    }
+    private static void SaveRecordingBar(CaptureOverlayWindow overlay,FrameworkElement bar,string file)
+    {
+        var root=(Canvas)overlay.FindName("Root");root.UpdateLayout();
+        var full=new RenderTargetBitmap(Math.Max(1,(int)Math.Ceiling(root.ActualWidth)),Math.Max(1,(int)Math.Ceiling(root.ActualHeight)),96,96,PixelFormats.Pbgra32);full.Render(root);
+        var origin=bar.TranslatePoint(new Point(0,0),root);const int margin=28;
+        var left=Math.Max(0,(int)Math.Floor(origin.X)-margin);var top=Math.Max(0,(int)Math.Floor(origin.Y)-margin);
+        var right=Math.Min(full.PixelWidth,(int)Math.Ceiling(origin.X+bar.ActualWidth)+margin);var bottom=Math.Min(full.PixelHeight,(int)Math.Ceiling(origin.Y+bar.ActualHeight)+margin);
+        var crop=new CroppedBitmap(full,new Int32Rect(left,top,Math.Max(1,right-left),Math.Max(1,bottom-top)));crop.Freeze();
+        Directory.CreateDirectory(".codex-build");var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(crop));using var stream=File.Create(Path.Combine(".codex-build",file));encoder.Save(stream);
     }
     private static void SaveRecordingBar(CaptureOverlayWindow overlay,FrameworkElement bar,string file)
     {

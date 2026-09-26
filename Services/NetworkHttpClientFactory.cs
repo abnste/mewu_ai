@@ -29,6 +29,12 @@ internal static class NetworkHttpClientFactory
         }
     }
 
+    /// <summary>Reads the currently configured proxy mode and URL without creating a client.</summary>
+    internal static (string Mode,string Url) CurrentProxy()
+    {
+        lock(Gate){return (_mode,_url);}
+    }
+
     internal static HttpClient Create()
     {
         lock(Gate)

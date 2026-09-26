@@ -109,8 +109,11 @@ public sealed class WindowVisualStructureTests
         Assert.Equal(new[]
         {
             "ReferenceButton","DrawButton","OcrButton","TranslateButton","TableButton",
-            "LongCaptureButton","RecordButton","VideoPlayButton","CopyButton","SaveButton","PinButton"
+            "LongCaptureButton","RecordButton","VideoPlayButton","CopyButton","SaveButton","PinButton",
+            // MCP 分享按钮（钉钉/飞书/Obsidian/IMA）在配置后隐藏显示，但结构上始终存在。
+            "DingTalkButton","FeishuButton","ObsidianButton","ImaButton"
         },names);
-        Assert.Equal(3,toolbar.Descendants(presentation+"Border").Count(border=>string.Equals((string?)border.Attribute("Style"),"{StaticResource ToolbarSeparator}",StringComparison.Ordinal)));
+        // MCP 分享按钮（钉钉/飞书/Obsidian/IMA）自带第 4 个分组分隔符。
+        Assert.Equal(4,toolbar.Descendants(presentation+"Border").Count(border=>string.Equals((string?)border.Attribute("Style"),"{StaticResource ToolbarSeparator}",StringComparison.Ordinal)));
     }
 }

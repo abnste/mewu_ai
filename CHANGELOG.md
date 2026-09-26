@@ -16,7 +16,18 @@
 
 ## 未发布 / Unreleased
 
-暂无。/ None.
+- 新增 MCP 工具集成：屏幕链接、邮箱和电话号码识别，QQ 邮箱与网易邮箱发件确认，钉钉、飞书、ima 和 Obsidian 分享。
+- 新增基础网页抓取和可选 Scrapling 抓取；安装探测、子进程输出、代理和取消流程均有界，不会因 Python 启动器或管道阻塞界面。
+- 选区实体操作条跟随当前选区，关闭、切换选区、录制和标注时不会显示旧内容；识别任务随覆盖层退出取消。
+- 保留录屏采集修复、音频时钟保护和录制结束后的遮罩恢复；WorkBuddy 子进程同时排空标准输出和错误输出并在失败时回收。
+- 增加 QRCoder 的本地 MIT 许可证声明、邮件通道路由回归，以及网络抓取测试默认改为显式 opt-in。
+
+
+- Added MCP integrations for screen links, email and phone entities, confirmed QQ/NetEase sending, DingTalk, Feishu, ima and Obsidian sharing.
+- Added built-in and optional Scrapling crawling with bounded installation detection, process output, proxy handling and cancellation.
+- The entity action bar now follows the active selection and is cleared on selection changes, recording, drawing and overlay close.
+- Preserved the recording capture, audio-clock and post-recording mask restoration fixes; WorkBuddy drains both child-process pipes and cleans up failed starts.
+- Added the local QRCoder MIT notice, mail-channel routing regression coverage, and explicit opt-in for live network crawl tests.
 
 ## 0.5.9 — 录制交互重构与阴影修复 / Recording interaction redesign and shadow fixes
 

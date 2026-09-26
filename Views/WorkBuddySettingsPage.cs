@@ -65,10 +65,13 @@ internal sealed class WorkBuddySettingsPage : StackPanel
             _model.Items.Clear();foreach(var model in catalog.Models)_model.Items.Add(model);
             _model.SelectedItem=catalog.Models.FirstOrDefault(item=>item.Model==previousModel)??catalog.Models.FirstOrDefault(item=>item.Model==catalog.CurrentModel)??catalog.Models[0];
             SetEfforts(catalog.Efforts,catalog.Efforts.Contains(previousEffort)?previousEffort:catalog.CurrentEffort);
+            // Persist the discovered executable so later launches skip the
+            // filesystem scan and probe this install directly.
+            if(!string.IsNullOrWhiteSpace(server.ExecutablePath)&&!string.Equals(server.ExecutablePath,Path,StringComparison.OrdinalIgnoreCase))_path.Text=server.ExecutablePath;
             _status.Text=T($"已读取 {catalog.Models.Count} 个模型 · 可测试连接",$"Loaded {catalog.Models.Count} models · ready to test");
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
-        catch(Exception ex)when(ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException or KeyNotFoundException or UnauthorizedAccessException){ShowError(ex);}
+        catch(Exception ex){new PrivacyLogger().Error("WorkBuddySettingsDetect",ex);ShowError(ex);EnsureFallbackModel();}
         finally{_detect.IsEnabled=true;_test.IsEnabled=true;}
     }
     private async Task TestAsync()
@@ -82,7 +85,7 @@ internal sealed class WorkBuddySettingsPage : StackPanel
             _token.ThrowIfCancellationRequested();_status.Text=T("已连接 WorkBuddy","Connected to WorkBuddy");_status.Foreground=Brushes.SeaGreen;
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
-        catch(Exception ex)when(ex is IOException or InvalidOperationException or TimeoutException or System.ComponentModel.Win32Exception or System.Text.Json.JsonException or KeyNotFoundException or UnauthorizedAccessException){ShowError(ex);}
+        catch(Exception ex){new PrivacyLogger().Error("WorkBuddySettingsTest",ex);ShowError(ex);}
         finally{_test.IsEnabled=true;_detect.IsEnabled=true;_model.IsEnabled=true;_effort.IsEnabled=true;}
     }
     private void ShowError(Exception error)
@@ -90,6 +93,18 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         if(_token.IsCancellationRequested)return;
         _status.Text=error is System.ComponentModel.Win32Exception or UnauthorizedAccessException?T("无法启动 WorkBuddy，请打开官方客户端并重试。","Cannot start WorkBuddy. Open the official client and retry."):error.Message;
         _status.Foreground=Brushes.Firebrick;
+    }
+
+    // Detection fallback: when the bridge cannot be reached, still offer a
+    // usable model choice (the previously saved one, or "auto") so the user
+    // can save settings and let the send path retry the connection.
+    private void EnsureFallbackModel()
+    {
+        if(_model.SelectedItem is not null)return;
+        var model=string.IsNullOrWhiteSpace(_settings.WorkBuddyModel)?"auto":_settings.WorkBuddyModel;
+        var option=new WorkBuddyModelOption(model,model=="auto"?T("自动（兜底）","Auto (fallback)"):model,_settings.WorkBuddySupportsImage);
+        _model.Items.Add(option);_model.SelectedItem=option;
+        _status.Text+=T("　已提供兜底模型，保存后发送时会重新连接验证。"," A fallback model is offered; sending will reconnect and verify.");
     }
     private static string T(string zh,string en)=>LocalizationService.T(zh,en);
     private sealed record EffortChoice(string Value)

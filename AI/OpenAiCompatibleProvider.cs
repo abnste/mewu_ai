@@ -136,8 +136,18 @@ public class OpenAiCompatibleProvider : IAiProvider
                 new PrivacyLogger().Info("ReasoningOnlyRecovery",
                     $"初次响应只有思考内容；provider={_settings.Type};model={_settings.Model};reasoningChars={result.Reasoning.Length};structured={request.ExpectStructuredResponse};准备一次正文兜底重试");
                 await Task.Delay(ReasoningOnlyRetryDelay,timeoutSource.Token).ConfigureAwait(false);
-                var retryRequest=CreateReasoningRecoveryRequest(request);
-                var retried=await SendCoreAsync(retryRequest,timeoutSource.Token).ConfigureAwait(false);
+                var retried=await SendCoreAsync(CreateReasoningRecoveryRequest(request),timeoutSource.Token).ConfigureAwait(false);
+                if(string.IsNullOrWhiteSpace(retried.Answer))
+                {
+                    // A few gateways ignore stream-level reasoning controls and
+                    // emit only a hidden reasoning channel again. Make one final
+                    // non-streaming attempt with reasoning disabled before the UI
+                    // reports an incomplete answer.
+                    new PrivacyLogger().Info("ReasoningOnlyRecovery",
+                        $"第一次正文兜底仍无正文；retryReasoningChars={retried.Reasoning.Length};准备非流式强制正文重试");
+                    await Task.Delay(ReasoningOnlyRetryDelay,timeoutSource.Token).ConfigureAwait(false);
+                    retried=await SendCoreAsync(CreateReasoningRecoveryRequest(request,forceNonStreaming:true),timeoutSource.Token).ConfigureAwait(false);
+                }
                 if(!string.IsNullOrWhiteSpace(retried.Answer))
                 {
                     // Preserve the first pass in the UI's reasoning card while
@@ -151,7 +161,7 @@ public class OpenAiCompatibleProvider : IAiProvider
                 // Keep the original reasoning-only result so the UI does not
                 // replace a useful first-pass trace with an empty retry trace.
                 new PrivacyLogger().Info("ReasoningOnlyRecovery",
-                    $"正文兜底重试仍无正文；retryReasoningChars={retried.Reasoning.Length}");
+                    $"正文兜底仍无正文；retryReasoningChars={retried.Reasoning.Length}");
                 return result;
             }
             catch(OperationCanceledException exception) when(token.IsCancellationRequested)
@@ -219,7 +229,7 @@ public class OpenAiCompatibleProvider : IAiProvider
             UseModelMaximumOutputTokens=request.UseModelMaximumOutputTokens
         };
 
-    private static AiRequest CreateReasoningRecoveryRequest(AiRequest request)
+    private static AiRequest CreateReasoningRecoveryRequest(AiRequest request,bool forceNonStreaming=false)
         =>new()
         {
             Prompt=request.Prompt+"\n\nRecovery instruction: the previous response contained reasoning only and no final answer. Do not output reasoning. Return the complete final answer now. If a structured response was requested, return one complete valid JSON object with the required answer field.",
@@ -229,7 +239,7 @@ public class OpenAiCompatibleProvider : IAiProvider
             // streaming, but suppress retry reasoning from the UI. The first
             // pass already rendered that trace and the final result will merge
             // it back into the completed response if an answer arrives.
-            StreamingProgress=request.StreamingProgress is null?null:new AnswerOnlyProgress(request.StreamingProgress),
+            StreamingProgress=forceNonStreaming||request.StreamingProgress is null?null:new AnswerOnlyProgress(request.StreamingProgress),
             AgentProgress=request.AgentProgress,
             InteractionHandler=request.InteractionHandler,
             StreamingCompletionPredicate=null,
