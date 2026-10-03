@@ -32,7 +32,7 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         form.Fields.Children.Add(AiSettingsForm.Field(T("模型","Model"),_model));
         _path.Text=settings.WorkBuddyExecutablePath;_path.IsReadOnly=true;
         var browse=new Button{Content=T("选择 WorkBuddy.exe","Choose WorkBuddy.exe"),Margin=new Thickness(8,0,0,0)};
-        browse.Click+=(_,_)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="WorkBuddy executable|WorkBuddy.exe"};if(d.ShowDialog()==true)_path.Text=d.FileName;};
+        browse.Click+=(_,_)=>{var d=new Microsoft.Win32.OpenFileDialog{Title=T("选择 WorkBuddy.exe","Choose WorkBuddy.exe"),Filter=T("WorkBuddy 可执行文件|WorkBuddy.exe","WorkBuddy executable|WorkBuddy.exe")};if(d.ShowDialog()==true)_path.Text=d.FileName;};
         var row=new Grid();row.ColumnDefinitions.Add(new ColumnDefinition());row.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});row.Children.Add(_path);Grid.SetColumn(browse,1);row.Children.Add(browse);
         form.Fields.Children.Add(AiSettingsForm.Field(T("WorkBuddy 程序路径（可选）","WorkBuddy executable path (optional)"),row));
         form.Fields.Children.Add(AiSettingsForm.Field(T("思考程度","Reasoning effort"),_effort));
@@ -91,7 +91,7 @@ internal sealed class WorkBuddySettingsPage : StackPanel
     private void ShowError(Exception error)
     {
         if(_token.IsCancellationRequested)return;
-        _status.Text=error is System.ComponentModel.Win32Exception or UnauthorizedAccessException?T("无法启动 WorkBuddy，请打开官方客户端并重试。","Cannot start WorkBuddy. Open the official client and retry."):error.Message;
+        _status.Text=error is System.ComponentModel.Win32Exception or UnauthorizedAccessException?T("无法启动 WorkBuddy，请打开官方客户端并重试。","Cannot start WorkBuddy. Open the official client and retry."):FormatErrorMessage(error.Message);
         _status.Foreground=Brushes.Firebrick;
     }
 
@@ -106,6 +106,44 @@ internal sealed class WorkBuddySettingsPage : StackPanel
         _model.Items.Add(option);_model.SelectedItem=option;
         _status.Text+=T("　已提供兜底模型，保存后发送时会重新连接验证。"," A fallback model is offered; sending will reconnect and verify.");
     }
+
+    internal static string FormatErrorMessage(string message)
+    {
+        var translated=message switch
+        {
+            "未找到本机 WorkBuddy，请选择 WorkBuddy.exe。"=>T(message,"WorkBuddy was not found. Select WorkBuddy.exe."),
+            "无法启动 WorkBuddy 本机接口。"=>T(message,"The local WorkBuddy connection could not start."),
+            "WorkBuddy ACP 版本不兼容，请更新官方客户端。"=>T(message,"The WorkBuddy ACP version is incompatible. Update the official client."),
+            "WorkBuddy 连接响应缺少 connectionId。"=>T(message,"The WorkBuddy connection response is missing connectionId."),
+            "WorkBuddy 连接响应格式无效。"=>T(message,"The WorkBuddy connection response has an invalid format."),
+            "WorkBuddy 未应用安全的默认权限模式，已停止。"=>T(message,"WorkBuddy did not apply the required default permissions and was stopped."),
+            "WorkBuddy 未启用本机视频工具的隔离环境。"=>T(message,"WorkBuddy did not enable the isolated environment for local video tools."),
+            "WorkBuddy 未返回有效会话。"=>T(message,"WorkBuddy did not return a valid session."),
+            "WorkBuddy 模型目录格式无效。"=>T(message,"The WorkBuddy model catalog has an invalid format."),
+            "WorkBuddy 没有返回可用模型，请检查官方客户端。"=>T(message,"WorkBuddy did not return any available models. Check the official client."),
+            "WorkBuddy 思考选项不兼容。"=>T(message,"The WorkBuddy reasoning options are incompatible."),
+            "WorkBuddy 模型或思考程度已不可用，请重新检测并选择。"=>T(message,"The WorkBuddy model or reasoning effort is no longer available. Refresh and select them again."),
+            "WorkBuddy 未应用所选思考程度。"=>T(message,"WorkBuddy did not apply the selected reasoning effort."),
+            "WorkBuddy 连接已关闭。"=>T(message,"The WorkBuddy connection has closed."),
+            "WorkBuddy 本机接口超时或已断开，请重新检测连接。"=>T(message,"The local WorkBuddy connection timed out or disconnected. Check the connection again."),
+            "WorkBuddy 本机接口在响应前关闭，请重新检测连接。"=>T(message,"The local WorkBuddy connection closed before responding. Check the connection again."),
+            "WorkBuddy 返回了不完整的接口响应。"=>T(message,"WorkBuddy returned an incomplete protocol response."),
+            "响应缺少必要字段。"=>T(message,"The response is missing required fields."),
+            "WorkBuddy 单条响应超过安全限制。"=>T(message,"A WorkBuddy response exceeds the size limit."),
+            "WorkBuddy 响应被截断。"=>T(message,"The WorkBuddy response was truncated."),
+            "WorkBuddy 连接检查超过 30 秒，已停止。请确认官方客户端已登录后重试。"=>T(message,"The WorkBuddy connection check exceeded 30 seconds and was stopped. Sign in to the official client and retry."),
+            "请在 WorkBuddy 页重新选择可用模型和思考程度。"=>T(message,"Select an available model and reasoning effort on the WorkBuddy page."),
+            _=>message
+        };
+        if(!string.Equals(translated,message,StringComparison.Ordinal)||!LocalizationService.IsEnglish)return translated;
+        var rejected=System.Text.RegularExpressions.Regex.Match(message,"^WorkBuddy 拒绝了接口请求（代码 (-?[0-9]+)），请在官方 WorkBuddy 中确认登录、额度和所选模型后重试。$",System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if(rejected.Success)return T(message,$"WorkBuddy rejected the request (code {rejected.Groups[1].Value}). Check sign-in, allowance, and the selected model in the official app, then retry.");
+        var http=System.Text.RegularExpressions.Regex.Match(message,"^WorkBuddy HTTP 接口返回 ([0-9]+)。$",System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if(http.Success)return T(message,$"The WorkBuddy HTTP endpoint returned {http.Groups[1].Value}.");
+        var ready=System.Text.RegularExpressions.Regex.Match(message,"^WorkBuddy 本机接口在 ([0-9]+) 秒内未就绪，请确认官方客户端已登录后重试。([\\s\\S]*)$",System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return ready.Success?T(message,$"The local WorkBuddy connection was not ready within {ready.Groups[1].Value} seconds. Sign in to the official client and retry."+(ready.Groups[2].Length>0?" "+ready.Groups[2].Value:string.Empty)):message;
+    }
+
     private static string T(string zh,string en)=>LocalizationService.T(zh,en);
     private sealed record EffortChoice(string Value)
     {

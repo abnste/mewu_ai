@@ -19,7 +19,7 @@ public partial class CaptureOverlayWindow
         if(!_drawingMode||Active is not { } item||!item.Markup.IsMouseCaptured)return false;
         var canvas=item.Markup;
         var point=Mouse.GetPosition(canvas);
-        if(_drawingMoveOriginalElement is not null||_drawingMoveOriginalStroke is not null)
+        if(_drawingMoveOriginalElement is not null||_drawingMoveOriginalStroke is not null||_drawingMoveOriginalRegionMark is not null)
         {
             if(_drawingResizeHandle<0)return false;
             ResizeSelectedDrawingObjectWithConstraint(item,point,canvas,constrain);

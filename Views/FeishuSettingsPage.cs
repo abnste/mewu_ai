@@ -17,7 +17,7 @@ internal sealed class FeishuSettingsPage : StackPanel
         private readonly string _name;
         internal string ChatId{get;}
         internal ChatOption(string chatId,string name){ChatId=chatId;_name=name;}
-        public override string ToString()=>$"{_name}（{ChatId}）";
+        public override string ToString()=>T($"{_name}（{ChatId}）",$"{_name} ({ChatId})");
     }
 
     private readonly CheckBox _enable=new();
@@ -38,7 +38,7 @@ internal sealed class FeishuSettingsPage : StackPanel
     internal FeishuSettingsPage(AppSettings settings,CancellationToken token)
     {
         _token=token;
-        var form=new AiSettingsForm("飞书",T("通过飞书自建应用分享截图：圈选区域后点击工具栏“飞书”按钮，图片会发送到指定群或联系人。需要在飞书开放平台（open.feishu.cn）创建企业自建应用并开通 im:message、im:chat 权限；Secret 只保存在本机。点击“测试连接”可拉取群列表供选择。","Share screenshots via a Feishu self-built app: after selecting a region, the Feishu toolbar button sends the image to a chosen chat or contact. Create an enterprise app on open.feishu.cn with the im:message and im:chat scopes; the secret stays on this machine. “Test connection” also fetches your chat list."),_status);
+        var form=new AiSettingsForm(T("飞书","Feishu"),T("通过飞书自建应用分享截图：圈选区域后点击工具栏“飞书”按钮，图片会发送到指定群或联系人。需要在飞书开放平台（open.feishu.cn）创建企业自建应用并开通 im:message、im:chat 权限；Secret 只保存在本机。点击“测试连接”可拉取群列表供选择。","Share screenshots via a Feishu self-built app: after selecting a region, the Feishu toolbar button sends the image to a chosen chat or contact. Create an enterprise app on open.feishu.cn with the im:message and im:chat scopes; the secret stays on this machine. “Test connection” also fetches your chat list."),_status);
         Children.Add(form);
         form.AddAction(_saveSecret,T("保存 Secret","Save secret"));
         form.AddAction(_test,T("测试连接","Test connection"));

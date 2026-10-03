@@ -28,7 +28,7 @@ internal sealed class DingTalkSettingsPage : StackPanel
     internal DingTalkSettingsPage(AppSettings settings,CancellationToken token)
     {
         _token=token;
-        var form=new AiSettingsForm("钉钉",T("通过钉钉开放平台的企业内部应用分享截图：圈选区域后点击工具栏“钉钉”按钮，图片会以工作通知发给指定联系人。需要在钉钉开放平台（open-dev.dingtalk.com）创建应用并获取 AppKey/AppSecret 与 AgentId；Secret 只保存在本机。","Share screenshots via a DingTalk enterprise app from the open platform: after selecting a region, the DingTalk toolbar button sends the image to chosen contacts as a work notification. Create an app on open-dev.dingtalk.com to get the AppKey/AppSecret and AgentId; the secret stays on this machine."),_status);
+        var form=new AiSettingsForm(T("钉钉","DingTalk"),T("通过钉钉开放平台的企业内部应用分享截图：圈选区域后点击工具栏“钉钉”按钮，图片会以工作通知发给指定联系人。需要在钉钉开放平台（open-dev.dingtalk.com）创建应用并获取 AppKey/AppSecret 与 AgentId；Secret 只保存在本机。","Share screenshots via a DingTalk enterprise app from the open platform: after selecting a region, the DingTalk toolbar button sends the image to chosen contacts as a work notification. Create an app on open-dev.dingtalk.com to get the AppKey/AppSecret and AgentId; the secret stays on this machine."),_status);
         Children.Add(form);
         form.AddAction(_saveSecret,T("保存 Secret","Save secret"));
         form.AddAction(_test,T("测试连接","Test connection"));

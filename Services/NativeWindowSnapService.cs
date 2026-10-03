@@ -48,6 +48,8 @@ internal sealed class NativeWindowSnapService
     private PreciseTargetCache? _preciseCache;
     private TaskbarBoundsCache? _taskbarCache;
 
+    internal static IntPtr RootIdentity(IntPtr handle)=>GetRootWindow(handle);
+
     internal ScreenRect? FindTopmostWindowAt(int screenX, int screenY, IntPtr excludedWindow)
         => FindTopmostTargetAt(screenX, screenY, excludedWindow)?.Bounds;
 
@@ -59,7 +61,7 @@ internal sealed class NativeWindowSnapService
     /// preview. It never touches UI Automation and is safe to call for every
     /// pointer move.
     /// </summary>
-    internal WindowSnapTarget? FindFastTargetAt(int screenX, int screenY, IntPtr excludedWindow)
+    internal WindowSnapTarget? FindFastTargetAt(int screenX, int screenY, IntPtr excludedWindow, bool forceFresh=false)
     {
         if (IsPointOverTaskbar(screenX, screenY))
         {
@@ -67,12 +69,12 @@ internal sealed class NativeWindowSnapService
             return null;
         }
 
-        return FindFastTargetAtCore(screenX, screenY, excludedWindow);
+        return FindFastTargetAtCore(screenX, screenY, excludedWindow, forceFresh);
     }
 
-    private WindowSnapTarget? FindFastTargetAtCore(int screenX, int screenY, IntPtr excludedWindow)
+    private WindowSnapTarget? FindFastTargetAtCore(int screenX, int screenY, IntPtr excludedWindow, bool forceFresh=false)
     {
-        var root = FindRootWindowAt(screenX, screenY, excludedWindow);
+        var root = FindRootWindowAt(screenX, screenY, excludedWindow, forceFresh);
         if (root == IntPtr.Zero)
             return null;
 
@@ -115,10 +117,11 @@ internal sealed class NativeWindowSnapService
             return null;
         }
 
-        if (TryGetPreciseCache(screenX, screenY, out var cached))
-            return cached;
+        var currentRoot=FindRootWindowAt(screenX,screenY,excludedWindow,forceFresh:true);
+        if(currentRoot==IntPtr.Zero)return null;
+        if (TryGetPreciseCache(screenX, screenY, currentRoot, out var cached))return cached;
 
-        var fast = FindFastTargetAtCore(screenX, screenY, excludedWindow);
+        var fast = FindFastTargetAtCore(screenX, screenY, excludedWindow,forceFresh:true);
         var root = fast is null ? FindRootWindowAt(screenX, screenY, excludedWindow) : GetRootWindow(fast.Handle);
         if (root == IntPtr.Zero || root == excludedWindow)
             return null;
@@ -172,7 +175,7 @@ internal sealed class NativeWindowSnapService
         return fast;
     }
 
-    private IntPtr FindRootWindowAt(int screenX, int screenY, IntPtr excludedWindow)
+    private IntPtr FindRootWindowAt(int screenX, int screenY, IntPtr excludedWindow, bool forceFresh=false)
     {
         var point = new NativePoint { X = screenX, Y = screenY };
         var direct = WindowFromPoint(point);
@@ -193,7 +196,7 @@ internal sealed class NativeWindowSnapService
         lock (_cacheGate)
         {
             var cache = _windowCache;
-            if (cache is not null && Stopwatch.GetTimestamp() <= cache.ExpiresAt && Contains(cache.Bounds, screenX, screenY) && IsSelectableWindow(cache.Handle, excludedWindow))
+            if (!forceFresh && cache is not null && Stopwatch.GetTimestamp() <= cache.ExpiresAt && Contains(cache.Bounds, screenX, screenY) && IsSelectableWindow(cache.Handle, excludedWindow))
                 return cache.Handle;
             if (cache is not null && Stopwatch.GetTimestamp() > cache.ExpiresAt)
                 _windowCache = null;
@@ -491,16 +494,17 @@ internal sealed class NativeWindowSnapService
 
     private void CachePrecise(WindowSnapTarget target)
     {
+        var root=GetRootWindow(target.Handle);if(root==IntPtr.Zero||!TryGetBounds(root,out var bounds))return;
         lock (_cacheGate)
-            _preciseCache = new PreciseTargetCache(target, Stopwatch.GetTimestamp() + Stopwatch.Frequency * MaxPreciseCacheAgeMs / 1000);
+            _preciseCache = new PreciseTargetCache(target, root, bounds, Stopwatch.GetTimestamp() + Stopwatch.Frequency * MaxPreciseCacheAgeMs / 1000);
     }
 
-    private bool TryGetPreciseCache(int screenX, int screenY, out WindowSnapTarget? target)
+    private bool TryGetPreciseCache(int screenX, int screenY, IntPtr currentRoot, out WindowSnapTarget? target)
     {
         lock (_cacheGate)
         {
             var cache = _preciseCache;
-            if (cache is not null && Stopwatch.GetTimestamp() <= cache.ExpiresAt && Contains(cache.Target.Bounds, screenX, screenY) && IsWindow(cache.Target.Handle))
+            if (cache is not null && Stopwatch.GetTimestamp() <= cache.ExpiresAt && Contains(cache.Target.Bounds, screenX, screenY) && IsWindow(cache.Target.Handle) && cache.Root==currentRoot && TryGetBounds(currentRoot,out var rootBounds) && rootBounds==cache.RootBounds)
             {
                 target = cache.Target;
                 return true;
@@ -584,7 +588,7 @@ internal sealed class NativeWindowSnapService
     }
 
     private sealed record WindowHitCache(IntPtr Handle, ScreenRect Bounds, long ExpiresAt);
-    private sealed record PreciseTargetCache(WindowSnapTarget Target, long ExpiresAt);
+    private sealed record PreciseTargetCache(WindowSnapTarget Target, IntPtr Root, ScreenRect RootBounds, long ExpiresAt);
     private sealed record TaskbarBoundsCache(IReadOnlyList<ScreenRect> Bounds, long ExpiresAt);
     private sealed record AutomationBranchCandidate(AutomationElement Element,double Area,bool Enabled,bool Actionable);
     private delegate bool EnumWindowsCallback(IntPtr handle, IntPtr parameter);
@@ -627,7 +631,7 @@ internal static class SelectionSnapPolicy
         if (directions.Contains('E')) right = Nearest(right, target.Left, target.Right, threshold);
         if (directions.Contains('N')) top = Nearest(top, target.Top, target.Bottom, threshold);
         if (directions.Contains('S')) bottom = Nearest(bottom, target.Top, target.Bottom, threshold);
-        return right - left >= 12 && bottom - top >= 12 ? new Rect(new Point(left, top), new Point(right, bottom)) : value;
+        return right - left >= CaptureSelectionGeometry.MinimumSize && bottom - top >= CaptureSelectionGeometry.MinimumSize ? new Rect(new Point(left, top), new Point(right, bottom)) : value;
     }
 
     private static double Nearest(double value, double first, double second, double threshold)

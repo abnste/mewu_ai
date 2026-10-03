@@ -24,6 +24,19 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        // Each language scenario must enter a fresh process before the ordinary
+        // harness initializes LocalizationService or creates a WPF Application.
+        if(args.Contains("--verify-isolated-video-trim")){VideoTrimReplay.Run(args);return;}
+        if(args.Contains("--render-video-trim")){VideoTrimVisualReplay.Run(args);return;}
+        if(args.Contains("--verify-recording-countdown-visual")){RecordingCountdownVisualReplay.Run(args);return;}
+        if(args.Contains("--verify-pointer-magnifier")){PointerMagnifierReplay.Run(args);return;}
+        if(args.Contains("--verify-translation-single-line")){TranslationSingleLineReplay.Run();return;}
+        if(args.Contains("--manual-video-trim-desktop")){VideoTrimDesktopSession.Run();return;}
+        if(args.Contains("--verify-localization-startup")){LocalizationStartupReplay.Run(args);return;}
+        if(args.Contains("--verify-isolated-capture-pipeline"))PrivacyLogger.ConfigureIsolatedReplayDirectory(Path.GetFullPath(".codex-build/capture-pipeline/logs"));
+        if(args.Contains("--verify-isolated-resize"))PrivacyLogger.ConfigureIsolatedReplayDirectory(Path.GetFullPath(".codex-build/resize-replay/logs"));
+        if(args.Contains("--verify-drawing-interaction"))DrawingInteractionReplay.ConfigureOutput();
+        if(args.Contains("--manual-drawing-desktop"))ManualDrawingDesktopSession.ConfigureOutput();
         if(args.Contains("--verify-public-model-catalog")){PublicModelCatalogReplay.RunAsync().GetAwaiter().GetResult();return;}
         if(args.Contains("--pass-through-target")){PointerPassThroughReplay.RunTarget();return;}
         if(args.Contains("--snapshot-background")){ApplicationSnapshotReplay.RunBackground();return;}
@@ -36,7 +49,7 @@ internal static class Program
         var verifyProviderTemplates=args.Contains("--verify-provider-templates");
         var verifySettingsEditing=args.Contains("--verify-settings-editing");
         var verifyTeaching=args.Contains("--verify-teaching");
-        var teaching=args.Contains("--teaching")||verifyTeaching;
+        var teaching=args.Contains("--teaching")||verifyTeaching||args.Contains("--verify-isolated-resize")||args.Contains("--verify-isolated-capture-pipeline")||args.Contains("--verify-drawing-interaction")||args.Contains("--manual-drawing-desktop");
 #if !DEBUG
         if(!teaching&&!verifyCaptureTools&&!verifyRecordingDuration&&!verifyColorPalette&&!verifyProviderTemplates&&!verifySettingsEditing)throw new InvalidOperationException("Release replay requires an explicit capture replay, palette, provider-template or settings-editing mode.");
 #else
@@ -50,6 +63,10 @@ internal static class Program
         app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source=new Uri("/MewuAI;component/Themes/LightTheme.xaml",UriKind.Relative) });
         if(verifyColorPalette){ColorPaletteReplay.Run(app);app.Run();return;}
         if(verifyProviderTemplates){ProviderTemplatesReplay.Run(app,english);app.Run();return;}
+        if(args.Contains("--verify-isolated-resize")){CaptureResizeReplay.Run(app);return;}
+        if(args.Contains("--verify-isolated-capture-pipeline")){CapturePipelineReplay.Run(app);return;}
+        if(args.Contains("--verify-drawing-interaction")){DrawingInteractionReplay.Run(app);return;}
+        if(args.Contains("--manual-drawing-desktop")){ManualDrawingDesktopSession.Run(app);return;}
         var host=new AppHost(app);
         if(verifySettingsEditing){SettingsEditingReplay.Run(app,host);return;}
         if(args.Contains("--verify-pinned-zoom")){PinnedZoomReplay.Run(app);return;}

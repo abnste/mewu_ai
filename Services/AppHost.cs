@@ -34,17 +34,21 @@ public sealed class AppHost : IDisposable
     private int _disposed;
     public AppSettings Settings { get; private set; }=new(); public bool IsExiting { get; private set; }
     public bool IsCaptureActive => Volatile.Read(ref _captureActive) != 0;
-    public AppHost(System.Windows.Application app,CultureInfo? uiCultureOverride=null)
+    internal bool IsIsolatedReplay { get; }
+    public AppHost(System.Windows.Application app,CultureInfo? uiCultureOverride=null):this(app,uiCultureOverride,null){}
+    internal AppHost(System.Windows.Application app,CultureInfo? uiCultureOverride,string? replayInstanceName)
     {
+        IsIsolatedReplay=replayInstanceName is not null;
         _app=app??throw new ArgumentNullException(nameof(app));
         _uiCultureOverride=uiCultureOverride;
         _hermesRuntime=new HermesRuntimeService();
-        _hermesReadAloud=new HermesReadAloudService(_app.Dispatcher);
-        _single=new();
+        _hermesReadAloud=replayInstanceName is null?new HermesReadAloudService(_app.Dispatcher):new HermesReadAloudService(_app.Dispatcher,new HermesSpeechFileStore(new TempFileService(System.IO.Path.Combine(System.IO.Path.GetTempPath(),replayInstanceName)),TempMediaRegistry.Shared));
+        _single=replayInstanceName is null?new():new(replayInstanceName);
         if(_single.IsPrimary)_single.ActivationRequested+=()=>_activationGate.Signal(QueueMainWindowActivation);
     }
     public bool Start()
     {
+        if(IsIsolatedReplay)throw new InvalidOperationException("An isolated replay cannot start the production host.");
         if(!_single.IsPrimary){_single.SignalPrimary();return false;}
         CrashDiagnosticsService.InitializePrimary();
         CrashDiagnosticsService.MarkOperation("加载设置");
@@ -122,11 +126,14 @@ public sealed class AppHost : IDisposable
             _restoreHiddenConversationSessions=RestoreConversationSessions;
             void HideLauncher()
             {
-                if (_main?.IsVisible == true){_main.Hide();NativeMethods.FlushComposition();}
+                var changed=false;
+                if (_main?.IsVisible == true){_main.Hide();changed=true;}
                 foreach(var widget in _app.Windows.OfType<ConversationFloatingWidget>().Where(window=>window.IsVisible).ToArray())
                 {
-                    hiddenConversationSessions.Add(widget);widget.Hide();
+                    hiddenConversationSessions.Add(widget);widget.Hide();changed=true;
                 }
+                // Capture only after every assistant-owned surface has left the compositor.
+                if(changed)NativeMethods.FlushComposition();
             }
             if(_app.Dispatcher.CheckAccess())HideLauncher();
             else await _app.Dispatcher.InvokeAsync(HideLauncher);
@@ -135,7 +142,16 @@ public sealed class AppHost : IDisposable
             void ShowCapture()
             {
                 token.ThrowIfCancellationRequested();
-                var overlay=new CaptureOverlayWindow(this,restoredSession);_activeCaptureOverlay=overlay;overlay.Closed+=(_,_)=>{OnCaptureOverlayClosed(overlay);RestoreConversationSessions();};overlay.Show();overlay.Activate();
+                var overlay=new CaptureOverlayWindow(this,restoredSession);_activeCaptureOverlay=overlay;
+                overlay.Closed+=(_,_)=>{OnCaptureOverlayClosed(overlay);RestoreConversationSessions();};
+                try{overlay.Show();overlay.Activate();}
+                catch
+                {
+                    // A failed Show must not strand hidden conversation windows or capture ownership.
+                    if(ReferenceEquals(_activeCaptureOverlay,overlay))_activeCaptureOverlay=null;
+                    try{overlay.Close();}catch(Exception cleanup){new PrivacyLogger().Error("CaptureStartupCleanup",cleanup);}
+                    RestoreConversationSessions();throw;
+                }
             }
             // Hotkeys already arrive on the UI thread. Freeze that moment
             // directly; don't queue two extra turns before taking the frame.
@@ -214,6 +230,7 @@ public sealed class AppHost : IDisposable
 
     internal IReadOnlyList<ConversationChannel> GetConversationChannels()
     {
+        if(IsIsolatedReplay)return [];
         var channels=new List<ConversationChannel>();
         foreach(var provider in Settings.Providers ?? [])
         {
@@ -355,6 +372,7 @@ public sealed class AppHost : IDisposable
 
     public bool IsTranslationAvailable(out string? error)
     {
+        if(IsIsolatedReplay){error=null;return false;}
         var provider=_aiProviderFactory.Create(Settings,out error);
         return provider is not null;
     }
@@ -554,7 +572,7 @@ public sealed class AppHost : IDisposable
     public void Dispose()
     {
         if(Interlocked.Exchange(ref _disposed,1)!=0)return;
-        var shouldCleanupTemp=_single.IsPrimary;
+        var shouldCleanupTemp=_single.IsPrimary&&!IsIsolatedReplay;
         IsExiting=true;_lifetime.Cancel();Interlocked.Exchange(ref _captureActive,0);_activeCaptureOverlay=null;
         foreach(var overlay in _app.Windows.OfType<CaptureOverlayWindow>().ToArray())try{overlay.Close();}catch(Exception ex){try{new PrivacyLogger().Error("CaptureOverlayCloseOnExit",ex);}catch{}}
         foreach(var widget in _app.Windows.OfType<ConversationFloatingWidget>().ToArray())try{widget.CloseForOwnerExit();}catch(Exception ex){try{new PrivacyLogger().Error("ConversationWidgetCloseOnExit",ex);}catch{}}
@@ -572,7 +590,7 @@ public sealed class AppHost : IDisposable
             if(!released&&cleanup.SkippedLeasedCount>0)new PrivacyLogger().Error("TempCleanupOnExit",new TimeoutException($"等待临时媒体释放超时，已保留 {cleanup.SkippedLeasedCount} 个仍在使用的文件"));
         }
         catch(Exception ex){try{new PrivacyLogger().Error("TempCleanupOnExit",ex);}catch{}}
-        CrashDiagnosticsService.MarkCleanExit();
+        if(!IsIsolatedReplay)CrashDiagnosticsService.MarkCleanExit();
         lock(_sessionHistoryGate)_sessionConversationHistory.Clear();
         DisposeSafely(_single,"SingleInstanceDispose");
         _lifetime.Dispose();

@@ -10,7 +10,7 @@ using Point = System.Windows.Point;
 
 namespace mewu_ai_Assistant.Views;
 
-/// <summary>五彩式方框标记：圈选整个方框半透明上色（DrawTool.Mark）。
+/// <summary>重点高亮：圈选方框，只对背景上色并保护文字细节（DrawTool.Mark）。
 /// 创建时抓取方框内像素的降采样灰度模板；画面刷新（RefreshDesktopFrame…）后
 /// 在原位置邻域做模板匹配（SAD）重新定位——像 PDF 标记一样随内容滚动/翻页
 /// 不错位；内容滚出当前画面时隐藏保留，翻回时自动恢复。</summary>
@@ -21,6 +21,7 @@ public partial class CaptureOverlayWindow
     private void BeginMarkDrawingPreview(SelectionItem item)
     {
         CancelMarkDrawingPreview();
+        if (!CanBeginBackgroundHighlight(item)) return;
         try
         {
             var preview = new Border
@@ -31,6 +32,8 @@ public partial class CaptureOverlayWindow
                 BorderThickness = new Thickness(1),
                 IsHitTestVisible = false
             };
+            preview.OpacityMask = GetBackgroundHighlightSource(item).CreateOpacityBrush(
+                BackgroundHighlightSourceBounds(item));
             InkCanvas.SetLeft(preview, 0);
             InkCanvas.SetTop(preview, 0);
             _drawingMarkPreview = (item, preview);
@@ -49,6 +52,9 @@ public partial class CaptureOverlayWindow
         var bounds = MarkDrawingBounds(item, _drawStart, point);
         preview.Preview.Width = Math.Max(0, bounds.Width);
         preview.Preview.Height = Math.Max(0, bounds.Height);
+        var sourceBounds = BackgroundHighlightSourceBounds(item);
+        sourceBounds.Offset(-bounds.X, -bounds.Y);
+        preview.Preview.OpacityMask = GetBackgroundHighlightSource(item).CreateOpacityBrush(sourceBounds);
         InkCanvas.SetLeft(preview.Preview, bounds.X);
         InkCanvas.SetTop(preview.Preview, bounds.Y);
     }
@@ -83,21 +89,23 @@ public partial class CaptureOverlayWindow
             new Point(Math.Clamp(end.X, 0, width), Math.Clamp(end.Y, 0, height)));
     }
 
-    /// <summary>创建方框标记：记录选区坐标 + 颜色，并抓取方框内像素灰度模板。</summary>
+    /// <summary>创建重点高亮：记录选区坐标 + 颜色，并抓取方框内像素灰度模板。</summary>
     private void AddRegionMark(SelectionItem item, Rect bounds)
     {
         var mark = new RegionMark { Bounds = bounds, Color = _drawColor };
         try { CaptureRegionMarkTemplate(RenderSelectionImage(item, false, false, false), item, mark); }
         catch (Exception error) { new PrivacyLogger().Error("RegionMarkTemplate", error); }
+        InvalidateRegionMarkMatching(item);
         item.RegionMarks.Add(mark);
+        item.DrawingOrder.Add(new RegionMarkDrawingAction(mark,false,item.RegionMarks.Count-1));item.DrawingRedo.Clear();
         RenderRegionMarks(item);
         MarkDrawingChanged(item);
         PromptStatus.Text = LocalizationService.T(
-            $"已上色 {item.RegionMarks.Count} 个方框 · 标记随内容滚动/翻页自动对齐，橡皮可擦除",
-            $"{item.RegionMarks.Count} colored region(s) · marks follow the content when scrolling; erase with the eraser");
+            $"已添加 {item.RegionMarks.Count} 处重点高亮 · 随内容滚动自动对齐，选择工具可编辑",
+            $"{item.RegionMarks.Count} highlight(s) · follow content when scrolling; edit with the selection tool");
     }
 
-    /// <summary>把全部方框标记渲染到标记层（OnScreen=false 的保留但不显示）。</summary>
+    /// <summary>把全部重点高亮渲染到标记层（OnScreen=false 的保留但不显示）。</summary>
     private void RenderRegionMarks(SelectionItem item)
     {
         var layer = item.RegionMarkLayer;
@@ -106,12 +114,16 @@ public partial class CaptureOverlayWindow
         foreach (var mark in item.RegionMarks)
         {
             if (!mark.OnScreen) continue;
-            layer.Children.Add(CreateRegionMarkVisual(mark));
+            layer.Children.Add(CreateRegionMarkVisual(item, mark));
         }
+        if (_drawingMode && ReferenceEquals(item, Active) && SelectedDrawingRegionMark(item) is not null)
+            ShowDrawingObjectSelection(item);
     }
 
-    private static Border CreateRegionMarkVisual(RegionMark mark)
+    private Border CreateRegionMarkVisual(SelectionItem item, RegionMark mark)
     {
+        var sourceBounds = BackgroundHighlightSourceBounds(item);
+        sourceBounds.Offset(-mark.Bounds.Left, -mark.Bounds.Top);
         var visual = new Border
         {
             Width = Math.Max(1, mark.Bounds.Width),
@@ -121,6 +133,7 @@ public partial class CaptureOverlayWindow
             BorderBrush = new SolidColorBrush(Color.FromArgb(190, mark.Color.R, mark.Color.G, mark.Color.B)),
             BorderThickness = new Thickness(1),
             IsHitTestVisible = false,
+            OpacityMask = GetBackgroundHighlightSource(item).CreateOpacityBrush(sourceBounds),
             Tag = mark.Id
         };
         Canvas.SetLeft(visual, mark.Bounds.Left);
@@ -128,23 +141,13 @@ public partial class CaptureOverlayWindow
         return visual;
     }
 
-    /// <summary>导出/复制/发送截图时把方框标记画进手工标注层（半透明圆角矩形）。</summary>
-    private static void AddRegionMarksToOverlay(InkCanvas content, SelectionItem item)
+    /// <summary>导出复用现场的文字保护遮罩和圆角边线，避免另一路覆盖文字。</summary>
+    private void AddRegionMarksToOverlay(InkCanvas content, SelectionItem item)
     {
         foreach (var mark in item.RegionMarks)
         {
             if (!mark.OnScreen) continue;
-            var rectangle = new Rectangle
-            {
-                Width = Math.Max(1, mark.Bounds.Width),
-                Height = Math.Max(1, mark.Bounds.Height),
-                RadiusX = 3,
-                RadiusY = 3,
-                Fill = new SolidColorBrush(Color.FromArgb(84, mark.Color.R, mark.Color.G, mark.Color.B)),
-                Stroke = new SolidColorBrush(Color.FromArgb(190, mark.Color.R, mark.Color.G, mark.Color.B)),
-                StrokeThickness = 1,
-                IsHitTestVisible = false
-            };
+            var rectangle = CreateRegionMarkVisual(item, mark);
             InkCanvas.SetLeft(rectangle, mark.Bounds.Left);
             InkCanvas.SetTop(rectangle, mark.Bounds.Top);
             content.Children.Add(rectangle);
@@ -152,15 +155,22 @@ public partial class CaptureOverlayWindow
     }
 
     /// <summary>抓取方框内像素灰度模板：降采样到最长边约 120 像素（匹配快且抗噪）。
-    /// 模板采样步长（TemplateStepX/Y）记录像素网格密度，匹配时按同一网格取样。</summary>
+    /// 模板采样步长记录像素网格密度；偏移记录被裁切后的可见模板相对完整标记的位置。</summary>
     private static void CaptureRegionMarkTemplate(BitmapSource source, SelectionItem item, RegionMark mark)
     {
         var scaleX = source.PixelWidth / Math.Max(1, item.Bounds.Width);
         var scaleY = source.PixelHeight / Math.Max(1, item.Bounds.Height);
-        var left = (int)Math.Clamp(Math.Floor(mark.Bounds.Left * scaleX), 0, Math.Max(0, source.PixelWidth - 4));
-        var top = (int)Math.Clamp(Math.Floor(mark.Bounds.Top * scaleY), 0, Math.Max(0, source.PixelHeight - 4));
-        var width = Math.Clamp((int)Math.Round(mark.Bounds.Width * scaleX), 4, source.PixelWidth - left);
-        var height = Math.Clamp((int)Math.Round(mark.Bounds.Height * scaleY), 4, source.PixelHeight - top);
+        var left = (int)Math.Clamp(Math.Floor(mark.Bounds.Left * scaleX), 0, source.PixelWidth);
+        var top = (int)Math.Clamp(Math.Floor(mark.Bounds.Top * scaleY), 0, source.PixelHeight);
+        var right = (int)Math.Clamp(Math.Ceiling(mark.Bounds.Right * scaleX), 0, source.PixelWidth);
+        var bottom = (int)Math.Clamp(Math.Ceiling(mark.Bounds.Bottom * scaleY), 0, source.PixelHeight);
+        var width = right - left;
+        var height = bottom - top;
+        mark.Template = null;
+        mark.TemplateWidth = mark.TemplateHeight = 0;
+        mark.TemplateStepX = mark.TemplateStepY = 1;
+        mark.TemplateOffsetX = mark.TemplateOffsetY = 0;
+        if (width < 2 || height < 2) return;
         var stepX = Math.Max(1, (int)Math.Ceiling(width / 120.0));
         var stepY = Math.Max(1, (int)Math.Ceiling(height / 120.0));
         var columns = (width + stepX - 1) / stepX;
@@ -184,58 +194,111 @@ public partial class CaptureOverlayWindow
         mark.TemplateHeight = rows;
         mark.TemplateStepX = stepX;
         mark.TemplateStepY = stepY;
+        mark.TemplateOffsetX = left / scaleX - mark.Bounds.Left;
+        mark.TemplateOffsetY = top / scaleY - mark.Bounds.Top;
     }
 
-    /// <summary>画面刷新后重新对齐方框标记：整帧转灰度后逐标记在邻域内 SAD 匹配。</summary>
+    /// <summary>画面刷新后重新对齐重点高亮：整帧转灰度后逐标记在邻域内 SAD 匹配。</summary>
     private readonly HashSet<SelectionItem> _regionMarkReanchorInFlight = new();
+    private readonly HashSet<SelectionItem> _regionMarkReanchorPending = new();
+
+    private void InvalidateRegionMarkMatching(SelectionItem item)
+    {
+        // Even an edit followed by Undo can recreate the same bounds and object
+        // identity. A monotonic version also rejects that stale async result.
+        item.RegionMarkVersion++;
+        _regionMarkReanchorPending.Remove(item);
+        TryCancel(item.RegionMarkReanchorRequest);
+    }
+
+    private bool IsRegionMarkMatchVersionCurrent(SelectionItem item, long version) =>
+        !_closed && _selections.Contains(item) && item.RegionMarkVersion == version;
 
     private async Task ReanchorRegionMarksAsync(SelectionItem item)
     {
-        if (_closed || !_selections.Contains(item) || item.VideoPath is not null) return;
-        if (item.RegionMarks.Count == 0) return;
-        if (!_regionMarkReanchorInFlight.Add(item)) return;
+        if(!Dispatcher.CheckAccess())
+        {
+            await Dispatcher.InvokeAsync(()=>ReanchorRegionMarksAsync(item)).Task.Unwrap();
+            return;
+        }
+        if (_closed || !_selections.Contains(item) || item.VideoPath is not null || item.RegionMarks.Count == 0) return;
+        if (ReferenceEquals(item, Active) && _drawingMoveOriginalRegionMark is not null)
+        {
+            _regionMarkReanchorPending.Add(item);
+            return;
+        }
+        if (!_regionMarkReanchorInFlight.Add(item)){_regionMarkReanchorPending.Add(item);return;}
+        CancellationTokenSource? request = null;
         try
         {
-            BitmapSource? image = null;
-            await Dispatcher.InvokeAsync(() =>
+            // Snapshot all mutable UI state before leaving the dispatcher. A restored
+            // history clone may have the same ID, but is not the same mark instance.
+            request=CancellationTokenSource.CreateLinkedTokenSource(_screenEntityLifetime.Token);
+            item.RegionMarkReanchorRequest=request;
+            var token=request.Token;
+            var version=item.RegionMarkVersion;
+            var frame=_frame;var bounds=item.Bounds;var replacement=item.CapturedImageOverride;
+            var marks=item.RegionMarks.ToArray();
+            var visibility=marks.Select(mark=>mark.OnScreen).ToArray();
+            var image=RenderSelectionImage(item,false,false,false);
+            if(image.PixelWidth<4||image.PixelHeight<4)return;
+            var snapshot=marks.Select(mark=>new RegionMarkMatchInput(mark.Id,mark.Bounds,mark.Template?.ToArray(),mark.TemplateWidth,mark.TemplateHeight,mark.TemplateStepX,mark.TemplateStepY)
+                {OffsetX=mark.TemplateOffsetX,OffsetY=mark.TemplateOffsetY}).ToArray();
+            var scaleX=image.PixelWidth/Math.Max(1,bounds.Width);var scaleY=image.PixelHeight/Math.Max(1,bounds.Height);
+            var updates=await Task.Run(()=>ReanchorMarksCore(image,scaleX,scaleY,snapshot,token),token).ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(()=>
             {
-                if (_closed || !_selections.Contains(item)) return;
-                image = RenderSelectionImage(item, false, false, false);
-            }).Task;
-            if (image is null || image.PixelWidth < 4 || image.PixelHeight < 4) return;
-            var snapshot = item.RegionMarks.Select(mark => new RegionMarkMatchInput(mark.Id, mark.Bounds, mark.Template, mark.TemplateWidth, mark.TemplateHeight, mark.TemplateStepX, mark.TemplateStepY)).ToArray();
-            var scaleX = image.PixelWidth / Math.Max(1, item.Bounds.Width);
-            var scaleY = image.PixelHeight / Math.Max(1, item.Bounds.Height);
-            var updates = await Task.Run(() => ReanchorMarksCore(image, scaleX, scaleY, snapshot)).ConfigureAwait(false);
-            await Dispatcher.InvokeAsync(() =>
-            {
-                if (_closed || !_selections.Contains(item)) return;
-                foreach (var update in updates)
+                if(token.IsCancellationRequested||!IsRegionMarkMatchVersionCurrent(item,version)||!ReferenceEquals(frame,_frame)||item.Bounds!=bounds||!ReferenceEquals(replacement,item.CapturedImageOverride))return;
+                if(item.RegionMarks.Count!=marks.Length){if(item.RegionMarks.Count>0)_regionMarkReanchorPending.Add(item);return;}
+                for(var i=0;i<marks.Length;i++)
+                    if(!ReferenceEquals(item.RegionMarks[i],marks[i])||marks[i].Bounds!=snapshot[i].Bounds||marks[i].OnScreen!=visibility[i]){_regionMarkReanchorPending.Add(item);return;}
+                foreach(var update in updates)
                 {
-                    var mark = item.RegionMarks.FirstOrDefault(candidate => candidate.Id == update.Id);
-                    if (mark is null) continue;
-                    mark.OnScreen = update.OnScreen;
-                    if (update.Bounds is { } bounds) mark.Bounds = bounds;
+                    var mark=marks.FirstOrDefault(candidate=>candidate.Id==update.Id);
+                    if(mark is null)continue;
+                    mark.OnScreen=update.OnScreen;if(update.Bounds is {} next)mark.Bounds=next;
                 }
                 RenderRegionMarks(item);
-                var moved = updates.Count(update => update.Bounds is not null);
-                var hidden = updates.Count(update => !update.OnScreen);
-                PromptStatus.Text = hidden > 0
-                    ? LocalizationService.T($"方框标记已随画面重新对齐；{hidden} 个不在当前画面，翻回时自动恢复。", $"Region marks realigned; {hidden} not on screen and will reappear when you scroll back.")
-                    : LocalizationService.T($"方框标记已随画面重新对齐（{moved} 处）。", $"Region marks realigned with the refreshed view ({moved}).");
-            }).Task;
+                var moved=updates.Count(update=>update.Bounds is not null);var hidden=updates.Count(update=>!update.OnScreen);
+                PromptStatus.Text=hidden>0
+                    ?LocalizationService.T($"重点高亮已随画面重新对齐；{hidden} 处不在当前画面，翻回时自动恢复。",$"Highlights realigned; {hidden} not on screen and will reappear when you scroll back.")
+                    :LocalizationService.T($"重点高亮已随画面重新对齐（{moved} 处）。",$"Highlights realigned with the refreshed view ({moved}).");
+            }).Task.ConfigureAwait(false);
         }
-        catch (Exception error) { new PrivacyLogger().Error("RegionMarkReanchor", error); }
-        finally { _regionMarkReanchorInFlight.Remove(item); }
+        catch(OperationCanceledException) when(_closed||request?.IsCancellationRequested==true){}
+        catch(Exception error){new PrivacyLogger().Error("RegionMarkReanchor",error);}
+        finally
+        {
+            // Never mutate these UI-owned sets from a Task.Run continuation.
+            if(!Dispatcher.HasShutdownStarted)
+            {
+                try
+                {
+                    await Dispatcher.InvokeAsync(()=>
+                    {
+                        _regionMarkReanchorInFlight.Remove(item);
+                        if(ReferenceEquals(item.RegionMarkReanchorRequest,request))item.RegionMarkReanchorRequest=null;
+                        if(_regionMarkReanchorPending.Remove(item)&&!_closed)_=ReanchorRegionMarksAsync(item);
+                    }).Task.ConfigureAwait(false);
+                }
+                catch(TaskCanceledException) when(_closed||Dispatcher.HasShutdownStarted){}
+            }
+            request?.Dispose();
+        }
     }
 
-    private sealed record RegionMarkMatchInput(Guid Id, Rect Bounds, byte[]? Template, int Width, int Height, int StepX, int StepY);
+    private sealed record RegionMarkMatchInput(Guid Id, Rect Bounds, byte[]? Template, int Width, int Height, int StepX, int StepY)
+    {
+        public double OffsetX { get; init; }
+        public double OffsetY { get; init; }
+    }
     private sealed record RegionMarkMatchResult(Guid Id, bool OnScreen, Rect? Bounds);
 
     /// <summary>整帧灰度化 + 逐标记邻域 SAD 搜索。垂直 ±400px、水平 ±80px（先粗后细）；
-    /// 平均差 &lt; 22 判为命中；纯色平区（&lt; 2）视为内容未变保持原位。</summary>
-    private static List<RegionMarkMatchResult> ReanchorMarksCore(BitmapSource image, double scaleX, double scaleY, RegionMarkMatchInput[] marks)
+    /// 平均差 &lt; 22 判为命中；模板本身近乎纯色时不凭同色区域推断位移。</summary>
+    private static List<RegionMarkMatchResult> ReanchorMarksCore(BitmapSource image, double scaleX, double scaleY, RegionMarkMatchInput[] marks,CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         var results = new List<RegionMarkMatchResult>(marks.Length);
         if (marks.Length == 0) return results;
         var width = image.PixelWidth;
@@ -247,6 +310,7 @@ public partial class CaptureOverlayWindow
         var gray = new byte[width * height];
         for (var y = 0; y < height; y++)
         {
+            token.ThrowIfCancellationRequested();
             var row = y * stride;
             for (var x = 0; x < width; x++)
             {
@@ -256,37 +320,59 @@ public partial class CaptureOverlayWindow
         }
         foreach (var mark in marks)
         {
+            token.ThrowIfCancellationRequested();
             if (mark.Template is null || mark.Width < 2 || mark.Height < 2)
             {
                 results.Add(new RegionMarkMatchResult(mark.Id, true, null));
                 continue;
             }
-            var expectedX = (int)Math.Round(mark.Bounds.X * scaleX);
-            var expectedY = (int)Math.Round(mark.Bounds.Y * scaleY);
-            var match = FindTemplate(gray, width, height, mark.Template, mark.Width, mark.Height, mark.StepX, mark.StepY, expectedX, expectedY);
+            var expectedX = (int)Math.Round((mark.Bounds.X + mark.OffsetX) * scaleX);
+            var expectedY = (int)Math.Round((mark.Bounds.Y + mark.OffsetY) * scaleY);
+            var match = FindTemplate(gray, width, height, mark.Template, mark.Width, mark.Height, mark.StepX, mark.StepY, expectedX, expectedY, token);
             if (match is not { } found)
             {
                 results.Add(new RegionMarkMatchResult(mark.Id, false, null));
                 continue;
             }
-            var (bestX, bestY, mean) = found;
-            if (mean < 2)
+            var (bestX, bestY, _) = found;
+            if (IsFlatRegionMarkTemplate(mark.Template))
             {
-                // 纯色平区：内容可能未变也可能整体同色，保持原位最稳。
+                // SAD measures agreement with the candidate, not texture. An
+                // exact match of a textured template can still have moved.
                 results.Add(new RegionMarkMatchResult(mark.Id, true, null));
                 continue;
             }
-            var bounds = new Rect(bestX / scaleX, bestY / scaleY, mark.Bounds.Width, mark.Bounds.Height);
+            var bounds = new Rect(bestX / scaleX - mark.OffsetX, bestY / scaleY - mark.OffsetY, mark.Bounds.Width, mark.Bounds.Height);
             results.Add(new RegionMarkMatchResult(mark.Id, true, bounds));
         }
         return results;
     }
 
-    private static (int X, int Y, double Mean)? FindTemplate(byte[] gray, int width, int height, byte[] template, int tw, int th, int stepX, int stepY, int expectedX, int expectedY)
+    private static bool IsFlatRegionMarkTemplate(byte[] template)
     {
+        var minimum = byte.MaxValue;
+        var maximum = byte.MinValue;
+        foreach (var value in template)
+        {
+            minimum = Math.Min(minimum, value);
+            maximum = Math.Max(maximum, value);
+            if (maximum - minimum >= 2) return false;
+        }
+        return true;
+    }
+
+    private static (int X, int Y, double Mean)? FindTemplate(byte[] gray, int width, int height, byte[] template, int tw, int th, int stepX, int stepY, int expectedX, int expectedY,CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
         // 采样点过多时抽稀（每 2 个取 1），上限约 4000 个比较点。
         var pointStrideX = tw * th > 4000 ? 2 : 1;
         var pointStrideY = tw * th > 4000 ? 2 : 1;
+        double DistanceSquared(int x, int y)
+        {
+            var dx = (double)x - expectedX;
+            var dy = (double)y - expectedY;
+            return dx * dx + dy * dy;
+        }
         // 局部搜索：返回最优位置与平均差。
         (int, int, double) Search(int startX, int endX, int startY, int endY, int step)
         {
@@ -295,6 +381,7 @@ public partial class CaptureOverlayWindow
             var best = double.MaxValue;
             for (var oy = startY; oy <= endY; oy += step)
             {
+                token.ThrowIfCancellationRequested();
                 for (var ox = startX; ox <= endX; ox += step)
                 {
                     if (ox < 0 || oy < 0 || ox + (tw - 1) * stepX >= width || oy + (th - 1) * stepY >= height) continue;
@@ -311,7 +398,8 @@ public partial class CaptureOverlayWindow
                         }
                     }
                     var mean = count == 0 ? double.MaxValue : (double)sum / count;
-                    if (mean < best) { best = mean; bestX = ox; bestY = oy; }
+                    if (mean < best || mean == best && DistanceSquared(ox, oy) < DistanceSquared(bestX, bestY))
+                    { best = mean; bestX = ox; bestY = oy; }
                 }
             }
             return (bestX, bestY, best);
@@ -320,6 +408,7 @@ public partial class CaptureOverlayWindow
         var (coarseX, coarseY, coarseMean) = Search(expectedX - 78, expectedX + 78, expectedY - 396, expectedY + 396, 3);
         var (fineX, fineY, fineMean) = Search(coarseX - 3, coarseX + 3, coarseY - 3, coarseY + 3, 1);
         if (Math.Min(coarseMean, fineMean) > 22) return null;
-        return fineMean <= coarseMean ? (fineX, fineY, fineMean) : (coarseX, coarseY, coarseMean);
+        return fineMean < coarseMean || fineMean == coarseMean && DistanceSquared(fineX, fineY) <= DistanceSquared(coarseX, coarseY)
+            ? (fineX, fineY, fineMean) : (coarseX, coarseY, coarseMean);
     }
 }

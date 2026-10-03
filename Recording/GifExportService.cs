@@ -19,7 +19,8 @@ public static class GifExportService
         string outputPath,
         int requestedFps,
         CancellationToken cancellationToken=default,
-        Func<BitmapSource,TimeSpan,BitmapSource>? annotationCompositor=null)
+        Func<BitmapSource,TimeSpan,BitmapSource>? annotationCompositor=null,
+        TempFileService? temp=null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(videoPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
@@ -49,7 +50,7 @@ public static class GifExportService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var temporaryPath=new TempFileService().NewFile(".gif");
+        var temporaryPath=(temp??new TempFileService()).NewFile(".gif");
         using var temporaryLease=TempMediaRegistry.Shared.Acquire(temporaryPath);
         try
         {

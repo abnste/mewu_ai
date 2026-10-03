@@ -102,6 +102,47 @@ public sealed class AnnotationPostProcessorTests
         Assert.Equal(2,result.Count);Assert.Equal(0,stats.DuplicatesRemoved);
     }
 
+    [Fact]
+    public void KeepsVideoExcursionMissedByFormerThreeSamples()
+    {
+        static VideoAnnotationKeyframe Frame(double time,double x=.125)=>new(time,x,.125,.125,.125);
+        var still=new AiAnnotation(.125,.125,.125,.125,"目标",0,0,4,[Frame(0),Frame(4)],"ref-video",AiAnnotationKind.Rectangle);
+        var moving=still with{Keyframes=[Frame(0),Frame(1,.625),Frame(2),Frame(4)]};
+        foreach(var input in new[]{new[]{still,moving},new[]{moving,still}})
+        {var result=AnnotationPostProcessor.Process(input,true,out var stats);Assert.Equal(2,result.Count);Assert.Equal(0,stats.DuplicatesRemoved);}
+    }
+
+    [Fact]
+    public void DeduplicationComparesOriginalBeforeSmallExcursionSimplification()
+    {
+        static VideoAnnotationKeyframe Frame(double time,double x=.125)=>new(time,x,.125,.0001,.0001);
+        var still=new AiAnnotation(.125,.125,.0001,.0001,"目标",0,0,4,[Frame(0),Frame(4)],"ref-video",AiAnnotationKind.Rectangle);
+        var moving=still with{Keyframes=[Frame(0),Frame(1,.126),Frame(2),Frame(4)]};
+        var result=AnnotationPostProcessor.Process([still,moving],true,out var stats);
+        Assert.Equal(2,result.Count);Assert.Equal(0,stats.DuplicatesRemoved);Assert.True(stats.KeyframesRemoved>0);
+    }
+
+    [Fact]
+    public void KeepsVideoPenExcursionBetweenFormerSamples()
+    {
+        var points=new[]{new AiAnnotationPoint(.1,.1),new AiAnnotationPoint(.3,.3)};
+        VideoAnnotationKeyframe Frame(double time,bool move=false)=>new(time,.1,.1,.2,.2,move?points.Select(p=>p with{X=p.X+.5}).ToArray():points);
+        var still=new AiAnnotation(.1,.1,.2,.2,"线条",0,0,4,[Frame(0),Frame(4)],"ref-video",AiAnnotationKind.Pen,points);
+        var moving=still with{Keyframes=[Frame(0),Frame(1,true),Frame(2),Frame(4)]};
+        var result=AnnotationPostProcessor.Process([still,moving],true,out var stats);
+        Assert.Equal(2,result.Count);Assert.Equal(0,stats.DuplicatesRemoved);
+    }
+
+    [Fact]
+    public void ShortMultiFrameTracksAreNotMisclassifiedAsPointEvents()
+    {
+        static VideoAnnotationKeyframe Frame(double time,double x=.125)=>new(time,x,.125,.125,.125);
+        var still=new AiAnnotation(.125,.125,.125,.125,"目标",0,0,.04,[Frame(0),Frame(.04)],"ref-video",AiAnnotationKind.Rectangle);
+        var moving=still with{Keyframes=[Frame(0),Frame(.01,.625),Frame(.02),Frame(.04)]};
+        var result=AnnotationPostProcessor.Process([still,moving],true,out var stats);
+        Assert.Equal(2,result.Count);Assert.Equal(0,stats.DuplicatesRemoved);
+    }
+
     private static AiAnnotation Image(double x,double y,double width,double height,string text,AiAnnotationKind kind)=>new(x,y,width,height,text,0,ReferenceHandle:"ref-image",Kind:kind);
     private static AiAnnotation Timeline(string text,AiAnnotationKind kind,double offset)=>new(.1+offset,.1,.2,.2,text,0,1,2,[new(1,.1+offset,.1,.2,.2),new(2,.3+offset,.3,.2,.2)],"ref-video",kind);
     private static AiAnnotation PointEvent(string text,AiAnnotationKind kind,double time,double x)=>new(x,.1,.2,.2,text,0,time,time,[new(time,x,.1,.2,.2)],"ref-video",kind);

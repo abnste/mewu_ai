@@ -18,7 +18,7 @@ public partial class CaptureOverlayWindow
     private bool _rightPassThroughVisual;
 
     private bool CanBeginRightPassThrough()=>_overlayReady&&!_closed&&!_recordingMode&&!_recordingCountdownActive&&
-        !_drawingMode&&!_longCaptureMode&&!_applicationSnapshotActive&&!_drawingModalOpen&&_systemFileDialogDepth==0&&!_selecting&&!_moving;
+        !_videoTrimBar.IsInteracting&&!_drawingMode&&!_longCaptureMode&&!_applicationSnapshotActive&&!_drawingModalOpen&&_systemFileDialogDepth==0&&!_selecting&&!_moving;
 
     private async void StartRightPassThrough()
     {
@@ -47,7 +47,7 @@ public partial class CaptureOverlayWindow
             var bounds=GetElementBounds(element);if(bounds.IsEmpty)return;
             excluded.Add(ScreenCoordinateService.ToScreenRect(ToPixelRect(bounds),_frame.OriginX,_frame.OriginY));
         }
-        foreach(var element in new FrameworkElement[]{PromptBarHost,Toolbar,DrawingToolbar,RecordingBar,LongCaptureBar})Exclude(element);
+        foreach(var element in new FrameworkElement[]{PromptBarHost,Toolbar,DrawingToolbar,RecordingBar,LongCaptureBar,_videoTrimBar})Exclude(element);
         foreach(var item in _selections)
         {
             Exclude(item.TextSelection);

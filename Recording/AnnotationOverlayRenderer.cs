@@ -25,7 +25,6 @@ internal static class AnnotationOverlayRenderer
             // bounds, shifting every exported and live vector annotation.
             drawing.DrawRectangle(Brushes.Transparent,null,new Rect(0,0,width,height));
             var cardWidth=Math.Min(Math.Clamp(width*.3,145,360),Math.Max(1,width-10));var font=Math.Clamp(width/70d,11,22);
-            var callouts=annotations.Where(annotation=>annotation.Kind==AiAnnotationKind.Callout).ToArray();
             var calloutFrames=new Dictionary<AiAnnotation,(VideoAnnotationKeyframe Frame,Rect Target,double CardHeight,AnnotationCalloutPlacement Placement)>(ReferenceEqualityComparer.Instance);var calloutOrder=new List<AiAnnotation>();var requests=new List<AnnotationCalloutRequest>();
             foreach(var annotation in annotations.Take(48))
             {
@@ -34,11 +33,12 @@ internal static class AnnotationOverlayRenderer
                 var target=new Rect(Math.Clamp(frame.X,0,1)*width,Math.Clamp(frame.Y,0,1)*height,Math.Max(14,Math.Clamp(frame.Width,0,1)*width),Math.Max(14,Math.Clamp(frame.Height,0,1)*height));var cardHeight=Math.Min(Math.Max(font*3.2,MeasureCalloutHeight(annotation.Text,cardWidth,font)),Math.Max(1,height-10));calloutOrder.Add(annotation);requests.Add(new AnnotationCalloutRequest(target,new Size(cardWidth,cardHeight)));calloutFrames[annotation]=(frame,target,cardHeight,default);
             }
             var plans=AnnotationLayoutService.PlanCallouts(requests,new Size(width,height));for(var index=0;index<calloutOrder.Count;index++){var note=calloutOrder[index];var current=calloutFrames[note];var placement=plans[index];if(calloutPositions?.TryGetValue(note,out var saved)==true){var left=Math.Clamp(saved.X*width,5,Math.Max(5,width-cardWidth-5));var top=Math.Clamp(saved.Y*height,5,Math.Max(5,height-current.CardHeight-5));var bounds=new Rect(left,top,cardWidth,current.CardHeight);placement=new AnnotationCalloutPlacement(bounds,AnnotationLayoutService.FindConnector(current.Target,bounds));}calloutFrames[note]=(current.Frame,current.Target,current.CardHeight,placement);}
+            var activeCalloutTargets=calloutFrames.Select(pair=>pair.Key with{X=pair.Value.Frame.X,Y=pair.Value.Frame.Y,Width=pair.Value.Frame.Width,Height=pair.Value.Frame.Height}).ToArray();
             foreach(var annotation in annotations.Take(48))
             {
                 var frame=new VideoAnnotationKeyframe(videoTime??0,annotation.X,annotation.Y,annotation.Width,annotation.Height);
                 if(annotation.IsVideoTimeline&&(!videoTime.HasValue||!VideoAnnotationTimeline.TryInterpolateForPresentation(annotation,videoTime.Value,presentationToleranceSeconds,out frame)))continue;
-                if(AnnotationLayoutService.IsDuplicateTargetMarker(annotation,callouts))continue;
+                if(AnnotationLayoutService.IsDuplicateTargetMarker(annotation with{X=frame.X,Y=frame.Y,Width=frame.Width,Height=frame.Height},activeCalloutTargets))continue;
                 var x=Math.Clamp(frame.X,0,1)*width;var y=Math.Clamp(frame.Y,0,1)*height;var boxWidth=Math.Max(14,Math.Clamp(frame.Width,0,1)*width);var boxHeight=Math.Max(14,Math.Clamp(frame.Height,0,1)*height);
                 if(annotation.Kind==AiAnnotationKind.Mosaic)continue;
                 var style=annotation.EffectiveStyle;var color=ParseColor(AnnotationPalette.ResolveColor(style.Color),style.Opacity);var brush=new SolidColorBrush(color);var stroke=Math.Clamp(style.StrokeWidth*Math.Min(width,height),1,48);var pen=new Pen(brush,annotation.Kind==AiAnnotationKind.Highlighter?Math.Max(5,stroke):stroke){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round,LineJoin=PenLineJoin.Round};

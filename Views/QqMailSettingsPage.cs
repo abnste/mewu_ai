@@ -25,7 +25,7 @@ internal sealed class QqMailSettingsPage : StackPanel
     internal QqMailSettingsPage(AppSettings settings,CancellationToken token)
     {
         _token=token;
-        var form=new AiSettingsForm("QQ 邮箱",T("接入官方 QQ 邮箱 MCP（api.mail.qq.com）。每个用户用自己的账号扫码授权，令牌只保存在本机；开启后，屏幕助手中出现邮件相关提问时自动拉取收件箱实时上下文，识别到邮箱地址还可经确认后代发邮件。","Connects the official QQ Mail MCP (api.mail.qq.com). Each user authorizes with their own account by scanning a QR code; the token stays on this machine. When enabled, mail-related prompts in the screen assistant pull live inbox context, and recognized email addresses can receive drafted mail after explicit confirmation."),_status);
+        var form=new AiSettingsForm(T("QQ 邮箱","QQ Mail"),T("接入官方 QQ 邮箱 MCP（api.mail.qq.com）。每个用户用自己的账号扫码授权，令牌只保存在本机；开启后，屏幕助手中出现邮件相关提问时自动拉取收件箱实时上下文，识别到邮箱地址还可经确认后代发邮件。","Connects the official QQ Mail MCP (api.mail.qq.com). Each user authorizes with their own account by scanning a QR code; the token stays on this machine. When enabled, mail-related prompts in the screen assistant pull live inbox context, and recognized email addresses can receive drafted mail after explicit confirmation."),_status);
         Children.Add(form);
         form.AddAction(_test,T("测试连接","Test connection"));
         form.AddAction(_authorize,T("扫码授权","Scan QR code to authorize"));
@@ -92,7 +92,7 @@ internal sealed class QqMailSettingsPage : StackPanel
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
         catch(Exception ex)
         {
-            ShowError($"{ex.Message}{(LocalizationService.IsEnglish?" Still not authorized: click “Scan QR code to authorize” to retry.":"仍未授权：点击“扫码授权”重试。")}");
+            ShowError(ex.Message+T("仍未授权：点击“扫码授权”重试。"," Still not authorized: click “Scan QR code to authorize” to retry."));
         }
         finally{_authorize.IsEnabled=true;_test.IsEnabled=true;_clear.IsEnabled=true;}
     }
@@ -131,7 +131,7 @@ internal sealed class QqMailSettingsPage : StackPanel
         }
         catch
         {
-            return LocalizationService.IsEnglish?"(account unknown)":"（账号未知）";
+            return T("（账号未知）","(account unknown)");
         }
     }
 

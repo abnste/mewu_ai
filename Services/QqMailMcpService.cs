@@ -277,8 +277,8 @@ internal static class QqMailMcpService
     internal static async Task<string> CallToolAsync(QqMailMcpToken token,string tool,JsonObject arguments,CancellationToken cancellationToken)
     {
         var (text,isError)=await CallToolRawAsync(token,tool,arguments,cancellationToken).ConfigureAwait(false);
-        if(isError)throw new InvalidOperationException(text.Length>0?text:$"QQ 邮箱工具 {tool} 执行失败");
-        if(text.Length==0)throw new InvalidOperationException($"QQ 邮箱工具 {tool} 未返回文本内容");
+        if(isError)throw new InvalidOperationException(text.Length>0?text:LocalizationService.T($"QQ 邮箱工具 {tool} 执行失败",$"QQ Mail tool {tool} failed"));
+        if(text.Length==0)throw new InvalidOperationException(LocalizationService.T($"QQ 邮箱工具 {tool} 未返回文本内容",$"QQ Mail tool {tool} returned no text"));
         return text;
     }
 
@@ -287,7 +287,7 @@ internal static class QqMailMcpService
     internal static async Task<(string Text,bool IsError)> CallToolRawAsync(QqMailMcpToken token,string tool,JsonObject arguments,CancellationToken cancellationToken)
     {
         var result=await CallAsync(token,"tools/call",new JsonObject{["name"]=tool,["arguments"]=DeepCopy(arguments)},cancellationToken).ConfigureAwait(false);
-        if(result.ValueKind!=JsonValueKind.Object)throw new InvalidOperationException("QQ 邮箱 MCP 返回了无法解析的工具结果");
+        if(result.ValueKind!=JsonValueKind.Object)throw new InvalidOperationException(LocalizationService.T("QQ 邮箱 MCP 返回了无法解析的工具结果","QQ Mail MCP returned an unreadable tool result"));
         var isError=result.TryGetProperty("isError",out var errorFlag)&&errorFlag.ValueKind==JsonValueKind.True;
         return (GetTextContent(result),isError);
     }
@@ -310,17 +310,17 @@ internal static class QqMailMcpService
         request.Headers.TryAddWithoutValidation("Accept","application/json, text/event-stream");
         request.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",token.AccessToken);
         using var response=await NetworkHttpClientFactory.Create().SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token).ConfigureAwait(false);
-        if((int)response.StatusCode==401)throw new InvalidOperationException("QQ 邮箱令牌已失效，请在设置中重新扫码授权");
-        if(!response.IsSuccessStatusCode)throw new InvalidOperationException($"QQ 邮箱 MCP 请求失败（HTTP {(int)response.StatusCode}）");
+        if((int)response.StatusCode==401)throw new InvalidOperationException(LocalizationService.T("QQ 邮箱令牌已失效，请在设置中重新扫码授权","The QQ Mail token has expired. Scan the QR code again in Settings."));
+        if(!response.IsSuccessStatusCode)throw new InvalidOperationException(LocalizationService.T($"QQ 邮箱 MCP 请求失败（HTTP {(int)response.StatusCode}）",$"QQ Mail MCP request failed (HTTP {(int)response.StatusCode})"));
         var body=await ReadBodyAsync(response,timeout.Token).ConfigureAwait(false);
         using var document=JsonDocument.Parse(body);
         var root=document.RootElement;
         if(root.TryGetProperty("error",out var error))
         {
             var message=GetString(error,"message")??error.GetRawText();
-            throw new InvalidOperationException($"QQ 邮箱 MCP 错误：{message}");
+            throw new InvalidOperationException(LocalizationService.T($"QQ 邮箱 MCP 错误：{message}",$"QQ Mail MCP error: {message}"));
         }
-        if(!root.TryGetProperty("result",out var result))throw new InvalidOperationException("QQ 邮箱 MCP 响应缺少 result");
+        if(!root.TryGetProperty("result",out var result))throw new InvalidOperationException(LocalizationService.T("QQ 邮箱 MCP 响应缺少 result","QQ Mail MCP response is missing result"));
         return result.Clone();
     }
 

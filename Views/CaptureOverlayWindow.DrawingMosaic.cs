@@ -72,7 +72,8 @@ public partial class CaptureOverlayWindow
             var region = MosaicPixelBounds(bounds, preview.ScaleX, preview.ScaleY,
                 preview.Pixels.SourceWidth, preview.Pixels.SourceHeight);
             var bitmap = preview.Pixels.RenderCrop(region);
-            var element = new MosaicDrawingElement(Guid.NewGuid(), bounds.X, bounds.Y, bounds.Width, bounds.Height);
+            if (!bitmap.IsFrozen) bitmap.Freeze();
+            var element = new MosaicDrawingElement(Guid.NewGuid(), bounds.X, bounds.Y, bounds.Width, bounds.Height) { Pixels = bitmap };
             var visual = new Image
             {
                 Tag = element.Id, Source = bitmap, Width = bounds.Width, Height = bounds.Height,
@@ -93,6 +94,16 @@ public partial class CaptureOverlayWindow
 
     private void CancelMosaicDrawingPreview()
     {
+        CancelBackgroundHighlightPreview();
+        CancelHealingOperation();
+        DismissSeamlessEraseFailure();
+        CancelMosaicDrawingPreviewContent();
+    }
+
+    private void CancelMosaicDrawingPreviewContent()
+    {
+        CancelHealingDrawingPreview();
+        CancelSeamlessEraseDrawingPreview();
         var preview = _drawingMosaicPreview;
         _drawingMosaicPreview = null;
         if (preview is null) return;
@@ -124,6 +135,19 @@ public partial class CaptureOverlayWindow
         // grid as the live preview, but only read the blocks touching this rectangle.
         using var pixels = MosaicPixelGrid.Create(source, region, blockSize);
         return pixels.RenderCrop(region);
+    }
+
+    private BitmapSource CaptureMosaicPixels(SelectionItem item, MosaicDrawingElement element)
+    {
+        var source = RenderSelectionImage(item, false, false, false);
+        var scaleX = source.PixelWidth / Math.Max(1, item.Bounds.Width);
+        var scaleY = source.PixelHeight / Math.Max(1, item.Bounds.Height);
+        var region = MosaicPixelBounds(new Rect(element.X, element.Y, element.Width, element.Height),
+            scaleX, scaleY, source.PixelWidth, source.PixelHeight);
+        var bitmap = element.SeamlessErase ? SeamlessEraseService.CreatePatch(source, region)
+            : CreateMosaicPixels(source, region, Math.Clamp((int)Math.Round(12 * Math.Max(scaleX, scaleY)), 6, 40));
+        if (!bitmap.IsFrozen) bitmap.Freeze();
+        return bitmap;
     }
 
     private sealed class MosaicPixelGrid : IDisposable

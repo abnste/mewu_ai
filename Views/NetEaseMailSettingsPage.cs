@@ -29,7 +29,7 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
     internal NetEaseMailSettingsPage(AppSettings settings,CancellationToken token)
     {
         _token=token;
-        var form=new AiSettingsForm("网易邮箱",T(
+        var form=new AiSettingsForm(T("网易邮箱","NetEase Mail"),T(
             "扫码授权用于读取收件箱；发送邮件还需填写账号和 SMTP 授权码（在网易邮箱网页设置中生成）。会话和授权码仅在本机加密保存。",
             "QR authorization reads the inbox. Sending also requires your account and an SMTP authorization code from NetEase web settings. Sessions and codes are encrypted on this machine."),_status);
         Children.Add(form);
@@ -116,7 +116,7 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
         catch(Exception ex)
         {
-            ShowError($"{ex.Message}{(LocalizationService.IsEnglish?" Retry by clicking “Scan QR code to authorize”.":" 点击“扫码授权”重试。")}");
+            ShowError(ex.Message+T(" 点击“扫码授权”重试。"," Retry by clicking “Scan QR code to authorize”."));
         }
         finally{_authorize.IsEnabled=true;_test.IsEnabled=true;_clearSession.IsEnabled=true;}
     }

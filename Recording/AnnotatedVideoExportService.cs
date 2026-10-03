@@ -14,7 +14,7 @@ namespace mewu_ai_Assistant.Recording;
 
 internal static class AnnotatedVideoExportService
 {
-    internal static async Task ExportAsync(string videoPath,string outputPath,BitmapSource? manualOverlay,IReadOnlyList<AiAnnotation> annotations,CancellationToken cancellationToken=default,IReadOnlyDictionary<AiAnnotation,System.Windows.Point>? calloutPositions=null)
+    internal static async Task ExportAsync(string videoPath,string outputPath,BitmapSource? manualOverlay,IReadOnlyList<AiAnnotation> annotations,CancellationToken cancellationToken=default,IReadOnlyDictionary<AiAnnotation,System.Windows.Point>? calloutPositions=null,TempFileService? temp=null)
     {
         var stage="读取源视频";
         try
@@ -40,7 +40,7 @@ internal static class AnnotatedVideoExportService
             }
             if(layer.Overlays.Count==0){await Task.Run(()=>AtomicFileService.Copy(sourcePath,destinationPath),cancellationToken);return;}
             composition.OverlayLayers.Add(layer);
-            var temporaryOutput=new TempFileService().NewFile(".mp4");using var outputLease=TempMediaRegistry.Shared.Acquire(temporaryOutput);
+            var temporaryOutput=(temp??new TempFileService()).NewFile(".mp4");using var outputLease=TempMediaRegistry.Shared.Acquire(temporaryOutput);
             try
             {
                 stage="创建临时输出文件";var outputFolderPath=Path.GetDirectoryName(temporaryOutput)??throw new InvalidOperationException("临时视频目录无效");
@@ -64,7 +64,7 @@ internal static class AnnotatedVideoExportService
 
         async Task AddOverlayAsync(BitmapSource bitmap,TimeSpan delay,TimeSpan duration)
         {
-            if(duration<=TimeSpan.Zero)return;var path=new TempFileService().NewFile(".png");var lease=TempMediaRegistry.Shared.Acquire(path);temporaryFiles.Add((path,lease));AnnotationOverlayRenderer.SavePng(bitmap,path);var file=await StorageFile.GetFileFromPathAsync(path).AsTask(cancellationToken);var imageClip=await MediaClip.CreateFromImageFileAsync(file,duration).AsTask(cancellationToken);layer.Overlays.Add(new MediaOverlay(imageClip){Delay=delay,Position=new Rect(0,0,properties.Width,properties.Height)});
+            if(duration<=TimeSpan.Zero)return;var path=(temp??new TempFileService()).NewFile(".png");var lease=TempMediaRegistry.Shared.Acquire(path);temporaryFiles.Add((path,lease));AnnotationOverlayRenderer.SavePng(bitmap,path);var file=await StorageFile.GetFileFromPathAsync(path).AsTask(cancellationToken);var imageClip=await MediaClip.CreateFromImageFileAsync(file,duration).AsTask(cancellationToken);layer.Overlays.Add(new MediaOverlay(imageClip){Delay=delay,Position=new Rect(0,0,properties.Width,properties.Height)});
         }
         }
         catch(System.Runtime.InteropServices.COMException ex){throw new InvalidOperationException($"{stage}失败（0x{ex.HResult:X8}）",ex);}

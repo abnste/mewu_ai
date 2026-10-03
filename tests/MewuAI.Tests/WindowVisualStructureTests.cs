@@ -76,7 +76,10 @@ public sealed class WindowVisualStructureTests
         Assert.Equal("0",(string?)shadow.Attribute("BorderThickness"));
         Assert.NotNull(shadow.Element(presentation+"Border.Effect")?.Element(presentation+"DropShadowEffect"));
         Assert.Null(surface.Element(presentation+"Border.Effect"));
-        Assert.Same(host,shadow.Parent);Assert.Same(host,surface.Parent);
+        Assert.Same(shadow.Parent,surface.Parent);
+        Assert.Contains(host,shadow.Ancestors());
+        Assert.All(shadow.Ancestors().TakeWhile(parent=>parent!=host),parent=>
+            Assert.NotEqual("True",(string?)parent.Attribute("ClipToBounds")));
     }
 
     [Fact]

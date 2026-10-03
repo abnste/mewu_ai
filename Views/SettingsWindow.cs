@@ -47,7 +47,7 @@ public sealed partial class SettingsWindow : Window
     private static readonly Brush ControlBorderBrush = new SolidColorBrush(Color.FromRgb(224, 230, 240));
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
-    private readonly ProviderHeaderCredentialService _headerCredentials = new();
+    private readonly ProviderHeaderCredentialService _headerCredentials;
     private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new(), _apiFormat = new(), _authMode = new();
     private readonly TextBox _hotkey = new();
     private readonly TextBox _baseUrl = new(), _customHeaders = new(), _requestPath = new(), _region = new(), _plan = new();
@@ -91,10 +91,15 @@ public sealed partial class SettingsWindow : Window
     private System.Windows.Input.Key _capturedHotkeyKey = System.Windows.Input.Key.S;
     private System.Windows.Input.ModifierKeys _capturedHotkeyModifiers = System.Windows.Input.ModifierKeys.Shift | System.Windows.Input.ModifierKeys.Alt;
 
-    public SettingsWindow(AppHost host)
+    public SettingsWindow(AppHost host) : this(host,new ProviderHeaderCredentialService())
+    {
+    }
+
+    internal SettingsWindow(AppHost host,ProviderHeaderCredentialService headerCredentials)
     {
         var initialization=System.Diagnostics.Stopwatch.StartNew();
         _host = host;
+        _headerCredentials = headerCredentials;
         _providers=[];
         var unavailableByProvider=new List<(AiProviderSettings Provider,HashSet<string> Headers)>();
         foreach(var stored in host.Settings.Providers ?? [])
@@ -331,7 +336,7 @@ public sealed partial class SettingsWindow : Window
         _hotkey.Text = FormatHotkey(_capturedHotkeyKey, _capturedHotkeyModifiers);
         _hotkey.PreviewKeyDown += CaptureHotkeyKeyDown;
         _hotkey.GotKeyboardFocus += (_, _) => _hotkey.SelectAll();
-        System.Windows.Automation.AutomationProperties.SetName(_hotkey, "全局截图快捷键按键");
+        System.Windows.Automation.AutomationProperties.SetName(_hotkey, LocalizationService.T("全局截图快捷键按键","Global capture shortcut keys"));
         panel.Children.Add(_hotkey);
         panel.Children.Add(Text(LocalizationService.T("点击输入框后按组合键设置（至少包含 Shift、Alt 或 Ctrl），按 Delete 清空；保存后生效。", "Click the field and press a shortcut with Shift, Alt or Ctrl; press Delete to clear. Changes take effect after saving."), true));
         var restore = ActionButton("恢复默认 Shift + Alt + S");
@@ -558,7 +563,7 @@ public sealed partial class SettingsWindow : Window
         _hermesAutoReadAloud.Content="回复后自动朗读";
         _hermesAutoReadAloud.IsChecked=_host.Settings.HermesAutoReadAloud;
         _hermesAutoReadAloud.Margin=new Thickness(0,5,0,0);
-        System.Windows.Automation.AutomationProperties.SetName(_hermesAutoReadAloud,"Hermes 回复后自动朗读");
+        System.Windows.Automation.AutomationProperties.SetName(_hermesAutoReadAloud,LocalizationService.T("Hermes 回复后自动朗读","Hermes read responses aloud"));
 
         form.Fields.Children.Add(_hermesAutoReadAloud);
         form.Loaded+=HermesPageLoaded;

@@ -1,0 +1,31 @@
+<!-- SPDX-FileCopyrightText: 2026 Abner Stephen and contributors -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors><IsTestProject>true</IsTestProject><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile></PropertyGroup>
+<ItemGroup>
+<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+<PackageReference Include="xunit.v3" Version="3.2.2" />
+<PackageReference Include="xunit.runner.visualstudio" Version="3.1.5"><PrivateAssets>all</PrivateAssets></PackageReference>
+<Compile Include="../../Models/AiModels.cs" Link="Product/AiModels.cs" />
+<Compile Include="../../Models/ScreenRect.cs" Link="Product/ScreenRect.cs" />
+<Compile Include="../../Services/VisualAnnotationProtocol.cs" Link="Product/VisualAnnotationProtocol.cs" />
+<Compile Include="../../Services/VideoAnnotationTimeline.cs" Link="Product/VideoAnnotationTimeline.cs" />
+<Compile Include="../../Services/TemporalAnnotationOverlap.cs" Link="Product/TemporalAnnotationOverlap.cs" />
+<Compile Include="../../Services/AnnotationPostProcessor.cs" Link="Product/AnnotationPostProcessor.cs" />
+<Compile Include="../../Services/AnnotationGeometryService.cs" Link="Product/AnnotationGeometryService.cs" />
+<Compile Include="../../Services/AnnotationLayoutService.cs" Link="Product/AnnotationLayoutService.cs" />
+<Compile Include="../../Services/AnnotationLayoutPlanner.cs" Link="Product/AnnotationLayoutPlanner.cs" />
+<Compile Include="../../Services/CapturePixelGeometry.cs" Link="Product/CapturePixelGeometry.cs" />
+<Compile Include="../../Services/CaptureSelectionGeometry.cs" Link="Product/CaptureSelectionGeometry.cs" />
+<Compile Include="../../Services/AccessibilityEvidencePolicy.cs" Link="Product/AccessibilityEvidencePolicy.cs" />
+<Compile Include="../../Services/AccessibilityAnnotationRefinementService.cs" Link="Product/AccessibilityAnnotationRefinementService.cs" />
+<Compile Include="../MewuAI.Tests/AnnotationPostProcessorTests.cs" Link="Tests/AnnotationPostProcessorTests.cs" />
+<Compile Include="../MewuAI.Tests/TemporalAnnotationOverlapTests.cs" Link="Tests/TemporalAnnotationOverlapTests.cs" />
+<Compile Include="../MewuAI.Tests/CaptureSelectionGeometryTests.cs" Link="Tests/CaptureSelectionGeometryTests.cs" />
+<Compile Include="../MewuAI.Tests/CapturePointMappingTests.cs" Link="Tests/CapturePointMappingTests.cs" />
+<Compile Include="../MewuAI.Tests/AccessibilityEvidencePolicyTests.cs" Link="Tests/AccessibilityEvidencePolicyTests.cs" />
+<Compile Include="../MewuAI.Tests/AnnotationLayoutServiceTests.cs" Link="Tests/AnnotationLayoutServiceTests.cs" />
+<Compile Include="../MewuAI.Tests/AnnotationLayoutParityTests.cs" Link="Tests/AnnotationLayoutParityTests.cs" />
+<Compile Include="../MewuAI.Tests/OriginalAnnotationLayoutReference.cs" Link="Tests/OriginalAnnotationLayoutReference.cs" />
+</ItemGroup>
+</Project>

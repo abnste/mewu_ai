@@ -2,6 +2,18 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 0.6.2 — 截图编辑、录屏剪辑与交互稳定性 / Capture editing, video trimming and interaction stability
+
+完整双语说明 / Full release notes: [0.6.2](./docs/release-notes-v0.6.2.md)
+
+- 手绘工具栏改为左对齐两行，绘制与选择分别操作；修复文字输入、橡皮擦、删除层序、撤销重做，以及移动和缩放选区时手工标注丢失的问题。 / Align the drawing toolbar in two rows and separate drawing from selection. Fix text input, erasing, deletion order, undo/redo and annotation loss when moving or resizing captures.
+- 新增透明无痕提取与可调笔刷的涂抹消除；荧光笔和重点高亮保护文字与细节，重点高亮支持移动、缩放和改色。 / Add transparent seamless lift and an adjustable healing brush. Freehand and region highlights protect text and detail; emphasis highlights can be moved, resized and recolored.
+- 序号可直接指定下一个编号，数字按实际轮廓居中；新增紧凑无外框十字线放大镜、RGB与坐标读数，修正高缩放取样偏移。 / Set the next annotation number directly and center its visible glyph. Add a compact borderless crosshair magnifier with RGB and coordinates, correcting sampling at higher display scaling.
+- 录屏原位预览新增定位与起止裁切，保存、复制、贴视频和AI引用共用选定片段，音频与标注同步处理；修复拖动端点时闪烁、跳回开头和末尾定位，重做倒计时样式。 / Add seeking and trimming to recording previews. Save, copy, pin and AI references share the selected segment, including audio and timed annotations. Fix flashes, jumps and end positioning, and refine the countdown.
+- 原位翻译保持OCR原文逐行结构，较长译文在行内适配字号；补齐AI/MCP设置与图片、视频、文件引用的英文文案。 / Preserve original OCR lines in translations, fitting longer text within each line. Complete English AI/MCP settings and image, video and file reference labels.
+- 累计截图维护优化：点击框选避免同步等待外部界面辅助信息，窗口吸附校验指针、截图和窗口身份；改善负坐标、屏幕边缘、物理像素步进与贴图裁切，启动失败后恢复相关窗口。冻结会话或替换后的截图，不再用当前桌面的辅助信息误调标注位置。 / Include accumulated capture fixes: avoid blocking pointer-down on accessibility queries, validate snapping against the pointer, frame and window, improve negative coordinates, edges, pixel stepping and pinned-image clipping, and restore windows after failed startup. Frozen conversation captures and replacement images are no longer realigned using current-desktop accessibility information.
+- 减少拖动中的重复处理并复用图像缓存；视频标注去重比较完整运动轨迹，避免误删中途分离的标注，陈旧匹配结果不能覆盖新编辑。导出标注时，仅实际显示的说明卡参与重复框判断，未显示的说明卡不再误隐藏本应显示的区域框。 / Reduce repeated work while dragging and reuse image caches. Compare full trajectories when deduplicating video annotations, and prevent stale matching results from overwriting newer edits. During annotated export, only rendered callouts suppress duplicate target boxes, so hidden callouts no longer remove boxes that should remain visible.
+
 ## 0.6.1 — MCP、屏幕实体与网页抓取 / MCP, screen entities and web crawling
 
 发行说明 / Release notes: [0.6.1](https://github.com/abnste/mewu_ai/releases/tag/v0.6.1)
@@ -23,21 +35,6 @@
 发行说明 / Release notes: [0.5.10](https://github.com/abnste/mewu_ai/releases/tag/v0.5.10)
 
 完整的双语发行说明见 [docs/release-notes-v0.5.10.md](./docs/release-notes-v0.5.10.md)。 / See the consolidated bilingual notes in [docs/release-notes-v0.5.10.md](./docs/release-notes-v0.5.10.md).
-
-## 未发布 / Unreleased
-
-- 新增 MCP 工具集成：屏幕链接、邮箱和电话号码识别，QQ 邮箱与网易邮箱发件确认，钉钉、飞书、ima 和 Obsidian 分享。
-- 新增基础网页抓取和可选 Scrapling 抓取；安装探测、子进程输出、代理和取消流程均有界，不会因 Python 启动器或管道阻塞界面。
-- 选区实体操作条跟随当前选区，关闭、切换选区、录制和标注时不会显示旧内容；识别任务随覆盖层退出取消。
-- 保留录屏采集修复、音频时钟保护和录制结束后的遮罩恢复；WorkBuddy 子进程同时排空标准输出和错误输出并在失败时回收。
-- 增加 QRCoder 的本地 MIT 许可证声明、邮件通道路由回归，以及网络抓取测试默认改为显式 opt-in。
-
-
-- Added MCP integrations for screen links, email and phone entities, confirmed QQ/NetEase sending, DingTalk, Feishu, ima and Obsidian sharing.
-- Added built-in and optional Scrapling crawling with bounded installation detection, process output, proxy handling and cancellation.
-- The entity action bar now follows the active selection and is cleared on selection changes, recording, drawing and overlay close.
-- Preserved the recording capture, audio-clock and post-recording mask restoration fixes; WorkBuddy drains both child-process pipes and cleans up failed starts.
-- Added the local QRCoder MIT notice, mail-channel routing regression coverage, and explicit opt-in for live network crawl tests.
 
 ## 0.5.9 — 录制交互重构与阴影修复 / Recording interaction redesign and shadow fixes
 

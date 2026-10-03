@@ -66,13 +66,17 @@
    </Border>
   </Grid>
   <Grid x:Name="DrawingToolbar" Visibility="Collapsed" ClipToBounds="False">
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <Grid Grid.Row="0" HorizontalAlignment="Left" ClipToBounds="False">
    <Border x:Name="DrawingToolbarShadow" Background="#FFFFFFFF" BorderBrush="Transparent" BorderThickness="0" CornerRadius="18" IsHitTestVisible="False">
     <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="24" ShadowDepth="6" Opacity="0.24"/></Border.Effect>
    </Border>
    <Border x:Name="DrawingToolbarSurface" Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="18" Padding="6" Panel.ZIndex="1">
    <WrapPanel x:Name="DrawingToolbarItems" Orientation="Horizontal">
     <StackPanel Orientation="Horizontal">
+    <Button x:Name="DrawingSelectButton" ToolTip="选择标注；双击文字可编辑" AutomationProperties.Name="选择标注工具" Click="DrawSelectTool" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M3,2 L3,15 L6.8,11.5 L10,18 L13,16.5 L9.8,10.5 L15,10 Z"/></Button>
     <Button x:Name="DrawingPenButton" ToolTip="画笔" AutomationProperties.Name="画笔工具" Click="DrawPen" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M3,15 L3,18 L6,18 L16,8 L13,5 Z M11.5,6.5 L14.5,9.5"/></Button>
+    <Button x:Name="DrawingEraserButton" ToolTip="橡皮；每次只擦除最上层对象" AutomationProperties.Name="橡皮擦工具" Click="DrawEraser" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M4,13 L10,4 L17,11 L11,17 L4,17 L2,15 Z M8,15 L14,9"/></Button>
     <Button x:Name="DrawingHighlightButton" ToolTip="高亮" AutomationProperties.Name="高亮标注工具" Click="DrawHighlight" Style="{StaticResource ToolbarIconButton}"><Rectangle Width="12" Height="12" RadiusX="3" Fill="#EAB631"/></Button>
     <Border Style="{StaticResource ToolbarSeparator}"/>
     </StackPanel>
@@ -85,32 +89,59 @@
     </StackPanel>
     <StackPanel Orientation="Horizontal">
     <Button x:Name="DrawingTextButton" ToolTip="文本框" AutomationProperties.Name="文本框标注工具" Click="DrawTextTool" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="T" FontFamily="Segoe UI Variable Display" FontSize="18" FontWeight="Bold"/></Button>
-    <Button x:Name="DrawingNumberButton" ToolTip="自动递增实心序号" AutomationProperties.Name="序号标注工具" Click="DrawNumberTool" Style="{StaticResource ToolbarIconButton}"><Border Width="20" Height="20" CornerRadius="10" Background="#52637A"><TextBlock Text="1" Foreground="White" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border></Button>
+    <Button x:Name="DrawingNumberButton" ToolTip="自动递增实心序号" AutomationProperties.Name="序号标注工具" Click="DrawNumberTool" Style="{StaticResource ToolbarIconButton}"><Border Width="20" Height="20" CornerRadius="10" Background="#52637A"><local:GlyphCenteredText Text="1" Foreground="White" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold"/></Border></Button>
+    <Border Style="{StaticResource ToolbarSeparator}"/>
+    </StackPanel>
+    <StackPanel x:Name="DrawingImageTools" Orientation="Horizontal">
     <Button x:Name="DrawingMosaicButton" ToolTip="矩形马赛克" AutomationProperties.Name="矩形马赛克工具" Click="DrawMosaicTool" Style="{StaticResource ToolbarIconButton}"><Grid Width="18" Height="18"><Rectangle Fill="#D6DEE9" RadiusX="2"/><Path Stroke="#8796AA" StrokeThickness="1" Data="M0,6 L18,6 M0,12 L18,12 M6,0 L6,18 M12,0 L12,18"/></Grid></Button>
-    <Button x:Name="DrawingMarkButton" ToolTip="五彩标记：拖动圈选方框，整块上色；标记锚定内容，滚动/翻页不错位" AutomationProperties.Name="五彩方框标记工具" Click="DrawMarkTool" Style="{StaticResource ToolbarIconButton}"><Grid Width="18" Height="18"><Rectangle Width="16" Height="11" RadiusX="2.5" Fill="#66FFC800" Stroke="#C9A50B" StrokeThickness="1.2" StrokeDashArray="3 2"/><Path Stroke="#8B6F00" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,16 L13,5 M11,3.5 L14.5,3.5 L14.5,7"/></Grid></Button>
-    <Button x:Name="DrawingEraserButton" ToolTip="橡皮；每次只擦除最上层对象" AutomationProperties.Name="橡皮擦工具" Click="DrawEraser" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M4,13 L10,4 L17,11 L11,17 L4,17 L2,15 Z M8,15 L14,9"/></Button>
-    <Border Style="{StaticResource ToolbarSeparator}"/>
-    </StackPanel>
-    <StackPanel Orientation="Horizontal">
-    <Button ToolTip="红色" AutomationProperties.Name="使用红色标注" Click="DrawRed" Style="{StaticResource ToolbarIconButton}"><Ellipse Width="11" Height="11" Fill="#E14959"/></Button>
-    <Button ToolTip="蓝色" AutomationProperties.Name="使用蓝色标注" Click="DrawBlue" Style="{StaticResource ToolbarIconButton}"><Ellipse Width="11" Height="11" Fill="#318CFF"/></Button>
-    <Button ToolTip="选择任意 RGB 颜色" AutomationProperties.Name="RGB颜色选择器" Click="DrawChooseColor" Style="{StaticResource ToolbarIconButton}"><Grid><Ellipse Width="22" Height="22" Stroke="#CAD4E1" StrokeThickness="1"/><Ellipse x:Name="DrawColorSwatch" Width="16" Height="16" Fill="#E14959"/></Grid></Button>
-    </StackPanel>
-    <StackPanel x:Name="DrawingTextControls" Orientation="Horizontal" Visibility="Collapsed">
-     <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
-     <Button x:Name="TextHighlightButton" ToolTip="切换文字荧光底色" AutomationProperties.Name="文字荧光底色" Click="ToggleTextHighlight" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="荧" FontSize="14" FontWeight="Bold"/></Button>
-     <ComboBox x:Name="DrawingFontFamily" Width="132" Height="34" Margin="3,4" VerticalContentAlignment="Center" ToolTip="电脑已安装字体" AutomationProperties.Name="标注字体" SelectionChanged="DrawingFontFamilyChanged"/>
-     <ComboBox x:Name="DrawingFontSize" Width="58" Height="34" Margin="1,4" VerticalContentAlignment="Center" ToolTip="字号" AutomationProperties.Name="标注字号" SelectionChanged="DrawingFontSizeChanged"/>
-    </StackPanel>
-    <StackPanel Orientation="Horizontal">
-    <Border Style="{StaticResource ToolbarSeparator}"/>
-    <Button ToolTip="撤销" AutomationProperties.Name="撤销标注" Click="DrawUndo" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M8,4 L3,9 L8,14 M4,9 L12,9 C15,9 17,11 17,14"/></Button>
-    <Button ToolTip="重做" AutomationProperties.Name="重做标注" Click="DrawRedo" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M12,4 L17,9 L12,14 M16,9 L8,9 C5,9 3,11 3,14"/></Button>
-    <Button ToolTip="清空标注" AutomationProperties.Name="清空全部标注" Click="DrawClear" Style="{StaticResource ToolbarIconButton}"><Path Width="17" Height="18" Stretch="Uniform" Stroke="#D75B68" StrokeThickness="1.8" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M3,5 L15,5 M6,5 L6,3 L12,3 L12,5 M5,7 L6,17 L12,17 L13,7 M8,9 L8,14 M10,9 L10,14"/></Button>
-    <Button ToolTip="完成标注" AutomationProperties.Name="完成标注" Click="DrawDone" Style="{StaticResource ReferenceIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M4,10 L8,14 L16,5"/></Button>
+    <Button x:Name="DrawingSeamlessEraseButton" Tag="SeamlessErase" ToolTip="无痕提取：框选内容后可移动或删除，原处自动补齐背景" AutomationProperties.Name="无痕提取工具" Click="DrawSeamlessEraseTool" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.6" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,12 L8,6 L13,11 L8,16 L5,16 Z M5,15 L10,10 M13,2 L13,6 M11,4 L15,4 M17,7 L17,9 M16,8 L18,8"/></Button>
+    <Button x:Name="DrawingHealButton" ToolTip="涂抹消除：刷过要去掉的内容，松手自动修补背景" AutomationProperties.Name="涂抹消除工具" Click="DrawHealTool" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.6" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M4,10 L11,3 Q14,0 17,3 Q20,6 17,9 L10,16 Q7,19 4,16 Q1,13 4,10 Z M6,8 L12,14 M8,6 L14,12 M10,8 L10.01,8 M12,10 L12.01,10"/></Button>
+    <Button x:Name="DrawingMarkButton" ToolTip="重点高亮：拖动覆盖重点内容；使用选择工具可移动、调整大小和修改颜色" AutomationProperties.Name="重点高亮工具" Click="DrawMarkTool" Style="{StaticResource ToolbarIconButton}"><Grid Width="18" Height="18"><Rectangle Width="16" Height="11" RadiusX="2.5" Fill="#66FFC800" Stroke="#C9A50B" StrokeThickness="1.2" StrokeDashArray="3 2"/><Path Stroke="#8B6F00" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,16 L13,5 M11,3.5 L14.5,3.5 L14.5,7"/></Grid></Button>
     </StackPanel>
    </WrapPanel>
    </Border>
+   </Grid>
+   <Grid x:Name="DrawingPropertiesRow" Grid.Row="1" HorizontalAlignment="Left" Margin="0,6,0,0" ClipToBounds="False">
+    <Border Background="#FFFFFFFF" CornerRadius="18" IsHitTestVisible="False">
+     <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="18" ShadowDepth="4" Opacity="0.20"/></Border.Effect>
+    </Border>
+    <Border Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="18" Padding="5" MinHeight="48" Panel.ZIndex="1">
+     <WrapPanel x:Name="DrawingPropertiesItems" Orientation="Horizontal">
+      <StackPanel x:Name="DrawingColorControls" Orientation="Horizontal">
+       <Button ToolTip="红色" AutomationProperties.Name="使用红色标注" Click="DrawRed" Style="{StaticResource ToolbarIconButton}"><Ellipse Width="11" Height="11" Fill="#E14959"/></Button>
+       <Button ToolTip="蓝色" AutomationProperties.Name="使用蓝色标注" Click="DrawBlue" Style="{StaticResource ToolbarIconButton}"><Ellipse Width="11" Height="11" Fill="#318CFF"/></Button>
+       <Button ToolTip="选择任意 RGB 颜色" AutomationProperties.Name="RGB颜色选择器" Click="DrawChooseColor" Style="{StaticResource ToolbarIconButton}"><Grid><Ellipse Width="22" Height="22" Stroke="#CAD4E1" StrokeThickness="1"/><Ellipse x:Name="DrawColorSwatch" Width="16" Height="16" Fill="#E14959"/></Grid></Button>
+      </StackPanel>
+      <StackPanel x:Name="DrawingStrokeControls" Orientation="Horizontal">
+       <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
+       <TextBlock Text="线宽" Foreground="#65748A" FontSize="12" VerticalAlignment="Center" Margin="5,0,4,0"/>
+       <ComboBox x:Name="DrawingStrokeWidth" Width="64" Height="34" Margin="1,4" VerticalContentAlignment="Center" ToolTip="线宽" AutomationProperties.Name="标注线宽" SelectionChanged="DrawingStrokeWidthChanged"/>
+      </StackPanel>
+      <StackPanel x:Name="DrawingNumberControls" Orientation="Horizontal" Visibility="Collapsed">
+       <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
+       <TextBlock x:Name="DrawingNumberLabel" Text="下个序号" Foreground="#65748A" FontSize="12" VerticalAlignment="Center" Margin="5,0,4,0"/>
+       <Button x:Name="DrawingNumberDecrease" Width="28" Height="34" Margin="1,4" Focusable="False" Click="DrawingNumberDecreaseClick" Style="{StaticResource ToolbarIconButton}"><Path Width="10" Height="10" Stroke="#52637A" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M1,5 L9,5"/></Button>
+       <TextBox x:Name="DrawingNumberValue" Width="56" Height="34" Margin="1,4" MaxLength="4" Padding="4,0" VerticalContentAlignment="Center" HorizontalContentAlignment="Center" TextAlignment="Center" Text="1" TextChanged="DrawingNumberValueChanged" LostKeyboardFocus="DrawingNumberValueLostFocus"/>
+       <Button x:Name="DrawingNumberIncrease" Width="28" Height="34" Margin="1,4" Focusable="False" Click="DrawingNumberIncreaseClick" Style="{StaticResource ToolbarIconButton}"><Path Width="10" Height="10" Stroke="#52637A" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M1,5 L9,5 M5,1 L5,9"/></Button>
+      </StackPanel>
+      <WrapPanel x:Name="DrawingTextControls" Orientation="Horizontal" Visibility="Collapsed">
+       <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
+       <Button x:Name="TextHighlightButton" ToolTip="切换文字荧光底色" AutomationProperties.Name="文字荧光底色" Click="ToggleTextHighlight" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="荧" FontSize="14" FontWeight="Bold"/></Button>
+       <ComboBox x:Name="DrawingFontFamily" Width="132" Height="34" Margin="3,4" VerticalContentAlignment="Center" ToolTip="电脑已安装字体" AutomationProperties.Name="标注字体" SelectionChanged="DrawingFontFamilyChanged"/>
+       <ComboBox x:Name="DrawingFontSize" Width="58" Height="34" Margin="1,4" VerticalContentAlignment="Center" ToolTip="字号" AutomationProperties.Name="标注字号" SelectionChanged="DrawingFontSizeChanged"/>
+      </WrapPanel>
+      <TextBlock x:Name="DrawingSelectionHint" Visibility="Collapsed"/>
+      <TextBlock x:Name="DrawingToolHint" Visibility="Collapsed"/>
+      <StackPanel x:Name="DrawingActionsGroup" Orientation="Horizontal">
+       <Border x:Name="DrawingActionsSeparator" Style="{StaticResource ToolbarSeparator}"/>
+       <Button x:Name="DrawingUndoButton" ToolTip="撤回" AutomationProperties.Name="撤回标注" Click="DrawUndo" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M8,4 L3,9 L8,14 M4,9 L12,9 C15,9 17,11 17,14"/></Button>
+       <Button x:Name="DrawingRedoButton" ToolTip="重做" AutomationProperties.Name="重做标注" Click="DrawRedo" Style="{StaticResource ToolbarIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M12,4 L17,9 L12,14 M16,9 L8,9 C5,9 3,11 3,14"/></Button>
+       <Button x:Name="DrawingClearButton" ToolTip="删除全部标注" AutomationProperties.Name="删除全部标注" Click="DrawClear" Style="{StaticResource ToolbarIconButton}"><Path Width="17" Height="18" Stretch="Uniform" Stroke="#D75B68" StrokeThickness="1.8" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M3,5 L15,5 M6,5 L6,3 L12,3 L12,5 M5,7 L6,17 L12,17 L13,7 M8,9 L8,14 M10,9 L10,14"/></Button>
+       <Button x:Name="DrawingDoneButton" ToolTip="确定" AutomationProperties.Name="完成标注" Click="DrawDone" Style="{StaticResource ReferenceIconButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground,RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Data="M4,10 L8,14 L16,5"/></Button>
+      </StackPanel>
+     </WrapPanel>
+    </Border>
+   </Grid>
   </Grid>
   <Border x:Name="ApplicationSnapshotFeedback" Visibility="Collapsed" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="12" Padding="12,8" IsHitTestVisible="False" Panel.ZIndex="90">
    <TextBlock x:Name="ApplicationSnapshotFeedbackText" Foreground="#52637A" FontSize="12" TextWrapping="Wrap" MaxWidth="380"/>
@@ -273,19 +304,42 @@
    <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="10" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
    <TextBlock x:Name="SizeTextLabel" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
   </Border>
-  <Border x:Name="PointerInspector" Visibility="Collapsed" Background="#F2111722" BorderBrush="#90FFFFFF" BorderThickness="1" CornerRadius="8" Padding="7,5" SnapsToDevicePixels="True" IsHitTestVisible="False">
-   <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="12" ShadowDepth="3" Opacity="0.34"/></Border.Effect>
-   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-    <Border Width="15" Height="15" CornerRadius="3" BorderBrush="#CCFFFFFF" BorderThickness="1" Margin="0,0,6,0"><Rectangle x:Name="PointerColorSwatch" Fill="White" RadiusX="2" RadiusY="2"/></Border>
-    <TextBlock x:Name="PointerColorText" Text="#FFFFFF" Foreground="White" FontFamily="Consolas" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
-    <Border Width="1" Height="13" Background="#70FFFFFF" Margin="8,0"/>
-    <TextBlock x:Name="PointerCoordinateText" Text="X 0  Y 0" Foreground="White" FontFamily="Consolas" FontSize="11" VerticalAlignment="Center"/>
+  <Border x:Name="PointerInspector" Visibility="Collapsed" Width="108" SnapsToDevicePixels="True" IsHitTestVisible="False">
+   <StackPanel>
+    <local:CaptureMagnifier x:Name="PointerMagnifier" Width="108" Height="108" ClipToBounds="True"/>
+    <Border Background="#FAFFFFFF" CornerRadius="0,0,6,6" Padding="4,2">
+     <StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Height="16">
+       <Rectangle x:Name="PointerColorSwatch" Width="7" Height="7" Fill="White" RadiusX="2" RadiusY="2" Margin="0,0,4,0" VerticalAlignment="Center"/>
+       <TextBlock x:Name="PointerColorText" Text="RGB 255,255,255" Foreground="#34465F" FontFamily="Consolas" FontSize="10" VerticalAlignment="Center"/>
+      </StackPanel>
+      <Grid Height="16"><TextBlock x:Name="PointerCoordinateText" Text="X 0 Y 0" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Grid>
+     </StackPanel>
+    </Border>
    </StackPanel>
   </Border>
-  <Border x:Name="RecordingCountdown" Visibility="Collapsed" Width="108" Height="108" CornerRadius="54" Background="#D91C2635" BorderBrush="#CCFFFFFF" BorderThickness="2" IsHitTestVisible="False" RenderTransformOrigin="0.5,0.5">
-   <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="28" ShadowDepth="5" Opacity="0.48"/></Border.Effect>
-   <Border.RenderTransform><ScaleTransform x:Name="RecordingCountdownScale" ScaleX="1" ScaleY="1"/></Border.RenderTransform>
-   <TextBlock x:Name="RecordingCountdownText" Text="3" Foreground="White" FontFamily="Segoe UI Variable Display" FontSize="54" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-  </Border>
+  <Grid x:Name="RecordingCountdown" Visibility="Collapsed" Width="212" Height="92" IsHitTestVisible="False" ClipToBounds="False" SnapsToDevicePixels="True">
+   <Border Background="White" CornerRadius="18" IsHitTestVisible="False">
+    <Border.Effect><DropShadowEffect Color="#334762" BlurRadius="24" ShadowDepth="6" Opacity="0.24"/></Border.Effect>
+   </Border>
+   <Border Background="#FAFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="18" Padding="12">
+    <Grid>
+     <Grid.ColumnDefinitions><ColumnDefinition Width="64"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+     <Grid Width="64" Height="64" VerticalAlignment="Center">
+      <Ellipse Width="61" Height="61" Stroke="#E8ECF8" StrokeThickness="3"/>
+      <Path x:Name="RecordingCountdownArc1" Stroke="#6E7CF1" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M36.036,3.282 A29,29 0 0 1 58.89,42.864"/>
+      <Path x:Name="RecordingCountdownArc2" Stroke="#6E7CF1" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M54.852,49.854 A29,29 0 0 1 9.148,49.854"/>
+      <Path x:Name="RecordingCountdownArc3" Stroke="#6E7CF1" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M5.11,42.864 A29,29 0 0 1 27.964,3.282"/>
+      <local:GlyphCenteredText x:Name="RecordingCountdownText" Text="3" Foreground="#5E6EEB" FontFamily="Segoe UI Variable Display" FontSize="38" FontWeight="SemiBold" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" RenderTransformOrigin="0.5,0.5">
+       <local:GlyphCenteredText.RenderTransform><ScaleTransform x:Name="RecordingCountdownScale" ScaleX="1" ScaleY="1"/></local:GlyphCenteredText.RenderTransform>
+      </local:GlyphCenteredText>
+     </Grid>
+     <StackPanel Grid.Column="2" VerticalAlignment="Center">
+      <TextBlock x:Name="RecordingCountdownLabel" Text="即将录制" Foreground="#52637A" FontSize="13" FontWeight="SemiBold"/>
+      <TextBlock x:Name="RecordingCountdownHint" Text="Esc 取消" Foreground="#7E8BA0" FontSize="12" Margin="0,6,0,0"/>
+     </StackPanel>
+    </Grid>
+   </Border>
+  </Grid>
 </Canvas>
 </Window>
