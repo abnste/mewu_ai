@@ -8,6 +8,7 @@ public sealed class AppSettings
     public HotkeySetting CaptureHotkey { get; set; } = new();
     public bool LaunchAtStartup { get; set; }
     public bool TeachingMode { get; set; } = true;
+    public bool ShowToolbarCaptions { get; set; } = true;
     public string UiLanguage { get; set; } = "system";
     public bool ThinkingGlowEnabled { get; set; } = true;
     public string ThinkingGlowColor { get; set; } = "#A7C7FF";

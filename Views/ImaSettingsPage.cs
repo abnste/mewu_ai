@@ -19,7 +19,12 @@ internal sealed class ImaSettingsPage : StackPanel
     private readonly TextBlock _status=new();
     private readonly Button _saveSecret=new(),_test=new(),_clearSecret=new();
     private readonly CancellationToken _token;
+    private readonly Func<AppSettings,CancellationToken,Task<IReadOnlyList<ImaVaultService.ImaKnowledgeBase>>> _getKnowledgeBases;
+    private readonly Func<AppSettings,bool> _isConfigured;
+    private readonly Action<string> _saveApiKey;
+    private readonly Action _clearApiKey;
     private bool _loaded;
+    private int _revision;
     internal bool Enabled=>_enable.IsChecked==true;
     internal string ClientId=>_clientId.Text.Trim();
     internal string KnowledgeBaseId=>(_knowledgeBase.SelectedItem as KnowledgeBaseOption)?.Id??string.Empty;
@@ -34,8 +39,14 @@ internal sealed class ImaSettingsPage : StackPanel
     }
 
     internal ImaSettingsPage(AppSettings settings,CancellationToken token)
+        :this(settings,token,ImaVaultService.GetKnowledgeBasesAsync,ImaVaultService.IsConfigured,ImaVaultService.SaveSecret,ImaVaultService.ClearSecret){}
+
+    internal ImaSettingsPage(AppSettings settings,CancellationToken token,
+        Func<AppSettings,CancellationToken,Task<IReadOnlyList<ImaVaultService.ImaKnowledgeBase>>> getKnowledgeBases,
+        Func<AppSettings,bool> isConfigured,Action<string> saveApiKey,Action clearApiKey)
     {
         _token=token;
+        _getKnowledgeBases=getKnowledgeBases;_isConfigured=isConfigured;_saveApiKey=saveApiKey;_clearApiKey=clearApiKey;
         var form=new AiSettingsForm("ima",T("把圈选截图归档进腾讯 ima 知识库：图片经 ima 官方 OpenAPI 上传（create_media → COS 直传 → add_knowledge），自动 OCR 入库、多端同步。凭证在 ima.qq.com/agent-interface 生成（ima 未向第三方开放扫码授权，官方接入方式即 Client ID/API Key）；API Key 只保存在本机（DPAPI 加密）。","Archive the selected screenshot into a Tencent ima knowledge base: the image is uploaded via the official ima OpenAPI (create_media → direct COS upload → add_knowledge) with automatic OCR and multi-device sync. Get the credentials at ima.qq.com/agent-interface (ima offers no third-party QR authorization; Client ID/API Key is the official way). The API Key stays on this machine (DPAPI encrypted)."),_status);
         Children.Add(form);
         form.AddAction(_saveSecret,T("保存 API Key","Save API Key"));
@@ -48,6 +59,8 @@ internal sealed class ImaSettingsPage : StackPanel
         form.Fields.Children.Add(AiSettingsForm.Field(T("Client ID","Client ID"),_clientId));
         form.Fields.Children.Add(AiSettingsForm.Field(T("API Key","API Key"),_apiKey));
         _knowledgeBase.ToolTip=T("点击“测试连接”后从账号中加载；留空默认第一个可写知识库。","Loaded after clicking “Test connection”; empty = first addable knowledge base.");
+        _knowledgeBase.Items.Add(DefaultKnowledgeBase());
+        _knowledgeBase.SelectedIndex=0;
         form.Fields.Children.Add(AiSettingsForm.Field(T("知识库（留空为默认）","Knowledge base (empty = default)"),_knowledgeBase));
         form.Fields.Children.Add(_enable);
         if(!string.IsNullOrWhiteSpace(settings.ImaKnowledgeBaseId))
@@ -55,22 +68,38 @@ internal sealed class ImaSettingsPage : StackPanel
             var saved=new KnowledgeBaseOption(settings.ImaKnowledgeBaseId,settings.ImaKnowledgeBaseName);
             _knowledgeBase.Items.Add(saved);_knowledgeBase.SelectedItem=saved;
         }
-        _status.Text=ImaVaultService.IsConfigured(settings)?T("已配置。","Configured."):T("填写 Client ID 并保存 API Key 后点击“测试连接”。","Enter the Client ID, save the API Key, then click “Test connection”.");
+        _status.Text=T("正在读取本机授权状态…","Reading local authorization status…");
+        _clientId.TextChanged+=(_,_)=>
+        {
+            _revision++;
+            _knowledgeBase.Items.Clear();_knowledgeBase.Items.Add(DefaultKnowledgeBase());_knowledgeBase.SelectedIndex=0;
+            _status.Text=T("Client ID 已修改，请重新测试连接。","Client ID changed. Test the connection again.");
+        };
         _saveSecret.Click+=(_,_)=>SaveSecret();
         _clearSecret.Click+=(_,_)=>ClearSecret();
         _test.Click+=async(_,_)=>await TestConnectionAsync();
         Loaded+=async(_,_)=>
         {
-            if(_loaded||!ImaVaultService.IsConfigured(settings))return;_loaded=true;
-            await LoadKnowledgeBasesAsync(preferSaved:false);
+            if(_loaded||_token.IsCancellationRequested)return;_loaded=true;
+            var snapshot=CurrentSettings();var revision=_revision;
+            try
+            {
+                var configured=await Task.Run(()=>_isConfigured(snapshot),_token);
+                if(!_token.IsCancellationRequested&&revision==_revision&&_test.IsEnabled)
+                    _status.Text=configured?T("已保存凭据，点击“测试连接”加载知识库。","Credentials saved. Test the connection to load knowledge bases."):T("填写 Client ID 并保存 API Key 后点击“测试连接”。","Enter the Client ID, save the API Key, then click “Test connection”.");
+            }
+            catch(OperationCanceledException)when(_token.IsCancellationRequested){}
+            catch(Exception ex){new PrivacyLogger().Info("ImaStatus",ex.GetType().Name);}
         };
     }
 
     private void SaveSecret()
     {
+        if(_token.IsCancellationRequested)return;
         try
         {
-            ImaVaultService.SaveSecret(_apiKey.Password);
+            _saveApiKey(_apiKey.Password);
+            _apiKey.Clear();_revision++;
             _status.Foreground=Brushes.SlateGray;
             _status.Text=T("API Key 已保存（本机加密）。","API Key saved (encrypted on this machine).");
         }
@@ -83,10 +112,14 @@ internal sealed class ImaSettingsPage : StackPanel
 
     private void ClearSecret()
     {
-        ImaVaultService.ClearSecret();
-        _apiKey.Clear();
-        _status.Foreground=Brushes.SlateGray;
-        _status.Text=T("API Key 已清除。","API Key cleared.");
+        if(_token.IsCancellationRequested)return;
+        try
+        {
+            _clearApiKey();_apiKey.Clear();_revision++;
+            _status.Foreground=Brushes.SlateGray;
+            _status.Text=T("API Key 已清除。","API Key cleared.");
+        }
+        catch(Exception ex){_status.Foreground=Brushes.Firebrick;_status.Text=ex.Message;}
     }
 
     private AppSettings CurrentSettings()=>new()
@@ -97,53 +130,52 @@ internal sealed class ImaSettingsPage : StackPanel
         ImaKnowledgeBaseName=KnowledgeBaseName
     };
 
-    private async Task TestConnectionAsync()
+    internal async Task TestConnectionAsync()
     {
-        if(_token.IsCancellationRequested)return;
-        // 若密码框里已输入新 Key，先自动保存，避免“填了 Key 却没点保存”导致测试失败。
-        if(_apiKey.Password.Length>0){try{ImaVaultService.SaveSecret(_apiKey.Password);}catch{}}
-        _test.IsEnabled=false;
+        if(!_test.IsEnabled||_token.IsCancellationRequested)return;
+        if(_apiKey.Password.Length>0)
+        {
+            _status.Foreground=Brushes.SlateGray;
+            _status.Text=T("请先点击“保存 API Key”，再测试连接。","Save the API Key before testing the connection.");
+            return;
+        }
+        // Capture WPF values before dispatching network work to a background thread.
+        var snapshot=CurrentSettings();var revision=++_revision;
+        _test.IsEnabled=false;_saveSecret.IsEnabled=false;_clearSecret.IsEnabled=false;
         _status.Foreground=Brushes.SlateGray;
         _status.Text=T("正在连接 ima…","Connecting to ima…");
         try
         {
-            var list=await Task.Run(()=>ImaVaultService.GetKnowledgeBasesAsync(CurrentSettings(),_token),_token);
+            var list=await Task.Run(()=>_getKnowledgeBases(snapshot,_token),_token);
             _token.ThrowIfCancellationRequested();
-            var preferred=KnowledgeBaseId;
+            if(revision!=_revision)return;
+            var preferred=KnowledgeBaseId;var preferredName=KnowledgeBaseName;
             _knowledgeBase.Items.Clear();
+            _knowledgeBase.Items.Add(DefaultKnowledgeBase());
             foreach(var kb in list)_knowledgeBase.Items.Add(new KnowledgeBaseOption(kb.Id,kb.Name));
-            _knowledgeBase.SelectedItem=_knowledgeBase.Items.OfType<KnowledgeBaseOption>().FirstOrDefault(kb=>kb.Id==preferred)
-                ??_knowledgeBase.Items.OfType<KnowledgeBaseOption>().FirstOrDefault();
+            var selected=_knowledgeBase.Items.OfType<KnowledgeBaseOption>().FirstOrDefault(kb=>kb.Id==preferred);
+            var missing=selected is null&&!string.IsNullOrEmpty(preferred);
+            if(missing){selected=new KnowledgeBaseOption(preferred,preferredName);_knowledgeBase.Items.Add(selected);}
+            _knowledgeBase.SelectedItem=selected??_knowledgeBase.Items[0];
             _status.Foreground=Brushes.SlateGray;
-            _status.Text=list.Count==0
+            _status.Text=missing
+                ?T("连接成功，但原知识库不可用，已保留原选择；请选择一个可写知识库。","Connected, but the saved knowledge base is unavailable. Its selection was preserved; choose an addable knowledge base.")
+                :list.Count==0
                 ?T("连接成功，但账号下没有可添加内容的知识库，请先在 ima 中创建。","Connected, but no addable knowledge bases exist. Create one in ima first.")
                 :T($"连接成功，加载到 {list.Count} 个知识库。",$"Connected. {list.Count} knowledge base(s) loaded.");
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
         catch(Exception ex)
         {
+            if(_token.IsCancellationRequested||revision!=_revision)return;
             _status.Foreground=Brushes.Firebrick;
             _status.Text=T($"连接失败：{ex.Message}",$"Connection failed: {ex.Message}");
-            new PrivacyLogger().Info("ImaTestConnection",$"{ex.GetType().Name}: {ex.Message}");
+            new PrivacyLogger().Info("ImaTestConnection",ex.GetType().Name);
         }
-        finally{_test.IsEnabled=true;}
+        finally{_test.IsEnabled=true;_saveSecret.IsEnabled=true;_clearSecret.IsEnabled=true;}
     }
 
-    private async Task LoadKnowledgeBasesAsync(bool preferSaved)
-    {
-        try
-        {
-            var preferred=KnowledgeBaseId;
-            var list=await Task.Run(()=>ImaVaultService.GetKnowledgeBasesAsync(CurrentSettings(),_token),_token);
-            _token.ThrowIfCancellationRequested();
-            _knowledgeBase.Items.Clear();
-            foreach(var kb in list)_knowledgeBase.Items.Add(new KnowledgeBaseOption(kb.Id,kb.Name));
-            _knowledgeBase.SelectedItem=_knowledgeBase.Items.OfType<KnowledgeBaseOption>().FirstOrDefault(kb=>kb.Id==preferred)
-                ??(preferSaved?null:_knowledgeBase.Items.OfType<KnowledgeBaseOption>().FirstOrDefault());
-        }
-        catch(OperationCanceledException)when(_token.IsCancellationRequested){}
-        catch(Exception ex){new PrivacyLogger().Info("ImaLoadKnowledgeBases",ex.GetType().Name);}
-    }
+    private static KnowledgeBaseOption DefaultKnowledgeBase()=>new(string.Empty,T("默认（第一个可写知识库）","Default (first addable knowledge base)"));
 
     private static string T(string zh,string en)=>LocalizationService.T(zh,en);
 }

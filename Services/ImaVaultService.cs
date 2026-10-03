@@ -6,6 +6,8 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using mewu_ai_Assistant.Models;
 namespace mewu_ai_Assistant.Services;
 
@@ -42,28 +44,58 @@ internal static class ImaVaultService
     internal sealed record ImaKnowledgeBase(string Id,string Name);
 
     /// <summary>列出当前账号可添加内容的知识库（用于设置页选择与连接测试）。</summary>
-    internal static async Task<IReadOnlyList<ImaKnowledgeBase>> GetKnowledgeBasesAsync(AppSettings settings,CancellationToken cancellationToken)
+    internal static Task<IReadOnlyList<ImaKnowledgeBase>> GetKnowledgeBasesAsync(AppSettings settings,CancellationToken cancellationToken)
+        =>GetKnowledgeBasesAsync(settings,NetworkHttpClientFactory.Create(),ReadSecret(cancellationToken),cancellationToken);
+
+    internal static async Task<IReadOnlyList<ImaKnowledgeBase>> GetKnowledgeBasesAsync(AppSettings settings,HttpClient client,string apiKey,CancellationToken cancellationToken)
     {
-        var payload=await PostAsync(settings,"get_addable_knowledge_base_list",new JsonObject{["cursor"]=string.Empty,["limit"]=50},cancellationToken).ConfigureAwait(false);
-        var list=payload?["knowledge_base_list"]?.AsArray()??payload?["data"]?["knowledge_base_list"]?.AsArray();
+        settings=Snapshot(settings);
         var result=new List<ImaKnowledgeBase>();
-        if(list is not null)
+        var ids=new HashSet<string>(StringComparer.Ordinal);
+        var cursors=new HashSet<string>(StringComparer.Ordinal);
+        var cursor=string.Empty;
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(Timeout);
+        for(var page=0;page<100;page++)
+        {
+            var payload=await PostAsync(settings,client,apiKey,"get_addable_knowledge_base_list",new JsonObject{["cursor"]=cursor,["limit"]=50},timeout.Token).ConfigureAwait(false);
+            if(payload["addable_knowledge_base_list"] is not JsonArray list)throw McpHttpResponse.Invalid("ima");
             foreach(var entry in list)
             {
-                var id=entry?["knowledge_base_id"]?.GetValue<string>()??entry?["id"]?.GetValue<string>();
-                var name=entry?["name"]?.GetValue<string>()??entry?["title"]?.GetValue<string>()??string.Empty;
-                if(!string.IsNullOrWhiteSpace(id))result.Add(new ImaKnowledgeBase(id!,name));
+                if(entry is not JsonObject item)throw McpHttpResponse.Invalid("ima");
+                var id=McpHttpResponse.RequiredString(item,"id","ima");
+                var name=McpHttpResponse.RequiredString(item,"name","ima");
+                if(ids.Add(id))result.Add(new ImaKnowledgeBase(id,name));
             }
-        return result;
+            if(payload["is_end"] is not JsonValue value||!value.TryGetValue<bool>(out var isEnd))throw McpHttpResponse.Invalid("ima");
+            if(isEnd)return result;
+            cursor=McpHttpResponse.RequiredString(payload,"next_cursor","ima");
+            if(!cursors.Add(cursor))throw McpHttpResponse.Invalid("ima");
+        }
+        throw new InvalidOperationException(LocalizationService.T("ima 知识库列表页数过多。","The ima knowledge-base list has too many pages."));
     }
 
     /// <summary>把 PNG 截图归档进 ima 知识库，返回可读结果文本。</summary>
-    internal static async Task<string> SaveImageAsync(AppSettings settings,byte[] png,CancellationToken cancellationToken)
+    internal static Task<string> SaveImageAsync(AppSettings settings,byte[] png,CancellationToken cancellationToken)
+        =>SaveImageAsync(settings,png,NetworkHttpClientFactory.Create(),ReadSecret(cancellationToken),cancellationToken);
+
+    internal static async Task<string> SaveImageAsync(AppSettings settings,byte[] png,HttpClient client,string apiKey,CancellationToken cancellationToken)
     {
-        if(!IsConfigured(settings))
+        cancellationToken.ThrowIfCancellationRequested();
+        settings=Snapshot(settings);
+        if(!settings.ImaEnabled||string.IsNullOrWhiteSpace(settings.ImaClientId)||string.IsNullOrWhiteSpace(apiKey))
             throw new InvalidOperationException(LocalizationService.T("ima 未启用或配置不完整。请到 设置 → MCP → ima 填写 Client ID 并保存 API Key。","ima is not enabled or incomplete. Fill in the Client ID and save the API Key under Settings → MCP → ima."));
-        var (kbId,kbName)=await ResolveKnowledgeBaseAsync(settings,cancellationToken).ConfigureAwait(false);
-        var stamp=DateTime.Now.ToString("yyyyMMdd-HHmmss",System.Globalization.CultureInfo.InvariantCulture);
+        if(png.Length==0||png.Length>30*1024*1024)throw new InvalidOperationException(LocalizationService.T("ima 图片大小必须大于 0 且不超过 30 MB。","ima images must be nonempty and no larger than 30 MB."));
+        var kbId=settings.ImaKnowledgeBaseId.Trim();
+        var kbName=string.IsNullOrWhiteSpace(settings.ImaKnowledgeBaseName)?kbId:settings.ImaKnowledgeBaseName;
+        if(kbId.Length==0)
+        {
+            var bases=await GetKnowledgeBasesAsync(settings,client,apiKey,cancellationToken).ConfigureAwait(false);
+            if(bases.Count==0)throw new InvalidOperationException(LocalizationService.T("ima 账号下没有可添加内容的知识库。","No addable ima knowledge bases found."));
+            kbId=bases[0].Id;
+            kbName=bases[0].Name;
+        }
+        var stamp=DateTime.Now.ToString("yyyyMMdd-HHmmss",System.Globalization.CultureInfo.InvariantCulture)+"-"+Guid.NewGuid().ToString("N");
         var fileName=$"MewuAI-{stamp}.png";
 
         // Step 1：创建媒体，取得 COS 直传凭证。
@@ -75,15 +107,12 @@ internal static class ImaVaultService
             ["knowledge_base_id"]=kbId,
             ["file_ext"]="png"
         };
-        var created=await PostAsync(settings,"create_media",createPayload,cancellationToken).ConfigureAwait(false)
-            ??throw new InvalidOperationException(LocalizationService.T("ima create_media 响应无效。","ima create_media returned an invalid response."));
-        var mediaId=created["media_id"]?.GetValue<string>()
-            ??throw new InvalidOperationException(LocalizationService.T("ima 响应缺少 media_id。","ima response has no media_id."));
-        var cos=created["cos_credential"]?.AsObject()
-            ??throw new InvalidOperationException(LocalizationService.T("ima 响应缺少 COS 上传凭证。","ima response has no COS upload credential."));
+        var created=await PostAsync(settings,client,apiKey,"create_media",createPayload,cancellationToken).ConfigureAwait(false);
+        var mediaId=McpHttpResponse.RequiredString(created,"media_id","ima");
+        var cos=McpHttpResponse.RequiredObject(created,"cos_credential","ima");
 
         // Step 2：COS 直传。
-        await UploadToCosAsync(cos,png,cancellationToken).ConfigureAwait(false);
+        await UploadToCosAsync(client,cos,png,cancellationToken).ConfigureAwait(false);
 
         // Step 3：登记进知识库。
         var addPayload=new JsonObject
@@ -99,65 +128,51 @@ internal static class ImaVaultService
                 ["file_name"]=fileName
             }
         };
-        await PostAsync(settings,"add_knowledge",addPayload,cancellationToken).ConfigureAwait(false);
+        var added=await PostAsync(settings,client,apiKey,"add_knowledge",addPayload,cancellationToken).ConfigureAwait(false);
+        McpHttpResponse.RequiredString(added,"media_id","ima");
         return LocalizationService.T($"已存入 ima 知识库「{kbName}」：{fileName}",$"Saved to ima knowledge base “{kbName}”: {fileName}");
     }
 
-    private static async Task<(string Id,string Name)> ResolveKnowledgeBaseAsync(AppSettings settings,CancellationToken cancellationToken)
+    private static async Task<JsonObject> PostAsync(AppSettings settings,HttpClient client,string apiKey,string endpoint,JsonObject payload,CancellationToken cancellationToken)
     {
-        if(!string.IsNullOrWhiteSpace(settings.ImaKnowledgeBaseId))
-            return (settings.ImaKnowledgeBaseId.Trim(),string.IsNullOrWhiteSpace(settings.ImaKnowledgeBaseName)?settings.ImaKnowledgeBaseId.Trim():settings.ImaKnowledgeBaseName);
-        var list=await GetKnowledgeBasesAsync(settings,cancellationToken).ConfigureAwait(false);
-        if(list.Count==0)
-            throw new InvalidOperationException(LocalizationService.T("ima 账号下没有可添加内容的知识库，请先在 ima 中创建。","No addable ima knowledge bases found. Create one in ima first."));
-        return (list[0].Id,list[0].Name);
-    }
-
-    private static async Task<JsonObject?> PostAsync(AppSettings settings,string endpoint,JsonObject payload,CancellationToken cancellationToken)
-    {
-        var apiKey=new CredentialService().Read(CredentialId);
+        cancellationToken.ThrowIfCancellationRequested();
         if(string.IsNullOrWhiteSpace(apiKey))throw new InvalidOperationException(LocalizationService.T("尚未保存 ima API Key。","No ima API Key saved yet."));
+        if(string.IsNullOrWhiteSpace(settings.ImaClientId)||settings.ImaClientId.Any(char.IsControl)||apiKey.Any(char.IsControl))throw new InvalidOperationException(LocalizationService.T("ima Client ID 或 API Key 格式无效。","The ima Client ID or API Key format is invalid."));
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(Timeout);
-        using var client=NetworkHttpClientFactory.Create();
         using var content=new StringContent(payload.ToJsonString(),Encoding.UTF8,"application/json");
         using var request=new HttpRequestMessage(HttpMethod.Post,$"{BaseUrl}/{endpoint}"){Content=content};
         request.Headers.TryAddWithoutValidation("ima-openapi-clientid",settings.ImaClientId.Trim());
         request.Headers.TryAddWithoutValidation("ima-openapi-apikey",apiKey);
         request.Headers.TryAddWithoutValidation("ima-openapi-ctx","client=mewu_ai");
         using var response=await client.SendAsync(request,timeout.Token).ConfigureAwait(false);
-        var body=await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-        var parsed=JsonNode.Parse(body)?.AsObject()
-            ??throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                LocalizationService.T("ima 返回非 JSON 响应（HTTP {0}）。","ima returned a non-JSON response (HTTP {0})."),(int)response.StatusCode));
-        var code=parsed["code"]?.GetValue<int>()??-1;
-        if(code!=0)
-        {
-            var message=parsed["msg"]?.GetValue<string>()??body;
-            throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                LocalizationService.T("ima 接口 {0} 失败（{1}）。","ima endpoint {0} failed ({1})."),endpoint,message));
-        }
-        return parsed["data"]?.AsObject()??parsed;
+        var parsed=await McpHttpResponse.ReadAsync(response,"ima "+endpoint,"code",timeout.Token).ConfigureAwait(false);
+        return McpHttpResponse.RequiredObject(parsed,"data","ima");
     }
 
     /// <summary>COS 简单上传（PUT）+ q-sign-algorithm=sha1 临时密钥签名。
     /// 与 ima 官方客户端一致：HttpString 末尾带换行、方法名小写 put、
     /// STS token 走 x-cos-security-token 头。</summary>
-    private static async Task UploadToCosAsync(JsonObject cos,byte[] png,CancellationToken cancellationToken)
+    private static async Task UploadToCosAsync(HttpClient client,JsonObject cos,byte[] png,CancellationToken cancellationToken)
     {
-        var secretId=cos["secret_id"]?.GetValue<string>();
-        var secretKey=cos["secret_key"]?.GetValue<string>();
-        var token=cos["token"]?.GetValue<string>();
-        var bucket=cos["bucket"]?.GetValue<string>()??cos["bucket_name"]?.GetValue<string>();
-        var region=cos["region"]?.GetValue<string>();
-        var cosKey=cos["cos_key"]?.GetValue<string>();
-        if(string.IsNullOrWhiteSpace(secretId)||string.IsNullOrWhiteSpace(secretKey)||string.IsNullOrWhiteSpace(bucket)||string.IsNullOrWhiteSpace(region)||string.IsNullOrWhiteSpace(cosKey))
-            throw new InvalidOperationException(LocalizationService.T("ima COS 上传凭证字段不完整。","ima COS upload credential is incomplete."));
+        cancellationToken.ThrowIfCancellationRequested();
+        var secretId=McpHttpResponse.RequiredString(cos,"secret_id","ima COS");
+        var secretKey=McpHttpResponse.RequiredString(cos,"secret_key","ima COS");
+        var token=McpHttpResponse.RequiredString(cos,"token","ima COS");
+        var bucket=McpHttpResponse.RequiredString(cos,"bucket_name","ima COS");
+        var region=McpHttpResponse.RequiredString(cos,"region","ima COS");
+        var cosKey=McpHttpResponse.RequiredString(cos,"cos_key","ima COS").TrimStart('/');
+        if(!Regex.IsMatch(bucket,@"\A[a-z0-9][a-z0-9-]*-[0-9]+\z")||!Regex.IsMatch(region,@"\A[a-z0-9]+(?:-[a-z0-9]+)+\z")
+            ||cosKey.Length==0||cosKey.Contains('\\')||cosKey.Any(char.IsControl)||cosKey.Split('/').Any(p=>p is "." or "..")
+            ||secretId.Any(char.IsControl)||token.Any(char.IsControl))throw McpHttpResponse.Invalid("ima COS");
         var host=$"{bucket}.cos.{region}.myqcloud.com";
-        var uri="/"+cosKey.TrimStart('/');
+        var uri="/"+cosKey;
+        var escapedUri="/"+string.Join("/",cosKey.Split('/').Select(Uri.EscapeDataString));
         var contentType="image/png";
-        var start=DateTimeOffset.UtcNow.ToUnixTimeSeconds()-60;
-        var end=start+3600;
+        var start=RequiredTimestamp(cos,"start_time");
+        var end=RequiredTimestamp(cos,"expired_time");
+        var now=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if(start>now+60||end<=now||end<=start)throw McpHttpResponse.Invalid("ima COS");
         var keyTime=$"{start};{end}";
         var signKey=HmacSha1Hex(keyTime,secretKey!);
         var httpString=$"put\n{uri}\n\ncontent-type={Uri.EscapeDataString(contentType)}&host={Uri.EscapeDataString(host)}\n";
@@ -168,18 +183,16 @@ internal static class ImaVaultService
 
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(Timeout);
-        using var client=NetworkHttpClientFactory.Create();
         using var content=new ByteArrayContent(png);
         content.Headers.TryAddWithoutValidation("Content-Type",contentType);
-        using var request=new HttpRequestMessage(HttpMethod.Put,$"https://{host}{uri}"){Content=content};
+        using var request=new HttpRequestMessage(HttpMethod.Put,$"https://{host}{escapedUri}"){Content=content};
         request.Headers.TryAddWithoutValidation("Authorization",authorization);
         request.Headers.TryAddWithoutValidation("x-cos-security-token",token??string.Empty);
         using var response=await client.SendAsync(request,timeout.Token).ConfigureAwait(false);
         if(!response.IsSuccessStatusCode)
         {
-            var body=await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
             throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                LocalizationService.T("ima COS 上传失败（HTTP {0}）。","ima COS upload failed (HTTP {0})."),$"{(int)response.StatusCode} {Truncate(body)}"));
+                LocalizationService.T("ima COS 上传失败（HTTP {0}）。","ima COS upload failed (HTTP {0})."),(int)response.StatusCode));
         }
     }
 
@@ -194,5 +207,25 @@ internal static class ImaVaultService
         return Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(data))).ToLowerInvariant();
     }
 
-    private static string Truncate(string value)=>value.Length<=200?value:value[..200];
+    private static long RequiredTimestamp(JsonObject cos,string name)
+    {
+        if(cos[name] is JsonValue value)
+        {
+            if(value.TryGetValue<long>(out var number))return number;
+            if(value.TryGetValue<string>(out var text)&&long.TryParse(text,NumberStyles.None,CultureInfo.InvariantCulture,out number))return number;
+        }
+        throw McpHttpResponse.Invalid("ima COS");
+    }
+
+    private static string ReadSecret(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return new CredentialService().Read(CredentialId)??string.Empty;
+    }
+
+    private static AppSettings Snapshot(AppSettings settings)=>new()
+    {
+        ImaEnabled=settings.ImaEnabled,ImaClientId=settings.ImaClientId,
+        ImaKnowledgeBaseId=settings.ImaKnowledgeBaseId,ImaKnowledgeBaseName=settings.ImaKnowledgeBaseName
+    };
 }

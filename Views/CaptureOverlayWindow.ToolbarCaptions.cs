@@ -6,6 +6,11 @@ namespace mewu_ai_Assistant.Views;
 
 public static class CaptureToolbarCaption
 {
+    public static readonly DependencyProperty IsVisibleProperty = DependencyProperty.RegisterAttached(
+        "IsVisible", typeof(bool), typeof(CaptureToolbarCaption), new FrameworkPropertyMetadata(true,FrameworkPropertyMetadataOptions.Inherits));
+    public static bool GetIsVisible(DependencyObject element) => (bool)element.GetValue(IsVisibleProperty);
+    public static void SetIsVisible(DependencyObject element, bool value) => element.SetValue(IsVisibleProperty, value);
+
     public static readonly DependencyProperty TextProperty = DependencyProperty.RegisterAttached(
         "Text", typeof(string), typeof(CaptureToolbarCaption), new PropertyMetadata(string.Empty));
 
@@ -17,8 +22,12 @@ public partial class CaptureOverlayWindow
 {
     private void InitializeCaptureToolbarCaptions()
     {
+        CaptureToolbarCaption.SetIsVisible(this,_host.Settings.ShowToolbarCaptions);
         void Caption(System.Windows.Controls.Button button, string chinese, string english)
-            => CaptureToolbarCaption.SetText(button, L(chinese, english));
+        {
+            CaptureToolbarCaption.SetText(button, L(chinese, english));
+            button.SetResourceReference(StyleProperty,button==ReferenceButton||button==DrawingDoneButton?"CaptionReferenceButton":"CaptionToolbarButton");
+        }
 
         Caption(ReferenceButton, "引用", "Ref");
         Caption(AddRegionButton, "添加", "Add");
@@ -37,5 +46,26 @@ public partial class CaptureOverlayWindow
         Caption(FeishuButton, "飞书", "Feishu");
         Caption(ObsidianButton, "笔记", "Notes");
         Caption(ImaButton, "ima", "ima");
+        Caption(DrawingSelectButton, "选择", "Select");
+        Caption(DrawingPenButton, "画笔", "Pen");
+        Caption(DrawingEraserButton, "橡皮", "Eraser");
+        Caption(DrawingHighlightButton, "荧光", "Marker");
+        Caption(DrawingLineButton, "直线", "Line");
+        Caption(DrawingArrowButton, "箭头", "Arrow");
+        Caption(DrawingRectangleButton, "矩形", "Box");
+        Caption(DrawingEllipseButton, "椭圆", "Oval");
+        Caption(DrawingTextButton, "文字", "Text");
+        Caption(DrawingNumberButton, "序号", "Number");
+        Caption(DrawingMosaicButton, "马赛克", "Mosaic");
+        Caption(DrawingSeamlessEraseButton, "提取", "Lift");
+        Caption(DrawingHealButton, "消除", "Heal");
+        Caption(DrawingMarkButton, "重点", "Mark");
+        Caption(DrawingUndoButton, "撤回", "Undo");
+        Caption(DrawingRedoButton, "重做", "Redo");
+        Caption(DrawingClearButton, "清空", "Clear");
+        Caption(DrawingDoneButton, "确定", "Done");
+        Caption(DrawingRedButton, "红色", "Red");
+        Caption(DrawingBlueButton, "蓝色", "Blue");
+        Caption(DrawingColorButton, "颜色", "Color");
     }
 }

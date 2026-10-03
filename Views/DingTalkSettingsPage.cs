@@ -20,6 +20,7 @@ internal sealed class DingTalkSettingsPage : StackPanel
     private readonly Button _saveSecret=new(),_test=new(),_clear=new();
     private readonly CancellationToken _token;
     private bool _statusLoaded;
+    private int _statusRevision;
     internal bool Enabled=>_enable.IsChecked==true;
     internal string AppKey=>_appKey.Text.Trim();
     internal string AgentId=>_agentId.Text.Trim();
@@ -48,13 +49,19 @@ internal sealed class DingTalkSettingsPage : StackPanel
         _saveSecret.Click+=(_,_)=>SaveSecret();
         _test.Click+=async(_,_)=>await TestAsync();
         _clear.Click+=(_,_)=>ClearSecret();
+        _appKey.TextChanged+=(_,_)=>
+        {
+            _statusRevision++;
+            _status.Text=T("AppKey 已修改，请重新测试连接。","AppKey changed. Test the connection again.");
+        };
         Loaded+=async(_,_)=>
         {
             if(_statusLoaded)return;_statusLoaded=true;
             try
             {
+                var revision=_statusRevision;
                 var configured=await Task.Run(()=>DingTalkService.IsConfigured(settings),_token);
-                if(!_token.IsCancellationRequested)_status.Text=configured?T("已配置（Secret 已保存）。","Configured (secret saved)."):T("尚未配置完整。","Not fully configured yet.");
+                if(!_token.IsCancellationRequested&&revision==_statusRevision)_status.Text=configured?T("已配置（Secret 已保存）。","Configured (secret saved)."):T("尚未配置完整。","Not fully configured yet.");
             }
             catch(OperationCanceledException)when(_token.IsCancellationRequested){}
             catch(Exception ex){new PrivacyLogger().Info("DingTalkStatus",ex.GetType().Name);}
@@ -64,6 +71,7 @@ internal sealed class DingTalkSettingsPage : StackPanel
     private void SaveSecret()
     {
         if(_token.IsCancellationRequested)return;
+        _statusRevision++;
         try
         {
             DingTalkService.SaveSecret(_secret.Password);
@@ -77,14 +85,20 @@ internal sealed class DingTalkSettingsPage : StackPanel
     private void ClearSecret()
     {
         if(_token.IsCancellationRequested)return;
-        DingTalkService.ClearSecret();
-        _status.Foreground=Brushes.SlateGray;
-        _status.Text=T("App Secret 已清除。","App Secret cleared.");
+        _statusRevision++;
+        try
+        {
+            DingTalkService.ClearSecret();_secret.Clear();
+            _status.Foreground=Brushes.SlateGray;
+            _status.Text=T("App Secret 已清除。","App Secret cleared.");
+        }
+        catch(Exception ex){ShowError(ex.Message);}
     }
 
     private async Task TestAsync()
     {
         if(!_test.IsEnabled||_token.IsCancellationRequested)return;
+        var revision=++_statusRevision;
         _test.IsEnabled=false;_saveSecret.IsEnabled=false;_clear.IsEnabled=false;
         _status.Foreground=Brushes.SlateGray;
         _status.Text=T("正在连接钉钉开放平台…","Connecting to the DingTalk open platform…");
@@ -92,16 +106,19 @@ internal sealed class DingTalkSettingsPage : StackPanel
         {
             var probe=new AppSettings{DingTalkEnabled=true,DingTalkAppKey=AppKey};
             await DingTalkService.TestConnectionAsync(probe,_token);
+            _token.ThrowIfCancellationRequested();
+            if(revision!=_statusRevision)return;
             _status.Text=T("access_token 获取成功，凭据有效。","access_token acquired; credentials valid.");
             _status.Foreground=Brushes.SeaGreen;
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
-        catch(Exception ex){ShowError(ex.Message);}
+        catch(Exception ex){if(revision==_statusRevision)ShowError(ex.Message);}
         finally{_test.IsEnabled=true;_saveSecret.IsEnabled=true;_clear.IsEnabled=true;}
     }
 
     private void ShowError(string message)
     {
+        if(_token.IsCancellationRequested)return;
         _status.Text=message;
         _status.Foreground=Brushes.Firebrick;
     }

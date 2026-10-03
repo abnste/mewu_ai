@@ -1592,6 +1592,7 @@ public partial class CaptureOverlayWindow : Window
         foreach(var state in snapshot.Selections)
         {
             var item=state.Item;
+            InvalidateScreenEntityScan(item);
             CancelVideoAnnotationPlayback(item);
             RestoreVideoRange(item,state.VideoRange);
             SelectionLayer.Children.Add(item.Host);
@@ -1857,7 +1858,7 @@ public partial class CaptureOverlayWindow : Window
         DingTalkButton.Visibility=!isVideo&&_host.Settings.DingTalkEnabled?Visibility.Visible:Visibility.Collapsed;
         FeishuButton.Visibility=!isVideo&&_host.Settings.FeishuEnabled?Visibility.Visible:Visibility.Collapsed;
         ObsidianButton.Visibility=!isVideo&&_host.Settings.ObsidianEnabled?Visibility.Visible:Visibility.Collapsed;
-        ImaButton.Visibility=!isVideo&&_host.Settings.ImaEnabled&&ImaVaultService.IsConfigured(_host.Settings)?Visibility.Visible:Visibility.Collapsed;
+        ImaButton.Visibility=!isVideo&&_host.Settings.ImaEnabled?Visibility.Visible:Visibility.Collapsed;
         McpShareSeparator.Visibility=DingTalkButton.Visibility==Visibility.Visible||FeishuButton.Visibility==Visibility.Visible||ObsidianButton.Visibility==Visibility.Visible||ImaButton.Visibility==Visibility.Visible?Visibility.Visible:Visibility.Collapsed;
         UpdateApplicationSnapshotTool(item);Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
@@ -2591,11 +2592,11 @@ public partial class CaptureOverlayWindow : Window
             // 结果追加到回答（进入历史），取消/失败也会如实记录。
             if(qqMailPendingDraft is not null&&CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))
             {
-                PromptStatus.Text="QQ 邮箱：等待确认发送…";
+                PromptStatus.Text=L("邮件：等待确认发送…","Mail: waiting for send confirmation…");
                 try
                 {
                     var qqMailOutcome=await QqMailSendService.DeliverAsync(qqMailPendingDraft,_host.Settings,
-                        summary=>Task.FromResult(Dispatcher.Invoke(()=>MewuDialogWindow.ShowChoice(this,LocalizationService.T("QQ 邮箱发送确认","QQ Mail send confirmation"),summary,LocalizationService.T("确认发送","Confirm send"),string.Empty)==MewuDialogResult.Primary)),
+                        summary=>Task.FromResult(Dispatcher.Invoke(()=>MewuDialogWindow.ShowChoice(this,LocalizationService.T("邮件发送确认","Mail send confirmation"),summary,LocalizationService.T("确认发送","Confirm send"),string.Empty)==MewuDialogResult.Primary)),
                         request.Token);
                     if(CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))
                     {
@@ -2608,7 +2609,7 @@ public partial class CaptureOverlayWindow : Window
                 catch(Exception ex)
                 {
                     new PrivacyLogger().Error("QqMailDeliver",ex);
-                    if(CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))PromptStatus.Text=$"QQ 邮箱发送失败：{ex.Message}";
+                    if(CaptureOverlayPolicy.CanAcceptAiUpdate(_request,request,_closed))PromptStatus.Text=$"{L("邮件发送失败","Mail send failed")}：{ex.Message}";
                 }
             }
             var continuation=result.ContinuationMessage is {ProviderContent:not null} complete&&string.Equals(complete.Role,"assistant",StringComparison.OrdinalIgnoreCase)
@@ -3441,7 +3442,7 @@ public partial class CaptureOverlayWindow : Window
     private void UpdateDrawingToolVisualState(DrawTool tool)
     {
         var active=tool switch{DrawTool.Select=>DrawingSelectButton,DrawTool.Freehand when _drawHighlighter=>DrawingHighlightButton,DrawTool.Freehand=>DrawingPenButton,DrawTool.Line=>DrawingLineButton,DrawTool.Rectangle=>DrawingRectangleButton,DrawTool.Ellipse=>DrawingEllipseButton,DrawTool.Arrow=>DrawingArrowButton,DrawTool.Mosaic=>DrawingMosaicButton,DrawTool.SeamlessErase=>DrawingSeamlessEraseButton,DrawTool.Heal=>DrawingHealButton,DrawTool.Mark=>DrawingMarkButton,DrawTool.Text=>DrawingTextButton,DrawTool.Number=>DrawingNumberButton,DrawTool.Eraser=>DrawingEraserButton,_=>DrawingPenButton};
-        foreach(var button in new[]{DrawingSelectButton,DrawingPenButton,DrawingEraserButton,DrawingHighlightButton,DrawingLineButton,DrawingRectangleButton,DrawingEllipseButton,DrawingArrowButton,DrawingMosaicButton,DrawingSeamlessEraseButton,DrawingHealButton,DrawingMarkButton,DrawingTextButton,DrawingNumberButton})button.Style=(Style)FindResource(ReferenceEquals(button,active)?"ReferenceIconButton":"ToolbarIconButton");
+        foreach(var button in new[]{DrawingSelectButton,DrawingPenButton,DrawingEraserButton,DrawingHighlightButton,DrawingLineButton,DrawingRectangleButton,DrawingEllipseButton,DrawingArrowButton,DrawingMosaicButton,DrawingSeamlessEraseButton,DrawingHealButton,DrawingMarkButton,DrawingTextButton,DrawingNumberButton})button.Style=(Style)FindResource(ReferenceEquals(button,active)?"CaptionReferenceButton":"CaptionToolbarButton");
     }
     private static DrawingAttributes RegularDrawingAttributes(Color color)=>new(){Color=color,Width=4,Height=4,IsHighlighter=false,FitToCurve=true};
     private static DrawingAttributes HighlightDrawingAttributes(Color color)=>new(){Color=color,Width=18,Height=18,IsHighlighter=true,FitToCurve=true};
@@ -4579,7 +4580,7 @@ public partial class CaptureOverlayWindow : Window
         item.Video.Visibility=Visibility.Collapsed;item.Image.Visibility=Visibility.Visible;item.VideoLease?.Dispose();item.VideoLease=null;item.VideoPath=null;item.VideoDuration=TimeSpan.Zero;item.VideoPlaying=false;
     }
     private void ClearImageOnlyLayers(SelectionItem item){ClearManualDrawing(item);item.DrawingOrder.Clear();item.DrawingRedo.Clear();ClearImageDerivedLayers(item);}
-    private void ClearImageDerivedLayers(SelectionItem item){item.SnapshotText=null;RemoveConnectionsTouching(item);item.TextLayer=NoTextLayerState.Instance;item.AnnotationNotes.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
+    private void ClearImageDerivedLayers(SelectionItem item){InvalidateScreenEntityScan(item);item.SnapshotText=null;RemoveConnectionsTouching(item);item.TextLayer=NoTextLayerState.Instance;item.AnnotationNotes.Clear();item.TextOverlays.Children.Clear();item.AiAnnotations.Children.Clear();ClearTextSelection(item);}
     private void InvalidateImageDerivedLayers(SelectionItem item){if(ReferenceEquals(_annotationCopyItem,item))CancelAnnotatedImageCopy();item.SnapshotTarget=null;if(ReferenceEquals(Active,item))HideScreenEntityBar();if(item.VideoPath is not null||item.CapturedImageOverride is not null)return;ClearImageDerivedLayers(item);}
     private bool IsCurrentRecording(RecordingSession session,SelectionItem item)=>ReferenceEquals(_recordingSession,session)&&ReferenceEquals(_recordingItem,item);
     private void ExitRecordingMode(SelectionItem selected)

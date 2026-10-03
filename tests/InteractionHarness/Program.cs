@@ -26,6 +26,7 @@ internal static class Program
     {
         // Each language scenario must enter a fresh process before the ordinary
         // harness initializes LocalizationService or creates a WPF Application.
+        if(args.Contains("--verify-screen-entity-scan")){ScreenEntityScanReplay.Run();return;}
         if(args.Contains("--verify-isolated-video-trim")){VideoTrimReplay.Run(args);return;}
         if(args.Contains("--render-video-trim")){VideoTrimVisualReplay.Run(args);return;}
         if(args.Contains("--verify-recording-countdown-visual")){RecordingCountdownVisualReplay.Run(args);return;}

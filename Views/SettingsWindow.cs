@@ -61,6 +61,7 @@ public sealed partial class SettingsWindow : Window
     private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
     private readonly CheckBox _recordSystemAudio = new(), _recordMicrophone = new();
+    private readonly CheckBox _toolbarCaptions = new();
     private readonly List<AiProviderSettings> _providers;
     private readonly Dictionary<string, string> _pendingApiKeys = [];
     private readonly HashSet<string> _apiKeysMarkedForDeletion = [];
@@ -319,6 +320,10 @@ public sealed partial class SettingsWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(_uiLanguage,"界面语言");
         panel.Children.Add(_uiLanguage);
         panel.Children.Add(Text("语言设置将在重新启动喵呜AI后生效。",true));
+        _toolbarCaptions.Content=LocalizationService.T("显示按钮功能文字","Show button labels");
+        _toolbarCaptions.IsChecked=_host.Settings.ShowToolbarCaptions;
+        _toolbarCaptions.ToolTip=LocalizationService.T("在截图与手动标注按钮内部显示简短文字；保存后下次截图生效。","Show short labels inside capture and drawing buttons. Applies to the next capture after saving.");
+        panel.Children.Add(_toolbarCaptions);
         panel.Children.Add(ThinkingGlowSettings());
         panel.Children.Add(NetworkProxySettings());
         panel.Children.Add(Text("启动与快捷键", true));
@@ -1237,6 +1242,7 @@ public sealed partial class SettingsWindow : Window
                 DefaultImageFormat=_imageFormat.SelectedIndex==1?"jpg":"png",
                 IncludeCaptureCursor=_captureCursor.IsChecked==true,
                 TeachingMode=_teachingMode.IsChecked==true,
+                ShowToolbarCaptions=_toolbarCaptions.IsChecked==true,
                 RecordingFps=ReadNumericChoice(_recordingFps,30),
                 RecordingQuality=ReadNumericChoice(_recordingQuality,75),
                 GifFps=ReadNumericChoice(_gifFps,15),
@@ -1277,6 +1283,7 @@ public sealed partial class SettingsWindow : Window
                 ImaClientId=_imaSettings.ClientId,
                 ImaKnowledgeBaseId=_imaSettings.KnowledgeBaseId,
                 ImaKnowledgeBaseName=_imaSettings.KnowledgeBaseName,
+                ScraplingPath=_host.Settings.ScraplingPath,
                 WorkBuddyModel=_workBuddySettings.SelectedModel?.Model??_host.Settings.WorkBuddyModel,
                 WorkBuddyReasoningEffort=_workBuddySettings.SelectedEffort,
                 WorkBuddySupportsImage=_workBuddySettings.SelectedModel?.SupportsImage??_host.Settings.WorkBuddySupportsImage,

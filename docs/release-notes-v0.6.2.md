@@ -1,14 +1,14 @@
 # 喵呜AI 0.6.2 / MewuAI 0.6.2
 
-本版本基于 v0.6.1，集中更新截图编辑、原位录屏剪辑、翻译与英文界面，并包含此前累计的截图响应、标注布局和稳定性优化。
+本版本基于 v0.6.1，集中更新截图编辑、原位录屏剪辑、翻译与英文界面，复审并修复 MCP 集成，同时包含此前累计的截图响应、标注布局和稳定性优化。
 
-This release builds on v0.6.1 with screenshot editing, in-place video trimming, translation and English-interface improvements, together with accumulated capture responsiveness, annotation layout and reliability fixes.
+This release builds on v0.6.1 with screenshot editing, in-place video trimming, translation and English-interface improvements, reviewed MCP integrations, and accumulated capture responsiveness, annotation layout and reliability fixes.
 
 ## 中文更新说明
 
 ### 截图与手工编辑
 
-- **更清晰的两行工具栏。** 工具与属性、撤回、重做、删除和确定分成两行，左侧对齐。截图主工具栏图标下增加一行中英文短标签，图标独立居中；分享入口隐藏时同步移除置顶右侧的空分隔线。橡皮擦紧接画笔，马赛克、无痕提取、涂抹消除与重点高亮放在同一组。
+- **更清晰的两行工具栏。** 工具与属性、撤回、重做、删除和确定分成两行，左侧对齐。截图与手绘按钮内部，在图标下方显示一行中英文小字，保持原有工具栏高度；常规设置可关闭文字并恢复图标居中。分享入口隐藏时同步移除置顶右侧的空分隔线。橡皮擦紧接画笔，马赛克、无痕提取、涂抹消除与重点高亮放在同一组。
 - **绘制和选择分开。** 使用绘制工具时不会因为经过已有图层而意外选中它；通过选择工具移动、缩放和编辑已有标注。修复文字输入、橡皮擦、删除层序和撤销重做的多处交互问题。
 - **保留手工内容。** 移动或调整截图选区时，手工标注继续跟随原桌面内容；临时移出选区的内容只被裁切显示，不会被删除，撤销与恢复也保留对应关系。
 - **背景高亮。** 荧光笔与“重点高亮”根据底图保护文字和细节，改善高亮后的可读性；重点高亮可以移动、调整范围和修改颜色。
@@ -34,13 +34,21 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - 减少拖动期间的重复处理，复用高亮与取样缓存，并限制派生图像的内存开销。
 - 视频标注去重比较完整运动轨迹，避免误删中途分离的标注；关闭或状态变化后，过期匹配结果不能覆盖较新的编辑。导出标注时，仅实际显示的说明卡参与重复框判断，未显示的说明卡不再误隐藏本应显示的区域框。
 
-v0.6.1 的 MCP 服务、网页抓取、屏幕实体操作和 WorkBuddy 更新继续保留。
+### MCP 集成修复
+
+- 修复分享服务误关闭共用网络连接造成后续请求失败；飞书图片上传/发送、钉钉接收人格式和 ima 知识库列表按官方接口修正，群列表与知识库列表支持分页。
+- 修复 ima 设置的跨线程访问、测试连接时隐式保存密钥和丢失原知识库选择；飞书选择群聊时同步接收人类型，切换账号后不接收旧列表。
+- 完善 QQ 邮箱协议握手、流式结果解析和请求校验；连接测试失败不再报成功。发件前确认草稿，无法确认投递时提示检查已发送箱，不自动重发或换账号发送。
+- 恢复网易 SMTP 证书验证，校验邮件地址，收件箱与 SMTP 分别测试；限制扫码登录跳转，避免日志记录会话和邮件原文。
+- Obsidian 保存使用独立文件名、检查 vault 内目录，取消或失败时清理本次未完成文件。旧选区的识别结果不能覆盖新截图；关闭覆盖层会取消网页抓取并阻止迟到弹窗。保存设置保留已有 Scrapling 路径。
+
+[MCP 配置与使用指南](./mcp-integrations.md#中文)。v0.6.1 的网页抓取和 WorkBuddy 等其他功能继续保留。
 
 ## English release notes
 
 ### Capture and manual editing
 
-- **Two aligned toolbar rows.** Tools occupy the first row; properties, undo, redo, delete and done occupy the second. Capture icons have compact, single-line Chinese or English labels below them while keeping their alignment. The capture toolbar hides the separator after Pin when no sharing actions are visible. The eraser follows the pen, while mosaic, seamless lift, healing brush and emphasis highlighting share a group.
+- **Two aligned toolbar rows.** Tools occupy the first row; properties, undo, redo, delete and done occupy the second. Compact Chinese or English labels sit below icons inside capture and drawing buttons without increasing toolbar height. General settings can hide the labels and restore centered icons. The capture toolbar hides the separator after Pin when no sharing actions are visible. The eraser follows the pen, while mosaic, seamless lift, healing brush and emphasis highlighting share a group.
 - **Separate drawing and selection.** Drawing over existing layers no longer unexpectedly selects them. Use the selection tool to move, resize and edit annotations. Fixes cover text input, erasing, deletion order, undo and redo.
 - **Preserved manual content.** Moving or resizing a desktop capture keeps annotations anchored to the original content. Content outside the current selection is clipped rather than deleted, including through undo and restoration.
 - **Background highlighting.** Freehand and region highlights protect text and image detail to improve readability. Emphasis highlights can be moved, resized and recolored.
@@ -66,7 +74,15 @@ v0.6.1 的 MCP 服务、网页抓取、屏幕实体操作和 WorkBuddy 更新继
 - Reduce repeated work while dragging, reuse highlight and sampling caches, and bound derived-image memory use.
 - Video annotation deduplication compares complete motion trajectories so annotations that later separate are not incorrectly removed. Stale matching results cannot overwrite newer edits after closing or changing state. During annotated export, only rendered callouts suppress duplicate target boxes, so hidden callouts no longer remove boxes that should remain visible.
 
-The MCP integrations, web crawling, screen-entity actions and WorkBuddy improvements from v0.6.1 remain included.
+### MCP integration fixes
+
+- Stop sharing integrations from disposing the shared HTTP client and breaking subsequent requests. Correct Feishu image requests, DingTalk recipient formatting and ima knowledge-base fields against their APIs, with paginated chat and knowledge-base lists.
+- Fix cross-thread access in ima settings, implicit key saves during testing and lost library selections. Choosing a Feishu chat updates the receiver type; switching accounts discards outdated list results.
+- Complete QQ Mail initialization, streamed result parsing and request validation. Failed connection checks no longer report success. Confirm drafts before sending, report uncertain delivery honestly and avoid automatic resending or account switching.
+- Restore SMTP certificate checks for NetEase, validate email addresses and test inbox access separately from SMTP. Restrict QR-login redirects and keep sessions and raw mailbox responses out of logs.
+- Use unique Obsidian file names, validate vault-contained directories and clean up incomplete files on failure or cancellation. Discard recognition from outdated selections; closing the overlay cancels crawling and prevents late dialogs. Saving settings preserves the existing Scrapling path.
+
+See the [integration guide](./mcp-integrations.md#english). Other web crawling and WorkBuddy improvements from v0.6.1 remain included.
 
 ## 下载 / Downloads
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 using System.IO;
 using System.Net.Security;
+using System.Net.Mail;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Text;
@@ -54,8 +55,9 @@ internal static class NetEaseMailService
     internal static void ClearAuthCode()=>new CredentialService().Save(CredentialId,string.Empty);
 
     /// <summary>发送一封纯文本邮件（UTF-8）。收件人列表至少一个地址。</summary>
-    internal static async Task SendAsync(AppSettings settings,IReadOnlyList<string> to,IReadOnlyList<string> cc,string subject,string body,CancellationToken cancellationToken)
+    internal static async Task<bool> SendAsync(AppSettings settings,IReadOnlyList<string> to,IReadOnlyList<string> cc,string subject,string body,CancellationToken cancellationToken)
     {
+        ValidateEnvelope(settings.NetEaseMailAccount,to,cc);
         if(!IsConfigured(settings))
             throw new InvalidOperationException(LocalizationService.T("网易邮箱未启用或缺少授权码。请到 设置 → MCP → 网易邮箱 填写账号并保存授权码。","NetEase Mail is not enabled or has no authorization code. Set the account and code under Settings → MCP → NetEase Mail."));
         if(to.Count==0)throw new InvalidOperationException(LocalizationService.T("缺少收件人。","No recipients."));
@@ -67,10 +69,11 @@ internal static class NetEaseMailService
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(SendTimeout);
         using var tcp=new TcpClient();
+        bool? dataAcceptance=null;
         try
         {
             await tcp.ConnectAsync(host,SmtpPort,timeout.Token).ConfigureAwait(false);
-            using var ssl=new SslStream(tcp.GetStream(),false,(_,_,_,_)=>true);
+            using var ssl=CreateSecureStream(tcp.GetStream());
             await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions{TargetHost=host,EnabledSslProtocols=SslProtocols.Tls12|SslProtocols.Tls13},timeout.Token).ConfigureAwait(false);
             using var writer=new StreamWriter(ssl,new UTF8Encoding(false)){AutoFlush=true,NewLine="\r\n"};
             using var reader=new StreamReader(ssl,Encoding.UTF8);
@@ -83,9 +86,19 @@ internal static class NetEaseMailService
             foreach(var address in to.Concat(cc).Distinct(StringComparer.OrdinalIgnoreCase))
                 await Command(writer,reader,$"RCPT TO:<{address}>","25",timeout.Token).ConfigureAwait(false);
             await Command(writer,reader,"DATA","354",timeout.Token).ConfigureAwait(false);
-            await writer.WriteAsync(BuildMessage(settings,account,to,cc,subject,body)).ConfigureAwait(false);
-            await Command(writer,reader,"\r\n.","250",timeout.Token).ConfigureAwait(false);
-            try{await Command(writer,reader,"QUIT","221",timeout.Token).ConfigureAwait(false);}catch(SmtpReplyException){}
+            await writer.WriteAsync(BuildMessage(settings,account,to,cc,subject,body).AsMemory(),timeout.Token).ConfigureAwait(false);
+            dataAcceptance=await CompleteDataAsync(writer,reader,timeout.Token).ConfigureAwait(false);
+            if(!dataAcceptance.Value)return false;
+            // DATA's 250 is the acceptance boundary. A later disconnect or QUIT
+            // timeout must not report failure and invite a duplicate send.
+            await TryQuitAsync(writer,reader,timeout.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch(Exception ex)when(dataAcceptance.HasValue&&ex is IOException or SocketException or OperationCanceledException)
+        {
+            // Disposing a failed StreamWriter may flush again. Cleanup must not
+            // turn an uncertain submission into a retryable failure (or undo 250).
+            return dataAcceptance.Value;
         }
         catch(SmtpReplyException ex)
         {
@@ -109,6 +122,7 @@ internal static class NetEaseMailService
         if(string.IsNullOrWhiteSpace(settings.NetEaseMailAccount)||!settings.NetEaseMailAccount.Contains('@'))
             throw new InvalidOperationException(LocalizationService.T("请先填写网易邮箱账号。","Enter the NetEase mail account first."));
         var account=settings.NetEaseMailAccount.Trim();
+        ValidateEnvelope(account,[account],[]);
         var authCode=new CredentialService().Read(CredentialId);
         if(string.IsNullOrWhiteSpace(authCode))throw new InvalidOperationException(LocalizationService.T("尚未保存授权码。","No authorization code saved yet."));
         var host=HostFor(account);
@@ -116,7 +130,7 @@ internal static class NetEaseMailService
         timeout.CancelAfter(SendTimeout);
         using var tcp=new TcpClient();
         await tcp.ConnectAsync(host,SmtpPort,timeout.Token).ConfigureAwait(false);
-        using var ssl=new SslStream(tcp.GetStream(),false,(_,_,_,_)=>true);
+        using var ssl=CreateSecureStream(tcp.GetStream());
         await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions{TargetHost=host,EnabledSslProtocols=SslProtocols.Tls12|SslProtocols.Tls13},timeout.Token).ConfigureAwait(false);
         using var writer=new StreamWriter(ssl,new UTF8Encoding(false)){AutoFlush=true,NewLine="\r\n"};
         using var reader=new StreamReader(ssl,Encoding.UTF8);
@@ -125,11 +139,46 @@ internal static class NetEaseMailService
         await Command(writer,reader,"AUTH LOGIN","334",timeout.Token).ConfigureAwait(false);
         await Command(writer,reader,Convert.ToBase64String(Encoding.UTF8.GetBytes(account)),"334",timeout.Token).ConfigureAwait(false);
         await Command(writer,reader,Convert.ToBase64String(Encoding.UTF8.GetBytes(authCode)),"235",timeout.Token).ConfigureAwait(false);
-        try{await Command(writer,reader,"QUIT","221",timeout.Token).ConfigureAwait(false);}catch(SmtpReplyException){}
+        await TryQuitAsync(writer,reader,timeout.Token).ConfigureAwait(false);
     }
 
-    private static string BuildMessage(AppSettings settings,string from,IReadOnlyList<string> to,IReadOnlyList<string> cc,string subject,string body)
+    internal static SslStream CreateSecureStream(Stream stream)=>new(stream,false);
+
+    internal static bool IsSingleAddress(string? value)
+        =>!string.IsNullOrWhiteSpace(value)&&!value.Any(ch=>char.IsControl(ch)||ch>127)&&
+          MailAddress.TryCreate(value,out var parsed)&&parsed.DisplayName.Length==0&&
+          string.Equals(parsed.Address,value.Trim(),StringComparison.Ordinal);
+
+    internal static void ValidateEnvelope(string from,IReadOnlyList<string> to,IReadOnlyList<string> cc)
     {
+        if(!IsSingleAddress(from)||!IsNetEaseAddress(from.Trim()))
+            throw new InvalidOperationException(LocalizationService.T("请输入有效的网易邮箱地址。","Enter a valid NetEase email address."));
+        if(to.Count==0||to.Concat(cc).Any(address=>!IsSingleAddress(address)))
+            throw new InvalidOperationException(LocalizationService.T("收件人必须是完整的单个邮箱地址。","Each recipient must be a complete email address."));
+    }
+
+    internal static async Task TryQuitAsync(StreamWriter writer,StreamReader reader,CancellationToken cancellationToken)
+    {
+        try{await Command(writer,reader,"QUIT","221",cancellationToken).ConfigureAwait(false);}
+        catch(Exception ex)when(ex is SmtpReplyException or IOException or OperationCanceledException){}
+    }
+
+    internal static async Task<bool> CompleteDataAsync(StreamWriter writer,StreamReader reader,CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            await Command(writer,reader,"\r\n.","250",cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch(SmtpReplyException ex)when(ex.ResponseCode is >=400 and <=599){throw;}
+        catch(Exception ex)when(ex is SmtpReplyException or IOException or OperationCanceledException or SocketException)
+        {return false;}
+    }
+
+    internal static string BuildMessage(AppSettings settings,string from,IReadOnlyList<string> to,IReadOnlyList<string> cc,string subject,string body)
+    {
+        ValidateEnvelope(from,to,cc);
         var fromName=settings.NetEaseMailFromName.Trim();
         var fromHeader=string.IsNullOrEmpty(fromName)?from:$"{EncodeHeader(fromName)} <{from}>";
         var builder=new StringBuilder();
@@ -165,17 +214,27 @@ internal static class NetEaseMailService
     private static async Task Expect(StreamReader reader,string expectPrefix,CancellationToken cancellationToken)
     {
         string last=string.Empty;
+        int? replyCode=null;
         while(true)
         {
             var line=await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
             if(line is null)throw new SmtpReplyException(LocalizationService.IsEnglish?"connection closed by server":"服务器关闭了连接");
+            if(line.Length<3||!line.Take(3).All(char.IsAsciiDigit)||
+                (line.Length>3&&line[3] is not (' ' or '-')))
+                throw new SmtpReplyException("invalid SMTP response");
+            var currentCode=int.Parse(line.AsSpan(0,3),System.Globalization.CultureInfo.InvariantCulture);
+            if(replyCode is not null&&replyCode!=currentCode)throw new SmtpReplyException("invalid SMTP response");
+            replyCode=currentCode;
             last=line;
             // 形如 "250-..." 表示还有续行；"250 ..." 为最后一行。
             if(line.Length<4||line[3]!='-')break;
         }
         if(!last.StartsWith(expectPrefix,StringComparison.Ordinal))
-            throw new SmtpReplyException(last.Length<=200?last:last[..200]);
+            throw new SmtpReplyException("SMTP "+replyCode,replyCode);
     }
 
-    private sealed class SmtpReplyException(string message):Exception(message);
+    private sealed class SmtpReplyException(string message,int? responseCode=null):Exception(message)
+    {
+        internal int? ResponseCode{get;}=responseCode;
+    }
 }

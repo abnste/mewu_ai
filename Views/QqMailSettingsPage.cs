@@ -20,6 +20,7 @@ internal sealed class QqMailSettingsPage : StackPanel
     private readonly Button _test=new(),_authorize=new(),_clear=new();
     private readonly CancellationToken _token;
     private bool _statusLoaded;
+    private int _statusRevision;
     internal bool Enabled=>_enable.IsChecked==true;
 
     internal QqMailSettingsPage(AppSettings settings,CancellationToken token)
@@ -44,7 +45,8 @@ internal sealed class QqMailSettingsPage : StackPanel
         Loaded+=async(_,_)=>
         {
             if(_statusLoaded)return;_statusLoaded=true;
-            try{var status=await Task.Run(StatusIdleText,_token);if(!_token.IsCancellationRequested)_status.Text=status;}
+            var revision=_statusRevision;
+            try{var status=await Task.Run(StatusIdleText,_token);if(!_token.IsCancellationRequested&&revision==_statusRevision)_status.Text=status;}
             catch(OperationCanceledException)when(_token.IsCancellationRequested){}
             catch(Exception ex){new PrivacyLogger().Info("QqMailStatus",ex.GetType().Name);}
         };
@@ -66,14 +68,20 @@ internal sealed class QqMailSettingsPage : StackPanel
     private void ClearAuthorization()
     {
         if(_token.IsCancellationRequested)return;
-        QqMailMcpService.ClearCachedToken();
-        _status.Foreground=Brushes.SlateGray;
-        _status.Text=StatusIdleText();
+        _statusRevision++;
+        try
+        {
+            QqMailMcpService.ClearCachedToken();
+            _status.Foreground=Brushes.SlateGray;
+            _status.Text=StatusIdleText();
+        }
+        catch(Exception ex){ShowError(ex.Message);}
     }
 
     private async Task AuthorizeAsync()
     {
         if(!_authorize.IsEnabled||_token.IsCancellationRequested)return;
+        _statusRevision++;
         _authorize.IsEnabled=false;_test.IsEnabled=false;_clear.IsEnabled=false;
         _status.Foreground=Brushes.SlateGray;
         _status.Text=T("正在打开腾讯授权页…请在浏览器中用手机 QQ 邮箱 App 扫码确认（5 分钟内有效）。","Opening the Tencent authorization page… scan the QR code with the QQ Mail mobile app (valid for 5 minutes).");
@@ -81,10 +89,10 @@ internal sealed class QqMailSettingsPage : StackPanel
         {
             var token=await QqMailMcpService.AuthorizeAsync(url=>
             {
-                try{Process.Start(new ProcessStartInfo(url){UseShellExecute=true});}
-                catch(Exception ex){new PrivacyLogger().Info("QqMailOpenBrowser",ex.GetType().Name);}
+                Process.Start(new ProcessStartInfo(url){UseShellExecute=true});
             },_token);
-            var account=await TryGetAccountAsync(token,_token);
+            var account=await GetAccountAsync(token,_token);
+            _token.ThrowIfCancellationRequested();
             var minutes=Math.Max(0,(int)token.ExpiresAt.Subtract(DateTimeOffset.UtcNow).TotalMinutes);
             _status.Text=T($"授权成功：{account}（令牌 {minutes} 分钟后到期，自动刷新）。",$"Authorized as {account} (token expires in {minutes} min, refreshes automatically).");
             _status.Foreground=Brushes.SeaGreen;
@@ -92,7 +100,7 @@ internal sealed class QqMailSettingsPage : StackPanel
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
         catch(Exception ex)
         {
-            ShowError(ex.Message+T("仍未授权：点击“扫码授权”重试。"," Still not authorized: click “Scan QR code to authorize” to retry."));
+            ShowError(ex.Message+T(" 请测试已有授权，或点击“扫码授权”重试。"," Test any saved authorization, or scan again to retry."));
         }
         finally{_authorize.IsEnabled=true;_test.IsEnabled=true;_clear.IsEnabled=true;}
     }
@@ -100,6 +108,7 @@ internal sealed class QqMailSettingsPage : StackPanel
     private async Task TestAsync()
     {
         if(!_test.IsEnabled||_token.IsCancellationRequested)return;
+        _statusRevision++;
         _test.IsEnabled=false;_authorize.IsEnabled=false;_clear.IsEnabled=false;
         _status.Foreground=Brushes.SlateGray;
         _status.Text=T("正在连接 QQ 邮箱 MCP…","Connecting to QQ Mail MCP…");
@@ -107,7 +116,8 @@ internal sealed class QqMailSettingsPage : StackPanel
         {
             var token=await QqMailMcpService.ResolveTokenAsync(_token);
             if(token is null)throw new InvalidOperationException(T("没有可用令牌且自动刷新失败。请先扫码授权。","No usable token and auto refresh failed. Scan the QR code to authorize first."));
-            var account=await TryGetAccountAsync(token,_token);
+            var account=await GetAccountAsync(token,_token);
+            _token.ThrowIfCancellationRequested();
             var scopes=token.Scope;
             var minutes=Math.Max(0,(int)token.ExpiresAt.Subtract(DateTimeOffset.UtcNow).TotalMinutes);
             _status.Text=T($"已连接 {account} · 权限：{scopes} · 令牌 {minutes} 分钟后到期",$"Connected as {account} · scopes: {scopes} · token expires in {minutes} min");
@@ -118,21 +128,23 @@ internal sealed class QqMailSettingsPage : StackPanel
         finally{_test.IsEnabled=true;_authorize.IsEnabled=true;_clear.IsEnabled=true;}
     }
 
-    /// <summary>调用 GetMe 取主别名地址用于状态展示；失败时退回占位文案。</summary>
-    private static async Task<string> TryGetAccountAsync(QqMailMcpToken token,CancellationToken cancellationToken)
+    /// <summary>GetMe 必须成功且包含账号，才能显示连接成功。</summary>
+    private static async Task<string> GetAccountAsync(QqMailMcpToken token,CancellationToken cancellationToken)
     {
-        try
-        {
-            var text=await QqMailMcpService.CallToolAsync(token,"GetMe",new JsonObject(),cancellationToken);
-            var data=JsonNode.Parse(text)?["data"]?["data"]??JsonNode.Parse(text)?["data"];
-            var alias=data?["aliases"]?.AsArray()?.FirstOrDefault(entry=>entry?["is_primary"]?.GetValue<bool>()==true)??data?["aliases"]?.AsArray()?.FirstOrDefault();
-            var account=alias?["email"]?.GetValue<string>();
-            return string.IsNullOrEmpty(account)?"—":account!;
-        }
-        catch
-        {
-            return T("（账号未知）","(account unknown)");
-        }
+        var text=await QqMailMcpService.CallToolAsync(token,"GetMe",new JsonObject(),cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        return ParseAccount(text);
+    }
+
+    internal static string ParseAccount(string text)
+    {
+        var root=JsonNode.Parse(text) as JsonObject;
+        var outer=root?["data"] as JsonObject;
+        var data=outer?["data"] as JsonObject??outer;
+        var aliases=(data?["aliases"] as JsonArray)?.OfType<JsonObject>().ToArray()??[];
+        var alias=aliases.FirstOrDefault(entry=>entry["is_primary"] is JsonValue value&&value.TryGetValue<bool>(out var primary)&&primary)??aliases.FirstOrDefault();
+        if(alias?["email"] is JsonValue email&&email.TryGetValue<string>(out var account)&&!string.IsNullOrWhiteSpace(account))return account;
+        throw new InvalidOperationException(T("QQ 邮箱未返回有效账号信息，无法确认连接。","QQ Mail returned no valid account information; the connection could not be verified."));
     }
 
     private void ShowError(string message)

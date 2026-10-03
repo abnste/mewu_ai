@@ -48,7 +48,7 @@ Read the [AI screenshot annotation guide](./docs/ai-screenshot-annotation.md) fo
 - **Screen recording and trimming:** Record a region with computer audio and an optional microphone. Trim the start and end directly below the preview, seek, undo changes, or restore the full video without overwriting the source. Save, copy, pin, and AI references use the same retained clip, including its audio and timeline annotations. Export MP4 video, MP3 audio, or a GIF.
 - **Ask about images and videos:** Reference several screenshots or attachments, ask follow-up questions, and click a time in an answer to jump to the relevant video scene.
 - **Choose your AI:** Connect API services, Hermes, ChatGPT Work / Codex, WorkBuddy, or MiniMax Code. Switch between them and keep your last selection.
-- **Screen actions and MCP services:** Recognize links, email addresses, and phone numbers; connect QQ Mail, NetEase Mail, DingTalk, Feishu, ima, or Obsidian for supported mail, sharing, and note workflows.
+- **Screen actions and MCP services:** Recognize links, email addresses, and phone numbers; connect QQ Mail, NetEase Mail, DingTalk, Feishu, ima, or Obsidian for supported mail, sharing, and note workflows. See the [integration setup guide](./docs/mcp-integrations.md#english).
 
 Screenshots, manual annotations, pinned images, text recognition, and recording work without an AI account. Translation, table extraction, and AI questions require a connected service.
 

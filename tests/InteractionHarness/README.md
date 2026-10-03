@@ -19,6 +19,7 @@ $harness = (Resolve-Path tests/InteractionHarness/bin/x64/Release/net10.0-window
 | `--verify-pointer-magnifier` | 合成像素、坐标及放大镜实际渲染 | 任务目录 |
 | `--verify-recording-countdown-visual` | 倒计时、序号字形的离屏排版 | 任务目录 |
 | `--verify-translation-single-line` | 合成 OCR 行的单行译文与导出排版 | 任务目录 |
+| `--verify-screen-entity-scan` | 合成异步识别与抓取生命周期、邮件拒绝和结果不明状态；无窗口，不调用真实 OCR、网络或账号 | 任务目录 |
 | `--verify-isolated-video-trim` | 合成音视频裁切、预览、导出及附件构造 | `.codex-build/video-trim` |
 | `--render-video-trim` | 时间条的中英文宽窄布局 | 任务目录 |
 | `--manual-drawing-desktop` | 人工操作合成绘图覆盖层 | `.codex-build/manual-drawing-desktop/session-<PID>` |
