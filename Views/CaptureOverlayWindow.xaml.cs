@@ -1856,6 +1856,7 @@ public partial class CaptureOverlayWindow : Window
         FeishuButton.Visibility=!isVideo&&_host.Settings.FeishuEnabled?Visibility.Visible:Visibility.Collapsed;
         ObsidianButton.Visibility=!isVideo&&_host.Settings.ObsidianEnabled?Visibility.Visible:Visibility.Collapsed;
         ImaButton.Visibility=!isVideo&&_host.Settings.ImaEnabled&&ImaVaultService.IsConfigured(_host.Settings)?Visibility.Visible:Visibility.Collapsed;
+        McpShareSeparator.Visibility=DingTalkButton.Visibility==Visibility.Visible||FeishuButton.Visibility==Visibility.Visible||ObsidianButton.Visibility==Visibility.Visible||ImaButton.Visibility==Visibility.Visible?Visibility.Visible:Visibility.Collapsed;
         UpdateApplicationSnapshotTool(item);Toolbar.Visibility=Visibility.Visible;PositionFloatingBar(Toolbar,item);
     }
 

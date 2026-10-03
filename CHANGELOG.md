@@ -6,7 +6,7 @@
 
 完整双语说明 / Full release notes: [0.6.2](./docs/release-notes-v0.6.2.md)
 
-- 手绘工具栏改为左对齐两行，绘制与选择分别操作；修复文字输入、橡皮擦、删除层序、撤销重做，以及移动和缩放选区时手工标注丢失的问题。 / Align the drawing toolbar in two rows and separate drawing from selection. Fix text input, erasing, deletion order, undo/redo and annotation loss when moving or resizing captures.
+- 手绘工具栏改为左对齐两行，绘制与选择分别操作；分享入口隐藏时不再残留空分隔线；修复文字输入、橡皮擦、删除层序、撤销重做，以及移动和缩放选区时手工标注丢失的问题。 / Align the drawing toolbar in two rows and separate drawing from selection; hide empty separators when sharing actions are unavailable. Fix text input, erasing, deletion order, undo/redo and annotation loss when moving or resizing captures.
 - 新增透明无痕提取与可调笔刷的涂抹消除；荧光笔和重点高亮保护文字与细节，重点高亮支持移动、缩放和改色。 / Add transparent seamless lift and an adjustable healing brush. Freehand and region highlights protect text and detail; emphasis highlights can be moved, resized and recolored.
 - 序号可直接指定下一个编号，数字按实际轮廓居中；新增紧凑无外框十字线放大镜、RGB与坐标读数，修正高缩放取样偏移。 / Set the next annotation number directly and center its visible glyph. Add a compact borderless crosshair magnifier with RGB and coordinates, correcting sampling at higher display scaling.
 - 录屏原位预览新增定位与起止裁切，保存、复制、贴视频和AI引用共用选定片段，音频与标注同步处理；修复拖动端点时闪烁、跳回开头和末尾定位，重做倒计时样式。 / Add seeking and trimming to recording previews. Save, copy, pin and AI references share the selected segment, including audio and timed annotations. Fix flashes, jumps and end positioning, and refine the countdown.
