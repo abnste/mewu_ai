@@ -81,7 +81,7 @@ public sealed partial class SettingsWindow : Window
     private string? _defaultProviderId;
     private readonly int _repairedProviderIdentityCount;
     private bool _loadingProvider;
-    private readonly TextBlock _modelStatus = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9), FontSize = 12 };
+    private readonly TextBlock _modelStatus = new();
     private CancellationTokenSource? _modelLoad;
     private int _apiKeyLoadGeneration;
     private bool _modelLoadPending;
@@ -1378,7 +1378,7 @@ public sealed partial class SettingsWindow : Window
     private void UpdateApiKeyStatus()
     {
         if(_selectedProvider is null){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text="";return;}
-        if(_captureProtectionAvailable!=true){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text="屏幕防捕获不可用，API Key 与敏感 Header 已隐藏。";_apiKeyStatus.Foreground=new SolidColorBrush(Color.FromRgb(196,76,88));return;}
+        if(_captureProtectionAvailable!=true){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text=LocalizationService.T("屏幕防捕获不可用，API Key 与敏感 Header 已隐藏。","Screen capture protection is unavailable; the API key and sensitive headers are hidden.");_apiKeyStatus.Foreground=new SolidColorBrush(Color.FromRgb(196,76,88));return;}
         var deleting=_apiKeysMarkedForDeletion.Contains(_selectedProvider.Id);var replacement=_pendingApiKeys.ContainsKey(_selectedProvider.Id);var savedReference=!string.IsNullOrWhiteSpace(_selectedProvider.CredentialId);var saved=savedReference&&!string.IsNullOrWhiteSpace(_apiKey.Password);
         _clearApiKey.Content=deleting?LocalizationService.T("撤销清除","Undo clear"):LocalizationService.T("清除已保存密钥","Clear saved key");_clearApiKey.IsEnabled=deleting||replacement||savedReference;
         _apiKeyStatus.Text=deleting?LocalizationService.T("保存后清除密钥，可在高级设置中撤销。","Key will be removed on save. Undo in Advanced settings."):replacement?LocalizationService.T("密钥已修改，保存后生效。", "Key changed. Save to apply."):saved?LocalizationService.T("已配置密钥。", "Key configured."):savedReference?LocalizationService.T("已保存的密钥无法读取，请重新输入。","Saved key unavailable. Enter it again."):LocalizationService.T("未配置 API Key。", "No API key configured.");

@@ -24,6 +24,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 
 ### 翻译与语言
 
+- 模型配置的密钥状态和模型加载提示合并到字段标题后的括号内，不再单独占行；较长提示可悬停查看完整内容。
 - 原位翻译保持 OCR 原文的逐行结构，较长译文在原行空间内适配字号，不再因为下方有空白而额外换行；显示与复制采用一致的行内处理。
 - 补齐 MiniMax Code、Codex、WorkBuddy 和部分 MCP 设置页的英文文案。英文状态下，附件引用显示为 `@Image1`、`@Video1`、`@File1` 和 `@CurrentScreen`，相关提示同步切换。
 
@@ -64,6 +65,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 
 ### Translation and language
 
+- Keep API key status and model-loading hints in parentheses beside their field titles, without an extra row; hover to read longer messages in full.
 - In-place translations preserve each original OCR line, fitting longer text within that line instead of wrapping into empty space below. Displayed and copied text use consistent line handling.
 - Complete English text in MiniMax Code, Codex, WorkBuddy and selected MCP settings pages. English references use `@Image1`, `@Video1`, `@File1` and `@CurrentScreen`, with matching hints.
 

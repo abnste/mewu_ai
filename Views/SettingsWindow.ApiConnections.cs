@@ -22,12 +22,8 @@ public sealed partial class SettingsWindow
         AiSettingsForm.PrepareEditor(_apiKey);
         _apiKey.VerticalContentAlignment = VerticalAlignment.Center;
         AutomationProperties.SetName(_apiKey, "API Key");
-        panel.Children.Add(AiSettingsForm.Field("API Key", _apiKey));
         _apiKeyStatus.Foreground = SecondaryBrush;
-        _apiKeyStatus.FontSize = 11;
-        _apiKeyStatus.Margin = new Thickness(0, -8, 0, 12);
-        _apiKeyStatus.TextWrapping = TextWrapping.Wrap;
-        panel.Children.Add(_apiKeyStatus);
+        panel.Children.Add(AiSettingsForm.Field("API Key", _apiKey, _apiKeyStatus));
 
         _model.IsEditable = true;
         _model.IsTextSearchEnabled = false;
@@ -44,12 +40,8 @@ public sealed partial class SettingsWindow
         modelRow.Children.Add(_model);
         Grid.SetColumn(refreshModels, 1);
         modelRow.Children.Add(refreshModels);
-        panel.Children.Add(AiSettingsForm.Field(LocalizationService.T("模型", "Model"), modelRow));
         _modelStatus.Foreground = SecondaryBrush;
-        _modelStatus.Margin = new Thickness(0, -7, 0, 12);
-        _modelStatus.FontSize = 11;
-        _modelStatus.TextWrapping = TextWrapping.Wrap;
-        panel.Children.Add(_modelStatus);
+        panel.Children.Add(AiSettingsForm.Field(LocalizationService.T("模型", "Model"), modelRow, _modelStatus));
 
         _testApiConnection.Content = LocalizationService.T("测试连接", "Test connection");
         _testApiConnection.MinHeight = 38;
