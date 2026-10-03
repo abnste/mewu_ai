@@ -360,6 +360,7 @@ public partial class CaptureOverlayWindow : Window
         _replayFrame=replayFrame;
         _pinsBeforeCapture=_replayFrame is null?GetPinnedWindows().ToHashSet():[];
         _host=host;IsTeachingMode=host.Settings.TeachingMode;_frame=_replayFrame??new ScreenCaptureService().CaptureDesktop(host.Settings.IncludeCaptureCursor);InitializeComponent();InitializeVideoTrim();ConfigureOverlayInputMethods();LocalizationService.SetExcludeFromLocalization(SelectionLayer,true);LocalizationService.SetExcludeFromLocalization(HistoryItems,true);LocalizationService.SetExcludeFromLocalization(ReferenceChips,true);AnswerText.MarkdownChanged+=(_,_)=>TableCopyButton.Visibility=AnswerText.ContainsTable?Visibility.Visible:Visibility.Collapsed;
+        InitializeCaptureToolbarCaptions();
         QuickPrompt.LostKeyboardFocus+=(_,_)=>_selectionPromptFocus=false;
         PromptBarHost.IsVisibleChanged+=(_,e)=>
         {
@@ -1851,6 +1852,7 @@ public partial class CaptureOverlayWindow : Window
         _toolbarHideTimer.Stop();
         var referenceLabel=GetReferenceLabel(item);ReferenceButton.ToolTip=_references.Contains(item)?L($"{referenceLabel} 已引用；可在输入框移除",$"{referenceLabel} is referenced; remove it in the prompt box"):L($"引用当前区域为 {referenceLabel}",$"Reference the current region as {referenceLabel}");ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
         var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;TableButton.Visibility=!isVideo&&_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
+        if(isVideo)UpdateVideoPlaybackButton(item.VideoPreview?.IsPlaying==true);
         // MCP 分享按钮：静态图选区 + 对应服务已启用时显示。
         DingTalkButton.Visibility=!isVideo&&_host.Settings.DingTalkEnabled?Visibility.Visible:Visibility.Collapsed;
         FeishuButton.Visibility=!isVideo&&_host.Settings.FeishuEnabled?Visibility.Visible:Visibility.Collapsed;
@@ -4604,9 +4606,16 @@ public partial class CaptureOverlayWindow : Window
 
     private void SetVideoPlaybackVisual(bool playing)
     {
+        UpdateVideoPlaybackButton(playing);
+        UpdateVideoTrimBar();
+    }
+
+    private void UpdateVideoPlaybackButton(bool playing)
+    {
         if(VideoPlayIcon is null)return;
         VideoPlayIcon.Data=Geometry.Parse(playing?"M3,2 L7,2 L7,16 L3,16 Z M11,2 L15,2 L15,16 L11,16 Z":"M4,2 L16,9 L4,16 Z");
-        VideoPlayButton.ToolTip=playing?"暂停视频":"播放视频";UpdateVideoTrimBar();
+        VideoPlayButton.ToolTip=playing?"暂停视频":"播放视频";
+        CaptureToolbarCaption.SetText(VideoPlayButton,playing?L("暂停","Pause"):L("播放","Play"));
     }
 
     private void OnPreviewKeyDown(object s,KeyEventArgs e)

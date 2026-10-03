@@ -8,7 +8,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 
 ### 截图与手工编辑
 
-- **更清晰的两行工具栏。** 工具与属性、撤回、重做、删除和确定分成两行，左侧对齐；截图工具栏在分享入口隐藏时同步移除置顶右侧的空分隔线。橡皮擦紧接画笔，马赛克、无痕提取、涂抹消除与重点高亮放在同一组。
+- **更清晰的两行工具栏。** 工具与属性、撤回、重做、删除和确定分成两行，左侧对齐。截图主工具栏图标下增加一行中英文短标签，图标独立居中；分享入口隐藏时同步移除置顶右侧的空分隔线。橡皮擦紧接画笔，马赛克、无痕提取、涂抹消除与重点高亮放在同一组。
 - **绘制和选择分开。** 使用绘制工具时不会因为经过已有图层而意外选中它；通过选择工具移动、缩放和编辑已有标注。修复文字输入、橡皮擦、删除层序和撤销重做的多处交互问题。
 - **保留手工内容。** 移动或调整截图选区时，手工标注继续跟随原桌面内容；临时移出选区的内容只被裁切显示，不会被删除，撤销与恢复也保留对应关系。
 - **背景高亮。** 荧光笔与“重点高亮”根据底图保护文字和细节，改善高亮后的可读性；重点高亮可以移动、调整范围和修改颜色。
@@ -40,7 +40,7 @@ v0.6.1 的 MCP 服务、网页抓取、屏幕实体操作和 WorkBuddy 更新继
 
 ### Capture and manual editing
 
-- **Two aligned toolbar rows.** Tools occupy the first row; properties, undo, redo, delete and done occupy the second. The capture toolbar hides the separator after Pin when no sharing actions are visible. The eraser follows the pen, while mosaic, seamless lift, healing brush and emphasis highlighting share a group.
+- **Two aligned toolbar rows.** Tools occupy the first row; properties, undo, redo, delete and done occupy the second. Capture icons have compact, single-line Chinese or English labels below them while keeping their alignment. The capture toolbar hides the separator after Pin when no sharing actions are visible. The eraser follows the pen, while mosaic, seamless lift, healing brush and emphasis highlighting share a group.
 - **Separate drawing and selection.** Drawing over existing layers no longer unexpectedly selects them. Use the selection tool to move, resize and edit annotations. Fixes cover text input, erasing, deletion order, undo and redo.
 - **Preserved manual content.** Moving or resizing a desktop capture keeps annotations anchored to the original content. Content outside the current selection is clipped rather than deleted, including through undo and restoration.
 - **Background highlighting.** Freehand and region highlights protect text and image detail to improve readability. Emphasis highlights can be moved, resized and recolored.
