@@ -42,7 +42,7 @@ internal static class MemoryStore
             .Where(item =>
             {
                 var keyword = Normalize(item.Keyword);
-                return keyword.Length > 0 && normalized.Contains(keyword, StringComparison.Ordinal);
+                return keyword.Length >= 2 && normalized.Contains(keyword, StringComparison.Ordinal);
             })
             .GroupBy(item => item.Entry.Id, StringComparer.OrdinalIgnoreCase).Select(group => group.First()).ToArray();
     }
