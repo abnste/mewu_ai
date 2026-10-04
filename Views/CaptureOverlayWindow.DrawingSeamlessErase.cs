@@ -115,8 +115,8 @@ public partial class CaptureOverlayWindow
             item.DrawingElements.Add(content);
             item.DrawingOrder.Add(new LiftDrawingAction(background, content));
             item.DrawingRedo.Clear();
-            item.Markup.Children.Add(backgroundVisual);
-            item.Markup.Children.Add(contentVisual);
+            item.RasterLayer.Children.Add(backgroundVisual);
+            item.RasterLayer.Children.Add(contentVisual);
             MarkDrawingChanged(item);
             SetDrawTool(DrawTool.Select);
             _selectedDrawingElementId = content.Id;

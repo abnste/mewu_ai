@@ -27,7 +27,7 @@ internal static class DrawingSeamlessEraseReplay
         void SetField(string name, object? value) => typeof(CaptureOverlayWindow).GetField(name, flags)!.SetValue(overlay, value);
         T Property<T>(object value, string name) => (T)value.GetType().GetProperty(name)!.GetValue(value)!;
         var type = item.GetType(); var elements = Property<IList>(item, "DrawingElements"); var order = Property<IList>(item, "DrawingOrder");
-        var canvas = Property<InkCanvas>(item, "Markup"); var snapshot = Invoke("CaptureOverlaySnapshot")!;
+        var canvas = Property<InkCanvas>(item, "Markup"); var raster = Property<InkCanvas>(item, "RasterLayer"); var snapshot = Invoke("CaptureOverlaySnapshot")!;
         var originalFrame = (CaptureFrame)Field("_frame")!; Guid id = default, backgroundId = default;
         Rect Crop() => (Rect)type.GetField("Bounds")!.GetValue(item)!;
         object Element() => elements.Cast<object>().Single(element => Property<Guid>(element, "Id") == id);
@@ -92,7 +92,7 @@ internal static class DrawingSeamlessEraseReplay
             require((bool)Invoke("BeginDrawingGesture", item, new Point(60, 50), canvas, 1, canvas)!, "seamless creation uses the normal gesture dispatcher");
             require(Field("_seamlessEraseFailureTip") is null, "the next seamless gesture dismisses old failure feedback");
             Invoke("UpdateSeamlessEraseDrawingPreview", item, new Point(140, 100));
-            require(elements.Count == 0 && order.Count == countBefore && !canvas.Children.OfType<Image>().Any(),
+            require(elements.Count == 0 && order.Count == countBefore && !canvas.Children.OfType<Image>().Any() && !raster.Children.OfType<Image>().Any(),
                 "lift drag preview is a selection outline without an image patch or history");
             require(Pixels(source).SequenceEqual(sourceBefore), "lift outline preview leaves screenshot bytes unchanged");
             Invoke("CancelMosaicDrawingPreview"); canvas.ReleaseMouseCapture();
@@ -116,9 +116,9 @@ internal static class DrawingSeamlessEraseReplay
             Redo(); require(elements.Count == 2 && Property<Guid>(elements[0]!, "Id") == backgroundId && Property<Guid>(elements[1]!, "Id") == id,
                 "one redo restores the complete pair in correct order");
             require(ReferenceEquals(Cache(), initialCache) && ReferenceEquals(Property<BitmapSource>(Background(), "Pixels"), backgroundCache), "pair redo shares both frozen buffers");
-            var visual = canvas.Children.OfType<Image>().Single(image => Equals(image.Tag, id));
+            var visual = raster.Children.OfType<Image>().Single(image => Equals(image.Tag, id));
             require(ReferenceEquals(visual.Source, initialCache), "actual visible seamless image uses its committed pixel cache");
-            var exported = Export(); var visible = RenderActualMarkup(canvas, exported.PixelWidth, exported.PixelHeight);
+            var exported = Export(); var visible = RenderActualManualLayers(item, exported.PixelWidth, exported.PixelHeight);
             var exportedPixels = Pixels(exported); var visiblePixels = Pixels(visible);
             var mismatches = exportedPixels.Zip(visiblePixels).Count(pair => pair.First != pair.Second);
             File.WriteAllText(Path.Combine(directory, "seamless-pixel-parity.json"), JsonSerializer.Serialize(new { cacheWidth = initialCache.PixelWidth, cacheHeight = initialCache.PixelHeight,
@@ -220,17 +220,23 @@ internal static class DrawingSeamlessEraseReplay
     }
 
     private static byte[] Pixels(BitmapSource image) { var bytes = new byte[image.PixelWidth * image.PixelHeight * 4]; image.CopyPixels(bytes, image.PixelWidth * 4, 0); return bytes; }
-    private static BitmapSource RenderActualMarkup(InkCanvas markup, int pixelWidth, int pixelHeight)
+    private static BitmapSource RenderActualManualLayers(object item, int pixelWidth, int pixelHeight)
     {
-        var parent = (Panel)VisualTreeHelper.GetParent(markup); var index = parent.Children.IndexOf(markup);
+        var type = item.GetType(); var markup = (InkCanvas)type.GetProperty("Markup")!.GetValue(item)!;
+        var raster = (InkCanvas)type.GetProperty("RasterLayer")!.GetValue(item)!;
+        var region = (Canvas?)type.GetField("RegionMarkLayer")!.GetValue(item);
+        var parent = (Panel)VisualTreeHelper.GetParent(markup);
+        var layers = parent.Children.OfType<FrameworkElement>().Where(child => ReferenceEquals(child, markup) || ReferenceEquals(child, raster) || ReferenceEquals(child, region))
+            .Select(child => (Child: child, Index: parent.Children.IndexOf(child))).ToArray();
         var size = new Size(markup.Width, markup.Height); var renderHost = new Grid { Width = size.Width, Height = size.Height };
-        parent.Children.Remove(markup);
+        foreach (var layer in layers) parent.Children.Remove(layer.Child);
         try
         {
-            renderHost.Children.Add(markup); renderHost.Measure(size); renderHost.Arrange(new Rect(size)); renderHost.UpdateLayout();
+            foreach (var layer in layers) renderHost.Children.Add(layer.Child);
+            renderHost.Measure(size); renderHost.Arrange(new Rect(size)); renderHost.UpdateLayout();
             var rendered = new RenderTargetBitmap(pixelWidth, pixelHeight, 96 * pixelWidth / size.Width, 96 * pixelHeight / size.Height, PixelFormats.Pbgra32); rendered.Render(renderHost); rendered.Freeze(); return rendered;
         }
-        finally { renderHost.Children.Remove(markup); parent.Children.Insert(index, markup); parent.UpdateLayout(); }
+        finally { renderHost.Children.Clear(); foreach (var layer in layers) parent.Children.Insert(layer.Index, layer.Child); parent.UpdateLayout(); }
     }
     private static void SaveImage(BitmapSource bitmap, string path)
     {

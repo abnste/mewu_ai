@@ -42,7 +42,7 @@ public partial class CaptureOverlayWindow
             InkCanvas.SetLeft(image, 0);
             InkCanvas.SetTop(image, 0);
             _drawingMosaicPreview = new MosaicDrawingPreview(item, pixels, image, clip, scaleX, scaleY);
-            item.Markup.Children.Add(image);
+            item.RasterLayer.Children.Add(image);
         }
         catch (Exception error)
         {
@@ -83,7 +83,7 @@ public partial class CaptureOverlayWindow
             InkCanvas.SetLeft(visual, bounds.X);
             InkCanvas.SetTop(visual, bounds.Y);
             CancelMosaicDrawingPreview();
-            item.Markup.Children.Add(visual);
+            item.RasterLayer.Children.Add(visual);
             item.DrawingElements.Add(element);
             item.DrawingOrder.Add(new ElementDrawingAction(element));
             item.DrawingRedo.Clear();
@@ -107,7 +107,7 @@ public partial class CaptureOverlayWindow
         var preview = _drawingMosaicPreview;
         _drawingMosaicPreview = null;
         if (preview is null) return;
-        preview.Item.Markup.Children.Remove(preview.Image);
+        preview.Item.RasterLayer.Children.Remove(preview.Image);
         preview.Image.Source = null;
         preview.Pixels.Dispose();
     }

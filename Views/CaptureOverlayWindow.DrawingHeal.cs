@@ -93,7 +93,7 @@ public partial class CaptureOverlayWindow
             item.DrawingElements.Add(element);
             item.DrawingOrder.Add(new ElementDrawingAction(element));
             item.DrawingRedo.Clear();
-            item.Markup.Children.Add(CreateMosaicVisual(item, element));
+            item.RasterLayer.Children.Add(CreateMosaicVisual(item, element));
             MarkDrawingChanged(item);
             RenderRegionMarks(item);
             PromptStatus.Text = LocalizationService.T("已修补涂抹区域 · 可继续涂抹或撤回", "Painted area repaired · continue brushing or undo");
