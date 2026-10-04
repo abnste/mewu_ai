@@ -68,8 +68,9 @@ public partial class CaptureOverlayWindow
     }
     private void ClearManualDrawing(SelectionItem item)
     {
+        EndRasterObjectDrawingPreview(item, refresh: false);
         InvalidateRegionMarkMatching(item);
-        item.Markup.Strokes.Clear();item.Markup.Children.Clear();item.RasterLayer.Children.Clear();item.DrawingElements.Clear();
+        item.Markup.Strokes.Clear();item.Markup.Children.Clear();item.RasterLayer.Children.Clear();item.RasterPreviewLayer.Children.Clear();item.DrawingElements.Clear();
         item.NextDrawingNumber=1;item.DrawingNumberPreference=Guid.NewGuid();item.RegionMarks.Clear();RenderRegionMarks(item);
     }
     private bool ApplyRegionHistory(SelectionItem item,DrawingAction action,bool redo)

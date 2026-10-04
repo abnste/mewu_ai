@@ -451,6 +451,7 @@ internal static class ManualDrawingReplay
     {
         Clear(overlay);
         var raster = Property<InkCanvas>(item, "RasterLayer");
+        var previewLayer = Property<System.Windows.Controls.Panel>(item, "RasterPreviewLayer");
         var elements = Property<IList>(item, "DrawingElements");
         var source = SyntheticBitmap(520, 330, patterned: true);
         SetPublic(item, "CapturedImageOverride", source);
@@ -459,7 +460,7 @@ internal static class ManualDrawingReplay
         var start = new Point(60, 60); var end = new Point(240, 170);
         Set(overlay, "_drawStart", start);
         Invoke(overlay, "BeginMosaicDrawingPreview", item);
-        var previewImage = raster.Children.OfType<Image>().Single();
+        var previewImage = previewLayer.Children.OfType<Image>().Single();
         var previewSource = previewImage.Source;
         Invoke(overlay, "UpdateMosaicDrawingPreview", item, new Point(150, 130));
         Invoke(overlay, "UpdateMosaicDrawingPreview", item, end);
@@ -467,9 +468,9 @@ internal static class ManualDrawingReplay
         Require(ReferenceEquals(previewSource, previewImage.Source), "Mosaic dragging repeatedly rebuilt its source image");
         Require(elements.Count == 0 && markup.Strokes.Count == 0 && Property<IList>(item, "DrawingOrder").Count == 0,
             "Dragging mosaic prematurely committed an annotation, history item or fake outline stroke");
-        Require(raster.Children.OfType<Image>().Any(), "Dragging mosaic shows no pixelated image preview");
+        Require(previewLayer.Children.OfType<Image>().Any(), "Dragging mosaic shows no pixelated image preview");
         var preview = new RenderTargetBitmap(520, 330, 96, 96, PixelFormats.Pbgra32);
-        preview.Render(raster);
+        preview.Render(previewLayer);
         var region = new Int32Rect(80, 80, 60, 50);
         var cleanColors = DistinctColors(source, region);
         var previewColors = DistinctColors(preview, region);
@@ -493,7 +494,7 @@ internal static class ManualDrawingReplay
         Invoke(overlay, "BeginMosaicDrawingPreview", item);
         Invoke(overlay, "UpdateMosaicDrawingPreview", item, end);
         Invoke(overlay, "CancelMosaicDrawingPreview");
-        Require(elements.Count == 0 && !markup.Children.OfType<Image>().Any() && !raster.Children.OfType<Image>().Any() && SamePixels(source, Render(overlay, item)),
+        Require(elements.Count == 0 && !markup.Children.OfType<Image>().Any() && !raster.Children.OfType<Image>().Any() && !previewLayer.Children.OfType<Image>().Any() && SamePixels(source, Render(overlay, item)),
             "Canceling a mosaic drag left preview pixels or an annotation behind");
         checks.Add("canceling-mosaic-removes-preview-without-changing-source");
     }

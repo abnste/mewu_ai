@@ -143,32 +143,60 @@ internal static class DrawingHighlightLiftReplay
         var center = new Point(boundsBefore.X + boundsBefore.Width / 2, boundsBefore.Y + boundsBefore.Height / 2);
         session.Set("_selectedDrawingElementId", id); session.Set("_drawingMoveOriginalElement", content);
         session.Set("_drawingMovePointerStart", center);
-        Call("MoveSelectedDrawingObject", item, center + MoveDelta, markup); Call("CommitSelectedDrawingMove");
+        Call("MoveSelectedDrawingObject", item, center + MoveDelta * .5, markup);
+        var sourceAfterFirstMove = session.Invoke("GetBackgroundHighlightSource", item);
+        Call("MoveSelectedDrawingObject", item, center + MoveDelta, markup);
+        var sourceReusedDuringMove = ReferenceEquals(sourceAfterFirstMove, session.Invoke("GetBackgroundHighlightSource", item));
+        check(sourceReusedDuringMove, "successive drag updates reuse the same derived highlight source without an export refresh");
+        // Capture actual presentation before both commit and export: export refreshes
+        // derived highlight sources and must not conceal stale pixels during a drag.
+        var duringMove = RenderLive(session, source.PixelWidth, source.PixelHeight);
+        Save(duringMove, Path.Combine(directory, "03-during-move-live.png"));
+        var duringMoveExport = Saved(); Save(duringMoveExport, Path.Combine(directory, "03-during-move-export.png"));
+        var duringMoveExportError = Pixels(duringMove).Zip(Pixels(duringMoveExport)).Max(pair => Math.Abs(pair.First - pair.Second));
+        check(duringMoveExportError <= 2, "during move export agrees with the already captured live layer order");
+        Call("CommitSelectedDrawingMove");
+        var rasterLayer = Get<Panel>(item, "RasterLayer"); var previewLayer = Get<Panel>(item, "RasterPreviewLayer");
+        check(session.Field("_rasterObjectDrawingPreview") is null && previewLayer.Children.Count == 0 &&
+            rasterLayer.Children.OfType<FrameworkElement>().Any(child => Equals(child.Tag, id)),
+            "move commit clears transient preview state and returns the foreground to the raster layer");
         content = elements.Cast<object>().Single(value => Get<Guid>(value, "Id") == id);
         background = elements.Cast<object>().Single(value => Get<Guid>(value, "Id") == backgroundId);
         check(Bounds(content).TopLeft == boundsBefore.TopLeft + MoveDelta && order.Count == 3, "real move commits the requested translation exactly once");
         check(ReferenceEquals(Get<BitmapSource>(content, "Pixels"), cached) && ReferenceEquals(Get<BitmapSource>(background, "Pixels"), repair) && Bounds(background) == backgroundBounds,
             "moving keeps foreground pixels immutable and repair fixed");
+        var live = RenderLive(session, source.PixelWidth, source.PixelHeight); Save(live, Path.Combine(directory, "04-moved-live.png"));
         var moved = Saved(); Save(moved, Path.Combine(directory, "03-moved-export.png"));
-        var live = RenderLive(session, moved.PixelWidth, moved.PixelHeight); Save(live, Path.Combine(directory, "04-moved-live.png"));
         var a = Pixels(moved); var b = Pixels(live); var parityError = a.Zip(b).Max(pair => Math.Abs(pair.First - pair.Second));
+        var during = Pixels(duringMove);
         check(parityError <= 2, "live layers and saved composition agree within WPF source-over quantization");
         var sampleX = (int)(480 * scale); var sampleY = (int)(180 * scale); var reference = Pixel(moved, sampleX, sampleY);
         check(reference[1] < 200 && reference[2] > reference[1] + 40, "reference background visibly receives red highlight");
-        var originError = 0;
+        var originError = 0; var duringMoveOriginError = 0;
         for (var y = (int)(LiftBounds.Top * scale) + 3; y < (int)(LiftBounds.Bottom * scale) - 3; y++)
         for (var x = (int)(LiftBounds.Left * scale) + 3; x < (int)(LiftBounds.Right * scale) - 3; x++)
-        for (var c = 0; c < 3; c++) originError = Math.Max(originError, Math.Abs(a[(y * moved.PixelWidth + x) * 4 + c] - reference[c]));
+        for (var c = 0; c < 3; c++)
+        {
+            var at = (y * moved.PixelWidth + x) * 4 + c;
+            originError = Math.Max(originError, Math.Abs(a[at] - reference[c]));
+            duringMoveOriginError = Math.Max(duringMoveOriginError, Math.Abs(during[at] - reference[c]));
+        }
         check(originError <= 2, "entire vacated rectangle is continuously highlighted without old text or a pale block");
-        var coreCount = 0; var coreError = 0; var shiftX = (int)(MoveDelta.X * scale); var shiftY = (int)(MoveDelta.Y * scale);
+        check(duringMoveOriginError <= 2, "during move before commit or export the vacated rectangle has no text ghost or pale block");
+        var coreCount = 0; var coreError = 0; var duringMoveCoreError = 0; var shiftX = (int)(MoveDelta.X * scale); var shiftY = (int)(MoveDelta.Y * scale);
         for (var y = (int)(LiftBounds.Top * scale); y < (int)(LiftBounds.Bottom * scale); y++)
         for (var x = (int)(LiftBounds.Left * scale); x < (int)(LiftBounds.Right * scale); x++)
         {
             var at = (y * moved.PixelWidth + x) * 4; if (glyph[at + 3] != 255) continue;
             coreCount++; var destination = ((y + shiftY) * moved.PixelWidth + x + shiftX) * 4;
-            for (var c = 0; c < 3; c++) coreError = Math.Max(coreError, a[destination + c]);
+            for (var c = 0; c < 3; c++)
+            {
+                coreError = Math.Max(coreError, a[destination + c]);
+                duringMoveCoreError = Math.Max(duringMoveCoreError, during[destination + c]);
+            }
         }
         check(coreCount > 100 && coreError == 0, "moved real text cores remain black at the highlighted destination");
+        check(coreCount > 100 && duringMoveCoreError == 0, "during move before commit or export destination text cores remain exactly black");
         var padding = Pixel(moved, (int)((boundsBefore.Left + 8) * scale), (int)((boundsBefore.Top + MoveDelta.Y + 8) * scale));
         check(padding.Take(3).Zip(reference).All(pair => Math.Abs(pair.First - pair.Second) <= 2), "transparent destination padding exposes continuous highlight");
         Undo(); check(Pixels(Saved()).SequenceEqual(Pixels(created)), "move undo restores exact combined pixels");
@@ -207,6 +235,8 @@ internal static class DrawingHighlightLiftReplay
             var overlap = Bounds(content); session.Set("_drawStart", overlap.TopLeft);
             Call("BeginMosaicDrawingPreview", item); Call("UpdateMosaicDrawingPreview", item, overlap.BottomRight);
             Call("CommitMosaicDrawingPreview", item, overlap.BottomRight);
+            check(previewLayer.Children.Count == 0 && session.Field("_drawingMosaicPreview") is null,
+                "ordinary mosaic commit removes all temporary preview visuals and state");
             var occluded = Saved(); Save(occluded, Path.Combine(directory, "06-later-mosaic.png"));
             var occludedPixels = Pixels(occluded); var ids = elements.Cast<object>().Select(value => Get<Guid>(value, "Id")).ToArray();
             check(elements.Count == 3 && !occludedPixels.SequenceEqual(a), "later ordinary mosaic visibly occludes the lifted foreground");
@@ -220,7 +250,7 @@ internal static class DrawingHighlightLiftReplay
         check(new WindowInteropHelper(overlay).Handle == IntPtr.Zero && !overlay.IsLoaded && !overlay.IsVisible && !markup.IsMouseCaptureWithin,
             "no window or mouse capture was created");
         SaveComparison([source, created, moved, deleted], Path.Combine(directory, "comparison.png"));
-        evidence.Add(new { scenario = Path.GetFileName(directory), scale, kind, highlightFirst, parityError, originError, coreCount, coreError, remainingText,
+        evidence.Add(new { scenario = Path.GetFileName(directory), scale, kind, highlightFirst, sourceReusedDuringMove, parityError, duringMoveExportError, originError, duringMoveOriginError, coreCount, coreError, duringMoveCoreError, remainingText,
             coloredForeground, transparent, opaque, foregroundBounds = Bounds(content), physicalWidth = moved.PixelWidth, physicalHeight = moved.PixelHeight });
     }
 

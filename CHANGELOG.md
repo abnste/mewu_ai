@@ -5,6 +5,7 @@
 ## 未发布 / Unreleased
 
 - 修复透明提取、涂抹消除与高亮叠加时出现白块或截断的问题，统一编辑画面与导出的图层顺序，并保留提取内容的移动、删除与撤销重做。 / Fix white patches and interrupted highlights when combining seamless lift or healing with highlights. Keep layer order consistent in the editor and exports while retaining move, delete, undo and redo for lifted content.
+- 提取图层拖动时使用透明预览，避免原处残留字影或新位置文字被高亮染色；连续移动复用文字保护数据，结束后恢复原图层顺序。 / Use a transparent drag preview for lifted content to prevent text ghosts or tinted text at the destination. Reuse highlight protection data throughout movement and restore the original layer order when the gesture ends.
 - 修复荧光笔和重点高亮在文字周围留下浅色描边的问题，让抗锯齿边缘平滑融入高亮背景，同时保留字芯和细线。 / Fix pale outlines around text in freehand and region highlights by blending antialiased edges into the highlighted background while preserving text cores and fine lines.
 
 ## 0.7.0 — 截图编辑、录屏剪辑与交互稳定性 / Capture editing, video trimming and interaction stability

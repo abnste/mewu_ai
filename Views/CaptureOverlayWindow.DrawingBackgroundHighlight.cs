@@ -36,7 +36,7 @@ public partial class CaptureOverlayWindow
         // anchored while the pointer moves; recompute once after the gesture.
         if (cache.Source is not null && ((_moving && ReferenceEquals(item, Active)) || ReferenceEquals(_resizeTarget, item)))
             return cache.Source;
-        var elements = item.DrawingElements.OfType<MosaicDrawingElement>().ToArray();
+        var elements = BackgroundHighlightRasterElements(item);
         if (cache.Source is not null && ReferenceEquals(cache.Frame, _frame.Image) &&
             ReferenceEquals(cache.Replacement, item.CapturedImageOverride) && cache.Bounds == item.Bounds &&
             cache.Elements.Length == elements.Length && cache.Elements.Zip(elements).All(pair => ReferenceEquals(pair.First, pair.Second))) return cache.Source;

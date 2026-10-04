@@ -51,7 +51,7 @@ public partial class CaptureOverlayWindow
     private BitmapSource RenderSeamlessLiftSource(SelectionItem item)
     {
         var source = RenderSelectionImage(item, false, false, false);
-        var elements = item.DrawingElements.OfType<MosaicDrawingElement>().ToArray();
+        var elements = BackgroundHighlightRasterElements(item);
         if (elements.Length == 0) return source;
         // Lift from the current raster state: an earlier repaired area stays
         // empty and content already moved elsewhere can be selected there.

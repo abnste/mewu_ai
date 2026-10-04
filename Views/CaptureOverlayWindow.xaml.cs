@@ -181,6 +181,7 @@ public partial class CaptureOverlayWindow : Window
         // Raster edits form the image sampled by background-preserving highlights.
         // Keep them below those highlights and above the captured screenshot.
         public InkCanvas RasterLayer { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false,Focusable=false,ClipToBounds=true,EditingMode=InkCanvasEditingMode.None};
+        public InkCanvas RasterPreviewLayer { get; }=new(){Background=Brushes.Transparent,IsHitTestVisible=false,Focusable=false,ClipToBounds=true,EditingMode=InkCanvasEditingMode.None};
         public InkCanvas Markup { get; }=CreateDrawingMarkupCanvas();
         public Canvas AiAnnotations { get; }=new(){IsHitTestVisible=true,ClipToBounds=false};
         public Canvas TextOverlays { get; }=new(){IsHitTestVisible=false};
@@ -984,6 +985,7 @@ public partial class CaptureOverlayWindow : Window
         ReleaseTeachingLiveCapture();
         _toolbarHideTimer.Stop();
         _closed=true;
+        EndRasterObjectDrawingPreview(refresh:false);
         _pointerSampleImage=null;PointerMagnifier.ClearSample();
         _screenEntityLifetime.Cancel();
         CancelMosaicDrawingPreview();CancelMarkDrawingPreview();
@@ -1552,7 +1554,7 @@ public partial class CaptureOverlayWindow : Window
 
     private SelectionItem CreateSelection(bool implicitFullScreen)
     {
-        var item=new SelectionItem{IsImplicit=implicitFullScreen};_ownedSelections.Add(item);item.Badge.Child=item.BadgeText;item.Badge.Visibility=Visibility.Collapsed;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(_drawColor);item.Markup.StrokeCollected+=(_,args)=>{if(!_drawingMode||_restoringDrawingAction||!ReferenceEquals(item,Active)||_drawTool!=DrawTool.Freehand||ReferenceEquals(args.Stroke,_drawPreview))return;item.DrawingOrder.Add(new StrokeDrawingAction(args.Stroke));item.DrawingRedo.Clear();MarkDrawingChanged(item);};item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.RasterLayer);item.RegionMarkLayer=new Canvas{IsHitTestVisible=false,ClipToBounds=true};item.Host.Children.Add(item.RegionMarkLayer);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);SelectionLayer.Children.Add(item.Host);return item;
+        var item=new SelectionItem{IsImplicit=implicitFullScreen};_ownedSelections.Add(item);item.Badge.Child=item.BadgeText;item.Badge.Visibility=Visibility.Collapsed;item.Markup.DefaultDrawingAttributes=RegularDrawingAttributes(_drawColor);item.Markup.StrokeCollected+=(_,args)=>{if(!_drawingMode||_restoringDrawingAction||!ReferenceEquals(item,Active)||_drawTool!=DrawTool.Freehand||ReferenceEquals(args.Stroke,_drawPreview))return;item.DrawingOrder.Add(new StrokeDrawingAction(args.Stroke));item.DrawingRedo.Clear();MarkDrawingChanged(item);};item.Markup.PreviewMouseLeftButtonDown+=MarkupDown;item.Markup.PreviewMouseMove+=MarkupMove;item.Markup.PreviewMouseLeftButtonUp+=MarkupUp;item.Markup.LostMouseCapture+=MarkupLostMouseCapture;item.Host.Children.Add(item.Image);item.Host.Children.Add(item.Video);item.Host.Children.Add(item.RasterLayer);item.RegionMarkLayer=new Canvas{IsHitTestVisible=false,ClipToBounds=true};item.Host.Children.Add(item.RegionMarkLayer);item.Host.Children.Add(item.Markup);item.Host.Children.Add(item.RasterPreviewLayer);item.Host.Children.Add(item.TextOverlays);item.Host.Children.Add(item.AiAnnotations);item.Host.Children.Add(item.TextSelection);item.Host.Children.Add(item.Outline);SelectionLayer.Children.Add(item.Host);return item;
     }
 
     private OverlaySnapshot CaptureOverlaySnapshot()=>new(
@@ -1648,7 +1650,7 @@ public partial class CaptureOverlayWindow : Window
     private void UpdateSelection(SelectionItem item)
     {
         QueueCrossRegionConnections();
-        var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.RasterLayer.Width=item.Markup.Width=item.TextOverlays.Width=item.AiAnnotations.Width=item.TextSelection.Width=r.Width;item.RasterLayer.Height=item.Markup.Height=item.TextOverlays.Height=item.AiAnnotations.Height=item.TextSelection.Height=r.Height;
+        var r=Normalize(item.Bounds);item.Bounds=r;Canvas.SetLeft(item.Host,r.Left);Canvas.SetTop(item.Host,r.Top);item.Host.Width=r.Width;item.Host.Height=r.Height;item.RasterPreviewLayer.Width=item.RasterLayer.Width=item.Markup.Width=item.TextOverlays.Width=item.AiAnnotations.Width=item.TextSelection.Width=r.Width;item.RasterPreviewLayer.Height=item.RasterLayer.Height=item.Markup.Height=item.TextOverlays.Height=item.AiAnnotations.Height=item.TextSelection.Height=r.Height;
         var px=ToPixelRect(r);
         if((_selecting||_moving||ReferenceEquals(item,_resizeTarget))&&ReferenceEquals(item,Active)&&item.CapturedImageOverride is null&&item.VideoPath is null)
         {
@@ -2246,6 +2248,7 @@ public partial class CaptureOverlayWindow : Window
         var raster=new InkCanvas{Width=size.Width,Height=size.Height,Background=Brushes.Transparent,ClipToBounds=true};
         foreach(var element in item.DrawingElements)
         {
+            if(IsRasterObjectDrawingPreview(item,element.Id))continue;
             FrameworkElement? visualElement=element switch
             {
                 TextDrawingElement text=>CreateTextDrawingEditor(item,text,interactive:false),
@@ -2265,7 +2268,10 @@ public partial class CaptureOverlayWindow : Window
         // edits precede highlights, while editable ink/text stays above them.
         var underlay=new InkCanvas{Width=size.Width,Height=size.Height,Background=Brushes.Transparent};
         AddRegionMarksToOverlay(underlay,item);
-        var layers=new Grid{Width=size.Width,Height=size.Height};layers.Children.Add(raster);layers.Children.Add(underlay);layers.Children.Add(content);
+        var previews=new InkCanvas{Width=size.Width,Height=size.Height,Background=Brushes.Transparent,ClipToBounds=true};
+        if(_rasterObjectDrawingPreview is { } movingPreview&&ReferenceEquals(movingPreview.Item,item))
+            previews.Children.Add(CloneRasterPreviewVisual(movingPreview.Visual));
+        var layers=new Grid{Width=size.Width,Height=size.Height};layers.Children.Add(raster);layers.Children.Add(underlay);layers.Children.Add(content);layers.Children.Add(previews);
         layers.Measure(size);layers.Arrange(new Rect(size));layers.UpdateLayout();
         var bounds=new Rect(size);
         var brush=new VisualBrush(layers){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=bounds,Stretch=Stretch.Fill};
@@ -3082,7 +3088,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void BeginLongCaptureLiveRegion(SelectionItem item)
     {
-        var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));var hole=new RectangleGeometry(Normalize(item.Bounds));DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);item.Image.Visibility=item.Video.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;
+        var full=new RectangleGeometry(new Rect(0,0,Math.Max(0,Root.ActualWidth),Math.Max(0,Root.ActualHeight)));var hole=new RectangleGeometry(Normalize(item.Bounds));DesktopImage.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);Dimmer.Clip=new CombinedGeometry(GeometryCombineMode.Exclude,full,hole);item.Image.Visibility=item.Video.Visibility=item.RasterPreviewLayer.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;
     }
 
     private async void OnPreviewMouseWheel(object sender,MouseWheelEventArgs e)
@@ -3367,7 +3373,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void EndLongCaptureSession(SelectionItem item)
     {
-        DesktopImage.Clip=null;Dimmer.Clip=null;LongCaptureBar.Visibility=LongCapturePreviewHost.Visibility=Visibility.Collapsed;LongCapturePreviewImage.Source=null;item.Image.Visibility=Visibility.Visible;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=Visibility.Visible;ApplyTextLayerState(item);ResetLongCaptureState();Cursor=Cursors.Cross;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;if(_selections.Contains(item)){var index=_selections.IndexOf(item);if(index>=0)Select(index);ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);}if(IsActive&&!_closed)Root.Focus();
+        DesktopImage.Clip=null;Dimmer.Clip=null;LongCaptureBar.Visibility=LongCapturePreviewHost.Visibility=Visibility.Collapsed;LongCapturePreviewImage.Source=null;item.Image.Visibility=Visibility.Visible;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.RasterPreviewLayer.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=Visibility.Visible;ApplyTextLayerState(item);ResetLongCaptureState();Cursor=Cursors.Cross;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;if(_selections.Contains(item)){var index=_selections.IndexOf(item);if(index>=0)Select(index);ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);}if(IsActive&&!_closed)Root.Focus();
     }
 
     private void ResetLongCaptureState()
@@ -3407,7 +3413,7 @@ public partial class CaptureOverlayWindow : Window
     private void EnterDrawingMode()
     {
         CancelAnnotatedImageCopy();
-        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;UpdateVideoTrimBar();Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=PointerInspector.Visibility=Visibility.Collapsed;item.RasterLayer.Visibility=item.Markup.Visibility=Visibility.Visible;item.Markup.IsHitTestVisible=true;EnsureDrawingControls(false);ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text=item.VideoPath is null?"原位标注中 · 颜色统一作用于画笔、形状、文字和序号":"视频原位标注中 · 手工标注将贯穿整个视频";
+        if(RejectIfOverlayOperationBusy()||Active is not {IsImplicit:false} item)return;_drawingOperationBefore=CaptureOverlaySnapshot();_drawingOperationChanged=false;_drawingMode=true;UpdateVideoTrimBar();Toolbar.Visibility=Visibility.Collapsed;HideHandles();SizeText.Visibility=PointerInspector.Visibility=Visibility.Collapsed;item.RasterPreviewLayer.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=Visibility.Visible;item.Markup.IsHitTestVisible=true;EnsureDrawingControls(false);ApplyCurrentDrawingAttributes(item);SetDrawTool(DrawTool.Freehand);DrawingToolbar.Visibility=Visibility.Visible;PositionFloatingBar(DrawingToolbar,item);SetPromptBarHidden(true);PromptStatus.Text=item.VideoPath is null?"原位标注中 · 颜色统一作用于画笔、形状、文字和序号":"视频原位标注中 · 手工标注将贯穿整个视频";
     }
     private void ExitDrawingMode()
     {
@@ -3661,6 +3667,7 @@ public partial class CaptureOverlayWindow : Window
         if(MoveSelectedRegionMark(item,point,canvas)){}
         else if(_drawingMoveOriginalElement is { } original&&_selectedDrawingElementId==original.Id)
         {
+            BeginRasterObjectDrawingPreview(item,original);
             var bounds=DrawingElementBounds(item,original);var delta=DrawingAnnotationGeometry.ConstrainTranslation(bounds,requested,new Size(canvas.ActualWidth,canvas.ActualHeight));var moved=MoveDrawingElement(original,delta);ReplaceDrawingElement(item,moved);var visual=FindDrawingElementVisual(item,original.Id);if(visual is not null){InkCanvas.SetLeft(visual,DrawingElementX(moved));InkCanvas.SetTop(visual,DrawingElementY(moved));}
         }
         else if(_selectedDrawingStroke is { } stroke&&_drawingMoveOriginalStroke is { } originalStroke)
@@ -3711,6 +3718,7 @@ public partial class CaptureOverlayWindow : Window
             else if(_selectedDrawingStroke is { } stroke&&_drawingMoveOriginalStroke is { } before)stroke.StylusPoints=EditableShapeStroke.Resize(before.Points,resized);
             else if(_drawingMoveOriginalElement is { } original)
             {
+                BeginRasterObjectDrawingPreview(item,original);
                 var changed=original switch
                 {
                     MosaicDrawingElement mosaic=>(DrawingElementSpec)(mosaic with{X=resized.X,Y=resized.Y,Width=resized.Width,Height=resized.Height}),
@@ -3739,6 +3747,7 @@ public partial class CaptureOverlayWindow : Window
         if(!_drawingObjectMoving){EndDrawingObjectGesture();return;}
         if(Active is { } item)
         {
+            EndRasterObjectDrawingPreview(item,refresh:false);
             if(CommitSelectedRegionMarkMove(item)){EndDrawingObjectGesture();return;}
             if(_selectedDrawingElementId is { } mosaicId&&item.DrawingElements.FirstOrDefault(element=>element.Id==mosaicId) is MosaicDrawingElement {IsLiftedContent:false} mosaic)
             {
@@ -3750,7 +3759,7 @@ public partial class CaptureOverlayWindow : Window
                         ReplaceDrawingElement(item,previous);
                         ReplaceMosaicDrawingVisual(item,previous);
                     }
-                    EndDrawingObjectGesture();ShowDrawingObjectSelection(item);SeamlessEraseFailed(error);return;
+                    EndDrawingObjectGesture();RefreshBackgroundHighlightSources(item);ShowDrawingObjectSelection(item);SeamlessEraseFailed(error);return;
                 }
                 ReplaceDrawingElement(item,mosaic);ReplaceMosaicDrawingVisual(item,mosaic);
             }
@@ -3762,6 +3771,7 @@ public partial class CaptureOverlayWindow : Window
     }
     private void EndDrawingObjectGesture()
     {
+        EndRasterObjectDrawingPreview();
         _drawingMoveOriginalElement=null;_drawingMoveOriginalStroke=null;_drawingMoveOriginalRegionMark=null;_drawingObjectMoving=false;_drawingResizeHandle=-1;
         if(Active is { } item)
         {
@@ -3831,7 +3841,7 @@ public partial class CaptureOverlayWindow : Window
         var index=item.DrawingElements.FindIndex(element=>element.Id==replacement.Id);if(index<0)return false;item.DrawingElements[index]=replacement;return true;
     }
 
-    private static FrameworkElement? FindDrawingElementVisual(SelectionItem item,Guid id)=>item.Markup.Children.OfType<FrameworkElement>().Concat(item.RasterLayer.Children.OfType<FrameworkElement>()).FirstOrDefault(child=>child.Tag is Guid tag&&tag==id);
+    private static FrameworkElement? FindDrawingElementVisual(SelectionItem item,Guid id)=>item.Markup.Children.OfType<FrameworkElement>().Concat(item.RasterLayer.Children.OfType<FrameworkElement>()).Concat(item.RasterPreviewLayer.Children.OfType<FrameworkElement>()).FirstOrDefault(child=>child.Tag is Guid tag&&tag==id);
 
     private void ShowDrawingObjectSelection(SelectionItem item)
     {
@@ -3861,6 +3871,7 @@ public partial class CaptureOverlayWindow : Window
 
     private void ClearDrawingObjectSelection()
     {
+        EndRasterObjectDrawingPreview();
         RemoveDrawingSelectionOutline();_selectedDrawingElementId=null;_selectedDrawingStroke=null;_selectedDrawingRegionMark=null;_drawingMoveOriginalElement=null;_drawingMoveOriginalStroke=null;_drawingMoveOriginalRegionMark=null;_drawingObjectMoving=false;_drawingResizeHandle=-1;
         if(_drawingMode&&Active is { } item){UpdateDrawingTextInput(item);UpdateDrawingContextControls(item);}
     }
@@ -3976,7 +3987,8 @@ public partial class CaptureOverlayWindow : Window
     private static Brush ContrastBrush(Color color)=>color.R*.299+color.G*.587+color.B*.114>155?Brushes.Black:Brushes.White;
     private void RebuildDrawingElements(SelectionItem item)
     {
-        item.Markup.Children.Clear();item.RasterLayer.Children.Clear();foreach(var element in item.DrawingElements){if(element is TextDrawingElement text)item.Markup.Children.Add(CreateTextDrawingEditor(item,text));else if(element is NumberDrawingElement number)item.Markup.Children.Add(CreateNumberDrawingVisual(number));else if(element is MosaicDrawingElement mosaic)item.RasterLayer.Children.Add(CreateMosaicVisual(item,mosaic));}UpdateDrawingTextInput(item);RefreshBackgroundHighlightSources(item);
+        EndRasterObjectDrawingPreview(item,refresh:false);
+        item.Markup.Children.Clear();item.RasterLayer.Children.Clear();item.RasterPreviewLayer.Children.Clear();foreach(var element in item.DrawingElements){if(element is TextDrawingElement text)item.Markup.Children.Add(CreateTextDrawingEditor(item,text));else if(element is NumberDrawingElement number)item.Markup.Children.Add(CreateNumberDrawingVisual(number));else if(element is MosaicDrawingElement mosaic)item.RasterLayer.Children.Add(CreateMosaicVisual(item,mosaic));}UpdateDrawingTextInput(item);RefreshBackgroundHighlightSources(item);
     }
     private void RemoveEmptyDrawingText(SelectionItem item)
     {
@@ -4382,7 +4394,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(!NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,true))throw new InvalidOperationException("无法启用倒计时期间的鼠标穿透，请重新截图");
         Cursor=Cursors.Arrow;if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=PointerInspector.Visibility=RecordingBar.Visibility=CrossRegionConnections.Visibility=Visibility.Collapsed;HideHandles();
-        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
+        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.RasterPreviewLayer.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
         selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
         // The frozen frame is not part of the countdown either.  The real
         // desktop remains visible under the dimmer, so a window moved before
@@ -4412,7 +4424,7 @@ public partial class CaptureOverlayWindow : Window
         ReleaseTeachingLiveCapture();
         _recordingInputTimer.Stop();_recordingBarInputActive=false;SetRecordingInputPassThrough(false);
         var interactionRestored=NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);_recordingCountdownActive=false;RecordingCountdown.Visibility=Visibility.Collapsed;ClearRecordingCountdownAnimations();DesktopImage.Visibility=Visibility.Visible;DesktopImage.Clip=null;Dimmer.Clip=null;CrossRegionConnections.Visibility=Visibility.Visible;_recordingItem=null;_recordingItemWasReferenced=false;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;Cursor=Cursors.Cross;
-        foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;item.Badge.Visibility=Visibility.Visible;var imageOnly=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.RasterLayer.Visibility=item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}
+        foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;item.Badge.Visibility=Visibility.Visible;var imageOnly=item.VideoPath is null?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=item.VideoPath is null?Visibility.Collapsed:Visibility.Visible;item.RasterPreviewLayer.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}
         var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);PromptStatus.Text=interactionRestored?status:"窗口交互恢复失败，正在安全关闭覆盖层，请重新截图";CrashDiagnosticsService.MarkOperation("屏幕助手：等待操作");if(!interactionRestored)_=Dispatcher.BeginInvoke(DispatcherPriority.Send,new Action(Close));
     }
 
@@ -4421,7 +4433,7 @@ public partial class CaptureOverlayWindow : Window
         _recordingMode=true;_recordingPaused=_recordingStopping=false;Cursor=Cursors.Arrow;
         if(Root.IsMouseCaptured)Root.ReleaseMouseCapture();
         Toolbar.Visibility=DrawingToolbar.Visibility=PromptBarHost.Visibility=SizeText.Visibility=CrossRegionConnections.Visibility=Visibility.Collapsed;HideHandles();
-        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
+        foreach(var item in _selections){item.Host.Visibility=ReferenceEquals(item,selected)?Visibility.Visible:Visibility.Collapsed;item.Badge.Visibility=Visibility.Collapsed;item.RasterPreviewLayer.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=item.TextOverlays.Visibility=item.AiAnnotations.Visibility=item.TextSelection.Visibility=Visibility.Collapsed;item.Markup.IsHitTestVisible=false;item.Image.Visibility=ReferenceEquals(item,selected)?Visibility.Collapsed:Visibility.Visible;}
         selected.Video.Visibility=Visibility.Collapsed;
         selected.Outline.BorderBrush=new SolidColorBrush(Color.FromRgb(50,151,242));selected.Outline.BorderThickness=new Thickness(2);selected.Outline.Effect=new DropShadowEffect{Color=Color.FromRgb(48,151,242),BlurRadius=18,ShadowDepth=0,Opacity=.9};
         RecordingTime.Text="00:00";SetRecordingPauseVisual(false);RecordingPauseButton.ToolTip="暂停";RecordingBar.Visibility=Visibility.Visible;PositionFloatingBar(RecordingBar,selected);
@@ -4601,7 +4613,7 @@ public partial class CaptureOverlayWindow : Window
     {
         ReleaseTeachingLiveCapture();
         _recordingInputTimer.Stop();_recordingBarInputActive=false;SetRecordingInputPassThrough(false);
-        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);RecordingBar.Visibility=Visibility.Collapsed;CrossRegionConnections.Visibility=Visibility.Visible;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.RasterLayer.Visibility=item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
+        _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);RecordingBar.Visibility=Visibility.Collapsed;CrossRegionConnections.Visibility=Visibility.Visible;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.RasterPreviewLayer.Visibility=item.RasterLayer.Visibility=item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
     }
     private async void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
