@@ -180,7 +180,8 @@ jobs:
             ".\artifacts\installer\MewuAI-Setup-$version-win-x64.exe",
             ".\artifacts\packages\MewuAI-Portable-$version-win-x64.zip"
           )
-          if (gh release view $tag *> $null) {
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
             throw "Release $tag already exists. Refusing to replace published assets."
           }
           gh release create $tag @assets --title "MewuAI $version · 喵呜AI $version" --notes-file ".\docs\release-notes-v$version.md" --verify-tag

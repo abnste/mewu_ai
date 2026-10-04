@@ -2,9 +2,9 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
-## 0.6.2 — 截图编辑、录屏剪辑与交互稳定性 / Capture editing, video trimming and interaction stability
+## 0.7.0 — 截图编辑、录屏剪辑与交互稳定性 / Capture editing, video trimming and interaction stability
 
-完整双语说明 / Full release notes: [0.6.2](./docs/release-notes-v0.6.2.md)
+完整双语说明 / Full release notes: [0.7.0](./docs/release-notes-v0.7.0.md)
 
 - 统一工具栏按钮各状态的图标和小字间距，修复点击后文字上跳；功能小字使用统一普通文字色，修正标注属性行被下拉框撑高、与主工具栏高度不一致的问题。 / Keep toolbar icon and caption spacing stable across button states, prevent captions jumping on click, and use a consistent neutral caption color. Prevent property dropdowns from making the annotation row taller than the main toolbar.
 - 修复涂抹消除放大彩边、产生彩色脏块的问题；结合更远处的平滑背景减少文字边缘渗色，避免细线被误判为纯色底，透明像素隐藏颜色不再污染修补结果。 / Fix amplified color fringes and colored artifacts in healing-brush repairs. Check surrounding smooth backgrounds to reduce text-edge bleeding, keep fine lines from being mistaken for a flat background, and exclude hidden colors in transparent pixels.

@@ -1,4 +1,4 @@
-# 喵呜AI 0.6.2 / MewuAI 0.6.2
+# 喵呜AI 0.7.0 / MewuAI 0.7.0
 
 本版本基于 v0.6.1，集中更新截图编辑、原位录屏剪辑、翻译与英文界面，复审并修复 MCP 集成，同时包含此前累计的截图响应、标注布局和稳定性优化。
 
@@ -48,7 +48,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - 恢复网易 SMTP 证书验证，校验邮件地址，收件箱与 SMTP 分别测试；限制扫码登录跳转，避免日志记录会话和邮件原文。
 - Obsidian 保存使用独立文件名、检查 vault 内目录，取消或失败时清理本次未完成文件。旧选区的识别结果不能覆盖新截图；关闭覆盖层会取消网页抓取并阻止迟到弹窗。保存设置保留已有 Scrapling 路径。
 
-[MCP 配置与使用指南](https://github.com/abnste/mewu_ai/blob/v0.6.2/docs/mcp-integrations.md#中文)。v0.6.1 的网页抓取和 WorkBuddy 等其他功能继续保留。
+[MCP 配置与使用指南](https://github.com/abnste/mewu_ai/blob/v0.7.0/docs/mcp-integrations.md#中文)。v0.6.1 的网页抓取和 WorkBuddy 等其他功能继续保留。
 
 ## English release notes
 
@@ -94,14 +94,14 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - Restore SMTP certificate checks for NetEase, validate email addresses and test inbox access separately from SMTP. Restrict QR-login redirects and keep sessions and raw mailbox responses out of logs.
 - Use unique Obsidian file names, validate vault-contained directories and clean up incomplete files on failure or cancellation. Discard recognition from outdated selections; closing the overlay cancels crawling and prevents late dialogs. Saving settings preserves the existing Scrapling path.
 
-See the [integration guide](https://github.com/abnste/mewu_ai/blob/v0.6.2/docs/mcp-integrations.md#english). Other web crawling and WorkBuddy improvements from v0.6.1 remain included.
+See the [integration guide](https://github.com/abnste/mewu_ai/blob/v0.7.0/docs/mcp-integrations.md#english). Other web crawling and WorkBuddy improvements from v0.6.1 remain included.
 
 ## 下载 / Downloads
 
-[安装版 EXE / Installer EXE](https://github.com/abnste/mewu_ai/releases/download/v0.6.2/MewuAI-Setup-0.6.2-win-x64.exe) · [便携版 ZIP / Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.6.2/MewuAI-Portable-0.6.2-win-x64.zip)
+[安装版 EXE / Installer EXE](https://github.com/abnste/mewu_ai/releases/download/v0.7.0/MewuAI-Setup-0.7.0-win-x64.exe) · [便携版 ZIP / Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v0.7.0/MewuAI-Portable-0.7.0-win-x64.zip)
 
 支持 Windows 10 2004 及以上 x64 系统，无需另装 .NET。SHA-256 可在 GitHub 下载资产详情中查看。
 
 Requires Windows 10 2004 or later, x64. No separate .NET installation is needed. SHA-256 digests are available in GitHub asset details.
 
-[完整更新历史 / Full changelog](https://github.com/abnste/mewu_ai/blob/v0.6.2/CHANGELOG.md)
+[完整更新历史 / Full changelog](https://github.com/abnste/mewu_ai/blob/v0.7.0/CHANGELOG.md)

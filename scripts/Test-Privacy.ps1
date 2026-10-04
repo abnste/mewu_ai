@@ -3,6 +3,7 @@
 param(
     [ValidateSet('Repository', 'Publish')][string]$Mode = 'Repository',
     [string]$PublishDirectory,
+    [string]$ToolDirectory = (Join-Path ([IO.Path]::GetTempPath()) 'MewuAI-privacy-tools'),
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/@^~:-]*$')][string]$RevisionRange = 'HEAD'
 )
 $ErrorActionPreference = 'Stop'
@@ -61,7 +62,7 @@ try {
         throw 'Commit metadata contains a non-private email. Use the GitHub privacy email for the corresponding author; preserve author names.'
     }
 
-    $toolDirectory = Join-Path $repositoryRoot '.codex-build/privacy-tools'
+    $toolDirectory = [IO.Path]::GetFullPath($ToolDirectory)
     New-Item -ItemType Directory -Path $toolDirectory -Force | Out-Null
     $archive = Join-Path $toolDirectory 'gitleaks-8.30.1.zip'
     $expectedHash = 'd29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e'
