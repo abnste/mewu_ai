@@ -11,19 +11,19 @@
   <Style x:Key="CaptionToolbarButton" TargetType="Button" BasedOn="{StaticResource ToolbarIconButton}">
    <Setter Property="Height" Value="38"/>
    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-    <Border x:Name="CaptionIconHost" Background="{TemplateBinding Background}" BorderBrush="#6E83F2" BorderThickness="0" CornerRadius="12">
+    <Border x:Name="CaptionIconHost" Background="{TemplateBinding Background}" BorderBrush="Transparent" BorderThickness="2" CornerRadius="12">
      <Grid>
       <ContentPresenter x:Name="CaptionIcon" HorizontalAlignment="Center" VerticalAlignment="Center">
        <ContentPresenter.RenderTransform><TranslateTransform Y="-5"/></ContentPresenter.RenderTransform>
       </ContentPresenter>
       <TextBlock x:Name="CaptionText" Text="{Binding Path=(local:CaptureToolbarCaption.Text),RelativeSource={RelativeSource TemplatedParent}}"
-                 FontFamily="Segoe UI" FontSize="8.5" FontWeight="Normal" Foreground="{TemplateBinding Foreground}" Opacity="0.8" TextAlignment="Center" Margin="0,0,0,1"
+                 FontFamily="Segoe UI" FontSize="8.5" FontWeight="Normal" Foreground="#52637A" Opacity="0.8" TextAlignment="Center" Margin="0,0,0,1"
                  HorizontalAlignment="Stretch" VerticalAlignment="Bottom" TextWrapping="NoWrap" IsHitTestVisible="False"/>
      </Grid>
     </Border>
     <ControlTemplate.Triggers>
      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CaptionIconHost" Property="Background" Value="#EAF1FA"/></Trigger>
-     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="CaptionIconHost" Property="BorderThickness" Value="2"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="CaptionIconHost" Property="BorderBrush" Value="#6E83F2"/></Trigger>
      <Trigger Property="IsPressed" Value="True"><Setter TargetName="CaptionIconHost" Property="Opacity" Value="0.68"/><Setter TargetName="CaptionText" Property="Opacity" Value="0.68"/></Trigger>
      <Trigger Property="IsEnabled" Value="False"><Setter TargetName="CaptionIconHost" Property="Opacity" Value="0.4"/><Setter TargetName="CaptionText" Property="Opacity" Value="0.4"/></Trigger>
      <Trigger Property="local:CaptureToolbarCaption.IsVisible" Value="False"><Setter TargetName="CaptionText" Property="Visibility" Value="Collapsed"/><Setter TargetName="CaptionIcon" Property="RenderTransform" Value="{x:Null}"/></Trigger>
