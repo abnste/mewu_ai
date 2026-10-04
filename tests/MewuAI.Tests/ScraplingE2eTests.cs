@@ -14,9 +14,10 @@ public sealed class ScraplingE2eTests
         Assert.Equal(expected,ScraplingCrawlService.Locate(new AppSettings()));
     }
 
-    [Fact]
+    [Fact(Skip="Requires an explicitly enabled local Scrapling install and live network; run manually with MEWU_RUN_NETWORK_TESTS=1.")]
     public async Task VerifiedScraplingEnvironmentExtractsWeChatBody()
     {
+        if(Environment.GetEnvironmentVariable("MEWU_RUN_NETWORK_TESTS")!="1")return;
         var dir=@"D:\scrapling（爬虫）";
         var python=Path.Combine(dir,"venv","Scripts","python.exe");
         if(!File.Exists(python))return;
@@ -26,10 +27,11 @@ public sealed class ScraplingE2eTests
         Assert.Contains("CURA",result.Text,StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
+    [Fact(Skip="Requires an explicitly enabled local Scrapling install and live network; run manually with MEWU_RUN_NETWORK_TESTS=1.")]
     public async Task MisreadWeChatKeyIsAutoCorrected()
     {
         // 圈选识别用的本地 OCR 会把大写 I 认成小写 l：clH 变体应被自动纠正回 IH。
+        if(Environment.GetEnvironmentVariable("MEWU_RUN_NETWORK_TESTS")!="1")return;
         var dir=@"D:\scrapling（爬虫）";
         var python=Path.Combine(dir,"venv","Scripts","python.exe");
         if(!File.Exists(python))return;
@@ -41,9 +43,10 @@ public sealed class ScraplingE2eTests
         Assert.Contains("CURA",result.Text,StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
+    [Fact(Skip="Requires an explicitly enabled local Scrapling install and live network; run manually with MEWU_RUN_NETWORK_TESTS=1.")]
     public async Task InvalidWeChatKeyFailsWithClearMessage()
     {
+        if(Environment.GetEnvironmentVariable("MEWU_RUN_NETWORK_TESTS")!="1")return;
         var dir=@"D:\scrapling（爬虫）";
         var python=Path.Combine(dir,"venv","Scripts","python.exe");
         if(!File.Exists(python))return;
@@ -54,7 +57,7 @@ public sealed class ScraplingE2eTests
         Assert.Contains("Parameter error",ex.Message);
     }
 
-    [Fact]
+    [Fact(Skip="Requires live network; run manually with MEWU_RUN_NETWORK_TESTS=1.")]
     public async Task BasicHttpCrawlHandlesStaticPageOrFailsGracefully()
     {
         // 内置基础抓取（未装 Scrapling 的兜底）：静态页出正文；拿不到时返回 null，

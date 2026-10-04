@@ -14,7 +14,7 @@ namespace mewu_ai_Assistant.Services;
 /// <param name="Sid">webmail 会话 ID（js6/main.jsp?sid=…）。</param>
 /// <param name="Cookies">mail.163.com 域会话 Cookie（名→值）。</param>
 /// <param name="ObtainedAt">会话获取时间。</param>
-internal sealed partial record NetEaseWebSession(string Account,string Sid,IReadOnlyDictionary<string,string> Cookies,DateTimeOffset ObtainedAt)
+internal sealed partial record NetEaseWebSession(string Account,string Sid,IReadOnlyDictionary<string,string> Cookies,DateTimeOffset ObtainedAt,string? MailHost=null)
 {
     [GeneratedRegex(@"sid=([A-Za-z0-9]+)")]
     internal static partial Regex SidRegex();
@@ -85,7 +85,7 @@ internal static partial class NetEaseMailWebMcpService
             }
             return new NetEaseWebSession(
                 string.IsNullOrWhiteSpace(account)||!account.Contains('@')?LocalizationService.IsEnglish?"(unknown)":"（未知）":account,
-                session.Sid!,cookies,session.ObtainedAt==default?DateTimeOffset.UtcNow:session.ObtainedAt);
+                session.Sid!,cookies,session.ObtainedAt==default?DateTimeOffset.UtcNow:session.ObtainedAt,session.MailHost);
         }
         catch{return null;}
     }
@@ -96,14 +96,11 @@ internal static partial class NetEaseMailWebMcpService
             Account=session.Account,
             Sid=session.Sid,
             Cookies=new Dictionary<string,string>(session.Cookies),
+            MailHost=session.MailHost,
             ObtainedAt=session.ObtainedAt
         },JsonOptions));
 
-    internal static void ClearSession()
-    {
-        try{new CredentialService().Save(CredentialId,string.Empty);}
-        catch(Exception ex){new PrivacyLogger().Info("NetEaseWebSessionClear",ex.GetType().Name);}
-    }
+    internal static void ClearSession()=>new CredentialService().Save(CredentialId,string.Empty);
 
     /// <summary>本机存在可用的网页会话（不含网络验证）。发件/上下文路由据此选择通道。</summary>
     internal static bool HasSession()=>ReadSession() is not null;
@@ -114,6 +111,7 @@ internal static partial class NetEaseMailWebMcpService
         public string? Sid{get;set;}
         public Dictionary<string,string>? Cookies{get;set;}
         public DateTimeOffset ObtainedAt{get;set;}
+        public string? MailHost{get;set;}
     }
 
     #endregion
@@ -129,8 +127,10 @@ internal static partial class NetEaseMailWebMcpService
         CancellationToken cancellationToken)
     {
         using var http=CreateHttpClient();
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(AuthorizationTimeout);
         report(LocalizationService.T("正在获取二维码…","Fetching the QR code…"));
-        var uuid=await GetQrcodeIdAsync(http,cancellationToken).ConfigureAwait(false);
+        var uuid=await GetQrcodeIdAsync(http,timeout.Token).ConfigureAwait(false);
 
         var qrUrl=$"{QrLandingBase}?u={uuid}&p={Product}";
         var png=RenderQrPng(qrUrl);
@@ -145,8 +145,6 @@ internal static partial class NetEaseMailWebMcpService
         // 轮询扫码状态：408 等待 / 409 已扫待确认 / 200 已确认 / 404 过期。
         // 官方协议：status 响应还带 accountType（1=邮箱账号走 qrcodeauth→ticketlogin，
         // 2=邮箱大师账号走 dashi 异步登录）。
-        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(AuthorizationTimeout);
         var confirmed=false;
         var accountType=1;
         var hintShown=false;
@@ -197,26 +195,26 @@ internal static partial class NetEaseMailWebMcpService
         {
             // 邮箱大师账号：POST dashi.163.com/account/ma/login {uuid, session:true}。
             report(LocalizationService.T("已确认（邮箱大师账号），正在换取邮箱会话…","Confirmed (Mailmaster account); exchanging for a mailbox session…"));
-            try{session=await MasterLoginAsync(http,uuid,cancellationToken).ConfigureAwait(false);}
+            try{session=await MasterLoginAsync(http,uuid,timeout.Token).ConfigureAwait(false);}
             catch(Exception error) when(error is InvalidOperationException or HttpRequestException or JsonException)
             {
                 // Some Mailmaster builds report accountType=2 while the public
                 // qrcodeauth/ticketlogin flow is the only route that returns a
                 // webmail sid. Retry that documented route before failing.
                 Log("MasterFallback",error.GetType().Name);
-                var ticket=await GetTicketAsync(http,uuid,cancellationToken).ConfigureAwait(false);
-                session=await ExchangeSessionAsync(http,uuid,ticket,cancellationToken).ConfigureAwait(false);
+                var ticket=await GetTicketAsync(http,uuid,timeout.Token).ConfigureAwait(false);
+                session=await ExchangeSessionAsync(http,uuid,ticket,timeout.Token).ConfigureAwait(false);
             }
         }
         else
         {
             var ticket=await GetTicketAsync(http,uuid,timeout.Token).ConfigureAwait(false);
             report(LocalizationService.T("已确认，正在换取邮箱会话…","Confirmed; exchanging for a mailbox session…"));
-            session=await ExchangeSessionAsync(http,uuid,ticket,cancellationToken).ConfigureAwait(false);
+            session=await ExchangeSessionAsync(http,uuid,ticket,timeout.Token).ConfigureAwait(false);
         }
         // 旧缓存可能没有账号（“（未知）”）：从 P_INFO Cookie 回填真实邮箱账号。
         if(!session.Account.Contains('@')&&AccountFromCookies(session.Cookies).Contains('@'))
-            session=new NetEaseWebSession(AccountFromCookies(session.Cookies),session.Sid,session.Cookies,session.ObtainedAt);
+            session=session with {Account=AccountFromCookies(session.Cookies)};
         CacheSession(session);
         return session;
     }
@@ -262,7 +260,7 @@ internal static partial class NetEaseMailWebMcpService
         var ticket=result?["ticket"]?.GetValue<string>();
         var ticketType=result?["type"]?.ToString();
         var ticketDomain=result?["domain"]?.ToString();
-        Log("GetTicket",$"code={code} retCode={retCode} type={ticketType} domain={ticketDomain} hasTicket={!string.IsNullOrWhiteSpace(ticket)}");
+        Log("GetTicket",$"hasTicket={!string.IsNullOrWhiteSpace(ticket)}");
         if(string.IsNullOrWhiteSpace(ticket))
             throw new InvalidOperationException(LocalizationService.T("扫码确认后未能取得登录票据，请重试。","No login ticket after confirming the scan; retry."));
         return new TicketResult(
@@ -294,18 +292,18 @@ internal static partial class NetEaseMailWebMcpService
             if(root is not null)
             {
                 var maCode=root["code"]?.ToString();
-                Log("MaAsyncLogin",$"http={(int)response.StatusCode} code={maCode} fields=[{string.Join(",",root.Select(pair=>pair.Key))}]");
+                Log("MaAsyncLogin",$"http={(int)response.StatusCode} json=true");
                 var result=root["result"]?.AsObject();
                 redirect??=result?["url"]?.GetValue<string>()??result?["redirect"]?.GetValue<string>()??result?["location"]?.GetValue<string>();
             }
-            else Log("MaAsyncLogin",$"http={(int)response.StatusCode} nonJson body={TruncateForLog(body)}");
+            else Log("MaAsyncLogin",$"http={(int)response.StatusCode} json=false");
         }
-        var sid=await FollowForSidAsync(http,redirect,cookies,cancellationToken).ConfigureAwait(false)
+        var location=await FollowForSidAsync(http,redirect,cookies,new Uri(MaAsyncLoginUrl),cancellationToken).ConfigureAwait(false)
             ??throw new InvalidOperationException(LocalizationService.T(
                 "已确认（邮箱大师账号）但未能取得邮箱会话。请重试；若持续失败请改用 SMTP 授权码方式。",
                 "Confirmed (Mailmaster account) but no mailbox session was returned. Retry, or fall back to the SMTP authorization code."));
         var account=AccountFromCookies(cookies);
-        return new NetEaseWebSession(account,sid,cookies,DateTimeOffset.UtcNow);
+        return new NetEaseWebSession(account,location.Sid,cookies,DateTimeOffset.UtcNow,location.Host);
     }
 
     /// <summary>P_INFO Cookie 形如 “账号|时间戳|…”：从中提取邮箱账号，取不到返回“（未知）”。</summary>
@@ -323,13 +321,6 @@ internal static partial class NetEaseMailWebMcpService
     {
         try{return string.IsNullOrWhiteSpace(text)?null:JsonNode.Parse(text)?.AsObject();}
         catch(JsonException){return null;}
-    }
-
-    private static string TruncateForLog(string? text)
-    {
-        if(string.IsNullOrEmpty(text))return string.Empty;
-        var t=text.Replace("\r"," ").Replace("\n"," ");
-        return t.Length>400?t[..400]+"…":t;
     }
 
     /// <summary>用票据换 webmail 会话：POST ticketlogin（noRedirect=1），收集 Cookie 并
@@ -362,16 +353,20 @@ internal static partial class NetEaseMailWebMcpService
 
         // noRedirect=1：服务端一般直接在响应体中给出入口地址；仍可能 302 跳转。
         var body=await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-        Log("TicketLogin",$"http={(int)response.StatusCode} cookies=[{string.Join(",",cookies.Keys)}] body={TruncateForLog(body)}");
-        var sid=NetEaseWebSession.ExtractSid(body)??NetEaseWebSession.ExtractSid(response.Headers.Location?.ToString()??string.Empty);
+        Log("TicketLogin",$"http={(int)response.StatusCode} cookieCount={cookies.Count}");
+        var redirect=response.Headers.Location?.ToString()??ExtractRedirect(body);
+        var location=redirect is null?null:ResolveAuthorizedRedirect(new Uri(loginUrl),redirect);
+        var sid=NetEaseWebSession.ExtractSid(location?.AbsoluteUri??string.Empty)??NetEaseWebSession.ExtractSid(body);
+        var mailHost=location?.Host??entryHost;
 
         // 未拿到 sid：跟随入口（Location 或响应体中的地址），并带回 ticketlogin 下发的 Cookie。
         if(string.IsNullOrEmpty(sid))
         {
-            var follow=response.Headers.Location?.ToString()??ExtractRedirect(body)??entryUrl;
+            var follow=redirect??entryUrl;
             if(!string.IsNullOrWhiteSpace(follow))
             {
-                sid=await FollowForSidAsync(http,follow,cookies,cancellationToken).ConfigureAwait(false);
+                var result=await FollowForSidAsync(http,follow,cookies,new Uri(loginUrl),cancellationToken).ConfigureAwait(false);
+                if(result is not null){sid=result.Sid;mailHost=result.Host;}
             }
         }
         if(string.IsNullOrEmpty(sid))
@@ -379,26 +374,28 @@ internal static partial class NetEaseMailWebMcpService
 
         var account=ticket.Account??ExtractAccount(body)??AccountFromCookies(cookies);
         if(account.Length==0)account=AccountFromCookies(cookies);
-        return new NetEaseWebSession(account,sid!,cookies,DateTimeOffset.UtcNow);
+        return new NetEaseWebSession(account,sid!,cookies,DateTimeOffset.UtcNow,mailHost);
     }
 
     /// <summary>带 Cookie 跟随跳转地址找 sid；过程中继续收集 Set-Cookie。</summary>
-    private static async Task<string?> FollowForSidAsync(HttpClient http,string? url,IDictionary<string,string> cookies,CancellationToken cancellationToken)
+    private sealed record MailSessionLocation(string Sid,string Host);
+
+    private static async Task<MailSessionLocation?> FollowForSidAsync(HttpClient http,string? url,IDictionary<string,string> cookies,Uri baseUri,CancellationToken cancellationToken)
     {
         for(var hop=0;hop<4&&!string.IsNullOrWhiteSpace(url);hop++)
         {
-            if(!url.StartsWith("http",StringComparison.OrdinalIgnoreCase))
-                url="https://mail.163.com/"+url.TrimStart('/');
-            using var request=NewRequest(HttpMethod.Get,url);
-            if(cookies.Count>0)
+            var target=ResolveAuthorizedRedirect(baseUri,url!);
+            using var request=NewRequest(HttpMethod.Get,target.AbsoluteUri);
+            if(cookies.Count>0&&IsMailboxHost(target.Host))
                 request.Headers.TryAddWithoutValidation("Cookie",string.Join("; ",cookies.Select(pair=>$"{pair.Key}={pair.Value}")));
             using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellationToken).ConfigureAwait(false);
             CollectCookies(response,cookies);
-            var sid=NetEaseWebSession.ExtractSid(url)??NetEaseWebSession.ExtractSid(response.Headers.Location?.ToString()??string.Empty);
+            var next=response.Headers.Location is { } redirect?ResolveAuthorizedRedirect(target,redirect.ToString()):null;
+            var sid=NetEaseWebSession.ExtractSid(target.AbsoluteUri)??NetEaseWebSession.ExtractSid(next?.AbsoluteUri??string.Empty);
             if(!string.IsNullOrEmpty(sid))
             {
-                Log("FollowSid",$"hop={hop} http={(int)response.StatusCode} sidFound=true url={MaskSid(url)}");
-                return sid;
+                Log("FollowSid",$"hop={hop} http={(int)response.StatusCode} sidFound=true");
+                return new(sid,next?.Host??target.Host);
             }
             string? body=null;
             if(response.Headers.Location is null&&response.Content.Headers.ContentType?.MediaType=="text/html")
@@ -408,19 +405,31 @@ internal static partial class NetEaseMailWebMcpService
                 if(!string.IsNullOrEmpty(sid))
                 {
                     Log("FollowSid",$"hop={hop} http={(int)response.StatusCode} sidFound=true(body)");
-                    return sid;
+                    return new(sid,target.Host);
                 }
             }
-            url=response.Headers.Location?.ToString()??ExtractRedirect(body??string.Empty);
-            Log("FollowSid",$"hop={hop} http={(int)response.StatusCode} next={MaskSid(url)}");
+            url=next?.AbsoluteUri??ExtractRedirect(body??string.Empty);
+            baseUri=target;
+            Log("FollowSid",$"hop={hop} http={(int)response.StatusCode} hasNext={url is not null}");
         }
         return null;
     }
 
-    private static string MaskSid(string? url)
+    internal static Uri ResolveAuthorizedRedirect(Uri origin,string value)
     {
-        if(string.IsNullOrEmpty(url))return string.Empty;
-        return NetEaseWebSession.SidRegex().Replace(url,"sid=***");
+        if(!Uri.TryCreate(origin,value,out var uri)||uri.Scheme!=Uri.UriSchemeHttps||uri.Port!=443||uri.UserInfo.Length>0||
+            !(IsMailboxHost(uri.Host)||uri.Host is "reg.163.com" or "scanlogin.mail.163.com" or "dashi.163.com"))
+            throw new InvalidOperationException(LocalizationService.T("网易邮箱返回了不受信任的登录跳转地址，已停止授权。","NetEase Mail returned an untrusted login redirect. Authorization stopped."));
+        return uri;
+    }
+
+    private static bool IsMailboxHost(string host)=>host is "mail.163.com" or "mail.126.com" or "mail.yeah.net" or "mail.netease.com" or "mail.188.com" or "vip.mail.163.com" or "vip.163.com" or "vip.126.com" or "vip.188.com" or "vipmail.163.com";
+
+    internal static string GetMailboxHost(NetEaseWebSession session)
+    {
+        var host=session.MailHost??HostForDomain("@"+session.Account.Split('@').Last());
+        if(!IsMailboxHost(host))throw new InvalidDataException("Invalid NetEase mailbox host.");
+        return host;
     }
 
     [GeneratedRegex(@"(?:top\.location\.href|location\.replace)\s*[=(]\s*[""']([^""']+)[""']")]
@@ -649,10 +658,12 @@ internal static partial class NetEaseMailWebMcpService
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(CallTimeout);
         using var http=CreateHttpClient();
-        var url=$"https://mail.163.com/js6/s?sid={Uri.EscapeDataString(session.Sid)}&{query}";
+        var host=GetMailboxHost(session);
+        var url=$"https://{host}/js6/s?sid={Uri.EscapeDataString(session.Sid)}&{query}";
         using var request=NewRequest(HttpMethod.Post,url);
         request.Headers.TryAddWithoutValidation("Accept","application/json");
-        request.Headers.TryAddWithoutValidation("Referer",$"https://mail.163.com/js6/main.jsp?sid={Uri.EscapeDataString(session.Sid)}&df=mail163_letter");
+        request.Headers.Referrer=new Uri($"https://{host}/js6/main.jsp?sid={Uri.EscapeDataString(session.Sid)}&df=mail163_letter");
+        request.Headers.Remove("Origin");request.Headers.TryAddWithoutValidation("Origin",$"https://{host}");
         request.Headers.TryAddWithoutValidation("Cookie",BuildCookieHeader(session));
         if(!varPayload.StartsWith("<?xml",StringComparison.OrdinalIgnoreCase))
             varPayload="<?xml version=\"1.0\"?>"+varPayload;
@@ -661,20 +672,20 @@ internal static partial class NetEaseMailWebMcpService
         using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token).ConfigureAwait(false);
         if((int)response.StatusCode==401||(int)response.StatusCode==403)
             throw new InvalidOperationException(LocalizationService.T("网易邮箱拒绝访问，会话可能已失效，请重新扫码授权。","NetEase Mail refused the request; the session may have expired. Scan the QR code again."));
+        if(!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(LocalizationService.T($"网易邮箱请求失败（HTTP {(int)response.StatusCode}）。",$"NetEase Mail request failed (HTTP {(int)response.StatusCode})."));
         var text=await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-        Log("Webmail",$"query={query} http={(int)response.StatusCode} resp={TruncateForLog(text)}");
-        if(NeedsRelogin(text))return null;
+        Log("Webmail",$"http={(int)response.StatusCode} responseCharacters={text.Length}");
         var payload=ParseWebmailResponse(text);
+        if(payload is null&&NeedsRelogin(text))return null;
         var code=payload?["code"]?.ToString()
-            ??payload?["result"]?["code"]?.ToString()
-            ??payload?["data"]?["code"]?.ToString();
-        Log("WebmailParsed",$"query={query} code={code??"(none)"} payload={(payload is null?"none":"ok")}");
+            ??(payload?["result"] as JsonObject)?["code"]?.ToString()
+            ??(payload?["data"] as JsonObject)?["code"]?.ToString();
+        Log("WebmailParsed",$"hasCode={code is not null} payload={(payload is null?"none":"ok")}");
         if(string.Equals(code,"FA_INVALID_SESSION",StringComparison.OrdinalIgnoreCase)||string.Equals(code,"FA_NOT_LOGIN",StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(LocalizationService.T("网易邮箱二维码网页会话已失效，请重新扫码授权后再发送。","The NetEase QR web session expired. Scan again before sending."));
         if(!string.IsNullOrEmpty(code)&&!string.Equals(code,"S_OK",StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                LocalizationService.T("网易邮箱网页接口返回错误（{0}）。若持续失败请重新扫码授权。","The NetEase web API returned an error ({0}). Scan the QR code again if it keeps failing."),
-                code));
+            throw new InvalidOperationException(LocalizationService.T("网易邮箱网页接口拒绝了请求。若持续失败请重新扫码授权。","The NetEase web API refused the request. Scan the QR code again if it keeps failing."));
         // 网易网页网关的 S_OK 仅表示请求被受理，不是最终投递凭证。
         // 调用方必须把结果展示为“已提交”，不能宣称收件人已收到。
         return payload;
@@ -795,7 +806,7 @@ internal static partial class NetEaseMailWebMcpService
         var body=await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if(!response.IsSuccessStatusCode)
         {
-            Log("HttpError",$"http={(int)response.StatusCode} body={TruncateForLog(body)}");
+            Log("HttpError",$"http={(int)response.StatusCode}");
             throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,
                 LocalizationService.T("网易扫码服务返回 HTTP {0}，请稍后重试。","NetEase scan service returned HTTP {0}; retry later."),(int)response.StatusCode));
         }

@@ -45,6 +45,7 @@ internal static class ScraplingCrawlService
         }
 
         Add(settings.ScraplingPath);
+        Add(DefaultInstallDir());
         foreach(var known in KnownPaths)Add(known);
 
         var desktop=Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
@@ -87,7 +88,7 @@ internal static class ScraplingCrawlService
             try
             {
                 var python=Path.Combine(dir,"venv","Scripts","python.exe");
-                new PrivacyLogger().Info("ScraplingLocate",$"candidate={dir} python={File.Exists(python)}");
+
                 if(File.Exists(python))return dir;
             }
             catch{ /* 探测失败继续 */ }
@@ -144,18 +145,15 @@ internal static class ScraplingCrawlService
     /// <summary>抓取 URL 内容。调用方负责在后台线程执行（浏览器抓取可能需要数十秒）。</summary>
     internal static async Task<CrawlResult> CrawlAsync(string url,string? scraplingDir,CancellationToken cancellationToken)
     {
+        if(!Uri.TryCreate(url,UriKind.Absolute,out var validated)||
+            (validated.Scheme!="http"&&validated.Scheme!="https"))
+            throw new ArgumentException(LocalizationService.T("只支持 HTTP/HTTPS 链接。","Only HTTP/HTTPS URLs are supported."),nameof(url));
         if(string.IsNullOrWhiteSpace(scraplingDir))
             throw new InvalidOperationException(LocalizationService.T("未找到 Scrapling 环境。","Scrapling environment was not found."));
-        new PrivacyLogger().Info("ScraplingStage",$"process_start dir={scraplingDir}");
+        new PrivacyLogger().Info("ScraplingStage","process_start");
         var python=Path.Combine(scraplingDir,"venv","Scripts","python.exe");
         if(!File.Exists(python))
             throw new InvalidOperationException(LocalizationService.T("Scrapling 环境不完整：缺少 venv\\Scripts\\python.exe。","Scrapling environment incomplete: venv\\Scripts\\python.exe is missing."));
-        var script=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","scrapling_fetch.py");
-        Directory.CreateDirectory(Path.GetDirectoryName(script)!);
-        await File.WriteAllTextAsync(script,FetchScript,Encoding.UTF8,cancellationToken).ConfigureAwait(false);
-
-        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromMinutes(3));
         var psi=new ProcessStartInfo(python)
         {
             WorkingDirectory=scraplingDir,
@@ -172,18 +170,12 @@ internal static class ScraplingCrawlService
         // 保留用户的有效代理（访问 google.com 等站点需要），但剔除格式损坏的
         // 代理变量（如 http://http://…，会让 curl_cffi 直接 ProxyError）。
         SanitizeProxyEnv(psi.EnvironmentVariables);
-        psi.ArgumentList.Add(script);
-        psi.ArgumentList.Add(url);
-        using var process=Process.Start(psi)
-            ??throw new InvalidOperationException(LocalizationService.T("无法启动 Scrapling Python 进程。","Failed to start the Scrapling Python process."));
-        var stdoutTask=process.StandardOutput.ReadToEndAsync(timeout.Token);
-        var stderrTask=process.StandardError.ReadToEndAsync(timeout.Token);
-        try{await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);}
-        finally{if(!process.HasExited){try{process.Kill(entireProcessTree:true);}catch{} }}
-        var stdout=await stdoutTask.ConfigureAwait(false);
-        var stderr=await stderrTask.ConfigureAwait(false);
-        if(!string.IsNullOrWhiteSpace(stderr))
-            new PrivacyLogger().Info("ScraplingStderr",Truncate(stderr,400));
+        psi.Environment["PYTHONIOENCODING"]="utf-8";
+        psi.ArgumentList.Add("-c");psi.ArgumentList.Add(FetchScript);psi.ArgumentList.Add(url);
+        var result=await BoundedChildProcess.RunAsync(psi,TimeSpan.FromMinutes(3),cancellationToken,4*1024*1024).ConfigureAwait(false);
+        if(result.ExitCode!=0||result.OutputTruncated)
+            throw new InvalidOperationException(LocalizationService.T("Scrapling 运行失败或输出过大，请检查安装和网络。","Scrapling failed or produced excessive output. Check its installation and network."));
+        var stdout=result.Output;
         // stdout 最后一行是 JSON 结果（前面可能有日志输出）。
         var jsonLine=stdout.Split('\n').Select(line=>line.Trim()).LastOrDefault(line=>
         {
@@ -192,7 +184,7 @@ internal static class ScraplingCrawlService
             catch(JsonException){return false;}
         });
         if(jsonLine is null)
-            throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,LocalizationService.T("Scrapling 未返回 JSON 结果：{0}","Scrapling returned no JSON result: {0}"),Truncate(stderr+stdout,500)));
+            throw new InvalidOperationException(LocalizationService.T("Scrapling 未返回有效结果，请检查安装和网络。","Scrapling returned no valid result. Check its installation and network."));
         JsonDocument doc;
         try{doc=JsonDocument.Parse(jsonLine.Trim());}
         catch(JsonException ex){throw new InvalidOperationException(LocalizationService.T("Scrapling 返回了无效 JSON。","Scrapling returned invalid JSON."),ex);}
@@ -207,7 +199,7 @@ internal static class ScraplingCrawlService
         var correctedFrom=root.TryGetProperty("corrected_from",out var cfNode)?cfNode.GetString():null;
         var textLength=text?.Length??0;
         var hasParameterError=text?.Contains("Parameter error",StringComparison.OrdinalIgnoreCase)==true;
-        new PrivacyLogger().Info("ScraplingResult",$"urlHost={new Uri(url).Host};length={textLength};parameterError={hasParameterError};titleLength={title?.Length??0};corrected={correctedFrom is not null}");
+        new PrivacyLogger().Info("ScraplingResult",$"length={textLength};parameterError={hasParameterError};titleLength={title?.Length??0};corrected={correctedFrom is not null}");
         return new CrawlResult(resultUrl??url,title??string.Empty,text??string.Empty,correctedFrom);
         }
     }
@@ -224,7 +216,7 @@ internal static class ScraplingCrawlService
                 "无法连接到目标网站：可能需要代理（如 google.com）、系统代理配置有误或站点不可达。请先在浏览器中确认该链接能打开。",
                 "Could not connect to the target site: a proxy may be required (e.g. google.com), the system proxy may be misconfigured, or the site is unreachable. Verify the link opens in a browser first."),
             ""=>LocalizationService.T("Scrapling 抓取失败。","Scrapling crawl failed."),
-            _=>code!,
+            _=>LocalizationService.T("Scrapling 抓取失败，请检查安装和网络。","Scrapling crawl failed. Check its installation and network."),
         };
     }
 
@@ -261,69 +253,40 @@ internal static class ScraplingCrawlService
 
     /// <summary>手动安装步骤（剪贴板用）：含检查 Python + 离线 / 在线两种安装方式。
     /// 当一键安装失败或用户希望自己装时复制到剪贴板。</summary>
-    internal static string ManualInstallSteps()
-    {
-        return LocalizationService.IsEnglish
-            ?"# Install Scrapling manually\n\n" +
-             "# 1) Find a Python 3.10+ interpreter\npy -3.13 -V  # or python / python3\n\n" +
-             "# 2) Create a venv and install\npy -3.13 -m venv %LOCALAPPDATA%\\MewuAI\\scrapling\n%LOCALAPPDATA%\\MewuAI\\scrapling\\venv\\Scripts\\pip install --upgrade pip\n%LOCALAPPDATA%\\MewuAI\\scrapling\\venv\\Scripts\\pip install scrapling\n\n" +
-             "# 3) Download the stealth browser (Chromium for playwright)\n%LOCALAPPDATA%\\MewuAI\\scrapling\\venv\\Scripts\\scrapling install\n\n" +
-             "# Then click \"Scrapling 爬取\" again. MewuAI auto-detects the install via Locate()."
-            :"# 手动安装 Scrapling\n\n" +
-             "# 1) 找到 Python 3.10+ 解释器（任选其一）\npy -3.13 -V   # 或 python / python3\n\n" +
-             "# 2) 建虚拟环境并安装 Scrapling\npy -3.13 -m venv %LOCALAPPDATA%\\MewuAI\\scrapling\n%LOCALAPPDATA%\\MewuAI\\scrapling\\venv\\Scripts\\pip install --upgrade pip\n%LOCALAPPDATA%\\MewuAI\\scrapling\\venv\\Scripts\\pip install scrapling\n\n" +
-             "# 3) 下载隐身浏览器（playwright 内置 Chromium）\n%LOCALAPPDATA%\\MewuAI\\scrapling\\venv\\Scripts\\scrapling install\n\n" +
-             "# 完成后再次点击\"Scrapling 爬取\"。mewuAI 通过 Locate() 自动发现安装。";
-    }
+    internal static string ManualInstallSteps()=>"""
+# PowerShell — Python 3.10+
+$install = Join-Path $env:LOCALAPPDATA 'MewuAI\scrapling'
+py -3 -m venv "$install\venv"
+& "$install\venv\Scripts\python.exe" -m pip install --upgrade pip
+& "$install\venv\Scripts\python.exe" -m pip install 'scrapling[fetchers]'
+& "$install\venv\Scripts\scrapling.exe" install
+""";
 
-    /// <summary>探测 PATH 里可用的 Python 3.10+ 解释器。优先级：py 启动器（先 -3.13、
-    /// -3.12、-3.10，回退默认）→ python3 → python。返回 (解释器路径, 版本字符串)，
-    /// 没找到返回 (null, null)。</summary>
-    private static (string? Path,string? Version) DetectPython()
+    private static async Task<(string? Path,string? Version)> DetectPythonAsync(CancellationToken token)
     {
-        var candidates=new List<(string machine, string[] args)>
+        foreach(var (name,args) in new (string,string[])[]{("py",["-3.13"]),("py",["-3.12"]),("py",["-3.11"]),("py",["-3.10"]),("py",["-3"]),("python",[]),("python3",[])})
         {
-            ("py", new[]{"-3.13"}),
-            ("py", new[]{"-3.12"}),
-            ("py", new[]{"-3.11"}),
-            ("py", new[]{"-3.10"}),
-            ("py", Array.Empty<string>()),
-            ("python", Array.Empty<string>()),
-            ("python3", Array.Empty<string>()),
-        };
-        foreach(var (machine, args) in candidates)
-        {
+            token.ThrowIfCancellationRequested();
+            var exe=LocateExecutable(name);if(exe is null)continue;
+            var start=new ProcessStartInfo(exe);
+            foreach(var arg in args)start.ArgumentList.Add(arg);
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add("import sys,json;print(json.dumps({'executable':sys.executable,'major':sys.version_info.major,'minor':sys.version_info.minor}))");
             try
             {
-                var exe=LocateExecutable(machine);
-                if(string.IsNullOrEmpty(exe))continue;
-                var psi=new ProcessStartInfo(exe,args.Length>0?string.Join(' ',args):"--version"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-                using var p=Process.Start(psi);
-                if(p is null)continue;
-                var stdout=p.StandardOutput.ReadToEnd().Trim();
-                var stderr=p.StandardError.ReadToEnd().Trim();
-                p.WaitForExit(5000);
-                if(p.ExitCode!=0)continue;
-                var combined=stdout.Length>0?stdout:stderr;
-                if(!combined.StartsWith("Python ",StringComparison.OrdinalIgnoreCase))continue;
-                var version=combined.Substring("Python ".Length).Trim();
-                // 只用 3.10+（Scrapling 需要）。
-                var dot=version.IndexOf('.');
-                if(dot<=0)continue;
-                if(!int.TryParse(version.AsSpan(0,dot),out var major))continue;
-                if(major<3||major>3&&version.Length<=dot+1)continue;
-                if(major==3)
-                {
-                    var secondDot=version.IndexOf('.',dot+1);
-                    if(secondDot<0)continue;
-                    if(!int.TryParse(version.AsSpan(dot+1,secondDot-dot-1),out var minor))continue;
-                    if(minor<10)continue;
-                }
-                return (exe, version);
+                var result=await BoundedChildProcess.RunAsync(start,TimeSpan.FromSeconds(5),token).ConfigureAwait(false);
+                if(result.ExitCode!=0||result.OutputTruncated)continue;
+                using var doc=JsonDocument.Parse(result.Output);
+                var root=doc.RootElement;
+                var major=root.GetProperty("major").GetInt32();var minor=root.GetProperty("minor").GetInt32();
+                var interpreter=root.GetProperty("executable").GetString();
+                if(major==3&&minor>=10&&interpreter is not null&&Path.IsPathFullyQualified(interpreter)&&File.Exists(interpreter))
+                    return(interpreter,$"{major}.{minor}");
             }
-            catch{ /* 探测失败继续 */ }
+            catch(OperationCanceledException){throw;}
+            catch(Exception ex)when(ex is TimeoutException or IOException or System.ComponentModel.Win32Exception or JsonException or InvalidOperationException or KeyNotFoundException){}
         }
-        return (null,null);
+        return(null,null);
     }
 
     /// <summary>把一个可执行文件名解析为完整路径（环境变量 PATH + 标准 Windows 安装目录）。
@@ -371,7 +334,7 @@ internal static class ScraplingCrawlService
     internal static async Task<InstallResult> EnsureInstalledAsync(IProgress<string>? progress,CancellationToken cancellationToken)
     {
         progress?.Report(LocalizationService.T("正在探测 Python 解释器…","Detecting Python interpreter…"));
-        var (pythonExe, version)=DetectPython();
+        var (pythonExe, version)=await DetectPythonAsync(cancellationToken).ConfigureAwait(false);
         if(pythonExe is null)
         {
             new PrivacyLogger().Info("ScraplingInstall","no_python_found");
@@ -392,16 +355,9 @@ internal static class ScraplingCrawlService
         {
             progress?.Report(LocalizationService.T("创建 venv…","Creating venv…"));
             Directory.CreateDirectory(installDir);
-            var venvArgs=new ProcessStartInfo(pythonExe,$"-m venv \"{Path.Combine(installDir,"venv")}\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
-            ClearBadProxyEnv(venvArgs.EnvironmentVariables);
-            using var vp=Process.Start(venvArgs);
-            if(vp is null)return new InstallResult(false,installDir,LocalizationService.T("无法启动 Python 进程。","Failed to start the Python process."));
-            var vstderr=vp.StandardError.ReadToEndAsync(cancellationToken).GetAwaiter().GetResult();
-            try{await vp.WaitForExitAsync(cancellationToken).ConfigureAwait(false);}catch(OperationCanceledException){return new InstallResult(false,installDir,LocalizationService.T("安装被取消。","Failed to install: canceled."));}
-            new PrivacyLogger().Info("ScraplingInstall","venv:"+Truncate(vstderr,400));
-            if(vp.ExitCode!=0||!File.Exists(python))
-                return new InstallResult(false,installDir,string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                    LocalizationService.T("创建 venv 失败（退出码 {0}）。","Failed to create venv (exit code {0})."),vp.ExitCode));
+            var created=await RunStep(pythonExe,["-m","venv",Path.Combine(installDir,"venv")],installDir,progress,cancellationToken).ConfigureAwait(false);
+            if(created.exit!=0||!File.Exists(python))
+                return new(false,installDir,LocalizationService.T("创建 Python 虚拟环境失败。","Failed to create the Python virtual environment."));
         }
 
         progress?.Report(LocalizationService.T("升级 pip…","Upgrading pip…"));
@@ -409,10 +365,10 @@ internal static class ScraplingCrawlService
         // pip upgrade 偶尔因为网络失败但不是致命（Scrapling 自带较新的 pip 约束）。
 
         progress?.Report(LocalizationService.T("安装 scrapling 包（约 30 MB，可能耗时 1-2 分钟）…","Installing scrapling package (~30 MB, may take 1-2 minutes)…"));
-        var pkgResult=await RunStep(python,new[]{"-m","pip","install","scrapling"},installDir,progress,cancellationToken).ConfigureAwait(false);
+        var pkgResult=await RunStep(python,new[]{"-m","pip","install","scrapling[fetchers]"},installDir,progress,cancellationToken).ConfigureAwait(false);
         var pkgExit=pkgResult.exit;
         var pkgStderr=pkgResult.stderr;
-        new PrivacyLogger().Info("ScraplingInstall","pip:"+Truncate(pkgStderr,600));
+        new PrivacyLogger().Info("ScraplingInstall",$"pip_exit={pkgExit}");
         if(pkgExit!=0)
         {
             return new InstallResult(false,installDir,string.Format(System.Globalization.CultureInfo.CurrentCulture,
@@ -422,12 +378,12 @@ internal static class ScraplingCrawlService
 
         progress?.Report(LocalizationService.T("下载隐身浏览器（playwright Chromium，可能 100-200 MB）…","Downloading stealth browser (playwright Chromium, ~100-200 MB)…"));
         var scraplingExe=Path.Combine(installDir,"venv","Scripts","scrapling.exe");
-        if(!File.Exists(scraplingExe))
-            scraplingExe=python; // fallback：python -m scrapling
-        var browserResult=await RunStep(scraplingExe,new[]{"install"},installDir,progress,cancellationToken).ConfigureAwait(false);
+        string browserExe=File.Exists(scraplingExe)?scraplingExe:python;
+        var browserArgs=File.Exists(scraplingExe)?new[]{"install"}:new[]{"-m","scrapling","install"};
+        var browserResult=await RunStep(browserExe,browserArgs,installDir,progress,cancellationToken).ConfigureAwait(false);
         var browserExit=browserResult.exit;
         var browserStderr=browserResult.stderr;
-        new PrivacyLogger().Info("ScraplingInstall","scrapling_install:"+Truncate(browserStderr,600));
+        new PrivacyLogger().Info("ScraplingInstall",$"browser_exit={browserExit}");
         if(browserExit!=0)
         {
             // scrapling install 失败不致命——没隐身浏览器也能用普通 Fetcher。
@@ -441,44 +397,11 @@ internal static class ScraplingCrawlService
 
     private static async Task<(int exit,string stderr)> RunStep(string exe,string[] args,string workingDir,IProgress<string>? progress,CancellationToken cancellationToken)
     {
-        var psi=new ProcessStartInfo(exe){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,WorkingDirectory=workingDir,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
-        foreach(var a in args)psi.ArgumentList.Add(a);
-        ClearBadProxyEnv(psi.EnvironmentVariables);
-        using var p=Process.Start(psi);
-        if(p is null)return (-1,"");
-        var stderrTask=p.StandardError.ReadToEndAsync(cancellationToken);
-        var stdoutTask=p.StandardOutput.ReadToEndAsync(cancellationToken);
-        try{await p.WaitForExitAsync(cancellationToken).ConfigureAwait(false);}catch(OperationCanceledException){try{p.Kill(entireProcessTree:true);}catch{} return (-1,"canceled");}
-        var stderr=await stderrTask.ConfigureAwait(false);
-        var stdout=await stdoutTask.ConfigureAwait(false);
-        foreach(var line in stdout.Split('\n').TakeLast(3))
-        {
-            var trimmed=line.Trim();
-            if(trimmed.Length>0)progress?.Report(Sanitize(trimmed));
-        }
-        return (p.ExitCode, stderr);
-    }
-
-    private static void ClearBadProxyEnv(System.Collections.Specialized.StringDictionary env)
-    {
-        var bad=new[]{"HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all_proxy"};
-        foreach(var name in bad)
-        {
-            try{env.Remove(name);}catch{}
-        }
-    }
-
-    private static string Sanitize(string line)
-    {
-        // 去掉 ANSI 控制字符（pip 进度条输出里有）。
-        var sb=new StringBuilder(line.Length);
-        foreach(var c in line)
-        {
-            if(c=='\r')continue;
-            if(c==0x1b){sb.Append(' ');continue;} // ESC（控制序列前缀）
-            sb.Append(c);
-        }
-        return sb.ToString().Trim();
+        var start=new ProcessStartInfo(exe){WorkingDirectory=workingDir};
+        foreach(var arg in args)start.ArgumentList.Add(arg);
+        SanitizeProxyEnv(start.EnvironmentVariables);
+        var result=await BoundedChildProcess.RunAsync(start,TimeSpan.FromMinutes(5),cancellationToken,0).ConfigureAwait(false);
+        return(result.ExitCode,string.Empty);
     }
 
     /// <summary>嵌入的抓取脚本（v4）。

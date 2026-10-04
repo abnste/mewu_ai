@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Media;
+using mewu_ai_Assistant.Services;
 
 namespace mewu_ai_Assistant.Views;
 
@@ -32,12 +33,43 @@ internal class AiSettingsForm : StackPanel
         TextElement.SetFontWeight(this,FontWeights.Normal);TextElement.SetFontSize(this,13);
     }
 
-    internal static FrameworkElement Field(string label,FrameworkElement editor)
+    internal static FrameworkElement Field(string label,FrameworkElement editor,TextBlock? inlineStatus=null)
     {
         var field=new StackPanel{Margin=new Thickness(0,0,0,14)};
-        field.Children.Add(new TextBlock{Text=label,FontSize=12,FontWeight=FontWeights.Normal,Foreground=BrushesForForm.Secondary,Margin=new Thickness(0,0,0,6)});
+        var heading=new TextBlock{FontSize=12,FontWeight=FontWeights.Normal,Foreground=BrushesForForm.Secondary,Margin=new Thickness(0,0,0,6)};
+        if(inlineStatus is not null)
+        {
+            // The localization watcher writes TextBlock.Text, which would replace
+            // these bound runs. Localize the title and status individually instead.
+            LocalizationService.SetExcludeFromLocalization(heading,true);
+            heading.TextWrapping=TextWrapping.NoWrap;
+            heading.TextTrimming=TextTrimming.CharacterEllipsis;
+            heading.Inlines.Add(new Run(LocalizationService.TranslateUiText(label)));
+            var hint=new Run{FontSize=11};
+            hint.SetBinding(Run.TextProperty,new Binding(nameof(TextBlock.Text)){Source=inlineStatus,Mode=BindingMode.OneWay,Converter=InlineStatusConverter.Instance});
+            hint.SetBinding(TextElement.ForegroundProperty,new Binding(nameof(TextBlock.Foreground)){Source=inlineStatus,Mode=BindingMode.OneWay});
+            heading.Inlines.Add(hint);
+            var tooltip=new TextBlock{MaxWidth=440,TextWrapping=TextWrapping.Wrap};
+            tooltip.SetBinding(TextBlock.TextProperty,new Binding(nameof(TextBlock.Text)){Source=inlineStatus,Mode=BindingMode.OneWay,Converter=InlineStatusConverter.Instance,ConverterParameter=false});
+            heading.ToolTip=tooltip;
+        }
+        else heading.Text=label;
+        field.Children.Add(heading);
         if(editor is Control control)PrepareEditor(control);
         field.Children.Add(editor);return field;
+    }
+
+    private sealed class InlineStatusConverter:IValueConverter
+    {
+        internal static readonly InlineStatusConverter Instance=new();
+        public object Convert(object value,Type targetType,object parameter,System.Globalization.CultureInfo culture)
+        {
+            if(value is not string text||string.IsNullOrWhiteSpace(text))return string.Empty;
+            var localized=LocalizationService.TranslateUiText(text);
+            return parameter is false?localized:$" ({localized.Trim().ReplaceLineEndings(" ")})";
+        }
+        public object ConvertBack(object value,Type targetType,object parameter,System.Globalization.CultureInfo culture)
+            =>Binding.DoNothing;
     }
 
     internal static void PrepareEditor(Control editor)

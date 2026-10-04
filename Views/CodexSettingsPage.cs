@@ -31,7 +31,7 @@ internal sealed class CodexSettingsPage : StackPanel
         form.Fields.Children.Add(AiSettingsForm.Field(T("模型","Model"),_model));
         _path.Text=settings.CodexExecutablePath;_path.IsReadOnly=true;
         var browse=new Button{Content=T("选择 codex.exe","Choose codex.exe"),Margin=new Thickness(8,0,0,0)};
-        browse.Click+=(_,_)=>{var d=new Microsoft.Win32.OpenFileDialog{Filter="Codex executable|codex.exe"};if(d.ShowDialog()==true)_path.Text=d.FileName;};
+        browse.Click+=(_,_)=>{var d=new Microsoft.Win32.OpenFileDialog{Title=T("选择 codex.exe","Choose codex.exe"),Filter=T("Codex 可执行文件|codex.exe","Codex executable|codex.exe")};if(d.ShowDialog()==true)_path.Text=d.FileName;};
         var row=new Grid();row.ColumnDefinitions.Add(new ColumnDefinition());row.ColumnDefinitions.Add(new ColumnDefinition{Width=GridLength.Auto});row.Children.Add(_path);Grid.SetColumn(browse,1);row.Children.Add(browse);
         form.Fields.Children.Add(AiSettingsForm.Field(T("Codex 程序路径（可选）","Codex executable path (optional)"),row));
         form.Fields.Children.Add(AiSettingsForm.Field(T("思考程度","Reasoning effort"),_effort));
@@ -78,12 +78,38 @@ internal sealed class CodexSettingsPage : StackPanel
                 System.ComponentModel.Win32Exception=>T("Codex 启动失败，请重新安装官方客户端后重试。","Codex could not start. Reinstall the official client and retry."),
                 KeyNotFoundException or System.Text.Json.JsonException=>T("Codex 接口格式不兼容，请升级官方客户端后重试。","The Codex protocol is incompatible. Update the official client and retry."),
                 UnauthorizedAccessException=>T("无法访问 Codex 工作目录，请检查文件夹权限。","Cannot access the Codex workspace. Check folder permissions."),
-                _=>ex.Message
+                _=>FormatErrorMessage(ex.Message)
             };
             _status.Foreground=Brushes.Firebrick;
         }
         finally{_detect.IsEnabled=true;}
     }
+
+    internal static string FormatErrorMessage(string message)
+    {
+        var translated=message switch
+        {
+            "未找到本机 Codex，请选择原生 codex.exe。"=>T(message,"Codex was not found. Select the native codex.exe executable."),
+            "无法启动本机 Codex。"=>T(message,"Codex could not start on this device."),
+            "Codex 模型目录过大。"=>T(message,"The Codex model catalog exceeds the size limit."),
+            "Codex 模型目录分页未结束，请升级官方客户端后重试。"=>T(message,"The Codex model catalog did not finish loading. Update the official client and retry."),
+            "Codex 尚未登录，请在官方 ChatGPT 桌面应用或 Codex CLI 中完成登录，再重新检测。"=>T(message,"Codex is not signed in. Sign in to the official ChatGPT desktop app or Codex CLI, then check again."),
+            "本机 Codex 的 MCP 名称无法安全隔离，请使用仅含字母、数字、下划线或短横线的名称。"=>T(message,"A local Codex MCP name cannot be safely isolated. Use only letters, digits, underscores, or hyphens in MCP names."),
+            "Codex 后台已退出，请重新检测连接。"=>T(message,"The Codex background process has exited. Check the connection again."),
+            "Codex 本机接口超时或已断开，请重新检测连接。"=>T(message,"The local Codex connection timed out or disconnected. Check the connection again."),
+            "Codex 请求超过 64 MiB 限制。"=>T(message,"The Codex request exceeds the 64 MiB limit."),
+            "Codex 返回了不完整的接口响应。"=>T(message,"Codex returned an incomplete protocol response."),
+            "Codex 后台连接中断，未完成的回答已取消。"=>T(message,"The Codex connection was interrupted. Pending responses were canceled."),
+            "响应缺少必要字段。"=>T(message,"The response is missing required fields."),
+            "Codex 单条响应超过安全限制。"=>T(message,"A Codex response exceeds the size limit."),
+            "Codex 响应被截断。"=>T(message,"The Codex response was truncated."),
+            _=>message
+        };
+        if(!string.Equals(translated,message,StringComparison.Ordinal)||!LocalizationService.IsEnglish)return translated;
+        var rejected=System.Text.RegularExpressions.Regex.Match(message,"^Codex 拒绝了接口请求（代码 (-?[0-9]+)），请检查登录、模型与官方客户端版本。$",System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return rejected.Success?T(message,$"Codex rejected the request (code {rejected.Groups[1].Value}). Check sign-in, the model, and the official client version."):message;
+    }
+
     private static string T(string zh,string en)=>LocalizationService.T(zh,en);
     private sealed record EffortChoice(string Value)
     {

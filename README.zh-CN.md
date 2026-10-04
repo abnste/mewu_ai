@@ -3,14 +3,14 @@
   <h1>喵呜AI（MewuAI）— Windows AI 截图标注软件</h1>
   <p>开源截图工具，支持 AI 原位标注、离线 OCR、截图翻译、长截图和录屏。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.5.9"><img src="https://img.shields.io/badge/公测版-v0.5.9-7C6CF0?style=flat-square" alt="v0.5.9 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.2"><img src="https://img.shields.io/badge/公测版-v0.7.2-7C6CF0?style=flat-square" alt="v0.7.2 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.9/MewuAI-Setup-0.5.9-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Setup-0.7.2-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.5.9/MewuAI-Portable-0.5.9-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Portable-0.7.2-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -28,6 +28,8 @@
 
 想了解“让 AI 在截图上圈出重点”“截图翻译并保留原位置”或“图片文字复制到 Excel”，请看[AI 截图标注使用指南](./docs/ai-screenshot-annotation.zh-CN.md)。
 
+**0.7.2 修复：** 修复反复使用离线 OCR 后内存持续占用偏高的问题，减少排队识别时的截图内存分配。详见 [0.7.2 更新说明](./docs/release-notes-v0.7.2.md)。
+
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-zh.png"><img src="./docs/images/mewuai-cover-web-zh.png" width="100%" alt="喵呜AI 概念封面：在 Windows 桌面上截图、提问和原位标注" /></a>
   <br /><sub>AI 生成的概念封面，实际界面见下方功能演示。</sub>
@@ -37,14 +39,30 @@
 
 - **试卷与作业**：像普通截图一样引用试卷，直接让 AI 讲解、批注；引用多张截图分析共同问题并生成练习，识读与判分仍需人工核对。
 
-- **截图与长截图**：框选区域、选择窗口、多屏截图，长截图不再限制固定拼接次数。自动吸附窗口后可截取应用快照，捕获受支持的滚动区域并恢复原位置，完成后自动置顶和引用；可用性取决于应用的渲染与滚动支持。
-- **标注与贴图**：画笔、高亮、直线、箭头、形状、文字、序号和马赛克；选中对象即可调整样式，全彩色板取色，拖动时预览真实马赛克。按住 Shift 约束线条、箭头和形状，点击“完成”后自动复制标注图。
-- **文字与表格**：识别并复制图片中的文字，翻译截图；用 AI 提取表格，粘贴到 Excel。
-- **录屏与导出**：录制指定区域，支持电脑声音和麦克风；保存为 MP4 视频、MP3 音频或 GIF 动图。
+- **截图与长截图**：框选区域、选择窗口、多屏截图，长截图不再限制固定拼接次数。框选时，紧凑取色框上方显示 #FFFFFF 格式的十六进制色值，中间是带十字线的无外框像素放大镜，下方显示屏幕坐标。自动吸附窗口后可截取应用快照，捕获受支持的滚动区域并恢复原位置，完成后自动置顶和引用；可用性取决于应用的渲染与滚动支持。
+- **标注与贴图**：第一行选择画笔、形状、文字、序号、马赛克等工具，第二行调整属性、撤回、重做、删除全部和确定。“选择”工具用于移动和编辑已有对象，序号工具可手动指定下个编号；荧光笔与重点高亮给背景上色并保护底图文字和细节。按住 Shift 约束线条、箭头和形状；移动或缩放截图选区时保留手工标注，确定后自动复制标注图。
+- **透明提取与局部修补**：“无痕提取”补齐原位置背景，并把文字或图案提取为可移动、缩放、删除的透明图层；“涂抹消除”沿笔刷路径修补内容。两者均在本机处理并支持撤回、重做，依据周边背景估算，适合截图文字和简单图案，不等同于通用主体抠图或生成式照片编辑。
+- **文字与表格**：离线识别并复制图片文字；截图翻译保留每个源行和独立分栏，较长的单行译文在本行空间内调整字号；用 AI 提取表格，粘贴到 Excel。
+- **录屏与裁切**：录制指定区域，支持电脑声音和麦克风。在预览下方直接定位、调整起止点、撤回修改或恢复完整视频，原文件不被覆盖；保存、复制、贴视频和 AI 引用统一使用保留片段，音频及时间轴标注同步处理。预览默认原分辨率，可在录屏设置中选择降低预览分辨率，保存的视频分辨率不受影响。支持导出 MP4 视频、MP3 音频或 GIF 动图。
 - **看图、看视频提问**：引用多张截图或附件继续追问，查看 AI 批注，点击回答中的时间跳到对应视频片段。
 - **选择你常用的 AI**：支持 API、Hermes、ChatGPT Work / Codex、WorkBuddy 和 MiniMax Code，可随时切换，记住上次选择。
+- **屏幕操作与 MCP 服务**：识别链接、邮箱地址和电话号码；连接 QQ 邮箱、网易邮箱、钉钉、飞书、ima 或 Obsidian，使用相应的邮件、分享及笔记功能。配置方法见[集成使用指南](./docs/mcp-integrations.md#中文)。
 
 截图、手工标注、贴图、文字识别和录屏无需配置 AI。翻译、表格提取及 AI 问答需要连接相应服务。
+
+## 开发中 / TODO
+
+- 接入 Computer-Use。
+- AI 自动控制截图区域，并创建、运行宏代码。
+- 接入更多 AI 工具。
+- 更快的响应速度与更低的 token 消耗。
+- 多模态生成能力。
+- 音频理解能力。
+- 二维码识别与更多可操作内容类型。
+- 接入 Jev 决策模型。
+- AIGC 画布编辑。
+- 支持更多语言。
+- 跨平台支持。
 
 ## 功能演示
 
@@ -187,7 +205,7 @@ Windows N / KN 版本需要安装 Media Feature Pack 才能录制和播放视频
 
 ## 开源协议
 
-作者：[**Abner Stephen**](https://github.com/abnste)、[**Yandi**](https://github.com/pyxyd) 和 [**数字星星**](https://github.com/shuziyuxingxing-stack)。
+<a href="https://github.com/abnste"><img src="https://github.com/abnste.png?size=150" width="50px" alt="Abner Stephen"></a><a href="https://github.com/pyxyd"><img src="https://github.com/pyxyd.png?size=150" width="50px" alt="Yandi"></a><a href="https://github.com/shuziyuxingxing-stack"><img src="https://github.com/shuziyuxingxing-stack.png?size=150" width="50px" alt="数字与星星"></a><a href="https://github.com/AndeDrCobb"><img src="https://github.com/AndeDrCobb.png?size=150" width="50px" alt="Cobb"></a>
 
 项目自有源码采用 [MPL-2.0](./LICENSE)，允许遵守协议的商业使用。对外分发时，请按协议提供受覆盖的源代码并保留版权和许可声明。详见[许可与源码说明](./SOURCE.md)；第三方依赖另见[第三方声明](./THIRD-PARTY-NOTICES.md)。
 

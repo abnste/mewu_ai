@@ -17,7 +17,7 @@ internal sealed class FeishuSettingsPage : StackPanel
         private readonly string _name;
         internal string ChatId{get;}
         internal ChatOption(string chatId,string name){ChatId=chatId;_name=name;}
-        public override string ToString()=>$"{_name}（{ChatId}）";
+        public override string ToString()=>T($"{_name}（{ChatId}）",$"{_name} ({ChatId})");
     }
 
     private readonly CheckBox _enable=new();
@@ -29,16 +29,22 @@ internal sealed class FeishuSettingsPage : StackPanel
     private readonly TextBlock _status=new();
     private readonly Button _saveSecret=new(),_test=new(),_clear=new();
     private readonly CancellationToken _token;
+    private readonly Func<AppSettings,CancellationToken,Task<IReadOnlyList<(string ChatId,string Name)>>> _listChats;
     private bool _statusLoaded;
+    private int _revision;
     internal bool Enabled=>_enable.IsChecked==true;
     internal string AppId=>_appId.Text.Trim();
     internal string TargetId=>_targetId.Text.Trim();
     internal string TargetType=>(_targetType.SelectedItem as ComboBoxItem)?.Tag?.ToString()??"chat_id";
 
     internal FeishuSettingsPage(AppSettings settings,CancellationToken token)
+        :this(settings,token,FeishuService.ListChatsAsync){}
+
+    internal FeishuSettingsPage(AppSettings settings,CancellationToken token,
+        Func<AppSettings,CancellationToken,Task<IReadOnlyList<(string ChatId,string Name)>>> listChats)
     {
-        _token=token;
-        var form=new AiSettingsForm("飞书",T("通过飞书自建应用分享截图：圈选区域后点击工具栏“飞书”按钮，图片会发送到指定群或联系人。需要在飞书开放平台（open.feishu.cn）创建企业自建应用并开通 im:message、im:chat 权限；Secret 只保存在本机。点击“测试连接”可拉取群列表供选择。","Share screenshots via a Feishu self-built app: after selecting a region, the Feishu toolbar button sends the image to a chosen chat or contact. Create an enterprise app on open.feishu.cn with the im:message and im:chat scopes; the secret stays on this machine. “Test connection” also fetches your chat list."),_status);
+        _token=token;_listChats=listChats;
+        var form=new AiSettingsForm(T("飞书","Feishu"),T("通过飞书自建应用分享截图：圈选区域后点击工具栏“飞书”按钮，图片会发送到指定群或联系人。需要在飞书开放平台（open.feishu.cn）创建企业自建应用并开通 im:message、im:chat 权限；Secret 只保存在本机。点击“测试连接”可拉取群列表供选择。","Share screenshots via a Feishu self-built app: after selecting a region, the Feishu toolbar button sends the image to a chosen chat or contact. Create an enterprise app on open.feishu.cn with the im:message and im:chat scopes; the secret stays on this machine. “Test connection” also fetches your chat list."),_status);
         Children.Add(form);
         form.AddAction(_saveSecret,T("保存 Secret","Save secret"));
         form.AddAction(_test,T("测试连接","Test connection"));
@@ -52,7 +58,18 @@ internal sealed class FeishuSettingsPage : StackPanel
         _enable.IsChecked=settings.FeishuEnabled;
         _secret.ToolTip=T("点击“保存 Secret”后才会写入本机（DPAPI 加密）。","Only written locally (DPAPI) after clicking “Save secret”.");
         _chats.ToolTip=T("点击“测试连接”后可从群列表中选择目标。","Populated by “Test connection”; pick a target chat here.");
-        _chats.SelectionChanged+=(_,_)=>{if(_chats.SelectedItem is ChatOption option)_targetId.Text=option.ChatId;};
+        _chats.SelectionChanged+=(_,_)=>
+        {
+            if(_chats.SelectedItem is not ChatOption option)return;
+            _targetType.SelectedIndex=0;
+            _targetId.Text=option.ChatId;
+        };
+        _targetType.SelectionChanged+=(_,_)=>{if(TargetType!="chat_id")_chats.SelectedItem=null;};
+        _appId.TextChanged+=(_,_)=>
+        {
+            _revision++;_chats.Items.Clear();
+            _status.Text=T("App ID 已修改，请重新测试连接。","App ID changed. Test the connection again.");
+        };
         form.Fields.Children.Add(AiSettingsForm.Field(T("App ID","App ID"),_appId));
         form.Fields.Children.Add(AiSettingsForm.Field(T("接收人类型","Receiver type"),_targetType));
         form.Fields.Children.Add(AiSettingsForm.Field(T("接收人 ID（chat_id 或 open_id）","Receiver ID (chat_id or open_id)"),_targetId));
@@ -68,8 +85,9 @@ internal sealed class FeishuSettingsPage : StackPanel
             if(_statusLoaded)return;_statusLoaded=true;
             try
             {
+                var revision=_revision;
                 var configured=await Task.Run(()=>FeishuService.IsConfigured(settings),_token);
-                if(!_token.IsCancellationRequested)_status.Text=configured?T("已配置（Secret 已保存）。","Configured (secret saved)."):T("尚未配置完整。","Not fully configured yet.");
+                if(!_token.IsCancellationRequested&&revision==_revision&&_test.IsEnabled)_status.Text=configured?T("已配置（Secret 已保存）。","Configured (secret saved)."):T("尚未配置完整。","Not fully configured yet.");
             }
             catch(OperationCanceledException)when(_token.IsCancellationRequested){}
             catch(Exception ex){new PrivacyLogger().Info("FeishuStatus",ex.GetType().Name);}
@@ -82,7 +100,7 @@ internal sealed class FeishuSettingsPage : StackPanel
         try
         {
             FeishuService.SaveSecret(_secret.Password);
-            _secret.Clear();
+            _secret.Clear();_revision++;
             _status.Foreground=Brushes.SeaGreen;
             _status.Text=T("App Secret 已保存（本机加密）。","App Secret saved (encrypted on this machine).");
         }
@@ -92,28 +110,34 @@ internal sealed class FeishuSettingsPage : StackPanel
     private void ClearSecret()
     {
         if(_token.IsCancellationRequested)return;
-        FeishuService.ClearSecret();
-        _status.Foreground=Brushes.SlateGray;
-        _status.Text=T("App Secret 已清除。","App Secret cleared.");
+        try
+        {
+            FeishuService.ClearSecret();_secret.Clear();_revision++;
+            _status.Foreground=Brushes.SlateGray;
+            _status.Text=T("App Secret 已清除。","App Secret cleared.");
+        }
+        catch(Exception ex){ShowError(ex.Message);}
     }
 
-    private async Task TestAsync()
+    internal async Task TestAsync()
     {
         if(!_test.IsEnabled||_token.IsCancellationRequested)return;
         _test.IsEnabled=false;_saveSecret.IsEnabled=false;_clear.IsEnabled=false;
         _status.Foreground=Brushes.SlateGray;
         _status.Text=T("正在连接飞书开放平台并拉取群列表…","Connecting to Feishu and fetching chats…");
+        var probe=new AppSettings{FeishuEnabled=true,FeishuAppId=AppId};var revision=++_revision;
         try
         {
-            var probe=new AppSettings{FeishuEnabled=true,FeishuAppId=AppId};
-            var chats=await FeishuService.ListChatsAsync(probe,_token);
+            var chats=await Task.Run(()=>_listChats(probe,_token),_token);
+            _token.ThrowIfCancellationRequested();
+            if(revision!=_revision)return;
             _chats.Items.Clear();
-            foreach(var (chatId,name) in chats.Take(50))_chats.Items.Add(new ChatOption(chatId,name));
+            foreach(var (chatId,name) in chats)_chats.Items.Add(new ChatOption(chatId,name));
             _status.Text=T($"凭据有效，发现 {chats.Count} 个可见群（可在“选择群聊”中挑选）。",$"Credentials valid; {chats.Count} visible chat(s) found (pick one below).");
             _status.Foreground=Brushes.SeaGreen;
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
-        catch(Exception ex){ShowError(ex.Message);}
+        catch(Exception ex){if(!_token.IsCancellationRequested&&revision==_revision)ShowError(ex.Message);}
         finally{_test.IsEnabled=true;_saveSecret.IsEnabled=true;_clear.IsEnabled=true;}
     }
 

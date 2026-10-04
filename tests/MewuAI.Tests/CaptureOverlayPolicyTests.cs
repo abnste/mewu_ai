@@ -270,7 +270,7 @@ public sealed class CaptureOverlayPolicyTests
         var prompt=CaptureOverlayPolicy.CreateReferenceAwarePrompt("比较 @图片1 和 @图片3",[
             new(0,"image-a","@图片1",AiAttachmentType.Image,640,480,null,true,true),
             new(1,"image-c","@图片3",AiAttachmentType.Image,800,600,null)]);
-        Assert.Contains("\"RegionIndex\":0",prompt);Assert.Contains("\"Label\":\"@图片3\"",prompt);Assert.Contains("\"ReferenceHandle\":\"image-c\"",prompt);Assert.Contains("\"hasExistingAiAnnotations\":true",prompt);Assert.Contains("preserve",prompt);Assert.Contains("append",prompt);Assert.Contains("replace",prompt);Assert.Contains("禁止按显示编号猜测",prompt);Assert.Contains("比较 @图片1 和 @图片3",prompt);
+        Assert.Contains("\"RegionIndex\":0",prompt);Assert.Contains("\"Label\":\"@图片3\"",prompt);Assert.Contains("\"ReferenceHandle\":\"image-c\"",prompt);Assert.Contains("\"hasExistingAiAnnotations\":true",prompt);Assert.Contains("preserve",prompt);Assert.Contains("append",prompt);Assert.Contains("replace",prompt);Assert.Contains(LocalizationService.IsEnglish?"never infer regionIndex from the display number":"禁止按显示编号猜测",prompt);Assert.Contains("比较 @图片1 和 @图片3",prompt);
     }
 
     [Fact]

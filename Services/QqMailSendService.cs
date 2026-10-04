@@ -12,11 +12,14 @@ namespace mewu_ai_Assistant.Services;
 /// <param name="Body">正文（纯文本）。</param>
 internal sealed record QqMailDraft(IReadOnlyList<(string Email,string? Name)> To,IReadOnlyList<(string Email,string? Name)> Cc,string Subject,string Body);
 
+internal enum MailChannel { Auto, Qq, NetEase }
+internal sealed record MailDeliveryResult(bool Success,string Message,bool IsUnconfirmed=false);
+
 /// <summary>
 /// QQ 邮箱发件流程：模型在回答里输出 ```mewu-mail-send``` 标记块表示“需要发送这封邮件”，
 /// 应用解析出草稿后调用 MCP SendMessage 工具，并遵循服务端的两阶段确认协议——
-/// 第一次调用返回 confirmation_token 与 operation_summary（不会发送），经用户在
-/// 确认对话框中明确同意后带令牌重试才真正发出。应用自身绝不代用户静默发送。
+/// 远端可能返回 confirmation_token 要求补充确认；任何远端调用之前均先由用户
+/// 确认固定草稿。没有可验证回执时明确提示检查已发送箱，不自动重发。
 /// </summary>
 internal static partial class QqMailSendService
 {
@@ -34,7 +37,7 @@ internal static partial class QqMailSendService
         draft=null!;
         cleanedAnswer=answer??string.Empty;
         var match=MailSendBlockRegex().Match(cleanedAnswer);
-        if(!match.Success)return false;
+        if(!match.Success||match.NextMatch().Success)return false;
         try
         {
             var payload=JsonNode.Parse(match.Groups[1].Value)?.AsObject();
@@ -44,103 +47,120 @@ internal static partial class QqMailSendService
             var subject=payload["subject"]?.GetValue<string>()??string.Empty;
             var body=payload["body"]?.GetValue<string>()??string.Empty;
             if(to.Count==0||subject.Trim().Length==0||body.Trim().Length==0)return false;
-            draft=new QqMailDraft(to,cc,subject.Trim(),body.Trim());
+            draft=new QqMailDraft(to,cc,subject,body);
             cleanedAnswer=CleanAround(cleanedAnswer.Remove(match.Index,match.Length));
             return true;
         }
-        catch(Exception ex)
-        {
-            new PrivacyLogger().Info("QqMailDraftParse",ex.GetType().Name);
-            return false;
-        }
+        catch(Exception ex)when(ex is JsonException or InvalidOperationException or FormatException){return false;}
     }
 
-    /// <summary>执行两阶段确认发送。<paramref name="confirm"/> 在 UI 线程弹出确认
-    /// 对话框（入参为给用户看的摘要），返回 true 表示用户同意。返回给调用方
-    /// 一段可直接展示的中文/英文结果文案。收件人为网易后缀时改走网易 SMTP
-    /// 通道（必须配置授权码——网易没有官方 OAuth-like 发件通道，网页扫码
-    /// 临时会话拿到的 sid 经实测可被服务端沙箱化：mbox:compose 返回 S_OK
-    /// 但“已发送”箱查不到副本，因此只保留扫码会话作为读上下文，不用于发件）。</summary>
-    internal static async Task<string> DeliverAsync(QqMailDraft draft,Models.AppSettings? settings,Func<string,Task<bool>> confirm,CancellationToken cancellationToken,bool forceNetEase=false)
+    // A recipient's domain never chooses the sender's account. Explicit selections
+    // fail closed; Auto uses the enabled QQ account, then enabled NetEase SMTP.
+    internal static MailChannel? SelectChannel(MailChannel requested,bool qqReady,bool netEaseReady)
+        =>requested switch
+        {
+            MailChannel.Qq=>qqReady?MailChannel.Qq:null,
+            MailChannel.NetEase=>netEaseReady?MailChannel.NetEase:null,
+            _=>qqReady?MailChannel.Qq:netEaseReady?MailChannel.NetEase:null
+        };
+
+    internal static bool CanSend(QqMailMcpToken? token)=>token is not null&&
+        token.Scope.Split(' ',StringSplitOptions.RemoveEmptyEntries).Contains("mail:send",StringComparer.Ordinal);
+
+    internal static async Task<MailDeliveryResult> DeliverAsync(QqMailDraft draft,Models.AppSettings? settings,
+        Func<string,Task<bool>> confirm,CancellationToken cancellationToken,MailChannel channel=MailChannel.Auto)
     {
-        // 通道路由：网易后缀优先网易 SMTP 通道（必须配置授权码）；QQ 未授权
-        // 但网易 SMTP 已配置时同样走网易通道。网页扫码会话仅用于读邮件上下文。
+        cancellationToken.ThrowIfCancellationRequested();
+        draft=SnapshotDraft(draft);
+        var token=settings?.QqMailMcpEnabled==true&&channel!=MailChannel.NetEase
+            ?await QqMailMcpService.ResolveTokenAsync(cancellationToken).ConfigureAwait(false):null;
         var netEaseReady=settings is not null&&NetEaseMailService.IsConfigured(settings);
-        var netEaseRecipient=draft.To.Count>0&&NetEaseMailService.IsNetEaseAddress(draft.To[0].Email);
-        var token=netEaseReady&&netEaseRecipient?null:await QqMailMcpService.ResolveTokenAsync(cancellationToken).ConfigureAwait(false);
-        if(forceNetEase&&netEaseReady)
-            return await DeliverViaNetEaseAsync(settings!,draft,confirm,cancellationToken).ConfigureAwait(false);
-        if(netEaseReady&&(netEaseRecipient||token is null))
-            return await DeliverViaNetEaseAsync(settings!,draft,confirm,cancellationToken).ConfigureAwait(false);
-        token??=await QqMailMcpService.ResolveTokenAsync(cancellationToken).ConfigureAwait(false);
-        if(token is null)
+        var selected=SelectChannel(channel,CanSend(token),netEaseReady);
+        if(selected is null)
+            return new(false,T("所选发件邮箱未启用或未授权。QQ 邮箱需要扫码授权；网易邮箱发送需要账号和 SMTP 授权码，扫码会话只能读取邮件。",
+                "The selected sending account is disabled or unauthorized. QQ Mail needs authorization; NetEase sending needs an account and SMTP code. A QR session only reads mail."));
+        if(selected==MailChannel.NetEase)
         {
-            if(NetEaseMailWebMcpService.HasSession()&&NetEaseMailService.IsNetEaseAddress(draft.To[0].Email))
-                return T("已扫码授权网易邮箱，但扫码会话仅用于读取邮件上下文；要实际发送必须填写 SMTP 授权码。请在 设置 → MCP → 网易邮箱 填写账号和授权码（网页端 设置 → POP3/SMTP/IMAP 生成）。",
-                    "NetEase Mail is QR-authorized only for reading context. To actually send, configure the SMTP authorization code under Settings → MCP → NetEase Mail (generate one in the web client under Settings → POP3/SMTP/IMAP).");
-            return T("QQ 邮箱尚未扫码授权，无法发送邮件。请先在 设置 → MCP → QQ 邮箱 扫码授权。","QQ Mail is not authorized yet. Authorize it under Settings → MCP → QQ Mail first.");
+            var from=settings!.NetEaseMailAccount;
+            var summary=BuildUserSummary(draft,new JsonObject{["from"]=from});
+            if(!await confirm(summary).ConfigureAwait(false))return Canceled();
+            cancellationToken.ThrowIfCancellationRequested();
+            var accepted=await NetEaseMailService.SendAsync(settings,draft.To.Select(entry=>entry.Email).ToArray(),draft.Cc.Select(entry=>entry.Email).ToArray(),draft.Subject,draft.Body,cancellationToken).ConfigureAwait(false);
+            return accepted?Sent("网易邮箱 / NetEase Mail",draft):Unconfirmed();
         }
-        if(!token.Scope.Contains("mail:send",StringComparison.OrdinalIgnoreCase))
-            return T("当前 QQ 邮箱授权缺少 mail:send 权限，无法发送。","The current QQ Mail authorization lacks the mail:send scope.");
+        return await DeliverQqAsync(draft,confirm,
+            (arguments,ct)=>QqMailMcpService.CallToolRawAsync(token!,"SendMessage",arguments,ct),cancellationToken).ConfigureAwait(false);
+    }
 
-        var arguments=BuildArguments(draft,null);
-        // 第一阶段：不带确认令牌，服务端只返回待确认摘要，不会发送。
-        var (phase1,isError)=await QqMailMcpService.CallToolRawAsync(token,"SendMessage",arguments,cancellationToken).ConfigureAwait(false);
-        string? confirmationToken=null;
-        string summary;
-        try
-        {
-            var payload=JsonNode.Parse(phase1)?.AsObject();
-            var details=payload?["error"]?["details"]?.AsObject();
-            confirmationToken=details?["confirmation_token"]?.GetValue<string>();
-            var operation=details?["operation_summary"]?.AsObject();
-            summary=BuildUserSummary(draft,operation);
-        }
-        catch(JsonException)
-        {
-            summary=BuildUserSummary(draft,null);
-        }
-        if(confirmationToken is null)
-        {
-            // 没有确认令牌：要么服务端明确拒绝，要么异常地直接完成了发送。
-            return isError
-                ?T($"QQ 邮箱拒绝发送：{Trim(phase1)}",$"QQ Mail refused the send: {Trim(phase1)}")
-                :T("邮件已发送。","The email was sent.");
-        }
-
-        // 用户确认是唯一放行条件；取消则放弃，令牌自然作废。
-        var approved=await confirm(summary).ConfigureAwait(false);
-        if(!approved)return T("已取消发送，邮件未发出。","Send canceled; nothing was delivered.");
-
+    internal static async Task<MailDeliveryResult> DeliverQqAsync(QqMailDraft draft,Func<string,Task<bool>> confirm,
+        Func<JsonObject,CancellationToken,Task<(string Text,bool IsError)>> send,CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        draft=SnapshotDraft(draft);
+        // Confirm the exact draft BEFORE any potentially mutating remote call.
+        if(!await confirm(BuildUserSummary(draft,null)).ConfigureAwait(false))return Canceled();
+        cancellationToken.ThrowIfCancellationRequested();
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(SendTimeout);
-        var (phase2,phase2Error)=await QqMailMcpService.CallToolRawAsync(token,"SendMessage",BuildArguments(draft,confirmationToken),timeout.Token).ConfigureAwait(false);
-        if(phase2Error)return T($"QQ 邮箱发送失败：{Trim(phase2)}",$"QQ Mail send failed: {Trim(phase2)}");
-        var recipients=string.Join("、",draft.To.Select(entry=>entry.Email));
-        return T($"邮件已通过 QQ 邮箱发送给 {recipients}（主题：{draft.Subject}）。",$"The email was sent via QQ Mail to {recipients} (subject: {draft.Subject}).");
+        try
+        {
+            var (phase1,isError)=await send(BuildArguments(draft,null),timeout.Token).ConfigureAwait(false);
+            var confirmationToken=ReadConfirmationToken(phase1);
+            if(string.IsNullOrWhiteSpace(confirmationToken))
+                return isError||HasBusinessError(phase1)?new(false,T("QQ 邮箱拒绝发送，请检查授权和收件地址。","QQ Mail refused the send. Check authorization and recipients.")):Unconfirmed();
+            timeout.Token.ThrowIfCancellationRequested();
+            var (phase2,phase2Error)=await send(BuildArguments(draft,confirmationToken),timeout.Token).ConfigureAwait(false);
+            if(ReadConfirmationToken(phase2) is not null)return Unconfirmed();
+            return phase2Error||HasBusinessError(phase2)?new(false,T("QQ 邮箱发送失败，请检查授权和收件地址。","QQ Mail send failed. Check authorization and recipients.")):Unconfirmed();
+        }
+        catch(Exception ex)when(ex is OperationCanceledException or IOException or InvalidDataException or System.Net.Http.HttpRequestException)
+        {
+            // Once a send call starts, loss of its reply cannot prove that no mail
+            // was sent. Do not offer an ordinary failure that invites a retry.
+            return Unconfirmed();
+        }
     }
 
-    /// <summary>网易通道：仅 SMTP 授权码（强制）。网易没有稳定的 OAuth-like 发件
-    /// 通道；网页扫码拿到的 webmail 临时会话经实测会被服务端沙箱化（mbox:compose
-    /// 返回 S_OK 但“已发送”箱没有副本），因此扫码授权仅供读邮件上下文使用，
-    /// 不能代发邮件。SMTP 授权码在网易网页端 设置 → POP3/SMTP/IMAP 生成后
-    /// 填入设置即可（DPAPI 加密保存）。</summary>
-    private static async Task<string> DeliverViaNetEaseAsync(Models.AppSettings settings,QqMailDraft draft,Func<string,Task<bool>> confirm,CancellationToken cancellationToken)
+    // MCP isError=false only describes the tool transport. No documented QQ
+    // delivery receipt schema is available here, so never infer delivery from it.
+    private static MailDeliveryResult Unconfirmed()=>new(false,T(
+        "无法确认邮件是否已发送。请检查已发送箱，勿直接重发，以免重复发送。",
+        "Whether the email was sent could not be verified. Check Sent mail before retrying to avoid duplicates."),IsUnconfirmed:true);
+
+    private static string? ReadConfirmationToken(string text)
     {
-        if(!NetEaseMailService.IsConfigured(settings))
-            return T("网易邮箱发件必须填写 SMTP 授权码（网页端 设置 → POP3/SMTP/IMAP 生成）。扫码授权仅用于读取邮件上下文，不能代发邮件。",
-                "NetEase Mail sending requires the SMTP authorization code (generated under web Settings → POP3/SMTP/IMAP). The QR-code authorization only enables context fetching, not sending.");
-        var from=settings.NetEaseMailAccount;
-        var recipients=string.Join("、",draft.To.Select(entry=>entry.Email));
-        var cc=string.Join("、",draft.Cc.Select(entry=>entry.Email));
-        var summary=T(
-            $"发件人：{from}\n收件人：{recipients}{(cc.Length>0?$"\n抄送：{cc}":string.Empty)}\n主题：{draft.Subject}\n\n{draft.Body}",
-            $"From: {from}\nTo: {recipients}{(cc.Length>0?$"\nCC: {cc}":string.Empty)}\nSubject: {draft.Subject}\n\n{draft.Body}");
-        var approved=await confirm(summary).ConfigureAwait(false);
-        if(!approved)return T("已取消发送，邮件未发出。","Send canceled; nothing was delivered.");
-        await NetEaseMailService.SendAsync(settings,draft.To.Select(entry=>entry.Email).ToArray(),draft.Cc.Select(entry=>entry.Email).ToArray(),draft.Subject,draft.Body,cancellationToken).ConfigureAwait(false);
-        return T($"邮件已通过网易邮箱（SMTP 授权码）发送给 {recipients}（主题：{draft.Subject}）。",$"The email was sent via NetEase Mail (SMTP authorization code) to {recipients} (subject: {draft.Subject}).");
+        try
+        {
+            var root=JsonNode.Parse(text) as JsonObject;
+            return (root?["error"] as JsonObject)?["details"] is JsonObject details&&
+                details["confirmation_token"] is JsonValue value&&value.TryGetValue<string>(out var token)&&!string.IsNullOrWhiteSpace(token)?token:null;
+        }
+        catch(JsonException){return null;}
     }
+
+    private static bool HasBusinessError(string text)
+    {
+        try
+        {
+            for(var node=JsonNode.Parse(text) as JsonObject;node is not null;node=node["data"] as JsonObject)
+                if(node["error"] is not null)return true;
+        }
+        catch(JsonException){}
+        return false;
+    }
+
+    private static QqMailDraft SnapshotDraft(QqMailDraft draft)
+    {
+        if(draft.To.Count==0||draft.To.Concat(draft.Cc).Any(entry=>!NetEaseMailService.IsSingleAddress(entry.Email))||
+            string.IsNullOrWhiteSpace(draft.Subject)||string.IsNullOrWhiteSpace(draft.Body))
+            throw new InvalidOperationException(T("邮件草稿缺少有效的收件人、主题或正文。","The draft needs valid recipients, a subject, and a body."));
+        return draft with {To=draft.To.ToArray(),Cc=draft.Cc.ToArray()};
+    }
+
+    private static MailDeliveryResult Canceled()=>new(false,T("已取消发送，邮件未发出。","Send canceled; nothing was delivered."));
+    private static MailDeliveryResult Sent(string account,QqMailDraft draft)=>new(true,
+        T($"邮件已通过 {account} 发送给 {string.Join("、",draft.To.Select(entry=>entry.Email))}。",
+          $"The email was sent via {account} to {string.Join(", ",draft.To.Select(entry=>entry.Email))}."));
 
     private static JsonObject BuildArguments(QqMailDraft draft,string? confirmationToken)
     {
@@ -178,16 +198,14 @@ internal static partial class QqMailSendService
     private static IReadOnlyList<(string Email,string? Name)> ParseAddresses(JsonNode? node)
     {
         var result=new List<(string,string?)>();
-        if(node is not JsonArray array)return result;
+        if(node is null)return result;
+        if(node is not JsonArray array)throw new FormatException("Invalid recipient list.");
         foreach(var item in array)
         {
-            var email=item?["email"]?.GetValue<string>();
-            if(string.IsNullOrWhiteSpace(email))continue;
-            // 地址必须能通过实体校验（防止模型编造或注入额外目标），
-            // 并以实体识别的规范化结果为准（去掉首尾标点等）。
-            var canonical=ScreenEntityRecognitionService.Extract(email).FirstOrDefault(entity=>entity.Type==ScreenEntityType.Email)?.Value;
-            if(canonical is null)continue;
-            result.Add((canonical,item?["name"]?.GetValue<string>()));
+            if(item is not JsonObject address)throw new FormatException("Invalid recipient.");
+            var email=address["email"]?.GetValue<string>();
+            if(!NetEaseMailService.IsSingleAddress(email))throw new FormatException("Invalid recipient.");
+            result.Add((email!.Trim(),address["name"]?.GetValue<string>()));
         }
         return result;
     }

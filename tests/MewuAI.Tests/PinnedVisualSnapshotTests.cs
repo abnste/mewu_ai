@@ -14,6 +14,19 @@ namespace MewuAI.Tests;
 public sealed class PinnedVisualSnapshotTests
 {
     [Theory]
+    [InlineData(99,0)]
+    [InlineData(0,99)]
+    [InlineData(99,99)]
+    public void ScaledOnePixelPinClippedAtFarEdgeDoesNotThrow(int x,int y)
+    {
+        var image=System.Windows.Media.Imaging.BitmapSource.Create(1,1,96,96,PixelFormats.Pbgra32,null,new byte[]{0,0,255,255},4);image.Freeze();
+        using var registration=PinnedImageCaptureRegistry.Register(()=>new(new(0,0,100,100),image,1));
+        using var desktop=new System.Drawing.Bitmap(1,1);
+        PinnedImageCaptureRegistry.CompositeInto(desktop,new(x,y,1,1));
+        Assert.True(desktop.GetPixel(0,0).R>0,"The visible sliver should retain image color.");
+    }
+
+    [Theory]
     [InlineData(1)]
     [InlineData(1.5)]
     [InlineData(2)]

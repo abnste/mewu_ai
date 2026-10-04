@@ -11,6 +11,15 @@ using Xunit;
 namespace MewuAI.Tests;
 public sealed class OcrIntegrationTests
 {
+    [Fact] public async Task CanceledOcrDoesNotBlockSubsequentQueuedRecognition()
+    {
+        var image=RenderText("HELLO SCREEN 123","Segoe UI","en-US");
+        using var canceled=new CancellationTokenSource();canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(()=>new WindowsOcrService(null).RecognizeAsync(image,canceled.Token));
+        var results=await Task.WhenAll(Enumerable.Range(0,3).Select(_=>new WindowsOcrService(null).RecognizeAsync(image,TestContext.Current.CancellationToken)));
+        Assert.All(results,result=>{Assert.Equal("PP-OCRv6 本地 OCR",result.Engine);Assert.Contains("SCREEN",result.Text,StringComparison.OrdinalIgnoreCase);Assert.NotEmpty(result.Lines);});
+    }
+
     [Fact] public async Task FrozenDecodedPngCanBeConvertedOnAnOcrWorker()
     {
         var image=RenderText("DECODED IMAGE 123","Segoe UI","en-US");

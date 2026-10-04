@@ -39,12 +39,8 @@ public static class ScreenCoordinateService
     }
 
     public static (int X,int Y) ToScreenPixelPoint(Point localDip,double surfaceWidth,double surfaceHeight,int pixelWidth,int pixelHeight,int originX,int originY)
-    {
-        if(surfaceWidth<=0||surfaceHeight<=0||pixelWidth<=0||pixelHeight<=0)return (originX,originY);
-        var x=Math.Clamp((int)Math.Round(localDip.X*pixelWidth/surfaceWidth),0,pixelWidth);
-        var y=Math.Clamp((int)Math.Round(localDip.Y*pixelHeight/surfaceHeight),0,pixelHeight);
-        return (originX+x,originY+y);
-    }
+        =>CapturePixelGeometry.ToScreenPixelPoint(localDip.X,localDip.Y,surfaceWidth,surfaceHeight,pixelWidth,pixelHeight,originX,originY);
+
 
     public static ScreenRect ToScreenRect(Int32Rect localPixels,int originX,int originY)=>new(originX+localPixels.X,originY+localPixels.Y,localPixels.Width,localPixels.Height);
 

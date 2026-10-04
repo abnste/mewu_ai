@@ -33,9 +33,10 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
     private readonly Process _process;
     private readonly HttpClient _http;
     private readonly string _baseUrl;
-    private readonly string _connectionId;
+    private string _connectionId;
     private readonly CancellationTokenSource _lifetime=new();
     private readonly Task _stderr;
+    private readonly Task _stdout;
     private readonly PrivacyLogger _logger=new();
     private int _nextId;
     private int _closing;
@@ -53,7 +54,8 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
         // Loopback traffic must never be routed through an (external) proxy.
         _http=new HttpClient(new SocketsHttpHandler{UseProxy=false,AllowAutoRedirect=false,UseCookies=false,PooledConnectionLifetime=TimeSpan.FromMinutes(5)})
         {Timeout=Timeout.InfiniteTimeSpan};
-        _stderr=DrainErrorsAsync();
+        _stderr=DrainOutputAsync(_process.StandardError);
+        _stdout=DrainOutputAsync(_process.StandardOutput);
     }
 
     internal static WorkBuddyInstallation? Discover(string? preferredPath=null)
@@ -287,8 +289,8 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
         {
             var process=Process.Start(CreateStartInfo(installation,directory,videoTools,port))??throw new InvalidOperationException("无法启动 WorkBuddy 本机接口。");
             new PrivacyLogger().Info("WorkBuddyAcp",$"子进程已启动（serve 端口 {port}）；视频工具={videoTools}");
-            var connectionId=await WaitForConnectionAsync(port,TimeSpan.FromSeconds(60),token).ConfigureAwait(false);
-            server=new(process,directory,videoTools,port,connectionId);
+            server=new(process,directory,videoTools,port,string.Empty);
+            server._connectionId=await WaitForConnectionAsync(port,TimeSpan.FromSeconds(60),token).ConfigureAwait(false);
             server.ExecutablePath=installation.Executable;
             var result=await server.InvokeAsync("initialize",new{protocolVersion=1,clientCapabilities=new{},clientInfo=new{name="MewuAI",version=typeof(WorkBuddyAcpServer).Assembly.GetName().Version?.ToString(3)??"0.0.0"}},token,TimeSpan.FromSeconds(60)).ConfigureAwait(false);
             if(!result.TryGetProperty("protocolVersion",out var version)||version.GetInt32()!=1)throw new InvalidDataException("WorkBuddy ACP 版本不兼容，请更新官方客户端。");
@@ -476,32 +478,12 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
         catch(Exception ex)when(ex is IOException or InvalidOperationException or OperationCanceledException){}
     }
 
-    private async Task DrainErrorsAsync()
+    private async Task DrainOutputAsync(StreamReader reader)
     {
         var buffer=new char[2048];
-        long characters=0;
-        var prefix=new List<char>(16);
-        try{int read;while((read=await _process.StandardError.ReadAsync(buffer.AsMemory(),_lifetime.Token).ConfigureAwait(false))>0)
-        {
-            characters+=read;
-            // Keep a short sanitized prefix: a CLI that exits immediately (for
-            // example with a bad argument) writes the reason to stderr, and
-            // without it the failure is undiagnosable from mewuAI's logs.
-            if(prefix.Count<240)
-                foreach(var character in buffer.AsSpan(0,Math.Min(read,240-prefix.Count)))
-                    if(!char.IsControl(character))prefix.Add(character);
-            Array.Clear(buffer);
-        }}
-        catch(Exception ex)when(ex is IOException or OperationCanceledException){}
-        finally
-        {
-            Array.Clear(buffer);
-            if(characters>0&&Volatile.Read(ref _closing)==0)
-            {
-                var preview=new string(prefix.ToArray());
-                _logger.Info("WorkBuddyAcp",$"stderr已读取并丢弃；字符数={characters}；前缀={preview}");
-            }
-        }
+        try{while(await reader.ReadAsync(buffer.AsMemory(),_lifetime.Token).ConfigureAwait(false)>0)Array.Clear(buffer);}
+        catch(Exception ex)when(ex is IOException or OperationCanceledException or ObjectDisposedException){}
+        finally{Array.Clear(buffer);}
     }
 
     internal static string Text(JsonElement value,string property)=>value.ValueKind==JsonValueKind.Object&&value.TryGetProperty(property,out var item)&&item.ValueKind==JsonValueKind.String?item.GetString()??"":"";
@@ -553,19 +535,19 @@ internal sealed class WorkBuddyAcpServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        Interlocked.Exchange(ref _closing,1);
+        if(Interlocked.Exchange(ref _closing,1)!=0)return;
         // Politely release the server-side connection before killing the CLI.
         try
         {
             using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(2));
             using var request=new HttpRequestMessage(HttpMethod.Delete,_baseUrl+"/api/v1/acp");
             ApplyAcpHeaders(request);
-            await _http.SendAsync(request,HttpCompletionOption.ResponseContentRead,timeout.Token).ConfigureAwait(false);
+            using var response=await _http.SendAsync(request,HttpCompletionOption.ResponseContentRead,timeout.Token).ConfigureAwait(false);
         }
         catch(Exception ex)when(ex is HttpRequestException or IOException or OperationCanceledException or ObjectDisposedException){}
         await _lifetime.CancelAsync().ConfigureAwait(false);
         try{if(!_process.HasExited)_process.Kill(entireProcessTree:true);}catch(Exception ex)when(ex is InvalidOperationException or System.ComponentModel.Win32Exception){}
-        try{await Task.WhenAll(_stderr,_process.WaitForExitAsync()).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);}catch(Exception ex)when(ex is TimeoutException or IOException or InvalidOperationException){}
+        try{await Task.WhenAll(_stderr,_stdout,_process.WaitForExitAsync()).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);}catch(Exception ex)when(ex is TimeoutException or IOException or InvalidOperationException){}
         _process.Dispose();_http.Dispose();_lifetime.Dispose();CleanWorkspace();
     }
 }

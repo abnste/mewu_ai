@@ -24,21 +24,21 @@ internal static class AnnotationPostProcessor
     {
         ArgumentNullException.ThrowIfNull(annotations);
         var qualityRejected=0;var duplicates=0;var keyframesRemoved=0;
-        var candidates=new List<(int Index,AiAnnotation Annotation)>();
+        var candidates=new List<(int Index,AiAnnotation Annotation,AiAnnotation Original)>();
         foreach(var (annotation,index) in annotations.Take(VisualAnnotationProtocol.MaximumAnnotations).Select((value,index)=>(value,index)))
         {
             if(annotation.IsVideoTimeline!=isVideo)continue;
             var removed=0;var normalized=isVideo?SimplifyTimeline(annotation,out removed):annotation;keyframesRemoved+=removed;
             if(!isVideo&&IsImplausiblyBroadLocalCallout(normalized)){qualityRejected++;continue;}
-            candidates.Add((index,normalized));
+            candidates.Add((index,normalized,annotation));
         }
 
         // Prefer semantically richer callouts over duplicate primitive boxes,
         // while restoring source order after suppression for stable rendering.
-        var kept=new List<(int Index,AiAnnotation Annotation)>();
+        var kept=new List<(int Index,AiAnnotation Annotation,AiAnnotation Original)>();
         foreach(var candidate in candidates.OrderByDescending(item=>Priority(item.Annotation)).ThenBy(item=>item.Index))
         {
-            if(kept.Any(existing=>AreDuplicates(candidate.Annotation,existing.Annotation,isVideo))){duplicates++;continue;}
+            if(kept.Any(existing=>AreDuplicates(candidate.Original,existing.Original,isVideo))){duplicates++;continue;}
             kept.Add(candidate);
         }
         var ordered=kept.OrderBy(item=>item.Index).Select(item=>item.Annotation).ToArray();var calloutCount=0;var connectionCount=0;var bounded=new List<AiAnnotation>(ordered.Length);
@@ -83,14 +83,8 @@ internal static class AnnotationPostProcessor
                 return pointIou>=DuplicateIou&&(first.Kind!=AiAnnotationKind.Callout||second.Kind!=AiAnnotationKind.Callout||textSimilarity>=.48||pointIou>=.9);
             }
             if(!TimelineOverlap(first,second,out var from,out var to))return false;
-            var samples=from==to?[from]:new[]{from,(from+to)/2,to};var iou=0d;
-            foreach(var sample in samples)
-            {
-                if(!VideoAnnotationTimeline.TryInterpolate(first,sample,out var a)||!VideoAnnotationTimeline.TryInterpolate(second,sample,out var b))return false;
-                iou+=AnnotationGeometryService.IntersectionOverUnion(AnnotationGeometryService.ToNormalizedRect(a),AnnotationGeometryService.ToNormalizedRect(b));
-            }
-            iou/=samples.Length;
-            return iou>=DuplicateIou&&(first.Kind!=AiAnnotationKind.Callout||second.Kind!=AiAnnotationKind.Callout||textSimilarity>=.48||iou>=.9);
+            var threshold=first.Kind==AiAnnotationKind.Callout&&second.Kind==AiAnnotationKind.Callout&&textSimilarity<.48?.9:DuplicateIou;
+            return TemporalAnnotationOverlap.BoxesStayOverlapping(first,second,from,to,threshold);
         }
         var imageIou=AnnotationGeometryService.IntersectionOverUnion(AnnotationGeometryService.ToNormalizedRect(first),AnnotationGeometryService.ToNormalizedRect(second));
         return imageIou>=DuplicateIou&&(first.Kind!=AiAnnotationKind.Callout||second.Kind!=AiAnnotationKind.Callout||textSimilarity>=.48||imageIou>=.9);
@@ -103,7 +97,7 @@ internal static class AnnotationPostProcessor
         var overlap=Math.Max(0,to-from);var shorter=Math.Max(.001,Math.Min(firstDuration,secondDuration));return overlap/shorter>=.7;
     }
 
-    private static bool IsClosePointEvent(AiAnnotation first,AiAnnotation second)=>first.EndTime!.Value-first.StartTime!.Value<=.05&&second.EndTime!.Value-second.StartTime!.Value<=.05&&Math.Abs(first.StartTime.Value-second.StartTime.Value)<=.12;
+    private static bool IsClosePointEvent(AiAnnotation first,AiAnnotation second)=>first.Keyframes is {Count:1}&&second.Keyframes is {Count:1}&&first.EndTime!.Value-first.StartTime!.Value<=.05&&second.EndTime!.Value-second.StartTime!.Value<=.05&&Math.Abs(first.StartTime.Value-second.StartTime.Value)<=.12;
 
     private static bool IsTargetMarker(AiAnnotationKind kind)=>kind is AiAnnotationKind.Callout or AiAnnotationKind.Rectangle or AiAnnotationKind.Ellipse;
     private static bool IsPathKind(AiAnnotationKind kind)=>kind is AiAnnotationKind.Pen or AiAnnotationKind.Highlighter or AiAnnotationKind.Arrow;
@@ -114,12 +108,7 @@ internal static class AnnotationPostProcessor
         if(!isVideo)return AreEquivalentPaths(first.Points,second.Points,allowReverse);
         if(IsClosePointEvent(first,second))return AreEquivalentPaths(first.Keyframes![0].Points,second.Keyframes![0].Points,allowReverse);
         if(!TimelineOverlap(first,second,out var from,out var to))return false;
-        var samples=from==to?[from]:new[]{from,(from+to)/2,to};
-        foreach(var sample in samples)
-        {
-            if(!VideoAnnotationTimeline.TryInterpolate(first,sample,out var a)||!VideoAnnotationTimeline.TryInterpolate(second,sample,out var b)||!AreEquivalentPaths(a.Points,b.Points,allowReverse))return false;
-        }
-        return true;
+        return TemporalAnnotationOverlap.PathsStayClose(first,second,from,to,allowReverse);
     }
 
     private static bool AreEquivalentPaths(IReadOnlyList<AiAnnotationPoint>? first,IReadOnlyList<AiAnnotationPoint>? second,bool allowReverse)

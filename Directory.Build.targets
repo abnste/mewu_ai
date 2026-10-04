@@ -1,0 +1,14 @@
+<!-- SPDX-FileCopyrightText: 2026 Abner Stephen and contributors -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<Project>
+  <!-- Keep release packages and isolated self-contained validation on the same
+       tested runtime. Do not change framework-dependent developer requirements
+       or the independently versioned Microsoft.Windows.SDK.NET.Ref framework. -->
+  <Target Name="PinSelfContainedRuntimePatch" BeforeTargets="ProcessFrameworkReferences" Condition="'$(SelfContained)' == 'true'">
+    <ItemGroup>
+      <FrameworkReference Condition="'%(FrameworkReference.Identity)' == 'Microsoft.NETCore.App' Or '%(FrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App' Or '%(FrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WPF' Or '%(FrameworkReference.Identity)' == 'Microsoft.WindowsDesktop.App.WindowsForms'">
+        <RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion>
+      </FrameworkReference>
+    </ItemGroup>
+  </Target>
+</Project>

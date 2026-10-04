@@ -10,7 +10,7 @@ namespace mewu_ai_Assistant.Recording;
 
 internal static class Mp3ExportService
 {
-    internal static async Task ExportAsync(string videoPath,string outputPath,CancellationToken cancellationToken=default)
+    internal static async Task ExportAsync(string videoPath,string outputPath,CancellationToken cancellationToken=default,TempFileService? temp=null)
     {
         var sourcePath=Path.GetFullPath(videoPath);
         var destinationPath=Path.GetFullPath(outputPath);
@@ -20,7 +20,7 @@ internal static class Mp3ExportService
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
         var token=timeout.Token;
-        var temporaryPath=new TempFileService().NewFile(".mp3");
+        var temporaryPath=(temp??new TempFileService()).NewFile(".mp3");
         using var temporaryLease=TempMediaRegistry.Shared.Acquire(temporaryPath);
         try
         {

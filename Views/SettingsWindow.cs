@@ -48,8 +48,8 @@ public sealed partial class SettingsWindow : Window
     private static readonly Brush ControlBorderBrush = new SolidColorBrush(Color.FromRgb(224, 230, 240));
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
-    private readonly ProviderHeaderCredentialService _headerCredentials = new();
-    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new(), _apiFormat = new(), _authMode = new();
+    private readonly ProviderHeaderCredentialService _headerCredentials;
+    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _recordingFps = new(), _recordingQuality = new(), _videoPreviewResolution = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new(), _apiFormat = new(), _authMode = new();
     private readonly TextBox _hotkey = new();
     private readonly TextBox _baseUrl = new(), _customHeaders = new(), _requestPath = new(), _region = new(), _plan = new();
     private readonly TextBox _requestParameters = new();
@@ -62,6 +62,7 @@ public sealed partial class SettingsWindow : Window
     private readonly CheckBox _history = new(), _voice = new(), _autoVoice = new(), _startup = new(), _captureCursor = new(), _teachingMode = new(), _recordCursor = new(), _hermesAutoReadAloud = new();
     private readonly Button _hermesDetect = new(), _hermesTest = new();
     private readonly CheckBox _recordSystemAudio = new(), _recordMicrophone = new();
+    private readonly CheckBox _toolbarCaptions = new();
     private readonly List<AiProviderSettings> _providers;
     private readonly Dictionary<string, string> _pendingApiKeys = [];
     private readonly HashSet<string> _apiKeysMarkedForDeletion = [];
@@ -81,7 +82,7 @@ public sealed partial class SettingsWindow : Window
     private string? _defaultProviderId;
     private readonly int _repairedProviderIdentityCount;
     private bool _loadingProvider;
-    private readonly TextBlock _modelStatus = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 9), FontSize = 12 };
+    private readonly TextBlock _modelStatus = new();
     private CancellationTokenSource? _modelLoad;
     private int _apiKeyLoadGeneration;
     private bool _modelLoadPending;
@@ -92,10 +93,15 @@ public sealed partial class SettingsWindow : Window
     private System.Windows.Input.Key _capturedHotkeyKey = System.Windows.Input.Key.S;
     private System.Windows.Input.ModifierKeys _capturedHotkeyModifiers = System.Windows.Input.ModifierKeys.Shift | System.Windows.Input.ModifierKeys.Alt;
 
-    public SettingsWindow(AppHost host)
+    public SettingsWindow(AppHost host) : this(host,new ProviderHeaderCredentialService())
+    {
+    }
+
+    internal SettingsWindow(AppHost host,ProviderHeaderCredentialService headerCredentials)
     {
         var initialization=System.Diagnostics.Stopwatch.StartNew();
         _host = host;
+        _headerCredentials = headerCredentials;
         _providers=[];
         var unavailableByProvider=new List<(AiProviderSettings Provider,HashSet<string> Headers)>();
         foreach(var stored in host.Settings.Providers ?? [])
@@ -317,6 +323,10 @@ public sealed partial class SettingsWindow : Window
         System.Windows.Automation.AutomationProperties.SetName(_uiLanguage,"界面语言");
         panel.Children.Add(_uiLanguage);
         panel.Children.Add(Text("语言设置将在重新启动喵呜AI后生效。",true));
+        _toolbarCaptions.Content=LocalizationService.T("显示按钮功能文字","Show button labels");
+        _toolbarCaptions.IsChecked=_host.Settings.ShowToolbarCaptions;
+        _toolbarCaptions.ToolTip=LocalizationService.T("在截图与手动标注按钮内部显示简短文字；保存后下次截图生效。","Show short labels inside capture and drawing buttons. Applies to the next capture after saving.");
+        panel.Children.Add(_toolbarCaptions);
         panel.Children.Add(ThinkingGlowSettings());
         panel.Children.Add(NetworkProxySettings());
         panel.Children.Add(Text("启动与快捷键", true));
@@ -334,7 +344,7 @@ public sealed partial class SettingsWindow : Window
         _hotkey.Text = FormatHotkey(_capturedHotkeyKey, _capturedHotkeyModifiers);
         _hotkey.PreviewKeyDown += CaptureHotkeyKeyDown;
         _hotkey.GotKeyboardFocus += (_, _) => _hotkey.SelectAll();
-        System.Windows.Automation.AutomationProperties.SetName(_hotkey, "全局截图快捷键按键");
+        System.Windows.Automation.AutomationProperties.SetName(_hotkey, LocalizationService.T("全局截图快捷键按键","Global capture shortcut keys"));
         panel.Children.Add(_hotkey);
         panel.Children.Add(Text(LocalizationService.T("点击输入框后按组合键设置（至少包含 Shift、Alt 或 Ctrl），按 Delete 清空；保存后生效。", "Click the field and press a shortcut with Shift, Alt or Ctrl; press Delete to clear. Changes take effect after saving."), true));
         var restore = ActionButton("恢复默认 Shift + Alt + S");
@@ -410,6 +420,16 @@ public sealed partial class SettingsWindow : Window
     private UIElement Recording()
     {
         var panel = Panel();
+        var previewLabel=LocalizationService.T("预览分辨率","Preview resolution");
+        panel.Children.Add(Text(previewLabel,true));
+        _videoPreviewResolution.SelectedValuePath="Tag";
+        _videoPreviewResolution.Items.Add(new ComboBoxItem{Content=LocalizationService.T("原始（100%）","Original (100%)"),Tag=100});
+        _videoPreviewResolution.Items.Add(new ComboBoxItem{Content="75%",Tag=75});
+        _videoPreviewResolution.Items.Add(new ComboBoxItem{Content="50%",Tag=50});
+        _videoPreviewResolution.SelectedValue=VideoPreviewSurface.NormalizeResolutionPercent(_host.Settings.VideoPreviewResolutionPercent);
+        System.Windows.Automation.AutomationProperties.SetName(_videoPreviewResolution,previewLabel);
+        panel.Children.Add(_videoPreviewResolution);
+        panel.Children.Add(Text(LocalizationService.T("新打开的视频预览生效；保存与发送的分辨率不变。","Applies to newly opened video previews; saved and sent video resolution stays unchanged."),true));
         panel.Children.Add(Text("MP4 帧率", true));
         AddNumericChoices(_recordingFps,SettingsChoicePolicy.IncludeCurrent(new[] { 15, 24, 30, 60 },_host.Settings.RecordingFps),_host.Settings.RecordingFps,"FPS");
         System.Windows.Automation.AutomationProperties.SetName(_recordingFps, "MP4 帧率");
@@ -469,13 +489,69 @@ public sealed partial class SettingsWindow : Window
             TextWrapping=TextWrapping.Wrap,Foreground=new SolidColorBrush(Color.FromRgb(101,116,138)),FontSize=12,Margin=new Thickness(8,0,8,10)
         };
         panel.Children.Add(header);
-        panel.Children.Add(_qqMailSettings);
-        panel.Children.Add(_netEaseMailSettings);
-        panel.Children.Add(_dingTalkSettings);
-        panel.Children.Add(_feishuSettings);
-        panel.Children.Add(_obsidianSettings);
-        panel.Children.Add(_imaSettings);
+        panel.Children.Add(McpGroup(
+            LocalizationService.T("邮箱", "Email"),
+            LocalizationService.T("收件箱上下文与确认后邮件发送。", "Inbox context and confirmed mail sending."),
+            (LocalizationService.T("QQ 邮箱","QQ Mail"),LocalizationService.T("扫码授权 · 收件箱与发信","QR authorization · inbox and sending"),_qqMailSettings),
+            (LocalizationService.T("网易邮箱","NetEase Mail"),LocalizationService.T("邮箱账号 · SMTP 发信","Mail account · SMTP sending"),_netEaseMailSettings)));
+        panel.Children.Add(McpGroup(
+            LocalizationService.T("消息与分享", "Messaging and sharing"),
+            LocalizationService.T("把截图发送到团队消息或群聊。", "Share screenshots with team messaging and chats."),
+            (LocalizationService.T("钉钉","DingTalk"),LocalizationService.T("应用连接 · 截图分享","App connection · screenshot sharing"),_dingTalkSettings),
+            (LocalizationService.T("飞书","Feishu"),LocalizationService.T("应用连接 · 群聊与联系人","App connection · chats and contacts"),_feishuSettings)));
+        panel.Children.Add(McpGroup(
+            LocalizationService.T("知识库与笔记", "Knowledge and notes"),
+            LocalizationService.T("保存截图到本地笔记库或 ima 知识库。", "Save screenshots to a local notes vault or ima knowledge base."),
+            ("Obsidian",LocalizationService.T("本地笔记库 · 截图归档","Local vault · screenshot archive"),_obsidianSettings),
+            ("ima",LocalizationService.T("知识库 · 截图保存","Knowledge base · screenshot saving"),_imaSettings)));
         return panel;
+    }
+
+    private static Border McpGroup(string title,string description,params (string Name,string Summary,UIElement Page)[] entries)
+    {
+        var content=new StackPanel();
+        content.Children.Add(new TextBlock
+        {
+            Text=title,
+            FontSize=15,
+            FontWeight=FontWeights.SemiBold,
+            Foreground=new SolidColorBrush(Color.FromRgb(23,32,51)),
+            Margin=new Thickness(0,0,0,3)
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text=description,
+            TextWrapping=TextWrapping.Wrap,
+            FontSize=11.5,
+            Foreground=SecondaryBrush,
+            Margin=new Thickness(0,0,0,10)
+        });
+        foreach(var entry in entries)
+        {
+            var label=new StackPanel{Margin=new Thickness(4,2,0,2)};
+            label.Children.Add(new TextBlock{Text=entry.Name,FontSize=13,FontWeight=FontWeights.Medium,Foreground=new SolidColorBrush(Color.FromRgb(23,32,51))});
+            label.Children.Add(new TextBlock{Text=entry.Summary,FontSize=11,Foreground=SecondaryBrush,Margin=new Thickness(0,2,0,0)});
+            content.Children.Add(new Expander
+            {
+                Header=label,
+                Content=entry.Page,
+                IsExpanded=false,
+                HorizontalContentAlignment=HorizontalAlignment.Stretch,
+                BorderBrush=ControlBorderBrush,
+                BorderThickness=new Thickness(0,1,0,0),
+                Padding=new Thickness(0,4,0,4)
+            });
+        }
+        return new Border
+        {
+            Background=PanelBrush,
+            BorderBrush=ControlBorderBrush,
+            BorderThickness=new Thickness(1),
+            CornerRadius=new CornerRadius(10),
+            Padding=new Thickness(15,13,15,3),
+            Margin=new Thickness(4,0,4,12),
+            Child=content
+        };
     }
 
 
@@ -505,7 +581,7 @@ public sealed partial class SettingsWindow : Window
         _hermesAutoReadAloud.Content="回复后自动朗读";
         _hermesAutoReadAloud.IsChecked=_host.Settings.HermesAutoReadAloud;
         _hermesAutoReadAloud.Margin=new Thickness(0,5,0,0);
-        System.Windows.Automation.AutomationProperties.SetName(_hermesAutoReadAloud,"Hermes 回复后自动朗读");
+        System.Windows.Automation.AutomationProperties.SetName(_hermesAutoReadAloud,LocalizationService.T("Hermes 回复后自动朗读","Hermes read responses aloud"));
 
         form.Fields.Children.Add(_hermesAutoReadAloud);
         form.Loaded+=HermesPageLoaded;
@@ -1179,8 +1255,10 @@ public sealed partial class SettingsWindow : Window
                 DefaultImageFormat=_imageFormat.SelectedIndex==1?"jpg":"png",
                 IncludeCaptureCursor=_captureCursor.IsChecked==true,
                 TeachingMode=_teachingMode.IsChecked==true,
+                ShowToolbarCaptions=_toolbarCaptions.IsChecked==true,
                 RecordingFps=ReadNumericChoice(_recordingFps,30),
                 RecordingQuality=ReadNumericChoice(_recordingQuality,75),
+                VideoPreviewResolutionPercent=ReadNumericChoice(_videoPreviewResolution,100),
                 GifFps=ReadNumericChoice(_gifFps,15),
                 IncludeRecordingCursor=_recordCursor.IsChecked==true,
                 RecordSystemAudio=_recordSystemAudio.IsChecked==true,
@@ -1219,6 +1297,7 @@ public sealed partial class SettingsWindow : Window
                 ImaClientId=_imaSettings.ClientId,
                 ImaKnowledgeBaseId=_imaSettings.KnowledgeBaseId,
                 ImaKnowledgeBaseName=_imaSettings.KnowledgeBaseName,
+                ScraplingPath=_host.Settings.ScraplingPath,
                 WorkBuddyModel=_workBuddySettings.SelectedModel?.Model??_host.Settings.WorkBuddyModel,
                 WorkBuddyReasoningEffort=_workBuddySettings.SelectedEffort,
                 WorkBuddySupportsImage=_workBuddySettings.SelectedModel?.SupportsImage??_host.Settings.WorkBuddySupportsImage,
@@ -1325,7 +1404,7 @@ public sealed partial class SettingsWindow : Window
     private void UpdateApiKeyStatus()
     {
         if(_selectedProvider is null){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text="";return;}
-        if(_captureProtectionAvailable!=true){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text="屏幕防捕获不可用，API Key 与敏感 Header 已隐藏。";_apiKeyStatus.Foreground=new SolidColorBrush(Color.FromRgb(196,76,88));return;}
+        if(_captureProtectionAvailable!=true){_clearApiKey.IsEnabled=false;_apiKeyStatus.Text=LocalizationService.T("屏幕防捕获不可用，API Key 与敏感 Header 已隐藏。","Screen capture protection is unavailable; the API key and sensitive headers are hidden.");_apiKeyStatus.Foreground=new SolidColorBrush(Color.FromRgb(196,76,88));return;}
         var deleting=_apiKeysMarkedForDeletion.Contains(_selectedProvider.Id);var replacement=_pendingApiKeys.ContainsKey(_selectedProvider.Id);var savedReference=!string.IsNullOrWhiteSpace(_selectedProvider.CredentialId);var saved=savedReference&&!string.IsNullOrWhiteSpace(_apiKey.Password);
         _clearApiKey.Content=deleting?LocalizationService.T("撤销清除","Undo clear"):LocalizationService.T("清除已保存密钥","Clear saved key");_clearApiKey.IsEnabled=deleting||replacement||savedReference;
         _apiKeyStatus.Text=deleting?LocalizationService.T("保存后清除密钥，可在高级设置中撤销。","Key will be removed on save. Undo in Advanced settings."):replacement?LocalizationService.T("密钥已修改，保存后生效。", "Key changed. Save to apply."):saved?LocalizationService.T("已配置密钥。", "Key configured."):savedReference?LocalizationService.T("已保存的密钥无法读取，请重新输入。","Saved key unavailable. Enter it again."):LocalizationService.T("未配置 API Key。", "No API key configured.");

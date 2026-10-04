@@ -11,12 +11,24 @@ public sealed class GeometryTests
 {
     [Theory]
     [InlineData(640,360,640,360)]
-    [InlineData(3840,2160,1280,720)]
-    [InlineData(2160,3840,720,1280)]
-    public void VideoPreviewSizeCapsLongEdgeWithoutChangingAspectRatio(int width,int height,int expectedWidth,int expectedHeight)
+    [InlineData(3840,2160,3840,2160)]
+    [InlineData(2160,3840,2160,3840)]
+    [InlineData(1921,1081,1921,1081)]
+    public void VideoPreviewDefaultsToOriginalPhysicalPixels(int width,int height,int expectedWidth,int expectedHeight)
     {
         Assert.Equal((expectedWidth,expectedHeight),VideoPreviewSurface.CalculatePreviewSize(width,height));
     }
+
+    [Theory]
+    [InlineData(3840,2160,75,2880,1620)]
+    [InlineData(3840,2160,50,1920,1080)]
+    [InlineData(2160,3840,50,1080,1920)]
+    [InlineData(641,361,75,481,271)]
+    [InlineData(1,1,50,1,1)]
+    [InlineData(1920,1080,0,1920,1080)]
+    [InlineData(1920,1080,101,1920,1080)]
+    public void VideoPreviewOnlyReducesResolutionWhenExplicitlySelected(int width,int height,int percent,int expectedWidth,int expectedHeight)
+        =>Assert.Equal((expectedWidth,expectedHeight),VideoPreviewSurface.CalculatePreviewSize(width,height,percent));
 
     [Fact] public void FromPoints_NormalizesReverseDrag(){Assert.Equal(new ScreenRect(-50,-20,150,100),ScreenRect.FromPoints(100,80,-50,-20));}
     [Fact] public void Clamp_HandlesNegativeVirtualCoordinates(){var value=new ScreenRect(-2100,-100,500,500).Clamp(new ScreenRect(-1920,0,3840,1080));Assert.Equal(new ScreenRect(-1920,0,500,500),value);}

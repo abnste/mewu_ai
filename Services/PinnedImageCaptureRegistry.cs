@@ -49,13 +49,14 @@ internal static class PinnedImageCaptureRegistry
             if(clipped.IsEmpty)continue;
             using var source=ToBitmap(snapshot.Image);
             var destinationRect=new Rectangle(clipped.X-virtualBounds.X,clipped.Y-virtualBounds.Y,clipped.Width,clipped.Height);
-            var sourceX=(int)Math.Round((clipped.X-snapshot.ContentBounds.X)/(double)snapshot.ContentBounds.Width*source.Width);
-            var sourceY=(int)Math.Round((clipped.Y-snapshot.ContentBounds.Y)/(double)snapshot.ContentBounds.Height*source.Height);
-            var sourceRight=(int)Math.Round((clipped.Right-snapshot.ContentBounds.X)/(double)snapshot.ContentBounds.Width*source.Width);
-            var sourceBottom=(int)Math.Round((clipped.Bottom-snapshot.ContentBounds.Y)/(double)snapshot.ContentBounds.Height*source.Height);
-            var sourceWidth=Math.Clamp(sourceRight-sourceX,1,source.Width-sourceX);
-            var sourceHeight=Math.Clamp(sourceBottom-sourceY,1,source.Height-sourceY);
-            if(sourceX<0||sourceY<0||sourceX>=source.Width||sourceY>=source.Height)continue;
+            // Preserve sub-pixel source coverage for a scaled pin clipped at an edge.
+            // Rounding a 1px source's last sliver to x=1 used to create Clamp(1,0).
+            var sourceX=(float)Math.Clamp((clipped.X-(double)snapshot.ContentBounds.X)/snapshot.ContentBounds.Width*source.Width,0,source.Width);
+            var sourceY=(float)Math.Clamp((clipped.Y-(double)snapshot.ContentBounds.Y)/snapshot.ContentBounds.Height*source.Height,0,source.Height);
+            var sourceRight=(float)Math.Clamp((clipped.Right-(double)snapshot.ContentBounds.X)/snapshot.ContentBounds.Width*source.Width,0,source.Width);
+            var sourceBottom=(float)Math.Clamp((clipped.Bottom-(double)snapshot.ContentBounds.Y)/snapshot.ContentBounds.Height*source.Height,0,source.Height);
+            var sourceWidth=sourceRight-sourceX;var sourceHeight=sourceBottom-sourceY;
+            if(sourceWidth<=0||sourceHeight<=0)continue;
             using var attributes=CreateOpacityAttributes(snapshot.Opacity);
             graphics.DrawImage(source,destinationRect,sourceX,sourceY,sourceWidth,sourceHeight,GraphicsUnit.Pixel,attributes);
         }

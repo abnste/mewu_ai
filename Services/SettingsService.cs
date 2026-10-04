@@ -232,7 +232,7 @@ public sealed class SettingsService
         settings.HermesProfile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
         settings.HermesModel=settings.HermesModel?.Trim()??string.Empty;
         settings.HermesReasoningEffort=string.IsNullOrWhiteSpace(settings.HermesReasoningEffort)?"medium":settings.HermesReasoningEffort.Trim().ToLowerInvariant();
-        NormalizeMemorySettings(settings);
+        settings.VideoPreviewResolutionPercent=VideoPreviewSurface.NormalizeResolutionPercent(settings.VideoPreviewResolutionPercent);
         settings.RecordingFps=Math.Clamp(settings.RecordingFps,10,60);settings.RecordingQuality=Math.Clamp(settings.RecordingQuality,20,100);settings.GifFps=Math.Clamp(settings.GifFps,1,15);settings.TempCleanupDays=Math.Clamp(settings.TempCleanupDays,1,30);settings.OverlayOpacity=double.IsFinite(settings.OverlayOpacity)?Math.Clamp(settings.OverlayOpacity,.4,.75):.6;if(!settings.EnableVoiceInput)settings.AutomaticallyStartListening=false;
         return settings;
     }

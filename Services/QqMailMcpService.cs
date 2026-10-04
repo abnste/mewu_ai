@@ -14,11 +14,42 @@ internal sealed record QqMailMcpToken(string AccessToken,string RefreshToken,str
     public bool IsUsable=>!string.IsNullOrWhiteSpace(AccessToken)&&ExpiresAt>DateTimeOffset.UtcNow.AddMinutes(1);
 }
 
+internal sealed class QqMailTokenCoordinator(Func<QqMailMcpToken?> read,Action<QqMailMcpToken?> write)
+{
+    private readonly object _storeGate=new();
+    private readonly SemaphoreSlim _refreshGate=new(1,1);
+    private long _revision;
+    internal QqMailMcpToken? Read(){lock(_storeGate)return read();}
+    internal void Write(QqMailMcpToken? value){lock(_storeGate){_revision++;write(value);}}
+    internal async Task<QqMailMcpToken?> ResolveAsync(Func<QqMailMcpToken,CancellationToken,Task<QqMailMcpToken>> refresh,CancellationToken token)
+    {
+        if(Read() is {IsUsable:true} current)return current;
+        await _refreshGate.WaitAsync(token).ConfigureAwait(false);
+        try
+        {
+            QqMailMcpToken? latest;long revision;
+            lock(_storeGate){latest=read();revision=_revision;}
+            if(latest is {IsUsable:true})return latest;
+            if(latest is null||string.IsNullOrWhiteSpace(latest.RefreshToken)||string.IsNullOrWhiteSpace(latest.ClientId))return null;
+            var result=await refresh(latest,token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            lock(_storeGate)
+            {
+                // A clear, a new authorization, or a concurrent credential write
+                // wins over an older in-flight refresh, including failed writes.
+                if(revision!=_revision||read()!=latest)return read() is {IsUsable:true} replacement?replacement:null;
+                if(!result.IsUsable)return null;
+                _revision++;write(result);return result;
+            }
+        }
+        finally{_refreshGate.Release();}
+    }
+}
+
 /// <summary>
 /// QQ 邮箱官方 MCP 服务（https://api.mail.qq.com/mcp）的传输与凭据层。
-/// 协议为完全无状态的 Streamable HTTP JSON-RPC：服务端不返回 Mcp-Session-Id，
-/// 已验证无需 initialize 握手即可直接 tools/call（响应为 application/json），
-/// 因此每次调用都是独立请求，也便于规避 10 次/分钟的速率限制。
+/// 使用 Streamable HTTP JSON-RPC；每次独立调用先协商协议并初始化，
+/// 如果服务端返回 Mcp-Session-Id，则仅在本次调用内透传，不跨账号缓存。
 /// 凭据完全独立于任何第三方客户端（含本机 WorkBuddy）：每个用户通过
 /// 腾讯授权页展示的二维码自行扫码授权，令牌仅保存在本机 DPAPI 中。
 /// </summary>
@@ -30,20 +61,20 @@ internal static class QqMailMcpService
     private const string TokenEndpoint="https://wx.mail.qq.com/oauth/token";
     private const string RegisterEndpoint="https://wx.mail.qq.com/oauth/register";
     private const string DefaultScope="alias:read mail:read mail:send mail:delete";
-    // 腾讯按“可信平台名单”校验动态注册的 client_name/redirect_uri（已实测：
-    // mewu_ai、VS Code、Cherry Studio 等名字与自定义 scheme 均被 403 拒绝，
-    // 仅 Codex 系名称允许任意 loopback 端口）。这是第三方桌面客户端接入
-    // QQ 邮箱 MCP 的唯一公开通道，注册后由腾讯返回平台级 client_id。
-    private const string RegisterClientName="Codex CLI";
+    // Identify this application truthfully. A server allowlist rejection must not
+    // be worked around by registering under another application's identity.
+    internal const string RegisterClientName="MewuAI";
     private static readonly TimeSpan CallTimeout=TimeSpan.FromSeconds(30);
     private static readonly TimeSpan AuthorizationTimeout=TimeSpan.FromMinutes(5);
-    private static readonly SemaphoreSlim Gate=new(1,1);
+    private static readonly QqMailTokenCoordinator Tokens=new(ReadTokenStore,WriteTokenStore);
     private static int _requestId;
     private static readonly JsonSerializerOptions JsonOptions=new(){PropertyNameCaseInsensitive=true};
 
     #region 凭据存取
 
-    internal static QqMailMcpToken? ReadCachedToken()
+    internal static QqMailMcpToken? ReadCachedToken()=>Tokens.Read();
+
+    private static QqMailMcpToken? ReadTokenStore()
     {
         try
         {
@@ -54,41 +85,23 @@ internal static class QqMailMcpService
         catch{return null;}
     }
 
-    internal static void CacheToken(QqMailMcpToken token)
-    {
-        try{new CredentialService().Save(CredentialId,JsonSerializer.Serialize(token,JsonOptions));}
-        catch(Exception ex){new PrivacyLogger().Info("QqMailTokenCache",ex.GetType().Name);}
-    }
+    internal static void CacheToken(QqMailMcpToken token)=>Tokens.Write(token);
 
-    internal static void ClearCachedToken()
-    {
-        try{new CredentialService().Save(CredentialId,string.Empty);}
-        catch(Exception ex){new PrivacyLogger().Info("QqMailTokenClear",ex.GetType().Name);}
-    }
+    private static void WriteTokenStore(QqMailMcpToken? token)
+        =>new CredentialService().Save(CredentialId,token is null?string.Empty:JsonSerializer.Serialize(token,JsonOptions));
+
+    internal static void ClearCachedToken()=>Tokens.Write(null);
 
     /// <summary>取得可用令牌：本地缓存 → refresh_token 自动刷新。全部失败返回 null。
     /// 不读取、不导入任何第三方客户端（如 WorkBuddy）的凭据。</summary>
     internal static async Task<QqMailMcpToken?> ResolveTokenAsync(CancellationToken cancellationToken)
     {
-        var cached=ReadCachedToken();
-        if(cached is {IsUsable:true})return cached;
-        if(cached is null||string.IsNullOrWhiteSpace(cached.RefreshToken)||string.IsNullOrWhiteSpace(cached.ClientId))return null;
-        await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // 双重检查：并发调用可能已完成刷新。
-            if(ReadCachedToken() is {IsUsable:true} refreshed) return refreshed;
-            var result=await RefreshAsync(cached,cancellationToken).ConfigureAwait(false);
-            if(result is {IsUsable:true})
-            {
-                CacheToken(result);
-                return result;
-            }
-            return null;
+            return await Tokens.ResolveAsync(RefreshAsync,cancellationToken).ConfigureAwait(false);
         }
-        catch(OperationCanceledException){throw;}
+        catch(OperationCanceledException)when(cancellationToken.IsCancellationRequested){throw;}
         catch(Exception ex){new PrivacyLogger().Info("QqMailRefresh",ex.GetType().Name);return null;}
-        finally{Gate.Release();}
     }
 
     #endregion
@@ -128,21 +141,32 @@ internal static class QqMailMcpService
         try
         {
             openInBrowser(authorizeUrl);
-            var context=await listener.GetContextAsync().WaitAsync(timeout.Token).ConfigureAwait(false);
-            var query=context.Request.QueryString;
-            RespondCallbackPage(context);
-            var error=query["error"];
-            if(!string.IsNullOrEmpty(error))
-                throw new InvalidOperationException(string.Equals(error,"access_denied",StringComparison.OrdinalIgnoreCase)
-                    ?LocalizationService.IsEnglish?"Authorization was denied in the QQ Mail app.":"用户在 QQ 邮箱 App 中拒绝了授权。"
-                    :string.Format(System.Globalization.CultureInfo.CurrentCulture,LocalizationService.IsEnglish?"Authorization failed: {0}":"授权失败：{0}",error));
-            var code=query["code"];
-            var returnedState=query["state"];
-            if(string.IsNullOrEmpty(code))throw new InvalidOperationException(LocalizationService.IsEnglish?"The authorization callback did not contain a code.":"授权回调中没有授权码。");
-            if(!string.Equals(returnedState,state,StringComparison.Ordinal))throw new InvalidOperationException(LocalizationService.IsEnglish?"Authorization state mismatch; please retry.":"授权 state 校验失败，请重试。");
-            var token=await ExchangeCodeAsync(clientId,code,codeVerifier,redirectUri,cancellationToken).ConfigureAwait(false);
-            CacheToken(token);
-            return token;
+            while(true)
+            {
+                var context=await listener.GetContextAsync().WaitAsync(timeout.Token).ConfigureAwait(false);
+                var query=context.Request.QueryString;
+                if(!IsExpectedCallback(context.Request.HttpMethod,context.Request.Url?.AbsolutePath,query["state"],state))
+                {
+                    RespondCallbackPage(context,false,400);
+                    continue; // Ignore unrelated browser requests (including favicon).
+                }
+                var error=query["error"];
+                if(!string.IsNullOrEmpty(error))
+                {
+                    RespondCallbackPage(context,false,400);
+                    throw new InvalidOperationException(LocalizationService.T("QQ 邮箱授权未完成，请返回应用重试。","QQ Mail authorization did not complete. Return to the app and retry."));
+                }
+                var code=query["code"];
+                if(string.IsNullOrWhiteSpace(code)){RespondCallbackPage(context,false,400);continue;}
+                try
+                {
+                    var token=await ExchangeCodeAsync(clientId,code,codeVerifier,redirectUri,timeout.Token).ConfigureAwait(false);
+                    CacheToken(token);
+                    RespondCallbackPage(context,true,200);
+                    return token;
+                }
+                catch{RespondCallbackPage(context,false,400);throw;}
+            }
         }
         finally
         {
@@ -151,7 +175,7 @@ internal static class QqMailMcpService
         }
     }
 
-    /// <summary>RFC 7591 动态注册：腾讯按平台名单校验后返回平台级 client_id（已实测幂等）。</summary>
+    /// <summary>RFC 7591 动态注册：使用本应用身份，由平台决定是否接受注册。</summary>
     private static async Task<string> RegisterClientAsync(string redirectUri,CancellationToken cancellationToken)
     {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -167,9 +191,12 @@ internal static class QqMailMcpService
         using var content=new StringContent(payload.ToJsonString(),System.Text.Encoding.UTF8,"application/json");
         using var response=await NetworkHttpClientFactory.Create().PostAsync(RegisterEndpoint,content,timeout.Token).ConfigureAwait(false);
         var body=await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+        if(response.StatusCode==HttpStatusCode.Forbidden)throw new InvalidOperationException(LocalizationService.T(
+            "QQ 邮箱平台尚未接受 MewuAI 客户端注册，无法开始新授权；已有有效授权不受影响。",
+            "QQ Mail has not accepted MewuAI client registration, so new authorization cannot start. Existing valid authorization is unchanged."));
         if(!response.IsSuccessStatusCode)throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,
             LocalizationService.IsEnglish?"QQ Mail client registration failed (HTTP {0}).":"QQ 邮箱客户端注册失败（HTTP {0}）。",(int)response.StatusCode));
-        using var document=JsonDocument.Parse(body);
+        using var document=ParseResponseJson(body);
         var clientId=GetString(document.RootElement,"client_id");
         if(string.IsNullOrWhiteSpace(clientId))throw new InvalidOperationException(LocalizationService.IsEnglish?"QQ Mail client registration response is missing client_id.":"QQ 邮箱客户端注册响应缺少 client_id。");
         return clientId!;
@@ -210,15 +237,15 @@ internal static class QqMailMcpService
         if(!response.IsSuccessStatusCode)throw new InvalidOperationException(string.Format(System.Globalization.CultureInfo.CurrentCulture,
             LocalizationService.IsEnglish?"QQ Mail token refresh failed (HTTP {0}).":"QQ 邮箱令牌刷新失败（HTTP {0}）。",(int)response.StatusCode));
         // 刷新响应可能不回传 refresh_token；为空时沿用旧值。
-        var refreshed=ParseTokenResponse(body,token.ClientId,requireRefreshToken:false);
+        var refreshed=ParseTokenResponse(body,token.ClientId,requireRefreshToken:false,fallbackScope:token.Scope);
         return new QqMailMcpToken(refreshed.AccessToken,
             refreshed.RefreshToken.Length>0?refreshed.RefreshToken:token.RefreshToken,
             token.ClientId,refreshed.ExpiresAt,refreshed.Scope);
     }
 
-    private static QqMailMcpToken ParseTokenResponse(string body,string clientId,bool requireRefreshToken)
+    internal static QqMailMcpToken ParseTokenResponse(string body,string clientId,bool requireRefreshToken,string? fallbackScope=null)
     {
-        using var document=JsonDocument.Parse(body);
+        using var document=ParseResponseJson(body);
         var root=document.RootElement;
         var accessToken=GetString(root,"access_token")??GetString(root,"accessToken");
         if(string.IsNullOrWhiteSpace(accessToken))throw new InvalidOperationException(LocalizationService.IsEnglish
@@ -233,7 +260,7 @@ internal static class QqMailMcpService
             var seconds=GetInt(root,"expires_in")??GetInt(root,"expiresIn");
             expiresAt=seconds is null?DateTimeOffset.UtcNow.AddMinutes(55):DateTimeOffset.UtcNow.AddSeconds(seconds.Value);
         }
-        var scope=GetString(root,"scope")??DefaultScope;
+        var scope=GetString(root,"scope")??fallbackScope??DefaultScope;
         return new QqMailMcpToken(accessToken!,refreshToken??string.Empty,clientId,expiresAt.Value,scope);
     }
 
@@ -243,18 +270,20 @@ internal static class QqMailMcpService
         {
             using var document=JsonDocument.Parse(body);
             var error=GetString(document.RootElement,"error")??string.Empty;
-            var description=GetString(document.RootElement,"error_description")??string.Empty;
-            var message=string.Join("：",new[]{error,description}.Where(part=>part.Length>0));
-            return message.Length>0?message:body.Length>160?body[..160]:body;
+            return error is "invalid_request" or "invalid_client" or "invalid_grant" or "unauthorized_client" or "unsupported_grant_type" or "invalid_scope" or "access_denied"?error:"invalid_response";
         }
-        catch{return body.Length>160?body[..160]:body;}
+        catch{return "invalid_response";}
     }
 
-    private static void RespondCallbackPage(HttpListenerContext context)
+    internal static bool IsExpectedCallback(string method,string? path,string? actualState,string expectedState)
+        =>method=="GET"&&path=="/callback"&&!string.IsNullOrEmpty(actualState)&&string.Equals(actualState,expectedState,StringComparison.Ordinal);
+
+    private static void RespondCallbackPage(HttpListenerContext context,bool success,int status)
     {
-        const string html="""<!doctype html><html><head><meta charset="utf-8"><title>mewu_ai</title></head><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f6f8fa"><div style="text-align:center"><h2 style="color:#2e7d32">✓ 授权成功</h2><p>已连接 QQ 邮箱，请返回 mewu_ai。</p><p style="color:#888">Authorization complete — return to mewu_ai.</p></div></body></html>""";
+        var message=success?"授权成功，请返回 MewuAI。 / Authorization complete — return to MewuAI.":"授权尚未完成，请返回 MewuAI 查看状态。 / Authorization is not complete — return to MewuAI.";
+        var html=$"<!doctype html><html><head><meta charset=\"utf-8\"><title>MewuAI</title></head><body><p>{message}</p></body></html>";
         var buffer=System.Text.Encoding.UTF8.GetBytes(html);
-        context.Response.StatusCode=200;
+        context.Response.StatusCode=status;
         context.Response.ContentType="text/html; charset=utf-8";
         context.Response.ContentLength64=buffer.Length;
         try{context.Response.OutputStream.Write(buffer);}catch{}
@@ -277,8 +306,8 @@ internal static class QqMailMcpService
     internal static async Task<string> CallToolAsync(QqMailMcpToken token,string tool,JsonObject arguments,CancellationToken cancellationToken)
     {
         var (text,isError)=await CallToolRawAsync(token,tool,arguments,cancellationToken).ConfigureAwait(false);
-        if(isError)throw new InvalidOperationException(text.Length>0?text:$"QQ 邮箱工具 {tool} 执行失败");
-        if(text.Length==0)throw new InvalidOperationException($"QQ 邮箱工具 {tool} 未返回文本内容");
+        if(isError)throw new InvalidOperationException(LocalizationService.T("QQ 邮箱工具执行失败，请检查授权和请求。","The QQ Mail tool failed. Check authorization and the request."));
+        if(text.Length==0)throw new InvalidOperationException(LocalizationService.T($"QQ 邮箱工具 {tool} 未返回文本内容",$"QQ Mail tool {tool} returned no text"));
         return text;
     }
 
@@ -287,76 +316,180 @@ internal static class QqMailMcpService
     internal static async Task<(string Text,bool IsError)> CallToolRawAsync(QqMailMcpToken token,string tool,JsonObject arguments,CancellationToken cancellationToken)
     {
         var result=await CallAsync(token,"tools/call",new JsonObject{["name"]=tool,["arguments"]=DeepCopy(arguments)},cancellationToken).ConfigureAwait(false);
-        if(result.ValueKind!=JsonValueKind.Object)throw new InvalidOperationException("QQ 邮箱 MCP 返回了无法解析的工具结果");
-        var isError=result.TryGetProperty("isError",out var errorFlag)&&errorFlag.ValueKind==JsonValueKind.True;
+        if(result.ValueKind!=JsonValueKind.Object)throw new InvalidOperationException(LocalizationService.T("QQ 邮箱 MCP 返回了无法解析的工具结果","QQ Mail MCP returned an unreadable tool result"));
+        if(result.TryGetProperty("isError",out var errorFlag)&&errorFlag.ValueKind is not (JsonValueKind.True or JsonValueKind.False))throw new InvalidDataException("Invalid MCP isError flag.");
+        var isError=errorFlag.ValueKind==JsonValueKind.True;
         return (GetTextContent(result),isError);
     }
 
     private static async Task<JsonElement> RpcAsync(QqMailMcpToken token,string method,JsonObject? parameters,CancellationToken cancellationToken)
+        =>await CallWithClientAsync(NetworkHttpClientFactory.Create(),token,method,parameters,cancellationToken).ConfigureAwait(false);
+
+    internal static async Task<JsonElement> CallWithClientAsync(HttpClient client,QqMailMcpToken token,string method,JsonObject? parameters,CancellationToken cancellationToken)
     {
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(CallTimeout);
+        var operationDispatched=false;
+        try
+        {
+        var initializeId=Interlocked.Increment(ref _requestId);
+        var initialize=new JsonObject
+        {
+            ["jsonrpc"]="2.0",["id"]=initializeId,["method"]="initialize",
+            ["params"]=new JsonObject
+            {
+                ["protocolVersion"]="2025-11-25",["capabilities"]=new JsonObject(),
+                ["clientInfo"]=new JsonObject{["name"]="MewuAI",["version"]=typeof(QqMailMcpService).Assembly.GetName().Version?.ToString()??"0.0.0"}
+            }
+        };
+        using var initializeRequest=CreateRpcRequest(token,initialize,null,null);
+        using var initializeResponse=await client.SendAsync(initializeRequest,HttpCompletionOption.ResponseHeadersRead,timeout.Token).ConfigureAwait(false);
+        EnsureHttpSuccess(initializeResponse);
+        var negotiated=await ReadRpcResultAsync(initializeResponse,initializeId,timeout.Token).ConfigureAwait(false);
+        var version=GetString(negotiated,"protocolVersion");
+        if(version is not ("2025-03-26" or "2025-06-18" or "2025-11-25"))throw new InvalidDataException("Unsupported QQ Mail MCP protocol version.");
+        if(method.StartsWith("tools/",StringComparison.Ordinal)&&
+            !(negotiated.TryGetProperty("capabilities",out var capabilities)&&capabilities.ValueKind==JsonValueKind.Object&&capabilities.TryGetProperty("tools",out var tools)&&tools.ValueKind==JsonValueKind.Object))
+            throw new InvalidDataException("QQ Mail MCP did not negotiate tool support.");
+        string? session=null;
+        if(initializeResponse.Headers.TryGetValues("Mcp-Session-Id",out var sessions))
+        {
+            var values=sessions.ToArray();
+            if(values.Length!=1||values[0].Length is 0 or >256||values[0].Any(ch=>ch<0x21||ch>0x7e))throw new InvalidDataException("Invalid QQ Mail MCP session header.");
+            session=values[0];
+        }
+        using var readyRequest=CreateRpcRequest(token,new JsonObject{["jsonrpc"]="2.0",["method"]="notifications/initialized"},version,session);
+        using var readyResponse=await client.SendAsync(readyRequest,HttpCompletionOption.ResponseHeadersRead,timeout.Token).ConfigureAwait(false);
+        EnsureHttpSuccess(readyResponse);
+        if(readyResponse.StatusCode!=HttpStatusCode.Accepted)throw new InvalidDataException("QQ Mail MCP did not accept initialization.");
+        var requestId=Interlocked.Increment(ref _requestId);
         var payload=new JsonObject
         {
             ["jsonrpc"]="2.0",
-            ["id"]=Interlocked.Increment(ref _requestId),
+            ["id"]=requestId,
             ["method"]=method
         };
         if(parameters is not null)payload["params"]=DeepCopy(parameters);
-        using var request=new HttpRequestMessage(HttpMethod.Post,Endpoint)
+        using var request=CreateRpcRequest(token,payload,version,session);
+        timeout.Token.ThrowIfCancellationRequested();
+        operationDispatched=true;
+        using var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token).ConfigureAwait(false);
+        if((int)response.StatusCode>=500)
+            throw new HttpRequestException($"QQ Mail MCP request failed (HTTP {(int)response.StatusCode}).",null,response.StatusCode);
+        EnsureHttpSuccess(response);
+        return await ReadRpcResultAsync(response,requestId,timeout.Token).ConfigureAwait(false);
+        }
+        catch(Exception ex)when(!operationDispatched&&ex is OperationCanceledException or IOException or InvalidDataException or HttpRequestException)
+        {
+            throw new InvalidOperationException(LocalizationService.T("QQ 邮箱连接未完成，发送请求尚未开始。","The QQ Mail connection did not complete; the send request has not started."));
+        }
+    }
+
+    private static HttpRequestMessage CreateRpcRequest(QqMailMcpToken token,JsonObject payload,string? version,string? session)
+    {
+        var request=new HttpRequestMessage(HttpMethod.Post,Endpoint)
         {
             Content=new StringContent(payload.ToJsonString(),System.Text.Encoding.UTF8,"application/json")
         };
         request.Headers.TryAddWithoutValidation("Accept","application/json, text/event-stream");
         request.Headers.Authorization=new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer",token.AccessToken);
-        using var response=await NetworkHttpClientFactory.Create().SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token).ConfigureAwait(false);
-        if((int)response.StatusCode==401)throw new InvalidOperationException("QQ 邮箱令牌已失效，请在设置中重新扫码授权");
-        if(!response.IsSuccessStatusCode)throw new InvalidOperationException($"QQ 邮箱 MCP 请求失败（HTTP {(int)response.StatusCode}）");
-        var body=await ReadBodyAsync(response,timeout.Token).ConfigureAwait(false);
-        using var document=JsonDocument.Parse(body);
+        if(version is not null)request.Headers.Add("MCP-Protocol-Version",version);
+        if(session is not null)request.Headers.Add("Mcp-Session-Id",session);
+        return request;
+    }
+
+    private static void EnsureHttpSuccess(HttpResponseMessage response)
+    {
+        if((int)response.StatusCode==401)throw new InvalidOperationException(LocalizationService.T("QQ 邮箱令牌已失效，请在设置中重新扫码授权","The QQ Mail token has expired. Scan the QR code again in Settings."));
+        if(!response.IsSuccessStatusCode)throw new InvalidOperationException(LocalizationService.T($"QQ 邮箱 MCP 请求失败（HTTP {(int)response.StatusCode}）",$"QQ Mail MCP request failed (HTTP {(int)response.StatusCode})"));
+    }
+
+    internal static JsonElement ParseRpcResult(string body,int requestId)
+    {
+        using var document=ParseResponseJson(body);
         var root=document.RootElement;
-        if(root.TryGetProperty("error",out var error))
+        if(root.ValueKind!=JsonValueKind.Object||GetString(root,"jsonrpc")!="2.0"||
+            !root.TryGetProperty("id",out var id)||id.ValueKind!=JsonValueKind.Number||!id.TryGetInt32(out var receivedId)||receivedId!=requestId)
+            throw new InvalidDataException("QQ Mail MCP response does not match the request.");
+        var hasError=root.TryGetProperty("error",out var error);
+        var hasResult=root.TryGetProperty("result",out var result);
+        if(hasError==hasResult)throw new InvalidDataException("Invalid QQ Mail MCP response envelope.");
+        if(hasError)
         {
-            var message=GetString(error,"message")??error.GetRawText();
-            throw new InvalidOperationException($"QQ 邮箱 MCP 错误：{message}");
+            var code=GetInt(error,"code");
+            throw new InvalidOperationException(LocalizationService.T($"QQ 邮箱 MCP 请求失败（代码 {code?.ToString()??"unknown"}）。",$"QQ Mail MCP request failed (code {code?.ToString()??"unknown"})."));
         }
-        if(!root.TryGetProperty("result",out var result))throw new InvalidOperationException("QQ 邮箱 MCP 响应缺少 result");
         return result.Clone();
     }
 
-    /// <summary>响应可能是 application/json，也可能是 text/event-stream（逐行 data: 前缀）。</summary>
-    private static async Task<string> ReadBodyAsync(HttpResponseMessage response,CancellationToken cancellationToken)
+    /// <summary>Read one correlated JSON-RPC response, not an entire persistent SSE stream.</summary>
+    internal static async Task<JsonElement> ReadRpcResultAsync(HttpResponseMessage response,int requestId,CancellationToken cancellationToken)
     {
         var contentType=response.Content.Headers.ContentType?.MediaType??"application/json";
         using var stream=await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var reader=new StreamReader(stream,System.Text.Encoding.UTF8);
-        if(!contentType.Contains("event-stream",StringComparison.OrdinalIgnoreCase))
-            return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+        const int maxCharacters=4*1024*1024;
+        if(!contentType.Equals("text/event-stream",StringComparison.OrdinalIgnoreCase))
+        {
+            var body=new System.Text.StringBuilder();var buffer=new char[4096];int count;
+            while((count=await reader.ReadAsync(buffer.AsMemory(),cancellationToken).ConfigureAwait(false))>0)
+            {
+                if(body.Length+count>maxCharacters)throw new InvalidDataException("QQ Mail MCP response is too large.");
+                body.Append(buffer,0,count);
+            }
+            return ParseRpcResult(body.ToString(),requestId);
+        }
         var builder=new System.Text.StringBuilder();
+        var total=0;
         while(await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
         {
-            if(!line.StartsWith("data:",StringComparison.OrdinalIgnoreCase))continue;
-            var data=line["data:".Length..].TrimStart();
-            if(data.Length==0||data=="[DONE]")continue;
+            total+=line.Length;
+            if(total>maxCharacters)throw new InvalidDataException("QQ Mail MCP response is too large.");
+            if(line.Length==0)
+            {
+                if(TryReadEvent(builder,requestId,out var result))return result;
+                builder.Clear();continue;
+            }
+            if(!line.StartsWith("data:",StringComparison.Ordinal))continue;
+            var data=line.AsSpan(5);if(data.Length>0&&data[0]==' ')data=data[1..];
+            if(builder.Length>0)builder.Append('\n');
             builder.Append(data);
         }
-        return builder.ToString();
+        if(TryReadEvent(builder,requestId,out var finalResult))return finalResult;
+        throw new InvalidDataException("QQ Mail MCP stream ended without the requested response.");
     }
 
-    private static string GetTextContent(JsonElement result)
+    private static bool TryReadEvent(System.Text.StringBuilder data,int requestId,out JsonElement result)
+    {
+        result=default;
+        if(data.Length==0)return false;
+        using var document=ParseResponseJson(data.ToString());var root=document.RootElement;
+        if(root.ValueKind!=JsonValueKind.Object||GetString(root,"jsonrpc")!="2.0")throw new InvalidDataException("Invalid QQ Mail MCP event.");
+        if(!root.TryGetProperty("id",out _)&&GetString(root,"method") is not null)return false;
+        result=ParseRpcResult(data.ToString(),requestId);return true;
+    }
+
+    internal static string GetTextContent(JsonElement result)
     {
         if(!result.TryGetProperty("content",out var content)||content.ValueKind!=JsonValueKind.Array)return string.Empty;
+        var parts=new List<string>();
         foreach(var item in content.EnumerateArray())
         {
             if(item.ValueKind!=JsonValueKind.Object)continue;
             var type=GetString(item,"type");
             if(!string.Equals(type,"text",StringComparison.OrdinalIgnoreCase))continue;
-            return GetString(item,"text")??string.Empty;
+            if(GetString(item,"text") is { } text)parts.Add(text);
         }
-        return string.Empty;
+        return string.Join("\n",parts);
     }
 
     private static JsonObject DeepCopy(JsonObject source)=>JsonNode.Parse(source.ToJsonString())!.AsObject();
+
+    private static JsonDocument ParseResponseJson(string text)
+    {
+        try{return JsonDocument.Parse(text);}
+        catch(JsonException){throw new InvalidDataException(LocalizationService.T("QQ 邮箱返回了无法解析的响应。","QQ Mail returned an unreadable response."));}
+    }
 
     internal static string? GetString(JsonElement parent,string name)
     {

@@ -76,7 +76,10 @@ public sealed class WindowVisualStructureTests
         Assert.Equal("0",(string?)shadow.Attribute("BorderThickness"));
         Assert.NotNull(shadow.Element(presentation+"Border.Effect")?.Element(presentation+"DropShadowEffect"));
         Assert.Null(surface.Element(presentation+"Border.Effect"));
-        Assert.Same(host,shadow.Parent);Assert.Same(host,surface.Parent);
+        Assert.Same(shadow.Parent,surface.Parent);
+        Assert.Contains(host,shadow.Ancestors());
+        Assert.All(shadow.Ancestors().TakeWhile(parent=>parent!=host),parent=>
+            Assert.NotEqual("True",(string?)parent.Attribute("ClipToBounds")));
     }
 
     [Fact]
@@ -108,7 +111,7 @@ public sealed class WindowVisualStructureTests
 
         Assert.Equal(new[]
         {
-            "ReferenceButton","DrawButton","OcrButton","TranslateButton","TableButton",
+            "ReferenceButton","AddRegionButton","RemoveRegionButton","DrawButton","OcrButton","TranslateButton","TableButton",
             "LongCaptureButton","RecordButton","VideoPlayButton","CopyButton","SaveButton","PinButton",
             // MCP 分享按钮（钉钉/飞书/Obsidian/IMA）在配置后隐藏显示，但结构上始终存在。
             "DingTalkButton","FeishuButton","ObsidianButton","ImaButton"

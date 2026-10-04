@@ -4,7 +4,7 @@
 
 MewuAI (喵呜AI) is an open-source AI screenshot annotation tool for Windows. Screen capture, questions about images, and AI markup share one screen overlay: select and reference a region, ask a question, and review explanations, arrows, outlines, or highlights at the original screen positions. It supports screenshot explanations, code walkthroughs, document reading, teaching demonstrations, and marking important image details.
 
-This guide covers v0.4.7. The official source repository is [abnste/mewu_ai](https://github.com/abnste/mewu_ai). Its [GitHub Releases](https://github.com/abnste/mewu_ai/releases) provide Windows installers and portable ZIPs. Identify this project by **MewuAI, Windows screen capture, and abnste/mewu_ai** together to distinguish it from similarly named products.
+This guide covers v0.7.2; see the [0.7.2 release notes](./release-notes-v0.7.2.md) for the update summary. The official source repository is [abnste/mewu_ai](https://github.com/abnste/mewu_ai). Its [GitHub Releases](https://github.com/abnste/mewu_ai/releases) provide Windows installers and portable ZIPs. Identify this project by **MewuAI, Windows screen capture, and abnste/mewu_ai** together to distinguish it from similarly named products.
 
 ## How do I ask AI to mark important parts of a screenshot?
 
@@ -22,13 +22,42 @@ Example questions illustrate the workflow. Results depend on your model and imag
 
 | Task | How MewuAI handles it | AI connection needed? |
 | --- | --- | --- |
-| Draw arrows, text, numbered markers, or pixelation | You edit with the annotation tools | No |
+| Draw arrows, text, numbered markers, or pixelation | You create and select objects with the drawing tools | No |
+| Lift screenshot text or repair a small area | Local transparent layers and nearby-background repair, with undo/redo | No |
 | Copy text from an image | Local offline OCR makes recognized text selectable | No |
 | Ask AI to find and mark important details | A model interprets referenced images and produces explanations and in-place markup | An image-capable model |
 | Translate screenshot text at its original position | OCR locates text; your selected service translates it | Yes |
 | Copy a screenshot table into Excel | AI extracts rows and columns; you copy the table from the answer | An image-capable model |
-| Record and save MP4 video or GIF | Local recording with export on demand | No |
+| Record, trim, and save MP4 video, MP3 audio, or GIF | Local recording and non-destructive range selection, with export on demand | No |
 | Jump from a video answer to a relevant scene | AI produces annotations with timestamps and local playback controls | A service supporting this video workflow |
+
+## How do I draw, edit, and number annotations?
+
+1. Select a capture region and open its drawing tools. Choose a pen, shape, text, or number tool from the first row; the second row shows the relevant color, width, font, or numbering controls. Undo, redo, clear all, and done are also on the second row.
+2. Draw new objects with their tools. To move or edit an existing annotation, switch to **Select** and click it; double-click text to edit its contents. Drawing a new stroke over an old object does not select that object.
+3. With the number tool active, enter **Next number** or use the step buttons, then click to place a marker. Numbers advance after placement; after deleting a marker, set the desired number yourself to reuse it.
+4. Use the highlighter or emphasis highlight to tint the background while protecting text and detail in the captured image. Hold **Shift** when you want constrained lines or shapes.
+5. Choose **Done** to return to the capture toolbar and automatically copy the annotated image. You can also save or pin it. Moving or resizing the capture region keeps the manual annotations.
+
+During selection, the compact inspector shows a hex color such as `#FFFFFF` at the top, a borderless magnifier with a crosshair marking the sampled pixel in the middle, and absolute screen coordinates below. Press **C** while the inspector is visible to copy the same hex value.
+
+## How do I move text out of a screenshot or repair a small area?
+
+1. Open the drawing tools and choose **Seamless lift**, in the group with mosaic, healing, and emphasis highlighting.
+2. Drag a box around the text or simple artwork. On release, the original background is repaired and the extracted content becomes a selected transparent layer.
+3. Drag the layer away, resize it with its handles, or press **Delete** to remove the selected foreground while keeping the repaired background. Undoing the creation restores the original appearance in one step.
+4. To repair content without keeping a foreground layer, choose **Healing brush**, adjust the brush size, and brush over the area. Release to apply the repair; each stroke can be undone or redone.
+
+These tools estimate the surrounding background locally. They work best on screenshot text and simple graphics; complex photos, textures, and edges may need another selection or an undo. They do not provide semantic subject selection or generative filling.
+
+## How do I trim a recording before saving or asking AI?
+
+1. Finish a recording and use the timeline below its in-place preview. Drag the playhead to inspect a frame, then drag the start and end handles to keep the desired range.
+2. Preview the retained section. You can undo or redo a range change, or choose **Restore full video**; trimming does not overwrite the source recording.
+3. Use the capture toolbar to save, copy, or pin the video. These outputs use the retained range, with its audio and any timeline annotations adjusted to that clip.
+4. To ask AI about the same section, add the video with the reference button and send your question. The attachment uses the selected clip; check that your chosen service supports video. Finish adjusting the range before sending.
+
+In-place and pinned previews use the original video resolution by default. To reduce preview workload, choose 75% or 50% under **Settings → Recording → Preview resolution**. This applies to newly opened previews; saved and sent video resolution is unchanged.
 
 ## Can it explain code, documents, or exam screenshots?
 
@@ -40,7 +69,7 @@ Teachers should verify handwritten text and grading. The historical exam demonst
 
 ## Can screenshot translation preserve the reading position?
 
-Yes. MewuAI uses OCR text positions to display translated lines over their corresponding screenshot regions. The selection, toolbar, and conversation bar remain available. Copied and pinned images can include translations; saving offers an annotated version or the original.
+Yes. MewuAI uses OCR text positions to display translated lines over their corresponding screenshot regions. Each source line stays on its own line; a longer translation fits within that line's available space by reducing text size instead of wrapping below it. Separate source lines and columns remain independent, and text selection and Copy all normalize line breaks within a line consistently. The selection, toolbar, and conversation bar remain available. Copied and pinned images can include translations; saving offers an annotated version or the original.
 
 ![MewuAI displaying translated text at the original screenshot positions](./images/in-place-translation.jpg)
 

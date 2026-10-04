@@ -75,6 +75,35 @@ public sealed class AnnotationExportTests
         Assert.Equal(2,notes.Count);Assert.True(ContainsRedPixel(overlay,36,36,44,44));Assert.True(ContainsRedPixel(overlay,36,116,44,124));
     }
 
+    [Fact]
+    public void InactiveCalloutDoesNotEraseVisibleTargetMarker()
+    {
+        var marker = new AiAnnotation(.2,.2,.2,.2,"",Kind:AiAnnotationKind.Rectangle,Style:new("#FF0000",.015));
+        var future = marker with { Text="Later",Kind=AiAnnotationKind.Callout,StartTime=5,EndTime=6,Keyframes=[new(5,.2,.2,.2,.2),new(6,.2,.2,.2,.2)] };
+        var overlay = AnnotationOverlayRenderer.RenderAiOverlay(300,200,[marker,future],0);
+        Assert.True(ContainsRedPixel(overlay,55,35,125,85));
+    }
+
+    [Fact]
+    public void EmptyCalloutDoesNotEraseVisibleTargetMarker()
+    {
+        var marker = new AiAnnotation(.2,.2,.2,.2,"",Kind:AiAnnotationKind.Rectangle,Style:new("#FF0000",.015));
+        var empty = marker with { Text=" ",Kind=AiAnnotationKind.Callout };
+        var overlay = AnnotationOverlayRenderer.RenderAiOverlay(300,200,[marker,empty]);
+        Assert.True(ContainsRedPixel(overlay,55,35,125,85));
+    }
+
+    [Fact]
+    public void MovingCalloutSuppressesMarkerAtCurrentRatherThanOriginalGeometry()
+    {
+        var marker = new AiAnnotation(.6,.6,.2,.2,"",Kind:AiAnnotationKind.Rectangle,Style:new("#FF0000",.015));
+        var moving = new AiAnnotation(.1,.1,.2,.2,"Current target",0,0,2,
+            [new(0,.1,.1,.2,.2),new(2,.6,.6,.2,.2)],Kind:AiAnnotationKind.Callout);
+        var overlay = AnnotationOverlayRenderer.RenderAiOverlay(300,200,[marker,moving],2);
+        Assert.False(ContainsRedPixel(overlay,0,0,299,199));
+        Assert.True(ContainsBluePixel(overlay,175,115,245,165));
+    }
+
     private static AiAnnotation Timeline(double start,double end)=>new(.1,.2,.2,.2,"目标",0,start,end,[new VideoAnnotationKeyframe(start,.1,.2,.2,.2),new VideoAnnotationKeyframe(end,.2,.25,.2,.2)]);
     private static BitmapSource SolidBitmap(int width,int height,Color color){var pixels=new byte[width*height*4];for(var i=0;i<pixels.Length;i+=4){pixels[i]=color.B;pixels[i+1]=color.G;pixels[i+2]=color.R;pixels[i+3]=color.A;}var bitmap=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,width*4);bitmap.Freeze();return bitmap;}
     private static bool HasNonWhitePixel(BitmapSource image){var pixels=new byte[image.PixelWidth*image.PixelHeight*4];image.CopyPixels(pixels,image.PixelWidth*4,0);for(var i=0;i<pixels.Length;i+=4)if(pixels[i]<245||pixels[i+1]<245||pixels[i+2]<245)return true;return false;}

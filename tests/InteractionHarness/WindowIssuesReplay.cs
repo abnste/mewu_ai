@@ -57,6 +57,11 @@ internal static class WindowIssuesReplay
                 typeof(SettingsWindow).GetField("_updateCheck",Private)!.SetValue(settings,suppressUpdate);
                 settings.Show();await Idle();
                 Check("settings-capture-allowed-as-requested",Affinity(settings)==0);
+                VerifyDialogPolicy(settings,"settings",0,Check);
+                var licenses=new LicenseNoticesWindow{Owner=settings};windows.Add(licenses);
+                licenses.Show();await Idle();
+                Check("public-licenses-have-no-recording-block",Affinity(licenses)==0);
+                licenses.Close();
                 var settingsHandle=Handle(settings);settings.Close();await Idle();
                 Check("closed-settings-no-protected-hwnd",!GetWindowDisplayAffinity(settingsHandle,out _));
 
@@ -128,6 +133,11 @@ internal static class WindowIssuesReplay
                         Array.Clear(sample);
                         second.Activate();await Idle();overlay.Activate();await Idle();
                         Check(label+"-reactivation-keeps-overlay-above-old-pins",Above(overlay,pin)&&Above(overlay,second));
+                        var refreshed=(CaptureFrame)typeof(CaptureOverlayWindow).GetMethod("CaptureCleanDesktopForRefresh",Private)!.Invoke(overlay,null)!;
+                        refreshed.Image.CopyPixels(new Int32Rect(200,210,1,1),sample,4,0);
+                        Check(label+"-refresh-preserves-pin-pixels",sample[2]>sample[1]&&sample[1]>sample[0]);
+                        Check(label+"-refresh-preserves-capture-policy",Affinity(overlay)==(teaching?0:NativeMethods.WdaExcludeFromCapture));
+                        Array.Clear(sample);
                         // Exercise the actual pin command in this same overlay,
                         // including its desktop refresh and focus restoration.
                         var created=PinSelection(app,overlay);

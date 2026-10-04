@@ -10,7 +10,7 @@ namespace mewu_ai_Assistant.Views;
 
 /// <summary>网易邮箱设置页。上半部分为“网页版扫码授权”（与 QQ 邮箱体验对齐：
 /// 用手机“网易邮箱大师”App 扫码确认，会话只保存在本机；授权后可实时读取
-/// 收件箱上下文并代发邮件），下半部分保留 SMTP 授权码作为备用发件通道。</summary>
+/// 收件箱上下文。发送邮件仍要求 SMTP 授权码。</summary>
 internal sealed class NetEaseMailSettingsPage : StackPanel
 {
     private readonly CheckBox _enable=new();
@@ -22,6 +22,7 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
     private readonly Image _qrImage=new(){Width=208,Height=208,Stretch=Stretch.Uniform,Visibility=Visibility.Collapsed,Margin=new Thickness(0,8,0,4)};
     private readonly CancellationToken _token;
     private bool _statusLoaded;
+    private int _statusRevision;
     internal bool Enabled=>_enable.IsChecked==true;
     internal string Account=>_account.Text.Trim();
     internal string FromName=>_fromName.Text.Trim();
@@ -29,9 +30,9 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
     internal NetEaseMailSettingsPage(AppSettings settings,CancellationToken token)
     {
         _token=token;
-        var form=new AiSettingsForm("网易邮箱",T(
-            "推荐用“网页版扫码授权”：点击“扫码授权”后用手机“网易邮箱大师”App 扫描二维码并确认登录，即可实时读取收件箱并在对话中代发邮件；会话只保存在本机，无需 IMAP/SMTP 授权码。下方 SMTP 授权码仅作为备用发件通道。",
-            "Prefer “Scan QR code to authorize”: scan with the NetEase Mailmaster mobile app and confirm, then live inbox context and confirmed mail sending become available; the session stays on this machine and no IMAP/SMTP code is needed. The SMTP authorization code below is only a fallback sending channel."),_status);
+        var form=new AiSettingsForm(T("网易邮箱","NetEase Mail"),T(
+            "扫码授权用于读取收件箱；发送邮件还需填写账号和 SMTP 授权码（在网易邮箱网页设置中生成）。会话和授权码仅在本机加密保存。",
+            "QR authorization reads the inbox. Sending also requires your account and an SMTP authorization code from NetEase web settings. Sessions and codes are encrypted on this machine."),_status);
         Children.Add(form);
         form.AddAction(_authorize,T("扫码授权","Scan QR code to authorize"));
         form.AddAction(_test,T("测试连接","Test connection"));
@@ -39,17 +40,17 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
         form.AddAction(_saveCode,T("保存授权码","Save auth code"));
         form.AddAction(_clearCode,T("清除授权码","Clear auth code"));
         _authorize.ToolTip=T("打开本页内嵌二维码，用手机“网易邮箱大师”App 内的“扫一扫”扫码并在手机上确认登录（相机/微信扫码只会跳到下载页）。无需 IMAP/SMTP 授权码。","Shows an embedded QR code; scan it with the built-in scanner inside the NetEase Mailmaster mobile app and confirm on the phone (camera/WeChat scanners only open a download page). No IMAP/SMTP code needed.");
-        _test.ToolTip=T("验证扫码会话是否仍有效（读取 1 封收件箱邮件，不发信、不改动已读状态）。","Checks whether the scan session is still valid (reads one inbox message; sends nothing, marks nothing read).");
-        _clearSession.ToolTip=T("删除本机保存的网易邮箱网页会话（收件箱读取与网页发件将不可用，SMTP 不受影响）。","Deletes the NetEase web session stored on this machine (inbox reading and web sending stop; SMTP is unaffected).");
+        _test.ToolTip=T("分别验证已保存的扫码会话和 SMTP 授权码；不发信、不改动已读状态。","Checks the saved scan session and SMTP code separately; sends nothing and marks nothing read.");
+        _clearSession.ToolTip=T("删除本机保存的网易邮箱网页会话（收件箱读取将不可用，SMTP 不受影响）。","Deletes the NetEase web session stored on this machine (inbox reading stops; SMTP is unaffected).");
         _account.Text=settings.NetEaseMailAccount;
         _fromName.Text=settings.NetEaseMailFromName;
-        _enable.Content=T("启用网易邮箱（识别到 163/126 等后缀即可发件，授权后还可实时读取收件箱）","Enable NetEase Mail (recognized 163/126 addresses can be emailed; live inbox reading works after authorization)");
+        _enable.Content=T("启用网易邮箱（配置 SMTP 后经确认发件，扫码授权后可读取收件箱）","Enable NetEase Mail (confirmed sending with SMTP configured; inbox access after QR authorization)");
         _enable.IsChecked=settings.NetEaseMailEnabled;
         _authCode.ToolTip=T("点击“保存授权码”后才会写入本机（DPAPI 加密）。","Only written locally (DPAPI) after clicking “Save auth code”.");
         form.Fields.Children.Add(_qrImage);
         form.Fields.Children.Add(AiSettingsForm.Field(T("邮箱账号（如 someone@163.com）","Account (e.g. someone@163.com)"),_account));
         form.Fields.Children.Add(AiSettingsForm.Field(T("发件人名称（可选，仅 SMTP 通道使用）","Sender display name (optional, SMTP channel only)"),_fromName));
-        form.Fields.Children.Add(AiSettingsForm.Field(T("SMTP 授权码（备用通道）","SMTP authorization code (fallback channel)"),_authCode));
+        form.Fields.Children.Add(AiSettingsForm.Field(T("SMTP 授权码（发件必需）","SMTP authorization code (required for sending)"),_authCode));
         form.Fields.Children.Add(_enable);
         _status.Text=T("正在读取本机授权状态…","Reading local authorization status…");
         _authorize.Click+=async(_,_)=>await AuthorizeAsync();
@@ -60,7 +61,8 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
         Loaded+=async(_,_)=>
         {
             if(_statusLoaded)return;_statusLoaded=true;
-            try{var status=await Task.Run(IdleStatusText,_token);if(!_token.IsCancellationRequested)_status.Text=status;}
+            var revision=_statusRevision;
+            try{var status=await Task.Run(IdleStatusText,_token);if(!_token.IsCancellationRequested&&revision==_statusRevision)_status.Text=status;}
             catch(OperationCanceledException)when(_token.IsCancellationRequested){}
             catch(Exception ex){new PrivacyLogger().Info("NetEaseMailStatus",ex.GetType().Name);}
         };
@@ -82,6 +84,7 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
     private async Task AuthorizeAsync()
     {
         if(!_authorize.IsEnabled||_token.IsCancellationRequested)return;
+        _statusRevision++;
         _authorize.IsEnabled=false;_test.IsEnabled=false;_clearSession.IsEnabled=false;
         _status.Foreground=Brushes.SlateGray;
         SetStatus(T("正在获取二维码…","Fetching the QR code…"));
@@ -93,6 +96,7 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
                     // 二维码在 UI 线程渲染显示（PNG 由 QRCoder 在本地生成）。
                     await Dispatcher.InvokeAsync(()=>
                     {
+                        if(_token.IsCancellationRequested)return;
                         var image=new BitmapImage();
                         using(var stream=new MemoryStream(png))
                         {
@@ -108,72 +112,86 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
                 },
                 text=>Dispatcher.Invoke(()=>SetStatus(text)),
                 _token).ConfigureAwait(true);
+            _token.ThrowIfCancellationRequested();
             if(session.Account.Contains('@')&&string.IsNullOrWhiteSpace(_account.Text))
                 _account.Text=session.Account;
-            SetStatus(T($"扫码授权成功：{session.Account}。可实时读取收件箱并在对话中代发邮件。",$"Scan authorization succeeded: {session.Account}. Live inbox reading and confirmed sending are now available."));
+            SetStatus(T($"扫码授权成功：{session.Account}。可读取收件箱；发件需另行配置 SMTP 授权码。",$"Scan authorization succeeded: {session.Account}. Inbox reading is now available; sending requires an SMTP authorization code."));
             _status.Foreground=Brushes.SeaGreen;
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
         catch(Exception ex)
         {
-            ShowError($"{ex.Message}{(LocalizationService.IsEnglish?" Retry by clicking “Scan QR code to authorize”.":" 点击“扫码授权”重试。")}");
+            ShowError(ex.Message+T(" 点击“扫码授权”重试。"," Retry by clicking “Scan QR code to authorize”."));
         }
-        finally{_authorize.IsEnabled=true;_test.IsEnabled=true;_clearSession.IsEnabled=true;}
+        finally
+        {
+            _qrImage.Visibility=Visibility.Collapsed;_qrImage.Source=null;
+            _authorize.IsEnabled=true;_test.IsEnabled=true;_clearSession.IsEnabled=true;
+        }
     }
 
     private async Task TestAsync()
     {
         if(!_test.IsEnabled||_token.IsCancellationRequested)return;
-        _test.IsEnabled=false;_authorize.IsEnabled=false;_clearSession.IsEnabled=false;
+        _statusRevision++;
+        _test.IsEnabled=false;_authorize.IsEnabled=false;_clearSession.IsEnabled=false;_saveCode.IsEnabled=false;_clearCode.IsEnabled=false;
         _status.Foreground=Brushes.SlateGray;
-        var session=NetEaseMailWebMcpService.ReadSession();
-        if(session is not null)
-        {
-            SetStatus(T("正在验证网易邮箱网页会话…","Validating the NetEase web session…"));
-            try
-            {
-                await NetEaseMailWebMcpService.ValidateSessionAsync(session,_token);
-                SetStatus(T($"网页会话有效：{session.Account}。",$"Web session valid: {session.Account}."));
-                _status.Foreground=Brushes.SeaGreen;
-                return;
-            }
-            catch(OperationCanceledException)when(_token.IsCancellationRequested){return;}
-            catch(Exception ex){ShowError(ex.Message);return;}
-            finally{_test.IsEnabled=true;_authorize.IsEnabled=true;_clearSession.IsEnabled=true;}
-        }
-        // 无网页会话：回退到 SMTP 通道测试。
-        SetStatus(T("未找到扫码会话，正在测试 SMTP 连接…","No scan session found; testing SMTP…"));
+        var probe=new AppSettings{NetEaseMailEnabled=true,NetEaseMailAccount=Account};
+        SetStatus(T("正在分别验证收件箱和 SMTP 发件连接…","Checking inbox access and SMTP sending credentials…"));
         try
         {
-            var probe=new AppSettings{NetEaseMailEnabled=true,NetEaseMailAccount=Account};
-            await NetEaseMailService.TestConnectionAsync(probe,_token);
-            SetStatus(T($"SMTP 授权码有效（{Account}）。",$"SMTP authorization code valid ({Account})."));
-            _status.Foreground=Brushes.SeaGreen;
+            var results=new List<string>();var failed=false;
+            var session=await Task.Run(NetEaseMailWebMcpService.ReadSession,_token);
+            if(session is null)results.Add(T("收件箱：未扫码授权。","Inbox: no scan authorization."));
+            else
+            {
+                try
+                {
+                    await NetEaseMailWebMcpService.ValidateSessionAsync(session,_token);
+                    results.Add(T($"收件箱：{session.Account} 会话有效。",$"Inbox: session valid for {session.Account}."));
+                }
+                catch(OperationCanceledException)when(_token.IsCancellationRequested){throw;}
+                catch(Exception ex){failed=true;results.Add(T($"收件箱验证失败：{ex.Message}",$"Inbox check failed: {ex.Message}"));}
+            }
+            var hasCode=await Task.Run(()=>!string.IsNullOrWhiteSpace(NetEaseMailService.ReadAuthCode()),_token);
+            if(!hasCode)results.Add(T("SMTP：尚未保存发件授权码。","SMTP: no sending authorization code saved."));
+            else
+            {
+                try
+                {
+                    await NetEaseMailService.TestConnectionAsync(probe,_token);
+                    results.Add(T($"SMTP：{probe.NetEaseMailAccount} 授权码有效。",$"SMTP: authorization code valid for {probe.NetEaseMailAccount}."));
+                }
+                catch(OperationCanceledException)when(_token.IsCancellationRequested){throw;}
+                catch(Exception ex){failed=true;results.Add(T($"SMTP 验证失败：{ex.Message}",$"SMTP check failed: {ex.Message}"));}
+            }
+            _token.ThrowIfCancellationRequested();
+            SetStatus(string.Join(" ",results));
+            _status.Foreground=failed?Brushes.Firebrick:Brushes.SlateGray;
         }
         catch(OperationCanceledException)when(_token.IsCancellationRequested){}
         catch(Exception ex){ShowError(ex.Message);}
-        finally{_test.IsEnabled=true;_authorize.IsEnabled=true;_clearSession.IsEnabled=true;}
+        finally{_test.IsEnabled=true;_authorize.IsEnabled=true;_clearSession.IsEnabled=true;_saveCode.IsEnabled=true;_clearCode.IsEnabled=true;}
     }
 
     private void ClearSession()
     {
         if(_token.IsCancellationRequested)return;
-        NetEaseMailWebMcpService.ClearSession();
-        _qrImage.Visibility=Visibility.Collapsed;
-        _qrImage.Source=null;
-        _status.Foreground=Brushes.SlateGray;
-        SetStatus(IdleStatusText());
+        _statusRevision++;
+        try
+        {
+            NetEaseMailWebMcpService.ClearSession();
+            _qrImage.Visibility=Visibility.Collapsed;_qrImage.Source=null;
+            _status.Foreground=Brushes.SlateGray;
+            SetStatus(IdleStatusText());
+        }
+        catch(Exception ex){ShowError(ex.Message);}
     }
 
     private void SaveCode()
     {
         if(_token.IsCancellationRequested)return;
-        if(NetEaseMailWebMcpService.ReadSession() is not null)
-        {
-            _status.Foreground=Brushes.SeaGreen;
-            SetStatus(T("当前已使用扫码会话授权，无需填写 SMTP 授权码。","A QR web session is already authorized; no SMTP authorization code is required."));
-            return;
-        }
+        _statusRevision++;
         try
         {
             NetEaseMailService.SaveAuthCode(_authCode.Password);
@@ -187,15 +205,21 @@ internal sealed class NetEaseMailSettingsPage : StackPanel
     private void ClearCode()
     {
         if(_token.IsCancellationRequested)return;
-        NetEaseMailService.ClearAuthCode();
-        _status.Foreground=Brushes.SlateGray;
-        SetStatus(IdleStatusText());
+        _statusRevision++;
+        try
+        {
+            NetEaseMailService.ClearAuthCode();_authCode.Clear();
+            _status.Foreground=Brushes.SlateGray;
+            SetStatus(IdleStatusText());
+        }
+        catch(Exception ex){ShowError(ex.Message);}
     }
 
-    private void SetStatus(string text)=>_status.Text=text;
+    private void SetStatus(string text){if(!_token.IsCancellationRequested)_status.Text=text;}
 
     private void ShowError(string message)
     {
+        if(_token.IsCancellationRequested)return;
         _status.Text=message;
         _status.Foreground=Brushes.Firebrick;
     }

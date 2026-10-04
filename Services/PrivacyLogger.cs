@@ -7,6 +7,17 @@ namespace mewu_ai_Assistant.Services;
 public sealed class PrivacyLogger
 {
     private static readonly object Gate=new();
+    private static string? _isolatedReplayDirectory;
+    // One-way, process-local test routing. Set before constructing the replay
+    // host so asynchronous error paths never rotate the user's production logs.
+    internal static void ConfigureIsolatedReplayDirectory(string directory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        var full=Path.GetFullPath(directory);
+        var previous=Interlocked.CompareExchange(ref _isolatedReplayDirectory,full,null);
+        if(previous is not null&&!string.Equals(previous,full,StringComparison.Ordinal))
+            throw new InvalidOperationException("Replay log routing has already been configured.");
+    }
     private static readonly Regex SensitiveAssignment=new(
         "(?i)\\b(?:authorization|proxy-authorization|api[_ -]?key|subscription[_ -]?key|access[_ -]?token|auth[_ -]?token|refresh[_ -]?token|client[_ -]?secret|private[_ -]?key|x[_ -]?(?:api[_ -]?)?key|token|jwt|secret|password|credential|cookie|signature)\\b\\s*[\\\"']?\\s*[:=]\\s*(?:(?:bearer|basic)\\s+)?(?:\\\"(?:\\\\.|[^\\\"\\\\])*\\\"|'(?:\\\\.|[^'\\\\])*'|[^\\\"'\\s,;\\&#]+)",
         RegexOptions.Compiled|RegexOptions.CultureInvariant);
@@ -19,7 +30,7 @@ public sealed class PrivacyLogger
     private const int MaxMessageCharacters=1000;
     private const int MaxStackTraceCharacters=16*1024;
     private readonly string _directory;
-    public PrivacyLogger(string? directory=null){_directory=directory??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","Logs");try{Directory.CreateDirectory(_directory);}catch{}lock(Gate)Rotate();}
+    public PrivacyLogger(string? directory=null){_directory=directory??Volatile.Read(ref _isolatedReplayDirectory)??Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"MewuAI","Logs");try{Directory.CreateDirectory(_directory);}catch{}lock(Gate)Rotate();}
     public void Error(string component,Exception exception)
     {
         try

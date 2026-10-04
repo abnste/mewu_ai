@@ -28,14 +28,16 @@ public sealed class PinnedVideoWindow : Window
     private readonly PinnedWindowDragController _drag;
     private readonly CancellationTokenSource _lifetime=new();
 
-    public PinnedVideoWindow(string videoPath,ScreenRect originalRegion,bool teachingMode=false)
+    public PinnedVideoWindow(string videoPath,ScreenRect originalRegion,bool teachingMode=false):this(videoPath,originalRegion,teachingMode,100) { }
+
+    public PinnedVideoWindow(string videoPath,ScreenRect originalRegion,bool teachingMode,int previewResolutionPercent)
     {
         _videoPath=Path.GetFullPath(videoPath);_originalRegion=originalRegion;_videoLease=TempMediaRegistry.Shared.AcquireExistingFile(_videoPath);
         try
         {
             _drag=new PinnedWindowDragController(this);Title="喵呜AI 贴视频";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.CanResize;Topmost=true;ShowActivated=false;ShowInTaskbar=NativeMethods.VisualQaCaptureEnabled;Background=Brushes.Transparent;AllowsTransparency=true;UseLayoutRounding=true;SnapsToDevicePixels=true;
             _videoView=new Image{Stretch=Stretch.Fill,IsHitTestVisible=false};
-            _player=new VideoPreviewSurface(_videoView,Dispatcher);
+            _player=new VideoPreviewSurface(_videoView,Dispatcher,previewResolutionPercent);
             _player.Failed+=error=>{_playing=false;if(_playItem is not null)_playItem.Header="播放";new PrivacyLogger().Error("PinnedVideoPreview",error);};
             _frame=new Border{Background=Brushes.Black,CornerRadius=new CornerRadius(10),BorderBrush=new SolidColorBrush(Color.FromArgb(110,189,208,226)),BorderThickness=new Thickness(1),ClipToBounds=true,Effect=new DropShadowEffect{Color=Color.FromRgb(42,55,72),BlurRadius=22,ShadowDepth=4,Opacity=.3},Child=_videoView};Content=_frame;Width=originalRegion.Width+ShadowPixels*2;Height=originalRegion.Height+ShadowPixels*2;
             SizeChanged+=KeepAspectRatio;DpiChanged+=OnDpiChanged;PreviewKeyDown+=OnPreviewKeyDown;PreviewMouseLeftButtonDown+=OnMouseLeftButtonDown;PreviewMouseDoubleClick+=OnMouseDoubleClick;PreviewMouseLeftButtonUp+=OnMouseLeftButtonUp;PreviewMouseMove+=OnMouseMove;MouseWheel+=OnMouseWheel;ContextMenu=BuildContextMenu();Loaded+=(_,_)=>{try{_player.Load(_videoPath,autoplay:true);}catch(Exception ex){new PrivacyLogger().Error("PinnedVideoPreviewLoad",ex);}};Closed+=(_,_)=>{_lifetime.Cancel();try{_player.Dispose();}finally{_videoLease.Dispose();_lifetime.Dispose();}};SourceInitialized+=(_,_)=>{var handle=new System.Windows.Interop.WindowInteropHelper(this).Handle;if(!NativeMethods.ApplyPresentationCaptureVisibility(handle,teachingMode)){new PrivacyLogger().Error("PinnedVideoCaptureProtection",new InvalidOperationException("无法应用贴视频共享/防捕获设置，已阻止显示贴视频"));Dispatcher.BeginInvoke(new Action(Close));return;}PlaceAtOriginalSize(handle);};

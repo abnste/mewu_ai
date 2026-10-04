@@ -44,11 +44,12 @@ public partial class CaptureOverlayWindow
         if(RejectIfOverlayOperationBusy()||Active is not { } item)return;
         if(item.VideoPath is not null)return; // 视频选区不支持发送（钉钉/飞书图片接口只收静态图）
         var operation=BeginOverlayOperation(busyStatus);
+        byte[]? png=null;
         try
         {
             // 在 UI 线程完成渲染再进入后台，与贴图/保存路径一致。
             var image=RenderSelectionImage(item,true,true,true);
-            var png=ObsidianVaultService.EncodePng(image);
+            png=ObsidianVaultService.EncodePng(image);
             var outcome=await Task.Run(()=>action(png,operation.Token),operation.Token).ConfigureAwait(true);
             if(IsOverlayOperationActive(operation,item))PromptStatus.Text=successLabel is null?outcome:$"{successLabel}{outcome}";
         }
@@ -58,6 +59,6 @@ public partial class CaptureOverlayWindow
             new PrivacyLogger().Error("McpShareImage",ex);
             if(IsOverlayOperationActive(operation,item))PromptStatus.Text=$"{L("发送失败","Send failed")}：{ex.Message}";
         }
-        finally{EndOverlayOperation(operation);}
+        finally{if(png is not null)System.Security.Cryptography.CryptographicOperations.ZeroMemory(png);EndOverlayOperation(operation);}
     }
 }

@@ -34,6 +34,7 @@ public partial class CaptureOverlayWindow
             ?L("滚动长截图 · F8 完成，Esc 取消","Scrolling capture · F8 to finish, Esc to cancel")
             :L("截取应用快照 · 自动获取完整画面","Capture application snapshot · Automatically capture full content");
         LongCaptureButton.ToolTip=label;AutomationProperties.SetName(LongCaptureButton,label);
+        CaptureToolbarCaption.SetText(LongCaptureButton,item.SnapshotTarget is null?L("长图","Scroll"):L("快照","Snap"));
         if(LongCaptureButton.Content is System.Windows.Shapes.Path icon)
             icon.Data=Geometry.Parse(item.SnapshotTarget is null
                 ?"M5,2 L13,2 L13,16 L5,16 Z M3,5 L5,3 L7,5 M11,13 L13,15 L15,13"

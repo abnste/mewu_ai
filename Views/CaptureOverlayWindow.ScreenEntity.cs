@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 using mewu_ai_Assistant.OCR;
 using mewu_ai_Assistant.Services;
@@ -18,46 +19,80 @@ public partial class CaptureOverlayWindow
     // 普通拖选走本地 OCR），识别出的链接/邮箱会显示在选区旁的悬浮条上，
     // 点击即可打开链接或直接撰写并发送邮件——无需先与 AI 对话。
     private const int MaxScreenEntityTextLength=12000;
-    private readonly HashSet<SelectionItem> _screenTextInFlight=new();
+    private sealed record ScreenEntityScan(CancellationTokenSource Cancellation,Rect Bounds,CaptureFrame Frame,
+        BitmapSource? CapturedImage,ApplicationSnapshotTarget? Target);
+    private readonly Dictionary<SelectionItem,ScreenEntityScan> _screenTextInFlight=new();
+    private readonly CancellationTokenSource _screenEntityLifetime=new();
 
     private void TryBeginScreenEntityScan(SelectionItem item)
     {
         if(_closed||_recordingMode||_drawingMode||_longCaptureMode)return;
         if(item.IsImplicit||item.VideoPath is not null||item.SnapshotText is not null)return;
-        if(!_screenTextInFlight.Add(item))return;
-        _=LoadScreenEntityTextAsync(item);
+        lock(_screenTextInFlight)
+            if(_screenTextInFlight.TryGetValue(item,out var current)&&IsScreenEntitySourceCurrent(item,current))return;
+        try
+        {
+            if(item.SnapshotTarget is { } target)
+                _=BeginScreenEntityScan(item,async token=>(await ApplicationSnapshotProcess.ReadAsync(target,token).ConfigureAwait(false)).Text);
+            else
+            {
+                // Freeze pixels on the UI thread before asynchronous local OCR.
+                var image=RenderSelectionImage(item,false,false,false);
+                _=BeginScreenEntityScan(item,async token=>(await new WindowsOcrService().RecognizeAsync(image,token).ConfigureAwait(false))?.Text);
+            }
+        }
+        catch(Exception ex){new PrivacyLogger().Info("ScreenEntityText",ex.GetType().Name);}
     }
 
-    private async Task LoadScreenEntityTextAsync(SelectionItem item)
+    private Task BeginScreenEntityScan(SelectionItem item,Func<CancellationToken,Task<string?>> readText)
+    {
+        InvalidateScreenEntityScan(item);
+        var request=new ScreenEntityScan(CancellationTokenSource.CreateLinkedTokenSource(_screenEntityLifetime.Token),
+            item.Bounds,_frame,item.CapturedImageOverride,item.SnapshotTarget);
+        lock(_screenTextInFlight)_screenTextInFlight[item]=request;
+        return LoadScreenEntityTextAsync(item,request,readText);
+    }
+
+    private void InvalidateScreenEntityScan(SelectionItem item)
+    {
+        lock(_screenTextInFlight)
+        {
+            if(!_screenTextInFlight.Remove(item,out var request))return;
+            request.Cancellation.Cancel();
+        }
+    }
+
+    private bool IsScreenEntitySourceCurrent(SelectionItem item,ScreenEntityScan request)
+        =>item.Bounds==request.Bounds&&ReferenceEquals(item.CapturedImageOverride,request.CapturedImage)
+            &&ReferenceEquals(_frame,request.Frame)&&Equals(item.SnapshotTarget,request.Target);
+
+    private async Task LoadScreenEntityTextAsync(SelectionItem item,ScreenEntityScan request,Func<CancellationToken,Task<string?>> readText)
     {
         try
         {
-            string? text=null;
-            if(item.SnapshotTarget is { } target)
-            {
-                // UIA 文本提取在独立工作进程中进行，不会阻塞界面。
-                var document=await ApplicationSnapshotProcess.ReadAsync(target,CancellationToken.None).ConfigureAwait(false);
-                text=document.Text;
-            }
-            else
-            {
-                // 尚未离开 UI 线程：先同步取图，再做本地 OCR。
-                var image=RenderSelectionImage(item,false,false,false);
-                var recognized=await new WindowsOcrService().RecognizeAsync(image,CancellationToken.None).ConfigureAwait(false);
-                text=recognized?.Text;
-            }
-            if(_closed)return;
+            var text=await readText(request.Cancellation.Token).ConfigureAwait(false);
+            request.Cancellation.Token.ThrowIfCancellationRequested();
             await Dispatcher.InvokeAsync(()=>
             {
-                if(_closed||!_selections.Contains(item))return;
+                if(_closed||_recordingMode||_drawingMode||_longCaptureMode||!_selections.Contains(item)
+                    ||item.SnapshotText is not null||!IsScreenEntitySourceCurrent(item,request))return;
+                lock(_screenTextInFlight)
+                    if(request.Cancellation.IsCancellationRequested||!_screenTextInFlight.TryGetValue(item,out var current)||!ReferenceEquals(current,request))return;
                 var trimmed=(text??string.Empty).Trim();
                 item.SnapshotText=trimmed.Length>MaxScreenEntityTextLength?trimmed[..MaxScreenEntityTextLength]:trimmed;
-                UpdateScreenEntityBar(item);
+                if(ReferenceEquals(Active,item))UpdateScreenEntityBar(item);
             }).Task.ConfigureAwait(false);
         }
         catch(OperationCanceledException){}
         catch(Exception ex){new PrivacyLogger().Info("ScreenEntityText",ex.GetType().Name);}
-        finally{_screenTextInFlight.Remove(item);}
+        finally
+        {
+            lock(_screenTextInFlight)
+            {
+                if(_screenTextInFlight.TryGetValue(item,out var current)&&ReferenceEquals(current,request))_screenTextInFlight.Remove(item);
+                request.Cancellation.Dispose();
+            }
+        }
     }
 
     private void ShowPhoneActionsForText(string? text)
@@ -72,13 +107,33 @@ public partial class CaptureOverlayWindow
     /// 需要 JS 渲染/被反爬拦截（微信公众号、知乎）时再引导用户一键安装——mewuAI 自动
     /// 调用 py/python 启动器创建 venv 并 pip install scrapling + scrapling install
     /// 下载隐身浏览器。</summary>
-    private async Task CrawlUrlWithScraplingAsync(string url)
+    private Task CrawlUrlWithScraplingAsync(string url)
+        =>RunScreenEntityCrawlAsync(token=>CrawlUrlCoreAsync(url,token));
+
+    private async Task RunScreenEntityCrawlAsync(Func<CancellationToken,Task> action)
     {
+        if(_closed||_screenEntityLifetime.IsCancellationRequested)return;
         if(_scraplingCrawlInFlight)
         {
             PromptStatus.Text=L("正在抓取中，请稍候…","A crawl is still running; please wait…");
             return;
         }
+        _scraplingCrawlInFlight=true;
+        using var lifetime=CancellationTokenSource.CreateLinkedTokenSource(_screenEntityLifetime.Token);
+        try{await action(lifetime.Token).ConfigureAwait(true);}
+        catch(OperationCanceledException)when(lifetime.IsCancellationRequested){}
+        catch(Exception ex)
+        {
+            new PrivacyLogger().Info("ScraplingCrawl",ex.GetType().Name);
+            if(!_closed&&!lifetime.IsCancellationRequested)
+                PromptStatus.Text=L($"抓取失败：{ex.Message}",$"Crawl failed: {ex.Message}");
+        }
+        finally{_scraplingCrawlInFlight=false;}
+    }
+
+    private async Task CrawlUrlCoreAsync(string url,CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
         var scraplingDir=ScraplingCrawlService.Locate(_host.Settings);
         if(scraplingDir is null)
         {
@@ -87,29 +142,36 @@ public partial class CaptureOverlayWindow
             ScraplingCrawlService.CrawlResult? basic=null;
             try
             {
-                basic=await Task.Run(()=>BasicHttpCrawlService.TryCrawlAsync(url,CancellationToken.None)).ConfigureAwait(true);
+                basic=await Task.Run(()=>BasicHttpCrawlService.TryCrawlAsync(url,token),token).ConfigureAwait(true);
             }
+            catch(OperationCanceledException)when(token.IsCancellationRequested){throw;}
             catch(Exception ex){new PrivacyLogger().Info("BasicHttpCrawlUi",ex.GetType().Name);}
+            token.ThrowIfCancellationRequested();
+            if(_closed)return;
             if(basic is not null)
             {
                 ShowCrawlResult(basic);
+                if(_closed||token.IsCancellationRequested)return;
                 PromptStatus.Text=L($"基础抓取完成（{basic.Text.Length} 字）。动态页面（微信/知乎等）建议安装 Scrapling 获得完整正文。",$"Basic fetch done ({basic.Text.Length} chars). Install Scrapling for full text of dynamic pages (WeChat/Zhihu…).");
                 return;
             }
             // 基础抓取拿不到正文（需要渲染/被拦截）：弹窗让用户一键安装。
             var choice=PromptMissingScraplingChoice(url);
+            token.ThrowIfCancellationRequested();
+            if(_closed)return;
             if(choice==ScraplingChoice.Cancel)return;
             if(choice==ScraplingChoice.CopySteps)
             {
-                ClipboardService.TrySetText(ScraplingCrawlService.ManualInstallSteps(),out _);
-                PromptStatus.Text=L("安装命令已复制到剪贴板。","Install commands copied to clipboard.");
+                PromptStatus.Text=ClipboardService.TrySetText(ScraplingCrawlService.ManualInstallSteps(),out _)
+                    ?L("安装命令已复制到剪贴板。","Install commands copied to clipboard.")
+                    :L("无法复制安装命令，请重试。","Could not copy the install commands. Try again.");
                 return;
             }
             // 一键安装
-            await InstallScraplingThenCrawlAsync(url);
+            await InstallScraplingThenCrawlAsync(url,token);
             return;
         }
-        await DoCrawlAsync(url,scraplingDir);
+        await DoCrawlAsync(url,scraplingDir,token);
     }
 
     private enum ScraplingChoice{OneClickInstall,CopySteps,Cancel}
@@ -138,55 +200,49 @@ public partial class CaptureOverlayWindow
     }
 
     /// <summary>运行一键安装（带进度流），完成后立即抓取。</summary>
-    private async Task InstallScraplingThenCrawlAsync(string url)
+    private async Task InstallScraplingThenCrawlAsync(string url,CancellationToken token)
     {
-        _scraplingCrawlInFlight=true;
-        var progress=new Progress<string>(line=>Dispatcher.Invoke(()=>PromptStatus.Text=line));
-        try
+        var progress=new Progress<string>(line=>
         {
-            var result=await ScraplingCrawlService.EnsureInstalledAsync(progress,CancellationToken.None).ConfigureAwait(true);
-            if(!result.Success)
-            {
-                MewuDialogWindow.ShowMessage(this,
-                    L("Scrapling 安装未成功","Scrapling install did not complete"),
-                    string.Format(System.Globalization.CultureInfo.CurrentCulture,
-                        L("安装失败：{0}\\n\\n已在 MewuAI 日志中记录详细 stderr。可改用\"复制手动安装步骤\"自行安装。","result={0}\\n\\nDetailed stderr was written to the MewuAI log. You can also use \"Copy manual steps\" to install it yourself."),
-                        result.Message));
-                return;
-            }
-            PromptStatus.Text=L("Scrapling 安装完成，开始抓取…","Scrapling installed; starting crawl…");
-            await DoCrawlAsync(url,result.InstallDir).ConfigureAwait(true);
+            if(_closed||token.IsCancellationRequested||Dispatcher.HasShutdownStarted)return;
+            Dispatcher.Invoke(()=>{if(!_closed&&!token.IsCancellationRequested)PromptStatus.Text=line;});
+        });
+        var result=await ScraplingCrawlService.EnsureInstalledAsync(progress,token).ConfigureAwait(true);
+        token.ThrowIfCancellationRequested();
+        if(_closed)return;
+        if(!result.Success)
+        {
+            MewuDialogWindow.ShowMessage(this,
+                L("Scrapling 安装未成功","Scrapling install did not complete"),
+                string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    L("安装失败：{0}\n\n可改用\"复制手动安装步骤\"自行安装。","Installation failed: {0}\n\nYou can use \"Copy manual steps\" to install it yourself."),
+                    result.Message));
+            return;
         }
-        finally{_scraplingCrawlInFlight=false;}
+        PromptStatus.Text=L("Scrapling 安装完成，开始抓取…","Scrapling installed; starting crawl…");
+        await DoCrawlAsync(url,result.InstallDir,token).ConfigureAwait(true);
     }
 
     /// <summary>实际的抓取流程（Scrapling 已就绪后调用）。</summary>
-    private async Task DoCrawlAsync(string url,string scraplingDir)
+    private async Task DoCrawlAsync(string url,string scraplingDir,CancellationToken token)
     {
-        _scraplingCrawlInFlight=true;
+        token.ThrowIfCancellationRequested();
         PromptStatus.Text=L("Scrapling 正在抓取网页内容（先快速请求，必要时隐身浏览器渲染）…","Scrapling is fetching the page (quick request first, stealth browser if needed)…");
-        try
-        {
-            var result=await Task.Run(()=>ScraplingCrawlService.CrawlAsync(url,scraplingDir,CancellationToken.None)).ConfigureAwait(true);
-            ShowCrawlResult(result);
-        }
-        catch(Exception ex)
-        {
-            PromptStatus.Text=L($"抓取失败：{ex.Message}",$"Crawl failed: {ex.Message}");
-            ScreenEntityBar.Visibility=Visibility.Visible;
-            new PrivacyLogger().Info("ScraplingCrawl",ex.GetType().Name);
-        }
-        finally{_scraplingCrawlInFlight=false;}
+        var result=await Task.Run(()=>ScraplingCrawlService.CrawlAsync(url,scraplingDir,token),token).ConfigureAwait(true);
+        token.ThrowIfCancellationRequested();
+        if(!_closed)ShowCrawlResult(result);
     }
 
     /// <summary>展示抓取结果：自动落盘、可选另存、复制剪贴板、弹出结果窗口。
     /// 若链接被自动纠正（OCR 易混字符），状态栏和保存文件都会注明。</summary>
     private void ShowCrawlResult(ScraplingCrawlService.CrawlResult result)
     {
+        if(_closed||_screenEntityLifetime.IsCancellationRequested)return;
         new PrivacyLogger().Info("ScraplingUiResult",$"length={result.Text.Length};parameterError={result.Text.Contains("Parameter error",StringComparison.OrdinalIgnoreCase)};corrected={result.CorrectedFrom is not null};engine={result.Engine??"Scrapling"}");
         // 结果自动落盘：%LOCALAPPDATA%\MewuAI\Crawls\<时间>-<标题>.md
         var savedPath=SaveCrawlResult(result);
         var chosenPath=PromptSaveCrawlResult(result,savedPath);
+        if(_closed||_screenEntityLifetime.IsCancellationRequested)return;
         if(!string.IsNullOrWhiteSpace(chosenPath))savedPath=chosenPath;
         var copied=ClipboardService.TrySetText(result.Text,out _);
         var correctedNote=result.CorrectedFrom is not null
@@ -195,7 +251,7 @@ public partial class CaptureOverlayWindow
         PromptStatus.Text=copied
             ?L($"抓取完成，正文已复制到剪贴板：{TruncateForStatus(result.Title,40)}（{result.Text.Length} 字）{correctedNote} · 文件：{savedPath}",$"Fetched and copied to clipboard: {TruncateForStatus(result.Title,40)} ({result.Text.Length} chars) {correctedNote} · file: {savedPath}")
             :L($"抓取完成：{TruncateForStatus(result.Title,40)}（{result.Text.Length} 字）{correctedNote} · 文件：{savedPath}",$"Fetched: {TruncateForStatus(result.Title,40)} ({result.Text.Length} chars) {correctedNote} · file: {savedPath}");
-        var window=new ScraplingCrawlResultWindow(_closed?null:this,result,savedPath);
+        var window=new ScraplingCrawlResultWindow(this,result,savedPath);
         window.Show();
     }
 
@@ -262,7 +318,7 @@ public partial class CaptureOverlayWindow
     private void UpdateScreenEntityBar(SelectionItem item)
     {
         var entities=ScreenEntityRecognitionService.Extract(item.SnapshotText);
-        if(entities.Count==0||_closed||!_selections.Contains(item)){HideScreenEntityBar();return;}
+        if(entities.Count==0||_closed||_recordingMode||_drawingMode||_longCaptureMode||!_selections.Contains(item)||!ReferenceEquals(Active,item)){HideScreenEntityBar();return;}
         ScreenEntityBarContent.Children.Clear();
         var url=entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Url);
         if(url is not null)
@@ -271,15 +327,15 @@ public partial class CaptureOverlayWindow
             ScreenEntityBarContent.Children.Add(EntityBarButton(
                 string.IsNullOrEmpty(host)?L("打开链接","Open link"):string.Format(System.Globalization.CultureInfo.CurrentCulture,L("打开 {0}","Open {0}"),host),
                 url.Value,url.Value,()=>{
-                    ScreenEntityMcpService.OpenUrl(url.Value);
-                    // 打开网站后立即收起识屏浮层，避免冻结帧遮挡浏览器导致卡顿。
-                    DismissOverlayAfterExternalAction();
+                    if(ScreenEntityMcpService.OpenUrl(url.Value))DismissOverlayAfterExternalAction();
+                    else PromptStatus.Text=L("无法打开链接，请复制后在浏览器中打开。","Could not open the link. Copy it and open it in your browser.");
                 }));
             ScreenEntityBarContent.Children.Add(EntityBarButton(
                 L("复制链接","Copy link"),
                 url.Value,L("复制 URL 到剪贴板","Copy the URL to the clipboard"),()=>{
-                    ClipboardService.TrySetText(url.Value,out _);
-                    PromptStatus.Text=L("链接已复制。","Link copied.");
+                    PromptStatus.Text=ClipboardService.TrySetText(url.Value,out _)
+                        ?L("链接已复制。","Link copied.")
+                        :L("无法复制链接，请重试。","Could not copy the link. Try again.");
                 }));
             // “爬取内容”：抓取微信公众号文章等页面正文。未安装 Scrapling 时先走
             // 内置基础抓取（零依赖）；拿不到正文（需要渲染/被反爬拦截）再引导一键安装。
@@ -355,7 +411,7 @@ public partial class CaptureOverlayWindow
     {
         var settings=_host.Settings;
         var qqAuthorized=settings.QqMailMcpEnabled&&QqMailMcpService.ReadCachedToken() is not null;
-        var neteaseReady=NetEaseMailService.IsConfigured(settings)||NetEaseMailWebMcpService.HasSession();
+        var neteaseReady=NetEaseMailService.IsConfigured(settings);
         if(qqAuthorized&&neteaseReady)
         {
             var choice=MewuDialogWindow.ShowChoice(this,LocalizationService.T("选择发件邮箱","Choose sending account"),LocalizationService.T("检测到 QQ 邮箱和网易邮箱均已授权，请选择本次发送使用的邮箱。","Both QQ Mail and NetEase Mail are authorized. Choose the account for this message."),LocalizationService.T("使用 QQ 邮箱","Use QQ Mail"),LocalizationService.T("使用网易邮箱","Use NetEase Mail"));
@@ -380,8 +436,15 @@ public partial class CaptureOverlayWindow
             OpenQqCompose(entity);
             return;
         }
-        ScreenEntityMcpService.OpenMailProvider(entity);
-        PromptStatus.Text=L("已复制邮箱地址并打开网页邮箱。要在本应用内直接发送，请到 设置 → MCP 配置 QQ 邮箱或网易邮箱。","Address copied and webmail opened. To send directly from this app, configure QQ Mail or NetEase Mail under Settings → MCP.");
+        var opened=ScreenEntityMcpService.OpenMailProvider(entity,out var copied);
+        var outcome=(opened,copied) switch
+        {
+            (true,true)=>L("地址已复制，已请求系统打开邮箱。","Address copied; the system was asked to open your mail app or webmail."),
+            (true,false)=>L("已请求系统打开邮箱，但地址未能复制。","The system was asked to open your mail app or webmail, but the address could not be copied."),
+            (false,true)=>L("地址已复制，但无法打开邮箱。","Address copied, but the mail app or webmail could not be opened."),
+            _=>L("无法复制地址或打开邮箱，请重试。","Could not copy the address or open mail. Try again.")
+        };
+        PromptStatus.Text=outcome+L(" 要在本应用内发送，请到 设置 → MCP 配置 QQ 邮箱或网易邮箱。"," To send from this app, configure QQ Mail or NetEase Mail under Settings → MCP.");
     }
 
     private void OpenQqCompose(ScreenEntity entity)
@@ -396,30 +459,29 @@ public partial class CaptureOverlayWindow
         netease.Show();
     }
 
-    private async Task<(bool Success,string Message)> SendViaQqMailAsync(string address,string subject,string body,CancellationToken token)
+    private async Task<MailDeliveryResult> SendViaQqMailAsync(string address,string subject,string body,CancellationToken token)
     {
         var draft=new QqMailDraft([(address,null)],Array.Empty<(string,string?)>(),subject,body);
         var outcome=await QqMailSendService.DeliverAsync(draft,_host.Settings,
             summary=>Task.FromResult(Dispatcher.Invoke(()=>MewuDialogWindow.ShowChoice(this,LocalizationService.T("QQ 邮箱发送确认","QQ Mail send confirmation"),summary,LocalizationService.T("确认发送","Confirm send"),string.Empty)==MewuDialogResult.Primary)),
-            token).ConfigureAwait(true);
-        var success=outcome.Contains("已发送",StringComparison.Ordinal)||outcome.Contains("was sent",StringComparison.Ordinal);
-        return (success,outcome);
+            token,MailChannel.Qq).ConfigureAwait(true);
+        return outcome;
     }
 
-    private async Task<(bool Success,string Message)> SendViaNetEaseAsync(string address,string subject,string body,CancellationToken token)
+    private async Task<MailDeliveryResult> SendViaNetEaseAsync(string address,string subject,string body,CancellationToken token)
     {
         try
         {
             var draft=new QqMailDraft([(address,null)],Array.Empty<(string,string?)>(),subject,body);
             var outcome=await QqMailSendService.DeliverAsync(draft,_host.Settings,
                 summary=>Task.FromResult(Dispatcher.Invoke(()=>MewuDialogWindow.ShowChoice(this,LocalizationService.T("网易邮箱发送确认","NetEase Mail send confirmation"),summary,LocalizationService.T("确认发送","Confirm send"),string.Empty)==MewuDialogResult.Primary)),
-                token,true).ConfigureAwait(true);
-            var success=outcome.Contains("已发送",StringComparison.Ordinal)||outcome.Contains("was sent",StringComparison.Ordinal);
-            return (success,outcome);
+                token,MailChannel.NetEase).ConfigureAwait(true);
+            return outcome;
         }
+        catch(OperationCanceledException)when(token.IsCancellationRequested){throw;}
         catch(Exception ex)
         {
-            return (false,ex.Message);
+            return new(false,ex.Message);
         }
     }
 }
@@ -518,25 +580,27 @@ internal sealed class ScraplingSetupHintWindow:Window
 /// 发送通道由调用方注入（QQ 邮箱 MCP 两阶段确认 / 网易邮箱 SMTP）。</summary>
 internal sealed class MailComposeWindow:Window
 {
-    private readonly Window _owner;
+    private readonly Window? _owner;
     private readonly string _address;
     private readonly TextBox _subject=new(){Padding=new Thickness(8,5,8,5)};
     private readonly TextBox _body=new(){AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Height=150,Padding=new Thickness(8,5,8,5)};
     private readonly Button _send;
     private readonly TextBlock _status=new(){TextWrapping=TextWrapping.Wrap,Foreground=new SolidColorBrush(Color.FromRgb(119,131,152)),FontSize=12};
-    private readonly Func<string,string,CancellationToken,Task<(bool Success,string Message)>> _sendAsync;
+    private readonly Func<string,string,CancellationToken,Task<MailDeliveryResult>> _sendAsync;
     private readonly CancellationTokenSource _cancellation=new();
+    private bool _sending;
+    private bool _deliveryUnconfirmed;
 
     /// <summary>发送成功并关闭窗口后回调（用于收起识屏浮层）。</summary>
     internal Action? OnSent{get;set;}
 
-    internal MailComposeWindow(Window owner,string address,string title,Func<string,string,CancellationToken,Task<(bool Success,string Message)>> sendAsync)
+    internal MailComposeWindow(Window? owner,string address,string title,Func<string,string,CancellationToken,Task<MailDeliveryResult>> sendAsync)
     {
         _owner=owner;_address=address;_sendAsync=sendAsync;
         Title=title;
         Width=480;SizeToContent=SizeToContent.Height;
-        WindowStartupLocation=WindowStartupLocation.CenterOwner;
-        Owner=owner;Topmost=owner.Topmost;
+        WindowStartupLocation=owner is null?WindowStartupLocation.CenterScreen:WindowStartupLocation.CenterOwner;
+        if(owner is not null){Owner=owner;Topmost=owner.Topmost;}
         ShowInTaskbar=false;ResizeMode=ResizeMode.NoResize;
         Background=new SolidColorBrush(Color.FromRgb(246,248,252));
         _subject.Text=LocalizationService.T("你好","Hello");
@@ -566,6 +630,7 @@ internal sealed class MailComposeWindow:Window
 
     private async Task SendAsync()
     {
+        if(_sending||_deliveryUnconfirmed||_cancellation.IsCancellationRequested)return;
         var subject=_subject.Text.Trim();
         var body=_body.Text.Trim();
         if(subject.Length==0||body.Length==0)
@@ -573,29 +638,29 @@ internal sealed class MailComposeWindow:Window
             _status.Text=LocalizationService.T("主题和正文不能为空。","Subject and body are required.");
             return;
         }
-        _send.IsEnabled=false;
+        _sending=true;_send.IsEnabled=false;
         _status.Text=LocalizationService.T("正在发送…","Sending…");
         try
         {
-            var (success,message)=await _sendAsync(subject,body,_cancellation.Token).ConfigureAwait(true);
-            _status.Text=message;
-            if(success)
+            var result=await _sendAsync(subject,body,_cancellation.Token).ConfigureAwait(true);
+            if(_cancellation.IsCancellationRequested)return;
+            _status.Text=result.Message;
+            _deliveryUnconfirmed=result.IsUnconfirmed;
+            if(result.Success&&!result.IsUnconfirmed)
             {
-                await Task.Delay(1000);
-                OnSent?.Invoke();
+                await Task.Delay(1000,_cancellation.Token);
                 Close();
+                OnSent?.Invoke();
             }
-            else _send.IsEnabled=true;
         }
         catch(OperationCanceledException)
         {
-            _status.Text=LocalizationService.T("已取消发送。","Send canceled.");
-            _send.IsEnabled=true;
+            if(!_cancellation.IsCancellationRequested)_status.Text=LocalizationService.T("已取消发送。","Send canceled.");
         }
         catch(Exception ex)
         {
-            _status.Text=ex.Message;
-            _send.IsEnabled=true;
+            if(!_cancellation.IsCancellationRequested)_status.Text=ex.Message;
         }
+        finally{_sending=false;_send.IsEnabled=!_deliveryUnconfirmed&&!_cancellation.IsCancellationRequested;}
     }
 }

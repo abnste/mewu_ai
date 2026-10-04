@@ -15,6 +15,14 @@ internal static class TranslationOverlayLayoutService
     internal const double HorizontalPadding=6;
     internal const double VerticalPadding=2;
 
+    // One response belongs to one OCR line. Provider-inserted line endings
+    // must not create extra visual or selectable rows within that source line.
+    internal static string NormalizeLineBreaks(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return value.ReplaceLineEndings(" ").Trim();
+    }
+
     // XY-cut partitions the selection at whitespace between OCR bounds. Every
     // leaf has its own cell, so translated paragraphs cannot paint over siblings.
     // An explicit stack and median fallback also bound malformed/overlapping OCR.
@@ -91,7 +99,7 @@ internal static class TranslationOverlayLayoutService
 
     internal static IReadOnlyList<string> WrapText(string value,double maxWidth,Func<string,double> measure)
     {
-        ArgumentNullException.ThrowIfNull(value);ArgumentNullException.ThrowIfNull(measure);value=value.Replace('\r',' ').Replace('\n',' ').Trim();if(value.Length==0||!IsFinitePositive(maxWidth))return [];var elements=new List<string>();var enumerator=StringInfo.GetTextElementEnumerator(value);while(enumerator.MoveNext())elements.Add(enumerator.GetTextElement());var rows=new List<string>();
+        ArgumentNullException.ThrowIfNull(value);ArgumentNullException.ThrowIfNull(measure);value=NormalizeLineBreaks(value);if(value.Length==0||!IsFinitePositive(maxWidth))return [];var elements=new List<string>();var enumerator=StringInfo.GetTextElementEnumerator(value);while(enumerator.MoveNext())elements.Add(enumerator.GetTextElement());var rows=new List<string>();
         for(var start=0;start<elements.Count;)
         {
             var low=start+1;var high=elements.Count;var best=low;while(low<=high){var middle=low+(high-low)/2;var candidate=string.Concat(elements.Skip(start).Take(middle-start));if(measure(candidate)<=maxWidth){best=middle;low=middle+1;}else high=middle-1;}if(best<elements.Count){for(var boundary=best-1;boundary>start;boundary--){if(!IsWrapBoundary(elements[boundary]))continue;best=boundary+1;break;}}var row=string.Concat(elements.Skip(start).Take(best-start)).Trim();if(row.Length>0)rows.Add(row);start=Math.Max(best,start+1);while(start<elements.Count&&string.IsNullOrWhiteSpace(elements[start]))start++;

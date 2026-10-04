@@ -70,11 +70,39 @@ public sealed class RecordingSession : IDisposable,IAsyncDisposable
     }
     private void StartRecorder()
     {
-        var screens=Forms.Screen.AllScreens;var displayRects=screens.Select(x=>new MewuScreenRect(x.Bounds.X,x.Bounds.Y,x.Bounds.Width,x.Bounds.Height)).ToArray();var slices=RecordingLayoutService.CreateSlices(_region,displayRects);var sources=new List<RecordingSourceBase>();foreach(var slice in slices){var screen=screens[Array.IndexOf(displayRects,slice.Display)];sources.Add(new DisplayRecordingSource(screen.DeviceName){SourceRect=new ScreenRecorderLib.ScreenRect(slice.Source.X-slice.Display.X,slice.Source.Y-slice.Display.Y,slice.Source.Width,slice.Source.Height),Position=new ScreenPoint(slice.Output.X,slice.Output.Y),OutputSize=new ScreenSize(slice.Output.Width,slice.Output.Height),IsCursorCaptureEnabled=_settings.IncludeRecordingCursor,IsBorderRequired=false});}if(sources.Count==0)throw new InvalidOperationException("选区不在可录制显示器范围内");
-        // Hardware H.264 encoders vary by GPU/driver and can produce uneven
-        // timestamps or visible stutter under desktop-capture load. Use the
-        // stable Media Foundation software path for a consistent MP4 cadence.
-        var options=new RecorderOptions{SourceOptions=new SourceOptions{RecordingSources=sources},OutputOptions=new OutputOptions{RecorderMode=RecorderMode.Video,OutputFrameSize=new ScreenSize(_region.Width,_region.Height)},VideoEncoderOptions=new VideoEncoderOptions{Encoder=new H264VideoEncoder(),Framerate=Math.Clamp(_settings.RecordingFps,10,60),Quality=Math.Clamp(_settings.RecordingQuality,20,100),IsHardwareEncodingEnabled=false,IsFixedFramerate=true},AudioOptions=RecordingAudioPolicy.Create(_settings),MouseOptions=new MouseOptions{IsMousePointerEnabled=_settings.IncludeRecordingCursor}};
+        var screens=Forms.Screen.AllScreens;
+        var displayRects=screens.Select(x=>new MewuScreenRect(x.Bounds.X,x.Bounds.Y,x.Bounds.Width,x.Bounds.Height)).ToArray();
+        var slices=RecordingLayoutService.CreateSlices(_region,displayRects);
+        var sources=new List<RecordingSourceBase>();
+        foreach(var slice in slices)
+        {
+            var screen=screens[Array.IndexOf(displayRects,slice.Display)];
+            sources.Add(new DisplayRecordingSource(screen.DeviceName)
+            {
+                // Desktop Duplication (the library default) can fail with
+                // DXGI_ERROR_UNSUPPORTED on hybrid/virtual display adapters.
+                // Windows Graphics Capture is supported by our Windows 10
+                // 2004 minimum and does not require DuplicateOutput support.
+                RecorderApi=RecorderApi.WindowsGraphicsCapture,
+                SourceRect=new ScreenRecorderLib.ScreenRect(slice.Source.X-slice.Display.X,slice.Source.Y-slice.Display.Y,slice.Source.Width,slice.Source.Height),
+                Position=new ScreenPoint(slice.Output.X,slice.Output.Y),
+                OutputSize=new ScreenSize(slice.Output.Width,slice.Output.Height),
+                IsCursorCaptureEnabled=_settings.IncludeRecordingCursor,
+                IsBorderRequired=false
+            });
+        }
+        if(sources.Count==0)throw new InvalidOperationException("选区不在可录制显示器范围内");
+        var options=new RecorderOptions{SourceOptions=new SourceOptions{RecordingSources=sources},OutputOptions=new OutputOptions{RecorderMode=RecorderMode.Video,OutputFrameSize=new ScreenSize(_region.Width,_region.Height)},VideoEncoderOptions=RecordingVideoPolicy.Create(_region.Width,_region.Height,_settings.RecordingFps,_settings.RecordingQuality),AudioOptions=RecordingAudioPolicy.Create(_settings),MouseOptions=new MouseOptions{IsMousePointerEnabled=_settings.IncludeRecordingCursor}};
+        if(options.AudioOptions.AudioSources.OfType<LoopbackAudioSource>().FirstOrDefault() is { } loopback)
+        {
+            _loopbackSilence=new LoopbackSilenceSource(loopback.DeviceName,ex=>
+            {
+                Log("RecordingLoopbackClock",ex);
+                if(Volatile.Read(ref _recordingStarted)!=0)StopForRuntimeFailure(LoopbackFailureMessage);
+            });
+            try{_loopbackSilence.WaitUntilReady();}
+            catch(Exception ex){throw new InvalidOperationException(LoopbackFailureMessage,ex);}
+        }
         _recorder=Recorder.CreateRecorder(options);
         _recorder.OnRecordingComplete+=(_,e)=>
         {

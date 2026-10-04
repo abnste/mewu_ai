@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
+// SPDX-License-Identifier: MPL-2.0
 using mewu_ai_Assistant.Services;
 using Xunit;
 
@@ -48,4 +50,12 @@ public sealed class ScreenEntityRecognitionTests
         Assert.True(candidate!.Dialable);
         Assert.Equal("+8613912345678",candidate.Display);
     }
+
+    [Theory]
+    [InlineData(MailChannel.Auto,true,true,MailChannel.Qq)]
+    [InlineData(MailChannel.Auto,false,true,MailChannel.NetEase)]
+    [InlineData(MailChannel.Qq,false,true,null)]
+    [InlineData(MailChannel.NetEase,true,false,null)]
+    internal void MailChannelSelectionDoesNotInferSenderFromRecipient(MailChannel requested,bool qqReady,bool netEaseReady,MailChannel? expected)
+        =>Assert.Equal(expected,QqMailSendService.SelectChannel(requested,qqReady,netEaseReady));
 }
