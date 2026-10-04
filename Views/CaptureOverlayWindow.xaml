@@ -138,7 +138,7 @@
       <StackPanel x:Name="DrawingStrokeControls" Orientation="Horizontal">
        <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
        <TextBlock Text="线宽" Foreground="#65748A" FontSize="12" VerticalAlignment="Center" Margin="5,0,4,0"/>
-       <ComboBox x:Name="DrawingStrokeWidth" Width="64" Height="34" Margin="1,4" VerticalContentAlignment="Center" ToolTip="线宽" AutomationProperties.Name="标注线宽" SelectionChanged="DrawingStrokeWidthChanged"/>
+       <ComboBox x:Name="DrawingStrokeWidth" Width="64" Height="34" MinHeight="34" Margin="1,4" VerticalContentAlignment="Center" ToolTip="线宽" AutomationProperties.Name="标注线宽" SelectionChanged="DrawingStrokeWidthChanged"/>
       </StackPanel>
       <StackPanel x:Name="DrawingNumberControls" Orientation="Horizontal" Visibility="Collapsed">
        <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
@@ -150,8 +150,8 @@
       <WrapPanel x:Name="DrawingTextControls" Orientation="Horizontal" Visibility="Collapsed">
        <Border Width="1" Background="#E2E8F1" Margin="5,6"/>
        <Button x:Name="TextHighlightButton" ToolTip="切换文字荧光底色" AutomationProperties.Name="文字荧光底色" Click="ToggleTextHighlight" Style="{StaticResource ToolbarIconButton}"><TextBlock Text="荧" FontSize="14" FontWeight="Bold"/></Button>
-       <ComboBox x:Name="DrawingFontFamily" Width="132" Height="34" Margin="3,4" VerticalContentAlignment="Center" ToolTip="电脑已安装字体" AutomationProperties.Name="标注字体" SelectionChanged="DrawingFontFamilyChanged"/>
-       <ComboBox x:Name="DrawingFontSize" Width="58" Height="34" Margin="1,4" VerticalContentAlignment="Center" ToolTip="字号" AutomationProperties.Name="标注字号" SelectionChanged="DrawingFontSizeChanged"/>
+       <ComboBox x:Name="DrawingFontFamily" Width="132" Height="34" MinHeight="34" Margin="3,4" VerticalContentAlignment="Center" ToolTip="电脑已安装字体" AutomationProperties.Name="标注字体" SelectionChanged="DrawingFontFamilyChanged"/>
+       <ComboBox x:Name="DrawingFontSize" Width="58" Height="34" MinHeight="34" Margin="1,4" VerticalContentAlignment="Center" ToolTip="字号" AutomationProperties.Name="标注字号" SelectionChanged="DrawingFontSizeChanged"/>
       </WrapPanel>
       <TextBlock x:Name="DrawingSelectionHint" Visibility="Collapsed"/>
       <TextBlock x:Name="DrawingToolHint" Visibility="Collapsed"/>

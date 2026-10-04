@@ -9,7 +9,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 ### 截图与手工编辑
 
 - **更清晰的两行工具栏。** 工具与属性、撤回、重做、删除和确定分成两行，左侧对齐。截图与手绘按钮内部，在图标下方显示一行中英文小字，保持原有工具栏高度；常规设置可关闭文字并恢复图标居中。分享入口隐藏时同步移除置顶右侧的空分隔线。橡皮擦紧接画笔，马赛克、无痕提取、涂抹消除与重点高亮放在同一组。
-- 工具栏图标与小字保持紧凑固定间距，选中、点击或切换焦点时文字不再上跳；“引用”等功能小字统一为普通文字色。
+- 工具栏图标与小字保持紧凑固定间距，选中、点击或切换焦点时文字不再上跳；“引用”等功能小字统一为普通文字色。修正属性下拉框撑高第二行的问题，使标注两行与主工具栏保持一致高度。
 - **绘制和选择分开。** 使用绘制工具时不会因为经过已有图层而意外选中它；通过选择工具移动、缩放和编辑已有标注。修复文字输入、橡皮擦、删除层序和撤销重做的多处交互问题。
 - **保留手工内容。** 移动或调整截图选区时，手工标注继续跟随原桌面内容；临时移出选区的内容只被裁切显示，不会被删除，撤销与恢复也保留对应关系。
 - **背景高亮。** 荧光笔与“重点高亮”根据底图保护文字和细节，改善高亮后的可读性；重点高亮可以移动、调整范围和修改颜色。
@@ -53,7 +53,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 ### Capture and manual editing
 
 - **Two aligned toolbar rows.** Tools occupy the first row; properties, undo, redo, delete and done occupy the second. Compact Chinese or English labels sit below icons inside capture and drawing buttons without increasing toolbar height. General settings can hide the labels and restore centered icons. The capture toolbar hides the separator after Pin when no sharing actions are visible. The eraser follows the pen, while mosaic, seamless lift, healing brush and emphasis highlighting share a group.
-- Keep compact icon-to-caption spacing stable when selecting, clicking or moving focus between toolbar buttons. Captions such as Ref use a consistent neutral text color.
+- Keep compact icon-to-caption spacing stable when selecting, clicking or moving focus between toolbar buttons. Captions such as Ref use a consistent neutral text color. Prevent property dropdowns from stretching the second annotation row, keeping both rows the same height as the main toolbar.
 - **Separate drawing and selection.** Drawing over existing layers no longer unexpectedly selects them. Use the selection tool to move, resize and edit annotations. Fixes cover text input, erasing, deletion order, undo and redo.
 - **Preserved manual content.** Moving or resizing a desktop capture keeps annotations anchored to the original content. Content outside the current selection is clipped rather than deleted, including through undo and restoration.
 - **Background highlighting.** Freehand and region highlights protect text and image detail to improve readability. Emphasis highlights can be moved, resized and recolored.

@@ -6,7 +6,7 @@
 
 完整双语说明 / Full release notes: [0.6.2](./docs/release-notes-v0.6.2.md)
 
-- 统一工具栏按钮各状态的图标和小字间距，修复点击后文字上跳；功能小字使用统一普通文字色。 / Keep toolbar icon and caption spacing stable across button states, prevent captions jumping on click, and use a consistent neutral caption color.
+- 统一工具栏按钮各状态的图标和小字间距，修复点击后文字上跳；功能小字使用统一普通文字色，修正标注属性行被下拉框撑高、与主工具栏高度不一致的问题。 / Keep toolbar icon and caption spacing stable across button states, prevent captions jumping on click, and use a consistent neutral caption color. Prevent property dropdowns from making the annotation row taller than the main toolbar.
 - 修复涂抹消除放大彩边、产生彩色脏块的问题；结合更远处的平滑背景减少文字边缘渗色，避免细线被误判为纯色底，透明像素隐藏颜色不再污染修补结果。 / Fix amplified color fringes and colored artifacts in healing-brush repairs. Check surrounding smooth backgrounds to reduce text-edge bleeding, keep fine lines from being mistaken for a flat background, and exclude hidden colors in transparent pixels.
 
 - 模型配置状态小字并入 API Key/模型标题后的括号，不再单独占行，长提示支持悬停查看。 / Place API key and model status hints in parentheses beside their field titles, with full messages available on hover.
