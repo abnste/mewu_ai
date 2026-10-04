@@ -43,7 +43,8 @@ public partial class CaptureOverlayWindow
         };
         _videoTrimBar.SeekRequested += (position, final) =>
         {
-            if (_videoTrimGestureItem is { } item) QueueVideoSeek(item, position);
+            if (_videoTrimGestureItem is { } item)
+                QueueVideoSeek(item, VideoClipTimeline.ClampPosition(position, GetVideoRange(item)));
         };
         _videoTrimBar.InteractionCompleted += CompleteVideoTrimInteraction;
         _videoTrimBar.TogglePlaybackRequested += () => ToggleVideoPlayback(this, new RoutedEventArgs());

@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using Path=System.Windows.Shapes.Path;
+using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
 
 namespace mewu_ai_Assistant.Views;
@@ -22,17 +23,18 @@ namespace mewu_ai_Assistant.Views;
 internal sealed class VideoTrimBar : Border
 {
     private enum Interaction { None, Seek, Start, End, Range }
-    private const double TrackInset=12;
+    private const double TrackInset=22;
     private static readonly Brush Accent=new SolidColorBrush(Color.FromRgb(100,116,239));
     private static readonly Brush Muted=new SolidColorBrush(Color.FromRgb(82,99,122));
     private static readonly Geometry PlayGeometry=Geometry.Parse("M5,2 L16,9 L5,16 Z");
     private static readonly Geometry PauseGeometry=Geometry.Parse("M4,2 L7,2 L7,16 L4,16 Z M11,2 L14,2 L14,16 L11,16 Z");
     private readonly Canvas _track=new(){Height=38,Background=Brushes.Transparent,Focusable=true};
-    private readonly Border _rail=new(){Height=4,CornerRadius=new CornerRadius(2),Background=new SolidColorBrush(Color.FromRgb(222,229,240)),IsHitTestVisible=false};
-    private readonly Border _range=new(){Height=4,CornerRadius=new CornerRadius(2),Background=new LinearGradientBrush(Color.FromRgb(111,124,245),Color.FromRgb(83,101,233),0),IsHitTestVisible=false};
-    private readonly Thumb _startThumb=CreateThumb(20,32,Accent);
-    private readonly Thumb _endThumb=CreateThumb(20,32,Accent);
-    private readonly Thumb _positionThumb=CreateThumb(16,36,Muted,position:true);
+    private readonly Border _rail=new(){Height=12,CornerRadius=new CornerRadius(4),Background=new SolidColorBrush(Color.FromRgb(238,242,248)),IsHitTestVisible=false};
+    private readonly Border _range=new(){Height=12,CornerRadius=new CornerRadius(3),Background=new SolidColorBrush(Color.FromRgb(222,227,255)),IsHitTestVisible=false};
+    private readonly Border _positionLine=new(){Width=2,Height=23,CornerRadius=new CornerRadius(1),Background=Muted,IsHitTestVisible=false};
+    private readonly Thumb _startThumb=CreateThumb(Interaction.Start);
+    private readonly Thumb _endThumb=CreateThumb(Interaction.End);
+    private readonly Thumb _positionThumb=CreateThumb(Interaction.Seek);
     private readonly TextBlock _times=new(){FontSize=12,FontFamily=new FontFamily("Segoe UI"),Foreground=Muted,VerticalAlignment=VerticalAlignment.Center,TextTrimming=TextTrimming.CharacterEllipsis};
     private readonly TextBlock _clock=new(){FontSize=13,FontWeight=FontWeights.SemiBold,Foreground=Muted,TextTrimming=TextTrimming.CharacterEllipsis};
     private readonly TextBlock _retained=new(){FontSize=12,Foreground=new SolidColorBrush(Color.FromRgb(100,115,139)),TextTrimming=TextTrimming.CharacterEllipsis,Margin=new Thickness(0,3,0,0)};
@@ -71,9 +73,10 @@ internal sealed class VideoTrimBar : Border
         AutomationProperties.SetName(_track,T("视频进度","Video position"));
         _track.Children.Add(_rail);
         _track.Children.Add(_range);
-        _track.Children.Add(_positionThumb);
+        _track.Children.Add(_positionLine);
         _track.Children.Add(_startThumb);
         _track.Children.Add(_endThumb);
+        _track.Children.Add(_positionThumb);
         ConfigureThumb(_startThumb,Interaction.Start,T("裁切起点","Trim start"));
         ConfigureThumb(_endThumb,Interaction.End,T("裁切终点","Trim end"));
         ConfigureThumb(_positionThumb,Interaction.Seek,T("播放位置","Playback position"));
@@ -140,7 +143,7 @@ internal sealed class VideoTrimBar : Border
             _start=Clamp(_start,TimeSpan.Zero,_duration-MinimumRange);
             _end=_start+MinimumRange;
         }
-        _position=Clamp(position,TimeSpan.Zero,_duration);
+        _position=ClampPosition(position);
         _playing=playing;
         _canTrim=canTrim;
         RefreshVisuals();
@@ -186,6 +189,9 @@ internal sealed class VideoTrimBar : Border
 
     private static TimeSpan Clamp(TimeSpan value,TimeSpan minimum,TimeSpan maximum)
         =>TimeSpan.FromTicks(Math.Clamp(value.Ticks,minimum.Ticks,Math.Max(minimum.Ticks,maximum.Ticks)));
+
+    private TimeSpan ClampPosition(TimeSpan value)=>_duration>TimeSpan.Zero
+        ?VideoClipTimeline.ClampPosition(value,new VideoClipRange(_start,_end)):TimeSpan.Zero;
 
     private bool BeginInteraction(Interaction interaction,Thumb? thumb=null)
     {
@@ -273,7 +279,7 @@ internal sealed class VideoTrimBar : Border
         if(!IsInteracting||_finishing)return;
         if(_interaction==Interaction.Seek)
         {
-            _position=Clamp(position,TimeSpan.Zero,_duration);
+            _position=ClampPosition(position);
             RefreshVisuals();
             SeekRequested?.Invoke(_position,false);
         }
@@ -281,6 +287,8 @@ internal sealed class VideoTrimBar : Border
         {
             if(_interaction==Interaction.Start)_start=Clamp(position,TimeSpan.Zero,_end-MinimumRange);
             else if(_interaction==Interaction.End)_end=Clamp(position,_start+MinimumRange,_duration);
+            // The owner previews the moving boundary during a trim gesture.
+            _position=_interaction==Interaction.Start?_start:_end;
             RefreshVisuals();
             RangeChanged?.Invoke(_start,_end,false);
         }
@@ -312,7 +320,7 @@ internal sealed class VideoTrimBar : Border
     private void ChangeRange(TimeSpan start,TimeSpan end)
     {
         if(!_canTrim||start==_start&&end==_end||!BeginInteraction(Interaction.Range))return;
-        _start=start;_end=end;
+        _start=start;_end=end;_position=ClampPosition(_position);
         CompleteInteraction(cancelled:false);
     }
 
@@ -345,9 +353,15 @@ internal sealed class VideoTrimBar : Border
     private void RefreshVisuals()
     {
         var start=ToX(_start);var end=ToX(_end);
-        Canvas.SetLeft(_rail,TrackInset);Canvas.SetTop(_rail,17);_rail.Width=TrackWidth;
-        Canvas.SetLeft(_range,start);Canvas.SetTop(_range,17);_range.Width=Math.Max(0,end-start);
-        PlaceThumb(_startThumb,start,3);PlaceThumb(_endThumb,end,3);PlaceThumb(_positionThumb,ToX(_position),1);
+        Canvas.SetLeft(_rail,TrackInset);Canvas.SetTop(_rail,18);_rail.Width=TrackWidth;
+        Canvas.SetLeft(_range,start);Canvas.SetTop(_range,18);_range.Width=Math.Max(0,end-start);
+        var position=ToX(_position);
+        Canvas.SetLeft(_positionLine,position-1);Canvas.SetTop(_positionLine,13);
+        // Most of each hit target sits outside the retained interval, with
+        // enough room inside for the bracket's visible arms to remain clickable.
+        PlaceThumb(_startThumb,start-6,14);
+        PlaceThumb(_endThumb,end+6,14);
+        PlaceThumb(_positionThumb,position,0);
         var ready=_duration>TimeSpan.Zero;
         _startThumb.IsEnabled=_endThumb.IsEnabled=ready&&_canTrim;
         _startThumb.Opacity=_endThumb.Opacity=ready&&_canTrim?1:.4;
@@ -381,36 +395,35 @@ internal sealed class VideoTrimBar : Border
         return null;
     }
 
-    private static Thumb CreateThumb(double width,double height,Brush fill,bool position=false)
+    private static Thumb CreateThumb(Interaction interaction)
     {
+        var position=interaction==Interaction.Seek;
         var hitTarget=new FrameworkElementFactory(typeof(Grid));
         hitTarget.SetValue(Panel.BackgroundProperty,Brushes.Transparent);
-        var border=new FrameworkElementFactory(typeof(Border)){Name="Surface"};
-        border.SetValue(FrameworkElement.WidthProperty,position?5d:12d);
-        border.SetValue(FrameworkElement.HorizontalAlignmentProperty,HorizontalAlignment.Center);
-        border.SetValue(FrameworkElement.MarginProperty,new Thickness(0,position?1:3,0,position?1:3));
-        border.SetValue(Border.BackgroundProperty,fill);
-        border.SetValue(Border.BorderBrushProperty,Brushes.White);
-        border.SetValue(Border.BorderThicknessProperty,new Thickness(1));
-        border.SetValue(Border.CornerRadiusProperty,new CornerRadius(position?2.5:4));
-        if(!position)
-        {
-            var grip=new FrameworkElementFactory(typeof(Path));
-            grip.SetValue(Path.DataProperty,Geometry.Parse("M4,7 L4,17 M7,7 L7,17"));
-            grip.SetValue(Path.StrokeProperty,Brushes.White);grip.SetValue(Path.StrokeThicknessProperty,1d);
-            grip.SetValue(Path.StrokeStartLineCapProperty,PenLineCap.Round);grip.SetValue(Path.StrokeEndLineCapProperty,PenLineCap.Round);
-            border.AppendChild(grip);
-        }
-        hitTarget.AppendChild(border);
+        var glyph=new FrameworkElementFactory(typeof(Path)){Name="Surface"};
+        // Brackets mark the retained interval; the separate pin above them
+        // remains reachable even when playback is exactly at either boundary.
+        glyph.SetValue(Path.DataProperty,Geometry.Parse(position
+            ?"M4,2 L12,2 Q14,2 14,4 L14,7 Q14,8 13,9 L8,13 L3,9 Q2,8 2,7 L2,4 Q2,2 4,2 Z"
+            :interaction==Interaction.Start
+                ?"M20,2 L16,2 L16,20 L20,20"
+                :"M0,2 L4,2 L4,20 L0,20"));
+        glyph.SetValue(Path.StrokeProperty,position?Muted:Accent);
+        glyph.SetValue(Path.StrokeThicknessProperty,position?1d:3d);
+        glyph.SetValue(Path.StrokeLineJoinProperty,PenLineJoin.Round);
+        glyph.SetValue(Path.StrokeStartLineCapProperty,PenLineCap.Round);
+        glyph.SetValue(Path.StrokeEndLineCapProperty,PenLineCap.Round);
+        glyph.SetValue(UIElement.IsHitTestVisibleProperty,false);
+        if(position)glyph.SetValue(Path.FillProperty,Muted);
+        hitTarget.AppendChild(glyph);
         var template=new ControlTemplate(typeof(Thumb)){VisualTree=hitTarget};
         var hover=new Trigger{Property=IsMouseOverProperty,Value=true};
-        hover.Setters.Add(new Setter(Border.BorderBrushProperty,new SolidColorBrush(Color.FromRgb(183,196,248)),"Surface"));
+        hover.Setters.Add(new Setter(Path.StrokeProperty,new SolidColorBrush(Color.FromRgb(68,84,204)),"Surface"));
         template.Triggers.Add(hover);
         var focused=new Trigger{Property=IsKeyboardFocusedProperty,Value=true};
-        focused.Setters.Add(new Setter(Border.BorderBrushProperty,new SolidColorBrush(Color.FromRgb(19,42,82)),"Surface"));
-        focused.Setters.Add(new Setter(Border.BorderThicknessProperty,new Thickness(2),"Surface"));
+        focused.Setters.Add(new Setter(Path.StrokeProperty,new SolidColorBrush(Color.FromRgb(19,42,82)),"Surface"));
         template.Triggers.Add(focused);
-        var thumb=new Thumb{Width=width,Height=height,Template=template,Focusable=true,Cursor=Cursors.SizeWE};
+        var thumb=new Thumb{Width=position?16:20,Height=position?14:24,Template=template,Focusable=true,Cursor=Cursors.SizeWE};
         InputMethod.SetIsInputMethodEnabled(thumb,false);
         return thumb;
     }

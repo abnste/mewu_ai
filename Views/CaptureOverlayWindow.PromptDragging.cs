@@ -88,7 +88,7 @@ public partial class CaptureOverlayWindow
         // A docked bar resists small accidental drags before detaching.
         var offset=_promptDetached?_promptDragOffset:_promptDragOffset*.25;
         var point=ClampFloatingPrompt(_promptDragOrigin+offset,_promptDetached?_promptDragScreen:_promptDragMonitor);
-        Canvas.SetLeft(PromptBarHost,point.X);Canvas.SetTop(PromptBarHost,point.Y);UpdatePromptDockHint();e.Handled=true;
+        Canvas.SetLeft(PromptBarHost,point.X);Canvas.SetTop(PromptBarHost,point.Y);UpdatePromptDockHint();UpdateVideoTrimBar();e.Handled=true;
     }
 
     private void UpdatePromptDockHint()
@@ -177,6 +177,7 @@ public partial class CaptureOverlayWindow
     {
         var version=++_promptDockAnimationVersion;
         Canvas.SetLeft(PromptBarHost,to.X);Canvas.SetTop(PromptBarHost,to.Y);
+        UpdateVideoTrimBar();
         if(!SystemParameters.ClientAreaAnimation){PositionPromptBar();return;}
         _promptDockAnimating=true;
         var ease=new ElasticEase{EasingMode=EasingMode.EaseOut,Oscillations=2,Springiness=5};

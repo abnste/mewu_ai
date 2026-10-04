@@ -15,6 +15,67 @@ public sealed class VideoClipTimelineTests
         "source-user-reference",AiAnnotationKind.Pen,Style:new("#ABCDEF"),Number:7,
         Destination:new(4,"destination-user-reference",.2,.3,.4,.5));
 
+    [Theory]
+    [InlineData(-1,3)]
+    [InlineData(0,3)]
+    [InlineData(2.9,3)]
+    [InlineData(3,3)]
+    [InlineData(5,5)]
+    [InlineData(7,7)]
+    [InlineData(7.1,7)]
+    [InlineData(10,7)]
+    public void PlaybackPositionRemainsInsideRetainedSourceInterval(double requested,double expected)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(expected),VideoClipTimeline.ClampPosition(TimeSpan.FromSeconds(requested),Range(3,7)));
+    }
+
+    [Fact]
+    public void FractionalCutBoundariesAndAdjacentTicksRemainExact()
+    {
+        var range=new VideoClipRange(TimeSpan.FromTicks(12573344),TimeSpan.FromTicks(37820620));
+        Assert.Equal(range.Start,VideoClipTimeline.ClampPosition(range.Start-TimeSpan.FromTicks(1),range));
+        Assert.Equal(range.Start,VideoClipTimeline.ClampPosition(range.Start,range));
+        Assert.Equal(range.End,VideoClipTimeline.ClampPosition(range.End,range));
+        Assert.Equal(range.End,VideoClipTimeline.ClampPosition(range.End+TimeSpan.FromTicks(1),range));
+        Assert.Equal(range.End-TimeSpan.FromTicks(1),VideoClipTimeline.ClampPosition(range.End-TimeSpan.FromTicks(1),range));
+    }
+
+    [Fact]
+    public void MovingEitherCutInwardBringsAnExistingPlayheadBackInsideTheRange()
+    {
+        var position=TimeSpan.FromSeconds(5.5);
+        Assert.Equal(TimeSpan.FromSeconds(4.75),VideoClipTimeline.ClampPosition(position,Range(1.25,4.75)));
+        position=TimeSpan.FromSeconds(1.5);
+        Assert.Equal(TimeSpan.FromSeconds(2.25),VideoClipTimeline.ClampPosition(position,Range(2.25,4.75)));
+        Assert.Equal(position,VideoClipTimeline.ClampPosition(position,Range(0,6)));
+    }
+
+    [Fact]
+    public void ShortSelectedRangeKeepsBothReachableEndpoints()
+    {
+        var range=new VideoClipRange(TimeSpan.FromTicks(1),TimeSpan.FromTicks(2));
+        Assert.Equal(range.Start,VideoClipTimeline.ClampPosition(TimeSpan.Zero,range));
+        Assert.Equal(range.End,VideoClipTimeline.ClampPosition(TimeSpan.FromSeconds(1),range));
+    }
+
+    [Fact]
+    public void ExtremeRequestsClampWithoutArithmeticOverflow()
+    {
+        var range=Range(3,7);
+        Assert.Equal(range.Start,VideoClipTimeline.ClampPosition(TimeSpan.MinValue,range));
+        Assert.Equal(range.End,VideoClipTimeline.ClampPosition(TimeSpan.MaxValue,range));
+        var tail=new VideoClipRange(TimeSpan.MaxValue-TimeSpan.FromTicks(2),TimeSpan.MaxValue);
+        Assert.Equal(tail.Start,VideoClipTimeline.ClampPosition(TimeSpan.MinValue,tail));
+        Assert.Equal(tail.End,VideoClipTimeline.ClampPosition(TimeSpan.MaxValue,tail));
+    }
+
+    [Theory]
+    [InlineData(-1,3)]
+    [InlineData(3,3)]
+    [InlineData(4,3)]
+    public void PlaybackPositionRejectsInvalidRetainedIntervals(double start,double end)
+        =>Assert.Throws<ArgumentOutOfRangeException>(()=>VideoClipTimeline.ClampPosition(TimeSpan.Zero,Range(start,end)));
+
     [Fact]
     public void CrossingBothCutsInterpolatesBoundaryGeometryAndKeepsInteriorFrames()
     {

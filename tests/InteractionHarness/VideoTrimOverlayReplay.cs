@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -92,6 +93,84 @@ internal static class VideoTrimOverlayReplay
             var preview = (VideoPreviewSurface)Invoke("EnsureVideoPreview", item)!;
             preview.Failed += previewErrors.Add;
             var bar = Field("_videoTrimBar")!;
+            Stage("paused-controls-follow-prompt-layout");
+            var promptHost = (FrameworkElement)overlay.FindName("PromptBarHost");
+            var promptBar = (FrameworkElement)overlay.FindName("PromptBar");
+            var toolbar = (FrameworkElement)overlay.FindName("Toolbar");
+            var promptState = (promptBar.Width, promptBar.Height, promptBar.MinHeight, promptBar.MaxHeight,
+                promptHost.Visibility, left: Canvas.GetLeft(promptHost), top: Canvas.GetTop(promptHost));
+            var oldConversation = Field("_conversationAiAvailable");
+            var oldHidden = Field("_promptBarHidden");
+            var oldDetached = Field("_promptDetached");
+            var oldDragScreen = Field("_promptDragScreen");
+            var oldDragMonitor = Field("_promptDragMonitor");
+            var oldDragOrigin = Field("_promptDragOrigin");
+            var oldDragOffset = Field("_promptDragOffset");
+            var oldDragging = Field("_promptDragging");
+            var trimControl = (FrameworkElement)bar;
+            void LayoutControls()
+            {
+                root.Measure(new Size(800, 600)); root.Arrange(new Rect(0, 0, 800, 600)); root.UpdateLayout();
+            }
+            Rect TrimBounds() => new(Canvas.GetLeft(trimControl), Canvas.GetTop(trimControl), trimControl.ActualWidth, trimControl.ActualHeight);
+            try
+            {
+                // Exercise the real visibility/placement methods with no HWND,
+                // media frames or main-toolbar refresh to hide a missing hook.
+                SetField("_conversationAiAvailable", true); SetField("_promptBarHidden", true);
+                SetField("_promptDetached", false); toolbar.Visibility = Visibility.Collapsed;
+                promptHost.Visibility = Visibility.Visible;
+                promptBar.Width = 574; promptBar.Height = 180; promptBar.MinHeight = 180;
+                Canvas.SetLeft(promptHost, 80); Canvas.SetTop(promptHost, 220);
+                LayoutControls(); Invoke("UpdateVideoTrimBar"); LayoutControls();
+                var withoutPrompt = TrimBounds();
+                Check(withoutPrompt.IntersectsWith((Rect)Invoke("GetPromptInteractionBounds")!),
+                    "paused placement fixture puts the hidden prompt over the preferred video controls position");
+                Invoke("SetPromptBarHidden", false, true); LayoutControls();
+                Check(!TrimBounds().IntersectsWith((Rect)Invoke("GetPromptInteractionBounds")!) && TrimBounds().Top < withoutPrompt.Top,
+                    "revealing the prompt immediately repositions paused controls without a video frame or visible main toolbar");
+                Invoke("SetPromptBarHidden", true, true); LayoutControls();
+                Check(Math.Abs(TrimBounds().Top - withoutPrompt.Top) < .01,
+                    "hiding the prompt restores paused controls to their preferred position");
+                Invoke("SetPromptBarHidden", false, true);
+                SetField("_promptDetached", true); SetField("_promptDragScreen", new Rect(0, 0, 800, 600));
+                Canvas.SetTop(promptHost, 400);
+                Invoke("PositionPromptBar"); LayoutControls();
+                Check(Math.Abs(TrimBounds().Top - withoutPrompt.Top) < .01,
+                    "moving the visible prompt away repositions paused controls without playback");
+                SetField("_promptDragging", true); SetField("_promptDragOrigin", new Point(Canvas.GetLeft(promptHost), Canvas.GetTop(promptHost)));
+                SetField("_promptDragMonitor", new Rect(0, 0, 800, 600));
+                Invoke("PromptDragDelta", promptHost, new DragDeltaEventArgs(0, -180)); LayoutControls();
+                Check(!TrimBounds().IntersectsWith((Rect)Invoke("GetPromptInteractionBounds")!) && TrimBounds().Top < withoutPrompt.Top,
+                    "actual prompt drag handler repositions paused controls as the prompt crosses them");
+                Invoke("PromptDragDelta", promptHost, new DragDeltaEventArgs(0, 180)); LayoutControls();
+                Check(Math.Abs(TrimBounds().Top - withoutPrompt.Top) < .01,
+                    "dragging the prompt away restores paused controls without a decoded frame");
+                SetField("_promptDragging", false);
+                promptBar.MinHeight = 420;
+                Invoke("PositionPromptBar"); LayoutControls();
+                // Real SizeChanged invokes this same positioning pass after
+                // arrangement in a shown overlay; this replay stays unshown.
+                Invoke("PositionPromptBar"); LayoutControls();
+                Check(promptBar.ActualHeight >= 420 && !TrimBounds().IntersectsWith((Rect)Invoke("GetPromptInteractionBounds")!) &&
+                    TrimBounds().Top < withoutPrompt.Top,
+                    "growing prompt content keeps the paused controls clear of its final arranged bounds");
+                Check(preview.PresentedFrameCount == 0 && !preview.IsPlaying && toolbar.Visibility == Visibility.Collapsed,
+                    "paused geometry refresh does not start decoding, playback or the main toolbar");
+            }
+            finally
+            {
+                SetField("_conversationAiAvailable", oldConversation); SetField("_promptBarHidden", oldHidden);
+                SetField("_promptDetached", oldDetached); SetField("_promptDragScreen", oldDragScreen);
+                SetField("_promptDragging", oldDragging); SetField("_promptDragMonitor", oldDragMonitor);
+                SetField("_promptDragOrigin", oldDragOrigin); SetField("_promptDragOffset", oldDragOffset);
+                ((FrameworkElement)overlay.FindName("PromptDockHint")).Visibility = Visibility.Collapsed;
+                promptBar.Width = promptState.Width; promptBar.Height = promptState.Height;
+                promptBar.MinHeight = promptState.MinHeight; promptBar.MaxHeight = promptState.MaxHeight;
+                promptHost.Visibility = promptState.Visibility;
+                Canvas.SetLeft(promptHost, promptState.left); Canvas.SetTop(promptHost, promptState.top);
+                Invoke("UpdatePromptBarHiddenTransform", false); LayoutControls(); Invoke("UpdateVideoTrimBar");
+            }
             var history = Field("_overlayHistory")!;
             int UndoCount() => Property<int>(history, "UndoCount");
             int RedoCount() => Property<int>(history, "RedoCount");
@@ -175,6 +254,28 @@ internal static class VideoTrimOverlayReplay
             var clones = (List<AiAttachment>)Invoke("CloneAttachmentsForFollowUp", attachments)!;
             Check(!ReferenceEquals(clones[0], attachments[0]) && clones[0].FilePath == prepared.Path && clones[0].Duration == range.Duration,
                 "follow-up validation attachment preserves frozen prepared path and duration");
+
+            Stage("seek-request-keeps-retained-range");
+            var seekMode = bar.GetType().GetNestedType("Interaction", BindingFlags.NonPublic)!;
+            var seekRequest = (Action<TimeSpan, bool>)Read(bar, "SeekRequested")!;
+            var seekRevision = Revision(); var seekUndo = UndoCount();
+            foreach (var requested in new[] { TimeSpan.Zero, duration })
+            {
+                BarState();
+                Check((bool)Call(bar, "BeginInteraction", Enum.Parse(seekMode, "Seek"), null)!,
+                    "overlay accepts a paused seek interaction inside the retained range");
+                Call(bar, "UpdateInteraction", requested);
+                seekRequest(requested, false);
+                var expected = requested < range.Start ? range.Start : range.End;
+                Check((TimeSpan)Read(item, "VideoLastRequestedPosition")! == expected && CurrentRange() == range,
+                    "an out-of-range SeekRequested is clamped without expanding the selected clip");
+                Call(bar, "CompleteInteraction", false);
+                await SettlePreviewAsync(5);
+                Check(CurrentRange() == range && Revision() == seekRevision && UndoCount() == seekUndo && ReferenceEquals(Cached(), prepared),
+                    "seek-only interaction preserves selected bounds, history and prepared export cache");
+                Check(Math.Abs((preview.LastPresentedPosition - expected).TotalSeconds) < .1,
+                    "out-of-range seek presents the actual retained endpoint frame");
+            }
 
             Stage("history-undo-redo");
             Invoke("UndoOverlayOperation");

@@ -1921,7 +1921,7 @@ public partial class CaptureOverlayWindow : Window
     {
         if(_thinkingGlowRequest is not null)PositionThinkingGlow();
 
-        if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;return;}
+        if(!_conversationAiAvailable){PromptBarHost.Visibility=Visibility.Collapsed;UpdateVideoTrimBar();return;}
         if(_positioningPromptBar||_promptDragging||_promptDockAnimating||Root.ActualWidth<=0||Root.ActualHeight<=0)return;
         var monitor=PromptMonitorBounds();
         if(monitor.IsEmpty)return;
@@ -1952,6 +1952,7 @@ public partial class CaptureOverlayWindow : Window
             UpdatePromptBarHiddenTransform(false);
             QueuePromptBarLayoutClamp();
             if(Toolbar.Visibility==Visibility.Visible)ShowToolbar();
+            else UpdateVideoTrimBar();
             if(DrawingToolbar.Visibility==Visibility.Visible&&Active is { } item)PositionFloatingBar(DrawingToolbar,item);
         }
         finally{_positioningPromptBar=false;}
@@ -1981,6 +1982,7 @@ public partial class CaptureOverlayWindow : Window
             Canvas.SetLeft(PromptBarHost,fitted.Left);
             Canvas.SetTop(PromptBarHost,fitted.Top);
             UpdatePromptBarHiddenTransform(false);
+            UpdateVideoTrimBar();
         }));
     }
     private void QueuePromptBarInputLayout()
@@ -2023,7 +2025,7 @@ public partial class CaptureOverlayWindow : Window
     private void SetPromptBarHidden(bool hidden,bool preserveToolbarPlacement=false)
     {
         if(hidden&&(_promptDetached||_promptDragging||_promptDockAnimating))return;
-        if(!_conversationAiAvailable){_selectionPromptFocus=false;if(PromptBarHost.IsKeyboardFocusWithin)Root.Focus();PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;return;}
+        if(!_conversationAiAvailable){_selectionPromptFocus=false;if(PromptBarHost.IsKeyboardFocusWithin)Root.Focus();PromptBarHost.Visibility=Visibility.Collapsed;PromptBarHost.IsHitTestVisible=false;UpdateVideoTrimBar();return;}
         // Preserve immediate typing after selection only while the pointer stays
         // at its focus anchor. Deliberate movement releases this in UpdatePointerInteraction.
         if(hidden&&preserveToolbarPlacement&&_selectionPromptFocus&&QuickPrompt.IsKeyboardFocusWithin)return;
@@ -2034,6 +2036,9 @@ public partial class CaptureOverlayWindow : Window
         _promptBarHidden=hidden;PromptBarHost.IsHitTestVisible=!hidden;UpdatePromptBarHiddenTransform(changed);
         if(!hidden)QueuePromptBarRevealFocus();
         if(!preserveToolbarPlacement&&Toolbar.Visibility==Visibility.Visible)ShowToolbar();
+        // A paused video has no frame callbacks to reposition its controls.
+        // Prompt reveal/hide must update them even while the main toolbar is hidden.
+        else UpdateVideoTrimBar();
     }
     private void UpdatePromptBarHiddenTransform(bool animate)
     {

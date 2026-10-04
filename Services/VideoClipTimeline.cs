@@ -11,6 +11,13 @@ internal sealed record VideoClipTimelineProjection(
 
 internal static class VideoClipTimeline
 {
+    /// <summary>Keep a source-time playhead inside both inclusive retained boundaries.</summary>
+    internal static TimeSpan ClampPosition(TimeSpan position,VideoClipRange range)
+    {
+        ValidateRange(range);
+        return TimeSpan.FromTicks(Math.Clamp(position.Ticks,range.Start.Ticks,range.End.Ticks));
+    }
+
     internal static VideoClipTimelineProjection Project(
         IReadOnlyList<AiAnnotation> annotations,VideoClipRange range,
         IReadOnlyDictionary<AiAnnotation,Point>? cardPositions=null)
