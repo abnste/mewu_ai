@@ -16,6 +16,7 @@ using System.Windows.Media.Imaging;
 using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Views;
 using Application = System.Windows.Application;
+using Brushes = System.Windows.Media.Brushes;
 using FlowDirection = System.Windows.FlowDirection;
 using Point = System.Windows.Point;
 using Size = System.Windows.Size;
