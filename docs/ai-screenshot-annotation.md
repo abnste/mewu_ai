@@ -57,6 +57,8 @@ These tools estimate the surrounding background locally. They work best on scree
 3. Use the capture toolbar to save, copy, or pin the video. These outputs use the retained range, with its audio and any timeline annotations adjusted to that clip.
 4. To ask AI about the same section, add the video with the reference button and send your question. The attachment uses the selected clip; check that your chosen service supports video. Finish adjusting the range before sending.
 
+In-place and pinned previews use the original video resolution by default. To reduce preview workload, choose 75% or 50% under **Settings → Recording → Preview resolution**. This applies to newly opened previews; saved and sent video resolution is unchanged.
+
 ## Can it explain code, documents, or exam screenshots?
 
 Yes. Select code and ask “Explain this function and point to its inputs and return value,” select a document and ask for key passages, or reference an assignment screenshot for a walkthrough. Multiple screenshots can be included in one question.

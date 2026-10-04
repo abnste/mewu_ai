@@ -25,6 +25,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - 修复调整裁切范围时的短暂空白、闪回开头及末尾定位问题；重做录屏倒计时样式并修正数字居中。
 - 修复完整录屏末帧附近定位久等的问题；连续调整起止点复用暂停预览，加载过程中也可继续编辑，播放或停止会取消过时的定位等待。
 - 暂停后控件条仍会随对话条显隐、移动与尺寸变化自动避让。起止点使用括号把手，播放位置使用独立指针；短片段的两端也能分别拖动，播放位置只能在选定的起止范围内调整。
+- 原位预览和贴视频默认使用原始分辨率，不再固定缩到1280长边。录屏设置中可选择75%或50%的预览分辨率，新打开的预览生效，保存与发送的分辨率不受影响；预览复用像素缓冲，减少高分辨率播放的大数组分配。
 
 ### 翻译与语言
 
@@ -70,6 +71,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - Fix blank flashes, jumps to the beginning and end-positioning problems while adjusting the range. The recording countdown now has a matching compact design and centered digits.
 - Fix long seek waits near the final frame of a full recording. Reuse the paused preview across consecutive trim edits, accept edits while loading, and cancel obsolete seek waits when playback starts or stops.
 - Keep paused video controls clear of the conversation bar as it appears, moves or resizes. Bracket handles distinguish trim boundaries from the separate playhead; both ends remain draggable on short clips, and playback positions stay within the selected range.
+- In-place and pinned videos preview at their original resolution by default, removing the fixed 1280-pixel limit. Recording settings offer 75% or 50% resolution for newly opened previews, without changing saved or sent video resolution. Reused pixel buffers reduce large allocations during high-resolution playback.
 
 ### Translation and language
 

@@ -48,7 +48,7 @@ public sealed partial class SettingsWindow : Window
     private static readonly Brush SecondaryBrush = new SolidColorBrush(Color.FromRgb(99, 112, 137));
     private readonly AppHost _host;
     private readonly ProviderHeaderCredentialService _headerCredentials;
-    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _recordingFps = new(), _recordingQuality = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new(), _apiFormat = new(), _authMode = new();
+    private readonly ComboBox _uiLanguage = new(), _delay = new(), _imageFormat = new(), _overlayOpacity = new(), _recordingFps = new(), _recordingQuality = new(), _videoPreviewResolution = new(), _gifFps = new(), _tempCleanup = new(), _voiceLanguage = new(), _hermesAgentSelector = new(), _hermesModelSelector = new(), _hermesReasoning = new(), _model = new(), _apiFormat = new(), _authMode = new();
     private readonly TextBox _hotkey = new();
     private readonly TextBox _baseUrl = new(), _customHeaders = new(), _requestPath = new(), _region = new(), _plan = new();
     private readonly TextBox _requestParameters = new();
@@ -417,6 +417,16 @@ public sealed partial class SettingsWindow : Window
     private UIElement Recording()
     {
         var panel = Panel();
+        var previewLabel=LocalizationService.T("预览分辨率","Preview resolution");
+        panel.Children.Add(Text(previewLabel,true));
+        _videoPreviewResolution.SelectedValuePath="Tag";
+        _videoPreviewResolution.Items.Add(new ComboBoxItem{Content=LocalizationService.T("原始（100%）","Original (100%)"),Tag=100});
+        _videoPreviewResolution.Items.Add(new ComboBoxItem{Content="75%",Tag=75});
+        _videoPreviewResolution.Items.Add(new ComboBoxItem{Content="50%",Tag=50});
+        _videoPreviewResolution.SelectedValue=VideoPreviewSurface.NormalizeResolutionPercent(_host.Settings.VideoPreviewResolutionPercent);
+        System.Windows.Automation.AutomationProperties.SetName(_videoPreviewResolution,previewLabel);
+        panel.Children.Add(_videoPreviewResolution);
+        panel.Children.Add(Text(LocalizationService.T("新打开的视频预览生效；保存与发送的分辨率不变。","Applies to newly opened video previews; saved and sent video resolution stays unchanged."),true));
         panel.Children.Add(Text("MP4 帧率", true));
         AddNumericChoices(_recordingFps,SettingsChoicePolicy.IncludeCurrent(new[] { 15, 24, 30, 60 },_host.Settings.RecordingFps),_host.Settings.RecordingFps,"FPS");
         System.Windows.Automation.AutomationProperties.SetName(_recordingFps, "MP4 帧率");
@@ -1245,6 +1255,7 @@ public sealed partial class SettingsWindow : Window
                 ShowToolbarCaptions=_toolbarCaptions.IsChecked==true,
                 RecordingFps=ReadNumericChoice(_recordingFps,30),
                 RecordingQuality=ReadNumericChoice(_recordingQuality,75),
+                VideoPreviewResolutionPercent=ReadNumericChoice(_videoPreviewResolution,100),
                 GifFps=ReadNumericChoice(_gifFps,15),
                 IncludeRecordingCursor=_recordCursor.IsChecked==true,
                 RecordSystemAudio=_recordSystemAudio.IsChecked==true,

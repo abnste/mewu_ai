@@ -3024,7 +3024,7 @@ public partial class CaptureOverlayWindow : Window
                     await AnnotatedVideoExportService.ExportAsync(video,annotatedPath,manualOverlay,projection.Annotations,operation.Token,projection.CardPositions,_videoTrimFiles);
                     if(!IsOverlayOperationActive(operation,item))return;video=annotatedPath;
                 }
-                var window=new PinnedVideoWindow(video,region,IsTeachingMode);try{window.Show();}catch{window.Close();throw;}
+                var window=new PinnedVideoWindow(video,region,IsTeachingMode,_host.Settings.VideoPreviewResolutionPercent);try{window.Show();}catch{window.Close();throw;}
             }
             else new PinnedImageWindow(RenderSelectionImage(item,true,true,true),region,IsTeachingMode).Show();
             // The newly created pin must be visible and interactive immediately.
@@ -4547,7 +4547,7 @@ public partial class CaptureOverlayWindow : Window
     private VideoPreviewSurface EnsureVideoPreview(SelectionItem item)
     {
         if(item.VideoPreview is not null)return item.VideoPreview;
-        var preview=new VideoPreviewSurface(item.Video,Dispatcher);
+        var preview=new VideoPreviewSurface(item.Video,Dispatcher,_host.Settings.VideoPreviewResolutionPercent);
         preview.Opened+=()=>
         {
             if(_closed||!_selections.Contains(item)||preview.Duration<=TimeSpan.Zero)return;

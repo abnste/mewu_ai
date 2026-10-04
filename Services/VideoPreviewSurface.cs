@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Abner Stephen and contributors
 // SPDX-License-Identifier: MPL-2.0
 using System.Diagnostics;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -25,11 +26,11 @@ namespace mewu_ai_Assistant.Services;
 internal sealed class VideoPreviewSurface : IDisposable
 {
     private const int MaxVideoDimension = 8192;
-    private const int MaxPreviewLongEdge = 1280;
     private static readonly TimeSpan SeekPresentationTimeout=TimeSpan.FromSeconds(20);
     private static readonly long MinimumFrameIntervalTicks = Math.Max(1, Stopwatch.Frequency / 15);
     private readonly Image _view;
     private readonly Dispatcher _dispatcher;
+    private readonly int _resolutionPercent;
     private readonly object _frameGate = new();
     private readonly SemaphoreSlim _seekGate=new(1,1);
     private CancellationTokenSource? _sourceCancellation;
@@ -41,6 +42,8 @@ internal sealed class VideoPreviewSurface : IDisposable
     private CanvasDevice? _device;
     private WriteableBitmap? _displayFrame;
     private byte[]? _latestPixels;
+    private readonly List<byte[]> _frameBuffers = [];
+    private byte[]? _deliveringPixels;
     private long _latestFrameGeneration;
     private long _latestFramePositionTicks;
     private long _lastPresentedPositionTicks;
@@ -66,10 +69,13 @@ internal sealed class VideoPreviewSurface : IDisposable
     private bool _disposed;
     private bool _playing;
 
-    internal VideoPreviewSurface(Image view, Dispatcher dispatcher)
+    internal VideoPreviewSurface(Image view, Dispatcher dispatcher):this(view,dispatcher,100) { }
+
+    internal VideoPreviewSurface(Image view, Dispatcher dispatcher, int resolutionPercent)
     {
         _view = view ?? throw new ArgumentNullException(nameof(view));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _resolutionPercent=NormalizeResolutionPercent(resolutionPercent);
         _view.Stretch = Stretch.Fill;
         _view.IsHitTestVisible = false;
     }
@@ -351,7 +357,7 @@ internal sealed class VideoPreviewSurface : IDisposable
             var naturalHeight = checked((int)sender.PlaybackSession.NaturalVideoHeight);
             if (naturalWidth <= 0 || naturalHeight <= 0 || naturalWidth > MaxVideoDimension || naturalHeight > MaxVideoDimension)
                 throw new InvalidDataException("视频没有可显示的画面尺寸");
-            var (width,height)=CalculatePreviewSize(naturalWidth,naturalHeight);
+            var (width,height)=CalculatePreviewSize(naturalWidth,naturalHeight,_resolutionPercent);
             var frameIntervalTicks=ReadNativeFrameIntervalTicks(sender);
 
             lock (_frameGate)
@@ -359,6 +365,7 @@ internal sealed class VideoPreviewSurface : IDisposable
                 if (_disposed || !ReferenceEquals(_player, sender)) return;
                 _width = width;
                 _height = height;
+                _frameBuffers.Clear();
                 Interlocked.Exchange(ref _nativeFrameIntervalTicks,frameIntervalTicks);
                 _device ??= CanvasDevice.GetSharedDevice();
                 _surface?.Dispose();
@@ -484,9 +491,9 @@ internal sealed class VideoPreviewSurface : IDisposable
     {
         // The frame server can run much faster than WPF's render dispatcher.
         // If a frame is already waiting for the UI, drop this one before the
-        // GPU readback and managed allocation.  A 4K frame is ~32 MiB, so
-        // decoding every callback while the UI is behind quickly floods the
-        // large-object heap without making playback look smoother.
+        // GPU readback and WPF copy. A 4K frame is ~32 MiB; even with the
+        // bounded reusable buffers below, copying every native callback while
+        // the UI is behind adds bandwidth without making playback smoother.
         if(Volatile.Read(ref _disposed))return;
         var forced=Volatile.Read(ref _forceNextFrame)!=0;
         if(Volatile.Read(ref _frameDispatchPending)!=0&&!forced)return;
@@ -514,9 +521,10 @@ internal sealed class VideoPreviewSurface : IDisposable
                 using var deviceLock=_device!.Lock();
                 sender.CopyFrameToVideoSurface(_surface);
                 var capturedPositionTicks=ToSourcePosition(sender.PlaybackSession.Position,_playbackRange).Ticks;
-                pixels = _surface.GetPixelBytes();
                 var required = checked(_width * _height * 4);
-                if (pixels.Length < required) return;
+                pixels=AcquireReadbackPixels(required);
+                if(pixels is null)return;
+                _surface.GetPixelBytes(pixels.AsBuffer());
                 Volatile.Write(ref _forceNextFrame,0);
                 generation=Volatile.Read(ref _generation);
                 _latestPixels = pixels;
@@ -550,6 +558,21 @@ internal sealed class VideoPreviewSurface : IDisposable
         _ = _dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => DeliverLatestFrame(generation)));
     }
 
+    // Called under _frameGate. A staged seek frame and an in-flight WPF copy
+    // keep their own slots. Pending, not-yet-delivered pixels can be replaced
+    // by a newer frame, just as before. Three slots bound 4K readback storage
+    // without allocating another multi-megabyte array on every callback.
+    private byte[]? AcquireReadbackPixels(int required)
+    {
+        var staged=Volatile.Read(ref _stagedFrame)?.Pixels;
+        foreach(var buffer in _frameBuffers)
+            if(buffer.Length==required&&!ReferenceEquals(buffer,staged)&&!ReferenceEquals(buffer,_deliveringPixels))return buffer;
+        if(_frameBuffers.Count>=3)return null;
+        var created=new byte[required];
+        _frameBuffers.Add(created);
+        return created;
+    }
+
     private void DeliverLatestFrame(long generation)
     {
         byte[]? pixels;
@@ -564,6 +587,7 @@ internal sealed class VideoPreviewSurface : IDisposable
             {
                 pixels=_latestPixels;
                 _latestPixels=null;
+                _deliveringPixels=pixels;
                 width=_width;
                 height=_height;
                 positionTicks=_latestFramePositionTicks;
@@ -596,6 +620,8 @@ internal sealed class VideoPreviewSurface : IDisposable
         }
         finally
         {
+            lock(_frameGate)
+                if(ReferenceEquals(_deliveringPixels,pixels))_deliveringPixels=null;
             Interlocked.Exchange(ref _frameDispatchPending, 0);
         }
         lock (_frameGate)
@@ -615,13 +641,16 @@ internal sealed class VideoPreviewSurface : IDisposable
         FramePresented?.Invoke(TimeSpan.FromTicks(frame.PositionTicks));
     }
 
-    internal static (int Width,int Height) CalculatePreviewSize(int width,int height)
+    internal static int NormalizeResolutionPercent(int value)=>value is 50 or 75 or 100?value:100;
+
+    internal static (int Width,int Height) CalculatePreviewSize(int width,int height,int resolutionPercent=100)
     {
         if(width<=0||height<=0)throw new ArgumentOutOfRangeException(nameof(width),"视频尺寸必须大于零");
-        var longEdge=Math.Max(width,height);
-        if(longEdge<=MaxPreviewLongEdge)return(width,height);
-        var scale=MaxPreviewLongEdge/(double)longEdge;
-        return(Math.Max(1,(int)Math.Round(width*scale)),Math.Max(1,(int)Math.Round(height*scale)));
+        var percent=NormalizeResolutionPercent(resolutionPercent);
+        if(percent==100)return(width,height);
+        // Preview buffers are BGRA, not encoded H.264; odd dimensions are
+        // valid and must not lose a row or column in the original-size mode.
+        return(Math.Max(1,(int)Math.Round(width*(percent/100d))),Math.Max(1,(int)Math.Round(height*(percent/100d))));
     }
 
     private void OnMediaFailed(WinMediaPlayer sender, Windows.Media.Playback.MediaPlayerFailedEventArgs args)
@@ -667,6 +696,8 @@ internal sealed class VideoPreviewSurface : IDisposable
             _surface = null;
             _width = _height = 0;
             _latestPixels = null;
+            _deliveringPixels = null;
+            _frameBuffers.Clear();
             _latestFrameGeneration = 0;
             _latestFramePositionTicks = 0;
             Volatile.Write(ref _forceNextFrame,0);

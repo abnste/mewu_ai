@@ -163,6 +163,7 @@ public sealed class EnvironmentProviderBootstrap
             IncludeCaptureCursor=source.IncludeCaptureCursor,
             RecordingFps=source.RecordingFps,
             RecordingQuality=source.RecordingQuality,
+            VideoPreviewResolutionPercent=source.VideoPreviewResolutionPercent,
             GifFps=source.GifFps,
             IncludeRecordingCursor=source.IncludeRecordingCursor,
             RecordSystemAudio=source.RecordSystemAudio,

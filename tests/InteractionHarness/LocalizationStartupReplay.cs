@@ -165,6 +165,8 @@ internal static class LocalizationStartupReplay
             VerifyWindows(main, settingsWindow, saved, english, checks);
             if (scenario.Name == "system-zh-saved-en") RenderEnglishEvidence(settingsWindow, directory, checks);
             Require(JsonSerializer.Serialize(saved) == settingsBeforeInspection, "page-inspection-does-not-mutate-saved-settings", checks);
+            VerifyPreviewResolutionRoundTrip(settingsWindow, saved, directory, headers, checks);
+            Require(JsonSerializer.Serialize(saved) == settingsBeforeInspection, "preview-choice-replay-does-not-mutate-host-settings", checks);
             Require(LocalizationService.CultureName == scenario.ExpectedCulture, "resources-main-and-settings-do-not-reset-language", checks);
             if (scenario.NextPreference is not null)
             {
@@ -217,6 +219,35 @@ internal static class LocalizationStartupReplay
         ImaKnowledgeBaseId = "synthetic-knowledge-base", ImaKnowledgeBaseName = UserKnowledgeBase
     };
 
+    private static void VerifyPreviewResolutionRoundTrip(SettingsWindow window, AppSettings saved, string directory,
+        ProviderHeaderCredentialService headers, List<string> checks)
+    {
+        var choice = Field<ComboBox>(window, "_videoPreviewResolution");
+        var originalChoice = choice.SelectedItem;
+        var service = new SettingsService(Path.Combine(directory, "preview-resolution-roundtrip.json"), headers, null);
+        // Exercise the real selection reader and persistence with a separate synthetic
+        // snapshot. Full SettingsWindow.Save also manages accounts/startup and is not invoked.
+        var readChoice = typeof(SettingsWindow).GetMethod("ReadNumericChoice", BindingFlags.Static | BindingFlags.NonPublic)!;
+        try
+        {
+            foreach (var percent in new[] { 100, 75, 50 })
+            {
+                choice.SelectedItem = choice.Items.OfType<ComboBoxItem>().Single(item => (int)item.Tag == percent);
+                var candidate = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(saved))!;
+                candidate.VideoPreviewResolutionPercent = (int)readChoice.Invoke(null, new object[] { choice, 100 })!;
+                service.Save(candidate);
+                var loaded = service.Load();
+                Require(loaded.VideoPreviewResolutionPercent == percent && loaded.ConfigurationErrors.Count == 0,
+                    $"actual-preview-choice-{percent}-persists-through-real-save-load", checks);
+                Require(loaded.RecordingFps == saved.RecordingFps && loaded.RecordingQuality == saved.RecordingQuality
+                    && loaded.GifFps == saved.GifFps && loaded.RecordSystemAudio == saved.RecordSystemAudio
+                    && loaded.RecordMicrophone == saved.RecordMicrophone,
+                    $"preview-choice-{percent}-preserves-recording-settings", checks);
+            }
+        }
+        finally { choice.SelectedItem = originalChoice; }
+    }
+
     private static void VerifyWindows(MainWindow main, SettingsWindow settings, AppSettings saved, bool english, List<string> checks)
     {
         Require(FrameworkElement.LoadedEvent.RoutingStrategy == RoutingStrategy.Direct, "loaded-event-is-direct-and-does-not-broadcast-to-pages", checks);
@@ -244,6 +275,17 @@ internal static class LocalizationStartupReplay
         Require((string)((ComboBoxItem)language.SelectedItem).Tag == saved.UiLanguage, "general-language-selection-matches-loaded-preference", checks);
         Require(HasText((DependencyObject)((TabItem)topTabs.Items[0]).Content, Choose(english, "语言设置将在重新启动喵呜AI后生效。", "Language changes take effect after restarting MewuAI.")),
             "general-restart-language-explanation", checks);
+        var previewResolution = Field<ComboBox>(settings, "_videoPreviewResolution");
+        var previewChoices = previewResolution.Items.OfType<ComboBoxItem>().ToArray();
+        Require(previewChoices.Select(item => (int)item.Tag).SequenceEqual(new[] { 100, 75, 50 }), "preview-resolution-has-only-supported-scales", checks);
+        Require(previewChoices.Select(item => (string)item.Content).SequenceEqual(new[] { Choose(english, "原始（100%）", "Original (100%)"), "75%", "50%" }),
+            "preview-resolution-choice-labels-localized", checks);
+        Require(AutomationProperties.GetName(previewResolution) == Choose(english, "预览分辨率", "Preview resolution"), "preview-resolution-accessible-name", checks);
+        Require((int)previewResolution.SelectedValue == saved.VideoPreviewResolutionPercent && saved.VideoPreviewResolutionPercent == 100,
+            "new-preview-settings-default-to-original-resolution", checks);
+        Require(HasText((DependencyObject)((TabItem)topTabs.Items[2]).Content, Choose(english,
+            "新打开的视频预览生效；保存与发送的分辨率不变。",
+            "Applies to newly opened video previews; saved and sent video resolution stays unchanged.")), "preview-only-scope-explained", checks);
         var backends = Field<AiSettingsTabs>(settings, "_backendSelector");
         var backendNames = new[] { "API", "Hermes", "Codex", "WorkBuddy", "MiniMax Code" };
         Require(backends.Tabs.Items.Count == backendNames.Length, "all-five-ai-backends-present", checks);
