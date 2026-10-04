@@ -54,6 +54,11 @@ internal static class PointerMagnifierReplay
             Check(magnifier.GetType().FullName == "mewu_ai_Assistant.Views.CaptureMagnifier", "actual magnifier is the product custom element");
             Check(!inspector.IsHitTestVisible && !magnifier.IsHitTestVisible && !magnifier.Focusable,
                 "inspector cannot intercept pointer or keyboard focus");
+            var formatColor = typeof(CaptureOverlayWindow).GetMethod("FormatPointerColor", BindingFlags.Static | BindingFlags.NonPublic)!;
+            foreach (var sample in new[] { (Color: Color.FromRgb(0, 0, 0), Text: "#000000"),
+                (Color: Color.FromRgb(1, 2, 15), Text: "#01020F"), (Color: Color.FromRgb(255, 255, 255), Text: "#FFFFFF") })
+                Check((string)formatColor.Invoke(null, [sample.Color])! == sample.Text,
+                    "shared display/copy formatter uses uppercase six-digit HEX " + sample.Text);
             foreach (var dpi in new[] { 96, 168, 192 })
             {
                 var scale = dpi / 96d;
@@ -68,7 +73,7 @@ internal static class PointerMagnifierReplay
                     var prefix = position.Name + "@" + dpi;
                     Check(inspector.Visibility == Visibility.Visible, prefix + " inspector shown");
                     var expected = SourceColor(position.X, position.Y, 0);
-                    Check(colorText.Text == $"RGB {expected.R},{expected.G},{expected.B}", prefix + " readout uses exact center RGB");
+                    Check(colorText.Text == $"#{expected.R:X2}{expected.G:X2}{expected.B:X2}", prefix + " HEX readout uses the exact center color");
                     Check(coordinateText.Text == $"X {-1920 + position.X} Y {-1080 + position.Y}", prefix + " negative virtual-screen coordinates retain physical pixels");
                     Check(((SolidColorBrush)swatch.Fill).Color == expected, prefix + " swatch matches center pixel");
                     var sample = Sample(magnifier);
@@ -85,8 +90,10 @@ internal static class PointerMagnifierReplay
                     var left = Canvas.GetLeft(inspector); var top = Canvas.GetTop(inspector);
                     Check(left >= 3.9 && top >= 3.9 && left + inspector.ActualWidth <= root.ActualWidth - 3.9 && top + inspector.ActualHeight <= root.ActualHeight - 3.9,
                         prefix + " complete card stays inside visible overlay");
-                    Check(magnifier.Width == 108 && magnifier.Height == 108 && Math.Abs(magnifier.ActualWidth - 108) <= 1 && Math.Abs(magnifier.ActualHeight - 108) <= 1,
-                        prefix + " magnifier is a square 108 DIP viewport with physical-pixel layout rounding: " + magnifier.RenderSize);
+                    Check(magnifier.Width == 90 && magnifier.Height == 90 && Math.Abs(magnifier.ActualWidth - 90) <= 1 && Math.Abs(magnifier.ActualHeight - 90) <= 1,
+                        prefix + " magnifier is a square 90 DIP viewport with physical-pixel layout rounding: " + magnifier.RenderSize);
+                    Check(inspector.Width == 90 && Math.Abs(inspector.ActualHeight - 126) <= 1,
+                        prefix + " compact card retains both readout rows below the magnifier");
                     Invoke("UpdatePointerInspector", new Point((position.X + .1) * root.ActualWidth / 800, (position.Y + .1) * root.ActualHeight / 600));
                     Check(ReferenceEquals(sample, Sample(magnifier)) && bytes.SequenceEqual(Pixels(Sample(magnifier))), prefix + " motion within same physical pixel reuses sample unchanged");
                     if (position.Name == "center")
@@ -113,6 +120,21 @@ internal static class PointerMagnifierReplay
             Set("_frame", new CaptureFrame(-2560, -1440, replacement));
             Invoke("UpdatePointerInspector", centerPoint);
             Check(coordinateText.Text == "X -2243 Y -1199", "same bitmap with new virtual origin refreshes coordinate readout");
+            foreach (var origin in new[] { (X: -32768, Y: -32768), (X: 65536, Y: -16384) })
+            {
+                Set("_frame", new CaptureFrame(origin.X, origin.Y, replacement));
+                Invoke("UpdatePointerInspector", centerPoint); root.UpdateLayout();
+                inspector.Arrange(new Rect(new Point(Canvas.GetLeft(inspector), Canvas.GetTop(inspector)), inspector.DesiredSize));
+                var expectedText = $"X {origin.X + 317} Y {origin.Y + 241}";
+                Check(coordinateText.Text == expectedText, "wide virtual-screen coordinates retain every digit: " + expectedText);
+                var text = new FormattedText(coordinateText.Text, System.Globalization.CultureInfo.InvariantCulture,
+                    coordinateText.FlowDirection, new Typeface(coordinateText.FontFamily, coordinateText.FontStyle,
+                        coordinateText.FontWeight, coordinateText.FontStretch), coordinateText.FontSize, coordinateText.Foreground,
+                    VisualTreeHelper.GetDpi(coordinateText).PixelsPerDip);
+                var textBounds = coordinateText.TransformToAncestor(inspector).TransformBounds(new Rect(0, 0, text.WidthIncludingTrailingWhitespace, text.Height));
+                Check(textBounds.Left >= 3 && textBounds.Right <= inspector.ActualWidth - 3 && textBounds.Top >= 90 && textBounds.Bottom <= inspector.ActualHeight,
+                    "complete long coordinate glyphs fit inside the compact second row: " + expectedText);
+            }
             foreach (var bounds in new[] { new Rect(-1920, -1080, 1920, 1080), new Rect(100, 200, 800, 600) })
             foreach (var point in new[] { bounds.TopLeft, bounds.TopRight, bounds.BottomLeft, bounds.BottomRight })
             {

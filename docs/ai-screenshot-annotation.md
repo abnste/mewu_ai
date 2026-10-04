@@ -39,7 +39,7 @@ Example questions illustrate the workflow. Results depend on your model and imag
 4. Use the highlighter or emphasis highlight to tint the background while protecting text and detail in the captured image. Hold **Shift** when you want constrained lines or shapes.
 5. Choose **Done** to return to the capture toolbar and automatically copy the annotated image. You can also save or pin it. Moving or resizing the capture region keeps the manual annotations.
 
-During selection, the compact borderless magnifier enlarges the pixels around the pointer. Its crosshair marks the sampled pixel; separate rows below show RGB and absolute screen coordinates. Press **C** while the inspector is visible to copy the RGB value.
+During selection, the compact borderless magnifier enlarges the pixels around the pointer. Its crosshair marks the sampled pixel; separate rows below show a hex color such as `#FFFFFF` and absolute screen coordinates. Press **C** while the inspector is visible to copy the same hex value.
 
 ## How do I move text out of a screenshot or repair a small area?
 

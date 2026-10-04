@@ -21,7 +21,7 @@ public sealed class CaptureMagnifier : FrameworkElement
     private static readonly Brush Backdrop = FrozenBrush(Color.FromRgb(238, 243, 249));
     private static readonly Pen CrossOutline = FrozenPen(Color.FromArgb(210, 27, 38, 56), 2.5);
     private static readonly Pen CrossLine = FrozenPen(Colors.White, 1);
-    private static readonly Pen PixelOutline = FrozenPen(Colors.White, 2);
+    private static readonly Pen PixelOutline = FrozenPen(Colors.White, 1.5);
     private static readonly Pen PixelLine = FrozenPen(Color.FromRgb(94, 110, 235), 1);
 
     internal BitmapSource Sample => _sample;

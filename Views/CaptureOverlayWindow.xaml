@@ -327,16 +327,16 @@
    <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="10" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
    <TextBlock x:Name="SizeTextLabel" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
   </Border>
-  <Border x:Name="PointerInspector" Visibility="Collapsed" Width="108" SnapsToDevicePixels="True" IsHitTestVisible="False">
+  <Border x:Name="PointerInspector" Visibility="Collapsed" Width="90" SnapsToDevicePixels="True" IsHitTestVisible="False">
    <StackPanel>
-    <local:CaptureMagnifier x:Name="PointerMagnifier" Width="108" Height="108" ClipToBounds="True"/>
+    <local:CaptureMagnifier x:Name="PointerMagnifier" Width="90" Height="90" ClipToBounds="True"/>
     <Border Background="#FAFFFFFF" CornerRadius="0,0,6,6" Padding="4,2">
      <StackPanel>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Height="16">
        <Rectangle x:Name="PointerColorSwatch" Width="7" Height="7" Fill="White" RadiusX="2" RadiusY="2" Margin="0,0,4,0" VerticalAlignment="Center"/>
-       <TextBlock x:Name="PointerColorText" Text="RGB 255,255,255" Foreground="#34465F" FontFamily="Consolas" FontSize="10" VerticalAlignment="Center"/>
+       <TextBlock x:Name="PointerColorText" Text="#FFFFFF" Foreground="#34465F" FontFamily="Consolas" FontSize="10" VerticalAlignment="Center"/>
       </StackPanel>
-      <Grid Height="16"><TextBlock x:Name="PointerCoordinateText" Text="X 0 Y 0" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Grid>
+      <Viewbox Height="16" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="PointerCoordinateText" Text="X 0 Y 0" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Viewbox>
      </StackPanel>
     </Border>
    </StackPanel>

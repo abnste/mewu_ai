@@ -51,7 +51,7 @@ public partial class CaptureOverlayWindow
             {
                 _pointerSampleColor = color; _pointerSampleBrush.Color = color;
                 PointerColorSwatch.Fill = _pointerSampleBrush;
-                PointerColorText.Text = string.Create(CultureInfo.InvariantCulture, $"RGB {color.R},{color.G},{color.B}");
+                PointerColorText.Text = FormatPointerColor(color);
             }
         }
         // Origins can change when the clean desktop frame is refreshed, even
@@ -68,6 +68,9 @@ public partial class CaptureOverlayWindow
         var location = PlacePointerInspector(point, PointerInspector.DesiredSize, bounds);
         Canvas.SetLeft(PointerInspector, location.X); Canvas.SetTop(PointerInspector, location.Y);
     }
+
+    private static string FormatPointerColor(Color color) =>
+        string.Create(CultureInfo.InvariantCulture, $"#{color.R:X2}{color.G:X2}{color.B:X2}");
 
     internal static Point PlacePointerInspector(Point point, Size size, Rect bounds)
     {

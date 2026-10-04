@@ -4713,7 +4713,7 @@ public partial class CaptureOverlayWindow : Window
         if(e.Key==Key.C&&Keyboard.Modifiers==ModifierKeys.None&&!_drawingMode&&!_recordingCountdownActive&&!_recordingMode&&PointerInspector.Visibility==Visibility.Visible)
         {
             UpdatePointerInspector(Mouse.GetPosition(Root));
-            if(PointerInspector.Visibility==Visibility.Visible&&_pointerSampleColor is { } sampled)CopyTextToClipboard($"RGB({sampled.R}, {sampled.G}, {sampled.B})");
+            if(PointerInspector.Visibility==Visibility.Visible&&_pointerSampleColor is { } sampled)CopyTextToClipboard(FormatPointerColor(sampled));
             e.Handled=true;return;
         }
         if(_recordingCountdownActive||_recordingMode||_drawingMode)return;
