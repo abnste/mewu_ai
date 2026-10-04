@@ -6,6 +6,8 @@
 
 完整双语说明 / Full release notes: [0.6.2](./docs/release-notes-v0.6.2.md)
 
+- 修复涂抹消除放大彩边、产生彩色脏块的问题；结合更远处的平滑背景减少文字边缘渗色，避免细线被误判为纯色底，透明像素隐藏颜色不再污染修补结果。 / Fix amplified color fringes and colored artifacts in healing-brush repairs. Check surrounding smooth backgrounds to reduce text-edge bleeding, keep fine lines from being mistaken for a flat background, and exclude hidden colors in transparent pixels.
+
 - 模型配置状态小字并入 API Key/模型标题后的括号，不再单独占行，长提示支持悬停查看。 / Place API key and model status hints in parentheses beside their field titles, with full messages available on hover.
 
 - 手绘工具栏改为左对齐两行，绘制与选择分别操作；截图与手绘按钮内部增加中英文短文字，保持原有工具栏高度，常规设置可关闭文字并恢复图标居中；分享入口隐藏时不再残留空分隔线；修复文字输入、橡皮擦、删除层序、撤销重做，以及移动和缩放选区时手工标注丢失的问题。 / Align the drawing toolbar in two rows and separate drawing from selection. Add compact bilingual labels inside capture and drawing buttons without increasing toolbar height; General settings can hide them and restore centered icons. Hide empty sharing separators. Fix text input, erasing, deletion order, undo/redo and annotation loss when moving or resizing captures.

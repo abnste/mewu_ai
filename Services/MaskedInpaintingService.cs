@@ -82,7 +82,8 @@ internal static class MaskedInpaintingService
                     working[at] = working[at + 1] = working[at + 2] = working[at + 3] = 0;
                 }
             }
-            plane = FitBoundary(working, state, width, height, cancellationToken);
+            plane = FitBoundary(working, state, width, height, cancellationToken) ??
+                FitSmoothContext(working, state, width, height, cancellationToken);
             if (plane is null) RepairFromBoundary(working, state, width, height, missing, cancellationToken);
             for (var y = minY; y <= maxY; y++)
             {
@@ -124,16 +125,21 @@ internal static class MaskedInpaintingService
         }
     }
 
-    private static double[,]? FitBoundary(byte[] pixels, byte[] state, int width, int height, CancellationToken token)
+    private static double[,]? FitBoundary(byte[] pixels, byte[] state, int width, int height, CancellationToken token,
+        byte[]? contextDistance = null)
     {
         var boundaryCount = 0;
         for (var y = 0; y < height; y++)
         {
             token.ThrowIfCancellationRequested();
             for (var x = 0; x < width; x++)
-                if (IsBoundary(state, width, height, x, y)) boundaryCount++;
+                if (IsSample(x, y)) boundaryCount++;
         }
-        if (boundaryCount == 0) throw new InvalidOperationException(MissingBackgroundMessage);
+        if (boundaryCount == 0)
+        {
+            if (contextDistance is not null) return null;
+            throw new InvalidOperationException(MissingBackgroundMessage);
+        }
         // Uniform deterministic sampling covers even a long, sparse brush path.
         var step = Math.Max(1, (boundaryCount + 4095) / 4096);
         var samples = new BoundarySample[(boundaryCount + step - 1) / step];
@@ -149,8 +155,10 @@ internal static class MaskedInpaintingService
                 token.ThrowIfCancellationRequested();
                 for (var x = 0; x < width; x++)
                 {
-                    if (!IsBoundary(state, width, height, x, y) || seen++ % step != 0) continue;
+                    if (!IsSample(x, y)) continue;
                     var at = (y * width + x) * 4;
+                    if (contextDistance is not null && pixels[at + 3] != 255) return null;
+                    if (seen++ % step != 0) continue;
                     samples[count++] = new BoundarySample(Normalize(x, width), Normalize(y, height),
                         pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]);
                 }
@@ -212,12 +220,120 @@ internal static class MaskedInpaintingService
             foreach (var residual in residuals)
                 if (double.IsFinite(residual) && residual <= 6) { support++; squaredError += residual * residual; }
             accepted = support >= count * .95 && squaredError <= support * 9;
+            if (accepted && contextDistance is null)
+            {
+                // Fitting may reject noise, but a sparse real line cannot be
+                // silently outvoted. Validate every immediate boundary pixel.
+                for (var y = 0; y < height && accepted; y++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    for (var x = 0; x < width; x++)
+                    {
+                        if (!IsBoundary(state, width, height, x, y)) continue;
+                        var at = (y * width + x) * 4;
+                        for (var channel = 0; channel < 4; channel++)
+                        {
+                            var error = Math.Abs(pixels[at + channel] - coefficients[channel, 0] -
+                                coefficients[channel, 1] * Normalize(x, width) - coefficients[channel, 2] * Normalize(y, height));
+                            if (double.IsFinite(error) && error <= 6) continue;
+                            accepted = false; break;
+                        }
+                        if (!accepted) break;
+                    }
+                }
+            }
             return accepted ? coefficients : null;
         }
         finally
         {
             Array.Clear(samples); Array.Clear(residuals); Array.Clear(sorted); Array.Clear(included);
             if (!accepted) Array.Clear(coefficients);
+        }
+
+        bool IsSample(int x, int y) => contextDistance is null ? IsBoundary(state, width, height, x, y) :
+            contextDistance[y * width + x] is >= 4 and <= 6;
+    }
+
+    // A brush can end on a glyph's thin colored fringe. Look beyond that fringe
+    // only when independent outer pixels confirm the same smooth background.
+    // Wide color regions and even a thin line continuing into the outer ring
+    // veto this shortcut; they must retain their local boundary colors instead.
+    private static double[,]? FitSmoothContext(byte[] pixels, byte[] state, int width, int height, CancellationToken token)
+    {
+        var distance = new byte[state.Length];
+        double[,]? coefficients = null;
+        var accepted = false;
+        try
+        {
+            // Truncated Manhattan distance to the original mask. No source
+            // content inside the mask, or newly repaired pixel, is sampled.
+            for (var y = 0; y < height; y++)
+            {
+                token.ThrowIfCancellationRequested();
+                for (var x = 0; x < width; x++)
+                {
+                    var index = y * width + x;
+                    if (state[index] == Unknown)
+                    {
+                        // Do not infer a smooth backdrop from one-sided
+                        // evidence when the stroke reaches the image edge.
+                        if (x < 10 || y < 10 || x + 10 >= width || y + 10 >= height) return null;
+                        continue;
+                    }
+                    var d = 11;
+                    if (x > 0) d = Math.Min(d, distance[index - 1] + 1);
+                    if (y > 0) d = Math.Min(d, distance[index - width] + 1);
+                    distance[index] = (byte)d;
+                }
+            }
+            for (var y = height - 1; y >= 0; y--)
+            {
+                token.ThrowIfCancellationRequested();
+                for (var x = width - 1; x >= 0; x--)
+                {
+                    var index = y * width + x;
+                    var d = (int)distance[index];
+                    if (x + 1 < width) d = Math.Min(d, distance[index + 1] + 1);
+                    if (y + 1 < height) d = Math.Min(d, distance[index + width] + 1);
+                    distance[index] = (byte)d;
+                }
+            }
+            coefficients = FitBoundary(pixels, state, width, height, token, distance);
+            if (coefficients is null) return null;
+            Span<int> quadrantCounts = stackalloc int[4];
+            quadrantCounts.Clear();
+            var count = 0; var squaredError = 0d;
+            for (var y = 0; y < height; y++)
+            {
+                token.ThrowIfCancellationRequested();
+                for (var x = 0; x < width; x++)
+                {
+                    var index = y * width + x;
+                    if (distance[index] is < 8 or > 10) continue;
+                    var at = index * 4;
+                    if (pixels[at + 3] != 255) return null;
+                    var nx = Normalize(x, width); var ny = Normalize(y, height);
+                    var error = 0d;
+                    for (var channel = 0; channel < 3; channel++)
+                        error = Math.Max(error, Math.Abs(pixels[at + channel] - coefficients[channel, 0] -
+                            coefficients[channel, 1] * nx - coefficients[channel, 2] * ny));
+                    // Validate every pixel, not a subsample or majority: small
+                    // high-contrast structures must not disappear in a vote.
+                    if (!double.IsFinite(error) || error > 6) return null;
+                    squaredError += error * error; count++;
+                    quadrantCounts[(nx >= 0 ? 1 : 0) + (ny >= 0 ? 2 : 0)]++;
+                }
+            }
+            if (count == 0 || squaredError > count * 9) return null;
+            foreach (var quadrantCount in quadrantCounts)
+                if (quadrantCount < 8) return null;
+            accepted = true;
+            return coefficients;
+        }
+        finally
+        {
+            Array.Clear(distance);
+            if (!accepted && coefficients is not null) Array.Clear(coefficients);
         }
     }
 
@@ -229,9 +345,9 @@ internal static class MaskedInpaintingService
             y + 1 < height && state[index + width] == Unknown);
     }
 
-    // Independent fast-marching reconstruction: advance from known boundaries,
-    // weight nearby accepted colors and continue their local gradients. This is
-    // inspired by Telea's method, not an OpenCV port or a generative image model.
+    // Advance from known boundaries using bounded color diffusion. Each channel
+    // shares positive donor weights; repaired pixels must not extrapolate and
+    // amplify small colored text fringes into saturated colors inside the hole.
     private static void RepairFromBoundary(byte[] pixels, byte[] state, int width, int height, int missing, CancellationToken token)
     {
         var distance = new float[state.Length];
@@ -298,26 +414,20 @@ internal static class MaskedInpaintingService
             var direction = .05 + Math.Abs(neighbour.X * normalX + neighbour.Y * normalY);
             var weight = neighbour.Weight * direction / (1 + Math.Abs(distance[index] - distance[donor]));
             if (state[donor] == Repaired) weight *= .75;
-            for (var channel = 0; channel < 4; channel++)
-            {
-                var color = pixels[donor * 4 + channel];
-                var gradientX = ColorGradient(sx - 1, sy, sx + 1, sy, color, channel);
-                var gradientY = ColorGradient(sx, sy - 1, sx, sy + 1, color, channel);
-                values[channel] += weight * Math.Clamp(color - gradientX * neighbour.X - gradientY * neighbour.Y, 0, 255);
-            }
+            var alphaWeight = weight * pixels[donor * 4 + 3];
+            for (var channel = 0; channel < 3; channel++)
+                values[channel] += alphaWeight * pixels[donor * 4 + channel];
+            values[3] += alphaWeight;
             weightSum += weight;
         }
         if (weightSum <= 0) throw new InvalidOperationException(MissingBackgroundMessage);
-        for (var channel = 0; channel < 4; channel++) pixels[index * 4 + channel] = ToByte(values[channel] / weightSum);
+        // Average in premultiplied space, then return straight BGRA. Invisible
+        // RGB in transparent donors must never tint the reconstructed patch.
+        for (var channel = 0; channel < 3; channel++)
+            pixels[index * 4 + channel] = values[3] > 0 ? ToByte(values[channel] / values[3]) : (byte)0;
+        pixels[index * 4 + 3] = ToByte(values[3] / weightSum);
         values.Clear();
 
-        bool Accepted(int sx, int sy) => sx >= 0 && sx < width && sy >= 0 && sy < height && IsAccepted(state[sy * width + sx]);
-        double ColorGradient(int ax, int ay, int bx, int by, byte center, int channel)
-        {
-            var a = Accepted(ax, ay); var b = Accepted(bx, by);
-            return a && b ? (pixels[(by * width + bx) * 4 + channel] - pixels[(ay * width + ax) * 4 + channel]) * .5 :
-                a ? center - pixels[(ay * width + ax) * 4 + channel] : b ? pixels[(by * width + bx) * 4 + channel] - center : 0;
-        }
         double DistanceGradient(int ax, int ay, int bx, int by)
         {
             var a = ax >= 0 && ax < width && ay >= 0 && ay < height && float.IsFinite(distance[ay * width + ax]);

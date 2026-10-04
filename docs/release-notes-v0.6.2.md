@@ -13,6 +13,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - **保留手工内容。** 移动或调整截图选区时，手工标注继续跟随原桌面内容；临时移出选区的内容只被裁切显示，不会被删除，撤销与恢复也保留对应关系。
 - **背景高亮。** 荧光笔与“重点高亮”根据底图保护文字和细节，改善高亮后的可读性；重点高亮可以移动、调整范围和修改颜色。
 - **无痕提取与涂抹消除。** 框选文字或图案后，自动修补原位置，并将提取内容变成可移动、缩放和删除的透明图层；另有可调笔刷大小的涂抹消除，每一笔支持撤回与重做。两者使用本地背景修补，适合截图文字和简单背景；复杂照片或纹理可能需要再次调整。
+- 修复涂抹消除反复放大细小彩边、生成彩色脏块的问题；结合更远处的平滑背景减少文字边缘渗色，细线和分色边界不会仅因占比小就被当成纯色底，透明像素中的隐藏颜色不再参与染色。
 - **可手动设置序号。** 新增“下个序号”输入与加减按钮，删除后可以调回需要的编号继续标注。序号图标和标出的数字按实际轮廓居中。
 - **紧凑像素放大镜。** 无外框方形镜面配中央十字线，下方相连底框分别显示 RGB 和坐标；屏幕边缘自动避让，并修正高缩放下可能差一个像素的取样。
 
@@ -54,6 +55,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - **Preserved manual content.** Moving or resizing a desktop capture keeps annotations anchored to the original content. Content outside the current selection is clipped rather than deleted, including through undo and restoration.
 - **Background highlighting.** Freehand and region highlights protect text and image detail to improve readability. Emphasis highlights can be moved, resized and recolored.
 - **Seamless lift and healing brush.** Select text or artwork to repair its original background and lift it onto a movable, resizable, removable transparent layer. A separate brush repairs painted areas with adjustable size and per-stroke undo/redo. These local repairs suit screenshot text and simple backgrounds; complex photos or textures may need further adjustment.
+- Fix amplified color fringes and colored artifacts in healing-brush repairs. Check surrounding smooth backgrounds to reduce text-edge bleeding, prevent sparse lines and color boundaries from being mistaken for a flat background, and exclude hidden colors in transparent pixels.
 - **Adjustable numbering.** A next-number field and step buttons let you restart from a chosen number after deletion. Number-tool icons and labels are centered using their visible glyphs.
 - **Compact pixel magnifier.** A borderless square view with a central crosshair connects directly to two RGB and coordinate rows. It stays within the current screen and fixes possible one-pixel sampling errors at higher display scaling.
 
