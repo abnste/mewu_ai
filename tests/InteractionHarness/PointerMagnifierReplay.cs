@@ -93,7 +93,14 @@ internal static class PointerMagnifierReplay
                     Check(magnifier.Width == 90 && magnifier.Height == 90 && Math.Abs(magnifier.ActualWidth - 90) <= 1 && Math.Abs(magnifier.ActualHeight - 90) <= 1,
                         prefix + " magnifier is a square 90 DIP viewport with physical-pixel layout rounding: " + magnifier.RenderSize);
                     Check(inspector.Width == 90 && Math.Abs(inspector.ActualHeight - 126) <= 1,
-                        prefix + " compact card retains both readout rows below the magnifier");
+                        prefix + " compact card retains 18 DIP readouts above and below the magnifier");
+                    var magnifierBounds = magnifier.TransformToAncestor(inspector).TransformBounds(new Rect(magnifier.RenderSize));
+                    var colorBounds = colorText.TransformToAncestor(inspector).TransformBounds(new Rect(colorText.RenderSize));
+                    var coordinateBounds = coordinateText.TransformToAncestor(inspector).TransformBounds(new Rect(coordinateText.RenderSize));
+                    Check(Math.Abs(magnifierBounds.Top - 18) <= 1 && Math.Abs(magnifierBounds.Bottom - 108) <= 1 &&
+                        colorBounds.Top >= -.5 && colorBounds.Bottom <= magnifierBounds.Top + .5 &&
+                        coordinateBounds.Top >= magnifierBounds.Bottom - .5 && coordinateBounds.Bottom <= inspector.ActualHeight + .5,
+                        prefix + " HEX is above the central magnifier and coordinates are below without overlap");
                     Invoke("UpdatePointerInspector", new Point((position.X + .1) * root.ActualWidth / 800, (position.Y + .1) * root.ActualHeight / 600));
                     Check(ReferenceEquals(sample, Sample(magnifier)) && bytes.SequenceEqual(Pixels(Sample(magnifier))), prefix + " motion within same physical pixel reuses sample unchanged");
                     if (position.Name == "center")
@@ -149,8 +156,8 @@ internal static class PointerMagnifierReplay
                 });
                 var coordinateRender = Path.Combine(directory, $"magnifier-{language}-coordinates-{origin.X}-{origin.Y}-168.png");
                 RenderCard(inspector, magnifier, Sample(magnifier), 168, coordinateRender, Check); renders.Add(coordinateRender);
-                Check(textBounds.Left >= 3 && textBounds.Right <= inspector.ActualWidth - 3 && textBounds.Top >= 90 && textBounds.Bottom <= inspector.ActualHeight,
-                    "complete long coordinate glyphs fit inside the compact second row: " + expectedText + "; measured=" + textBounds +
+                Check(textBounds.Left >= 3 && textBounds.Right <= inspector.ActualWidth - 3 && textBounds.Top >= 108 && textBounds.Bottom <= inspector.ActualHeight,
+                    "complete long coordinate glyphs fit inside the bottom coordinate row: " + expectedText + "; measured=" + textBounds +
                     "; arranged=" + arrangedTextBounds + "; card=" + inspector.RenderSize);
             }
             foreach (var bounds in new[] { new Rect(-1920, -1080, 1920, 1080), new Rect(100, 200, 800, 600) })

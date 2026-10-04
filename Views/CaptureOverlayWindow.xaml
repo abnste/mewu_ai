@@ -328,18 +328,19 @@
    <TextBlock x:Name="SizeTextLabel" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
   </Border>
   <Border x:Name="PointerInspector" Visibility="Collapsed" Width="90" SnapsToDevicePixels="True" IsHitTestVisible="False">
-   <StackPanel>
-    <local:CaptureMagnifier x:Name="PointerMagnifier" Width="90" Height="90" ClipToBounds="True"/>
-    <Border Background="#FAFFFFFF" CornerRadius="0,0,6,6" Padding="4,2">
-     <StackPanel>
-      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Height="16">
-       <Rectangle x:Name="PointerColorSwatch" Width="7" Height="7" Fill="White" RadiusX="2" RadiusY="2" Margin="0,0,4,0" VerticalAlignment="Center"/>
-       <TextBlock x:Name="PointerColorText" Text="#FFFFFF" Foreground="#34465F" FontFamily="Consolas" FontSize="10" VerticalAlignment="Center"/>
-      </StackPanel>
-      <Viewbox Height="16" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="PointerCoordinateText" Text="X 0 Y 0" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Viewbox>
+   <Grid>
+    <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="90"/><RowDefinition Height="18"/></Grid.RowDefinitions>
+    <Border x:Name="PointerColorHeader" Grid.Row="0" Background="#FAFFFFFF" CornerRadius="6,6,0,0" Padding="4,1">
+     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Height="16">
+      <Rectangle x:Name="PointerColorSwatch" Width="7" Height="7" Fill="White" RadiusX="2" RadiusY="2" Margin="0,0,4,0" VerticalAlignment="Center"/>
+      <TextBlock x:Name="PointerColorText" Text="#FFFFFF" Foreground="#34465F" FontFamily="Consolas" FontSize="10" VerticalAlignment="Center"/>
      </StackPanel>
     </Border>
-   </StackPanel>
+    <local:CaptureMagnifier x:Name="PointerMagnifier" Grid.Row="1" Width="90" Height="90" ClipToBounds="True"/>
+    <Border x:Name="PointerCoordinateFooter" Grid.Row="2" Background="#FAFFFFFF" CornerRadius="0,0,6,6" Padding="4,1">
+     <Viewbox Height="16" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="PointerCoordinateText" Text="X 0 Y 0" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Viewbox>
+    </Border>
+   </Grid>
   </Border>
   <Grid x:Name="RecordingCountdown" Visibility="Collapsed" Width="212" Height="92" IsHitTestVisible="False" ClipToBounds="False" SnapsToDevicePixels="True">
    <Border Background="White" CornerRadius="18" IsHitTestVisible="False">

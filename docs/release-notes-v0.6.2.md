@@ -16,7 +16,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - **无痕提取与涂抹消除。** 框选文字或图案后，自动修补原位置，并将提取内容变成可移动、缩放和删除的透明图层；另有可调笔刷大小的涂抹消除，每一笔支持撤回与重做。两者使用本地背景修补，适合截图文字和简单背景；复杂照片或纹理可能需要再次调整。
 - 修复涂抹消除反复放大细小彩边、生成彩色脏块的问题；结合更远处的平滑背景减少文字边缘渗色，细线和分色边界不会仅因占比小就被当成纯色底，透明像素中的隐藏颜色不再参与染色。
 - **可手动设置序号。** 新增“下个序号”输入与加减按钮，删除后可以调回需要的编号继续标注。序号图标和标出的数字按实际轮廓居中。
-- **紧凑像素放大镜。** 无外框方形镜面缩小为90×90，中央十字线精准定位，下方相连底框分别显示 `#FFFFFF` 格式色值和坐标，按 C 复制同样的色值；长坐标自动适配宽度，屏幕边缘自动避让，并修正高缩放下可能差一个像素的取样。
+- **紧凑像素放大镜。** 上方显示 `#FFFFFF` 格式色值，中间是90×90无外框方形镜面与定位十字线，下方显示坐标，上下信息条与镜面相连。按 C 复制同样的色值；长坐标自动适配宽度，屏幕边缘自动避让，并修正高缩放下可能差一个像素的取样。
 
 ### 原位录屏剪辑
 
@@ -60,7 +60,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - **Seamless lift and healing brush.** Select text or artwork to repair its original background and lift it onto a movable, resizable, removable transparent layer. A separate brush repairs painted areas with adjustable size and per-stroke undo/redo. These local repairs suit screenshot text and simple backgrounds; complex photos or textures may need further adjustment.
 - Fix amplified color fringes and colored artifacts in healing-brush repairs. Check surrounding smooth backgrounds to reduce text-edge bleeding, prevent sparse lines and color boundaries from being mistaken for a flat background, and exclude hidden colors in transparent pixels.
 - **Adjustable numbering.** A next-number field and step buttons let you restart from a chosen number after deletion. Number-tool icons and labels are centered using their visible glyphs.
-- **Compact pixel magnifier.** A smaller borderless 90×90 view with a central crosshair connects directly to hex-color and coordinate rows. Colors display and copy with C in `#FFFFFF` format; long coordinates fit within the compact width. It stays within the current screen and fixes possible one-pixel sampling errors at higher display scaling.
+- **Compact pixel magnifier.** A hex-color row sits above a borderless 90×90 view with a central crosshair, with coordinates below; both rows connect directly to the magnifier. Colors display and copy with C in `#FFFFFF` format; long coordinates fit within the compact width. It stays within the current screen and fixes possible one-pixel sampling errors at higher display scaling.
 
 ### In-place video trimming
 
