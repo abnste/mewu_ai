@@ -28,6 +28,7 @@ public sealed partial class SettingsWindow : Window
     private FeishuSettingsPage _feishuSettings=null!;
     private ObsidianSettingsPage _obsidianSettings=null!;
     private ImaSettingsPage _imaSettings=null!;
+    private MemorySettingsPage _memorySettings=null!;
     private AiSettingsTabs _backendSelector=null!;
     private bool HermesSelected=>_backendSelector?.SelectedBackendIndex==AiSettingsTabs.HermesIndex;
     internal void ShowAiPage()=>_aiTab.IsSelected=true;
@@ -161,6 +162,8 @@ public sealed partial class SettingsWindow : Window
         _aiTab=Tab("AI", Ai(),scroll:false);
         tabs.Items.Add(_aiTab);
         tabs.Items.Add(Tab("MCP", Mcp()));
+        _memorySettings = new MemorySettingsPage(host.Settings);
+        tabs.Items.Add(Tab("记忆", _memorySettings));
         tabs.Items.Add(Tab("语音", Voice()));
         tabs.Items.Add(Tab("隐私", Privacy()));
         tabs.Items.Add(Tab("关于", About()));
@@ -1228,8 +1231,14 @@ public sealed partial class SettingsWindow : Window
                 HermesReasoningEffort=hermesReasoning,
                 HermesAutoReadAloud=_hermesAutoReadAloud.IsChecked==true,
                 Providers=storedProviders,
-                DefaultProviderId=_defaultProviderId
+                DefaultProviderId=_defaultProviderId,
+                MemoryEntries=(_host.Settings.MemoryEntries ?? []).Select(entry => new MemoryEntry
+                {
+                    Id=entry.Id, Keywords=[.. entry.Keywords ?? []], Sensitive=entry.Sensitive,
+                    Enabled=entry.Enabled, FieldKind=entry.FieldKind, CredentialId=entry.CredentialId, Value=entry.Value
+                }).ToList()
             };
+            _memorySettings.Apply(candidate);
             if(!_host.TryApplySettings(candidate,out var error,out var warning))throw new InvalidOperationException(error??"设置保存失败");
             committed=true;applyWarning=warning;
             if(workBuddyWarning is not null)applyWarning=applyWarning is null?workBuddyWarning:$"{applyWarning}\n{workBuddyWarning}";
@@ -1251,7 +1260,13 @@ public sealed partial class SettingsWindow : Window
             try{credentials.Delete(id);}catch(Exception cleanupError){try{new PrivacyLogger().Error("CredentialCleanup",cleanupError);}catch{}}
         _pendingApiKeys.Clear();
         _apiKeysMarkedForDeletion.Clear();
-        try{Close();}catch(Exception ex){try{new PrivacyLogger().Error("SettingsClose",ex);}catch{}}
+         // Keep the settings window open after saving so users can continue
+         // editing memory entries and immediately verify the saved state.
+         try
+         {
+             MessageBox.Show(this, LocalizationService.T("设置已保存。", "Settings saved."), LocalizationService.T("保存成功", "Saved"), MessageBoxButton.OK, MessageBoxImage.Information);
+         }
+         catch(Exception ex){try{new PrivacyLogger().Error("SettingsRefreshAfterSave",ex);}catch{}}
     }
 
     private static void ValidateProvider(AiProviderSettings provider)

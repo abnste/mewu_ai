@@ -15,6 +15,15 @@ public sealed class ScreenEntityRecognitionTests
     }
 
     [Fact]
+    public void StopsEmailAtKnownDomainWhenOcrConcatenatesFollowingText()
+    {
+        var entities=ScreenEntityRecognitionService.Extract("联系 ing@gmail.comshuzi");
+
+        Assert.Contains(entities,entity=>entity.Type==ScreenEntityType.Email&&entity.Value=="ing@gmail.com");
+        Assert.DoesNotContain(entities,entity=>entity.Type==ScreenEntityType.Email&&entity.Value.Contains("shuzi",StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void IgnoresUnsupportedSchemesAndDeduplicates()
     {
         var entities=ScreenEntityRecognitionService.Extract("ftp://example.com https://example.com https://example.com x@example.org x@example.org");
