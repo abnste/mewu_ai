@@ -26,6 +26,7 @@ internal static class Program
     {
         // Each language scenario must enter a fresh process before the ordinary
         // harness initializes LocalizationService or creates a WPF Application.
+        if(args.Contains("--verify-ocr-memory")){OcrMemoryReplay.Run(args);return;}
         if(args.Contains("--verify-highlight-lift")){DrawingHighlightLiftReplay.Run();return;}
         if(args.Contains("--verify-background-highlight-visual")){DrawingBackgroundHighlightReplay.RunVisual();return;}
         if(args.Contains("--verify-screen-entity-scan")){ScreenEntityScanReplay.Run();return;}

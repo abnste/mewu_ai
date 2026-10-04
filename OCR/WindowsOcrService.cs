@@ -44,10 +44,10 @@ public sealed class WindowsOcrService
 
     private static async Task<OcrDocument> RecognizeWithPaddleAsync(BitmapSource image,CancellationToken token)
     {
-        using var bitmap=await Task.Run(()=>CreateSkBitmap(image),token).ConfigureAwait(false);
         await PaddleGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
+            using var bitmap=await Task.Run(()=>CreateSkBitmap(image),token).ConfigureAwait(false);
             var options=RapidOcrOptions.PPOCRv6 with {ReturnWordBox=true,ReturnSingleCharBox=true,TextScore=.45f};
             var result=await PaddleEngine.Value.DetectAsync(bitmap,options,null,token).ConfigureAwait(false);
             var lines=result.TextBlocks.Select(ToLine).Where(line=>!string.IsNullOrWhiteSpace(line.Text)&&line.Width>0&&line.Height>0).ToList();
@@ -80,7 +80,15 @@ public sealed class WindowsOcrService
     {
         var model=RapidOcrModelSet.PPOCRv6Small;string Resolve(string path)=>Path.Combine(AppContext.BaseDirectory,path);
         model=model with {DetModelPath=Resolve(model.DetModelPath),ClsModelPath=Resolve(model.ClsModelPath),RecModelPath=Resolve(model.RecModelPath),KeysPath=Resolve(model.KeysPath)};
-        var engine=new RapidOcr();engine.InitModels(model);return engine;
+        // Screenshot and text-line dimensions change between calls. The default
+        // CPU arena retains its peak native allocation for the process lifetime;
+        // model caching must not also retain every large inference workspace.
+        using var options=RapidOcr.GetDefaultSessionOptions();
+        options.EnableCpuMemArena=false;
+        options.EnableMemoryPattern=false;
+        var engine=new RapidOcr();
+        try{engine.InitModels(model,options);return engine;}
+        catch{engine.Dispose();throw;}
     }
 
     internal static SKBitmap CreateSkBitmap(BitmapSource image)
