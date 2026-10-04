@@ -17,9 +17,131 @@ using Size = System.Windows.Size;
 using Panel = System.Windows.Controls.Panel;
 using Color = System.Windows.Media.Color;
 using FlowDirection = System.Windows.FlowDirection;
+using Application = System.Windows.Application;
+using System.Windows.Ink;
+using System.Windows.Input;
+using System.Windows.Interop;
+using System.Security.Cryptography;
 
 internal static class DrawingBackgroundHighlightReplay
 {
+    internal static void RunVisual()
+    {
+        var directory = ReplayOutputDirectory.PrepareWorkingDirectory("background-highlight-visual");
+        PrivacyLogger.ConfigureIsolatedReplayDirectory(Path.Combine(directory, "logs"));
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("/MewuAI;component/Themes/LightTheme.xaml", UriKind.Relative) });
+        using var host = new AppHost(app, null, "MewuAI-HighlightFringe-" + Guid.NewGuid().ToString("N"));
+        host.Settings.EnableVoiceInput = false; host.Settings.AutomaticallyStartListening = false; host.Settings.SaveConversationHistory = false;
+        var checks = new List<string>(); var failures = new List<string>(); var evidence = new List<object>();
+        void Check(bool condition, string label) { checks.Add(label); if (!condition) failures.Add(label); }
+        CaptureOverlayWindow? overlay = null;
+        const int logicalWidth = 720, rowHeight = 64;
+        var rows = new[] {
+            (Background: Color.FromRgb(243,243,244), Text: Colors.Black, Size:22d),
+            (Background: Color.FromRgb(230,218,192), Text: Colors.Black, Size:22d),
+            (Background: Color.FromRgb(32,36,42), Text: Colors.White, Size:22d),
+            (Background: Color.FromRgb(238,244,250), Text: Color.FromRgb(36,78,210), Size:22d),
+            (Background: Color.FromRgb(243,243,244), Text: Color.FromRgb(180,180,180), Size:12d),
+            (Background: Color.FromRgb(243,243,244), Text: Colors.Black, Size:10d) };
+        try
+        {
+            foreach (var scale in new[] { 1d, 1.75d, 2d })
+            {
+                var width = (int)(logicalWidth * scale); var height = (int)(rowHeight * rows.Length * scale);
+                var glyphVisual = new DrawingVisual();
+                using (var drawing = glyphVisual.RenderOpen())
+                {
+                    drawing.PushTransform(new ScaleTransform(scale, scale));
+                    for (var i = 0; i < rows.Length; i++)
+                    {
+                        var row = rows[i];
+                        var text = new FormattedText("重点高亮保护正文，边缘平滑 Clear text 123", CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                            new Typeface("Microsoft YaHei UI"), row.Size, new SolidColorBrush(row.Text), scale);
+                        drawing.DrawText(text, new Point(32, i * rowHeight + 14));
+                    }
+                    drawing.Pop();
+                }
+                var glyph = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32); glyph.Render(glyphVisual);
+                var coverage = Pixels(glyph); var sourcePixels = new byte[width * height * 4];
+                for (var y = 0; y < height; y++) for (var x = 0; x < width; x++)
+                {
+                    var row = rows[Math.Min(rows.Length - 1, (int)(y / scale) / rowHeight)]; var at = (y * width + x) * 4; var inverse = 255 - coverage[at + 3];
+                    byte[] background = [row.Background.B, row.Background.G, row.Background.R];
+                    for (var c = 0; c < 3; c++) sourcePixels[at + c] = (byte)Math.Min(255, coverage[at + c] + (background[c] * inverse + 127) / 255);
+                    sourcePixels[at + 3] = 255;
+                }
+                var source = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, sourcePixels, width * 4); source.Freeze();
+                var protection = BackgroundHighlightService.CreateSource(source, scale);
+                var strokes = Enumerable.Range(0, rows.Length).Select(i => new BackgroundHighlightStroke(
+                    new StylusPointCollection { new StylusPoint(12 * scale, (i * rowHeight + 32) * scale), new StylusPoint(708 * scale, (i * rowHeight + 32) * scale) },
+                    new DrawingAttributes { Color = Colors.Red, Width = 52 * scale, Height = 52 * scale, FitToCurve = false }, protection, new Rect(0,0,width,height))).ToArray();
+                BitmapSource RenderStrokes(int count)
+                {
+                    var visual = new DrawingVisual(); using (var drawing = visual.RenderOpen())
+                    { drawing.DrawImage(source,new Rect(0,0,width,height)); for(var repeat=0;repeat<count;repeat++) foreach(var stroke in strokes) stroke.Draw(drawing); }
+                    var output = new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32); output.Render(visual); output.Freeze(); return output;
+                }
+                var once = RenderStrokes(1); var twice = RenderStrokes(2);
+                overlay = new CaptureOverlayWindow(host,null,new CaptureFrame(0,0,source));
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+                object? Invoke(string name, params object?[] args) => typeof(CaptureOverlayWindow).GetMethod(name,flags)!.Invoke(overlay,args);
+                var root = (Canvas)overlay.FindName("Root"); root.Width=logicalWidth; root.Height=rowHeight*rows.Length;
+                root.Measure(new Size(root.Width,root.Height));root.Arrange(new Rect(0,0,root.Width,root.Height));root.UpdateLayout();
+                var item=Invoke("CreateSelection",false)!; var itemType=item.GetType();
+                ((IList)typeof(CaptureOverlayWindow).GetField("_selections",flags)!.GetValue(overlay)!).Add(item);
+                itemType.GetField("Bounds")!.SetValue(item,new Rect(0,0,logicalWidth,rowHeight*rows.Length)); Invoke("UpdateSelection",item);
+                typeof(CaptureOverlayWindow).GetField("_drawColor",flags)!.SetValue(overlay,Colors.Red);
+                BitmapSource Saved() => (BitmapSource)Invoke("RenderSelectionImage",item,true,false,false)!;
+                void AddMarks() { for(var i=0;i<rows.Length;i++) Invoke("AddRegionMark",item,new Rect(10,i*rowHeight+6,700,52)); }
+                AddMarks(); var regionOnce=Saved(); AddMarks();var regionTwice=Saved();
+                var prefix="highlight-red-"+(int)(96*scale);
+                Save(source,Path.Combine(directory,prefix+"-before.png"));
+                foreach(var variant in new[]{(Name:"stroke",Image:once),(Name:"stroke-twice",Image:twice),(Name:"region",Image:regionOnce),(Name:"region-twice",Image:regionTwice)})
+                {
+                    Save(variant.Image,Path.Combine(directory,prefix+"-"+variant.Name+".png"));
+                    Check(variant.Image.PixelWidth==width&&variant.Image.PixelHeight==height,prefix+variant.Name+" retains native pixel dimensions");
+                    var actual=Pixels(variant.Image);
+                    for(var i=0;i<rows.Length;i++)
+                    {
+                        var core=0;var coreError=0;var adjacentAa=0;var tintedAa=0;var ringPixels=0;var maxRing=0;
+                        var tintedBackground=Pixel(variant.Image,new Point((int)(690*scale),(int)((i*rowHeight+32)*scale)));
+                        byte[] foreground=[rows[i].Text.B,rows[i].Text.G,rows[i].Text.R];
+                        for(var y=(int)((i*rowHeight+10)*scale);y<(int)((i*rowHeight+51)*scale);y++)
+                        for(var x=(int)(28*scale);x<(int)(650*scale);x++)
+                        {
+                            var at=(y*width+x)*4;var alpha=coverage[at+3]; if(alpha==0)continue;
+                            if(alpha==255){core++;for(var c=0;c<3;c++)coreError=Math.Max(coreError,Math.Abs(actual[at+c]-sourcePixels[at+c]));continue;}
+                            var nearCore=false;
+                            for(var dy=-1;dy<=1;dy++)for(var dx=-1;dx<=1;dx++)if(coverage[((y+dy)*width+x+dx)*4+3]==255)nearCore=true;
+                            if(!nearCore)continue; adjacentAa++; if(Enumerable.Range(0,3).Any(c=>actual[at+c]!=sourcePixels[at+c]))tintedAa++;
+                            var excess=0;for(var c=0;c<3;c++)excess=Math.Max(excess,Math.Max(Math.Min(foreground[c],tintedBackground[c])-actual[at+c],actual[at+c]-Math.Max(foreground[c],tintedBackground[c])));
+                            if(excess>2)ringPixels++;maxRing=Math.Max(maxRing,excess);
+                        }
+                        var label=prefix+" "+variant.Name+" row"+i;
+                        Check(core>20&&coreError==0,label+" opaque text cores remain exact");
+                        Check(adjacentAa>20&&tintedAa>adjacentAa/2,label+" real antialias edges receive smooth tint");
+                        Check(ringPixels==0,label+" edges do not overshoot tinted background/core color range");
+                        var originalBackground = Pixel(source,new Point((int)(690*scale),(int)((i*rowHeight+32)*scale)));
+                        Check(!tintedBackground.SequenceEqual(originalBackground),label+" blank background actually receives red tint");
+                        evidence.Add(new{scale,variant=variant.Name,row=i,fontSize=rows[i].Size,core,coreError,adjacentAa,tintedAa,ringPixels,maxRing});
+                    }
+                }
+                var comparison=new DrawingVisual();using(var drawing=comparison.RenderOpen())
+                {drawing.DrawImage(source,new Rect(0,0,width,height));drawing.DrawImage(once,new Rect(0,height+16,width,height));drawing.DrawImage(regionOnce,new Rect(0,2*(height+16),width,height));}
+                var combined=new RenderTargetBitmap(width,height*3+32,96,96,PixelFormats.Pbgra32);combined.Render(comparison);Save(combined,Path.Combine(directory,prefix+"-before-stroke-region.png"));
+                Check(Pixels(source).SequenceEqual(sourcePixels),prefix+" source bytes unchanged");
+                Check(new WindowInteropHelper(overlay).Handle==IntPtr.Zero&&!overlay.IsVisible&&!overlay.IsLoaded,prefix+" no HWND or desktop input");
+                overlay.Close();overlay=null;
+            }
+        }
+        catch(Exception error){failures.Add(error.ToString());}
+        finally{overlay?.Close();app.Shutdown();}
+        static string Hash(string path){using var input=File.OpenRead(path);return Convert.ToHexString(SHA256.HashData(input));}
+        File.WriteAllText(Path.Combine(directory,"result.json"),JsonSerializer.Serialize(new{passed=failures.Count==0,checks,evidence,failures,productSha256=Hash(typeof(BackgroundHighlightService).Assembly.Location),harnessSha256=Hash(typeof(DrawingBackgroundHighlightReplay).Assembly.Location),syntheticOnly=true,shownWindows=false,productionSettingsUsed=false,clipboardUsed=false},new JsonSerializerOptions{WriteIndented=true}));
+        Environment.ExitCode=failures.Count==0?0:1;
+    }
+
     internal static void Verify(CaptureOverlayWindow overlay, object item, Action<bool, string> require, string directory)
     {
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
@@ -145,13 +267,20 @@ internal static class DrawingBackgroundHighlightReplay
             foreach (var row in textCases)
             {
                 Highlight(row.Y, end: 780); Invoke("AddRegionMark", item, new Rect(90, row.Y - 20, 710, 40));
-                var actual = Saved(); var referencePixels = Pixels(clean); var actualPixels = Pixels(actual); var glyphPixels = 0; var maximumError = 0; var differentGlyphPixels = 0; var differences = new List<object>();
+                var actual = Saved(); var referencePixels = Pixels(clean); var actualPixels = Pixels(actual); var glyphPixels = 0; var maximumError = 0; var differentGlyphPixels = 0; var antialiasPixels = 0; var tintedAntialiasPixels = 0; var differences = new List<object>();
                 var back = new byte[] { row.Background.B, row.Background.G, row.Background.R };
                 for (var y = (int)((row.Y - 19) * sy); y < (int)((row.Y + 20) * sy); y++)
                 for (var x = (int)(95 * sx); x < (int)(710 * sx); x++)
                 {
                     var at = (y * clean.PixelWidth + x) * 4;
-                    if (Enumerable.Range(0, 3).All(channel => referencePixels[at + channel] == back[channel])) continue;
+                    var glyphAlpha = glyphLayer[((y + pixels.Y) * width + x + pixels.X) * 4 + 3];
+                    if (glyphAlpha == 0) continue;
+                    if (glyphAlpha < 255)
+                    {
+                        antialiasPixels++;
+                        if (Enumerable.Range(0, 3).Any(channel => actualPixels[at + channel] != referencePixels[at + channel])) tintedAntialiasPixels++;
+                        continue;
+                    }
                     glyphPixels++;
                     for (var channel = 0; channel < 3; channel++) maximumError = Math.Max(maximumError, Math.Abs(actualPixels[at + channel] - referencePixels[at + channel]));
                     if (Enumerable.Range(0, 3).Any(channel => actualPixels[at + channel] != referencePixels[at + channel]))
@@ -160,7 +289,8 @@ internal static class DrawingBackgroundHighlightReplay
                         if (differences.Count < 16) differences.Add(new { x, y, before = referencePixels.AsSpan(at, 4).ToArray(), after = actualPixels.AsSpan(at, 4).ToArray() });
                     }
                 }
-                if (glyphPixels <= 500 || maximumError != 0) glyphFailures.Add(row.Y + ":glyphPixels=" + glyphPixels + ":different=" + differentGlyphPixels + ":maxError=" + maximumError);
+                if (glyphPixels <= 100 || maximumError != 0 || antialiasPixels == 0 || tintedAntialiasPixels <= antialiasPixels / 4)
+                    glyphFailures.Add(row.Y + ":corePixels=" + glyphPixels + ":different=" + differentGlyphPixels + ":maxError=" + maximumError + ":AA=" + antialiasPixels + ":tintedAA=" + tintedAntialiasPixels);
                 require(!Pixel(actual, new Point(750 * sx, row.Y * sy)).SequenceEqual(Pixel(clean, new Point(750 * sx, row.Y * sy))), "blank background beyond actual text is tinted at row " + row.Y);
                 var spaces = spaceSamples.Where(sample => sample.Row == row.Y).Select(sample => sample.Pixel).ToArray();
                 var counters = CounterSamples(clean, new Int32Rect((int)(95 * sx), (int)((row.Y - 20) * sy), (int)(620 * sx), (int)(40 * sy)), back);
@@ -174,11 +304,11 @@ internal static class DrawingBackgroundHighlightReplay
                     if (!tinted) backgroundFailures.Add(row.Y + ":" + sample.Kind + ":" + sample.Point);
                     blankEvidence.Add(new { kind = sample.Kind, x = sample.Point.X, y = sample.Point.Y, beforePixel, afterPixel, tinted });
                 }
-                glyphEvidence.Add(new { row = row.Y, glyphPixels, maximumError, differentGlyphPixels, differences, blankEvidence });
+                glyphEvidence.Add(new { row = row.Y, glyphPixels, maximumError, differentGlyphPixels, antialiasPixels, tintedAntialiasPixels, differences, blankEvidence });
             }
             Save(Saved(), Path.Combine(directory, "background-highlights-real-bilingual-text.png"));
             File.WriteAllText(Path.Combine(directory, "background-highlight-real-text-pixels.json"), JsonSerializer.Serialize(glyphEvidence, new JsonSerializerOptions { WriteIndented = true }));
-            require(glyphFailures.Count == 0, "actual bilingual font glyph pixels remain unchanged: " + string.Join(";", glyphFailures));
+            require(glyphFailures.Count == 0, "actual bilingual opaque glyph cores remain unchanged while antialias edges are tinted: " + string.Join(";", glyphFailures));
             require(backgroundFailures.Count == 0, "all real word spaces and enclosed glyph counters are tinted: " + string.Join(";", backgroundFailures));
 
             var largePixels = Enumerable.Repeat((byte)255, 3840 * 2160 * 4).ToArray();

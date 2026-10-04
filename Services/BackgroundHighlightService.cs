@@ -98,12 +98,22 @@ internal static class BackgroundHighlightService
                     protection[pixel] = (byte)Math.Max(protection[pixel], Math.Abs(channel[pixel] - background));
                 }
             }
-            // Protect weak antialias pixels only when they adjoin a real detail.
-            // Exact background pixels remain tintable, even beside a glyph.
+            // Antialias pixels contain both foreground and background. A binary
+            // mask preserves their old background too, leaving pale outlines
+            // when the surrounding background is highlighted. Estimate local
+            // foreground coverage instead, keeping the detail core protected
+            // while allowing its background-heavy edge to receive the tint.
+            // Keep this neighborhood at one physical pixel: the wider radius
+            // used to estimate background would mix unrelated dark text into
+            // a nearby faint line and erase that line's protection.
+            // https://www.w3.org/TR/compositing-1/#simplealphacompositing
             Morphology(protection, first, scratch, width, height, 1, maximum: true);
             for (var pixel = 0; pixel < count; pixel++)
             {
-                var alpha = protection[pixel] > 0 && first[pixel] >= 2 ? (byte)0 : original[pixel * 4 + 3];
+                var contrast = first[pixel];
+                var sourceAlpha = original[pixel * 4 + 3];
+                var alpha = contrast < 2 ? sourceAlpha :
+                    (byte)((sourceAlpha * (contrast - protection[pixel]) + contrast / 2) / contrast);
                 var offset = pixel * 4;
                 output[offset] = output[offset + 1] = output[offset + 2] = output[offset + 3] = alpha;
             }

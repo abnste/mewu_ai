@@ -2,6 +2,10 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 未发布 / Unreleased
+
+- 修复荧光笔和重点高亮在文字周围留下浅色描边的问题，让抗锯齿边缘平滑融入高亮背景，同时保留字芯和细线。 / Fix pale outlines around text in freehand and region highlights by blending antialiased edges into the highlighted background while preserving text cores and fine lines.
+
 ## 0.7.0 — 截图编辑、录屏剪辑与交互稳定性 / Capture editing, video trimming and interaction stability
 
 完整双语说明 / Full release notes: [0.7.0](./docs/release-notes-v0.7.0.md)
