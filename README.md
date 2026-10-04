@@ -3,14 +3,14 @@
   <h1>MewuAI — AI Screenshot Annotation for Windows</h1>
   <p>Open-source screen capture with in-place AI annotations, offline OCR, screenshot translation, and screen recording.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.1"><img src="https://img.shields.io/badge/Public_Beta-v0.7.1-7C6CF0?style=flat-square" alt="v0.7.1 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.2"><img src="https://img.shields.io/badge/Public_Beta-v0.7.2-7C6CF0?style=flat-square" alt="v0.7.2 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.1/MewuAI-Setup-0.7.1-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Setup-0.7.2-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.1/MewuAI-Portable-0.7.1-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Portable-0.7.2-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -30,7 +30,7 @@
 
 Read the [AI screenshot annotation guide](./docs/ai-screenshot-annotation.md) for examples, setup, privacy, and the difference between manual markup, OCR, and AI annotations.
 
-**0.7.1 fixes:** Smoother highlighted text edges, continuous highlighting beneath lifted or healed content, and consistent drag previews, selection and export layering. Consecutive drag updates reuse highlight protection data. See the [0.7.1 release notes](./docs/release-notes-v0.7.1.md).
+**0.7.2 fixes:** Reduce memory retained after repeated offline OCR and avoid allocating full screenshot buffers for queued recognition requests. See the [0.7.2 release notes](./docs/release-notes-v0.7.2.md).
 
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-en.png"><img src="./docs/images/mewuai-cover-web-en.png" width="100%" alt="MewuAI concept cover: capture, ask and annotate on a Windows desktop" /></a>

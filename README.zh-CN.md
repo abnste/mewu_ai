@@ -3,14 +3,14 @@
   <h1>喵呜AI（MewuAI）— Windows AI 截图标注软件</h1>
   <p>开源截图工具，支持 AI 原位标注、离线 OCR、截图翻译、长截图和录屏。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.1"><img src="https://img.shields.io/badge/公测版-v0.7.1-7C6CF0?style=flat-square" alt="v0.7.1 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.2"><img src="https://img.shields.io/badge/公测版-v0.7.2-7C6CF0?style=flat-square" alt="v0.7.2 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.1/MewuAI-Setup-0.7.1-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Setup-0.7.2-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.1/MewuAI-Portable-0.7.1-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Portable-0.7.2-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -28,7 +28,7 @@
 
 想了解“让 AI 在截图上圈出重点”“截图翻译并保留原位置”或“图片文字复制到 Excel”，请看[AI 截图标注使用指南](./docs/ai-screenshot-annotation.zh-CN.md)。
 
-**0.7.1 修复：** 高亮文字边缘平滑受色，透明提取与局部修补不再截断高亮，拖动预览、选择命中与导出保持一致的层序；连续拖动复用文字保护数据。详见 [0.7.1 更新说明](./docs/release-notes-v0.7.1.md)。
+**0.7.2 修复：** 修复反复使用离线 OCR 后内存持续占用偏高的问题，减少排队识别时的截图内存分配。详见 [0.7.2 更新说明](./docs/release-notes-v0.7.2.md)。
 
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-zh.png"><img src="./docs/images/mewuai-cover-web-zh.png" width="100%" alt="喵呜AI 概念封面：在 Windows 桌面上截图、提问和原位标注" /></a>

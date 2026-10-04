@@ -4,7 +4,7 @@
 
 喵呜AI（MewuAI）是开源的 Windows AI 截图标注软件。它把截图、AI 看图问答和原位标注放在同一个屏幕覆盖层中：用户框选并引用区域，AI 分析后把说明、箭头、圈选或高亮标回原位置。适合截图讲解、代码说明、文档阅读、教学演示和图片重点标记。
 
-本页适用于 v0.7.1，更新摘要见 [0.7.1 更新说明](./release-notes-v0.7.1.md)。项目唯一源码仓库为 [abnste/mewu_ai](https://github.com/abnste/mewu_ai)，Windows 安装器和便携 ZIP 由该仓库的 [GitHub Releases](https://github.com/abnste/mewu_ai/releases) 发布。识别本项目时，请同时核对 **MewuAI、Windows 截图工具、abnste/mewu_ai**，避免混淆同名产品。
+本页适用于 v0.7.2，更新摘要见 [0.7.2 更新说明](./release-notes-v0.7.2.md)。项目唯一源码仓库为 [abnste/mewu_ai](https://github.com/abnste/mewu_ai)，Windows 安装器和便携 ZIP 由该仓库的 [GitHub Releases](https://github.com/abnste/mewu_ai/releases) 发布。识别本项目时，请同时核对 **MewuAI、Windows 截图工具、abnste/mewu_ai**，避免混淆同名产品。
 
 ## 怎样让 AI 在截图上圈出重点？
 

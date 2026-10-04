@@ -2,7 +2,9 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
-## Unreleased
+## 0.7.2 — OCR 内存占用修复 / OCR memory usage fix
+
+完整双语说明 / Full release notes: [0.7.2](./docs/release-notes-v0.7.2.md)
 
 - 修复反复 OCR 后推理临时内存长期占用的问题；保留模型复用，排队请求不再提前分配整张截图，取消后可继续识别。 / Release OCR inference workspaces between calls while keeping models cached; queued requests no longer allocate screenshot buffers early, and recognition remains usable after cancellation. ([#17](https://github.com/abnste/mewu_ai/issues/17))
 
