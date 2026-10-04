@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using mewu_ai_Assistant.Models;
+using mewu_ai_Assistant.Recording;
 using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Views;
 using Application = System.Windows.Application;
@@ -89,19 +90,156 @@ internal static partial class VideoTrimReplay
         preview.CloseSource(); await ExpectCanceledAsync(pendingClose, evidence, "CloseSource cancels native seek waiter");
         await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
         evidence.Check(image.Source is null && preview.Position == TimeSpan.Zero && !preview.IsPlaying, "CloseSource clears frame and playback state");
+        await VerifyFullSourceTailAsync(preview, image, source, 5.9, "full-source", evidence);
+        var fullDuration = preview.Duration;
+        await VerifySourceEndRangeAsync(preview, image, source,
+            new VideoClipRange(TimeSpan.FromSeconds(1.25), fullDuration), "start-only-trim", evidence);
+        await VerifySourceEndRangeAsync(preview, image, source,
+            new VideoClipRange(fullDuration - TimeSpan.FromMilliseconds(100), fullDuration), "short-source-end-range", evidence);
+        using (var shortClip = await evidence.Step("prepare-short-full-source", token => VideoClipPreparationService.PrepareAsync(source,
+            new VideoClipRange(TimeSpan.FromSeconds(1.2573344), TimeSpan.FromSeconds(1.3573344)), token,
+            new TempFileService(Path.Combine(directory, "short-full-source")))))
+            await VerifyFullSourceTailAsync(preview, image, shortClip.Path, 1.3, "short-full-source", evidence);
+        preview.CloseSource();
         evidence.Check(errors.Count == 0, "source replacement and close do not emit stale media failures");
         evidence.Check(Hash(source) == sourceHash, "preview and seek never modify original media");
         evidence.Check(Application.Current.Windows.Count == 0, "decoder regression never creates a visible or hidden window");
         VerifyTrimBar(evidence);
     }
 
-    private static async Task LoadPreviewAsync(VideoPreviewSurface preview, string source, VideoClipRange range, CancellationToken token)
+    private static async Task LoadPreviewAsync(VideoPreviewSurface preview, string source, VideoClipRange? range, CancellationToken token,
+        TimeSpan? initialPosition = null)
     {
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         void Opened() => ready.TrySetResult(); void Failed(Exception error) => ready.TrySetException(error);
         preview.Opened += Opened; preview.Failed += Failed;
-        try { preview.Load(source, false, range); await ready.Task.WaitAsync(TimeSpan.FromSeconds(25), token); }
+        try { preview.Load(source, false, range, initialPosition); await ready.Task.WaitAsync(TimeSpan.FromSeconds(25), token); }
         finally { preview.Opened -= Opened; preview.Failed -= Failed; }
+    }
+
+    private static async Task VerifyFullSourceTailAsync(VideoPreviewSurface preview, Image image, string source,
+        double finalPixelTime, string name, Evidence evidence, bool initializeAtStart = true, bool diagnoseCandidates = false)
+    {
+        await evidence.Step(name + "-load", token => LoadPreviewAsync(preview, source, null, token,
+            initializeAtStart ? TimeSpan.Zero : null));
+        var native = (Windows.Media.Playback.MediaPlayer)typeof(VideoPreviewSurface).GetField("_player", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(preview)!;
+        var duration = preview.Duration;
+        evidence.Check(preview.PlaybackRange is null && duration > TimeSpan.Zero, name + " uses the complete native source");
+        if (initializeAtStart) AssertPreviewFrame(image, finalPixelTime > 5 ? 0 : 1.3, evidence, name + " explicit initial frame");
+        if (diagnoseCandidates)
+        {
+            var interval = (long)typeof(VideoPreviewSurface).GetField("_nativeFrameIntervalTicks", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(preview)!;
+            foreach (var factor in new[] { 2d, 1.5, 1.1, 1d })
+            {
+                var target = duration - TimeSpan.FromTicks((long)(interval * factor));
+                TimeSpan? actual = null; string? error = null;
+                try
+                {
+                    actual = await evidence.Step("tail-candidate-" + factor, async token =>
+                    {
+                        await preview.SeekAsync(TimeSpan.Zero, true, token);
+                        return await preview.SeekAsync(target, true, token);
+                    }, 5);
+                }
+                catch (Exception exception) { error = exception.GetType().Name; }
+                var frame = image.Source as BitmapSource ?? throw new InvalidOperationException("Tail candidate lost its preview frame.");
+                var pixel = new byte[4]; var code = 0;
+                for (var bit = 0; bit < 5; bit++) { frame.CopyPixels(new Int32Rect(18 + bit * 24, 160, 1, 1), pixel, 4, 0); if (pixel[0] > 160) code |= 1 << bit; }
+                frame.CopyPixels(new Int32Rect(160, 90, 1, 1), pixel, 4, 0);
+                evidence.Stage("tail-candidate-result", new { factor, interval, target, actual, error, code,
+                    blue = pixel[0], green = pixel[1], red = pixel[2], nativePosition = native.PlaybackSession.Position,
+                    preview.Position, preview.LastPresentedPosition, preview.PresentedFrameCount });
+            }
+            // Restore the same genuinely presented initial state before the
+            // required exact-EOF check; candidates never replace its assertion.
+            await evidence.Step("tail-candidates-reset", token => preview.SeekAsync(TimeSpan.Zero, true, token), 5);
+        }
+        foreach (var (label, offset) in new[] { ("exact", 0L), ("tick", 1L), ("1ms", TimeSpan.TicksPerMillisecond),
+                     ("10ms", 10 * TimeSpan.TicksPerMillisecond), ("repeat-exact", 0L), ("repeat-tick", 1L) })
+        {
+            var requested = duration - TimeSpan.FromTicks(offset);
+            evidence.Stage(name + "-tail-before", new { label, requested, duration, initializeAtStart, preview.Position,
+                preview.LastPresentedPosition, preview.PresentedFrameCount, nativePosition = native.PlaybackSession.Position });
+            var actual = await evidence.Step(name + "-tail-" + label, token => preview.SeekAsync(requested, true, token), 5);
+            evidence.Check(actual >= TimeSpan.Zero && actual <= duration && actual >= duration - TimeSpan.FromMilliseconds(80),
+                name + " " + label + " settles at a real final frame without waiting for a nonexistent next frame");
+            evidence.Stage(name + "-tail-result", new { label, requested, actual, duration, preview.Position,
+                preview.LastPresentedPosition, preview.PresentedFrameCount, nativePosition = native.PlaybackSession.Position });
+            AssertPreviewFrame(image, finalPixelTime, evidence, name + " " + label + " final pixels");
+        }
+        var middle = TimeSpan.FromTicks(duration.Ticks / 2);
+        var middleEvents = new System.Collections.Concurrent.ConcurrentQueue<object>();
+        var seekCompletedCount = 0; var frameAvailableCount = 0;
+        Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlaybackSession, object> sought = (session, _) =>
+        {
+            Interlocked.Increment(ref seekCompletedCount);
+            middleEvents.Enqueue(new { kind = "native-seek-completed", utc = DateTime.UtcNow, position = session.Position });
+        };
+        Windows.Foundation.TypedEventHandler<Windows.Media.Playback.MediaPlayer, object> available = (player, _) =>
+        {
+            Interlocked.Increment(ref frameAvailableCount);
+            middleEvents.Enqueue(new { kind = "native-frame-available", utc = DateTime.UtcNow, position = player.PlaybackSession.Position });
+        };
+        native.PlaybackSession.SeekCompleted += sought; native.VideoFrameAvailable += available;
+        evidence.Stage(name + "-middle-before", new { middle, duration, nativePosition = native.PlaybackSession.Position,
+            preview.LastPresentedPosition, preview.PresentedFrameCount });
+        var settled = TimeSpan.Zero; string? middleError = null;
+        try { settled = await evidence.Step(name + "-seek-back-to-middle", token => preview.SeekAsync(middle, true, token), 5); }
+        catch (Exception error) { middleError = error.GetType().Name; throw; }
+        finally
+        {
+            native.PlaybackSession.SeekCompleted -= sought; native.VideoFrameAvailable -= available;
+            evidence.Stage(name + "-middle-native-result", new { middle, settled, middleError, seekCompletedCount, frameAvailableCount,
+                nativePosition = native.PlaybackSession.Position, preview.Position, preview.LastPresentedPosition,
+                preview.PresentedFrameCount, events = middleEvents.ToArray() });
+        }
+        evidence.Check(Math.Abs((settled - middle).TotalSeconds) < .08 && !preview.IsPlaying,
+            name + " tail handling leaves the next middle seek usable and paused");
+        AssertPreviewFrame(image, finalPixelTime > 5 ? 3 : 1.3, evidence, name + " returned middle pixels");
+        var initialCount = preview.PresentedFrameCount;
+        var advancing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Presented(TimeSpan _) { if (preview.PresentedFrameCount >= initialCount + 2) advancing.TrySetResult(); }
+        preview.FramePresented += Presented;
+        try
+        {
+            preview.Play(); await advancing.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            evidence.Check(preview.IsPlaying && preview.PresentedFrameCount >= initialCount + 2,
+                name + " playback continues to present actual frames after repeated tail seeks");
+        }
+        finally { preview.Pause(); preview.FramePresented -= Presented; }
+    }
+
+    private static async Task VerifyUnpositionedFullTailAsync(string directory, Evidence evidence)
+    {
+        var source = await evidence.Step("unpositioned-fixture", token => VideoTrimSyntheticMedia.CreateAsync(Path.Combine(directory, "source"), false, token), 60);
+        var image = new Image(); using var preview = new VideoPreviewSurface(image, Dispatcher.CurrentDispatcher);
+        await VerifyFullSourceTailAsync(preview, image, source, 5.9, "unpositioned-full-source", evidence, initializeAtStart: false);
+    }
+
+    private static async Task VerifyTailCandidatesAsync(string directory, Evidence evidence)
+    {
+        var source = await evidence.Step("tail-candidates-fixture", token => VideoTrimSyntheticMedia.CreateAsync(Path.Combine(directory, "source"), false, token), 60);
+        var image = new Image(); using var preview = new VideoPreviewSurface(image, Dispatcher.CurrentDispatcher);
+        await VerifyFullSourceTailAsync(preview, image, source, 5.9, "full-source-candidates", evidence, diagnoseCandidates: true);
+    }
+
+    private static async Task VerifySourceEndRangeAsync(VideoPreviewSurface preview, Image image, string source,
+        VideoClipRange range, string name, Evidence evidence)
+    {
+        await evidence.Step(name + "-load", token => LoadPreviewAsync(preview, source, range, token, range.Start));
+        AssertPreviewFrame(image, range.Start.TotalSeconds, evidence, name + " real initial frame");
+        foreach (var (label, offset) in new[] { ("exact", 0L), ("tick", 1L), ("1ms", TimeSpan.TicksPerMillisecond),
+                     ("10ms", 10 * TimeSpan.TicksPerMillisecond) })
+        {
+            var target = range.End - TimeSpan.FromTicks(offset);
+            var actual = await evidence.Step(name + "-tail-" + label, token => preview.SeekAsync(target, true, token), 5);
+            evidence.Stage(name + "-tail-result", new { label, range, target, actual, preview.Position,
+                preview.LastPresentedPosition, preview.PresentedFrameCount });
+            evidence.Check(actual >= range.Start && actual <= range.End && actual >= range.End - TimeSpan.FromMilliseconds(80),
+                name + " " + label + " settles within the final source frame without hanging");
+            AssertPreviewFrame(image, 5.9, evidence, name + " " + label + " actual source-end pixels");
+            evidence.Check(!preview.IsPlaying, name + " " + label + " preserves paused editing");
+        }
     }
 
     private static async Task VerifyNearEndAsync(string directory, Evidence evidence, long offsetTicks = 1)
@@ -178,11 +316,12 @@ internal static partial class VideoTrimReplay
             : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
         var pixels = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4]; bitmap.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
         var center = (90 * bitmap.PixelWidth + 160) * 4; var channel = sourceSeconds < 2 ? 2 : sourceSeconds < 4 ? 0 : 1;
-        evidence.Check(pixels[center + channel] > 220 && pixels[center + (channel + 1) % 3] < 40, name + " color");
         var timecode = 0;
         for (var bit = 0; bit < 5; bit++) if (pixels[(160 * bitmap.PixelWidth + 18 + bit * 24) * 4] > 160) timecode |= 1 << bit;
+        evidence.Stage("preview-pixels", new { name, sourceSeconds, timecode, blue = pixels[center], green = pixels[center + 1],
+            red = pixels[center + 2], alpha = pixels[center + 3], bitmap.PixelWidth, bitmap.PixelHeight });
+        evidence.Check(pixels[center + channel] > 220 && pixels[center + (channel + 1) % 3] < 40, name + " color");
         evidence.Check(timecode == (int)(sourceSeconds * 4), name + " encoded timecode");
-        evidence.Stage("preview-pixels", new { name, sourceSeconds, timecode });
     }
 
     private static void VerifyTrimBar(Evidence evidence)

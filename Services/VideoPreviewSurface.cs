@@ -33,6 +33,7 @@ internal sealed class VideoPreviewSurface : IDisposable
     private readonly object _frameGate = new();
     private readonly SemaphoreSlim _seekGate=new(1,1);
     private CancellationTokenSource? _sourceCancellation;
+    private CancellationTokenSource? _presentationCancellation=new();
     private VideoClipRange? _playbackRange;
     private long _nativeFrameIntervalTicks=TimeSpan.TicksPerMillisecond;
     private WinMediaPlayer? _player;
@@ -51,8 +52,10 @@ internal sealed class VideoPreviewSurface : IDisposable
     private DecodedFrame? _stagedFrame;
     private string? _sourcePath;
     private TimeSpan? _initialPosition;
+    private SettledSeek? _settledSeek;
     private event Action? FrameDecoded;
     private sealed record DecodedFrame(byte[] Pixels, int Width, int Height, long PositionTicks);
+    private readonly record struct SettledSeek(long Generation,long TargetTicks,long NativeTicks,long PresentedTicks,long FrameCount);
     private int _width;
     private int _height;
     private int _frameBusy;
@@ -132,7 +135,7 @@ internal sealed class VideoPreviewSurface : IDisposable
             player.IsVideoFrameServerEnabled = true;
             var source=MediaSource.CreateFromUri(new Uri(normalized, UriKind.Absolute));
             player.Source=playbackRange is { } bounded
-                ?new MediaPlaybackItem(source,bounded.Start,bounded.Duration):source;
+                ?new MediaPlaybackItem(source,bounded.Start,bounded.Duration):new MediaPlaybackItem(source);
             if (autoplay&&!initialPosition.HasValue) player.Play();
         }
         catch (Exception ex)
@@ -153,7 +156,8 @@ internal sealed class VideoPreviewSurface : IDisposable
         VerifyDispatcher();
         ObjectDisposedException.ThrowIf(_disposed, this);
         var player = _player ?? throw new InvalidOperationException("视频尚未加载");
-        _presentationVersion++;
+        CancelPresentationWaits();
+        _initialPosition=null;
         _holdPresentation=false;
         _stagedFrame=null;
         player.Play();
@@ -176,7 +180,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         ObjectDisposedException.ThrowIf(_disposed,this);
         var player=_player??throw new InvalidOperationException("视频尚未加载");
         var generation=Volatile.Read(ref _generation);
-        using var linked=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken,_sourceCancellation!.Token);
+        using var linked=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken,_sourceCancellation!.Token,_presentationCancellation!.Token);
         await _seekGate.WaitAsync(linked.Token);
         try
         {
@@ -194,28 +198,37 @@ internal sealed class VideoPreviewSurface : IDisposable
         position=position<=offset?TimeSpan.Zero:position-offset;
         var duration=session.NaturalDuration;
         if(duration>TimeSpan.Zero&&position>duration)position=duration;
-        // A bounded item's final frame may end before its nominal duration.
-        // Seeking within that frame and then asking for one more can produce
-        // SeekCompleted with no new VideoFrameAvailable. Use the native end
-        // seek for the entire tail frame instead; it presents the last frame.
+        // A video's final frame may end before its nominal duration. A native
+        // end seek at the physical EOF can return the old surface with an EOF
+        // timestamp; stepping beyond that point may produce no further frame.
+        // Decode from just before the final frame and step into it instead.
+        // Interior clip ends retain the native bounded-item end seek.
         // Keep source-start seeks at zero, including clips shorter than a frame.
-        var tailSeek=pauseAfterSeek&&_playbackRange is not null&&duration>TimeSpan.Zero&&position>TimeSpan.Zero&&
-            duration.Ticks-position.Ticks<=Interlocked.Read(ref _nativeFrameIntervalTicks);
-        if(tailSeek)position=duration;
-        if(pauseAfterSeek){player.Pause();_playing=false;}
-        if(tailSeek&&PresentedFrameCount>0)
+        var frameIntervalTicks=Interlocked.Read(ref _nativeFrameIntervalTicks);
+        var tailSeek=pauseAfterSeek&&duration>TimeSpan.Zero&&position>TimeSpan.Zero&&
+            duration.Ticks-position.Ticks<=frameIntervalTicks;
+        if(tailSeek)
         {
-            // Repeating a native end seek can produce neither SeekCompleted
-            // nor another frame. Reuse a frame only when both the decoder and
-            // the pixels already presented by this source are in its tail.
-            // A changed Position alone never proves that the view caught up.
-            var tailStart=TimeSpan.FromTicks(Math.Max(0,duration.Ticks-Interlocked.Read(ref _nativeFrameIntervalTicks)));
-            var nativePosition=session.Position;
-            var presented=LastPresentedPosition;
-            if(nativePosition>=tailStart&&nativePosition<=duration&&
-               presented>=offset+tailStart&&presented<=offset+duration)
-                return presented;
+            if(IsPhysicalSourceTail(player,frameIntervalTicks))
+            {
+                var leadTicks=Math.Min(frameIntervalTicks,duration.Ticks);
+                var halfLeadTicks=leadTicks/2+leadTicks%2;
+                position=TimeSpan.FromTicks(Math.Max(0,duration.Ticks-leadTicks-halfLeadTicks));
+            }
+            else position=duration;
         }
+        if(pauseAfterSeek){player.Pause();_playing=false;}
+        if(pauseAfterSeek&&_settledSeek is { } prior&&prior.Generation==generation&&
+           prior.TargetTicks==position.Ticks&&prior.FrameCount>0&&prior.FrameCount==PresentedFrameCount&&
+           prior.NativeTicks==session.Position.Ticks&&prior.PresentedTicks==LastPresentedPosition.Ticks)
+        {
+            // Repeating an already decoded target can complete the native seek
+            // without producing another step frame. Reuse only that successful
+            // seek's unchanged, actually presented frame, never a timestamp
+            // merely close to the new request or to the end of the video.
+            return TimeSpan.FromTicks(prior.PresentedTicks);
+        }
+        _settledSeek=null;
         // Paused seeking can first decode a GOP reference frame. Stage these
         // intermediate frames rather than briefly flashing them on screen.
         var presentationVersion=++_presentationVersion;
@@ -274,7 +287,11 @@ internal sealed class VideoPreviewSurface : IDisposable
             EnsurePresentationCurrent();
             if(_stagedFrame is { } frame)PresentFrame(frame);
             settled=true;
-            return LastPresentedPosition;
+            var presented=LastPresentedPosition;
+            if(pauseAfterSeek&&IsCurrentPlayer(player,generation)&&presentationVersion==_presentationVersion&&
+               !cancellationToken.IsCancellationRequested&&PresentedFrameCount>0)
+                _settledSeek=new(generation,position.Ticks,session.Position.Ticks,presented.Ticks,PresentedFrameCount);
+            return presented;
         }
         finally
         {
@@ -286,17 +303,28 @@ internal sealed class VideoPreviewSurface : IDisposable
             // An old cancelled seek must not release a newer load's hold.
             if(IsCurrentPlayer(player,generation)&&presentationVersion==_presentationVersion)
             {
+                if(!settled)_settledSeek=null;
                 _holdPresentation=!settled;
                 _stagedFrame=null;
             }
         }
     }
 
+    private bool IsPhysicalSourceTail(WinMediaPlayer player,long frameIntervalTicks)
+    {
+        if(_playbackRange is not { } range)return true;
+        // The already opened MediaSource retains the original file duration;
+        // no extra file or metadata reader is needed for a start-only trim.
+        return player.Source is MediaPlaybackItem item&&item.Source.Duration is { } sourceDuration&&
+            sourceDuration>TimeSpan.Zero&&range.End.Ticks>=sourceDuration.Ticks-Math.Min(sourceDuration.Ticks,frameIntervalTicks);
+    }
+
     internal void Stop()
     {
         VerifyDispatcher();
         if (_disposed) return;
-        _presentationVersion++;
+        CancelPresentationWaits();
+        _initialPosition=null;
         _holdPresentation=false;
         _stagedFrame=null;
         var player = _player;
@@ -375,7 +403,9 @@ internal sealed class VideoPreviewSurface : IDisposable
     private async Task CompleteOpenedAsync(WinMediaPlayer player,long generation)
     {
         if(!IsCurrentPlayer(player,generation))return;
-        var token=_sourceCancellation!.Token;
+        var sourceToken=_sourceCancellation!.Token;
+        using var presentation=CancellationTokenSource.CreateLinkedTokenSource(sourceToken,_presentationCancellation!.Token);
+        var token=presentation.Token;
         try
         {
             // Some Windows builds ignore Play before MediaOpened. A bounded,
@@ -419,7 +449,12 @@ internal sealed class VideoPreviewSurface : IDisposable
             EnsureCurrentPlayer(player,generation,token);
             Opened?.Invoke();
         }
-        catch(OperationCanceledException)when(token.IsCancellationRequested){}
+        catch(OperationCanceledException)when(token.IsCancellationRequested)
+        {
+            // Play/Stop supersedes initial positioning without unloading the
+            // already opened source. Do not leave its host waiting for ready.
+            if(!sourceToken.IsCancellationRequested&&IsCurrentPlayer(player,generation))Opened?.Invoke();
+        }
         catch(Exception ex){RaiseFailed(player,ex);}
     }
 
@@ -606,10 +641,19 @@ internal sealed class VideoPreviewSurface : IDisposable
         });
     }
 
-    private void CloseSourceCore(bool retainDisplayedFrame=false)
+    private void CancelPresentationWaits()
     {
         _presentationVersion++;
+        _settledSeek=null;
+        var cancellation=_presentationCancellation;
+        _presentationCancellation=_disposed?null:new CancellationTokenSource();
+        try{cancellation?.Cancel();}finally{cancellation?.Dispose();}
+    }
+
+    private void CloseSourceCore(bool retainDisplayedFrame=false)
+    {
         Interlocked.Increment(ref _generation);
+        CancelPresentationWaits();
         var cancellation=_sourceCancellation;_sourceCancellation=null;
         try{cancellation?.Cancel();}finally{cancellation?.Dispose();}
         WinMediaPlayer? player;
@@ -666,6 +710,7 @@ internal sealed class VideoPreviewSurface : IDisposable
         RaiseOnUi(() =>
         {
             if (!IsCurrentPlayer(sender,generation)) return;
+            _settledSeek=null;
             _playing = false;
             try { sender.Pause(); } catch { }
             Failed?.Invoke(exception);

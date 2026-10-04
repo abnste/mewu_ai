@@ -166,6 +166,27 @@ internal static partial class VideoTrimReplay
                 preview.Pause();
             }
             finally { preview.FramePresented -= PlayingFrame; }
+            foreach (var operation in new[] { "Play", "Stop" })
+            {
+                var inFlight = preview.SeekAsync(TimeSpan.FromSeconds(.75), true);
+                var queued = preview.SeekAsync(TimeSpan.FromSeconds(4.25), true);
+                evidence.Check(!inFlight.IsCompleted && !queued.IsCompleted, operation + " race owns both native and queued seeks");
+                if (operation == "Play") preview.Play(); else preview.Stop();
+                await ExpectCanceledAsync(inFlight, evidence, operation + " cancels the pending native seek without its twenty-second timeout");
+                await ExpectCanceledAsync(queued, evidence, operation + " cancels the seek queued under the previous presentation owner");
+                if (operation == "Play")
+                {
+                    var count = preview.PresentedFrameCount;
+                    await Task.Delay(450);
+                    evidence.Check(preview.IsPlaying && preview.PresentedFrameCount >= count + 2,
+                        "Play advances after canceling native and queued seek waiters");
+                }
+                var actual = await evidence.Step(operation + "-fresh-seek-after-cancellation",
+                    token => preview.SeekAsync(TimeSpan.FromSeconds(2.75), true, token), 5);
+                evidence.Check(Math.Abs(actual.TotalSeconds - 2.75) < .1 && !preview.IsPlaying,
+                    operation + " releases the seek gate for a newly requested frame");
+                AssertPreviewFrame(view, 2.75, evidence, operation + " fresh seek actual pixels");
+            }
             evidence.Check(Hash(source) == sourceHash, "reload and seek leave synthetic source unchanged");
             phase = "idle"; preview.CloseSource();
             evidence.Check(view.Source is null && preview.LastPresentedPosition == TimeSpan.Zero, "explicit CloseSource releases retained pixels and timestamp");

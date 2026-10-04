@@ -23,6 +23,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - 录制完成后，在原位预览下方拖动进度条定位，直接调整起点和终点，也可恢复完整片段。
 - 保存、复制、贴视频及发送给 AI 参考均使用选定片段，音频和时间轴标注同步裁切。
 - 修复调整裁切范围时的短暂空白、闪回开头及末尾定位问题；重做录屏倒计时样式并修正数字居中。
+- 修复完整录屏末帧附近定位久等的问题；连续调整起止点复用暂停预览，加载过程中也可继续编辑，播放或停止会取消过时的定位等待。
 
 ### 翻译与语言
 
@@ -66,6 +67,7 @@ This release builds on v0.6.1 with screenshot editing, in-place video trimming, 
 - Seek from the timeline beneath a completed recording, adjust its start and end, or restore the full clip.
 - Save, copy, pin and AI references all use the selected segment, with audio and timed annotations trimmed consistently.
 - Fix blank flashes, jumps to the beginning and end-positioning problems while adjusting the range. The recording countdown now has a matching compact design and centered digits.
+- Fix long seek waits near the final frame of a full recording. Reuse the paused preview across consecutive trim edits, accept edits while loading, and cancel obsolete seek waits when playback starts or stops.
 
 ### Translation and language
 

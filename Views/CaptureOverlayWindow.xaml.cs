@@ -211,6 +211,7 @@ public partial class CaptureOverlayWindow : Window
         public PreparedVideoClip? PreparedVideoClip;
         public CancellationTokenSource? VideoPreviewLoad;
         public bool VideoPreviewLoading;
+        public bool VideoPreviewPlayWhenReady;
         public Task VideoPreviewReady = Task.CompletedTask;
         public CancellationTokenSource? VideoSeekRequest;
         public TimeSpan? VideoSeekTarget;
@@ -4589,7 +4590,7 @@ public partial class CaptureOverlayWindow : Window
         _recordingInputTimer.Stop();_recordingBarInputActive=false;SetRecordingInputPassThrough(false);
         _recordingMode=_recordingPaused=_recordingStopping=false;ClearRecordingVisualHole();NativeMethods.TrySetWindowMouseTransparent(new WindowInteropHelper(this).Handle,false);RecordingBar.Visibility=Visibility.Collapsed;CrossRegionConnections.Visibility=Visibility.Visible;PromptBarHost.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;Cursor=Cursors.Cross;foreach(var item in _selections){item.Host.Visibility=Visibility.Visible;var isImageOnly=item.VideoPath is null;var imageOnly=isImageOnly?Visibility.Visible:Visibility.Collapsed;item.Image.Visibility=imageOnly;item.Video.Visibility=isImageOnly?Visibility.Collapsed:Visibility.Visible;item.Markup.Visibility=Visibility.Visible;item.TextOverlays.Visibility=item.TextSelection.Visibility=imageOnly;item.AiAnnotations.Visibility=Visibility.Visible;}var index=_selections.IndexOf(selected);if(index>=0)Select(index);RefreshSelectionNumbers();UpdateReferenceChips();ShowToolbar();PositionPromptBar();SetPromptBarHidden(false);
     }
-    private void ToggleVideoPlayback(object s,RoutedEventArgs e)
+    private async void ToggleVideoPlayback(object s,RoutedEventArgs e)
     {
         // AI answer/annotation work may still be finishing while the video
         // toolbar is visible. Playback is independent of that request; only
@@ -4600,7 +4601,7 @@ public partial class CaptureOverlayWindow : Window
             CancelVideoAnnotationPlayback(item);
             var preview=EnsureVideoPreview(item);
             if(preview.IsPlaying){preview.Pause();item.VideoPlaying=false;RenderAnnotationsForItem(item,preview.LastPresentedPosition.TotalSeconds);PromptStatus.Text="视频已暂停 · 标注已保留";SetVideoPlaybackVisual(false);FocusQuickPromptAfterRecording();}
-            else{preview.Play();item.VideoPlaying=true;PromptStatus.Text="视频正在原位播放";SetVideoPlaybackVisual(true);}
+            else{await PlayVideoSelectionAsync(item);if(!_closed&&item.VideoPlaying)PromptStatus.Text="视频正在原位播放";}
         }
         catch(Exception ex){new PrivacyLogger().Error("RecordingPreviewToggle",ex);item.VideoPlaying=false;PromptStatus.Text="视频预览暂不可用；仍可保存或复制视频";}
     }

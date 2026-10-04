@@ -97,6 +97,8 @@ internal static partial class VideoTrimReplay
                 case "near-end-10ms": RunDispatcherScenario(() => VerifyNearEndAsync(directory, evidence, TimeSpan.TicksPerMillisecond * 10)); break;
                 case "short-range": RunDispatcherScenario(() => VerifyShortRangeAsync(directory, evidence)); break;
                 case "flicker": RunDispatcherScenario(() => VerifyFlickerAsync(directory, evidence)); break;
+                case "full-tail-no-initial": RunDispatcherScenario(() => VerifyUnpositionedFullTailAsync(directory, evidence)); break;
+                case "tail-candidates": RunDispatcherScenario(() => VerifyTailCandidatesAsync(directory, evidence)); break;
                 case "overlay": RunDispatcherScenario(() => evidence.Step("overlay-integration", token => VideoTrimOverlayReplay.RunAsync(
                     System.Windows.Application.Current, Path.GetFullPath(Path.Combine(directory, "..", "media", "source", "synthetic.mp4")),
                     directory, evidence.Checks, token), 90)); break;

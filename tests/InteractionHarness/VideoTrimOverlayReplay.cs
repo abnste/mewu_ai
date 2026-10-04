@@ -38,8 +38,8 @@ internal static class VideoTrimOverlayReplay
             if (!condition) throw new InvalidOperationException(name);
             checks.Add(name);
         }
-        void Stage(string name) => File.AppendAllText(Path.Combine(directory, "overlay-stages.jsonl"),
-            JsonSerializer.Serialize(new { utc = DateTime.UtcNow, stage = name }) + "\n", new UTF8Encoding(false));
+        void Stage(string name, object? data = null) => File.AppendAllText(Path.Combine(directory, "overlay-stages.jsonl"),
+            JsonSerializer.Serialize(new { utc = DateTime.UtcNow, stage = name, data }) + "\n", new UTF8Encoding(false));
         var originalHash = Hash(sourcePath);
         var metadata = await VideoTrimSyntheticMedia.MetadataAsync(sourcePath, token);
         var duration = TimeSpan.FromSeconds(metadata.Seconds);
@@ -101,7 +101,7 @@ internal static class VideoTrimOverlayReplay
             Task<PreparedVideoClip> Prepare() => (Task<PreparedVideoClip>)Invoke("PrepareSelectionVideoAsync", item, token)!;
             void BarState() => Call(bar, "SetState", duration, CurrentRange().Start, CurrentRange().End, CurrentRange().Start, false, true);
             void ChangeRange(VideoClipRange next) { BarState(); Call(bar, "ChangeRange", next.Start, next.End); }
-            async Task SettlePreviewAsync()
+            async Task SettlePreviewAsync(int seconds = 25, bool requirePaused = true)
             {
                 var clock = Stopwatch.StartNew();
                 while (true)
@@ -112,11 +112,11 @@ internal static class VideoTrimOverlayReplay
                     if (ready.IsFaulted) await ready;
                     var seek = (Task?)Read(item, "VideoSeekWork");
                     if (!(bool)Read(item, "VideoPreviewLoading")! && Read(item, "VideoSeekRequest") is null && (seek is null || seek.IsCompleted)) break;
-                    if (clock.Elapsed > TimeSpan.FromSeconds(25)) throw new TimeoutException("Overlay preview did not settle after range operation.");
+                    if (clock.Elapsed > TimeSpan.FromSeconds(seconds)) throw new TimeoutException("Overlay preview did not settle after range operation.");
                     await Task.Delay(10, token);
                 }
                 await app.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
-                Check(!preview.IsPlaying, "range operation leaves the isolated synthetic preview paused");
+                if (requirePaused) Check(!preview.IsPlaying, "range operation leaves the isolated synthetic preview paused");
             }
             void FreezeSentTargets()
             {
@@ -148,8 +148,8 @@ internal static class VideoTrimOverlayReplay
             Check(CurrentRange() == range && UndoCount() == 1 && RedoCount() == 0,
                 "actual trim control commit records one overlay history operation");
             Check(Cached() is null && Revision() == 1, "range commit invalidates prepared media and advances revision");
-            Check((TimeSpan)Read(item, "VideoDuration")! == duration && preview.PlaybackRange == range && Math.Abs(preview.Duration.TotalSeconds - 3.5) < .001,
-                "bounded preview retains full source metadata while native playback duration is clipped");
+            Check((TimeSpan)Read(item, "VideoDuration")! == duration && preview.PlaybackRange is null && Math.Abs(preview.Duration.TotalSeconds - duration.TotalSeconds) < .001,
+                "paused range editing keeps the complete decoder open while retaining selected export bounds");
             Check(notes.Count == 1 && ReferenceEquals(notes[0], sourceNote) && cardPositions[sourceNote] == new Point(.65, .7),
                 "trim retains source-absolute annotations and manual card positions");
 
@@ -244,6 +244,90 @@ internal static class VideoTrimOverlayReplay
             await SettlePreviewAsync();
             var final = await Prepare();
             Check(final.IsOriginal && SamePath(final.Path, sourcePath), "restoring full range resumes original media instead of stale trimmed output");
+
+            Stage("rapid-alternating-endpoints");
+            var originalBounds = (Rect)Read(item, "Bounds")!;
+            var rapidUndo = UndoCount(); var rapidRevision = Revision();
+            void Begin(string mode)
+            {
+                BarState();
+                Check((bool)Call(bar, "BeginInteraction", Enum.Parse(interaction, mode), null)!, mode + " accepts another gesture without waiting for decoder settlement");
+            }
+            void End() => Call(bar, "CompleteInteraction", false);
+            int CurrentTimecode()
+            {
+                var image = Property<System.Windows.Controls.Image>(item, "Video");
+                var source = image.Source as BitmapSource ?? throw new InvalidOperationException("Preview has no real frame.");
+                var pixel = new byte[4]; var code = 0;
+                for (var bit = 0; bit < 5; bit++) { source.CopyPixels(new Int32Rect(18 + bit * 24, 160, 1, 1), pixel, 4, 0); if (pixel[0] > 160) code |= 1 << bit; }
+                return code;
+            }
+            Invoke("LoadVideoRange", item, range, range.Start, false);
+            Check((bool)Read(item, "VideoPreviewLoading")!, "rapid replay starts during a real pending bounded decoder load");
+            long editingGeneration = -1;
+            var expectedRange = VideoClipRange.Full(duration);
+            for (var gesture = 0; gesture < 12; gesture++)
+            {
+                var start = gesture % 2 == 0; Begin(start ? "Start" : "End");
+                if (gesture == 0) editingGeneration = (long)Read(preview, "_generation")!;
+                var targetSeconds = (start ? 1.125 : 4.125) + (gesture / 2 % 2) * .5;
+                var beforeSeconds = (start ? CurrentRange().Start : CurrentRange().End).TotalSeconds;
+                for (var move = 1; move <= 24; move++) Call(bar, "UpdateInteraction", TimeSpan.FromSeconds(beforeSeconds + (targetSeconds - beforeSeconds) * move / 24));
+                End();
+                expectedRange = start ? new VideoClipRange(TimeSpan.FromSeconds(targetSeconds), expectedRange.End)
+                    : new VideoClipRange(expectedRange.Start, TimeSpan.FromSeconds(targetSeconds));
+                Check(CurrentRange() == expectedRange && UndoCount() == rapidUndo + gesture + 1 && Revision() == rapidRevision + gesture + 1,
+                    "alternating gesture " + gesture + " commits its latest endpoint with exactly one history operation");
+                Check((long)Read(preview, "_generation")! == editingGeneration,
+                    "alternating gesture " + gesture + " reuses the same full-source decoder");
+            }
+            Begin("Start"); Call(bar, "UpdateInteraction", TimeSpan.FromSeconds(.625)); Call(bar, "CancelInteraction");
+            await SettlePreviewAsync(5);
+            Check(CurrentRange() == expectedRange && UndoCount() == rapidUndo + 12 && Revision() == rapidRevision + 12,
+                "cancel after rapid alternating drags restores the last committed range without another history entry");
+            Check(preview.PlaybackRange is null && Math.Abs((preview.LastPresentedPosition - expectedRange.End).TotalSeconds) < .1 && CurrentTimecode() == 18,
+                "rapid endpoint queue settles on the latest actual source frame and remains editable");
+
+            Stage("edit-supersedes-pending-play-load");
+            Invoke("ToggleVideoPlayback", overlay, new RoutedEventArgs());
+            Check((bool)Read(item, "VideoPreviewLoading")!, "play after paused trim starts an actual bounded load");
+            Begin("Start"); Call(bar, "UpdateInteraction", TimeSpan.FromSeconds(2.125)); End();
+            await SettlePreviewAsync(5);
+            Check(!preview.IsPlaying && preview.PlaybackRange is null && CurrentRange().Start == TimeSpan.FromSeconds(2.125) && CurrentTimecode() == 8,
+                "a new endpoint gesture cancels pending autoplay and keeps its own latest frame");
+            Invoke("ToggleVideoPlayback", overlay, new RoutedEventArgs());
+            await SettlePreviewAsync(5, requirePaused: false);
+            Check(preview.IsPlaying && preview.PlaybackRange == CurrentRange() && Math.Abs((preview.Duration - CurrentRange().Duration).TotalSeconds) < .001,
+                "explicit Play applies the selected native bounds after editing");
+            Invoke("ToggleVideoPlayback", overlay, new RoutedEventArgs());
+            Begin("End"); Call(bar, "UpdateInteraction", TimeSpan.FromSeconds(4.125)); End();
+            await SettlePreviewAsync(5);
+            Check(preview.PlaybackRange is null && !preview.IsPlaying && CurrentTimecode() == 16,
+                "pause then edit returns to full-source seeking without stale bounded pixels");
+
+            Stage("quick-seek-play-and-edit-ownership");
+            ChangeRange(VideoClipRange.Full(duration)); await SettlePreviewAsync(5);
+            Begin("Seek"); Call(bar, "UpdateInteraction", TimeSpan.FromSeconds(2.125)); End();
+            Check(Read(item, "VideoSeekRequest") is not null, "quick Play follows a genuinely pending overlay seek");
+            Invoke("ToggleVideoPlayback", overlay, new RoutedEventArgs());
+            await SettlePreviewAsync(5, requirePaused: false);
+            Check(preview.IsPlaying && preview.PlaybackRange is null && preview.LastPresentedPosition.TotalSeconds is >= 2.125 and < 2.4 && CurrentTimecode() == 8,
+                "same-range quick Play retains the latest requested position before advancing");
+            Invoke("ToggleVideoPlayback", overlay, new RoutedEventArgs());
+            Begin("Seek"); Call(bar, "UpdateInteraction", TimeSpan.FromSeconds(4.125)); End();
+            Invoke("ToggleVideoPlayback", overlay, new RoutedEventArgs());
+            Begin("Start"); Call(bar, "UpdateInteraction", TimeSpan.FromSeconds(1.125)); End();
+            await SettlePreviewAsync(5);
+            var finalCode = CurrentTimecode();
+            Stage("quick-play-edit-final-state", new { preview.IsPlaying, currentCode = finalCode, preview.LastPresentedPosition,
+                lastRequested = (TimeSpan)Read(item, "VideoLastRequestedPosition")!, range = CurrentRange(),
+                requestCleared = Read(item, "VideoSeekRequest") is null, seekWorkCompleted = (Read(item, "VideoSeekWork") as Task)?.IsCompleted,
+                sourceGeneration = (long)Read(preview, "_generation")!, nativeRange = preview.PlaybackRange,
+                pendingAutoplay = (bool)Read(item, "VideoPreviewPlayWhenReady")! });
+            Check(!preview.IsPlaying && finalCode == 4 && Math.Abs(preview.LastPresentedPosition.TotalSeconds - 1.125) < .1,
+                "editing during pending quick Play owns the final paused frame without late autoplay");
+            Check((Rect)Read(item, "Bounds")! == originalBounds && !Property<bool>(bar, "IsInteracting") && Read(item, "VideoSeekRequest") is null,
+                "rapid replay releases gesture and seek state without moving the video selection");
             Check(Hash(sourcePath) == originalHash, "overlay attachment, AI mapping, history and cancellation preserve original media SHA-256");
             Check(new WindowInteropHelper(overlay).Handle == IntPtr.Zero && !overlay.IsVisible && !overlay.IsLoaded && Field("_rightPassThrough") is null,
                 "complete overlay regression uses no native window, desktop input or Loaded activation");

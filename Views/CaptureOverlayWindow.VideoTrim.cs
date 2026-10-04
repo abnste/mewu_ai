@@ -98,7 +98,7 @@ public partial class CaptureOverlayWindow
 
     private void BeginVideoTrimInteraction()
     {
-        if (Active is not { VideoPath: not null } item || item.VideoPreviewLoading || _overlayRequest is not null ||
+        if (Active is not { VideoPath: not null } item || _overlayRequest is not null ||
             (_videoTrimBar.IsTrimInteraction && _request is not null))
         {
             _videoTrimBar.CancelInteraction();
@@ -106,17 +106,23 @@ public partial class CaptureOverlayWindow
         }
         _videoTrimGestureItem = item;
         _videoTrimGestureRange = GetVideoRange(item);
-        _videoTrimGesturePosition = item.VideoPreview?.LastPresentedPosition ?? _videoTrimGestureRange.Start;
+        _videoTrimGesturePosition = item.VideoSeekRequest is not null || item.VideoPreviewLoading
+            ? item.VideoLastRequestedPosition
+            : item.VideoPreview?.LastPresentedPosition ?? _videoTrimGestureRange.Start;
         item.VideoLastRequestedPosition = _videoTrimGesturePosition;
         _videoTrimGesturePlaying = item.VideoPreview?.IsPlaying == true;
         _videoTrimBefore = _videoTrimBar.IsTrimInteraction ? CaptureOverlaySnapshot() : null;
+        item.VideoPreviewPlayWhenReady = false;
         CancelVideoAnnotationPlayback(item);
         item.VideoPreview?.Pause();
         item.VideoPlaying = false;
         SetVideoPlaybackVisual(false);
-        // Open the full source once per gesture so both boundaries can be
-        // expanded. Native playback is restored to the selected range on up.
-        if (_videoTrimBar.IsTrimInteraction && item.VideoPreview?.PlaybackRange is not null)
+        // Keep the full source open throughout paused editing. Reopening a
+        // bounded decoder on every mouse-up made the next drag wait for it,
+        // then immediately reopen the full source again. A pending open can
+        // accept the latest target without rejecting the user's next gesture.
+        if ((_videoTrimBar.IsTrimInteraction && item.VideoPreview?.PlaybackRange is not null) ||
+            item.VideoPreviewReady.IsFaulted || item.VideoPreviewReady.IsCanceled)
             LoadVideoRange(item, null, _videoTrimGesturePosition, false);
     }
 
@@ -138,10 +144,11 @@ public partial class CaptureOverlayWindow
         }
         var target = cancelled ? _videoTrimGesturePosition : item.VideoLastRequestedPosition;
         target = TimeSpan.FromTicks(Math.Clamp(target.Ticks, range.Start.Ticks, range.End.Ticks));
-        var sameNativeRange = item.VideoPreview?.PlaybackRange == range ||
-            (item.VideoPreview?.PlaybackRange is null && range.IsFull(item.VideoDuration));
-        if (sameNativeRange && !(cancelled && _videoTrimGesturePlaying)) QueueVideoSeek(item, target);
-        else LoadVideoRange(item, range, target, cancelled && _videoTrimGesturePlaying);
+        // Range selection is independent of the paused preview's source.
+        // Apply native clip bounds only when playback resumes; export and AI
+        // attachments already use the committed VideoRange directly.
+        if (cancelled && _videoTrimGesturePlaying) LoadVideoRange(item, range, target, true);
+        else QueueVideoSeek(item, target);
         UpdateSelection(item);
         _ = Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(UpdateVideoTrimBar));
     }
@@ -170,6 +177,7 @@ public partial class CaptureOverlayWindow
         var load = new CancellationTokenSource();
         item.VideoPreviewLoad = load;
         item.VideoPreviewLoading = true;
+        item.VideoPreviewPlayWhenReady = play;
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         item.VideoPreviewReady = ready.Task;
         var preview = EnsureVideoPreview(item);
@@ -182,11 +190,11 @@ public partial class CaptureOverlayWindow
             preview.Load(item.VideoPath!, autoplay: false, playbackRange: range, initialPosition: position);
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(20), load.Token);
             if (!ReferenceEquals(item.VideoPreviewLoad, load) || _closed) return;
-            item.VideoPreviewLoading = false;
             if (item.VideoSeekWork is { } seek) await seek;
             if (!ReferenceEquals(item.VideoPreviewLoad, load) || _closed) return;
-            if (play) preview.Play();
+            if (item.VideoPreviewPlayWhenReady) preview.Play();
             item.VideoPlaying = preview.IsPlaying;
+            if (ReferenceEquals(item, Active)) SetVideoPlaybackVisual(item.VideoPlaying);
         }
         catch (OperationCanceledException) { ready.TrySetCanceled(); }
         catch (Exception error)
@@ -206,6 +214,7 @@ public partial class CaptureOverlayWindow
             {
                 item.VideoPreviewLoad = null;
                 item.VideoPreviewLoading = false;
+                item.VideoPreviewPlayWhenReady = false;
                 if (!_closed) UpdateVideoTrimBar();
             }
             load.Dispose();
@@ -241,6 +250,7 @@ public partial class CaptureOverlayWindow
         {
             if (!_closed && ReferenceEquals(item.VideoSeekRequest, request))
             {
+                item.VideoPreviewPlayWhenReady = false;
                 new PrivacyLogger().Error("VideoTrimSeek", error);
                 PromptStatus.Text = L("视频定位失败，请重试。", "Video seeking failed. Please retry.");
             }
@@ -263,6 +273,37 @@ public partial class CaptureOverlayWindow
         item.VideoSeekRequest = null;
         item.VideoSeekTarget = null;
         request?.Cancel();
+    }
+
+    private async Task PlayVideoSelectionAsync(SelectionItem item)
+    {
+        var preview = EnsureVideoPreview(item);
+        var range = GetVideoRange(item);
+        var pendingSeek = item.VideoSeekRequest is not null;
+        var target = pendingSeek
+            ? item.VideoLastRequestedPosition : preview.LastPresentedPosition;
+        target = TimeSpan.FromTicks(Math.Clamp(target.Ticks, range.Start.Ticks, range.End.Ticks));
+        var sameNativeRange = preview.PlaybackRange == range ||
+            (preview.PlaybackRange is null && range.IsFull(item.VideoDuration));
+        if (sameNativeRange)
+        {
+            if (pendingSeek)
+            {
+                // Let the existing coalescing queue finish the latest target.
+                // Canceling and immediately seeking on the same native player
+                // would overlap untagged SeekCompleted/frame callbacks.
+                item.VideoPreviewPlayWhenReady = true;
+                var seek = item.VideoSeekWork!;
+                await seek;
+                if (_closed || !_selections.Contains(item) || !item.VideoPreviewPlayWhenReady ||
+                    !ReferenceEquals(item.VideoSeekWork, seek) || !ReferenceEquals(item.VideoPreview, preview)) return;
+                item.VideoPreviewPlayWhenReady = false;
+            }
+            preview.Play();
+            item.VideoPlaying = true;
+            SetVideoPlaybackVisual(true);
+        }
+        else LoadVideoRange(item, range, target, true);
     }
 
     private async Task<PreparedVideoClip> PrepareSelectionVideoAsync(SelectionItem item, CancellationToken token)
