@@ -130,10 +130,28 @@ internal static class PointerMagnifierReplay
                 var text = new FormattedText(coordinateText.Text, System.Globalization.CultureInfo.InvariantCulture,
                     coordinateText.FlowDirection, new Typeface(coordinateText.FontFamily, coordinateText.FontStyle,
                         coordinateText.FontWeight, coordinateText.FontStretch), coordinateText.FontSize, coordinateText.Foreground,
+                    null, TextOptions.GetTextFormattingMode(coordinateText),
                     VisualTreeHelper.GetDpi(coordinateText).PixelsPerDip);
                 var textBounds = coordinateText.TransformToAncestor(inspector).TransformBounds(new Rect(0, 0, text.WidthIncludingTrailingWhitespace, text.Height));
+                var arrangedTextBounds = coordinateText.TransformToAncestor(inspector).TransformBounds(new Rect(coordinateText.RenderSize));
+                var coordinateHost = coordinateText.Parent as FrameworkElement;
+                layouts.Add(new
+                {
+                    scenario = "long-coordinate", expectedText, coordinateText.FontSize, fontFamily = coordinateText.FontFamily.Source,
+                    dpi = VisualTreeHelper.GetDpi(coordinateText).PixelsPerDip, formattingMode = TextOptions.GetTextFormattingMode(coordinateText).ToString(),
+                    language = coordinateText.Language.IetfLanguageTag, measuredWidth = text.WidthIncludingTrailingWhitespace, measuredHeight = text.Height,
+                    textBounds = new { textBounds.X, textBounds.Y, textBounds.Width, textBounds.Height },
+                    arrangedTextBounds = new { arrangedTextBounds.X, arrangedTextBounds.Y, arrangedTextBounds.Width, arrangedTextBounds.Height },
+                    textRenderSize = coordinateText.RenderSize, textDesiredSize = coordinateText.DesiredSize, inspectorSize = inspector.RenderSize,
+                    coordinateHostType = coordinateHost?.GetType().Name, coordinateHostSize = coordinateHost?.RenderSize,
+                    transform = coordinateText.TransformToAncestor(inspector).ToString(),
+                    measureValid = coordinateText.IsMeasureValid, arrangeValid = coordinateText.IsArrangeValid
+                });
+                var coordinateRender = Path.Combine(directory, $"magnifier-{language}-coordinates-{origin.X}-{origin.Y}-168.png");
+                RenderCard(inspector, magnifier, Sample(magnifier), 168, coordinateRender, Check); renders.Add(coordinateRender);
                 Check(textBounds.Left >= 3 && textBounds.Right <= inspector.ActualWidth - 3 && textBounds.Top >= 90 && textBounds.Bottom <= inspector.ActualHeight,
-                    "complete long coordinate glyphs fit inside the compact second row: " + expectedText);
+                    "complete long coordinate glyphs fit inside the compact second row: " + expectedText + "; measured=" + textBounds +
+                    "; arranged=" + arrangedTextBounds + "; card=" + inspector.RenderSize);
             }
             foreach (var bounds in new[] { new Rect(-1920, -1080, 1920, 1080), new Rect(100, 200, 800, 600) })
             foreach (var point in new[] { bounds.TopLeft, bounds.TopRight, bounds.BottomLeft, bounds.BottomRight })
