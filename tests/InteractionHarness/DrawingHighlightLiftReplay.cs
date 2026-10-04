@@ -156,7 +156,7 @@ internal static class DrawingHighlightLiftReplay
         var duringMoveExportError = Pixels(duringMove).Zip(Pixels(duringMoveExport)).Max(pair => Math.Abs(pair.First - pair.Second));
         check(duringMoveExportError <= 2, "during move export agrees with the already captured live layer order");
         Call("CommitSelectedDrawingMove");
-        var rasterLayer = Get<Panel>(item, "RasterLayer"); var previewLayer = Get<Panel>(item, "RasterPreviewLayer");
+        var rasterLayer = Get<InkCanvas>(item, "RasterLayer"); var previewLayer = Get<InkCanvas>(item, "RasterPreviewLayer");
         check(session.Field("_rasterObjectDrawingPreview") is null && previewLayer.Children.Count == 0 &&
             rasterLayer.Children.OfType<FrameworkElement>().Any(child => Equals(child.Tag, id)),
             "move commit clears transient preview state and returns the foreground to the raster layer");
