@@ -82,7 +82,7 @@ internal static class DrawingBackgroundHighlightReplay
                     { drawing.DrawImage(source,new Rect(0,0,width,height)); for(var repeat=0;repeat<count;repeat++) foreach(var stroke in strokes) stroke.Draw(drawing); }
                     var output = new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32); output.Render(visual); output.Freeze(); return output;
                 }
-                var once = RenderStrokes(1); var twice = RenderStrokes(2);
+                var once = RenderStrokes(1); var twice = RenderStrokes(2); var threeTimes = RenderStrokes(3);
                 overlay = new CaptureOverlayWindow(host,null,new CaptureFrame(0,0,source));
                 const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
                 object? Invoke(string name, params object?[] args) => typeof(CaptureOverlayWindow).GetMethod(name,flags)!.Invoke(overlay,args);
@@ -94,10 +94,10 @@ internal static class DrawingBackgroundHighlightReplay
                 typeof(CaptureOverlayWindow).GetField("_drawColor",flags)!.SetValue(overlay,Colors.Red);
                 BitmapSource Saved() => (BitmapSource)Invoke("RenderSelectionImage",item,true,false,false)!;
                 void AddMarks() { for(var i=0;i<rows.Length;i++) Invoke("AddRegionMark",item,new Rect(10,i*rowHeight+6,700,52)); }
-                AddMarks(); var regionOnce=Saved(); AddMarks();var regionTwice=Saved();
+                AddMarks(); var regionOnce=Saved(); AddMarks();var regionTwice=Saved(); AddMarks();var regionThreeTimes=Saved();
                 var prefix="highlight-red-"+(int)(96*scale);
                 Save(source,Path.Combine(directory,prefix+"-before.png"));
-                foreach(var variant in new[]{(Name:"stroke",Image:once),(Name:"stroke-twice",Image:twice),(Name:"region",Image:regionOnce),(Name:"region-twice",Image:regionTwice)})
+                foreach(var variant in new[]{(Name:"stroke",Image:once),(Name:"stroke-twice",Image:twice),(Name:"stroke-three-times",Image:threeTimes),(Name:"region",Image:regionOnce),(Name:"region-twice",Image:regionTwice),(Name:"region-three-times",Image:regionThreeTimes)})
                 {
                     Save(variant.Image,Path.Combine(directory,prefix+"-"+variant.Name+".png"));
                     Check(variant.Image.PixelWidth==width&&variant.Image.PixelHeight==height,prefix+variant.Name+" retains native pixel dimensions");

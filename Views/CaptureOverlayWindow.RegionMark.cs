@@ -27,13 +27,10 @@ public partial class CaptureOverlayWindow
             var preview = new Border
             {
                 CornerRadius = new CornerRadius(3),
-                Background = new SolidColorBrush(Color.FromArgb(84, _drawColor.R, _drawColor.G, _drawColor.B)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(190, _drawColor.R, _drawColor.G, _drawColor.B)),
                 BorderThickness = new Thickness(1),
                 IsHitTestVisible = false
             };
-            preview.OpacityMask = GetBackgroundHighlightSource(item).CreateOpacityBrush(
-                BackgroundHighlightSourceBounds(item));
+            ApplyRegionMarkBrushes(preview, GetBackgroundHighlightSource(item), BackgroundHighlightSourceBounds(item), _drawColor);
             InkCanvas.SetLeft(preview, 0);
             InkCanvas.SetTop(preview, 0);
             _drawingMarkPreview = (item, preview);
@@ -54,7 +51,7 @@ public partial class CaptureOverlayWindow
         preview.Preview.Height = Math.Max(0, bounds.Height);
         var sourceBounds = BackgroundHighlightSourceBounds(item);
         sourceBounds.Offset(-bounds.X, -bounds.Y);
-        preview.Preview.OpacityMask = GetBackgroundHighlightSource(item).CreateOpacityBrush(sourceBounds);
+        ApplyRegionMarkBrushes(preview.Preview, GetBackgroundHighlightSource(item), sourceBounds, _drawColor);
         InkCanvas.SetLeft(preview.Preview, bounds.X);
         InkCanvas.SetTop(preview.Preview, bounds.Y);
     }
@@ -129,16 +126,21 @@ public partial class CaptureOverlayWindow
             Width = Math.Max(1, mark.Bounds.Width),
             Height = Math.Max(1, mark.Bounds.Height),
             CornerRadius = new CornerRadius(3),
-            Background = new SolidColorBrush(Color.FromArgb(84, mark.Color.R, mark.Color.G, mark.Color.B)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(190, mark.Color.R, mark.Color.G, mark.Color.B)),
             BorderThickness = new Thickness(1),
             IsHitTestVisible = false,
-            OpacityMask = GetBackgroundHighlightSource(item).CreateOpacityBrush(sourceBounds),
             Tag = mark.Id
         };
+        ApplyRegionMarkBrushes(visual, GetBackgroundHighlightSource(item), sourceBounds, mark.Color);
         Canvas.SetLeft(visual, mark.Bounds.Left);
         Canvas.SetTop(visual, mark.Bounds.Top);
         return visual;
+    }
+
+    private static void ApplyRegionMarkBrushes(Border visual, BackgroundHighlightSource source, Rect sourceBounds, Color color)
+    {
+        visual.Background = source.CreateTintBrush(color, 84, sourceBounds);
+        visual.BorderBrush = source.CreateTintBrush(color, 190, sourceBounds);
+        visual.OpacityMask = source.CreateOpacityBrush(sourceBounds);
     }
 
     /// <summary>导出复用现场的文字保护遮罩和圆角边线，避免另一路覆盖文字。</summary>

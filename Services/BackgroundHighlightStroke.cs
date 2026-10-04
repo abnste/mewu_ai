@@ -45,9 +45,7 @@ internal sealed class BackgroundHighlightStroke : Stroke
     protected override void DrawCore(DrawingContext drawingContext, DrawingAttributes drawingAttributes)
     {
         if (_sourceBounds.IsEmpty || _sourceBounds.Width <= 0 || _sourceBounds.Height <= 0) return;
-        var color = drawingAttributes.Color;
-        var brush = new SolidColorBrush(Color.FromArgb((byte)(84 * color.A / 255), color.R, color.G, color.B));
-        brush.Freeze();
+        var brush = _source.CreateTintBrush(drawingAttributes.Color, 84, _sourceBounds);
         drawingContext.PushOpacityMask(_source.CreateOpacityBrush(_sourceBounds));
         drawingContext.DrawGeometry(brush, null, GetGeometry(drawingAttributes));
         drawingContext.Pop();

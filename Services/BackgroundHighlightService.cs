@@ -6,10 +6,33 @@ using System.Windows.Media.Imaging;
 
 namespace mewu_ai_Assistant.Services;
 
-/// <summary>A shared, immutable background-only alpha mask in source pixel coordinates.</summary>
-internal sealed class BackgroundHighlightSource(BitmapSource mask)
+/// <summary>Shared frozen foreground coverage and detail protection in source pixels.</summary>
+internal sealed class BackgroundHighlightSource(BitmapSource mask, BitmapSource foreground)
 {
     internal BitmapSource Mask { get; } = mask;
+
+    internal DrawingBrush CreateTintBrush(Color color, byte opacity, Rect sourceBounds)
+    {
+        var pixels = new Rect(0, 0, foreground.PixelWidth, foreground.PixelHeight);
+        var drawing = new DrawingGroup();
+        using (var context = drawing.Open())
+        {
+            // Tint the background contribution, then put the estimated
+            // foreground back over it before applying highlight opacity.
+            context.DrawRectangle(new SolidColorBrush(Color.FromRgb(color.R, color.G, color.B)), null, pixels);
+            context.DrawImage(foreground, pixels);
+        }
+        drawing.Freeze();
+        var brush = new DrawingBrush(drawing)
+        {
+            ViewportUnits = BrushMappingMode.Absolute, Viewport = sourceBounds,
+            ViewboxUnits = BrushMappingMode.Absolute, Viewbox = pixels,
+            Stretch = Stretch.Fill, TileMode = TileMode.None,
+            Opacity = (byte)(opacity * color.A / 255) / 255d
+        };
+        brush.Freeze();
+        return brush;
+    }
 
     internal ImageBrush CreateOpacityBrush(Rect sourceBounds)
     {
@@ -40,7 +63,7 @@ internal static class BackgroundHighlightService
     {
         var mask = BitmapSource.Create(1, 1, 96, 96, PixelFormats.Pbgra32, null, new byte[4], 4);
         mask.Freeze();
-        return new BackgroundHighlightSource(mask);
+        return new BackgroundHighlightSource(mask, mask);
     }
 
     // Choose opening/closing from the wider mean's polarity against local extrema.
@@ -57,7 +80,7 @@ internal static class BackgroundHighlightService
         EnsureSupportedDimensions(width, height);
         var count = checked(width * height);
         var stride = checked(width * 4);
-        byte[] original = [], channel = [], first = [], second = [], scratch = [], protection = [], output = [];
+        byte[] original = [], channel = [], first = [], second = [], scratch = [], protection = [], output = [], foreground = [];
         var radius = Math.Clamp((int)Math.Ceiling(6 * (double.IsFinite(pixelsPerDip) ? pixelsPerDip : 1)), 6, 24);
         try
         {
@@ -68,6 +91,7 @@ internal static class BackgroundHighlightService
             scratch = new byte[count];
             protection = new byte[count];
             output = new byte[original.Length];
+            foreground = new byte[original.Length];
             var formatted = source.Format == PixelFormats.Bgra32 ? source : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
             formatted.CopyPixels(original, stride, 0);
             for (var component = 0; component < 3; component++)
@@ -96,13 +120,16 @@ internal static class BackgroundHighlightService
                     // Raw extrema retain the actual foreground/background split.
                     var background = Math.Abs(mean - minimum) < Math.Abs(mean - maximum) ? opening : closing;
                     protection[pixel] = (byte)Math.Max(protection[pixel], Math.Abs(channel[pixel] - background));
+                    foreground[pixel * 4 + component] = background;
                 }
             }
             // Antialias pixels contain both foreground and background. A binary
             // mask preserves their old background too, leaving pale outlines
             // when the surrounding background is highlighted. Estimate local
-            // foreground coverage instead, keeping the detail core protected
-            // while allowing its background-heavy edge to receive the tint.
+            // foreground coverage instead and separate its color contribution.
+            // Merely fading a solid tint by coverage still forms colored rings
+            // on repeated highlights. Compositing aF + (1-a)H at opacity t
+            // retains aF and repeatedly tints only the background contribution.
             // Keep this neighborhood at one physical pixel: the wider radius
             // used to estimate background would mix unrelated dark text into
             // a nearby faint line and erase that line's protection.
@@ -111,20 +138,45 @@ internal static class BackgroundHighlightService
             for (var pixel = 0; pixel < count; pixel++)
             {
                 var contrast = first[pixel];
-                var sourceAlpha = original[pixel * 4 + 3];
-                var alpha = contrast < 2 ? sourceAlpha :
-                    (byte)((sourceAlpha * (contrast - protection[pixel]) + contrast / 2) / contrast);
                 var offset = pixel * 4;
+                // A one-level overshoot can come from premultiplied glyph
+                // rounding; it must not make an otherwise solid core tintable.
+                var coverage = contrast < 2 ? 0 : contrast - protection[pixel] <= 1 ? 255 :
+                    (protection[pixel] * 255 + contrast / 2) / contrast;
+                // Enforce the RGB feasibility bounds of P = aF + (1-a)B.
+                // Increasing a when needed keeps the recovered foreground in
+                // gamut rather than clipping its color or painting a halo.
+                for (var component = 0; component < 3; component++)
+                {
+                    var value = original[offset + component];
+                    var background = foreground[offset + component];
+                    if (value < background)
+                        coverage = Math.Max(coverage, ((background - value) * 255 + background - 1) / background);
+                    else if (value > background)
+                        coverage = Math.Max(coverage, ((value - background) * 255 + 254 - background) / (255 - background));
+                }
+                for (var component = 0; component < 3; component++)
+                {
+                    var premultiplied = (original[offset + component] * 255 -
+                        (255 - coverage) * foreground[offset + component] + 127) / 255;
+                    foreground[offset + component] = (byte)Math.Clamp(premultiplied, 0, coverage);
+                }
+                foreground[offset + 3] = (byte)coverage;
+                // The source-over derivation assumes an opaque source. Keep
+                // translucent pixels intact rather than increasing their alpha.
+                var alpha = coverage < 255 && original[offset + 3] == 255 ? (byte)255 : (byte)0;
                 output[offset] = output[offset + 1] = output[offset + 2] = output[offset + 3] = alpha;
             }
             var mask = BitmapSource.Create(width, height, source.DpiX, source.DpiY, PixelFormats.Pbgra32, null, output, stride);
             mask.Freeze();
-            return new BackgroundHighlightSource(mask);
+            var detail = BitmapSource.Create(width, height, source.DpiX, source.DpiY, PixelFormats.Pbgra32, null, foreground, stride);
+            detail.Freeze();
+            return new BackgroundHighlightSource(mask, detail);
         }
         finally
         {
             Array.Clear(original); Array.Clear(channel); Array.Clear(first); Array.Clear(second);
-            Array.Clear(scratch); Array.Clear(protection); Array.Clear(output);
+            Array.Clear(scratch); Array.Clear(protection); Array.Clear(output); Array.Clear(foreground);
         }
     }
 

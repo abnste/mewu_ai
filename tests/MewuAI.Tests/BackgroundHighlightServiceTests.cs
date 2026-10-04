@@ -57,7 +57,9 @@ public sealed class BackgroundHighlightServiceTests
             var actualDifference = Pixel(source, x, y).Take(3).Where((channel, index) => channel != background[index]).Any();
             var opacity = Pixel(mask.Mask, x, y)[3];
             if (x is >= 22 and <= 24) Assert.Equal(0, opacity);
-            else if (actualDifference) Assert.InRange(opacity, 1, 254);
+            // Antialias coverage is now reconstructed by the shared foreground
+            // texture. The mask only excludes solid cores/nonopaque source.
+            else if (actualDifference) Assert.Equal(255, opacity);
             else Assert.Equal(255, opacity);
         }
         Assert.Equal(255, Pixel(mask.Mask, 8, 18)[3]); Assert.Equal(before, Pixels(source));
@@ -100,15 +102,17 @@ public sealed class BackgroundHighlightServiceTests
     }
 
     [Fact]
-    public void ContinuousMaskNeverExceedsSourceAlphaOrMutatesTransparentInput()
+    public void NonopaqueSourceIsProtectedWithoutChangingItsAlphaOrPixels() => Sta(() =>
     {
         var pixels = Pixels(Source([240, 240, 240], [0, 0, 0]));
         for (var pixel = 0; pixel < 64 * 36; pixel++) pixels[pixel * 4 + 3] = pixel % 2 == 0 ? (byte)128 : (byte)0;
         var source = BitmapSource.Create(64, 36, 96, 96, PixelFormats.Bgra32, null, pixels, 256); source.Freeze();
-        var mask = Pixels(BackgroundHighlightService.CreateSource(source).Mask);
-        for (var pixel = 0; pixel < 64 * 36; pixel++) Assert.InRange(mask[pixel * 4 + 3], 0, pixels[pixel * 4 + 3]);
+        var protection = BackgroundHighlightService.CreateSource(source);
+        var mask = Pixels(protection.Mask);
+        for (var pixel = 0; pixel < 64 * 36; pixel++) Assert.Equal(0, mask[pixel * 4 + 3]);
+        Assert.Equal(Pixels(Render(source)), Pixels(Render(source, Stroke(protection))));
         Assert.Equal(pixels, Pixels(source));
-    }
+    });
 
     [Theory]
     [InlineData(220, 220, 220, 0, 0, 0)]
@@ -132,7 +136,7 @@ public sealed class BackgroundHighlightServiceTests
         var source = BitmapSource.Create(64, 36, 96, 96, PixelFormats.Bgra32, null, bytes, 256); source.Freeze();
         var protection = BackgroundHighlightService.CreateSource(source);
         var stroke = Stroke(protection); stroke.DrawingAttributes.Color = Colors.Red;
-        foreach (var rendered in new[] { Render(source, stroke), Render(source, stroke, stroke) })
+        foreach (var rendered in new[] { Render(source, stroke), Render(source, stroke, stroke), Render(source, stroke, stroke, stroke) })
         {
             var tintedBackground = Pixel(rendered, 7, 18);
             var previous = tintedBackground;
