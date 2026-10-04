@@ -1817,7 +1817,7 @@ public partial class CaptureOverlayWindow : Window
         if(!ShouldShowSelectionToolbar(pointer)){ScheduleToolbarHide();return;}
         _toolbarHideTimer.Stop();
         var regionNumber=_activeIndex+1;var type=item.VideoPath is null?"区域":"视频";ReferenceButton.ToolTip=_references.Contains(item)?$"{type}{regionNumber} 已引用；可在输入框移除":$"引用当前{type}为 @{type}{regionNumber}";ReferenceButton.Background=new SolidColorBrush(_references.Contains(item)?Color.FromRgb(218,239,231):Color.FromRgb(233,237,255));
-        var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;TableButton.Visibility=!isVideo&&_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
+         var isVideo=item.VideoPath is not null;ReferenceButton.Visibility=_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;DrawButton.Visibility=Visibility.Visible;RecordButton.Visibility=LongCaptureButton.Visibility=!isVideo?Visibility.Visible:Visibility.Collapsed;OcrButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;MemoryFillButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;BarcodeButton.Visibility=isVideo?Visibility.Collapsed:Visibility.Visible;TranslateButton.Visibility=!isVideo&&_translationAiAvailable?Visibility.Visible:Visibility.Collapsed;TableButton.Visibility=!isVideo&&_conversationAiAvailable?Visibility.Visible:Visibility.Collapsed;VideoPlayButton.Visibility=isVideo?Visibility.Visible:Visibility.Collapsed;PinButton.ToolTip=isVideo?"贴视频 (P)":"贴图 (P)";CopyButton.ToolTip=isVideo?"复制视频文件 (C)":"复制图片 (C)";SaveButton.ToolTip=isVideo?"保存 MP4 / GIF (S)":"保存图片 (S)";
         // MCP 分享按钮：静态图选区 + 对应服务已启用时显示。
         DingTalkButton.Visibility=!isVideo&&_host.Settings.DingTalkEnabled?Visibility.Visible:Visibility.Collapsed;
         FeishuButton.Visibility=!isVideo&&_host.Settings.FeishuEnabled?Visibility.Visible:Visibility.Collapsed;
@@ -3880,6 +3880,33 @@ public partial class CaptureOverlayWindow : Window
             RenderTextOverlays(item,image,document.Lines,translations,true);RecordOverlayOperation(before,"原位翻译");PromptStatus.Text=$"{document.Engine} · 已在原位翻译 {translations.Count} 行";
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消翻译";}catch(TimeoutException ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=ex.Message;}catch(Exception ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
+    }
+
+    private void DecodeBarcode(object s, RoutedEventArgs e)
+    {
+        if (RejectIfOverlayOperationBusy()) return;
+        if (Active is not { IsImplicit: false } item || item.VideoPath is not null) { PromptStatus.Text = "请先框选二维码或条码区域"; return; }
+        try
+        {
+            var results = BarcodeDecodeService.Decode(CurrentImage());
+            if (results.Count == 0) { PromptStatus.Text = "未识别到二维码或条码。微信好友码请完整圈选，避免裁掉四角定位标记。"; return; }
+            var lines = results.Select(r => $"{ClassifyBarcode(r.Text)}：{r.Text}").ToArray();
+            var message = string.Join(Environment.NewLine, lines);
+            ClipboardService.TrySetText(string.Join(Environment.NewLine, results.Select(r => r.Text)), out _);
+            MessageBox.Show(this, message + Environment.NewLine + Environment.NewLine + "内容已复制到剪贴板。", "二维码/条码识别", MessageBoxButton.OK, MessageBoxImage.Information);
+            PromptStatus.Text = $"已识别 {results.Count} 个二维码/条码，内容已复制";
+        }
+        catch (Exception ex) { new PrivacyLogger().Info("BarcodeDecode", ex.GetType().Name); PromptStatus.Text = $"二维码/条码识别失败：{ex.Message}"; }
+    }
+
+    private static string ClassifyBarcode(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "未知条码";
+        if (text.Contains("work.weixin.qq.com", StringComparison.OrdinalIgnoreCase)) return "企业微信二维码";
+        if (text.Contains("weixin.qq.com", StringComparison.OrdinalIgnoreCase) || text.StartsWith("wxp://", StringComparison.OrdinalIgnoreCase)) return "微信二维码";
+        if (text.Contains("qm.qq.com", StringComparison.OrdinalIgnoreCase) || text.Contains("qq.com", StringComparison.OrdinalIgnoreCase)) return "QQ二维码";
+        if (Uri.TryCreate(text, UriKind.Absolute, out _)) return "普通链接二维码";
+        return text.All(char.IsDigit) ? "商品/数字条码" : "普通二维码";
     }
 
     private async void Ocr(object s,RoutedEventArgs e)

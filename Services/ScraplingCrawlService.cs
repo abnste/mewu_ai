@@ -228,23 +228,26 @@ internal static class ScraplingCrawlService
         };
     }
 
-    /// <summary>剔除格式损坏的代理环境变量（值形如 http://http://…、无主机名等），
-    /// 保留合法代理（用户可能依赖本地代理访问外网）。curl_cffi 遇到坏代理会直接
-    /// ProxyError，playwright 也会受影响。</summary>
-    private static void SanitizeProxyEnv(System.Collections.Specialized.StringDictionary env)
+    /// <summary>修复/剔除格式损坏的代理环境变量，保留合法代理（用户可能依赖本地
+    /// 代理访问外网）。已知坏形态：双重 scheme（HTTP_PROXY=http://http://127.0.0.1:33210，
+    /// 2026-09-25 00:28 实测导致 curl "Could not resolve proxy: http"——Uri 把 host
+    /// 解析成 "http" 而非空，此前校验误放行）。策略：先修复双重 scheme，仍不合法才移除。</summary>
+    internal static void SanitizeProxyEnv(System.Collections.Specialized.StringDictionary env)
     {
         foreach(var name in new[]{"HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all_proxy"})
         {
             try
             {
                 if(env[name] is null)continue;
-                var value=env[name];
-                if(string.IsNullOrWhiteSpace(value)||!Uri.TryCreate(value.Trim(),UriKind.Absolute,out var parsed)
-                    ||(parsed.Scheme!="http"&&parsed.Scheme!="https"&&parsed.Scheme!="socks5"&&parsed.Scheme!="socks5h")
-                    ||string.IsNullOrWhiteSpace(parsed.Host))
-                {
-                    env.Remove(name);
-                }
+                var value=env[name]!.Trim();
+                // 修复双重 scheme：http://http://host:port → http://host:port。
+                value=Regex.Replace(value,"^(https?|socks5h?)://(?:https?://)+","$1://",RegexOptions.IgnoreCase);
+                // 合法代理：scheme://host[:port]，host 须像主机名/IP（"http"/"https" 是坏值特征）。
+                var valid=value.StartsWith("socks",StringComparison.OrdinalIgnoreCase)
+                    ?Regex.IsMatch(value,"^socks5h?://[A-Za-z0-9._\\-]+(?::\\d+)?/?$",RegexOptions.IgnoreCase)
+                    :Regex.IsMatch(value,"^https?://[A-Za-z0-9._\\-]+(?::\\d+)?/?$",RegexOptions.IgnoreCase);
+                if(valid)env[name]=value;
+                else env.Remove(name);
             }
             catch{ /* 单项失败不影响其他 */ }
         }
@@ -575,6 +578,13 @@ def try_stealthy(u):
     except Exception as e:
         return "", "", f"{type(e).__name__}: {e}"
 
+def is_network_error(err):
+    # 代理/解析/连接/超时类失败：网络层问题，继续换 URL 重试没有意义。
+    lowered = (err or "").lower()
+    return any(m in lowered for m in (
+        "proxy", "could not resolve", "could not connect", "timed out", "timeout",
+        "ssl", "connection", "tunnel"))
+
 weixin = "mp.weixin.qq.com" in url
 errors = []
 title, text = "", ""
@@ -582,11 +592,14 @@ title, text = "", ""
 title, text, err = try_fetch(url)
 if err:
     errors.append(f"fetch: {err}")
+net_down = is_network_error(err)
 
 # 微信 /s/ 链接且疑似错误页：本地 OCR 常把 key 里的 I/l/1、O/0 认混，
 # 有界生成变体并用轻量 Fetcher 探测（有效 key 的纯 HTTP 请求就能拿到正文）。
+# 首次请求就是网络层错误（代理坏/断网）时跳过——24 个变体必然全部同样失败，
+# 白白拖几分钟（2026-09-25 00:28 实测 2.6 分钟无响应的根因之一）。
 corrected = None
-if weixin and (not text or looks_error_page(text)):
+if weixin and not net_down and (not text or looks_error_page(text)):
     m = re.match(r"^(https?://mp\.weixin\.qq\.com/s/)([A-Za-z0-9_-]+)(.*)$", url)
     if m:
         prefix, key, suffix = m.group(1), m.group(2), m.group(3)
@@ -612,6 +625,11 @@ if weixin and (not text or looks_error_page(text)):
                 break
             t2, x2, e2 = try_fetch(prefix + v + suffix, timeout=15)
             if e2:
+                # 变体探测途中出现网络层错误：后续探测必然同样失败，立即止损。
+                if is_network_error(e2):
+                    errors.append(f"variant: {e2}")
+                    net_down = True
+                    break
                 continue
             if x2 and not looks_error_page(x2):
                 corrected = prefix + v + suffix

@@ -81,6 +81,7 @@ public sealed class SettingsService
     internal static void ValidateForSave(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        ValidateMemorySettings(settings);
         if(settings.Providers is not {Count:>0})throw new InvalidOperationException("至少需要一个 AI Provider");
         var providerIds=new HashSet<string>(StringComparer.Ordinal);
         foreach(var provider in settings.Providers)
@@ -231,8 +232,68 @@ public sealed class SettingsService
         settings.HermesProfile=string.IsNullOrWhiteSpace(settings.HermesProfile)?"default":settings.HermesProfile.Trim();
         settings.HermesModel=settings.HermesModel?.Trim()??string.Empty;
         settings.HermesReasoningEffort=string.IsNullOrWhiteSpace(settings.HermesReasoningEffort)?"medium":settings.HermesReasoningEffort.Trim().ToLowerInvariant();
+        NormalizeMemorySettings(settings);
         settings.RecordingFps=Math.Clamp(settings.RecordingFps,10,60);settings.RecordingQuality=Math.Clamp(settings.RecordingQuality,20,100);settings.GifFps=Math.Clamp(settings.GifFps,1,15);settings.TempCleanupDays=Math.Clamp(settings.TempCleanupDays,1,30);settings.OverlayOpacity=double.IsFinite(settings.OverlayOpacity)?Math.Clamp(settings.OverlayOpacity,.4,.75):.6;if(!settings.EnableVoiceInput)settings.AutomaticallyStartListening=false;
         return settings;
+    }
+
+    private static void NormalizeMemorySettings(AppSettings settings)
+    {
+        settings.MemoryEntries ??= [];
+        var normalized = new List<MemoryEntry>();
+        foreach (var entry in settings.MemoryEntries)
+        {
+            if (entry is null) continue;
+            entry.Id = string.IsNullOrWhiteSpace(entry.Id) ? Guid.NewGuid().ToString("N") : entry.Id.Trim();
+            entry.Keywords ??= [];
+            entry.Keywords = entry.Keywords
+                .Where(keyword => !string.IsNullOrWhiteSpace(keyword))
+                .Select(keyword => keyword.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(32)
+                .ToList();
+            entry.FieldKind = entry.FieldKind?.Trim().ToLowerInvariant() switch
+            {
+                "username" or "email" or "password" or "text" => entry.FieldKind.Trim().ToLowerInvariant(),
+                _ => "auto"
+            };
+            entry.CredentialId ??= string.Empty;
+            entry.Value ??= string.Empty;
+            if (entry.FieldKind == "password") entry.Sensitive = true;
+            if (entry.Keywords.Count > 0) normalized.Add(entry);
+        }
+        settings.MemoryEntries = normalized.Take(100).ToList();
+        settings.MemoryDetectionPlan = settings.MemoryDetectionPlan?.Trim().ToLowerInvariant() switch
+        {
+            "rules" or "strict" => settings.MemoryDetectionPlan.Trim().ToLowerInvariant(),
+            _ => "hybrid"
+        };
+        settings.MemoryConfidenceThreshold = double.IsFinite(settings.MemoryConfidenceThreshold)
+            ? Math.Clamp(settings.MemoryConfidenceThreshold, .5, .98) : .72;
+        settings.MemoryVisualModelPath = settings.MemoryVisualModelPath?.Trim() ?? string.Empty;
+    }
+
+    private static void ValidateMemorySettings(AppSettings settings)
+    {
+        if (settings.MemoryEntries is null || settings.MemoryEntries.Count > 100)
+            throw new InvalidOperationException("记忆项数量不能超过 100 条");
+        if (settings.MemoryDetectionPlan is not ("hybrid" or "rules" or "strict"))
+            throw new InvalidOperationException("记忆扫描计划无效");
+        if (!double.IsFinite(settings.MemoryConfidenceThreshold) || settings.MemoryConfidenceThreshold is < .5 or > .98)
+            throw new InvalidOperationException("记忆自动填充阈值必须在 50% 到 98% 之间");
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in settings.MemoryEntries)
+        {
+            if (entry is null || string.IsNullOrWhiteSpace(entry.Id) || !ids.Add(entry.Id))
+                throw new InvalidOperationException("记忆项标识无效或重复");
+            if (entry.Keywords is not { Count: > 0 } || entry.Keywords.Any(keyword => string.IsNullOrWhiteSpace(keyword) || keyword.Length > 128))
+                throw new InvalidOperationException("每条记忆至少需要一个不超过 128 个字符的关键词");
+            if (entry.Keywords.Count > 32) throw new InvalidOperationException("每条记忆最多支持 32 个关键词");
+            if (entry.FieldKind is not ("auto" or "username" or "email" or "password" or "text"))
+                throw new InvalidOperationException("记忆字段类型无效");
+            if (!string.IsNullOrWhiteSpace(entry.CredentialId) && (entry.CredentialId.Length > 128 || entry.CredentialId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_')))
+                throw new InvalidOperationException("记忆凭据标识无效");
+        }
     }
 
     private static void ValidateHermesForSave(AppSettings settings)

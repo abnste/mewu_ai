@@ -64,4 +64,21 @@ public sealed class ScraplingE2eTests
         Assert.True(result.Text.Length>=80,result.Text);
         Assert.Contains("Example Domain",result.Title,StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void SanitizeProxyEnvRepairsDoubleSchemeAndDropsGarbage()
+    {
+        // 本机系统级坏代理（http://http://…）曾让 curl 报 "Could not resolve proxy: http"；
+        // 修复双重 scheme 保留真实代理意图，垃圾值直接移除。
+        var env=new System.Collections.Specialized.StringDictionary
+        {
+            {"HTTP_PROXY","http://http://127.0.0.1:33210"},
+            {"https_proxy","http://127.0.0.1:7890"},
+            {"ALL_PROXY","garbage"},
+        };
+        ScraplingCrawlService.SanitizeProxyEnv(env);
+        Assert.Equal("http://127.0.0.1:33210",env["HTTP_PROXY"]);
+        Assert.Equal("http://127.0.0.1:7890",env["https_proxy"]);
+        Assert.Null(env["ALL_PROXY"]);
+    }
 }

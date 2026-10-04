@@ -296,18 +296,22 @@ public partial class CaptureOverlayWindow
                     _=CrawlUrlWithScraplingAsync(url.Value);
                 }));
         }
-        // 每个识别到的邮箱都提供撰写入口；QQ/foxmail 地址优先走 QQ 邮箱 MCP，
-        // 网易后缀（163/126/yeah 等）优先走网易 SMTP，其余按可用渠道回退。
-        var email=entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Email&&entity.MailProvider=="qq")
-            ??entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Email&&entity.MailProvider=="netease")
-            ??entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Email);
+        var phone=entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Phone);
+        // UIA/OCR snapshots may contain the whole surrounding document rather than
+        // only the dragged glyphs. A phone selection can therefore pick up an
+        // unrelated mailbox (for example "ing@gmail.com"). Phone actions take
+        // precedence so that a phone selection never opens a mail composer.
+        var email=phone is null
+            ?entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Email&&entity.MailProvider=="qq")
+                ??entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Email&&entity.MailProvider=="netease")
+                ??entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Email)
+            :null;
         if(email is not null)
         {
             ScreenEntityBarContent.Children.Add(EntityBarButton(
                 string.Format(System.Globalization.CultureInfo.CurrentCulture,L("发邮件给 {0}","Email {0}"),email.Value),
                 email.Value,$"{email.DisplayProvider} · {email.Value}",()=>ComposeScreenEntityMail(email)));
         }
-        var phone=entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Phone);
         if(phone is not null)
         {
             ScreenEntityBarContent.Children.Add(EntityBarButton(L("拨号","Call"),phone.Value,L("拨打电话号码","Dial phone number"),()=>
