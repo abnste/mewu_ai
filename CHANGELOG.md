@@ -2,7 +2,9 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
-## 未发布 / Unreleased
+## 0.7.1 — 高亮边缘与透明提取叠加修复 / Highlight edges and seamless-lift composition fixes
+
+完整双语说明 / Full release notes: [0.7.1](./docs/release-notes-v0.7.1.md)
 
 - 修复透明提取、涂抹消除与高亮叠加时出现白块或截断的问题，统一编辑画面与导出的图层顺序，并保留提取内容的移动、删除与撤销重做。 / Fix white patches and interrupted highlights when combining seamless lift or healing with highlights. Keep layer order consistent in the editor and exports while retaining move, delete, undo and redo for lifted content.
 - 提取图层拖动时使用透明预览，避免原处残留字影或新位置文字被高亮染色；连续移动复用文字保护数据，结束后恢复原图层顺序。 / Use a transparent drag preview for lifted content to prevent text ghosts or tinted text at the destination. Reuse highlight protection data throughout movement and restore the original layer order when the gesture ends.
