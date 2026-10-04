@@ -73,9 +73,13 @@ internal static class DrawingHighlightLiftReplay
     private static void RunCase(AppHost host, double scale, string kind, bool highlightFirst, string directory, Action<bool, string> check, List<object> evidence)
     {
         var (source, glyph) = CreateSource(scale); var original = Pixels(source);
-        using var session = new Session(host, source);
+        using var session = new Session(host, source, directory);
         var overlay = session.Overlay; var item = session.Item; var markup = session.Markup;
         var elements = Get<IList>(item, "DrawingElements"); var order = Get<IList>(item, "DrawingOrder");
+        var clean = (BitmapSource)session.Invoke("RenderSelectionImage", item, false, false, false)!;
+        var fullSource = clean.PixelWidth == source.PixelWidth && clean.PixelHeight == source.PixelHeight && Pixels(clean).SequenceEqual(original);
+        check(fullSource, "clean selection is the complete synthetic source with identical pixels");
+        if (!fullSource) throw new InvalidOperationException("Synthetic layout does not map the full source into its selection; see layout.json.");
         void Call(string method, params object?[] arguments) => session.Invoke(method, arguments);
         BitmapSource Saved() => (BitmapSource)session.Invoke("RenderSelectionImage", item, true, false, false)!;
         void Undo() => Call("DrawUndo", overlay, new RoutedEventArgs());
@@ -225,7 +229,7 @@ internal static class DrawingHighlightLiftReplay
         internal CaptureOverlayWindow Overlay { get; }
         internal object Item { get; }
         internal InkCanvas Markup { get; }
-        internal Session(AppHost host, BitmapSource source)
+        internal Session(AppHost host, BitmapSource source, string directory)
         {
             Overlay = new CaptureOverlayWindow(host, null, new CaptureFrame(0, 0, source));
             var root = (Canvas)Overlay.FindName("Root"); root.Width = Width; root.Height = Height;
@@ -235,6 +239,21 @@ internal static class DrawingHighlightLiftReplay
             Item.GetType().GetField("Bounds", Flags)!.SetValue(Item, new Rect(0, 0, Width, Height));
             Invoke("UpdateSelection", Item); Markup = Get<InkCanvas>(Item, "Markup");
             var selection = Get<Grid>(Item, "Host"); selection.Measure(new Size(Width, Height)); selection.Arrange(new Rect(0, 0, Width, Height)); selection.UpdateLayout();
+            var before = Layout();
+            // A Window's DPI/layout callbacks use the real virtual desktop dimensions.
+            // Detach its actual content for this no-HWND synthetic layout, so child
+            // UpdateLayout cannot make ToPixelRect crop against the physical desktop.
+            Overlay.Content = null;
+            root.Width = Width; root.Height = Height;
+            root.Measure(new Size(Width, Height)); root.Arrange(new Rect(0, 0, Width, Height)); root.UpdateLayout();
+            Invoke("UpdateSelection", Item);
+            selection.Measure(new Size(Width, Height)); selection.Arrange(new Rect(0, 0, Width, Height)); selection.UpdateLayout();
+            File.WriteAllText(Path.Combine(directory, "layout.json"), JsonSerializer.Serialize(new { before, after = Layout(), sourceWidth = source.PixelWidth, sourceHeight = source.PixelHeight },
+                new JsonSerializerOptions { WriteIndented = true }));
+
+            object Layout() => new { rootWidth = root.Width, rootHeight = root.Height, rootActualWidth = root.ActualWidth, rootActualHeight = root.ActualHeight,
+                windowWidth = Overlay.Width, windowHeight = Overlay.Height, windowActualWidth = Overlay.ActualWidth, windowActualHeight = Overlay.ActualHeight,
+                pixelRect = (Int32Rect)Invoke("ToPixelRect", new Rect(0, 0, Width, Height))!, hwnd = new WindowInteropHelper(Overlay).Handle.ToInt64(), windowLoaded = Overlay.IsLoaded };
         }
         internal object? Invoke(string name, params object?[] args) => typeof(CaptureOverlayWindow).GetMethod(name, Flags)!.Invoke(Overlay, args);
         internal object? Field(string name) => typeof(CaptureOverlayWindow).GetField(name, Flags)!.GetValue(Overlay);
