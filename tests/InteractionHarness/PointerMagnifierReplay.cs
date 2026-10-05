@@ -177,6 +177,9 @@ internal static class PointerMagnifierReplay
             Invoke("UpdatePointerInspector", centerPoint); root.UpdateLayout();
             var textRender = Path.Combine(directory, "magnifier-" + language + "-text-edge-168.png");
             RenderCard(inspector, magnifier, Sample(magnifier), 168, textRender, Check); renders.Add(textRender);
+            // Keep synthetic DPI geometry independent of the unopened Window's
+            // physical-desktop layout when selection controls invalidate measure.
+            overlay.Content=null;
             var item=Invoke("CreateSelection",false)!;
             var selections=(System.Collections.IList)typeof(CaptureOverlayWindow).GetField("_selections",Private)!.GetValue(overlay)!;
             selections.Add(item);Set("_activeIndex",0);
@@ -192,7 +195,7 @@ internal static class PointerMagnifierReplay
                 item.GetType().GetField("Bounds")!.SetValue(item,selectionBounds);Invoke("UpdateSelection",item);
                 var point=new Point(root.Width-2,root.Height-2);Invoke("UpdatePointerInspector",point);root.UpdateLayout();
                 var pixelBounds=(Int32Rect)Invoke("ToPixelRect",selectionBounds)!;
-                Check(sizeText.Text==$"{pixelBounds.Width} × {pixelBounds.Height}","size readout uses physical capture dimensions at "+dpi+" DPI");
+                Check(sizeText.Text==$"{pixelBounds.Width} × {pixelBounds.Height}","size readout uses physical capture dimensions at "+dpi+" DPI; actual="+sizeText.Text+"; expected="+$"{pixelBounds.Width} × {pixelBounds.Height}"+"; surface="+root.RenderSize);
                 Check(sizeRow.Visibility==Visibility.Visible&&Math.Abs(inspector.ActualHeight-144)<=1&&Math.Abs(inspector.ActualWidth-90)<=1,"size adds exactly one compact line without widening the magnifier at "+dpi+" DPI");
                 var coordinates=coordinateText.TransformToAncestor(inspector).TransformBounds(new Rect(coordinateText.RenderSize));
                 var dimensions=sizeText.TransformToAncestor(inspector).TransformBounds(new Rect(sizeText.RenderSize));
