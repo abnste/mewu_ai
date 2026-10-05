@@ -19,6 +19,8 @@ using mewu_ai_Assistant.Views;
 using QRCoder;
 using Application=System.Windows.Application;
 using Size=System.Windows.Size;
+using Button=System.Windows.Controls.Button;
+using Panel=System.Windows.Controls.Panel;
 
 internal static class ScreenEntityScanReplay
 {
