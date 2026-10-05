@@ -130,9 +130,16 @@ internal static class ScreenEntityScanReplay
 
             var multiValues=new[]{"https://example.invalid/first","second-code","https://example.invalid/third"};
             var multiImage=MultipleCodes(multiValues);
+            // Use real monitor metadata with synthetic pixels, so a monitor
+            // above/left of the primary cannot place the hint outside the fake frame.
+            var desktop=System.Windows.Forms.SystemInformation.VirtualScreen;
+            var primary=System.Windows.Forms.Screen.PrimaryScreen!.WorkingArea;
+            var syntheticDesktop=BitmapSource.Create(desktop.Width,desktop.Height,96,96,PixelFormats.Bgra32,null,new byte[desktop.Width*desktop.Height*4],desktop.Width*4);syntheticDesktop.Freeze();
+            Set("_frame",new CaptureFrame(desktop.X,desktop.Y,syntheticDesktop));
+            var stageLeft=primary.Left-desktop.Left;var stageTop=primary.Top-desktop.Top;
             fields.GetField("CapturedImageOverride")!.SetValue(item,multiImage);
-            fields.GetField("Bounds")!.SetValue(item,new Rect(40,150,Math.Min(700,multiImage.PixelWidth),multiImage.PixelHeight));Clear();
-            root.Width=900;root.Height=620;root.Measure(new Size(900,620));root.Arrange(new Rect(0,0,900,620));root.UpdateLayout();
+            fields.GetField("Bounds")!.SetValue(item,new Rect(stageLeft+40,stageTop+150,Math.Min(700,multiImage.PixelWidth),multiImage.PixelHeight));Clear();
+            root.Width=desktop.Width;root.Height=desktop.Height;root.Measure(new Size(desktop.Width,desktop.Height));root.Arrange(new Rect(0,0,desktop.Width,desktop.Height));root.UpdateLayout();
             var multiText=NewResult();var multiTask=Start(multiText);
             var results=(IDictionary)typeof(CaptureOverlayWindow).GetField("_screenBarcodes",Private)!.GetValue(overlay)!;
             WaitUntil(()=>results.Contains(item));
@@ -168,10 +175,14 @@ internal static class ScreenEntityScanReplay
             var sizeLabel=(FrameworkElement)overlay.FindName("SizeText");
             Check(sizeLabel.Visibility!=Visibility.Visible||!Bounds(multiBar).IntersectsWith(Bounds(sizeLabel)),"the hint also avoids the screenshot dimension badge");
             var scale=english?1:1.75;
-            var rendered=new RenderTargetBitmap((int)(900*scale),(int)(620*scale),96*scale,96*scale,PixelFormats.Pbgra32);rendered.Render(root);
+            Check(new Rect(stageLeft,stageTop,primary.Width,primary.Height).Contains(Bounds(multiBar)),"the actual hint lies inside the active physical monitor's viewport");
+            var stage=new DrawingVisual();
+            using(var drawing=stage.RenderOpen())drawing.DrawRectangle(new VisualBrush(root){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=new Rect(stageLeft,stageTop,900,620),Stretch=Stretch.Fill},null,new Rect(0,0,900,620));
+            var rendered=new RenderTargetBitmap((int)(900*scale),(int)(620*scale),96*scale,96*scale,PixelFormats.Pbgra32);rendered.Render(stage);
             var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(rendered));
             using(var output=File.Create(Path.Combine(directory,"multiple-qr-layout.png")))encoder.Save(output);
             Invoke("ClearImageDerivedLayers",item);fields.GetField("CapturedImageOverride")!.SetValue(item,null);fields.GetField("Bounds")!.SetValue(item,bounds);Clear();
+            Set("_frame",frame);root.Width=400;root.Height=300;root.Measure(new Size(400,300));root.Arrange(new Rect(0,0,400,300));root.UpdateLayout();
 
             var deliveries=0;var sentCallbacks=0;
             var compose=new MailComposeWindow(null,"sample@example.org","Synthetic compose",(_,_,_)=>
