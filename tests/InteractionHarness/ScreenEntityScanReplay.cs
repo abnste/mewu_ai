@@ -16,6 +16,7 @@ using System.Windows.Threading;
 using mewu_ai_Assistant.Models;
 using mewu_ai_Assistant.Services;
 using mewu_ai_Assistant.Views;
+using QRCoder;
 using Application=System.Windows.Application;
 using Size=System.Windows.Size;
 
@@ -97,6 +98,29 @@ internal static class ScreenEntityScanReplay
             var removed=NewResult();var removedTask=Start(removed);selections.Remove(item);
             removed.SetResult("removed selection");Complete(removedTask);Check(Text() is null,"removed selection never receives a late result");selections.Add(item);
 
+            const string qrValue="https://example.invalid/automatic-qr";
+            using(var generator=new QRCodeGenerator())
+            using(var qrData=generator.CreateQrCode(qrValue,QRCodeGenerator.ECCLevel.M))
+            using(var qrCode=new PngByteQRCode(qrData))
+            using(var qrStream=new MemoryStream(qrCode.GetGraphic(5)))
+            {
+                var qrImage=new BitmapImage();qrImage.BeginInit();qrImage.CacheOption=BitmapCacheOption.OnLoad;qrImage.StreamSource=qrStream;qrImage.EndInit();qrImage.Freeze();
+                Set("_frame",new CaptureFrame(0,0,qrImage));fields.GetField("Bounds")!.SetValue(item,new Rect(0,0,qrImage.PixelWidth,qrImage.PixelHeight));Clear();
+                var barcodeResults=(IDictionary)typeof(CaptureOverlayWindow).GetField("_screenBarcodes",Private)!.GetValue(overlay)!;
+                var delayedText=NewResult();var automaticTask=Start(delayedText);
+                WaitUntil(()=>barcodeResults.Contains(item));
+                var bar=(FrameworkElement)overlay.FindName("ScreenEntityBar");
+                var content=(Panel)overlay.FindName("ScreenEntityBarContent");
+                Check(bar.Visibility==Visibility.Visible&&Text() is null,"QR hint appears automatically before the text reader completes");
+                Check(content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue),"automatic QR hint exposes the decoded content without a toolbar click");
+                delayedText.SetResult("sample@example.org");Complete(automaticTask);
+                Check(content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue)&&content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="sample@example.org"),"email and QR actions coexist after either recognition completes");
+                fields.GetField("Bounds")!.SetValue(item,new Rect(1,0,qrImage.PixelWidth-1,qrImage.PixelHeight));Invoke("UpdateScreenEntityBar",item);
+                Check(!content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue),"changed geometry never reuses a previous QR hint");
+                Invoke("ClearImageDerivedLayers",item);Check(!barcodeResults.Contains(item),"content invalidation releases decoded QR content");
+                Set("_frame",frame);fields.GetField("Bounds")!.SetValue(item,bounds);Clear();
+            }
+
             var deliveries=0;var sentCallbacks=0;
             var compose=new MailComposeWindow(null,"sample@example.org","Synthetic compose",(_,_,_)=>
                 Task.FromResult(++deliveries==1?new MailDeliveryResult(false,"synthetic refusal"):new MailDeliveryResult(false,"synthetic unconfirmed",true)));
@@ -148,7 +172,7 @@ internal static class ScreenEntityScanReplay
         File.WriteAllText(Path.Combine(directory,"screen-entity-result.json"),JsonSerializer.Serialize(new
         {
             passed=failure is null,checks,failure,productSha256=Convert.ToHexString(SHA256.HashData(assembly)),
-            actualDesktopInput=false,nativeWindowCreated=false,realOcrOrAccountsUsed=false
+            actualDesktopInput=false,nativeWindowCreated=false,realOcrOrAccountsUsed=false,realBarcodeDecode=true
         },new JsonSerializerOptions{WriteIndented=true}),new UTF8Encoding(false));
         Environment.ExitCode=failure is null?0:1;
     }
@@ -162,5 +186,14 @@ internal static class ScreenEntityScanReplay
         timer.Start();try{Dispatcher.PushFrame(loop);}finally{timer.Stop();}
         if(!task.IsCompleted)throw new TimeoutException("Synthetic screen-entity request did not settle.");
         task.GetAwaiter().GetResult();
+    }
+
+    private static void WaitUntil(Func<bool> condition)
+    {
+        var loop=new DispatcherFrame();var watch=Stopwatch.StartNew();
+        var timer=new DispatcherTimer(DispatcherPriority.Send){Interval=TimeSpan.FromMilliseconds(20)};
+        timer.Tick+=(_,_)=>{if(condition()||watch.Elapsed>TimeSpan.FromSeconds(10))loop.Continue=false;};
+        timer.Start();try{Dispatcher.PushFrame(loop);}finally{timer.Stop();}
+        if(!condition())throw new TimeoutException("Automatic QR scan did not publish its hint.");
     }
 }

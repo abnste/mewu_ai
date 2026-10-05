@@ -4,7 +4,7 @@
 
 ## 未发布 / Unreleased
 
-- 新增圈选区域内二维码/条码识别与本机记忆扫描填充（右键工具栏“文字”按钮）；记忆值使用 Windows DPAPI 加密，填充前检查目标窗口，支持逐项确认。 / Add local QR/barcode recognition and memory-based form filling from the OCR button's context menu, with DPAPI-encrypted values, target-window checks and per-field confirmation. ([#19](https://github.com/abnste/mewu_ai/pull/19))
+- 圈选后自动识别二维码/条码，并像邮箱、链接一样显示原位提示；新增本机记忆扫描填充（右键工具栏“文字”按钮），记忆值使用 Windows DPAPI 加密，填充前检查目标窗口，支持逐项确认。 / Automatically recognize selected QR codes/barcodes and show inline actions alongside email/link recognition. Add memory-based form filling from the OCR button's context menu, with DPAPI-encrypted values, target-window checks and per-field confirmation. ([#19](https://github.com/abnste/mewu_ai/pull/19))
 
 ## 0.7.2 — OCR 内存占用修复 / OCR memory usage fix
 

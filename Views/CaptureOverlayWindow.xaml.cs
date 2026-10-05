@@ -988,6 +988,7 @@ public partial class CaptureOverlayWindow : Window
         EndRasterObjectDrawingPreview(refresh:false);
         _pointerSampleImage=null;PointerMagnifier.ClearSample();
         _screenEntityLifetime.Cancel();
+        _screenBarcodes.Clear();
         CancelMosaicDrawingPreview();CancelMarkDrawingPreview();
         CancelAnnotatedImageCopy();
         StopRightPassThrough();
@@ -4113,30 +4114,6 @@ public partial class CaptureOverlayWindow : Window
             RenderTextOverlays(item,image,document.Lines,translations,true);RecordOverlayOperation(before,"原位翻译");PromptStatus.Text=$"{document.Engine} · 已在原位翻译 {translations.Count} 行";
         }
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消翻译";}catch(TimeoutException ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=ex.Message;}catch(Exception ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
-    }
-
-    private async void DecodeBarcode(object s, RoutedEventArgs e)
-    {
-        if (RejectIfOverlayOperationBusy()) return;
-        if (Active is not { IsImplicit: false } item || item.VideoPath is not null) { PromptStatus.Text = L("请先框选二维码或条码区域", "Select a QR code or barcode region first."); return; }
-        var operation = BeginOverlayOperation(L("正在识别二维码/条码…按 Esc 可取消", "Reading QR codes/barcodes… Press Esc to cancel"));
-        try
-        {
-            var image = CurrentImage();
-            image.Freeze();
-            var results = await Task.Run(() => BarcodeDecodeService.Decode(image), operation.Token);
-            if (!IsOverlayOperationActive(operation, item)) return;
-            if (results.Count == 0) { PromptStatus.Text = L("未识别到二维码或条码，请完整圈选后重试。", "No QR code or barcode found. Select the whole code and retry."); return; }
-            var lines = results.Select(r => $"{ClassifyBarcode(r.Text)}：{r.Text}").ToArray();
-            var message = string.Join(Environment.NewLine, lines);
-            var copied = ClipboardService.TrySetText(string.Join(Environment.NewLine, results.Select(r => r.Text)), out _);
-            var copyStatus = copied ? L("内容已复制到剪贴板。", "Content copied to the clipboard.") : L("剪贴板暂不可用，请稍后重试。", "The clipboard is unavailable. Please retry.");
-            MewuDialogWindow.ShowMessage(this, L("二维码/条码识别", "QR code / barcode"), message + Environment.NewLine + Environment.NewLine + copyStatus, true);
-            if (IsOverlayOperationActive(operation, item)) PromptStatus.Text = copyStatus;
-        }
-        catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
-        catch (Exception ex) { new PrivacyLogger().Info("BarcodeDecode", ex.GetType().Name); if (IsOverlayOperationActive(operation, item)) PromptStatus.Text = L("二维码/条码识别失败，请重新圈选后重试。", "Could not read the code. Select the region again and retry."); }
-        finally { EndOverlayOperation(operation); }
     }
 
     private static string ClassifyBarcode(string? text)

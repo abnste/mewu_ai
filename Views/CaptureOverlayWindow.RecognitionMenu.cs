@@ -12,9 +12,8 @@ public partial class CaptureOverlayWindow
     {
         _historyCopyMenuOpen = true;
         var available = !_closed && _overlayRequest is null && Active is { IsImplicit: false, VideoPath: null };
-        BarcodeMenuItem.Header = L("二维码/条码识别", "Read QR code / barcode");
         MemoryFillMenuItem.Header = L("扫描填充", "Scan and fill");
-        BarcodeMenuItem.IsEnabled = MemoryFillMenuItem.IsEnabled = available;
+        MemoryFillMenuItem.IsEnabled = available;
         if (sender is ContextMenu menu && PresentationSource.FromVisual(menu) is HwndSource source)
             NativeMethods.ApplyOwnedWindowCaptureVisibility(source.Handle, new WindowInteropHelper(this).Handle);
     }

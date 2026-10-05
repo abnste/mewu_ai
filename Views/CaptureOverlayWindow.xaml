@@ -72,7 +72,6 @@
      <Button x:Name="OcrButton" ToolTip="原位文字识别 (O)" AutomationProperties.Name="原位文字识别" Click="Ocr" Style="{StaticResource CaptionToolbarButton}">
       <Button.ContextMenu>
        <ContextMenu Style="{StaticResource TextSelectionContextMenu}" Opened="RecognitionMenuOpened" Closed="RecognitionMenuClosed">
-        <MenuItem x:Name="BarcodeMenuItem" Header="二维码/条码识别" Click="DecodeBarcode" Style="{StaticResource TextSelectionMenuItem}"/>
         <MenuItem x:Name="MemoryFillMenuItem" Header="扫描填充" Click="ScanFill" Style="{StaticResource TextSelectionMenuItem}"/>
        </ContextMenu>
       </Button.ContextMenu>

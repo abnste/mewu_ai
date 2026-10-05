@@ -14,13 +14,14 @@ public sealed class BarcodeDecodeTests
     private const string Content = "https://example.invalid/qr?text=中文&value=42";
 
     [Fact]
-    public void NewRecognitionCommandsAreReachableFromTheExistingOcrButtonMenu()
+    public void ScanFillIsReachableWithoutAddingAManualBarcodeButton()
     {
         var document = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "Fixtures", "CaptureOverlayWindow.xaml.xml"));
         XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
         var button = document.Descendants().Single(element => (string?)element.Attribute(xaml + "Name") == "OcrButton");
-        var menu = Assert.Single(button.Descendants().Where(element => element.Name.LocalName == "ContextMenu"));
-        Assert.Equal(new[] { "DecodeBarcode", "ScanFill" }, menu.Elements().Select(element => (string?)element.Attribute("Click")).ToArray());
+        var menu = Assert.Single(button.Descendants(), element => element.Name.LocalName == "ContextMenu");
+        Assert.Equal(new[] { "ScanFill" }, menu.Elements().Select(element => (string?)element.Attribute("Click")).ToArray());
+        Assert.DoesNotContain(document.Descendants(), element => (string?)element.Attribute("Click") == "DecodeBarcode");
         Assert.Equal("Ocr", (string?)button.Attribute("Click"));
         Assert.Equal("RecognitionMenuOpened", (string?)menu.Attribute("Opened"));
     }

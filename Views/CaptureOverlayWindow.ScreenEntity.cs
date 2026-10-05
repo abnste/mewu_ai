@@ -23,6 +23,9 @@ public partial class CaptureOverlayWindow
         BitmapSource? CapturedImage,ApplicationSnapshotTarget? Target);
     private readonly Dictionary<SelectionItem,ScreenEntityScan> _screenTextInFlight=new();
     private readonly CancellationTokenSource _screenEntityLifetime=new();
+    private sealed record BarcodeScanResult(ScreenEntityScan Source,IReadOnlyList<string> Values);
+    private readonly Dictionary<SelectionItem,BarcodeScanResult> _screenBarcodes=new();
+    private readonly SemaphoreSlim _screenBarcodeGate=new(1,1);
 
     private void TryBeginScreenEntityScan(SelectionItem item)
     {
@@ -32,29 +35,35 @@ public partial class CaptureOverlayWindow
             if(_screenTextInFlight.TryGetValue(item,out var current)&&IsScreenEntitySourceCurrent(item,current))return;
         try
         {
+            var image=RenderSelectionImage(item,false,false,false);
+            if(!image.IsFrozen)image.Freeze();
             if(item.SnapshotTarget is { } target)
-                _=BeginScreenEntityScan(item,async token=>(await ApplicationSnapshotProcess.ReadAsync(target,token).ConfigureAwait(false)).Text);
+                _=BeginScreenEntityScanWithImage(item,async token=>(await ApplicationSnapshotProcess.ReadAsync(target,token).ConfigureAwait(false)).Text,image);
             else
             {
                 // Freeze pixels on the UI thread before asynchronous local OCR.
-                var image=RenderSelectionImage(item,false,false,false);
-                _=BeginScreenEntityScan(item,async token=>(await new WindowsOcrService().RecognizeAsync(image,token).ConfigureAwait(false))?.Text);
+                _=BeginScreenEntityScanWithImage(item,async token=>(await new WindowsOcrService().RecognizeAsync(image,token).ConfigureAwait(false))?.Text,image);
             }
         }
         catch(Exception ex){new PrivacyLogger().Info("ScreenEntityText",ex.GetType().Name);}
     }
 
     private Task BeginScreenEntityScan(SelectionItem item,Func<CancellationToken,Task<string?>> readText)
+        =>BeginScreenEntityScanWithImage(item,readText,RenderSelectionImage(item,false,false,false));
+
+    private Task BeginScreenEntityScanWithImage(SelectionItem item,Func<CancellationToken,Task<string?>> readText,BitmapSource image)
     {
+        if(!image.IsFrozen)image.Freeze();
         InvalidateScreenEntityScan(item);
         var request=new ScreenEntityScan(CancellationTokenSource.CreateLinkedTokenSource(_screenEntityLifetime.Token),
             item.Bounds,_frame,item.CapturedImageOverride,item.SnapshotTarget);
         lock(_screenTextInFlight)_screenTextInFlight[item]=request;
-        return LoadScreenEntityTextAsync(item,request,readText);
+        return LoadScreenEntityTextAsync(item,request,readText,image);
     }
 
     private void InvalidateScreenEntityScan(SelectionItem item)
     {
+        _screenBarcodes.Remove(item);
         lock(_screenTextInFlight)
         {
             if(!_screenTextInFlight.Remove(item,out var request))return;
@@ -66,8 +75,9 @@ public partial class CaptureOverlayWindow
         =>item.Bounds==request.Bounds&&ReferenceEquals(item.CapturedImageOverride,request.CapturedImage)
             &&ReferenceEquals(_frame,request.Frame)&&Equals(item.SnapshotTarget,request.Target);
 
-    private async Task LoadScreenEntityTextAsync(SelectionItem item,ScreenEntityScan request,Func<CancellationToken,Task<string?>> readText)
+    private async Task LoadScreenEntityTextAsync(SelectionItem item,ScreenEntityScan request,Func<CancellationToken,Task<string?>> readText,BitmapSource image)
     {
+        var barcodeTask=LoadScreenBarcodesAsync(item,request,image);
         try
         {
             var text=await readText(request.Cancellation.Token).ConfigureAwait(false);
@@ -87,12 +97,40 @@ public partial class CaptureOverlayWindow
         catch(Exception ex){new PrivacyLogger().Info("ScreenEntityText",ex.GetType().Name);}
         finally
         {
+            await barcodeTask.ConfigureAwait(false);
             lock(_screenTextInFlight)
             {
                 if(_screenTextInFlight.TryGetValue(item,out var current)&&ReferenceEquals(current,request))_screenTextInFlight.Remove(item);
                 request.Cancellation.Dispose();
             }
         }
+    }
+
+    private async Task LoadScreenBarcodesAsync(SelectionItem item,ScreenEntityScan request,BitmapSource image)
+    {
+        var token=request.Cancellation.Token;
+        try
+        {
+            await _screenBarcodeGate.WaitAsync(token).ConfigureAwait(false);
+            IReadOnlyList<string> values;
+            try
+            {
+                values=await Task.Run(()=>BarcodeDecodeService.Decode(image).Select(result=>result.Text)
+                    .Where(value=>!string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal).Take(12).ToArray(),token).ConfigureAwait(false);
+            }
+            finally{_screenBarcodeGate.Release();}
+            token.ThrowIfCancellationRequested();
+            await Dispatcher.InvokeAsync(()=>
+            {
+                if(_closed||_recordingMode||_drawingMode||_longCaptureMode||!_selections.Contains(item)||!IsScreenEntitySourceCurrent(item,request))return;
+                lock(_screenTextInFlight)
+                    if(token.IsCancellationRequested||!_screenTextInFlight.TryGetValue(item,out var current)||!ReferenceEquals(current,request))return;
+                _screenBarcodes[item]=new(request,values);
+                if(ReferenceEquals(Active,item))UpdateScreenEntityBar(item);
+            }).Task.ConfigureAwait(false);
+        }
+        catch(OperationCanceledException) { }
+        catch(Exception ex){new PrivacyLogger().Info("ScreenBarcode",ex.GetType().Name);}
     }
 
     private void ShowPhoneActionsForText(string? text)
@@ -318,8 +356,22 @@ public partial class CaptureOverlayWindow
     private void UpdateScreenEntityBar(SelectionItem item)
     {
         var entities=ScreenEntityRecognitionService.Extract(item.SnapshotText);
-        if(entities.Count==0||_closed||_recordingMode||_drawingMode||_longCaptureMode||!_selections.Contains(item)||!ReferenceEquals(Active,item)){HideScreenEntityBar();return;}
+        var codes=_screenBarcodes.TryGetValue(item,out var result)&&IsScreenEntitySourceCurrent(item,result.Source)?result.Values:[];
+        if((entities.Count==0&&codes.Count==0)||_closed||_recordingMode||_drawingMode||_longCaptureMode||!_selections.Contains(item)||!ReferenceEquals(Active,item)){HideScreenEntityBar();return;}
         ScreenEntityBarContent.Children.Clear();
+        foreach(var code in codes)
+        {
+            ScreenEntityBarContent.Children.Add(EntityBarButton(L("复制二维码/条码内容","Copy QR / barcode"),code,$"{ClassifyBarcode(code)} · {code}",()=>
+            {
+                PromptStatus.Text=ClipboardService.TrySetText(code,out _)?L("二维码/条码内容已复制。","QR / barcode content copied."):L("剪贴板暂不可用，请稍后重试。","The clipboard is unavailable. Please retry.");
+            }));
+            if(Uri.TryCreate(code,UriKind.Absolute,out var decodedUri)&&decodedUri.Scheme is "http" or "https")
+                ScreenEntityBarContent.Children.Add(EntityBarButton(L("打开二维码链接","Open QR link"),code,code,()=>
+                {
+                    if(ScreenEntityMcpService.OpenUrl(code))DismissOverlayAfterExternalAction();
+                    else PromptStatus.Text=L("无法打开链接，请复制后在浏览器中打开。","Could not open the link. Copy it and open it in your browser.");
+                }));
+        }
         var url=entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Url);
         if(url is not null)
         {
