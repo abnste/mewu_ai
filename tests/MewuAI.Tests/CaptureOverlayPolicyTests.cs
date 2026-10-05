@@ -569,6 +569,29 @@ public sealed class CaptureOverlayPolicyTests
         Assert.False(CaptureOverlayPolicy.IsPointerInFloatingBarInteractionZone(new Point(480,530),toolbar,10));
     }
 
+    [Theory]
+    [InlineData(0,0,1920,1080,300,300,600,400)]
+    [InlineData(0,0,600,400,10,10,580,380)]
+    [InlineData(-1280,-100,1280,720,-1200,-80,1100,650)]
+    [InlineData(0,0,768,432,8,8,752,416)]
+    public void EntityHintStaysWithinMonitorWithoutCoveringToolbarOrPrompt(double x,double y,double w,double h,double sx,double sy,double sw,double sh)
+    {
+        var monitor=new Rect(x,y,w,h);var selection=new Rect(sx,sy,sw,sh);
+        var toolbarPlacement=CaptureOverlayPolicy.GetFloatingBarPlacement(monitor,selection,Math.Min(420,w-16),52,Rect.Empty);
+        var toolbar=new Rect(toolbarPlacement.Left,toolbarPlacement.Top,Math.Min(420,w-16),52);
+        var prompt=new Rect(x+16,y+h-100,Math.Min(500,w-32),80);
+        var hint=CaptureOverlayPolicy.FindScreenEntityBarSpace(monitor,selection,280,42,[toolbar,prompt]);
+        Assert.False(hint.IsEmpty);Assert.True(monitor.Contains(hint));
+        Assert.False(hint.IntersectsWith(toolbar));Assert.False(hint.IntersectsWith(prompt));
+    }
+
+    [Fact]
+    public void EntityHintDoesNotCoverControlsWhenThereIsNoFreeSpace()
+    {
+        var monitor=new Rect(0,0,600,400);
+        Assert.True(CaptureOverlayPolicy.FindScreenEntityBarSpace(monitor,monitor,280,42,[monitor]).IsEmpty);
+    }
+
     [Fact]
     public void HoverSelectsTheTopmostExplicitScreenshotObject()
     {

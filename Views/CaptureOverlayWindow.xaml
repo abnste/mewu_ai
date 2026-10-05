@@ -177,7 +177,7 @@
    <TextBlock x:Name="ApplicationSnapshotFeedbackText" Foreground="#52637A" FontSize="12" TextWrapping="Wrap" MaxWidth="380"/>
   </Border>
   <Border x:Name="ScreenEntityBar" Visibility="Collapsed" Background="#FCFFFFFF" BorderBrush="#D7E1EF" BorderThickness="1" CornerRadius="12" Padding="8,5" Panel.ZIndex="91">
-   <StackPanel x:Name="ScreenEntityBarContent" Orientation="Horizontal"/>
+   <WrapPanel x:Name="ScreenEntityBarContent"/>
   </Border>
   <Grid x:Name="LongCaptureBar" Visibility="Collapsed" ClipToBounds="False">
    <Border x:Name="LongCaptureBarShadow" Background="#FFFFFFFF" BorderBrush="Transparent" BorderThickness="0" CornerRadius="18" IsHitTestVisible="False">

@@ -21,6 +21,7 @@ using Application=System.Windows.Application;
 using Size=System.Windows.Size;
 using Button=System.Windows.Controls.Button;
 using Panel=System.Windows.Controls.Panel;
+using Point=System.Windows.Point;
 
 internal static class ScreenEntityScanReplay
 {
@@ -114,14 +115,62 @@ internal static class ScreenEntityScanReplay
                 var bar=(FrameworkElement)overlay.FindName("ScreenEntityBar");
                 var content=(Panel)overlay.FindName("ScreenEntityBarContent");
                 Check(bar.Visibility==Visibility.Visible&&Text() is null,"QR hint appears automatically before the text reader completes");
-                Check(content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue),"automatic QR hint exposes the decoded content without a toolbar click");
+                Check(Buttons(content).Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue),"automatic QR hint exposes the decoded content without a toolbar click");
                 delayedText.SetResult("sample@example.org");Complete(automaticTask);
-                Check(content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue)&&content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="sample@example.org"),"email and QR actions coexist after either recognition completes");
+                Check(Buttons(content).Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue)&&Buttons(content).Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="sample@example.org"),"email and QR actions coexist after either recognition completes");
                 fields.GetField("Bounds")!.SetValue(item,new Rect(1,0,qrImage.PixelWidth-1,qrImage.PixelHeight));Invoke("UpdateScreenEntityBar",item);
-                Check(!content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue),"changed geometry never reuses a previous QR hint");
+                Check(!Buttons(content).Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue),"changed geometry never reuses a previous QR hint");
                 Invoke("ClearImageDerivedLayers",item);Check(!barcodeResults.Contains(item),"content invalidation releases decoded QR content");
                 fields.GetField("CapturedImageOverride")!.SetValue(item,null);fields.GetField("Bounds")!.SetValue(item,bounds);Clear();
             }
+
+            var multiValues=new[]{"https://example.invalid/first","second-code","https://example.invalid/third"};
+            var multiImage=MultipleCodes(multiValues);
+            fields.GetField("CapturedImageOverride")!.SetValue(item,multiImage);
+            fields.GetField("Bounds")!.SetValue(item,new Rect(40,150,Math.Min(700,multiImage.PixelWidth),multiImage.PixelHeight));Clear();
+            root.Width=900;root.Height=620;root.Measure(new Size(900,620));root.Arrange(new Rect(0,0,900,620));root.UpdateLayout();
+            var multiText=NewResult();var multiTask=Start(multiText);
+            var results=(IDictionary)typeof(CaptureOverlayWindow).GetField("_screenBarcodes",Private)!.GetValue(overlay)!;
+            WaitUntil(()=>results.Contains(item));
+            var multiBar=(FrameworkElement)overlay.FindName("ScreenEntityBar");var multiContent=(Panel)overlay.FindName("ScreenEntityBarContent");
+            var decoded=(IReadOnlyList<string>)results[item]!.GetType().GetProperty("Values")!.GetValue(results[item])!;
+            Check(decoded.Count==3&&multiValues.All(decoded.Contains),"three actual QR codes are decoded and none is lost by the compact presentation");
+            Check(multiContent.Children.Count==1&&Buttons(multiContent).Count(button=>decoded.Contains(System.Windows.Automation.AutomationProperties.GetName(button)))<=2,"multiple QR codes show one action group instead of repeated buttons");
+            var seen=new HashSet<string>();
+            for(var index=0;index<3;index++)
+            {
+                var current=Buttons(multiContent).First(button=>decoded.Contains(System.Windows.Automation.AutomationProperties.GetName(button)));
+                seen.Add(System.Windows.Automation.AutomationProperties.GetName(current));
+                Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Next code").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            }
+            Check(seen.SetEquals(multiValues),"next navigation reaches every code and wraps without selecting a screenshot");
+            var firstSelected=Buttons(multiContent).First(button=>decoded.Contains(System.Windows.Automation.AutomationProperties.GetName(button)));
+            var selectedValue=System.Windows.Automation.AutomationProperties.GetName(firstSelected);
+            Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Previous code").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var previousValue=System.Windows.Automation.AutomationProperties.GetName(Buttons(multiContent).First(button=>decoded.Contains(System.Windows.Automation.AutomationProperties.GetName(button))));
+            Check(previousValue!=selectedValue,"previous navigation changes the code independently of the text reader");
+            multiText.SetResult("sample@example.org");Complete(multiTask);
+            Check(Buttons(multiContent).Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==previousValue),"late text completion preserves the selected QR code");
+            Invoke("UpdateSelection",item);root.Background=new SolidColorBrush(Color.FromRgb(232,236,242));
+            var toolbar=(FrameworkElement)overlay.FindName("Toolbar");toolbar.Visibility=Visibility.Visible;
+            Invoke("PositionFloatingBar",toolbar,item);root.UpdateLayout();
+            Rect Bounds(FrameworkElement element)=>new(Canvas.GetLeft(element),Canvas.GetTop(element),element.DesiredSize.Width,element.DesiredSize.Height);
+            Check(multiBar.Visibility==Visibility.Visible&&!Bounds(multiBar).IntersectsWith(Bounds(toolbar)),"the rendered hint avoids the main toolbar after toolbar reflow");
+            Check(multiBar.DesiredSize.Width<=500&&multiBar.DesiredSize.Height<100,"three codes and a mailbox remain compact rather than stretching across the screen");
+            Check((bool)Invoke("PointerInToolbarInteractionZone",new Point(Bounds(multiBar).Left+10,Bounds(multiBar).Top+10))!,"the hint owns pointer hover and cannot select an underlying region");
+            var nextButton=Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Next code");
+            nextButton.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice,Environment.TickCount,System.Windows.Input.MouseButton.Left){RoutedEvent=System.Windows.Input.Mouse.PreviewMouseDownEvent});
+            Check(!(bool)typeof(CaptureOverlayWindow).GetField("_selecting",Private)!.GetValue(overlay)!&&!(bool)typeof(CaptureOverlayWindow).GetField("_moving",Private)!.GetValue(overlay)!&&selections.Count==1,"real preview mouse routing through a QR button never starts selection or movement");
+            var rendered=new RenderTargetBitmap(900,620,96,96,PixelFormats.Pbgra32);rendered.Render(root);
+            var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(rendered));
+            using(var output=File.Create(Path.Combine(directory,"multiple-qr-layout.png")))encoder.Save(output);
+            LocalizationService.Initialize("zh-CN",null);Invoke("UpdateScreenEntityBar",item);root.UpdateLayout();
+            Check(Buttons(multiContent).Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="下一个二维码"),"compact QR navigation is localized in Chinese");
+            var scaled=new RenderTargetBitmap(1575,1085,168,168,PixelFormats.Pbgra32);scaled.Render(root);
+            encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(scaled));
+            using(var output=File.Create(Path.Combine(directory,"multiple-qr-layout-zh-175.png")))encoder.Save(output);
+            LocalizationService.Initialize("en-US",null);
+            Invoke("ClearImageDerivedLayers",item);fields.GetField("CapturedImageOverride")!.SetValue(item,null);fields.GetField("Bounds")!.SetValue(item,bounds);Clear();
 
             var deliveries=0;var sentCallbacks=0;
             var compose=new MailComposeWindow(null,"sample@example.org","Synthetic compose",(_,_,_)=>
@@ -177,6 +226,28 @@ internal static class ScreenEntityScanReplay
             actualDesktopInput=false,nativeWindowCreated=false,realOcrOrAccountsUsed=false,realBarcodeDecode=true
         },new JsonSerializerOptions{WriteIndented=true}),new UTF8Encoding(false));
         Environment.ExitCode=failure is null?0:1;
+    }
+
+    private static IEnumerable<Button> Buttons(Panel panel)
+        =>panel.Children.OfType<Button>().Concat(panel.Children.OfType<Panel>().SelectMany(Buttons));
+
+    private static BitmapSource MultipleCodes(string[] values)
+    {
+        var images=values.Select(value=>
+        {
+            using var generator=new QRCodeGenerator();using var data=generator.CreateQrCode(value,QRCodeGenerator.ECCLevel.M);
+            using var code=new PngByteQRCode(data);using var stream=new MemoryStream(code.GetGraphic(4));
+            var image=new BitmapImage();image.BeginInit();image.CacheOption=BitmapCacheOption.OnLoad;image.StreamSource=stream;image.EndInit();image.Freeze();return image;
+        }).ToArray();
+        var width=images.Sum(image=>image.PixelWidth)+40*(images.Length-1);var height=images.Max(image=>image.PixelHeight);
+        var pixels=Enumerable.Repeat((byte)255,width*height*4).ToArray();var offset=0;
+        foreach(var image in images)
+        {
+            var converted=new FormatConvertedBitmap(image,PixelFormats.Bgra32,null,0);var rows=new byte[image.PixelWidth*image.PixelHeight*4];converted.CopyPixels(rows,image.PixelWidth*4,0);
+            for(var y=0;y<image.PixelHeight;y++)Array.Copy(rows,y*image.PixelWidth*4,pixels,(y*width+offset)*4,image.PixelWidth*4);
+            offset+=image.PixelWidth+40;
+        }
+        var result=BitmapSource.Create(width,height,96,96,PixelFormats.Bgra32,null,pixels,width*4);result.Freeze();return result;
     }
 
     private static void Complete(Task task)

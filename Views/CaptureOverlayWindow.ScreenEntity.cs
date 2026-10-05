@@ -23,7 +23,10 @@ public partial class CaptureOverlayWindow
         BitmapSource? CapturedImage,ApplicationSnapshotTarget? Target);
     private readonly Dictionary<SelectionItem,ScreenEntityScan> _screenTextInFlight=new();
     private readonly CancellationTokenSource _screenEntityLifetime=new();
-    private sealed record BarcodeScanResult(ScreenEntityScan Source,IReadOnlyList<string> Values);
+    private sealed record BarcodeScanResult(ScreenEntityScan Source,IReadOnlyList<string> Values)
+    {
+        public int SelectedIndex { get; set; }
+    }
     private readonly Dictionary<SelectionItem,BarcodeScanResult> _screenBarcodes=new();
     private readonly SemaphoreSlim _screenBarcodeGate=new(1,1);
 
@@ -359,18 +362,43 @@ public partial class CaptureOverlayWindow
         var codes=_screenBarcodes.TryGetValue(item,out var result)&&IsScreenEntitySourceCurrent(item,result.Source)?result.Values:[];
         if((entities.Count==0&&codes.Count==0)||_closed||_recordingMode||_drawingMode||_longCaptureMode||!_selections.Contains(item)||!ReferenceEquals(Active,item)){HideScreenEntityBar();return;}
         ScreenEntityBarContent.Children.Clear();
-        foreach(var code in codes)
+        if(codes.Count>0)
         {
-            ScreenEntityBarContent.Children.Add(EntityBarButton(L("复制二维码/条码内容","Copy QR / barcode"),code,$"{ClassifyBarcode(code)} · {code}",()=>
+            var barcodeResult=_screenBarcodes[item];
+            var code=codes[barcodeResult.SelectedIndex];
+            bool Current()=>!_closed&&!_drawingMode&&!_recordingMode&&!_longCaptureMode&&ReferenceEquals(Active,item)&&IsScreenEntitySourceCurrent(item,barcodeResult.Source)
+                &&_screenBarcodes.TryGetValue(item,out var current)&&ReferenceEquals(current,barcodeResult);
+            var group=new StackPanel{Orientation=Orientation.Horizontal};
+            group.Children.Add(new TextBlock{Text=L("二维码","QR / barcode"),FontSize=12,VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(4,0,6,0),ToolTip=$"{ClassifyBarcode(code)} · {code}"});
+            if(codes.Count>1)
             {
+                Button Navigate(int delta,string glyph,string label)
+                {
+                    var button=EntityBarButton(glyph,label,label,()=>
+                    {
+                        if(!Current())return;
+                        barcodeResult.SelectedIndex=(barcodeResult.SelectedIndex+delta+codes.Count)%codes.Count;
+                        UpdateScreenEntityBar(item);
+                    });
+                    button.Width=26;button.Padding=new Thickness(0);return button;
+                }
+                group.Children.Add(Navigate(-1,"‹",L("上一个二维码","Previous code")));
+                group.Children.Add(new TextBlock{Text=$"{barcodeResult.SelectedIndex+1} / {codes.Count}",FontSize=12,VerticalAlignment=VerticalAlignment.Center,Margin=new Thickness(4,0,4,0)});
+                group.Children.Add(Navigate(1,"›",L("下一个二维码","Next code")));
+            }
+            group.Children.Add(EntityBarButton(L("复制","Copy"),code,code,()=>
+            {
+                if(!Current())return;
                 PromptStatus.Text=ClipboardService.TrySetText(code,out _)?L("二维码/条码内容已复制。","QR / barcode content copied."):L("剪贴板暂不可用，请稍后重试。","The clipboard is unavailable. Please retry.");
             }));
             if(Uri.TryCreate(code,UriKind.Absolute,out var decodedUri)&&decodedUri.Scheme is "http" or "https")
-                ScreenEntityBarContent.Children.Add(EntityBarButton(L("打开二维码链接","Open QR link"),code,code,()=>
+                group.Children.Add(EntityBarButton(L("打开","Open"),code,code,()=>
                 {
+                    if(!Current())return;
                     if(ScreenEntityMcpService.OpenUrl(code))DismissOverlayAfterExternalAction();
                     else PromptStatus.Text=L("无法打开链接，请复制后在浏览器中打开。","Could not open the link. Copy it and open it in your browser.");
                 }));
+            ScreenEntityBarContent.Children.Add(group);
         }
         var url=entities.FirstOrDefault(entity=>entity.Type==ScreenEntityType.Url);
         if(url is not null)
@@ -449,7 +477,7 @@ public partial class CaptureOverlayWindow
 
     private Button EntityBarButton(string text,string name,string toolTip,Action click)
     {
-        var button=new Button{Content=text,ToolTip=toolTip,Padding=new Thickness(10,4,10,4)};
+        var button=new Button{Content=new TextBlock{Text=text,TextTrimming=TextTrimming.CharacterEllipsis},MaxWidth=240,ToolTip=toolTip,Padding=new Thickness(10,4,10,4)};
         System.Windows.Automation.AutomationProperties.SetName(button,name);
         button.SetResourceReference(StyleProperty,"ReferenceChipButton");
         button.Cursor=Cursors.Hand;

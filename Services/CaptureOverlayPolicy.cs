@@ -420,6 +420,33 @@ internal static class CaptureOverlayPolicy
         return new(left,fallback,FloatingBarSide.AboveFallback);
     }
 
+    internal static Rect FindScreenEntityBarSpace(Rect monitor,Rect selection,double width,double height,IReadOnlyList<Rect> occupied,double edgeMargin=6,double gap=8)
+    {
+        if(monitor.IsEmpty||width<=0||height<=0||!double.IsFinite(width)||!double.IsFinite(height)||width>monitor.Width-edgeMargin*2||height>monitor.Height-edgeMargin*2)return Rect.Empty;
+        var left=Math.Clamp(selection.Left,monitor.Left+edgeMargin,monitor.Right-width-edgeMargin);
+        var obstructions=occupied.Where(rect=>!rect.IsEmpty).ToArray();
+        var xs=new List<double>{left,monitor.Right-width-edgeMargin,monitor.Left+edgeMargin};
+        var ys=new List<double>();
+        // Prefer the space just above the main toolbar, then the other side of
+        // the capture. Screen-edge fallbacks also reject every occupied bar.
+        if(occupied.Count>0&&!occupied[0].IsEmpty)ys.Add(occupied[0].Top-height-gap);
+        ys.AddRange([selection.Top-height-gap,selection.Bottom+gap]);
+        foreach(var rect in obstructions)
+        {
+            ys.Add(rect.Bottom+gap);ys.Add(rect.Top-height-gap);
+            xs.Add(rect.Right+gap);xs.Add(rect.Left-width-gap);
+        }
+        ys.AddRange([selection.Top+gap,monitor.Top+edgeMargin,monitor.Bottom-height-edgeMargin]);
+        foreach(var y in ys.Distinct())foreach(var x in xs.Distinct())
+        {
+            var candidate=new Rect(x,y,width,height);
+            if(candidate.Left<monitor.Left+edgeMargin||candidate.Top<monitor.Top+edgeMargin||candidate.Right>monitor.Right-edgeMargin||candidate.Bottom>monitor.Bottom-edgeMargin)continue;
+            var padded=candidate;padded.Inflate(gap/2,gap/2);
+            if(obstructions.All(rect=>!padded.IntersectsWith(rect)))return candidate;
+        }
+        return Rect.Empty;
+    }
+
     internal static bool IsPointerInFloatingBarInteractionZone(Point pointer,Rect barBounds,double transitionPadding,Rect? foregroundBounds=null)
     {
         if(foregroundBounds is {IsEmpty:false} foreground&&foreground.Contains(pointer))return false;
