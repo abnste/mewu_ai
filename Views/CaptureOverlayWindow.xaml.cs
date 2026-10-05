@@ -4115,31 +4115,38 @@ public partial class CaptureOverlayWindow : Window
         catch(OperationCanceledException){if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text="已取消翻译";}catch(TimeoutException ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=ex.Message;}catch(Exception ex){new PrivacyLogger().Error("OverlayTranslate",ex);if(!_closed&&ReferenceEquals(_overlayRequest,operation))PromptStatus.Text=$"翻译失败：{ex.Message}";}finally{EndOverlayOperation(operation);}
     }
 
-    private void DecodeBarcode(object s, RoutedEventArgs e)
+    private async void DecodeBarcode(object s, RoutedEventArgs e)
     {
         if (RejectIfOverlayOperationBusy()) return;
-        if (Active is not { IsImplicit: false } item || item.VideoPath is not null) { PromptStatus.Text = "请先框选二维码或条码区域"; return; }
+        if (Active is not { IsImplicit: false } item || item.VideoPath is not null) { PromptStatus.Text = L("请先框选二维码或条码区域", "Select a QR code or barcode region first."); return; }
+        var operation = BeginOverlayOperation(L("正在识别二维码/条码…按 Esc 可取消", "Reading QR codes/barcodes… Press Esc to cancel"));
         try
         {
-            var results = BarcodeDecodeService.Decode(CurrentImage());
-            if (results.Count == 0) { PromptStatus.Text = "未识别到二维码或条码。微信好友码请完整圈选，避免裁掉四角定位标记。"; return; }
+            var image = CurrentImage();
+            image.Freeze();
+            var results = await Task.Run(() => BarcodeDecodeService.Decode(image), operation.Token);
+            if (!IsOverlayOperationActive(operation, item)) return;
+            if (results.Count == 0) { PromptStatus.Text = L("未识别到二维码或条码，请完整圈选后重试。", "No QR code or barcode found. Select the whole code and retry."); return; }
             var lines = results.Select(r => $"{ClassifyBarcode(r.Text)}：{r.Text}").ToArray();
             var message = string.Join(Environment.NewLine, lines);
-            ClipboardService.TrySetText(string.Join(Environment.NewLine, results.Select(r => r.Text)), out _);
-            MessageBox.Show(this, message + Environment.NewLine + Environment.NewLine + "内容已复制到剪贴板。", "二维码/条码识别", MessageBoxButton.OK, MessageBoxImage.Information);
-            PromptStatus.Text = $"已识别 {results.Count} 个二维码/条码，内容已复制";
+            var copied = ClipboardService.TrySetText(string.Join(Environment.NewLine, results.Select(r => r.Text)), out _);
+            var copyStatus = copied ? L("内容已复制到剪贴板。", "Content copied to the clipboard.") : L("剪贴板暂不可用，请稍后重试。", "The clipboard is unavailable. Please retry.");
+            MewuDialogWindow.ShowMessage(this, L("二维码/条码识别", "QR code / barcode"), message + Environment.NewLine + Environment.NewLine + copyStatus, true);
+            if (IsOverlayOperationActive(operation, item)) PromptStatus.Text = copyStatus;
         }
-        catch (Exception ex) { new PrivacyLogger().Info("BarcodeDecode", ex.GetType().Name); PromptStatus.Text = $"二维码/条码识别失败：{ex.Message}"; }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
+        catch (Exception ex) { new PrivacyLogger().Info("BarcodeDecode", ex.GetType().Name); if (IsOverlayOperationActive(operation, item)) PromptStatus.Text = L("二维码/条码识别失败，请重新圈选后重试。", "Could not read the code. Select the region again and retry."); }
+        finally { EndOverlayOperation(operation); }
     }
 
     private static string ClassifyBarcode(string? text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return "未知条码";
-        if (text.Contains("work.weixin.qq.com", StringComparison.OrdinalIgnoreCase)) return "企业微信二维码";
-        if (text.Contains("weixin.qq.com", StringComparison.OrdinalIgnoreCase) || text.StartsWith("wxp://", StringComparison.OrdinalIgnoreCase)) return "微信二维码";
-        if (text.Contains("qm.qq.com", StringComparison.OrdinalIgnoreCase) || text.Contains("qq.com", StringComparison.OrdinalIgnoreCase)) return "QQ二维码";
-        if (Uri.TryCreate(text, UriKind.Absolute, out _)) return "普通链接二维码";
-        return text.All(char.IsDigit) ? "商品/数字条码" : "普通二维码";
+        if (string.IsNullOrWhiteSpace(text)) return L("未知条码", "Unknown barcode");
+        if (text.Contains("work.weixin.qq.com", StringComparison.OrdinalIgnoreCase)) return L("企业微信二维码", "WeCom QR code");
+        if (text.Contains("weixin.qq.com", StringComparison.OrdinalIgnoreCase) || text.StartsWith("wxp://", StringComparison.OrdinalIgnoreCase)) return L("微信二维码", "WeChat QR code");
+        if (text.Contains("qm.qq.com", StringComparison.OrdinalIgnoreCase) || text.Contains("qq.com", StringComparison.OrdinalIgnoreCase)) return L("QQ二维码", "QQ QR code");
+        if (Uri.TryCreate(text, UriKind.Absolute, out _)) return L("普通链接二维码", "Link QR code");
+        return text.All(char.IsDigit) ? L("商品/数字条码", "Numeric barcode") : L("普通二维码", "QR code");
     }
 
     private async void Ocr(object s,RoutedEventArgs e)

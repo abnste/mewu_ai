@@ -15,8 +15,11 @@ internal sealed record MemoryInputCandidate(
 
 internal static class MemoryFillService
 {
-    internal static IReadOnlyList<MemoryInputCandidate> FindInputs(ApplicationSnapshotTarget target, ScreenRect region)
+    internal static IReadOnlyList<MemoryInputCandidate> FindInputs(ApplicationSnapshotTarget target, ScreenRect region, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!target.IsCurrent()) return [];
+        var timer = System.Diagnostics.Stopwatch.StartNew();
         var root = AutomationElement.FromHandle(new IntPtr(target.Handle));
         var result = new List<MemoryInputCandidate>();
         var walker = TreeWalker.ControlViewWalker;
@@ -26,6 +29,8 @@ internal static class MemoryFillService
         var visited = 0;
         while (queue.Count > 0 && result.Count < 128 && visited++ < 10_000)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (timer.Elapsed > TimeSpan.FromSeconds(5)) break;
             var element = queue.Dequeue();
             AutomationElement.AutomationElementInformation info;
             try { info = element.Current; } catch { continue; }
@@ -52,8 +57,14 @@ internal static class MemoryFillService
             }
             try
             {
-                for (var child = walker.GetFirstChild(element); child is not null; child = walker.GetNextSibling(child)) queue.Enqueue(child);
+                for (var child = walker.GetFirstChild(element); child is not null && queue.Count + visited < 10_000; child = walker.GetNextSibling(child))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (timer.Elapsed > TimeSpan.FromSeconds(5)) break;
+                    queue.Enqueue(child);
+                }
             }
+            catch (OperationCanceledException) { throw; }
             catch { }
         }
         return result;
@@ -61,26 +72,43 @@ internal static class MemoryFillService
 
     internal static bool TryFill(MemoryInputCandidate candidate, string value, IntPtr targetWindow)
     {
-        if (candidate.IsReadOnly || candidate.Element is null) return false;
+        if (candidate.IsReadOnly || candidate.Element is null || !BelongsToWindow(candidate.Element, targetWindow)) return false;
         try
         {
             if (candidate.Element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern && !valuePattern.Current.IsReadOnly)
             {
                 valuePattern.SetValue(value);
-                return VerifyValue(candidate.Element, value);
+                // Password providers deliberately forbid reading Current.Value.
+                return candidate.IsPassword || VerifyValue(candidate.Element, value);
             }
         }
         catch (ElementNotEnabledException) { }
         catch (InvalidOperationException) { }
         catch (System.Runtime.InteropServices.COMException) { }
-        if(candidate.Element is null)return false;
         try
         {
+            // Never append to an existing value, or guess a password field's contents.
+            if (candidate.IsPassword || !VerifyValue(candidate.Element, string.Empty)) return false;
+            if (!NativeMethods.SetForegroundWindow(targetWindow)) return false;
             candidate.Element.SetFocus();
+            if (!candidate.Element.Equals(AutomationElement.FocusedElement)) return false;
             return NativeMethods.TrySendUnicodeText(targetWindow,value) && VerifyValue(candidate.Element, value);
         }
         catch(InvalidOperationException){return false;}
         catch(System.Runtime.InteropServices.COMException){return false;}
+    }
+
+    private static bool BelongsToWindow(AutomationElement element, IntPtr targetWindow)
+    {
+        if (targetWindow == IntPtr.Zero || !NativeMethods.IsWindow(targetWindow)) return false;
+        try
+        {
+            var current = element;
+            for (var depth = 0; current is not null && depth < 64; current = TreeWalker.ControlViewWalker.GetParent(current), depth++)
+                if (new IntPtr(current.Current.NativeWindowHandle) == targetWindow) return true;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+        return false;
     }
 
     private static bool VerifyValue(AutomationElement element, string expected)

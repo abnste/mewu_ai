@@ -29,6 +29,7 @@ internal static class NativeMethods
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool GetWindowRect(IntPtr hWnd,out WindowRect rect);
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll",SetLastError=true)] private static extern uint SendInput(uint count,Input[] inputs,int size);
 
     [StructLayout(LayoutKind.Sequential)] private struct Input
@@ -39,7 +40,15 @@ internal static class NativeMethods
     [StructLayout(LayoutKind.Explicit)] private struct InputUnion
     {
         [FieldOffset(0)] internal KeyboardInput Keyboard;
+        [FieldOffset(0)] internal MouseInput Mouse;
     }
+    [StructLayout(LayoutKind.Sequential)] private struct MouseInput
+    {
+        internal int X, Y;
+        internal uint MouseData, Flags, Time;
+        internal IntPtr ExtraInfo;
+    }
+    internal static int NativeInputSize=>Marshal.SizeOf<Input>();
     [StructLayout(LayoutKind.Sequential)] private struct KeyboardInput
     {
         internal ushort VirtualKey;
@@ -55,7 +64,8 @@ internal static class NativeMethods
     internal static bool TrySendUnicodeText(IntPtr targetWindow,string text)
     {
         if(targetWindow==IntPtr.Zero||string.IsNullOrEmpty(text)||text.Length>4096)return false;
-        if(!SetForegroundWindow(targetWindow))return false;
+        // The caller must activate the intended window and focus its input first.
+        if(GetForegroundWindow()!=targetWindow)return false;
         var inputs=new Input[text.Length*2];
         for(var i=0;i<text.Length;i++)
         {
@@ -63,7 +73,8 @@ internal static class NativeMethods
             inputs[i*2]=new Input{Type=InputKeyboard,Data=new InputUnion{Keyboard=new KeyboardInput{ScanCode=code,Flags=KeyboardUnicode}}};
             inputs[i*2+1]=new Input{Type=InputKeyboard,Data=new InputUnion{Keyboard=new KeyboardInput{ScanCode=code,Flags=KeyboardUnicode|KeyboardKeyUp}}};
         }
-        return SendInput((uint)inputs.Length,inputs,Marshal.SizeOf<Input>())==inputs.Length;
+        if(GetForegroundWindow()!=targetWindow)return false;
+        return SendInput((uint)inputs.Length,inputs,NativeInputSize)==inputs.Length;
     }
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern IntPtr CreateRectRgn(int left,int top,int right,int bottom);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern int CombineRgn(IntPtr destination,IntPtr source1,IntPtr source2,int mode);

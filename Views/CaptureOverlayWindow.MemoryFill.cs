@@ -11,6 +11,7 @@ public partial class CaptureOverlayWindow
 {
     private async void ScanFill(object? sender, RoutedEventArgs e)
     {
+        if (RejectIfOverlayOperationBusy()) return;
         new PrivacyLogger().Info("MemoryScanFill", "button-clicked");
         if (Active is not { IsImplicit: false } item || item.VideoPath is not null)
         {
@@ -18,7 +19,7 @@ public partial class CaptureOverlayWindow
             return;
         }
         var memories = _host.Settings.MemoryEntries ?? [];
-        if (!memories.Any(entry => entry.Enabled && entry.Keywords.Count > 0))
+        if (!memories.Any(entry => entry is { Enabled: true, Keywords.Count: > 0 }))
         {
             PromptStatus.Text = L("请先在设置 → 记忆中添加关键词和值。", "Add keywords and values under Settings → Memory first.");
             return;
@@ -29,6 +30,7 @@ public partial class CaptureOverlayWindow
             new PrivacyLogger().Info("MemoryScanFill", $"started; memories={memories.Count}; region={item.Bounds.Width:F0}x{item.Bounds.Height:F0}");
             var image = RenderSelectionImage(item, false, false, false);
             var document = await new WindowsOcrService().RecognizeAsync(image, operation.Token).ConfigureAwait(true);
+            if (!IsOverlayOperationActive(operation, item)) return;
             var matches = MemoryStore.Match(memories, document.Text);
             new PrivacyLogger().Info("MemoryScanFill", $"ocrChars={document.Text.Length}; lines={document.Lines.Count}; matches={matches.Count}");
             if (matches.Count == 0)
@@ -38,12 +40,13 @@ public partial class CaptureOverlayWindow
             }
             var screen = ScreenCoordinateService.ToScreenRect(ToPixelRect(item.Bounds), _frame.OriginX, _frame.OriginY);
             var target = item.SnapshotTarget ?? ResolveMemoryTarget(screen);
-            if (target is null)
+            if (target is null || !target.IsCurrent() || target.Handle == new WindowInteropHelper(this).Handle.ToInt64())
             {
                 PromptStatus.Text = L("未能获取当前窗口的输入控件，请重新圈选。", "Could not access the input controls in this window. Select again.");
                 return;
             }
-            var inputs = await Task.Run(() => MemoryFillService.FindInputs(target, screen), operation.Token).ConfigureAwait(true);
+            var inputs = await Task.Run(() => MemoryFillService.FindInputs(target, screen, operation.Token), operation.Token).ConfigureAwait(true);
+            if (!IsOverlayOperationActive(operation, item) || !target.IsCurrent()) return;
             new PrivacyLogger().Info("MemoryScanFill", $"inputs={inputs.Count}; target={target.Handle}");
             if (inputs.Count == 0)
             {
@@ -54,6 +57,7 @@ public partial class CaptureOverlayWindow
             var usedInputs = new HashSet<MemoryInputCandidate>();
             foreach (var match in matches)
             {
+                if (!IsOverlayOperationActive(operation, item) || !target.IsCurrent()) return;
                 var value = MemoryStore.Read(match.Entry);
                 if (string.IsNullOrEmpty(value)) continue;
                 var keyword = MemoryStore.Normalize(match.Keyword);
@@ -63,17 +67,17 @@ public partial class CaptureOverlayWindow
                     : new Point(
                         screen.X + (line.X + line.Width / 2d) * screen.Width / Math.Max(1, image.PixelWidth),
                         screen.Y + (line.Y + line.Height / 2d) * screen.Height / Math.Max(1, image.PixelHeight));
-                var available = inputs.Where(input => !usedInputs.Contains(input)).ToArray();
+                var available = inputs.Where(input => !input.IsReadOnly && !usedInputs.Contains(input)).ToArray();
                 var requiresPassword = match.Entry.Sensitive || string.Equals(match.Entry.FieldKind, "password", StringComparison.OrdinalIgnoreCase);
-                var pool = requiresPassword ? available.Where(input => input.IsPassword).ToArray() : available;
+                var pool = available.Where(input => input.IsPassword == requiresPassword).ToArray();
                 var candidate = pool.OrderByDescending(input => MemoryFillService.Score(match.Entry, input, anchor, screen)).FirstOrDefault();
                 if (candidate is null) continue;
                 var confidence = MemoryFillService.Score(match.Entry, candidate, anchor, screen);
                 var threshold = Math.Clamp(_host.Settings.MemoryConfidenceThreshold, .5, .98);
                 var strict = string.Equals(_host.Settings.MemoryDetectionPlan, "strict", StringComparison.OrdinalIgnoreCase);
                 if ((strict || confidence < threshold) && !ConfirmMemoryCandidate(match.Entry, candidate, confidence)) continue;
-                var fillTarget = new WindowInteropHelper(this).Handle;
-                var fillOk = MemoryFillService.TryFill(candidate, value, fillTarget);
+                if (!IsOverlayOperationActive(operation, item) || !target.IsCurrent()) return;
+                var fillOk = MemoryFillService.TryFill(candidate, value, new IntPtr(target.Handle));
                 new PrivacyLogger().Info("MemoryScanFill", $"fill kind={match.Entry.FieldKind}; bounds={candidate.Bounds.Left:F0},{candidate.Bounds.Top:F0},{candidate.Bounds.Width:F0}x{candidate.Bounds.Height:F0}; confidence={confidence:F2}; success={fillOk}");
                 if (fillOk) { usedInputs.Add(candidate); filled++; }
             }
@@ -99,9 +103,8 @@ public partial class CaptureOverlayWindow
     private bool ConfirmMemoryCandidate(MemoryEntry entry, MemoryInputCandidate candidate, double confidence)
     {
         var field = entry.Sensitive ? L("敏感字段", "sensitive field") : L("字段", "field");
-        var result = MessageBox.Show(this,
+        return MewuDialogWindow.ShowChoice(this, L("确认扫描填充", "Confirm scan fill"),
             string.Format(System.Globalization.CultureInfo.CurrentCulture, L("检测到 {0}，匹配置信度 {1:P0}。是否填充？", "Detected a {0} with {1:P0} confidence. Fill it?"), field, confidence),
-            L("确认扫描填充", "Confirm scan fill"), MessageBoxButton.YesNo, entry.Sensitive ? MessageBoxImage.Warning : MessageBoxImage.Question);
-        return result == MessageBoxResult.Yes;
+            L("填充", "Fill"), string.Empty, L("取消", "Cancel")) == MewuDialogResult.Primary;
     }
 }

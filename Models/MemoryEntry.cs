@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 namespace mewu_ai_Assistant.Models;
 
-/// <summary>A local autofill mapping. Values are stored in the local settings file.</summary>
+/// <summary>A local autofill mapping. Persisted values use a DPAPI credential reference.</summary>
 public sealed class MemoryEntry
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

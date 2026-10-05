@@ -23,6 +23,7 @@
 | Concentus.Oggfile | 1.0.7 | MIT | https://github.com/lostromb/concentus.oggfile |
 | System.Speech | 10.0.11 | MIT 及第三方条款 | https://github.com/dotnet/runtime |
 | QRCoder | 1.6.0 | MIT | https://github.com/codebude/QRCoder |
+| ZXing.Net / ZXing.Net.Bindings.Windows.Compatibility | 0.16.11 / 0.16.14 | Apache-2.0 | https://github.com/micjahn/ZXing.Net |
 | System.Numerics.Tensors | 9.0.0 | MIT 及第三方条款 | https://github.com/dotnet/runtime |
 | Windows 自包含 .NET 运行时与 WPF 桌面运行时 | 随发布包版本 | Microsoft .NET Library License 及第三方条款 | https://github.com/dotnet/core/blob/main/license-information.md |
 

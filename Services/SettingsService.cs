@@ -10,6 +10,7 @@ public sealed class SettingsService
     private static readonly string[] HermesReasoningEfforts=["none","minimal","low","medium","high","xhigh","max","ultra"];
     private readonly string _path;
     private readonly ProviderHeaderCredentialService _headerCredentials;
+    private readonly CredentialService _memoryCredentials;
     private readonly Action<string,Exception>? _logError;
     private static readonly JsonSerializerOptions Options=new() { WriteIndented=true,Converters={new JsonStringEnumConverter()} };
     public SettingsService(string? path=null,ProviderHeaderCredentialService? headerCredentials=null)
@@ -25,6 +26,7 @@ public sealed class SettingsService
         var directory=Path.GetDirectoryName(_path)??throw new ArgumentException("设置文件路径无效",nameof(path));
         Directory.CreateDirectory(directory);
         _headerCredentials=headerCredentials??new ProviderHeaderCredentialService(new CredentialService(Path.Combine(directory,"Credentials")));
+        _memoryCredentials=new CredentialService(Path.Combine(directory,"Credentials"));
         _logError=logError;
     }
     public AppSettings Load()
@@ -75,7 +77,45 @@ public sealed class SettingsService
     public void Save(AppSettings settings)
     {
         ValidateForSave(settings);
-        SaveCore(settings);
+        var originals=settings.MemoryEntries;
+        var prepared=new List<MemoryEntry>();
+        var created=new List<string>();
+        var previousIds=new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            if(File.Exists(_path))
+            {
+                try
+                {
+                    var previous=JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_path),Options);
+                    foreach(var entry in previous?.MemoryEntries??[])
+                        if(entry?.CredentialId?.StartsWith("memory-",StringComparison.Ordinal)==true)previousIds.Add(entry.CredentialId);
+                }
+                catch(JsonException) { }
+            }
+            foreach(var entry in originals)
+            {
+                var copy=new MemoryEntry{Id=entry.Id,Keywords=[..entry.Keywords],Sensitive=entry.Sensitive,Enabled=entry.Enabled,FieldKind=entry.FieldKind,CredentialId=entry.CredentialId};
+                if(!string.IsNullOrEmpty(entry.Value))
+                {
+                    copy.CredentialId="memory-"+Guid.NewGuid().ToString("N");
+                    created.Add(copy.CredentialId);
+                    MemoryStore.Save(copy,entry.Value,_memoryCredentials);
+                }
+                prepared.Add(copy);
+            }
+            settings.MemoryEntries=prepared;
+            SaveCore(settings);
+        }
+        catch
+        {
+            settings.MemoryEntries=originals;
+            foreach(var id in created)try{_memoryCredentials.Delete(id);}catch(Exception ex){Log("MemoryCredentialRollback",ex);}
+            throw;
+        }
+        var retained=prepared.Select(entry=>entry.CredentialId).ToHashSet(StringComparer.Ordinal);
+        foreach(var id in previousIds.Where(id=>!retained.Contains(id)))
+            try{_memoryCredentials.Delete(id);}catch(Exception ex){Log("MemoryCredentialCleanup",ex);}
     }
 
     internal static void ValidateForSave(AppSettings settings)
@@ -210,6 +250,7 @@ public sealed class SettingsService
 
     private static AppSettings NormalizeCommon(AppSettings settings)
     {
+        NormalizeMemorySettings(settings);
         settings.CaptureHotkey??=new();
         if(settings.CaptureHotkey.Key==System.Windows.Input.Key.None)
             settings.CaptureHotkey.Modifiers=System.Windows.Input.ModifierKeys.None;

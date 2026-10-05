@@ -70,8 +70,8 @@
       },
       "Microsoft.Win32.SystemEvents": {
         "type": "Transitive",
-        "resolved": "6.0.0",
-        "contentHash": "hqTM5628jSsQiv+HGpiq3WKBl2c8v1KZfby2J6Pr7pEPlK9waPdgEO6b8A/+/xn/yZ9ulv8HuqK71ONy2tg67A=="
+        "resolved": "9.0.10",
+        "contentHash": "P1CEtsxar/RhfoH3r1vc9ra28LLVYphpcFBxyRIEMM/jP3qh4j9TU4sWH2RUhMZX+GbFxZ+zz1oSP2n9MwjshA=="
       },
       "Microsoft.Windows.SDK.BuildTools": {
         "type": "Transitive",
@@ -137,10 +137,10 @@
       },
       "System.Drawing.Common": {
         "type": "Transitive",
-        "resolved": "6.0.0",
-        "contentHash": "NfuoKUiP2nUWwKZN6twGqXioIe1zVD0RIj2t976A+czLHr2nY454RwwXs6JU9Htc6mwqL6Dn/nEL3dpVf2jOhg==",
+        "resolved": "9.0.10",
+        "contentHash": "FDakPhIcxHnhslLiz4ZQ+ALpHRpCU3zOep9Mcq+4hL23XwQrzmgJNYvf1tH4kJ/V36wO/ZhRr8nOfiz26P3wKg==",
         "dependencies": {
-          "Microsoft.Win32.SystemEvents": "6.0.0"
+          "Microsoft.Win32.SystemEvents": "9.0.10"
         }
       },
       "System.Numerics.Tensors": {
@@ -166,6 +166,20 @@
         "resolved": "2.1.0",
         "contentHash": "p7W78KZc2EWuVqAd704m4yGWg0HtxahjNYRVxDWhw7npf8oMD8C7EUc1pjkjZIcmk5PxXJ+t5FE2Fs3gBYjv1A=="
       },
+      "ZXing.Net": {
+        "type": "Transitive",
+        "resolved": "0.16.11",
+        "contentHash": "OZfAVu88hl87BffQ+rlWCj/vLvAhhCK4QnFaoveeF/MY8SjHNSYBQ3qyUEWlPKNgBQGh1syXhCDg10vUnCsqkg=="
+      },
+      "ZXing.Net.Bindings.Windows.Compatibility": {
+        "type": "Transitive",
+        "resolved": "0.16.14",
+        "contentHash": "bJw1qjpNJ8JmDP55UBAvA5bCU+vSEGua4z43nukJqMlrpkKu6mTw6NZGJZntM8KbNQ3RNLu8DJMJBSWUd0ifYg==",
+        "dependencies": {
+          "System.Drawing.Common": "9.0.10",
+          "ZXing.Net": "0.16.11"
+        }
+      },
       "MewuAI": {
         "type": "Project",
         "dependencies": {
@@ -177,7 +191,8 @@
           "RapidOcrNet": "[4.1.0, )",
           "ScreenRecorderLib": "[7.0.0, )",
           "System.Speech": "[10.0.11, )",
-          "WpfMath": "[2.1.0, )"
+          "WpfMath": "[2.1.0, )",
+          "ZXing.Net.Bindings.Windows.Compatibility": "[0.16.14, )"
         }
       }
     }

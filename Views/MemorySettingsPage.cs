@@ -11,8 +11,6 @@ internal sealed class MemorySettingsPage : ScrollViewer
 {
     private readonly StackPanel _rows = new();
     private readonly List<Row> _items = [];
-    private readonly AppSettings _settings;
-    private readonly List<MemoryEntry> _originalEntries;
     private readonly ComboBox _plan = new();
     private readonly Slider _threshold = new() { Minimum = .5, Maximum = .98, TickFrequency = .01, IsSnapToTickEnabled = true, Width = 180 };
     private readonly TextBlock _thresholdLabel = new() { Width = 48, VerticalAlignment = VerticalAlignment.Center };
@@ -32,8 +30,6 @@ internal sealed class MemorySettingsPage : ScrollViewer
 
     internal MemorySettingsPage(AppSettings settings)
     {
-        _settings = settings;
-        _originalEntries = (settings.MemoryEntries ?? []).Select(Clone).ToList();
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         Padding = new Thickness(20, 12, 20, 18);
@@ -49,9 +45,9 @@ internal sealed class MemorySettingsPage : ScrollViewer
         root.Children.Add(add);
         var plan = new StackPanel { Margin = new Thickness(0, 14, 0, 4) };
         plan.Children.Add(new TextBlock { Text = T("扫描计划", "Detection plan"), FontWeight = FontWeights.SemiBold });
-        _plan.Items.Add(new ComboBoxItem { Content = T("混合：规则 + UIA + 视觉模型（推荐）", "Hybrid: rules + UIA + visual model (recommended)"), Tag = "hybrid" });
+        _plan.Items.Add(new ComboBoxItem { Content = T("自动：OCR + 输入框匹配（推荐）", "Automatic: OCR + input matching (recommended)"), Tag = "hybrid" });
         _plan.Items.Add(new ComboBoxItem { Content = T("规则优先：OCR + UIA + 几何", "Rules first: OCR + UIA + geometry"), Tag = "rules" });
-        _plan.Items.Add(new ComboBoxItem { Content = T("严格：低置信度不自动填充", "Strict: never autofill low-confidence matches"), Tag = "strict" });
+        _plan.Items.Add(new ComboBoxItem { Content = T("严格：每次填充前确认", "Strict: confirm each field before filling"), Tag = "strict" });
         _plan.SelectedValuePath = "Tag"; _plan.SelectedValue = settings.MemoryDetectionPlan;
         plan.Children.Add(_plan);
         var thresholdLine = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
@@ -60,10 +56,8 @@ internal sealed class MemorySettingsPage : ScrollViewer
         _thresholdLabel.Text = $" {_threshold.Value:P0}"; thresholdLine.Children.Add(_thresholdLabel);
         _threshold.ValueChanged += (_, _) => _thresholdLabel.Text = $" {_threshold.Value:P0}";
         plan.Children.Add(thresholdLine);
-        _visualModel.Content = T("启用本地视觉输入框模型（模型不可用时自动回退）", "Enable local visual input model (falls back automatically if unavailable)");
-        _visualModel.IsChecked = settings.MemoryVisualModelEnabled; plan.Children.Add(_visualModel);
-        _modelPath.Text = settings.MemoryVisualModelPath; _modelPath.ToolTip = T("可选 ONNX UI element detector 路径；不填写也可使用规则方案。", "Optional ONNX UI element detector path; rules work without it.");
-        plan.Children.Add(AiSettingsForm.Field(T("视觉模型路径（可选）", "Visual model path (optional)"), _modelPath));
+        _visualModel.IsChecked = settings.MemoryVisualModelEnabled;
+        _modelPath.Text = settings.MemoryVisualModelPath;
         root.Children.Add(plan);
         root.Children.Add(_rows);
         Content = root;
@@ -88,14 +82,11 @@ internal sealed class MemorySettingsPage : ScrollViewer
             row.Entry.FieldKind = (row.FieldKind.SelectedValue as string) ?? "auto";
             if (row.Entry.FieldKind == "password") row.Entry.Sensitive = true;
             row.Entry.Enabled = row.Enabled.IsChecked != false;
-            MemoryStore.EnsureCredentialId(row.Entry);
-            if (row.Value.Text.Length > 0) MemoryStore.Save(row.Entry, row.Value.Text);
-            else if (MemoryStore.Read(row.Entry) is null) throw new InvalidOperationException($"记忆项“{keywords[0]}”的值不能为空。");
+            if (string.IsNullOrWhiteSpace(row.Value.Text)) throw new InvalidOperationException($"记忆项“{keywords[0]}”的值不能为空。");
+            // Only update the draft. SettingsService commits credentials after validation.
+            row.Entry.Value = row.Value.Text;
             entries.Add(row.Entry);
         }
-        var retained = entries.Select(entry => entry.CredentialId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var old in _originalEntries)
-            if (!retained.Contains(old.CredentialId)) MemoryStore.Delete(old);
         settings.MemoryEntries = entries;
         settings.MemoryDetectionPlan = (_plan.SelectedValue as string) ?? "hybrid";
         settings.MemoryConfidenceThreshold = _threshold.Value;
@@ -111,7 +102,7 @@ internal sealed class MemorySettingsPage : ScrollViewer
         row.Sensitive.IsChecked = entry.Sensitive;
         row.Enabled.Content = T("启用", "Enabled");
         row.Enabled.IsChecked = entry.Enabled;
-        row.Value.ToolTip = T("值将明文保存在本机设置文件中。", "The value is stored in plain text in the local settings file.");
+        row.Value.ToolTip = T("保存设置时使用 Windows DPAPI 加密，仅当前 Windows 用户可读取。", "Encrypted with Windows DPAPI when settings are saved; readable only by the current Windows user.");
         var existingValue = MemoryStore.Read(entry);
         if (!string.IsNullOrEmpty(existingValue)) row.Value.Text = existingValue;
         row.FieldKind.Items.Add(new ComboBoxItem { Content = T("自动", "Auto"), Tag = "auto" });

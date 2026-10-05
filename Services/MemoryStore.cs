@@ -14,20 +14,23 @@ internal static class MemoryStore
         return entry.CredentialId;
     }
 
-    internal static void Save(MemoryEntry entry, string value)
+    internal static void Save(MemoryEntry entry, string value, CredentialService? credentials = null)
     {
         if (string.IsNullOrWhiteSpace(value)) throw new InvalidOperationException("记忆值不能为空。");
         if (entry.Keywords is null || entry.Keywords.Count == 0) throw new InvalidOperationException("至少需要一个关键词。");
-        entry.Value = value;
+        var id = EnsureCredentialId(entry);
+        if (!id.StartsWith(Prefix, StringComparison.Ordinal)) throw new InvalidOperationException("记忆凭据标识无效。");
+        (credentials ?? new CredentialService()).Save(id, value);
+        entry.Value = string.Empty;
     }
 
-    internal static string? Read(MemoryEntry entry)
-        => string.IsNullOrEmpty(entry.Value) ? (string.IsNullOrWhiteSpace(entry.CredentialId) ? null : new CredentialService().Read(entry.CredentialId)) : entry.Value;
+    internal static string? Read(MemoryEntry entry, CredentialService? credentials = null)
+        => string.IsNullOrEmpty(entry.Value) ? (entry.CredentialId?.StartsWith(Prefix, StringComparison.Ordinal) != true ? null : (credentials ?? new CredentialService()).Read(entry.CredentialId)) : entry.Value;
 
     internal static void Delete(MemoryEntry entry)
     {
         entry.Value = string.Empty;
-        if (!string.IsNullOrWhiteSpace(entry.CredentialId)) new CredentialService().Delete(entry.CredentialId);
+        if (entry.CredentialId?.StartsWith(Prefix, StringComparison.Ordinal) == true) new CredentialService().Delete(entry.CredentialId);
     }
 
     internal static string Normalize(string text)
@@ -38,7 +41,7 @@ internal static class MemoryStore
         var normalized = Normalize(text);
         if (normalized.Length == 0) return [];
         return entries.Where(entry => entry.Enabled && entry.Keywords is { Count: > 0 })
-            .SelectMany(entry => entry.Keywords.Select(keyword => (Entry: entry, Keyword: keyword.Trim())))
+            .SelectMany(entry => entry.Keywords.Where(keyword => !string.IsNullOrWhiteSpace(keyword)).Select(keyword => (Entry: entry, Keyword: keyword.Trim())))
             .Where(item =>
             {
                 var keyword = Normalize(item.Keyword);

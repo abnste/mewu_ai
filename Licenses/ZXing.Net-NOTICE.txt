@@ -1,0 +1,11 @@
+ZXing.Net 0.16.11 and ZXing.Net.Bindings.Windows.Compatibility 0.16.14
+Copyright 2012 ZXing.Net authors
+Maintainer: Michael Jahn
+https://github.com/micjahn/ZXing.Net
+
+ZXing.Net is a port of the ZXing multi-format barcode processing library.
+These components are distributed under the Apache License, Version 2.0.
+See Apache-2.0.txt in this directory for the full license.
+
+This attribution is provided by the distributor. It does not modify the
+upstream license or imply endorsement by the upstream authors.

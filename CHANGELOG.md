@@ -2,6 +2,10 @@
 
 每个正式版本对应自己的源码标签、安装包和双语发行说明。后续功能写入新版本；旧版本说明保留当时发布内容。/ Each release has its own source tag, packages, and bilingual notes. Later changes belong to later releases.
 
+## 未发布 / Unreleased
+
+- 新增圈选区域内二维码/条码识别与本机记忆扫描填充；记忆值使用 Windows DPAPI 加密，填充前检查目标窗口，支持逐项确认。 / Add local QR/barcode recognition and memory-based form filling, with DPAPI-encrypted values, target-window checks and per-field confirmation. ([#19](https://github.com/abnste/mewu_ai/pull/19))
+
 ## 0.7.2 — OCR 内存占用修复 / OCR memory usage fix
 
 完整双语说明 / Full release notes: [0.7.2](./docs/release-notes-v0.7.2.md)
