@@ -27,7 +27,8 @@ internal static partial class ScreenEntityRecognitionService
         }
         foreach(Match match in EmailRegex().Matches(text))
         {
-            var value=match.Value.TrimEnd('.',',',';',':','。','，','；','：');
+            var value=NormalizeEmailCandidate(match.Value);
+            if(value.Length==0)continue;
             var domain=value[(value.LastIndexOf('@')+1)..].ToLowerInvariant();
             var provider=domain switch { "qq.com" or "foxmail.com"=>"qq", "163.com" or "126.com" or "yeah.net"=>"netease", _=>null };
             results.Add(new(ScreenEntityType.Email,value,provider));
@@ -39,6 +40,21 @@ internal static partial class ScreenEntityRecognitionService
             results.Add(new(ScreenEntityType.Phone,value));
         }
         return results.GroupBy(entity=>$"{entity.Type}:{entity.Value}",StringComparer.OrdinalIgnoreCase).Select(group=>group.First()).Take(12).ToArray();
+    }
+    private static string NormalizeEmailCandidate(string candidate)
+    {
+        var value=candidate.TrimEnd('.',',',';',':','。','，','；','：');
+        var at=value.LastIndexOf('@');
+        if(at<=0||at==value.Length-1)return string.Empty;
+
+        // OCR/UIA snapshots can concatenate the next word directly after a known
+        // mailbox domain (for example "ing@gmail.comshuzi"). Keep the domain
+        // boundary at the known suffix instead of presenting a bogus address.
+        var domain=value[(at+1)..];
+        var knownDomains=new[]{"gmail.com","outlook.com","hotmail.com","live.com","qq.com","foxmail.com","163.com","126.com","yeah.net"};
+        var suffix=knownDomains.FirstOrDefault(domain.StartsWith);
+        if(suffix is not null)value=value[..(at+1+suffix.Length)];
+        return value;
     }
     private static string TrimPunctuation(string value)=>value.TrimEnd('.',',',';',':','!','?','。','，','；','：','！','？',')',']','}','）','】','》');
 }

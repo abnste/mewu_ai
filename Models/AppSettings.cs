@@ -77,6 +77,12 @@ public sealed class AppSettings
     public string HermesReasoningEffort { get; set; } = "medium";
     public bool HermesAutoReadAloud { get; set; }
     public List<AiProviderSettings> Providers { get; set; } = [];
+    public List<MemoryEntry> MemoryEntries { get; set; } = [];
+    /// <summary>Autofill detection plan: rules, hybrid, or strict.</summary>
+    public string MemoryDetectionPlan { get; set; } = "hybrid";
+    public double MemoryConfidenceThreshold { get; set; } = .72;
+    public bool MemoryVisualModelEnabled { get; set; }
+    public string MemoryVisualModelPath { get; set; } = string.Empty;
     [JsonIgnore] public List<string> ConfigurationErrors { get; } = [];
     [JsonIgnore] public bool HasSensitiveCredentialErrors { get; internal set; }
 }

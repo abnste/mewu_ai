@@ -28,6 +28,43 @@ internal static class NativeMethods
     [DllImport("gdi32.dll")] private static extern bool RectInRegion(IntPtr region,ref WindowRect rectangle);
     [DllImport("user32.dll",SetLastError=true)] internal static extern bool GetWindowRect(IntPtr hWnd,out WindowRect rect);
     [DllImport("user32.dll")] internal static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll",SetLastError=true)] internal static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll",SetLastError=true)] private static extern uint SendInput(uint count,Input[] inputs,int size);
+
+    [StructLayout(LayoutKind.Sequential)] private struct Input
+    {
+        internal uint Type;
+        internal InputUnion Data;
+    }
+    [StructLayout(LayoutKind.Explicit)] private struct InputUnion
+    {
+        [FieldOffset(0)] internal KeyboardInput Keyboard;
+    }
+    [StructLayout(LayoutKind.Sequential)] private struct KeyboardInput
+    {
+        internal ushort VirtualKey;
+        internal ushort ScanCode;
+        internal uint Flags;
+        internal uint Time;
+        internal IntPtr ExtraInfo;
+    }
+    private const uint InputKeyboard=1;
+    private const uint KeyboardUnicode=0x0004;
+    private const uint KeyboardKeyUp=0x0002;
+
+    internal static bool TrySendUnicodeText(IntPtr targetWindow,string text)
+    {
+        if(targetWindow==IntPtr.Zero||string.IsNullOrEmpty(text)||text.Length>4096)return false;
+        if(!SetForegroundWindow(targetWindow))return false;
+        var inputs=new Input[text.Length*2];
+        for(var i=0;i<text.Length;i++)
+        {
+            var code=(ushort)text[i];
+            inputs[i*2]=new Input{Type=InputKeyboard,Data=new InputUnion{Keyboard=new KeyboardInput{ScanCode=code,Flags=KeyboardUnicode}}};
+            inputs[i*2+1]=new Input{Type=InputKeyboard,Data=new InputUnion{Keyboard=new KeyboardInput{ScanCode=code,Flags=KeyboardUnicode|KeyboardKeyUp}}};
+        }
+        return SendInput((uint)inputs.Length,inputs,Marshal.SizeOf<Input>())==inputs.Length;
+    }
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern IntPtr CreateRectRgn(int left,int top,int right,int bottom);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern int CombineRgn(IntPtr destination,IntPtr source1,IntPtr source2,int mode);
     [DllImport("gdi32.dll",SetLastError=true)] internal static extern bool DeleteObject(IntPtr handle);

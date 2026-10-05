@@ -60,6 +60,7 @@
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="RapidOcrNet" Version="4.1.0" ExcludeAssets="contentFiles" />
     <PackageReference Include="ScreenRecorderLib" Version="7.0.0" />
+    <PackageReference Include="ZXing.Net.Bindings.Windows.Compatibility" Version="0.16.14" />
     <PackageReference Include="System.Speech" Version="10.0.11" />
     <PackageReference Include="WpfMath" Version="2.1.0" />
   </ItemGroup>

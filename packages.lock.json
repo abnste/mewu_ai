@@ -76,6 +76,15 @@
           "XamlMath.Shared": "2.1.0"
         }
       },
+      "ZXing.Net.Bindings.Windows.Compatibility": {
+        "type": "Direct",
+        "requested": "[0.16.14, )",
+        "resolved": "0.16.14",
+        "contentHash": "bJw1qjpNJ8JmDP55UBAvA5bCU+vSEGua4z43nukJqMlrpkKu6mTw6NZGJZntM8KbNQ3RNLu8DJMJBSWUd0ifYg==",
+        "dependencies": {
+          "ZXing.Net": "0.16.11"
+        }
+      },
       "Clipper2": {
         "type": "Transitive",
         "resolved": "2.0.0",
@@ -158,6 +167,11 @@
         "type": "Transitive",
         "resolved": "2.1.0",
         "contentHash": "p7W78KZc2EWuVqAd704m4yGWg0HtxahjNYRVxDWhw7npf8oMD8C7EUc1pjkjZIcmk5PxXJ+t5FE2Fs3gBYjv1A=="
+      },
+      "ZXing.Net": {
+        "type": "Transitive",
+        "resolved": "0.16.11",
+        "contentHash": "OZfAVu88hl87BffQ+rlWCj/vLvAhhCK4QnFaoveeF/MY8SjHNSYBQ3qyUEWlPKNgBQGh1syXhCDg10vUnCsqkg=="
       }
     },
     "net10.0-windows10.0.19041/win-x64": {
