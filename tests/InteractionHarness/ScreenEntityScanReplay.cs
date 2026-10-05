@@ -107,7 +107,7 @@ internal static class ScreenEntityScanReplay
             using(var qrStream=new MemoryStream(qrCode.GetGraphic(5)))
             {
                 var qrImage=new BitmapImage();qrImage.BeginInit();qrImage.CacheOption=BitmapCacheOption.OnLoad;qrImage.StreamSource=qrStream;qrImage.EndInit();qrImage.Freeze();
-                Set("_frame",new CaptureFrame(0,0,qrImage));fields.GetField("Bounds")!.SetValue(item,new Rect(0,0,qrImage.PixelWidth,qrImage.PixelHeight));Clear();
+                fields.GetField("CapturedImageOverride")!.SetValue(item,qrImage);fields.GetField("Bounds")!.SetValue(item,new Rect(20,20,qrImage.PixelWidth,qrImage.PixelHeight));Clear();
                 var barcodeResults=(IDictionary)typeof(CaptureOverlayWindow).GetField("_screenBarcodes",Private)!.GetValue(overlay)!;
                 var delayedText=NewResult();var automaticTask=Start(delayedText);
                 WaitUntil(()=>barcodeResults.Contains(item));
@@ -120,7 +120,7 @@ internal static class ScreenEntityScanReplay
                 fields.GetField("Bounds")!.SetValue(item,new Rect(1,0,qrImage.PixelWidth-1,qrImage.PixelHeight));Invoke("UpdateScreenEntityBar",item);
                 Check(!content.Children.OfType<Button>().Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)==qrValue),"changed geometry never reuses a previous QR hint");
                 Invoke("ClearImageDerivedLayers",item);Check(!barcodeResults.Contains(item),"content invalidation releases decoded QR content");
-                Set("_frame",frame);fields.GetField("Bounds")!.SetValue(item,bounds);Clear();
+                fields.GetField("CapturedImageOverride")!.SetValue(item,null);fields.GetField("Bounds")!.SetValue(item,bounds);Clear();
             }
 
             var deliveries=0;var sentCallbacks=0;
