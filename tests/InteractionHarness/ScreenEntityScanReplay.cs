@@ -22,6 +22,7 @@ using Size=System.Windows.Size;
 using Button=System.Windows.Controls.Button;
 using Panel=System.Windows.Controls.Panel;
 using Point=System.Windows.Point;
+using Color=System.Windows.Media.Color;
 
 internal static class ScreenEntityScanReplay
 {
