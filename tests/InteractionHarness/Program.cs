@@ -29,7 +29,7 @@ internal static class Program
         if(args.Contains("--verify-ocr-memory")){OcrMemoryReplay.Run(args);return;}
         if(args.Contains("--verify-highlight-lift")){DrawingHighlightLiftReplay.Run();return;}
         if(args.Contains("--verify-background-highlight-visual")){DrawingBackgroundHighlightReplay.RunVisual();return;}
-        if(args.Contains("--verify-screen-entity-scan")){ScreenEntityScanReplay.Run();return;}
+        if(args.Contains("--verify-screen-entity-scan")){ScreenEntityScanReplay.Run(args);return;}
         if(args.Contains("--verify-video-preview-resolution")){VideoPreviewResolutionReplay.Run(args);return;}
         if(args.Contains("--verify-isolated-video-trim")){VideoTrimReplay.Run(args);return;}
         if(args.Contains("--render-video-trim")){VideoTrimVisualReplay.Run(args);return;}

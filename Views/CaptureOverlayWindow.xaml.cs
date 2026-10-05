@@ -1907,11 +1907,10 @@ public partial class CaptureOverlayWindow : Window
         if(ReferenceEquals(bar,ScreenEntityBar))
         {
             var space=CaptureOverlayPolicy.FindScreenEntityBarSpace(monitor,item.Bounds,w,h,
-                [GetFloatingElementBounds(Toolbar),promptBounds,GetFloatingElementBounds(ApplicationSnapshotFeedback)],PromptEdgeMargin,PromptFloatingGap);
+                [GetFloatingElementBounds(Toolbar),promptBounds,GetFloatingElementBounds(ApplicationSnapshotFeedback),GetFloatingElementBounds(SizeText)],PromptEdgeMargin,PromptFloatingGap);
             if(space.IsEmpty){bar.Visibility=Visibility.Collapsed;return;}
             Canvas.SetLeft(bar,space.Left);Canvas.SetTop(bar,space.Top);
         }
-        else if(ReferenceEquals(bar,Toolbar)&&ScreenEntityBar.Visibility==Visibility.Visible)PositionFloatingBar(ScreenEntityBar,item);
         if(IsTeachingMode&&(ReferenceEquals(bar,RecordingBar)||ReferenceEquals(bar,LongCaptureBar)))
         {
             var space=CaptureOverlayPolicy.FindCaptureControlSpace(monitor,item.Bounds,w,h);
@@ -1930,6 +1929,7 @@ public partial class CaptureOverlayWindow : Window
             bar.Visibility=Visibility.Visible;
         }
         if(ReferenceEquals(bar,Toolbar)&&SizeText.Visibility==Visibility.Visible){SizeText.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var sizeHeight=SizeText.DesiredSize.Height;var preferred=placement.Top<item.Bounds.Top?placement.Top-sizeHeight-4:item.Bounds.Top-sizeHeight-4;var sizeY=preferred>=monitor.Top+4?preferred:Math.Min(item.Bounds.Bottom-sizeHeight-4,item.Bounds.Top+4);Canvas.SetLeft(SizeText,item.Bounds.Left);Canvas.SetTop(SizeText,sizeY);}
+        if((ReferenceEquals(bar,Toolbar)||ReferenceEquals(bar,ApplicationSnapshotFeedback))&&ScreenEntityBar.Visibility==Visibility.Visible)PositionFloatingBar(ScreenEntityBar,item);
     }
 
     private static Rect GetFloatingElementBounds(FrameworkElement element)

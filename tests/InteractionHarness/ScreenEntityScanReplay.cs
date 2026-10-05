@@ -28,10 +28,13 @@ internal static class ScreenEntityScanReplay
 {
     private const BindingFlags Private=BindingFlags.Instance|BindingFlags.NonPublic;
 
-    internal static void Run()
+    internal static void Run(string[] args)
     {
         var directory=ReplayOutputDirectory.PrepareWorkingDirectory("screen-entity-scan");
-        LocalizationService.Initialize("en-US",null);
+        var english=!args.Contains("--chinese");
+        var nextLabel=english?"Next code":"下一个二维码";
+        var previousLabel=english?"Previous code":"上一个二维码";
+        LocalizationService.Initialize(english?"en-US":"zh-CN",null);
         PrivacyLogger.ConfigureIsolatedReplayDirectory(Path.Combine(directory,"logs"));
         var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};
         var previousContext=SynchronizationContext.Current;
@@ -142,12 +145,12 @@ internal static class ScreenEntityScanReplay
             {
                 var current=Buttons(multiContent).First(button=>decoded.Contains(System.Windows.Automation.AutomationProperties.GetName(button)));
                 seen.Add(System.Windows.Automation.AutomationProperties.GetName(current));
-                Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Next code").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)==nextLabel).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             }
             Check(seen.SetEquals(multiValues),"next navigation reaches every code and wraps without selecting a screenshot");
             var firstSelected=Buttons(multiContent).First(button=>decoded.Contains(System.Windows.Automation.AutomationProperties.GetName(button)));
             var selectedValue=System.Windows.Automation.AutomationProperties.GetName(firstSelected);
-            Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Previous code").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)==previousLabel).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             var previousValue=System.Windows.Automation.AutomationProperties.GetName(Buttons(multiContent).First(button=>decoded.Contains(System.Windows.Automation.AutomationProperties.GetName(button))));
             Check(previousValue!=selectedValue,"previous navigation changes the code independently of the text reader");
             multiText.SetResult("sample@example.org");Complete(multiTask);
@@ -159,18 +162,15 @@ internal static class ScreenEntityScanReplay
             Check(multiBar.Visibility==Visibility.Visible&&!Bounds(multiBar).IntersectsWith(Bounds(toolbar)),"the rendered hint avoids the main toolbar after toolbar reflow");
             Check(multiBar.DesiredSize.Width<=500&&multiBar.DesiredSize.Height<100,"three codes and a mailbox remain compact rather than stretching across the screen");
             Check((bool)Invoke("PointerInToolbarInteractionZone",new Point(Bounds(multiBar).Left+10,Bounds(multiBar).Top+10))!,"the hint owns pointer hover and cannot select an underlying region");
-            var nextButton=Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="Next code");
+            var nextButton=Buttons(multiContent).Single(button=>System.Windows.Automation.AutomationProperties.GetName(button)==nextLabel);
             nextButton.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice,Environment.TickCount,System.Windows.Input.MouseButton.Left){RoutedEvent=System.Windows.Input.Mouse.PreviewMouseDownEvent});
             Check(!(bool)typeof(CaptureOverlayWindow).GetField("_selecting",Private)!.GetValue(overlay)!&&!(bool)typeof(CaptureOverlayWindow).GetField("_moving",Private)!.GetValue(overlay)!&&selections.Count==1,"real preview mouse routing through a QR button never starts selection or movement");
-            var rendered=new RenderTargetBitmap(900,620,96,96,PixelFormats.Pbgra32);rendered.Render(root);
+            var sizeLabel=(FrameworkElement)overlay.FindName("SizeText");
+            Check(sizeLabel.Visibility!=Visibility.Visible||!Bounds(multiBar).IntersectsWith(Bounds(sizeLabel)),"the hint also avoids the screenshot dimension badge");
+            var scale=english?1:1.75;
+            var rendered=new RenderTargetBitmap((int)(900*scale),(int)(620*scale),96*scale,96*scale,PixelFormats.Pbgra32);rendered.Render(root);
             var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(rendered));
             using(var output=File.Create(Path.Combine(directory,"multiple-qr-layout.png")))encoder.Save(output);
-            LocalizationService.Initialize("zh-CN",null);Invoke("UpdateScreenEntityBar",item);root.UpdateLayout();
-            Check(Buttons(multiContent).Any(button=>System.Windows.Automation.AutomationProperties.GetName(button)=="下一个二维码"),"compact QR navigation is localized in Chinese");
-            var scaled=new RenderTargetBitmap(1575,1085,168,168,PixelFormats.Pbgra32);scaled.Render(root);
-            encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(scaled));
-            using(var output=File.Create(Path.Combine(directory,"multiple-qr-layout-zh-175.png")))encoder.Save(output);
-            LocalizationService.Initialize("en-US",null);
             Invoke("ClearImageDerivedLayers",item);fields.GetField("CapturedImageOverride")!.SetValue(item,null);fields.GetField("Bounds")!.SetValue(item,bounds);Clear();
 
             var deliveries=0;var sentCallbacks=0;
@@ -224,7 +224,7 @@ internal static class ScreenEntityScanReplay
         File.WriteAllText(Path.Combine(directory,"screen-entity-result.json"),JsonSerializer.Serialize(new
         {
             passed=failure is null,checks,failure,productSha256=Convert.ToHexString(SHA256.HashData(assembly)),
-            actualDesktopInput=false,nativeWindowCreated=false,realOcrOrAccountsUsed=false,realBarcodeDecode=true
+            actualDesktopInput=false,nativeWindowCreated=false,realOcrOrAccountsUsed=false,realBarcodeDecode=true,language=english?"en-US":"zh-CN",renderedDpi=english?96:168
         },new JsonSerializerOptions{WriteIndented=true}),new UTF8Encoding(false));
         Environment.ExitCode=failure is null?0:1;
     }
