@@ -34,6 +34,7 @@ public partial class CaptureOverlayWindow
         Caption(RemoveRegionButton, "删除", "Delete");
         Caption(DrawButton, "标注", "Draw");
         Caption(OcrButton, "文字", "OCR");
+        OcrButton.ToolTip = L("原位文字识别 (O)；右键识别二维码或扫描填充", "Recognize text (O); right-click for QR codes or scan-and-fill");
         Caption(TranslateButton, "翻译", "Translate");
         Caption(TableButton, "表格", "Table");
         Caption(LongCaptureButton, "长图", "Scroll");

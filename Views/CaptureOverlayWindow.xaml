@@ -69,7 +69,15 @@
     <Button x:Name="RemoveRegionButton" ToolTip="删除当前区域 (Delete)" AutomationProperties.Name="删除当前区域" Click="RemoveSelection" Style="{StaticResource CaptionToolbarButton}"><Path Width="17" Height="18" Stroke="#D75B68" StrokeThickness="1.8" StrokeLineJoin="Round" Data="M3,5 L15,5 M6,5 L6,3 L12,3 L12,5 M5,7 L6,17 L12,17 L13,7 M8,8 L8,14 M10,8 L10,14"/></Button>
     <Border Style="{StaticResource ToolbarSeparator}"/>
     <Button x:Name="DrawButton" ToolTip="原位标注 (D)" AutomationProperties.Name="原位标注" Click="Draw" Style="{StaticResource CaptionToolbarButton}"><Path Width="18" Height="18" Stroke="#52637A" StrokeThickness="1.8" StrokeLineJoin="Round" Data="M3,14 L3,17 L6,17 L16,7 L13,4 Z M11.5,5.5 L14.5,8.5"/></Button>
-     <Button x:Name="OcrButton" ToolTip="原位文字识别 (O)" AutomationProperties.Name="原位文字识别" Click="Ocr" Style="{StaticResource CaptionToolbarButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="#52637A" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,6 L2,2 L6,2 M12,2 L16,2 L16,6 M16,12 L16,16 L12,16 M6,16 L2,16 L2,12 M5,7 L13,7 M5,10 L13,10 M5,13 L11,13"/></Button>
+     <Button x:Name="OcrButton" ToolTip="原位文字识别 (O)" AutomationProperties.Name="原位文字识别" Click="Ocr" Style="{StaticResource CaptionToolbarButton}">
+      <Button.ContextMenu>
+       <ContextMenu Style="{StaticResource TextSelectionContextMenu}" Opened="RecognitionMenuOpened" Closed="RecognitionMenuClosed">
+        <MenuItem x:Name="BarcodeMenuItem" Header="二维码/条码识别" Click="DecodeBarcode" Style="{StaticResource TextSelectionMenuItem}"/>
+        <MenuItem x:Name="MemoryFillMenuItem" Header="扫描填充" Click="ScanFill" Style="{StaticResource TextSelectionMenuItem}"/>
+       </ContextMenu>
+      </Button.ContextMenu>
+      <Path Width="18" Height="18" Stretch="Uniform" Stroke="#52637A" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,6 L2,2 L6,2 M12,2 L16,2 L16,6 M16,12 L16,16 L12,16 M6,16 L2,16 L2,12 M5,7 L13,7 M5,10 L13,10 M5,13 L11,13"/>
+     </Button>
      <Button x:Name="TranslateButton" ToolTip="原位翻译 (T)" AutomationProperties.Name="原位翻译" Click="Translate" Style="{StaticResource CaptionToolbarButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="#52637A" StrokeThickness="1.7" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M2,3 L10,3 L10,9 L6,9 L3,12 L3,9 L2,9 Z M8,7 L16,7 L16,13 L13,13 L13,16 L10,13 L8,13 Z"/></Button>
      <Button x:Name="TableButton" ToolTip="AI 表格识别" AutomationProperties.Name="识别当前区域中的表格" Click="RecognizeTable" Style="{StaticResource CaptionToolbarButton}"><Path Width="18" Height="18" Stretch="Uniform" Stroke="#52637A" StrokeThickness="1.6" StrokeLineJoin="Round" Data="M2,3 L16,3 L16,15 L2,15 Z M2,7 L16,7 M2,11 L16,11 M7,3 L7,15 M12,3 L12,15"/></Button>
     <Border Style="{StaticResource ToolbarSeparator}"/>
