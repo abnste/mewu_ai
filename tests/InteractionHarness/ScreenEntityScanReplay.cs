@@ -175,7 +175,7 @@ internal static class ScreenEntityScanReplay
             var sizeLabel=(FrameworkElement)overlay.FindName("SizeText");
             Check(sizeLabel.Visibility!=Visibility.Visible||!Bounds(multiBar).IntersectsWith(Bounds(sizeLabel)),"the hint also avoids the screenshot dimension badge");
             var scale=english?1:1.75;
-            Check(new Rect(stageLeft,stageTop,primary.Width,primary.Height).Contains(Bounds(multiBar)),"the actual hint lies inside the active physical monitor's viewport");
+            Check(new Rect(stageLeft,stageTop,900,620).Contains(Bounds(multiBar)),"the actual hint stays beside the capture instead of jumping to the distant screen edge");
             var stage=new DrawingVisual();
             using(var drawing=stage.RenderOpen())drawing.DrawRectangle(new VisualBrush(root){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=new Rect(stageLeft,stageTop,900,620),Stretch=Stretch.Fill},null,new Rect(0,0,900,620));
             var rendered=new RenderTargetBitmap((int)(900*scale),(int)(620*scale),96*scale,96*scale,PixelFormats.Pbgra32);rendered.Render(stage);

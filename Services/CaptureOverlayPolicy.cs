@@ -437,7 +437,7 @@ internal static class CaptureOverlayPolicy
             xs.Add(rect.Right+gap);xs.Add(rect.Left-width-gap);
         }
         ys.AddRange([selection.Top+gap,monitor.Top+edgeMargin,monitor.Bottom-height-edgeMargin]);
-        foreach(var y in ys.Distinct())foreach(var x in xs.Distinct())
+        foreach(var x in xs.Distinct())foreach(var y in ys.Distinct())
         {
             var candidate=new Rect(x,y,width,height);
             if(candidate.Left<monitor.Left+edgeMargin||candidate.Top<monitor.Top+edgeMargin||candidate.Right>monitor.Right-edgeMargin||candidate.Bottom>monitor.Bottom-edgeMargin)continue;
