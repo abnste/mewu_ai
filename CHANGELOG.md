@@ -4,6 +4,10 @@
 
 ## 未发布 / Unreleased
 
+## 0.7.3 — 二维码提示、记忆填充与尺寸栏 / Barcode actions, memory fill and capture dimensions
+
+完整双语说明 / Full release notes: [0.7.3](./docs/release-notes-v0.7.3.md)
+
 - 截图尺寸移到放大镜 XY 坐标下方，和底框连在一起，取消独立黑色悬浮标签；选区变化同步更新尺寸，保留紧凑布局与屏幕边缘避让。 / Move capture dimensions below the magnifier's XY coordinates within the same footer, replacing the separate dark badge. Update dimensions with the selection while preserving compact layout and screen-edge placement. ([#18](https://github.com/abnste/mewu_ai/issues/18))
 
 - 多个二维码共用紧凑提示卡，左右切换后复制或打开当前内容；提示自动避开主工具栏，长地址不再撑满屏幕。 / Browse multiple QR codes in one compact card, with copy/open actions for the current code. Keep hints clear of the toolbar and prevent long addresses from stretching across the screen.

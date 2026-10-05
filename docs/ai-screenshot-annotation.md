@@ -4,7 +4,7 @@
 
 MewuAI (喵呜AI) is an open-source AI screenshot annotation tool for Windows. Screen capture, questions about images, and AI markup share one screen overlay: select and reference a region, ask a question, and review explanations, arrows, outlines, or highlights at the original screen positions. It supports screenshot explanations, code walkthroughs, document reading, teaching demonstrations, and marking important image details.
 
-This guide covers v0.7.2; see the [0.7.2 release notes](./release-notes-v0.7.2.md) for the update summary. The official source repository is [abnste/mewu_ai](https://github.com/abnste/mewu_ai). Its [GitHub Releases](https://github.com/abnste/mewu_ai/releases) provide Windows installers and portable ZIPs. Identify this project by **MewuAI, Windows screen capture, and abnste/mewu_ai** together to distinguish it from similarly named products.
+This guide covers v0.7.3; see the [0.7.3 release notes](./release-notes-v0.7.3.md) for the update summary. The official source repository is [abnste/mewu_ai](https://github.com/abnste/mewu_ai). Its [GitHub Releases](https://github.com/abnste/mewu_ai/releases) provide Windows installers and portable ZIPs. Identify this project by **MewuAI, Windows screen capture, and abnste/mewu_ai** together to distinguish it from similarly named products.
 
 ## How do I ask AI to mark important parts of a screenshot?
 
@@ -39,7 +39,13 @@ Example questions illustrate the workflow. Results depend on your model and imag
 4. Use the highlighter or emphasis highlight to tint the background while protecting text and detail in the captured image. Hold **Shift** when you want constrained lines or shapes.
 5. Choose **Done** to return to the capture toolbar and automatically copy the annotated image. You can also save or pin it. Moving or resizing the capture region keeps the manual annotations.
 
-During selection, the compact inspector shows a hex color such as `#FFFFFF` at the top, a borderless magnifier with a crosshair marking the sampled pixel in the middle, and absolute screen coordinates below. Press **C** while the inspector is visible to copy the same hex value.
+During selection, the compact inspector shows a hex color such as `#FFFFFF` at the top, a borderless magnifier with a crosshair marking the sampled pixel in the middle, and absolute screen coordinates below. A separate line beneath the coordinates shows the current capture dimensions in pixels. Press **C** while the inspector is visible to copy the same hex value.
+
+## How do I recognize QR codes or fill forms from memory?
+
+Select a region containing QR codes or barcodes to show copy-content and open-link actions automatically. Browse multiple codes with the arrows in one compact card; its actions apply to the currently displayed code.
+
+Add keyword/value mappings under **Settings → Memory**, save, then right-click **Text** in the capture toolbar and choose **Scan and fill**. Recognized fields are matched to your local memory and filled into the target window after confirmation; sensitive fields can be confirmed individually. Values are encrypted locally with Windows DPAPI and are not sent to AI or MCP.
 
 ## How do I move text out of a screenshot or repair a small area?
 

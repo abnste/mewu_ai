@@ -3,14 +3,14 @@
   <h1>喵呜AI（MewuAI）— Windows AI 截图标注软件</h1>
   <p>开源截图工具，支持 AI 原位标注、离线 OCR、截图翻译、长截图和录屏。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.2"><img src="https://img.shields.io/badge/公测版-v0.7.2-7C6CF0?style=flat-square" alt="v0.7.2 公测版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.3"><img src="https://img.shields.io/badge/公测版-v0.7.3-7C6CF0?style=flat-square" alt="v0.7.3 公测版" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 及以上，x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Setup-0.7.2-win-x64.exe"><strong>下载安装版</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.3/MewuAI-Setup-0.7.3-win-x64.exe"><strong>下载安装版</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Portable-0.7.2-win-x64.zip">免安装版</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.3/MewuAI-Portable-0.7.3-win-x64.zip">免安装版</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./CHANGELOG.md">更新日志</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -28,7 +28,7 @@
 
 想了解“让 AI 在截图上圈出重点”“截图翻译并保留原位置”或“图片文字复制到 Excel”，请看[AI 截图标注使用指南](./docs/ai-screenshot-annotation.zh-CN.md)。
 
-**0.7.2 修复：** 修复反复使用离线 OCR 后内存持续占用偏高的问题，减少排队识别时的截图内存分配。详见 [0.7.2 更新说明](./docs/release-notes-v0.7.2.md)。
+**0.7.3 更新：** 圈选后自动识别二维码和条码，多个码在紧凑卡片中切换；新增加密本机记忆填充，截图尺寸移到放大镜坐标下方。详见 [0.7.3 更新说明](./docs/release-notes-v0.7.3.md)。
 
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-zh.png"><img src="./docs/images/mewuai-cover-web-zh.png" width="100%" alt="喵呜AI 概念封面：在 Windows 桌面上截图、提问和原位标注" /></a>
@@ -43,6 +43,7 @@
 - **标注与贴图**：第一行选择画笔、形状、文字、序号、马赛克等工具，第二行调整属性、撤回、重做、删除全部和确定。“选择”工具用于移动和编辑已有对象，序号工具可手动指定下个编号；荧光笔与重点高亮给背景上色并保护底图文字和细节。按住 Shift 约束线条、箭头和形状；移动或缩放截图选区时保留手工标注，确定后自动复制标注图。
 - **透明提取与局部修补**：“无痕提取”补齐原位置背景，并把文字或图案提取为可移动、缩放、删除的透明图层；“涂抹消除”沿笔刷路径修补内容。两者均在本机处理并支持撤回、重做，依据周边背景估算，适合截图文字和简单图案，不等同于通用主体抠图或生成式照片编辑。
 - **文字与表格**：离线识别并复制图片文字；截图翻译保留每个源行和独立分栏，较长的单行译文在本行空间内调整字号；用 AI 提取表格，粘贴到 Excel。
+- **二维码与记忆填充**：圈选二维码或条码后自动显示复制、打开提示，多个码在一张紧凑卡片中切换。在记忆设置中保存关键词和值，再右键截图工具条的“文字”按钮扫描填充表单；记忆值在本机加密，待填字段可逐项确认。
 - **录屏与裁切**：录制指定区域，支持电脑声音和麦克风。在预览下方直接定位、调整起止点、撤回修改或恢复完整视频，原文件不被覆盖；保存、复制、贴视频和 AI 引用统一使用保留片段，音频及时间轴标注同步处理。预览默认原分辨率，可在录屏设置中选择降低预览分辨率，保存的视频分辨率不受影响。支持导出 MP4 视频、MP3 音频或 GIF 动图。
 - **看图、看视频提问**：引用多张截图或附件继续追问，查看 AI 批注，点击回答中的时间跳到对应视频片段。
 - **选择你常用的 AI**：支持 API、Hermes、ChatGPT Work / Codex、WorkBuddy 和 MiniMax Code，可随时切换，记住上次选择。

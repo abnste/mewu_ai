@@ -3,14 +3,14 @@
   <h1>MewuAI — AI Screenshot Annotation for Windows</h1>
   <p>Open-source screen capture with in-place AI annotations, offline OCR, screenshot translation, and screen recording.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.2"><img src="https://img.shields.io/badge/Public_Beta-v0.7.2-7C6CF0?style=flat-square" alt="v0.7.2 public beta" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v0.7.3"><img src="https://img.shields.io/badge/Public_Beta-v0.7.3-7C6CF0?style=flat-square" alt="v0.7.3 public beta" /></a>
     <img src="https://img.shields.io/badge/Windows-10_2004%2B-0078D4?style=flat-square" alt="Windows 10 2004 or later, x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Setup-0.7.2-win-x64.exe"><strong>Download installer</strong></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.3/MewuAI-Setup-0.7.3-win-x64.exe"><strong>Download installer</strong></a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.2/MewuAI-Portable-0.7.2-win-x64.zip">Portable ZIP</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v0.7.3/MewuAI-Portable-0.7.3-win-x64.zip">Portable ZIP</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./CHANGELOG.md">Changelog</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -30,7 +30,7 @@
 
 Read the [AI screenshot annotation guide](./docs/ai-screenshot-annotation.md) for examples, setup, privacy, and the difference between manual markup, OCR, and AI annotations.
 
-**0.7.2 fixes:** Reduce memory retained after repeated offline OCR and avoid allocating full screenshot buffers for queued recognition requests. See the [0.7.2 release notes](./docs/release-notes-v0.7.2.md).
+**New in 0.7.3:** Automatically recognize selected QR codes and barcodes, browse multiple codes in a compact card, fill forms from encrypted local memory, and show capture dimensions below the magnifier's coordinates. See the [0.7.3 release notes](./docs/release-notes-v0.7.3.md).
 
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-en.png"><img src="./docs/images/mewuai-cover-web-en.png" width="100%" alt="MewuAI concept cover: capture, ask and annotate on a Windows desktop" /></a>
@@ -45,6 +45,7 @@ Read the [AI screenshot annotation guide](./docs/ai-screenshot-annotation.md) fo
 - **Annotations and pinned images:** Choose pens, shapes, text, numbered markers, and mosaic from the first toolbar row; the second holds properties, undo, redo, clear, and done. The Select tool moves and edits existing objects; the number tool lets you set the next number. Highlights tint the background while protecting underlying text and detail. Hold Shift to constrain lines, arrows and shapes; moving or resizing the capture region preserves manual annotations. Done copies the annotated image automatically.
 - **Transparent content lift and local repair:** Seamless lift repairs the original background and places the extracted text or artwork on a transparent layer that you can move, resize, or delete. The healing brush repairs content along a brush stroke. Both support undo and redo and work locally; they estimate nearby background and are intended for screenshot text and simple graphics, not general-purpose subject cutouts or generative photo editing.
 - **Text and tables:** Copy text with offline OCR, translate screenshots while preserving each source line and separate columns, and use AI to extract tables for Excel. Long single-line translations fit their available line space by adjusting text size.
+- **QR codes and memory fill:** Selected QR codes and barcodes show copy/open actions automatically; browse several codes in one compact card. Configure keyword/value mappings in Memory settings, then right-click the capture toolbar's Text button to scan and fill a form. Values are encrypted locally and each proposed field can be confirmed before filling.
 - **Screen recording and trimming:** Record a region with computer audio and an optional microphone. Trim the start and end directly below the preview, seek, undo changes, or restore the full video without overwriting the source. Save, copy, pin, and AI references use the same retained clip, including its audio and timeline annotations. Previews use the original resolution by default; Recording settings offer a smaller preview without affecting saved video resolution. Export MP4 video, MP3 audio, or a GIF.
 - **Ask about images and videos:** Reference several screenshots or attachments, ask follow-up questions, and click a time in an answer to jump to the relevant video scene.
 - **Choose your AI:** Connect API services, Hermes, ChatGPT Work / Codex, WorkBuddy, or MiniMax Code. Switch between them and keep your last selection.
