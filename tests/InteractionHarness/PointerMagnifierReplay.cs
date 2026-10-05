@@ -177,6 +177,33 @@ internal static class PointerMagnifierReplay
             Invoke("UpdatePointerInspector", centerPoint); root.UpdateLayout();
             var textRender = Path.Combine(directory, "magnifier-" + language + "-text-edge-168.png");
             RenderCard(inspector, magnifier, Sample(magnifier), 168, textRender, Check); renders.Add(textRender);
+            var item=Invoke("CreateSelection",false)!;
+            var selections=(System.Collections.IList)typeof(CaptureOverlayWindow).GetField("_selections",Private)!.GetValue(overlay)!;
+            selections.Add(item);Set("_activeIndex",0);
+            var sizeRow=(Border)overlay.FindName("SizeText");var sizeText=(TextBlock)overlay.FindName("SizeTextLabel");
+            var footer=(Border)overlay.FindName("PointerCoordinateFooter");
+            Check(footer.IsAncestorOf(sizeRow)&&footer.IsAncestorOf(coordinateText),"capture dimensions and XY share the same connected magnifier footer");
+            Check(sizeRow.Effect is null&&sizeRow.Background is null&&sizeText.Foreground.ToString()==coordinateText.Foreground.ToString(),"dimensions use the coordinate text color without a separate dark surface or shadow");
+            foreach(var dpi in new[]{96,168,192})
+            {
+                var scale=dpi/96d;root.Width=800/scale;root.Height=600/scale;
+                root.Measure(new Size(root.Width,root.Height));root.Arrange(new Rect(0,0,root.Width,root.Height));root.UpdateLayout();
+                var selectionBounds=new Rect(40/scale,30/scale,240/scale,180/scale);
+                item.GetType().GetField("Bounds")!.SetValue(item,selectionBounds);Invoke("UpdateSelection",item);
+                var point=new Point(root.Width-2,root.Height-2);Invoke("UpdatePointerInspector",point);root.UpdateLayout();
+                var pixelBounds=(Int32Rect)Invoke("ToPixelRect",selectionBounds)!;
+                Check(sizeText.Text==$"{pixelBounds.Width} × {pixelBounds.Height}","size readout uses physical capture dimensions at "+dpi+" DPI");
+                Check(sizeRow.Visibility==Visibility.Visible&&Math.Abs(inspector.ActualHeight-144)<=1&&Math.Abs(inspector.ActualWidth-90)<=1,"size adds exactly one compact line without widening the magnifier at "+dpi+" DPI");
+                var coordinates=coordinateText.TransformToAncestor(inspector).TransformBounds(new Rect(coordinateText.RenderSize));
+                var dimensions=sizeText.TransformToAncestor(inspector).TransformBounds(new Rect(sizeText.RenderSize));
+                Check(dimensions.Top>=coordinates.Bottom&&dimensions.Bottom<=inspector.ActualHeight&&dimensions.Left>=3&&dimensions.Right<=87,"size is fully visible beneath XY in the same footer at "+dpi+" DPI");
+                Check(Canvas.GetLeft(inspector)>=0&&Canvas.GetTop(inspector)>=0&&Canvas.GetLeft(inspector)+inspector.ActualWidth<=root.ActualWidth&&Canvas.GetTop(inspector)+inspector.ActualHeight<=root.ActualHeight,"extra size row remains inside the screen at the bottom-right corner at "+dpi+" DPI");
+                var sizeRender=Path.Combine(directory,$"magnifier-{language}-capture-size-{dpi}.png");RenderCard(inspector,magnifier,Sample(magnifier),dpi,sizeRender,Check);renders.Add(sizeRender);
+                item.GetType().GetField("Bounds")!.SetValue(item,new Rect(40/scale,30/scale,360/scale,220/scale));Invoke("UpdateSelection",item);
+                Check(sizeText.Text=="360 × 220","changing selection dimensions immediately refreshes the footer at "+dpi+" DPI");
+            }
+            Invoke("RemoveActiveSelection",false);Invoke("UpdatePointerInspector",centerPoint);root.UpdateLayout();
+            Check(sizeRow.Visibility==Visibility.Collapsed&&Math.Abs(inspector.ActualHeight-126)<=1,"removing the selection also removes the size row and its spacing");
             foreach (var field in new[] { "_recordingMode", "_recordingCountdownActive", "_drawingMode", "_longCaptureMode", "_promptDragging", "_promptDockAnimating" })
             {
                 inspector.Visibility = Visibility.Visible; Set(field, true);

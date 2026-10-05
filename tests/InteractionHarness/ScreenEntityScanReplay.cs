@@ -173,7 +173,7 @@ internal static class ScreenEntityScanReplay
             nextButton.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice,Environment.TickCount,System.Windows.Input.MouseButton.Left){RoutedEvent=System.Windows.Input.Mouse.PreviewMouseDownEvent});
             Check(!(bool)typeof(CaptureOverlayWindow).GetField("_selecting",Private)!.GetValue(overlay)!&&!(bool)typeof(CaptureOverlayWindow).GetField("_moving",Private)!.GetValue(overlay)!&&selections.Count==1,"real preview mouse routing through a QR button never starts selection or movement");
             var sizeLabel=(FrameworkElement)overlay.FindName("SizeText");
-            Check(sizeLabel.Visibility!=Visibility.Visible||!Bounds(multiBar).IntersectsWith(Bounds(sizeLabel)),"the hint also avoids the screenshot dimension badge");
+            Check(((FrameworkElement)overlay.FindName("PointerInspector")).IsAncestorOf(sizeLabel),"screenshot dimensions belong to the magnifier instead of a competing floating badge");
             var scale=english?1:1.75;
             Check(new Rect(stageLeft,stageTop,900,620).Contains(Bounds(multiBar)),"the actual hint stays beside the capture instead of jumping to the distant screen edge");
             var stage=new DrawingVisual();

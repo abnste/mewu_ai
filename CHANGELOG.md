@@ -4,6 +4,8 @@
 
 ## 未发布 / Unreleased
 
+- 截图尺寸移到放大镜 XY 坐标下方，和底框连在一起，取消独立黑色悬浮标签；选区变化同步更新尺寸，保留紧凑布局与屏幕边缘避让。 / Move capture dimensions below the magnifier's XY coordinates within the same footer, replacing the separate dark badge. Update dimensions with the selection while preserving compact layout and screen-edge placement. ([#18](https://github.com/abnste/mewu_ai/issues/18))
+
 - 多个二维码共用紧凑提示卡，左右切换后复制或打开当前内容；提示自动避开主工具栏，长地址不再撑满屏幕。 / Browse multiple QR codes in one compact card, with copy/open actions for the current code. Keep hints clear of the toolbar and prevent long addresses from stretching across the screen.
 
 - 圈选后自动识别二维码/条码，并像邮箱、链接一样显示原位提示；新增本机记忆扫描填充（右键工具栏“文字”按钮），记忆值使用 Windows DPAPI 加密，填充前检查目标窗口，支持逐项确认。 / Automatically recognize selected QR codes/barcodes and show inline actions alongside email/link recognition. Add memory-based form filling from the OCR button's context menu, with DPAPI-encrypted values, target-window checks and per-field confirmation. ([#19](https://github.com/abnste/mewu_ai/pull/19))

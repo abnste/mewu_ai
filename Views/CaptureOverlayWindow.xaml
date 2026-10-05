@@ -330,13 +330,9 @@
     <Button.Template><ControlTemplate TargetType="Button"><Border Background="Transparent"/></ControlTemplate></Button.Template>
    </Button>
   </Grid>
-  <Border x:Name="SizeText" Visibility="Collapsed" Background="#E6111722" BorderBrush="#80FFFFFF" BorderThickness="1" CornerRadius="7" Padding="6,3" SnapsToDevicePixels="True" IsHitTestVisible="False">
-   <Border.Effect><DropShadowEffect Color="#111722" BlurRadius="10" ShadowDepth="2" Opacity="0.28"/></Border.Effect>
-   <TextBlock x:Name="SizeTextLabel" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
-  </Border>
   <Border x:Name="PointerInspector" Visibility="Collapsed" Width="90" SnapsToDevicePixels="True" IsHitTestVisible="False">
    <Grid>
-    <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="90"/><RowDefinition Height="18"/></Grid.RowDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="18"/><RowDefinition Height="90"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Border x:Name="PointerColorHeader" Grid.Row="0" Background="#FAFFFFFF" CornerRadius="6,6,0,0" Padding="4,1">
      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Height="16">
       <Rectangle x:Name="PointerColorSwatch" Width="7" Height="7" Fill="White" RadiusX="2" RadiusY="2" Margin="0,0,4,0" VerticalAlignment="Center"/>
@@ -345,7 +341,12 @@
     </Border>
     <local:CaptureMagnifier x:Name="PointerMagnifier" Grid.Row="1" Width="90" Height="90" ClipToBounds="True"/>
     <Border x:Name="PointerCoordinateFooter" Grid.Row="2" Background="#FAFFFFFF" CornerRadius="0,0,6,6" Padding="4,1">
-     <Viewbox Height="16" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="PointerCoordinateText" Text="X 0 Y 0" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Viewbox>
+     <StackPanel>
+      <Viewbox Height="16" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="PointerCoordinateText" Text="X 0 Y 0" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Viewbox>
+      <Border x:Name="SizeText" Visibility="Collapsed" Margin="0,2,0,0" IsHitTestVisible="False">
+       <Viewbox Height="16" Stretch="Uniform" StretchDirection="DownOnly"><TextBlock x:Name="SizeTextLabel" Foreground="#65748A" FontFamily="Consolas" FontSize="10" TextAlignment="Center" VerticalAlignment="Center"/></Viewbox>
+      </Border>
+     </StackPanel>
     </Border>
    </Grid>
   </Border>

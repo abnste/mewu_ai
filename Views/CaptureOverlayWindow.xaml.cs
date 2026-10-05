@@ -1668,7 +1668,7 @@ public partial class CaptureOverlayWindow : Window
         }
         UpdateVideoTrimBar();
         var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?AnnotationPalette.Referenced:AnnotationPalette.Inactive;item.Outline.BorderThickness=new Thickness(active?1.8:1.2);item.Outline.Effect=active&&!item.IsImplicit?AnnotationPalette.SelectionGlow:null;item.Badge.Background=AnnotationPalette.Accent;item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
-        if(active&&!item.IsImplicit){SizeTextLabel.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":$"视频 · {GetVideoOutputDuration(item):mm\\:ss}";SizeText.Visibility=Visibility.Visible;Canvas.SetLeft(SizeText,r.Left);Canvas.SetTop(SizeText,Math.Max(0,r.Top-30));PositionHandles(r);}else if(item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
+        if(active&&!item.IsImplicit){SizeTextLabel.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":L($"视频 · {GetVideoOutputDuration(item):mm\\:ss}",$"Video · {GetVideoOutputDuration(item):mm\\:ss}");SizeText.Visibility=Visibility.Visible;PositionHandles(r);if(PointerInspector.Visibility==Visibility.Visible)UpdatePointerInspector(_lastToolbarPointer);}else if(active&&item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
     }
 
     private void Select(int index){if(_activeIndex!=index)_videoTrimBar.CancelInteraction();_activeIndex=index;for(var i=0;i<_selections.Count;i++)UpdateSelection(_selections[i]);if(Active is { } item)UpdateScreenEntityBar(item);else HideScreenEntityBar();}
@@ -1907,7 +1907,7 @@ public partial class CaptureOverlayWindow : Window
         if(ReferenceEquals(bar,ScreenEntityBar))
         {
             var space=CaptureOverlayPolicy.FindScreenEntityBarSpace(monitor,item.Bounds,w,h,
-                [GetFloatingElementBounds(Toolbar),promptBounds,GetFloatingElementBounds(ApplicationSnapshotFeedback),GetFloatingElementBounds(SizeText)],PromptEdgeMargin,PromptFloatingGap);
+                [GetFloatingElementBounds(Toolbar),promptBounds,GetFloatingElementBounds(ApplicationSnapshotFeedback)],PromptEdgeMargin,PromptFloatingGap);
             if(space.IsEmpty){bar.Visibility=Visibility.Collapsed;return;}
             Canvas.SetLeft(bar,space.Left);Canvas.SetTop(bar,space.Top);
         }
@@ -1928,7 +1928,6 @@ public partial class CaptureOverlayWindow : Window
             }
             bar.Visibility=Visibility.Visible;
         }
-        if(ReferenceEquals(bar,Toolbar)&&SizeText.Visibility==Visibility.Visible){SizeText.Measure(new Size(double.PositiveInfinity,double.PositiveInfinity));var sizeHeight=SizeText.DesiredSize.Height;var preferred=placement.Top<item.Bounds.Top?placement.Top-sizeHeight-4:item.Bounds.Top-sizeHeight-4;var sizeY=preferred>=monitor.Top+4?preferred:Math.Min(item.Bounds.Bottom-sizeHeight-4,item.Bounds.Top+4);Canvas.SetLeft(SizeText,item.Bounds.Left);Canvas.SetTop(SizeText,sizeY);}
         if((ReferenceEquals(bar,Toolbar)||ReferenceEquals(bar,ApplicationSnapshotFeedback))&&ScreenEntityBar.Visibility==Visibility.Visible)PositionFloatingBar(ScreenEntityBar,item);
     }
 
