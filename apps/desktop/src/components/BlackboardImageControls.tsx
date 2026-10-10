@@ -8,7 +8,7 @@ import {blackboardImage,imageAt,zoomBlackboardImage} from '../blackboard-image';
 import {t} from '../i18n';
 import './blackboard-image.css';
 interface Props {
-  surface:()=>SVGSVGElement;box:EditorBox;frame:()=>EditorBox;drawings:()=>Drawing[];
+  surface:()=>SVGSVGElement;box:EditorBox;frame:()=>EditorBox;drawings:()=>Drawing[];preview:()=>Drawing|undefined;
   revision:()=>number;source:()=>string;disabled:()=>boolean;gestureActive:()=>boolean;
   onMove:(event:PointerEvent,drawing:Drawing)=>void;
   onUpdate:(drawing:Drawing,revision:number,active:()=>boolean)=>Promise<boolean>;
@@ -19,10 +19,11 @@ interface Props {
 export default function BlackboardImageControls(props:Props){
   let controls!:HTMLDivElement,disposed=false,timer:ReturnType<typeof setTimeout>|undefined;
   let zoom:{value:Drawing;revision:number;source:string}|undefined,flight:Promise<boolean>|undefined;
-  const [hovered,setHovered]=createSignal(''),[preview,setPreview]=createSignal<Drawing>(),[zooming,setZooming]=createSignal(false);
-  const value=createMemo(()=>preview()??props.drawings().find(value=>value.id===hovered()));
+  const [hovered,setHovered]=createSignal(''),[zooming,setZooming]=createSignal(false);
+  // The image and its corner control must use the same live gesture geometry.
+  const value=createMemo(()=>{const id=hovered(),preview=props.preview();return preview?.id===id?preview:props.drawings().find(value=>value.id===id);});
   const coordinate=(event:{clientX:number;clientY:number}):DrawingPoint=>{const box=props.surface().getBoundingClientRect(),frame=props.frame();return{x:frame.x+(event.clientX-box.left)/box.width*frame.width,y:frame.y+(event.clientY-box.top)/box.height*frame.height};};
-  const cancel=()=>{if(timer!==undefined)clearTimeout(timer);timer=undefined;zoom=undefined;setPreview(undefined);setZooming(false);props.onZooming(false);props.onPreview(undefined);};
+  const cancel=()=>{if(timer!==undefined)clearTimeout(timer);timer=undefined;zoom=undefined;setZooming(false);props.onZooming(false);props.onPreview(undefined);};
   async function flush(active:()=>boolean=()=>true):Promise<boolean>{
     if(timer!==undefined)clearTimeout(timer);timer=undefined;
     if(flight)return (await flight)&&active();
@@ -33,7 +34,7 @@ export default function BlackboardImageControls(props:Props){
     flight=request;
     const saved=await request;
     if(flight===request)flight=undefined;
-    if(!disposed){setPreview(undefined);setZooming(false);props.onZooming(false);props.onPreview(undefined);}
+    if(!disposed){setZooming(false);props.onZooming(false);props.onPreview(undefined);}
     return saved;
   }
   const hover=(event:PointerEvent)=>{
@@ -49,7 +50,7 @@ export default function BlackboardImageControls(props:Props){
     const next=zoomBlackboardImage(image,props.frame(),point,delta);if(!next)return;
     event.preventDefault();event.stopPropagation();
     if(!zoom)zoom={value:next,revision:props.revision(),source:props.source()};else zoom.value=next;
-    setHovered(image.id);setPreview(next);setZooming(true);props.onZooming(true);props.onPreview(next);
+    setHovered(image.id);setZooming(true);props.onZooming(true);props.onPreview(next);
     if(timer!==undefined)clearTimeout(timer);timer=setTimeout(()=>void flush(),140);
   };
   const beforeStroke=(event:PointerEvent)=>{if(zooming()){event.preventDefault();event.stopImmediatePropagation();void flush();}};
