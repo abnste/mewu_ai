@@ -4,7 +4,7 @@ import {splitReplyReasoning} from './reply-reasoning';
 export interface LivePreview {runId:string;text:string;reasoning:string}
 export function livePreview(previous:LivePreview|undefined,event:RunEvent):LivePreview {
   const old=previous?.runId===event.runId?previous:{runId:event.runId,text:'',reasoning:''};
-  return {runId:event.runId,text:Array.from(old.text+(event.text??'')).slice(0,1600).join(''),reasoning:Array.from(old.reasoning+(event.reasoning??'')).slice(-1600).join('')};
+  return {runId:event.runId,text:Array.from(old.text+(event.text??'')).slice(-1600).join(''),reasoning:Array.from(old.reasoning+(event.reasoning??'')).slice(-1600).join('')};
 }
 // This is a transient preview cache, independent of saved conversations/memory.
 export function mergeLivePreview(previous:ReadonlyMap<string,LivePreview>,event:RunEvent):ReadonlyMap<string,LivePreview>{
@@ -18,5 +18,5 @@ export function previewSnippet(text:string,tail=false):string {
 export function liveSnippet(value:LivePreview|undefined):string {
   if(!value)return '';
   const parts=splitReplyReasoning(value.text,value.reasoning,true);
-  return previewSnippet(parts.text||parts.reasoning,!parts.text);
+  return previewSnippet(parts.text||parts.reasoning,true);
 }

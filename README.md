@@ -19,7 +19,7 @@ On this branch, opening a blackboard carries existing capture regions, images, H
 
 Drawing, recording and AI annotations are built in. Plugins can be disabled or removed. Current plugins are declarative JSON packages: they cannot execute arbitrary downloaded code. Hermes, Codex, WorkBuddy and MiniMax Code agent integrations, macOS delivery, device synchronization and dedicated image/video generation APIs are not included in this preview. The current agent is not a complete replacement for Hermes and Hindsight. Actual annotation quality depends on the model.
 
-Only explicitly minimized conversations appear in the floating list and its count. Escape closes ordinary conversations into history; a restored minimized conversation returns to the floating list. Its preview streams public reasoning and answers, then shows the beginning of the final answer with “...” for long content. Adding a reference inserts the corresponding @image or @video name at the input caret while retaining its attachment identity.
+Only explicitly minimized conversations appear in the floating list and its count. Escape closes ordinary conversations into history; a restored minimized conversation returns to the floating list. Its preview follows the latest public reasoning and answer chunks, then shows the beginning of the final answer with “...” for long content. Adding a reference inserts the corresponding @image or @video name at the input caret while retaining its attachment identity.
 
 HTML/SVG/Canvas results are transparent interactive objects with hover controls for moving, reloading and closing. Video actions and quick trim appear below the video by default and avoid nearby controls when space is limited. Long captures show their stitched content in a live side preview.
 

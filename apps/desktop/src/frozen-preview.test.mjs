@@ -20,6 +20,16 @@ test('transient widget preview cache is bounded and retains the most recently st
   values=mergeLivePreview(values,{sceneId:'12',runId:'a',text:'y'});values=mergeLivePreview(values,{sceneId:'new',runId:'a',text:'z'});
   assert.equal(values.get('12').text,'xy');assert.equal(values.get('13'),undefined);
 });
+test('long streaming answers continue following new chunks before returning to the final answer beginning',()=>{
+  const finalAnswer='答案开头：'+'🙂'.repeat(1700)+'正在补充';
+  let value=livePreview(undefined,{runId:'long',reasoning:'先检查来源'});
+  value=livePreview(value,{runId:'long',text:finalAnswer});
+  assert.equal(liveSnippet(value),'🙂'.repeat(86)+'正在补充');
+  value=livePreview(value,{runId:'long',text:'，最后一段'});
+  assert.equal(liveSnippet(value),'🙂'.repeat(81)+'正在补充，最后一段');
+  assert.equal(Array.from(value.text).length,1600);
+  assert.equal(previewSnippet(finalAnswer+'，最后一段'),'答案开头：'+'🙂'.repeat(85)+'...');
+});
 test('lower placement stays near the video and avoids the composer and object actions',async()=>{
   const module=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./video-placement.ts',import.meta.url),'utf8'),{mode:'transform'}));await module.link(()=>{throw Error('dependency');});await module.evaluate();
   const box={left:200,top:200,width:640,height:360},screen={width:1280,height:900};
