@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
-import { Code2, Copy, Download, File, Image, Link2, Maximize2, Move, Pencil, RotateCcw, Video, X } from 'lucide-solid';
+import { Code2, Copy, Download, File, Image, Link2, Maximize2, Pencil, RotateCcw, Video, X } from 'lucide-solid';
+import ObjectMoveGrip from './ObjectMoveGrip';
+import {objectMoveGripPosition} from '../object-move-grip';
 import type {ObjectTrashPort} from '../object-trash';
 import type {DrawingFlush,RegisterDrawingFlush} from '../drawing-flush';
 import {isBlackboardText} from '../blackboard-objects';
@@ -83,7 +85,8 @@ export default function ArtifactCard(props: Props) {
     const width = Math.min(p.width * vp.width, p.height * vp.height * ratio);
     return { width, height: width / ratio };
   });
-  const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=isImage()?imageBox().width:p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-(isDocument()?84:32),left+width-(isDocument()?84:32)))-left}px`,top:`${Math.max(4,Math.min(vp.height-32,top+4))-top}px`};};
+  const movePosition=()=>{const p=position(),vp=viewport();return objectMoveGripPosition({x:p.x*vp.width,y:p.y*vp.height,width:isImage()?imageBox().width:p.width*vp.width},vp);};
+  const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-56,left+width-56))-left}px`,top:`${Math.max(4,Math.min(vp.height-28,top+(width<176?28:4)))-top}px`};};
   const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
 
   async function flushZoom() {
@@ -183,7 +186,7 @@ export default function ArtifactCard(props: Props) {
     style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isImage() ? `${imageBox().width}px` : `${position().width * 100}%`, height: isImage() ? `${imageBox().height}px` : `${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
     data-video-item={isVideo() ? props.item.id : undefined} data-video-scene={isVideo() ? props.video?.sceneId : undefined}
     aria-label={props.item.asset.name} onWheel={wheel} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
-    <Show when={props.blackboard&&!isDocument()}><div class="blackboard-object-control" role="toolbar" aria-label={t('对象工具')} style={controlPosition()}><button aria-label={t('移动对象')} title={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18} strokeWidth={1.7}/></button></div></Show>
+    <Show when={props.blackboard||isImage()||isDocument()||isVideo()}><ObjectMoveGrip label={t('移动对象')} disabled={props.busy} style={movePosition()} onPointerDown={event=>gesture(event,false,true)}/></Show>
     <Show when={props.blackboard&&isBlackboardText(props.item.asset)}><For each={['nw','ne','sw','se'] as ResizeCorner[]}>{corner=><div class={`blackboard-text-corner ${corner}`} aria-hidden="true" onPointerDown={event=>gesture(event,true,true,corner)} />}</For></Show>
     <Show when={!isImage()&&!isDocument()&&!isVideo()&&!props.blackboard}>
     <header class="artifact-header" onPointerDown={e => gesture(e)}>
@@ -201,12 +204,10 @@ export default function ArtifactCard(props: Props) {
       <button class="icon-button compact" title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}', () => props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={15} /></button>
     </div></Show>
     <Show when={isDocument()}><div class="document-object-tools" role="toolbar" aria-label={t('对象工具')} style={controlPosition()}>
-      <button title={t('移动对象')} aria-label={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18}/></button>
       <button title={t('重新载入')} aria-label={t('重新载入内容')} disabled={props.busy} onClick={()=>setReload(value=>value+1)}><RotateCcw size={18}/></button>
       <button title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={18}/></button>
     </div></Show>
     <Show when={isVideo()&&!props.blackboard}><div class="video-object-tools" role="toolbar" aria-label={t('视频工具')}>
-      <button title={t('移动对象')} aria-label={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={20}/></button>
       <button title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={20}/></button>
       <button title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
       <button title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>

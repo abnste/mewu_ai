@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+button.object-move-grip{position:absolute;left:50%;top:4px;z-index:4;display:block;width:var(--object-move-width);max-width:100%;height:var(--object-move-height);box-sizing:border-box;transform:translateX(-50%);margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:#fff;mix-blend-mode:difference;pointer-events:auto;cursor:grab;touch-action:none;user-select:none}
+button.object-move-grip::before{content:"";position:absolute;left:50%;top:6px;width:36px;max-width:calc(100% - 12px);height:4px;border-radius:999px;background:currentColor;transform:translateX(-50%);opacity:0;transition:opacity .12s}
+button.object-move-grip:is(:hover,:focus-visible,.object-move-held)::before{opacity:.65}
+button.object-move-grip:is(:hover,:active){background:transparent;box-shadow:none}
+button.object-move-grip.object-move-held{cursor:grabbing}
+button.object-move-grip:focus-visible{outline:1px solid #ffffff80;outline-offset:-4px}
+button.object-move-grip:disabled{cursor:default;opacity:1}
+button.object-move-grip:disabled::before{opacity:0}
+@media(prefers-reduced-motion:reduce){button.object-move-grip::before{transition:none}}

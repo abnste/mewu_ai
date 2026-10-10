@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 import {createEffect,createMemo,createSignal,onCleanup,Show} from 'solid-js';
-import {Move} from 'lucide-solid';
+import ObjectMoveGrip from './ObjectMoveGrip';
+import {objectMoveGripPosition} from '../object-move-grip';
 import type {Drawing,DrawingPoint} from '../contracts';
 import type {EditorBox} from '../drawing-editor-port';
 import type {RegisterDrawingFlush} from '../drawing-flush';
@@ -20,7 +21,7 @@ export default function BlackboardImageControls(props:Props){
   let controls!:HTMLDivElement,disposed=false,timer:ReturnType<typeof setTimeout>|undefined;
   let zoom:{value:Drawing;revision:number;source:string}|undefined,flight:Promise<boolean>|undefined;
   const [hovered,setHovered]=createSignal(''),[zooming,setZooming]=createSignal(false);
-  // The image and its corner control must use the same live gesture geometry.
+  // The image and its top grip must use the same live gesture geometry.
   const value=createMemo(()=>{const id=hovered(),preview=props.preview();return preview?.id===id?preview:props.drawings().find(value=>value.id===id);});
   const coordinate=(event:{clientX:number;clientY:number}):DrawingPoint=>{const box=props.surface().getBoundingClientRect(),frame=props.frame();return{x:frame.x+(event.clientX-box.left)/box.width*frame.width,y:frame.y+(event.clientY-box.top)/box.height*frame.height};};
   const cancel=()=>{if(timer!==undefined)clearTimeout(timer);timer=undefined;zoom=undefined;setZooming(false);props.onZooming(false);props.onPreview(undefined);};
@@ -57,9 +58,10 @@ export default function BlackboardImageControls(props:Props){
   createEffect(()=>{const surface=props.surface();if(!surface)return;surface.addEventListener('pointermove',hover);surface.addEventListener('pointerleave',leave);surface.addEventListener('pointerdown',beforeStroke,true);surface.addEventListener('wheel',wheel,{passive:false});onCleanup(()=>{surface.removeEventListener('pointermove',hover);surface.removeEventListener('pointerleave',leave);surface.removeEventListener('pointerdown',beforeStroke,true);surface.removeEventListener('wheel',wheel);});});
   createEffect(()=>{const source=props.source();if(zoom&&zoom.source!==source)cancel();});
   const unregister=props.onRegisterFlush?.(async active=>{if(!(await flush(active)))throw Error('图片尺寸尚未保存');});
-  const position=()=>{const drawing=value();if(!drawing)return{};const frame=props.frame(),a=drawing.points[0],b=drawing.points[1],x=props.box.x+(b.x-frame.x)/frame.width*props.box.width-32,y=props.box.y+(a.y-frame.y)/frame.height*props.box.height+4;return{left:`${Math.max(4,Math.min(innerWidth-32,x))}px`,top:`${Math.max(4,Math.min(innerHeight-32,y))}px`};};
+  const bounds=()=>{const drawing=value()!,frame=props.frame(),a=drawing.points[0],b=drawing.points[1];return{x:props.box.x+(a.x-frame.x)/frame.width*props.box.width,y:props.box.y+(a.y-frame.y)/frame.height*props.box.height,width:(b.x-a.x)/frame.width*props.box.width};};
+  const position=()=>{const box=bounds();return{left:`${box.x}px`,top:`${box.y}px`,width:`${box.width}px`};};
   onCleanup(()=>{disposed=true;unregister?.();cancel();});
   return <Show when={value()}>{drawing=><div ref={controls} class="blackboard-image-controls" role="toolbar" aria-label={t('图片工具')} style={position()} onPointerDown={event=>event.stopPropagation()} onPointerLeave={event=>{const surface=props.surface();if(!surface.contains(event.relatedTarget as Node)&&!zooming())setHovered('');}}>
-    <button aria-label={t('移动图片')} title={t('移动图片')} disabled={props.disabled()||zooming()} onPointerDown={event=>props.onMove(event,drawing())}><Move size={18} strokeWidth={1.7}/></button>
+    <ObjectMoveGrip label={t('移动图片')} disabled={props.disabled()||zooming()} style={objectMoveGripPosition(bounds(),{width:innerWidth,height:innerHeight})} onPointerDown={event=>props.onMove(event,drawing())}/>
   </div>}</Show>;
 }
