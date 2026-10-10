@@ -209,6 +209,23 @@ test('actual number SVG switches its glyph contrast live when the circle fill ch
   dispose();
 });
 
+test('actual arrow SVG uses open adaptive wings and reuses nodes while its endpoint and line width change',()=>{
+  const [length,setLength]=solid.createSignal(32),[width,setWidth]=solid.createSignal(2);
+  const root=renderer.createElement('root');
+  const dispose=renderer.render(()=>renderer.createComponent(shapeJsx.DrawingShape,{get drawing(){return{id:'arrow',kind:'arrow',color:'#ff0000',strokeWidth:width(),points:[{x:0,y:0},{x:length(),y:0}]};}}),root);
+  const head=descendants(root,'polyline')[0],shaft=descendants(root,'line')[0],points=head.props.points;
+  assert.equal(head.props.fill,'none');assert.equal(descendants(root,'polygon').length,0);
+  setWidth(12);assert.equal(head.props.points,points);assert.equal(descendants(root,'polyline')[0],head);
+  assert.equal(descendants(root,'g')[0].props['stroke-width'],12);
+  for(const [size,wing] of [[8,2],[80,20],[200,24]]){
+    setLength(size);const [left,tip,right]=head.props.points.split(' ').map(value=>value.split(',').map(Number));
+    assert.equal(descendants(root,'polyline')[0],head);assert.equal(descendants(root,'line')[0],shaft);
+    assert.deepEqual(tip,[size,0]);assert.ok(Math.abs(Math.hypot(left[0]-size,left[1])-wing)<1e-9);
+    assert.equal(left[1],-right[1]);assert.equal(shaft.props.x2,size);
+  }
+  dispose();
+});
+
 test('actual DrawingItem/Shape JSX updates live pen pixels and reuses completed SVG nodes; removal disposes the active tail',()=>{
   const [draft,setDraft]=solid.createSignal(),[drawings]=solid.createSignal([]),[stored]=solid.createSignal([]),[tool,setTool]=solid.createSignal('pen'),[selected,setSelected]=solid.createSignal('');
   const root=renderer.createElement('root'),points=[{x:0,y:0}],base={id:'active',kind:'pen',color:'#ee4848',strokeWidth:4,points};let renders=0;

@@ -2,7 +2,8 @@
 import type { Drawing, DrawingKind, DrawingPoint, Region } from '../contracts';
 
 export function drawingBounds(drawing: Drawing) {
-  const xs = drawing.points.map(point => point.x), ys = drawing.points.map(point => point.y);
+  const points = drawing.kind === 'arrow' ? [...drawing.points, ...(arrowWings(drawing.points) ?? [])] : drawing.points;
+  const xs = points.map(point => point.x), ys = points.map(point => point.y);
   let x = Math.min(...xs), y = Math.min(...ys), width = Math.max(...xs) - x, height = Math.max(...ys) - y;
   if (drawing.kind === 'text') {
     const lines = (drawing.text ?? '').split('\n'), size = drawing.fontSize ?? 20;
@@ -68,14 +69,19 @@ export const rasterDrawing = (drawing:Drawing) => drawing.rich?.kind === 'repair
 export const drawingOrder = (drawings: Drawing[]) => [...drawings.filter(value => value.kind === 'mosaic'), ...drawings.filter(rasterDrawing), ...drawings.filter(value => value.kind !== 'mosaic' && !rasterDrawing(value))];
 export function validNextNumber(value: string) { return /^[1-9]\d{0,3}$/.test(value) ? Number(value) : undefined; }
 
-export function arrowHead(points: DrawingPoint[], strokeWidth: number) {
+export function arrowWings(points: DrawingPoint[]): [DrawingPoint, DrawingPoint] | undefined {
   const [a, b] = points;
-  if (!a || !b) return '';
+  if (!a || !b || ![a.x, a.y, b.x, b.y].every(Number.isFinite)) return;
   const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy);
-  if (!distance) return '';
-  const length = Math.min(distance, Math.max(strokeWidth * 4, 12)), wing = length * .48;
-  const ux = dx / distance, uy = dy / distance, x = b.x - ux * length, y = b.y - uy * length;
-  return `${b.x},${b.y} ${x - uy * wing},${y + ux * wing} ${x + uy * wing},${y - ux * wing}`;
+  if (!distance || !Number.isFinite(distance)) return;
+  // Original Mewu: each wing is 1/4 of the shaft, capped at 24, at ±30°.
+  const length = Math.min(24, distance * .25), wing = length / 2, back = length * Math.sqrt(3) / 2;
+  const ux = dx / distance, uy = dy / distance, x = b.x - ux * back, y = b.y - uy * back;
+  return [{x:x - uy * wing, y:y + ux * wing}, {x:x + uy * wing, y:y - ux * wing}];
+}
+export function arrowHead(points: DrawingPoint[]) {
+  const wings = arrowWings(points);
+  return wings ? [wings[0], points[1], wings[1]].map(point => `${point.x},${point.y}`).join(' ') : '';
 }
 export const penPath = (points: DrawingPoint[]) => points.map((point, index) => `${index ? 'L' : 'M'}${point.x},${point.y}`).join(' ');
 export function drawingMoveDelta(delta: number, minimum: number, maximum: number, regionStart: number, regionEnd: number, backgroundEnd: number) {

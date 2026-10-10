@@ -415,8 +415,8 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
             }
             DrawingKind::Arrow => {
                 let end = drawing.points[1];
-                let (left, right) = arrow_wings(first, end, stroke);
-                let _ = write!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{color}\" stroke-width=\"{stroke}\" stroke-linecap=\"round\"/><polygon points=\"{},{} {},{} {},{}\" fill=\"{color}\"/>", first.x, first.y, end.x, end.y, end.x, end.y, left.x, left.y, right.x, right.y);
+                let (left, right) = arrow_wings(first, end);
+                let _ = write!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{color}\" stroke-width=\"{stroke}\" stroke-linecap=\"round\"/><polyline points=\"{},{} {},{} {},{}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{stroke}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>", first.x, first.y, end.x, end.y, left.x, left.y, end.x, end.y, right.x, right.y);
             }
             DrawingKind::Rect | DrawingKind::Ellipse => {
                 let end = drawing.points[1];
@@ -481,30 +481,29 @@ fn number_foreground(color: &str) -> &'static str {
     }
 }
 
-fn arrow_wings(
-    start: DrawingPoint,
-    end: DrawingPoint,
-    stroke: f64,
-) -> (DrawingPoint, DrawingPoint) {
+fn arrow_wings(start: DrawingPoint, end: DrawingPoint) -> (DrawingPoint, DrawingPoint) {
     let dx = end.x - start.x;
     let dy = end.y - start.y;
     let distance = dx.hypot(dy);
     if distance < f64::EPSILON {
         return (end, end);
     }
-    let length = (stroke * 4.).max(12.).min(distance);
+    // Original Mewu uses open wings at ±30°, sized from the shaft length.
+    let length = (distance * 0.25).min(24.);
+    let back = length * 3_f64.sqrt() / 2.;
+    let wing = length / 2.;
     let ux = dx / distance;
     let uy = dy / distance;
-    let bx = end.x - ux * length;
-    let by = end.y - uy * length;
+    let bx = end.x - ux * back;
+    let by = end.y - uy * back;
     (
         DrawingPoint {
-            x: bx - uy * length * 0.48,
-            y: by + ux * length * 0.48,
+            x: bx - uy * wing,
+            y: by + ux * wing,
         },
         DrawingPoint {
-            x: bx + uy * length * 0.48,
-            y: by - ux * length * 0.48,
+            x: bx + uy * wing,
+            y: by - ux * wing,
         },
     )
 }
@@ -682,14 +681,74 @@ mod tests {
         assert_eq!(result.get_pixel(40, 20), Rgba([255, 0, 0, 255]));
         assert_eq!(result.get_pixel(39, 40), Rgba([255, 0, 0, 255]));
         assert_eq!(result.get_pixel(20, 20), Rgba([255, 255, 255, 255]));
-        let (left, right) = arrow_wings(
-            DrawingPoint { x: 0., y: 0. },
-            DrawingPoint { x: 3., y: 0. },
-            4.,
-        );
-        assert_eq!(left.x, 0.);
-        assert_eq!(right.x, 0.);
-        assert!((left.y - 1.44).abs() < 0.001);
+    }
+
+    #[test]
+    fn arrow_wings_follow_original_length_rule_and_preserve_direction() {
+        for (shaft, size) in [
+            (4., 1.),
+            (8., 2.),
+            (32., 8.),
+            (80., 20.),
+            (96., 24.),
+            (200., 24.),
+        ] {
+            for angle in (0..8).map(|i| i as f64 * std::f64::consts::FRAC_PI_4) {
+                let start = DrawingPoint {
+                    x: 12000.,
+                    y: 13000.,
+                };
+                let end = DrawingPoint {
+                    x: start.x + shaft * angle.cos(),
+                    y: start.y + shaft * angle.sin(),
+                };
+                let (left, right) = arrow_wings(start, end);
+                for (point, side) in [(left, -1.), (right, 1.)] {
+                    let wing_angle = angle + side * std::f64::consts::FRAC_PI_6;
+                    assert!((point.x - (end.x - size * wing_angle.cos())).abs() < 1e-9);
+                    assert!((point.y - (end.y - size * wing_angle.sin())).abs() < 1e-9);
+                }
+            }
+        }
+        let point = DrawingPoint { x: 40., y: 50. };
+        assert_eq!(arrow_wings(point, point), (point, point));
+    }
+
+    #[test]
+    fn exported_arrow_has_open_wings_with_the_same_stroke_as_its_shaft() {
+        let mut arrow = drawing(DrawingKind::Arrow, &[(30., 50.), (110., 50.)]);
+        arrow.stroke_width = 2.;
+        let output = crop_region(&background(), &region(vec![arrow.clone()])).unwrap();
+        // Wing ends are at (92.68, 60)/(92.68, 40), not a filled triangle.
+        assert_eq!(output.get_pixel(76, 47), Rgba([255, 0, 0, 255]));
+        assert_eq!(output.get_pixel(78, 44), Rgba([255, 255, 255, 255]));
+        assert_eq!(output.get_pixel(40, 40), Rgba([255, 0, 0, 255]));
+        let narrow = drawing_svg(&[arrow.clone()], 200, 100);
+        arrow.stroke_width = 12.;
+        let wide = drawing_svg(&[arrow], 200, 100);
+        let wing_points = |svg: &str| {
+            roxmltree::Document::parse(svg)
+                .unwrap()
+                .descendants()
+                .find(|node| node.has_tag_name("polyline"))
+                .unwrap()
+                .attribute("points")
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(wing_points(&narrow), wing_points(&wide));
+        for svg in [&narrow, &wide] {
+            let document = roxmltree::Document::parse(svg).unwrap();
+            assert!(!document
+                .descendants()
+                .any(|node| node.has_tag_name("polygon")));
+            let head = document
+                .descendants()
+                .find(|node| node.has_tag_name("polyline"))
+                .unwrap();
+            assert_eq!(head.attribute("fill"), Some("none"));
+            assert_eq!(head.attribute("stroke-linejoin"), Some("round"));
+        }
     }
 
     #[test]

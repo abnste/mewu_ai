@@ -37,7 +37,7 @@ export function DrawingShape(props: { drawing: Drawing; interactive?: boolean; s
       <Match when={props.drawing.kind === 'rich'}><RichDrawingShape drawing={props.drawing} interactive={props.interactive} context={props.richContext} onError={props.onError} /></Match>
       <Match when={props.drawing.kind === 'pen' || props.drawing.kind === 'highlighter'}><g opacity={props.drawing.kind === 'highlighter' ? .35 : 1}><Show when={props.drawing.points.length > 1} fallback={<circle cx={first().x} cy={first().y} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show></g></Match>
       <Match when={props.drawing.kind === 'line'}><line x1={first().x} y1={first().y} x2={second().x} y2={second().y} /></Match>
-      <Match when={props.drawing.kind === 'arrow'}><line x1={first().x} y1={first().y} x2={second().x} y2={second().y} /><polygon points={arrowHead(props.drawing.points, props.drawing.strokeWidth)} fill={props.drawing.color} stroke="none" /></Match>
+      <Match when={props.drawing.kind === 'arrow'}><line x1={first().x} y1={first().y} x2={second().x} y2={second().y} /><polyline points={arrowHead(props.drawing.points)} fill="none" /></Match>
       <Match when={props.drawing.kind === 'rect'}><rect {...box()} /></Match>
       <Match when={props.drawing.kind === 'ellipse'}><ellipse cx={box().x + box().width / 2} cy={box().y + box().height / 2} rx={box().width / 2} ry={box().height / 2} /></Match>
       <Match when={props.drawing.kind === 'mosaic'}><MosaicShape drawing={props.drawing} context={props.mosaicContext} /></Match>
