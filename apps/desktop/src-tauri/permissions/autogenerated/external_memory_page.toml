@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-external-memory-page"
+description = "Enables the external_memory_page command without any pre-configured scope."
+commands.allow = ["external_memory_page"]
+
+[[permission]]
+identifier = "deny-external-memory-page"
+description = "Denies the external_memory_page command without any pre-configured scope."
+commands.deny = ["external_memory_page"]

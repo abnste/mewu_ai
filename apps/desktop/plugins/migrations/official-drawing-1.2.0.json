@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.drawing",
+  "version": "1.2.0",
+  "name": "绘制",
+  "description": "在截图和视频中绘制与编辑标注。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "drawing-tools",
+      "title": "绘制",
+      "kind": "selection.drawing-tools",
+      "tools": [
+        "pen",
+        "line",
+        "arrow",
+        "rect",
+        "ellipse",
+        "text",
+        "highlighter",
+        "number",
+        "mosaic"
+      ]
+    },
+    {
+      "id": "video-drawing-tools",
+      "title": "视频绘制",
+      "kind": "artifact.video-drawing-tools",
+      "tools": [
+        "pen",
+        "line",
+        "arrow",
+        "rect",
+        "ellipse",
+        "text",
+        "number"
+      ]
+    }
+  ]
+}

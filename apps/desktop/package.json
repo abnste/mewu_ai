@@ -1,0 +1,26 @@
+{
+  "name": "@mewu/desktop",
+  "version": "1.0.0-preview.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.1",
+    "dompurify": "3.4.16",
+    "entities": "6.0.1",
+    "katex": "0.19.0",
+    "lucide-solid": "1.52.0",
+    "marked": "18.1.0",
+    "solid-js": "1.9.17"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.3",
+    "vite-plugin-solid": "2.11.14"
+  }
+}

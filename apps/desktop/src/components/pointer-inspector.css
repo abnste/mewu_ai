@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.pointer-inspector{position:fixed;z-index:36;width:90px;overflow:hidden;border-radius:6px;background:#fffffff7;box-shadow:0 3px 13px #18243340;pointer-events:none;user-select:none;color:#34465f;font:10px/1 Consolas,"Cascadia Mono",monospace}
+.pointer-color{height:18px;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
+.pointer-color i{width:7px;height:7px;border-radius:2px;box-shadow:0 0 0 1px #27384b22}
+.pointer-magnifier{position:relative;width:90px;height:90px;background:#eef3f9;overflow:hidden}
+.pointer-magnifier img,.pointer-magnifier svg{position:absolute;inset:0;width:90px;height:90px;display:block}
+.pointer-magnifier img{image-rendering:pixelated;object-fit:fill}
+.pointer-magnifier svg{fill:none;stroke-linecap:butt}
+.pointer-cross-outline{stroke:#1b2638d2;stroke-width:2.5}.pointer-cross{stroke:#fff;stroke-width:1}
+.pointer-pixel-outline{stroke:#fff;stroke-width:1.5}.pointer-pixel{stroke:#348bf1;stroke-width:1}
+.pointer-coordinate-footer{padding:1px 4px;box-sizing:border-box}.pointer-coordinates,.pointer-dimensions{height:16px}.pointer-dimensions{margin-top:2px}.pointer-coordinate-footer svg{display:block;width:82px;height:16px;overflow:visible}.pointer-coordinate-footer text{font:10px Consolas,"Cascadia Mono",monospace;fill:#65748a}

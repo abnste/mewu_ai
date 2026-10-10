@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.capture-shortcut-field{display:flex;flex-direction:column;align-items:flex-end;gap:5px;max-width:100%}
+.capture-shortcut-controls{display:flex;align-items:center;gap:3px;max-width:100%}
+.capture-shortcut-controls input{width:178px;max-width:calc(100vw - 170px);font-size:12px;cursor:pointer;text-align:center;padding:8px;border:1px solid var(--line,#d7e1ef);border-radius:8px;color:var(--text,#26364d);background:var(--surface,#fff)}
+.capture-shortcut-controls input.recording{border-color:var(--accent,#348bf1);box-shadow:0 0 0 2px var(--accent-soft,#eaf1fa)}
+.capture-shortcut-controls input:disabled{cursor:default;opacity:.65}
+.capture-shortcut-actual,.capture-shortcut-error{max-width:280px;text-align:right;font-size:11px;line-height:1.4;color:var(--muted,#6b7d92)}
+.capture-shortcut-error{color:var(--danger,#bb4f5a)}
+.capture-shortcut-reload{font-size:11px;color:var(--accent,#348bf1);border:0;background:transparent;padding:1px 0}
+@media(max-width:600px){.capture-shortcut-controls input{width:138px}.capture-shortcut-controls{gap:0}.capture-shortcut-controls .icon-button{width:24px}.capture-shortcut-error{max-width:200px}}

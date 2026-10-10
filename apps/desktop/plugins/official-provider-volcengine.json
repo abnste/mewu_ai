@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.volcengine",
+  "version": "1.0.0",
+  "name": "Volcengine 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "volcengine",
+      "title": "火山方舟",
+      "template": {
+        "providerId": "Volcengine",
+        "group": "china",
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "model": "",
+        "searchTerms": "豆包 Doubao 字节 ByteDance Volcengine Ark",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

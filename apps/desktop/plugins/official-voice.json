@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.voice",
+  "version": "1.0.0",
+  "name": "语音输入",
+  "description": "使用 Windows 已安装识别器，将一次听写写入对话草稿。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "dictation",
+      "title": "语音输入",
+      "kind": "input.speech-to-text",
+      "engine": "windows.sapi"
+    }
+  ]
+}

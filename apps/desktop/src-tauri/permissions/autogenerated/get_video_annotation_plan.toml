@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-video-annotation-plan"
+description = "Enables the get_video_annotation_plan command without any pre-configured scope."
+commands.allow = ["get_video_annotation_plan"]
+
+[[permission]]
+identifier = "deny-get-video-annotation-plan"
+description = "Denies the get_video_annotation_plan command without any pre-configured scope."
+commands.deny = ["get_video_annotation_plan"]

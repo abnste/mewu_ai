@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-plugin-ocr"
+description = "Enables the cancel_plugin_ocr command without any pre-configured scope."
+commands.allow = ["cancel_plugin_ocr"]
+
+[[permission]]
+identifier = "deny-cancel-plugin-ocr"
+description = "Denies the cancel_plugin_ocr command without any pre-configured scope."
+commands.deny = ["cancel_plugin_ocr"]

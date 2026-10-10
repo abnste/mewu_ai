@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.table-answer{min-width:0}.reply-table{position:relative;margin:10px 0 14px;min-width:0}
+.reply-table-actions{display:flex;justify-content:flex-end;gap:1px;margin:0 0 5px;user-select:none}
+.reply-table-actions button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:25px;padding:4px 7px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted,#72829a);font-size:11px;line-height:1}
+.reply-table-actions button:hover{background:var(--accent-soft,#eaf1fa);color:var(--accent,#348bf1);border-color:var(--line,#d7e1ef)}
+.reply-table-actions button:disabled{opacity:.5}.reply-table-actions button:focus-visible,.table-load-retry:focus-visible{outline:2px solid var(--accent,#348bf1);outline-offset:1px}
+.reply-table-scroll{overflow:auto;max-width:100%;border:1px solid var(--line,#d7e1ef);border-radius:7px;user-select:text;overscroll-behavior:contain}
+.reply-table-scroll:focus-visible{outline:2px solid var(--accent,#348bf1);outline-offset:1px}
+.reply-table table{width:100%;border-collapse:collapse;font-size:.94em;line-height:1.5;background:var(--surface,#fff)}
+.reply-table th,.reply-table td{min-width:65px;max-width:320px;padding:7px 9px;border-right:1px solid var(--line,#d7e1ef);border-bottom:1px solid var(--line,#d7e1ef);white-space:pre-wrap;overflow-wrap:break-word;color:var(--text,#34455e)}
+.reply-table th{background:#f1f4f8;font-weight:600}.reply-table tr>:last-child{border-right:0}.reply-table tbody tr:last-child td{border-bottom:0}
+.reply-table-cell{display:block;max-width:300px;white-space:pre-wrap;overflow-wrap:anywhere}
+.reply-table-menu{position:fixed;z-index:120;width:166px;padding:5px;border:1px solid var(--line,#d7e1ef);border-radius:9px;background:var(--surface,#fff);box-shadow:0 6px 24px #33476233,0 1px 4px #3347621a}
+.reply-table-menu button{display:block;width:100%;min-height:34px;padding:8px;border:0;border-radius:5px;text-align:left;background:transparent;color:var(--text,#34455e);font-size:12px}
+.reply-table-menu button:hover,.reply-table-menu button:focus-visible{background:var(--accent-soft,#eaf1fa);outline:none;color:var(--accent,#348bf1)}
+.table-load-retry{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:4px 6px;border:0;border-radius:5px;background:transparent;color:var(--muted,#72829a);font-size:11px}
+.table-load-retry:hover{background:var(--accent-soft,#eaf1fa)}.reply-table-error{display:block;color:var(--danger,#b84b52);font-size:11px;margin-top:5px}

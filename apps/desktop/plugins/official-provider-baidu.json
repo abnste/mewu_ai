@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.baidu",
+  "version": "1.0.0",
+  "name": "Baidu 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "baidu",
+      "title": "百度千帆",
+      "template": {
+        "providerId": "Baidu",
+        "group": "china",
+        "baseUrl": "https://qianfan.baidubce.com/v2",
+        "model": "",
+        "searchTerms": "文心 ERNIE Baidu",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

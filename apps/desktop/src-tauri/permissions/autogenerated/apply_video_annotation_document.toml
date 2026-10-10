@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-video-annotation-document"
+description = "Enables the apply_video_annotation_document command without any pre-configured scope."
+commands.allow = ["apply_video_annotation_document"]
+
+[[permission]]
+identifier = "deny-apply-video-annotation-document"
+description = "Denies the apply_video_annotation_document command without any pre-configured scope."
+commands.deny = ["apply_video_annotation_document"]

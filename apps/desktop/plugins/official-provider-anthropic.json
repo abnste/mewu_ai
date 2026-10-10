@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.anthropic",
+  "version": "1.0.0",
+  "name": "Anthropic 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "anthropic",
+      "title": "Anthropic Claude",
+      "template": {
+        "providerId": "Anthropic",
+        "group": "global",
+        "baseUrl": "https://api.anthropic.com/v1",
+        "model": "",
+        "searchTerms": "Claude",
+        "advanced": {
+          "protocol": "anthropic_messages",
+          "authMode": "api_key",
+          "requestParameters": {}
+        }
+      }
+    },
+    {
+      "kind": "model.connection",
+      "id": "anthropicbearer",
+      "title": "Anthropic 兼容中转",
+      "template": {
+        "providerId": "AnthropicBearer",
+        "group": "custom",
+        "baseUrl": "http://localhost",
+        "model": "",
+        "searchTerms": "Claude Messages Bearer proxy",
+        "advanced": {
+          "protocol": "anthropic_messages",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

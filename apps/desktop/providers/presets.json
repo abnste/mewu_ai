@@ -1,0 +1,301 @@
+[
+  {
+    "id": "MiniMax",
+    "name": "MiniMax 国内",
+    "group": "china",
+    "baseUrl": "https://api.minimax.cn/v1",
+    "model": "MiniMax-M3",
+    "searchTerms": "MiniMax China",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Volcengine",
+    "name": "火山方舟",
+    "group": "china",
+    "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+    "model": "",
+    "searchTerms": "豆包 Doubao 字节 ByteDance Volcengine Ark",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "DashScope",
+    "name": "阿里百炼",
+    "group": "china",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model": "",
+    "searchTerms": "通义千问 Qwen Alibaba DashScope",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "DeepSeek",
+    "name": "DeepSeek",
+    "group": "china",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "model": "",
+    "searchTerms": "深度求索",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Moonshot",
+    "name": "Kimi 国内",
+    "group": "china",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "model": "",
+    "searchTerms": "月之暗面 Moonshot",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Zhipu",
+    "name": "智谱 GLM",
+    "group": "china",
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "model": "",
+    "searchTerms": "BigModel 智谱清言",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Tencent",
+    "name": "腾讯 TokenHub",
+    "group": "china",
+    "baseUrl": "https://tokenhub.tencentmaas.com/v1",
+    "model": "",
+    "searchTerms": "混元 Hunyuan Tencent",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Baidu",
+    "name": "百度千帆",
+    "group": "china",
+    "baseUrl": "https://qianfan.baidubce.com/v2",
+    "model": "",
+    "searchTerms": "文心 ERNIE Baidu",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "SiliconFlow",
+    "name": "硅基流动",
+    "group": "china",
+    "baseUrl": "https://api.siliconflow.cn/v1",
+    "model": "",
+    "searchTerms": "SiliconFlow",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "OpenAI",
+    "name": "OpenAI",
+    "group": "global",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "",
+    "searchTerms": "ChatGPT GPT",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Anthropic",
+    "name": "Anthropic Claude",
+    "group": "global",
+    "baseUrl": "https://api.anthropic.com/v1",
+    "model": "",
+    "searchTerms": "Claude",
+    "advanced": {
+      "protocol": "anthropic_messages",
+      "authMode": "api_key",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "AnthropicBearer",
+    "name": "Anthropic 兼容中转",
+    "group": "custom",
+    "baseUrl": "http://localhost",
+    "model": "",
+    "searchTerms": "Claude Messages Bearer proxy",
+    "advanced": {
+      "protocol": "anthropic_messages",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "OpenAIResponses",
+    "name": "OpenAI Responses",
+    "group": "global",
+    "baseUrl": "https://api.openai.com/v1",
+    "model": "",
+    "searchTerms": "Responses GPT o-series",
+    "advanced": {
+      "protocol": "openai_responses",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Google",
+    "name": "Google Gemini",
+    "group": "global",
+    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "model": "",
+    "searchTerms": "Google",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "xAI",
+    "name": "xAI Grok",
+    "group": "global",
+    "baseUrl": "https://api.x.ai/v1",
+    "model": "",
+    "searchTerms": "Grok",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "OpenRouter",
+    "name": "OpenRouter",
+    "group": "global",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "model": "",
+    "searchTerms": "OpenRouter",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Groq",
+    "name": "Groq",
+    "group": "global",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "model": "",
+    "searchTerms": "Groq",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Mistral",
+    "name": "Mistral AI",
+    "group": "global",
+    "baseUrl": "https://api.mistral.ai/v1",
+    "model": "",
+    "searchTerms": "Mistral",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Together",
+    "name": "Together AI",
+    "group": "global",
+    "baseUrl": "https://api.together.ai/v1",
+    "model": "",
+    "searchTerms": "Together",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "MiniMaxGlobal",
+    "name": "MiniMax 国际",
+    "group": "global",
+    "baseUrl": "https://api.minimax.io/v1",
+    "model": "MiniMax-M3",
+    "searchTerms": "MiniMax Global",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "DashScopeGlobal",
+    "name": "阿里百炼国际",
+    "group": "global",
+    "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "model": "",
+    "searchTerms": "通义千问 Qwen DashScope Alibaba",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "MoonshotGlobal",
+    "name": "Kimi 国际",
+    "group": "global",
+    "baseUrl": "https://api.moonshot.ai/v1",
+    "model": "",
+    "searchTerms": "Moonshot Kimi Global",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  },
+  {
+    "id": "Custom",
+    "name": "自定义兼容服务",
+    "group": "custom",
+    "baseUrl": "",
+    "model": "",
+    "searchTerms": "OpenAI localhost Ollama LM Studio 中转",
+    "advanced": {
+      "protocol": "chat_completions",
+      "authMode": "bearer",
+      "requestParameters": {}
+    }
+  }
+]

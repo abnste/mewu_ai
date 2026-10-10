@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-memory-provider-state"
+description = "Enables the get_memory_provider_state command without any pre-configured scope."
+commands.allow = ["get_memory_provider_state"]
+
+[[permission]]
+identifier = "deny-get-memory-provider-state"
+description = "Denies the get_memory_provider_state command without any pre-configured scope."
+commands.deny = ["get_memory_provider_state"]

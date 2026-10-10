@@ -1,0 +1,13 @@
+{
+  "identifier": "scroll-controls",
+  "description": "First-party long capture controls",
+  "windows": [
+    "scroll-controls"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-scroll-status",
+    "allow-control-scroll-capture"
+  ]
+}

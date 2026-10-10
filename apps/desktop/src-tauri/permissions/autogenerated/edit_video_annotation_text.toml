@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-edit-video-annotation-text"
+description = "Enables the edit_video_annotation_text command without any pre-configured scope."
+commands.allow = ["edit_video_annotation_text"]
+
+[[permission]]
+identifier = "deny-edit-video-annotation-text"
+description = "Denies the edit_video_annotation_text command without any pre-configured scope."
+commands.deny = ["edit_video_annotation_text"]

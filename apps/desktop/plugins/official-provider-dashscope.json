@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.dashscope",
+  "version": "1.0.0",
+  "name": "DashScope 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "dashscope",
+      "title": "阿里百炼",
+      "template": {
+        "providerId": "DashScope",
+        "group": "china",
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "",
+        "searchTerms": "通义千问 Qwen Alibaba DashScope",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    },
+    {
+      "kind": "model.connection",
+      "id": "dashscopeglobal",
+      "title": "阿里百炼国际",
+      "template": {
+        "providerId": "DashScopeGlobal",
+        "group": "global",
+        "baseUrl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "model": "",
+        "searchTerms": "通义千问 Qwen DashScope Alibaba",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.selection-code-card{position:fixed;z-index:27;display:flex;align-items:center;flex-wrap:wrap;gap:4px;max-width:min(500px,calc(100vw - 12px));padding:5px 8px;border:1px solid var(--line);border-radius:12px;background:var(--surface,#fff);color:var(--text);box-shadow:var(--shadow,0 4px 14px #24344920);font-size:12px;pointer-events:auto;user-select:none}
+.selection-code-label{display:flex;align-items:center;gap:6px;padding:0 4px;white-space:nowrap;color:var(--muted)}
+.selection-code-navigation{display:flex;align-items:center;gap:1px;font-variant-numeric:tabular-nums}
+.selection-code-navigation .icon-button{width:25px;height:26px;padding:0}
+.selection-code-action{display:flex;align-items:center;justify-content:center;gap:5px;height:28px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:var(--text);font:inherit;cursor:pointer}
+.selection-code-action:hover{background:var(--accent-soft)}
+.selection-code-action:disabled{opacity:.5;cursor:default}
+.selection-code-card button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}

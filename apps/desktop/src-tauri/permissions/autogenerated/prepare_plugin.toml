@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prepare-plugin"
+description = "Enables the prepare_plugin command without any pre-configured scope."
+commands.allow = ["prepare_plugin"]
+
+[[permission]]
+identifier = "deny-prepare-plugin"
+description = "Denies the prepare_plugin command without any pre-configured scope."
+commands.deny = ["prepare_plugin"]

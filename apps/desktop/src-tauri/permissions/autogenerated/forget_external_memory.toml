@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-forget-external-memory"
+description = "Enables the forget_external_memory command without any pre-configured scope."
+commands.allow = ["forget_external_memory"]
+
+[[permission]]
+identifier = "deny-forget-external-memory"
+description = "Denies the forget_external_memory command without any pre-configured scope."
+commands.deny = ["forget_external_memory"]

@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.voice-input-control{position:relative;display:flex;align-items:stretch;flex:none;gap:0}
+.voice-trigger.listening{color:var(--accent,#348bf1);background:var(--accent-soft,#eaf1fa)}
+.voice-language-trigger{display:grid;place-items:center;flex:0 0 13px;width:13px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--secondary,#6b7d92)}
+.voice-language-trigger:hover{background:var(--accent-soft,#eaf1fa)}
+.voice-language-trigger:disabled{opacity:.35}
+.voice-language-menu{position:absolute;right:0;bottom:calc(100% + 8px);width:190px;max-width:calc(100vw - 24px);max-height:220px;overflow:auto;padding:5px;border:1px solid var(--line,#d7e1ef);border-radius:11px;background:var(--surface,#fff);box-shadow:var(--shadow-menu,0 6px 24px #3347623d);z-index:45}
+.voice-language-menu.opens-down{top:calc(100% + 8px);bottom:auto}
+.voice-language-menu button{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;padding:8px;border:0;border-radius:7px;text-align:left;color:var(--text,#26364d);background:transparent;font-size:12px}
+.voice-language-menu button:hover{background:var(--accent-soft,#eaf1fa)}

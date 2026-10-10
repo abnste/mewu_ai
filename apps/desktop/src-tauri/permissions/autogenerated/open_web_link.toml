@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-web-link"
+description = "Enables the open_web_link command without any pre-configured scope."
+commands.allow = ["open_web_link"]
+
+[[permission]]
+identifier = "deny-open-web-link"
+description = "Denies the open_web_link command without any pre-configured scope."
+commands.deny = ["open_web_link"]

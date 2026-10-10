@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.minimax",
+  "version": "1.0.0",
+  "name": "MiniMax 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "minimax",
+      "title": "MiniMax 国内",
+      "template": {
+        "providerId": "MiniMax",
+        "group": "china",
+        "baseUrl": "https://api.minimax.cn/v1",
+        "model": "MiniMax-M3",
+        "searchTerms": "MiniMax China",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    },
+    {
+      "kind": "model.connection",
+      "id": "minimaxglobal",
+      "title": "MiniMax 国际",
+      "template": {
+        "providerId": "MiniMaxGlobal",
+        "group": "global",
+        "baseUrl": "https://api.minimax.io/v1",
+        "model": "MiniMax-M3",
+        "searchTerms": "MiniMax Global",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

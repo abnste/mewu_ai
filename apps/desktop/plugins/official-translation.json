@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.translation",
+  "version": "1.0.0",
+  "name": "原位翻译",
+  "description": "本机识别选区文字，使用当前连接翻译并在原图上显示译文。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "translate",
+      "title": "原位翻译",
+      "kind": "selection.translation"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-frozen-scenes"
+description = "Enables the get_frozen_scenes command without any pre-configured scope."
+commands.allow = ["get_frozen_scenes"]
+
+[[permission]]
+identifier = "deny-get-frozen-scenes"
+description = "Denies the get_frozen_scenes command without any pre-configured scope."
+commands.deny = ["get_frozen_scenes"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-mosaic-preview"
+description = "Enables the get_mosaic_preview command without any pre-configured scope."
+commands.allow = ["get_mosaic_preview"]
+
+[[permission]]
+identifier = "deny-get-mosaic-preview"
+description = "Denies the get_mosaic_preview command without any pre-configured scope."
+commands.deny = ["get_mosaic_preview"]

@@ -1,0 +1,94 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.artifact-card.video-artifact {
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+.artifact-card.video-artifact .artifact-content {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.artifact-card.video-artifact .artifact-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  background: var(--surface-subtle);
+}
+.artifact-card.video-artifact > .artifact-header,
+.artifact-card.video-artifact > .artifact-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+  transition: opacity .12s ease;
+}
+.artifact-card.video-artifact > .artifact-header {
+  top: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+}
+.artifact-card.video-artifact > .artifact-footer {
+  top: 32px;
+  min-height: 30px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 0 0 6px 6px;
+}
+.artifact-card.video-artifact:is(:hover, :focus-within, .moving) > .artifact-header,
+.artifact-card.video-artifact:is(:hover, :focus-within, .moving) > .artifact-footer {
+  opacity: 1;
+  pointer-events: auto;
+}
+.artifact-card.video-artifact .artifact-kind {
+  display: none;
+}
+.artifact-card.video-artifact .resize-handle {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.artifact-card.video-artifact .video-playback-error {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--surface);
+  pointer-events: none;
+  z-index: 2;
+}
+.artifact-card.video-artifact .video-annotation-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.video-annotation-layer image { pointer-events: none; }
+.video-annotation-hit { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
+.video-annotation-hit.selected { stroke: var(--accent, #2563eb); stroke-width: 1.5px; stroke-dasharray: 4 3; }
+.video-annotation-tools { display: flex; align-items: center; gap: 4px; padding: 4px 0 0; }
+.video-annotation-tools .inline-error { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.video-answer-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.video-answer-actions button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.video-annotation-hit { touch-action: none; }
+.video-annotation-hit.selected { cursor: move; }
+.video-annotation-hit.moving { cursor: grabbing; }
+.video-annotation-text-editor { position: fixed; z-index: 120; width: min(300px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: auto; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-menu); }
+.video-annotation-text-editor textarea { display: block; width: 100%; min-height: 80px; max-height: 160px; resize: vertical; color: var(--text); background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 5px; padding: 6px; font: inherit; }
+.video-annotation-text-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 4px; }
+.video-annotation-text-actions .inline-error { margin-right: auto; min-width: 0; }

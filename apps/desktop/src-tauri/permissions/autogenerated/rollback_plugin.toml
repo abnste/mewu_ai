@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rollback-plugin"
+description = "Enables the rollback_plugin command without any pre-configured scope."
+commands.allow = ["rollback_plugin"]
+
+[[permission]]
+identifier = "deny-rollback-plugin"
+description = "Denies the rollback_plugin command without any pre-configured scope."
+commands.deny = ["rollback_plugin"]

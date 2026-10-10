@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-memory-sync"
+description = "Enables the set_memory_sync command without any pre-configured scope."
+commands.allow = ["set_memory_sync"]
+
+[[permission]]
+identifier = "deny-set-memory-sync"
+description = "Denies the set_memory_sync command without any pre-configured scope."
+commands.deny = ["set_memory_sync"]

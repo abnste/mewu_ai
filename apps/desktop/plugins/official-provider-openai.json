@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.openai",
+  "version": "1.0.0",
+  "name": "OpenAI 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "openai",
+      "title": "OpenAI",
+      "template": {
+        "providerId": "OpenAI",
+        "group": "global",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "",
+        "searchTerms": "ChatGPT GPT",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    },
+    {
+      "kind": "model.connection",
+      "id": "openairesponses",
+      "title": "OpenAI Responses",
+      "template": {
+        "providerId": "OpenAIResponses",
+        "group": "global",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "",
+        "searchTerms": "Responses GPT o-series",
+        "advanced": {
+          "protocol": "openai_responses",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

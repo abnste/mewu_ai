@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-act-on-code"
+description = "Enables the act_on_code command without any pre-configured scope."
+commands.allow = ["act_on_code"]
+
+[[permission]]
+identifier = "deny-act-on-code"
+description = "Denies the act_on_code command without any pre-configured scope."
+commands.deny = ["act_on_code"]

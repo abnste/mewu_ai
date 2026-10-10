@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-raster-edit"
+description = "Enables the apply_raster_edit command without any pre-configured scope."
+commands.allow = ["apply_raster_edit"]
+
+[[permission]]
+identifier = "deny-apply-raster-edit"
+description = "Denies the apply_raster_edit command without any pre-configured scope."
+commands.deny = ["apply_raster_edit"]

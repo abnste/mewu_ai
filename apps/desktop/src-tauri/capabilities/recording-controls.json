@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "recording-controls",
+  "description": "Transient first-party recording controls",
+  "windows": [
+    "recording-controls"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-recording-status",
+    "allow-control-recording"
+  ]
+}

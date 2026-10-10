@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-connection-profile"
+description = "Enables the delete_connection_profile command without any pre-configured scope."
+commands.allow = ["delete_connection_profile"]
+
+[[permission]]
+identifier = "deny-delete-connection-profile"
+description = "Denies the delete_connection_profile command without any pre-configured scope."
+commands.deny = ["delete_connection_profile"]

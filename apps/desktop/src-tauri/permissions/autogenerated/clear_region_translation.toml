@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-region-translation"
+description = "Enables the clear_region_translation command without any pre-configured scope."
+commands.allow = ["clear_region_translation"]
+
+[[permission]]
+identifier = "deny-clear-region-translation"
+description = "Denies the clear_region_translation command without any pre-configured scope."
+commands.deny = ["clear_region_translation"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-begin-capture-shortcut-edit"
+description = "Enables the begin_capture_shortcut_edit command without any pre-configured scope."
+commands.allow = ["begin_capture_shortcut_edit"]
+
+[[permission]]
+identifier = "deny-begin-capture-shortcut-edit"
+description = "Denies the begin_capture_shortcut_edit command without any pre-configured scope."
+commands.deny = ["begin_capture_shortcut_edit"]

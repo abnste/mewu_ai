@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-drawing-document"
+description = "Enables the apply_drawing_document command without any pre-configured scope."
+commands.allow = ["apply_drawing_document"]
+
+[[permission]]
+identifier = "deny-apply-drawing-document"
+description = "Denies the apply_drawing_document command without any pre-configured scope."
+commands.deny = ["apply_drawing_document"]

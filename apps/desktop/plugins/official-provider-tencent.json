@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.tencent",
+  "version": "1.0.0",
+  "name": "Tencent 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "tencent",
+      "title": "腾讯 TokenHub",
+      "template": {
+        "providerId": "Tencent",
+        "group": "china",
+        "baseUrl": "https://tokenhub.tencentmaas.com/v1",
+        "model": "",
+        "searchTerms": "混元 Hunyuan Tencent",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

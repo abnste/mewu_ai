@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pin-ready"
+description = "Enables the pin_ready command without any pre-configured scope."
+commands.allow = ["pin_ready"]
+
+[[permission]]
+identifier = "deny-pin-ready"
+description = "Denies the pin_ready command without any pre-configured scope."
+commands.deny = ["pin_ready"]

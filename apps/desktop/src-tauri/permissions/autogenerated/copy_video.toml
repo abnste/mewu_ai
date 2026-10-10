@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-video"
+description = "Enables the copy_video command without any pre-configured scope."
+commands.allow = ["copy_video"]
+
+[[permission]]
+identifier = "deny-copy-video"
+description = "Denies the copy_video command without any pre-configured scope."
+commands.deny = ["copy_video"]

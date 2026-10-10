@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-control-recording"
+description = "Enables the control_recording command without any pre-configured scope."
+commands.allow = ["control_recording"]
+
+[[permission]]
+identifier = "deny-control-recording"
+description = "Denies the control_recording command without any pre-configured scope."
+commands.deny = ["control_recording"]

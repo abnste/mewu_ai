@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-memory-page"
+description = "Enables the memory_page command without any pre-configured scope."
+commands.allow = ["memory_page"]
+
+[[permission]]
+identifier = "deny-memory-page"
+description = "Denies the memory_page command without any pre-configured scope."
+commands.deny = ["memory_page"]

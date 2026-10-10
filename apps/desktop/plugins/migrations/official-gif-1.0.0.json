@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.gif",
+  "version": "1.0.0",
+  "name": "GIF 导出",
+  "description": "将当前视频范围导出为无声 GIF。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "gif",
+      "title": "GIF 导出",
+      "kind": "artifact.video-gif",
+      "engine": "windows.media-editing-gif"
+    }
+  ]
+}

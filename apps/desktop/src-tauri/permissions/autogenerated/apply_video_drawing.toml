@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-video-drawing"
+description = "Enables the apply_video_drawing command without any pre-configured scope."
+commands.allow = ["apply_video_drawing"]
+
+[[permission]]
+identifier = "deny-apply-video-drawing"
+description = "Denies the apply_video_drawing command without any pre-configured scope."
+commands.deny = ["apply_video_drawing"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-plugin-drawing"
+description = "Enables the apply_plugin_drawing command without any pre-configured scope."
+commands.allow = ["apply_plugin_drawing"]
+
+[[permission]]
+identifier = "deny-apply-plugin-drawing"
+description = "Denies the apply_plugin_drawing command without any pre-configured scope."
+commands.deny = ["apply_plugin_drawing"]

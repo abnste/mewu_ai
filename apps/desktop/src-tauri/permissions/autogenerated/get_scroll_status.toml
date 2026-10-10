@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-scroll-status"
+description = "Enables the get_scroll_status command without any pre-configured scope."
+commands.allow = ["get_scroll_status"]
+
+[[permission]]
+identifier = "deny-get-scroll-status"
+description = "Denies the get_scroll_status command without any pre-configured scope."
+commands.deny = ["get_scroll_status"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-frozen-scene"
+description = "Enables the restore_frozen_scene command without any pre-configured scope."
+commands.allow = ["restore_frozen_scene"]
+
+[[permission]]
+identifier = "deny-restore-frozen-scene"
+description = "Denies the restore_frozen_scene command without any pre-configured scope."
+commands.deny = ["restore_frozen_scene"]

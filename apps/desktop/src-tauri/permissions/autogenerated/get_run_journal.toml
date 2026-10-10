@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-run-journal"
+description = "Enables the get_run_journal command without any pre-configured scope."
+commands.allow = ["get_run_journal"]
+
+[[permission]]
+identifier = "deny-get-run-journal"
+description = "Denies the get_run_journal command without any pre-configured scope."
+commands.deny = ["get_run_journal"]

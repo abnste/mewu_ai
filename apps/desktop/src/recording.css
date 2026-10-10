@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+html[data-surface="recording"],html[data-surface="recording"] body,html[data-surface="recording"] #root { background:#fcfdff!important;margin:0;width:100%;height:100%;overflow:hidden; }
+html[data-surface="recording-live"],html[data-surface="recording-live"] body,html[data-surface="recording-live"] #root { background:transparent!important; }
+.app.recording-active { background:transparent;pointer-events:none; }
+.recording-live-mask { position:fixed;inset:0;pointer-events:none;user-select:none; }
+.recording-live-mask>svg { position:absolute;inset:0;width:100%;height:100%; }
+.recording-region-outline { fill:none;stroke:#3297f2;stroke-width:2; }
+.recording-countdown { position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;width:82px;height:82px;border:1px solid var(--accent-line);border-radius:50%;background:#fcfdfff5;color:var(--accent);font-size:42px;font-weight:550;line-height:1;box-shadow:var(--shadow-menu); }
+.recording-control-window { width:100%;height:100%;user-select:none; }
+.recording-controls { box-sizing:border-box;width:100%;height:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:#fcfdff;color:var(--text); }
+.recording-status-dot { width:8px;height:8px;flex:none;border-radius:50%;background:#df5360; }
+.recording-status-dot.paused { background:var(--muted); }
+.recording-status-icon { flex:none;color:var(--secondary); }
+.recording-elapsed { min-width:0;flex:1;font:14px Consolas,monospace;font-variant-numeric:tabular-nums;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.recording-control-button { display:grid;place-items:center;width:30px;height:30px;flex:none;border:0;border-radius:8px;background:transparent;color:var(--secondary); }
+.recording-control-button:hover { background:var(--accent-soft);color:var(--accent); }
+.recording-control-button:disabled { opacity:.4; }
+.recording-stop { color:#ce4756; }
+.recording-stop:hover { color:#ce4756;background:#fbecef; }
+.recording-control-error { color:var(--danger); }
+.recording-control-error>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px; }
+.capture-toolbar .capture-record { color:#df5360; }
+.capture-toolbar .capture-record:hover { color:#ce4756;background:#fbecef; }

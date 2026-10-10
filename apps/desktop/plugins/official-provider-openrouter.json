@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.openrouter",
+  "version": "1.0.0",
+  "name": "OpenRouter 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "openrouter",
+      "title": "OpenRouter",
+      "template": {
+        "providerId": "OpenRouter",
+        "group": "global",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "model": "",
+        "searchTerms": "OpenRouter",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

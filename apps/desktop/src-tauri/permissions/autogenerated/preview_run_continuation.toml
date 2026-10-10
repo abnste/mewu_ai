@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-run-continuation"
+description = "Enables the preview_run_continuation command without any pre-configured scope."
+commands.allow = ["preview_run_continuation"]
+
+[[permission]]
+identifier = "deny-preview-run-continuation"
+description = "Denies the preview_run_continuation command without any pre-configured scope."
+commands.deny = ["preview_run_continuation"]

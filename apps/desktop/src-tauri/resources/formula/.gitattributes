@@ -1,0 +1,3 @@
+# Keep the reviewed byte pin unchanged on every Git checkout.
+fonts/*.ttf -text
+fonts/inventory.json -text

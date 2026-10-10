@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-blackboard"
+description = "Enables the create_blackboard command without any pre-configured scope."
+commands.allow = ["create_blackboard"]
+
+[[permission]]
+identifier = "deny-create-blackboard"
+description = "Denies the create_blackboard command without any pre-configured scope."
+commands.deny = ["create_blackboard"]

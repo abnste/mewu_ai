@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-recording-audio"
+description = "Enables the get_recording_audio command without any pre-configured scope."
+commands.allow = ["get_recording_audio"]
+
+[[permission]]
+identifier = "deny-get-recording-audio"
+description = "Denies the get_recording_audio command without any pre-configured scope."
+commands.deny = ["get_recording_audio"]

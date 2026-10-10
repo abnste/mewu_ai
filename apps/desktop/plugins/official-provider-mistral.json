@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.mistral",
+  "version": "1.0.0",
+  "name": "Mistral 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "mistral",
+      "title": "Mistral AI",
+      "template": {
+        "providerId": "Mistral",
+        "group": "global",
+        "baseUrl": "https://api.mistral.ai/v1",
+        "model": "",
+        "searchTerms": "Mistral",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.moonshot",
+  "version": "1.0.0",
+  "name": "Moonshot 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "moonshot",
+      "title": "Kimi 国内",
+      "template": {
+        "providerId": "Moonshot",
+        "group": "china",
+        "baseUrl": "https://api.moonshot.cn/v1",
+        "model": "",
+        "searchTerms": "月之暗面 Moonshot",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    },
+    {
+      "kind": "model.connection",
+      "id": "moonshotglobal",
+      "title": "Kimi 国际",
+      "template": {
+        "providerId": "MoonshotGlobal",
+        "group": "global",
+        "baseUrl": "https://api.moonshot.ai/v1",
+        "model": "",
+        "searchTerms": "Moonshot Kimi Global",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

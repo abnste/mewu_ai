@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-pin-objects"
+description = "Enables the get_pin_objects command without any pre-configured scope."
+commands.allow = ["get_pin_objects"]
+
+[[permission]]
+identifier = "deny-get-pin-objects"
+description = "Denies the get_pin_objects command without any pre-configured scope."
+commands.deny = ["get_pin_objects"]

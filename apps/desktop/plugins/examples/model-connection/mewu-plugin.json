@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "example.model-connection",
+  "version": "1.0.0",
+  "name": "本机模型连接",
+  "description": "本机兼容 API 连接模板",
+  "publisher": "Example",
+  "license": "MIT",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "local-chat",
+      "title": "本机 Chat Completions",
+      "template": {
+        "providerId": "local-chat",
+        "group": "custom",
+        "baseUrl": "http://127.0.0.1:1234/v1",
+        "model": "",
+        "searchTerms": "localhost LM Studio",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "none",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

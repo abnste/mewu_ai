@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-message-table"
+description = "Enables the export_message_table command without any pre-configured scope."
+commands.allow = ["export_message_table"]
+
+[[permission]]
+identifier = "deny-export-message-table"
+description = "Denies the export_message_table command without any pre-configured scope."
+commands.deny = ["export_message_table"]

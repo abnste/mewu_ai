@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.memory-hindsight",
+  "version": "1.0.0",
+  "name": "Hindsight 记忆",
+  "description": "接入 Hindsight 长期记忆服务。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    { "id": "hindsight", "title": "Hindsight", "kind": "memory.provider", "adapter": "hindsight" }
+  ]
+}

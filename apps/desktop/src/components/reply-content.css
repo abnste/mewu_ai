@@ -1,0 +1,18 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.reply-reasoning { margin:0 0 7px;min-width:0;color:var(--secondary); }
+.reply-reasoning-toggle { display:flex;align-items:center;gap:6px;max-width:100%;font-size:12px;line-height:20px;padding:2px 0;color:inherit; }
+.reply-reasoning-toggle>svg:last-child { transition:transform .14s; }
+.reply-reasoning-toggle>svg.expanded { transform:rotate(180deg); }
+.reply-reasoning-body { max-height:140px;overflow:auto;overflow-wrap:anywhere;user-select:text;border-left:2px solid #c5d0e4;padding:6px 10px;margin-top:5px;font-size:12px;line-height:19px;scrollbar-width:thin;color:#75829a; }
+.message-markdown a { color:var(--accent);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere; }
+.message-markdown h5,.message-markdown h6 { margin:10px 0 5px;font-size:1em;line-height:1.5; }
+.reply-image-slot { display:block;margin:7px 0;max-width:400px; }
+.reply-image-slot>img { display:block;max-width:100%;max-height:300px;object-fit:contain;border-radius:8px; }
+.reply-code-block { position:relative; }
+.reply-code-heading { display:flex;align-items:center;justify-content:space-between;gap:12px;user-select:none;font-size:10px;line-height:18px;color:var(--secondary);padding-bottom:6px; }
+.reply-code-copy { margin-left:auto;font:inherit;color:inherit;padding:0 2px;border-radius:3px; }
+.reply-code-copy:hover { color:var(--accent); }
+.reply-code-block code { display:block;white-space:pre;overflow:auto;user-select:text; }
+.message-markdown ol { list-style:decimal; }
+.message-markdown ul { list-style:disc; }
+.message-markdown li::marker { color:var(--secondary); }

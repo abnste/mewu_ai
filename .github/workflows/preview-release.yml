@@ -1,0 +1,50 @@
+name: Signed desktop release
+on:
+  push:
+    tags: ['v1.*']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audit public source
+        run: node scripts/audit-public.mjs
+      - name: Verify version matches tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag and package versions differ' }
+      - name: Update Rust stable
+        run: rustup update stable --no-self-update
+      - name: Test frontend and native core
+        shell: pwsh
+        run: |
+          node --experimental-vm-modules --test apps/desktop/src/*.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --workspace --locked
+          exit $LASTEXITCODE
+      - name: Build signed installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          MEWU_BUILD_COMMIT: ${{ github.sha }}
+        run: npm run desktop:build
+      - name: Assemble explicit release assets
+        run: node scripts/prepare-release.mjs
+      - name: Publish version and fixed update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish-release.mjs

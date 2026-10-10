@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-pointer-sample"
+description = "Enables the get_pointer_sample command without any pre-configured scope."
+commands.allow = ["get_pointer_sample"]
+
+[[permission]]
+identifier = "deny-get-pointer-sample"
+description = "Denies the get_pointer_sample command without any pre-configured scope."
+commands.deny = ["get_pointer_sample"]

@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pin",
+  "description": "Independent first-party pinned image windows",
+  "windows": [
+    "pin-*"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-pin-state",
+    "allow-pin-ready",
+    "allow-control-pin",
+    "allow-show-pin-menu",
+    "allow-export-pin",
+    "allow-start-pin-drag",
+    "allow-reference-pin-object"
+  ]
+}

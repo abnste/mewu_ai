@@ -1,0 +1,19 @@
+[
+  {"id":"plain","input":"回答🙂 $x < y$","text":"回答🙂 $x < y$","reasoning":""},
+  {"id":"bom-prefix","input":"\ufeff<think>合成</think>答案","text":"答案","reasoning":"合成"},
+  {"id":"zero-width-prefix","input":"\u200b<think>合成</think>答案","text":"答案","reasoning":"合成"},
+  {"id":"non-whitespace-control","input":"\u0085<think>示例</think>","text":"\u0085<think>示例</think>","reasoning":""},
+  {"id":"minimax","input":"<think>合成思考🙂</think>最终回答","text":"最终回答","reasoning":"合成思考🙂"},
+  {"id":"whitespace","input":" \n<think>推理</think>\n\n  缩进正文","text":"\n\n  缩进正文","reasoning":"推理"},
+  {"id":"uppercase","input":"<THINK>合成</ThInK>答案","text":"答案","reasoning":"合成"},
+  {"id":"thinking","input":"<thinking>合成</thinking>答案","text":"答案","reasoning":"合成"},
+  {"id":"reasoning","input":"<reasoning>合成</reasoning>答案","text":"答案","reasoning":"合成"},
+  {"id":"two-blocks","input":"<think>一</think>\n<reasoning>二</reasoning>正文","text":"正文","reasoning":"一\n\n二"},
+  {"id":"unfinished","input":"<think>未完成思考</thi","text":"","reasoning":"未完成思考</thi"},
+  {"id":"partial-opening","input":"<thi","text":"<thi","reasoning":""},
+  {"id":"code-example","input":"```xml\n<think>示例</think>\n```","text":"```xml\n<think>示例</think>\n```","reasoning":""},
+  {"id":"inline-code-example","input":"`<think>示例</think>`","text":"`<think>示例</think>`","reasoning":""},
+  {"id":"answer-prose","input":"标签 <think>示例</think> 是文本","text":"标签 <think>示例</think> 是文本","reasoning":""},
+  {"id":"answer-code-after-think","input":"<think>合成</think>\n```xml\n<think>示例</think>\n```","text":"\n```xml\n<think>示例</think>\n```","reasoning":"合成"},
+  {"id":"thought-less-than","input":"<think>a < b，<div>样例</div>🙂</think>| X | Y |\n|---|---|\n|1|2|","text":"| X | Y |\n|---|---|\n|1|2|","reasoning":"a < b，<div>样例</div>🙂"}
+]

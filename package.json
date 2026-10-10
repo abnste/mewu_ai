@@ -1,0 +1,14 @@
+{
+  "name": "mewu-workspace",
+  "version": "1.0.0-preview.1",
+  "private": true,
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm --workspace @mewu/desktop run dev",
+    "build": "npm --workspace @mewu/desktop run build",
+    "desktop:dev": "npm --workspace @mewu/desktop run tauri -- dev",
+    "desktop:build": "npm --workspace @mewu/desktop run tauri -- build"
+  }
+}

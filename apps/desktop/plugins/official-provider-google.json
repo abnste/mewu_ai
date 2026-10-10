@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.google",
+  "version": "1.0.0",
+  "name": "Google 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "google",
+      "title": "Google Gemini",
+      "template": {
+        "providerId": "Google",
+        "group": "global",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "model": "",
+        "searchTerms": "Google",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

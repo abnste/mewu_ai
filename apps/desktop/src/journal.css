@@ -1,0 +1,14 @@
+.run-journal { margin-top:4px; }
+.journal-terminal { display:flex;align-items:center;gap:9px;color:var(--secondary); }
+.run-journal button { border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:2px 4px; }
+.run-journal button:hover { color:var(--accent); }
+.run-journal button:disabled { opacity:.5;cursor:default; }
+.run-journal button:focus-visible { outline:2px solid var(--accent);outline-offset:1px;border-radius:4px; }
+.journal-body { margin:4px 0 0 12px;max-height:220px;overflow:auto; }
+.journal-entry { display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:2px 0; }
+.journal-entry-open { display:flex;gap:8px;align-items:baseline;max-width:100%;text-align:left; }
+.journal-entry-open span { overflow-wrap:anywhere; }
+.journal-entry-open small { flex-shrink:0;color:var(--muted);font-size:10px; }
+.journal-detail { width:100%; }
+.journal-detail pre { white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;max-height:160px;overflow:auto;user-select:text;margin:4px 0; }
+.journal-error { display:flex;gap:8px;color:var(--danger); }

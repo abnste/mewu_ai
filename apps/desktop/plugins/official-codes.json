@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.codes",
+  "version": "1.0.0",
+  "name": "二维码与条码",
+  "description": "在当前截图选区本地识别二维码和条码，提供复制与打开操作。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "recognize",
+      "title": "二维码与条码",
+      "kind": "selection.codes",
+      "engine": "rxing"
+    }
+  ]
+}

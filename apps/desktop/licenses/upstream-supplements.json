@@ -1,0 +1,180 @@
+[
+  {
+    "name": "rmcp",
+    "version": "3.5.1",
+    "commit": "79437f291b2c44053d00dcd5db969fd0cca7c887",
+    "source": "https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/79437f291b2c44053d00dcd5db969fd0cca7c887/LICENSE",
+    "file": "rmcp-3.5.1-LICENSE.txt",
+    "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+  },
+  {
+    "name": "jsonschema-regex",
+    "version": "0.58.6",
+    "commit": "55ac1664384793c5d3b20745d3f9c169dfe2c06f",
+    "source": "https://raw.githubusercontent.com/Stranger6667/jsonschema/55ac1664384793c5d3b20745d3f9c169dfe2c06f/LICENSE",
+    "file": "jsonschema-55ac166-LICENSE-MIT.txt",
+    "sha256": "117829c3ca21efb132d81a44b55363d395ab8eea18526873bc828da4c0e5f038"
+  },
+  {
+    "name": "jsonschema-value",
+    "version": "0.58.6",
+    "commit": "55ac1664384793c5d3b20745d3f9c169dfe2c06f",
+    "source": "https://raw.githubusercontent.com/Stranger6667/jsonschema/55ac1664384793c5d3b20745d3f9c169dfe2c06f/LICENSE",
+    "file": "jsonschema-55ac166-LICENSE-MIT.txt",
+    "sha256": "117829c3ca21efb132d81a44b55363d395ab8eea18526873bc828da4c0e5f038"
+  },
+  {
+    "name": "uuid-simd",
+    "version": "0.8.0",
+    "commit": "d74c030d9dc4f3cae02146d1f497ff62726ef09a",
+    "source": "https://raw.githubusercontent.com/Nugine/simd/d74c030d9dc4f3cae02146d1f497ff62726ef09a/LICENSE",
+    "file": "simd-d74c030-LICENSE-MIT.txt",
+    "sha256": "71674605ec4c087fe9eb534e3e4f9e26eb2e4aabcd76a29fd156c6a844d44b3d"
+  },
+  {
+    "name": "vsimd",
+    "version": "0.8.0",
+    "commit": "d74c030d9dc4f3cae02146d1f497ff62726ef09a",
+    "source": "https://raw.githubusercontent.com/Nugine/simd/d74c030d9dc4f3cae02146d1f497ff62726ef09a/LICENSE",
+    "file": "simd-d74c030-LICENSE-MIT.txt",
+    "sha256": "71674605ec4c087fe9eb534e3e4f9e26eb2e4aabcd76a29fd156c6a844d44b3d"
+  },
+  {
+    "name": "alloc-stdlib",
+    "version": "0.3.0",
+    "commit": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012",
+    "source": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE",
+    "file": "rust-alloc-no-stdlib-0a81fd6-LICENSE.txt",
+    "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae"
+  },
+  {
+    "name": "clipboard-win",
+    "version": "5.4.1",
+    "commit": "3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342",
+    "source": "https://raw.githubusercontent.com/DoumanAsh/clipboard-win/3b27cf2bfd1adcfa6e0264eb51c1025ddaf0f342/LICENSE",
+    "file": "clipboard-win-3b27cf2-LICENSE.txt",
+    "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+  },
+  {
+    "name": "defmt-parser",
+    "version": "1.0.0",
+    "commit": "4a8cdb44891ed57b8ff5a023b6bec7137c48708f",
+    "source": "https://raw.githubusercontent.com/knurling-rs/defmt/4a8cdb44891ed57b8ff5a023b6bec7137c48708f/LICENSE-MIT",
+    "file": "defmt-4a8cdb4-LICENSE-MIT.txt",
+    "sha256": "2710a622a896bba67356913d4d0492cab5465f61b2ecce6d880aeb483834fb50"
+  },
+  {
+    "name": "ratex-font",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "ratex-font-loader",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "ratex-layout",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "ratex-lexer",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "ratex-parser",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "ratex-svg",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "ratex-types",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "ratex-unicode-font",
+    "version": "0.1.14",
+    "commit": "776c1d37bafa3bf445a0ab9377c55fe77f7a0133",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/LICENSE",
+    "file": "RaTeX-776c1d3-LICENSE.txt",
+    "sha256": "f65e10eaa978c50a58c5e792110b4be5014b865edcb2ade49076bfcc98fa92b0",
+    "git": true
+  },
+  {
+    "name": "selectors",
+    "version": "0.38.0",
+    "commit": "572ecba2d1600e7c3d490586692a209faf703baa",
+    "source": "https://www.mozilla.org/en-US/MPL/2.0/",
+    "declaration": "https://raw.githubusercontent.com/servo/stylo/572ecba2d1600e7c3d490586692a209faf703baa/selectors/Cargo.toml",
+    "file": "MPL-2.0.txt",
+    "sha256": "9221c2f936159b8446d329249fb4c0f25be510f447383a0f13336ac7985668a3",
+    "standard": true
+  },
+  {
+    "name": "tauri-plugin",
+    "version": "2.7.1",
+    "commit": "30da1fd6e17de6107ecc850c95dfb16b5729f2dd",
+    "source": "https://raw.githubusercontent.com/tauri-apps/tauri/30da1fd6e17de6107ecc850c95dfb16b5729f2dd/LICENSE-MIT",
+    "file": "tauri-30da1fd-LICENSE-MIT.txt",
+    "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d"
+  },
+  {
+    "name": "webview2-com",
+    "version": "0.39.1",
+    "commit": "edc2caf886175ccaebe86078c9cfe1ae2a187328",
+    "source": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+    "file": "webview2-rs-edc2caf-LICENSE.txt",
+    "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+  },
+  {
+    "name": "webview2-com-macros",
+    "version": "0.8.1",
+    "commit": "dffa41a8a46d3f5565eefbff2de57d38d399f158",
+    "source": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE",
+    "file": "webview2-rs-dffa41a-LICENSE.txt",
+    "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+  },
+  {
+    "name": "webview2-com-sys",
+    "version": "0.39.1",
+    "commit": "edc2caf886175ccaebe86078c9cfe1ae2a187328",
+    "source": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+    "file": "webview2-rs-edc2caf-LICENSE.txt",
+    "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+  }
+]

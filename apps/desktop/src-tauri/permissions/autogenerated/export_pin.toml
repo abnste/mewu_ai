@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-pin"
+description = "Enables the export_pin command without any pre-configured scope."
+commands.allow = ["export_pin"]
+
+[[permission]]
+identifier = "deny-export-pin"
+description = "Denies the export_pin command without any pre-configured scope."
+commands.deny = ["export_pin"]

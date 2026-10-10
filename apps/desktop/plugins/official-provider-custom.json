@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.custom",
+  "version": "1.0.0",
+  "name": "自定义模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "custom",
+      "title": "自定义兼容服务",
+      "template": {
+        "providerId": "Custom",
+        "group": "custom",
+        "baseUrl": "",
+        "model": "",
+        "searchTerms": "OpenAI localhost Ollama LM Studio 中转",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

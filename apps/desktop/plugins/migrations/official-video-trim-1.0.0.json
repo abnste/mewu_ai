@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.video-trim",
+  "version": "1.0.0",
+  "name": "视频裁剪",
+  "description": "在视频原位调整播放范围，并保存裁剪后的片段。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "trim",
+      "title": "视频裁剪",
+      "kind": "artifact.video-trim",
+      "engine": "windows.media-editing"
+    }
+  ]
+}

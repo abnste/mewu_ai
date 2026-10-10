@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.space-pin-layer{position:absolute;inset:0;z-index:20;pointer-events:none;overflow:hidden}
+.space-pin-object{position:absolute;pointer-events:auto;cursor:move;touch-action:none;outline:none;border:0;background:transparent;box-shadow:none}
+.space-pin-object>img{position:absolute;left:50%;top:50%;display:block;max-width:none;max-height:none;pointer-events:none;transform-origin:center}
+.space-pin-object:hover .image-object-tools,.space-pin-object:focus-within .image-object-tools{opacity:1;visibility:visible;pointer-events:auto}

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.recording",
+  "version": "1.0.0",
+  "name": "屏幕录制",
+  "description": "录制选区画面与声音，在原位裁剪并保存视频或 GIF。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "record",
+      "title": "屏幕录制",
+      "kind": "selection.recording",
+      "engine": "windows.wgc-mf"
+    },
+    {
+      "id": "audio",
+      "title": "声源",
+      "kind": "recording.audio",
+      "engine": "windows.wasapi"
+    },
+    {
+      "id": "trim",
+      "title": "裁剪",
+      "kind": "artifact.video-trim",
+      "engine": "windows.media-editing"
+    },
+    {
+      "id": "gif",
+      "title": "GIF 导出",
+      "kind": "artifact.video-gif",
+      "engine": "windows.media-editing-gif"
+    }
+  ]
+}

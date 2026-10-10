@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-drawing-table"
+description = "Enables the copy_drawing_table command without any pre-configured scope."
+commands.allow = ["copy_drawing_table"]
+
+[[permission]]
+identifier = "deny-copy-drawing-table"
+description = "Denies the copy_drawing_table command without any pre-configured scope."
+commands.deny = ["copy_drawing_table"]

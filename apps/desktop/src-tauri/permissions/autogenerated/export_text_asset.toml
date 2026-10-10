@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-text-asset"
+description = "Enables the export_text_asset command without any pre-configured scope."
+commands.allow = ["export_text_asset"]
+
+[[permission]]
+identifier = "deny-export-text-asset"
+description = "Denies the export_text_asset command without any pre-configured scope."
+commands.deny = ["export_text_asset"]

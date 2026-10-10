@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-scene-window"
+description = "Enables the close_scene_window command without any pre-configured scope."
+commands.allow = ["close_scene_window"]
+
+[[permission]]
+identifier = "deny-close-scene-window"
+description = "Denies the close_scene_window command without any pre-configured scope."
+commands.deny = ["close_scene_window"]

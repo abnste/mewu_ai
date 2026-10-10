@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-drawing-layout-preview"
+description = "Enables the get_drawing_layout_preview command without any pre-configured scope."
+commands.allow = ["get_drawing_layout_preview"]
+
+[[permission]]
+identifier = "deny-get-drawing-layout-preview"
+description = "Denies the get_drawing_layout_preview command without any pre-configured scope."
+commands.deny = ["get_drawing_layout_preview"]

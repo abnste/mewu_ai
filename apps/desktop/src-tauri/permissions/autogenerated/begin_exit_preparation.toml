@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-begin-exit-preparation"
+description = "Enables the begin_exit_preparation command without any pre-configured scope."
+commands.allow = ["begin_exit_preparation"]
+
+[[permission]]
+identifier = "deny-begin-exit-preparation"
+description = "Denies the begin_exit_preparation command without any pre-configured scope."
+commands.deny = ["begin_exit_preparation"]

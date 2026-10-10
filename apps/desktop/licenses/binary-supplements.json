@@ -1,0 +1,16 @@
+[
+  {
+    "file": "WebView2-SDK-1.0.3800.47-LICENSE.txt",
+    "sha256": "0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55",
+    "source": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg",
+    "member": "LICENSE.txt",
+    "component": "Microsoft WebView2 SDK 1.0.3800.47, x64 static loader"
+  },
+  {
+    "file": "WebView2-SDK-1.0.3800.47-NOTICE.txt",
+    "sha256": "106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90",
+    "source": "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.3800.47/microsoft.web.webview2.1.0.3800.47.nupkg",
+    "member": "NOTICE.txt",
+    "component": "Microsoft WebView2 SDK 1.0.3800.47, x64 static loader"
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "example.drawing",
+  "version": "1.0.0",
+  "name": "绘图工具集示例",
+  "description": "声明宿主支持的九种截图绘图工具，不加载脚本或二进制。",
+  "publisher": "Example",
+  "license": "MIT",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "drawing-tools",
+      "title": "绘制",
+      "kind": "selection.drawing-tools",
+      "tools": ["pen", "line", "arrow", "rect", "ellipse", "text", "highlighter", "number", "mosaic"]
+    }
+  ]
+}

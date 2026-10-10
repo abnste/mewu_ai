@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.provider.zhipu",
+  "version": "1.0.0",
+  "name": "Zhipu 模型接入",
+  "description": "模型 API 连接模板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": [
+    "model-providers"
+  ],
+  "contributions": [
+    {
+      "kind": "model.connection",
+      "id": "zhipu",
+      "title": "智谱 GLM",
+      "template": {
+        "providerId": "Zhipu",
+        "group": "china",
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "",
+        "searchTerms": "BigModel 智谱清言",
+        "advanced": {
+          "protocol": "chat_completions",
+          "authMode": "bearer",
+          "requestParameters": {}
+        }
+      }
+    }
+  ]
+}

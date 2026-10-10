@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.scroll",
+  "version": "1.0.0",
+  "name": "长截图",
+  "description": "滚动采集选区，拼接为可绘制和识别的长图。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [{ "id": "capture", "title": "长截图", "kind": "selection.scroll" }]
+}

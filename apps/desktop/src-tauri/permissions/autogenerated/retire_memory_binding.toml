@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-retire-memory-binding"
+description = "Enables the retire_memory_binding command without any pre-configured scope."
+commands.allow = ["retire_memory_binding"]
+
+[[permission]]
+identifier = "deny-retire-memory-binding"
+description = "Denies the retire_memory_binding command without any pre-configured scope."
+commands.deny = ["retire_memory_binding"]

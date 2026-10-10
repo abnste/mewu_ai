@@ -1,0 +1,24 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.app .mewu-composer .message {
+  box-sizing:border-box;min-width:0;width:fit-content;max-width:calc(100% - 44px);
+  margin:3px 0 9px;padding:8px 12px;border:1px solid #dce4f1;border-radius:15px;
+  background:#f6f8fd;overflow-wrap:anywhere;
+}
+.app .mewu-composer .message.user { margin-left:auto;margin-right:0;background:#e8edff;border-color:#c4cffa;color:#415572; }
+.app .mewu-composer .message.assistant { margin-left:0;margin-right:auto; }
+.app .mewu-composer .message:last-child { margin-bottom:0; }
+.app .mewu-composer .message-markdown { min-width:0; }
+.app .mewu-composer .message-markdown hr { border:0;border-top:1px solid #dce4f1;margin:14px 0; }
+.composer-tool { display:flex;flex-direction:column;align-items:center;flex:none;min-width:0;gap:3px; }
+.composer-button-label { display:block;color:#72829a;font-size:10px;line-height:15px;text-align:center;white-space:nowrap;user-select:none;pointer-events:none; }
+.composer-tool.voice-tool .composer-button-label { align-self:flex-start;width:calc(100% - 13px); }
+.composer-row.with-button-labels .composer-field { margin-bottom:18px; }
+.space-thinking-glow {
+  position:fixed;left:0;right:0;bottom:0;height:min(220px,24vh);z-index:25;pointer-events:none;user-select:none;
+  background:radial-gradient(ellipse 62% 105% at 50% 105%,color-mix(in srgb,var(--thinking-glow-color) 61%,transparent) 0%,color-mix(in srgb,var(--thinking-glow-color) 35%,transparent) 35%,color-mix(in srgb,var(--thinking-glow-color) 11%,transparent) 70%,transparent 100%);
+  transform-origin:50% 100%;animation:space-thinking-breath 3.6s ease-in-out infinite;
+}
+@keyframes space-thinking-breath { 0%,100% { opacity:.48;transform:scaleY(.85); } 50% { opacity:.95;transform:scaleY(1); } }
+.reduce-motion .space-thinking-glow { animation:none;opacity:.7;transform:none; }
+@media(prefers-reduced-motion:reduce) { .space-thinking-glow { animation:none;opacity:.7;transform:none; } }
+@media(max-width:600px) { .app .mewu-composer .message { max-width:calc(100% - 24px);padding:7px 10px; }.composer-button-label { font-size:9px; } }

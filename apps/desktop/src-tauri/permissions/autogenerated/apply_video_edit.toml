@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-video-edit"
+description = "Enables the apply_video_edit command without any pre-configured scope."
+commands.allow = ["apply_video_edit"]
+
+[[permission]]
+identifier = "deny-apply-video-edit"
+description = "Denies the apply_video_edit command without any pre-configured scope."
+commands.deny = ["apply_video_edit"]

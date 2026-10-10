@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-voice-capabilities"
+description = "Enables the get_voice_capabilities command without any pre-configured scope."
+commands.allow = ["get_voice_capabilities"]
+
+[[permission]]
+identifier = "deny-get-voice-capabilities"
+description = "Denies the get_voice_capabilities command without any pre-configured scope."
+commands.deny = ["get_voice_capabilities"]

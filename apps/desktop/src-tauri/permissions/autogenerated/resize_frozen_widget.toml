@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resize-frozen-widget"
+description = "Enables the resize_frozen_widget command without any pre-configured scope."
+commands.allow = ["resize_frozen_widget"]
+
+[[permission]]
+identifier = "deny-resize-frozen-widget"
+description = "Denies the resize_frozen_widget command without any pre-configured scope."
+commands.deny = ["resize_frozen_widget"]

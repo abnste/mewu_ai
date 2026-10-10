@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+html[data-surface="scroll"],html[data-surface="scroll"] body,html[data-surface="scroll"] #root,
+html[data-surface="scroll-live"],html[data-surface="scroll-live"] body,html[data-surface="scroll-live"] #root{background:transparent!important}
+.app.scroll-active{background:transparent;pointer-events:none}
+.scroll-live-mask{position:fixed;inset:0;pointer-events:none;user-select:none}
+.scroll-live-mask>svg{position:absolute;inset:0;width:100%;height:100%}
+.scroll-control-window{width:100%;height:100%;padding:10px;user-select:none}
+.scroll-controls{width:100%;height:56px;display:flex;align-items:center;gap:9px;padding:9px 12px;border:1px solid var(--line);border-radius:16px;background:#fcfdff;color:var(--text);box-shadow:0 3px 9px #101a2d2b,0 1px 3px #101a2d1a}
+.scroll-measure{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
+.scroll-measure output{font:13px Consolas,monospace;white-space:nowrap}
+.scroll-notice{font-size:11px;color:var(--danger);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scroll-controls>button{display:grid;place-items:center;width:32px;height:32px;flex:none;border:1px solid var(--line);border-radius:9px;background:var(--surface-subtle);color:var(--secondary)}
+.scroll-controls>button:hover{background:var(--accent-soft);color:var(--accent)}
+.scroll-controls>button:disabled{opacity:.4}
+.scroll-controls>button.scroll-keep{width:auto;display:flex;gap:4px;padding:0 7px;font-size:11px;white-space:nowrap}
+.scroll-error{color:var(--danger);font-size:12px}
+.scroll-error>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

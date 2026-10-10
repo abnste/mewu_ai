@@ -1,0 +1,375 @@
+{
+  "version": "0.19.0",
+  "integrity": "sha512-v6Tznz3zJ7u3niRCoDTsumM2+HA2XXcCu+WAacCeHD2z3p9A9Ks987o5FzfTGBN0e8A0vjEgIDvLbICrXpdw/Q==",
+  "standard": {
+    "file": "OFL-1.1.txt",
+    "source": "https://openfontlicense.org/documents/OFL.txt",
+    "sha256": "1d361a8f8e8ce6e68457dcd93fb56e162e6baa3bbb7e7573a290d44399f6b57e"
+  },
+  "parser": {
+    "name": "fontTools",
+    "version": "4.66.1"
+  },
+  "fonts": [
+    {
+      "file": "KaTeX_AMS-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_AMS.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13"
+    },
+    {
+      "file": "KaTeX_Caligraphic-Bold.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Caligraphic.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "07d8e303ce4fc12b4bb54f1004170dd190a1f3db45d400fe68060df3e0897268"
+    },
+    {
+      "file": "KaTeX_Caligraphic-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Caligraphic.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7"
+    },
+    {
+      "file": "KaTeX_Fraktur-Bold.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Fraktur.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1"
+    },
+    {
+      "file": "KaTeX_Fraktur-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Fraktur.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3"
+    },
+    {
+      "file": "KaTeX_Main-Bold.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Main.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8"
+    },
+    {
+      "file": "KaTeX_Main-BoldItalic.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Main.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f"
+    },
+    {
+      "file": "KaTeX_Main-Italic.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Main.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a"
+    },
+    {
+      "file": "KaTeX_Main-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Main.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830"
+    },
+    {
+      "file": "KaTeX_Math-BoldItalic.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Math.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5"
+    },
+    {
+      "file": "KaTeX_Math-Italic.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Math.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a"
+    },
+    {
+      "file": "KaTeX_SansSerif-Bold.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_SansSerif.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0"
+    },
+    {
+      "file": "KaTeX_SansSerif-Italic.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_SansSerif.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083"
+    },
+    {
+      "file": "KaTeX_SansSerif-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_SansSerif.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad"
+    },
+    {
+      "file": "KaTeX_Script-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Script.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67"
+    },
+    {
+      "file": "KaTeX_Size1-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Size1.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b"
+    },
+    {
+      "file": "KaTeX_Size2-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Size2.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b"
+    },
+    {
+      "file": "KaTeX_Size3-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Size3.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082"
+    },
+    {
+      "file": "KaTeX_Size4-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Size4.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877"
+    },
+    {
+      "file": "KaTeX_Typewriter-Regular.ttf",
+      "names": [
+        {
+          "id": 0,
+          "text": "Copyright (c) 2009-2010 Design Science, Inc.\nCopyright (c) 2014-2018 Khan Academy"
+        },
+        {
+          "id": 13,
+          "text": "Copyright (c) 2009-2010, Design Science, Inc. (<www.mathjax.org>)\nCopyright (c) 2014-2018 Khan Academy (<www.khanacademy.org>),\nwith Reserved Font Name KaTeX_Typewriter.\n\nThis Font Software is licensed under the SIL Open Font License, Version 1.1.\nThis license available with a FAQ at:\nhttp://scripts.sil.org/OFL"
+        },
+        {
+          "id": 14,
+          "text": "http://scripts.sil.org/OFL"
+        }
+      ],
+      "sha256": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa"
+    }
+  ]
+}

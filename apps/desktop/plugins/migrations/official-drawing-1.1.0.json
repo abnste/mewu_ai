@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.drawing",
+  "version": "1.1.0",
+  "name": "截图绘制",
+  "description": "在截图选区中使用画笔、直线、箭头、矩形、椭圆、文字、荧光笔、序号和马赛克。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "drawing-tools",
+      "title": "绘制",
+      "kind": "selection.drawing-tools",
+      "tools": [
+        "pen",
+        "line",
+        "arrow",
+        "rect",
+        "ellipse",
+        "text",
+        "highlighter",
+        "number",
+        "mosaic"
+      ]
+    }
+  ]
+}

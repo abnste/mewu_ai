@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-space"
+description = "Enables the hide_space command without any pre-configured scope."
+commands.allow = ["hide_space"]
+
+[[permission]]
+identifier = "deny-hide-space"
+description = "Denies the hide_space command without any pre-configured scope."
+commands.deny = ["hide_space"]

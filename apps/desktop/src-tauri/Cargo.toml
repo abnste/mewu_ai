@@ -1,0 +1,74 @@
+[package]
+name = "mewu-desktop"
+version = "1.0.0-preview.1"
+edition = "2021"
+license = "MPL-2.0"
+default-run = "mewu-desktop"
+
+[[bin]]
+name = "mewu-plugin-validator"
+path = "../../../tools/plugin-catalog/native.rs"
+test = false
+
+[build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[dependencies]
+mewu-core = { path = "../../../crates/mewu-core" }
+tauri = { version = "=2.12.1", features = [ "tray-icon"] }
+tauri-plugin-global-shortcut = "=2.4.0"
+tauri-plugin-single-instance = "=2.5.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "=0.4.45"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream", "rustls", "system-proxy", "socks"] }
+futures-util = "0.3"
+eventsource-stream = "0.2"
+base64 = "0.22"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+gif = { version = "=0.14.2", default-features = false, features = ["std", "color_quant", "raii_no_panic"] }
+rxing = { version = "=0.9.3", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "datamatrix", "aztec", "pdf417", "oned", "encoding_rs"] }
+rfd = "=0.17.2"
+arboard = "3"
+zeroize = "1"
+url = "2"
+tiny_http = "=0.12.0"
+same-file = "=1.0.6"
+dirs = "=7.0.0"
+rmcp = { version = "=3.5.1", default-features = false, features = ["client", "transport-async-rw"] }
+process-wrap = { version = "=10.0.1", default-features = false, features = ["tokio1", "creation-flags", "job-object", "kill-on-drop", "process-group"] }
+jsonschema = { version = "=0.58.6", default-features = false }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+semver = "=1.0.28"
+sha2 = "=0.10.9"
+resvg = { version = "=0.48.1", default-features = false, features = ["text"] }
+pulldown-cmark = { version = "=0.13.4", default-features = false }
+unicode-segmentation = "=1.13.3"
+unicode-width = "=0.2.2"
+ratex-parser = { git = "https://github.com/erweixin/RaTeX", rev = "776c1d37bafa3bf445a0ab9377c55fe77f7a0133" }
+ratex-layout = { git = "https://github.com/erweixin/RaTeX", rev = "776c1d37bafa3bf445a0ab9377c55fe77f7a0133" }
+ratex-types = { git = "https://github.com/erweixin/RaTeX", rev = "776c1d37bafa3bf445a0ab9377c55fe77f7a0133" }
+ratex-svg = { git = "https://github.com/erweixin/RaTeX", rev = "776c1d37bafa3bf445a0ab9377c55fe77f7a0133", default-features = false, features = ["standalone"] }
+ratex-unicode-font = { git = "https://github.com/erweixin/RaTeX", rev = "776c1d37bafa3bf445a0ab9377c55fe77f7a0133" }
+roxmltree = "=0.21.1"
+tauri-plugin-updater = "=2.13.2"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+xcap = { version = "=0.9.8", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-capture = "=2.0.1"
+windows = { version = "=0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_Media_Speech", "Win32_Media_Audio", "Win32_Globalization", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_System_Performance", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging", "Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Storage_Search", "Media_Editing", "Media_MediaProperties", "Media_Transcoding", "Win32_System_WinRT"] }
+windows-future = "=0.3.2"
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_DataExchange", "Win32_System_Registry", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Memory", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "=0.62.2", features = ["Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_Variant"] }
+
+[dev-dependencies]
+rxing = { version = "=0.9.3", default-features = false, features = ["encoders"] }

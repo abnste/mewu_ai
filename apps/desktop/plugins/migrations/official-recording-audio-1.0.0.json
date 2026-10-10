@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.recording-audio",
+  "version": "1.0.0",
+  "name": "录屏声音",
+  "description": "录屏时选择电脑声音、麦克风或两者。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "audio",
+      "title": "录屏声音",
+      "kind": "recording.audio",
+      "engine": "windows.wasapi"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-system-preferences"
+description = "Enables the set_system_preferences command without any pre-configured scope."
+commands.allow = ["set_system_preferences"]
+
+[[permission]]
+identifier = "deny-set-system-preferences"
+description = "Denies the set_system_preferences command without any pre-configured scope."
+commands.deny = ["set_system_preferences"]

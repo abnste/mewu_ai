@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.pin",
+  "version": "1.0.0",
+  "name": "贴图",
+  "description": "将选区图片贴在桌面。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    { "id": "pin", "title": "贴图", "kind": "selection.pin" }
+  ]
+}

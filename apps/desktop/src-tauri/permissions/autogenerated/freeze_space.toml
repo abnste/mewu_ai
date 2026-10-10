@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-freeze-space"
+description = "Enables the freeze_space command without any pre-configured scope."
+commands.allow = ["freeze_space"]
+
+[[permission]]
+identifier = "deny-freeze-space"
+description = "Denies the freeze_space command without any pre-configured scope."
+commands.deny = ["freeze_space"]

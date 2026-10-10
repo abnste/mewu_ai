@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discover-mcp-server"
+description = "Enables the discover_mcp_server command without any pre-configured scope."
+commands.allow = ["discover_mcp_server"]
+
+[[permission]]
+identifier = "deny-discover-mcp-server"
+description = "Denies the discover_mcp_server command without any pre-configured scope."
+commands.deny = ["discover_mcp_server"]

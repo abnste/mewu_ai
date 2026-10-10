@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-run-plugin-workflow"
+description = "Enables the run_plugin_workflow command without any pre-configured scope."
+commands.allow = ["run_plugin_workflow"]
+
+[[permission]]
+identifier = "deny-run-plugin-workflow"
+description = "Denies the run_plugin_workflow command without any pre-configured scope."
+commands.deny = ["run_plugin_workflow"]

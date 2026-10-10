@@ -1,0 +1,135 @@
+[
+  {
+    "name": "KaTeX_Main-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Main-Regular.ttf",
+    "sha256": "d0332f52868370fd83ae7fa46470f90c8f2eab2fcf12bc4f88080b340c95a830",
+    "license": "OFL-1.1",
+    "bytes": 53580
+  },
+  {
+    "name": "KaTeX_Main-Bold.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Main-Bold.ttf",
+    "sha256": "138ac28d1663b3037e9c5f52371fa5c63d8324f4a38d22cd573e6ea3a3fd0cf8",
+    "license": "OFL-1.1",
+    "bytes": 51336
+  },
+  {
+    "name": "KaTeX_Main-Italic.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Main-Italic.ttf",
+    "sha256": "0d85ae7cc30f23790a7f1a58c4a112fdca8aae769b6ba11429af1d98b1b6cb3a",
+    "license": "OFL-1.1",
+    "bytes": 33580
+  },
+  {
+    "name": "KaTeX_Main-BoldItalic.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Main-BoldItalic.ttf",
+    "sha256": "70ee1f64a20f2048c21940ef46d0144fd215baa953ca69afd1e31e98544f708f",
+    "license": "OFL-1.1",
+    "bytes": 32968
+  },
+  {
+    "name": "KaTeX_Math-Italic.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Math-Italic.ttf",
+    "sha256": "08ce98e51b04d58945a301e639e02b6998af29fdfd61a7b8afdd07bbfc479d4a",
+    "license": "OFL-1.1",
+    "bytes": 31308
+  },
+  {
+    "name": "KaTeX_Math-BoldItalic.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Math-BoldItalic.ttf",
+    "sha256": "f9377ab0271cda59af24bcffbd46a4d0c8a3572ffafdbb38de2ad5ea7b0d5ee5",
+    "license": "OFL-1.1",
+    "bytes": 31196
+  },
+  {
+    "name": "KaTeX_AMS-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_AMS-Regular.ttf",
+    "sha256": "68534840bcfdd2bffb6f0e8deb48684dd01e7f04ea2813267577afb906de1d13",
+    "license": "OFL-1.1",
+    "bytes": 63632
+  },
+  {
+    "name": "KaTeX_Caligraphic-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Caligraphic-Regular.ttf",
+    "sha256": "ed0b74372feefcbb9c0666b2e210da37b7e49fa7fbbf3eeb11db5f693dacfbb7",
+    "license": "OFL-1.1",
+    "bytes": 12344
+  },
+  {
+    "name": "KaTeX_Fraktur-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Fraktur-Regular.ttf",
+    "sha256": "1e6f9579e90e2cac37f8f60a597c436e075c114385652b7cbeb0dec0421291b3",
+    "license": "OFL-1.1",
+    "bytes": 19572
+  },
+  {
+    "name": "KaTeX_Fraktur-Bold.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Fraktur-Bold.ttf",
+    "sha256": "9163df9c7122432e6495b4229fa9071cf9ae86a758ae5efc4924ec2e1a6dbce1",
+    "license": "OFL-1.1",
+    "bytes": 19584
+  },
+  {
+    "name": "KaTeX_SansSerif-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_SansSerif-Regular.ttf",
+    "sha256": "f36ea897e19f4a2e571d1e900e4e3710e438deb05a842486045ba0a3e616a4ad",
+    "license": "OFL-1.1",
+    "bytes": 19436
+  },
+  {
+    "name": "KaTeX_SansSerif-Bold.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_SansSerif-Bold.ttf",
+    "sha256": "1ece03f79f95277d57dc7f6b435a74e1379b0d46104a8530286b60ff49369ea0",
+    "license": "OFL-1.1",
+    "bytes": 24504
+  },
+  {
+    "name": "KaTeX_SansSerif-Italic.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_SansSerif-Italic.ttf",
+    "sha256": "3931dd81faed86ba021bb2bbdc36f5bed9a38d6b4f4077aca59b265aa1b02083",
+    "license": "OFL-1.1",
+    "bytes": 22364
+  },
+  {
+    "name": "KaTeX_Script-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Script-Regular.ttf",
+    "sha256": "1c67f068fea8bb09bf099c088b1cf64bd27516a6e07f4684344873564bb66a67",
+    "license": "OFL-1.1",
+    "bytes": 16648
+  },
+  {
+    "name": "KaTeX_Typewriter-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Typewriter-Regular.ttf",
+    "sha256": "f01f3e87d9c6a61c0c081ceb577abd864eb00a612f7ac1620dd6915fad2ef5aa",
+    "license": "OFL-1.1",
+    "bytes": 27556
+  },
+  {
+    "name": "KaTeX_Size1-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Size1-Regular.ttf",
+    "sha256": "95b6d2f1a50173bfedb8c63e1d1c99b10427d0a4df4201cb44513b226951a22b",
+    "license": "OFL-1.1",
+    "bytes": 12228
+  },
+  {
+    "name": "KaTeX_Size2-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Size2-Regular.ttf",
+    "sha256": "a6b2099fb555c60e3a0db3a08842ebf1d732c6eb4e4bf44913613bed4fc4e39b",
+    "license": "OFL-1.1",
+    "bytes": 11508
+  },
+  {
+    "name": "KaTeX_Size3-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Size3-Regular.ttf",
+    "sha256": "500e04d54f0d51666332c9d2089aa803be22aa878eca539e59fa53c6e522b082",
+    "license": "OFL-1.1",
+    "bytes": 7588
+  },
+  {
+    "name": "KaTeX_Size4-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/erweixin/RaTeX/776c1d37bafa3bf445a0ab9377c55fe77f7a0133/fonts/KaTeX_Size4-Regular.ttf",
+    "sha256": "c647367d1dd4e162468717d020e1fc0f1dc5c26ebfdffbe55261713bf88c5877",
+    "license": "OFL-1.1",
+    "bytes": 10364
+  }
+]

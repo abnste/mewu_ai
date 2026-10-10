@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-run-plugin-translation"
+description = "Enables the run_plugin_translation command without any pre-configured scope."
+commands.allow = ["run_plugin_translation"]
+
+[[permission]]
+identifier = "deny-run-plugin-translation"
+description = "Denies the run_plugin_translation command without any pre-configured scope."
+commands.deny = ["run_plugin_translation"]

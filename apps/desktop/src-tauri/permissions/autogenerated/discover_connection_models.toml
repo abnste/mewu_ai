@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discover-connection-models"
+description = "Enables the discover_connection_models command without any pre-configured scope."
+commands.allow = ["discover_connection_models"]
+
+[[permission]]
+identifier = "deny-discover-connection-models"
+description = "Denies the discover_connection_models command without any pre-configured scope."
+commands.deny = ["discover_connection_models"]

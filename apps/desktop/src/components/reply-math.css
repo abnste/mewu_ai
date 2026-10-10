@@ -1,0 +1,10 @@
+/* Keep a little inline room for radical/italic ink beyond KaTeX's advance width. */
+.reply-formula { display:inline-block;box-sizing:border-box;max-width:100%;overflow-x:auto;overflow-y:hidden;vertical-align:middle;white-space:normal;padding:2px 3px; }
+.reply-formula-display { display:block;max-width:100%;overflow-x:auto;overflow-y:hidden;margin:12px 0;padding:3px; }
+.reply-formula .katex { font-size:1.06em; }
+.reply-formula .katex-display { margin:0;text-align:left; }
+.reply-formula .katex-display>.katex { text-align:left; }
+/* Math's intrinsic width cannot enlarge a reply table column. Long expressions
+   scroll inside the cell; the table keeps its original rows and columns. */
+.message-markdown td .reply-formula,.message-markdown th .reply-formula,.reply-table-cell .reply-formula { max-width:min(300px,65vw); }
+.message-markdown td .reply-formula-display,.message-markdown th .reply-formula-display,.reply-table-cell .reply-formula-display { margin:2px 0; }

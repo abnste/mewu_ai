@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reinstall-official-plugin"
+description = "Enables the reinstall_official_plugin command without any pre-configured scope."
+commands.allow = ["reinstall_official_plugin"]
+
+[[permission]]
+identifier = "deny-reinstall-official-plugin"
+description = "Denies the reinstall_official_plugin command without any pre-configured scope."
+commands.deny = ["reinstall_official_plugin"]

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.annotations",
+  "version": "1.0.0",
+  "name": "原位作答",
+  "description": "在截图上添加可编辑的答案、圈点和绘图。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "contributions": [
+    {
+      "id": "annotate",
+      "title": "原位作答",
+      "kind": "agent.visual-annotations",
+      "engine": "host.vector-v1"
+    }
+  ]
+}

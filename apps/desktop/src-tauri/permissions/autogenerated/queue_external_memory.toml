@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-queue-external-memory"
+description = "Enables the queue_external_memory command without any pre-configured scope."
+commands.allow = ["queue_external_memory"]
+
+[[permission]]
+identifier = "deny-queue-external-memory"
+description = "Denies the queue_external_memory command without any pre-configured scope."
+commands.deny = ["queue_external_memory"]

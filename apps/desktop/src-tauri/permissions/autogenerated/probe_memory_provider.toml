@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-probe-memory-provider"
+description = "Enables the probe_memory_provider command without any pre-configured scope."
+commands.allow = ["probe_memory_provider"]
+
+[[permission]]
+identifier = "deny-probe-memory-provider"
+description = "Denies the probe_memory_provider command without any pre-configured scope."
+commands.deny = ["probe_memory_provider"]

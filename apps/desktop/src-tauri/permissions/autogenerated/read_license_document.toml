@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-license-document"
+description = "Enables the read_license_document command without any pre-configured scope."
+commands.allow = ["read_license_document"]
+
+[[permission]]
+identifier = "deny-read-license-document"
+description = "Denies the read_license_document command without any pre-configured scope."
+commands.deny = ["read_license_document"]
