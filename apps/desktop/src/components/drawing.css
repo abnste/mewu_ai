@@ -32,7 +32,7 @@
 .drawing-blackboard .drawing-done{position:sticky;right:0;background:var(--surface,#fafcff);box-shadow:-5px 0 8px var(--surface,#fafcff)}
 .drawing-blackboard .drawing-hit{cursor:crosshair}
 .drawing-edit-surface.drawing-select-mode{cursor:default}.drawing-edit-surface.drawing-text-mode{cursor:text}
-.drawing-edit-surface.drawing-eraser-mode,.drawing-eraser-mode .drawing-hit{cursor:crosshair}
+.drawing-eraser-mode .drawing-hit{cursor:inherit}
 .drawing-hit{pointer-events:visiblePainted;cursor:move}
 .drawing-resize-handle{fill:#fff;stroke:#348bf1;stroke-width:1.5;pointer-events:all}
 .drawing-toolbar{position:absolute;display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:max-content;max-width:calc(100vw - 12px);padding:0;border:0;background:transparent;box-shadow:none;color:var(--text,#52637a);z-index:2}
@@ -41,13 +41,23 @@
 .drawing-toolbar button{border:1px solid transparent;background:transparent;color:inherit}
 .drawing-toolbar button:hover,.drawing-toolbar button.selected{background:var(--accent-soft,#eaf1fa);border-color:var(--line,#d7e1ef);color:var(--accent,#348bf1)}
 .drawing-toolbar button:focus-visible,.drawing-toolbar select:focus-visible{outline:2px solid var(--accent,#348bf1);outline-offset:1px}
-.drawing-toolbar button:disabled,.drawing-toolbar select:disabled{opacity:.35;cursor:default}
+.drawing-toolbar button:disabled,.drawing-toolbar select:disabled{opacity:1;cursor:default}
+.drawing-toolbar button[data-unavailable="true"],.drawing-toolbar select[data-unavailable="true"]{opacity:.35}
+.drawing-toolbar[data-controls-locked="true"] button,.drawing-toolbar[data-controls-locked="true"] select,.drawing-toolbar[data-controls-locked="true"] .drawing-width-slider{opacity:.35}
+.drawing-width-slider{display:flex;align-items:center;gap:8px;width:148px;padding:0 8px;height:48px;box-sizing:border-box;cursor:default}
+.drawing-width-slider input{appearance:none;width:96px;min-width:0;height:4px;margin:0;border:0;border-radius:2px;outline:0;background:linear-gradient(to right,var(--accent,#348bf1) var(--drawing-range-progress),var(--line,#d7e1ef) var(--drawing-range-progress));cursor:pointer}
+.drawing-width-slider input::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border:2px solid var(--surface,#fff);border-radius:50%;background:var(--accent,#348bf1);box-shadow:0 0 0 1px #348bf144}
+.drawing-width-slider input::-moz-range-thumb{width:10px;height:10px;border:2px solid var(--surface,#fff);border-radius:50%;background:var(--accent,#348bf1)}
+.drawing-width-slider input:focus-visible{outline:2px solid var(--accent,#348bf1);outline-offset:5px}
+.drawing-width-slider input:disabled{cursor:default}
+.drawing-width-slider output{min-width:32px;text-align:right;font-size:12px;font-variant-numeric:tabular-nums;color:var(--text,#52637a)}
+.drawing-width-slider output span{margin-left:2px;font-size:10px;color:var(--muted,#8290a3)}
 .drawing-toolbar button.drawing-done{color:var(--accent,#348bf1)}
 .drawing-divider{width:1px;height:20px;background:var(--line,#d7e1ef);margin:0 3px}
 .drawing-toolbar select{width:auto;min-width:64px;max-width:92px;height:30px;padding:2px 6px;gap:6px;border:1px solid var(--line,#d7e1ef);border-radius:7px;background:var(--surface,#fff);color:inherit;font-size:11px}
 .drawing-toolbar .drawing-number{width:64px;height:30px;padding:2px 5px;border:1px solid var(--line,#d7e1ef);border-radius:7px;background:var(--surface,#fff);color:inherit;font-size:12px}
 .drawing-toolbar .drawing-number:focus-visible{outline:2px solid var(--accent,#348bf1);outline-offset:1px}
-.drawing-toolbar .drawing-number:disabled{opacity:.35}
+.drawing-toolbar .drawing-number:disabled{cursor:default}
 .drawing-text-editor{position:absolute;z-index:3;width:288px;max-width:calc(100vw - 12px);padding:8px;background:var(--surface,#fff);border:1px solid var(--line,#d7e1ef);border-radius:11px;box-shadow:0 6px 24px #3347623d}
 .drawing-text-editor textarea{display:block;width:100%;min-height:88px;max-height:160px;resize:vertical;border:0;background:transparent;outline:none;color:var(--text,#26364d);font:14px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;user-select:text}
 .drawing-text-editor>div{display:flex;justify-content:flex-end;gap:6px;margin-top:5px}

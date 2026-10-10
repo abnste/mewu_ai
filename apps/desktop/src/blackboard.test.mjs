@@ -10,16 +10,17 @@ const ast=parse(source,{sourceType:'module',plugins:['typescript','jsx']});
 const body=ast.program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
 const slice=name=>{const node=body.find(node=>node.type==='FunctionDeclaration'&&node.id.name===name);return source.slice(node.start,node.end);};
 const pure=async path=>import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(await readFile(new URL(path,import.meta.url),'utf8'),{mode:'transform'})).toString('base64'));
-const {ObjectEraser}=await pure('./components/drawing-eraser.ts');
+const {ObjectEraser,eraserStrokeHits,clipEraserSweep}=await pure('./components/drawing-eraser.ts');
+const {drawingPointerSamples}=await pure('./components/drawing-pointer.ts');
 const {isBlackboard}=await pure('./blackboard.ts');
 const {blackboardImage}=await pure('./blackboard-image.ts');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(blackboard=true){
   let captured=false,revision=0,mode='pen',erasing=false;
   const listeners=new Map(),removed=[],objects=new Set(['first','second']);
-  const svg={addEventListener:(name,handler)=>listeners.set(name,handler),removeEventListener:name=>listeners.delete(name),setPointerCapture(){captured=true;},hasPointerCapture:()=>captured,releasePointerCapture(){captured=false;},focus(){}};
+  const svg={getBoundingClientRect:()=>({left:0,top:0,width:100,height:100}),addEventListener:(name,handler)=>listeners.set(name,handler),removeEventListener:name=>listeners.delete(name),setPointerCapture(){captured=true;},hasPointerCapture:()=>captured,releasePointerCapture(){captured=false;},focus(){}};
   const props={blackboard,busy:false,inputLocked:false,box:{x:0,y:0,width:100,height:100},port:{canSelect:()=>true,sourceIdentity:()=>props.source,sourceSize:()=>({width:100,height:100}),frame:()=>({x:0,y:0,width:100,height:100})},source:'original'};
-  const context=vm.createContext({props,svg,ObjectEraser,blackboardImage,drawings:()=>[...objects].map(id=>({id,kind:id==='picture'?'rich':'pen',rich:id==='picture'?{kind:'extracted'}:undefined})), identity:()=>props.source,tool:()=>mode,disabled:()=>props.busy||props.inputLocked,textEditor:()=>false,edit:()=>false,finishing:()=>false,disposed:false,cancelGesture:undefined,eraseSource:undefined,setErasing:value=>{erasing=value;},editableIds:()=>objects,eraserHit:(_svg,point,allowed)=>{const id=point.x<30?'first':point.x<60?'second':'picture';return allowed.has(id)?id:undefined;},target:()=>({expectedRevision:revision}),commit:async command=>{removed.push(command);objects.delete(command.drawingId);revision++;return true;}});
+  const context=vm.createContext({props,svg,ObjectEraser,eraserStrokeHits,clipEraserSweep,drawingPointerSamples,blackboardImage,eraseWidth:()=>4,document:{elementFromPoint:()=>svg},drawings:()=>[...objects].map(id=>({id,kind:id==='picture'?'rich':'pen',points:[{x:id==='first'?10:id==='second'?40:80,y:10}],strokeWidth:2,rich:id==='picture'?{kind:'extracted'}:undefined})), identity:()=>props.source,tool:()=>mode,disabled:()=>props.busy||props.inputLocked,textEditor:()=>false,edit:()=>false,finishing:()=>false,disposed:false,cancelGesture:undefined,eraseSource:undefined,eraseFlight:undefined,setErasing:value=>{erasing=value;},editableIds:()=>objects,eraserHit:(_svg,point,allowed)=>{const id=point.x<30?'first':point.x<60?'second':'picture';return allowed.has(id)?id:undefined;},target:()=>({expectedRevision:revision}),commit:async command=>{removed.push(command);objects.delete(command.drawingId);revision++;return true;}});
   vm.runInContext(stripTypeScriptTypes(slice('beginErase')+'\n'+slice('begin'),{mode:'transform'}),context);
   const event=(type,x,buttons=2)=>({type,button:2,buttons,pointerId:1,clientX:x,clientY:10,preventDefault(){},stopPropagation(){}});
   return {context,props,removed,objects,event,mode:value=>{mode=value;},erasing:()=>erasing,fire:(type,x,buttons)=>listeners.get(type)?.(event(type,x,buttons)),begin:()=>context.begin(event('pointerdown',10)),listenerCount:()=>listeners.size};
@@ -37,8 +38,18 @@ test('secondary eraser stops on lost capture, input lock or source replacement w
     const f=fixture();f.begin();await tick();change(f);await tick();assert.equal(f.removed.length,1);assert.equal(f.erasing(),false);
   }
 });
-test('right click outside blackboard remains outside drawing authoring',()=>{
-  const f=fixture(false);f.begin();assert.equal(f.removed.length,0);assert.equal(f.listenerCount(),0);
+test('screenshot drawing uses the same temporary right-button eraser without changing its selected pen',async()=>{
+  const f=fixture(false);f.begin();await tick();assert.equal(f.removed.length,1);assert.equal(f.context.tool(),'pen');f.fire('pointerup',10,0);assert.equal(f.listenerCount(),0);
+});
+
+test('released eraser detaches capture immediately but exit flush waits for all already accepted hits',async()=>{
+  const f=fixture();let resume;const gate=new Promise(resolve=>resume=resolve),original=f.context.commit;let requests=0;
+  f.context.commit=async(...args)=>{if(++requests===1)await gate;return original(...args);};
+  f.begin();f.fire('pointermove',40,2);f.fire('pointerup',40,0);
+  assert.equal(f.erasing(),false);assert.equal(f.listenerCount(),0);assert.equal(requests,1);
+  f.props.inputLocked=true;f.context.cancelGesture();f.fire('lostpointercapture',40,0);
+  let finished=false;const flushing=f.context.eraseFlight.then(()=>finished=true);await tick();assert.equal(finished,false);
+  resume();await flushing;assert.deepEqual(f.removed.map(v=>v.drawingId),['first','second']);assert.deepEqual(f.removed.map(v=>v.expectedRevision),[0,1]);
 });
 test('real JSX context-menu handler suppresses browser menu only for a blackboard',()=>{
   const nodes=[];const walk=node=>{if(!node||typeof node!=='object')return;if(node.type)nodes.push(node);for(const value of Object.values(node)){if(Array.isArray(value))value.forEach(walk);else if(value&&typeof value==='object')walk(value);}};walk(ast);
@@ -89,4 +100,4 @@ test('successful board finish removes only the parent reference draft so automat
   assert.equal(await context.finishBlackboard(),true);assert.equal(references.parent,undefined);assert.deepEqual(references.other,[{kind:'item',id:'keep'}]);assert.deepEqual(current.refs,[{kind:'item',id:'board-image'}]);assert.equal(busy,false);
 });
 
-test('secondary eraser leaves board images intact and removes only ink',async()=>{const f=fixture();f.objects.add('picture');f.begin();await tick();f.fire('pointermove',80,2);await tick();assert.equal(f.removed.length,1);assert.ok(f.objects.has('picture'));f.fire('pointerup',80,0);});
+test('secondary eraser leaves board images intact and removes all crossed ink',async()=>{const f=fixture();f.objects.add('picture');f.begin();await tick();f.fire('pointermove',80,2);await tick();assert.equal(f.removed.length,2);assert.ok(f.objects.has('picture'));f.fire('pointerup',80,0);});

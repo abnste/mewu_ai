@@ -190,7 +190,7 @@ const checks = [];
   const callback = register.arguments[0];
   const errors = [], task = deferred(), context = { sceneId:id(1),background:asset,region };
   const mod = new SourceTextModule(transform(`import { taskCopy, richPreviewTarget, richSourceIdentity, report } from 'fixture';const props={port:{copyTable:taskCopy,sourceIdentity:()=>richSourceIdentity(context)}};
-    let context=${JSON.stringify(context)}, currentDrawing=${JSON.stringify(drawing)}, disposed=false, finishing=false, tableCopy, flight, flushImages;
+    let context=${JSON.stringify(context)}, currentDrawing=${JSON.stringify(drawing)}, disposed=false, finishing=false, tableCopy, flight, flushImages, eraseFlight;
     const identity=()=>context.sceneId; const selectedDrawing=()=>currentDrawing, selected=()=>currentDrawing.id, richContext=()=>context;
     const disabled=()=>finishing, edit=()=>undefined, cancelGesture=undefined, tableFormat=()=>'png';
     const setFinishing=value=>{finishing=value}; const saveText=async()=>true;

@@ -5,7 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule } from 'node:vm';
 const module = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./components/drawing-eraser.ts', import.meta.url), 'utf8'), { mode: 'transform' }));
 await module.link(() => { throw new Error('Unexpected runtime dependency'); }); await module.evaluate();
-const { eraserHit, ObjectEraser } = module.namespace;
+const { eraserHit, eraserStrokeHits, eraserCursor, clipEraserSweep, ObjectEraser } = module.namespace;
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 const checks = [];
@@ -23,17 +23,17 @@ const checks = [];
   const eraser = new ObjectEraser({ x: 0, y: 0 }, { current: () => true, hit: point => { hit.push([point.x, point.y]); }, remove: async () => assert.fail('No hit'), stopped() {} });
   eraser.start(); eraser.move({ x: 11.99, y: 0 }); eraser.move({ x: 7.2, y: 9.6 }); eraser.move({ x: 7.2, y: 9.6 }); eraser.move({ x: 19.2, y: 9.6 });
   eraser.move({ x: NaN, y: 100 });
-  assert.deepEqual(hit, [[0, 0], [7.2, 9.6], [19.2, 9.6]]); eraser.stop();
-  checks.push('The 12 CSS-pixel distance is Euclidean, inclusive, and advances even when no object is hit');
+  assert.deepEqual(hit, [[0, 0], [11.99,0], [7.2, 9.6], [19.2, 9.6]]); eraser.stop();
+  checks.push('Short real moves are sampled immediately; identical/invalid capture resync does not re-hit');
 }
 {
   const first = deferred(), second = deferred(), calls = [], hits = []; let revision = 3;
   const eraser = new ObjectEraser({ x: 0, y: 0 }, { current: () => true, hit: point => { hits.push(point.x); return `object-${point.x}`; }, remove: async id => { calls.push([id, revision]); await (calls.length === 1 ? first.promise : second.promise); revision++; return true; }, stopped() {} });
   eraser.start(); eraser.move({ x: 12, y: 0 }); eraser.move({ x: 24, y: 0 }); eraser.move({ x: 36, y: 0 });
-  assert.deepEqual(hits, [0]); assert.equal(calls.length, 1);
-  first.resolve(); await tick(); assert.deepEqual(hits, [0, 36]); assert.deepEqual(calls, [['object-0', 3], ['object-36', 4]]);
-  second.resolve(); await tick(); assert.equal(calls.length, 2); eraser.stop();
-  checks.push('Only one deletion is in flight; pending motion is bounded to its latest real sample and uses the updated revision');
+  assert.deepEqual(hits, [0,12,24,36]); assert.equal(calls.length, 1);
+  first.resolve(); await tick(); assert.deepEqual(calls, [['object-0', 3], ['object-12', 4]]);
+  second.resolve(); await tick(); assert.deepEqual(calls,[['object-0',3],['object-12',4],['object-24',5],['object-36',6]]); eraser.stop();
+  checks.push('Unique hit IDs are collected during motion; serial IPC uses each updated revision without losing intermediate ink');
 }
 {
   const wait = deferred(), calls = []; let cleanups = 0;
@@ -72,3 +72,27 @@ const checks = [];
 }
 for (const check of checks) console.log(`PASS ${check}`);
 console.log(`${checks.length} eraser checks passed`);
+
+const dot=(id,x,y,strokeWidth=2)=>({id,kind:'pen',strokeWidth,color:'#ff0000',points:[{x,y}]});
+{
+  const drawings=[dot('touch',0,0),dot('outside',0,3.01),{...dot('image',0,0),kind:'rich'}];
+  assert.deepEqual([...eraserStrokeHits(drawings,{x:0,y:3},{x:0,y:3},4)],['touch','outside']);
+  assert.deepEqual([...eraserStrokeHits([dot('edge',0,0)],{x:0,y:3.01},{x:0,y:3.01},4)],[]);
+  assert.deepEqual([...eraserStrokeHits([dot('edge',0,0)],{x:0,y:3},{x:0,y:3},4)],['edge']);
+  const crossing={...dot('crossing',0,0),points:[{x:500,y:-10},{x:500,y:10}]};
+  assert.deepEqual([...eraserStrokeHits([dot('middle',250,0),crossing],{x:0,y:0},{x:1000,y:0},4)],['middle','crossing']);
+  assert.deepEqual([...eraserStrokeHits([dot('miss',250,4)],{x:0,y:0},{x:1000,y:0},4)],[]);
+  assert.deepEqual([...eraserStrokeHits([dot('nan',0,0)],{x:NaN,y:0},{x:1,y:1},4)],[]);
+  assert.match(eraserCursor(18),/^url\("data:image\/svg\+xml,/);
+  assert.deepEqual(JSON.parse(JSON.stringify(clipEraserSweep({x:-20,y:10},{x:20,y:10},{x:0,y:0,width:100,height:100}))),[{x:0,y:10},{x:20,y:10}]);
+  assert.equal(clipEraserSweep({x:-20,y:10},{x:-1,y:10},{x:0,y:0,width:100,height:100}),undefined);
+  console.log('PASS Initial disks, exact tangency, single dots, fast sweeps, crossing strokes, and image exclusion');
+}
+{
+  const gate=deferred(),calls=[];let cleanups=0,complete=false;
+  const eraser=new ObjectEraser({x:0,y:0},{current:()=>true,hit:(point,previous)=>point.x===0?['a','a']:['a','b','c'],remove:async id=>{calls.push(id);if(id==='a')await gate.promise;return true;},stopped:()=>cleanups++});
+  eraser.start();eraser.move({x:1,y:0});eraser.finish();eraser.finished.then(()=>complete=true);
+  await tick();assert.equal(complete,false);assert.deepEqual(calls,['a']);
+  gate.resolve();await eraser.finished;assert.deepEqual(calls,['a','b','c']);assert.equal(cleanups,1);
+  console.log('PASS Pointer release drains accepted unique hits; completion waits for every native receipt');
+}
