@@ -93,6 +93,65 @@ test('unpainted terminal input still commits one gesture, including a tiny endpo
   }finally{clock.restore();}
 });
 
+test('real highlighter Shift gesture snaps to horizontal, vertical and all diagonal directions without changing its ink kind or width',async()=>{
+  const clock=frames();try{
+    for(const [dx,dy,x,y] of [[120,20,620,500],[-120,20,380,500],[20,120,500,620],[20,-120,500,380],[90,70,580,580],[-90,70,420,580],[90,-70,580,420],[-90,-70,420,420]]){
+      const f=setup();f.tool('highlighter');f.begin(event('pointerdown',500,500,{shiftKey:true}));
+      f.window.emit(event('pointermove',500+dx,500+dy,{shiftKey:true}));clock.paint();
+      assert.deepEqual(f.draft().points,[{x:500,y:500},{x,y}]);
+      f.window.emit(event('pointerup',500+dx,500+dy,{shiftKey:true}));await tick();
+      const drawing=f.commands[0].drawing;assert.equal(drawing.kind,'highlighter');assert.equal(drawing.strokeWidth,18);assert.deepEqual(drawing.points,[{x:500,y:500},{x,y}]);
+      assert.equal(f.window.count(),0);assert.equal(clock.queued.size,0);
+    }
+    const f=setup();f.tool('highlighter');f.begin(event('pointerdown',950,960,{shiftKey:true}));
+    f.window.emit(event('pointerup',1000,1000,{shiftKey:true}));await tick();assert.deepEqual(f.commands[0].drawing.points,[{x:950,y:960},{x:990,y:1000}]);
+  }finally{clock.restore();}
+});
+
+test('highlighter modifier changes repaint while stationary and restore all sampled freehand ink without duplicating points',async()=>{
+  const clock=frames();try{
+    const f=setup();f.tool('highlighter');f.begin(event('pointerdown',10,20));const sampled=f.draft().points;
+    for(let i=1;i<=160;i++)f.window.emit(event('pointermove',10+i,20+i%4));clock.paint();const freehand=plain(sampled);
+    f.shift(true);assert.equal(clock.queued.size,1);clock.paint();assert.deepEqual(f.draft().points,[{x:10,y:20},{x:170,y:20}]);
+    assert.notEqual(f.draft().points,sampled);assert.deepEqual(sampled,freehand);
+    f.shift(false);clock.paint();assert.equal(f.draft().points,sampled);assert.deepEqual(f.draft().points,freehand);
+    f.shift(true);f.window.emit(event('pointermove',180,42,{shiftKey:true}));clock.paint();
+    assert.deepEqual(f.draft().points,[{x:10,y:20},{x:180,y:20}],'queued key constraint must not overwrite newer pointer endpoint');
+    f.shift(false);f.window.emit(event('pointerup',181,43));await tick();
+    assert.deepEqual(f.commands[0].drawing.points,[...freehand,{x:180,y:42},{x:181,y:43}]);
+    sampled.push({x:999,y:999});assert.equal(f.commands[0].drawing.points.length,163);
+  }finally{clock.restore();}
+});
+
+test('highlighter uses dispatched pointer modifiers for coalesced input and the exact unpainted release endpoint',async()=>{
+  const clock=frames();try{
+    const f=setup();f.tool('highlighter');f.begin(event('pointerdown',20,30));
+    const a=event('pointermove',40,44),b=event('pointermove',80,66);
+    f.window.emit({...b,shiftKey:true,getCoalescedEvents:()=>[a,b]});clock.paint();
+    assert.deepEqual(f.draft().points,[{x:20,y:30},{x:68,y:78}]);
+    f.shift(false);f.window.emit(event('pointerup',100,77,{shiftKey:true}));await tick();
+    assert.deepEqual(f.commands[0].drawing.points,[{x:20,y:30},{x:83.5,y:93.5}]);assert.equal(clock.queued.size,0);
+    const free=setup();free.tool('highlighter');free.begin(event('pointerdown',20,30,{shiftKey:true}));
+    free.window.emit(event('pointermove',40,44,{shiftKey:true}));free.window.emit(event('pointerup',60,50));await tick();
+    assert.deepEqual(free.commands[0].drawing.points,[{x:20,y:30},{x:40,y:44},{x:60,y:50}]);
+  }finally{clock.restore();}
+});
+
+test('constrained highlighter cancels stale or lost gestures and retains the existing strict point bound',async()=>{
+  const clock=frames();try{
+    for(const reason of ['source','revision','lost','cancel','surface','lock']){
+      const f=setup();f.tool('highlighter');f.begin(event('pointerdown',10,20));f.window.emit(event('pointermove',100,70));f.shift(true);
+      if(reason==='source')f.props.source='successor';if(reason==='revision')f.props.revision++;
+      if(reason==='lost')f.svg.emit(event('lostpointercapture',100,70));if(reason==='cancel')f.cancel();
+      if(reason==='surface')f.svg.box.left++;if(reason==='lock')f.props.inputLocked=true;
+      clock.paint();f.window.emit(event('pointerup',100,70,{shiftKey:true}));await tick();assert.equal(f.commands.length,0,reason);assert.equal(f.draft(),undefined,reason);assert.equal(f.window.count(),0,reason);
+    }
+    const f=setup();f.tool('highlighter');f.props.port.rejectPointOverflow=true;f.begin(event('pointerdown',0,0,{shiftKey:true}));
+    for(let i=1;i<=4096;i++)f.window.emit(event('pointermove',i/8,i/8,{shiftKey:true}));
+    clock.paint();f.window.emit(event('pointerup',600,700,{shiftKey:true}));await tick();assert.equal(f.commands.length,0);assert.deepEqual(f.errors,['笔迹最多 4096 个点']);
+  }finally{clock.restore();}
+});
+
 test('cancel/lost capture/buttons/source/revision/display/tool/plugin/exit/dispose reject queued visual work and never write', async () => {
   const clock=frames();try{
     for(const reason of ['cancel','pointercancel','lost','buttons','source','revision','box','surface','tool','plugin','allow','lock','blur','resize','dispose']){
@@ -236,6 +295,17 @@ test('actual DrawingItem/Shape JSX updates live pen pixels and reuses completed 
   assert.equal(descendants(root,'path').length,1);assert.equal(descendants(root,'circle').length,0);const first=descendants(root,'path')[0],path=first.props.d;
   points.push({x:128,y:0},{x:129,y:1});setDraft({...base});assert.equal(descendants(root,'path').length,2);assert.equal(descendants(root,'path')[0],first);assert.equal(first.props.d,path);assert.ok(descendants(root,'path')[1].props.d.endsWith('L129,1'));assert.equal(renders,1);
   setSelected('active');setTool('select');assert.equal(descendants(root,'path').length,2);setDraft(undefined);assert.equal(descendants(root,'path').length,0);dispose();
+});
+
+test('actual highlighter SVG switches between segmented ink and a straight preview without stale paths or changing translucency',()=>{
+  const points=Array.from({length:260},(_,i)=>({x:10+i,y:20+i%4})),[draft,setDraft]=solid.createSignal({id:'highlight',kind:'highlighter',color:'#fff200',strokeWidth:18,points});
+  const root=renderer.createElement('root'),state={draft,drawings:()=>[],stored:()=>[],tool:()=> 'highlighter',selected:()=> '',storedDraft:()=>undefined};let renders=0;
+  const dispose=renderer.render(()=>itemJsx.fixture({id:'highlight',port:{canSelect:()=>true,render:drawing=>{renders++;return renderer.createComponent(shapeJsx.DrawingShape,{drawing});}}},state),root);
+  assert.equal(descendants(root,'path').length,3);const ink=descendants(root,'g').find(node=>node.props.opacity===.35);assert.ok(ink);assert.equal(descendants(root,'g').find(node=>node.props['data-drawing-id']==='highlight').props['stroke-width'],18);
+  setDraft({...draft(),points:[points[0],{x:269,y:20}]});assert.equal(descendants(root,'path').length,1);assert.equal(descendants(root,'path')[0].props.d,'M10,20 L269,20');
+  setDraft({...draft(),points});assert.equal(descendants(root,'path').length,3);assert.ok(descendants(root,'path').at(-1).props.d.endsWith('L269,23'));
+  points.push({x:270,y:24});setDraft({...draft()});assert.ok(descendants(root,'path').at(-1).props.d.endsWith('L270,24'));assert.equal(renders,1);assert.equal(descendants(root,'g').find(node=>node.props.opacity===.35),ink);
+  dispose();
 });
 
 test('actual stored JSX remains on the native raster port while selection, interactivity and exact preview bounds update',()=>{

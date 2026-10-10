@@ -415,6 +415,8 @@ export default function SharedDrawingEditor(props: Props) {
     else setSelected('');
     if(objectMove)trash.begin();
     let value: Drawing = original ? { ...original, points: original.points.map(value => ({ ...value })) } : { id: crypto.randomUUID(), kind: kind as DrawingKind, color: color(), strokeWidth: kind === 'mosaic' ? blockSize() : kind === 'highlighter' ? highlightWidth() : width(), points: kind === 'pen' || kind === 'highlighter' ? [start] : [start, start] };
+    // Keep sampled ink separate from the straight preview so releasing Shift restores it.
+    const strokePoints = !original && (kind === 'pen' || kind === 'highlighter') ? value.points : undefined;
     let changed = false, ended = false, dragStarted = !original;
     const pointerId = event.pointerId;
     if (!original) setDraft(value);
@@ -442,14 +444,15 @@ export default function SharedDrawingEditor(props: Props) {
         const dy = blackboardImage(original)?end.y-start.y:drawingMoveDelta(end.y - start.y, bounds.y, bounds.y + bounds.height, props.port.frame().y, props.port.frame().y + props.port.frame().height, props.port.sourceSize().height);
         value = { ...original, points: original.points.map(point => ({ ...point, x: point.x + dx, y: point.y + dy })) }; changed = Math.abs(dx) + Math.abs(dy) > .1;
       } else if (kind === 'pen' || kind === 'highlighter') {
-        const last = value.points[value.points.length - 1];
+        const points = strokePoints!, last = points[points.length - 1];
         if (end.x !== last.x || end.y !== last.y) {
-          if (value.points.length >= 4096) {
+          if (points.length >= 4096) {
             if (props.port.rejectPointOverflow) { finish(false); props.onError('笔迹最多 4096 个点'); return; }
             // Preserve the release endpoint under the existing screenshot point bound.
-            if (terminal) value.points[value.points.length - 1] = end;
-          } else value.points.push(end);
+            if (terminal) points[points.length - 1] = end;
+          } else points.push(end);
         }
+        if (kind === 'highlighter') value = { ...value, points: shift ? [start, constrainedEnd('line', start, end, true, initialFrame)] : points };
         return;
       } else value = { ...value, points: [start, constrainedEnd(kind as DrawingKind, start, end, shift, props.port.frame())] };
       setDraft(value);
@@ -458,7 +461,7 @@ export default function SharedDrawingEditor(props: Props) {
       if (ended) return;
       if (!current() || !surfaceCurrent()) { finish(false); return; }
       if (latest) { const next = latest; latest = undefined; update(next.end, next.shift); }
-      else if (!original && (kind === 'pen' || kind === 'highlighter')) setDraft({ ...value });
+      if (!ended && !original && (kind === 'pen' || kind === 'highlighter')) setDraft({ ...value });
     };
     const previewFrame = drawingFrame(publish);
     const moved = (next: PointerEvent) => {
@@ -472,11 +475,12 @@ export default function SharedDrawingEditor(props: Props) {
       }
       next.preventDefault();
       if (!original && (kind === 'pen' || kind === 'highlighter')) {
-        for (const sample of drawingPointerSamples(next)) { if (sample.pointerId !== pointerId) continue; update(point(sample, true, initialBox, initialFrame), sample.shiftKey, next.type === 'pointerup'); if (ended) return; }
+        latest = undefined;
+        for (const sample of drawingPointerSamples(next)) { if (sample.pointerId !== pointerId) continue; update(point(sample, true, initialBox, initialFrame), next.shiftKey, next.type === 'pointerup'); if (ended) return; }
       } else latest = { end: point(next, !original||!blackboardImage(original), initialBox, initialFrame), shift: next.shiftKey };
       if (next.type === 'pointerup') publish(); else previewFrame.request();
     };
-    refreshConstraint = shift => { if (!original && ['line', 'arrow', 'rect', 'ellipse'].includes(kind)) { latest = { end: latest?.end ?? lastEnd, shift }; previewFrame.request(); } };
+    refreshConstraint = shift => { if (!original && ['line', 'arrow', 'rect', 'ellipse', 'highlighter'].includes(kind)) { latest = { end: latest?.end ?? lastEnd, shift }; previewFrame.request(); } };
     const cleanup = () => {
       previewFrame.cancel(); latest = undefined;
       window.removeEventListener('pointermove', moved); window.removeEventListener('pointerup', released);
