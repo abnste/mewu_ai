@@ -32,7 +32,7 @@
 .drawing-blackboard .drawing-done{position:sticky;right:0;background:var(--surface,#fafcff);box-shadow:-5px 0 8px var(--surface,#fafcff)}
 .drawing-blackboard .drawing-hit{cursor:crosshair}
 .drawing-edit-surface.drawing-select-mode{cursor:default}.drawing-edit-surface.drawing-text-mode{cursor:text}
-.drawing-eraser-mode .drawing-hit{cursor:inherit}
+.drawing-edit-surface.drawing-eraser-mode .drawing-hit{cursor:inherit}
 .drawing-hit{pointer-events:visiblePainted;cursor:move}
 .drawing-resize-handle{fill:#fff;stroke:#348bf1;stroke-width:1.5;pointer-events:all}
 .drawing-toolbar{position:absolute;display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:max-content;max-width:calc(100vw - 12px);padding:0;border:0;background:transparent;box-shadow:none;color:var(--text,#52637a);z-index:2}
