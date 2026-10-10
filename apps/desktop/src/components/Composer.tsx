@@ -27,6 +27,7 @@ interface Props {
   onFreeze: () => void; onNew: () => void; onCapture: () => void; onClose: () => void; onSessions: () => void;
   onRemoveRef: (reference: Reference) => void; onFocusRef: (reference: Reference) => void;
   referenceInsertion?:{sceneId:string;reference:Reference;serial:number};
+  onReferenceInserted?:(serial:number)=>void;
   onExpanded: (expanded: boolean) => void; onAgent: (id: string) => void; onConnection: () => void;
   onSelectConnection: (id: string) => void;
   onError?: (error: string) => void;
@@ -64,6 +65,7 @@ export default function Composer(props: Props) {
     const label=`@${referenceLabel(request.reference)} `;
     const start=input.selectionStart??props.draft.length,end=input.selectionEnd??start;
     input.setRangeText(label,start,end,'end');props.onDraft(input.value);
+      props.onReferenceInserted?.(request.serial);
     setHidden(false);queueMicrotask(()=>input.focus({preventScroll:true}));
   }));
   const streaming = () => props.stream && props.scene.run?.id === props.stream.runId && !props.scene.messages.some(message => message.role === 'assistant' && message.runId === props.stream?.runId);
