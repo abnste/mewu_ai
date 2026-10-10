@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';import test from 'node:test';import {readFile}from'node:fs/promises';import {stripTypeScriptTypes}from'node:module';import {SourceTextModule,SyntheticModule}from'node:vm';
+import assert from 'node:assert/strict';import test from 'node:test';import {readFile}from'node:fs/promises';import {stripTypeScriptTypes}from'node:module';import {SourceTextModule,SyntheticModule,runInNewContext}from'node:vm';import{parse}from'@babel/parser';
 const reactive=await import(new URL('../../../node_modules/solid-js/dist/solid.js',import.meta.url));
 const solid=new SyntheticModule(Object.keys(reactive),function(){for(const[k,v]of Object.entries(reactive))this.setExport(k,v);});
 const module=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./blackboard-text.ts',import.meta.url),'utf8'),{mode:'transform'}));await module.link(()=>solid);await module.evaluate();const {createBlackboardText,resizeBoardObject}=module.namespace;
@@ -17,6 +17,15 @@ test('a synchronous bridge publication cannot reopen an unsaved draft during its
 });
 test('source changes cannot discard unsaved text and inactive ownership prevents a write',async()=>{
   let count=0;const m=mount(async()=> 'original',async()=>{count++;return'copy';});await m.data.load('source');m.data.edit('draft');await assert.rejects(m.data.load('other'),/仍保留/);await assert.rejects(m.data.flush(()=>false),/已切换/);assert.equal(count,0);assert.equal(m.data.text(),'draft');m.dispose();
+});
+test('the production quit hook saves the latest TXT draft before native preparation revokes authoring',async()=>{
+  const source=await readFile(new URL('./App.tsx',import.meta.url),'utf8'),ast=parse(source,{sourceType:'module',plugins:['typescript','jsx']});let hook;
+  const walk=n=>{if(!n||typeof n!=='object')return;if(n.type==='NewExpression'&&n.callee?.name==='ExitPreparation')hook=n.arguments[0].properties.find(p=>p.key?.name==='beforePrepare')?.value;for(const v of Object.values(n))if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object')walk(v);};walk(ast);assert.ok(hook);
+  const exitModule=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./exit-preparation.ts',import.meta.url),'utf8'),{mode:'transform'}));await exitModule.link(()=>{throw Error('unexpected import');});await exitModule.evaluate();
+  let phase='running',release,writes=0,receipt;const m=mount(async()=>'',async()=>{assert.equal(phase,'running');writes++;await new Promise(resolve=>release=resolve);return 'saved';});await m.data.load('original');m.data.edit('最后一段输入');
+  const before=runInNewContext(`(${source.slice(hook.start,hook.end)})`,{flushVideoDrawing:async()=>{assert.equal(phase,'running');},flushDrawing:active=>m.data.flush(active)});
+  const queue=new exitModule.namespace.ExitPreparation({lock:()=>{},beforePrepare:before,beginPreparation:async()=>{assert.equal(writes,1);phase='preparing';},flush:active=>m.data.flush(active),finish:r=>{receipt=r;},error:e=>assert.fail(e)});
+  const pending=queue.prepare({requestId:'txt-exit'});await new Promise(resolve=>setImmediate(resolve));assert.equal(phase,'running');assert.equal(writes,1);release();await pending;assert.equal(receipt.success,true);assert.equal(m.data.text(),'最后一段输入');assert.equal(writes,1);m.dispose();
 });
 test('each corner keeps its opposite anchor while resizing and clamps bounds inside the board',()=>{
   const start={x:.2,y:.3,width:.4,height:.4};

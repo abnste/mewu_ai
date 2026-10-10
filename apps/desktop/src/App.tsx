@@ -281,7 +281,11 @@ export default function App() {
       setExitPreparing(locked);
       if (!locked && !disposed) resumeDraftSave();
     },
-    beforePrepare: active => flushVideoDrawing(active),
+    beforePrepare: async active => {
+      await flushVideoDrawing(active);
+      // TXT writes require RUNNING, just like accepted video authoring.
+      await flushDrawing(active);
+    },
     beginPreparation: bridge.beginExitPreparation,
     flush: flushForExit,
     finish: bridge.finishExitPreparation,
