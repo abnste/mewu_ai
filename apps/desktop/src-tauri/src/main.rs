@@ -75,6 +75,7 @@ mod scroll_capture;
 mod scroll_host;
 mod scroll_stitch;
 mod settings_host;
+mod session_title;
 mod settings_info;
 mod settings_window;
 mod speech_backend;
@@ -167,6 +168,7 @@ pub(crate) struct Host {
     capture_jobs: Arc<capture_delay_work::CaptureJobs>,
     capture_preferences: capture_preferences::CapturePreferencesActor,
     system_preferences: system_preferences::SystemPreferencesActor,
+    session_titles: session_title::Runtime,
     settings_resources: Result<settings_info::SettingsResources, settings_info::Error>,
     legacy_import_warning: AtomicBool,
     exit: lifecycle::ExitState,
@@ -225,6 +227,7 @@ fn emit_run_event(app: &AppHandle, value: serde_json::Value) -> tauri::Result<()
     app.emit_to(frozen::LABEL, "run-event", &value)
 }
 fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
+    app.state::<Host>().session_titles.reconcile(snapshot);
     speech_host::reconcile(app, snapshot);
     code_host::reconcile(app, snapshot);
     video_host::reconcile(app, snapshot);
@@ -1536,7 +1539,12 @@ fn start_run_with_annotations(
             .map_err(|e| e.to_string())?;
         return Ok(publish(app, &snapshot));
     }
-    let RunPreflight { transport, key, .. } = preflight;
+    let RunPreflight {
+        transport,
+        key,
+        connection,
+    } = preflight;
+    let title_transport = transport.clone();
     let run_tools =
         match mcp_host::RunTools::with_annotations(&context, visual.clone(), video.clone()) {
             Ok(tools) => Arc::new(tools),
@@ -1802,6 +1810,12 @@ fn start_run_with_annotations(
             if let Ok(snapshot) = updated {
                 publish(&app2, &snapshot);
                 host.memory.wake.notify_one();
+                if plugin_origin.is_none() {
+                    session_title::schedule(
+                        &app2, &mut engine, &scene_id, &run_id,
+                        connection, title_transport, key,
+                    );
+                }
             }
         };
     });
@@ -2369,6 +2383,7 @@ fn main() {
                 connection_probes: Arc::new(Mutex::new(connection_host::ProbeRegistry::default())),
                 capture_preferences: capture_preferences::CapturePreferencesActor::open(&root),
                 system_preferences,
+                session_titles: session_title::Runtime::default(),
                 settings_resources: settings_info::BuildInfo::new(
                     env!("CARGO_PKG_VERSION"),
                     option_env!("MEWU_BUILD_COMMIT"),

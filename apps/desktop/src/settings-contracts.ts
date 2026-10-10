@@ -10,6 +10,7 @@ export interface SystemPreferenceValues {
   networkProxyUrl: string;
   launchAtStartup: boolean;
   allowScreenShare: boolean;
+  autoGenerateTitle: boolean;
 }
 export interface SystemPreferences extends SystemPreferenceValues { version: 1; revision: number; startupRegistered: boolean; startupWarning?: string | null }
 export function validSystemPreferences(value: unknown): value is SystemPreferences {
@@ -19,9 +20,10 @@ export function validSystemPreferences(value: unknown): value is SystemPreferenc
     && ['system', 'direct', 'custom'].includes(v.networkProxyMode)
     && typeof v.networkProxyUrl === 'string' && v.networkProxyUrl.length <= 2048 && !/[\0\r\n]/.test(v.networkProxyUrl)
     && typeof v.launchAtStartup === 'boolean' && typeof v.allowScreenShare === 'boolean' && typeof v.startupRegistered === 'boolean'
+    && typeof v.autoGenerateTitle === 'boolean'
     && (v.startupWarning === undefined || v.startupWarning === null || typeof v.startupWarning === 'string' && v.startupWarning.length <= 4096);
 }
-export const sameSystemValues = (a: SystemPreferenceValues, b: SystemPreferenceValues) => a.networkProxyMode === b.networkProxyMode && a.networkProxyUrl === b.networkProxyUrl && a.launchAtStartup === b.launchAtStartup && a.allowScreenShare === b.allowScreenShare;
+export const sameSystemValues = (a: SystemPreferenceValues, b: SystemPreferenceValues) => a.networkProxyMode === b.networkProxyMode && a.networkProxyUrl === b.networkProxyUrl && a.launchAtStartup === b.launchAtStartup && a.allowScreenShare === b.allowScreenShare && a.autoGenerateTitle === b.autoGenerateTitle;
 export interface SettingsInfo {
   application: string;
   version: string;

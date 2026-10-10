@@ -41,6 +41,7 @@ pub async fn set_system_preferences(
     network_proxy_url: String,
     launch_at_startup: bool,
     allow_screen_share: bool,
+    auto_generate_title: bool,
 ) -> Result<SystemPreferencesStatus, String> {
     owner(&window)?;
     if !save_allowed(&app) {
@@ -64,6 +65,7 @@ pub async fn set_system_preferences(
             launch_at_startup,
             startup_owner: startup_owner.clone(),
             allow_screen_share,
+            auto_generate_title,
         })
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -117,6 +119,9 @@ pub async fn set_system_preferences(
         };
         if let Err(error) = crate::network_policy::configure(&receipt.value) {
             let _ = app.emit_to("settings", "host-error", error);
+        }
+        if !receipt.value.auto_generate_title {
+            host.session_titles.cancel_all();
         }
         let (startup_registered, startup_warning) =
             crate::startup_windows::status(receipt.value.startup_owner.as_deref());

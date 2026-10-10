@@ -2,7 +2,7 @@
 import { sameSystemValues, validSystemPreferences, type SystemPreferences, type SystemPreferenceValues } from './settings-contracts';
 interface Draft { value: SystemPreferenceValues; expectedRevision: number }
 export interface SystemPreferencesView { state?: SystemPreferences; draft?: Draft; values?: SystemPreferenceValues; pending: boolean; conflict: boolean; error: string }
-const values = (value: SystemPreferenceValues): SystemPreferenceValues => ({ networkProxyMode: value.networkProxyMode, networkProxyUrl: value.networkProxyUrl, launchAtStartup: 'startupRegistered' in value ? (value as SystemPreferences).startupRegistered : value.launchAtStartup, allowScreenShare: value.allowScreenShare });
+const values = (value: SystemPreferenceValues): SystemPreferenceValues => ({ networkProxyMode: value.networkProxyMode, networkProxyUrl: value.networkProxyUrl, launchAtStartup: 'startupRegistered' in value ? (value as SystemPreferences).startupRegistered : value.launchAtStartup, allowScreenShare: value.allowScreenShare, autoGenerateTitle: value.autoGenerateTitle });
 const conflictMessage = '系统设置已变化，请载入最新设置';
 export class SystemPreferencesController {
   private state?: SystemPreferences;

@@ -21,6 +21,8 @@ Drawing, recording and AI annotations are built in. Plugins can be disabled or r
 
 Only explicitly minimized conversations appear in the floating list and its count. Escape closes ordinary conversations into history; a restored minimized conversation returns to the floating list. Its preview follows the latest public reasoning and answer chunks, then shows the beginning of the final answer with “...” for long content. Adding a reference inserts the corresponding @image or @video name at the input caret while retaining its attachment identity.
 
+Settings → General can disable automatic chat titles. By default, after the first user request receives a complete answer, a separate request asks the same selected model for a short task title. It uses only the first prompt, excludes memory and attachments, and does not add another chat message. Title failures leave the answer intact; manual names are preserved.
+
 HTML/SVG/Canvas results are transparent interactive objects with hover controls for moving, reloading and closing. Video actions and quick trim appear below the video by default and avoid nearby controls when space is limited. Long captures show their stitched content in a live side preview.
 
 ## Installation and updates

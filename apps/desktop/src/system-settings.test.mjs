@@ -18,7 +18,7 @@ async function load(file) {
 const { validSystemPreferences } = (await load('./settings-contracts.ts')).namespace;
 const { settingsClient } = (await load('./settings-client.ts')).namespace;
 const { SystemPreferencesController } = (await load('./system-preferences.ts')).namespace;
-const state = extra => ({ version: 1, revision: 0, networkProxyMode: 'system', networkProxyUrl: '', launchAtStartup: false, startupRegistered: false, allowScreenShare: true, ...extra });
+const state = extra => ({ version: 1, revision: 0, networkProxyMode: 'system', networkProxyUrl: '', launchAtStartup: false, startupRegistered: false, allowScreenShare: true, autoGenerateTitle: true, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
@@ -34,6 +34,21 @@ test('actual registered startup state is preserved when a different setting is e
   controller.loaded(state({ revision: 2, launchAtStartup: false, startupRegistered: true }));
   controller.edit({ allowScreenShare: false }); await controller.saveDraft();
   assert.equal(calls[1].value.launchAtStartup, true);
+});
+
+test('title choice is strict, persisted through native save and survives editing unrelated settings', async () => {
+  for (const autoGenerateTitle of [undefined, null, 'true', 1]) assert.equal(validSystemPreferences(state({ autoGenerateTitle })), false);
+  const calls = [], controller = new SystemPreferencesController(async (revision, value) => {
+    calls.push({ revision, value }); return state({ revision: revision + 1, ...value, startupRegistered: value.launchAtStartup });
+  }, () => {});
+  controller.loaded(state()); controller.edit({ autoGenerateTitle: false }); await controller.saveDraft();
+  assert.equal(calls[0].value.autoGenerateTitle, false); assert.equal(controller.view().draft, undefined);
+  controller.loaded(state({ revision: 1, autoGenerateTitle: false }));
+  controller.edit({ networkProxyMode: 'direct' }); await controller.saveDraft();
+  assert.equal(calls[1].value.autoGenerateTitle, false);
+  const reopened = new SystemPreferencesController(async () => { throw Error('unexpected save'); }, () => {});
+  reopened.loaded(controller.view().state); assert.equal(reopened.view().values.autoGenerateTitle, false);
+  assert.equal(reopened.view().draft, undefined);
 });
 test('explicit startup enable repairs a missing Run item even when saved preference is already true', async () => {
   const calls = [], controller = new SystemPreferencesController(async (revision, value) => {
@@ -69,8 +84,8 @@ test('system bridge listens before reads, fences stale state and sends only type
   const opening = client.watchSystemPreferences(value => seen.push(value.revision)); await tick();
   receive(state({ revision: 3 })); task.resolve(state({ revision: 0 })); const stop = await opening;
   assert.deepEqual(seen, [3]); stop(); receive(state({ revision: 4 })); assert.equal(stops, 1); assert.deepEqual(seen, [3]);
-  await client.saveSystemPreferences(3, { networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false });
-  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), { name: 'set_system_preferences', args: { expectedRevision: 3, networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false } });
+  await client.saveSystemPreferences(3, { networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false, autoGenerateTitle: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), { name: 'set_system_preferences', args: { expectedRevision: 3, networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false, autoGenerateTitle: false } });
 });
 test('late startup registry query cannot overwrite a same-revision noop save event', async () => {
   const task = deferred(), seen = []; let receive;
@@ -94,10 +109,12 @@ test('actual general settings initialize real status, edit startup/sharing/proxy
   const calls = [], props = { active: false, preferences: { textSize: 'default', reduceMotion: false }, onPreferences(value) { props.preferences = value; } };
   props.api = { watchSystemPreferences: async receive => { receive(state()); return () => {}; }, getSystemPreferences: async () => state(), saveSystemPreferences: async (revision, value) => { calls.push({ revision, value }); return state({ revision: revision + 1, ...value, startupRegistered: value.launchAtStartup }); } };
   const context = vm.createContext({ props, SystemPreferencesController, createSignal: value => [() => value, next => { value = typeof next === 'function' ? next(value) : next; }], createEffect() {}, on() {}, onCleanup() {}, settingsApi: undefined });
-  vm.runInContext(ts(`${body.filter(node => node.type !== 'ReturnStatement').map(slice).join('\n')}\nglobalThis.qa={initialize,view,controller,changes:{startup:${change('登录 Windows 后自动启动')},sharing:${change('允许屏幕共享看到框选和标注')},proxy:${change('网络代理')},labels:${change('显示按钮功能文字')}}};`), context);
+  vm.runInContext(ts(`${body.filter(node => node.type !== 'ReturnStatement').map(slice).join('\n')}\nglobalThis.qa={initialize,view,controller,changes:{startup:${change('登录 Windows 后自动启动')},sharing:${change('允许屏幕共享看到框选和标注')},proxy:${change('网络代理')},labels:${change('显示按钮功能文字')},titles:${change('自动生成会话标题')}}};`), context);
   await context.qa.initialize();
   context.qa.changes.startup(true); context.qa.changes.sharing(false); context.qa.changes.proxy({ currentTarget: { value: 'direct' } }); context.qa.changes.labels(false);
+  context.qa.changes.titles(false);
   await context.qa.controller.saveDraft();
   assert.equal(calls.length, 1); assert.equal(calls[0].value.launchAtStartup, true); assert.equal(calls[0].value.allowScreenShare, false); assert.equal(calls[0].value.networkProxyMode, 'direct'); assert.equal(props.preferences.showButtonLabels, false);
   assert.equal(context.qa.view().draft, undefined); assert.equal(context.qa.view().state.startupRegistered, true);
+  assert.equal(calls[0].value.autoGenerateTitle, false); assert.equal(context.qa.view().values.autoGenerateTitle, false);
 });

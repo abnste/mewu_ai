@@ -29,6 +29,9 @@ mod blackboard_store;
 #[path = "history_storage.rs"]
 pub(crate) mod history_storage;
 
+#[path = "session_title_store.rs"]
+pub(crate) mod session_title_store;
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("存储错误：{0}")]
@@ -407,6 +410,10 @@ impl Store {
                     return Ok(self.snapshot());
                 }
                 target.conversation_start = Some(target.messages.len());
+                target.title_revision = target.title_revision.checked_add(1)
+                    .ok_or_else(|| invalid("会话标题版本已达到上限"))?;
+                target.auto_title_attempted = false;
+                target.title = "新场景".into();
                 target.draft.clear();
                 target.run = None;
                 touch(target);
@@ -481,6 +488,9 @@ impl Store {
                 }
                 let target = scene_mut(&mut next, &scene_id)?;
                 target.title = title.trim().into();
+                target.auto_title_attempted = true;
+                target.title_revision = target.title_revision.checked_add(1)
+                    .ok_or_else(|| invalid("会话标题版本已达到上限"))?;
                 touch(target);
             }
             SceneCommand::SetRefs { scene_id, refs } => {
@@ -2297,6 +2307,8 @@ fn new_scene(agent_id: &str, connection_id: Option<String>) -> Scene {
         blackboard_link: None,
         id: id(),
         title: "新场景".into(),
+        auto_title_attempted: false,
+        title_revision: 0,
         agent_id: agent_id.into(),
         connection_id,
         created_at: timestamp,
@@ -2988,6 +3000,9 @@ fn validate_snapshot(state: &Snapshot) -> Result<()> {
         }
         if target.title.trim().is_empty() {
             return Err(invalid("场景标题为空"));
+        }
+        if target.title_revision > 9_007_199_254_740_991 {
+            return Err(invalid("会话标题版本无效"));
         }
         unique(target.regions.iter().map(|r| r.id.as_str()), "区域")?;
         unique(target.items.iter().map(|i| i.id.as_str()), "素材项")?;

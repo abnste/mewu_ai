@@ -346,6 +346,7 @@ pub fn begin_exit_preparation(
         host.capture_jobs.cancel();
         host.capture_preferences.invalidate();
         host.system_preferences.invalidate();
+        host.session_titles.cancel_all();
         if let Ok(resources) = &host.settings_resources {
             resources.invalidate();
         }
@@ -444,6 +445,7 @@ fn start_shutdown(
     // Revoke listening before the renderer collects its final draft state.
     crate::speech_host::cancel_all(app);
     crate::code_host::cancel_all(app);
+    host.session_titles.cancel_all();
     // The renderer first locks fresh input and drains already registered manual
     // authoring while RUNNING. It then calls begin_exit_preparation with this
     // exact nonce before the ordinary PREPARING flush/acknowledgement.
@@ -564,6 +566,10 @@ fn start_shutdown(
             return;
         }
         let host = app.state::<Host>();
+        if let Err(error) = host.session_titles.drain(Duration::from_secs(5)).await {
+            abort(&app, &id, &error);
+            return;
+        }
         if let Err(error) = host.capture_jobs.drain(Duration::from_secs(5)).await {
             abort(&app, &id, &error);
             return;

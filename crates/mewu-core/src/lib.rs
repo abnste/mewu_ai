@@ -32,6 +32,7 @@ pub use rich_annotations::{
     RICH_DRAWING_STROKE_WIDTH,
 };
 pub use store::{CoreError, ExportView, Store};
+pub use store::session_title_store::{title_request_is_current, SessionTitleRequest};
 pub use store::history_storage::HistoryCleanupPlan;
 pub use translation::validate_translation_document;
 pub use video_annotation_algorithm::{

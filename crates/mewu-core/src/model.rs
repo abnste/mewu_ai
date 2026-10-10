@@ -423,6 +423,10 @@ pub struct BlackboardLink {
 pub struct Scene {
     pub id: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_title_attempted: bool,
+    #[serde(default, skip_serializing_if = "title_revision_is_zero")]
+    pub title_revision: u64,
     pub agent_id: String,
     #[serde(default)]
     pub connection_id: Option<String>,
@@ -448,6 +452,10 @@ pub struct Scene {
     pub conversation_start: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<Run>,
+}
+
+fn title_revision_is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -70,6 +70,11 @@ pub struct SystemPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_owner: Option<String>,
     pub allow_screen_share: bool,
+    #[serde(default = "default_auto_title")]
+    pub auto_generate_title: bool,
+}
+fn default_auto_title() -> bool {
+    true
 }
 impl SystemPreferences {
     pub fn defaults() -> Self {
@@ -81,6 +86,7 @@ impl SystemPreferences {
             launch_at_startup: false,
             startup_owner: None,
             allow_screen_share: true,
+            auto_generate_title: true,
         }
     }
     fn validate_saved(&self) -> Result<(), Error> {
@@ -103,6 +109,7 @@ pub struct SaveRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_owner: Option<String>,
     pub allow_screen_share: bool,
+    pub auto_generate_title: bool,
 }
 impl SaveRequest {
     fn same_choice(&self, current: &SystemPreferences) -> bool {
@@ -111,6 +118,7 @@ impl SaveRequest {
             && self.launch_at_startup == current.launch_at_startup
             && self.startup_owner == current.startup_owner
             && self.allow_screen_share == current.allow_screen_share
+            && self.auto_generate_title == current.auto_generate_title
     }
 }
 
@@ -490,6 +498,7 @@ impl SaveTask {
                 launch_at_startup: self.request.launch_at_startup,
                 startup_owner: self.request.startup_owner.clone(),
                 allow_screen_share: self.request.allow_screen_share,
+                auto_generate_title: self.request.auto_generate_title,
             };
             file.commit(&self.loaded, &next, admitted)
         })();
@@ -647,6 +656,7 @@ mod tests {
             launch_at_startup: true,
             startup_owner: None,
             allow_screen_share: false,
+            auto_generate_title: true,
         }
     }
     fn saved() -> SystemPreferences {
@@ -685,6 +695,23 @@ mod tests {
         assert!(validate_proxy(ProxyMode::Custom, &"a".repeat(2049)).is_err());
     }
     #[test]
+    fn legacy_title_default_does_not_rewrite_and_disabled_choice_reopens_exactly() {
+        let dir = Directory::new();
+        let mut legacy = serde_json::to_value(saved()).unwrap();
+        legacy.as_object_mut().unwrap().remove("autoGenerateTitle");
+        let raw = serde_json::to_vec(&legacy).unwrap();
+        fs::write(dir.0.join(FILE_NAME), &raw).unwrap();
+        let actor = SystemPreferencesActor::open(&dir.0);
+        assert!(actor.view().unwrap().auto_generate_title);
+        assert_eq!(fs::read(dir.0.join(FILE_NAME)).unwrap(), raw);
+        let mut choice = request(1); choice.auto_generate_title = false;
+        let receipt = actor.begin_save(choice).unwrap().commit(|| true).unwrap();
+        assert!(receipt.changed); assert_eq!(receipt.value.revision, 2);
+        assert!(!SystemPreferencesActor::open(&dir.0).view().unwrap().auto_generate_title);
+        let mut choice = request(2); choice.auto_generate_title = false;
+        assert!(!actor.begin_save(choice).unwrap().commit(|| true).unwrap().changed);
+    }
+    #[test]
     fn reads_defaults_and_noop_leave_no_file_and_never_enable_startup() {
         let dir = Directory::new();
         let actor = SystemPreferencesActor::open(&dir.0);
@@ -700,6 +727,7 @@ mod tests {
                 launch_at_startup: value.launch_at_startup,
                 startup_owner: value.startup_owner,
                 allow_screen_share: value.allow_screen_share,
+                auto_generate_title: value.auto_generate_title,
             })
             .unwrap()
             .commit(|| true)
