@@ -95,7 +95,8 @@ interface Props {
 interface Box { x: number; y: number; width: number; height: number }
 interface PluginEntry { plugin: PluginRecord; contribution: PluginContribution }
 type Handle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se';
-const HANDLES: Handle[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
+const CORNERS: Handle[] = ['nw', 'ne', 'sw', 'se'];
+const EDGES: Handle[] = ['n', 'w', 'e', 's'];
 const TOOLBAR_WIDTH = 405, TOOLBAR_HEIGHT = 60, EDGE = 6, GAP = 8, TOLERANCE = 24;
 const contains = (box: Box, x: number, y: number, padding = 0) => x >= box.x - padding && x <= box.x + box.width + padding && y >= box.y - padding && y <= box.y + box.height + padding;
 const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -701,7 +702,8 @@ export default function SpaceCanvas(props: Props) {
         <span class="capture-region-number">{index() + 1}</span>
         <Show when={props.translationPending?.request.target.regionId === id || props.translationNotice?.regionId === id}><div class="ocr-status" role="status" onPointerDown={event => event.stopPropagation()}><Show when={props.translationPending?.request.target.regionId === id}><LoaderCircle size={13} class="spin" /></Show><span>{props.translationPending?.request.target.regionId === id ? props.translationPending.progress?.phase === 'rendering' ? t("正在排版") : props.translationPending.progress?.phase === 'translating' ? `正在翻译${props.translationPending.progress.total ? ` ${props.translationPending.progress.completed}/${props.translationPending.progress.total}` : ''}` : t("正在识别") : props.translationNotice?.text}</span><button title={props.translationPending ? t("取消翻译") : t("关闭")} aria-label={props.translationPending ? t("取消翻译") : t("关闭翻译提示")} onClick={() => { props.onTranslationCancel?.(); props.onClearTranslationNotice?.(); }}><X size={13} /></button></div></Show>
         <Show when={active() === id && !forceNew() && !drawingSession()}>
-          <For each={HANDLES}>{handle => <i class={`capture-handle capture-handle-${handle}`} onPointerDown={event => editRegion(event, region(), handle)} aria-hidden="true" />}</For>
+          <For each={EDGES}>{edge => <i class={`capture-edge capture-edge-${edge}`} onPointerDown={event => editRegion(event, region(), edge)} aria-hidden="true" />}</For>
+          <For each={CORNERS}>{corner => <i class={`capture-handle capture-handle-${corner}`} onPointerDown={event => editRegion(event, region(), corner)} aria-hidden="true" />}</For>
         </Show>
       </section>;
     }}</For>
