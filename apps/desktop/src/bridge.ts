@@ -366,12 +366,15 @@ export async function createBlackboard(sceneId:string):Promise<Snapshot> {
   if(original.blackboardLink)throw Error('请先完成当前黑板');
   const target=emptyScene(original.agentId);target.connectionId=original.connectionId;
   const itemId=uid();target.blackboardLink={parentSceneId:original.id,itemId};
+  const {carryBlackboardObjects}=await import('./blackboard-objects');
+  target.items=carryBlackboardObjects(original,canvas.width,canvas.height,uid);
+  const itemRefs=original.refs.filter(ref=>ref.kind==='item').flatMap(ref=>{const index=original.items.findIndex(item=>item.id===ref.id);return index<0?[]:[{kind:'item' as const,id:target.items[index].id}];});
   original.items.push({id:itemId,asset:structuredClone(asset),x:.10+(original.items.length%4)*.035,y:.12+(original.items.length%4)*.035,width:.48,height:.48,state:{blackboardSceneId:target.id}});
   for(const scene of preview.scenes)scene.frozen=true;
   preview.scenes.push(target);preview.activeSceneId=target.id;
   target.title='黑板';target.background=asset;
   target.regions=[{id:uid(),x:0,y:0,width:canvas.width,height:canvas.height,drawings:[],drawingRevision:0,drawingHistory:{undo:[],redo:[]}}];
-  target.refs=[{kind:'region',id:target.regions[0].id}];
+  target.refs=[{kind:'region',id:target.regions[0].id},...itemRefs];
   return publish();
 }
 export async function openBlackboard(sceneId:string,itemId:string):Promise<Snapshot>{

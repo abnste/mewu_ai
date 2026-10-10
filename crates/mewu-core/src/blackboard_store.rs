@@ -111,6 +111,7 @@ impl Store {
         let mut board = new_scene(&parent.agent_id, parent.connection_id.clone());
         let item_id = Uuid::new_v4().to_string();
         board.title = "黑板".into();
+        board.items = crate::blackboard_objects::carried(parent, &asset)?;
         board.blackboard_link = Some(BlackboardLink {
             parent_scene_id: parent_id.into(),
             item_id: item_id.clone(),
@@ -129,6 +130,11 @@ impl Store {
             kind: ReferenceKind::Region,
             id: board.regions[0].id.clone(),
         }];
+        for (original, carried) in parent.items.iter().zip(&board.items) {
+            if parent.refs.iter().any(|r| r.kind == ReferenceKind::Item && r.id == original.id) {
+                board.refs.push(Reference {kind:ReferenceKind::Item,id:carried.id.clone()});
+            }
+        }
         board.background = Some(asset.clone());
         board_region(&board)?;
         let parent = scene_mut(&mut next, parent_id)?;

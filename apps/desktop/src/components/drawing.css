@@ -6,6 +6,20 @@
 .drawing-edit-surface:focus{outline:none}
 .drawing-blackboard .drawing-toolbar{flex-direction:row;align-items:center;flex-wrap:nowrap;gap:var(--toolbar-button-gap);overflow-x:auto;scrollbar-width:thin;border-radius:15px;padding:6px}
 .drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-properties-row{display:contents}
+.drawing-blackboard{pointer-events:none}
+.drawing-blackboard .drawing-edit-surface{z-index:1;pointer-events:auto}
+.drawing-blackboard .drawing-toolbar{z-index:5;pointer-events:auto}
+.drawing-blackboard .drawing-trash{position:sticky;right:54px;background:var(--surface,#fafcff)}
+.drawing-trash.object-dragging{color:var(--danger,#dc4455)}
+.drawing-trash.object-trash-over{background:#dc4455!important;color:#fff!important}
+.blackboard-artifact-layer{position:absolute;inset:0;pointer-events:none}
+.artifact-card.blackboard-object{z-index:auto!important;pointer-events:none;min-width:0;min-height:0;overflow:visible;border:0;border-radius:0;background:transparent;box-shadow:none!important}
+.blackboard-object .artifact-content{width:100%;height:100%;background:transparent}
+.blackboard-object.blackboard-interactive .artifact-content{pointer-events:auto}
+.blackboard-object-control{position:absolute;right:4px;top:4px;z-index:4;opacity:0;pointer-events:auto;mix-blend-mode:difference}
+.blackboard-object:hover .blackboard-object-control,.blackboard-object.moving .blackboard-object-control,.blackboard-object:focus-within .blackboard-object-control,.blackboard-object-hovered .blackboard-object-control{opacity:1}
+.blackboard-object-control button{width:28px;height:28px;display:grid;place-items:center;border:0;padding:0;border-radius:0;background:transparent;color:#fff;box-shadow:none;cursor:grab;touch-action:none}
+.blackboard-object-control button:active{cursor:grabbing}
 .drawing-blackboard .drawing-toolbar>*{flex-shrink:0}
 .drawing-blackboard .drawing-divider{margin:0 5px}
 .drawing-blackboard .drawing-done{position:sticky;right:0;background:var(--surface,#fafcff);box-shadow:-5px 0 8px var(--surface,#fafcff)}

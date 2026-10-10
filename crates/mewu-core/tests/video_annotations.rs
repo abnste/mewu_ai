@@ -1526,6 +1526,28 @@ fn manual_edit_layout(body: &str) -> VerifiedVideoTextLayout {
 }
 
 #[test]
+fn blackboard_video_copy_keeps_ai_origin_receipts_after_reopen_and_original_item_removal() {
+    let file=Db::new();let mut store=Store::open(&file.0).unwrap();
+    let f=setup(&mut store,10*SECOND);let run=begin(&mut store,&f);
+    let lease=leases(&mut store,&run,1).remove(0);let layout=text_layout();
+    let sent=&run.input.manifest().targets[0];
+    store.apply_video_annotations_with_receipt(&lease,&run.authority,batch(&run,vec![text(range(sent.frames[0].source_playback_ticks,sent.sent_window.end_ticks),&layout)]),vec![layout]).unwrap();
+    store.finish_run(&run.run.scene_id,&run.run.run_id,"synthetic complete").unwrap();
+    let original=view(&store,&f).annotations.unwrap();assert!(original.objects[0].origin.is_some());
+    let make_board=|preview:bool|{let id=uid();Asset{id:id.clone(),path:format!("D:/assets/{id}.{}.png",if preview{"board-preview"}else{"board"}),name:"黑板.png".into(),kind:AssetKind::Image,width:Some(1280),height:Some(720),origin_x:None,origin_y:None,scale_factor:None}};
+    store.create_blackboard_document(&f.target.scene_id,make_board(false)).unwrap();
+    let snapshot=store.snapshot();let board=snapshot.scenes.iter().find(|s|s.id==snapshot.active_scene_id).unwrap().clone();
+    let copy=board.items.iter().find(|i|i.asset.kind==AssetKind::Video).unwrap();
+    assert_ne!(copy.id,f.target.item_id);assert_eq!(copy.video_annotations.as_ref(),Some(&original));
+    let link=board.blackboard_link.clone().unwrap();
+    store.finish_blackboard_document(&board,make_board(true)).unwrap();
+    store.apply(SceneCommand::RemoveItem{scene_id:f.target.scene_id.clone(),item_id:f.target.item_id.clone()}).unwrap();
+    store.open_blackboard_document(&f.target.scene_id,&link.item_id).unwrap();
+    let before=store.snapshot();drop(store);
+    let reopened=Store::open(&file.0).unwrap();assert_eq!(reopened.snapshot(),before);
+}
+
+#[test]
 fn manual_text_update_retains_ai_identity_interval_literal_content_and_durable_history() {
     let file = Db::new();
     let mut store = Store::open(&file.0).unwrap();

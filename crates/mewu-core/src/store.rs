@@ -691,6 +691,10 @@ impl Store {
                 if old.asset != item.asset {
                     return Err(invalid("更新素材位置不能替换素材来源"));
                 }
+                if old.state.as_ref().and_then(|s| s.get(crate::blackboard_objects::SOURCE_KEY))
+                    != item.state.as_ref().and_then(|s| s.get(crate::blackboard_objects::SOURCE_KEY)) {
+                    return Err(invalid("更新素材不能替换黑板来源"));
+                }
                 // Range metadata and history are host-owned. A stale card move
                 // cannot erase a newer trim, nor can generic IPC forge one.
                 let video_edit = old.video_edit.clone();
@@ -3013,6 +3017,7 @@ fn validate_snapshot(state: &Snapshot) -> Result<()> {
         crate::geometry_history::validate(target)?;
         for item in &target.items {
             validate_asset(&item.asset)?;
+            crate::blackboard_objects::valid_link(state, target, item)?;
             validate_bounds(item.x, item.y, item.width, item.height, 1.0, 1.0)?;
             crate::video_edit::validate(item)?;
             crate::video_annotations::validate_item(item)?;

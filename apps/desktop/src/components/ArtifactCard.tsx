@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
 import { createEffect, createMemo, createResource, createSignal, onCleanup, Show, untrack } from 'solid-js';
-import { Code2, Copy, Download, File, Image, Link2, Maximize2, Pencil, RotateCcw, Video, X } from 'lucide-solid';
+import { Code2, Copy, Download, File, Image, Link2, Maximize2, Move, Pencil, RotateCcw, Video, X } from 'lucide-solid';
+import type {ObjectTrashPort} from '../object-trash';
+import type {RegisterDrawingFlush} from '../drawing-flush';
 import type { SpaceItem } from '../contracts';
 import { assetUrl, documentUrl, isolatedDocument, native, readArtifact } from '../bridge';
 import './video.css';
@@ -15,13 +17,14 @@ interface Props {
   onActivate?: () => void;
   referenced: boolean;
   onReference: () => void;
-  onRemove: () => void;
+  onRemove: () => void | Promise<void>;
   onUpdate: (item: SpaceItem) => void | Promise<void>;
   onExport?: () => void;
   onCopy?: () => void;
   video?: Omit<VideoArtifactProps, 'item' | 'active'>;
   busy?: boolean;
   onOpenBlackboard?: () => void;
+  blackboard?:boolean;interactive?:boolean;hovered?:boolean;trash?:ObjectTrashPort;onRegisterFlush?:RegisterDrawingFlush;
 }
 
 export default function ArtifactCard(props: Props) {
@@ -37,6 +40,8 @@ export default function ArtifactCard(props: Props) {
   let gestureToken = 0;
   let disposed = false;
   let disposeGesture: (() => void) | undefined;
+  let gestureFlight:Promise<void>|undefined;
+  const unregisterFlush=props.onRegisterFlush?.(async active=>{disposeGesture?.();if(gestureFlight)await gestureFlight;if(!active())throw Error('素材编辑已切换');});
   const activate = () => props.onActivate?.();
   // An isolated iframe does not bubble its pointer events into this document.
   // Its focus can still select this card without accessing the child document.
@@ -52,6 +57,7 @@ export default function ArtifactCard(props: Props) {
     shell?.removeEventListener('focusin', activate);
     gestureToken += 1;
     disposeGesture?.();
+    unregisterFlush?.();
   });
   const savedPosition = () => ({ x: props.item.x, y: props.item.y, width: props.item.width, height: props.item.height });
   const persistedPosition = createMemo(() => `${props.item.x}:${props.item.y}:${props.item.width}:${props.item.height}`);
@@ -69,8 +75,8 @@ export default function ArtifactCard(props: Props) {
   });
   const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
 
-  const gesture = (event: PointerEvent, resize = false) => {
-    if (props.busy || event.button !== 0 || (!resize && (event.target as HTMLElement).closest('button'))) return;
+  const gesture = (event: PointerEvent, resize = false, control = false) => {
+    if (props.busy || gestureFlight || event.button !== 0 || (!resize && !control && (event.target as HTMLElement).closest('button'))) return;
     event.preventDefault(); event.stopPropagation();
     disposeGesture?.();
     const token = ++gestureToken;
@@ -80,11 +86,13 @@ export default function ArtifactCard(props: Props) {
     const vw = window.innerWidth, vh = window.innerHeight;
     const videoMode = isVideo();
     let changed = false;
-    target.setPointerCapture(event.pointerId);
+    if(props.blackboard&&!resize)props.trash?.begin();
+    try{target.setPointerCapture(event.pointerId);}catch{props.trash?.cancel();return;}
     const move = (e: PointerEvent) => {
       if (!changed && Math.hypot(e.clientX - startX, e.clientY - startY) < 3) return;
       changed = true;
       setMoving(true);
+      if(props.blackboard&&!resize)props.trash?.move({x:e.clientX,y:e.clientY});
       const dx = (e.clientX - startX) / vw, dy = (e.clientY - startY) / vh;
       const minWidth = videoMode ? Math.min(64 / vw, 1 - start.x) : Math.min(240 / vw, .85);
       const minHeight = videoMode ? Math.min(48 / vh, 1 - start.y) : Math.min(160 / vh, .8);
@@ -108,15 +116,21 @@ export default function ArtifactCard(props: Props) {
       target.removeEventListener('pointermove', move);
       target.removeEventListener('pointerup', end);
       target.removeEventListener('pointercancel', end);
+      target.removeEventListener('lostpointercapture', canceled);
       if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
-      if (disposeGesture === cleanup) disposeGesture = undefined;
+      if (disposeGesture === canceled) disposeGesture = undefined;
     };
     const end = async (e: PointerEvent) => {
       cleanup();
       if (disposed || token !== gestureToken) return;
+      const remove=Boolean(props.blackboard&&!resize&&changed&&e.type==='pointerup'&&props.trash?.finish({x:e.clientX,y:e.clientY}));props.trash?.cancel();
       if (changed && e.type !== 'pointercancel') {
-        try { await props.onUpdate({ ...props.item, ...position() }); }
+        const request=Promise.resolve().then(()=>remove?props.onRemove():props.onUpdate({ ...props.item, ...position() }));
+        // Removal owns the app's full flush; registering it here would wait on itself.
+        if(!remove)gestureFlight=request;
+        try { await request; }
         catch { /* The caller presents the error; the saved geometry remains authoritative. */ }
+        finally{if(gestureFlight===request)gestureFlight=undefined;}
       }
       if (disposed || token !== gestureToken) return;
       // Clamping can commit the same geometry, leaving persistedPosition's memo
@@ -124,17 +138,20 @@ export default function ArtifactCard(props: Props) {
       setPosition(savedPosition());
       setMoving(false);
     };
-    disposeGesture = cleanup;
+    const canceled=()=>{cleanup();props.trash?.cancel();setPosition(savedPosition());setMoving(false);};
+    disposeGesture = canceled;
     target.addEventListener('pointermove', move);
     target.addEventListener('pointerup', end);
     target.addEventListener('pointercancel', end);
+    target.addEventListener('lostpointercapture', canceled);
   };
 
-  return <section ref={node => { shell = node; node.addEventListener('pointerdown', activate, true); node.addEventListener('focusin', activate); }} class="artifact-card" classList={{ active: props.active, moving: moving(), 'video-artifact': props.item.asset.kind === 'video', 'image-object': isImage() }} tabindex={isImage() ? 0 : undefined}
+  return <section ref={node => { shell = node; node.addEventListener('pointerdown', activate, true); node.addEventListener('focusin', activate); }} class="artifact-card" classList={{ active: props.active, moving: moving(), 'video-artifact': props.item.asset.kind === 'video', 'image-object': isImage(), 'document-object':isDocument(), 'blackboard-object':props.blackboard,'blackboard-interactive':props.interactive,'blackboard-object-hovered':props.hovered }} tabindex={isImage() ? 0 : undefined}
     style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isImage() ? `${imageBox().width}px` : `${position().width * 100}%`, height: isImage() ? `${imageBox().height}px` : `${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
     data-video-item={isVideo() ? props.item.id : undefined} data-video-scene={isVideo() ? props.video?.sceneId : undefined}
-    aria-label={props.item.asset.name} onPointerDown={e => { e.stopPropagation(); if (isImage()) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
-    <Show when={!isImage()}>
+    aria-label={props.item.asset.name} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
+    <Show when={props.blackboard}><div class="blackboard-object-control" role="toolbar" aria-label={t('对象工具')}><button aria-label={t('移动对象')} title={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18} strokeWidth={1.7}/></button></div></Show>
+    <Show when={!isImage()&&!props.blackboard}>
     <header class="artifact-header" onPointerDown={e => gesture(e)}>
       <Show when={isDocument()} fallback={<Show when={props.item.asset.kind === 'image'} fallback={<Show when={props.item.asset.kind === 'video'} fallback={<File size={14} />}><Video size={14} /></Show>}><Image size={14} /></Show>}><Code2 size={14} /></Show>
       <span class="artifact-title" title={props.item.asset.name}>{props.item.asset.name}</span>
@@ -143,7 +160,7 @@ export default function ArtifactCard(props: Props) {
       <button class="icon-button compact" title={t("移除")} aria-label={t("移除 {0}").replaceAll("{0}", () => String(props.item.asset.name))} disabled={props.busy} onClick={props.onRemove}><X size={14} /></button>
     </header>
     </Show>
-    <Show when={isImage()}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
+    <Show when={isImage()&&!props.blackboard}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
       <button class="icon-button compact" classList={{ selected: props.referenced }} title={props.referenced ? t('取消引用') : t('引用')} aria-label={props.referenced ? t('取消引用') : t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={15} /></button>
       <Show when={props.onOpenBlackboard}><button class="icon-button compact" title={t('编辑黑板')} aria-label={t('编辑黑板')} disabled={props.busy} onClick={() => props.onOpenBlackboard?.()}><Pencil size={15} /></button></Show>
       <button class="icon-button compact" title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event => gesture(event, true)}><Maximize2 size={15} /></button>
@@ -156,7 +173,7 @@ export default function ArtifactCard(props: Props) {
         </Show>
       </Show>
       <Show when={props.item.asset.kind === 'video'}>
-        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} active={Boolean(props.active)} onActivate={props.onActivate} />}</Show>
+        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} />}</Show>
       </Show>
       <Show when={isDocument()}>
         <Show when={native} fallback={<Show when={!source.error} fallback={<span class="inline-error">{t("无法读取内容")}</span>}>
@@ -171,7 +188,7 @@ export default function ArtifactCard(props: Props) {
       <Show when={props.item.asset.kind === 'text'}><TextArtifact assetId={props.item.asset.id} name={props.item.asset.name} /></Show>
       <Show when={moving()}><div class="iframe-drag-cover" /></Show>
     </div>
-    <Show when={!isImage()}><footer class="artifact-footer">
+    <Show when={!isImage()&&!props.blackboard}><footer class="artifact-footer">
       <button class="quiet-button" classList={{ selected: props.referenced }} onClick={props.onReference}><Link2 size={13} />{props.referenced ? t('已引用') : t('引用')}</button>
       <Show when={isVideo() && props.onCopy}><button class="quiet-button" title={t("复制视频文件 (C)")} aria-label={t("复制视频文件")} disabled={props.busy} onClick={() => props.onCopy?.()}><Copy size={13} />{t("复制")}</button></Show>
       <Show when={['video', 'text'].includes(props.item.asset.kind) && props.onExport}><button class="quiet-button" disabled={props.busy} onClick={() => props.onExport?.()}><Download size={13} />{t("保存")}</button></Show>

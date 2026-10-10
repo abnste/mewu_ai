@@ -990,5 +990,9 @@
   "最近颜色 {0}": "Recent color {0}",
   "移动图片": "Move image",
   "图片尺寸尚未保存": "Image size has not been saved",
-  "选择": "Select"
+  "选择": "Select",
+  "对象工具": "Object controls",
+  "移动对象": "Move object",
+  "拖入删除": "Drop to delete",
+  "删除对象": "Delete object"
 }

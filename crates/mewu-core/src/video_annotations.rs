@@ -1030,14 +1030,19 @@ pub(crate) fn validate_ledger(db: &Connection, state: &Snapshot) -> Result<()> {
                 };
                 let run = j::required(db, &origin.run_id)?;
                 let (hash, input) = load(db, &run.id)?.ok_or(CoreError::JournalConflict)?;
-                if run.scene != scene.id
+                // A board copy retains its immutable AI receipt in the original scene.
+                // The host alone creates this link; generic item updates cannot replace it.
+                let linked = crate::blackboard_objects::source(item)?.filter(|s| s.scene_id == run.scene);
+                let source_scene = linked.as_ref().map_or(scene.id.as_str(), |s| s.scene_id.as_str());
+                let source_item = linked.as_ref().map_or(item.id.as_str(), |s| s.item_id.as_str());
+                if run.scene != source_scene
                     || run.user != origin.user_message_id
                     || hash != origin.manifest_sha256
                 {
                     return Err(j::bad("视频对象来源不匹配"));
                 }
                 if !input.manifest.targets.iter().any(|t| {
-                    t.item_id == item.id
+                    t.item_id == source_item
                         && t.handle == origin.target_handle
                         && t.source.source_id == doc.source_id
                         && t.source.source_duration_ticks == doc.source_duration_ticks
@@ -1052,7 +1057,7 @@ pub(crate) fn validate_ledger(db: &Connection, state: &Snapshot) -> Result<()> {
                         event == origin.tool_event_id
                             && r.group_id == origin.group_id
                             && r.targets.iter().any(|t| {
-                                t.item_id == item.id
+                                t.item_id == source_item
                                     && t.objects.iter().any(|o| {
                                         o.id == object.id
                                             && o.target_handle == origin.target_handle

@@ -4,6 +4,7 @@ import type { Drawing, DrawingPoint, DrawingStep, ManualDrawingKind } from './co
 import type { DrawingPropertyDraft } from "./components/drawing-properties";
 import type { RegisterDrawingFlush } from "./drawing-flush";
 import type { DrawingTableFormat } from "./drawing-layout-preview";
+import type { ObjectTrashPort } from './object-trash';
 export interface EditorBox { x:number;y:number;width:number;height:number }
 export type EditorDrawingAction = {expectedRevision:number} & (
   | {type:'add_drawing'|'update_drawing';drawing:Drawing}
@@ -47,6 +48,11 @@ export interface SharedDrawingEditorProps {
   blackboard?:boolean;
   onFinishBlackboard?:()=>Promise<boolean>;
   extraTools?:()=>JSX.Element;
+  objects?:(interactive:()=>boolean)=>JSX.Element;
+  objectsFlush?:(active:()=>boolean)=>Promise<void>;
+  onObjectPointerMove?:(event:PointerEvent)=>void;
+  onObjectPointerLeave?:()=>void;
+  onRegisterObjectTrash?:(port:ObjectTrashPort)=>()=>void;
   onRegisterHistory?:RegisterDrawingHistory;
 }
 export interface DrawingHistoryControls { undo:()=>void;redo:()=>void;canUndo:()=>boolean;canRedo:()=>boolean }

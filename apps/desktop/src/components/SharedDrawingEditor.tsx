@@ -14,13 +14,15 @@ import type { DrawingTableFormat } from "../drawing-layout-preview";
 import "./drawing.css";
 import DrawingColorPicker from './DrawingColorPicker';
 import BlackboardImageControls from './BlackboardImageControls';
+import {blackboardImage} from '../blackboard-image';
+import {objectTrash} from '../object-trash';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
 const labels: Record<ManualDrawingKind, string> = { pen: '画笔', line: '直线', arrow: '箭头', rect: '矩形', ellipse: '椭圆', text: '文字', highlighter: '荧光笔', number: '序号', mosaic: '马赛克' };
 const icons = { pen: Pencil, line: Minus, arrow: ArrowUpRight, rect: Square, ellipse: Circle, text: Type, highlighter: Highlighter, number: Hash, mosaic: Grid2X2 };
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 export default function SharedDrawingEditor(props: Props) {
-  let svg!: SVGSVGElement, toolbar!: HTMLDivElement, toolsRow!: HTMLDivElement, textarea: HTMLTextAreaElement | undefined;
+  let svg!: SVGSVGElement, toolbar!: HTMLDivElement, toolsRow!: HTMLDivElement, trashButton!:HTMLButtonElement, textarea: HTMLTextAreaElement | undefined;
   let cancelGesture: (() => void) | undefined, refreshConstraint: ((shift: boolean) => void) | undefined, disposed = false, serial = 0, numberPreference = 0;
   let flight: Promise<boolean> | undefined;
   let tableCopy: Promise<void> | undefined;
@@ -63,6 +65,10 @@ export default function SharedDrawingEditor(props: Props) {
   const propertySize = () => propertyTarget()?.fontSize ?? (tool() === 'number' ? numberDiameter() : fontSize());
   const options = (defaults: number[], current: number) => [...new Set([...defaults, current])].sort((a, b) => a - b);
   const disabled = () => pending() || props.busy || props.inputLocked || finishing() || imageZooming();
+  const [objectDragging,setObjectDragging]=createSignal(false),[trashOver,setTrashOver]=createSignal(false);
+  const trash=objectTrash(()=>trashButton,()=>Boolean(disabled()||edit()),(dragging,over)=>{setObjectDragging(dragging);setTrashOver(over);});
+  const unregisterTrash=props.blackboard?props.onRegisterObjectTrash?.(trash):undefined;
+  onCleanup(()=>{unregisterTrash?.();trash.cancel();});
   const blockSize = () => props.port.mosaic?.blockSize() ?? 8;
   const editableIds = () => new Set([...drawings().filter(value => props.port.canSelect(value)).map(value => value.id),...(props.port.stored?.().map(value=>value.id)??[])]);
   const historyAvailable = (redo: boolean) => props.port.historyAvailable(redo);
@@ -171,7 +177,7 @@ export default function SharedDrawingEditor(props: Props) {
     };
     const eraser = new ObjectEraser({ x: event.clientX, y: event.clientY }, {
       current: () => !disposed && !stopped && Boolean(eraseSource?.()) && (secondary ? props.blackboard === true : tool() === 'eraser') && !props.busy && !props.inputLocked && !finishing(),
-      hit: point => eraserHit(svg, point, editableIds()),
+      hit: point => eraserHit(svg, point, props.blackboard?new Set(drawings().filter(value=>!blackboardImage(value)&&props.port.canSelect(value)).map(value=>value.id)):editableIds()),
       remove: id => commit({ ...target(), type: 'remove_drawing', drawingId: id }),
       stopped: cleanup,
     });
@@ -327,8 +333,10 @@ export default function SharedDrawingEditor(props: Props) {
       }); return;
     }
     const original = kind === 'select' ? hit : undefined;
+    const objectMove=Boolean(props.blackboard&&original&&blackboardImage(original));
     if (kind === 'select') { setSelected(original?.id ?? ''); if (!original) return; }
     else setSelected('');
+    if(objectMove)trash.begin();
     let value: Drawing = original ? { ...original, points: original.points.map(value => ({ ...value })) } : { id: crypto.randomUUID(), kind: kind as DrawingKind, color: color(), strokeWidth: kind === 'mosaic' ? blockSize() : kind === 'highlighter' ? highlightWidth() : width(), points: kind === 'pen' || kind === 'highlighter' ? [start] : [start, start] };
     let changed = false, ended = false, dragStarted = !original;
     const pointerId = event.pointerId;
@@ -379,6 +387,7 @@ export default function SharedDrawingEditor(props: Props) {
     const moved = (next: PointerEvent) => {
       if (next.pointerId !== pointerId) return;
       if (!current() || (next.type === 'pointermove' && !(next.buttons & 1))) { finish(false); return; }
+      if(objectMove)trash.move({x:next.clientX,y:next.clientY});
       if (!dragStarted) {
         if (Math.abs(next.clientX - event.clientX) <= 4 && Math.abs(next.clientY - event.clientY) <= 4) return;
         dragStarted = true;
@@ -400,6 +409,8 @@ export default function SharedDrawingEditor(props: Props) {
     const finish = (save: boolean) => {
       if (ended) return;
       const valid = current() && surfaceCurrent(); ended = true; cleanup();
+      const removeObject=objectMove&&save&&valid&&dragStarted&&trashOver();if(objectMove)trash.cancel();
+      if(removeObject){setDraft(undefined);void commit({...target(revision),type:'remove_drawing',drawingId:original!.id}).finally(()=>{if(!disposed)setSelected('');});return;}
       if (!save || !valid || (original && !changed)) { setDraft(undefined); return; }
       const [a, b] = value.points;
       if (!original && (((kind === 'arrow' || kind === 'line') && Math.hypot(b.x - a.x, b.y - a.y) < 1) || (['rect', 'ellipse', 'mosaic'].includes(kind) && (Math.abs(b.x - a.x) < 1 || Math.abs(b.y - a.y) < 1)))) { setDraft(undefined); return; }
@@ -462,7 +473,7 @@ export default function SharedDrawingEditor(props: Props) {
     catch (error) { if (!disposed) report(error); }
     finally { if (!disposed) setFinishing(false); }
   }
-  const remove = () => { const value = selectedDrawing() ?? props.port.stored?.().find(value=>value.id===selected()); if (value && !disabled() && !cancelGesture && !edit()) void commit({ ...target(), type: 'remove_drawing', drawingId: value.id }).then(ok => { if (ok) setSelected(''); }); };
+  const remove = () => { const value = selectedDrawing() ?? props.port.stored?.().find(value=>value.id===selected()); if (value && !(props.blackboard&&'rich' in value&&blackboardImage(value as Drawing)) && !disabled() && !cancelGesture && !edit()) void commit({ ...target(), type: 'remove_drawing', drawingId: value.id }).then(ok => { if (ok) setSelected(''); }); };
   async function pin() {
     if (disabled() || cancelGesture || !props.onPin) return;
     const currentIdentity = identity(); setFinishing(true);
@@ -481,7 +492,7 @@ export default function SharedDrawingEditor(props: Props) {
   }
   function keyboard(event: KeyboardEvent) {
     if ((event.target instanceof Element ? event.target : document.activeElement)?.closest('.drawing-color-panel')) return;
-    if ((event.target instanceof Element ? event.target : document.activeElement)?.closest(props.keyboardIgnore ?? '.video-trim-popover,.artifact-video,[data-run-journal]')) return;
+    if ((event.target instanceof Element ? event.target : document.activeElement)?.closest(props.keyboardIgnore ?? '.video-trim-popover,.artifact-video,.blackboard-object,[data-run-journal]')) return;
     if (props.inputLocked) return;
     if (document.querySelector('.drawing-drafts-dialog')) return;
     if (event.isComposing) return;
@@ -527,6 +538,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (tableCopy) await tableCopy;
     if (flight && !(await flight)) throw new Error('标注尚未保存');
     await flushImages?.(active);
+    await props.objectsFlush?.(active);
     if (!active() || disposed || origin !== identity()) throw new Error('标注编辑已切换');
     if (!(await saveText(true, () => active() && !disposed && origin === identity()))) throw new Error('标注尚未保存');
   });
@@ -551,8 +563,9 @@ export default function SharedDrawingEditor(props: Props) {
       {_ => <Show when={isPreview()} fallback={stored()}>{_ => render()}</Show>}
     </Show>;
   }
-  return <div class="drawing-editor" classList={{'drawing-blackboard':props.blackboard}} onContextMenu={event=>{if(props.blackboard){event.preventDefault();event.stopPropagation();}}} onPointerDown={event => event.stopPropagation()}>
-    <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser' }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px` }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={begin} onDblClick={doubleClick} aria-label={t("绘制区域")}>
+  return <div class="drawing-editor" classList={{'drawing-blackboard':props.blackboard}} onPointerMove={props.onObjectPointerMove} onPointerLeave={props.onObjectPointerLeave} onContextMenu={event=>{if(props.blackboard){event.preventDefault();event.stopPropagation();}}} onPointerDown={event => event.stopPropagation()}>
+    {props.objects?.(()=>tool()==='select')}
+    <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser' }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px`,'pointer-events':props.blackboard&&tool()==='select'?'none':undefined }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={begin} onDblClick={doubleClick} aria-label={t("绘制区域")}>
       <For each={drawingIds()}>{id => <DrawingItem id={id} />}</For>
       <Show when={rasterPreview()}>{value=> <Show when={value().mode==='extract'} fallback={<polyline points={value().points.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke="#428fff" stroke-opacity=".38" stroke-width={value().width} stroke-linecap="round" stroke-linejoin="round" pointer-events="none" />}><rect x={Math.min(value().points[0].x,value().points.at(-1)!.x)} y={Math.min(value().points[0].y,value().points.at(-1)!.y)} width={Math.abs(value().points.at(-1)!.x-value().points[0].x)} height={Math.abs(value().points.at(-1)!.y-value().points[0].y)} fill="none" stroke="#428fff" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none" /></Show>}</Show>
       <For each={resizeHandles()}>{(point, index) => <ellipse class="drawing-resize-handle" cx={point.x} cy={point.y} rx={handleSize().x / 2} ry={handleSize().y / 2} vector-effect="non-scaling-stroke" style={{ cursor: resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? 'move' : index() % 2 ? 'nesw-resize' : 'nwse-resize' }} aria-label={resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? t('调整端点') : t('缩放图形')} onPointerDown={event => beginResize(event, index())} />}</For>
@@ -579,7 +592,7 @@ export default function SharedDrawingEditor(props: Props) {
       <Show when={selectedDrawing()?.rich?.kind === 'table' && props.port.copyTable}><button title={t("复制表格")} aria-label={t("复制表格")} disabled={disabled() || !!edit()} onClick={copySelectedTable}><Copy size={16} /></button><select aria-label={t("表格复制格式")} value={tableFormat()} disabled={disabled() || !!edit()} onChange={event => setTableFormat(event.currentTarget.value as DrawingTableFormat)}><For each={['table', 'markdown', 'csv', 'tsv', 'png'] as DrawingTableFormat[]}>{format => <option value={format} selected={tableFormat() === format}>{format === 'table' ? 'Excel' : format === 'markdown' ? 'Markdown' : format.toUpperCase()}</option>}</For></select></Show>
       <button data-caption={t("撤销")} title={t("撤销 · Ctrl + Z")} aria-label={t("撤销绘制")} disabled={disabled() || !!edit() || !historyAvailable(false)} onClick={() => history(false)}><Undo2 size={17} /></button>
       <button data-caption={t("重做")} title={t("重做 · Ctrl + Shift + Z")} aria-label={t("重做绘制")} disabled={disabled() || !!edit() || !historyAvailable(true)} onClick={() => history(true)}><Redo2 size={17} /></button>
-      <button data-caption={t("删除")} title={t("删除对象 · Delete")} aria-label={t("删除绘制对象")} disabled={disabled() || !!edit() || !(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))} onClick={remove}><Trash2 size={16} /></button>
+      <button ref={trashButton} class="drawing-trash" classList={{'object-dragging':objectDragging(),'object-trash-over':trashOver()}} data-caption={t("删除")} title={props.blackboard?t('拖入删除'):t("删除对象 · Delete")} aria-label={props.blackboard?t('删除对象'):t("删除绘制对象")} disabled={disabled() || !!edit() || (!objectDragging()&&(!(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))||Boolean(props.blackboard&&selectedDrawing()&&blackboardImage(selectedDrawing()!))))} onClick={remove}><Trash2 size={16} /></button>
       <Show when={props.onPin}><button data-caption={t("贴图")} title={t("贴图 · P")} aria-label={t("贴图")} disabled={disabled()} onClick={() => void pin()}><Pin size={17} /></button></Show>
       <button data-caption={t("完成")} class="drawing-done" title={props.retainOnDone ? t("完成") : t("完成并复制")} aria-label={props.retainOnDone ? t("完成") : t("完成并复制")} disabled={disabled()} onClick={() => void done()}><Check size={18} /></button>
       </div>

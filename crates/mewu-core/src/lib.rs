@@ -11,6 +11,7 @@ mod model;
 mod ocr;
 mod rich_annotations;
 mod store;
+mod blackboard_objects;
 mod translation;
 mod video_annotation_algorithm;
 mod video_annotation_layouts;

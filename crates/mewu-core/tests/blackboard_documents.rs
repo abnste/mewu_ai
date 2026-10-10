@@ -283,3 +283,50 @@ fn old_blackboard_is_adopted_only_on_finish_without_losing_chat_draft_or_ink() {
         .unwrap();
     assert_eq!(active(&store).regions, legacy.regions);
 }
+
+#[test]
+fn board_carries_all_asset_kinds_independently_and_keeps_original_sources() {
+    let mut store = Store::open_in_memory().unwrap();
+    let parent = active(&store).id;
+    for kind in [AssetKind::Image,AssetKind::Html,AssetKind::Svg,AssetKind::Video,AssetKind::Text,AssetKind::File] {
+        let mut source = asset(true);source.name="素材".into();source.kind=kind;
+        if matches!(source.kind,AssetKind::Text|AssetKind::File){source.width=None;source.height=None;}
+        store.add_asset(&parent,source).unwrap();
+    }
+    let before=active(&store);
+    store.apply(SceneCommand::SetRefs{scene_id:parent.clone(),refs:vec![Reference{kind:ReferenceKind::Item,id:before.items[1].id.clone()}]}).unwrap();
+    store.create_blackboard_document(&parent,asset(false)).unwrap();
+    let board=active(&store);
+    assert_eq!(board.items.len(),6);
+    for (source,copy) in before.items.iter().zip(&board.items) {
+        assert_ne!(source.id,copy.id);assert_eq!(source.asset,copy.asset);
+        assert_eq!((source.x,source.y,source.width,source.height),(copy.x,copy.y,copy.width,copy.height));
+        assert_eq!(copy.state.as_ref().unwrap()["__mewuBoardSource"]["itemId"],source.id);
+    }
+    assert!(board.refs.contains(&Reference{kind:ReferenceKind::Item,id:board.items[1].id.clone()}));
+    let mut forged=board.items[1].clone();forged.state.as_mut().unwrap().remove("__mewuBoardSource");
+    let snapshot=store.snapshot();
+    assert!(store.apply(SceneCommand::UpdateItem{scene_id:board.id.clone(),item:forged}).is_err());
+    assert_eq!(store.snapshot(),snapshot);
+    store.apply(SceneCommand::RemoveItem{scene_id:board.id.clone(),item_id:board.items[1].id.clone()}).unwrap();
+    assert_eq!(active(&store).items.len(),5);
+    let source=store.snapshot().scenes.into_iter().find(|s|s.id==parent).unwrap();
+    assert_eq!(&source.items[..6],before.items.as_slice());
+    assert!(!active(&store).refs.iter().any(|r|r.id==board.items[1].id));
+}
+
+#[test]
+fn background_anchored_recording_keeps_screen_placement_on_board() {
+    let mut store=Store::open_in_memory().unwrap();let parent=active(&store).id;
+    let mut screen=asset(true);screen.name="截图.png".into();screen.width=Some(1000);screen.height=Some(500);
+    store.set_background(&parent,screen.clone()).unwrap();
+    let mut recording=asset(true);recording.kind=AssetKind::Video;
+    store.add_asset(&parent,recording).unwrap();let mut item=active(&store).items[0].clone();
+    item.state=Some(serde_json::from_value(serde_json::json!({"coordinateSpace":"background","backgroundId":screen.id})).unwrap());
+    store.apply(SceneCommand::UpdateItem{scene_id:parent.clone(),item:item.clone()}).unwrap();
+    store.create_blackboard_document(&parent,asset(false)).unwrap();let copy=&active(&store).items[0];
+    assert!((copy.x-item.x).abs()<1e-12);assert!((copy.y-(40.+item.y*640.)/720.).abs()<1e-12);
+    assert!((copy.height-item.height*640./720.).abs()<1e-12);
+    assert!(!copy.state.as_ref().unwrap().contains_key("coordinateSpace"));
+    assert_eq!(store.snapshot().scenes.iter().find(|s|s.id==parent).unwrap().items[0],item);
+}
