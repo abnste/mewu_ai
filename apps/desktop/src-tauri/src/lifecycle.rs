@@ -317,7 +317,7 @@ pub fn is_exit_flush_command(command: &SceneCommand) -> bool {
         || matches!(command, SceneCommand::SetRegionGeometry { .. })
         || matches!(
             command,
-            SceneCommand::AddDrawing { .. } | SceneCommand::UpdateDrawing { .. }
+            SceneCommand::AddDrawing { .. } | SceneCommand::UpdateDrawing { .. } | SceneCommand::UpdateDrawings { .. }
         )
 }
 

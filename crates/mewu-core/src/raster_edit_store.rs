@@ -27,7 +27,7 @@ impl Store {
                 || drawing.origin.is_some()
                 || drawing.rich.as_ref() != Some(layout.reference())
                 || !ids.insert(drawing.id.clone())
-                || !matches!(layout.content(), RichContent::Raster { version: 1, role: actual, source_sha256 }
+                || !matches!(layout.content(), RichContent::Raster { version: 1, role: actual, source_sha256,.. }
                     if *actual == role && *source_sha256 == expected.visual_sha256)
                 || (index > 0 && drawing.points != drawings[0].points)
             {

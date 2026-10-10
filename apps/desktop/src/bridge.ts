@@ -413,6 +413,9 @@ export async function previewDrawingCommand(command:DrawingCommand):Promise<Snap
     if(!step)return clone();
     if('batch' in step){for(const edit of redo?step.batch:[...step.batch].reverse())apply(edit,redo);}else apply(step,redo);
     destination.push(step);
+  }else if(command.type==='update_drawings'){
+    const batch=command.drawings.map(drawing=>{const index=drawings.findIndex(d=>d.id===drawing.id);if(index<0)throw Error('绘制对象不存在');return {index,before:structuredClone(drawings[index]),after:structuredClone(drawing)};});
+    for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];
   }else if(command.type==='add_drawing'||command.type==='update_drawing'||command.type==='remove_drawing'){
     const id=command.type==='remove_drawing'?command.drawingId:command.drawing.id;
     const at=drawings.findIndex(drawing=>drawing.id===id);

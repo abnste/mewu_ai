@@ -3,16 +3,12 @@ import { t } from "./i18n";
 import { nativeSelectOwnsEscape } from './native-select-escape';
 import { createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import * as pin from './pin-bridge';
-import { referencePinObject } from './pin-objects';
-import { Copy, Download, Link2, Pin, RotateCcw, X } from 'lucide-solid';
 import { PinDragGesture, pinImageLayout } from './pin-interaction';
 import './pin.css';
 
 export default function PinView() {
   document.documentElement.dataset.surface = 'pin';
   const [state, setState] = createSignal<pin.PinViewState>(), [error, setError] = createSignal('');
-  const [referencing, setReferencing] = createSignal(false);
-  async function reference() { if (closing || disposed || referencing()) return; setReferencing(true); try { await referencePinObject(null,null); } catch(cause){report(cause);} finally{if(!disposed)setReferencing(false);} }
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
   let disposed = false, acknowledged = false, closing = false, dragging = false, exporting = false, zooming = false, zoomSteps = 0;
   let stop: (() => void) | undefined, errorTimer: ReturnType<typeof setTimeout> | undefined;
@@ -45,7 +41,7 @@ export default function PinView() {
     catch (cause) { zoomSteps = 0; report(cause); }
     finally { zooming = false; }
   }
-  function wheel(event: WheelEvent) { event.preventDefault(); if (!state() || closing || !event.deltaY) return; gesture.end(); zoomSteps = Math.max(-8, Math.min(8, zoomSteps + (event.deltaY < 0 ? 1 : -1))); void drainZoom(); }
+  function wheel(event: WheelEvent) { event.preventDefault(); if (!state() || closing || dragging || !event.deltaY) return; gesture.end(); zoomSteps = Math.max(-8, Math.min(8, zoomSteps + (event.deltaY < 0 ? 1 : -1))); void drainZoom(); }
   function keyboard(event: KeyboardEvent) {
     if (nativeSelectOwnsEscape(event)) return;
     if (event.isComposing || event.repeat || closing) return;
@@ -58,14 +54,6 @@ export default function PinView() {
   onCleanup(() => { disposed = true; gesture.end(); zoomSteps = 0; stop?.(); clearTimeout(errorTimer); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); window.removeEventListener('blur', end); window.removeEventListener('resize', resize); document.removeEventListener('keydown', keyboard); document.removeEventListener('wheel', wheel); });
   return <main class="pin-surface" tabindex={0} style={{ '--pin-padding': `${padding()}px`, '--pin-outline': `${1 / scale()}px`, '--pin-shadow-y': `${2 / scale()}px`, '--pin-shadow-blur': `${6 / scale()}px`, '--pin-radius': `${10 / scale()}px`, opacity: state()?.opacity ?? 1 }} onPointerDown={down} onDblClick={event => { if (event.button === 0 && !(event.target as Element).closest('button')) { event.preventDefault(); void close(); } }} onContextMenu={event => { event.preventDefault(); gesture.end(); if (!closing) void pin.showPinMenu().catch(report); }}>
     <Show when={state()}>{value => <div class="pin-frame"><img class="pin-image" src={value().imageUrl} alt={t("贴图")} draggable={false} style={{ width: `${layout()?.width ?? 0}px`, height: `${layout()?.height ?? 0}px`, transform: `translate(-50%,-50%) rotate(${layout()?.angle ?? 0}deg)` }} onLoad={event => void loaded(event.currentTarget)} onError={failed} /></div>}</Show>
-    <Show when={state()}><div class="pin-hover-tools" role="toolbar" aria-label={t('图片工具')}>
-      <button title={t('引用')} aria-label={t('引用')} disabled={referencing()} onClick={()=>void reference()}><Link2 size={15}/></button>
-      <button title={t('复制')} aria-label={t('复制')} onClick={()=>void exportImage(true)}><Copy size={15}/></button>
-      <button title={t('保存')} aria-label={t('保存')} onClick={()=>void exportImage(false)}><Download size={15}/></button>
-      <button title={t('还原')} aria-label={t('还原')} onClick={()=>void pin.controlPin({type:'restore'}).catch(report)}><RotateCcw size={15}/></button>
-      <button title={t('置顶')} aria-label={t('置顶')} classList={{selected:state()?.topmost}} onClick={()=>void pin.controlPin({type:'set_topmost',enabled:!state()?.topmost}).catch(report)}><Pin size={15}/></button>
-      <button title={t('关闭贴图')} aria-label={t('关闭贴图')} onClick={()=>void close()}><X size={15}/></button>
-    </div></Show>
     <Show when={error()}><div class="pin-error" role="alert"><span>{error()}</span><button title={t("关闭贴图")} aria-label={t("关闭贴图")} onClick={() => void close()}>×</button></div></Show>
   </main>;
 }

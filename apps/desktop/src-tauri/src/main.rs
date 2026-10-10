@@ -325,7 +325,7 @@ async fn apply_scene_command(
         SceneCommand::FreezeScene { scene_id } => return freeze_space(app, scene_id).await,
         SceneCommand::CloseScene { scene_id } => return close_scene_window(app, scene_id).await,
         SceneCommand::AddDrawing { .. }
-        | SceneCommand::UpdateDrawing { .. }
+        | SceneCommand::UpdateDrawing { .. } | SceneCommand::UpdateDrawings { .. }
         | SceneCommand::RemoveDrawing { .. }
         | SceneCommand::UndoDrawing { .. }
         | SceneCommand::RedoDrawing { .. } => return Err("请从绘制工具操作".into()),

@@ -94,6 +94,7 @@ pub async fn get_pin_objects(
 pub enum ObjectControl {
     Close {},
     Move { x: f64, y: f64 },
+    Zoom { direction: i8 },
 }
 #[tauri::command]
 pub async fn control_pin_object(
@@ -118,11 +119,14 @@ pub async fn control_pin_object(
     }
     match action {
         ObjectControl::Close {} => close_entry(&app, &label, false),
+        ObjectControl::Zoom { direction } => {
+            pin_window::control(&app, &pin, PinAction::Zoom { direction }).await?
+        }
         ObjectControl::Move { x, y } => {
             if !x.is_finite()
                 || !y.is_finite()
-                || !(0. ..=1.).contains(&x)
-                || !(0. ..=1.).contains(&y)
+                || !(-16. ..=16.).contains(&x)
+                || !(-16. ..=16.).contains(&y)
             {
                 return Err("贴图位置无效".into());
             }

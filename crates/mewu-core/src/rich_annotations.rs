@@ -60,6 +60,8 @@ pub enum RichContent {
         version: u32,
         role: RasterRole,
         source_sha256: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<String>,
     },
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +103,8 @@ pub struct RichDrawingRef {
     pub kind: RichKind,
     pub width: u32,
     pub height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -204,6 +208,10 @@ fn validate_descriptor(value: &Descriptor) -> Result<()> {
         kind: value.content.kind(),
         width: value.width,
         height: value.height,
+        parent_id: match &value.content {
+            RichContent::Raster { parent_id, .. } => parent_id.clone(),
+            _ => None,
+        },
     })?;
     if value.version != 1
         || value.renderer.style_version == 0
@@ -219,6 +227,8 @@ fn validate_descriptor(value: &Descriptor) -> Result<()> {
         RichContent::Raster {
             version,
             source_sha256,
+            parent_id,
+            role,
             ..
         } => {
             if *version != 1
@@ -226,6 +236,9 @@ fn validate_descriptor(value: &Descriptor) -> Result<()> {
                 || value.renderer.id != "mewu.local-raster-edit"
                 || value.renderer.version != "1"
                 || value.renderer.style_version != 1
+                || parent_id.as_ref().is_some_and(|id| {
+                    *role != RasterRole::Repair || uuid::Uuid::parse_str(id).is_err()
+                })
             {
                 return Err(invalid("本地修补图层来源或版本无效"));
             }
@@ -282,6 +295,10 @@ pub(crate) fn validate_ref_shape(value: &RichDrawingRef) -> Result<()> {
         || value.width > 6000
         || value.height > 6000
         || u64::from(value.width) * u64::from(value.height) > MAX_RICH_PIXELS
+        || value
+            .parent_id
+            .as_ref()
+            .is_some_and(|id| value.kind != RichKind::Repair || uuid::Uuid::parse_str(id).is_err())
     {
         return Err(invalid("富标注引用身份或尺寸无效"));
     }
@@ -298,6 +315,10 @@ fn descriptor_reference(value: &Descriptor) -> Result<RichDrawingRef> {
         kind: value.content.kind(),
         width: value.width,
         height: value.height,
+        parent_id: match &value.content {
+            RichContent::Raster { parent_id, .. } => parent_id.clone(),
+            _ => None,
+        },
     })
 }
 fn validate_png(bytes: &[u8], width: u32, height: u32) -> Result<()> {

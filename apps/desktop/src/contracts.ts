@@ -4,7 +4,7 @@ export type AssetKind = 'image' | 'video' | 'html' | 'svg' | 'text' | 'file';
 export interface Asset { id: string; name: string; kind: AssetKind; path: string; width?: number; height?: number; originX?: number; originY?: number; scaleFactor?: number }
 export type ManualDrawingKind = 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'highlighter' | 'number' | 'mosaic';
 export type DrawingKind = ManualDrawingKind | 'rich';
-export interface RichDrawingRef { layoutId: string; layoutSha256: string; rasterSha256: string; kind: 'table' | 'formula' | 'repair' | 'extracted'; width: number; height: number }
+export interface RichDrawingRef { layoutId: string; layoutSha256: string; rasterSha256: string; kind: 'table' | 'formula' | 'repair' | 'extracted'; width: number; height: number; parentId?:string }
 export interface DrawingPoint { x: number; y: number }
 export interface DrawingOrigin { runId: string; userMessageId: string; toolEventId: string; groupId: string; targetHandle: string; manifestSha256: string }
 export interface VisualAnnotationGrant { pluginId: string; pluginRevision: number; contributionId: string }
@@ -26,6 +26,7 @@ export interface ReplayRegionGeometry { type: 'undo_region_geometry' | 'redo_reg
 interface DrawingTarget { sceneId: string; regionId: string; backgroundId: string; expectedRevision: number }
 export type DrawingCommand = DrawingTarget & (
   | { type: 'add_drawing' | 'update_drawing'; drawing: Drawing }
+  | {type:'update_drawings';drawings:Drawing[]}
   | { type: 'remove_drawing'; drawingId: string }
   | { type: 'undo_drawing' | 'redo_drawing' }
 );

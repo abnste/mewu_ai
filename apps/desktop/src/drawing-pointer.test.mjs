@@ -19,10 +19,11 @@ const body = ast.program.body.find(value => value.type === 'ExportDefaultDeclara
 const declaration = name => { const node = body.find(value => value.type === 'FunctionDeclaration' ? value.id.name === name : value.type === 'VariableDeclaration' && value.declarations.some(declaration => declaration.id.name === name)); assert.ok(node, name); return source.slice(node.start, node.end); };
 const actual = ['cacheKey', 'gestureIdentity', 'point', 'target', 'editableIds', 'commit', 'begin', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
-import { drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t } from 'deps';
+import { drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage } from 'deps';
 export class Element { closest() { return {getAttribute:()=>this.id}; } }
 export function fixture(props,svg,window) {
  let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false;
+ let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
  const publications=[],tool=()=>toolValue,setTool=value=>toolValue=value,selected=()=>selectedId,setSelected=value=>selectedId=value;
  const draft=()=>draftValue,setDraft=value=>{draftValue=value;if(value)publications.push(JSON.parse(JSON.stringify(value)));},pending=()=>pendingValue,setPending=value=>pendingValue=value;
  const edit=()=>undefined,textEditor=()=>undefined,finishing=()=>false,disabled=()=>pending()||props.busy||props.inputLocked;
@@ -36,7 +37,7 @@ export function fixture(props,svg,window) {
  return {begin,draft,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,
    dispose:()=>{disposed=true;cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value)};
 }`));
-await module.link(() => synthetic({ ...pointer, ...geometry, ...properties, t: value => value })); await module.evaluate();
+await module.link(() => synthetic({ ...pointer, ...geometry, ...properties, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
 class Events {
   listeners = new Map();
   addEventListener(type, callback) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(callback); }
@@ -173,10 +174,11 @@ async function jsx(source,dependencies){
 const shapeJsx=await jsx(await raw('./components/DrawingLayer.tsx'),{
   './drawing-geometry':geometry,'./drawing-pointer':pointer,'./RichDrawingShape':{default:()=>undefined},'../bridge':{getMosaicPreview:()=>{throw Error('No native IO');}},'../i18n':{t:value=>value},
 });
-const itemJsx=await jsx(`import {createMemo,Show} from 'solid-js';import {liveDrawing} from 'pointer';
+const itemJsx=await jsx(`import {linkedRepairPreview} from 'selection';import {createMemo,Show} from 'solid-js';import {liveDrawing} from 'pointer';
 export function fixture(props,state){props={...props,port:{...props.port,drawings:state.drawings,stored:state.stored}};const draft=()=>state.draft(),edit=()=>undefined,tool=()=>state.tool(),selected=()=>state.selected(),storedDraft=()=>state.storedDraft(),drawings=state.drawings;
 ${['drawingIndex','storedIndex','activeDraftId'].map(declaration).join('\n')}
-${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer});
+const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()];${declaration('previews')}
+${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer,selection:{linkedRepairPreview:(drawing)=>drawing}});
 const descendants=(node,tag)=>[...(node.tag===tag?[node]:[]),...node.children.flatMap(child=>descendants(child,tag))];
 
 test('actual DrawingItem/Shape JSX updates live pen pixels and reuses completed SVG nodes; removal disposes the active tail',()=>{
@@ -205,4 +207,17 @@ test('moving one of many stored rasters never rerenders unrelated annotations',(
   const dispose=renderer.render(()=>values.map(value=>itemJsx.fixture({id:value.id,port},state)),root);assert.equal(descendants(root,'native-raster').length,128);
   for(let i=0;i<20;i++)setStoredDraft({id:'stored-0',bounds:{x:i,y:i,width:20,height:20}});
   assert.equal(counts.get('stored-0'),21);for(const value of values.slice(1))assert.equal(counts.get(value.id),1);assert.equal(descendants(root,'native-raster').length,128);dispose();
+});
+
+
+test('actual rich-image JSX retains one loaded SVG image across drawing revisions, but clears rejected previews',async()=>{
+  const layout=await pure('./drawing-layout-preview.ts'),jobs=[];
+  const rich=await jsx(await raw('./components/RichDrawingShape.tsx'),{'../drawing-layout-preview':layout,'../drawing-layout-bridge':{getDrawingLayoutPreview:target=>new Promise((resolve,reject)=>jobs.push({target,resolve,reject}))}});
+  const [revision,setRevision]=solid.createSignal(0),root=renderer.createElement('root');
+  const drawing={id:'picture',kind:'rich',points:[{x:10,y:10},{x:100,y:60}],rich:{layoutId:'immutable',kind:'extracted',width:90,height:50}},asset={id:'source',kind:'image',width:500,height:400};
+  const props={drawing,get context(){return{sceneId:'scene',background:asset,region:{id:'region',x:0,y:0,width:500,height:400,drawingRevision:revision()}};}};
+  const dispose=renderer.render(()=>renderer.createComponent(rich.default,props),root);
+  await tick();jobs[0].resolve({...jobs[0].target,dataUrl:'synthetic-pixels'});await tick();const node=descendants(root,'image')[0];assert.ok(node);
+  for(let i=1;i<=8;i++){setRevision(i);await tick();assert.equal(descendants(root,'image')[0],node);jobs[i].resolve({...jobs[i].target,dataUrl:'synthetic-pixels'});await tick();assert.equal(descendants(root,'image')[0],node);}
+  setRevision(9);await tick();jobs[9].reject(Error('native rejected current object'));await tick();assert.equal(descendants(root,'image').length,0);dispose();
 });

@@ -6,6 +6,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import {parse} from '@babel/parser';
 const load=async path=>import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL(path,import.meta.url),'utf8'),{mode:'transform'})).toString('base64')}`);
+const {moveImageObject}=await load('./image-object-geometry.ts');
 const {objectTrash}=await load('./object-trash.ts'),{carryBlackboardObjects}=await load('./blackboard-objects.ts');
 test('trash requires an active drag and current visible enabled bounds; hover and cancellation never delete',()=>{
   globalThis.innerWidth=500;globalThis.innerHeight=400;
@@ -34,7 +35,7 @@ test('dropping a media object does not await its own app flush; movement still w
     const listeners=new Map(),target={setPointerCapture(){},hasPointerCapture:()=>false,addEventListener:(name,handler)=>listeners.set(name,handler),removeEventListener:name=>listeners.delete(name)};
     let position={x:.1,y:.1,width:.2,height:.2};
     const props={blackboard:true,busy:false,item:{...position,asset:{id:'asset'}},trash:{begin(){},move(){},finish:()=>remove,cancel(){}},onRegisterFlush:value=>{flush=value;return()=>{};},onRemove:async()=>{await flush(()=>true);removed++;},onUpdate:async item=>{updated++;await new Promise(resolve=>{resolveUpdate=resolve;});Object.assign(props.item,item);}};
-    const context=vm.createContext({props,position:()=>position,setPosition:value=>{position=value;},savedPosition:()=>({...props.item}),isImage:()=>false,isVideo:()=>false,window:{innerWidth:800,innerHeight:600},innerWidth:800,innerHeight:600,disposed:false,gestureToken:0,gestureFlight:undefined,textFlush:undefined,disposeGesture:undefined,setMoving(){},Promise,Error});
+    const context=vm.createContext({props,position:()=>position,setPosition:value=>{position=value;},savedPosition:()=>({...props.item}),isImage:()=>false,isVideo:()=>false,window:{innerWidth:800,innerHeight:600},innerWidth:800,innerHeight:600,zoomAsset:undefined,flushZoom:async()=>{},moveImageObject,disposed:false,gestureToken:0,gestureFlight:undefined,textFlush:undefined,disposeGesture:undefined,setMoving(){},Promise,Error});
     vm.runInContext(stripTypeScriptTypes(declaration('unregisterFlush')+'\n'+declaration('gesture')+'\ngesture',{mode:'transform'}),context)({button:0,pointerId:1,currentTarget:target,clientX:100,clientY:100,preventDefault(){},stopPropagation(){}},false,true);
     listeners.get('pointermove')({clientX:140,clientY:140});
     const completion=listeners.get('pointerup')({type:'pointerup',clientX:140,clientY:140});

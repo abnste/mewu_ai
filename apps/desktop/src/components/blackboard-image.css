@@ -4,3 +4,7 @@
 .blackboard-image-controls button:hover{background:transparent;opacity:1}
 .blackboard-image-controls button:active{cursor:grabbing}
 .blackboard-image-controls button:focus-visible{outline:1px solid currentColor;outline-offset:0}
+
+.blackboard-image-controls button:disabled{opacity:.8}
+
+.blackboard-image-controls button:hover:disabled{opacity:1}

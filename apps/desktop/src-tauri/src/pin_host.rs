@@ -1089,10 +1089,10 @@ pub fn show_pin_menu(app: AppHandle, window: WebviewWindow) -> Result<(), String
     pin_window::menu(&app, &window)
 }
 #[tauri::command]
-pub fn start_pin_drag(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+pub async fn start_pin_drag(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
     view_state(&app, &window)?;
     app.state::<Host>().exit.ensure_running()?;
-    pin_window::start_drag(&window)
+    pin_window::start_drag(&window).await
 }
 
 #[tauri::command]

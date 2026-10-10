@@ -15,7 +15,7 @@ export function validPinObject(value: PinObject): boolean {
       && [value.width, value.height].every(n => Number.isSafeInteger(n) && n > 0) && Number.isInteger(value.quarterTurns) && value.quarterTurns >= 0 && value.quarterTurns < 4;
   } catch { return false; }
 }
-export async function controlPinObject(id: string, action: { type: 'close' } | { type: 'move'; x: number; y: number }): Promise<void> {
+export async function controlPinObject(id: string, action: { type: 'close' } | { type: 'move'; x: number; y: number } | {type:'zoom';direction:1|-1}): Promise<void> {
   if (native) await invoke('control_pin_object', { id, action });
 }
 export async function referencePinObject(id: string | null, sceneId: string | null): Promise<Snapshot | null> {

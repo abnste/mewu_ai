@@ -18,6 +18,7 @@ pub(crate) enum Mutation {
     Add(Drawing),
     AppendBatch(Vec<Drawing>),
     Update(Drawing),
+    UpdateBatch(Vec<Drawing>),
     Remove(String),
     Undo,
     Redo,
@@ -57,14 +58,18 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
         DrawingKind::Text | DrawingKind::Number => count == 1,
         _ => count == 2,
     };
+    let floating = object
+        .rich
+        .as_ref()
+        .is_some_and(|r| r.kind == crate::RichKind::Extracted || r.parent_id.is_some());
     if !valid_count
         || object.points.iter().any(|p| {
             !p.x.is_finite()
                 || !p.y.is_finite()
-                || p.x < 0.
-                || p.y < 0.
-                || p.x > width
-                || p.y > height
+                || p.x < if floating { -width * 16. } else { 0. }
+                || p.y < if floating { -height * 16. } else { 0. }
+                || p.x > if floating { width * 16. } else { width }
+                || p.y > if floating { height * 16. } else { height }
         })
     {
         return Err(invalid("绘制点数或背景像素坐标无效"));
@@ -91,6 +96,7 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
                 || h <= 0.
                 || (first - second).abs() > first.abs().max(second.abs()) * 1e-6
                 || (reference.kind == crate::RichKind::Repair
+                    && reference.parent_id.is_none()
                     && ((w - f64::from(reference.width)).abs() > 1e-6
                         || (h - f64::from(reference.height)).abs() > 1e-6))
             {
@@ -167,6 +173,16 @@ fn validate_objects(objects: &[Drawing], width: f64, height: f64) -> Result<()> 
             return Err(invalid("绘制对象标识重复"));
         }
         validate_object(object, width, height)?;
+        if let Some(id) = object.rich.as_ref().and_then(|r| r.parent_id.as_ref()) {
+            if !objects.iter().any(|p| {
+                &p.id == id
+                    && p.rich
+                        .as_ref()
+                        .is_some_and(|r| r.kind == crate::RichKind::Extracted)
+            }) {
+                return Err(invalid("修补图层缺少原图"));
+            }
+        }
     }
     Ok(())
 }
@@ -238,7 +254,7 @@ pub(crate) fn validate(region: &Region, background: Option<&Asset>) -> Result<()
         return Err(invalid("绘制历史超过保留范围"));
     }
     for step in history.undo.iter().chain(&history.redo) {
-        if step.edits().is_empty() || step.edits().len() > 48 {
+        if step.edits().is_empty() || step.edits().len() > MAX_OBJECTS {
             return Err(invalid("绘制批次无效"));
         }
         for edit in step.edits() {
@@ -275,6 +291,41 @@ fn trim_history(history: &mut DrawingHistory) -> Result<()> {
 }
 
 pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation) -> Result<bool> {
+    if let Mutation::UpdateBatch(values) = &mutation {
+        return update_batch(region, background, values.clone(), true);
+    }
+    if let Mutation::Update(value) = &mutation {
+        if region
+            .drawings
+            .iter()
+            .any(|d| d.rich.as_ref().and_then(|r| r.parent_id.as_ref()) == Some(&value.id))
+        {
+            return update_batch(region, background, vec![value.clone()], false);
+        }
+    }
+    if let Mutation::Remove(id) = &mutation {
+        if region
+            .drawings
+            .iter()
+            .any(|d| d.rich.as_ref().and_then(|r| r.parent_id.as_ref()) == Some(id))
+        {
+            let batch = region
+                .drawings
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, d)| {
+                    &d.id == id || d.rich.as_ref().and_then(|r| r.parent_id.as_ref()) == Some(id)
+                })
+                .map(|(index, d)| DrawingEdit {
+                    index,
+                    before: Some(d.clone()),
+                    after: None,
+                })
+                .collect();
+            return commit_batch(region, background, batch);
+        }
+    }
     if let Mutation::AppendBatch(values) = mutation {
         if values.is_empty() || values.len() > 48 {
             return Err(invalid("绘制批次无效"));
@@ -384,7 +435,7 @@ pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation)
             validate(region, Some(background))?;
             return Ok(true);
         }
-        Mutation::AppendBatch(_) => unreachable!("handled above"),
+        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) => unreachable!("handled above"),
     };
     apply_edit(&mut region.drawings, &edit, true)?;
     region.drawing_history.redo.clear();
@@ -393,4 +444,99 @@ pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation)
     region.drawing_revision = next_revision(region)?;
     validate(region, Some(background))?;
     Ok(true)
+}
+
+fn commit_batch(region: &mut Region, background: &Asset, batch: Vec<DrawingEdit>) -> Result<bool> {
+    if batch.is_empty() {
+        return Ok(false);
+    }
+    let step = DrawingStep::Batch(DrawingBatchEdit { batch });
+    apply_step(&mut region.drawings, &step, true)?;
+    region.drawing_history.redo.clear();
+    region.drawing_history.undo.push(step);
+    trim_history(&mut region.drawing_history)?;
+    region.drawing_revision = next_revision(region)?;
+    validate(region, Some(background))?;
+    Ok(true)
+}
+fn update_batch(
+    region: &mut Region,
+    background: &Asset,
+    values: Vec<Drawing>,
+    geometry_only: bool,
+) -> Result<bool> {
+    if values.is_empty() || values.len() > MAX_OBJECTS {
+        return Err(invalid("绘制批次无效"));
+    }
+    let mut ids = HashSet::new();
+    let mut batch = Vec::new();
+    for value in &values {
+        if !ids.insert(&value.id) {
+            return Err(invalid("绘制对象标识重复"));
+        }
+        let (index, old) = region
+            .drawings
+            .iter()
+            .enumerate()
+            .find(|(_, d)| d.id == value.id)
+            .ok_or_else(|| invalid("绘制对象已不存在"))?;
+        if old
+            .rich
+            .as_ref()
+            .is_some_and(|r| r.kind == crate::RichKind::Repair)
+        {
+            return Err(invalid("背景修补只能随原图移动"));
+        }
+        if old.origin != value.origin {
+            return Err(invalid("不能更改绘制来源"));
+        }
+        if geometry_only || old.kind == DrawingKind::Rich || value.kind == DrawingKind::Rich {
+            let mut expected = old.clone();
+            expected.points = value.points.clone();
+            if expected != *value {
+                return Err(invalid("批量移动只能修改几何位置"));
+            }
+        }
+        if old == value {
+            continue;
+        }
+        batch.push(DrawingEdit {
+            index,
+            before: Some(old.clone()),
+            after: Some(value.clone()),
+        });
+        if old
+            .rich
+            .as_ref()
+            .is_some_and(|r| r.kind == crate::RichKind::Extracted)
+        {
+            if value.points.len() != 2 {
+                return Err(invalid("原图几何无效"));
+            }
+            let a = old.points[0];
+            let b = old.points[1];
+            let next = value.points[0];
+            if b.x <= a.x || b.y <= a.y {
+                return Err(invalid("原图几何无效"));
+            }
+            let sx = (value.points[1].x - next.x) / (b.x - a.x);
+            let sy = (value.points[1].y - next.y) / (b.y - a.y);
+            for (index, child) in region.drawings.iter().enumerate().filter(|(_, d)| {
+                d.rich.as_ref().and_then(|r| r.parent_id.as_ref()) == Some(&old.id)
+            }) {
+                let mut after = child.clone();
+                for p in &mut after.points {
+                    p.x = next.x + (p.x - a.x) * sx;
+                    p.y = next.y + (p.y - a.y) * sy;
+                }
+                batch.push(DrawingEdit {
+                    index,
+                    before: Some(child.clone()),
+                    after: Some(after),
+                });
+            }
+        }
+    }
+    batch.sort_by_key(|e| e.index);
+    commit_batch(region, background, batch)
 }

@@ -31,3 +31,8 @@ test('reference and movement carry only host IDs, not renderer file paths',async
 test('browser preview does not fabricate desktop pinned object success',async()=>{
  const value=await load(false);const handle=await value.api.subscribePinObjects(()=>assert.fail(),()=>assert.fail());await handle.refresh();handle.stop();await assert.rejects(value.api.referencePinObject(object.id,'scene'),/桌面版/);assert.deepEqual(value.calls,[]);
 });
+
+test('capture pins send zoom and negative positions only to the registered object ID',async()=>{
+ const value=await load();await value.api.controlPinObject(object.id,{type:'zoom',direction:1});await value.api.controlPinObject(object.id,{type:'move',x:-.1,y:-.2});
+ assert.deepEqual(JSON.parse(JSON.stringify(value.calls)),[{name:'control_pin_object',args:{id:object.id,action:{type:'zoom',direction:1}}},{name:'control_pin_object',args:{id:object.id,action:{type:'move',x:-.1,y:-.2}}}]);
+});

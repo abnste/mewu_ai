@@ -8,6 +8,7 @@ import type { ObjectTrashPort } from './object-trash';
 export interface EditorBox { x:number;y:number;width:number;height:number }
 export type EditorDrawingAction = {expectedRevision:number} & (
   | {type:'add_drawing'|'update_drawing';drawing:Drawing}
+  | {type:'update_drawings';drawings:Drawing[]}
   | {type:'remove_drawing';drawingId:string}
   | {type:'undo_drawing'|'redo_drawing'}
   | {type:'move_stored';drawingId:string;from:EditorBox;to:EditorBox}
@@ -52,6 +53,7 @@ export interface SharedDrawingEditorProps {
   objectsFlush?:(active:()=>boolean)=>Promise<void>;
   onObjectPointerMove?:(event:PointerEvent)=>void;
   onObjectPointerLeave?:()=>void;
+  onObjectWheel?:(event:WheelEvent)=>boolean;
   onRegisterObjectTrash?:(port:ObjectTrashPort)=>()=>void;
   onRegisterHistory?:RegisterDrawingHistory;
 }

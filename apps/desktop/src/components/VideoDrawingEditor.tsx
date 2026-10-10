@@ -113,7 +113,7 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
     storedMove:(id,from,delta)=>{const p=object(id)?.primitive;if(!p)throw Error('视频绘制对象已变化');if(p.kind==='vector'){const g=p.layout.geometryBounds,x=Math.max(Math.ceil(-g.x),Math.min(Math.floor(props.info.width-g.x-g.width),Math.floor(from.x+delta.x+.5))),y=Math.max(Math.ceil(-g.y),Math.min(Math.floor(props.info.height-g.y-g.height),Math.floor(from.y+delta.y+.5)));return{...from,x,y};}return{...from,x:Math.max(0,Math.min(props.info.width-from.width,from.x+delta.x)),y:Math.max(0,Math.min(props.info.height-from.height,from.y+delta.y))};},
     renderStored:(id,interactive,selected,preview)=>props.renderStored(id,interactive,selected,preview),
     canSelect:()=>true,canStyle:drawing=>drawing.kind==='text'||Boolean(descriptor(drawing.id)&&authorizes(drawing)),
-    allows:action=>current()&&(action.type!=='add_drawing'||Boolean(props.grant?.tools.includes(action.drawing.kind as never))),
+    allows:action=>action.type!=='update_drawings'&&current()&&(action.type!=='add_drawing'||Boolean(props.grant?.tools.includes(action.drawing.kind as never))),
     propertyCommand:draft=>{if(!draftChanged(draft))return;drawingToVideoSource(draft.drawing);return{type:draft.base?'update_drawing':'add_drawing',expectedRevision:draft.expectedRevision,drawing:draft.drawing};},
     historyAvailable:redo=>Boolean(doc()?.[redo?'redo':'undo'].length),
     persistedId:id=>aliases.get(id)??id,rejectPointOverflow:true,

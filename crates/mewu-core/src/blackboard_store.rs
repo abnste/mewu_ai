@@ -112,7 +112,7 @@ impl Store {
             if drawing.origin.is_some()
                 || drawing.kind != DrawingKind::Rich
                 || drawing.rich.as_ref() != Some(layout.reference())
-                || !matches!(layout.content(), RichContent::Raster { version: 1, role: RasterRole::Extracted, source_sha256 } if *source_sha256 == fence.visual_sha256)
+                || !matches!(layout.content(), RichContent::Raster { version: 1, role: RasterRole::Extracted, source_sha256,.. } if *source_sha256 == fence.visual_sha256)
             {
                 return Err(invalid("黑板截图对象来源无效"));
             }

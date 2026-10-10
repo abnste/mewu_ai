@@ -93,6 +93,14 @@ pub(crate) fn layout(
     role: RasterRole,
     source: &VisualSourceFence,
 ) -> Result<VerifiedRichLayout, String> {
+    layout_with_parent(pixels, role, source, None)
+}
+fn layout_with_parent(
+    pixels: RgbaImage,
+    role: RasterRole,
+    source: &VisualSourceFence,
+    parent_id: Option<String>,
+) -> Result<VerifiedRichLayout, String> {
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new(&mut png)
         .write_image(
@@ -108,6 +116,7 @@ pub(crate) fn layout(
             version: 1,
             role,
             source_sha256: source.visual_sha256.clone(),
+            parent_id,
         },
         RichRendererIdentity {
             id: "mewu.local-raster-edit".into(),
@@ -275,12 +284,32 @@ pub async fn apply_raster_edit(
             }
         };
         check()?;
-        let mut layouts = vec![layout(pixels, RasterRole::Repair, &expected)?];
+        let x = f64::from(mapping.x + area.x);
+        let y = f64::from(mapping.y + area.y);
+        let parent_id = target
+            .region
+            .drawings
+            .iter()
+            .rev()
+            .find(|d| {
+                d.rich
+                    .as_ref()
+                    .is_some_and(|r| r.kind == mewu_core::RichKind::Extracted)
+                    && d.points[0].x <= x
+                    && d.points[0].y <= y
+                    && d.points[1].x >= x + f64::from(area.width)
+                    && d.points[1].y >= y + f64::from(area.height)
+            })
+            .map(|d| d.id.clone());
+        let mut layouts = vec![layout_with_parent(
+            pixels,
+            RasterRole::Repair,
+            &expected,
+            parent_id,
+        )?];
         if let Some(pixels) = lifted {
             layouts.push(layout(pixels, RasterRole::Extracted, &expected)?);
         }
-        let x = f64::from(mapping.x + area.x);
-        let y = f64::from(mapping.y + area.y);
         let drawings: Vec<_> = layouts.iter().map(|r| drawing(r, x, y)).collect();
         let selected_id = if drawings.len() == 2 {
             Some(drawings[1].id.clone())

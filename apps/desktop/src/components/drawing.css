@@ -85,3 +85,6 @@
 .drawing-tools-row,.drawing-properties-row{display:flex;flex-wrap:nowrap;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a;overflow-x:auto;scrollbar-width:thin;box-sizing:border-box}
 .drawing-tools-row>*,.drawing-properties-row>*{flex-shrink:0}
 .drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-properties-row{padding:0;border-radius:0;background:transparent;box-shadow:none;overflow:visible}
+
+.drawing-selection-background{position:absolute;z-index:-1;pointer-events:auto;background:transparent}
+.blackboard-object-control button:disabled{opacity:1}

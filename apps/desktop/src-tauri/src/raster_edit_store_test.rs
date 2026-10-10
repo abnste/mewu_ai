@@ -242,6 +242,202 @@ fn raster_extract_two_layers_one_undo_move_redo_and_reopen() {
     assert_eq!(reopened.snapshot(), final_snapshot);
 }
 #[test]
+fn attached_repair_follows_parent_move_scale_delete_history_and_reopen() {
+    let db = Db::new();
+    let (mut store, target, expected) = setup(&db);
+    let (drawings, layouts) = prepare(&expected);
+    let parent = drawings[1].clone();
+    let root_repair = drawings[0].clone();
+    store
+        .append_raster_edit(
+            &target.scene_id,
+            &target.region.id,
+            &expected,
+            drawings,
+            layouts,
+        )
+        .unwrap();
+    let region = store.snapshot().scenes[0].regions[0].clone();
+    let fence = mewu_core::visual_source_fence(&target.background, &region).unwrap();
+    let layout = layout_with_parent(
+        RgbaImage::from_pixel(6, 6, Rgba([240, 240, 240, 255])),
+        RasterRole::Repair,
+        &fence,
+        Some(parent.id.clone()),
+    )
+    .unwrap();
+    let patch = drawing(&layout, 24., 24.);
+    store
+        .append_raster_edit(
+            &target.scene_id,
+            &target.region.id,
+            &fence,
+            vec![patch.clone()],
+            vec![layout.clone()],
+        )
+        .unwrap();
+    assert_eq!(
+        render(&store, &target).get_pixel(28, 28),
+        &Rgba([240, 240, 240, 255])
+    );
+    let mut moved = parent.clone();
+    for p in &mut moved.points {
+        p.x += 40.;
+    }
+    let update = |revision, drawing| SceneCommand::UpdateDrawing {
+        scene_id: target.scene_id.clone(),
+        region_id: target.region.id.clone(),
+        background_id: target.background.id.clone(),
+        expected_revision: revision,
+        drawing,
+    };
+    store.apply(update(2, moved.clone())).unwrap();
+    let region = store.snapshot().scenes[0].regions[0].clone();
+    assert_eq!(region.drawings[0], root_repair);
+    assert_eq!(
+        region.drawings[2].points[0],
+        DrawingPoint { x: 64., y: 24. }
+    );
+    assert_eq!(
+        serde_json::to_value(region.drawing_history.undo.last().unwrap()).unwrap()["batch"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        render(&store, &target).get_pixel(68, 28),
+        &Rgba([240, 240, 240, 255])
+    );
+    let scaled = Drawing {
+        points: vec![
+            DrawingPoint { x: -10., y: -10. },
+            DrawingPoint { x: 30., y: 30. },
+        ],
+        ..parent.clone()
+    };
+    store.apply(update(3, scaled.clone())).unwrap();
+    let region = store.snapshot().scenes[0].regions[0].clone();
+    assert_eq!(
+        region.drawings[2].points,
+        vec![
+            DrawingPoint { x: -2., y: -2. },
+            DrawingPoint { x: 10., y: 10. }
+        ]
+    );
+    render(&store, &target);
+    store.apply(action(&target, 4, false)).unwrap();
+    assert_eq!(store.snapshot().scenes[0].regions[0].drawings[1], moved);
+    store.apply(action(&target, 5, true)).unwrap();
+    let saved = store.snapshot();
+    drop(store);
+    let mut store = Store::open(&db.0).unwrap();
+    assert_eq!(store.snapshot(), saved);
+    assert_eq!(
+        store.rich_layout(layout.reference()).unwrap().png(),
+        layout.png()
+    );
+    let before = store.snapshot();
+    assert!(store.apply(update(6, patch)).is_err());
+    assert_eq!(store.snapshot(), before);
+    store
+        .apply(SceneCommand::RemoveDrawing {
+            scene_id: target.scene_id.clone(),
+            region_id: target.region.id.clone(),
+            background_id: target.background.id.clone(),
+            expected_revision: 6,
+            drawing_id: parent.id.clone(),
+        })
+        .unwrap();
+    assert_eq!(
+        store.snapshot().scenes[0].regions[0].drawings,
+        vec![root_repair]
+    );
+    store.apply(action(&target, 7, false)).unwrap();
+    assert_eq!(
+        store.snapshot().scenes[0].regions[0].drawings,
+        saved.scenes[0].regions[0].drawings
+    );
+}
+#[test]
+fn marquee_batch_is_one_atomic_geometry_step_and_rejects_forgery() {
+    let db = Db::new();
+    let (mut store, target, expected) = setup(&db);
+    let (drawings, layouts) = prepare(&expected);
+    let parent = drawings[1].clone();
+    store
+        .append_raster_edit(
+            &target.scene_id,
+            &target.region.id,
+            &expected,
+            drawings,
+            layouts,
+        )
+        .unwrap();
+    let ink = Drawing {
+        id: uuid::Uuid::new_v4().to_string(),
+        kind: DrawingKind::Pen,
+        color: "#123456".into(),
+        stroke_width: 4.,
+        points: vec![DrawingPoint { x: 5., y: 5. }],
+        text: None,
+        font_size: None,
+        origin: None,
+        rich: None,
+    };
+    store
+        .apply(SceneCommand::AddDrawing {
+            scene_id: target.scene_id.clone(),
+            region_id: target.region.id.clone(),
+            background_id: target.background.id.clone(),
+            expected_revision: 1,
+            drawing: ink.clone(),
+        })
+        .unwrap();
+    let mut values = vec![parent, ink];
+    for d in &mut values {
+        for p in &mut d.points {
+            p.x += 10.;
+            p.y += 5.;
+        }
+    }
+    let batch = |revision, drawings| SceneCommand::UpdateDrawings {
+        scene_id: target.scene_id.clone(),
+        region_id: target.region.id.clone(),
+        background_id: target.background.id.clone(),
+        expected_revision: revision,
+        drawings,
+    };
+    let original = store.snapshot();
+    let mut forged = values.clone();
+    forged[1].color = "#FF0000".into();
+    assert!(store.apply(batch(2, forged)).is_err());
+    assert_eq!(store.snapshot(), original);
+    store.apply(batch(2, values.clone())).unwrap();
+    let saved = store.snapshot();
+    assert_eq!(
+        serde_json::to_value(
+            saved.scenes[0].regions[0]
+                .drawing_history
+                .undo
+                .last()
+                .unwrap()
+        )
+        .unwrap()["batch"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(store.apply(batch(2, values)).is_err());
+    assert_eq!(store.snapshot(), saved);
+    store.apply(action(&target, 3, false)).unwrap();
+    assert_eq!(
+        store.snapshot().scenes[0].regions[0].drawings,
+        original.scenes[0].regions[0].drawings
+    );
+}
+#[test]
 fn raster_png_and_history_roll_back_together_on_real_sqlite_failure() {
     let db = Db::new();
     let (mut store, target, expected) = setup(&db);

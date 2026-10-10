@@ -340,6 +340,8 @@ pub fn apply_drawing_document(
     crate::ensure_scene_command_admission(&app, &host, window.label(), &command)?;
     let snapshot = engine.store.snapshot();
     match &command {
+        SceneCommand::UpdateDrawings { .. } => { /* Core validates the entire geometry-only batch and immutable references. */
+        }
         SceneCommand::UpdateDrawing {
             scene_id,
             region_id,

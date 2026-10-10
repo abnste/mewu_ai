@@ -255,6 +255,10 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
         {
             return Err("绘制颜色或线宽无效".into());
         }
+        let floating = drawing
+            .rich
+            .as_ref()
+            .is_some_and(|r| r.kind == mewu_core::RichKind::Extracted || r.parent_id.is_some());
         let count = drawing.points.len();
         if !(match drawing.kind {
             DrawingKind::Pen | DrawingKind::Highlighter => (1..=4096).contains(&count),
@@ -263,10 +267,20 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
         }) || drawing.points.iter().any(|p| {
             !p.x.is_finite()
                 || !p.y.is_finite()
-                || p.x < 0.
-                || p.y < 0.
-                || p.x > width as f64
-                || p.y > height as f64
+                || p.x < if floating { -(width as f64) * 16. } else { 0. }
+                || p.y < if floating { -(height as f64) * 16. } else { 0. }
+                || p.x
+                    > if floating {
+                        width as f64 * 16.
+                    } else {
+                        width as f64
+                    }
+                || p.y
+                    > if floating {
+                        height as f64 * 16.
+                    } else {
+                        height as f64
+                    }
         }) {
             return Err("绘制坐标无效".into());
         }
@@ -320,6 +334,7 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
                 || h <= 0.
                 || (a - b).abs() > a.abs().max(b.abs()) * 1e-6
                 || (reference.kind == mewu_core::RichKind::Repair
+                    && reference.parent_id.is_none()
                     && ((w - f64::from(reference.width)).abs() > 1e-6
                         || (h - f64::from(reference.height)).abs() > 1e-6))
             {

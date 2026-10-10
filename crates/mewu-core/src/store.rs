@@ -652,6 +652,25 @@ impl Store {
                     crate::drawing::Mutation::Remove(drawing_id),
                 )?;
             }
+            SceneCommand::UpdateDrawings {
+                scene_id,
+                region_id,
+                background_id,
+                expected_revision,
+                drawings,
+            } => {
+                if !edit_drawing(
+                    &mut next,
+                    &scene_id,
+                    &region_id,
+                    &background_id,
+                    expected_revision,
+                    crate::drawing::Mutation::UpdateBatch(drawings),
+                )? {
+                    self.ensure_current_revision()?;
+                    return Ok(self.snapshot());
+                }
+            }
             SceneCommand::UndoDrawing {
                 scene_id,
                 region_id,
@@ -3020,7 +3039,18 @@ fn validate_snapshot(state: &Snapshot) -> Result<()> {
         for item in &target.items {
             validate_asset(&item.asset)?;
             crate::blackboard_objects::valid_link(state, target, item)?;
-            validate_bounds(item.x, item.y, item.width, item.height, 1.0, 1.0)?;
+            if ![item.x, item.y, item.width, item.height]
+                .iter()
+                .all(|v| v.is_finite())
+                || item.x.abs() > 16.
+                || item.y.abs() > 16.
+                || item.width <= 0.
+                || item.height <= 0.
+                || item.width > 8.
+                || item.height > 8.
+            {
+                return Err(invalid("素材位置或尺寸无效"));
+            }
             crate::video_edit::validate(item)?;
             crate::video_annotations::validate_item(item)?;
         }

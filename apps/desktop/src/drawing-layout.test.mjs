@@ -210,4 +210,19 @@ const checks = [];
   mod.namespace.copySelectedTable();mod.namespace.changeSource();await tick();assert.equal(count,1);assert.equal(errors.length,0);
   checks.push('Actual Editor copy blocks duplicate clicks and its flush waits for real completion; source switch before dispatch cannot copy a successor');
 }
+
+
+{
+  const jobs=[],published=[];
+  const reader=new preview.DrawingLayoutReader(value=>{const gate=deferred();jobs.push({value,gate});return gate.promise;},value=>published.push(value));
+  reader.select(target,'same-source');await tick();jobs[0].gate.resolve(receipt());await tick();
+  const first=published.at(-1).preview;
+  const newer={...target,expectedRevision:8};reader.select(newer,'same-source');await tick();
+  assert.equal(published.at(-1).preview,first);assert.equal(published.at(-1).loading,true);
+  jobs[1].gate.resolve(receipt(newer));await tick();assert.equal(published.at(-1).preview.expectedRevision,8);
+  reader.select({...newer,expectedRevision:9},'same-source');await tick();jobs[2].gate.reject(Error('deleted at native fence'));await tick();assert.equal(published.at(-1).preview,undefined);
+  reader.select(target,'other-source');assert.equal(published.at(-1).preview,undefined);reader.dispose();
+  checks.push('Revision revalidation keeps identical immutable pixels visible; native rejection, source changes and deletion clear them without accepting old authority');
+}
+
 console.log(JSON.stringify({ passed: checks.length, checks }, null, 2));

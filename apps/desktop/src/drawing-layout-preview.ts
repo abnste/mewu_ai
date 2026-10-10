@@ -20,7 +20,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const exactKeys = (value: Record<string, unknown>, keys: string[]) => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 export function validRichReference(value: unknown): value is RichDrawingRef {
-  if (!record(value) || !exactKeys(value, ['layoutId', 'layoutSha256', 'rasterSha256', 'kind', 'width', 'height'])) return false;
+  if (!record(value) || !exactKeys(value, ['layoutId', 'layoutSha256', 'rasterSha256', 'kind', 'width', 'height', ...(Object.hasOwn(value,'parentId')?['parentId']:[])])) return false;
+  if(Object.hasOwn(value,'parentId')&&(value.kind!=='repair'||typeof value.parentId!=='string'||!uuid.test(value.parentId)))return false;
   return typeof value.layoutId === 'string' && uuid.test(value.layoutId) && typeof value.layoutSha256 === 'string' && hash.test(value.layoutSha256)
     && typeof value.rasterSha256 === 'string' && hash.test(value.rasterSha256) && ['table', 'formula', 'repair', 'extracted'].includes(String(value.kind))
     && Number.isSafeInteger(value.width) && Number.isSafeInteger(value.height) && Number(value.width) > 0 && Number(value.height) > 0
@@ -31,7 +32,7 @@ export function validLayoutTarget(value: unknown): value is DrawingLayoutTarget 
     && [value.sceneId, value.regionId, value.drawingId].every(id => typeof id === 'string' && uuid.test(id))
     && Number.isSafeInteger(value.expectedRevision) && Number(value.expectedRevision) >= 0 && validRichReference(value.reference);
 }
-const referenceKey = (value: RichDrawingRef) => [value.layoutId, value.layoutSha256, value.rasterSha256, value.kind, value.width, value.height];
+const referenceKey = (value: RichDrawingRef) => [value.layoutId, value.layoutSha256, value.rasterSha256, value.kind, value.width, value.height,value.parentId??null];
 export const sameRichReference = (left: RichDrawingRef, right: RichDrawingRef) => JSON.stringify(referenceKey(left)) === JSON.stringify(referenceKey(right));
 export function layoutRequestKey(target: DrawingLayoutTarget, sourceIdentity: string): string {
   return JSON.stringify([sourceIdentity, target.sceneId, target.regionId, target.drawingId, target.expectedRevision, referenceKey(target.reference)]);
@@ -96,15 +97,23 @@ export interface DrawingLayoutReadState { preview?: DrawingLayoutPreview; loadin
 export class DrawingLayoutReader {
   private generation = 0;
   private disposed = false;
+  private visible?: DrawingLayoutPreview;
+  private source = '';
   constructor(private read: (target: DrawingLayoutTarget, sourceIdentity: string) => Promise<DrawingLayoutPreview>, private publish: (value: DrawingLayoutReadState) => void) {}
   select(target?: DrawingLayoutTarget, sourceIdentity = '') {
     const generation = ++this.generation; if (this.disposed) return;
-    this.publish({ loading: Boolean(target) });
+    const previous = this.visible;
+    const keep = target && previous && sourceIdentity === this.source
+      && target.sceneId === previous.sceneId && target.regionId === previous.regionId
+      && target.drawingId === previous.drawingId && sameRichReference(target.reference, previous.reference);
+    if (!keep) this.visible = undefined;
+    this.source = sourceIdentity;
+    this.publish({ loading: Boolean(target), ...(keep ? { preview: previous } : {}) });
     if (!target) return;
     void Promise.resolve().then(() => this.read(cloneLayoutTarget(target), sourceIdentity)).then(preview => {
-      if (!this.disposed && generation === this.generation) this.publish({ loading: false, preview });
-    }, cause => { if (!this.disposed && generation === this.generation) this.publish({ loading: false, error: cause instanceof Error ? cause.message : String(cause) }); });
+      if (!this.disposed && generation === this.generation) { this.visible = preview; this.publish({ loading: false, preview }); }
+    }, cause => { if (!this.disposed && generation === this.generation) { this.visible = undefined; this.publish({ loading: false, error: cause instanceof Error ? cause.message : String(cause) }); } });
   }
-  imageFailed() { if (!this.disposed) { this.generation++; this.publish({ loading: false, error: '无法读取图中对象' }); } }
+  imageFailed() { if (!this.disposed) { this.generation++; this.visible = undefined; this.publish({ loading: false, error: '无法读取图中对象' }); } }
   dispose() { this.disposed = true; this.generation++; }
 }

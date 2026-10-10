@@ -16,8 +16,9 @@ test('wheel zoom preserves immutable source and aspect, anchors the cursor, and 
   assert.deepEqual(picture,before);assert.equal(next.rich,picture.rich);
   let bounded=next;
   for(let i=0;i<30;i++)bounded=images.zoomBlackboardImage(bounded,frame,anchor,-240);
-  assert.ok(bounded.points[0].x>=0&&bounded.points[0].y>=0);
-  assert.ok(bounded.points[1].x<=800&&bounded.points[1].y<=600);
+  assert.ok(bounded.points[1].x-bounded.points[0].x<=6400+1e-9);
+  assert.ok(bounded.points[1].y-bounded.points[0].y<=4800+1e-9);
+  assert.ok(bounded.points[0].x<0&&bounded.points[0].y<0);
   for(let i=0;i<50;i++)bounded=images.zoomBlackboardImage(bounded,frame,anchor,240);
   assert.ok(bounded.points[1].y-bounded.points[0].y>=24-1e-9);
   assert.equal(images.zoomBlackboardImage(picture,frame,anchor,NaN),undefined);

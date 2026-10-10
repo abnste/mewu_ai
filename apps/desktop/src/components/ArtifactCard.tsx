@@ -6,6 +6,7 @@ import type {ObjectTrashPort} from '../object-trash';
 import type {DrawingFlush,RegisterDrawingFlush} from '../drawing-flush';
 import {isBlackboardText} from '../blackboard-objects';
 import {resizeBoardObject,type ResizeCorner} from '../blackboard-text';
+import {moveImageObject,zoomImageObject} from '../image-object-geometry';
 import BlackboardText from './BlackboardText';
 import type { SpaceItem } from '../contracts';
 import { assetUrl, documentUrl, isolatedDocument, native, readArtifact } from '../bridge';
@@ -29,6 +30,7 @@ interface Props {
   onOpenBlackboard?: () => void;
   blackboard?:boolean;interactive?:boolean;hovered?:boolean;trash?:ObjectTrashPort;onRegisterFlush?:RegisterDrawingFlush;
   boardSceneId?:string;onError?:(message:string)=>void;
+  onRegisterWheel?:(wheel:(event:WheelEvent)=>void)=>()=>void;
 }
 
 export default function ArtifactCard(props: Props) {
@@ -45,8 +47,10 @@ export default function ArtifactCard(props: Props) {
   let disposed = false;
   let disposeGesture: (() => void) | undefined;
   let gestureFlight:Promise<void>|undefined;
+  let zoomTimer:ReturnType<typeof setTimeout>|undefined,zoomAsset:string|undefined;
   let textFlush:DrawingFlush|undefined;
-  const unregisterFlush=props.onRegisterFlush?.(async active=>{disposeGesture?.();if(gestureFlight)await gestureFlight;if(textFlush)await textFlush(active);if(!active())throw Error('素材编辑已切换');});
+  const unregisterFlush=props.onRegisterFlush?.(async active=>{disposeGesture?.();await flushZoom();if(gestureFlight)await gestureFlight;if(textFlush)await textFlush(active);if(!active())throw Error('素材编辑已切换');});
+  const unregisterWheel=props.onRegisterWheel?.(wheel);
   const activate = () => props.onActivate?.();
   // An isolated iframe does not bubble its pointer events into this document.
   // Its focus can still select this card without accessing the child document.
@@ -62,7 +66,8 @@ export default function ArtifactCard(props: Props) {
     shell?.removeEventListener('focusin', activate);
     gestureToken += 1;
     disposeGesture?.();
-    unregisterFlush?.();
+    clearTimeout(zoomTimer);
+    unregisterFlush?.();unregisterWheel?.();
   });
   const savedPosition = () => ({ x: props.item.x, y: props.item.y, width: props.item.width, height: props.item.height });
   const persistedPosition = createMemo(() => `${props.item.x}:${props.item.y}:${props.item.width}:${props.item.height}`);
@@ -78,10 +83,31 @@ export default function ArtifactCard(props: Props) {
     const width = Math.min(p.width * vp.width, p.height * vp.height * ratio);
     return { width, height: width / ratio };
   });
+  const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=isImage()?imageBox().width:p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-32,left+width-32))-left}px`,top:`${Math.max(4,Math.min(vp.height-32,top+4))-top}px`};};
   const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
 
+  async function flushZoom() {
+    clearTimeout(zoomTimer);zoomTimer=undefined;
+    if(gestureFlight)await gestureFlight;
+    if(!zoomAsset)return;
+    const assetId=zoomAsset;zoomAsset=undefined;
+    if(disposed||props.item.asset.id!==assetId){setMoving(false);return;}
+    const request=Promise.resolve().then(()=>props.onUpdate({...props.item,...position()}));gestureFlight=request;
+    try {await request;} catch(error){props.onError?.(error instanceof Error?error.message:String(error));throw error;}
+    finally{if(gestureFlight===request)gestureFlight=undefined;if(!disposed){setPosition(savedPosition());setMoving(false);}}
+  }
+  function wheel(event:WheelEvent) {
+    if(!isImage()||props.busy||gestureFlight||disposeGesture||disposed)return;
+    const p={...position(),width:imageBox().width/innerWidth,height:imageBox().height/innerHeight};
+    const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?innerHeight:1);
+    const next=zoomImageObject(p,{x:event.clientX/innerWidth,y:event.clientY/innerHeight},delta,innerWidth,innerHeight);
+    if(!next)return;event.preventDefault();event.stopPropagation();
+    zoomAsset=props.item.asset.id;setMoving(true);setPosition(next);clearTimeout(zoomTimer);
+    zoomTimer=setTimeout(()=>void flushZoom().catch(()=>{}),140);
+  }
+
   const gesture = (event: PointerEvent, resize = false, control = false, corner?:ResizeCorner) => {
-    if (props.busy || gestureFlight || event.button !== 0 || (!resize && !control && (event.target as HTMLElement).closest('button'))) return;
+    if (props.busy || gestureFlight || zoomAsset || event.button !== 0 || (!resize && !control && (event.target as HTMLElement).closest('button'))) return;
     event.preventDefault(); event.stopPropagation();
     disposeGesture?.();
     const token = ++gestureToken;
@@ -99,6 +125,7 @@ export default function ArtifactCard(props: Props) {
       setMoving(true);
       if(props.blackboard&&!resize)props.trash?.move({x:e.clientX,y:e.clientY});
       const dx = (e.clientX - startX) / vw, dy = (e.clientY - startY) / vh;
+      if(!resize&&(isImage()||props.blackboard)){setPosition(moveImageObject(start,dx,dy,vw,vh));return;}
       if(resize&&corner){setPosition(resizeBoardObject(start,dx,dy,corner,vw,vh));return;}
       const minWidth = videoMode ? Math.min(64 / vw, 1 - start.x) : Math.min(240 / vw, .85);
       const minHeight = videoMode ? Math.min(48 / vh, 1 - start.y) : Math.min(160 / vh, .8);
@@ -155,8 +182,8 @@ export default function ArtifactCard(props: Props) {
   return <section ref={node => { shell = node; node.addEventListener('pointerdown', activate, true); node.addEventListener('focusin', activate); }} class="artifact-card" classList={{ active: props.active, moving: moving(), 'video-artifact': props.item.asset.kind === 'video', 'image-object': isImage(), 'document-object':isDocument(), 'blackboard-object':props.blackboard,'blackboard-interactive':props.interactive,'blackboard-object-hovered':props.hovered }} tabindex={isImage() ? 0 : undefined}
     style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isImage() ? `${imageBox().width}px` : `${position().width * 100}%`, height: isImage() ? `${imageBox().height}px` : `${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
     data-video-item={isVideo() ? props.item.id : undefined} data-video-scene={isVideo() ? props.video?.sceneId : undefined}
-    aria-label={props.item.asset.name} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
-    <Show when={props.blackboard}><div class="blackboard-object-control" role="toolbar" aria-label={t('对象工具')}><button aria-label={t('移动对象')} title={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18} strokeWidth={1.7}/></button></div></Show>
+    aria-label={props.item.asset.name} onWheel={wheel} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
+    <Show when={props.blackboard}><div class="blackboard-object-control" role="toolbar" aria-label={t('对象工具')} style={controlPosition()}><button aria-label={t('移动对象')} title={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18} strokeWidth={1.7}/></button></div></Show>
     <Show when={props.blackboard&&isBlackboardText(props.item.asset)}><For each={['nw','ne','sw','se'] as ResizeCorner[]}>{corner=><div class={`blackboard-text-corner ${corner}`} aria-hidden="true" onPointerDown={event=>gesture(event,true,true,corner)} />}</For></Show>
     <Show when={!isImage()&&!props.blackboard}>
     <header class="artifact-header" onPointerDown={e => gesture(e)}>

@@ -281,14 +281,58 @@ pub(crate) fn drag_threshold(scale: f64) -> (f64, f64) {
         (4. / scale, 4. / scale)
     }
 }
-pub(crate) fn start_drag(window: &WebviewWindow) -> Result<(), String> {
+fn dragged_rect(rect: Rect, dx: i64, dy: i64) -> Result<Rect, String> {
+    Ok(Rect {
+        x: i32::try_from(i64::from(rect.x) + dx).map_err(|_| "贴图位置超出范围")?,
+        y: i32::try_from(i64::from(rect.y) + dy).map_err(|_| "贴图位置超出范围")?,
+        ..rect
+    })
+}
+pub(crate) async fn start_drag(window: &WebviewWindow) -> Result<(), String> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+        use windows_sys::Win32::{Foundation::POINT, UI::WindowsAndMessaging::GetCursorPos};
+        static DRAG: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+        let _slot = DRAG.try_acquire().map_err(|_| "贴图正在移动")?;
         if unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON)) } >= 0 {
             return Ok(());
         }
+        let original = current_rect(window)?;
+        let mut start = POINT { x: 0, y: 0 };
+        if unsafe { GetCursorPos(&mut start) } == 0 {
+            return Err("无法读取指针位置".into());
+        }
+        let app = window.app_handle();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+        let mut last = original;
+        loop {
+            app.state::<Host>().exit.ensure_running()?;
+            let mut point = POINT { x: 0, y: 0 };
+            if unsafe { GetCursorPos(&mut point) } == 0 {
+                return Err("无法读取指针位置".into());
+            }
+            let next = dragged_rect(
+                original,
+                i64::from(point.x) - i64::from(start.x),
+                i64::from(point.y) - i64::from(start.y),
+            )?;
+            if next != last {
+                apply_rect(window, next)?;
+                last = next;
+            }
+            if unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON)) } >= 0 {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("贴图移动已结束".into());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(8)).await;
+        }
+        pin_host::objects::changed(app);
+        return Ok(());
     }
+    #[cfg(not(windows))]
     window.start_dragging().map_err(|_| "无法拖动贴图".into())
 }
 pub(crate) fn current_rect(window: &WebviewWindow) -> Result<Rect, String> {
@@ -692,6 +736,32 @@ fn restack(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_pin_drag_crosses_top_and_negative_monitor_origins_without_clamping() {
+        let rect = Rect {
+            x: 100,
+            y: 20,
+            width: 300,
+            height: 200,
+        };
+        assert_eq!(
+            dragged_rect(rect, -400, -100).unwrap(),
+            Rect {
+                x: -300,
+                y: -80,
+                ..rect
+            }
+        );
+        assert!(dragged_rect(
+            Rect {
+                x: i32::MAX,
+                ..rect
+            },
+            1,
+            0
+        )
+        .is_err());
+    }
     fn projected(
         background_size: (u32, u32),
         region: (f64, f64, f64, f64),

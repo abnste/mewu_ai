@@ -793,6 +793,13 @@ pub enum SceneCommand {
         expected_revision: u64,
         drawing: Drawing,
     },
+    UpdateDrawings {
+        scene_id: String,
+        region_id: String,
+        background_id: String,
+        expected_revision: u64,
+        drawings: Vec<Drawing>,
+    },
     RemoveDrawing {
         scene_id: String,
         region_id: String,
