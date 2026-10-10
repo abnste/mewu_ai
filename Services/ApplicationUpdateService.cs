@@ -11,7 +11,9 @@ using System.Text.Json.Serialization;
 
 namespace mewu_ai_Assistant.Services;
 
-internal sealed record ApplicationUpdatePackage(Version Version,string TagName,string InstallerPath,string Sha256);
+internal enum ApplicationInstallerKind { InnoSetup, RemakeNsis }
+
+internal sealed record ApplicationUpdatePackage(Version Version,string TagName,string InstallerPath,string Sha256,ApplicationInstallerKind InstallerKind);
 
 internal sealed record ApplicationUpdateResult(Version CurrentVersion,Version LatestVersion,string TagName,ApplicationUpdatePackage? Package)
 {
@@ -66,7 +68,8 @@ internal sealed class ApplicationUpdateService
             throw new InvalidDataException("已发现新版本，但 GitHub 暂时限制更新信息请求，无法取得可信安装包校验值。请稍后重试，或从项目官方 Releases 页面下载；未下载或安装任何未经校验的文件。");
 
         var versionText=release.TagName[1..];
-        var installerName=$"MewuAI-Setup-{versionText}-win-x64.exe";
+        var installerKind=GetInstallerKind(latestVersion);
+        var installerName=GetInstallerName(versionText,installerKind);
         const string checksumsName="SHA256SUMS.txt";
         var installer=RequireSingleAsset(release.Assets,installerName,MaximumInstallerBytes);
         ValidateReleaseDownloadUri(installer.DownloadUrl,release.TagName,installerName);
@@ -105,13 +108,13 @@ internal sealed class ApplicationUpdateService
             progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在校验已下载的安装包…","Verifying the downloaded installer…")));
             var existingHash=await ComputeSha256Async(destination,cancellationToken).ConfigureAwait(false);
             if(string.Equals(existingHash,expectedHash,StringComparison.OrdinalIgnoreCase))
-                return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,new ApplicationUpdatePackage(latestVersion,release.TagName,destination,expectedHash));
+                return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,new ApplicationUpdatePackage(latestVersion,release.TagName,destination,expectedHash,installerKind));
             TryDelete(destination);
         }
 
         progress?.Report(new ApplicationUpdateProgress(LocalizationService.T("正在下载更新…","Downloading update…"),0,installer.Size));
         await DownloadInstallerAsync(installer,destination,expectedHash,progress,cancellationToken).ConfigureAwait(false);
-        return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,new ApplicationUpdatePackage(latestVersion,release.TagName,destination,expectedHash));
+        return new ApplicationUpdateResult(currentVersion,latestVersion,release.TagName,new ApplicationUpdatePackage(latestVersion,release.TagName,destination,expectedHash,installerKind));
     }
 
     internal async Task LaunchInstallerAsync(ApplicationUpdatePackage package,CancellationToken cancellationToken)
@@ -121,7 +124,10 @@ internal sealed class ApplicationUpdateService
         var rootWithSeparator=Path.TrimEndingDirectorySeparator(_updatesDirectory)+Path.DirectorySeparatorChar;
         if(!installer.StartsWith(rootWithSeparator,StringComparison.OrdinalIgnoreCase)||!File.Exists(installer))
             throw new InvalidOperationException("更新安装包路径无效，请重新检查更新");
-        var expectedName=$"MewuAI-Setup-{package.TagName[1..]}-win-x64.exe";
+        var expectedKind=GetInstallerKind(ParseReleaseVersion(package.TagName));
+        if(package.InstallerKind!=expectedKind||package.Version!=ParseReleaseVersion(package.TagName))
+            throw new InvalidOperationException("更新安装包类型与版本不匹配，请重新检查更新");
+        var expectedName=GetInstallerName(package.TagName[1..],expectedKind);
         if(!string.Equals(Path.GetFileName(installer),expectedName,StringComparison.Ordinal))
             throw new InvalidOperationException("更新安装包名称无效，请重新检查更新");
         var actualHash=await ComputeSha256Async(installer,cancellationToken).ConfigureAwait(false);
@@ -131,17 +137,41 @@ internal sealed class ApplicationUpdateService
             throw new InvalidDataException("更新安装包校验失败，已删除损坏文件，请重试");
         }
 
+        var startInfo=CreateInstallerStartInfo(installer,expectedKind);
+        cancellationToken.ThrowIfCancellationRequested();
+        if(Process.Start(startInfo) is null)throw new InvalidOperationException("无法启动更新安装程序");
+    }
+
+    internal static ProcessStartInfo CreateInstallerStartInfo(string installer,ApplicationInstallerKind kind)
+    {
         var startInfo=new ProcessStartInfo(installer)
         {
             UseShellExecute=false,
             WorkingDirectory=Path.GetDirectoryName(installer),
             CreateNoWindow=true
         };
-        foreach(var argument in new[]{"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/NOCANCEL","/SP-"})
+        // The remake uses Tauri's NSIS bundle, whose silent flag is /S.
+        // Inno Setup's flags must never be passed to that installer.
+        var arguments=kind switch
+        {
+            ApplicationInstallerKind.InnoSetup=>new[]{"/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/NOCANCEL","/SP-"},
+            ApplicationInstallerKind.RemakeNsis=>new[]{"/S"},
+            _=>throw new InvalidOperationException("不支持的更新安装包类型")
+        };
+        foreach(var argument in arguments)
             startInfo.ArgumentList.Add(argument);
-        cancellationToken.ThrowIfCancellationRequested();
-        if(Process.Start(startInfo) is null)throw new InvalidOperationException("无法启动更新安装程序");
+        return startInfo;
     }
+
+    private static ApplicationInstallerKind GetInstallerKind(Version version)=>
+        version.Major>=1?ApplicationInstallerKind.RemakeNsis:ApplicationInstallerKind.InnoSetup;
+
+    private static string GetInstallerName(string versionText,ApplicationInstallerKind kind)=>kind switch
+    {
+        ApplicationInstallerKind.InnoSetup=>$"MewuAI-Setup-{versionText}-win-x64.exe",
+        ApplicationInstallerKind.RemakeNsis=>$"MewuAI-Remake-Setup-{versionText}-win-x64.exe",
+        _=>throw new InvalidOperationException("不支持的更新安装包类型")
+    };
 
     private async Task<GitHubRelease> GetLatestReleaseAsync(CancellationToken cancellationToken)
     {

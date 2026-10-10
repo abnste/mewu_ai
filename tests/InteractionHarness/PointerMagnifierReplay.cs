@@ -205,6 +205,25 @@ internal static class PointerMagnifierReplay
                 item.GetType().GetField("Bounds")!.SetValue(item,new Rect(40/scale,30/scale,360/scale,220/scale));Invoke("UpdateSelection",item);
                 Check(sizeText.Text=="360 × 220","changing selection dimensions immediately refreshes the footer at "+dpi+" DPI");
             }
+            // Exercise the same pointer route used for live selection, including
+            // the dimensions row and magnifier, without creating a native window.
+            Set("_start",new Point(20,15));Set("_selecting",true);
+            try
+            {
+                var watch=System.Diagnostics.Stopwatch.StartNew();
+                for(var index=0;index<120;index++)
+                {
+                    Invoke("UpdatePointerInteraction",new Point(80+index,60+index*.6));
+                    root.UpdateLayout();
+                }
+                watch.Stop();
+                var selected=(Rect)item.GetType().GetField("Bounds")!.GetValue(item)!;
+                var expected=(Int32Rect)Invoke("ToPixelRect",selected)!;
+                Check(inspector.Visibility==Visibility.Visible&&sizeText.Text==$"{expected.Width} × {expected.Height}",
+                    "live selection pointer route leaves the magnifier and physical size in sync");
+                layouts.Add(new{scenario="selection-drag",steps=120,elapsedMilliseconds=watch.Elapsed.TotalMilliseconds});
+            }
+            finally{Set("_selecting",false);}
             Invoke("RemoveActiveSelection",false);Invoke("UpdatePointerInspector",centerPoint);root.UpdateLayout();
             Check(sizeRow.Visibility==Visibility.Collapsed&&Math.Abs(inspector.ActualHeight-126)<=1,"removing the selection also removes the size row and its spacing");
             foreach (var field in new[] { "_recordingMode", "_recordingCountdownActive", "_drawingMode", "_longCaptureMode", "_promptDragging", "_promptDockAnimating" })

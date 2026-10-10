@@ -888,7 +888,7 @@ public sealed partial class SettingsWindow : Window
         {
             var current=typeof(SettingsWindow).Assembly.GetName().Version??new Version(0,1,0);
             var result=await service.CheckAndDownloadAsync(current,progress,operation.Token,
-                async (_,tag,token)=>await Dispatcher.InvokeAsync(()=>
+                async (availableVersion,tag,token)=>await Dispatcher.InvokeAsync(()=>
                 {
                     if(token.IsCancellationRequested||!ReferenceEquals(_updateCheck,operation)||!IsVisible)return false;
                     if(!prompt)return false;
@@ -896,7 +896,9 @@ public sealed partial class SettingsWindow : Window
                     return MewuDialogWindow.ShowChoice(
                         this,
                         LocalizationService.T("发现新版本","Update available"),
-                        LocalizationService.T($"当前版本 v{current.ToString(3)}，发现新版本 {tag}。是否下载更新？下载完成后可选择安装并重启。",$"You're using v{current.ToString(3)}. MewuAI {tag} is available. Download the update? You can choose to install and restart after the download."),
+                        availableVersion.Major>=1
+                            ?LocalizationService.T($"发现重制版 {tag}。是否下载？下载完成并通过校验后，可选择直接安装重制版。",$"The remake {tag} is available. Download it? After verification, you can choose to install it directly.")
+                            :LocalizationService.T($"当前版本 v{current.ToString(3)}，发现新版本 {tag}。是否下载更新？下载完成后可选择安装并重启。",$"You're using v{current.ToString(3)}. MewuAI {tag} is available. Download the update? You can choose to install and restart after the download."),
                         LocalizationService.T("下载更新","Download update"),
                         LocalizationService.T("稍后","Later"))==MewuDialogResult.Primary;
                 },System.Windows.Threading.DispatcherPriority.Normal,token).Task);
@@ -914,11 +916,14 @@ public sealed partial class SettingsWindow : Window
             }
 
             status.Text=LocalizationService.T($"{result.TagName} 已下载并通过校验",$"{result.TagName} downloaded and verified");
+            var isRemake=result.Package!.InstallerKind==ApplicationInstallerKind.RemakeNsis;
             var choice=MewuDialogWindow.ShowChoice(
                 this,
                 LocalizationService.T("更新已准备好","Update ready"),
-                LocalizationService.T($"喵呜AI {result.TagName} 已下载并通过 SHA-256 校验。立即安装并自动重启应用吗？",$"MewuAI {result.TagName} has been downloaded and verified with SHA-256. Install it now and restart MewuAI?"),
-                LocalizationService.T("安装并重启","Install and restart"),
+                isRemake
+                    ? LocalizationService.T($"重制版 {result.TagName} 已下载并通过 SHA-256 校验。立即安装吗？当前版本将退出，安装完成后可启动重制版。",$"The remake {result.TagName} has been downloaded and verified with SHA-256. Install it now? This version will close; you can launch the remake when installation finishes.")
+                    : LocalizationService.T($"喵呜AI {result.TagName} 已下载并通过 SHA-256 校验。立即安装并自动重启应用吗？",$"MewuAI {result.TagName} has been downloaded and verified with SHA-256. Install it now and restart MewuAI?"),
+                isRemake?LocalizationService.T("安装重制版","Install remake"):LocalizationService.T("安装并重启","Install and restart"),
                 LocalizationService.T("稍后","Later"));
             if(choice!=MewuDialogResult.Primary||operation.IsCancellationRequested||!ReferenceEquals(_updateCheck,operation)||!IsVisible)return;
             status.Text=LocalizationService.T("正在启动安装程序…","Starting the installer…");

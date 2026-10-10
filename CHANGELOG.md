@@ -4,6 +4,9 @@
 
 ## 未发布 / Unreleased
 
+- 修复 0.7.3 截图拖选时一次鼠标移动重复刷新放大镜的问题，减少布局开销并保持尺寸读数同步。 / Fix duplicate magnifier refreshes on each capture-drag pointer move in 0.7.3, reducing layout work while keeping dimensions in sync.
+- 更新器预留 1.0 及后续重制版 NSIS 安装包路径，继续核对 GitHub 资产地址与 SHA-256，按安装器类型使用正确的静默参数；正式重制版发布时需提供约定名称的安装包。 / Prepare the updater for the 1.0+ remake's NSIS installer, retaining GitHub asset URL and SHA-256 checks and using installer-specific silent arguments. The future release must provide the agreed installer asset name.
+
 ## 0.7.3 — 二维码提示、记忆填充与尺寸栏 / Barcode actions, memory fill and capture dimensions
 
 完整双语说明 / Full release notes: [0.7.3](./docs/release-notes-v0.7.3.md)

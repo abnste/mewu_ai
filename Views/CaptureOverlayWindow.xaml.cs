@@ -1319,11 +1319,13 @@ public partial class CaptureOverlayWindow : Window
         _lastToolbarPointer=p;
         if(_recordingMode||_recordingCountdownActive||_drawingMode||_longCaptureMode){PointerInspector.Visibility=Visibility.Collapsed;return;}
         if(PointerOverVideoTrim(p)){PointerInspector.Visibility=Visibility.Collapsed;ResetSnapPreview();return;}
-        UpdatePointerInspector(p);
-        if(_selecting&&Active is { } created){if(_pendingAutoSelection is not null&&Math.Abs(p.X-_start.X)<SystemParameters.MinimumHorizontalDragDistance&&Math.Abs(p.Y-_start.Y)<SystemParameters.MinimumVerticalDragDistance)return;_pendingAutoSelection=null;_pendingSnapshotTarget=null;created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
+        // UpdateSelection refreshes the inspector after changing the size readout.
+        // Sampling it here as well did two layout/monitor passes for every drag event.
+        if(_selecting&&Active is { } created){if(_pendingAutoSelection is not null&&Math.Abs(p.X-_start.X)<SystemParameters.MinimumHorizontalDragDistance&&Math.Abs(p.Y-_start.Y)<SystemParameters.MinimumVerticalDragDistance){UpdatePointerInspector(p);return;}_pendingAutoSelection=null;_pendingSnapshotTarget=null;created.Bounds=Normalize(new Rect(_start,p));UpdateSelection(created);}
         else if(_moving&&Active is { } moved){var d=p-_moveStart;var next=ClampSelection(new Rect(_moveOrigin.X+d.X,_moveOrigin.Y+d.Y,_moveOrigin.Width,_moveOrigin.Height));SetSelectionBoundsPreservingManualContent(moved,next);UpdateSelection(moved);}
         else
         {
+            UpdatePointerInspector(p);
             if(IsInteractingWithPrompt(p)||CanRevealPromptAtScreenEdge(p))
             {
                 HideToolbarImmediately();PointerInspector.Visibility=Visibility.Collapsed;
@@ -1668,7 +1670,7 @@ public partial class CaptureOverlayWindow : Window
         }
         UpdateVideoTrimBar();
         var active=ReferenceEquals(item,Active);var referenced=_references.Contains(item);item.Outline.BorderBrush=item.IsImplicit?Brushes.Transparent:active?Cyan:referenced?AnnotationPalette.Referenced:AnnotationPalette.Inactive;item.Outline.BorderThickness=new Thickness(active?1.8:1.2);item.Outline.Effect=active&&!item.IsImplicit?AnnotationPalette.SelectionGlow:null;item.Badge.Background=AnnotationPalette.Accent;item.Badge.Visibility=item.IsImplicit?Visibility.Collapsed:Visibility.Visible;
-        if(active&&!item.IsImplicit){SizeTextLabel.Text=item.VideoPath is null?$"{px.Width} × {px.Height}":L($"视频 · {GetVideoOutputDuration(item):mm\\:ss}",$"Video · {GetVideoOutputDuration(item):mm\\:ss}");SizeText.Visibility=Visibility.Visible;PositionHandles(r);if(PointerInspector.Visibility==Visibility.Visible)UpdatePointerInspector(_lastToolbarPointer);}else if(active&&item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
+        if(active&&!item.IsImplicit){var sizeLabel=item.VideoPath is null?$"{px.Width} × {px.Height}":L($"视频 · {GetVideoOutputDuration(item):mm\\:ss}",$"Video · {GetVideoOutputDuration(item):mm\\:ss}");if(SizeTextLabel.Text!=sizeLabel)SizeTextLabel.Text=sizeLabel;if(SizeText.Visibility!=Visibility.Visible)SizeText.Visibility=Visibility.Visible;PositionHandles(r);if(PointerInspector.Visibility==Visibility.Visible||_selecting||_moving)UpdatePointerInspector(_lastToolbarPointer);}else if(active&&item.IsImplicit){HideHandles();SizeText.Visibility=Visibility.Collapsed;}
     }
 
     private void Select(int index){if(_activeIndex!=index)_videoTrimBar.CancelInteraction();_activeIndex=index;for(var i=0;i<_selections.Count;i++)UpdateSelection(_selections[i]);if(Active is { } item)UpdateScreenEntityBar(item);else HideScreenEntityBar();}

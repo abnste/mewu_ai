@@ -58,14 +58,18 @@ public partial class CaptureOverlayWindow
         // when its bitmap and addressed local pixel are reused.
         PointerCoordinateText.Text = string.Create(CultureInfo.InvariantCulture, $"X {screenX} Y {screenY}");
         PointerInspector.Visibility = Visibility.Visible;
-        if (!PointerInspector.IsMeasureValid) PointerInspector.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        // XAML fixes the card width and each row's height (18 + 90 + 18,
+        // plus 18 when dimensions are shown). Text changes during dragging
+        // invalidate Measure on every pixel; forcing it synchronously here
+        // stalls the input path even though the outer size cannot change.
+        var inspectorSize = new Size(PointerInspector.Width, SizeText.Visibility == Visibility.Visible ? 144 : 126);
         var monitor = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point(screenX, screenY)).Bounds;
         var bounds = ScreenCoordinateService.ToLocalDipRect(new ScreenRect(monitor.X, monitor.Y, monitor.Width, monitor.Height),
             _frame.OriginX, _frame.OriginY, Root.ActualWidth, Root.ActualHeight, _frame.Image.PixelWidth, _frame.Image.PixelHeight);
         var surface = new Rect(0, 0, Root.ActualWidth, Root.ActualHeight);
         bounds.Intersect(surface);
         if (bounds.IsEmpty || !bounds.Contains(point)) bounds = surface;
-        var location = PlacePointerInspector(point, PointerInspector.DesiredSize, bounds);
+        var location = PlacePointerInspector(point, inspectorSize, bounds);
         Canvas.SetLeft(PointerInspector, location.X); Canvas.SetTop(PointerInspector, location.Y);
     }
 

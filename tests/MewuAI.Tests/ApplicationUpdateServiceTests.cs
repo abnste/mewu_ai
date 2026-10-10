@@ -187,9 +187,54 @@ public sealed class ApplicationUpdateServiceTests
             Assert.True(result.IsUpdateAvailable);
             Assert.Equal(new Version(0,1,1),result.LatestVersion);
             Assert.Equal(hash,result.Package!.Sha256);
+            Assert.Equal(ApplicationInstallerKind.InnoSetup,result.Package.InstallerKind);
+            Assert.Equal(["/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/CLOSEAPPLICATIONS","/NOCANCEL","/SP-"],
+                ApplicationUpdateService.CreateInstallerStartInfo(result.Package.InstallerPath,result.Package.InstallerKind).ArgumentList);
             Assert.Equal(installer,await File.ReadAllBytesAsync(result.Package.InstallerPath,TestContext.Current.CancellationToken));
             Assert.Equal(3,requested.Count);
             Assert.Empty(responses);
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
+    public async Task RemakeReleaseDownloadsVerifiedNsisInstallerAndUsesItsOwnArguments()
+    {
+        var root=TestDirectory();
+        try
+        {
+            const string fileName="MewuAI-Remake-Setup-1.0.0-win-x64.exe";
+            var bytes=Encoding.UTF8.GetBytes("remake NSIS installer");
+            var hash=Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+            var assets=new[]{new
+            {
+                name=fileName,size=bytes.Length,
+                browser_download_url=$"https://github.com/abnste/mewu_ai/releases/download/v1.0.0/{fileName}",
+                digest="sha256:"+hash
+            }};
+            var release=JsonSerializer.Serialize(new{tag_name="v1.0.0",draft=false,prerelease=false,assets});
+            var responses=new Queue<HttpResponseMessage>([JsonResponse(release),BytesResponse(bytes)]);
+            var service=new ApplicationUpdateService((_,_,_)=>Task.FromResult(responses.Dequeue()),root);
+            var result=await service.CheckAndDownloadAsync(new Version(0,7,3),null,TestContext.Current.CancellationToken);
+
+            Assert.Equal(ApplicationInstallerKind.RemakeNsis,result.Package!.InstallerKind);
+            Assert.Equal(fileName,Path.GetFileName(result.Package.InstallerPath));
+            Assert.Equal(bytes,await File.ReadAllBytesAsync(result.Package.InstallerPath,TestContext.Current.CancellationToken));
+            Assert.Equal(["/S"],ApplicationUpdateService.CreateInstallerStartInfo(result.Package.InstallerPath,result.Package.InstallerKind).ArgumentList);
+            Assert.Empty(responses);
+        }
+        finally{Directory.Delete(root,true);}
+    }
+
+    [Fact]
+    public async Task RemakeReleaseDoesNotInstallLegacyNamedAsset()
+    {
+        var root=TestDirectory();
+        try
+        {
+            var service=new ApplicationUpdateService((_,_,_)=>Task.FromResult(JsonResponse(ReleaseJson("v1.0.0",20))),root);
+            await Assert.ThrowsAsync<InvalidDataException>(()=>service.CheckAndDownloadAsync(new Version(0,7,3),null,TestContext.Current.CancellationToken));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(root));
         }
         finally{Directory.Delete(root,true);}
     }
