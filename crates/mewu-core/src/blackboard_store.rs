@@ -55,6 +55,23 @@ fn board_item(id: String, board_id: &str, asset: Asset, offset: usize) -> SpaceI
 }
 
 impl Store {
+    pub fn update_blackboard_text(&mut self, scene_id: &str, item_id: &str, expected_asset_id: &str, replacement: Asset) -> Result<Snapshot> {
+        self.journal_transaction(|_, state| {
+            editable(state, scene_id)?;
+            let target = scene_mut(state, scene_id)?;
+            if target.blackboard_link.is_none() { return Err(invalid("此会话不是黑板")); }
+            let item = target.items.iter_mut().find(|i| i.id == item_id).ok_or_else(|| not_found("文本对象", item_id))?;
+            if item.asset.id != expected_asset_id || !crate::blackboard_objects::is_text(&item.asset)
+                || !crate::blackboard_objects::is_text(&replacement) || replacement.id == expected_asset_id || replacement.name != item.asset.name {
+                return Err(invalid("文本对象已变化，请重新读取"));
+            }
+            validate_asset(&replacement)?;
+            item.asset = replacement;
+            touch(target);
+            Ok(())
+        })?;
+        Ok(self.snapshot())
+    }
     /// The parent remains intact. Its image card and the editable backing scene
     /// are created together, so interrupted editing can always be reopened.
     pub fn create_blackboard_document(
@@ -130,8 +147,9 @@ impl Store {
             kind: ReferenceKind::Region,
             id: board.regions[0].id.clone(),
         }];
-        for (original, carried) in parent.items.iter().zip(&board.items) {
-            if parent.refs.iter().any(|r| r.kind == ReferenceKind::Item && r.id == original.id) {
+        for carried in &board.items {
+            let source = crate::blackboard_objects::source(carried)?.ok_or_else(|| invalid("黑板素材来源缺失"))?;
+            if parent.refs.iter().any(|r| r.kind == ReferenceKind::Item && r.id == source.item_id) {
                 board.refs.push(Reference {kind:ReferenceKind::Item,id:carried.id.clone()});
             }
         }

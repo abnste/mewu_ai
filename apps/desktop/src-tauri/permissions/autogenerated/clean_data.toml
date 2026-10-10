@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clean-data"
+description = "Enables the clean_data command without any pre-configured scope."
+commands.allow = ["clean_data"]
+
+[[permission]]
+identifier = "deny-clean-data"
+description = "Denies the clean_data command without any pre-configured scope."
+commands.deny = ["clean_data"]

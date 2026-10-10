@@ -26,6 +26,8 @@ mod visual_annotations_store;
 mod raster_edit_store;
 #[path = "blackboard_store.rs"]
 mod blackboard_store;
+#[path = "history_storage.rs"]
+pub(crate) mod history_storage;
 
 #[derive(Debug, Error)]
 pub enum CoreError {

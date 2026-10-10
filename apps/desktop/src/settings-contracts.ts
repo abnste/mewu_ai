@@ -42,6 +42,28 @@ export interface DataDirectoryState {
   canChange: boolean;
 }
 export interface DataDirectoryProposal { proposalId: string; path: string; generation: number }
+export type DataCategory = 'files' | 'screenshots' | 'conversations';
+export interface DataBucket { category: DataCategory; count: number; bytes: number; cleanableCount: number; cleanableBytes: number; token: string }
+export interface DataUsage { files: DataBucket; screenshots: DataBucket; conversations: DataBucket; databaseBytes: number; canClean: boolean }
+export interface DataCleanupReceipt { removedCount: number; removedBytes: number; failedCount: number; compacted: boolean; usage: DataUsage }
+const nonnegative = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+export function validDataCategory(value: unknown): value is DataCategory { return ['files', 'screenshots', 'conversations'].includes(value as string); }
+export function validDataBucket(value: unknown, category: DataCategory): value is DataBucket {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as DataBucket;
+  return v.category === category && [v.count, v.bytes, v.cleanableCount, v.cleanableBytes].every(nonnegative)
+    && v.cleanableCount <= v.count && v.cleanableBytes <= v.bytes && typeof v.token === 'string' && /^[0-9a-f]{64}$/.test(v.token);
+}
+export function validDataUsage(value: unknown): value is DataUsage {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as DataUsage;
+  return validDataBucket(v.files, 'files') && validDataBucket(v.screenshots, 'screenshots') && validDataBucket(v.conversations, 'conversations') && nonnegative(v.databaseBytes) && typeof v.canClean === 'boolean';
+}
+export function validDataCleanupReceipt(value: unknown): value is DataCleanupReceipt {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as DataCleanupReceipt;
+  return [v.removedCount, v.removedBytes, v.failedCount].every(nonnegative) && typeof v.compacted === 'boolean' && validDataUsage(v.usage);
+}
 const dataPath = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 32768 && !value.includes('\0');
 export function validDataDirectoryState(value: unknown): value is DataDirectoryState {
   if (!value || typeof value !== 'object') return false;

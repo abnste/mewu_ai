@@ -64,6 +64,8 @@
     "allow-set-system-preferences",
     "allow-app-update-status",
     "allow-check-app-update",
-    "allow-install-app-update"
+    "allow-install-app-update",
+    "allow-get-data-usage",
+    "allow-clean-data"
   ]
 }

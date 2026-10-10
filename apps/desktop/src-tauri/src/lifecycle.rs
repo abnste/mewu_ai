@@ -126,6 +126,7 @@ impl ExitState {
                     | "apply_scene_command"
                     | "apply_plugin_drawing"
                     | "apply_drawing_document"
+                    | "save_blackboard_text"
                     | "get_drawing_layout_preview"
                     | "get_snapshot"
                     | "memory_page"

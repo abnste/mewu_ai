@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
-import type {Scene,SpaceItem} from './contracts';
+import type {Asset,Scene,SpaceItem} from './contracts';
+export const isBlackboardText = (asset:Asset) => asset.kind === 'text' && /\.txt$/i.test(asset.name);
+export const isBlackboardObject = (asset:Asset) => ['image','video','html','svg'].includes(asset.kind) || isBlackboardText(asset);
 /** Browser preview follows the host's independent object copies; assets remain immutable. */
 export function carryBlackboardObjects(scene:Scene,width:number,height:number,id:()=>string):SpaceItem[] {
-  return scene.items.map(original=>{
+  return scene.items.filter(original=>isBlackboardObject(original.asset)).map(original=>{
     const item=structuredClone(original);item.id=id();item.state??={};
     const source=scene.background;
     if(source&&item.state.coordinateSpace==='background'&&item.state.backgroundId===source.id){

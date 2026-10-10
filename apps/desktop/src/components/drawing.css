@@ -20,6 +20,13 @@
 .blackboard-object:hover .blackboard-object-control,.blackboard-object.moving .blackboard-object-control,.blackboard-object:focus-within .blackboard-object-control,.blackboard-object-hovered .blackboard-object-control{opacity:1}
 .blackboard-object-control button{width:28px;height:28px;display:grid;place-items:center;border:0;padding:0;border-radius:0;background:transparent;color:#fff;box-shadow:none;cursor:grab;touch-action:none}
 .blackboard-object-control button:active{cursor:grabbing}
+.blackboard-text-editor{display:block;box-sizing:border-box;width:100%;height:100%;margin:0;padding:12px 36px 12px 12px;resize:none;border:0;border-radius:0;outline:none;background:#fff;color:#222;font:14px/1.6 Consolas,"Microsoft YaHei",monospace;user-select:text;overflow:auto}
+.blackboard-text-editor:disabled{opacity:1;color:#555}
+.blackboard-text-corner{position:absolute;z-index:4;width:12px;height:12px;pointer-events:auto;touch-action:none;background:transparent}
+.blackboard-text-corner.nw{top:-6px;left:-6px;cursor:nwse-resize}
+.blackboard-text-corner.ne{top:-6px;right:-6px;cursor:nesw-resize}
+.blackboard-text-corner.sw{bottom:-6px;left:-6px;cursor:nesw-resize}
+.blackboard-text-corner.se{bottom:-6px;right:-6px;cursor:nwse-resize}
 .drawing-blackboard .drawing-toolbar>*{flex-shrink:0}
 .drawing-blackboard .drawing-divider{margin:0 5px}
 .drawing-blackboard .drawing-done{position:sticky;right:0;background:var(--surface,#fafcff);box-shadow:-5px 0 8px var(--surface,#fafcff)}

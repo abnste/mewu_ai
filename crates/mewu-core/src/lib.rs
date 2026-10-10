@@ -32,6 +32,7 @@ pub use rich_annotations::{
     RICH_DRAWING_STROKE_WIDTH,
 };
 pub use store::{CoreError, ExportView, Store};
+pub use store::history_storage::HistoryCleanupPlan;
 pub use translation::validate_translation_document;
 pub use video_annotation_algorithm::{
     active_at as video_annotations_at, project_interval as project_video_annotation_interval,

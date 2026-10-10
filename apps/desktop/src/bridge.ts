@@ -368,7 +368,7 @@ export async function createBlackboard(sceneId:string):Promise<Snapshot> {
   const itemId=uid();target.blackboardLink={parentSceneId:original.id,itemId};
   const {carryBlackboardObjects}=await import('./blackboard-objects');
   target.items=carryBlackboardObjects(original,canvas.width,canvas.height,uid);
-  const itemRefs=original.refs.filter(ref=>ref.kind==='item').flatMap(ref=>{const index=original.items.findIndex(item=>item.id===ref.id);return index<0?[]:[{kind:'item' as const,id:target.items[index].id}];});
+  const itemRefs=original.refs.filter(ref=>ref.kind==='item').flatMap(ref=>{const carried=target.items.find(item=>(item.state?.__mewuBoardSource as {itemId?:string}|undefined)?.itemId===ref.id);return carried?[{kind:'item' as const,id:carried.id}]:[];});
   original.items.push({id:itemId,asset:structuredClone(asset),x:.10+(original.items.length%4)*.035,y:.12+(original.items.length%4)*.035,width:.48,height:.48,state:{blackboardSceneId:target.id}});
   for(const scene of preview.scenes)scene.frozen=true;
   preview.scenes.push(target);preview.activeSceneId=target.id;
@@ -510,6 +510,20 @@ export async function readArtifact(assetId: string): Promise<string> {
   const text = artifactText.get(assetId);
   if (text === undefined) throw new Error('无法读取文件');
   return text;
+}
+export async function saveBlackboardText(sceneId:string,itemId:string,expectedAssetId:string,text:string):Promise<Asset> {
+  if(new TextEncoder().encode(text).length>2*1024*1024||text.includes('\0'))throw Error('文本超出限制或包含无效字符');
+  let snapshot:Snapshot;
+  if(native)snapshot=await invokeSnapshot('save_blackboard_text',{sceneId,itemId,expectedAssetId,text});
+  else {
+    const scene=findScene(sceneId),item=scene.items.find(i=>i.id===itemId);
+    if(preview.activeSceneId!==sceneId||scene.closed||scene.frozen||scene.run?.status==='running'||!scene.blackboardLink||!item||item.asset.id!==expectedAssetId||item.asset.kind!=='text'||!/\.txt$/i.test(item.asset.name))throw Error('文本对象已变化，请重新读取');
+    const asset:Asset={...item.asset,id:uid(),path:URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'}))};
+    artifactText.set(asset.id,text);item.asset=asset;snapshot=publish();
+  }
+  const asset=snapshot.scenes.find(s=>s.id===sceneId)?.items.find(i=>i.id===itemId)?.asset;
+  if(!asset||asset.kind!=='text'||asset.id===expectedAssetId)throw Error('文本保存结果无效');
+  return asset;
 }
 
 export async function getProviderPresets(): Promise<ProviderPreset[]> {

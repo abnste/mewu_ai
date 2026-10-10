@@ -95,6 +95,9 @@ impl StorageRuntime {
     pub fn picker_idle(&self) -> bool {
         !self.inner.choosing.load(Ordering::Acquire)
     }
+    pub(crate) fn maintenance(&self) -> Result<PickerPermit, String> {
+        PickerPermit::begin(&self.inner)
+    }
     fn view(&self, can_change: bool) -> DataDirectoryState {
         DataDirectoryState {
             path: self.root.to_string_lossy().into_owned(),
@@ -111,7 +114,7 @@ impl StorageRuntime {
         }
     }
 }
-struct PickerPermit(Arc<Inner>);
+pub(crate) struct PickerPermit(Arc<Inner>);
 impl PickerPermit {
     fn begin(inner: &Arc<Inner>) -> Result<Self, String> {
         let _slot = inner.proposal.lock().map_err(|_| "目录选择状态不可用")?;
@@ -131,7 +134,7 @@ impl Drop for PickerPermit {
     }
 }
 
-fn owner(window: &WebviewWindow) -> Result<usize, String> {
+pub(crate) fn owner(window: &WebviewWindow) -> Result<usize, String> {
     if window.label() != "settings" {
         return Err("此窗口不能更改数据目录".into());
     }
@@ -151,7 +154,7 @@ fn owner(window: &WebviewWindow) -> Result<usize, String> {
         }
     }
 }
-fn current_owner(app: &AppHandle, window: &WebviewWindow, expected: usize) -> Result<(), String> {
+pub(crate) fn current_owner(app: &AppHandle, window: &WebviewWindow, expected: usize) -> Result<(), String> {
     let current = app.get_webview_window("settings").ok_or("设置窗口已关闭")?;
     if owner(&current)? != expected
         || owner(window)? != expected

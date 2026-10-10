@@ -85,6 +85,9 @@ mod system_preferences;
 mod storage_cli;
 mod storage_dependencies;
 mod storage_host;
+mod data_host;
+mod data_storage;
+mod blackboard_text_host;
 #[cfg(test)]
 mod storage_integration_tests;
 mod storage_root;
@@ -2045,6 +2048,9 @@ fn main() {
                 storage_host::choose_data_directory,
                 storage_host::cancel_data_directory_proposal,
                 storage_host::migrate_data_directory,
+                data_host::get_data_usage,
+                data_host::clean_data,
+                blackboard_text_host::save_blackboard_text,
                 capture_shortcut_host::set_capture_shortcut,
                 capture_shortcut_host::begin_capture_shortcut_edit,
                 capture_shortcut_host::end_capture_shortcut_edit,

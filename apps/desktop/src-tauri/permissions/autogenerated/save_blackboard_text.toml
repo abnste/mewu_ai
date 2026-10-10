@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-blackboard-text"
+description = "Enables the save_blackboard_text command without any pre-configured scope."
+commands.allow = ["save_blackboard_text"]
+
+[[permission]]
+identifier = "deny-save-blackboard-text"
+description = "Denies the save_blackboard_text command without any pre-configured scope."
+commands.deny = ["save_blackboard_text"]

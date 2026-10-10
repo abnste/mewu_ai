@@ -19,10 +19,10 @@ test('trash requires an active drag and current visible enabled bounds; hover an
   box={...box,left:510,right:558};port.begin();assert.equal(port.finish({x:520,y:360}),false);
 });
 test('all media are independent board objects; source-bound recording is projected without losing trim or annotations',()=>{
-  const original={id:'source',background:{id:'screen',width:1000,height:500},items:['html','svg','image','video','file','text'].map((kind,i)=>({id:`item${i}`,asset:{id:`asset${i}`,kind,path:`D:/assets/${i}`},x:.1,y:.2,width:.3,height:.4,state:{coordinateSpace:'background',backgroundId:'screen',blackboardSceneId:'old'},videoEdit:kind==='video'?{revision:3}:undefined,videoAnnotations:kind==='video'?{objects:[{origin:{runId:'original'}}]}:undefined}))};
+  const original={id:'source',background:{id:'screen',width:1000,height:500},items:['html','svg','image','video','file','text'].map((kind,i)=>({id:`item${i}`,asset:{id:`asset${i}`,name:kind==='text'?'notes.txt':kind==='file'?'document.pdf':`${kind}.data`,kind,path:`D:/assets/${i}`},x:.1,y:.2,width:.3,height:.4,state:{coordinateSpace:'background',backgroundId:'screen',blackboardSceneId:'old'},videoEdit:kind==='video'?{revision:3}:undefined,videoAnnotations:kind==='video'?{objects:[{origin:{runId:'original'}}]}:undefined}))};
   const before=structuredClone(original);let index=0;const copies=carryBlackboardObjects(original,1000,1000,()=>`copy${index++}`);
-  assert.deepEqual(original,before);assert.equal(copies.length,6);
-  for(let i=0;i<copies.length;i++){assert.equal(copies[i].y,.35);assert.equal(copies[i].height,.2);assert.notEqual(copies[i].id,original.items[i].id);assert.deepEqual(copies[i].asset,original.items[i].asset);assert.deepEqual(copies[i].state,{__mewuBoardSource:{sceneId:'source',itemId:`item${i}`}});}
+  assert.deepEqual(original,before);assert.equal(copies.length,5);const carried=original.items.filter(item=>item.asset.kind!=='file');
+  for(let i=0;i<copies.length;i++){assert.equal(copies[i].y,.35);assert.equal(copies[i].height,.2);assert.notEqual(copies[i].id,carried[i].id);assert.deepEqual(copies[i].asset,carried[i].asset);assert.deepEqual(copies[i].state,{__mewuBoardSource:{sceneId:'source',itemId:carried[i].id}});}
   assert.deepEqual(copies[3].videoEdit,original.items[3].videoEdit);assert.deepEqual(copies[3].videoAnnotations,original.items[3].videoAnnotations);copies[3].videoAnnotations.objects.length=0;assert.equal(original.items[3].videoAnnotations.objects.length,1);
 });
 test('dropping a media object does not await its own app flush; movement still waits for persistence',async()=>{
@@ -34,7 +34,7 @@ test('dropping a media object does not await its own app flush; movement still w
     const listeners=new Map(),target={setPointerCapture(){},hasPointerCapture:()=>false,addEventListener:(name,handler)=>listeners.set(name,handler),removeEventListener:name=>listeners.delete(name)};
     let position={x:.1,y:.1,width:.2,height:.2};
     const props={blackboard:true,busy:false,item:{...position,asset:{id:'asset'}},trash:{begin(){},move(){},finish:()=>remove,cancel(){}},onRegisterFlush:value=>{flush=value;return()=>{};},onRemove:async()=>{await flush(()=>true);removed++;},onUpdate:async item=>{updated++;await new Promise(resolve=>{resolveUpdate=resolve;});Object.assign(props.item,item);}};
-    const context=vm.createContext({props,position:()=>position,setPosition:value=>{position=value;},savedPosition:()=>({...props.item}),isImage:()=>false,isVideo:()=>false,window:{innerWidth:800,innerHeight:600},innerWidth:800,innerHeight:600,disposed:false,gestureToken:0,gestureFlight:undefined,disposeGesture:undefined,setMoving(){},Promise,Error});
+    const context=vm.createContext({props,position:()=>position,setPosition:value=>{position=value;},savedPosition:()=>({...props.item}),isImage:()=>false,isVideo:()=>false,window:{innerWidth:800,innerHeight:600},innerWidth:800,innerHeight:600,disposed:false,gestureToken:0,gestureFlight:undefined,textFlush:undefined,disposeGesture:undefined,setMoving(){},Promise,Error});
     vm.runInContext(stripTypeScriptTypes(declaration('unregisterFlush')+'\n'+declaration('gesture')+'\ngesture',{mode:'transform'}),context)({button:0,pointerId:1,currentTarget:target,clientX:100,clientY:100,preventDefault(){},stopPropagation(){}},false,true);
     listeners.get('pointermove')({clientX:140,clientY:140});
     const completion=listeners.get('pointerup')({type:'pointerup',clientX:140,clientY:140});

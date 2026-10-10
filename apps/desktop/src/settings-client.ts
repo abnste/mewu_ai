@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { validCapturePreferences, validDataDirectoryProposal, validDataDirectoryState, validLicenseDocument, validSettingsInfo, type CapturePreferences, type CapturePreferenceValues, type DataDirectoryProposal, type LicenseDocumentKind } from './settings-contracts';
 import { validSystemPreferences, type SystemPreferences, type SystemPreferenceValues } from './settings-contracts';
+import { validDataCategory, validDataUsage, validDataCleanupReceipt, type DataCategory } from './settings-contracts';
 export interface SettingsTransport {
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
   listen: (event: string, receive: (payload: unknown) => void) => Promise<() => void>;
@@ -54,6 +55,17 @@ export function settingsClient(transport: SettingsTransport) {
       return value;
     },
     async openDataDirectory() { await transport.invoke('open_data_directory'); },
+    async dataUsage() {
+      const value = await transport.invoke('get_data_usage');
+      if (!validDataUsage(value)) throw new Error('数据占用状态无效');
+      return value;
+    },
+    async cleanData(category: DataCategory, expectedToken: string) {
+      if (!validDataCategory(category) || !/^[0-9a-f]{64}$/.test(expectedToken)) throw new Error('清理范围无效');
+      const value = await transport.invoke('clean_data', { category, expectedToken });
+      if (!validDataCleanupReceipt(value)) throw new Error('清理结果无效，请刷新占用');
+      return value;
+    },
     async dataDirectoryState() {
       const value = await transport.invoke('get_data_directory_state');
       if (!validDataDirectoryState(value)) throw new Error('数据目录状态无效');

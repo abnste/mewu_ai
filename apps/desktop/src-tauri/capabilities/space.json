@@ -100,6 +100,7 @@
     "allow-open-blackboard",
     "allow-get-pin-objects",
     "allow-control-pin-object",
-    "allow-reference-pin-object"
+    "allow-reference-pin-object",
+    "allow-save-blackboard-text"
   ]
 }

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
-import { createEffect, createMemo, createResource, createSignal, onCleanup, Show, untrack } from 'solid-js';
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
 import { Code2, Copy, Download, File, Image, Link2, Maximize2, Move, Pencil, RotateCcw, Video, X } from 'lucide-solid';
 import type {ObjectTrashPort} from '../object-trash';
-import type {RegisterDrawingFlush} from '../drawing-flush';
+import type {DrawingFlush,RegisterDrawingFlush} from '../drawing-flush';
+import {isBlackboardText} from '../blackboard-objects';
+import {resizeBoardObject,type ResizeCorner} from '../blackboard-text';
+import BlackboardText from './BlackboardText';
 import type { SpaceItem } from '../contracts';
 import { assetUrl, documentUrl, isolatedDocument, native, readArtifact } from '../bridge';
 import './video.css';
@@ -25,6 +28,7 @@ interface Props {
   busy?: boolean;
   onOpenBlackboard?: () => void;
   blackboard?:boolean;interactive?:boolean;hovered?:boolean;trash?:ObjectTrashPort;onRegisterFlush?:RegisterDrawingFlush;
+  boardSceneId?:string;onError?:(message:string)=>void;
 }
 
 export default function ArtifactCard(props: Props) {
@@ -41,7 +45,8 @@ export default function ArtifactCard(props: Props) {
   let disposed = false;
   let disposeGesture: (() => void) | undefined;
   let gestureFlight:Promise<void>|undefined;
-  const unregisterFlush=props.onRegisterFlush?.(async active=>{disposeGesture?.();if(gestureFlight)await gestureFlight;if(!active())throw Error('素材编辑已切换');});
+  let textFlush:DrawingFlush|undefined;
+  const unregisterFlush=props.onRegisterFlush?.(async active=>{disposeGesture?.();if(gestureFlight)await gestureFlight;if(textFlush)await textFlush(active);if(!active())throw Error('素材编辑已切换');});
   const activate = () => props.onActivate?.();
   // An isolated iframe does not bubble its pointer events into this document.
   // Its focus can still select this card without accessing the child document.
@@ -75,7 +80,7 @@ export default function ArtifactCard(props: Props) {
   });
   const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
 
-  const gesture = (event: PointerEvent, resize = false, control = false) => {
+  const gesture = (event: PointerEvent, resize = false, control = false, corner?:ResizeCorner) => {
     if (props.busy || gestureFlight || event.button !== 0 || (!resize && !control && (event.target as HTMLElement).closest('button'))) return;
     event.preventDefault(); event.stopPropagation();
     disposeGesture?.();
@@ -94,6 +99,7 @@ export default function ArtifactCard(props: Props) {
       setMoving(true);
       if(props.blackboard&&!resize)props.trash?.move({x:e.clientX,y:e.clientY});
       const dx = (e.clientX - startX) / vw, dy = (e.clientY - startY) / vh;
+      if(resize&&corner){setPosition(resizeBoardObject(start,dx,dy,corner,vw,vh));return;}
       const minWidth = videoMode ? Math.min(64 / vw, 1 - start.x) : Math.min(240 / vw, .85);
       const minHeight = videoMode ? Math.min(48 / vh, 1 - start.y) : Math.min(160 / vh, .8);
       if (resize && isImage()) {
@@ -151,6 +157,7 @@ export default function ArtifactCard(props: Props) {
     data-video-item={isVideo() ? props.item.id : undefined} data-video-scene={isVideo() ? props.video?.sceneId : undefined}
     aria-label={props.item.asset.name} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
     <Show when={props.blackboard}><div class="blackboard-object-control" role="toolbar" aria-label={t('对象工具')}><button aria-label={t('移动对象')} title={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18} strokeWidth={1.7}/></button></div></Show>
+    <Show when={props.blackboard&&isBlackboardText(props.item.asset)}><For each={['nw','ne','sw','se'] as ResizeCorner[]}>{corner=><div class={`blackboard-text-corner ${corner}`} aria-hidden="true" onPointerDown={event=>gesture(event,true,true,corner)} />}</For></Show>
     <Show when={!isImage()&&!props.blackboard}>
     <header class="artifact-header" onPointerDown={e => gesture(e)}>
       <Show when={isDocument()} fallback={<Show when={props.item.asset.kind === 'image'} fallback={<Show when={props.item.asset.kind === 'video'} fallback={<File size={14} />}><Video size={14} /></Show>}><Image size={14} /></Show>}><Code2 size={14} /></Show>
@@ -184,8 +191,8 @@ export default function ArtifactCard(props: Props) {
           <Show when={reload() + 1} keyed>{_revision => <iframe title={props.item.asset.name} src={documentUrl(props.item.asset)} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />}</Show>
         </Show>
       </Show>
-      <Show when={props.item.asset.kind === 'file'}><div class="file-object"><File size={30} /><span>{props.item.asset.name}</span></div></Show>
-      <Show when={props.item.asset.kind === 'text'}><TextArtifact assetId={props.item.asset.id} name={props.item.asset.name} /></Show>
+      <Show when={props.item.asset.kind === 'file'&&!props.blackboard}><div class="file-object"><File size={30} /><span>{props.item.asset.name}</span></div></Show>
+      <Show when={props.item.asset.kind === 'text'}><Show when={props.blackboard&&isBlackboardText(props.item.asset)&&props.boardSceneId} fallback={<Show when={!props.blackboard}><TextArtifact assetId={props.item.asset.id} name={props.item.asset.name} /></Show>}><BlackboardText sceneId={props.boardSceneId!} itemId={props.item.id} assetId={props.item.asset.id} name={props.item.asset.name} busy={Boolean(props.busy)} onFlush={flush=>{textFlush=flush;return()=>{if(textFlush===flush)textFlush=undefined;};}} onError={message=>props.onError?.(message)} /></Show></Show>
       <Show when={moving()}><div class="iframe-drag-cover" /></Show>
     </div>
     <Show when={!isImage()&&!props.blackboard}><footer class="artifact-footer">

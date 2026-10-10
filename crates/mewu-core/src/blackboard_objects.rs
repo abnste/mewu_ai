@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
-use crate::{Asset, Scene, Snapshot, SpaceItem};
+use crate::{Asset, AssetKind, Scene, Snapshot, SpaceItem};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 type Result<T> = std::result::Result<T, crate::CoreError>;
 
 pub(crate) const SOURCE_KEY: &str = "__mewuBoardSource";
+pub(crate) fn is_text(asset: &Asset) -> bool {
+    asset.kind == AssetKind::Text && asset.name.to_ascii_lowercase().ends_with(".txt")
+}
+pub(crate) fn presentable(asset: &Asset) -> bool {
+    matches!(asset.kind, AssetKind::Image | AssetKind::Video | AssetKind::Html | AssetKind::Svg) || is_text(asset)
+}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Source {
@@ -41,6 +47,7 @@ pub(crate) fn carried(parent: &Scene, background: &Asset) -> Result<Vec<SpaceIte
     parent
         .items
         .iter()
+        .filter(|original| presentable(&original.asset))
         .map(|original| {
             let mut item = original.clone();
             item.id = Uuid::new_v4().to_string();

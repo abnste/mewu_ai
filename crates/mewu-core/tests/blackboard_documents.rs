@@ -285,11 +285,11 @@ fn old_blackboard_is_adopted_only_on_finish_without_losing_chat_draft_or_ink() {
 }
 
 #[test]
-fn board_carries_all_asset_kinds_independently_and_keeps_original_sources() {
+fn board_carries_presentable_media_and_txt_but_keeps_other_files_in_parent() {
     let mut store = Store::open_in_memory().unwrap();
     let parent = active(&store).id;
     for kind in [AssetKind::Image,AssetKind::Html,AssetKind::Svg,AssetKind::Video,AssetKind::Text,AssetKind::File] {
-        let mut source = asset(true);source.name="素材".into();source.kind=kind;
+        let mut source = asset(true);source.name=if kind==AssetKind::Text{"笔记.txt"}else{"素材"}.into();source.kind=kind;
         if matches!(source.kind,AssetKind::Text|AssetKind::File){source.width=None;source.height=None;}
         store.add_asset(&parent,source).unwrap();
     }
@@ -297,8 +297,8 @@ fn board_carries_all_asset_kinds_independently_and_keeps_original_sources() {
     store.apply(SceneCommand::SetRefs{scene_id:parent.clone(),refs:vec![Reference{kind:ReferenceKind::Item,id:before.items[1].id.clone()}]}).unwrap();
     store.create_blackboard_document(&parent,asset(false)).unwrap();
     let board=active(&store);
-    assert_eq!(board.items.len(),6);
-    for (source,copy) in before.items.iter().zip(&board.items) {
+    assert_eq!(board.items.len(),5);
+    for (source,copy) in before.items.iter().filter(|i|i.asset.kind!=AssetKind::File).zip(&board.items) {
         assert_ne!(source.id,copy.id);assert_eq!(source.asset,copy.asset);
         assert_eq!((source.x,source.y,source.width,source.height),(copy.x,copy.y,copy.width,copy.height));
         assert_eq!(copy.state.as_ref().unwrap()["__mewuBoardSource"]["itemId"],source.id);
@@ -309,7 +309,7 @@ fn board_carries_all_asset_kinds_independently_and_keeps_original_sources() {
     assert!(store.apply(SceneCommand::UpdateItem{scene_id:board.id.clone(),item:forged}).is_err());
     assert_eq!(store.snapshot(),snapshot);
     store.apply(SceneCommand::RemoveItem{scene_id:board.id.clone(),item_id:board.items[1].id.clone()}).unwrap();
-    assert_eq!(active(&store).items.len(),5);
+    assert_eq!(active(&store).items.len(),4);
     let source=store.snapshot().scenes.into_iter().find(|s|s.id==parent).unwrap();
     assert_eq!(&source.items[..6],before.items.as_slice());
     assert!(!active(&store).refs.iter().any(|r|r.id==board.items[1].id));

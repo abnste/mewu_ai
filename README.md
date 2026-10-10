@@ -15,7 +15,7 @@ Mewu 1.0 is a Windows desktop remake. A shortcut opens the capture space: screen
 - Chat Completions, OpenAI Responses and Anthropic Messages connections; model templates and declared capabilities can be installed from public GitHub repositories.
 - Local MCP tools, installed plugin management and a configurable GitHub plugin catalog.
 
-On this branch, opening a blackboard carries existing capture regions, HTML/SVG results, recordings and attachments into it as independent objects. Capture images retain saved annotations and support hover-wheel resizing; HTML remains interactive and videos retain playback, trimming and annotations. Use the corner handle to move objects and drop them onto Delete to remove them. The eraser only removes ink. Drawing tools use a custom RGB/HEX palette with three recent colors. Toolbar buttons keep the same square dimensions with labels shown or hidden.
+On this branch, opening a blackboard carries existing capture regions, images, HTML/SVG results, recordings and TXT notes into it as independent objects. Other documents stay out of the board. TXT notes have a plain white editing surface and four corner resize handles; edits save a copy without changing the original file. Capture images retain saved annotations and support hover-wheel resizing; HTML remains interactive and videos retain playback, trimming and annotations. Use the upper corner handle to move objects and drop them onto Delete to remove them. The eraser only removes ink. Drawing tools use a custom RGB/HEX palette with three recent colors. Toolbar buttons keep the same square dimensions with labels shown or hidden.
 
 Drawing, recording and AI annotations are built in. Plugins can be disabled or removed. Current plugins are declarative JSON packages: they cannot execute arbitrary downloaded code. Hermes, Codex, WorkBuddy and MiniMax Code agent integrations, macOS delivery, device synchronization and dedicated image/video generation APIs are not included in this preview. The current agent is not a complete replacement for Hermes and Hindsight. Actual annotation quality depends on the model.
 
@@ -28,6 +28,8 @@ The application checks for updates in the background. Settings → About provide
 Legacy 0.7.4 already recognizes the future stable 1.x installer name. It intentionally ignores prereleases; 0.7.3 should first update to 0.7.4. Supported legacy API connections are imported once from local settings. Legacy data is retained, but legacy conversation history is not converted into the new scene database. See [upgrade details](apps/desktop/README.md).
 
 New installations store data in `~/.mewu`. Existing remake installations retain their configured directory; Settings → Data can move it. Signing updates is separate from Windows Authenticode signing; this preview installer has no Windows signing certificate.
+
+Settings → Data also shows stored file, image and conversation sizes, with separate cleanup actions. Cleanup protects open conversations, memory sources and referenced media. Unreferenced app-owned copies become eligible after one day. Conversation sizes are logical payload sizes; the database row and cleanup result show actual disk usage.
 
 ## Development
 

@@ -49,6 +49,16 @@
 .settings-data-path { display:flex;align-items:flex-start;gap:12px;flex-direction:column;min-width:0; }
 .settings-data-path .field-label { margin:0; }
 .settings-data-actions { display:flex;align-items:center;gap:12px;flex-wrap:wrap; }
+.settings-storage-section { margin-top:var(--settings-section-gap); }
+.settings-storage-actions { display:flex;align-items:center;gap:12px; }
+.settings-storage-actions>span { color:var(--muted);font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums; }
+.settings-cleanup-review { width:min(420px,100%); }
+.settings-cleanup-review h2 { margin:0;font-size:16px; }
+.settings-cleanup-review p { margin:0;font-size:12px;line-height:1.7;color:var(--secondary); }
+.settings-cleanup-review .settings-cleanup-amount { color:var(--text);font-size:16px;font-variant-numeric:tabular-nums; }
+.settings-cleanup-amount small { font-size:11px;color:var(--muted); }
+.settings-cleanup-review .settings-actions { justify-content:flex-end; }
+.settings-cleanup-result { margin:12px 0 0;color:var(--secondary);font-size:11px;line-height:1.7; }
 .settings-data-path code,.settings-build { font-size:11px;overflow-wrap:anywhere;white-space:pre-wrap;user-select:text;color:var(--secondary); }
 .settings-build { max-width:250px; }
 .settings-document-backdrop { position:fixed;inset:0;z-index:160;display:flex;align-items:center;justify-content:center;padding:26px;background:#25344b40; }

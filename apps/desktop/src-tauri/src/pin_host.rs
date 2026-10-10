@@ -313,6 +313,13 @@ pub fn resolve_asset(app: &AppHandle, id: &str) -> Option<PinAssetLease> {
         .find(|e| e.source.asset().id == id && e.cancel.check().is_ok())
         .map(|e| e.source.clone())
 }
+pub(crate) fn storage_assets(app: &AppHandle) -> Result<Vec<Asset>, String> {
+    let Some(registry) = app.try_state::<PinRegistry>() else { return Ok(Vec::new()); };
+    let state = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+    // Source pixels live in their own pin-staging directory and hold leases.
+    // Only durable orientation copies participate in the assets inventory.
+    Ok(state.entries.values().flat_map(|entry| entry.object_assets.values()).cloned().collect())
+}
 pub fn is_pin_label(label: &str) -> bool {
     label.strip_prefix("pin-").is_some_and(valid_uuid)
 }
