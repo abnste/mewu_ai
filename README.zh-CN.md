@@ -4,7 +4,7 @@
 
 Mewu 1.0 是 Windows 桌面重制版。快捷键唤起截图空间，对话、截图、文件、标注与交互式 HTML/SVG 结果共处同一界面。
 
-**当前分支为 1.0 预览版。** 0.7.x 稳定版继续保留在 [master](https://github.com/abnste/mewu_ai/tree/master)。预览版从 [Releases](https://github.com/abnste/mewu_ai/releases) 下载，带有预发布标记。
+**当前分支为 1.0 预览版。** 下载[预览版 2](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.2)：[安装版 EXE](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Setup-1.0.0-preview.2-win-x64.exe) 或[便携版 ZIP](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Portable-1.0.0-preview.2-win-x64.zip)。0.7.x 稳定版继续保留在 [master](https://github.com/abnste/mewu_ai/tree/master)。
 
 ## 当前功能
 
@@ -15,7 +15,9 @@ Mewu 1.0 是 Windows 桌面重制版。快捷键唤起截图空间，对话、�
 - Chat Completions、OpenAI Responses、Anthropic Messages 三种模型接入，以及可从公开 GitHub 安装的模型模板和声明式能力插件。
 - 本地 MCP、插件启停/卸载/更新/回退、可配置的 GitHub 社区插件目录。
 
-当前分支支持把截图选区、图片、HTML/SVG 结果、录屏和 TXT 笔记带入黑板，作为独立对象；其他文档不会出现在黑板上。TXT 使用白底编辑区，四角可缩放，编辑保存为副本，保留原文件。截图和导入图片支持悬浮滚轮缩放，可以移过屏幕四边。选择工具支持拖框多选和整体移动，一次移动可整体撤销；无痕提取的修补层会跟随原图移动和缩放。桌面置顶图片不显示悬浮工具条，操作保留在右键菜单。截图图片保留原标注；HTML 保持交互，视频保留播放、裁切和批注。通过上角的控件拖动对象，拖到底部「删除」后松手移除；橡皮只擦笔迹。画笔宽度使用滑条；按住右键临时切换为同等大小的橡皮，点状笔迹也可点按擦除。绘制色板支持 RGB、HEX 和最近三种颜色；工具条显示或隐藏文字时，按钮均保持相同的正方形尺寸。
+当前分支支持把截图选区、图片、HTML/SVG 结果、录屏和 TXT 笔记带入黑板，作为独立对象；其他文档不会出现在黑板上。TXT 使用白底编辑区，四角可缩放，编辑保存为副本，保留原文件。截图和导入图片支持悬浮滚轮缩放，可以移过屏幕四边。选择工具支持拖框多选和整体移动，一次移动可整体撤销；无痕提取的修补层会跟随原图移动和缩放。桌面置顶图片不显示悬浮工具条，操作保留在右键菜单。截图图片保留原标注；HTML 保持交互，视频保留播放、裁切和批注。悬浮到对象顶部中央显示移动横条；拖到底部「删除」后松手移除；橡皮只擦笔迹。画笔宽度使用滑条；按住右键临时切换为同等大小的橡皮，点状笔迹也可点按擦除。绘制色板支持 RGB、HEX 和最近三种颜色；工具条显示或隐藏文字时，按钮均保持相同的正方形尺寸。
+
+绘制箭头使用随长度变化的开口线条箭头。荧光笔按住 Shift 可画水平、垂直或 45° 斜线，松开 Shift 恢复自由笔迹。
 
 绘制、录屏与 AI 标注属于软件内置能力。当前扩展为 JSON 声明式包，不运行下载的任意代码。Hermes、Codex、WorkBuddy、MiniMax Code 外部 Agent 接入，macOS、跨设备同步及专用图片/视频生成接口尚未交付；当前 Agent 还不能完整替代 Hermes 与 Hindsight。原位和视频批注质量取决于实际模型。
 
