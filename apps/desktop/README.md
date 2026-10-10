@@ -18,6 +18,8 @@ https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json
 
 The update-channel release remains a prerelease and is excluded from GitHub's latest stable release. Each manifest names a versioned installer under its immutable version tag. A stable 1.x release advances both preview.json and latest.json, so preview clients can move to stable without reinstalling. Source branch names are not used by the installed updater or release script; changing next to master does not change the endpoint, signing key or application identity.
 
+Versioned releases attach only the Windows installer and portable ZIP, matching the legacy release layout. License texts and source attribution stay inside the packages. Update signatures are embedded in the fixed channel manifest; no standalone signature, checksum or metadata files are attached to a versioned release. GitHub provides asset SHA-256 digests. Publish notes come from `docs/release-notes-<version>.md`.
+
 Use monotonically increasing SemVer versions. Signature verification binds the installer bytes and version, rejects unsigned updates, rejects downgrade offers, and restricts installer URLs to this repository. Only the first-party settings window has updater permissions. Generated HTML/SVG cannot invoke the updater.
 
 Update checks run after startup and every six hours, using the user's proxy setting. Installation is started explicitly in About. The updater downloads first, verifies the signature, then uses the ordinary save/drain shutdown protocol. Failure before shutdown keeps the running application; failure to launch an installer after final shutdown restarts the current application. Updates do not rename or delete the user data root.
