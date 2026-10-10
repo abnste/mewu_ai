@@ -190,19 +190,23 @@ const checks = [];
   const callback = register.arguments[0];
   const errors = [], task = deferred(), context = { sceneId:id(1),background:asset,region };
   const mod = new SourceTextModule(transform(`import { taskCopy, richPreviewTarget, richSourceIdentity, report } from 'fixture';const props={port:{copyTable:taskCopy,sourceIdentity:()=>richSourceIdentity(context)}};
-    let context=${JSON.stringify(context)}, currentDrawing=${JSON.stringify(drawing)}, disposed=false, finishing=false, tableCopy, flight;
+    let context=${JSON.stringify(context)}, currentDrawing=${JSON.stringify(drawing)}, disposed=false, finishing=false, tableCopy, flight, flushImages;
     const identity=()=>context.sceneId; const selectedDrawing=()=>currentDrawing, selected=()=>currentDrawing.id, richContext=()=>context;
     const disabled=()=>finishing, edit=()=>undefined, cancelGesture=undefined, tableFormat=()=>'png';
     const setFinishing=value=>{finishing=value}; const saveText=async()=>true;
     export ${code.slice(copy.start,copy.end)}
     export const flush=${code.slice(callback.start,callback.end)};
     export const changeSource=()=>{context={...context,sceneId:'other'}};
+    export const setImageFlush=flush=>{flushImages=flush};
     export const isBusy=()=>finishing;`));
   let count=0;
   await mod.link(()=>synthetic({taskCopy:async()=>{count++;return task.promise;},richPreviewTarget:preview.richPreviewTarget,richSourceIdentity:preview.richSourceIdentity,report:error=>errors.push(String(error))}));await mod.evaluate();
   mod.namespace.copySelectedTable(); mod.namespace.copySelectedTable(); await tick(); assert.equal(count,1); assert.equal(mod.namespace.isBusy(),true);
   let flushed=false; const flushing=mod.namespace.flush(()=>true).then(()=>{flushed=true;}); await tick(); assert.equal(flushed,false);
   task.resolve(); await flushing; await tick(); assert.equal(mod.namespace.isBusy(),false);
+  const imageTask=deferred();mod.namespace.setImageFlush(()=>imageTask.promise);
+  let imageFlushed=false;const boardFlush=mod.namespace.flush(()=>true).then(()=>{imageFlushed=true;});await tick();assert.equal(imageFlushed,false);
+  imageTask.resolve();await boardFlush;assert.equal(imageFlushed,true);
   mod.namespace.copySelectedTable();mod.namespace.changeSource();await tick();assert.equal(count,1);assert.equal(errors.length,0);
   checks.push('Actual Editor copy blocks duplicate clicks and its flush waits for real completion; source switch before dispatch cannot copy a successor');
 }

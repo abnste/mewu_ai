@@ -91,17 +91,32 @@ where
     mosaic::paint_mosaics(image, &region.drawings, &mut bitmap, x, y)?;
     // Screenshot repairs and lifted pixels are raster content, beneath editable
     // ink/text. Their exact immutable bytes also drive preview, exports and AI.
-    for drawing in region.drawings.iter().filter(|d| d.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit())) {
+    for drawing in region
+        .drawings
+        .iter()
+        .filter(|d| d.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit()))
+    {
         let reference = drawing.rich.as_ref().ok_or("修补图层引用缺失")?;
         let raster = load(reference)?;
-        if raster.dimensions() != (reference.width, reference.height) { return Err("修补图层尺寸已变更".into()); }
+        if raster.dimensions() != (reference.width, reference.height) {
+            return Err("修补图层尺寸已变更".into());
+        }
         let p = &drawing.points;
-        crate::raster_compositor::paint_raster(&mut bitmap, &raster,
-            p[0].x - f64::from(x), p[0].y - f64::from(y),
-            p[1].x - p[0].x, p[1].y - p[0].y)?;
+        crate::raster_compositor::paint_raster(
+            &mut bitmap,
+            &raster,
+            p[0].x - f64::from(x),
+            p[0].y - f64::from(y),
+            p[1].x - p[0].x,
+            p[1].y - p[0].y,
+        )?;
     }
-    let drawings: Vec<_> = region.drawings.iter()
-        .filter(|d| !d.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit())).cloned().collect();
+    let drawings: Vec<_> = region
+        .drawings
+        .iter()
+        .filter(|d| !d.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit()))
+        .cloned()
+        .collect();
     if region
         .drawings
         .iter()
@@ -304,9 +319,9 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
                 || w <= 0.
                 || h <= 0.
                 || (a - b).abs() > a.abs().max(b.abs()) * 1e-6
-                || (reference.kind.is_raster_edit() &&
-                    ((w - f64::from(reference.width)).abs() > 1e-6 ||
-                     (h - f64::from(reference.height)).abs() > 1e-6))
+                || (reference.kind == mewu_core::RichKind::Repair
+                    && ((w - f64::from(reference.width)).abs() > 1e-6
+                        || (h - f64::from(reference.height)).abs() > 1e-6))
             {
                 return Err("富图层布局或样式无效".into());
             }

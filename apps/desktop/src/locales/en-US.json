@@ -982,5 +982,13 @@
   "保存未完成，已取消更新": "Saving failed; update cancelled",
   "请先检查更新": "Check for updates first",
   "正在更新，请稍候": "Update in progress",
-  "更新文件过大": "Update file too large"
+  "更新文件过大": "Update file too large",
+  "色彩与明度": "Saturation and brightness",
+  "色相": "Hue",
+  "选择颜色 {0}": "Choose {0}",
+  "最近使用": "Recent colors",
+  "最近颜色 {0}": "Recent color {0}",
+  "移动图片": "Move image",
+  "图片尺寸尚未保存": "Image size has not been saved",
+  "选择": "Select"
 }

@@ -90,7 +90,7 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
                 || w <= 0.
                 || h <= 0.
                 || (first - second).abs() > first.abs().max(second.abs()) * 1e-6
-                || (reference.kind.is_raster_edit()
+                || (reference.kind == crate::RichKind::Repair
                     && ((w - f64::from(reference.width)).abs() > 1e-6
                         || (h - f64::from(reference.height)).abs() > 1e-6))
             {

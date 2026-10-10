@@ -62,10 +62,49 @@ impl Store {
         parent_id: &str,
         asset: Asset,
     ) -> Result<Snapshot> {
+        self.create_blackboard_document_with_captures(parent_id, asset, vec![], vec![])
+    }
+
+    /// Capture rasters and the editable board enter the database in one transaction.
+    /// Only the native host can prepare VerifiedRichLayout values; PNGs never enter IPC JSON.
+    pub fn create_blackboard_document_with_captures(
+        &mut self,
+        parent_id: &str,
+        asset: Asset,
+        captures: Vec<Drawing>,
+        layouts: Vec<VerifiedRichLayout>,
+    ) -> Result<Snapshot> {
         validate_background(&asset)?;
         editable(&self.state, parent_id)?;
-        if scene(&self.state, parent_id)?.blackboard_link.is_some() {
+        let source = scene(&self.state, parent_id)?;
+        if source.blackboard_link.is_some() {
             return Err(invalid("请先完成当前黑板"));
+        }
+        if captures.len() != layouts.len()
+            || (!captures.is_empty() && captures.len() != source.regions.len())
+        {
+            return Err(invalid("黑板截图对象不完整"));
+        }
+        let mut total_bytes = 0usize;
+        for ((drawing, layout), region) in captures.iter().zip(&layouts).zip(&source.regions) {
+            let background = source
+                .background
+                .as_ref()
+                .ok_or_else(|| invalid("截图不存在"))?;
+            let fence = visual_source_fence(background, region)?;
+            if drawing.origin.is_some()
+                || drawing.kind != DrawingKind::Rich
+                || drawing.rich.as_ref() != Some(layout.reference())
+                || !matches!(layout.content(), RichContent::Raster { version: 1, role: RasterRole::Extracted, source_sha256 } if *source_sha256 == fence.visual_sha256)
+            {
+                return Err(invalid("黑板截图对象来源无效"));
+            }
+            total_bytes = total_bytes
+                .checked_add(layout.png().len())
+                .ok_or_else(|| invalid("截图对象过大"))?;
+            if total_bytes > 32 * 1024 * 1024 {
+                return Err(invalid("截图对象过大"));
+            }
         }
         let mut next = self.state.clone();
         let parent = scene(&next, parent_id)?;
@@ -82,6 +121,8 @@ impl Store {
             y: 0.,
             width: asset.width.unwrap() as f64,
             height: asset.height.unwrap() as f64,
+            drawing_revision: u64::from(!captures.is_empty()),
+            drawings: captures,
             ..Region::default()
         }];
         board.refs = vec![Reference {
@@ -100,7 +141,14 @@ impl Store {
         }
         next.active_scene_id = board.id.clone();
         next.scenes.push(board);
-        self.persist(next)
+        self.journal_transaction(|db, state| {
+            for layout in &layouts {
+                crate::rich_annotations::insert(db, layout)?;
+            }
+            *state = next;
+            Ok(())
+        })?;
+        Ok(self.snapshot())
     }
 
     pub fn open_blackboard_document(&mut self, parent_id: &str, item_id: &str) -> Result<Snapshot> {

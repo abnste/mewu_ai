@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: MPL-2.0 */
+@import './toolbar-buttons.css';
 .drawing-layer{position:absolute;inset:-1.5px;width:calc(100% + 3px);height:calc(100% + 3px);overflow:hidden;pointer-events:none}
 .drawing-editor{position:absolute;inset:0;z-index:24;touch-action:none;cursor:default}
 .drawing-edit-surface{position:absolute;overflow:hidden;cursor:crosshair;touch-action:none}
 .drawing-edit-surface:focus{outline:none}
-.drawing-blackboard .drawing-toolbar{flex-direction:row;align-items:center;flex-wrap:nowrap;gap:3px;overflow-x:auto;scrollbar-width:thin;border-radius:15px;padding:6px}
+.drawing-blackboard .drawing-toolbar{flex-direction:row;align-items:center;flex-wrap:nowrap;gap:var(--toolbar-button-gap);overflow-x:auto;scrollbar-width:thin;border-radius:15px;padding:6px}
 .drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-properties-row{display:contents}
 .drawing-blackboard .drawing-toolbar>*{flex-shrink:0}
 .drawing-blackboard .drawing-divider{margin:0 5px}
-.drawing-blackboard .drawing-toolbar button[data-caption]::after{max-width:58px;overflow:hidden;text-overflow:ellipsis}
 .drawing-blackboard .drawing-done{position:sticky;right:0;background:var(--surface,#fafcff);box-shadow:-5px 0 8px var(--surface,#fafcff)}
 .drawing-blackboard .drawing-hit{cursor:crosshair}
 .drawing-edit-surface.drawing-select-mode{cursor:default}.drawing-edit-surface.drawing-text-mode{cursor:text}
@@ -17,14 +17,12 @@
 .drawing-toolbar{position:absolute;display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:max-content;max-width:calc(100vw - 12px);padding:0;border:0;background:transparent;box-shadow:none;color:var(--text,#52637a);z-index:2}
 .drawing-toolbar.drawing-dock-right{align-items:flex-end}
 .drawing-blackboard .drawing-toolbar{background:var(--surface,#fafcff);box-shadow:0 6px 24px #3347623d,0 1px 4px #3347621a}
-.drawing-toolbar button{width:32px;height:34px;display:grid;place-items:center;border:1px solid transparent;border-radius:8px;background:transparent;color:inherit}
+.drawing-toolbar button{border:1px solid transparent;background:transparent;color:inherit}
 .drawing-toolbar button:hover,.drawing-toolbar button.selected{background:var(--accent-soft,#eaf1fa);border-color:var(--line,#d7e1ef);color:var(--accent,#348bf1)}
 .drawing-toolbar button:focus-visible,.drawing-toolbar select:focus-visible{outline:2px solid var(--accent,#348bf1);outline-offset:1px}
 .drawing-toolbar button:disabled,.drawing-toolbar select:disabled{opacity:.35;cursor:default}
 .drawing-toolbar button.drawing-done{color:var(--accent,#348bf1)}
 .drawing-divider{width:1px;height:20px;background:var(--line,#d7e1ef);margin:0 3px}
-.drawing-color{display:grid;place-items:center;width:29px;height:32px;border-radius:7px;border:1px solid var(--line,#d7e1ef);overflow:hidden}
-.drawing-color input{width:25px;height:28px;padding:1px;border:0;background:transparent;cursor:pointer}
 .drawing-toolbar select{width:auto;min-width:64px;max-width:92px;height:30px;padding:2px 6px;gap:6px;border:1px solid var(--line,#d7e1ef);border-radius:7px;background:var(--surface,#fff);color:inherit;font-size:11px}
 .drawing-toolbar .drawing-number{width:64px;height:30px;padding:2px 5px;border:1px solid var(--line,#d7e1ef);border-radius:7px;background:var(--surface,#fff);color:inherit;font-size:12px}
 .drawing-toolbar .drawing-number:focus-visible{outline:2px solid var(--accent,#348bf1);outline-offset:1px}
@@ -53,10 +51,6 @@
 .capture-toolbar>button.capture-plugin{color:var(--accent,#348bf1)}
 .capture-toolbar:has(.capture-plugin-menu){z-index:26}
 
-.drawing-tools-row,.drawing-properties-row{display:flex;flex-wrap:nowrap;align-items:center;gap:3px;width:max-content;max-width:calc(100vw - 12px);padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a;overflow-x:auto;scrollbar-width:thin;box-sizing:border-box}
+.drawing-tools-row,.drawing-properties-row{display:flex;flex-wrap:nowrap;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a;overflow-x:auto;scrollbar-width:thin;box-sizing:border-box}
 .drawing-tools-row>*,.drawing-properties-row>*{flex-shrink:0}
 .drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-properties-row{padding:0;border-radius:0;background:transparent;box-shadow:none;overflow:visible}
-.drawing-toolbar button[data-caption]{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:3px;flex:0 0 48px;width:48px;height:48px}
-.drawing-toolbar button[data-caption]::after{content:attr(data-caption);font:10px/1.2 "Segoe UI",sans-serif;white-space:nowrap}
-html[data-button-labels="hide"] .drawing-toolbar button[data-caption]{flex-basis:32px;width:32px;height:34px}
-html[data-button-labels="hide"] .drawing-toolbar button[data-caption]::after{display:none}

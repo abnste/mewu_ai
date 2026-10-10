@@ -15,6 +15,8 @@ Mewu 1.0 is a Windows desktop remake. A shortcut opens the capture space: screen
 - Chat Completions, OpenAI Responses and Anthropic Messages connections; model templates and declared capabilities can be installed from public GitHub repositories.
 - Local MCP tools, installed plugin management and a configurable GitHub plugin catalog.
 
+On this branch, opening a blackboard carries existing capture regions into it as independent images, including saved annotations. Hover an image to move it or use the wheel to resize it; draw directly over it. Drawing tools use a custom RGB/HEX palette with three recent colors. Toolbar buttons keep the same square dimensions with labels shown or hidden.
+
 Drawing, recording and AI annotations are built in. Plugins can be disabled or removed. Current plugins are declarative JSON packages: they cannot execute arbitrary downloaded code. Hermes, Codex, WorkBuddy and MiniMax Code agent integrations, macOS delivery, device synchronization and dedicated image/video generation APIs are not included in this preview. The current agent is not a complete replacement for Hermes and Hindsight. Actual annotation quality depends on the model.
 
 ## Installation and updates

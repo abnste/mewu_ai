@@ -2,6 +2,8 @@
 * text=auto eol=lf
 # Preserve reviewed upstream legal-file bytes and hashes exactly.
 apps/desktop/licenses/*.txt -text
+# Formula font inventory is a byte-pinned resource, including its line endings.
+apps/desktop/src-tauri/resources/formula/fonts/inventory.json -text whitespace=cr-at-eol
 *.ico binary
 *.png binary
 *.jpg binary

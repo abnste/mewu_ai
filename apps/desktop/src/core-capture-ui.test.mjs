@@ -61,10 +61,10 @@ test('actual toolbar keeps drawing and recording with no plugins and reserves no
   const recording = canvas.all.find(node => node.type === 'JSXOpeningElement' && node.name.name === 'button' && node.attributes.some(value => value.name?.name === 'class' && value.value?.value === 'capture-record'));
   assert.ok(drawing); assert.ok(recording);
   const calls = [], scope = run(`${canvas.slice(canvas.variable('toolbarWidth'))}\nconst draw=${canvas.slice(canvas.attribute(drawing, 'onClick'))};const record=${canvas.slice(canvas.attribute(recording, 'onClick'))};globalThis.clicks=()=>{draw();record()};globalThis.width=toolbarWidth;`, {
-    TOOLBAR_WIDTH: 264, pinEntries: () => [], workflowEntries: () => [], ocrEntries: () => [], scrollEntries: () => [], translationEntries: () => [], activeRegion: () => undefined,
+    TOOLBAR_WIDTH: 405, pinEntries: () => [], workflowEntries: () => [], ocrEntries: () => [], scrollEntries: () => [], translationEntries: () => [], activeRegion: () => undefined,
     region: () => ({ id: 'region' }), beginDrawing: value => calls.push(['draw', value.id]), props: { onRecordRegion: id => calls.push(['record', id]) },
   });
-  scope.clicks(); assert.deepEqual(calls, [['draw', 'region'], ['record', 'region']]); assert.equal(scope.width(), 419); scope.props.showButtonLabels = false; assert.equal(scope.width(), 321);
+  scope.clicks(); assert.deepEqual(calls, [['draw', 'region'], ['record', 'region']]); assert.equal(scope.width(), 405); scope.props.showButtonLabels = false; assert.equal(scope.width(), 405);
   assert.equal(canvas.all.some(node => node.type === 'JSXOpeningElement' && node.name.name === 'RecordingAudioMenu'), false);
   assert.equal(canvas.ast.program.body.some(node => node.type === 'ImportDeclaration' && node.source.value.includes('RecordingAudioMenu')), false);
 });

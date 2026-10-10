@@ -88,7 +88,7 @@ fn read_target(app: &AppHandle, target: &Target) -> Result<(VisualSourceFence, u
         host.revision.load(Ordering::Acquire),
     ))
 }
-fn layout(
+pub(crate) fn layout(
     pixels: RgbaImage,
     role: RasterRole,
     source: &VisualSourceFence,
@@ -123,7 +123,7 @@ fn layout(
     crate::rich_annotation_host::decode(&result)?;
     Ok(result)
 }
-fn drawing(layout: &VerifiedRichLayout, x: f64, y: f64) -> Drawing {
+pub(crate) fn drawing(layout: &VerifiedRichLayout, x: f64, y: f64) -> Drawing {
     Drawing {
         id: uuid::Uuid::new_v4().to_string(),
         kind: DrawingKind::Rich,

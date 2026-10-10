@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0 */
+@import './toolbar-buttons.css';
 .capture-surface{user-select:none;-webkit-user-select:none;touch-action:none}
 .capture-surface:focus{outline:none}
 .capture-blackboard .capture-region{pointer-events:none;cursor:default}
@@ -28,17 +29,11 @@
 .capture-handle-sw{left:0;top:100%;cursor:nesw-resize}.capture-handle-s{left:50%;top:100%;cursor:ns-resize}.capture-handle-se{left:100%;top:100%;cursor:nwse-resize}
 .capture-surface.capture-add-mode,.capture-add-mode .capture-region,.capture-add-mode .capture-handle{cursor:crosshair}
 .capture-dragging .capture-region{cursor:grabbing}
-.capture-toolbar{position:absolute;z-index:25;display:flex;align-items:center;gap:4px;width:226px;height:46px;max-width:calc(100vw - 12px);padding:5px;border:1px solid #d7e1ef;border-radius:14px;background:#fafcff;box-shadow:0 6px 24px #3347623d,0 1px 4px #3347621a;cursor:default;user-select:none;touch-action:none}
-.capture-toolbar>button{width:36px;height:34px;flex:0 0 36px;display:grid;place-items:center;color:#52637a;border:1px solid transparent;border-radius:9px;line-height:1;background:transparent;transition:background .12s,border-color .12s}
+.capture-toolbar{position:absolute;z-index:25;display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:1px solid #d7e1ef;border-radius:14px;background:#fafcff;box-shadow:0 6px 24px #3347623d,0 1px 4px #3347621a;cursor:default;user-select:none;touch-action:none;flex-wrap:wrap}
+.capture-toolbar>button{color:#52637a;border:1px solid transparent;background:transparent}
 .capture-toolbar>button:hover{background:#eaf1fa;border-color:#d7e1ef}.capture-toolbar>button:active{background:#dfeafa}
 .capture-toolbar>button:focus-visible{outline:2px solid #6e83f2;outline-offset:1px}
 .capture-toolbar>button.capture-reference{font:600 20px/1 "Segoe UI",sans-serif;color:#5869e9}
 .capture-toolbar>button.capture-referenced{background:#e9edff;border-color:#d8e0ff}
 .capture-toolbar>button.capture-delete{color:#ce6371}
 .capture-toolbar .capture-separator{flex:0 0 1px;width:1px;height:22px;background:#dce4ef;margin:0 3px}
-.capture-toolbar{flex-wrap:wrap;height:auto;min-height:46px}
-
-.capture-toolbar>button[data-caption]{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:4px;flex:0 0 50px;width:50px;height:50px}
-.capture-toolbar>button[data-caption]::after{content:attr(data-caption);font:10px/1.2 "Segoe UI",sans-serif;white-space:nowrap;max-width:56px;overflow:hidden;text-overflow:ellipsis}
-html[data-button-labels="hide"] .capture-toolbar>button[data-caption]{flex-basis:36px;width:36px;height:34px}
-html[data-button-labels="hide"] .capture-toolbar>button[data-caption]::after{display:none}

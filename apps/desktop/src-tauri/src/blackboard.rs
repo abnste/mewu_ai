@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use crate::{capture_delay_work, recording, scroll_host, Host, HostSnapshot, SpaceTransition};
 use image::{ImageFormat, Rgba, RgbaImage};
-use mewu_core::{Asset, AssetKind, Scene};
+use mewu_core::{Asset, AssetKind, Drawing, RasterRole, Scene, VerifiedRichLayout};
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -82,6 +82,83 @@ fn check_source(current: &Scene, original: &Scene) -> Result<(), String> {
     }
     Ok(())
 }
+
+fn prepare_captures(
+    root: &Path,
+    scene: &Scene,
+    width: u32,
+    height: u32,
+    work: &capture_delay_work::Work,
+) -> Result<(Vec<Drawing>, Vec<VerifiedRichLayout>), String> {
+    if scene.regions.is_empty() {
+        return Ok((vec![], vec![]));
+    }
+    let background = scene.background.as_ref().ok_or("截图不存在")?;
+    let source_width = f64::from(background.width.ok_or("截图尺寸无效")?);
+    let source_height = f64::from(background.height.ok_or("截图尺寸无效")?);
+    let scale = (f64::from(width) / source_width).min(f64::from(height) / source_height);
+    let offset_x = (f64::from(width) - source_width * scale) / 2.;
+    let offset_y = (f64::from(height) - source_height * scale) / 2.;
+    let mut drawings = Vec::new();
+    let mut layouts = Vec::new();
+    let mut total_bytes = 0usize;
+    for region in &scene.regions {
+        work.check()?;
+        let source = region.image_override.as_ref().unwrap_or(background);
+        let lease = crate::image_host::SourceLease::open(source, root)?;
+        let translation = region
+            .translation
+            .as_ref()
+            .map(|saved| crate::image_host::SourceLease::open(&saved.overlay, root))
+            .transpose()?;
+        let pixels = crate::assets::crop_from_parts(background, region, root)?.into_rgba8();
+        lease.verify()?;
+        if let Some(lease) = translation {
+            lease.verify()?;
+        }
+        work.check()?;
+        let raster_scale = (6000. / f64::from(pixels.width()))
+            .min(6000. / f64::from(pixels.height()))
+            .min(
+                (16. * 1024. * 1024. / (f64::from(pixels.width()) * f64::from(pixels.height())))
+                    .sqrt(),
+            );
+        let pixels = if raster_scale < 1. {
+            let bounded_width = (f64::from(pixels.width()) * raster_scale).floor().max(1.) as u32;
+            let bounded_height = (f64::from(pixels.height()) * raster_scale).floor().max(1.) as u32;
+            image::DynamicImage::ImageRgba8(pixels)
+                .resize(
+                    bounded_width,
+                    bounded_height,
+                    image::imageops::FilterType::Lanczos3,
+                )
+                .into_rgba8()
+        } else {
+            pixels
+        };
+        let ratio = f64::from(pixels.width()) / f64::from(pixels.height());
+        let displayed_width = (region.width * scale).min(region.height * scale * ratio);
+        let displayed_height = displayed_width / ratio;
+        let x = offset_x + region.x * scale + (region.width * scale - displayed_width) / 2.;
+        let y = offset_y + region.y * scale + (region.height * scale - displayed_height) / 2.;
+        let fence = mewu_core::visual_source_fence(background, region)
+            .map_err(|error| error.to_string())?;
+        let layout = crate::raster_edit_host::layout(pixels, RasterRole::Extracted, &fence)?;
+        total_bytes = total_bytes
+            .checked_add(layout.png().len())
+            .ok_or("截图对象过大")?;
+        if total_bytes > 32 * 1024 * 1024 {
+            return Err("截图对象过大".into());
+        }
+        let mut drawing = crate::raster_edit_host::drawing(&layout, x, y);
+        drawing.points[1].x = x + displayed_width;
+        drawing.points[1].y = y + displayed_height;
+        drawings.push(drawing);
+        layouts.push(layout);
+    }
+    work.check()?;
+    Ok((drawings, layouts))
+}
 #[tauri::command]
 pub(crate) async fn create_blackboard(
     app: AppHandle,
@@ -114,13 +191,19 @@ pub(crate) async fn create_blackboard(
     let work = host.capture_jobs.begin()?.ok_or("空间正在切换")?;
     let _invoke = work.cancel_on_drop();
     let root = host.assets.clone();
+    let capture_source = original.clone();
     let (work, _transition, prepared) = tauri::async_runtime::spawn_blocking(move || {
-        let prepared = prepare(&root, size.width, size.height, &work);
+        let prepared = (|| {
+            let (asset, file) = prepare(&root, size.width, size.height, &work)?;
+            let (captures, layouts) =
+                prepare_captures(&root, &capture_source, size.width, size.height, &work)?;
+            Ok::<_, String>((asset, file, captures, layouts))
+        })();
         (work, transition, prepared)
     })
     .await
     .map_err(|_| "黑板创建中断")?;
-    let (asset, mut file) = prepared?;
+    let (asset, mut file, captures, layouts) = prepared?;
     work.check()?;
     host.exit.ensure_new_operation()?;
     let snapshot = {
@@ -141,7 +224,7 @@ pub(crate) async fn create_blackboard(
         )?;
         engine
             .store
-            .create_blackboard_document(&scene_id, asset)
+            .create_blackboard_document_with_captures(&scene_id, asset, captures, layouts)
             .map_err(|error| error.to_string())?
     };
     file.adopted = true;
@@ -287,6 +370,234 @@ pub(crate) fn open_blackboard(
 mod tests {
     use super::*;
     use std::sync::Arc;
+    #[test]
+    fn selected_regions_become_editable_images_with_ink_zoom_history_and_reopen() {
+        let directory =
+            std::env::temp_dir().join(format!("mewu-board-captures-{}", uuid::Uuid::new_v4()));
+        let root = directory.join("assets");
+        std::fs::create_dir_all(&root).unwrap();
+        let database = directory.join("spaces.db");
+        let jobs = Arc::new(capture_delay_work::CaptureJobs::default());
+        let work = jobs.begin().unwrap().unwrap();
+        let (mut capture, capture_file) = prepare(&root, 160, 100, &work).unwrap();
+        capture.name = "截图.png".into();
+        let mut pixels = RgbaImage::from_pixel(160, 100, Rgba([30, 160, 80, 255]));
+        for y in 40..80 {
+            for x in 90..150 {
+                pixels.put_pixel(x, y, Rgba([30, 100, 220, 255]));
+            }
+        }
+        pixels.save(&capture_file.path).unwrap();
+        let mut store = mewu_core::Store::open(&database).unwrap();
+        let parent = store.snapshot().active_scene_id;
+        store.set_background(&parent, capture.clone()).unwrap();
+        for (x, y, width, height) in [(10., 10., 60., 40.), (90., 40., 60., 40.)] {
+            store
+                .apply(mewu_core::SceneCommand::AddRegion {
+                    scene_id: parent.clone(),
+                    region: mewu_core::Region {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        x,
+                        y,
+                        width,
+                        height,
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+        }
+        let original = store.snapshot().scenes[0].clone();
+        let first = &original.regions[0];
+        store
+            .apply(mewu_core::SceneCommand::AddDrawing {
+                scene_id: parent.clone(),
+                region_id: first.id.clone(),
+                background_id: capture.id.clone(),
+                expected_revision: 0,
+                drawing: Drawing {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    kind: mewu_core::DrawingKind::Line,
+                    color: "#ffffff".into(),
+                    stroke_width: 4.,
+                    points: vec![
+                        mewu_core::DrawingPoint { x: 15., y: 30. },
+                        mewu_core::DrawingPoint { x: 65., y: 30. },
+                    ],
+                    text: None,
+                    font_size: None,
+                    origin: None,
+                    rich: None,
+                },
+            })
+            .unwrap();
+        let original = store.snapshot().scenes[0].clone();
+        let (board_asset, board_file) = prepare(&root, 320, 200, &work).unwrap();
+        let (objects, layouts) = prepare_captures(&root, &original, 320, 200, &work).unwrap();
+        assert_eq!(objects.len(), 2);
+        assert_eq!(
+            objects[0].points,
+            vec![
+                mewu_core::DrawingPoint { x: 20., y: 20. },
+                mewu_core::DrawingPoint { x: 140., y: 100. }
+            ]
+        );
+        let state = store
+            .create_blackboard_document_with_captures(
+                &parent,
+                board_asset.clone(),
+                objects,
+                layouts,
+            )
+            .unwrap();
+        let board_id = state.active_scene_id;
+        let board = state.scenes.iter().find(|s| s.id == board_id).unwrap();
+        let region_id = board.regions[0].id.clone();
+        let (preview, preview_file) = prepare_preview(&root, board, &work).unwrap();
+        let pixels = image::open(&preview.path).unwrap().to_rgba8();
+        assert_eq!(pixels.get_pixel(50, 60).0, [255, 255, 255, 255]); // Existing capture ink came along.
+        assert_eq!(pixels.get_pixel(200, 120).0, [30, 100, 220, 255]);
+        assert_eq!(pixels.get_pixel(0, 0).0, [51, 53, 58, 255]);
+        drop(preview_file);
+        let mut resized = board.regions[0].drawings[1].clone();
+        resized.points = vec![
+            mewu_core::DrawingPoint { x: 170., y: 40. },
+            mewu_core::DrawingPoint { x: 230., y: 80. },
+        ];
+        store
+            .apply(mewu_core::SceneCommand::UpdateDrawing {
+                scene_id: board_id.clone(),
+                region_id: region_id.clone(),
+                background_id: board_asset.id.clone(),
+                expected_revision: 1,
+                drawing: resized.clone(),
+            })
+            .unwrap();
+        store
+            .apply(mewu_core::SceneCommand::UndoDrawing {
+                scene_id: board_id.clone(),
+                region_id: region_id.clone(),
+                background_id: board_asset.id.clone(),
+                expected_revision: 2,
+            })
+            .unwrap();
+        store
+            .apply(mewu_core::SceneCommand::RedoDrawing {
+                scene_id: board_id.clone(),
+                region_id: region_id.clone(),
+                background_id: board_asset.id.clone(),
+                expected_revision: 3,
+            })
+            .unwrap();
+        store
+            .apply(mewu_core::SceneCommand::AddDrawing {
+                scene_id: board_id.clone(),
+                region_id,
+                background_id: board_asset.id,
+                expected_revision: 4,
+                drawing: Drawing {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    kind: mewu_core::DrawingKind::Line,
+                    color: "#ff0000".into(),
+                    stroke_width: 4.,
+                    points: vec![
+                        mewu_core::DrawingPoint { x: 175., y: 60. },
+                        mewu_core::DrawingPoint { x: 225., y: 60. },
+                    ],
+                    text: None,
+                    font_size: None,
+                    origin: None,
+                    rich: None,
+                },
+            })
+            .unwrap();
+        let state = store.snapshot();
+        let board = state.scenes.iter().find(|s| s.id == board_id).unwrap();
+        assert_eq!(board.regions[0].drawings[1], resized);
+        let (preview, preview_file) = prepare_preview(&root, board, &work).unwrap();
+        let pixels = image::open(&preview.path).unwrap().to_rgba8();
+        assert_eq!(pixels.get_pixel(200, 60).0, [255, 0, 0, 255]); // New ink stays above the resized image.
+        assert_eq!(pixels.get_pixel(200, 45).0, [30, 100, 220, 255]);
+        let edited_region = board.regions[0].clone();
+        store.finish_blackboard_document(board, preview).unwrap();
+        let state = store.snapshot();
+        let returned = state.scenes.iter().find(|s| s.id == parent).unwrap();
+        assert_eq!(returned.regions, original.regions);
+        let item = returned.items[0].id.clone();
+        drop(store);
+        let mut store = mewu_core::Store::open(&database).unwrap();
+        let state = store.open_blackboard_document(&parent, &item).unwrap();
+        assert_eq!(
+            state
+                .scenes
+                .iter()
+                .find(|s| s.id == state.active_scene_id)
+                .unwrap()
+                .regions[0],
+            edited_region
+        );
+        drop(store);
+        drop(preview_file);
+        drop(board_file);
+        drop(capture_file);
+        drop(work);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", database.display()));
+        }
+        std::fs::remove_dir(root).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+    #[test]
+    fn selected_image_and_board_transaction_roll_back_on_database_failure() {
+        let directory =
+            std::env::temp_dir().join(format!("mewu-board-rollback-{}", uuid::Uuid::new_v4()));
+        let root = directory.join("assets");
+        std::fs::create_dir_all(&root).unwrap();
+        let database = directory.join("spaces.db");
+        let jobs = Arc::new(capture_delay_work::CaptureJobs::default());
+        let work = jobs.begin().unwrap().unwrap();
+        let (capture, capture_file) = prepare(&root, 64, 48, &work).unwrap();
+        let mut store = mewu_core::Store::open(&database).unwrap();
+        let parent = store.snapshot().active_scene_id;
+        store.set_background(&parent, capture).unwrap();
+        store
+            .apply(mewu_core::SceneCommand::AddRegion {
+                scene_id: parent.clone(),
+                region: mewu_core::Region {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    x: 2.,
+                    y: 3.,
+                    width: 32.,
+                    height: 24.,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let before = store.snapshot();
+        let (board, board_file) = prepare(&root, 64, 48, &work).unwrap();
+        let (objects, layouts) = prepare_captures(&root, &before.scenes[0], 64, 48, &work).unwrap();
+        let db = rusqlite::Connection::open(&database).unwrap();
+        db.execute_batch("CREATE TRIGGER fail_board BEFORE UPDATE ON app_state BEGIN SELECT RAISE(ABORT,'test failure');END;").unwrap();
+        assert!(store
+            .create_blackboard_document_with_captures(&parent, board, objects, layouts)
+            .is_err());
+        assert_eq!(store.snapshot(), before);
+        assert_eq!(
+            db.query_row("SELECT COUNT(*) FROM drawing_layouts", [], |r| r
+                .get::<_, u32>(0))
+                .unwrap(),
+            0
+        );
+        drop(store);
+        drop(db);
+        drop(board_file);
+        drop(capture_file);
+        drop(work);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", database.display()));
+        }
+        std::fs::remove_dir(root).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
     #[test]
     fn preview_png_contains_saved_ink_and_does_not_mutate_the_editable_background() {
         let root =
