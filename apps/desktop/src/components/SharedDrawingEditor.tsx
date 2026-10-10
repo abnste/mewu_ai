@@ -17,6 +17,7 @@ import BlackboardImageControls from './BlackboardImageControls';
 import {blackboardImage} from '../blackboard-image';
 import {objectTrash} from '../object-trash';
 import DrawingWidthSlider from './DrawingWidthSlider';
+import InlineDrawingText from './InlineDrawingText';
 import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview} from './drawing-selection';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
@@ -56,7 +57,6 @@ export default function SharedDrawingEditor(props: Props) {
   const [pending, setPending] = createSignal(false), [edit, setEdit] = createSignal<DrawingPropertyDraft>();
   const activeDraftId = createMemo(() => draft()?.id), activeEditId = createMemo(() => edit()?.drawing.id), storedPreviewId = createMemo(() => storedDraft()?.id);
   const textEditor = () => edit()?.mode === 'text' ? edit() : undefined;
-  const text = () => textEditor()?.drawing.text ?? '';
   const cacheKey = () => props.port.draftKey();
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
   const [toolbarSize, setToolbarSize] = createSignal({ width: 680, height: 118 });
@@ -372,8 +372,9 @@ export default function SharedDrawingEditor(props: Props) {
       if (!disabled() && !textEditor() && !edit() && !cancelGesture) { svg.focus({preventScroll:true}); beginErase(event,true); }
       return;
     }
-    if (event.button !== 0 || disabled() || textEditor() || cancelGesture) return;
+    if (event.button !== 0 || disabled() || cancelGesture) return;
     event.preventDefault();
+    if (textEditor()) { void finishTextAt(event); return; }
     if (edit()) { void saveText(); return; }
     svg.focus({ preventScroll: true });
     if (!forcedImage && tool() === 'eraser') { beginErase(event); return; }
@@ -500,16 +501,32 @@ export default function SharedDrawingEditor(props: Props) {
     window.addEventListener('pointermove', moved); window.addEventListener('pointerup', released); window.addEventListener('pointercancel', canceled); svg.addEventListener('lostpointercapture', canceled);
     if (!original) try { svg.setPointerCapture(pointerId); } catch { finish(false); }
   }
+  async function finishTextAt(event: PointerEvent) {
+    // A click commits at the current position, then starts the next inline text.
+    // Freeze only source/geometry identity: the successful save advances revision.
+    const source = () => JSON.stringify([identity(),props.port.sourceIdentity(),props.port.frame(),props.box]);
+    const origin = source();
+    if (await saveText() && !disposed && origin === source() && !disabled() && tool() === 'text') begin(event);
+  }
+  function textBlur(event: FocusEvent) {
+    if (!event.relatedTarget || event.relatedTarget instanceof Node && toolbar.contains(event.relatedTarget) || event.relatedTarget instanceof Element && event.relatedTarget.closest('.drawing-color-panel')) return;
+    void saveText();
+  }
+  function confirmText() {
+    void saveText().then(saved => { if (saved && !disposed && !textEditor()) svg.focus({preventScroll:true}); });
+  }
   async function saveText(controlled = false, active: () => boolean = () => true): Promise<boolean> {
     const value = edit(); if (!value) return true;
     if (pending() || (!controlled && props.busy) || !active()) return false;
     const key = cacheKey(), origin = identity();
     try {
-      const command = props.port.propertyCommand(value);
+      const command: EditorDrawingAction | undefined = value.mode === 'text' && !value.drawing.text?.trim()
+        ? value.base ? {...target(value.expectedRevision),type:'remove_drawing',drawingId:value.base.id} : undefined
+        : props.port.propertyCommand(value);
       if (!command) { cancelEdit(); return true; }
       let persisted = false;
       const saved = await commit(command, controlled, active, () => { persisted = true; drawingDrafts.delete(key, value); });
-      if (persisted && !disposed && origin === identity() && edit() === value) { setEdit(undefined); setSelected(props.port.persistedId?.(value.drawing.id) ?? value.drawing.id); }
+      if (persisted && !disposed && origin === identity() && edit() === value) { setEdit(undefined); setSelected(value.mode === 'text' ? '' : props.port.persistedId?.(value.drawing.id) ?? value.drawing.id); }
       if (saved) {
         return true;
       }
@@ -571,13 +588,13 @@ export default function SharedDrawingEditor(props: Props) {
     if ((event.target instanceof Element ? event.target : document.activeElement)?.closest(props.keyboardIgnore ?? '.video-trim-popover,.artifact-video,.blackboard-object,[data-run-journal]')) return;
     if (props.inputLocked) return;
     if (document.querySelector('.drawing-drafts-dialog')) return;
-    if (event.isComposing) return;
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Shift') { refreshConstraint?.(event.shiftKey); return; }
     if (event.type === 'keyup') return;
     if (nativeSelectOwnsEscape(event)) return;
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
-      if (cancelGesture) cancelGesture(); else if (!disabled() && edit()) cancelEdit(); else if (!disabled()) { if (props.blackboard) void done(); else props.onClose(); }
+      if (cancelGesture) cancelGesture(); else if (!disabled() && textEditor()) confirmText(); else if (!disabled() && edit()) cancelEdit(); else if (!disabled()) { if (props.blackboard) void done(); else props.onClose(); }
       return;
     }
     if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
@@ -645,6 +662,7 @@ export default function SharedDrawingEditor(props: Props) {
     <Show when={props.blackboard&&tool()==='select'}><div class="drawing-selection-background" style={{left:`${props.box.x}px`,top:`${props.box.y}px`,width:`${props.box.width}px`,height:`${props.box.height}px`}} onPointerDown={begin}/></Show>
     <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser'||erasing() }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px`,'pointer-events':props.blackboard&&tool()==='select'?'none':undefined,cursor:tool()==='eraser'||erasing()?eraseCursor():undefined }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={begin} onContextMenu={event=>event.preventDefault()} onDblClick={doubleClick} aria-label={t("绘制区域")}>
       <For each={drawingIds()}>{id => <DrawingItem id={id} />}</For>
+      <Show when={textEditor()}>{value => <InlineDrawingText drawing={value().drawing} disabled={pending() || !!props.inputLocked} ref={element => {textarea=element;}} onInput={setText} onConfirm={confirmText} onBlur={textBlur}/>}</Show>
       <Show when={marquee()}>{box=><rect class="drawing-marquee" {...box()} fill="#348bf1" fill-opacity=".07" stroke="#348bf1" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>}</Show>
       <Show when={rasterPreview()}>{value=> <Show when={value().mode==='extract'} fallback={<polyline points={value().points.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke="#428fff" stroke-opacity=".38" stroke-width={value().width} stroke-linecap="round" stroke-linejoin="round" pointer-events="none" />}><rect x={Math.min(value().points[0].x,value().points.at(-1)!.x)} y={Math.min(value().points[0].y,value().points.at(-1)!.y)} width={Math.abs(value().points.at(-1)!.x-value().points[0].x)} height={Math.abs(value().points.at(-1)!.y-value().points[0].y)} fill="none" stroke="#428fff" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none" /></Show>}</Show>
       <For each={resizeHandles()}>{(point, index) => <ellipse class="drawing-resize-handle" cx={point.x} cy={point.y} rx={handleSize().x / 2} ry={handleSize().y / 2} vector-effect="non-scaling-stroke" style={{ cursor: resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? 'move' : index() % 2 ? 'nesw-resize' : 'nwse-resize' }} aria-label={resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? t('调整端点') : t('缩放图形')} onPointerDown={event => beginResize(event, index())} />}</For>
@@ -666,7 +684,7 @@ export default function SharedDrawingEditor(props: Props) {
       <Show when={tool() === 'number'}><input class="drawing-number" type="number" aria-label={t("下个序号")} title={t("下个序号")} min="1" max="9999" step="1" value={nextNumber()} disabled={disabled()} onInput={event => editNumber(event.currentTarget.value)} /></Show>
       <Show when={propertyKind() === 'number'}><select aria-label={t("序号大小")} title={t("序号大小")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([22, 28, 36, 48, 64], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>
       <Show when={propertyKind() === 'text'}><select aria-label={t("字号")} title={t("字号")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([16, 20, 28, 36, 48], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>
-      <Show when={edit()?.mode === 'style' && edit()?.error}><button title={t("重试保存")} aria-label={t("重试保存标注")} disabled={disabled()} onClick={() => void saveText()}><Check size={16} /></button><button title={t("载入最新")} aria-label={t("载入最新标注")} disabled={disabled()} onClick={loadLatest}><RotateCcw size={16} /></button><button title={t("取消修改")} aria-label={t("取消属性修改")} disabled={disabled()} onClick={cancelUserEdit}><X size={16} /></button></Show>
+      <Show when={edit()?.error}><button title={t("重试保存")} aria-label={t("重试保存标注")} disabled={disabled()} onClick={confirmText}><Check size={16} /></button><button title={t("载入最新")} aria-label={t("载入最新标注")} disabled={disabled()} onClick={loadLatest}><RotateCcw size={16} /></button><button title={t("取消修改")} aria-label={t("取消属性修改")} disabled={disabled()} onClick={cancelUserEdit}><X size={16} /></button></Show>
       <span class="drawing-divider" />
       <Show when={selectedDrawing()?.rich?.kind === 'table' && props.port.copyTable}><button title={t("复制表格")} aria-label={t("复制表格")} disabled={disabled() || !!edit()} onClick={copySelectedTable}><Copy size={16} /></button><select aria-label={t("表格复制格式")} value={tableFormat()} disabled={disabled() || !!edit()} onChange={event => setTableFormat(event.currentTarget.value as DrawingTableFormat)}><For each={['table', 'markdown', 'csv', 'tsv', 'png'] as DrawingTableFormat[]}>{format => <option value={format} selected={tableFormat() === format}>{format === 'table' ? 'Excel' : format === 'markdown' ? 'Markdown' : format.toUpperCase()}</option>}</For></select></Show>
       <button data-caption={t("撤销")} title={t("撤销 · Ctrl + Z")} aria-label={t("撤销绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(false)} disabled={disabled() || !!edit() || !historyAvailable(false)} onClick={() => history(false)}><Undo2 size={17} /></button>
@@ -677,9 +695,5 @@ export default function SharedDrawingEditor(props: Props) {
       </div>
     </div>
     <Show when={props.blackboard}><BlackboardImageControls surface={()=>svg} box={props.box} frame={props.port.frame} drawings={drawings} preview={previewDrawing} revision={props.port.revision} source={()=>JSON.stringify([identity(),props.port.sourceIdentity(),props.port.sourceSize(),props.port.frame(),props.box])} disabled={()=>pending()||props.busy||!!props.inputLocked||finishing()||!!edit()} gestureActive={()=>!!cancelGesture} onMove={(event,drawing)=>begin(event,drawing)} onUpdate={(drawing,revision,active)=>commit({expectedRevision:revision,type:'update_drawing',drawing},true,active)} onPreview={setDraft} onZooming={setImageZooming} onRegisterFlush={flush=>{flushImages=flush;return()=>{if(flushImages===flush)flushImages=undefined;};}} onError={props.onError}/></Show>
-    <Show when={textEditor()}>{value => <div class="drawing-text-editor" style={{ left: `${clamp(props.box.x + (value().drawing.points[0].x - props.port.frame().x) * props.box.width / props.port.frame().width, 6, Math.max(6, viewport().width - 294))}px`, top: `${clamp(props.box.y + (value().drawing.points[0].y - props.port.frame().y) * props.box.height / props.port.frame().height, 6, Math.max(6, viewport().height - 160))}px` }}>
-      <textarea ref={textarea} aria-label={t("绘制文字")} placeholder={t("输入文字")} value={text()} disabled={pending() || props.inputLocked} onInput={event => setText(event.currentTarget.value)} onKeyDown={event => { if (!event.isComposing && event.keyCode !== 229 && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void saveText(); } }} />
-      <div><Show when={value().error}><span class="drawing-edit-error" role="status">{value().error}</span><Show when={value().base}><button class="icon-button compact" title={t("载入最新")} aria-label={t("载入最新标注")} disabled={disabled()} onClick={loadLatest}><RotateCcw size={15} /></button></Show></Show><button class="icon-button compact" title={t("取消")} aria-label={t("取消文字")} disabled={disabled()} onClick={cancelUserEdit}><X size={15} /></button><button class="primary-button" title={`${value().base ? t('保存') : t('添加')} · Ctrl + Enter`} aria-label={value().base ? t('保存文字') : t('添加文字')} disabled={disabled() || !text().trim()} onClick={() => void saveText()}><Check size={15} /></button></div>
-    </div>}</Show>
   </div>;
 }

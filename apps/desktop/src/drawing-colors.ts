@@ -3,6 +3,14 @@ export const colorPresets = ['#FFFFFF','#242832','#EE4848','#F28B38','#F4C94D','
 export const colorHistoryKey = 'mewu.drawing-colors.v1';
 export const normalizeColor = (value:string) => /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim().toUpperCase() : undefined;
 export const colorRgb = (value:string) => [1,3,5].map(offset=>parseInt(value.slice(offset,offset+2),16));
+// WCAG relative luminance; choose the stronger of the two opaque text colors.
+export function numberForeground(value:string): '#000000' | '#FFFFFF' {
+  const [r,g,b]=colorRgb(value).map(channel=>{
+    const s=channel/255; return s<=.04045?s/12.92:((s+.055)/1.055)**2.4;
+  });
+  const luminance=.2126*r+.7152*g+.0722*b;
+  return (luminance+.05)/.05>=1.05/(luminance+.05)?'#000000':'#FFFFFF';
+}
 export function rgbColor(channels:number[]) { return '#'+channels.map(value=>Math.round(Math.max(0,Math.min(255,value))).toString(16).padStart(2,'0')).join('').toUpperCase(); }
 export function colorHsv(value:string) {
   const [r,g,b]=colorRgb(value).map(value=>value/255), max=Math.max(r,g,b),min=Math.min(r,g,b),delta=max-min;

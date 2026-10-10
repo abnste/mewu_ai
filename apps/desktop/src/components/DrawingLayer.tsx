@@ -8,6 +8,7 @@ import { penSegments } from './drawing-pointer';
 import RichDrawingShape from './RichDrawingShape';
 import type { RichDrawingContext } from '../drawing-layout-preview';
 import './drawing.css';
+import { numberForeground } from '../drawing-colors';
 
 interface MosaicContext { sceneId: string; background: Asset; override?: MosaicSource }
 function MosaicShape(props: { drawing: Drawing; context?: MosaicContext }) {
@@ -40,7 +41,7 @@ export function DrawingShape(props: { drawing: Drawing; interactive?: boolean; s
       <Match when={props.drawing.kind === 'rect'}><rect {...box()} /></Match>
       <Match when={props.drawing.kind === 'ellipse'}><ellipse cx={box().x + box().width / 2} cy={box().y + box().height / 2} rx={box().width / 2} ry={box().height / 2} /></Match>
       <Match when={props.drawing.kind === 'mosaic'}><MosaicShape drawing={props.drawing} context={props.mosaicContext} /></Match>
-      <Match when={props.drawing.kind === 'number'}><circle cx={first().x + diameter() / 2} cy={first().y + diameter() / 2} r={diameter() / 2} fill={props.drawing.color} stroke="none" /><text x={first().x + diameter() / 2} y={first().y + diameter() / 2 + numberSize() * .35} text-anchor="middle" font-family={'"Segoe UI", "Microsoft YaHei", sans-serif'} font-size={String(numberSize())} font-weight="600" fill="white" stroke="none">{props.drawing.text}</text></Match>
+      <Match when={props.drawing.kind === 'number'}><circle cx={first().x + diameter() / 2} cy={first().y + diameter() / 2} r={diameter() / 2} fill={props.drawing.color} stroke="none" /><text x={first().x + diameter() / 2} y={first().y + diameter() / 2 + numberSize() * .35} text-anchor="middle" font-family={'"Segoe UI", "Microsoft YaHei", sans-serif'} font-size={String(numberSize())} font-weight="600" fill={numberForeground(props.drawing.color)} stroke="none">{props.drawing.text}</text></Match>
       <Match when={props.drawing.kind === 'text'}><text x={first().x} y={first().y + (props.drawing.fontSize ?? 20)} font-family={'"Segoe UI", "Microsoft YaHei", sans-serif'} font-size={String(props.drawing.fontSize ?? 20)} fill={props.drawing.color} stroke="none" style={{ 'white-space': 'pre' }}><For each={(props.drawing.text ?? '').split('\n')}>{(line, index) => <tspan x={first().x} y={first().y + (props.drawing.fontSize ?? 20) * (1 + index() * 1.25)}>{line || ' '}</tspan>}</For></text></Match>
     </Switch>
     <Show when={props.selected}><rect {...bounds()} fill="none" stroke="#348bf1" stroke-width="1" vector-effect="non-scaling-stroke" stroke-dasharray="4 3" pointer-events="none" /></Show>

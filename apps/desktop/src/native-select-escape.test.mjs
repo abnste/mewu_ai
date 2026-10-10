@@ -37,7 +37,7 @@ function fixture(code) {
   const context = vm.createContext({
     Element, document:doc, effects, console,
     props:{onClose:()=>effect('close'),inputLocked:false,scene:{items:[]}},
-    cancelGesture:undefined, disabled:()=>false, edit:()=>undefined,
+    cancelGesture:undefined, disabled:()=>false, edit:()=>undefined,textEditor:()=>undefined,confirmText:()=>effect('confirmText'),
     exitPreparing:()=>false,settings:()=>false,pendingDrawingDrafts:()=>[],scroll:()=>undefined,recording:()=>undefined,
     busy:()=>false,sessionsOpen:()=>false,scene:()=>({id:'scene'}),expanded:()=>({}),closeScene:()=>effect('closeScene'),
     voicePending:()=>false, pendingPin:true,cancelPendingPin:()=>effect('cancelPin'),

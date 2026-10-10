@@ -125,7 +125,7 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
       const x=Math.max(-b.x,Math.min(props.info.width-b.x-b.width,dx)),y=Math.max(-b.y,Math.min(props.info.height-b.y-b.height,dy));
       return{...original,points:original.points.map(point=>({x:point.x+x,y:point.y+y}))};
     },
-    render:(drawing,interactive,selected,preview)=>object(drawing.id)?props.renderStored(drawing.id,interactive,selected,preview?drawing:undefined):<DrawingShape drawing={drawing} interactive={interactive} selected={selected}/>,
+    render:(drawing,interactive,selected,preview)=>drawing.kind==='text'&&preview?<DrawingShape drawing={drawing} interactive={interactive} selected={selected}/>:object(drawing.id)?props.renderStored(drawing.id,interactive,selected,preview?drawing:undefined):<DrawingShape drawing={drawing} interactive={interactive} selected={selected}/>,
   };
   const register:RegisterDrawingFlush=flush=>props.onRegisterDrawingAuthoringFlush?.(async active=>{if(!active()||!ready())throw Error('视频绘制对象已变化');await flush(active);})??(()=>{});
   onCleanup(()=>{disposed=true;});

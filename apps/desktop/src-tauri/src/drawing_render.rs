@@ -450,7 +450,8 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
                 let size = (diameter * 0.55).min(diameter * 0.78 / (text.len() as f64 * 0.6));
                 let cx = first.x + diameter / 2.;
                 let cy = first.y + diameter / 2.;
-                let _ = write!(svg, "<circle cx=\"{cx}\" cy=\"{cy}\" r=\"{}\" fill=\"{color}\"/><text x=\"{cx}\" y=\"{}\" fill=\"#ffffff\" font-family=\"{FONT_FAMILY}\" font-size=\"{size}\" font-weight=\"600\" text-anchor=\"middle\">{text}</text>", diameter/2., cy + size * 0.35);
+                let foreground = number_foreground(color);
+                let _ = write!(svg, "<circle cx=\"{cx}\" cy=\"{cy}\" r=\"{}\" fill=\"{color}\"/><text x=\"{cx}\" y=\"{}\" fill=\"{foreground}\" font-family=\"{FONT_FAMILY}\" font-size=\"{size}\" font-weight=\"600\" text-anchor=\"middle\">{text}</text>", diameter/2., cy + size * 0.35);
             }
             DrawingKind::Mosaic | DrawingKind::Rich => {} // Raster layers are composed outside SVG.
         }
@@ -460,6 +461,24 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
     }
     svg.push_str("</svg>");
     svg
+}
+
+fn number_foreground(color: &str) -> &'static str {
+    // Same WCAG sRGB transfer and contrast comparison as the live SVG preview.
+    let linear = |offset| {
+        let s = u8::from_str_radix(&color[offset..offset + 2], 16).unwrap_or(0) as f64 / 255.;
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = 0.2126 * linear(1) + 0.7152 * linear(3) + 0.0722 * linear(5);
+    if (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) {
+        "#000000"
+    } else {
+        "#FFFFFF"
+    }
 }
 
 fn arrow_wings(
@@ -794,15 +813,55 @@ mod tests {
             let left = 4 + index * 48;
             assert_eq!(image.get_pixel(left + 20, 22), Rgba([255, 0, 0, 255]));
             assert_eq!(image.get_pixel(left + 20, 18), Rgba([255, 255, 255, 255]));
-            let white_inside = (left + 5..left + 35)
+            let dark_inside = (left + 5..left + 35)
                 .flat_map(|x| (32..48).map(move |y| (x, y)))
-                .filter(|&(x, y)| image.get_pixel(x, y)[1] > 180)
+                .filter(|&(x, y)| image.get_pixel(x, y)[0] < 90)
                 .count();
             assert!(
-                white_inside > 8,
-                "number {} has no readable white label",
+                dark_inside > 8,
+                "number {} has no readable dark label",
                 values[index as usize]
             );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn number_exports_use_contrasting_glyphs_on_light_and_dark_fills() {
+        for (fill, foreground) in [("#FFFFFF", 0_u8), ("#242832", 255_u8), ("#F4C94D", 0_u8)] {
+            let mut number = drawing(DrawingKind::Number, &[(10., 10.)]);
+            number.color = fill.into();
+            number.text = Some("8".into());
+            number.font_size = Some(48.);
+            let image = crop_region(
+                &background(),
+                &Region {
+                    x: 0.,
+                    y: 0.,
+                    width: 80.,
+                    height: 80.,
+                    drawings: vec![number],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let glyph_pixels = (20..48)
+                .flat_map(|x| (22..48).map(move |y| (x, y)))
+                .filter(|&(x, y)| {
+                    image.get_pixel(x, y).0[..3]
+                        .iter()
+                        .all(|value| value.abs_diff(foreground) < 20)
+                })
+                .count();
+            assert!(glyph_pixels > 8, "exported number is unreadable on {fill}");
+        }
+        for (fill, expected) in [
+            ("#757575", "#FFFFFF"),
+            ("#767676", "#000000"),
+            ("#0000FF", "#FFFFFF"),
+            ("#00FF00", "#000000"),
+        ] {
+            assert_eq!(number_foreground(fill), expected);
         }
     }
 

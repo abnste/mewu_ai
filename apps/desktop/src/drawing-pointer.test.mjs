@@ -171,7 +171,9 @@ async function jsx(source,dependencies){
   const compiled=transformSync(source,{filename:'drawing-fixture.tsx',babelrc:false,configFile:false,parserOpts:{plugins:['typescript','jsx']},presets:[[solidPreset,{generate:'universal',moduleName:'test-renderer'}]]}).code;
   const result=new SourceTextModule(transform(compiled));await result.link(name=>synthetic(name==='test-renderer'?renderer:name==='solid-js'?solid:dependencies[name]??{}));await result.evaluate();return result.namespace;
 }
+const colors=await pure('./drawing-colors.ts');
 const shapeJsx=await jsx(await raw('./components/DrawingLayer.tsx'),{
+  '../drawing-colors':colors,
   './drawing-geometry':geometry,'./drawing-pointer':pointer,'./RichDrawingShape':{default:()=>undefined},'../bridge':{getMosaicPreview:()=>{throw Error('No native IO');}},'../i18n':{t:value=>value},
 });
 const itemJsx=await jsx(`import {linkedRepairPreview} from 'selection';import {createMemo,Show} from 'solid-js';import {liveDrawing} from 'pointer';
@@ -180,6 +182,32 @@ ${['drawingIndex','storedIndex','activeDraftId'].map(declaration).join('\n')}
 const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()];${declaration('previews')}
 ${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer,selection:{linkedRepairPreview:(drawing)=>drawing}});
 const descendants=(node,tag)=>[...(node.tag===tag?[node]:[]),...node.children.flatMap(child=>descendants(child,tag))];
+
+const videoCode=await raw('./components/VideoDrawingEditor.tsx');
+const videoBody=parse(videoCode,{sourceType:'module',plugins:['typescript','jsx']}).program.body.find(n=>n.type==='ExportDefaultDeclaration').declaration.body.body;
+const videoRender=videoBody.find(n=>n.type==='VariableDeclaration'&&n.declarations[0].id.name==='port').declarations[0].init.properties.find(n=>n.key.name==='render').value;
+const videoPreviewJsx=await jsx(`import {DrawingShape} from 'shapes';export function fixture(props,object){return ${videoCode.slice(videoRender.start,videoRender.end)};}`,{shapes:shapeJsx});
+test('editing a stored video text paints the live draft rather than its old native raster',()=>{
+  const [text,setText]=solid.createSignal('new text');let rasterCalls=0;
+  const root=renderer.createElement('root'),draw={id:'stored',kind:'text',color:'#242832',fontSize:28,strokeWidth:1,points:[{x:10,y:20}],get text(){return text();}};
+  const render=videoPreviewJsx.fixture({renderStored:()=>{rasterCalls++;return renderer.createElement('image');}},()=>({primitive:{kind:'text'}}));
+  const dispose=renderer.render(()=>render(draw,true,false,true),root);
+  assert.equal(rasterCalls,0);assert.equal(descendants(root,'image').length,0);assert.equal(descendants(root,'text').length,1);
+  setText('实时文字');assert.equal(descendants(root,'text')[0].children[0].children[0].text,'实时文字');
+  dispose();render(draw,true,false,false);assert.equal(rasterCalls,1);
+});
+
+test('actual number SVG switches its glyph contrast live when the circle fill changes',()=>{
+  const [color,setColor]=solid.createSignal('#FFFFFF');
+  const root=renderer.createElement('root');
+  const dispose=renderer.render(()=>renderer.createComponent(shapeJsx.DrawingShape,{get drawing(){return{id:'number',kind:'number',color:color(),strokeWidth:1,points:[{x:40,y:50}],text:'1',fontSize:36};}}),root);
+  const label=descendants(root,'text')[0];
+  for(const [fill,foreground] of [['#FFFFFF','#000000'],['#242832','#FFFFFF'],['#F4C94D','#000000'],['#0000FF','#FFFFFF']]){
+    setColor(fill);assert.equal(descendants(root,'text')[0],label);assert.equal(label.props.fill,foreground);
+    assert.equal(descendants(root,'circle')[0].props.fill,fill);
+  }
+  dispose();
+});
 
 test('actual DrawingItem/Shape JSX updates live pen pixels and reuses completed SVG nodes; removal disposes the active tail',()=>{
   const [draft,setDraft]=solid.createSignal(),[drawings]=solid.createSignal([]),[stored]=solid.createSignal([]),[tool,setTool]=solid.createSignal('pen'),[selected,setSelected]=solid.createSignal('');
