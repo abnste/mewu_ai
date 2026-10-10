@@ -11,7 +11,7 @@
 需要 Node.js 22 或更新版本，以及本仓库的 Rust/Tauri 构建环境。此工具没有新增 npm 或 Cargo 依赖。从仓库根目录执行：
 
 ```powershell
-cargo build -p mewu-desktop --bin mewu-plugin-validator --locked
+cargo build -p mewu-desktop --bin mewu-plugin-validator --features catalog-validator --locked
 node tools/plugin-catalog/cli.mjs --help
 ```
 

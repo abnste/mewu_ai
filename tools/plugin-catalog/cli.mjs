@@ -19,7 +19,7 @@ node tools/plugin-catalog/cli.mjs build <entries目录> --out <目录.json> [--c
 
 所有命令可加 --validator <mewu-plugin-validator可执行文件>。
 也可设置 MEWU_PLUGIN_VALIDATOR；否则从 CARGO_TARGET_DIR/debug 或 target/debug 查找。
-构建校验器：cargo build -p mewu-desktop --bin mewu-plugin-validator --locked
+构建校验器：cargo build -p mewu-desktop --bin mewu-plugin-validator --features catalog-validator --locked
 --bundled 只检查内置清单格式，不赋予任何文件官方来源权限。
 --check 比较生成结果，不写文件。目录仅接收直属 JSON 条目，不静默略过其他文件。
 `;

@@ -9,6 +9,7 @@ default-run = "mewu-desktop"
 name = "mewu-plugin-validator"
 path = "../../../tools/plugin-catalog/native.rs"
 test = false
+required-features = ["catalog-validator"]
 
 [build-dependencies]
 tauri-build = { version = "=2.7.1", features = [] }
@@ -72,3 +73,6 @@ windows = { version = "=0.62.2", features = ["Win32_System_Com_StructuredStorage
 
 [dev-dependencies]
 rxing = { version = "=0.9.3", default-features = false, features = ["encoders"] }
+
+[features]
+catalog-validator = []
