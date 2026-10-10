@@ -70,6 +70,17 @@ const callbacks = [
   ['Video trim','./components/VideoTrimBar.tsx','keyDown'],
   ['Video annotation move','./components/VideoArtifact.tsx','escapeMove'],
 ];
+
+test('ordinary Escape closes an unminimized conversation even when expanded, but returns a restored minimized conversation to its dock',async()=>{
+  const f=fixture(await callback('./App.tsx','escape'));
+  f.context.freeze=()=>f.effects.push(['minimize']);
+  f.context.scene=()=>({id:'plain',minimized:false});
+  f.run(f.event(f.root));assert.deepEqual(f.effects,[['closeScene']]);
+  f.effects.length=0;f.context.scene=()=>({id:'restored',minimized:true});
+  f.run(f.event(f.root));assert.deepEqual(f.effects,[['minimize']]);
+  f.effects.length=0;f.context.sessionsOpen=()=>true;f.context.setSessionsOpen=()=>f.effects.push(['closePicker']);
+  f.run(f.event(f.root));assert.deepEqual(f.effects,[['closePicker']]);
+});
 for (const [label,file,name] of callbacks) test(`${label}: native picker Escape never closes/cancels content; normal Escape retains behavior`, async () => {
   const f = fixture(await callback(file,name));
   if (name==='recordKey') f.context.cancelGesture=()=>f.effects.push(['cancelGesture']);

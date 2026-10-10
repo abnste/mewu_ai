@@ -114,8 +114,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
     const box = video.getBoundingClientRect(), card = video.closest('.artifact-card');
     const editorBox = { x: box.left, y: box.top, width: box.width, height: box.height };
     setDrawingBox(previous => Object.keys(editorBox).every(key => previous[key as keyof typeof previous] === editorBox[key as keyof typeof editorBox]) ? previous : editorBox);
-    const header = card?.querySelector('.artifact-header')?.getBoundingClientRect(), footer = card?.querySelector('.artifact-footer')?.getBoundingClientRect();
-    const controls = props.blackboard ? document.querySelector('.drawing-blackboard .drawing-toolbar')?.getBoundingClientRect() : header && footer ? { left: Math.min(header.left, footer.left), top: Math.min(header.top, footer.top), width: Math.max(header.right, footer.right) - Math.min(header.left, footer.left), height: Math.max(header.bottom, footer.bottom) - Math.min(header.top, footer.top) } : header ?? footer;
+    const controls = props.blackboard ? document.querySelector('.drawing-blackboard .drawing-toolbar')?.getBoundingClientRect() : card?.querySelector('.video-object-tools')?.getBoundingClientRect();
     const composer = document.querySelector('.composer:not(.composer-hidden)')?.getBoundingClientRect();
     const next = placeVideoControls(box, { width: window.innerWidth, height: window.innerHeight }, popover?.getBoundingClientRect().height ?? 0, composer, controls);
     setPlacement(previous => previous.left === next.left && previous.top === next.top && previous.width === next.width ? previous : next);

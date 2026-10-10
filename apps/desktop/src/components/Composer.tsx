@@ -26,6 +26,7 @@ interface Props {
   onDraft: (text: string) => void; onSend: () => void; onCancel: () => void; onImport: () => void;
   onFreeze: () => void; onNew: () => void; onCapture: () => void; onClose: () => void; onSessions: () => void;
   onRemoveRef: (reference: Reference) => void; onFocusRef: (reference: Reference) => void;
+  referenceInsertion?:{sceneId:string;reference:Reference;serial:number};
   onExpanded: (expanded: boolean) => void; onAgent: (id: string) => void; onConnection: () => void;
   onSelectConnection: (id: string) => void;
   onError?: (error: string) => void;
@@ -58,6 +59,13 @@ export default function Composer(props: Props) {
   const agent = () => props.agents.find(a => a.id === props.scene.agentId);
   const connection = () => props.connections.find(value => value.id === props.scene.connectionId);
   const referenceLabel = (ref: Reference) => ref.kind === 'region' ? `${t('图片')}${props.scene.regions.findIndex(r => r.id === ref.id) + 1}` : props.scene.items.find(item => item.id === ref.id)?.asset.name || t('文件');
+  createEffect(on(()=>props.referenceInsertion,request=>{
+    if(!request||request.sceneId!==props.scene.id||!input)return;
+    const label=`@${referenceLabel(request.reference)} `;
+    const start=input.selectionStart??props.draft.length,end=input.selectionEnd??start;
+    input.setRangeText(label,start,end,'end');props.onDraft(input.value);
+    setHidden(false);queueMicrotask(()=>input.focus({preventScroll:true}));
+  }));
   const streaming = () => props.stream && props.scene.run?.id === props.stream.runId && !props.scene.messages.some(message => message.role === 'assistant' && message.runId === props.stream?.runId);
   const conversationMessages = createMemo(() => props.scene.messages.slice(props.scene.conversationStart ?? 0));
   const reply = createMemo(() => latestReply({ run: props.scene.run, messages: conversationMessages(), stream: props.stream }));
@@ -186,7 +194,7 @@ export default function Composer(props: Props) {
       <Show when={props.expanded}><header class="conversation-heading">
         <MessageSquare size={15} /><span title={connection() ? `${connection()!.name} · ${connection()!.model}` : undefined}>{connection()?.model ? `${agent()?.name || 'Mewu'} · ${connection()!.model}` : agent()?.name || 'Mewu'}</span>
         <button class="icon-button compact" title={t('历史会话')} aria-label={t('历史会话')} onClick={props.onSessions}><History size={16} /></button>
-        <button class="icon-button compact" title={t('冻结会话')} aria-label={t('冻结会话')} onClick={props.onFreeze}><Minus size={17} /></button>
+        <button class="icon-button compact" title={t('最小化会话')} aria-label={t('最小化会话')} onClick={props.onFreeze}><Minus size={17} /></button>
         <button class="icon-button compact" title={t('关闭会话')} aria-label={t('关闭会话')} onClick={props.onClose}><X size={16} /></button>
       </header></Show>
       <Show when={historyVisible()}><div ref={node => { history = node; setHistoryElement(node); }} class="conversation-scroll" onWheel={event => { if (event.deltaY < 0) setAtEnd(false); }} onScroll={e => setAtEnd(e.currentTarget.scrollHeight - e.currentTarget.scrollTop - e.currentTarget.clientHeight <= 24)}>
@@ -208,7 +216,7 @@ export default function Composer(props: Props) {
             <div class="popover-divider" />
             <button class="picker-entry" onClick={() => act(props.onNew)}><SquarePen size={15} /><span>{t('新建对话')}</span></button>
             <button class="picker-entry" onClick={() => act(props.onSessions)}><History size={15} /><span>{t('历史会话')}</span></button>
-            <button class="picker-entry" onClick={() => act(props.onFreeze)}><Minus size={15} /><span>{t('冻结会话')}</span></button>
+            <button class="picker-entry" onClick={() => act(props.onFreeze)}><Minus size={15} /><span>{t('最小化会话')}</span></button>
             <button class="picker-entry" onClick={() => act(props.onClose)}><X size={15} /><span>{t('关闭会话')}</span></button>
             <Show when={position()}><button class="picker-entry" onClick={() => act(() => { setPosition(undefined); props.onPosition(undefined); })}><RotateCcw size={15} /><span>{t('归位')}</span></button></Show>
           </div></Show>

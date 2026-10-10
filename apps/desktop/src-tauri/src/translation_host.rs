@@ -622,7 +622,9 @@ fn save_overlay(root: &Path, image: &image::RgbaImage) -> Result<PendingOverlay,
     {
         return Err("译文图层尺寸超过限制".into());
     }
-    let root = root.canonicalize().map_err(|_| "译文素材目录不可用")?;
+    // Keep the registered logical root in the Asset; opening still verifies
+    // the actual file and canonical root. Windows may virtualize AppData.
+    let _ = root.canonicalize().map_err(|_| "译文素材目录不可用")?;
     let id = uuid::Uuid::new_v4().to_string();
     let path = root.join(format!("{id}.png"));
     let mut file = OpenOptions::new()

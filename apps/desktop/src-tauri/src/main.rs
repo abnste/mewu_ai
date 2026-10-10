@@ -220,6 +220,10 @@ pub(crate) struct HostSnapshot {
     snapshot: Snapshot,
     revision: u64,
 }
+fn emit_run_event(app: &AppHandle, value: serde_json::Value) -> tauri::Result<()> {
+    app.emit_to("space", "run-event", &value)?;
+    app.emit_to(frozen::LABEL, "run-event", &value)
+}
 fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
     speech_host::reconcile(app, snapshot);
     code_host::reconcile(app, snapshot);
@@ -251,7 +255,10 @@ fn show(app: &AppHandle) {
     }
     let _ = frozen::hide(app);
     if let Some(window) = app.get_webview_window("space") {
-        if let Err(error) = capture_visibility::apply(&window) { let _ = app.emit_to("space", "host-error", error); return; }
+        if let Err(error) = capture_visibility::apply(&window) {
+            let _ = app.emit_to("space", "host-error", error);
+            return;
+        }
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
@@ -325,7 +332,8 @@ async fn apply_scene_command(
         SceneCommand::FreezeScene { scene_id } => return freeze_space(app, scene_id).await,
         SceneCommand::CloseScene { scene_id } => return close_scene_window(app, scene_id).await,
         SceneCommand::AddDrawing { .. }
-        | SceneCommand::UpdateDrawing { .. } | SceneCommand::UpdateDrawings { .. }
+        | SceneCommand::UpdateDrawing { .. }
+        | SceneCommand::UpdateDrawings { .. }
         | SceneCommand::RemoveDrawing { .. }
         | SceneCommand::UndoDrawing { .. }
         | SceneCommand::RedoDrawing { .. } => return Err("请从绘制工具操作".into()),
@@ -617,10 +625,9 @@ pub(crate) async fn hide_space_checked(
         engine
             .translation_jobs
             .cancel_scene("space", &snapshot.active_scene_id);
-        snapshot
-            .scenes
-            .iter()
-            .any(|scene| scene.frozen && !scene.closed && frozen::has_content(scene))
+        snapshot.scenes.iter().any(|scene| {
+            scene.frozen && scene.minimized && !scene.closed && frozen::has_content(scene)
+        })
     };
     speech_host::cancel_owner(&app, "space");
     code_host::cancel_owner(&app, "space");
@@ -671,10 +678,9 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
             .apply(SceneCommand::CloseScene { scene_id })
             .map_err(|error| error.to_string())?;
         cancel_ended_runs(&mut engine, &snapshot);
-        let has_frozen = snapshot
-            .scenes
-            .iter()
-            .any(|scene| scene.frozen && !scene.closed && frozen::has_content(scene));
+        let has_frozen = snapshot.scenes.iter().any(|scene| {
+            scene.frozen && scene.minimized && !scene.closed && frozen::has_content(scene)
+        });
         publish(&app, &snapshot);
         (was_active, has_frozen)
     };
@@ -796,7 +802,7 @@ async fn freeze_space(app: AppHandle, scene_id: String) -> Result<HostSnapshot, 
     pixel_sampler::invalidate(&app);
     pin_host::cancel_pending(&app, "space");
     recording::ensure_idle(&app)?;
-    {
+    let previously_minimized = {
         let mut engine = host.lock()?;
         host.exit.ensure_new_operation()?;
         let current = engine.store.snapshot();
@@ -808,13 +814,15 @@ async fn freeze_space(app: AppHandle, scene_id: String) -> Result<HostSnapshot, 
         if !frozen::has_content(scene) {
             return Err("当前空间没有可冻结的内容".into());
         }
+        let previously_minimized = scene.minimized;
         engine
             .store
             .apply(SceneCommand::FreezeScene {
                 scene_id: scene_id.clone(),
             })
             .map_err(|error| error.to_string())?;
-    }
+        previously_minimized
+    };
     if let Err(error) = frozen::layout(&app, false, true).await {
         // Window operations cannot share SQLite's transaction. Compensate selection
         // if the native transition fails so the user does not see a blank new scene.
@@ -822,7 +830,10 @@ async fn freeze_space(app: AppHandle, scene_id: String) -> Result<HostSnapshot, 
             host.exit.ensure_background()?;
             Ok(engine)
         }) {
-            if let Ok(restored) = engine.store.apply(SceneCommand::ActivateScene { scene_id }) {
+            if let Ok(restored) = engine
+                .store
+                .compensate_failed_minimize(&scene_id, previously_minimized)
+            {
                 publish(&app, &restored);
             }
         }
@@ -1049,7 +1060,9 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         // or a progress notification, and must not release the current owner.
         return get_snapshot(app.clone(), host);
     };
-    host.system_preferences.snapshot_for_operation().map_err(|error| error.to_string())?;
+    host.system_preferences
+        .snapshot_for_operation()
+        .map_err(|error| error.to_string())?;
     let preferences = host
         .capture_preferences
         .snapshot_for_capture()
@@ -1714,7 +1727,7 @@ fn start_run_with_annotations(
                         let host = app2.state::<Host>();
                         if let Ok(engine) = host.lock() {
                             if run_is_authorized(&engine, &scene_id, &run_id, plugin_origin.as_ref()) {
-                                let _ = app2.emit_to("space", "run-event", serde_json::json!({
+                                let _ = emit_run_event(&app2, serde_json::json!({
                                     "sceneId": scene_id, "runId": run_id, "status": "running", "text": text
                                 }));
                             }
@@ -1725,7 +1738,7 @@ fn start_run_with_annotations(
                         if let Ok(engine) = host.lock() {
                             if run_is_authorized(&engine, &scene_id, &run_id, plugin_origin.as_ref()) {
                                 public_reasoning.push_str(text);
-                                let _ = app2.emit_to("space", "run-event", serde_json::json!({
+                                let _ = emit_run_event(&app2, serde_json::json!({
                                     "sceneId": scene_id, "runId": run_id, "status": "running", "reasoning": text
                                 }));
                             }
@@ -1924,8 +1937,13 @@ static EARLY_QUIT: AtomicBool = AtomicBool::new(false);
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--verify-update") {
         let args: Vec<_> = std::env::args_os().collect();
-        if args.len() != 3 { std::process::exit(2); }
-        let result = app_update::verify_cli(tauri::generate_context!(), &std::path::PathBuf::from(&args[2]));
+        if args.len() != 3 {
+            std::process::exit(2);
+        }
+        let result = app_update::verify_cli(
+            tauri::generate_context!(),
+            &std::path::PathBuf::from(&args[2]),
+        );
         std::process::exit(if result.is_ok() { 0 } else { 2 });
     }
     if std::env::args().nth(1).as_deref() == Some("--storage-info") {
@@ -2076,8 +2094,8 @@ fn main() {
                 apply_scene_command,
                 capture_screen,
                 blackboard::create_blackboard,
-            blackboard::finish_blackboard,
-            blackboard::open_blackboard,
+                blackboard::finish_blackboard,
+                blackboard::open_blackboard,
                 asset_host::import_assets,
                 web_link_host::open_web_link,
                 ui_language::set_ui_language,
@@ -2195,8 +2213,13 @@ fn main() {
                 capture_shortcut_host::invalidate_owner(window.app_handle(), window.label());
             }
             if pin_host::is_pin_label(window.label()) {
-                if matches!(event, tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)) {
-                    let _ = window.app_handle().emit_to("space", "pin-objects-changed", ());
+                if matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+                ) {
+                    let _ = window
+                        .app_handle()
+                        .emit_to("space", "pin-objects-changed", ());
                 }
                 if matches!(event, tauri::WindowEvent::Destroyed) {
                     pin_host::destroyed(window.app_handle(), window.label());
@@ -2328,7 +2351,9 @@ fn main() {
             let plugins = plugin_host::PluginRuntime::open(&root)?;
             let system_preferences = system_preferences::SystemPreferencesActor::open(&root);
             network_policy::initialize(system_preferences.view());
-            if let Ok(value) = system_preferences.view() { startup_windows::initialize(&value); }
+            if let Ok(value) = system_preferences.view() {
+                startup_windows::initialize(&value);
+            }
             app.manage(Host {
                 storage,
                 _storage_lock: storage_lock,
@@ -2347,7 +2372,11 @@ fn main() {
                 settings_resources: settings_info::BuildInfo::new(
                     env!("CARGO_PKG_VERSION"),
                     option_env!("MEWU_BUILD_COMMIT"),
-                    if env!("CARGO_PKG_VERSION").contains('-') { settings_info::ReleaseChannel::Alpha } else { settings_info::ReleaseChannel::Stable },
+                    if env!("CARGO_PKG_VERSION").contains('-') {
+                        settings_info::ReleaseChannel::Alpha
+                    } else {
+                        settings_info::ReleaseChannel::Stable
+                    },
                 )
                 .and_then(|build| settings_info::SettingsResources::open(&root, build)),
                 capture_jobs: Arc::new(capture_delay_work::CaptureJobs::default()),

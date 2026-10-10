@@ -72,12 +72,21 @@ impl AssetLocations {
                 break;
             }
         }
-        let suffix = suffix.ok_or("asset_path_outside_registered_roots")?;
         let mut current = supplied_root.to_path_buf();
         let mut parents = pin_ancestors(&current).map_err(|_| "asset_directory_unsafe")?;
         let canonical_root = current
             .canonicalize()
             .map_err(|_| "asset_directory_missing")?;
+        // Writers may have stored Windows' canonical spelling of this same
+        // pinned root (including package virtualization). Never resolve an
+        // arbitrary stored path or search other directories for a basename.
+        if suffix.is_none() {
+            let prefix = lexical(&canonical_root)?;
+            if logical.len() > prefix.len() && components_eq(&logical[..prefix.len()], &prefix) {
+                suffix = Some(&logical[prefix.len()..]);
+            }
+        }
+        let suffix = suffix.ok_or("asset_path_outside_registered_roots")?;
         for (index, part) in suffix.iter().enumerate() {
             current.push(part);
             if index + 1 < suffix.len() {
@@ -296,6 +305,19 @@ mod tests {
             fs::read(f.old.join("asset.bin")).unwrap(),
             b"old private bytes"
         );
+    }
+    #[test]
+    fn canonical_spelling_of_current_root_is_readable_without_allowing_other_canonical_roots() {
+        let f = Fixture::new();
+        let locations = AssetLocations::new(f.current.clone(), vec![]).unwrap();
+        let canonical = f.current.canonicalize().unwrap().join("asset.bin");
+        assert_eq!(
+            fs::read(locations.resolve_path(&canonical, &f.current).unwrap()).unwrap(),
+            b"current"
+        );
+        assert!(locations
+            .resolve_path(&f.old.canonicalize().unwrap().join("asset.bin"), &f.current)
+            .is_err());
     }
     #[test]
     fn alias_is_lexical_and_does_not_require_old_root_exists() {

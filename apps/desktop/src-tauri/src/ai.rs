@@ -766,7 +766,7 @@ pub fn request_body(context: &RunContext, root: &Path) -> Result<Value, String> 
         return Err("消息与当前运行不匹配".into());
     }
     let mut system = context.agent.instructions.clone();
-    system.push_str("\n你在 Mewu 的 AI 空间中与用户协作。需要制作交互演示时，输出自包含的 html 或 svg 代码块；不加载网络资源。仅当用户要求创作时生成内容。直接回答，避免宣传口号。");
+    system.push_str("\n你在 Mewu 的 AI 空间中与用户协作。需要制作交互演示、工具、尺子、图标或角色时，输出自包含的 html 或 svg 代码块；Canvas 使用 html 中的 canvas 和内联脚本。内容是可直接交互的悬浮对象，默认 html/body 透明背景、margin:0，不添加外层卡片、标题栏、拖动/刷新/关闭按钮（这些由宿主提供）。响应可用尺寸，保留用户要求的必要按钮；不加载网络资源。仅当用户要求创作时生成内容。直接回答，避免宣传口号。");
     if matches!(
         &context.projection,
         mewu_core::RunProjection::RecordedContinuation(_)

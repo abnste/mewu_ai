@@ -15,6 +15,7 @@ pub struct FrozenScene {
     preview: String,
     status: &'static str,
     updated_at: u64,
+    run_id: Option<String>,
 }
 #[derive(Clone, Serialize)]
 pub struct FrozenSnapshot {
@@ -69,18 +70,31 @@ pub fn snapshot(state: &Snapshot, revision: u64) -> FrozenSnapshot {
     let mut scenes: Vec<_> = state
         .scenes
         .iter()
-        .filter(|scene| scene.frozen && !scene.closed && has_content(scene))
+        .filter(|scene| scene.frozen && scene.minimized && !scene.closed && has_content(scene))
         .map(|scene| {
             let preview = scene
                 .messages
-                .last()
+                .iter()
+                .rev()
+                .find(|message| {
+                    message.role == MessageRole::Assistant
+                        && scene
+                            .run
+                            .as_ref()
+                            .is_none_or(|run| message.run_id.as_ref() == Some(&run.id))
+                })
                 .map(|message| message.text.as_str())
-                .unwrap_or(scene.draft.as_str())
+                .unwrap_or("")
                 .trim()
                 .chars()
-                .take(90)
+                .take(91)
                 .map(|ch| if ch.is_whitespace() { ' ' } else { ch })
-                .collect();
+                .collect::<String>();
+            let preview = if preview.chars().count() > 90 {
+                format!("{}...", preview.chars().take(90).collect::<String>())
+            } else {
+                preview
+            };
             FrozenScene {
                 id: scene.id.clone(),
                 title: display_title(scene),
@@ -93,6 +107,7 @@ pub fn snapshot(state: &Snapshot, revision: u64) -> FrozenSnapshot {
                     None => "idle",
                 },
                 updated_at: scene.updated_at,
+                run_id: scene.run.as_ref().map(|run| run.id.clone()),
             }
         })
         .collect();
@@ -417,6 +432,53 @@ mod tests {
             snapshot(&store.snapshot(), 3).scenes.is_empty(),
             "automatic blank scenes are not floating conversations"
         );
+    }
+
+    #[test]
+    fn widget_counts_only_explicitly_minimized_open_scenes_and_truncates_final_answer_from_start() {
+        use mewu_core::{SceneCommand, Store};
+        let mut store = Store::open_in_memory().unwrap();
+        let history = store.snapshot().active_scene_id;
+        store
+            .apply(SceneCommand::SetDraft {
+                scene_id: history.clone(),
+                draft: "只在历史中".into(),
+            })
+            .unwrap();
+        store.apply(SceneCommand::NewScene).unwrap();
+        let minimized = store.snapshot().active_scene_id;
+        store
+            .apply(SceneCommand::SetDraft {
+                scene_id: minimized.clone(),
+                draft: "会话".into(),
+            })
+            .unwrap();
+        let run = store.begin_run(&minimized).unwrap();
+        store
+            .apply(SceneCommand::FreezeScene {
+                scene_id: minimized.clone(),
+            })
+            .unwrap();
+        store
+            .finish_run(
+                &minimized,
+                &run.run_id,
+                &format!("开头{}", "🙂".repeat(100)),
+            )
+            .unwrap();
+        let state = snapshot(&store.snapshot(), 2);
+        assert_eq!(state.scenes.len(), 1);
+        assert_eq!(state.scenes[0].id, minimized);
+        assert_eq!(
+            state.scenes[0].preview,
+            format!("开头{}...", "🙂".repeat(88))
+        );
+        store
+            .apply(SceneCommand::CloseScene {
+                scene_id: minimized,
+            })
+            .unwrap();
+        assert!(snapshot(&store.snapshot(), 3).scenes.is_empty());
     }
 
     #[test]

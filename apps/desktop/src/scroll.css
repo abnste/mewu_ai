@@ -15,3 +15,8 @@ html[data-surface="scroll-live"],html[data-surface="scroll-live"] body,html[data
 .scroll-controls>button.scroll-keep{width:auto;display:flex;gap:4px;padding:0 7px;font-size:11px;white-space:nowrap}
 .scroll-error{color:var(--danger);font-size:12px}
 .scroll-error>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.scroll-control-window{display:flex;flex-direction:column;gap:8px}
+.scroll-preview{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;border-radius:12px;background:transparent;box-shadow:var(--shadow-menu)}
+.scroll-preview img{display:block;width:100%;height:auto}
+.scroll-controls{flex:none}

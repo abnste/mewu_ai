@@ -194,6 +194,7 @@ export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
     if (old.closed) throw new Error('会话已关闭');
     previewGeometry.close();
     old.frozen = true;
+    if(command.type==='freeze_scene')old.minimized=true;
     const next = emptyScene(old.agentId);
     next.connectionId = previewConnectionFor(old.agentId);
     preview.scenes.push(next);

@@ -429,6 +429,8 @@ pub struct Scene {
     pub created_at: u64,
     pub updated_at: u64,
     pub frozen: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub minimized: bool,
     #[serde(default)]
     pub closed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -14,7 +14,8 @@ export function placeVideoControls(box: VideoPlacementBox, viewport: { width: nu
   const obstacles = [controls, composer].filter((value): value is VideoPlacementBox => Boolean(value && overlapsX(value)));
   const overlap = (top: number, other: VideoPlacementBox) => Math.max(0, Math.min(top + height + gap, bottom(other)) - Math.max(top - gap, other.top));
   const fits = (top: number) => top >= margin && top + height <= viewport.height - margin && obstacles.every(other => overlap(top, other) === 0);
-  for (const top of [bottom(box) + gap, box.top - height - gap]) if (fits(top)) return { left, top, width };
+  const below = controls && overlapsX(controls) ? Math.max(bottom(box), bottom(controls)) + gap : bottom(box) + gap;
+  for (const top of [below, bottom(box) - height - gap, box.top - height - gap]) if (fits(top)) return { left, top, width };
   const candidates = [
     ...(composer && overlapsX(composer) ? [composer.top - height - margin, bottom(composer) + margin] : []),
     bottom(box) - height,

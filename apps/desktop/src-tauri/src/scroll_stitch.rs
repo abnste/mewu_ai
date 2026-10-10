@@ -471,6 +471,45 @@ impl ScrollStitcher {
         self.state
     }
 
+    /// Sample accepted strips directly. A live thumbnail never assembles or
+    /// clones the potentially 128 MiB full output, and cannot change stitching.
+    pub fn preview(
+        &self,
+        max_width: u32,
+        max_height: u32,
+        cancel: &AtomicBool,
+    ) -> Result<RgbaImage> {
+        if max_width == 0 || max_height == 0 || max_width > 320 || max_height > 1536 {
+            return Err(StitchError::InvalidFrame);
+        }
+        let scale = (max_width as f64 / self.state.width as f64)
+            .min(max_height as f64 / self.state.height as f64)
+            .min(1.);
+        let width = (self.state.width as f64 * scale).round().max(1.) as u32;
+        let height = (self.state.height as f64 * scale).round().max(1.) as u32;
+        let mut image = RgbaImage::new(width, height);
+        let mut strips = self.strips.iter();
+        let mut strip = strips.next().ok_or(StitchError::InvalidFrame)?;
+        let mut first = 0;
+        for y in 0..height {
+            check_cancel(cancel)?;
+            let sy = (y as u64 * self.state.height as u64 / height as u64) as usize;
+            while sy >= first + strip.rows {
+                first += strip.rows;
+                strip = strips.next().ok_or(StitchError::InvalidFrame)?;
+            }
+            for x in 0..width {
+                let sx = (x as u64 * self.state.width as u64 / width as u64) as usize;
+                let at = ((sy - first) * self.state.width as usize + sx) * 4;
+                image.put_pixel(
+                    x,
+                    y,
+                    image::Rgba(strip.pixels[at..at + 4].try_into().unwrap()),
+                );
+            }
+        }
+        Ok(image)
+    }
     pub fn finish(self) -> Result<RgbaImage> {
         let Self {
             state,
@@ -810,6 +849,31 @@ fn copy<T: Copy>(source: &[T]) -> Result<Vec<T>> {
 mod tests {
     use super::*;
     use image::Rgba;
+    #[test]
+    fn bounded_preview_samples_accepted_bidirectional_strips_without_changing_the_final_image() {
+        let mut stitch = ScrollStitcher::new(frame(40), limits()).unwrap();
+        stitch.accept(frame(72)).unwrap();
+        stitch.accept(frame(12)).unwrap();
+        let cancel = AtomicBool::new(false);
+        let small = stitch.preview(64, 60, &cancel).unwrap();
+        let full = expected(12, 156);
+        assert!(small.width() <= 64 && small.height() <= 60);
+        for (x, y, pixel) in small.enumerate_pixels() {
+            assert_eq!(
+                pixel,
+                full.get_pixel(
+                    (x as u64 * full.width() as u64 / small.width() as u64) as u32,
+                    (y as u64 * full.height() as u64 / small.height() as u64) as u32
+                )
+            );
+        }
+        cancel.store(true, Ordering::Relaxed);
+        assert!(matches!(
+            stitch.preview(64, 60, &cancel),
+            Err(StitchError::Canceled)
+        ));
+        assert_eq!(stitch.finish().unwrap(), full);
+    }
 
     fn pixel(x: u32, y: i64, seed: u32) -> Rgba<u8> {
         let mut value = (y as u32).wrapping_mul(0x9e3779b9) ^ x.wrapping_mul(0x85ebca6b) ^ seed;

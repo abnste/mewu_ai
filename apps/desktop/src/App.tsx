@@ -99,6 +99,8 @@ export default function App() {
   let voiceComposing = false, voiceSubscribed = false, stopVoiceEvents: (() => void) | undefined;
   const [drafts, setDrafts] = createSignal<Record<string, string>>({});
   const [referenceDrafts, setReferenceDrafts] = createSignal<Record<string, Reference[]>>({});
+  const [referenceInsertion,setReferenceInsertion]=createSignal<{sceneId:string;reference:Reference;serial:number}>();
+  let referenceSerial=0;
   const [streams, setStreams] = createSignal<Record<string, { runId: string; text: string; reasoning?: string }>>({});
   const [expanded, setExpanded] = createSignal<Record<string, boolean>>({});
   const [composerPositions, setComposerPositions] = createSignal<Record<string, { x: number; y: number } | undefined>>({});
@@ -179,7 +181,7 @@ export default function App() {
     if(pinReferenced(object) && item){toggleReference({kind:'item',id:item.id});return;}
     const sceneId=scene()?.id;if(!sceneId)return;
     setBusy(true);
-    try{await flush();if(scene()?.id!==sceneId)throw Error('会话已切换');const next=await referencePinObject(object.id,sceneId);if(!next)throw Error('无法引用贴图');clearReferenceDraft(sceneId);accept(next);await pinObjectsSubscription?.refresh();}
+    try{await flush();if(scene()?.id!==sceneId)throw Error('会话已切换');const next=await referencePinObject(object.id,sceneId);if(!next)throw Error('无法引用贴图');clearReferenceDraft(sceneId);accept(next);const added=pinItem(object);if(added)setReferenceInsertion({sceneId,reference:{kind:'item',id:added.id},serial:++referenceSerial});await pinObjectsSubscription?.refresh();}
     catch(cause){showError(cause);}finally{setBusy(false);}
   }
   const canvasScene = () => { const current=scene()!;const ids=new Set(pinObjects().map(object=>object.attachmentAssetId));return {...current,items:current.items.filter(item=>!ids.has(item.asset.id))}; };
@@ -693,6 +695,7 @@ export default function App() {
     const id = scene()!.id;
     const current = refs();
     const next = current.some(r => r.kind === reference.kind && r.id === reference.id) ? current.filter(r => r.kind !== reference.kind || r.id !== reference.id) : [...current, reference];
+    if(next.length>current.length)setReferenceInsertion({sceneId:id,reference,serial:++referenceSerial});
     setReferenceDrafts(old => ({ ...old, [id]: next }));
     void command({ type: 'set_refs', sceneId: id, refs: next }).catch(showError);
   }
@@ -1066,7 +1069,7 @@ export default function App() {
     }
     if (busy()) return;
     if (sessionsOpen()) { setSessionsOpen(false); return; }
-    if (scene() && expanded()[scene()!.id]) setExpanded(old => ({ ...old, [scene()!.id]: false }));
+    if (scene()?.minimized) void freeze();
     else if (scene()) void closeScene(scene()!.id);
   };
   const pinEscape = (event: KeyboardEvent) => {
@@ -1105,7 +1108,7 @@ export default function App() {
           <button class="icon-button" aria-label={t('撤销')} title={t('撤销 · Ctrl+Z')} disabled={busy()||sending()||exitPreparing()||scene()?.run?.status==='running'||!canReplaySpace(false)} onClick={()=>replaySpace(false)}><Undo2 size={17}/></button>
           <button class="icon-button" aria-label={t('重做')} title={t('重做 · Ctrl+Shift+Z')} disabled={busy()||sending()||exitPreparing()||scene()?.run?.status==='running'||!canReplaySpace(true)} onClick={()=>replaySpace(true)}><Redo2 size={17}/></button>
         </nav>
-        <Composer showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={scene()!} agents={snapshot()!.agents} connections={snapshot()!.connections} draft={draft()} refs={refs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show>
+        <Composer referenceInsertion={referenceInsertion()} showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={scene()!} agents={snapshot()!.agents} connections={snapshot()!.connections} draft={draft()} refs={refs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show>
         <Show when={sessionsOpen()}><SessionDock scenes={snapshot()!.scenes.filter(scene=>!scene.blackboardLink)} activeId={snapshot()!.activeSceneId} busy={busy()} onClose={() => setSessionsOpen(false)} onCloseScene={id => void closeScene(id)} onActivate={id => { if (id !== scene()!.id) void switchScene({ type: 'activate_scene', sceneId: id }); else setSessionsOpen(false); }} /></Show>
       </>}
     </Show>

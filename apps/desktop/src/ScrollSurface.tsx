@@ -44,11 +44,11 @@ export default function ScrollSurface() {
   document.addEventListener('keydown', keyboard);
   onCleanup(() => { disposed = true; stop?.(); document.removeEventListener('keydown', keyboard); });
   return <div class="scroll-control-window"><Show when={status()} fallback={<Show when={error()}><div class="scroll-controls scroll-error" role="alert"><CircleAlert size={15} /><span>{error()}</span></div></Show>}>
-    {current => <div class="scroll-controls" role="toolbar" aria-label={t("长截图控制")}>
+    {current => <><Show when={current().preview}>{preview=><div class="scroll-preview"><img src={preview()} alt={t('长截图预览')} draggable={false} onLoad={event=>{const host=event.currentTarget.parentElement;if(host)host.scrollTop=host.scrollHeight;}}/></div>}</Show><div class="scroll-controls" role="toolbar" aria-label={t("长截图控制")}>
       <div class="scroll-measure"><output aria-label={t("长截图尺寸")}>{current().width} × {current().height}</output><Show when={error() || notices[current().status]}><span class="scroll-notice" title={error() || t(notices[current().status] ?? '')}>{error() || t(notices[current().status] ?? '')}</span></Show></div>
       <Show when={current().phase !== 'capturing'}><LoaderCircle size={15} class="spin" /></Show>
       <button classList={{ 'scroll-keep': scrollNeedsKeep(current()) }} disabled={pending() || current().phase !== 'capturing'} title={scrollNeedsKeep(current()) ? t('保存已拼部分') : t("完成{0}").replaceAll("{0}", () => String(current().stopHotkey.includes('F8') ? ' · F8' : ''))} aria-label={scrollNeedsKeep(current()) ? t('保存已拼部分') : t('完成长截图')} onClick={() => void act(scrollNeedsKeep(current()) ? 'keep' : 'finish')}><Check size={18} /><Show when={scrollNeedsKeep(current())}><span>{t("保存已拼部分")}</span></Show></button>
       <button disabled={pending()} title={t("取消 · Esc")} aria-label={t("取消长截图")} onClick={() => void act('cancel')}><X size={18} /></button>
-    </div>}
+    </div></>}
   </Show></div>;
 }

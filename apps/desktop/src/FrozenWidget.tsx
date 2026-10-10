@@ -6,6 +6,8 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Check, ChevronDown, CircleAlert, LoaderCircle, MessageSquare, X } from 'lucide-solid';
 import './frozen.css';
+import type {RunEvent} from './contracts';
+import {mergeLivePreview,liveSnippet,type LivePreview} from './frozen-preview';
 
 interface FrozenScene {
   id: string;
@@ -13,6 +15,7 @@ interface FrozenScene {
   preview: string;
   status: 'idle' | 'running' | 'completed' | 'failed' | 'canceled';
   updatedAt: number;
+  runId?:string;
 }
 interface FrozenSnapshot { revision: number; scenes: FrozenScene[] }
 
@@ -25,6 +28,7 @@ export default function FrozenWidget() {
   const [hiding, setHiding] = createSignal(false);
   const [resizing, setResizing] = createSignal(false);
   const [error, setError] = createSignal('');
+  const [live,setLive]=createSignal<ReadonlyMap<string,LivePreview>>(new Map());
   const primary = createMemo(() => snapshot().scenes[0]);
   const busy = () => restoring() || Boolean(closing()) || hiding();
   let disposed = false;
@@ -42,6 +46,7 @@ export default function FrozenWidget() {
       for (const subscribe of [
         () => listen<FrozenSnapshot>('frozen-scenes', event => accept(event.payload)),
         () => listen<boolean>('frozen-widget-layout', event => setExpanded(event.payload)),
+        () => listen<RunEvent>('run-event', ({payload}) => setLive(old=>mergeLivePreview(old,payload))),
       ]) {
         const stop = await subscribe();
         if (disposed) stop(); else stops.push(stop);
@@ -123,10 +128,10 @@ export default function FrozenWidget() {
     if (sceneId) void restore(sceneId);
   }
   const status = (scene: FrozenScene) => {
-    if (scene.status === 'running') return t('正在回复…');
+    if(scene.status==='running')return live().get(scene.id)?.runId===scene.runId?liveSnippet(live().get(scene.id)):scene.preview;
+    if(scene.preview)return scene.preview;
     if (scene.status === 'failed') return t('回复失败');
     if (scene.status === 'canceled') return t('已停止');
-    if (scene.status === 'completed') return t('回答已完成');
     return scene.preview || t('点击恢复');
   };
   const symbol = (scene: FrozenScene) => <>
@@ -136,10 +141,10 @@ export default function FrozenWidget() {
   </>;
 
   return <main class="frozen-widget" classList={{ 'is-expanded': expanded() }}
-    aria-label={t("冻结的会话")} onKeyDown={event => { if (event.key === 'Escape' && expanded()) void toggle(); }}>
+    aria-label={t("最小化的会话")} onKeyDown={event => { if (event.key === 'Escape' && expanded()) void toggle(); }}>
     <Show when={expanded()}>
       <section class="frozen-list" aria-label={t("选择要恢复的会话")}>
-        <header><span>{t("冻结的会话")}</span><span class="frozen-total">{snapshot().scenes.length}</span><button class="frozen-hide" title={t("隐藏浮窗")} aria-label={t("隐藏浮窗")} disabled={busy()} onClick={() => void hideWidget()}><X size={14} /></button></header>
+        <header><span>{t("最小化的会话")}</span><span class="frozen-total">{snapshot().scenes.length}</span><button class="frozen-hide" title={t("隐藏浮窗")} aria-label={t("隐藏浮窗")} disabled={busy()} onClick={() => void hideWidget()}><X size={14} /></button></header>
         <div class="frozen-list-scroll">
           <For each={snapshot().scenes.map(scene => scene.id)}>{id => <Show when={snapshot().scenes.find(scene => scene.id === id)}>{scene => <div class="frozen-row">
             <button class="frozen-row-restore" disabled={busy()} onClick={() => void restore(id)} title={t("恢复：{0}").replaceAll("{0}", () => String(scene().title))}>
@@ -158,7 +163,7 @@ export default function FrozenWidget() {
         title={error() || t("恢复：{0}").replaceAll("{0}", () => String(primary()?.title ?? t('会话')))}
         onClick={primaryClick}>
         <span class="frozen-icon"><MessageSquare size={15} /></span>
-        <span class="frozen-copy"><strong>{primary()?.title || t('冻结的会话')}</strong>
+        <span class="frozen-copy"><strong>{primary()?.title || t('最小化的会话')}</strong>
           <span classList={{ 'frozen-failed': Boolean(error()) }}>{error() || (primary() ? status(primary()!) : t('暂无会话'))}</span>
         </span>
       </button>
@@ -166,7 +171,7 @@ export default function FrozenWidget() {
         <span class="frozen-primary-state frozen-state">{primary() && symbol(primary()!)}</span>
         <button class="frozen-close frozen-primary-close" title={t("关闭会话")} aria-label={t("关闭会话：{0}").replaceAll("{0}", () => String(primary()?.title ?? ''))} disabled={!primary() || busy()} onPointerDown={event => closePointerDown(event, primary()?.id)} onPointerCancel={() => { closePressedId = undefined; }} onClick={event => closeClick(event, primary()?.id)}><X size={13} /></button>
       <Show when={snapshot().scenes.length > 0}>
-        <button class="frozen-count" disabled={busy() || resizing()} title={t("选择会话")} aria-expanded={expanded()} aria-label={t("选择 {0} 个冻结会话").replaceAll("{0}", () => String(snapshot().scenes.length))} onClick={() => void toggle()}>
+        <button class="frozen-count" disabled={busy() || resizing()} title={t("选择会话")} aria-expanded={expanded()} aria-label={t("选择 {0} 个最小化会话").replaceAll("{0}", () => String(snapshot().scenes.length))} onClick={() => void toggle()}>
           <span>{snapshot().scenes.length}</span><ChevronDown size={11} classList={{ turned: expanded() }} />
         </button>
       </Show>

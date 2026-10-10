@@ -1291,9 +1291,7 @@ mod tests {
         // Existing compensation is deliberately background-allowed, not fresh work.
         state.ensure_background().unwrap();
         store
-            .apply(SceneCommand::ActivateScene {
-                scene_id: scene.clone(),
-            })
+            .compensate_failed_minimize(&scene, false)
             .unwrap();
         let after = store.snapshot();
         assert_eq!(after.active_scene_id, scene);

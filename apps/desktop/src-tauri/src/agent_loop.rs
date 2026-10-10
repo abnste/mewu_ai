@@ -791,6 +791,43 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn invalid_tool_arguments_are_not_executed_but_feed_back_into_the_bounded_loop() {
+        use mewu_core::ReceiptPhase;
+        let fixture = Fixture::new(vec![
+            calls(&["bad"], "remember", ""),
+            final_text("参数已更正"),
+        ]);
+        let journal = StoreJournal::new();
+        let tool_journal = journal.clone();
+        let answer = recorded_inner(
+            Transport::chat(fixture.url.clone()), "", body(), tools(), |_| {}, journal.clone(),
+            move |_, lease| {
+                let tool_journal = tool_journal.clone();
+                async move {
+                    tool_journal.not_sent(&lease, NotSentReason::InvalidArguments)?;
+                    Ok(CommittedToolOutput { model_json: json!({"error":"缺少 fontSize", "executed":false, "correction":"按 schema 补全参数"}).to_string() })
+                }
+            },
+        ).await.unwrap();
+        assert_eq!(answer, "参数已更正");
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let feedback = requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .unwrap();
+        let result: Value = serde_json::from_str(feedback["content"].as_str().unwrap()).unwrap();
+        assert_eq!(result["executed"], false);
+        assert_eq!(result["error"], "缺少 fontSize");
+        let page = journal.page();
+        assert_eq!(page.entries.len(), 3);
+        assert_eq!(page.entries[1].phase, ReceiptPhase::NotSent);
+        assert_eq!(page.entries[2].phase, ReceiptPhase::Responded);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn completed_turn_commit_failure_prevents_first_tool_and_truncation_stays_unknown() {
         use mewu_core::ReceiptPhase;
         let fixture = Fixture::new(vec![calls(&["a"], "remember", "先说明")]);

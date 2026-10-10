@@ -340,6 +340,28 @@ impl Store {
         })
     }
 
+    /// The native minimize window failed after its storage transaction. Restore
+    /// only selection and its prior minimize choice, retaining late run results.
+    pub fn compensate_failed_minimize(
+        &mut self,
+        scene_id: &str,
+        previously_minimized: bool,
+    ) -> Result<Snapshot> {
+        let mut next = self.state.clone();
+        let target = scene_mut(&mut next, scene_id)?;
+        if target.closed {
+            return Err(invalid("会话已关闭"));
+        }
+        target.minimized = previously_minimized;
+        for candidate in &mut next.scenes {
+            candidate.frozen = candidate.id != scene_id;
+        }
+        next.active_scene_id = scene_id.into();
+        let snapshot = self.persist(next)?;
+        self.geometry_group = None;
+        Ok(snapshot)
+    }
+
     pub fn apply(&mut self, command: SceneCommand) -> Result<Snapshot> {
         if let SceneCommand::FinishRegionGeometryEdit { scene_id, edit_id } = &command {
             crate::geometry_history::validate_edit_id(edit_id)?;
@@ -419,6 +441,7 @@ impl Store {
                 if next.active_scene_id != scene_id {
                     return Err(invalid("只能冻结当前活动场景"));
                 }
+                scene_mut(&mut next, &scene_id)?.minimized = true;
                 create_scene(&mut next)?;
             }
             SceneCommand::ActivateScene { scene_id } => {
@@ -2279,6 +2302,7 @@ fn new_scene(agent_id: &str, connection_id: Option<String>) -> Scene {
         created_at: timestamp,
         updated_at: timestamp,
         frozen: false,
+        minimized: false,
         closed: false,
         background: None,
         regions: vec![],

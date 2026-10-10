@@ -6,6 +6,7 @@ use crate::{
     scroll_stitch::{ScrollStitcher, StitchLimits, StitchState, StitchStatus},
     Host,
 };
+use image::ImageEncoder;
 use mewu_core::{Asset, AssetKind, OcrTarget};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -38,6 +39,8 @@ pub struct Status {
     height: u32,
     status: StitchStatus,
     stop_hotkey: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
 }
 struct Active {
     status: Status,
@@ -379,6 +382,7 @@ pub async fn start_scroll_capture(
             height: geometry.height,
             status: StitchStatus::Initial,
             stop_hotkey: String::new(),
+            preview: None,
         };
         emit(&app, &Some(status.clone()));
         *slot = Some(Active {
@@ -439,6 +443,9 @@ pub async fn start_scroll_capture(
             )
             .map_err(|e| e.to_string())?;
             update(&work_app, &work_id, |s| s.phase = "capturing");
+            publish_preview(&work_app, &work_id, &stitch, &cancel)?;
+            let mut preview_at = Instant::now();
+            let mut preview_dirty = false;
             let started = Instant::now();
             let mut holding = false;
             loop {
@@ -447,6 +454,11 @@ pub async fn start_scroll_capture(
                 }
                 if !work_app.state::<Host>().exit.is_running() {
                     return Ok(());
+                }
+                if preview_dirty && preview_at.elapsed() >= Duration::from_millis(200) {
+                    publish_preview(&work_app, &work_id, &stitch, &cancel)?;
+                    preview_at = Instant::now();
+                    preview_dirty = false;
                 }
                 if !holding && started.elapsed() > Duration::from_secs(600) {
                     holding = true;
@@ -482,6 +494,10 @@ pub async fn start_scroll_capture(
                     Err(e) => return Err(e.to_string()),
                 };
                 progress(&work_app, &work_id, state);
+                preview_dirty |= matches!(
+                    state.status,
+                    StitchStatus::Extended | StitchStatus::Retraced
+                );
                 authorized(&work_app, &target, &plugin_id, revision, &contribution_id)?;
                 if finish_after && complete_frame(state.status) {
                     break;
@@ -523,6 +539,32 @@ fn progress(app: &AppHandle, id: &str, state: StitchState) {
         s.height = state.height;
         s.status = state.status;
     });
+}
+fn publish_preview(
+    app: &AppHandle,
+    id: &str,
+    stitch: &ScrollStitcher,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    use base64::Engine;
+    let image = stitch
+        .preview(220, 1536, cancel)
+        .map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut bytes)
+        .write_image(
+            image.as_raw(),
+            image.width(),
+            image.height(),
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|_| "无法生成长截图预览")?;
+    let value = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    );
+    update(app, id, |s| s.preview = Some(value));
+    Ok(())
 }
 fn update(app: &AppHandle, id: &str, change: impl FnOnce(&mut Status)) {
     if let Ok(mut slot) = app.state::<ScrollState>().0.lock() {
@@ -647,7 +689,7 @@ async fn prepare_windows(app: &AppHandle, g: &Geometry) -> Result<(), String> {
                 tauri::WebviewUrl::App("index.html?surface=scroll".into()),
             )
             .title("Mewu · 长截图")
-            .inner_size(320., 76.)
+            .inner_size(preview_size(&g).0, preview_size(&g).1)
             .decorations(false)
             .transparent(true)
             .background_color(tauri::window::Color(0, 0, 0, 0))
@@ -674,8 +716,8 @@ async fn prepare_windows(app: &AppHandle, g: &Geometry) -> Result<(), String> {
             crate::recording::exclude(&toolbar, true)?;
             toolbar
                 .set_position(tauri::PhysicalPosition::new(
-                    (g.origin_x as f64 + (g.monitor_width as f64 - 320. * g.scale) / 2.) as i32,
-                    (g.origin_y as f64 + 10. * g.scale) as i32,
+                    preview_placement(&g).0,
+                    preview_placement(&g).1,
                 ))
                 .map_err(|_| "无法放置长截图控制条")?;
             toolbar.show().map_err(|_| "无法显示长截图控制条")?;
@@ -685,6 +727,36 @@ async fn prepare_windows(app: &AppHandle, g: &Geometry) -> Result<(), String> {
     })
     .map_err(|_| "长截图窗口准备失败")?;
     receive.await.map_err(|_| "长截图窗口准备中断")?
+}
+fn preview_size(g: &Geometry) -> (f64, f64) {
+    let available_width = (g.monitor_width as f64 / g.scale - 12.).max(1.);
+    let available_height = (g.monitor_height as f64 / g.scale - 12.).max(1.);
+    (
+        available_width.min(260.),
+        (g.monitor_height as f64 / g.scale * 0.68 + 76.)
+            .min(640.)
+            .min(available_height),
+    )
+}
+fn preview_placement(g: &Geometry) -> (i32, i32) {
+    let (width, height) = preview_size(g);
+    let (width, height) = (width * g.scale, height * g.scale);
+    let margin = 6. * g.scale;
+    let right = g.x as f64 + g.width as f64 + 10. * g.scale;
+    let left = if right + width <= g.origin_x as f64 + g.monitor_width as f64 - margin {
+        right
+    } else {
+        g.x as f64 - width - 10. * g.scale
+    };
+    (
+        left.max(g.origin_x as f64 + margin)
+            .min(g.origin_x as f64 + g.monitor_width as f64 - width - margin)
+            .round() as i32,
+        (g.y as f64 + g.height as f64 - height)
+            .max(g.origin_y as f64 + margin)
+            .min(g.origin_y as f64 + g.monitor_height as f64 - height - margin)
+            .round() as i32,
+    )
 }
 async fn finish(app: &AppHandle, id: &str, result: Result<(), String>) {
     let (send, receive) = tokio::sync::oneshot::channel();
@@ -733,6 +805,40 @@ pub async fn cancel_for_shutdown(app: &AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn side_preview_uses_original_negative_monitor_coordinates_and_fits_small_scaled_monitors() {
+        let mut g = Geometry {
+            x: -2400,
+            y: -100,
+            width: 640,
+            height: 480,
+            origin_x: -2560,
+            origin_y: -200,
+            monitor_width: 2560,
+            monitor_height: 1400,
+            scale: 1.5,
+        };
+        assert_eq!(preview_placement(&g), (-1745, -191));
+        g.x = -200;
+        g.width = 180;
+        assert_eq!(preview_placement(&g).0, -605);
+        g = Geometry {
+            x: -300,
+            y: 0,
+            width: 200,
+            height: 200,
+            origin_x: -320,
+            origin_y: 0,
+            monitor_width: 320,
+            monitor_height: 360,
+            scale: 1.5,
+        };
+        let (x, y) = preview_placement(&g);
+        let (w, h) = preview_size(&g);
+        assert!(x >= g.origin_x + 9 && x as f64 + w * g.scale <= -9.);
+        assert!(y >= 9 && y as f64 + h * g.scale <= 351.);
+    }
 
     #[test]
     fn finish_never_implies_keep_on_uncertain_last_frame_or_a_stopped_source() {

@@ -9,6 +9,7 @@ export interface ScrollStatus {
   width: number; height: number;
   status: 'initial' | 'extended' | 'retraced' | 'unchanged' | 'low_information' | 'ambiguous' | 'lost_overlap' | 'limit_reached';
   stopHotkey: string;
+  preview?:string;
 }
 export type ScrollAction = 'finish' | 'keep' | 'cancel';
 export function scrollNeedsKeep(status: ScrollStatus): boolean { return ['low_information', 'ambiguous', 'lost_overlap', 'limit_reached'].includes(status.status); }

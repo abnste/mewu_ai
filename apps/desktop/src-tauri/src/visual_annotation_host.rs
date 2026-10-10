@@ -111,14 +111,19 @@ impl RunScope {
         let plan = match parse_plan(&call.arguments, &self.input) {
             Ok(plan) => plan,
             Err(error) => {
-                return self.not_sent(
-                    app,
-                    scene,
-                    run,
-                    &lease,
-                    mewu_core::NotSentReason::InvalidArguments,
-                    error,
-                )
+                self.check_live(app, scene, run)?;
+                let host = app.state::<Host>();
+                let mut engine = host.lock()?;
+                let receipt = engine
+                    .store
+                    .record_tool_not_sent(&lease, mewu_core::NotSentReason::InvalidArguments)
+                    .map_err(journal_runtime::store_error)?;
+                journal_runtime::emit_changed(app, scene, run, receipt.journal_revision);
+                publish(app, &engine.store.snapshot());
+                // No drawing was dispatched. Let the existing bounded tool loop
+                // consume an explicit error and correct its next call; never
+                // turn a malformed call into a successful execution receipt.
+                return Ok(journal_runtime::CommittedToolOutput {model_json:json!({"error":error,"executed":false,"correction":"Use the advertised visual_annotate JSON schema exactly. Keep the supplied target, coordinateSpace and styleUnit. Text: one point, text, fontSize, color and anchor=topLeft. Shapes: points, color and strokeWidth. Tables/formulas: their own fields only, no strokeWidth or text. Correct the parameters or explain the failure; do not claim annotations were drawn."}).to_string()});
             }
         };
         if let Err(error) = self.check_live(app, scene, run) {
@@ -261,7 +266,7 @@ fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
             "points":{"type":"array","minItems":min,"maxItems":max,"items":point}
         }})
     };
-    let mut text = json!({"type":"object","additionalProperties":false,"required":["kind","color","strokeWidth","points","text","fontSize"],"properties":{
+    let mut text = json!({"type":"object","additionalProperties":false,"required":["kind","color","points","text","fontSize"],"properties":{
         "kind":{"const":"text"},"color":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"},
         "strokeWidth":{"type":"number","minimum":0.5,"maximum":max_stroke},
         "points":{"type":"array","minItems":1,"maxItems":1,"items":point},
@@ -320,7 +325,7 @@ struct Group {
     coordinate_space: Option<CoordinateSpace>,
     #[serde(default, rename = "styleUnit", deserialize_with = "explicit_optional")]
     style_unit: Option<StyleUnit>,
-    objects: Vec<ModelObject>,
+    objects: Vec<Value>,
 }
 #[derive(Deserialize, PartialEq, Eq)]
 #[serde(try_from = "String")]
@@ -378,7 +383,7 @@ where
 struct Object {
     kind: DrawingKind,
     color: String,
-    stroke_width: f64,
+    stroke_width: Option<f64>,
     points: Vec<DrawingPoint>,
     text: Option<String>,
     font_size: Option<f64>,
@@ -386,12 +391,46 @@ struct Object {
     anchor: Option<TextAnchor>,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
 enum ModelObject {
     Table(TableObject),
     Formula(FormulaObject),
     Vector(Object),
+}
+fn parse_object(value: Value) -> Result<ModelObject, String> {
+    let kind = value
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or("缺少 kind")?;
+    let fields: &[&str] = match kind {
+        "table" => &["points", "table"],
+        "formula" => &["points", "tex", "color", "fontSize"],
+        "text" => &["points", "text", "fontSize", "color"],
+        "pen" | "highlighter" | "line" | "arrow" | "rect" | "ellipse" => {
+            &["points", "color", "strokeWidth"]
+        }
+        _ => return Err("kind 不受支持".into()),
+    };
+    for field in fields {
+        if value.get(*field).is_none_or(Value::is_null) {
+            return Err(format!("缺少 {field}"));
+        }
+    }
+    match kind {
+        "table" => serde_json::from_value(value)
+            .map(ModelObject::Table)
+            .map_err(|_| {
+                "table 需要 version、header、rows、align；单元格为文本，不附带文字或线宽字段".into()
+            }),
+        "formula" => serde_json::from_value(value)
+            .map(ModelObject::Formula)
+            .map_err(|_| {
+                "formula 需要 points、tex、color、fontSize，不附带 text、strokeWidth 或 anchor"
+                    .into()
+            }),
+        _ => serde_json::from_value(value)
+            .map(ModelObject::Vector)
+            .map_err(|_| "图元字段类型无效或包含不支持的字段，points 使用 [{x,y}] 数组".into()),
+    }
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -501,7 +540,8 @@ fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatc
     if arguments.len() > 32 * 1024 {
         return Err("原位作答内容过长".into());
     }
-    let args: Arguments = serde_json::from_str(arguments).map_err(|_| "原位作答内容格式无效")?;
+    let args: Arguments = serde_json::from_str(arguments)
+        .map_err(|_| "批注参数需要包含 groups 数组，每组包含 target、objects 和规定的坐标单位")?;
     let count = args
         .groups
         .iter()
@@ -534,7 +574,9 @@ fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatc
         }
         let scale = style_scale(target);
         let mut drawings = Vec::new();
-        for object in group.objects {
+        for (index, value) in group.objects.into_iter().enumerate() {
+            let object =
+                parse_object(value).map_err(|error| format!("第 {} 个批注：{error}", index + 1))?;
             let object = match object {
                 ModelObject::Table(object) => {
                     let content = RichContent::Table {
@@ -590,13 +632,17 @@ fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatc
             } else if object.anchor.is_some() {
                 return Err("原位作答图元锚点无效".into());
             }
+            let stroke_width = object
+                .stroke_width
+                .or_else(|| (object.kind == DrawingKind::Text).then_some(1.))
+                .ok_or("形状缺少 strokeWidth")?;
             if matches!(
                 object.kind,
                 DrawingKind::Mosaic | DrawingKind::Number | DrawingKind::Rich
             ) || object.points.is_empty()
                 || object.points.len() > 128
-                || !object.stroke_width.is_finite()
-                || !(0.5..=16.).contains(&object.stroke_width)
+                || !stroke_width.is_finite()
+                || !(0.5..=16.).contains(&stroke_width)
                 || object
                     .text
                     .as_ref()
@@ -612,7 +658,7 @@ fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatc
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: object.kind,
                 color: object.color,
-                stroke_width: object.stroke_width * scale,
+                stroke_width: stroke_width * scale,
                 points,
                 text: object.text,
                 font_size: object.font_size.map(|s| s * scale),
@@ -724,7 +770,9 @@ async fn render_plan(
                     content,
                 } => {
                     let layout = match &content {
-                        RichContent::Raster { .. } => return Err("AI 批注不能指定本地修补图层".into()),
+                        RichContent::Raster { .. } => {
+                            return Err("AI 批注不能指定本地修补图层".into())
+                        }
                         RichContent::Table { .. } => {
                             let permit = TABLE_WORKERS
                                 .acquire()
@@ -849,6 +897,41 @@ mod rich_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn text_without_shape_line_width_is_valid_but_units_targets_and_unknown_fields_are_not_guessed()
+    {
+        let input = normalized_input();
+        let mut value = normalized_args(&input);
+        value["groups"][0]["objects"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("strokeWidth");
+        assert_eq!(
+            parse_batch(&value.to_string(), &input).unwrap().groups[0].drawings[0].stroke_width,
+            2.
+        );
+        let mut missing = value.clone();
+        missing["groups"][0]["objects"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("fontSize");
+        assert_eq!(
+            parse_batch(&missing.to_string(), &input).unwrap_err(),
+            "第 1 个批注：缺少 fontSize"
+        );
+        for field in ["path", "origin", "id", "sceneId"] {
+            let mut bad = value.clone();
+            bad["groups"][0]["objects"][0][field] = json!("private-secret");
+            let error = parse_batch(&bad.to_string(), &input).unwrap_err();
+            assert!(!error.contains("private-secret"));
+        }
+        let mut missing = value;
+        missing["groups"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("coordinateSpace");
+        assert!(parse_batch(&missing.to_string(), &input).is_err());
+    }
     pub(super) fn input() -> VerifiedVisualInput {
         use mewu_core::{
             VisualInputManifest, VisualInputTarget, VisualPixelRect, VisualPixelSize,

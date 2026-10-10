@@ -83,7 +83,7 @@ export default function ArtifactCard(props: Props) {
     const width = Math.min(p.width * vp.width, p.height * vp.height * ratio);
     return { width, height: width / ratio };
   });
-  const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=isImage()?imageBox().width:p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-32,left+width-32))-left}px`,top:`${Math.max(4,Math.min(vp.height-32,top+4))-top}px`};};
+  const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=isImage()?imageBox().width:p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-(isDocument()?84:32),left+width-(isDocument()?84:32)))-left}px`,top:`${Math.max(4,Math.min(vp.height-32,top+4))-top}px`};};
   const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
 
   async function flushZoom() {
@@ -183,9 +183,9 @@ export default function ArtifactCard(props: Props) {
     style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isImage() ? `${imageBox().width}px` : `${position().width * 100}%`, height: isImage() ? `${imageBox().height}px` : `${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
     data-video-item={isVideo() ? props.item.id : undefined} data-video-scene={isVideo() ? props.video?.sceneId : undefined}
     aria-label={props.item.asset.name} onWheel={wheel} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
-    <Show when={props.blackboard}><div class="blackboard-object-control" role="toolbar" aria-label={t('对象工具')} style={controlPosition()}><button aria-label={t('移动对象')} title={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18} strokeWidth={1.7}/></button></div></Show>
+    <Show when={props.blackboard&&!isDocument()}><div class="blackboard-object-control" role="toolbar" aria-label={t('对象工具')} style={controlPosition()}><button aria-label={t('移动对象')} title={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18} strokeWidth={1.7}/></button></div></Show>
     <Show when={props.blackboard&&isBlackboardText(props.item.asset)}><For each={['nw','ne','sw','se'] as ResizeCorner[]}>{corner=><div class={`blackboard-text-corner ${corner}`} aria-hidden="true" onPointerDown={event=>gesture(event,true,true,corner)} />}</For></Show>
-    <Show when={!isImage()&&!props.blackboard}>
+    <Show when={!isImage()&&!isDocument()&&!isVideo()&&!props.blackboard}>
     <header class="artifact-header" onPointerDown={e => gesture(e)}>
       <Show when={isDocument()} fallback={<Show when={props.item.asset.kind === 'image'} fallback={<Show when={props.item.asset.kind === 'video'} fallback={<File size={14} />}><Video size={14} /></Show>}><Image size={14} /></Show>}><Code2 size={14} /></Show>
       <span class="artifact-title" title={props.item.asset.name}>{props.item.asset.name}</span>
@@ -200,6 +200,19 @@ export default function ArtifactCard(props: Props) {
       <button class="icon-button compact" title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event => gesture(event, true)}><Maximize2 size={15} /></button>
       <button class="icon-button compact" title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}', () => props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={15} /></button>
     </div></Show>
+    <Show when={isDocument()}><div class="document-object-tools" role="toolbar" aria-label={t('对象工具')} style={controlPosition()}>
+      <button title={t('移动对象')} aria-label={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={18}/></button>
+      <button title={t('重新载入')} aria-label={t('重新载入内容')} disabled={props.busy} onClick={()=>setReload(value=>value+1)}><RotateCcw size={18}/></button>
+      <button title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={18}/></button>
+    </div></Show>
+    <Show when={isVideo()&&!props.blackboard}><div class="video-object-tools" role="toolbar" aria-label={t('视频工具')}>
+      <button title={t('移动对象')} aria-label={t('移动对象')} disabled={props.busy} onPointerDown={event=>gesture(event,false,true)}><Move size={20}/></button>
+      <button title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={20}/></button>
+      <button title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
+      <button title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>
+      <button title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event=>gesture(event,true)}><Maximize2 size={20}/></button>
+      <button title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={20}/></button>
+    </div></Show>
     <div class="artifact-content">
       <Show when={props.item.asset.kind === 'image'}>
         <Show when={!failed()} fallback={<span class="inline-error">{t("无法打开图片")}</span>}>
@@ -210,19 +223,21 @@ export default function ArtifactCard(props: Props) {
         <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} />}</Show>
       </Show>
       <Show when={isDocument()}>
+        <Show when={reload()+1} keyed>{_revision => <>
         <Show when={native} fallback={<Show when={!source.error} fallback={<span class="inline-error">{t("无法读取内容")}</span>}>
           <Show when={source()} fallback={<span class="quiet-state">{t("载入中")}</span>}>
             <iframe title={props.item.asset.name} srcdoc={isolatedDocument(source()!)} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />
           </Show>
         </Show>}>
-          <Show when={reload() + 1} keyed>{_revision => <iframe title={props.item.asset.name} src={documentUrl(props.item.asset)} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />}</Show>
+          <iframe title={props.item.asset.name} src={documentUrl(props.item.asset)} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />
         </Show>
+        </>}</Show>
       </Show>
       <Show when={props.item.asset.kind === 'file'&&!props.blackboard}><div class="file-object"><File size={30} /><span>{props.item.asset.name}</span></div></Show>
       <Show when={props.item.asset.kind === 'text'}><Show when={props.blackboard&&isBlackboardText(props.item.asset)&&props.boardSceneId} fallback={<Show when={!props.blackboard}><TextArtifact assetId={props.item.asset.id} name={props.item.asset.name} /></Show>}><BlackboardText sceneId={props.boardSceneId!} itemId={props.item.id} assetId={props.item.asset.id} name={props.item.asset.name} busy={Boolean(props.busy)} onFlush={flush=>{textFlush=flush;return()=>{if(textFlush===flush)textFlush=undefined;};}} onError={message=>props.onError?.(message)} /></Show></Show>
       <Show when={moving()}><div class="iframe-drag-cover" /></Show>
     </div>
-    <Show when={!isImage()&&!props.blackboard}><footer class="artifact-footer">
+    <Show when={!isImage()&&!isDocument()&&!isVideo()&&!props.blackboard}><footer class="artifact-footer">
       <button class="quiet-button" classList={{ selected: props.referenced }} onClick={props.onReference}><Link2 size={13} />{props.referenced ? t('已引用') : t('引用')}</button>
       <Show when={isVideo() && props.onCopy}><button class="quiet-button" title={t("复制视频文件 (C)")} aria-label={t("复制视频文件")} disabled={props.busy} onClick={() => props.onCopy?.()}><Copy size={13} />{t("复制")}</button></Show>
       <Show when={['video', 'text'].includes(props.item.asset.kind) && props.onExport}><button class="quiet-button" disabled={props.busy} onClick={() => props.onExport?.()}><Download size={13} />{t("保存")}</button></Show>
