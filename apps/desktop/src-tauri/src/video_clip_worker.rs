@@ -883,6 +883,14 @@ mod tests {
     }
     #[test]
     fn mp3_receipts_reject_wrong_job_duration_channels_and_duplicate_terminal() {
+        // This protocol fixture validates absolute paths without accessing media.
+        #[cfg(target_os = "macos")]
+        let (source_path, output_path) = (
+            "/mewu-contract-fixtures/a.mp4",
+            "/mewu-contract-fixtures/b.mp3",
+        );
+        #[cfg(not(target_os = "macos"))]
+        let (source_path, output_path) = ("D:/owned/a.mp4", "D:/owned/b.mp3");
         let mut source = metadata();
         source.has_audio = true;
         let audio = crate::mp3_file::Metadata {
@@ -892,8 +900,8 @@ mod tests {
             frames: 77,
         };
         let job = ClipJob::RenderMp3 {
-            source: "D:/owned/a.mp4".into(),
-            output: "D:/owned/b.mp3".into(),
+            source: source_path.into(),
+            output: output_path.into(),
             expected: source.clone(),
             range: None,
         };
@@ -926,7 +934,7 @@ mod tests {
                 .is_err());
         }
         let mut wrong = Protocol::new(ClipJob::Inspect {
-            source: "D:/owned/a.mp4".into(),
+            source: source_path.into(),
         });
         wrong
             .accept(WorkerEvent::Ready { version: VERSION })

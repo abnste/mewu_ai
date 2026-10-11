@@ -87,6 +87,11 @@ pub struct CaptureOptions {
     pub include_cursor: bool,
 }
 
+/// Rechecks the host's live capture lease and native window generations. Each
+/// invocation must release host/registry locks before returning to native work.
+#[cfg(target_os = "macos")]
+pub(crate) type CaptureCheck = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
 pub fn capture_desktop(asset_dir: &Path) -> Result<CapturedScreen, String> {
     capture_desktop_with_options(asset_dir, CaptureOptions::default())
 }
@@ -110,9 +115,10 @@ pub(crate) fn capture_desktop_with_exclusions(
     asset_dir: &Path,
     options: CaptureOptions,
     exclusions: &[crate::capture_macos::ExcludedWindow],
+    allowed: CaptureCheck,
 ) -> Result<CapturedScreen, String> {
     ensure_supported_options(options)?;
-    implementation::capture_with_exclusions(asset_dir, None, options, exclusions)
+    implementation::capture_with_exclusions(asset_dir, None, options, exclusions, allowed)
 }
 
 pub fn capture_monitor_with_options(
@@ -178,7 +184,13 @@ mod implementation {
         }
         #[cfg(target_os = "macos")]
         {
-            capture_with_exclusions(asset_dir, selected_id, options, &[])
+            capture_with_exclusions(
+                asset_dir,
+                selected_id,
+                options,
+                &[],
+                std::sync::Arc::new(|| Ok(())),
+            )
         }
     }
 
@@ -188,9 +200,10 @@ mod implementation {
         selected_id: Option<u32>,
         options: CaptureOptions,
         exclusions: &[crate::capture_macos::ExcludedWindow],
+        allowed: CaptureCheck,
     ) -> Result<CapturedScreen, String> {
         crate::capture_macos::validate_exclusions(exclusions)?;
-        capture_inner(asset_dir, selected_id, options, exclusions)
+        capture_inner(asset_dir, selected_id, options, exclusions, allowed)
     }
 
     fn capture_inner(
@@ -198,6 +211,7 @@ mod implementation {
         selected_id: Option<u32>,
         options: CaptureOptions,
         #[cfg(target_os = "macos")] exclusions: &[crate::capture_macos::ExcludedWindow],
+        #[cfg(target_os = "macos")] allowed: CaptureCheck,
     ) -> Result<CapturedScreen, String> {
         #[cfg(not(windows))]
         let _ = options;
@@ -209,6 +223,8 @@ mod implementation {
         if !asset_dir.is_absolute() {
             return Err("截图素材目录必须是绝对路径".to_owned());
         }
+        #[cfg(target_os = "macos")]
+        allowed()?;
         #[cfg(target_os = "macos")]
         crate::capture_permission_macos::preflight()?;
 
@@ -261,6 +277,7 @@ mod implementation {
                     physical_before.0,
                     physical_before.1,
                     exclusions,
+                    allowed.clone(),
                 )?,
                 CaptureBackend::ScreenCaptureKit,
             )
@@ -268,6 +285,7 @@ mod implementation {
             // macOS 12.3–13 cannot receive SCScreenshotManager selectors. The
             // legacy path remains a compatibility branch, without claiming it
             // is tested on those older systems. Host hidden proofs still apply.
+            allowed()?;
             (
                 monitor
                     .capture_region(0, 0, before.display_width, before.display_height)
@@ -275,6 +293,8 @@ mod implementation {
                 CaptureBackend::CoreGraphics,
             )
         };
+        #[cfg(target_os = "macos")]
+        allowed()?;
         // Sample before slower window-map metadata/encoding. OS pixel capture
         // and cursor sampling are separate calls, not an atomic desktop frame.
         // Disabled captures never read the global cursor resource here.
@@ -326,6 +346,8 @@ mod implementation {
         // The caller supplies a trusted app-owned directory. No caller-provided
         // filename is joined into it. Only successfully encoded files are handed
         // to the asset catalog; failed writes are removed before returning.
+        #[cfg(target_os = "macos")]
+        allowed()?;
         fs::create_dir_all(asset_dir).map_err(|error| format!("无法创建素材目录：{error}"))?;
         let path = asset_dir.join(format!("{asset_id}.png"));
         let file = OpenOptions::new()
@@ -333,8 +355,10 @@ mod implementation {
             .create_new(true)
             .open(&path)
             .map_err(|error| format!("无法创建截图素材：{error}"))?;
-        let encoded = {
+        let encoded = (|| {
             let mut writer = BufWriter::new(file);
+            #[cfg(target_os = "macos")]
+            allowed()?;
             PngEncoder::new_with_quality(&mut writer, CompressionType::Fast, FilterType::Adaptive)
                 .write_image(pixels.as_raw(), width, height, ExtendedColorType::Rgba8)
                 .map_err(|error| format!("无法编码截图：{error}"))
@@ -343,11 +367,16 @@ mod implementation {
                         .flush()
                         .map_err(|error| format!("无法保存截图：{error}"))
                 })
-        };
+        })();
         // Drop the large RGBA allocation before producing metadata or returning
         // an encoding error. The renderer loads the file through the asset path.
         drop(pixels);
         if let Err(error) = encoded {
+            let _ = fs::remove_file(&path);
+            return Err(error);
+        }
+        #[cfg(target_os = "macos")]
+        if let Err(error) = allowed() {
             let _ = fs::remove_file(&path);
             return Err(error);
         }

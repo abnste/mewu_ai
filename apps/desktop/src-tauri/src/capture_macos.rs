@@ -4,6 +4,7 @@
 
 #![cfg(target_os = "macos")]
 
+use crate::capture::CaptureCheck;
 use block2::RcBlock;
 use image::RgbaImage;
 use objc2::{
@@ -67,6 +68,7 @@ pub(crate) fn capture(
     width_pixels: u32,
     height_pixels: u32,
     exclusions: &[ExcludedWindow],
+    allowed: CaptureCheck,
 ) -> Result<RgbaImage, String> {
     if MainThreadMarker::new().is_some() {
         return Err("Mac 原生截图必须由后台截图任务调用".to_owned());
@@ -87,7 +89,9 @@ pub(crate) fn capture(
         height: height_pixels,
         pid: i32::try_from(std::process::id()).map_err(|_| "当前应用进程标识无效")?,
         exclusions: exclusions.to_vec(),
+        allowed,
     };
+    let admission = request.allowed.clone();
     let (sender, receiver) = mpsc::channel();
     let native_lifetime = Arc::new(NativeLifetime::default());
     let outer_lease = NativeBlockLease::retain(&native_lifetime)?;
@@ -101,6 +105,7 @@ pub(crate) fn capture(
             }
             let result = catch_unwind(AssertUnwindSafe(|| {
                 autoreleasepool(|_| {
+                    (request.allowed)()?;
                     // Apple provides these borrowed pointers only for this callback.
                     // A successful object is retained before issuing the next call.
                     if let Some(error) = unsafe { error.as_ref() } {
@@ -118,10 +123,11 @@ pub(crate) fn capture(
         },
     );
 
-    autoreleasepool(|_| {
+    autoreleasepool(|_| -> Result<(), String> {
         // Include off-screen windows so the host's exact presentation-window
         // exclusions can still be found after its acknowledged hide operation.
         // https://developer.apple.com/documentation/screencapturekit/scshareablecontent/getexcludingdesktopwindows(_:onscreenwindowsonly:completionhandler:)
+        admission()?;
         unsafe {
             SCShareableContent::getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler(
                 false,
@@ -129,7 +135,8 @@ pub(crate) fn capture(
                 &completion,
             );
         }
-    });
+        Ok(())
+    })?;
     // The system has copied the escaping heap block. Release our local copy so
     // the lease observes the final native release rather than our own receiver.
     drop(completion);
@@ -142,7 +149,9 @@ pub(crate) fn capture(
         .recv()
         .unwrap_or_else(|_| Err("原生截图回调已终止，请重试".to_owned()));
     native_lifetime.wait_released();
-    result
+    let pixels = result?;
+    admission()?;
+    Ok(pixels)
 }
 
 #[derive(Default)]
@@ -207,6 +216,7 @@ struct Request {
     height: u32,
     pid: i32,
     exclusions: Vec<ExcludedWindow>,
+    allowed: CaptureCheck,
 }
 
 fn begin_screenshot(
@@ -310,6 +320,7 @@ fn begin_screenshot(
         // input first, then signal block destruction with this final lease.
         NativeBlockLease::retain(native_lifetime)?,
     );
+    let admission = request.allowed.clone();
     let completed = Arc::new(AtomicBool::new(false));
     let completion = RcBlock::new(move |image: *mut CGImage, error: *mut NSError| {
         let _native_inputs = &keepalive;
@@ -318,6 +329,7 @@ fn begin_screenshot(
         }
         let result = catch_unwind(AssertUnwindSafe(|| {
             autoreleasepool(|_| {
+                (request.allowed)()?;
                 if let Some(error) = unsafe { error.as_ref() } {
                     return Err(native_error("无法获取屏幕图像", error));
                 }
@@ -325,7 +337,9 @@ fn begin_screenshot(
                     unsafe { image.as_ref() }.ok_or_else(|| "系统未返回屏幕图像".to_owned())?;
                 // The borrowed native image is fully copied before this callback
                 // returns. The parent receives only owned and validated pixels.
-                copy_image(image, request.width, request.height)
+                let pixels = copy_image(image, request.width, request.height)?;
+                (request.allowed)()?;
+                Ok(pixels)
             })
         }))
         .unwrap_or_else(|_| Err("读取原生截图像素失败".to_owned()));
@@ -336,6 +350,7 @@ fn begin_screenshot(
     // our local RcBlock after this call leaves the native copy responsible for
     // completion and release. It is never a stack block or a detached Rust job.
     // https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager/captureimage(contentfilter:configuration:completionhandler:)
+    admission()?;
     unsafe {
         SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(
             &filter,

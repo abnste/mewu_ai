@@ -285,6 +285,20 @@ pub(crate) fn window_id(witness: &CaptureWitness) -> Option<u32> {
         .and(witness.native_id)
 }
 
+/// Pure generation fence; safe during final Store adoption because it neither
+/// queries WindowServer nor dispatches the main loop.
+pub(crate) fn current(witness: &CaptureWitness) -> Result<(), String> {
+    if registry()
+        .lock()
+        .map_err(|_| UNAVAILABLE)?
+        .capture_current(witness)
+    {
+        Ok(())
+    } else {
+        Err(UNAVAILABLE.into())
+    }
+}
+
 /// Build a filter hint from the admitted identity, never a fresh UI title.
 /// The capture backend must still check the live SCWindow's PID/ID/title.
 pub(crate) fn exclusion(
