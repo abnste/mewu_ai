@@ -689,8 +689,16 @@ mod tests {
         // The resolver checks its real cmap before any fixture is rendered.
         let font_path = "/System/Library/Fonts/Apple Symbols.ttf";
         if let Ok(metadata) = std::fs::metadata(font_path) {
+            use std::io::Read;
             assert!(metadata.len() <= 32 * 1024 * 1024);
-            options.fontdb_mut().load_font_file(font_path).unwrap();
+            let mut bytes = Vec::new();
+            std::fs::File::open(font_path)
+                .unwrap()
+                .take(32 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)
+                .unwrap();
+            assert!(bytes.len() <= 32 * 1024 * 1024);
+            options.fontdb_mut().load_font_data(bytes);
         }
         let base = options.fontdb.faces().next().expect("local test fonts").id;
         let selector = usvg::FontResolver::default_fallback_selector();
