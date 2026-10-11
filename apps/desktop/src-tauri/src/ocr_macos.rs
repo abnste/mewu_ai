@@ -546,19 +546,20 @@ mod tests {
         .is_err());
     }
 
-    fn synthetic_text() -> PixelBuffer {
-        let image =
-            DynamicImage::ImageRgba8(RgbaImage::from_pixel(1400, 360, Rgba([255, 255, 255, 255])));
-        let drawings = [("Hello OCR test 12345", 40.), ("中文测试", 200.)]
-            .into_iter()
-            .map(|(text, y)| Drawing {
+    fn render_text_fixture(base: PixelBuffer, items: &[(&str, f64, f64, f64)]) -> PixelBuffer {
+        let width = base.width();
+        let height = base.height();
+        let image = DynamicImage::ImageRgba8(base);
+        let drawings = items
+            .iter()
+            .map(|&(text, x, y, font_size)| Drawing {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: DrawingKind::Text,
                 color: "#000000".into(),
                 stroke_width: 1.,
-                points: vec![DrawingPoint { x: 48., y }],
+                points: vec![DrawingPoint { x, y }],
                 text: Some(text.into()),
-                font_size: Some(64.),
+                font_size: Some(font_size),
                 origin: None,
                 rich: None,
             })
@@ -569,14 +570,182 @@ mod tests {
                 id: "mac-ocr-synthetic".into(),
                 x: 0.,
                 y: 0.,
-                width: 1400.,
-                height: 360.,
+                width: f64::from(width),
+                height: f64::from(height),
                 drawings,
                 ..Default::default()
             },
         )
         .unwrap()
         .into_rgba8()
+    }
+
+    fn synthetic_text() -> PixelBuffer {
+        render_text_fixture(
+            RgbaImage::from_pixel(1400, 360, Rgba([255, 255, 255, 255])),
+            &[
+                ("Hello OCR test 12345", 48., 40., 64.),
+                ("中文测试", 48., 200., 64.),
+            ],
+        )
+    }
+
+    fn compact_result(document: &OcrDocument) -> String {
+        document
+            .lines
+            .iter()
+            .flat_map(|line| line.text.chars())
+            .filter(|c| !c.is_whitespace())
+            .collect()
+    }
+
+    #[test]
+    #[ignore = "real Apple Vision on synthetic URL/contact/punctuation text; no links are opened"]
+    fn real_vision_recognizes_synthetic_links_punctuation_and_contact_text() {
+        let image = render_text_fixture(
+            RgbaImage::from_pixel(1600, 600, Rgba([255, 255, 255, 255])),
+            &[
+                ("https://example.com/path?q=42&v=1", 48., 32., 56.),
+                ("user@example.com", 48., 164., 64.),
+                ("Phone +86 138 0000 1234", 48., 296., 64.),
+                ("Punctuation: (test), [42]; A/B!", 48., 428., 56.),
+            ],
+        );
+        let document = recognize_impl(image, Arc::new(AtomicBool::new(false))).unwrap();
+        let text = compact_result(&document);
+        eprintln!("synthetic URL/contact/punctuation Vision result: {text}");
+        for expected in [
+            "https://example.com/path?q=42&v=1",
+            "user@example.com",
+            "Phone+8613800001234",
+            "Punctuation:(test),[42];A/B!",
+        ] {
+            assert!(
+                text.contains(expected),
+                "missing {expected:?}; actual: {text}"
+            );
+        }
+        assert!(document.lines.iter().all(|line| !line.words.is_empty()));
+        validate_ocr_document(&document).unwrap();
+    }
+
+    #[test]
+    #[ignore = "real Apple Vision on synthetic transparent pixels including invisible RGB text"]
+    fn real_vision_ignores_hidden_rgb_and_recognizes_transparent_text() {
+        let mut base = render_text_fixture(
+            RgbaImage::from_pixel(1400, 300, Rgba([255, 255, 255, 255])),
+            &[("HIDDEN RGB", 48., 160., 64.)],
+        );
+        for pixel in base.pixels_mut() {
+            pixel[3] = 0;
+        }
+        assert!(base.pixels().any(|pixel| pixel[0] < 128 && pixel[3] == 0));
+        let image = render_text_fixture(base, &[("Transparent text 24680", 48., 24., 64.)]);
+        assert!(image.pixels().any(|pixel| pixel[3] == 0));
+        assert!(image.pixels().filter(|pixel| pixel[3] > 128).count() > 1000);
+        let document = recognize_impl(image, Arc::new(AtomicBool::new(false))).unwrap();
+        let text = compact_result(&document);
+        eprintln!("synthetic transparent Vision result: {text}");
+        assert!(text.contains("Transparenttext24680"), "actual: {text}");
+        assert!(
+            !text.contains("HIDDEN") && !text.contains("RGB"),
+            "actual: {text}"
+        );
+        validate_ocr_document(&document).unwrap();
+    }
+
+    #[test]
+    #[ignore = "real Apple Vision on an 8MP synthetic image reduced by the shared 4MP preparation"]
+    fn real_vision_returns_original_coordinates_after_recognition_resize() {
+        let image = render_text_fixture(
+            RgbaImage::from_pixel(4000, 2000, Rgba([255, 255, 255, 255])),
+            &[("Scaling check 67890", 640., 640., 128.)],
+        );
+        let geometry = Geometry::new(image.width(), image.height(), MAX_SIDE).unwrap();
+        assert!(geometry.width < image.width() && geometry.height < image.height());
+        let document = recognize_impl(image, Arc::new(AtomicBool::new(false))).unwrap();
+        let text = compact_result(&document);
+        eprintln!("synthetic scaled Vision result: {text}");
+        assert!(text.contains("Scalingcheck67890"), "actual: {text}");
+        assert_eq!((document.width, document.height), (4000, 2000));
+        let words: Vec<_> = document.lines.iter().flat_map(|line| &line.words).collect();
+        assert!(!words.is_empty());
+        // Broad bounds cover font ascenders/descenders and OCR tolerance while
+        // rejecting recognition-sized coordinates or a second Y inversion.
+        assert!(words.iter().all(|word| word.x >= 600. && word.y >= 600.));
+        assert!(words.iter().all(|word| word.y + word.height <= 840.));
+        validate_ocr_document(&document).unwrap();
+    }
+
+    #[test]
+    #[ignore = "real Apple Vision on an outline-font-supported non-BMP symbol; reports normalization"]
+    fn real_vision_handles_supported_non_bmp_symbol_without_fabricating_boxes() {
+        use resvg::{tiny_skia, usvg};
+        let symbol = '\u{1d7d8}'; // MATHEMATICAL DOUBLE-STRUCK DIGIT ZERO.
+        assert!(symbol as u32 > 0xffff);
+        let mut options = usvg::Options::default();
+        options.fontdb = crate::drawing_render::fonts().unwrap();
+        // Load one explicit local outline font, without traversing font folders.
+        // The resolver checks its real cmap before any fixture is rendered.
+        let font_path = "/System/Library/Fonts/Apple Symbols.ttf";
+        if let Ok(metadata) = std::fs::metadata(font_path) {
+            assert!(metadata.len() <= 32 * 1024 * 1024);
+            options.fontdb_mut().load_font_file(font_path).unwrap();
+        }
+        let base = options.fontdb.faces().next().expect("local test fonts").id;
+        let selector = usvg::FontResolver::default_fallback_selector();
+        let supporting = selector(symbol, &[base], &mut options.fontdb)
+            .expect("a loaded outline font must actually support the non-BMP fixture");
+        let family = options.fontdb.face(supporting).unwrap().families[0]
+            .0
+            .replace('&', "&amp;")
+            .replace('"', "&quot;");
+        options.image_href_resolver = usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        };
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="240"><rect width="1400" height="240" fill="white"/><text x="48" y="140" fill="black" font-size="80" font-family="PingFang SC, Arial Unicode MS, sans-serif">Before</text><text x="450" y="140" fill="black" font-size="80" font-family="{family}">{symbol}</text><text x="600" y="140" fill="black" font-size="80" font-family="PingFang SC, Arial Unicode MS, sans-serif">After 34567</text></svg>"#
+        );
+        let tree = usvg::Tree::from_str(&svg, &options).unwrap();
+        let mut pixmap = tiny_skia::Pixmap::new(1400, 240).unwrap();
+        resvg::render(
+            &tree,
+            tiny_skia::Transform::identity(),
+            &mut pixmap.as_mut(),
+        );
+        let image = RgbaImage::from_raw(1400, 240, pixmap.data().to_vec()).unwrap();
+        assert!(
+            image
+                .enumerate_pixels()
+                .filter(|(x, _, pixel)| { (450..600).contains(x) && pixel[0] < 128 })
+                .count()
+                > 100,
+            "the supported non-BMP glyph must produce visible ink"
+        );
+        let document = recognize_impl(image, Arc::new(AtomicBool::new(false))).unwrap();
+        let text = compact_result(&document);
+        eprintln!("synthetic U+1D7D8 Vision result: {text}");
+        assert!(
+            text.contains("Before") && text.contains("After34567"),
+            "actual: {text}"
+        );
+        // Vision may normalize a styled mathematical digit to ASCII. Report
+        // actual text; do not pretend the engine preserved a surrogate pair.
+        // If it did, all returned ranges and boxes still come from Vision.
+        for line in &document.lines {
+            for span in text_spans(&line.text) {
+                assert_eq!(
+                    span.range.location,
+                    line.text[..span.start].encode_utf16().count()
+                );
+                assert_eq!(
+                    span.range.length,
+                    line.text[span.start..span.end].encode_utf16().count()
+                );
+            }
+        }
+        validate_ocr_document(&document).unwrap();
     }
 
     #[test]
