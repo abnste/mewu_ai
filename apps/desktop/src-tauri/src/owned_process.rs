@@ -9,6 +9,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg(all(target_os = "linux", test, feature = "linux-worker-tests"))]
+#[path = "owned_process_linux_tests.rs"]
+mod linux_tests;
+
 #[cfg(windows)]
 #[derive(Debug)]
 struct ProcessJob(windows_sys::Win32::Foundation::HANDLE);

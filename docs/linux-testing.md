@@ -51,6 +51,18 @@ These fixtures require the isolation marker, refuse any existing Secret Service 
 
 Follow the [official AppImage packaging guidance](https://v2.tauri.app/distribute/appimage/) when choosing a build distribution. A build made on a newer distribution does not establish compatibility with older systems. Test normal AppImage execution and extracted execution separately; missing `/dev/fuse` blocks normal mounting even if extraction works.
 
+## Native worker lifetime prerequisite
+
+The Linux production `ManagedProcess` adapter remains unsupported. Its prerequisite fixture uses only the exact current test executable and installed `/usr/bin/bwrap`, with a new user/PID namespace and the fixture worker as PID 1. The writable root bind preserves the helper's normal filesystem view; this is a lifetime prerequisite, not filesystem isolation or support for arbitrary commands/MCP plugins. No bubblewrap source or binary is bundled.
+
+```sh
+MEWU_LINUX_WORKER_TEST_ISOLATED=1 cargo test -p mewu-desktop --locked --features linux-worker-tests native_linux_namespace_fixture -- --nocapture --test-threads=1
+```
+
+The explicit marker and feature are required. A missing helper, denied namespace or failed pidfd transfer fails the test. Each fixture process sends its own kernel pidfd with SCM_RIGHTS through an exclusively created private test socket. The original helper's child creates a new session and spawns a grandchild with all stdio closed. The controller checks that all owners and the actual output reader remain alive before normal exit, owner cancellation, an actual 80 ms timeout, wrapper cancellation and application-parent death. Completion requires every owned pidfd to be signaled, the actual original child to be reaped, and the actual reader thread to be joined. A numeric PID, an empty stdout notification or wrapper exit alone never establishes completion.
+
+This fixture follows the installed helper's [PID namespace options](https://github.com/containers/bubblewrap/blob/main/bwrap.xml) and the kernel's [PID namespace teardown implementation](https://github.com/torvalds/linux/blob/master/kernel/pid_namespace.c). It does not yet verify production operation-permit retention, the production bootstrap, configured media backends, or arbitrary descendant containment outside a dedicated namespace. Those remain separate implementation and acceptance gates.
+
 ## Native acceptance evidence
 
 Keep each command, exit code, log, screenshot and exported file hash in a private evidence directory. Record PASS, FAIL, BLOCKED or NOT RUN for each case; only observed expected behavior is PASS.

@@ -107,3 +107,4 @@ glib = "=0.18.5"
 catalog-validator = []
 linux-x11-tests = []
 linux-secret-service-tests = []
+linux-worker-tests = []
