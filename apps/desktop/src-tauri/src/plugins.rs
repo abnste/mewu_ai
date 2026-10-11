@@ -24,7 +24,10 @@ const OFFICIAL_DRAWING_V1_0_0: &[u8] =
     include_bytes!("../../plugins/migrations/official-drawing-1.0.0.json");
 const OFFICIAL_DRAWING_V1_1_0: &[u8] =
     include_bytes!("../../plugins/migrations/official-drawing-1.1.0.json");
+#[cfg(not(target_os = "macos"))]
 const OFFICIAL_OCR: &[u8] = include_bytes!("../../plugins/official-ocr.json");
+#[cfg(target_os = "macos")]
+const OFFICIAL_OCR: &[u8] = include_bytes!("../../plugins/macos/official-ocr.json");
 const OFFICIAL_SCROLL: &[u8] = include_bytes!("../../plugins/official-scroll.json");
 const OFFICIAL_TRANSLATION: &[u8] = include_bytes!("../../plugins/official-translation.json");
 const OFFICIAL_PIN: &[u8] = include_bytes!("../../plugins/official-pin.json");
@@ -340,6 +343,17 @@ pub enum MemoryAdapter {
 #[serde(rename_all = "lowercase")]
 pub enum OcrEngine {
     Windows,
+    #[serde(rename = "apple.vision")]
+    AppleVision,
+}
+
+impl OcrEngine {
+    pub(crate) fn supported(self) -> bool {
+        match self {
+            Self::Windows => cfg!(windows),
+            Self::AppleVision => cfg!(target_os = "macos"),
+        }
+    }
 }
 
 /// A fixed host adapter, not permission to load arbitrary recognizers or code.
@@ -1539,6 +1553,9 @@ impl PluginStore {
         for item in record.package.manifest.contributions {
             if let PluginContribution::Ocr { id, engine, .. } = item {
                 if id == contribution_id {
+                    if !engine.supported() {
+                        return Err("此文字识别插件不支持当前系统，请重新安装对应系统的官方插件".into());
+                    }
                     return Ok(engine);
                 }
             }
@@ -4654,12 +4671,44 @@ mod tests {
     }
 
     #[test]
+    fn ocr_engine_is_canonical_and_foreign_packages_do_not_gain_native_authority() {
+        let dir = Directory::new();
+        let mut store = PluginStore::open(&dir.0).unwrap();
+        for (engine, native) in [("windows", cfg!(windows)), ("apple.vision", cfg!(target_os = "macos"))] {
+            let mut manifest = parse_manifest(OFFICIAL_OCR).unwrap();
+            manifest.id = format!("example.ocr-{}", engine.replace('.', "-"));
+            manifest.contributions = vec![PluginContribution::Ocr {
+                id: "recognize".into(),
+                title: "文字识别".into(),
+                engine: serde_json::from_value(serde_json::json!(engine)).unwrap(),
+            }];
+            let bytes = serde_json::to_vec(&manifest).unwrap();
+            assert_eq!(parse_manifest(&bytes).unwrap(), manifest);
+            store.install_bytes(&bytes, source(), None).unwrap();
+            assert_eq!(store.ocr(&manifest.id, 1, "recognize").is_ok(), native);
+        }
+        for engine in ["AppleVision", "apple", "vision", "apple.vision ", "remote"] {
+            assert!(serde_json::from_value::<OcrEngine>(serde_json::json!(engine)).is_err());
+        }
+        assert!(serde_json::from_slice::<PluginContribution>(br#"{"kind":"selection.ocr","id":"recognize","title":"OCR","engine":"windows","engine":"apple.vision"}"#).is_err());
+        drop(store);
+        let reopened = PluginStore::open(&dir.0).unwrap();
+        assert_eq!(reopened.ocr("example.ocr-windows", 1, "recognize").is_ok(), cfg!(windows));
+        assert_eq!(reopened.ocr("example.ocr-apple-vision", 1, "recognize").is_ok(), cfg!(target_os = "macos"));
+    }
+
+    #[test]
     fn bundled_ocr_checks_kind_revision_package_and_persistent_removal() {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
+        let bundled: PluginManifest = serde_json::from_slice(OFFICIAL_OCR).unwrap();
+        #[cfg(target_os = "macos")]
+        let expected_engine = OcrEngine::AppleVision;
+        #[cfg(not(target_os = "macos"))]
+        let expected_engine = OcrEngine::Windows;
         assert_eq!(
             store.ocr("mewu.ocr", 1, "recognize").unwrap(),
-            OcrEngine::Windows
+            expected_engine
         );
         assert!(store.ocr("mewu.ocr", 1, "drawing-tools").is_err());
         assert!(store.workflow("mewu.ocr", 1, "recognize").is_err());
@@ -4670,7 +4719,7 @@ mod tests {
         let mut store = PluginStore::open(&dir.0).unwrap();
         assert!(store.ocr("mewu.ocr", 2, "recognize").is_err());
         store.set_enabled("mewu.ocr", 2, true).unwrap();
-        let manifest_path = path(&dir.0, "mewu.ocr", "1.0.0");
+        let manifest_path = path(&dir.0, "mewu.ocr", &bundled.version);
         let bytes = fs::read(&manifest_path).unwrap();
         fs::write(&manifest_path, b"{}").unwrap();
         assert!(store.ocr("mewu.ocr", 3, "recognize").is_err());

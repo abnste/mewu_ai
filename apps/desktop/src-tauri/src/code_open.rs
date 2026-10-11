@@ -115,7 +115,11 @@ fn dispatch(
             .join()
             .map_err(|_| "打开应用的任务已中断".to_string())?
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::code_open_macos::dispatch(address, allowed)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (address, allowed);
         Err("此平台尚未接入打开应用".into())

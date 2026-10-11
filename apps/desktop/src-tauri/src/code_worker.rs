@@ -115,12 +115,12 @@ pub async fn run_scan(
     if cancel.load(Ordering::Acquire) {
         return Err(CodeError::Cancelled);
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = image;
         return Err(CodeError::Unsupported);
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         let permit = Permit::acquire(cancel.clone())?;
         let mut guard = CancelOnDrop(Some(cancel.clone()));

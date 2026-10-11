@@ -3089,7 +3089,9 @@ version = "1.0.0-preview.2"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "block2",
  "chrono",
+ "core-foundation 0.10.1",
  "dirs",
  "eventsource-stream",
  "futures-util",
@@ -3098,6 +3100,10 @@ dependencies = [
  "jsonschema",
  "libc",
  "mewu-core",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-vision",
  "process-wrap",
  "pulldown-cmark",
  "ratex-layout",
@@ -3727,6 +3733,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
  "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-vision"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc194758a2d5d7540b1ad283bfb9ca318ec608991892326e95b428230b2689b"
+dependencies = [
+ "block2",
+ "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
 ]
 

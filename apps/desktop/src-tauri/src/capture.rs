@@ -150,6 +150,8 @@ mod implementation {
         if !asset_dir.is_absolute() {
             return Err("截图素材目录必须是绝对路径".to_owned());
         }
+        #[cfg(target_os = "macos")]
+        crate::capture_permission_macos::preflight()?;
 
         let monitors = Monitor::all().map_err(|error| format!("无法读取显示器：{error}"))?;
         let monitor = select_monitor(&monitors, selected_id)?;

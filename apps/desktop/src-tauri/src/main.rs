@@ -8,6 +8,8 @@ mod asset_host;
 mod asset_locations;
 mod assets;
 mod capture;
+#[cfg(target_os = "macos")]
+mod capture_permission_macos;
 mod blackboard;
 mod capture_cursor;
 mod capture_delay_work;
@@ -19,7 +21,11 @@ mod clipboard_video_storage;
 mod code_decode;
 mod code_host;
 mod code_open;
+#[cfg(target_os = "macos")]
+mod code_open_macos;
 mod code_worker;
+#[cfg(target_os = "macos")]
+mod window_witness_macos;
 mod screen_entities;
 mod connection_host;
 mod content_server;
@@ -1086,6 +1092,16 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         return get_snapshot(app.clone(), host);
     };
     let _invoke = work.cancel_on_drop();
+    #[cfg(target_os = "macos")]
+    {
+        // Request only for an explicit capture, before hiding windows and
+        // without holding Engine/plugin locks across the OS permission UI.
+        tauri::async_runtime::spawn_blocking(capture_permission_macos::request)
+            .await
+            .map_err(|_| "无法检查屏幕录制权限")??;
+        work.check()?;
+        host.exit.ensure_new_operation()?;
+    }
     speech_host::cancel_owner(&app, "space");
     capture_shortcut_host::invalidate_all(&app);
     code_host::cancel_owner(&app, "space");
@@ -2245,6 +2261,10 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window_witness_macos::revoke_owner(window.label());
+            }
             if window.label() == "settings" && matches!(event, tauri::WindowEvent::Destroyed) {
                 storage_host::invalidate_owner(window.app_handle());
             }

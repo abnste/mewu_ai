@@ -7,7 +7,7 @@ export type PluginContribution =
   | { id: string; title: string; kind: 'selection.workflow'; prompt: string; accepts: ['image'] }
   | { id: string; title: string; kind: 'selection.drawing-tools'; tools: import('./contracts').ManualDrawingKind[] }
   | { id: string; title: string; kind: 'artifact.video-drawing-tools'; tools: import('./video-drawing-contracts').VideoDrawingTool[] }
-  | { id: string; title: string; kind: 'selection.ocr'; engine: 'windows' }
+  | { id: string; title: string; kind: 'selection.ocr'; engine: 'windows' | 'apple.vision' }
   | { id: string; title: string; kind: 'selection.scroll' }
   | { id: string; title: string; kind: 'selection.translation' }
   | { id: string; title: string; kind: 'selection.pin' }
