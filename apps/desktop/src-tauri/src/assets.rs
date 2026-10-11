@@ -21,9 +21,9 @@ pub fn verified_path(asset: &Asset, root: &Path) -> Result<PathBuf, String> {
     }
     Ok(path)
 }
-/// Only completed, app-owned MP4 recordings may use the media transport.
-/// This checks the container signature, not codec compatibility; the recorder
-/// owns H.264 encoding and must finalize the file before registering its asset.
+/// Only completed, app-owned MP4 assets may use the media transport.
+/// This checks the container signature, not codec compatibility. Recordings
+/// must be finalized and imports must pass native inspection before publication.
 pub fn open_video(asset: &Asset, root: &Path) -> Result<(std::fs::File, u64), String> {
     if asset.kind != AssetKind::Video
         || uuid::Uuid::parse_str(&asset.id)
@@ -165,10 +165,13 @@ pub fn clean_crop_from_parts(
     root: &Path,
 ) -> Result<DynamicImage, String> {
     let mut clean = region.clone();
-    clean
-        .drawings
-        .retain(|drawing| drawing.kind == mewu_core::DrawingKind::Mosaic
-            || drawing.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit()));
+    clean.drawings.retain(|drawing| {
+        drawing.kind == mewu_core::DrawingKind::Mosaic
+            || drawing
+                .rich
+                .as_ref()
+                .is_some_and(|r| r.kind.is_raster_edit())
+    });
     crop_source_from_parts(background, &clean, root, None).map(|(image, _)| image)
 }
 
@@ -272,10 +275,19 @@ pub fn import_batch(sources: &[PathBuf], root: &Path) -> Result<ImportedAssets, 
         batch.created.push(destination.clone());
         file.write_all(&bytes).map_err(|_| "无法保存素材")?;
         file.sync_all().map_err(|_| "无法保存素材")?;
-        batch.assets.push(Asset {
+        // Release the writer before acquiring the read-only source lease.
+        // Windows forbids opening that lease while a write handle is alive.
+        drop(file);
+        let stored = Asset {
             path: destination.to_string_lossy().into_owned(),
             ..asset
-        });
+        };
+        if stored.kind == AssetKind::Video {
+            // Container admission is preliminary. The host must inspect the
+            // owned copy with its supervised native codec before committing.
+            open_video(&stored, root)?;
+        }
+        batch.assets.push(stored);
     }
     Ok(batch)
 }
@@ -284,6 +296,9 @@ pub fn import_batch(sources: &[PathBuf], root: &Path) -> Result<ImportedAssets, 
 pub fn import(source: &Path, root: &Path) -> Result<Asset, String> {
     let mut batch = import_batch(&[source.to_path_buf()], root)?;
     let asset = batch.assets[0].clone();
+    if asset.kind == AssetKind::Video {
+        return Err("需要宿主完成视频检查".into());
+    }
     batch.commit();
     Ok(asset)
 }
@@ -296,25 +311,26 @@ fn read_import(source: &Path, remaining: usize) -> Result<(Asset, Vec<u8>), Stri
         .to_ascii_lowercase();
     let kind = match extension.as_str() {
         "png" | "jpg" | "jpeg" | "webp" => AssetKind::Image,
+        "mp4" => AssetKind::Video,
         "html" | "htm" => AssetKind::Html,
         "svg" => AssetKind::Svg,
         "txt" | "md" | "json" | "csv" => AssetKind::Text,
-        _ => return Err("目前支持图片、HTML、SVG、TXT、Markdown、JSON 和 CSV".into()),
+        _ => return Err("目前支持图片、MP4、HTML、SVG、TXT、Markdown、JSON 和 CSV".into()),
     };
     // Validate and save the exact same bytes from one opened source. A growing
     // file cannot escape a metadata-only size check or replace validated content.
-    let maximum = if kind == AssetKind::Image {
-        MAX_FILE as usize
-    } else {
-        MAX_TEXT
+    let maximum = match kind {
+        AssetKind::Image => MAX_FILE as usize,
+        AssetKind::Video => MAX_VIDEO_BYTES as usize,
+        _ => MAX_TEXT,
     };
     let file = std::fs::File::open(source).map_err(|_| "无法读取文件")?;
     let metadata = file.metadata().map_err(|_| "无法读取文件")?;
     if !metadata.is_file() || metadata.len() > maximum as u64 {
-        return Err(if kind == AssetKind::Image {
-            "图片超过 32 MB"
-        } else {
-            "文档超过 2 MB"
+        return Err(match kind {
+            AssetKind::Image => "图片超过 32 MB",
+            AssetKind::Video => "视频超过 512 MB",
+            _ => "文档超过 2 MB",
         }
         .into());
     }
@@ -347,7 +363,7 @@ fn read_import(source: &Path, remaining: usize) -> Result<(Asset, Vec<u8>), Stri
         }
         width = Some(dimensions.0);
         height = Some(dimensions.1);
-    } else {
+    } else if kind != AssetKind::Video {
         std::str::from_utf8(&bytes).map_err(|_| "文档不是有效 UTF-8")?;
         if kind == AssetKind::Text && bytes.contains(&0) {
             return Err("文本文件包含无效空字符".into());
@@ -1205,5 +1221,39 @@ mod tests {
             .set_len(MAX_VIDEO_BYTES + 1)
             .unwrap();
         assert!(open_video(&asset, &root).is_err());
+    }
+
+    #[test]
+    fn staged_video_import_keeps_owned_bytes_and_rolls_back_mixed_invalid_batches() {
+        let f = Fixture::new();
+        let root = f.0.join("assets");
+        let source = f.0.join("selected.MP4");
+        let bytes = b"\0\0\0\x18ftypmp42\0\0\0\0mp42isom\0\0\0\x08mdat";
+        std::fs::write(&source, bytes).unwrap();
+        let keep = root.join("keep.txt");
+        std::fs::write(&keep, "keep").unwrap();
+        {
+            let batch = import_batch(&[source.clone()], &root).unwrap();
+            let asset = &batch.assets[0];
+            assert_eq!(asset.kind, AssetKind::Video);
+            assert!(asset.width.is_none() && asset.height.is_none());
+            assert_ne!(Path::new(&asset.path), source);
+            assert_eq!(Path::new(&asset.path).extension().unwrap(), "mp4");
+            std::fs::write(&source, b"changed source").unwrap();
+            let (mut owned, _) = open_video(asset, &root).unwrap();
+            let mut actual = Vec::new();
+            owned.read_to_end(&mut actual).unwrap();
+            assert_eq!(actual, bytes);
+        }
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        let text = f.0.join("valid.txt");
+        std::fs::write(&text, "valid text").unwrap();
+        assert!(import_batch(&[text, source.clone()], &root).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        assert_eq!(std::fs::read_to_string(keep).unwrap(), "keep");
+        std::fs::write(&source, bytes).unwrap();
+        assert!(read_import(&source, bytes.len() - 1).is_err());
+        assert!(import(&source, &root).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
     }
 }

@@ -1366,9 +1366,16 @@ impl Store {
             validate_asset(asset)?;
             if !matches!(
                 asset.kind,
-                AssetKind::Image | AssetKind::Text | AssetKind::Html | AssetKind::Svg
+                AssetKind::Image | AssetKind::Video | AssetKind::Text | AssetKind::Html | AssetKind::Svg
             ) {
                 return Err(invalid("此类素材不能通过文件导入"));
+            }
+            if asset.kind == AssetKind::Video
+                && (asset.width.is_none() || asset.height.is_none()
+                    || asset.origin_x.is_some() || asset.origin_y.is_some()
+                    || asset.scale_factor.is_some())
+            {
+                return Err(invalid("导入视频缺少像素尺寸或包含屏幕坐标"));
             }
         }
         let incoming: HashSet<&str> = assets.iter().map(|asset| asset.id.as_str()).collect();
