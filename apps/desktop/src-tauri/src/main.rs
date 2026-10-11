@@ -91,6 +91,8 @@ mod recording_storage;
 mod recording_worker;
 mod rich_annotation_host;
 mod runtime_platform;
+#[cfg(target_os = "macos")]
+mod video_clip_output_macos;
 mod save_dialog;
 mod scroll_capture;
 mod scroll_host;
