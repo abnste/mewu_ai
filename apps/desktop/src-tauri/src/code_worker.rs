@@ -6,7 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -20,7 +20,31 @@ const MAX_FRAME: usize = code_decode::MAX_RESULT_BYTES + 1024;
 const MAX_OUTPUT: usize = 2 * MAX_FRAME;
 const START_TIMEOUT: Duration = Duration::from_secs(3);
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(10);
+const TEXT_TIMEOUT: Duration = Duration::from_secs(25);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Copy)]
+struct Timeouts {
+    startup: Duration,
+    total: Duration,
+    cleanup: Duration,
+}
+impl Timeouts {
+    fn for_mode(mode: ScanMode) -> Self {
+        Self {
+            startup: START_TIMEOUT,
+            total: if mode.has_text() {
+                TEXT_TIMEOUT
+            } else {
+                TOTAL_TIMEOUT
+            },
+            cleanup: CLEANUP_TIMEOUT,
+        }
+    }
+    fn expired(self, ready: bool, elapsed: Duration) -> bool {
+        (!ready && elapsed >= self.startup) || elapsed >= self.total
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -198,11 +222,25 @@ fn attach_io(
         .stdout
         .take()
         .ok_or(CodeError::WorkerUnavailable)?;
+    attach_io_from(process, image, mode, stdout)
+}
+fn attach_io_from(
+    process: &mut ManagedProcess<Permit>,
+    image: CodeImage,
+    mode: ScanMode,
+    output: impl Read + Send + 'static,
+) -> Result<
+    (
+        mpsc::Receiver<Output>,
+        mpsc::Receiver<Result<(), CodeError>>,
+    ),
+    CodeError,
+> {
     let (out_tx, out_rx) = mpsc::sync_channel(4);
     let reader = std::thread::Builder::new()
         .name("mewu-code-output".into())
         .spawn(move || {
-            let mut reader = BufReader::new(stdout);
+            let mut reader = BufReader::new(output);
             let mut total = 0usize;
             loop {
                 let output = match read_line(&mut reader, MAX_FRAME) {
@@ -307,6 +345,23 @@ fn supervise_executable(
     let mut process =
         ManagedProcess::spawn(&mut command, permit).map_err(|_| CodeError::WorkerUnavailable)?;
     let (output, writer) = attach_io(&mut process, image, mode)?;
+    supervise_process(
+        process,
+        output,
+        writer,
+        cancel,
+        started,
+        Timeouts::for_mode(mode),
+    )
+}
+fn supervise_process(
+    mut process: ManagedProcess<Permit>,
+    output: mpsc::Receiver<Output>,
+    writer: mpsc::Receiver<Result<(), CodeError>>,
+    cancel: Arc<AtomicBool>,
+    started: Instant,
+    timeouts: Timeouts,
+) -> Result<Vec<DecodedCode>, CodeError> {
     let mut ready = false;
     let mut eof = false;
     let mut write_done = false;
@@ -318,16 +373,9 @@ fn supervise_executable(
         if cancel.load(Ordering::Acquire) {
             failure = Some(CodeError::Cancelled);
         }
-        if failure.is_none()
-            && terminal.is_none()
-            && ((!ready && started.elapsed() >= START_TIMEOUT)
-                || started.elapsed()
-                    >= if mode.has_text() {
-                        Duration::from_secs(25)
-                    } else {
-                        TOTAL_TIMEOUT
-                    })
-        {
+        // A terminal frame is not completion: the owned child, descendants
+        // and tracked pipes must still finish within this same mode budget.
+        if failure.is_none() && timeouts.expired(ready, started.elapsed()) {
             failure = Some(CodeError::TimedOut);
         }
         if !write_done {
@@ -368,16 +416,11 @@ fn supervise_executable(
                 return terminal.ok_or(CodeError::Protocol)?;
             }
         }
-        if killed_at.is_some_and(|at| at.elapsed() >= CLEANUP_TIMEOUT) {
+        if killed_at.is_some_and(|at| at.elapsed() >= timeouts.cleanup) {
             return Err(CodeError::CleanupTimedOut);
         }
-        if failure.is_none() && exited_at.is_some_and(|at| at.elapsed() >= CLEANUP_TIMEOUT) {
+        if failure.is_none() && exited_at.is_some_and(|at| at.elapsed() >= timeouts.cleanup) {
             failure = Some(CodeError::Protocol);
-        }
-        // A malformed child can emit a terminal event and remain alive. Its
-        // post-result lifetime is bounded too; receiving JSON alone is not done.
-        if terminal.is_some() && started.elapsed() >= TOTAL_TIMEOUT && failure.is_none() {
-            failure = Some(CodeError::TimedOut);
         }
         match output.recv_timeout(Duration::from_millis(20)) {
             Ok(Output::Frame(event)) => {
@@ -527,6 +570,385 @@ fn decode_scan(image: CodeImage, mode: ScanMode) -> Result<Vec<DecodedCode>, Cod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_deadlines_include_terminal_lifetime_and_exact_boundaries() {
+        assert_eq!(START_TIMEOUT, Duration::from_secs(3));
+        assert_eq!(TOTAL_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(TEXT_TIMEOUT, Duration::from_secs(25));
+        assert_eq!(CLEANUP_TIMEOUT, Duration::from_secs(2));
+        for mode in [ScanMode::Codes, ScanMode::Text, ScanMode::CodesAndText] {
+            let timeouts = Timeouts::for_mode(mode);
+            let total = Duration::from_secs(if mode.has_text() { 25 } else { 10 });
+            assert_eq!(timeouts.total, total);
+            assert_eq!(timeouts.startup, START_TIMEOUT);
+            assert_eq!(timeouts.cleanup, CLEANUP_TIMEOUT);
+            assert!(!timeouts.expired(false, START_TIMEOUT - Duration::from_nanos(1)));
+            assert!(timeouts.expired(false, START_TIMEOUT));
+            assert!(!timeouts.expired(true, total - Duration::from_nanos(1)));
+            assert!(timeouts.expired(true, total));
+            // This predicate has no terminal exemption or new result deadline.
+            assert_eq!(timeouts.expired(true, TOTAL_TIMEOUT), !mode.has_text());
+        }
+    }
+
+    #[cfg(windows)]
+    mod supervised {
+        use super::*;
+
+        pub(super) const FIXTURE: &str = "code_worker::tests::supervised_deadline_fixture";
+        pub(super) const FIXTURE_MODE: &str = "MEWU_CODE_DEADLINE_TEST_CHILD";
+
+        #[derive(Serialize, Deserialize)]
+        #[serde(deny_unknown_fields)]
+        pub(super) struct Evidence {
+            pub worker: u32,
+            pub descendant: Option<u32>,
+        }
+        pub(super) fn command(mode: &str) -> Command {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", FIXTURE, "--nocapture"])
+                .env(FIXTURE_MODE, mode)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            command
+        }
+        pub(super) fn evidence(descendant: Option<u32>) {
+            // libtest owns stdout. Its diagnostics never enter the strict
+            // protocol pipe, which this fixture writes directly to stderr.
+            println!(
+                "\n{}",
+                serde_json::to_string(&Evidence {
+                    worker: std::process::id(),
+                    descendant,
+                })
+                .unwrap()
+            );
+            std::io::stdout().flush().unwrap();
+        }
+        pub(super) fn event(event: Event) {
+            let mut output = std::io::stderr().lock();
+            output
+                .write_all(&serde_json::to_vec(&event).unwrap())
+                .unwrap();
+            output.write_all(b"\n").unwrap();
+            output.flush().unwrap();
+        }
+        struct Fixture {
+            process: ManagedProcess<Permit>,
+            output: mpsc::Receiver<Output>,
+            writer: mpsc::Receiver<Result<(), CodeError>>,
+            evidence: mpsc::Receiver<Evidence>,
+            slot: Slot,
+            cancel: Arc<AtomicBool>,
+            started: Instant,
+            timeouts: Timeouts,
+        }
+        impl Fixture {
+            fn spawn(scenario: &str, mode: ScanMode) -> Self {
+                let cancel = Arc::new(AtomicBool::new(false));
+                // A real Permit with an isolated slot lets these native tests
+                // run alongside other decoders without changing the global slot.
+                let slot = Arc::new(Mutex::new(Some(cancel.clone())));
+                let permit = Permit {
+                    slot: slot.clone(),
+                    token: cancel.clone(),
+                };
+                let started = Instant::now();
+                let mut process = ManagedProcess::spawn(&mut command(scenario), permit).unwrap();
+                let stderr = process.child_mut().stderr.take().unwrap();
+                let (output, writer) = attach_io_from(
+                    &mut process,
+                    CodeImage {
+                        width: 1,
+                        height: 1,
+                        luma: vec![255],
+                    },
+                    mode,
+                    stderr,
+                )
+                .unwrap();
+                let stdout = process.child_mut().stdout.take().unwrap();
+                let (tx, evidence) = mpsc::channel();
+                process.track_io(std::thread::spawn(move || {
+                    for line in BufReader::new(stdout).lines() {
+                        let Ok(line) = line else { break };
+                        if let Ok(value) = serde_json::from_str::<Evidence>(&line) {
+                            let _ = tx.send(value);
+                        }
+                    }
+                }));
+                let mut timeouts = Timeouts::for_mode(mode);
+                // Only the total budget is scaled. Production mode selection,
+                // the entire supervisor loop, native ownership and IO are used.
+                timeouts.total /= 10;
+                Self {
+                    process,
+                    output,
+                    writer,
+                    evidence,
+                    slot,
+                    cancel,
+                    started,
+                    timeouts,
+                }
+            }
+            fn run(self) -> Result<Vec<DecodedCode>, CodeError> {
+                supervise_process(
+                    self.process,
+                    self.output,
+                    self.writer,
+                    self.cancel,
+                    self.started,
+                    self.timeouts,
+                )
+            }
+        }
+        fn until(mut done: impl FnMut() -> bool) {
+            let started = Instant::now();
+            while !done() {
+                assert!(
+                    started.elapsed() < Duration::from_secs(5),
+                    "native lifecycle deadline"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        #[cfg(target_os = "macos")]
+        fn process_gone(pid: u32) -> bool {
+            (unsafe { libc::kill(pid as libc::pid_t, 0) }) == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        }
+        #[cfg(target_os = "macos")]
+        fn assert_process_gone(pid: u32) {
+            assert!(process_gone(pid), "fixture process {pid} still exists");
+        }
+
+        #[test]
+        fn late_text_terminal_can_finish_after_codes_budget() {
+            for mode in [ScanMode::Text, ScanMode::CodesAndText, ScanMode::Codes] {
+                let mut fixture = Fixture::spawn("late", mode);
+                let evidence = fixture
+                    .evidence
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap();
+                assert_eq!(evidence.worker, fixture.process.child_mut().id());
+                assert!(fixture.process.try_wait().unwrap().is_none());
+                assert!(fixture.slot.lock().unwrap().is_some());
+                let slot = fixture.slot.clone();
+                let started = fixture.started;
+                #[cfg(windows)]
+                let job = fixture.process.observe_job_for_test().unwrap();
+                let result = fixture.run();
+                if mode.has_text() {
+                    assert_eq!(result, Ok(Vec::new()));
+                    assert!(started.elapsed() > TOTAL_TIMEOUT / 10);
+                    assert!(started.elapsed() < TEXT_TIMEOUT / 10);
+                } else {
+                    assert_eq!(result, Err(CodeError::TimedOut));
+                }
+                assert!(slot.lock().unwrap().is_none());
+                #[cfg(windows)]
+                assert_eq!(job.active_processes(), Some(0));
+                #[cfg(target_os = "macos")]
+                assert_process_gone(evidence.worker);
+            }
+        }
+
+        #[test]
+        fn terminal_without_exit_is_killed_at_original_mode_deadline() {
+            for (scenario, mode) in [
+                ("completed_hang", ScanMode::Codes),
+                ("failed_hang", ScanMode::Text),
+            ] {
+                let mut fixture = Fixture::spawn(scenario, mode);
+                let evidence = fixture
+                    .evidence
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap();
+                assert!(fixture.process.try_wait().unwrap().is_none());
+                let slot = fixture.slot.clone();
+                let started = fixture.started;
+                let timeouts = fixture.timeouts;
+                #[cfg(windows)]
+                let job = fixture.process.observe_job_for_test().unwrap();
+                assert_eq!(fixture.run(), Err(CodeError::TimedOut));
+                assert!(started.elapsed() >= timeouts.total);
+                assert!(started.elapsed() < timeouts.total + timeouts.cleanup);
+                assert!(slot.lock().unwrap().is_none());
+                #[cfg(windows)]
+                assert_eq!(job.active_processes(), Some(0));
+                #[cfg(target_os = "macos")]
+                assert_process_gone(evidence.worker);
+            }
+        }
+
+        #[test]
+        fn cancellation_reaps_live_descendant_and_inherited_pipe_before_slot_release() {
+            let mut fixture = Fixture::spawn("tree_terminal", ScanMode::Text);
+            let evidence = fixture
+                .evidence
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            assert!(evidence.descendant.is_some());
+            assert_eq!(evidence.worker, fixture.process.child_mut().id());
+            assert!(fixture.process.try_wait().unwrap().is_none());
+            assert!(!fixture.process.tree_empty());
+            assert!(!fixture.process.fully_exited());
+            assert!(fixture.slot.lock().unwrap().is_some());
+            #[cfg(windows)]
+            let job = fixture.process.observe_job_for_test().unwrap();
+            #[cfg(windows)]
+            {
+                assert_eq!(job.contains_process_for_test(evidence.worker), Some(true));
+                assert_eq!(
+                    job.contains_process_for_test(evidence.descendant.unwrap()),
+                    Some(true)
+                );
+                assert_eq!(job.contains_process_for_test(0), None);
+                assert_eq!(
+                    job.contains_process_for_test(unsafe {
+                        windows_sys::Win32::System::Threading::GetCurrentProcessId()
+                    }),
+                    Some(false)
+                );
+            }
+            #[cfg(target_os = "macos")]
+            assert_eq!(
+                unsafe { libc::kill(evidence.descendant.unwrap() as libc::pid_t, 0) },
+                0
+            );
+            let slot = fixture.slot.clone();
+            fixture.cancel.store(true, Ordering::Release);
+            assert_eq!(fixture.run(), Err(CodeError::Cancelled));
+            assert!(slot.lock().unwrap().is_none());
+            #[cfg(windows)]
+            assert_eq!(job.active_processes(), Some(0));
+            #[cfg(target_os = "macos")]
+            {
+                assert_process_gone(evidence.worker);
+                assert_process_gone(evidence.descendant.unwrap());
+            }
+        }
+
+        #[test]
+        fn cleanup_timeout_retains_permit_until_tracked_io_really_finishes() {
+            let mut fixture = Fixture::spawn("tree_terminal", ScanMode::Text);
+            let evidence = fixture
+                .evidence
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            assert!(evidence.descendant.is_some());
+            assert_eq!(evidence.worker, fixture.process.child_mut().id());
+            #[cfg(windows)]
+            let job = fixture.process.observe_job_for_test().unwrap();
+            #[cfg(windows)]
+            {
+                assert_eq!(job.contains_process_for_test(evidence.worker), Some(true));
+                assert_eq!(
+                    job.contains_process_for_test(evidence.descendant.unwrap()),
+                    Some(true)
+                );
+            }
+            let (tx, rx) = mpsc::channel::<()>();
+            let io_done = Arc::new(AtomicBool::new(false));
+            let done = io_done.clone();
+            fixture.process.track_io(std::thread::spawn(move || {
+                let _ = rx.recv();
+                done.store(true, Ordering::Release);
+            }));
+            fixture.timeouts.cleanup = Duration::from_millis(100);
+            let slot = fixture.slot.clone();
+            fixture.cancel.store(true, Ordering::Release);
+            assert_eq!(fixture.run(), Err(CodeError::CleanupTimedOut));
+            #[cfg(windows)]
+            until(|| job.active_processes() == Some(0));
+            #[cfg(target_os = "macos")]
+            until(|| process_gone(evidence.worker) && process_gone(evidence.descendant.unwrap()));
+            assert!(slot.lock().unwrap().is_some());
+            assert!(!io_done.load(Ordering::Acquire));
+            // Drop moved native ownership and the real Permit to its reaper;
+            // neither a timeout nor the finished supervisor released the slot.
+            tx.send(()).unwrap();
+            until(|| slot.lock().unwrap().is_none());
+            assert!(io_done.load(Ordering::Acquire));
+            #[cfg(windows)]
+            assert_eq!(job.active_processes(), Some(0));
+            #[cfg(target_os = "macos")]
+            {
+                assert_process_gone(evidence.worker);
+                assert_process_gone(evidence.descendant.unwrap());
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn supervised_deadline_fixture() {
+        use supervised::{command, event, evidence, Evidence, FIXTURE_MODE};
+        let Ok(scenario) = std::env::var(FIXTURE_MODE) else {
+            return;
+        };
+        if scenario == "pipe_descendant" {
+            let mut gate = String::new();
+            assert_eq!(std::io::stdin().read_line(&mut gate).unwrap(), 3);
+            assert_eq!(gate, "go\n");
+            evidence(None);
+            std::thread::sleep(Duration::from_secs(15));
+            std::process::exit(0);
+        }
+        // The parent installs its Job/group before attach_io sends these bytes.
+        read_scan(&mut BufReader::new(std::io::stdin().lock())).unwrap();
+        event(Event::Ready { version: VERSION });
+        match scenario.as_str() {
+            "late" => {
+                evidence(None);
+                std::thread::sleep(Duration::from_millis(1300));
+                event(Event::Completed { codes: Vec::new() });
+                std::thread::sleep(Duration::from_millis(100));
+                std::process::exit(0);
+            }
+            "completed_hang" | "failed_hang" => {
+                event(if scenario == "completed_hang" {
+                    Event::Completed { codes: Vec::new() }
+                } else {
+                    Event::Failed {
+                        error: CodeError::DecodeFailed,
+                    }
+                });
+                evidence(None);
+            }
+            "tree_terminal" => {
+                let mut child = command("pipe_descendant")
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .unwrap();
+                child.stdin.take().unwrap().write_all(b"go\n").unwrap();
+                let stdout = child.stdout.take().unwrap();
+                let descendant = BufReader::new(stdout)
+                    .lines()
+                    .map(Result::unwrap)
+                    .find_map(|line| serde_json::from_str::<Evidence>(&line).ok())
+                    .expect("real descendant consumed its stdin gate");
+                assert_eq!(descendant.worker, child.id());
+                event(Event::Completed { codes: Vec::new() });
+                evidence(Some(child.id()));
+                // Keep both workers alive and the inherited protocol pipe open.
+                // The supervisor must kill the native tree, not just accept JSON.
+            }
+            _ => panic!("unknown deadline fixture scenario"),
+        }
+        std::thread::sleep(Duration::from_secs(15));
+        std::process::exit(0);
+    }
+
     #[cfg(windows)]
     #[test]
     #[ignore = "explicit exact built app worker verification; synthetic text/QR only, no clipboard, URL opening, desktop or user storage"]
