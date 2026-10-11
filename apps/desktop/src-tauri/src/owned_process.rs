@@ -238,7 +238,9 @@ impl<P: Send + 'static> ManagedProcess<P> {
         }));
         let process = owned.0.as_mut().unwrap();
         #[cfg(not(target_os = "macos"))]
-        process.job = Some(ProcessJob::attach(&process.child)?);
+        {
+            process.job = Some(ProcessJob::attach(&process.child)?);
+        }
         #[cfg(target_os = "macos")]
         {
             // Install the provisional owner before querying the kernel. On a
