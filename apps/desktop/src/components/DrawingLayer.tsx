@@ -12,7 +12,7 @@ import { numberForeground, highlightMaskTable } from '../drawing-colors';
 import type { HighlightPreview } from '../highlight-preview';
 
 interface MosaicContext { sceneId: string; background: Asset; override?: MosaicSource }
-function HighlighterShape(props: { drawing: Drawing; context?: MosaicContext; onError?: (message: string) => void }) {
+function HighlighterShape(props: { drawing: Drawing; interactive?: boolean; context?: MosaicContext; onError?: (message: string) => void }) {
   const id = `highlight-${createUniqueId()}`, segment = penSegments();
   const [foreground, setForeground] = createSignal<HighlightPreview>();
   const identity = createMemo(() => JSON.stringify([props.context?.sceneId, props.context?.background.id, props.context?.override?.source.id]));
@@ -25,7 +25,7 @@ function HighlighterShape(props: { drawing: Drawing; context?: MosaicContext; on
   const bounds = () => drawingBounds(props.drawing);
   const ink = () => <Show when={props.drawing.points.length > 1} fallback={<circle cx={props.drawing.points[0]?.x ?? 0} cy={props.drawing.points[0]?.y ?? 0} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show>;
   return <Show when={props.context} fallback={<g opacity={.35}>{ink()}</g>}>
-    <Show when={foreground()}>{value => <g opacity={.35} stroke="none">
+    <Show when={foreground()}>{value => <g opacity={.35} stroke="none" pointer-events="none">
       <defs>
         <mask id={`${id}-ink`} maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" {...bounds()} style={{ 'mask-type': 'alpha' }}><g fill="none" stroke="white" stroke-width={props.drawing.strokeWidth} stroke-linecap="round" stroke-linejoin="round">{ink()}</g></mask>
         <filter id={`${id}-coverage`} filterUnits="userSpaceOnUse" {...bounds()} color-interpolation-filters="sRGB"><feComponentTransfer><feFuncA type="discrete" tableValues={highlightMaskTable} /></feComponentTransfer></filter>
@@ -33,6 +33,7 @@ function HighlighterShape(props: { drawing: Drawing; context?: MosaicContext; on
       </defs>
       <g mask={`url(#${id}-ink)`}><g mask={`url(#${id}-mask)`}><rect width={value().width} height={value().height} fill={props.drawing.color} /><image href={value().dataUrl} width={value().width} height={value().height} onError={() => { setForeground(undefined); props.onError?.('无法生成荧光笔预览'); }} /></g></g>
     </g>}</Show>
+    <Show when={props.interactive}><g opacity={0} fill="none" stroke={props.drawing.color} pointer-events="stroke"><Show when={props.drawing.points.length > 1} fallback={<circle cx={props.drawing.points[0]?.x ?? 0} cy={props.drawing.points[0]?.y ?? 0} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" pointer-events="fill" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show></g></Show>
   </Show>;
 }
 function MosaicShape(props: { drawing: Drawing; context?: MosaicContext }) {
@@ -60,7 +61,7 @@ export function DrawingShape(props: { drawing: Drawing; interactive?: boolean; s
     <Switch>
       <Match when={props.drawing.kind === 'rich'}><RichDrawingShape drawing={props.drawing} interactive={props.interactive} context={props.richContext} onError={props.onError} /></Match>
       <Match when={props.drawing.kind === 'pen'}><g><Show when={props.drawing.points.length > 1} fallback={<circle cx={first().x} cy={first().y} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show></g></Match>
-      <Match when={props.drawing.kind === 'highlighter'}><HighlighterShape drawing={props.drawing} context={props.mosaicContext} onError={props.onError} /></Match>
+      <Match when={props.drawing.kind === 'highlighter'}><HighlighterShape drawing={props.drawing} interactive={props.interactive} context={props.mosaicContext} onError={props.onError} /></Match>
       <Match when={props.drawing.kind === 'line'}><line x1={first().x} y1={first().y} x2={second().x} y2={second().y} /></Match>
       <Match when={props.drawing.kind === 'arrow'}><line x1={first().x} y1={first().y} x2={second().x} y2={second().y} /><polyline points={arrowHead(props.drawing.points)} fill="none" /></Match>
       <Match when={props.drawing.kind === 'rect'}><rect {...box()} /></Match>

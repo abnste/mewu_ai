@@ -328,6 +328,20 @@ test('actual protected marker fences stale source responses and retains its load
   highlightLoader=()=>{throw Error('No native IO');};
 });
 
+test('protected foreground images never intercept clicks; only ink geometry participates in marker selection',async()=>{
+  const tick=()=>new Promise(resolve=>setImmediate(resolve));
+  highlightLoader=async()=>({backgroundId:'a',width:80,height:40,dataUrl:'data:image/png;base64,a'});
+  const [drawing,setDrawing]=solid.createSignal({id:'hit',kind:'highlighter',color:'#fff200',strokeWidth:18,points:[{x:20,y:20},{x:60,y:20}]});
+  const [interactive,setInteractive]=solid.createSignal(true),root=renderer.createElement('root');
+  const dispose=renderer.render(()=>renderer.createComponent(shapeJsx.DrawingShape,{get drawing(){return drawing();},get interactive(){return interactive();},mosaicContext:{sceneId:'s',background:{id:'a',width:80,height:40}}}),root);
+  await tick();
+  const paint=descendants(root,'g').find(node=>node.props.opacity===.35),hit=descendants(root,'g').find(node=>node.props.opacity===0);
+  assert.equal(paint.props['pointer-events'],'none');assert.equal(hit.props['pointer-events'],'stroke');assert.equal(descendants(hit,'path').length,1);assert.equal(descendants(hit,'image').length,0);assert.equal(descendants(hit,'rect').length,0);
+  setDrawing({...drawing(),points:[{x:20,y:20}]});assert.equal(descendants(hit,'path').length,0);assert.equal(descendants(hit,'circle')[0].props['pointer-events'],'fill');
+  setInteractive(false);assert.equal(descendants(root,'g').some(node=>node.props.opacity===0),false);
+  dispose();highlightLoader=()=>{throw Error('No native IO');};
+});
+
 test('actual stored JSX remains on the native raster port while selection, interactivity and exact preview bounds update',()=>{
   const [draft]=solid.createSignal(),[drawings]=solid.createSignal([]),[stored]=solid.createSignal([{id:'stored'}]),[tool,setTool]=solid.createSignal('pen'),[selected,setSelected]=solid.createSignal(''),[storedDraft,setStoredDraft]=solid.createSignal();
   const root=renderer.createElement('root'),renders=[];
