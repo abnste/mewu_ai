@@ -269,6 +269,219 @@ fn main() {
     panic!("native Linux factory fixture cannot run on this platform");
 }
 #[cfg(target_os = "linux")]
+fn resource_controller(case: &str) {
+    use crate::owned_process::linux_worker::{TrustedCommand, Worker};
+    use std::{
+        io::{Read, Write},
+        process::Stdio,
+        sync::{
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            Arc,
+        },
+        time::{Duration, Instant},
+    };
+    let root = std::path::PathBuf::from(std::env::var_os("APPDIR").unwrap());
+    let captured = TrustedCommand::new(Worker::Code);
+    if case != "valid-env" && case != "replace-after-capture" {
+        assert!(captured.is_err(), "unsafe AppDir was accepted: {case}");
+        eprintln!("factory resource {case}: rejected before any child exec PASS");
+        return;
+    }
+    let mut command = captured.unwrap();
+    if case == "replace-after-capture" {
+        let binary = root.join("usr/bin/MewuAI");
+        std::fs::rename(&binary, root.join("original-loaded-inode")).unwrap();
+        std::fs::write(&binary, b"INERT REPLACEMENT").unwrap();
+    }
+    command
+        .env_clear()
+        .env("MEWU_LINUX_WORKER_TEST_ISOLATED", "1")
+        .env("MEWU_FACTORY_RESOURCE_ROOT", &root)
+        .env("LD_LIBRARY_PATH", "/nonexistent/untrusted-loader")
+        .env("LD_PRELOAD", "/nonexistent/untrusted-preload")
+        .env("LD_AUDIT", "/nonexistent/untrusted-audit")
+        .env("GLIBC_TUNABLES", "untrusted")
+        .env("APPDIR", "/nonexistent/overwritten-root")
+        .env("GIO_MODULE_DIR", "/nonexistent/overwritten-modules")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    struct Permit(Arc<AtomicUsize>);
+    impl Drop for Permit {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    let released = Arc::new(AtomicUsize::new(0));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let result = owned_process::ManagedProcess::spawn_trusted(
+        command,
+        Permit(released.clone()),
+        deadline,
+        &AtomicBool::new(false),
+    );
+    if case == "replace-after-capture" {
+        assert!(
+            result.is_err(),
+            "replaced AppDir binary must fail before exec"
+        );
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        eprintln!("factory resource {case}: launch rechecked pinned identity before exec; P released PASS");
+        return;
+    }
+    let mut owned = result.unwrap();
+    let mut stdout = owned.child_mut().stdout.take().unwrap();
+    let (output_tx, output_rx) = std::sync::mpsc::channel();
+    owned.track_io(std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let result = stdout
+            .by_ref()
+            .take(1024)
+            .read_to_end(&mut output)
+            .map(|_| output);
+        let _ = output_tx.send(result);
+    }));
+    owned
+        .child_mut()
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"P")
+        .unwrap();
+    while !owned.fully_exited() {
+        assert!(
+            Instant::now() < deadline,
+            "real resource worker/IO did not finish"
+        );
+        let _ = owned.try_wait().unwrap();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(owned.try_wait().unwrap().unwrap().success());
+    assert_eq!(
+        output_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+            .unwrap(),
+        b"trusted-domain\n"
+    );
+    drop(owned);
+    assert_eq!(released.load(Ordering::SeqCst), 1);
+    eprintln!("factory resource valid-env: real worker received sealed resources after env_clear/tainted overrides; actual PID1 wait + IO join PASS");
+}
+
+#[cfg(target_os = "linux")]
+fn resource_fixtures() {
+    use std::{
+        os::unix::fs::{symlink, PermissionsExt},
+        process::Command,
+    };
+    let directories = [
+        "usr",
+        "usr/bin",
+        "usr/lib",
+        "usr/lib/gtk-3.0",
+        "usr/lib/gtk-3.0/3.0.0",
+        "usr/lib/gdk-pixbuf-2.0",
+        "usr/lib/gdk-pixbuf-2.0/2.10.0",
+        "usr/lib/girepository-1.0",
+        "usr/lib/gio",
+        "usr/lib/gio/modules",
+        "usr/lib/gstreamer-1.0",
+        "usr/lib/gstreamer1.0",
+        "usr/lib/gstreamer1.0/gstreamer-1.0",
+        "usr/share",
+        "usr/share/glib-2.0",
+        "usr/share/glib-2.0/schemas",
+    ];
+    let files = [
+        "usr/lib/gtk-3.0/3.0.0/immodules.cache",
+        "usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache",
+        "usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner",
+        "usr/lib/gstreamer1.0/gstreamer-1.0/gst-ptp-helper",
+        "usr/lib/libfixture.so.1",
+    ];
+    for case in [
+        "valid-env",
+        "root-other-writable",
+        "resource-other-writable",
+        "symlink-escape",
+        "missing-resource",
+        "wrong-loaded-inode",
+        "replace-after-capture",
+    ] {
+        let root = std::env::temp_dir().join(format!(
+            "mewu-resource-fixture-{}-{case}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for relative in directories {
+            let path = root.join(relative);
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        for relative in files {
+            let path = root.join(relative);
+            std::fs::write(&path, b"fixture resource, never executed").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        symlink("libfixture.so.1", root.join("usr/lib/libfixture.so")).unwrap();
+        let executable = root.join("usr/bin/MewuAI");
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        match case {
+            "root-other-writable" => {
+                std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777)).unwrap()
+            }
+            "resource-other-writable" => std::fs::set_permissions(
+                root.join(files[0]),
+                std::fs::Permissions::from_mode(0o666),
+            )
+            .unwrap(),
+            "symlink-escape" => symlink("/usr/lib", root.join("usr/lib/escape")).unwrap(),
+            "missing-resource" => std::fs::remove_file(root.join(files[0])).unwrap(),
+            "wrong-loaded-inode" => {
+                std::fs::copy(&executable, root.join("other-executable")).unwrap();
+            }
+            _ => (),
+        }
+        let launch = if case == "wrong-loaded-inode" {
+            root.join("other-executable")
+        } else {
+            executable.clone()
+        };
+        let status = Command::new(launch)
+            .args(["--factory-resource-controller", case])
+            .env("APPDIR", &root)
+            .status()
+            .unwrap();
+        assert!(status.success(), "native resource fixture failed: {case}");
+        // Remove only this fixture's explicit paths; never follow test symlinks.
+        for relative in [
+            "usr/lib/libfixture.so",
+            "usr/lib/escape",
+            "other-executable",
+            "original-loaded-inode",
+        ] {
+            let path = root.join(relative);
+            if std::fs::symlink_metadata(&path).is_ok() {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        std::fs::remove_file(executable).unwrap();
+        for relative in files {
+            let path = root.join(relative);
+            if path.exists() {
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+        for relative in directories.into_iter().rev() {
+            std::fs::remove_dir(root.join(relative)).unwrap();
+        }
+        std::fs::remove_dir(root).unwrap();
+    }
+}
+#[cfg(target_os = "linux")]
 fn main() {
     use crate::owned_process::linux_worker as factory;
     use std::{
@@ -291,12 +504,45 @@ fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     if args
         .get(1)
+        .is_some_and(|v| v == "--factory-resource-controller")
+    {
+        resource_controller(args[2].to_str().unwrap());
+        return;
+    }
+    if args
+        .get(1)
         .is_some_and(|v| v == "--factory-failure-controller")
     {
         failure_controller(args[2].to_str().unwrap());
         return;
     }
     if args.get(1).is_some_and(|v| v == "--code-worker") {
+        if let Some(root) = std::env::var_os("MEWU_FACTORY_RESOURCE_ROOT") {
+            let root = std::path::PathBuf::from(root);
+            assert_eq!(
+                std::env::var_os("APPDIR"),
+                Some(root.clone().into_os_string())
+            );
+            assert_eq!(
+                std::env::var_os("GIO_MODULE_DIR"),
+                Some(root.join("usr/lib/gio/modules").into_os_string())
+            );
+            assert_eq!(
+                std::env::var_os("GST_PLUGIN_PATH_1_0"),
+                Some(root.join("usr/lib/gstreamer-1.0").into_os_string())
+            );
+            for name in [
+                "LD_LIBRARY_PATH",
+                "LD_PRELOAD",
+                "LD_AUDIT",
+                "GLIBC_TUNABLES",
+            ] {
+                assert!(
+                    std::env::var_os(name).is_none(),
+                    "tainted loader variable survived: {name}"
+                );
+            }
+        }
         assert_eq!(rustix::process::getpid().as_raw_nonzero().get(), 1);
         // Strong whitelist assertion after the original worker exec: neither
         // known source/bridge nor intentionally inheritable parent FD survives.
@@ -402,6 +648,30 @@ fn main() {
         eprintln!("factory native: pinned inode survives pathname replacement; unrelated/source/bridge FD closed; real PID1 wait + IO join + P retained PASS");
         return;
     }
+    {
+        // Actual Linux syscall result, independent of the sealed factory:
+        // recvmsg echoes CMSG_CLOEXEC even when this ACK carries no FDs.
+        use rustix::net::{recvmsg, RecvAncillaryBuffer, RecvFlags, ReturnFlags};
+        let (mut sender, receiver) = std::os::unix::net::UnixStream::pair().unwrap();
+        sender.write_all(b"A").unwrap();
+        let mut byte = [0];
+        let mut storage = [];
+        let mut ancillary = RecvAncillaryBuffer::new(&mut storage);
+        let result = recvmsg(
+            &receiver,
+            &mut [std::io::IoSliceMut::new(&mut byte)],
+            &mut ancillary,
+            RecvFlags::CMSG_CLOEXEC,
+        )
+        .unwrap();
+        assert_eq!(result.bytes, 1);
+        assert_eq!(byte, [b'A']);
+        assert_eq!(result.flags, ReturnFlags::CMSG_CLOEXEC);
+        eprintln!(
+            "factory native ACK kernel echo: bytes=1 flags={:#x} no ancillary data PASS",
+            result.flags.bits()
+        );
+    }
     let dir = std::env::temp_dir().join(format!("mewu-factory-fixture-{}", std::process::id()));
     std::fs::create_dir(&dir).unwrap();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -436,4 +706,5 @@ fn main() {
             "native factory failure fixture {case} failed"
         );
     }
+    resource_fixtures();
 }
