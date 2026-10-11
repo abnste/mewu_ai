@@ -188,7 +188,7 @@ fn complete_frame(sample: &CMSampleBuffer) -> Result<bool, String> {
         if value.is_null() || CFGetTypeID(value as CFTypeRef) != CFDictionaryGetTypeID() {
             return Err("屏幕帧状态类型无效".into());
         }
-        let key = kSCStreamFrameInfoStatus.ok_or("屏幕帧状态键不可用")?;
+        let key = SCStreamFrameInfoStatus;
         let status = CFDictionaryGetValue(value as CFDictionaryRef, key as *const _ as *const _);
         if status.is_null() || CFGetTypeID(status as CFTypeRef) != CFNumberGetTypeID() {
             return Err("屏幕帧状态无效".into());
@@ -947,7 +947,7 @@ pub(super) fn run(
             }
             let file = File::open(destination.path()).map_err(|_| "无法核验录屏文件")?;
             destination.publish(&file).map_err(|e| e.to_string())?;
-            destination.commit().map_err(|e| e.to_string())?;
+            destination.commit();
             Ok(Some(Report {
                 width: config.width,
                 height: config.height,

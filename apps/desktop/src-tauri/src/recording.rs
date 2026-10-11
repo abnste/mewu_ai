@@ -330,11 +330,12 @@ pub async fn start_recording(
                     && bounds.size.height == config.capture_coordinates.height;
             }
             #[cfg(not(target_os = "macos"))]
-            m.origin_x
-                == config.origin_x
-                && m.origin_y == config.origin_y
-                && m.display_width == config.monitor_width
-                && m.display_height == config.monitor_height
+            {
+                m.origin_x == config.origin_x
+                    && m.origin_y == config.origin_y
+                    && m.display_width == config.monitor_width
+                    && m.display_height == config.monitor_height
+            }
         })
         .ok_or("显示器已改变，请重新截图")?;
     let controls = Arc::new(crate::recording_worker::ControlBus::default());
