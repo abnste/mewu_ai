@@ -36,6 +36,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "video_clip_frames_macos.rs"]
+mod frames;
+
 struct Source {
     path: PathBuf,
     file: File,
@@ -517,6 +520,24 @@ pub(super) fn execute(
             let mut source = Source::open(source, cancel)?;
             render(&mut source, output, expected, range, cancel, on_progress)
                 .map(ClipJobResult::Rendered)
+        }
+        ClipJob::ExtractFrames {
+            source,
+            output_directory,
+            expected,
+            window,
+            requested_ticks,
+        } => {
+            let mut source = Source::open(source, cancel)?;
+            frames::extract(
+                &mut source,
+                output_directory,
+                expected,
+                window,
+                requested_ticks,
+                cancel,
+            )
+            .map(|frames| ClipJobResult::FramesExtracted { frames })
         }
         _ => Err(ClipError::Unsupported),
     })

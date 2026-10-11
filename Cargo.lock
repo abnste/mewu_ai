@@ -3109,6 +3109,7 @@ dependencies = [
  "objc2-av-foundation",
  "objc2-core-graphics",
  "objc2-core-media",
+ "objc2-core-video",
  "objc2-foundation",
  "objc2-screen-capture-kit",
  "objc2-uniform-type-identifiers",
