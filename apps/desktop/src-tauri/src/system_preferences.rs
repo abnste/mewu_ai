@@ -621,9 +621,6 @@ mod tests {
     struct Directory(PathBuf);
     impl Directory {
         fn new() -> Self {
-            #[cfg(windows)]
-            let base = PathBuf::from("D:/tmp");
-            #[cfg(not(windows))]
             let base = std::env::temp_dir();
             let path = base.join(format!("mewu-system-prefs-{}", uuid::Uuid::new_v4()));
             fs::create_dir(&path).unwrap();
@@ -632,9 +629,6 @@ mod tests {
     }
     impl Drop for Directory {
         fn drop(&mut self) {
-            #[cfg(windows)]
-            let base = PathBuf::from("D:/tmp");
-            #[cfg(not(windows))]
             let base = std::env::temp_dir();
             if let (Ok(path), Ok(base)) = (self.0.canonicalize(), base.canonicalize()) {
                 if path.parent() == Some(base.as_path())

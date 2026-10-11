@@ -426,14 +426,7 @@ mod tests {
     }
     struct TestDir(PathBuf);
     fn test_root() -> PathBuf {
-        #[cfg(windows)]
-        {
-            PathBuf::from("D:/tmp")
-        }
-        #[cfg(not(windows))]
-        {
-            std::env::temp_dir()
-        }
+        std::env::temp_dir()
     }
     impl TestDir {
         fn path(&self) -> &Path {
