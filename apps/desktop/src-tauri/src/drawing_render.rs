@@ -728,9 +728,13 @@ pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
             if database.faces().next().is_none() {
                 return Err("未找到可用于绘制文字的系统字体".into());
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             {
                 database.set_sans_serif_family("Segoe UI");
+            }
+            #[cfg(target_os = "linux")]
+            {
+                database.set_sans_serif_family(linux_default_family(&database)?);
             }
             #[cfg(target_os = "macos")]
             {
@@ -746,6 +750,27 @@ fn macos_default_family(database: &usvg::fontdb::Database) -> Result<String, Str
     // Select from parsed, already-loaded faces. A queried file might exceed
     // the read budget or lack a valid face; never select its assumed family.
     for wanted in ["Helvetica", "Arial Unicode MS", "PingFang SC"] {
+        if let Some((family, _)) = database
+            .faces()
+            .flat_map(|face| &face.families)
+            .find(|(family, _)| family == wanted)
+        {
+            return Ok(family.clone());
+        }
+    }
+    database
+        .faces()
+        .flat_map(|face| &face.families)
+        .find(|(family, _)| !family.trim().is_empty())
+        .map(|(family, _)| family.clone())
+        .ok_or_else(|| "未找到可用于绘制文字的系统字体名称".into())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_default_family(database: &usvg::fontdb::Database) -> Result<String, String> {
+    // Select a family from already parsed and bounded font data. Installing
+    // Noto CJK provides Chinese glyphs; a path alone is not coverage evidence.
+    for wanted in ["DejaVu Sans", "Noto Sans CJK SC"] {
         if let Some((family, _)) = database
             .faces()
             .flat_map(|face| &face.families)
@@ -792,6 +817,33 @@ fn font_paths() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use image::{GenericImageView, Rgba, RgbaImage};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_loaded_font_families_shape_complete_chinese_latin_and_digits() {
+        let database = fonts().unwrap();
+        let family = linux_default_family(&database).unwrap();
+        assert_eq!(database.family_name(&usvg::fontdb::Family::SansSerif), family);
+        assert!(database.faces().any(|face| face.families.iter().any(|(name, _)| name == &family)));
+        let mut item = drawing(DrawingKind::Text, &[(24., 20.)]);
+        let expected = "中文测试 Hello 0123456789";
+        item.text = Some(expected.into());
+        item.font_size = Some(48.);
+        let mut options = usvg::Options::default();
+        options.font_family = family;
+        options.fontdb = database;
+        let tree = usvg::Tree::from_str(&drawing_svg(&[item], 1000, 160), &options).unwrap();
+        let glyphs: Vec<_> = tree.root().children().iter()
+            .filter_map(|node| match node { usvg::Node::Text(text) => Some(text), _ => None })
+            .flat_map(|text| text.layouted())
+            .flat_map(|span| &span.positioned_glyphs)
+            .filter(|glyph| glyph.text.chars().any(|c| !c.is_whitespace())).collect();
+        assert!(!glyphs.is_empty());
+        assert!(glyphs.iter().all(|glyph| glyph.id.0 != 0), "missing glyphs are not Chinese coverage");
+        let actual: String = glyphs.iter().map(|glyph| glyph.text.as_str()).collect();
+        assert_eq!(actual.chars().filter(|c| !c.is_whitespace()).collect::<String>(),
+            expected.chars().filter(|c| !c.is_whitespace()).collect::<String>());
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

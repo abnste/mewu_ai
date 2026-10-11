@@ -12,6 +12,8 @@ Use a separate checkout and empty test data directory. Record the source commit,
 
 Install Node.js 24, Rust stable and the [official Tauri Linux development dependencies](https://v2.tauri.app/start/prerequisites/#linux). Check WebKitGTK 4.1, GTK3 and appindicator development packages with `pkg-config`; runtime libraries alone do not prove a build environment is ready. Verify that a marker created in the build directory is visible through the desktop file manager, then verify an actual local executable can be launched through the supported desktop tools. Opening a terminal alone does not prove this.
 
+Chinese drawing, table, video annotation and translation raster tests require usable Chinese fonts, such as the distribution's `fonts-noto-cjk` package. The bounded loader reads DejaVu Sans and Noto Sans CJK font data and chooses its generic family from the parsed faces. Preserve the actual glyph and raster assertions; missing glyphs are failures. The bundled OCR plugin still rejects Linux explicitly until its native adapter is implemented. Platform rejection tests verify this boundary and do not count as working OCR.
+
 From the repository root:
 
 ```sh

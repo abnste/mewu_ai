@@ -4703,11 +4703,17 @@ mod tests {
         let mut store = PluginStore::open(&dir.0).unwrap();
         let bundled: PluginManifest = serde_json::from_slice(OFFICIAL_OCR).unwrap();
         #[cfg(target_os = "macos")]
-        let expected_engine = OcrEngine::AppleVision;
-        #[cfg(not(target_os = "macos"))]
-        let expected_engine = OcrEngine::Windows;
+        let expected_engine = Ok(OcrEngine::AppleVision);
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let expected_engine = Ok(OcrEngine::Windows);
+        // Linux has no native OCR adapter yet. The same lifecycle/package
+        // checks must still run, with an exact fail-closed platform result.
+        #[cfg(target_os = "linux")]
+        let expected_engine: Result<OcrEngine, String> = Err(
+            "此文字识别插件不支持当前系统，请重新安装对应系统的官方插件".into()
+        );
         assert_eq!(
-            store.ocr("mewu.ocr", 1, "recognize").unwrap(),
+            store.ocr("mewu.ocr", 1, "recognize"),
             expected_engine
         );
         assert!(store.ocr("mewu.ocr", 1, "drawing-tools").is_err());
@@ -4724,14 +4730,14 @@ mod tests {
         fs::write(&manifest_path, b"{}").unwrap();
         assert!(store.ocr("mewu.ocr", 3, "recognize").is_err());
         fs::write(&manifest_path, bytes).unwrap();
-        assert!(store.ocr("mewu.ocr", 3, "recognize").is_ok());
+        assert_eq!(store.ocr("mewu.ocr", 3, "recognize"), expected_engine);
         store.uninstall("mewu.ocr", 3).unwrap();
         drop(store);
         let mut store = PluginStore::open(&dir.0).unwrap();
         assert!(store.ocr("mewu.ocr", 4, "recognize").is_err());
         assert!(!manifest_path.exists());
         store.install_official("mewu.ocr", Some(4)).unwrap();
-        assert!(store.ocr("mewu.ocr", 5, "recognize").is_ok());
+        assert_eq!(store.ocr("mewu.ocr", 5, "recognize"), expected_engine);
     }
 
     #[test]
