@@ -2497,6 +2497,294 @@ mod tests {
         let next = acquire_runtime_lock(&f.paths, Duration::from_millis(80)).unwrap();
         drop(next);
     }
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Mac-only real synthetic migration diagnostic; run alone with --test-threads=1 --nocapture"]
+    fn macos_synthetic_512_media_migration_at_inherited_fd_limit() {
+        use image::ImageEncoder;
+        use std::{collections::BTreeMap, mem::size_of};
+
+        const DIRECTORIES: usize = 32;
+        const FILES_PER_DIRECTORY: usize = 16;
+        const MAX_OBSERVED_FDS: usize = 65_536;
+
+        fn report(value: serde_json::Value) {
+            eprintln!("MEWU_MAC_STORAGE_FD_DIAGNOSTIC {value}");
+        }
+        fn io_result<T>(stage: &str, result: std::io::Result<T>) -> T {
+            result.unwrap_or_else(|error| {
+                report(serde_json::json!({
+                    "syntheticOnly": true, "stage": stage,
+                    "ioErrorKind": format!("{:?}", error.kind()),
+                    "rawOsError": error.raw_os_error(), "detail": error.to_string(),
+                }));
+                panic!("{stage}: {error:?}");
+            })
+        }
+        fn storage_result<T>(stage: &str, result: Result<T, StorageError>) -> T {
+            result.unwrap_or_else(|error| {
+                // StorageError currently discards the originating errno. A later
+                // last_os_error() would be unrelated and must not impersonate it.
+                report(serde_json::json!({
+                    "syntheticOnly": true, "stage": stage,
+                    "storageError": error.code, "detail": error.detail,
+                    "rawOsError": null, "errnoUnavailable": true,
+                }));
+                panic!("{stage}: {error:?}");
+            })
+        }
+        fn limits() -> (libc::rlim_t, libc::rlim_t) {
+            let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+            // Read only; the diagnostic never invokes setrlimit or a shell.
+            let result = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limits.as_mut_ptr()) };
+            if result != 0 {
+                io_result::<()>("getrlimit", Err(std::io::Error::last_os_error()));
+            }
+            let limits = unsafe { limits.assume_init() };
+            (limits.rlim_cur, limits.rlim_max)
+        }
+        #[derive(Debug, Clone, Copy, Serialize)]
+        struct FdSample {
+            count: usize,
+            highest_fd: i32,
+        }
+        struct Sampler {
+            buffer: Vec<libc::proc_fdinfo>,
+            observations: usize,
+            maximum_count: usize,
+            maximum_fd: i32,
+        }
+        impl Sampler {
+            fn new() -> Self {
+                Self {
+                    buffer: (0..MAX_OBSERVED_FDS)
+                        .map(|_| libc::proc_fdinfo {
+                            proc_fd: -1,
+                            proc_fdtype: 0,
+                        })
+                        .collect(),
+                    observations: 0,
+                    maximum_count: 0,
+                    maximum_fd: -1,
+                }
+            }
+            fn sample(&mut self) -> FdSample {
+                let buffer_bytes =
+                    i32::try_from(self.buffer.len() * size_of::<libc::proc_fdinfo>())
+                        .expect("bounded native observation buffer");
+                // Apple's PROC_PIDLISTFDS returns bytes of actual proc_fdinfo
+                // entries. The NULL-buffer size query includes spare slots and
+                // is not an open-FD count. Query only this process; no descriptor
+                // or filesystem enumeration is created by this observation.
+                // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c
+                let bytes = unsafe {
+                    libc::proc_pidinfo(
+                        i32::try_from(std::process::id()).expect("native current PID"),
+                        libc::PROC_PIDLISTFDS,
+                        0,
+                        self.buffer.as_mut_ptr().cast(),
+                        buffer_bytes,
+                    )
+                };
+                if bytes <= 0 {
+                    io_result::<()>("proc_pidinfo", Err(std::io::Error::last_os_error()));
+                }
+                assert!(
+                    bytes < buffer_bytes,
+                    "native FD observation may be truncated"
+                );
+                let bytes = usize::try_from(bytes).expect("positive native byte count");
+                assert_eq!(bytes % size_of::<libc::proc_fdinfo>(), 0);
+                let count = bytes / size_of::<libc::proc_fdinfo>();
+                let entries = &self.buffer[..count];
+                assert!(entries.iter().all(|entry| entry.proc_fd >= 0));
+                let highest_fd = entries.iter().map(|entry| entry.proc_fd).max().unwrap();
+                self.observations += 1;
+                self.maximum_count = self.maximum_count.max(count);
+                self.maximum_fd = self.maximum_fd.max(highest_fd);
+                FdSample { count, highest_fd }
+            }
+            fn stage(&mut self, stage: &str) -> FdSample {
+                let sample = self.sample();
+                report(serde_json::json!({
+                    "syntheticOnly": true, "stage": stage, "fdSample": sample,
+                }));
+                sample
+            }
+        }
+
+        let inherited_limits = limits();
+        report(serde_json::json!({
+            "syntheticOnly": true, "stage": "inheritedLimits",
+            "softLimit": inherited_limits.0.to_string(),
+            "hardLimit": inherited_limits.1.to_string(),
+            "observer": "libproc PROC_PIDLISTFDS, current process only, no observer FD",
+            "maximumMeaning": "sampled lower bound; checkpoints can miss transient opens",
+        }));
+        let mut sampler = Sampler::new();
+        let baseline = sampler.stage("beforeSyntheticFixture");
+        let f = Fixture::new();
+        let mut expected_bytes = BTreeMap::new();
+        for directory in 0..DIRECTORIES {
+            let relative_directory = format!("assets/media-{directory:02}");
+            io_result(
+                "createSyntheticMediaDirectory",
+                fs::create_dir(f.paths.legacy_root.join(&relative_directory)),
+            );
+            for file in 0..FILES_PER_DIRECTORY {
+                // Valid, deterministic PNG media, generated entirely in memory.
+                let ordinal = (directory * FILES_PER_DIRECTORY + file) as u32;
+                let pixels = image::RgbaImage::from_fn(64, 48, |x, y| {
+                    image::Rgba([
+                        (x * 17 + y * 11 + ordinal * 13) as u8,
+                        (x * 7 + y * 23 + ordinal * 19 + (ordinal >> 8) * 37) as u8,
+                        (x * 29 + y * 3 + ordinal * 31) as u8,
+                        255,
+                    ])
+                });
+                let mut bytes = Vec::new();
+                image::codecs::png::PngEncoder::new(&mut bytes)
+                    .write_image(pixels.as_raw(), 64, 48, image::ExtendedColorType::Rgba8)
+                    .unwrap();
+                let relative = format!("{relative_directory}/synthetic-{file:02}.png");
+                io_result(
+                    "writeSyntheticMedia",
+                    fs::write(f.paths.legacy_root.join(&relative), &bytes),
+                );
+                expected_bytes.insert(relative, bytes);
+            }
+        }
+        assert_eq!(expected_bytes.len(), 512);
+        let before = storage_result(
+            "sourceInventory",
+            inventory(&f.paths.legacy_root, None, &mut |_| Ok(())),
+        );
+        // Also retain the existing raw SQLite databases, synthetic key bytes,
+        // plugin metadata and unknown file. No user data enters this fixture.
+        for entry in before.iter().filter(|entry| !entry.directory) {
+            let bytes = io_result(
+                "readSyntheticSource",
+                fs::read(f.paths.legacy_root.join(&entry.relative)),
+            );
+            assert_eq!(bytes.len() as u64, entry.length);
+            assert_eq!(format!("{:x}", Sha256::digest(&bytes)), entry.sha256);
+            if let Some(original) = expected_bytes.insert(entry.relative.clone(), bytes.clone()) {
+                assert_eq!(original, bytes);
+            }
+        }
+        assert_eq!(expected_bytes.len(), 518);
+        sampler.stage("beforeMigration");
+        let runtime = storage_result(
+            "runtimeLock",
+            acquire_runtime_lock(&f.paths, Duration::ZERO),
+        );
+        let initial = storage_result("initialStartup", resolve_startup(&f.paths));
+        let id = storage_result(
+            "requestMigration",
+            request_migration(&f.paths, &initial.root, initial.generation, &f.target),
+        );
+        // A cold restart does not retain the old resolved root's pins.
+        drop(initial);
+        sampler.stage("requestedBeforeColdMigration");
+        let mut checkpoints = BTreeMap::<String, usize>::new();
+        let mut migration_maximum_count = 0;
+        let mut migration_maximum_fd = -1;
+        let resolved = storage_result(
+            "actualMigration",
+            resolve_startup_with_hook(&f.paths, &mut |checkpoint| {
+                let sample = sampler.sample();
+                migration_maximum_count = migration_maximum_count.max(sample.count);
+                migration_maximum_fd = migration_maximum_fd.max(sample.highest_fd);
+                *checkpoints.entry(format!("{checkpoint:?}")).or_default() += 1;
+                Ok(())
+            }),
+        );
+        sampler.stage("afterMigrationBeforeCommit");
+        assert_eq!(resolved.root, f.target);
+        assert_eq!(resolved.generation, 1);
+        assert_eq!(resolved.trial.as_ref().unwrap().id(), id);
+        let target = storage_result(
+            "targetInventory",
+            inventory(
+                &f.target,
+                Some(&format!(".mewu-transfer-{id}")),
+                &mut |_| Ok(()),
+            ),
+        );
+        assert_eq!(before, target);
+        let source = storage_result(
+            "retainedSourceInventory",
+            inventory(
+                &f.paths.legacy_root,
+                Some(&format!("{SOURCE_MARKER_PREFIX}{id}.json")),
+                &mut |_| Ok(()),
+            ),
+        );
+        assert_eq!(before, source);
+        for (relative, bytes) in &expected_bytes {
+            assert_eq!(
+                io_result("readMigratedBytes", fs::read(f.target.join(relative))),
+                *bytes,
+            );
+            if relative.starts_with("assets/") {
+                let mapped = resolved
+                    .locations
+                    .resolve_path(
+                        &f.paths.legacy_root.join(relative),
+                        &f.target.join("assets"),
+                    )
+                    .unwrap();
+                assert_eq!(mapped, f.target.join(relative));
+                assert_eq!(io_result("readMigratedAlias", fs::read(mapped)), *bytes);
+            }
+        }
+        let mut empty = io_result(
+            "readMigratedEmptyDirectory",
+            fs::read_dir(f.target.join("empty")),
+        );
+        assert!(io_result("readMigratedEmptyEntry", empty.next().transpose()).is_none());
+        drop(empty);
+        storage_result(
+            "commitMigration",
+            commit_startup(&f.paths, resolved.trial.as_ref().unwrap()),
+        );
+        let state = storage_result("committedState", readonly_state(&f.paths)).unwrap();
+        assert_eq!(state.phase, StoragePhase::Committed);
+        assert_eq!(state.root, f.target);
+        sampler.stage("afterCommit");
+        drop(resolved);
+        let reopened = storage_result("reopenedStartup", resolve_startup(&f.paths));
+        assert_eq!(reopened.root, f.target);
+        assert!(reopened.trial.is_none());
+        sampler.stage("afterCommitAndReopen");
+        drop(reopened);
+        drop(runtime);
+        io_result("removeSyntheticFixture", fs::remove_dir_all(&f.base));
+        drop(f);
+        let released = sampler.stage("afterAllFixtureOwnersDropped");
+        let final_limits = limits();
+        report(serde_json::json!({
+            "syntheticOnly": true, "stage": "complete",
+            "mediaFiles": 512, "shallowMediaDirectories": DIRECTORIES,
+            "verifiedFilesIncludingDatabasesKeysAndUnknown": expected_bytes.len(),
+            "rawBytesAndSha256Match": true, "emptyDirectoryAndAliasesVerified": true,
+            "checkpoints": checkpoints, "fdObservations": sampler.observations,
+            "maximumObservedFdCountLowerBound": sampler.maximum_count,
+            "maximumObservedFdNumber": sampler.maximum_fd,
+            "maximumObservedMigrationFdCountLowerBound": migration_maximum_count,
+            "maximumObservedMigrationFdNumber": migration_maximum_fd,
+            "baseline": baseline, "released": released,
+            "softLimitAfter": final_limits.0.to_string(),
+            "hardLimitAfter": final_limits.1.to_string(),
+            "limitsUnchanged": inherited_limits == final_limits,
+        }));
+        assert_eq!(inherited_limits, final_limits);
+        assert_eq!(
+            released.count, baseline.count,
+            "synthetic migration retained descriptors after all owners dropped"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn dpapi_synthetic_ciphertext_remains_identical_and_decryptable_at_new_path() {
