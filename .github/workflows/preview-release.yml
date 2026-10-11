@@ -33,6 +33,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2
       - name: Install locked frontend dependencies
         run: npm ci
+      - name: Resolve Mac test temporary directory
+        if: runner.os == 'macOS'
+        run: node -e "const fs=require('node:fs');fs.appendFileSync(process.env.GITHUB_ENV,'TMPDIR='+fs.realpathSync(process.env.TMPDIR)+'\n')"
       - name: Audit public source
         run: node scripts/audit-public.mjs
       - name: Update Rust stable
