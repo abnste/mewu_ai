@@ -102,7 +102,6 @@ pub(crate) struct CaptureWitness {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CaptureObservation {
     id: u32,
-    onscreen: bool,
 }
 
 #[derive(Default)]
@@ -309,6 +308,19 @@ pub(crate) fn capture_witness(window: &WebviewWindow) -> Result<CaptureWitness, 
     )?;
     witness.native_id = capture_match(&list, &witness, false, "admit.all")?.map(|entry| entry.id);
     drop(list);
+    // The optional IsOnscreen key can be absent for an offscreen window. All
+    // admits identity only; a fresh OnScreenOnly set validates actual members
+    // before admission completes, including any unnamed current-process window.
+    let onscreen = diagnostic_stage(
+        &witness.label,
+        "admit.onscreen",
+        "list.copy",
+        WindowList::copy(OPTION_ON_SCREEN_ONLY, 0),
+    )?;
+    if let Some(observed) = capture_match(&onscreen, &witness, true, "admit.onscreen")? {
+        witness.native_id = Some(observed.id);
+    }
+    drop(onscreen);
     if !registry()
         .lock()
         .map_err(|_| UNAVAILABLE)?
@@ -389,7 +401,8 @@ pub(crate) fn hidden(witness: &CaptureWitness) -> Result<bool, String> {
         return Err(UNAVAILABLE.into());
     }
     // Check even offscreen reuse of the old number before querying the current
-    // onscreen set. A missing old ID is safe only if no matching owner is shown.
+    // onscreen set. All is identity evidence, never proof of hiddenness; a
+    // missing old ID is safe only if the final set shows no matching owner.
     let all = diagnostic_stage(
         &witness.label,
         "hidden.all",
@@ -441,7 +454,12 @@ fn capture_match(
             diagnostic_rows += 1;
         }
         let title = diagnostic_stage(&witness.label, phase, "entry.title", entry.title())?;
-        let onscreen = diagnostic_stage(&witness.label, phase, "entry.onscreen", entry.onscreen())?;
+        let onscreen = diagnostic_stage(
+            &witness.label,
+            phase,
+            "entry.onscreen",
+            entry.onscreen_optional(),
+        )?;
         diagnostic_stage(
             &witness.label,
             phase,
@@ -518,7 +536,7 @@ impl<'a> CaptureScan<'a> {
         id: u32,
         pid: i32,
         title: Option<&str>,
-        onscreen: bool,
+        onscreen: Option<bool>,
     ) -> Result<(), String> {
         let known_id = self.witness.native_id == Some(id);
         if known_id && (pid != self.witness.pid || title != Some(self.witness.title.as_str())) {
@@ -527,11 +545,17 @@ impl<'a> CaptureScan<'a> {
         if pid != self.witness.pid {
             return Ok(());
         }
+        // OnScreenOnly membership is the public visibility evidence even if
+        // this optional key is absent. An explicitly false member is invalid,
+        // including non-target Settings and unnamed current-process windows.
+        if self.onscreen_only && onscreen == Some(false) {
+            return Err(UNAVAILABLE.into());
+        }
         // Quartz names are optional. An unnamed onscreen window belonging to
         // us could be the capture window, so its absence cannot prove hidden.
         // https://developer.apple.com/documentation/coregraphics/kcgwindowname
         if title.is_none_or(str::is_empty) {
-            return if onscreen {
+            return if self.onscreen_only || onscreen == Some(true) {
                 Err(UNAVAILABLE.into())
             } else {
                 Ok(())
@@ -550,10 +574,7 @@ impl<'a> CaptureScan<'a> {
         {
             return Err("截图窗口身份已改变，请重新打开空间".into());
         }
-        if self.onscreen_only && !onscreen {
-            return Err(UNAVAILABLE.into());
-        }
-        self.candidate = Some(CaptureObservation { id, onscreen });
+        self.candidate = Some(CaptureObservation { id });
         Ok(())
     }
 }
@@ -697,12 +718,27 @@ impl Dictionary<'_> {
     }
 
     fn onscreen(&self) -> Result<bool, String> {
-        // SAFETY: Linked public constant and runtime CFBoolean type check.
-        let value = self.value(unsafe { kCGWindowIsOnscreen });
-        require_type(value, unsafe { CFBooleanGetTypeID() })?;
-        // SAFETY: Runtime type checked and dictionary keeps the value alive.
-        Ok(unsafe { CFBooleanGetValue(value.cast()) })
+        // Existing code-action authorization continues to require the key.
+        self.onscreen_optional()?.ok_or_else(|| UNAVAILABLE.into())
     }
+
+    fn onscreen_optional(&self) -> Result<Option<bool>, String> {
+        // SAFETY: Linked public constant; the list owns any returned CF object.
+        optional_boolean(self.value(unsafe { kCGWindowIsOnscreen }))
+    }
+}
+
+fn optional_boolean(value: CFTypeRef) -> Result<Option<bool>, String> {
+    // Missing is unknown, never false. Present values must still have the
+    // documented CFBoolean type; a CFNumber or CFString cannot supply evidence.
+    // https://developer.apple.com/documentation/coregraphics/optional-window-list-keys
+    if value.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: Public type getter; callers retain the borrowed value's container.
+    require_type(value, unsafe { CFBooleanGetTypeID() })?;
+    // SAFETY: Runtime type checked; callers keep the borrowed CF object alive.
+    Ok(Some(unsafe { CFBooleanGetValue(value.cast()) }))
 }
 
 fn require_type(value: CFTypeRef, expected: CFTypeID) -> Result<(), String> {
@@ -799,6 +835,80 @@ mod tests {
     }
 
     #[test]
+    fn optional_onscreen_distinguishes_absence_boolean_and_malformed_present_values() {
+        use core_foundation::{boolean::CFBoolean, number::CFNumber, string::CFString};
+        // Owned in-memory CF values exercise actual type checks without a
+        // WindowServer query, screen capture, or GUI session.
+        assert_eq!(optional_boolean(std::ptr::null()).unwrap(), None);
+        let yes = CFBoolean::true_value();
+        let no = CFBoolean::false_value();
+        assert_eq!(optional_boolean(yes.as_CFTypeRef()).unwrap(), Some(true));
+        assert_eq!(optional_boolean(no.as_CFTypeRef()).unwrap(), Some(false));
+        let number = CFNumber::from(1i64);
+        let text = CFString::new("true");
+        assert!(optional_boolean(number.as_CFTypeRef()).is_err());
+        assert!(optional_boolean(text.as_CFTypeRef()).is_err());
+    }
+
+    #[test]
+    fn absent_all_visibility_requires_the_final_onscreen_membership_check() {
+        let witness = capture(0, None);
+        let mut all = CaptureScan::new(&witness, false);
+        // An empty-title record with no key is identity-only evidence. It may
+        // be absent from the final set, but must not be called hidden from All.
+        all.consider(663, 42, Some(""), None).unwrap();
+        assert!(all.candidate.is_none());
+        let absent = CaptureScan::new(&witness, true);
+        assert!(absent.candidate.is_none());
+        for title in [None, Some("")] {
+            let mut actually_shown = CaptureScan::new(&witness, true);
+            assert!(actually_shown.consider(663, 42, title, None).is_err());
+            let mut positive_all = CaptureScan::new(&witness, false);
+            assert!(positive_all.consider(663, 42, title, Some(true)).is_err());
+        }
+        let mut target = CaptureScan::new(&witness, true);
+        target.consider(10, 42, Some("Mewu"), None).unwrap();
+        assert_eq!(target.candidate, Some(CaptureObservation { id: 10 }));
+    }
+
+    #[test]
+    fn false_onscreen_members_fail_before_named_or_unnamed_title_filtering() {
+        let witness = capture(0, None);
+        for title in [None, Some(""), Some("Mewu"), Some("Mewu Settings")] {
+            let mut scan = CaptureScan::new(&witness, true);
+            assert!(scan.consider(10, 42, title, Some(false)).is_err());
+        }
+        let mut settings = CaptureScan::new(&witness, true);
+        settings
+            .consider(20, 42, Some("Mewu Settings"), None)
+            .unwrap();
+        assert!(settings.candidate.is_none());
+    }
+
+    #[test]
+    fn unknown_all_visibility_cannot_rebind_between_queries_or_hide_duplicates() {
+        let witness = capture(0, None);
+        let mut all = CaptureScan::new(&witness, false);
+        all.consider(10, 42, Some("Mewu"), None).unwrap();
+        let admitted = capture(0, Some(all.candidate.as_ref().unwrap().id));
+        assert!(all.consider(11, 42, Some("Mewu"), None).is_err());
+        let mut duplicate_id = CaptureScan::new(&admitted, false);
+        duplicate_id.consider(10, 42, Some("Mewu"), None).unwrap();
+        assert!(duplicate_id.consider(10, 42, Some("Mewu"), None).is_err());
+        for (id, pid, title) in [
+            (11, 42, Some("Mewu")),
+            (10, 84, Some("Mewu")),
+            (10, 42, Some("Mewu Settings")),
+            (10, 42, None),
+        ] {
+            for onscreen_only in [false, true] {
+                let mut observed = CaptureScan::new(&admitted, onscreen_only);
+                assert!(observed.consider(id, pid, title, None).is_err());
+            }
+        }
+    }
+
+    #[test]
     fn capture_admission_never_grants_action_authority_and_destroyed_invalidates_it() {
         let mut state = Registry::default();
         let generation = state.begin("space").unwrap();
@@ -831,34 +941,23 @@ mod tests {
     fn unlisted_capture_is_hidden_until_its_own_exact_title_is_onscreen() {
         let witness = capture(0, None);
         let mut scan = CaptureScan::new(&witness, true);
-        scan.consider(20, 42, Some("Mewu Settings"), true).unwrap();
-        scan.consider(30, 84, Some("Mewu"), true).unwrap();
+        scan.consider(20, 42, Some("Mewu Settings"), Some(true))
+            .unwrap();
+        scan.consider(30, 84, Some("Mewu"), Some(true)).unwrap();
         assert!(scan.candidate.is_none());
-        scan.consider(10, 42, Some("Mewu"), true).unwrap();
-        assert_eq!(
-            scan.candidate,
-            Some(CaptureObservation {
-                id: 10,
-                onscreen: true
-            })
-        );
+        scan.consider(10, 42, Some("Mewu"), Some(true)).unwrap();
+        assert_eq!(scan.candidate, Some(CaptureObservation { id: 10 }));
     }
 
     #[test]
     fn offscreen_admission_retains_actual_id_and_reuse_fails_even_offscreen() {
         let witness = capture(0, Some(10));
         let mut scan = CaptureScan::new(&witness, false);
-        scan.consider(10, 42, Some("Mewu"), false).unwrap();
-        assert_eq!(
-            scan.candidate,
-            Some(CaptureObservation {
-                id: 10,
-                onscreen: false
-            })
-        );
+        scan.consider(10, 42, Some("Mewu"), Some(false)).unwrap();
+        assert_eq!(scan.candidate, Some(CaptureObservation { id: 10 }));
         for (pid, title) in [(84, Some("Mewu")), (42, Some("Settings")), (42, None)] {
             let mut reused = CaptureScan::new(&witness, false);
-            assert!(reused.consider(10, pid, title, false).is_err());
+            assert!(reused.consider(10, pid, title, Some(false)).is_err());
         }
     }
 
@@ -866,11 +965,15 @@ mod tests {
     fn duplicate_or_changed_capture_identity_never_proves_hidden() {
         let witness = capture(0, None);
         let mut duplicate = CaptureScan::new(&witness, false);
-        duplicate.consider(10, 42, Some("Mewu"), false).unwrap();
-        assert!(duplicate.consider(11, 42, Some("Mewu"), false).is_err());
+        duplicate
+            .consider(10, 42, Some("Mewu"), Some(false))
+            .unwrap();
+        assert!(duplicate
+            .consider(11, 42, Some("Mewu"), Some(false))
+            .is_err());
         let known = capture(0, Some(10));
         let mut changed = CaptureScan::new(&known, false);
-        assert!(changed.consider(11, 42, Some("Mewu"), false).is_err());
+        assert!(changed.consider(11, 42, Some("Mewu"), Some(false)).is_err());
     }
 
     #[test]
@@ -878,13 +981,15 @@ mod tests {
         let witness = capture(0, None);
         for title in [None, Some("")] {
             let mut visible = CaptureScan::new(&witness, true);
-            assert!(visible.consider(10, 42, title, true).is_err());
+            assert!(visible.consider(10, 42, title, Some(true)).is_err());
             let mut absent = CaptureScan::new(&witness, false);
-            absent.consider(10, 42, title, false).unwrap();
+            absent.consider(10, 42, title, Some(false)).unwrap();
             assert!(absent.candidate.is_none());
         }
         let mut inconsistent = CaptureScan::new(&witness, true);
-        assert!(inconsistent.consider(10, 42, Some("Mewu"), false).is_err());
+        assert!(inconsistent
+            .consider(10, 42, Some("Mewu"), Some(false))
+            .is_err());
     }
 
     #[test]
