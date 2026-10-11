@@ -12,7 +12,7 @@ fn expressions() -> &'static [Regex; 3] {
     EXPRESSIONS.get_or_init(|| {
         [r#"(?i)https?://[^\s<>"'，。；：！？、（）【】]+"#,
          r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}",
-         r"(?:\+[0-9](?:[ -]?[0-9]){6,14}|1[3-9](?:[ -]?[0-9]){9})"]
+         r"(?:\+[0-9](?:[ -]?[0-9]){6,14}|(?:86[ -]?)?1[3-9](?:[ -]?[0-9]){9})"]
         .map(|pattern| RegexBuilder::new(pattern).size_limit(1024 * 1024).dfa_size_limit(256 * 1024).build().expect("fixed entity expression"))
     })
 }
@@ -90,12 +90,19 @@ pub fn phone_number(text: &str) -> Option<String> {
         {
             return Some(digits);
         }
-    } else if digits.len() == 11
-        && digits.starts_with('1')
-        && matches!(digits.as_bytes()[1], b'3'..=b'9')
-        && digits.bytes().all(|b| b.is_ascii_digit())
-    {
-        return Some(format!("+86{digits}"));
+    } else {
+        let national = if digits.len() == 13 {
+            digits.strip_prefix("86")?
+        } else {
+            &digits
+        };
+        if national.len() == 11
+            && national.starts_with('1')
+            && matches!(national.as_bytes()[1], b'3'..=b'9')
+            && national.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Some(format!("+86{national}"));
+        }
     }
     None
 }
@@ -194,6 +201,27 @@ pub fn mailto(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unprefixed_plus_and_bare_china_country_codes_share_the_full_number() {
+        for value in [
+            "13800138000",
+            "8613800138000",
+            "86 138 0013 8000",
+            "+86-138-0013-8000",
+        ] {
+            assert_eq!(phone_number(value).as_deref(), Some("+8613800138000"));
+            let result = recognize(value);
+            assert_eq!(result.len(), 1, "{value}");
+            assert_eq!(result[0].text, "+8613800138000");
+        }
+        assert_eq!(
+            recognize("13800138000 8613800138000 +8613800138000").len(),
+            1
+        );
+        for text in ["86138001380001", "a8613800138000", "8612800138000"] {
+            assert!(recognize(text).is_empty(), "{text}");
+        }
+    }
     #[test]
     fn preserves_full_domains_paths_and_balanced_url_punctuation() {
         let values = recognize("(https://example.org/A_(B)). https://[::1]/x user@gmail.com.evil USER@Example.org. +44 20 7946 0958, 138-0013-8000");

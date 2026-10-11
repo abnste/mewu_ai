@@ -546,6 +546,7 @@ mod tests {
             ("https://example.org", 40.),
             ("user@example.org", 180.),
             ("+8613800138000", 320.),
+            ("86 139 0013 8000", 460.),
         ]
         .into_iter()
         .map(|(text, y)| Drawing {
@@ -606,6 +607,7 @@ mod tests {
                     (F::Url, "https://example.org"),
                     (F::Email, "user@example.org"),
                     (F::Phone, "+8613800138000"),
+                    (F::Phone, "+8613900138000"),
                 ] {
                     assert!(
                         values.iter().any(|v| v.format == format && v.text == text),
