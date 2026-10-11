@@ -187,7 +187,7 @@ export default function App() {
     try{await flush();if(scene()?.id!==sceneId)throw Error('会话已切换');const next=await referencePinObject(object.id,sceneId);if(!next)throw Error('无法引用贴图');clearReferenceDraft(sceneId);accept(next);const added=pinItem(object);if(added)setReferenceInsertion({sceneId,reference:{kind:'item',id:added.id},serial:++referenceSerial});await pinObjectsSubscription?.refresh();}
     catch(cause){showError(cause);}finally{setBusy(false);}
   }
-  const canvasScene = () => { const current=scene()!;const ids=new Set(pinObjects().map(object=>object.attachmentAssetId));return {...current,items:current.items.filter(item=>!ids.has(item.asset.id))}; };
+  const canvasScene = () => { const current=scene()!;if(isBlackboard(current))return current;const ids=new Set(pinObjects().map(object=>object.attachmentAssetId));return {...current,items:current.items.filter(item=>!ids.has(item.asset.id))}; };
   let stopEvents: (() => void) | undefined;
   let stopRecordingEvents: (() => void) | undefined;
   let stopScrollEvents: (() => void) | undefined;

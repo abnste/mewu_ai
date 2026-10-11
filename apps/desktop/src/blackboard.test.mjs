@@ -67,6 +67,20 @@ test('blackboard presentation recognizes only generated PNG identities, not ordi
 
 const appSource=await readFile(new URL('./App.tsx',import.meta.url),'utf8');
 const appBody=parse(appSource,{sourceType:'module',plugins:['typescript','jsx']}).program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
+test('native pin refresh never hides editable media carried into the blackboard',()=>{
+  const declaration=appBody.flatMap(node=>node.type==='VariableDeclaration'?node.declarations:[]).find(node=>node.id.name==='canvasScene');
+  let current={background:{id:'board',kind:'image',name:'黑板.png',path:'D:/assets/board.board.png'},items:[{id:'carried',asset:{id:'pinned-image',kind:'image'}},{id:'video',asset:{id:'video',kind:'video'}}]};
+  const before=structuredClone(current);let pins=[];
+  const project=vm.runInNewContext(stripTypeScriptTypes('('+appSource.slice(declaration.init.start,declaration.init.end)+')',{mode:'transform'}),{scene:()=>current,pinObjects:()=>pins,isBlackboard});
+  assert.equal(project(),current);
+  pins=[{attachmentAssetId:'pinned-image'}];
+  assert.equal(project(),current);assert.deepEqual(current,before);
+  current={...current,background:undefined};
+  assert.deepEqual(Array.from(project().items,item=>item.id),['video']);
+  assert.equal(current.items.length,2);
+  pins=[];
+  assert.deepEqual(Array.from(project().items,item=>item.id),['carried','video']);
+});
 const opening=appBody.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='openBlackboard');
 function closeFixture(flushDrawing,finishBlackboard=async()=>({activeSceneId:'parent'})){
   let editing='board',busy=false,operations=0;const errors=[];
