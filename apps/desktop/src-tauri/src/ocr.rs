@@ -23,8 +23,9 @@ const TIMEOUT: Duration = Duration::from_secs(15);
 const CANCEL_ERROR: &str = "文字识别已取消";
 const TIMEOUT_ERROR: &str = "文字识别超时，请缩小选区后重试";
 
-/// Consumes an owned, already-cropped/composited RGBA image. No file, display,
-/// network, or model access occurs here. Returns coordinates in original crop
+/// Consumes an owned, already-cropped/composited RGBA image. Linux reads only
+/// fixed system recognizer/model paths; no display or network access occurs.
+/// Returns coordinates in original crop
 /// pixels in the recognizer's OCR coordinate frame; apply text_angle once about center.
 pub fn recognize(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocument, String> {
     #[cfg(windows)]
@@ -35,7 +36,11 @@ pub fn recognize(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocu
     {
         macos::recognize_impl(bitmap, cancel)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::recognize_impl(bitmap, cancel)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = (bitmap, cancel);
         Err("当前系统尚未支持本机文字识别；此插件需要 Windows 10 或更新版本".into())
@@ -45,6 +50,10 @@ pub fn recognize(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocu
 #[cfg(target_os = "macos")]
 #[path = "ocr_macos.rs"]
 mod macos;
+
+#[cfg(target_os = "linux")]
+#[path = "ocr_linux.rs"]
+mod linux;
 
 #[derive(Debug, Clone, Copy)]
 struct Geometry {
