@@ -9,6 +9,8 @@ mod asset_locations;
 mod assets;
 mod capture;
 #[cfg(target_os = "macos")]
+mod capture_macos;
+#[cfg(target_os = "macos")]
 mod capture_permission_macos;
 mod blackboard;
 mod capture_cursor;
@@ -31,6 +33,8 @@ mod connection_host;
 mod content_server;
 mod credentials;
 mod drawing_render;
+#[cfg(target_os = "macos")]
+mod font_macos;
 mod raster_edit_algorithm;
 mod raster_edit_host;
 mod export_variant_dialog;
@@ -914,7 +918,7 @@ struct RuntimeInfo {
 fn runtime_info(app: AppHandle, host: tauri::State<'_, Host>) -> Result<RuntimeInfo, String> {
     Ok(RuntimeInfo {
         hotkey: capture_shortcut_host::active_display(&app),
-        capture_backend: if cfg!(windows) { "GDI" } else { "CoreGraphics" },
+        capture_backend: capture::backend_name(),
         content_origin: host.content_origin.clone(),
     })
 }
@@ -1112,6 +1116,14 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     pin_host::cancel_pending(&app, "space");
     recording::ensure_idle(&app)?;
     let window = app.get_webview_window("space").ok_or("窗口不存在")?;
+    #[cfg(target_os = "macos")]
+    let capture_witnesses = {
+        let mut witnesses = vec![window_witness_macos::capture_witness(&window)?];
+        if let Some(widget) = app.get_webview_window(frozen::LABEL) {
+            witnesses.push(window_witness_macos::capture_witness(&widget)?);
+        }
+        witnesses
+    };
     pin_window::capture_begin(&app);
     {
         let engine = host.lock()?;
@@ -1141,6 +1153,31 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     let (work, _transition, captured) = tauri::async_runtime::spawn_blocking(move || {
         let captured = work.check().and_then(|_| {
             capture_app.state::<Host>().exit.ensure_new_operation()?;
+            #[cfg(target_os = "macos")]
+            {
+                // The main-loop hide has completed. Read the native window list
+                // again after any capture delay, without Engine/registry locks.
+                // A window that reappeared or lost its identity aborts capture.
+                let mut exclusions = Vec::with_capacity(capture_witnesses.len());
+                for witness in &capture_witnesses {
+                    work.check()?;
+                    if !window_witness_macos::hidden(witness)? {
+                        return Err("截图窗口尚未隐藏，请重新截图".into());
+                    }
+                    if let Some(exclusion) = window_witness_macos::exclusion(witness)? {
+                        exclusions.push(exclusion);
+                    }
+                }
+                work.check()?;
+                return capture::capture_desktop_with_exclusions(
+                    &root,
+                    capture::CaptureOptions {
+                        include_cursor: preferences.include_cursor,
+                    },
+                    &exclusions,
+                );
+            }
+            #[cfg(not(target_os = "macos"))]
             capture::capture_desktop_with_options(
                 &root,
                 capture::CaptureOptions {

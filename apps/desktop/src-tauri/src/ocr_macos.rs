@@ -564,7 +564,7 @@ mod tests {
                 rich: None,
             })
             .collect();
-        crate::drawing_render::crop_region(
+        let rendered = crate::drawing_render::crop_region(
             &image,
             &Region {
                 id: "mac-ocr-synthetic".into(),
@@ -577,7 +577,24 @@ mod tests {
             },
         )
         .unwrap()
-        .into_rgba8()
+        .into_rgba8();
+        for &(text, x, y, font_size) in items {
+            let ink = rendered
+                .enumerate_pixels()
+                .filter(|(px, py, pixel)| {
+                    f64::from(*px) >= x
+                        && f64::from(*py) >= y
+                        && f64::from(*py) < y + font_size * 1.5
+                        && pixel[3] > 128
+                        && pixel[0] < 128
+                })
+                .count();
+            assert!(
+                ink > 100,
+                "synthetic OCR text was not rendered: {text:?}, visible ink={ink}"
+            );
+        }
+        rendered
     }
 
     fn synthetic_text() -> PixelBuffer {
@@ -687,33 +704,48 @@ mod tests {
         options.fontdb = crate::drawing_render::fonts().unwrap();
         // Load one explicit local outline font, without traversing font folders.
         // The resolver checks its real cmap before any fixture is rendered.
-        let font_path = "/System/Library/Fonts/Apple Symbols.ttf";
-        if let Ok(metadata) = std::fs::metadata(font_path) {
-            use std::io::Read;
-            assert!(metadata.len() <= 32 * 1024 * 1024);
-            let mut bytes = Vec::new();
-            std::fs::File::open(font_path)
-                .unwrap()
-                .take(32 * 1024 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .unwrap();
-            assert!(bytes.len() <= 32 * 1024 * 1024);
-            options.fontdb_mut().load_font_data(bytes);
-        }
-        let base = options.fontdb.faces().next().expect("local test fonts").id;
+        // Core Text on the actual test Mac reports Apple Symbols lacks this
+        // scalar; the installed STIX Two Math outline font supplies it.
+        let font_path = "/System/Library/Fonts/Supplemental/STIXTwoMath.otf";
+        let metadata = std::fs::metadata(font_path).expect("installed synthetic STIX font");
+        use std::io::Read;
+        assert!(metadata.len() <= 32 * 1024 * 1024);
+        let mut bytes = Vec::new();
+        std::fs::File::open(font_path)
+            .unwrap()
+            .take(32 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert!(bytes.len() <= 32 * 1024 * 1024);
+        options.fontdb_mut().load_font_data(bytes);
+        let base = options
+            .fontdb
+            .faces()
+            .find(|face| face.post_script_name == "Helvetica")
+            .expect("loaded exact Helvetica base without the non-BMP scalar")
+            .id;
         let selector = usvg::FontResolver::default_fallback_selector();
+        // This API excludes its base face: a single arbitrary base can itself
+        // be the only face with the character and thus produce a false miss.
+        // The known Helvetica base cannot support the fixture. usvg checks
+        // actual face bytes through fontdb.with_face_data and skrifa's cmap,
+        // whose map explicitly rejects GlyphId::NOTDEF (zero).
         let supporting = selector(symbol, &[base], &mut options.fontdb)
             .expect("a loaded outline font must actually support the non-BMP fixture");
-        let family = options.fontdb.face(supporting).unwrap().families[0]
+        let supporting_face = options.fontdb.face(supporting).unwrap();
+        assert_eq!(supporting_face.post_script_name, "STIXTwoMath-Regular");
+        let family = supporting_face.families[0]
             .0
             .replace('&', "&amp;")
-            .replace('"', "&quot;");
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
         options.image_href_resolver = usvg::ImageHrefResolver {
             resolve_data: Box::new(|_, _, _| None),
             resolve_string: Box::new(|_, _| None),
         };
         let svg = format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="240"><rect width="1400" height="240" fill="white"/><text x="48" y="140" fill="black" font-size="80" font-family="PingFang SC, Arial Unicode MS, sans-serif">Before</text><text x="450" y="140" fill="black" font-size="80" font-family="{family}">{symbol}</text><text x="600" y="140" fill="black" font-size="80" font-family="PingFang SC, Arial Unicode MS, sans-serif">After 34567</text></svg>"#
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="240"><rect width="1400" height="240" fill="white"/><text x="48" y="140" fill="black" font-size="80" font-family="Helvetica">Before</text><text x="450" y="140" fill="black" font-size="80" font-family="{family}">{symbol}</text><text x="600" y="140" fill="black" font-size="80" font-family="Helvetica">After 34567</text></svg>"#
         );
         let tree = usvg::Tree::from_str(&svg, &options).unwrap();
         let mut pixmap = tiny_skia::Pixmap::new(1400, 240).unwrap();
@@ -723,6 +755,9 @@ mod tests {
             &mut pixmap.as_mut(),
         );
         let image = RgbaImage::from_raw(1400, 240, pixmap.data().to_vec()).unwrap();
+        // The explicit white background makes every pixel opaque; only here
+        // are tiny-skia's premultiplied bytes also valid straight RGBA input.
+        assert!(image.pixels().all(|pixel| pixel[3] == 255));
         assert!(
             image
                 .enumerate_pixels()
@@ -737,6 +772,18 @@ mod tests {
         assert!(
             text.contains("Before") && text.contains("After34567"),
             "actual: {text}"
+        );
+        assert!(
+            document
+                .lines
+                .iter()
+                .flat_map(|line| &line.words)
+                .any(|word| {
+                    word.text.chars().any(|c| c == symbol || c == '0')
+                        && word.x < 550.
+                        && word.x + word.width > 450.
+                }),
+            "the mathematical zero must be recognized at its real position: {text}"
         );
         // Vision may normalize a styled mathematical digit to ASCII. Report
         // actual text; do not pretend the engine preserved a surrogate pair.

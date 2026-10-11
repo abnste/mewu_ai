@@ -32,6 +32,7 @@ const MAX_LABEL_BYTES: usize = 256;
 const MAX_TITLE_BYTES: usize = 4096;
 const UNAVAILABLE: &str = "窗口身份不可用，请重新打开空间";
 const OPTION_ALL: u32 = 0;
+const OPTION_ON_SCREEN_ONLY: u32 = 1;
 const OPTION_ON_SCREEN_BELOW_WINDOW: u32 = 1 << 2;
 const OPTION_INCLUDING_WINDOW: u32 = 1 << 3;
 
@@ -59,6 +60,23 @@ struct Witness {
     native: NativeIdentity,
     label: String,
     generation: u64,
+}
+
+/// Admission for observing a capture window, never an action authorization.
+/// A window that starts hidden may not yet have a Quartz window number.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CaptureWitness {
+    label: String,
+    generation: u64,
+    pid: i32,
+    title: String,
+    native_id: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CaptureObservation {
+    id: u32,
+    onscreen: bool,
 }
 
 #[derive(Default)]
@@ -156,6 +174,14 @@ impl Registry {
         let owner = self.owners.get(&witness.label)?;
         (owner.current == Some(token) && owner.generation == witness.generation).then_some(witness)
     }
+
+    fn capture_current(&self, witness: &CaptureWitness) -> bool {
+        !self.failed
+            && self
+                .owners
+                .get(&witness.label)
+                .is_some_and(|owner| owner.generation == witness.generation)
+    }
 }
 
 fn registry() -> &'static Mutex<Registry> {
@@ -215,6 +241,187 @@ pub(crate) fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
         .lock()
         .map_err(|_| UNAVAILABLE)?
         .resolve(&label, generation, native)
+}
+
+/// Acquire before hiding, without host/store locks: title() may visit the UI.
+/// Hidden or not-yet-listed windows are admitted without granting a code token.
+pub(crate) fn capture_witness(window: &WebviewWindow) -> Result<CaptureWitness, String> {
+    let label = window.label().to_owned();
+    let generation = registry().lock().map_err(|_| UNAVAILABLE)?.begin(&label)?;
+    let title = window.title().map_err(|_| UNAVAILABLE)?;
+    if !valid_text(&title, MAX_TITLE_BYTES) {
+        return Err(UNAVAILABLE.into());
+    }
+    let pid = i32::try_from(std::process::id()).map_err(|_| UNAVAILABLE)?;
+    let mut witness = CaptureWitness {
+        label,
+        generation,
+        pid,
+        title,
+        native_id: None,
+    };
+    // All includes offscreen windows; neither an empty list nor an offscreen
+    // entry grants action authority. Only the checked dictionary supplies IDs.
+    let list = WindowList::copy(OPTION_ALL, 0)?;
+    witness.native_id = capture_match(&list, &witness, false)?.map(|entry| entry.id);
+    drop(list);
+    if !registry()
+        .lock()
+        .map_err(|_| UNAVAILABLE)?
+        .capture_current(&witness)
+    {
+        return Err(UNAVAILABLE.into());
+    }
+    Ok(witness)
+}
+
+/// The admitted ID, if known and not revoked. This is an observation, not a
+/// capability: callers must also verify hidden() and the filter's live owner.
+pub(crate) fn window_id(witness: &CaptureWitness) -> Option<u32> {
+    registry()
+        .lock()
+        .ok()
+        .filter(|state| state.capture_current(witness))
+        .and(witness.native_id)
+}
+
+/// Build a filter hint from the admitted identity, never a fresh UI title.
+/// The capture backend must still check the live SCWindow's PID/ID/title.
+pub(crate) fn exclusion(
+    witness: &CaptureWitness,
+) -> Result<Option<crate::capture_macos::ExcludedWindow>, String> {
+    if !registry()
+        .lock()
+        .map_err(|_| UNAVAILABLE)?
+        .capture_current(witness)
+    {
+        return Err(UNAVAILABLE.into());
+    }
+    let excluded = witness
+        .native_id
+        .map(|id| crate::capture_macos::ExcludedWindow {
+            id,
+            title: witness.title.clone(),
+        });
+    // Construct outside the registry lock, then reject a Destroyed/replacement
+    // that occurred in the meantime, including admissions with no Quartz ID.
+    if !registry()
+        .lock()
+        .map_err(|_| UNAVAILABLE)?
+        .capture_current(witness)
+    {
+        return Err(UNAVAILABLE.into());
+    }
+    Ok(excluded)
+}
+
+/// Fresh WindowServer verification, without dispatching to the UI thread.
+/// A queued Tauri hide() alone must never be treated as this result.
+pub(crate) fn hidden(witness: &CaptureWitness) -> Result<bool, String> {
+    if !registry()
+        .lock()
+        .map_err(|_| UNAVAILABLE)?
+        .capture_current(witness)
+    {
+        return Err(UNAVAILABLE.into());
+    }
+    // Check even offscreen reuse of the old number before querying the current
+    // onscreen set. A missing old ID is safe only if no matching owner is shown.
+    let all = WindowList::copy(OPTION_ALL, 0)?;
+    capture_match(&all, witness, false)?;
+    drop(all);
+    // Apple specifies NullWindowID for OnScreenOnly. The last observation is
+    // the onscreen set, so a completed hide between these calls can succeed.
+    // https://developer.apple.com/documentation/coregraphics/cgwindowlistoption/optiononscreenonly
+    let onscreen = WindowList::copy(OPTION_ON_SCREEN_ONLY, 0)?;
+    let observed_hidden = capture_match(&onscreen, witness, true)?.is_none();
+    drop(onscreen);
+    if !registry()
+        .lock()
+        .map_err(|_| UNAVAILABLE)?
+        .capture_current(witness)
+    {
+        return Err(UNAVAILABLE.into());
+    }
+    Ok(observed_hidden)
+}
+
+fn capture_match(
+    list: &WindowList,
+    witness: &CaptureWitness,
+    onscreen_only: bool,
+) -> Result<Option<CaptureObservation>, String> {
+    let mut scan = CaptureScan::new(witness, onscreen_only);
+    for index in 0..list.count {
+        let entry = list.entry(index)?;
+        let id = entry.id()?;
+        let pid = entry.pid()?;
+        if pid != witness.pid && Some(id) != witness.native_id {
+            continue;
+        }
+        scan.consider(id, pid, entry.title()?.as_deref(), entry.onscreen()?)?;
+    }
+    Ok(scan.candidate)
+}
+
+struct CaptureScan<'a> {
+    witness: &'a CaptureWitness,
+    onscreen_only: bool,
+    candidate: Option<CaptureObservation>,
+}
+
+impl<'a> CaptureScan<'a> {
+    fn new(witness: &'a CaptureWitness, onscreen_only: bool) -> Self {
+        Self {
+            witness,
+            onscreen_only,
+            candidate: None,
+        }
+    }
+
+    fn consider(
+        &mut self,
+        id: u32,
+        pid: i32,
+        title: Option<&str>,
+        onscreen: bool,
+    ) -> Result<(), String> {
+        let known_id = self.witness.native_id == Some(id);
+        if known_id && (pid != self.witness.pid || title != Some(self.witness.title.as_str())) {
+            return Err("截图窗口编号已被替换，请重新打开空间".into());
+        }
+        if pid != self.witness.pid {
+            return Ok(());
+        }
+        // Quartz names are optional. An unnamed onscreen window belonging to
+        // us could be the capture window, so its absence cannot prove hidden.
+        // https://developer.apple.com/documentation/coregraphics/kcgwindowname
+        if title.is_none_or(str::is_empty) {
+            return if onscreen {
+                Err(UNAVAILABLE.into())
+            } else {
+                Ok(())
+            };
+        }
+        if title != Some(self.witness.title.as_str()) {
+            return Ok(());
+        }
+        if self.candidate.is_some() {
+            return Err("窗口标题不唯一，无法确认截图窗口".into());
+        }
+        if self
+            .witness
+            .native_id
+            .is_some_and(|expected| expected != id)
+        {
+            return Err("截图窗口身份已改变，请重新打开空间".into());
+        }
+        if self.onscreen_only && !onscreen {
+            return Err(UNAVAILABLE.into());
+        }
+        self.candidate = Some(CaptureObservation { id, onscreen });
+        Ok(())
+    }
 }
 
 /// Performs a fresh WindowServer query without dispatching to the UI thread.
@@ -445,6 +652,105 @@ mod tests {
             pid: 42,
             title: "Mewu".into(),
         }
+    }
+
+    fn capture(generation: u64, native_id: Option<u32>) -> CaptureWitness {
+        CaptureWitness {
+            label: "space".into(),
+            generation,
+            pid: 42,
+            title: "Mewu".into(),
+            native_id,
+        }
+    }
+
+    #[test]
+    fn capture_admission_never_grants_action_authority_and_destroyed_invalidates_it() {
+        let mut state = Registry::default();
+        let generation = state.begin("space").unwrap();
+        let unlisted = capture(generation, None);
+        let listed = capture(generation, Some(10));
+        assert!(state.capture_current(&unlisted));
+        assert!(state.capture_current(&listed));
+        assert!(state.witnesses.is_empty());
+        assert!(state.get(1).is_none());
+        state.revoke("space");
+        assert!(!state.capture_current(&unlisted));
+        assert!(!state.capture_current(&listed));
+        let replacement = capture(state.begin("space").unwrap(), Some(10));
+        assert!(state.capture_current(&replacement));
+        assert!(!state.capture_current(&listed));
+    }
+
+    #[test]
+    fn action_identity_replacement_also_revokes_old_capture_admission() {
+        let mut state = Registry::default();
+        let generation = state.begin("space").unwrap();
+        state.resolve("space", generation, native(10)).unwrap();
+        let old_capture = capture(generation, Some(10));
+        assert!(state.capture_current(&old_capture));
+        state.resolve("space", generation, native(11)).unwrap();
+        assert!(!state.capture_current(&old_capture));
+    }
+
+    #[test]
+    fn unlisted_capture_is_hidden_until_its_own_exact_title_is_onscreen() {
+        let witness = capture(0, None);
+        let mut scan = CaptureScan::new(&witness, true);
+        scan.consider(20, 42, Some("Mewu Settings"), true).unwrap();
+        scan.consider(30, 84, Some("Mewu"), true).unwrap();
+        assert!(scan.candidate.is_none());
+        scan.consider(10, 42, Some("Mewu"), true).unwrap();
+        assert_eq!(
+            scan.candidate,
+            Some(CaptureObservation {
+                id: 10,
+                onscreen: true
+            })
+        );
+    }
+
+    #[test]
+    fn offscreen_admission_retains_actual_id_and_reuse_fails_even_offscreen() {
+        let witness = capture(0, Some(10));
+        let mut scan = CaptureScan::new(&witness, false);
+        scan.consider(10, 42, Some("Mewu"), false).unwrap();
+        assert_eq!(
+            scan.candidate,
+            Some(CaptureObservation {
+                id: 10,
+                onscreen: false
+            })
+        );
+        for (pid, title) in [(84, Some("Mewu")), (42, Some("Settings")), (42, None)] {
+            let mut reused = CaptureScan::new(&witness, false);
+            assert!(reused.consider(10, pid, title, false).is_err());
+        }
+    }
+
+    #[test]
+    fn duplicate_or_changed_capture_identity_never_proves_hidden() {
+        let witness = capture(0, None);
+        let mut duplicate = CaptureScan::new(&witness, false);
+        duplicate.consider(10, 42, Some("Mewu"), false).unwrap();
+        assert!(duplicate.consider(11, 42, Some("Mewu"), false).is_err());
+        let known = capture(0, Some(10));
+        let mut changed = CaptureScan::new(&known, false);
+        assert!(changed.consider(11, 42, Some("Mewu"), false).is_err());
+    }
+
+    #[test]
+    fn unnamed_own_onscreen_or_inconsistent_onscreen_metadata_fails_closed() {
+        let witness = capture(0, None);
+        for title in [None, Some("")] {
+            let mut visible = CaptureScan::new(&witness, true);
+            assert!(visible.consider(10, 42, title, true).is_err());
+            let mut absent = CaptureScan::new(&witness, false);
+            absent.consider(10, 42, title, false).unwrap();
+            assert!(absent.candidate.is_none());
+        }
+        let mut inconsistent = CaptureScan::new(&witness, true);
+        assert!(inconsistent.consider(10, 42, Some("Mewu"), false).is_err());
     }
 
     #[test]

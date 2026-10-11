@@ -23,8 +23,11 @@ pub use mosaic::mosaic_grid;
 const MAX_PIXELS: u64 = 32 * 1024 * 1024;
 const MAX_DRAWINGS_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FONT_BYTES: usize = 48 * 1024 * 1024;
+#[cfg(not(target_os = "macos"))]
 const FONT_FAMILY: &str =
     "Segoe UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, DejaVu Sans, sans-serif";
+#[cfg(target_os = "macos")]
+const FONT_FAMILY: &str = "Helvetica, PingFang SC, Arial Unicode MS, sans-serif";
 static FONTS: OnceLock<Result<Arc<usvg::fontdb::Database>, String>> = OnceLock::new();
 
 #[cfg(test)]
@@ -318,7 +321,14 @@ fn vector_overlay(
         .any(|drawing| matches!(drawing.kind, DrawingKind::Text | DrawingKind::Number))
     {
         options.fontdb = fonts()?;
-        options.font_family = "Segoe UI".into();
+        #[cfg(not(target_os = "macos"))]
+        {
+            options.font_family = "Segoe UI".into();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            options.font_family = macos_default_family(&options.fontdb)?;
+        }
     }
     let tree = usvg::Tree::from_str(&xml, &options).map_err(|_| "无法排版绘制内容")?;
     let mut overlay = tiny_skia::Pixmap::new(width, height).ok_or("选区过大，无法合成标注")?;
@@ -685,7 +695,11 @@ pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
             let mut database = usvg::fontdb::Database::new();
             let mut bytes_left = MAX_FONT_BYTES;
             let mut loaded = 0;
-            for path in font_paths() {
+            #[cfg(target_os = "macos")]
+            let paths = crate::font_macos::font_paths()?;
+            #[cfg(not(target_os = "macos"))]
+            let paths = font_paths();
+            for path in paths {
                 if loaded == 3 {
                     break;
                 }
@@ -714,12 +728,41 @@ pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
             if database.faces().next().is_none() {
                 return Err("未找到可用于绘制文字的系统字体".into());
             }
-            database.set_sans_serif_family("Segoe UI");
+            #[cfg(not(target_os = "macos"))]
+            {
+                database.set_sans_serif_family("Segoe UI");
+            }
+            #[cfg(target_os = "macos")]
+            {
+                database.set_sans_serif_family(macos_default_family(&database)?);
+            }
             Ok(Arc::new(database))
         })
         .clone()
 }
 
+#[cfg(target_os = "macos")]
+fn macos_default_family(database: &usvg::fontdb::Database) -> Result<String, String> {
+    // Select from parsed, already-loaded faces. A queried file might exceed
+    // the read budget or lack a valid face; never select its assumed family.
+    for wanted in ["Helvetica", "Arial Unicode MS", "PingFang SC"] {
+        if let Some((family, _)) = database
+            .faces()
+            .flat_map(|face| &face.families)
+            .find(|(family, _)| family == wanted)
+        {
+            return Ok(family.clone());
+        }
+    }
+    database
+        .faces()
+        .flat_map(|face| &face.families)
+        .find(|(family, _)| !family.trim().is_empty())
+        .map(|(family, _)| family.clone())
+        .ok_or_else(|| "未找到可用于绘制文字的系统字体名称".into())
+}
+
+#[cfg(not(target_os = "macos"))]
 fn font_paths() -> Vec<PathBuf> {
     #[cfg(windows)]
     {
@@ -731,17 +774,6 @@ fn font_paths() -> Vec<PathBuf> {
             .iter()
             .map(|name| fonts.join(name))
             .collect();
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return [
-            "/System/Library/Fonts/PingFang.ttc",
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            "/System/Library/Fonts/SFNS.ttf",
-        ]
-        .iter()
-        .map(PathBuf::from)
-        .collect();
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
@@ -760,6 +792,77 @@ fn font_paths() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use image::{GenericImageView, Rgba, RgbaImage};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_system_fonts_shape_real_chinese_english_and_digit_glyphs() {
+        let text = "中文测试 Hello 0123456789";
+        let mut item = drawing(DrawingKind::Text, &[(24., 20.)]);
+        item.text = Some(text.into());
+        item.font_size = Some(48.);
+        let database = fonts().unwrap();
+        let family = macos_default_family(&database).unwrap();
+        assert!(database
+            .faces()
+            .any(|face| face.families.iter().any(|(name, _)| name == &family)));
+        assert_eq!(
+            database.family_name(&usvg::fontdb::Family::SansSerif),
+            family
+        );
+        let mut options = usvg::Options::default();
+        options.font_family = family;
+        options.fontdb = database;
+        options.image_href_resolver = usvg::ImageHrefResolver {
+            resolve_data: Box::new(|_, _, _| None),
+            resolve_string: Box::new(|_, _| None),
+        };
+        let tree =
+            usvg::Tree::from_str(&drawing_svg(&[item.clone()], 1000, 160), &options).unwrap();
+        let glyphs: Vec<_> = tree
+            .root()
+            .children()
+            .iter()
+            .filter_map(|node| match node {
+                usvg::Node::Text(text) => Some(text),
+                _ => None,
+            })
+            .flat_map(|text| text.layouted())
+            .flat_map(|span| &span.positioned_glyphs)
+            .filter(|glyph| glyph.text.chars().any(|c| !c.is_whitespace()))
+            .collect();
+        assert!(!glyphs.is_empty(), "the actual text must be shaped");
+        assert!(
+            glyphs.iter().all(|glyph| glyph.id.0 != 0),
+            "missing-glyph boxes do not count as Chinese/Latin/digit coverage"
+        );
+        let shaped: String = glyphs.iter().map(|glyph| glyph.text.as_str()).collect();
+        assert_eq!(
+            shaped
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>(),
+            text.chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        );
+        let base =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(1000, 160, Rgba([255, 255, 255, 255])));
+        let raster = crop_region(
+            &base,
+            &Region {
+                id: "mac-system-font-glyphs".into(),
+                x: 0.,
+                y: 0.,
+                width: 1000.,
+                height: 160.,
+                drawings: vec![item],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .into_rgba8();
+        assert!(raster.pixels().filter(|p| p[1] < 128).count() > 1000);
+    }
 
     fn drawing(kind: DrawingKind, points: &[(f64, f64)]) -> Drawing {
         Drawing {

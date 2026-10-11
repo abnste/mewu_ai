@@ -41,6 +41,26 @@ pub enum CoordinateSpace {
 pub enum CaptureBackend {
     Gdi,
     CoreGraphics,
+    ScreenCaptureKit,
+}
+
+pub fn backend_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "GDI"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if crate::capture_macos::available() {
+            "ScreenCaptureKit"
+        } else {
+            "CoreGraphics"
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        "Unsupported"
+    }
 }
 
 /// Monitor ids are valid for the current display configuration, not persistent
@@ -81,6 +101,18 @@ pub fn capture_desktop_with_options(
 ) -> Result<CapturedScreen, String> {
     ensure_supported_options(options)?;
     implementation::capture(asset_dir, None, options)
+}
+
+/// Host-only exclusions witnessed before hiding the space/conversation windows.
+/// The host retains their generation/hidden proof and scene lease until return.
+#[cfg(target_os = "macos")]
+pub(crate) fn capture_desktop_with_exclusions(
+    asset_dir: &Path,
+    options: CaptureOptions,
+    exclusions: &[crate::capture_macos::ExcludedWindow],
+) -> Result<CapturedScreen, String> {
+    ensure_supported_options(options)?;
+    implementation::capture_with_exclusions(asset_dir, None, options, exclusions)
 }
 
 pub fn capture_monitor_with_options(
@@ -140,6 +172,33 @@ mod implementation {
         selected_id: Option<u32>,
         options: CaptureOptions,
     ) -> Result<CapturedScreen, String> {
+        #[cfg(windows)]
+        {
+            capture_inner(asset_dir, selected_id, options)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            capture_with_exclusions(asset_dir, selected_id, options, &[])
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn capture_with_exclusions(
+        asset_dir: &Path,
+        selected_id: Option<u32>,
+        options: CaptureOptions,
+        exclusions: &[crate::capture_macos::ExcludedWindow],
+    ) -> Result<CapturedScreen, String> {
+        crate::capture_macos::validate_exclusions(exclusions)?;
+        capture_inner(asset_dir, selected_id, options, exclusions)
+    }
+
+    fn capture_inner(
+        asset_dir: &Path,
+        selected_id: Option<u32>,
+        options: CaptureOptions,
+        #[cfg(target_os = "macos")] exclusions: &[crate::capture_macos::ExcludedWindow],
+    ) -> Result<CapturedScreen, String> {
         #[cfg(not(windows))]
         let _ = options;
         let _capture_guard = CAPTURE_LOCK.try_lock().map_err(|error| match error {
@@ -156,7 +215,27 @@ mod implementation {
         let monitors = Monitor::all().map_err(|error| format!("无法读取显示器：{error}"))?;
         let monitor = select_monitor(&monitors, selected_id)?;
         let before = monitor_info(&monitor)?;
+        #[cfg(windows)]
         validate_expected_size(&before)?;
+        #[cfg(target_os = "macos")]
+        validate_scale(&before)?;
+        #[cfg(target_os = "macos")]
+        let topology_before = mac_topology(&monitors)?;
+        #[cfg(target_os = "macos")]
+        let physical_before = {
+            let entry = topology_before
+                .iter()
+                .find(|entry| entry.0.id == before.id)
+                .ok_or_else(|| "所选显示器已不可用，请重新选择".to_owned())?;
+            if entry.0 != before {
+                return Err("截图前显示器配置已改变，请重试".to_owned());
+            }
+            if before.display_width == 0 || before.display_height == 0 {
+                return Err("显示器桌面尺寸无效".to_owned());
+            }
+            validate_pixel_size(entry.1 .0, entry.1 .1)?;
+            entry.1
+        };
 
         let asset_id = Uuid::new_v4().to_string();
         let window_probe = super::super::window_snap::begin_capture(
@@ -166,11 +245,36 @@ mod implementation {
             before.display_height,
         );
 
+        #[cfg(windows)]
         let pixels = monitor
             // Fix the requested bounds before allocation, so a Windows mode
             // change cannot silently expand the upstream GDI pixel buffer.
             .capture_region(0, 0, before.display_width, before.display_height)
             .map_err(|error| format!("无法获取屏幕，请检查屏幕录制权限：{error}"))?;
+        #[cfg(windows)]
+        let backend = platform::BACKEND;
+        #[cfg(target_os = "macos")]
+        let (pixels, backend) = if crate::capture_macos::available() {
+            (
+                crate::capture_macos::capture(
+                    before.id,
+                    physical_before.0,
+                    physical_before.1,
+                    exclusions,
+                )?,
+                CaptureBackend::ScreenCaptureKit,
+            )
+        } else {
+            // macOS 12.3–13 cannot receive SCScreenshotManager selectors. The
+            // legacy path remains a compatibility branch, without claiming it
+            // is tested on those older systems. Host hidden proofs still apply.
+            (
+                monitor
+                    .capture_region(0, 0, before.display_width, before.display_height)
+                    .map_err(|error| format!("无法获取屏幕，请检查屏幕录制权限：{error}"))?,
+                CaptureBackend::CoreGraphics,
+            )
+        };
         // Sample before slower window-map metadata/encoding. OS pixel capture
         // and cursor sampling are separate calls, not an atomic desktop frame.
         // Disabled captures never read the global cursor resource here.
@@ -185,6 +289,17 @@ mod implementation {
         validate_pixel_size(width, height)?;
         if before != monitor_info(&monitor)? {
             return Err("截图期间显示器设置已改变，请重新截图".to_owned());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let monitors_after =
+                Monitor::all().map_err(|error| format!("无法确认截图后的显示器配置：{error}"))?;
+            if topology_before != mac_topology(&monitors_after)? {
+                return Err("截图期间显示器配置已改变，请重新截图".to_owned());
+            }
+            if (width, height) != physical_before {
+                return Err("截图像素尺寸与显示器不一致，请重新截图".to_owned());
+            }
         }
         if before.coordinate_space == CoordinateSpace::PhysicalPixels
             && (width != before.display_width || height != before.display_height)
@@ -252,7 +367,7 @@ mod implementation {
             coordinate_space: before.coordinate_space,
             pixels_per_display_unit_x: f64::from(width) / f64::from(before.display_width),
             pixels_per_display_unit_y: f64::from(height) / f64::from(before.display_height),
-            backend: platform::BACKEND,
+            backend,
         })
     }
 
@@ -297,10 +412,36 @@ mod implementation {
         read().map_err(|error| format!("无法读取显示器属性：{error}"))
     }
 
-    fn validate_expected_size(info: &MonitorInfo) -> Result<(), String> {
-        if !info.scale_factor.is_finite() || info.scale_factor <= 0.0 || info.scale_factor > 8.0 {
-            return Err("显示器缩放比例无效".to_owned());
+    #[cfg(target_os = "macos")]
+    fn mac_topology(monitors: &[Monitor]) -> Result<Vec<(MonitorInfo, (u32, u32))>, String> {
+        use objc2_core_graphics::{CGDisplayPixelsHigh, CGDisplayPixelsWide};
+        if monitors.is_empty() || monitors.len() > 64 {
+            return Err("显示器配置数量无效".to_owned());
         }
+        let mut topology = Vec::with_capacity(monitors.len());
+        for monitor in monitors {
+            let info = monitor_info(monitor)?;
+            // These API values are pixels. CGDisplayBounds-based xcap origin
+            // and display_width/height above remain desktop logical points.
+            // https://developer.apple.com/documentation/coregraphics/cgdisplaypixelswide(_:)
+            let width = u32::try_from(CGDisplayPixelsWide(info.id))
+                .map_err(|_| "显示器物理宽度超出限制")?;
+            let height = u32::try_from(CGDisplayPixelsHigh(info.id))
+                .map_err(|_| "显示器物理高度超出限制")?;
+            if info.id == 0 || width == 0 || height == 0 {
+                return Err("显示器物理尺寸无效".to_owned());
+            }
+            topology.push((info, (width, height)));
+        }
+        topology.sort_by_key(|entry| entry.0.id);
+        if topology.windows(2).any(|pair| pair[0].0.id == pair[1].0.id) {
+            return Err("显示器标识不唯一".to_owned());
+        }
+        Ok(topology)
+    }
+
+    fn validate_expected_size(info: &MonitorInfo) -> Result<(), String> {
+        validate_scale(info)?;
         // xcap's macOS geometry uses CGDisplayBounds points; Windows uses
         // DEVMODE physical pixels. Never scale a desktop origin by local DPI.
         let factor = match info.coordinate_space {
@@ -313,6 +454,13 @@ mod implementation {
             return Err("显示器分辨率超过当前截图限制".to_owned());
         }
         validate_pixel_size(width as u32, height as u32)
+    }
+
+    fn validate_scale(info: &MonitorInfo) -> Result<(), String> {
+        if !info.scale_factor.is_finite() || info.scale_factor <= 0.0 || info.scale_factor > 8.0 {
+            return Err("显示器缩放比例无效".to_owned());
+        }
+        Ok(())
     }
 
     fn validate_pixel_size(width: u32, height: u32) -> Result<(), String> {
