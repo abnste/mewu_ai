@@ -83,6 +83,21 @@ pub async fn export_message_table(
     table_index: usize,
     format: ExportFormat,
 ) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    return export_linux(app, window, scene_id, message_id, table_index, format).await;
+    #[cfg(not(target_os = "linux"))]
+    return export_legacy(app, window, scene_id, message_id, table_index, format).await;
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn export_legacy(
+    app: AppHandle,
+    window: WebviewWindow,
+    scene_id: String,
+    message_id: String,
+    table_index: usize,
+    format: ExportFormat,
+) -> Result<(), String> {
     owner(window.label())?;
     let request = REQUESTS
         .try_acquire()
@@ -140,6 +155,161 @@ pub async fn export_message_table(
             }
         }
         Ok(())
+    })
+    .await
+    .map_err(|_| "表格导出中断")?
+}
+
+#[cfg(target_os = "linux")]
+async fn export_linux(
+    app: AppHandle,
+    window: WebviewWindow,
+    scene_id: String,
+    message_id: String,
+    table_index: usize,
+    format: ExportFormat,
+) -> Result<(), String> {
+    use crate::{
+        image_export::ImageSaveFormat,
+        save_dialog::{DialogSpec, FormatSpec, SaveDialogOutcome},
+    };
+    owner(window.label())?;
+    let token = crate::window_actions_linux::window_handle(&window)?;
+    let request = REQUESTS
+        .try_acquire()
+        .map_err(|_| "表格正在处理，请稍后重试")?;
+    let host = app.state::<Host>();
+    let text = read(&app, &scene_id, &message_id)?;
+    let (work, cancel) = host
+        .image_exports
+        .begin_document(window.label().into(), || {
+            host.exit.ensure_running()?;
+            crate::image_host::ensure_visible(token)
+        })?;
+    let _invoke = work.cancel_on_drop();
+    let worker = tokio::select! {
+        biased;
+        _ = work.cancelled() => return work.settle_result(Err(crate::image_host::CANCELED.into())),
+        permit = WORKERS.acquire() => permit.map_err(|_| "表格处理不可用")?,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_request, _worker) = (request, worker);
+        let allowed = || {
+            crate::image_host::check_cancel(&cancel)?;
+            crate::image_host::ensure_visible(token)?;
+            unchanged(&app, &scene_id, &message_id, &text)
+        };
+        let accept = || {
+            // Preserve Engine -> export registry order. GTK callbacks never
+            // acquire Engine; only this worker validates the message snapshot.
+            let host = app.state::<Host>();
+            let engine = host.lock()?;
+            host.exit.ensure_running()?;
+            if engine
+                .store
+                .completed_message_text(&scene_id, &message_id)
+                .map_err(|e| e.to_string())?
+                != text
+            {
+                return Err("回答已变更，请重试".into());
+            }
+            work.accept_publication(|| crate::image_host::ensure_visible(token))
+        };
+        let result = (|| {
+            allowed()?;
+            let parsed = parse_answer(&text)?;
+            let table = parsed.tables.get(table_index).ok_or("表格不存在")?;
+            match format {
+                ExportFormat::Markdown | ExportFormat::Csv | ExportFormat::Tsv => {
+                    let text = match format {
+                        ExportFormat::Markdown => table.markdown(),
+                        ExportFormat::Csv => table.delimited(','),
+                        _ => table.delimited('\t'),
+                    };
+                    let data = table_clipboard::linux::Data::text(text)?;
+                    allowed()?;
+                    let _clipboard = CLIPBOARD.lock().map_err(|_| "剪贴板正在使用")?;
+                    accept()?;
+                    data.publish(window.clone(), token, cancel.clone())
+                }
+                ExportFormat::Table => {
+                    let image = table_document::render(table)?;
+                    allowed()?;
+                    let path = table_staging::stage(&app.state::<Host>().root, &image)?;
+                    let data = table_clipboard::linux::Data::table(
+                        table_clipboard::PreparedTableClipboard {
+                            html: table.html(),
+                            markdown: table.markdown(),
+                            csv: table.delimited(','),
+                            image,
+                            png_path: path,
+                        },
+                    )?;
+                    allowed()?;
+                    let _clipboard = CLIPBOARD.lock().map_err(|_| "剪贴板正在使用")?;
+                    accept()?;
+                    data.publish(window.clone(), token, cancel.clone())
+                }
+                ExportFormat::Png => {
+                    static PNG: [FormatSpec<ImageSaveFormat>; 1] = [FormatSpec {
+                        format: ImageSaveFormat::Png,
+                        label: "PNG 图片",
+                        extensions: &["png"],
+                    }];
+                    let image = table_document::render(table)?;
+                    allowed()?;
+                    let policy_app = app.clone();
+                    let policy_scene = scene_id.clone();
+                    let policy_message = message_id.clone();
+                    let policy_text = text.clone();
+                    let policy_cancel = cancel.clone();
+                    let choice = crate::save_dialog::linux::pick_destination(
+                        window.clone(),
+                        token,
+                        DialogSpec {
+                            basename: "表格",
+                            formats: &PNG,
+                            default_index: 1,
+                        },
+                        cancel.clone(),
+                        move || {
+                            crate::image_host::check_cancel(&policy_cancel)?;
+                            crate::image_host::ensure_visible(token)?;
+                            unchanged(&policy_app, &policy_scene, &policy_message, &policy_text)
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let SaveDialogOutcome::Selected { path, format } = choice else {
+                        return Ok(());
+                    };
+                    let destination =
+                        crate::image_export::ImageDestination::prepare(&path, format)?;
+                    let protected = app
+                        .state::<Host>()
+                        .root
+                        .canonicalize()
+                        .map_err(|_| "应用目录不可用")?;
+                    if destination.path().starts_with(&protected) {
+                        return Err("请选择应用目录以外的保存位置".into());
+                    }
+                    crate::image_export::save_image_atomic(
+                        format,
+                        &image,
+                        &destination,
+                        &cancel,
+                        |temporary, target| {
+                            allowed()?;
+                            accept()?;
+                            std::fs::rename(temporary, target)
+                                .map_err(|_| "无法完成表格保存，原文件未被覆盖".into())
+                        },
+                    )
+                }
+            }
+        })();
+        // A detached invoking future cancels admission; actual work and source
+        // survive queued dialogs/clipboard callbacks until their real ACK.
+        work.settle_result(result)
     })
     .await
     .map_err(|_| "表格导出中断")?

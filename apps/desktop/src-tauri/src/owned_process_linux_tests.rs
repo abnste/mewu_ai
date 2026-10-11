@@ -176,6 +176,10 @@ fn fixed_namespace(path: &Path) -> Command {
             "/",
             "--proc",
             "/proc",
+            // Ordinary recursive binds are nodev, including the inherited
+            // /dev mount. Give Stdio::null its own standard device mount.
+            "--dev",
+            "/dev",
             "--",
         ])
         .arg(std::env::current_exe().unwrap())
@@ -195,12 +199,20 @@ fn helper(mode: &str, path: &Path) -> ! {
         "owner" => {
             assert_eq!(getpid().as_raw_nonzero().get(), 1, "must be actual PID 1");
             send_owner(&socket, b'O');
+            let mut null = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/null")
+                .expect("PID1 can open the device required by Stdio::null");
+            assert_eq!(null.read(&mut [0u8; 1]).unwrap(), 0);
+            null.write_all(b"fixture null-device prerequisite").unwrap();
+            drop(null);
             let mut child = fixed_helper("escaped", path)
                 .stdin(Stdio::null())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .spawn()
-                .unwrap();
+                .expect("PID1 spawns the fixed escaped-session helper");
             // The original config pipe is kept exclusively by this PID 1.
             let mut request = [0];
             std::io::stdin().read_exact(&mut request).unwrap();
@@ -217,7 +229,7 @@ fn helper(mode: &str, path: &Path) -> ! {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
-                .unwrap();
+                .expect("escaped helper spawns the fixed stdio-free grandchild");
             let mut request = [0];
             let _ = socket.read(&mut request);
             // On a broken test parent, bound the fixture rather than daemonize.

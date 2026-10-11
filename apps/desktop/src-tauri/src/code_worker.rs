@@ -400,9 +400,11 @@ fn supervise_process(
             if !exit.success() {
                 failure.get_or_insert(CodeError::WorkerUnavailable);
             }
-            if !process.tree_empty() {
-                failure.get_or_insert(CodeError::Protocol);
-            }
+            // Parent exit and native owner accounting are separate observations.
+            // Keep all permits until fully_exited proves the tree and IO are
+            // drained, within the existing total and post-exit cleanup budgets.
+            // A still-live descendant becomes Protocol at that same cleanup
+            // deadline below; it never makes a terminal frame successful.
         }
         if failure.is_some() && killed_at.is_none() {
             process.kill();
@@ -449,16 +451,22 @@ fn supervise_process(
                     }
                 };
                 if let Err(error) = accepted {
+                    #[cfg(test)]
+                    eprintln!("code supervisor frame rejected: error={error:?} ready={ready} terminal={} elapsed={:?}", terminal.is_some(), started.elapsed());
                     failure.get_or_insert(error);
                 }
             }
             Ok(Output::Eof) => {
                 eof = true;
                 if terminal.is_none() {
+                    #[cfg(test)]
+                    eprintln!("code supervisor protocol: EOF without terminal, ready={ready}, elapsed={:?}", started.elapsed());
                     failure.get_or_insert(CodeError::Protocol);
                 }
             }
             Ok(Output::Error) => {
+                #[cfg(test)]
+                eprintln!("code supervisor protocol: malformed frame, ready={ready} terminal={} elapsed={:?}", terminal.is_some(), started.elapsed());
                 failure.get_or_insert(CodeError::Protocol);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -791,6 +799,30 @@ mod tests {
         }
 
         #[test]
+        fn terminal_parent_exit_waits_for_actual_owner_and_rejects_live_descendant() {
+            let mut fixture = Fixture::spawn("tree_exit", ScanMode::Text);
+            let evidence = fixture.evidence.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert!(evidence.descendant.is_some());
+            assert_eq!(evidence.worker, fixture.process.child_mut().id());
+            let slot = fixture.slot.clone();
+            let started = fixture.started;
+            let timeouts = fixture.timeouts;
+            #[cfg(windows)]
+            let job = fixture.process.observe_job_for_test().unwrap();
+            assert_eq!(fixture.run(), Err(CodeError::Protocol));
+            assert!(started.elapsed() >= timeouts.cleanup);
+            assert!(started.elapsed() < timeouts.total + timeouts.cleanup);
+            assert!(slot.lock().unwrap().is_none());
+            #[cfg(windows)]
+            assert_eq!(job.active_processes(), Some(0));
+            #[cfg(target_os = "macos")]
+            {
+                assert_process_gone(evidence.worker);
+                assert_process_gone(evidence.descendant.unwrap());
+            }
+        }
+
+        #[test]
         fn cancellation_reaps_live_descendant_and_inherited_pipe_before_slot_release() {
             let mut fixture = Fixture::spawn("tree_terminal", ScanMode::Text);
             let evidence = fixture
@@ -925,7 +957,7 @@ mod tests {
                 });
                 evidence(None);
             }
-            "tree_terminal" => {
+            "tree_terminal" | "tree_exit" => {
                 let mut child = command("pipe_descendant")
                     .stderr(Stdio::inherit())
                     .spawn()
@@ -940,6 +972,9 @@ mod tests {
                 assert_eq!(descendant.worker, child.id());
                 event(Event::Completed { codes: Vec::new() });
                 evidence(Some(child.id()));
+                if scenario == "tree_exit" {
+                    std::process::exit(0);
+                }
                 // Keep both workers alive and the inherited protocol pipe open.
                 // The supervisor must kill the native tree, not just accept JSON.
             }

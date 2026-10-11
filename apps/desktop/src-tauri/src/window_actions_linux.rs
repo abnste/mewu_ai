@@ -400,5 +400,6 @@ mod tests {
         worker.join().unwrap();
         assert_eq!((actual.width, actual.height), (2, 1));
         assert_eq!(actual.bytes.as_ref(), expected.as_slice());
+        crate::table_clipboard::linux::native_clipboard_fixture(&display);
     }
 }

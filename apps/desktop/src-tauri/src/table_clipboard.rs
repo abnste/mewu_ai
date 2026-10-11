@@ -18,6 +18,10 @@
 use image::RgbaImage;
 use std::path::PathBuf;
 
+#[cfg(any(target_os = "linux", test))]
+#[path = "table_clipboard_linux.rs"]
+pub(crate) mod linux;
+
 pub struct PreparedTableClipboard {
     /// Escaped table fragment, without a CF_HTML header. Content policy is the host's.
     pub html: String,
