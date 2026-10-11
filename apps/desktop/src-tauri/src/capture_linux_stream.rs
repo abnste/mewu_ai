@@ -103,8 +103,12 @@ fn local_socket(display: &ParsedDisplay) -> io::Result<String> {
 }
 
 pub(super) fn connect() -> Result<(Connection, usize), String> {
+    connect_display(None)
+}
+
+pub(super) fn connect_display(display_name: Option<&str>) -> Result<(Connection, usize), String> {
     let deadline = Instant::now() + SOCKET_BUDGET;
-    let display = x11rb::reexports::x11rb_protocol::parse_display::parse_display(None)
+    let display = x11rb::reexports::x11rb_protocol::parse_display::parse_display(display_name)
         .map_err(|_| "X11 图形会话地址无效")?;
     let path = local_socket(&display).map_err(|_| "截图需要本机 X11 桌面会话")?;
     let socket = SocketAddrUnix::new_abstract_name(path.as_bytes())

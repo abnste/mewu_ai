@@ -99,8 +99,47 @@ pub struct CaptureOptions {
 
 /// Rechecks the host's live capture lease and native window generations. Each
 /// invocation must release host/registry locks before returning to native work.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 pub(crate) type CaptureCheck = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) struct CaptureFile { path: PathBuf, retained: bool }
+
+#[cfg(any(target_os = "linux", test))]
+impl CaptureFile {
+    pub(crate) fn created(path: PathBuf) -> Self { Self { path, retained: false } }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl Drop for CaptureFile {
+    fn drop(&mut self) {
+        if !self.retained { let _ = std::fs::remove_file(&self.path); }
+    }
+}
+
+/// Owns only the PNG created by this invocation. Dropping a canceled worker or
+/// an abandoned async adoption removes it; successful store adoption retains it.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) struct PendingCapture {
+    pub(crate) screen: CapturedScreen,
+    pub(crate) file: CaptureFile,
+    pub(crate) native_check: Option<CaptureCheck>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl PendingCapture {
+    pub(crate) fn retain(&mut self) { self.file.retained = true; }
+    pub(crate) fn into_retained(mut self) -> CapturedScreen { self.retain(); self.screen }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn capture_desktop_with_witnesses(
+    asset_dir: &Path, options: CaptureOptions,
+    witnesses: &[crate::window_witness_linux::CaptureWitness], allowed: CaptureCheck,
+) -> Result<PendingCapture, String> {
+    ensure_supported_options(options)?;
+    linux::capture_with_witnesses(asset_dir, options, witnesses, allowed)
+}
 
 pub fn capture_desktop(asset_dir: &Path) -> Result<CapturedScreen, String> {
     capture_desktop_with_options(asset_dir, CaptureOptions::default())
