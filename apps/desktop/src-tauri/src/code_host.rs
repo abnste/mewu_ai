@@ -135,13 +135,62 @@ struct Grant {
     plugin_id: String,
     revision: u64,
     contribution_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text_grant: Option<TextGrant>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextGrant {
+    plugin_id: String,
+    revision: u64,
+    contribution_id: String,
 }
 impl Grant {
     fn current(&self, snapshot: &PluginSnapshot) -> bool {
-        snapshot.plugins.iter().any(|p| p.manifest.id == self.plugin_id && p.revision == self.revision
-            && p.state == PluginState::Enabled && p.error.is_none()
-            && p.manifest.contributions.iter().any(|c| matches!(c,
-                PluginContribution::Codes {id,engine:CodeEngine::Rxing,..} if id == &self.contribution_id)))
+        let primary = snapshot.plugins.iter().any(|p| {
+            p.manifest.id == self.plugin_id
+                && p.revision == self.revision
+                && p.state == PluginState::Enabled
+                && p.error.is_none()
+                && p.manifest.contributions.iter().any(|c| match c {
+                    PluginContribution::Codes {
+                        id,
+                        engine: CodeEngine::Rxing,
+                        ..
+                    }
+                    | PluginContribution::Ocr {
+                        id,
+                        engine: crate::plugins::OcrEngine::Windows,
+                        ..
+                    } => id == &self.contribution_id,
+                    _ => false,
+                })
+        });
+        primary && self.text_grant.as_ref().is_none_or(|grant| snapshot.plugins.iter().any(|p| p.manifest.id == grant.plugin_id && p.revision == grant.revision
+            && p.state == PluginState::Enabled && p.error.is_none() && p.manifest.contributions.iter().any(|c| matches!(c,
+                PluginContribution::Ocr {id,engine:crate::plugins::OcrEngine::Windows,..} if id == &grant.contribution_id))))
+    }
+    fn authorize(
+        &self,
+        store: &crate::plugins::PluginStore,
+    ) -> Result<code_worker::ScanMode, String> {
+        if store
+            .codes(&self.plugin_id, self.revision, &self.contribution_id)
+            .is_ok()
+        {
+            if let Some(grant) = &self.text_grant {
+                store.ocr(&grant.plugin_id, grant.revision, &grant.contribution_id)?;
+                Ok(code_worker::ScanMode::CodesAndText)
+            } else {
+                Ok(code_worker::ScanMode::Codes)
+            }
+        } else {
+            store.ocr(&self.plugin_id, self.revision, &self.contribution_id)?;
+            if self.text_grant.is_some() {
+                return Err("识别权限重复".into());
+            }
+            Ok(code_worker::ScanMode::Text)
+        }
     }
 }
 #[derive(Clone)]
@@ -469,11 +518,7 @@ fn check_origin(
     crate::recording::ensure_idle(app)?;
     let host = app.state::<Host>();
     let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
-    plugins.store.codes(
-        &origin.grant.plugin_id,
-        origin.grant.revision,
-        &origin.grant.contribution_id,
-    )?;
+    origin.grant.authorize(&plugins.store)?;
     let engine = host.lock()?;
     atomic_gate(&host, origin.window)?;
     crate::recording::ensure_idle(app)?;
@@ -584,6 +629,7 @@ pub async fn scan_plugin_codes(
     contribution_id: String,
     target: OcrTarget,
     translation_id: Option<String>,
+    text_grant: Option<TextGrant>,
 ) -> Result<ScanReply, String> {
     if window.label() != "space" {
         return Err("此窗口不能识别选区".into());
@@ -604,12 +650,11 @@ pub async fn scan_plugin_codes(
         plugin_id,
         revision,
         contribution_id,
+        text_grant,
     };
     let (origin, background, region, cancel, cached, invalidated) = {
         let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
-        plugins
-            .store
-            .codes(&grant.plugin_id, grant.revision, &grant.contribution_id)?;
+        grant.authorize(&plugins.store)?;
         let engine = host.lock()?;
         atomic_gate(&host, native_window)?;
         crate::recording::ensure_idle(&app)?;
@@ -666,7 +711,12 @@ pub async fn scan_plugin_codes(
                 .await
                 .map_err(|_| "图片准备任务中断".to_string())??;
                 check_origin(&task_app, &origin, &task_id, &task_cancel)?;
-                let result = code_worker::run(image, task_cancel.clone())
+                let mode = {
+                    let host = task_app.state::<Host>();
+                    let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+                    origin.grant.authorize(&plugins.store)?
+                };
+                let result = code_worker::run_scan(image, mode, task_cancel.clone())
                     .await
                     .map_err(|e| e.to_string());
                 // Even CleanupTimedOut must not free the accepted host work slot
@@ -707,11 +757,19 @@ fn register_result(
     crate::code_decode::validate_results(values.as_ref()).map_err(|e| e.to_string())?;
     let host = app.state::<Host>();
     let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
-    plugins.store.codes(
-        &origin.grant.plugin_id,
-        origin.grant.revision,
-        &origin.grant.contribution_id,
-    )?;
+    let mode = origin.grant.authorize(&plugins.store)?;
+    for value in values.iter() {
+        let is_text = matches!(
+            value.format,
+            CodeFormat::Url | CodeFormat::Email | CodeFormat::Phone
+        );
+        if (mode == code_worker::ScanMode::Codes && is_text)
+            || (mode == code_worker::ScanMode::Text && !is_text)
+            || (is_text && crate::code_open::registered_address(value.format, &value.text).is_err())
+        {
+            return Err("识别内容与权限不一致".into());
+        }
+    }
     let engine = host.lock()?;
     atomic_gate(&host, origin.window)?;
     crate::recording::ensure_idle(app)?;
@@ -739,7 +797,7 @@ fn register_result(
             id: uuid::Uuid::new_v4().to_string(),
             format: v.format,
             text: v.text.clone(),
-            can_open: code_url(&v.text).is_ok(),
+            can_open: crate::code_open::registered_address(v.format, &v.text).is_ok(),
         })
         .collect();
     let source_token = uuid::Uuid::new_v4().to_string();
@@ -853,6 +911,7 @@ impl TryFrom<String> for CodeAction {
         }
     }
 }
+#[cfg(test)]
 fn code_url(value: &str) -> Result<url::Url, String> {
     crate::code_open::http_url(value).ok_or_else(|| "此内容不是可打开的链接".into())
 }
@@ -891,11 +950,7 @@ fn action_allowed(app: &AppHandle, id: &str, cancel: &Arc<AtomicBool>) -> Result
         return Err(CANCELED.into());
     }
     let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
-    plugins.store.codes(
-        &origin.grant.plugin_id,
-        origin.grant.revision,
-        &origin.grant.contribution_id,
-    )?;
+    origin.grant.authorize(&plugins.store)?;
     let engine = host.lock()?;
     atomic_gate(&host, origin.window)?;
     crate::recording::ensure_idle(app)?;
@@ -945,7 +1000,7 @@ pub async fn act_on_code(
             .try_acquire_owned()
             .map_err(|_| "上次操作尚未结束")?,
     );
-    let (id, cancel, text, source) = {
+    let (id, cancel, text, format, source) = {
         let mut state = registry.0.state.lock().map_err(|_| "识别状态不可用")?;
         atomic_gate(&host, handle)?;
         let current = state
@@ -969,9 +1024,10 @@ pub async fn act_on_code(
             .find(|v| v.id == code_id)
             .ok_or("识别内容不存在")?;
         if matches!(action, CodeAction::Open) {
-            code_url(&value.text)?;
+            crate::code_open::registered_address(value.format, &value.text)?;
         }
         let text = value.text.clone();
+        let format = value.format;
         let source = current.origin.source.clone();
         let id = uuid::Uuid::new_v4().to_string();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -982,7 +1038,7 @@ pub async fn act_on_code(
             source_token,
             cancel: cancel.clone(),
         });
-        (id, cancel, text, source)
+        (id, cancel, text, format, source)
     };
     drop(host);
     let mut invocation = InvokeCancel {
@@ -1010,7 +1066,7 @@ pub async fn act_on_code(
                     .map_err(|_| "剪贴板不可用".to_string())?
                     .set_text(text)
                     .map_err(|_| "无法复制识别内容".to_string()),
-                CodeAction::Open => crate::code_open::open(code_url(&text)?, move || {
+                CodeAction::Open => crate::code_open::open_registered(format, &text, move || {
                     action_allowed(&worker_app, &worker_id, &worker_cancel)
                 }),
             }
@@ -1042,6 +1098,62 @@ pub async fn act_on_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn text_scan_requires_its_independent_current_installed_package_and_cache_key() {
+        struct Directory(PathBuf);
+        impl Drop for Directory {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = Directory(
+            std::env::temp_dir().join(format!("mewu-entity-grant-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir(&dir.0).unwrap();
+        let mut store = crate::plugins::PluginStore::open(&dir.0).unwrap();
+        let (_, origin, _) = fixture();
+        let mut combined = origin.grant.clone();
+        combined.text_grant = Some(TextGrant {
+            plugin_id: "mewu.ocr".into(),
+            revision: 1,
+            contribution_id: "recognize".into(),
+        });
+        assert_eq!(
+            combined.authorize(&store).unwrap(),
+            code_worker::ScanMode::CodesAndText
+        );
+        assert!(combined.current(&store.snapshot().unwrap()));
+        let text = Grant {
+            plugin_id: "mewu.ocr".into(),
+            revision: 1,
+            contribution_id: "recognize".into(),
+            text_grant: None,
+        };
+        assert_eq!(text.authorize(&store).unwrap(), code_worker::ScanMode::Text);
+        let mut state = State::default();
+        state
+            .cache_put(
+                origin.source.clone(),
+                combined.clone(),
+                Arc::new(vec![DecodedCode {
+                    format: CodeFormat::Email,
+                    text: "user@example.org".into(),
+                }]),
+            )
+            .unwrap();
+        assert!(state
+            .cache_get(origin.source.as_ref(), &origin.grant)
+            .is_none());
+        assert!(state.cache_get(origin.source.as_ref(), &combined).is_some());
+        store.set_enabled("mewu.ocr", 1, false).unwrap();
+        assert!(!combined.current(&store.snapshot().unwrap()));
+        assert!(combined.authorize(&store).is_err());
+        assert!(text.authorize(&store).is_err());
+        assert_eq!(
+            origin.grant.authorize(&store).unwrap(),
+            code_worker::ScanMode::Codes
+        );
+    }
     use mewu_core::{AssetKind, DrawingEdit, OcrDocument, RegionOcr, TranslationDocument};
 
     fn id() -> String {
@@ -1084,6 +1196,7 @@ mod tests {
                 plugin_id: "mewu.codes".into(),
                 revision: 1,
                 contribution_id: "recognize".into(),
+                text_grant: None,
             },
         };
         (snapshot, origin, region)

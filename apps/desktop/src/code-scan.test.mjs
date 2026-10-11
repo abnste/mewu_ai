@@ -13,6 +13,15 @@ const scene=()=>({id:'scene',closed:false,frozen:false,background:bg(),regions:[
 const plugin=(id='mewu.codes',official=true)=>({manifest:{id,contributions:[{id:'recognize',kind:'selection.codes',engine:'rxing'}]},source:{type:official?'official':'local'},state:'enabled',revision:1});
 const input=()=>codeSource(scene(),'r',[plugin()]);
 {
+ const ocr={manifest:{id:'mewu.ocr',contributions:[{id:'recognize',kind:'selection.ocr',engine:'windows'}]},source:{type:'official'},state:'enabled',revision:2};
+ const only=codeSource(scene(),'r',[ocr]);assert.equal(only.request.pluginId,'mewu.ocr');assert.equal(only.request.textGrant,undefined);
+ const both=codeSource(scene(),'r',[ocr,plugin()]);assert.equal(both.request.pluginId,'mewu.codes');assert.deepEqual(both.request.textGrant,{pluginId:'mewu.ocr',revision:2,contributionId:'recognize'});
+ for(const state of ['disabled','removed']){const disabled=codeSource(scene(),'r',[{...ocr,state},plugin()]);assert.equal(disabled.request.textGrant,undefined);assert.notEqual(disabled.key,both.key);assert.equal(codeSource(scene(),'r',[{...ocr,state}]),undefined);}
+ const newer=codeSource(scene(),'r',[{...ocr,revision:3},plugin()]);assert.notEqual(newer.key,both.key);
+ assert.equal(codeSource(scene(),'r',[{...ocr,error:'revoked'}]),undefined);
+ checks.push('OCR-only and combined automatic scans bind independent package revisions; disabled, removed or revoked OCR never grants text recognition');
+}
+{
  const original=scene(),key=codeSource(original,'r',[plugin()]).key;
  for (const mutate of [s=>s.draft='new',s=>s.messages.push({text:'stream'}),s=>s.refs.push({id:'r'}),s=>s.regions[0].ocr={document:{}},s=>s.regions[0].drawingHistory={undo:[{}]},s=>s.run={id:'run',status:'running'}]) {const s=structuredClone(original);mutate(s);assert.equal(codeSource(s,'r',[plugin()]).key,key);}
  for(const mutate of [s=>s.background.path='same-id-new-path',s=>s.background.scaleFactor=2,s=>s.regions[0].x++,s=>s.regions[0].drawingRevision++,s=>s.regions[0].imageOverride={...bg(),id:'long'},s=>s.regions[0].drawings=[{id:'d',kind:'rect',color:'#112233',strokeWidth:2,points:[{x:1,y:1},{x:20,y:20}]}],s=>s.regions[0].translation={backgroundId:'bg',sourceId:'bg',drawingRevision:0,document:{width:500,height:300},overlay:{...bg(),id:'overlay'}}]) {const s=structuredClone(original);mutate(s);assert.notEqual(codeSource(s,'r',[plugin()]).key,key);}

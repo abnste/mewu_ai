@@ -20,6 +20,7 @@ mod code_decode;
 mod code_host;
 mod code_open;
 mod code_worker;
+mod screen_entities;
 mod connection_host;
 mod content_server;
 mod credentials;

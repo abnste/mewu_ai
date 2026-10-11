@@ -34,6 +34,36 @@ pub fn open(
 ) -> Result<(), String> {
     // Revalidate the canonical URL even if another caller is added later.
     http_url(address.as_str()).ok_or("此内容不能作为网页打开")?;
+    dispatch(address.to_string(), allowed)
+}
+
+pub fn registered_address(
+    format: crate::code_decode::CodeFormat,
+    text: &str,
+) -> Result<String, String> {
+    use crate::code_decode::CodeFormat;
+    let address = match format {
+        CodeFormat::Email => crate::screen_entities::mailto(text),
+        CodeFormat::Phone => {
+            crate::screen_entities::phone_number(text).map(|number| format!("tel:{number}"))
+        }
+        _ => http_url(text).map(|address| address.to_string()),
+    };
+    address.ok_or_else(|| "此识别内容不能打开".into())
+}
+pub fn open_registered(
+    format: crate::code_decode::CodeFormat,
+    text: &str,
+    allowed: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
+    dispatch(registered_address(format, text)?, allowed)
+}
+// Private: every caller constructs a validated HTTP URL, encoded recipient,
+// or global phone number. Never accepts caller-supplied schemes or arguments.
+fn dispatch(
+    address: String,
+    allowed: impl FnOnce() -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
     #[cfg(windows)]
     {
         std::thread::Builder::new()
@@ -53,7 +83,7 @@ pub fn open(
                 unsafe {
                     CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE).ok()
                 }
-                .map_err(|_| "无法打开网页".to_string())?;
+                .map_err(|_| "无法打开应用".to_string())?;
                 struct Apartment;
                 impl Drop for Apartment {
                     fn drop(&mut self) {
@@ -63,7 +93,7 @@ pub fn open(
                     }
                 }
                 let _apartment = Apartment;
-                let wide: Vec<u16> = address.as_str().encode_utf16().chain(Some(0)).collect();
+                let wide: Vec<u16> = address.encode_utf16().chain(Some(0)).collect();
                 allowed()?;
                 let result = unsafe {
                     ShellExecuteW(
@@ -78,23 +108,39 @@ pub fn open(
                 if result.0 as isize > 32 {
                     Ok(())
                 } else {
-                    Err("无法打开网页，可复制链接后重试".into())
+                    Err("无法打开应用，可复制内容后重试".into())
                 }
             })
-            .map_err(|_| "无法打开网页".to_string())?
+            .map_err(|_| "无法打开应用".to_string())?
             .join()
-            .map_err(|_| "打开网页的任务已中断".to_string())?
+            .map_err(|_| "打开应用的任务已中断".to_string())?
     }
     #[cfg(not(windows))]
     {
         let _ = (address, allowed);
-        Err("此平台尚未接入打开网页".into())
+        Err("此平台尚未接入打开应用".into())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn registered_entities_cannot_inject_headers_arguments_or_other_protocols() {
+        use crate::code_decode::CodeFormat as F;
+        assert_eq!(
+            registered_address(F::Email, "a?b&c=d@example.org").unwrap(),
+            "mailto:a%3Fb%26c%3Dd@example.org"
+        );
+        assert_eq!(
+            registered_address(F::Phone, "+8613800138000").unwrap(),
+            "tel:+8613800138000"
+        );
+        assert!(registered_address(F::QrCode, "tel:+8613800138000").is_err());
+        assert!(registered_address(F::Email, "a@example.com?bcc=x@example.org").is_err());
+        assert!(registered_address(F::Phone, "123456;ext=1").is_err());
+        assert!(registered_address(F::Url, "javascript:alert(1)").is_err());
+    }
     #[test]
     fn accepts_only_explicit_http_urls_without_credentials_or_controls() {
         for text in [

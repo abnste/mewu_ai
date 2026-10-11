@@ -29,6 +29,8 @@ struct InputHeader {
     width: u32,
     height: u32,
     length: usize,
+    #[serde(default)]
+    mode: ScanMode,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -102,6 +104,13 @@ impl Drop for CancelOnDrop {
 }
 
 pub async fn run(image: CodeImage, cancel: Arc<AtomicBool>) -> Result<Vec<DecodedCode>, CodeError> {
+    run_scan(image, ScanMode::Codes, cancel).await
+}
+pub async fn run_scan(
+    image: CodeImage,
+    mode: ScanMode,
+    cancel: Arc<AtomicBool>,
+) -> Result<Vec<DecodedCode>, CodeError> {
     image.validate()?;
     if cancel.load(Ordering::Acquire) {
         return Err(CodeError::Cancelled);
@@ -120,7 +129,7 @@ pub async fn run(image: CodeImage, cancel: Arc<AtomicBool>) -> Result<Vec<Decode
             .name("mewu-code-supervisor".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    supervise(image, cancel, permit)
+                    supervise(image, mode, cancel, permit)
                 }))
                 .unwrap_or(Err(CodeError::WorkerUnavailable));
                 let _ = tx.send(result);
@@ -176,6 +185,7 @@ enum Output {
 fn attach_io(
     process: &mut ManagedProcess<Permit>,
     image: CodeImage,
+    mode: ScanMode,
 ) -> Result<
     (
         mpsc::Receiver<Output>,
@@ -233,6 +243,7 @@ fn attach_io(
                     width: image.width,
                     height: image.height,
                     length: image.luma.len(),
+                    mode,
                 })
                 .map_err(|_| CodeError::Protocol)?;
                 if header.len() + 1 > MAX_HEADER {
@@ -258,15 +269,25 @@ fn attach_io(
 
 fn supervise(
     image: CodeImage,
+    mode: ScanMode,
     cancel: Arc<AtomicBool>,
     permit: Permit,
+) -> Result<Vec<DecodedCode>, CodeError> {
+    let executable = std::env::current_exe().map_err(|_| CodeError::WorkerUnavailable)?;
+    supervise_executable(image, mode, cancel, permit, &executable)
+}
+fn supervise_executable(
+    image: CodeImage,
+    mode: ScanMode,
+    cancel: Arc<AtomicBool>,
+    permit: Permit,
+    executable: &std::path::Path,
 ) -> Result<Vec<DecodedCode>, CodeError> {
     let started = Instant::now();
     if cancel.load(Ordering::Acquire) {
         return Err(CodeError::Cancelled);
     }
-    let mut command =
-        Command::new(std::env::current_exe().map_err(|_| CodeError::WorkerUnavailable)?);
+    let mut command = Command::new(executable);
     command
         .arg("--code-worker")
         .stdin(Stdio::piped())
@@ -285,7 +306,7 @@ fn supervise(
     }
     let mut process =
         ManagedProcess::spawn(&mut command, permit).map_err(|_| CodeError::WorkerUnavailable)?;
-    let (output, writer) = attach_io(&mut process, image)?;
+    let (output, writer) = attach_io(&mut process, image, mode)?;
     let mut ready = false;
     let mut eof = false;
     let mut write_done = false;
@@ -300,7 +321,12 @@ fn supervise(
         if failure.is_none()
             && terminal.is_none()
             && ((!ready && started.elapsed() >= START_TIMEOUT)
-                || started.elapsed() >= TOTAL_TIMEOUT)
+                || started.elapsed()
+                    >= if mode.has_text() {
+                        Duration::from_secs(25)
+                    } else {
+                        TOTAL_TIMEOUT
+                    })
         {
             failure = Some(CodeError::TimedOut);
         }
@@ -403,7 +429,7 @@ fn supervise(
     }
 }
 
-fn read_image(reader: &mut impl BufRead) -> Result<CodeImage, CodeError> {
+fn read_scan(reader: &mut impl BufRead) -> Result<(CodeImage, ScanMode), CodeError> {
     let header: InputHeader =
         serde_json::from_slice(&read_line(reader, MAX_HEADER)?.ok_or(CodeError::Protocol)?)
             .map_err(|_| CodeError::Protocol)?;
@@ -419,15 +445,22 @@ fn read_image(reader: &mut impl BufRead) -> Result<CodeImage, CodeError> {
     if reader.read(&mut extra).map_err(|_| CodeError::Protocol)? != 0 {
         return Err(CodeError::Protocol);
     }
-    Ok(CodeImage {
-        width: header.width,
-        height: header.height,
-        luma,
-    })
+    Ok((
+        CodeImage {
+            width: header.width,
+            height: header.height,
+            luma,
+        },
+        header.mode,
+    ))
+}
+#[cfg(test)]
+fn read_image(reader: &mut impl BufRead) -> Result<CodeImage, CodeError> {
+    read_scan(reader).map(|(image, _)| image)
 }
 /// main first dispatches exact --code-worker before opening DB/server/Tauri.
 pub fn worker_main() -> i32 {
-    let image = match read_image(&mut BufReader::new(std::io::stdin())) {
+    let (image, mode) = match read_scan(&mut BufReader::new(std::io::stdin())) {
         Ok(image) => image,
         Err(_) => return 2,
     };
@@ -435,7 +468,7 @@ pub fn worker_main() -> i32 {
         return 2;
     }
     let result =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| code_decode::decode(image)))
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode_scan(image, mode)))
             .unwrap_or(Err(CodeError::DecodeFailed));
     let event = match result {
         Ok(codes) => Event::Completed { codes },
@@ -448,9 +481,150 @@ pub fn worker_main() -> i32 {
     }
 }
 
+fn decode_scan(image: CodeImage, mode: ScanMode) -> Result<Vec<DecodedCode>, CodeError> {
+    image.validate()?;
+    // OCR is performed in this existing bounded, killable worker. It never
+    // reads accessibility text, credentials, files, the desktop or the network.
+    let text_pixels = if mode.has_text() {
+        let mut pixels = Vec::with_capacity(image.luma.len() * 4);
+        for &gray in &image.luma {
+            pixels.extend_from_slice(&[gray, gray, gray, 255]);
+        }
+        Some(
+            image::RgbaImage::from_raw(image.width, image.height, pixels)
+                .ok_or(CodeError::InputLimit)?,
+        )
+    } else {
+        None
+    };
+    let mut values = if mode.has_codes() {
+        code_decode::decode(image)?
+    } else {
+        vec![]
+    };
+    if let Some(pixels) = text_pixels {
+        if let Ok(document) = crate::ocr::recognize(pixels, Arc::new(AtomicBool::new(false))) {
+            let text = document
+                .lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let entities = crate::screen_entities::recognize(&text);
+            // Barcode results retain their existing order and budget. An OCR
+            // failure (e.g. missing language pack) cannot suppress valid codes.
+            values.extend(
+                entities
+                    .into_iter()
+                    .take(code_decode::MAX_CODES.saturating_sub(values.len())),
+            );
+        }
+    }
+    code_decode::validate_results(&values)?;
+    Ok(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "explicit exact built app worker verification; synthetic text/QR only, no clipboard, URL opening, desktop or user storage"]
+    fn real_supervised_text_and_barcode_scan_use_only_declared_modes() {
+        use crate::code_decode::CodeFormat as F;
+        use mewu_core::{Drawing, DrawingKind, DrawingPoint, Region};
+        let executable = std::path::PathBuf::from(
+            std::env::var_os("MEWU_CODE_SCAN_PROBE_EXECUTABLE").expect("exact candidate path"),
+        );
+        assert!(executable.is_absolute() && executable.is_file());
+        let base = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            1800,
+            700,
+            image::Rgba([255, 255, 255, 255]),
+        ));
+        let drawings = [
+            ("https://example.org", 40.),
+            ("user@example.org", 180.),
+            ("+8613800138000", 320.),
+        ]
+        .into_iter()
+        .map(|(text, y)| Drawing {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: DrawingKind::Text,
+            color: "#000000".into(),
+            stroke_width: 1.,
+            points: vec![DrawingPoint { x: 48., y }],
+            text: Some(text.into()),
+            font_size: Some(64.),
+            origin: None,
+            rich: None,
+        })
+        .collect();
+        let mut bitmap = crate::drawing_render::crop_region(
+            &base,
+            &Region {
+                id: "synthetic-entities".into(),
+                x: 0.,
+                y: 0.,
+                width: 1800.,
+                height: 700.,
+                drawings,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .into_rgba8();
+        use rxing::{BarcodeFormat, EncodeHints, MultiFormatWriter, Writer};
+        let qr = MultiFormatWriter
+            .encode_with_hints(
+                "MEWU CODE ONLY",
+                &BarcodeFormat::QR_CODE,
+                240,
+                240,
+                &EncodeHints::default(),
+            )
+            .unwrap();
+        for y in 0..240 {
+            for x in 0..240 {
+                if qr.get(x, y) {
+                    bitmap.put_pixel(1450 + x, 30 + y, image::Rgba([0, 0, 0, 255]));
+                }
+            }
+        }
+        let make = || CodeImage {
+            width: bitmap.width(),
+            height: bitmap.height(),
+            luma: bitmap.pixels().map(|p| p[0]).collect(),
+        };
+        for mode in [ScanMode::CodesAndText, ScanMode::Text, ScanMode::Codes] {
+            let token = Arc::new(AtomicBool::new(false));
+            let permit = Permit::acquire(token.clone()).unwrap();
+            let values = supervise_executable(make(), mode, token, permit, &executable).unwrap();
+            assert!(!busy());
+            if mode.has_text() {
+                for (format, text) in [
+                    (F::Url, "https://example.org"),
+                    (F::Email, "user@example.org"),
+                    (F::Phone, "+8613800138000"),
+                ] {
+                    assert!(
+                        values.iter().any(|v| v.format == format && v.text == text),
+                        "{mode:?}: {values:?}"
+                    );
+                }
+            } else {
+                assert!(values
+                    .iter()
+                    .all(|v| !matches!(v.format, F::Url | F::Email | F::Phone)));
+            }
+            assert_eq!(
+                values
+                    .iter()
+                    .any(|v| v.format == F::QrCode && v.text == "MEWU CODE ONLY"),
+                mode.has_codes()
+            );
+        }
+    }
     #[tokio::test]
     async fn precancelled_input_never_acquires_a_worker() {
         assert_eq!(
@@ -506,6 +680,7 @@ mod tests {
                 height: 2048,
                 luma: vec![255; code_decode::MAX_PIXELS],
             },
+            ScanMode::Codes,
         )
         .unwrap();
         std::thread::sleep(Duration::from_millis(150));
@@ -541,6 +716,9 @@ mod tests {
             &mut &b"{\"version\":1,\"width\":8193,\"height\":1,\"length\":8193}\n"[..]
         )
         .is_err());
+        let text = b"{\"version\":1,\"width\":1,\"height\":1,\"length\":1,\"mode\":\"text\"}\n\xff";
+        assert_eq!(read_scan(&mut &text[..]).unwrap().1, ScanMode::Text);
+        assert!(read_scan(&mut &b"{\"version\":1,\"width\":1,\"height\":1,\"length\":1,\"mode\":\"command\"}\n\xff"[..]).is_err());
     }
     #[test]
     fn event_enums_are_strict_and_partial_json_never_succeeds() {
@@ -550,5 +728,21 @@ mod tests {
         assert!(read_line(&mut &b"{}"[..], 100).is_err());
         assert!(read_line(&mut &b"012345\n"[..], 6).is_err());
         assert!(serde_json::from_str::<CodeError>(r#"{"busy":null}"#).is_err());
+    }
+}
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanMode {
+    #[default]
+    Codes,
+    Text,
+    CodesAndText,
+}
+impl ScanMode {
+    fn has_codes(self) -> bool {
+        self != Self::Text
+    }
+    fn has_text(self) -> bool {
+        self != Self::Codes
     }
 }

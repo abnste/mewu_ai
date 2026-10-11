@@ -528,7 +528,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | regex-automata | 0.4.18 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L037] |
 | Cargo | regex-lite | 0.1.9 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L037] |
 | Cargo | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L037]; src/unicode_tables/LICENSE-UNICODE [L246] |
-| Cargo | regex | 1.13.1 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L037] |
+| Cargo | regex | 1.13.1 | MIT OR Apache-2.0 | direct | LICENSE-APACHE [L005]; LICENSE-MIT [L037] |
 | Cargo | rgb | 0.8.53 | MIT | transitive | LICENSE [L252] |
 | Cargo | ring | 0.17.14 | Apache-2.0 AND ISC | transitive | LICENSE [L253]; LICENSE-BoringSSL [L254]; LICENSE-other-bits [L255]; src/polyfill/once_cell/LICENSE-APACHE [L005]; src/polyfill/once_cell/LICENSE-MIT [L256]; third_party/fiat/LICENSE [L257] |
 | Cargo | roxmltree | 0.20.0 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L258] |

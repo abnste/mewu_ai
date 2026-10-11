@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
 import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from 'solid-js';
-import { Check, ChevronLeft, ChevronRight, Copy, ExternalLink, QrCode } from 'lucide-solid';
+import { Check, ChevronLeft, ChevronRight, Copy, ExternalLink, Mail, Phone, QrCode } from 'lucide-solid';
 import type { CodeAction, CodeScanResult } from '../code-contracts';
 import { placeCodeCard, type CodeBox } from '../code-card-layout';
 import './selection-code-card.css';
@@ -19,6 +19,8 @@ export default function SelectionCodeCard(props: Props) {
   const [obstacles, setObstacles] = createSignal<CodeBox[]>([]);
   const index = createMemo(() => Math.max(0, props.result.codes.findIndex(value => value.id === selected())));
   const code = createMemo(() => props.result.codes[index()]);
+  const label = createMemo(() => code()?.format === 'url' ? '链接' : code()?.format === 'email' ? '邮箱' : code()?.format === 'phone' ? '电话' : code()?.format.toUpperCase().includes('QR') ? '二维码' : '条码');
+  const openLabel = createMemo(() => code()?.format === 'email' ? '写邮件' : code()?.format === 'phone' ? '拨号' : '打开');
   const location = createMemo(() => placeCodeCard(viewport(), props.region, size(), [...(props.toolbar ? [props.toolbar] : []), ...obstacles()]));
   createEffect(on(() => props.result.sourceToken, () => { setSelected(props.result.codes[0]?.id ?? ''); setCopied(''); }));
   function measure() {
@@ -53,13 +55,13 @@ export default function SelectionCodeCard(props: Props) {
     window.addEventListener('resize', resize); measure();
   });
   onCleanup(() => { disposed = true; observer?.disconnect(); mutations?.disconnect(); window.removeEventListener('resize', resize); clearTimeout(copiedTimer); });
-  return <div ref={element} class="selection-code-card" role="group" aria-label={t("二维码与条码")} aria-hidden={props.hidden || !location()} inert={props.hidden || !location()} style={{ left: `${location()?.x ?? 0}px`, top: `${location()?.y ?? 0}px`, visibility: props.hidden || !location() ? 'hidden' : 'visible' }} onPointerDown={event => event.stopPropagation()} onDblClick={event => event.stopPropagation()} on:keydown={event => {
+  return <div ref={element} class="selection-code-card" role="group" aria-label={t("选区识别结果")} aria-hidden={props.hidden || !location()} inert={props.hidden || !location()} style={{ left: `${location()?.x ?? 0}px`, top: `${location()?.y ?? 0}px`, visibility: props.hidden || !location() ? 'hidden' : 'visible' }} onPointerDown={event => event.stopPropagation()} onDblClick={event => event.stopPropagation()} on:keydown={event => {
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); navigate(event.key === 'ArrowLeft' ? -1 : 1); }
   }}>
-    <span class="selection-code-label" title={code()?.text}><QrCode size={15} /><span>{code()?.format.toUpperCase().includes('QR') ? t('二维码') : t('条码')}</span></span>
-    <Show when={props.result.codes.length > 1}><div class="selection-code-navigation"><button class="icon-button compact" aria-label={t("上一个码")} title={t("上一个")} disabled={pending() || props.disabled} onClick={() => navigate(-1)}><ChevronLeft size={14} /></button><span>{index() + 1}/{props.result.codes.length}</span><button class="icon-button compact" aria-label={t("下一个码")} title={t("下一个")} disabled={pending() || props.disabled} onClick={() => navigate(1)}><ChevronRight size={14} /></button></div></Show>
-    <button class="selection-code-action" aria-label={t("复制当前码")} title={code()?.text} disabled={pending() || props.disabled} onClick={() => void action('copy')}><Show when={copied() === code()?.id} fallback={<Copy size={13} />}><Check size={13} /></Show><span>{t("复制")}</span></button>
-    <Show when={code()?.canOpen}><button class="selection-code-action" aria-label={t("打开当前链接")} title={code()?.text} disabled={pending() || props.disabled} onClick={() => void action('open')}><ExternalLink size={13} /><span>{t("打开")}</span></button></Show>
+    <span class="selection-code-label" title={code()?.text}><Show when={code()?.format === 'url'} fallback={<Show when={code()?.format === 'email'} fallback={<Show when={code()?.format === 'phone'} fallback={<QrCode size={15} />}><Phone size={15} /></Show>}><Mail size={15} /></Show>}><ExternalLink size={15} /></Show><span>{t(label())}</span></span>
+    <Show when={props.result.codes.length > 1}><div class="selection-code-navigation"><button class="icon-button compact" aria-label={t("上一个识别结果")} title={t("上一个")} disabled={pending() || props.disabled} onClick={() => navigate(-1)}><ChevronLeft size={14} /></button><span>{index() + 1}/{props.result.codes.length}</span><button class="icon-button compact" aria-label={t("下一个识别结果")} title={t("下一个")} disabled={pending() || props.disabled} onClick={() => navigate(1)}><ChevronRight size={14} /></button></div></Show>
+    <button class="selection-code-action" aria-label={t("复制当前内容")} title={code()?.text} disabled={pending() || props.disabled} onClick={() => void action('copy')}><Show when={copied() === code()?.id} fallback={<Copy size={13} />}><Check size={13} /></Show><span>{t("复制")}</span></button>
+    <Show when={code()?.canOpen}><button class="selection-code-action" aria-label={t(openLabel())} title={code()?.text} disabled={pending() || props.disabled} onClick={() => void action('open')}><ExternalLink size={13} /><span>{t(openLabel())}</span></button></Show>
   </div>;
 }

@@ -1028,5 +1028,21 @@
   "音频保存结果无效": "Invalid audio export result",
   "重点高亮": "Highlight region",
   "快照": "Snapshot",
-  "快照（Shift：手动长截图）": "Snapshot (Shift: manual scrolling)"
+  "快照（Shift：手动长截图）": "Snapshot (Shift: manual scrolling)",
+  "选区识别结果": "Selection results",
+  "链接": "Link",
+  "邮箱": "Email",
+  "电话": "Phone",
+  "写邮件": "Compose",
+  "拨号": "Dial",
+  "上一个识别结果": "Previous result",
+  "下一个识别结果": "Next result",
+  "复制当前内容": "Copy content",
+  "此识别内容不能打开": "This result cannot be opened",
+  "识别内容与权限不一致": "The result does not match the recognition permission",
+  "识别权限重复": "Duplicate recognition permission",
+  "无法打开应用": "Unable to open the application",
+  "无法打开应用，可复制内容后重试": "Unable to open the application. Copy the content and try again.",
+  "打开应用的任务已中断": "The application opening task was interrupted",
+  "此平台尚未接入打开应用": "Opening applications is not supported on this platform"
 }

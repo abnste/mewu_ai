@@ -36,6 +36,9 @@ pub fn pixel_count(width: u32, height: u32) -> Result<usize, CodeError> {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", try_from = "String")]
 pub enum CodeFormat {
+    Url,
+    Email,
+    Phone,
     QrCode,
     DataMatrix,
     Aztec,
@@ -50,6 +53,9 @@ impl TryFrom<String> for CodeFormat {
     type Error = &'static str;
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
+            "url" => Ok(Self::Url),
+            "email" => Ok(Self::Email),
+            "phone" => Ok(Self::Phone),
             "qr_code" => Ok(Self::QrCode),
             "data_matrix" => Ok(Self::DataMatrix),
             "aztec" => Ok(Self::Aztec),

@@ -8,9 +8,10 @@ Mewu 1.0 is a Windows desktop remake. A shortcut opens the capture space: screen
 
 ## Included
 
-The current `next` source includes MP3 export, preview resolution settings and text-preserving pen and rectangular highlighters added after preview 2; the published preview 2 downloads do not contain those additions.
+The current `next` source includes MP3 export, preview resolution settings, text-preserving pen and rectangular highlighters, window snapshots and link/email/phone recognition added after preview 2; the published preview 2 downloads do not contain those additions.
 
 - Region capture, drawing, blackboards, borderless pinned images, OCR, translation, scrolling capture and barcode recognition.
+- With the OCR plugin enabled, stable selections locally recognize links, email addresses and phone numbers. Click a result to copy it, open a webpage, compose a message or hand a number to the dialer. Recognition makes no network requests and does not send messages or place calls automatically.
 - Multiple conversations, freeze/resume, Markdown and formulas, collapsible public reasoning, image and text attachments.
 - Screen recording with computer audio by default, pause, trimming, video annotations, MP4/MP3/GIF export, and original/75%/50% preview resolution.
 - Agent identity, local SQLite/FTS5 memory, optional Hindsight connection, run history and resumable answers.

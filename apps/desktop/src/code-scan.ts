@@ -8,16 +8,19 @@ const assetKey = (asset?: Asset) => asset ? [asset.id, asset.name, asset.kind, a
 export function codeSource(scene: Scene | undefined, regionId: string, plugins: PluginRecord[]): CodeSource | undefined {
   const background = scene?.background, region = scene?.regions.find(value => value.id === regionId);
   if (!scene || !background || !region || scene.closed || scene.frozen) return;
-  const choices = plugins.filter(value => value.state === 'enabled' && !value.error).flatMap(plugin => plugin.manifest.contributions.filter(value => value.kind === 'selection.codes').map(contribution => ({ plugin, contribution })));
+  const choices = plugins.filter(value => value.state === 'enabled' && !value.error).flatMap(plugin => plugin.manifest.contributions.filter(value => value.kind === 'selection.codes' || value.kind === 'selection.ocr').map(contribution => ({ plugin, contribution })));
   choices.sort((a, b) => {
-    const official = (value: typeof a) => value.plugin.source.type === 'official' && value.plugin.manifest.id === 'mewu.codes' && value.contribution.id === 'recognize';
+    const official = (value: typeof a) => value.plugin.source.type === 'official' && (value.plugin.manifest.id === 'mewu.codes' || value.plugin.manifest.id === 'mewu.ocr') && value.contribution.id === 'recognize';
     return Number(official(b)) - Number(official(a)) || (a.plugin.manifest.id < b.plugin.manifest.id ? -1 : a.plugin.manifest.id > b.plugin.manifest.id ? 1 : 0) || (a.contribution.id < b.contribution.id ? -1 : a.contribution.id > b.contribution.id ? 1 : 0);
   });
-  const entry = choices[0]; if (!entry) return;
+  const codes = choices.find(value => value.contribution.kind === 'selection.codes');
+  const text = choices.find(value => value.contribution.kind === 'selection.ocr');
+  const entry = codes ?? text; if (!entry) return;
   const target = { sceneId: scene.id, regionId, backgroundId: background.id, drawingRevision: region.drawingRevision ?? 0, x: region.x, y: region.y, width: region.width, height: region.height };
   const translation = region.translation;
-  const request = { pluginId: entry.plugin.manifest.id, revision: entry.plugin.revision, contributionId: entry.contribution.id, target, translationId: translation?.overlay.id ?? null };
-  const key = JSON.stringify([request.pluginId, request.revision, request.contributionId, scene.id, regionId, assetKey(background), assetKey(region.imageOverride), region.x, region.y, region.width, region.height, target.drawingRevision,
+  const textGrant = codes && text ? { pluginId: text.plugin.manifest.id, revision: text.plugin.revision, contributionId: text.contribution.id } : undefined;
+  const request = { pluginId: entry.plugin.manifest.id, revision: entry.plugin.revision, contributionId: entry.contribution.id, target, translationId: translation?.overlay.id ?? null, ...(textGrant ? { textGrant } : {}) };
+  const key = JSON.stringify([request.pluginId, request.revision, request.contributionId, textGrant ?? null, scene.id, regionId, assetKey(background), assetKey(region.imageOverride), region.x, region.y, region.width, region.height, target.drawingRevision,
     (region.drawings ?? []).map(value => [value.id, value.kind, value.color, value.strokeWidth, value.points.map(point => [point.x, point.y]), value.text ?? null, value.fontSize ?? null]),
     translation ? [translation.backgroundId, translation.sourceId, translation.drawingRevision, translation.document.width, translation.document.height, assetKey(translation.overlay)] : null]);
   return { key, request };
