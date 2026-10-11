@@ -80,12 +80,13 @@ export default function ArtifactCard(props: Props) {
   const isDocument = () => props.item.asset.kind === 'html' || props.item.asset.kind === 'svg';
   const isVideo = () => props.item.asset.kind === 'video';
   const isImage = () => props.item.asset.kind === 'image';
+  const isRasterMedia = () => isImage() || isVideo();
   const imageBox = createMemo(() => {
     const p = position(), vp = viewport(), ratio = (props.item.asset.width ?? 1) / (props.item.asset.height ?? 1);
     const width = Math.min(p.width * vp.width, p.height * vp.height * ratio);
     return { width, height: width / ratio };
   });
-  const movePosition=()=>{const p=position(),vp=viewport();return objectMoveGripPosition({x:p.x*vp.width,y:p.y*vp.height,width:isImage()?imageBox().width:p.width*vp.width},vp);};
+  const movePosition=()=>{const p=position(),vp=viewport();return objectMoveGripPosition({x:p.x*vp.width,y:p.y*vp.height,width:isRasterMedia()?imageBox().width:p.width*vp.width},vp);};
   const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-56,left+width-56))-left}px`,top:`${Math.max(4,Math.min(vp.height-28,top+(width<176?28:4)))-top}px`};};
   const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
 
@@ -115,7 +116,7 @@ export default function ArtifactCard(props: Props) {
     disposeGesture?.();
     const token = ++gestureToken;
     const target = event.currentTarget as HTMLElement;
-    const start = isImage() ? { ...position(), width: imageBox().width / innerWidth, height: imageBox().height / innerHeight } : position();
+    const start = isRasterMedia() ? { ...position(), width: imageBox().width / innerWidth, height: imageBox().height / innerHeight } : position();
     const startX = event.clientX, startY = event.clientY;
     const vw = window.innerWidth, vh = window.innerHeight;
     const videoMode = isVideo();
@@ -132,7 +133,7 @@ export default function ArtifactCard(props: Props) {
       if(resize&&corner){setPosition(resizeBoardObject(start,dx,dy,corner,vw,vh));return;}
       const minWidth = videoMode ? Math.min(64 / vw, 1 - start.x) : Math.min(240 / vw, .85);
       const minHeight = videoMode ? Math.min(48 / vh, 1 - start.y) : Math.min(160 / vh, .8);
-      if (resize && isImage()) {
+      if (resize && isRasterMedia()) {
         const ratio = (props.item.asset.width ?? 1) / (props.item.asset.height ?? 1);
         const width = Math.min((1 - start.x) * vw, (1 - start.y) * vh * ratio, Math.max(48, start.width * vw + e.clientX - startX));
         setPosition({ ...start, width: width / vw, height: width / ratio / vh });
@@ -183,7 +184,7 @@ export default function ArtifactCard(props: Props) {
   };
 
   return <section ref={node => { shell = node; node.addEventListener('pointerdown', activate, true); node.addEventListener('focusin', activate); }} class="artifact-card" classList={{ active: props.active, moving: moving(), 'video-artifact': props.item.asset.kind === 'video', 'image-object': isImage(), 'document-object':isDocument(), 'blackboard-object':props.blackboard,'blackboard-interactive':props.interactive,'blackboard-object-hovered':props.hovered }} tabindex={isImage() ? 0 : undefined}
-    style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isImage() ? `${imageBox().width}px` : `${position().width * 100}%`, height: isImage() ? `${imageBox().height}px` : `${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
+    style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isRasterMedia() ? `${imageBox().width}px` : `${position().width * 100}%`, height: isRasterMedia() ? `${imageBox().height}px` : `${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
     data-video-item={isVideo() ? props.item.id : undefined} data-video-scene={isVideo() ? props.video?.sceneId : undefined}
     aria-label={props.item.asset.name} onWheel={wheel} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
     <Show when={props.blackboard||isImage()||isDocument()||isVideo()}><ObjectMoveGrip label={t('移动对象')} disabled={props.busy} style={movePosition()} onPointerDown={event=>gesture(event,false,true)}/></Show>

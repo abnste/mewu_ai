@@ -121,6 +121,7 @@ pub async fn import_assets(
     host.exit.ensure_running()?;
     let target = ImportTarget::capture(&host.lock()?.store.snapshot(), &scene_id)?;
     let root = host.assets.clone();
+    let import_window = window.clone();
     let worker_app = app.clone();
     let worker_target = target.clone();
     let (permit, prepared) = tauri::async_runtime::spawn_blocking(move || {
@@ -176,6 +177,12 @@ pub async fn import_assets(
     .await
     .map_err(|_| "导入任务中断")??;
     crate::recording::ensure_idle(&app)?;
+    // Query native geometry before taking Engine; the UI thread must never wait
+    // for that lock while servicing a window request. Use the current viewport
+    // after the dialog, as the window may have moved between displays.
+    let logical_size = import_window
+        .inner_size().map_err(|_| "无法读取空间尺寸")?
+        .to_logical::<u32>(import_window.scale_factor().map_err(|_| "无法读取空间缩放")?);
     let (published, imported_images) = {
         let mut engine = host.lock()?;
         host.exit.ensure_running()?;
@@ -193,7 +200,7 @@ pub async fn import_assets(
                 .collect::<Vec<_>>();
             let snapshot = engine
                 .store
-                .import_assets(&scene_id, batch.assets.clone())
+                .import_assets_in_viewport(&scene_id, batch.assets.clone(), logical_size.width, logical_size.height)
                 .map_err(|error| error.to_string())?;
             batch.commit();
             (crate::publish(&app, &snapshot), imported_images)
