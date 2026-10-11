@@ -240,6 +240,14 @@ fn config_for(
         width,
         height,
         audio: backend::AudioMode::Mute,
+        #[cfg(target_os = "macos")]
+        capture_coordinates: background
+            .capture_coordinates
+            .clone()
+            .filter(|c| {
+                c.space == mewu_core::CaptureCoordinateSpace::QuartzPoints && c.valid_for(mw, mh)
+            })
+            .ok_or("截图的 Mac 屏幕坐标缺失，请重新截图后录制")?,
     })
 }
 
@@ -258,6 +266,8 @@ pub async fn start_recording(
     app.state::<Host>().exit.ensure_new_operation()?;
     #[cfg(windows)]
     let window_handle = window.hwnd().map_err(|_| "空间窗口不可用")?.0 as usize;
+    #[cfg(target_os = "macos")]
+    let window_handle = crate::window_witness_macos::window_handle(&window)?;
     crate::recording_storage::supported()?;
     let host = app.state::<Host>();
     let _transition = crate::begin_space_transition(&app, &host)?;
@@ -311,7 +321,17 @@ pub async fn start_recording(
     let monitor = monitors
         .into_iter()
         .find(|m| {
-            m.origin_x == config.origin_x
+            #[cfg(target_os = "macos")]
+            {
+                let bounds = objc2_core_graphics::CGDisplayBounds(m.id);
+                return bounds.origin.x == config.capture_coordinates.origin_x
+                    && bounds.origin.y == config.capture_coordinates.origin_y
+                    && bounds.size.width == config.capture_coordinates.width
+                    && bounds.size.height == config.capture_coordinates.height;
+            }
+            #[cfg(not(target_os = "macos"))]
+            m.origin_x
+                == config.origin_x
                 && m.origin_y == config.origin_y
                 && m.display_width == config.monitor_width
                 && m.display_height == config.monitor_height
@@ -360,6 +380,10 @@ pub async fn start_recording(
         let recording_state = app.state::<RecordingState>();
         let mut active = recording_state.0.lock().map_err(|_| "录屏状态不可用")?;
         host.exit.ensure_new_operation()?;
+        #[cfg(target_os = "macos")]
+        if !crate::window_witness_macos::current_for(window_handle, "space") {
+            return Err("空间已收起".into());
+        }
         #[cfg(windows)]
         {
             use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
@@ -635,7 +659,14 @@ pub(crate) fn exclude(window: &tauri::WebviewWindow, exclude: bool) -> Result<()
     }
     Ok(())
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub(crate) fn exclude(_: &tauri::WebviewWindow, _: bool) -> Result<(), String> {
+    // SCK has no WDA flag. The owned recorder must resolve and exclude its
+    // actual parent application before starting; this covers new HUD windows.
+    // Failure to find that parent stops capture rather than capturing overlays.
+    Ok(())
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn exclude(_: &tauri::WebviewWindow, _: bool) -> Result<(), String> {
     Err("此平台暂不支持录屏".into())
 }

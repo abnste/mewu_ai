@@ -77,13 +77,16 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSIndexSet", "NSObject", "NSRange", "NSString", "NSObjCRuntime", "NSURL", "NSProcessInfo", "NSGeometry", "NSValue"] }
 objc2-uniform-type-identifiers = { version = "=0.3.2", default-features = false, features = ["std", "UTType"] }
 objc2-vision = { version = "=0.3.2", default-features = false, features = ["std", "VNRecognizeTextRequest", "VNObservation", "VNRequest", "VNRequestHandler", "VNTypes", "objc2-core-foundation", "block2"] }
-objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = ["std", "SCShareableContent", "SCStream", "SCScreenshotManager", "block2", "objc2-core-graphics", "objc2-core-foundation", "libc"] }
+objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = ["std", "SCShareableContent", "SCStream", "SCScreenshotManager", "block2", "objc2-core-graphics", "objc2-core-foundation", "objc2-core-media", "dispatch2", "libc"] }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGDirectDisplay", "CGImage", "CGDataProvider"] }
 block2 = "=0.6.2"
 core-foundation = "=0.10.1"
-objc2-av-foundation = {version = "=0.3.2", default-features = false, features = ["std", "AVAsset", "AVAssetTrack", "AVMediaFormat", "AVAssetImageGenerator", "AVAsynchronousKeyValueLoading", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-core-graphics", "AVAssetExportSession", "AVVideoComposition", "AVAssetReader", "AVAssetReaderOutput"] }
-objc2-core-media = {version = "=0.3.2", default-features = false, features = ["std", "CMTime", "objc2", "CMTimeRange", "CMBase", "CMSampleBuffer", "objc2-core-video"] }
+objc2-av-foundation = {version = "=0.3.2", default-features = false, features = ["std", "AVAsset", "AVAssetTrack", "AVMediaFormat", "AVAssetImageGenerator", "AVAsynchronousKeyValueLoading", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-core-graphics", "AVAssetExportSession", "AVVideoComposition", "AVAssetReader", "AVAssetReaderOutput", "AVAssetWriter", "AVAssetWriterInput", "AVVideoSettings"] }
+objc2-core-media = {version = "=0.3.2", default-features = false, features = ["std", "CMTime", "objc2", "CMTimeRange", "CMBase", "CMSampleBuffer", "objc2-core-video", "CMFormatDescription", "CMSync", "objc2-core-audio-types"] }
 objc2-core-video = {version = "=0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
+objc2-core-foundation = {version = "=0.3.2", default-features = false, features = ["std", "CFCGTypes", "CFBase"] }
+objc2-avf-audio = {version = "=0.3.2", default-features = false, features = ["std", "AVAudioSettings"] }
+dispatch2 = {version = "=0.3.1", default-features = false, features = ["std", "block2", "objc2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libloading = "=0.8.9"

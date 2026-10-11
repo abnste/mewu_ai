@@ -178,7 +178,15 @@ pub fn supported() -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        if crate::capture_macos::available() {
+            Ok(())
+        } else {
+            Err("Mac 原生录屏需要 macOS 14 或更新版本".into())
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         Err("当前平台尚未实现原生录屏".into())
     }

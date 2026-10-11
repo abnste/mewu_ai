@@ -357,7 +357,11 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
             .map(|value| value.0 as usize)
             .map_err(|_| "录屏声音窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::window_witness_macos::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = window;
         Err("当前平台尚不支持录屏声音".into())
@@ -369,7 +373,11 @@ fn visible(handle: usize) -> bool {
         use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
         handle != 0 && IsWindow(handle as _) != 0 && IsWindowVisible(handle as _) != 0
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::window_witness_macos::visible(handle)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = handle;
         false
@@ -412,6 +420,10 @@ pub async fn set_recording_audio(
         return Err("此窗口不能修改录屏声音".into());
     }
     prefs::validate_choice(mode, grant.as_ref()).map_err(|_| "录屏声音选择无效")?;
+    #[cfg(target_os = "macos")]
+    if matches!(mode, AudioMode::Microphone | AudioMode::Both) {
+        return Err("当前 Mac 录屏支持电脑声音或静音，麦克风录制尚未实现".into());
+    }
     let handle = window_handle(&window)?; // Never inside plugins, Engine or our data mutex.
     if !admission(&app, handle) {
         return Err("当前无法修改录屏声音".into());

@@ -31,6 +31,8 @@ pub struct Config {
     pub height: u32,
     #[serde(default)]
     pub audio: AudioMode,
+    #[cfg(target_os = "macos")]
+    pub capture_coordinates: mewu_core::CaptureCoordinates,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -146,12 +148,20 @@ pub fn run(
     {
         native::run(config, commands, progress)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::run(config, commands, progress)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (commands, progress);
         Err("当前平台尚未实现原生录屏".into())
     }
 }
+
+#[cfg(target_os = "macos")]
+#[path = "recording_backend_macos.rs"]
+mod macos;
 
 #[cfg(windows)]
 mod native {
@@ -1349,6 +1359,14 @@ mod tests {
             width: 640,
             height: 480,
             audio: AudioMode::Mute,
+            #[cfg(target_os = "macos")]
+            capture_coordinates: mewu_core::CaptureCoordinates {
+                space: mewu_core::CaptureCoordinateSpace::QuartzPoints,
+                origin_x: -1920.,
+                origin_y: 0.,
+                width: 1920.,
+                height: 1080.,
+            },
         }
     }
 
