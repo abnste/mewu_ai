@@ -38,6 +38,8 @@ use std::{
 
 #[path = "video_clip_frames_macos.rs"]
 mod frames;
+#[path = "video_clip_gif_macos.rs"]
+mod gif;
 
 struct Source {
     path: PathBuf,
@@ -538,6 +540,43 @@ pub(super) fn execute(
                 cancel,
             )
             .map(|frames| ClipJobResult::FramesExtracted { frames })
+        }
+        ClipJob::RenderGif {
+            source,
+            output,
+            expected,
+            range,
+        } => {
+            let mut source = Source::open(source, cancel)?;
+            gif::render(
+                &mut source,
+                output,
+                expected,
+                range.as_ref(),
+                &[],
+                cancel,
+                on_progress,
+            )
+            .map(ClipJobResult::GifRendered)
+        }
+        ClipJob::RenderGifAnnotated {
+            source,
+            output,
+            expected,
+            range,
+            overlays,
+        } => {
+            let mut source = Source::open(source, cancel)?;
+            gif::render(
+                &mut source,
+                output,
+                expected,
+                range.as_ref(),
+                overlays,
+                cancel,
+                on_progress,
+            )
+            .map(ClipJobResult::GifRendered)
         }
         _ => Err(ClipError::Unsupported),
     })
