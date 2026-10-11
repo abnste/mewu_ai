@@ -50,10 +50,17 @@ pub(super) fn prepare(command: &mut Command) -> io::Result<()> {
     });
     #[cfg(test)]
     let gated_helper = gated_helper
-        || command.get_args().take(2).eq([
-            std::ffi::OsStr::new("--exact"),
-            std::ffi::OsStr::new("owned_process::macos::tests::synthetic_child"),
-        ]);
+        || [
+            "owned_process::macos::tests::synthetic_child",
+            "code_worker::tests::supervised_deadline_fixture",
+        ]
+        .iter()
+        .any(|test| {
+            command
+                .get_args()
+                .take(2)
+                .eq([std::ffi::OsStr::new("--exact"), std::ffi::OsStr::new(test)])
+        });
     if !gated_helper {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
