@@ -30,6 +30,8 @@ use std::{
 const BOOTSTRAP: &str = "--mewu-linux-worker-bootstrap";
 const RECEIPT: u8 = b'O';
 const ACK: u8 = b'A';
+#[path = "linux_worker_env.rs"]
+mod resource_env;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Worker {
@@ -70,6 +72,7 @@ pub(crate) struct TrustedCommand {
     parent: Option<UnixStream>,
     child: Option<UnixStream>,
     source: Option<File>,
+    resources: resource_env::ResourceEnvironment,
 }
 
 impl TrustedCommand {
@@ -79,6 +82,7 @@ impl TrustedCommand {
         let loaded = File::open("/proc/self/exe")?;
         let source = File::from(fcntl_dupfd_cloexec(&loaded, 3)?);
         drop(loaded);
+        let resources = resource_env::ResourceEnvironment::capture(&source)?;
         let source_raw = source.as_raw_fd();
         let executable = format!("/proc/self/fd/{source_raw}");
         let (a, b) = UnixStream::pair()?;
@@ -137,6 +141,7 @@ impl TrustedCommand {
             parent: Some(parent),
             child: Some(child),
             source: Some(source),
+            resources,
         })
     }
     fn builder(&mut self) -> &mut Command {
@@ -190,6 +195,11 @@ impl TrustedCommand {
                     .map_err(|_| io::ErrorKind::InvalidInput)?,
             )
             .ok_or(io::ErrorKind::InvalidInput)?;
+        check(deadline, cancel)?;
+        self.resources.apply(
+            self.command.as_mut().unwrap(),
+            self.source.as_ref().unwrap(),
+        )?;
         check(deadline, cancel)?;
         let child = self
             .command

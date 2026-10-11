@@ -50,7 +50,7 @@ programs, Windows and macOS lifetime implementations retain their boundaries.
 
 References: [Rust current_exe security](https://doc.rust-lang.org/std/env/fn.current_exe.html),
 [bubblewrap 0.6.1 source](https://github.com/containers/bubblewrap/blob/v0.6.1/bubblewrap.c),
-[Linux dynamic-loader executable origin](https://github.com/bminor/glibc/blob/master/sysdeps/unix/sysv/linux/dl-origin.c).
+[Linux dynamic-loader executable origin in glibc 2.35](https://github.com/bminor/glibc/blob/glibc-2.35/sysdeps/unix/sysv/linux/dl-origin.c).
 
 The failure fixture uses a separate controller process for each case. Faults
 exist only in that compiled fixture executable, not in production bootstrap
@@ -66,3 +66,29 @@ before acknowledgement, final executable-FD failure after acknowledgement and
 bridge EOF. Unknown-owner cases explicitly assert UNPROVEN DRAIN and a retained
 permit; their conservative failure assertion must not count as successful
 application exit or update. All cases still require native execution.
+
+The resource environment is derived from a verified AppDir instead of retaining
+AppRun's inherited loader paths. The AppDir's `usr/bin/MewuAI` must match the
+already-open loaded executable device/inode. Root identity and the bounded
+resource tree are checked at capture and again immediately before spawning.
+Normal internal library symlinks are allowed; escaping symlinks, special files,
+cross-device trees and excessive depth/entries are rejected. Writable extracted
+trees must have root/current-user ownership and no group/other writable entries.
+Only an actual `fstatvfs` read-only filesystem permits writable stored mode bits.
+Startup never changes resource permissions. This is identity/ownership validation,
+not a cryptographic signature check or protection against the same user modifying
+their own files during the dynamic loader's later reads.
+
+Fixed GTK/GIO/GDKPixbuf/GStreamer paths are sealed after every caller environment
+change. Arbitrary `LD_LIBRARY_PATH`, `LD_PRELOAD`, `LD_AUDIT`, loader tunables and
+module search overrides are removed before exec, including standalone workers.
+Missing required AppDir resources fail before creating a child. The actual
+candidate's main ELF and 101 bundled reachable SONAMEs have relative RUNPATHs,
+but 22 system SONAMEs, dynamically loaded modules and helper processes still need
+native package checks. This static evidence does not establish worker Ready.
+
+The added native resource fixtures run the real factory from a private AppDir
+copy, test environment clearing/tainted overrides and normal internal SONAME
+symlinks, and reject wrong/replaced loaded inodes, writable resources, escaping
+symlinks and missing required files before exec. They are not an AppImage mount,
+real GTK/GStreamer module load, signed installer, or application GUI acceptance.
