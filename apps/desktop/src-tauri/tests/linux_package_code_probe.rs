@@ -87,6 +87,41 @@ mod native {
             .nth(3)
             .ok_or("missing repository parent")?
             .canonicalize()?;
+        let git = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["rev-parse", "HEAD"])
+            .output()?;
+        let source_commit = std::str::from_utf8(&git.stdout)?.trim();
+        if !git.status.success()
+            || source_commit.len() != 40
+            || !source_commit.bytes().all(|v| v.is_ascii_hexdigit() && !v.is_ascii_uppercase())
+            || std::env::var("MEWU_BUILD_COMMIT").as_deref() != Ok(source_commit)
+        {
+            return Err("explicit build source does not match this repository".into());
+        }
+        let clean = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["status", "--porcelain", "-z"])
+            .output()?;
+        if !clean.status.success() || !clean.stdout.is_empty() {
+            return Err("actual package probe source must remain clean".into());
+        }
+        let staged: serde_json::Value = serde_json::from_slice(&fs::read(
+            repo.join("out/release-linux-x86_64/.metadata/build.json"),
+        )?)?;
+        let normalized: serde_json::Value = serde_json::from_slice(&fs::read(
+            repo.join("target/release/bundle/appimage/permission-normalization.json"),
+        )?)?;
+        if staged["sourceCommit"].as_str() != Some(source_commit)
+            || staged["platform"].as_str() != Some("linux-x86_64")
+            || normalized["sourceCommit"].as_str() != Some(source_commit)
+            || normalized["contentAndModesVerified"].as_bool() != Some(true)
+            || normalized["candidateExecuted"].as_bool() != Some(false)
+        {
+            return Err("normal staging and feature permission proofs do not bind this source".into());
+        }
         let expected = repo
             .join("target/release/bundle/appimage/MewuAI.AppDir")
             .canonicalize()?;
@@ -219,6 +254,8 @@ mod native {
         }
         let receipt = serde_json::json!({
             "schemaVersion":1,"kind":"native_feature_appdir_code_receipt",
+            "sourceCommit":source_commit,"normalInstallerAssets":staged["assets"],
+            "featureRepackedArtifact":normalized["outputArtifact"],
             "nativeLinux":true,"actualMewuElfSha256":elf_hash,
             "actualMewuElfBytes":before.len(),"pngSha256":hash(png.get_ref()),
             "lumaSha256":hash(luma),"elapsedMillis":started.elapsed().as_millis(),
