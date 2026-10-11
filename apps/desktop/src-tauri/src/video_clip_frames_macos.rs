@@ -172,13 +172,13 @@ fn pts_ticks(t: CMTime) -> Result<u64, ClipError> {
         time_ticks(t)
     }
 }
-fn decoded_jpeg(
+pub(super) fn decoded_rgb(
     sample: &CMSampleBuffer,
     matrix: [i32; 4],
     encoded: (u32, u32),
     expected: &VideoMetadata,
     cancel: &AtomicBool,
-) -> Result<Vec<u8>, ClipError> {
+) -> Result<image::RgbImage, ClipError> {
     let pixel = unsafe { sample.image_buffer() }.ok_or(ClipError::InvalidMedia)?;
     if CVPixelBufferGetPixelFormatType(&pixel) != kCVPixelFormatType_32BGRA
         || CVPixelBufferIsPlanar(&pixel)
@@ -264,37 +264,35 @@ fn decoded_jpeg(
         )
     };
     check_cancel(cancel)?;
-    let mut jpeg = Jpeg(Vec::new());
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 95)
-        .encode_image(&rgb)
-        .map_err(|_| ClipError::OutputInvalid)?;
-    check_cancel(cancel)?;
-    Ok(jpeg.0)
+    Ok(rgb)
 }
 
 #[allow(deprecated)]
-pub(super) fn extract(
-    source: &mut Source,
-    output: &Path,
+pub(super) fn for_each_decoded(
+    source: &Source,
     expected: &VideoMetadata,
-    window: &VideoRange,
     requested: &[u64],
+    budget: Duration,
     cancel: &AtomicBool,
-) -> Result<Vec<FrameDescriptor>, ClipError> {
-    contract::validate_extraction_request(expected, window, requested)?;
+    mut accept: impl FnMut(usize, &CMSampleBuffer, u64, u64, [i32; 4]) -> Result<(), ClipError>,
+) -> Result<(), ClipError> {
+    if requested.is_empty()
+        || requested.len() > contract::MAX_GIF_FRAMES as usize
+        || requested.windows(2).any(|v| v[0] >= v[1])
+        || requested.iter().any(|&v| v >= expected.duration_ticks)
+    {
+        return Err(ClipError::InvalidRange);
+    }
     let started = Instant::now();
     let check = || {
         check_cancel(cancel)?;
-        if started.elapsed() >= Duration::from_secs(30) {
-            return Err(ClipError::TimedOut);
+        if started.elapsed() >= budget {
+            Err(ClipError::TimedOut)
+        } else {
+            Ok(())
         }
-        Ok(())
     };
     check()?;
-    if inspect(source, cancel)? != *expected {
-        return Err(ClipError::SourceChanged);
-    }
-    let mut directory = Directory::open(output)?;
     let asset = asset_for(source)?;
     loaded(&asset, cancel)?;
     let tracks =
@@ -358,17 +356,14 @@ pub(super) fn extract(
         }
     };
     let mut current = read()?.ok_or(ClipError::InvalidMedia)?;
-    let mut frames = Vec::with_capacity(requested.len());
-    let mut total = 0u64;
+    let mut index = 0;
     loop {
         check()?;
-        directory.check()?;
         let next = read()?;
         if next.as_ref().is_some_and(|v| v.1 <= current.1) {
             return Err(ClipError::InvalidMedia);
         }
-        // Decoded buffers may omit duration. The next actual decoded PTS gives
-        // their presentation interval; only a clean EOF admits the track end.
+        // Only actual decoded timestamps and clean EOF determine presentation.
         let mut end = next.as_ref().map_or(track_end, |v| v.1).min(track_end);
         if let Some(duration) = current.2 {
             end = end.min(
@@ -381,23 +376,74 @@ pub(super) fn extract(
         if end <= current.1 {
             return Err(ClipError::InvalidMedia);
         }
-        let mut jpeg = None;
-        while frames.len() < requested.len() && requested[frames.len()] < end {
-            let index = frames.len();
-            let tick = requested[index];
-            if tick < current.1 {
+        while index < requested.len() && requested[index] < end {
+            if requested[index] < current.1 {
                 return Err(ClipError::InvalidRange);
             }
-            if jpeg.is_none() {
-                jpeg = Some(decoded_jpeg(
-                    &current.0,
+            check()?;
+            accept(index, &current.0, current.1, end - current.1, matrix)?;
+            check()?;
+            index += 1;
+        }
+        if index == requested.len() {
+            break;
+        }
+        current = next.ok_or(ClipError::InvalidRange)?;
+    }
+    drop(flight);
+    check()
+}
+
+pub(super) fn extract(
+    source: &mut Source,
+    output: &Path,
+    expected: &VideoMetadata,
+    window: &VideoRange,
+    requested: &[u64],
+    cancel: &AtomicBool,
+) -> Result<Vec<FrameDescriptor>, ClipError> {
+    contract::validate_extraction_request(expected, window, requested)?;
+    let started = Instant::now();
+    let check = || {
+        check_cancel(cancel)?;
+        if started.elapsed() >= Duration::from_secs(30) {
+            Err(ClipError::TimedOut)
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+    if inspect(source, cancel)? != *expected {
+        return Err(ClipError::SourceChanged);
+    }
+    let mut directory = Directory::open(output)?;
+    let mut frames = Vec::with_capacity(requested.len());
+    let mut total = 0u64;
+    let mut cached: Option<(u64, Vec<u8>)> = None;
+    for_each_decoded(
+        source,
+        expected,
+        requested,
+        Duration::from_secs(30).saturating_sub(started.elapsed()),
+        cancel,
+        |index, sample, pts, duration, matrix| {
+            check()?;
+            directory.check()?;
+            if cached.as_ref().is_none_or(|v| v.0 != pts) {
+                let rgb = decoded_rgb(
+                    sample,
                     matrix,
                     contract::extracted_dimensions(expected),
                     expected,
                     cancel,
-                )?);
+                )?;
+                let mut jpeg = Jpeg(Vec::new());
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 95)
+                    .encode_image(&rgb)
+                    .map_err(|_| ClipError::OutputInvalid)?;
+                cached = Some((pts, jpeg.0));
             }
-            let bytes = jpeg.as_ref().unwrap();
+            let bytes = &cached.as_ref().unwrap().1;
             total = total
                 .checked_add(bytes.len() as u64)
                 .ok_or(ClipError::OutputInvalid)?;
@@ -409,21 +455,17 @@ pub(super) fn extract(
             let (width, height) = contract::extracted_dimensions(expected);
             frames.push(FrameDescriptor {
                 index: index as u32,
-                requested_ticks: tick,
-                actual_pts_ticks: current.1,
-                sample_duration_ticks: end - current.1,
+                requested_ticks: requested[index],
+                actual_pts_ticks: pts,
+                sample_duration_ticks: duration,
                 encoded_width: width,
                 encoded_height: height,
                 jpeg_sha256: format!("{:x}", Sha256::digest(bytes)),
                 bytes_length: bytes.len() as u64,
             });
-        }
-        if frames.len() == requested.len() {
-            break;
-        }
-        current = next.ok_or(ClipError::InvalidRange)?;
-    }
-    drop(flight);
+            Ok(())
+        },
+    )?;
     check()?;
     source.check(cancel)?;
     directory.check()?;

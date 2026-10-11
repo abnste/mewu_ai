@@ -38,13 +38,20 @@ pub(crate) struct Destination {
     directory: File,
     directory_name: CString,
     final_name: CString,
+    staging_name: CString,
     staging_path: PathBuf,
     published: Option<(u64, u64)>,
     committed: bool,
 }
 impl Destination {
     pub(crate) fn new(output: &Path) -> Result<Self, ClipError> {
-        if !output.is_absolute() || output.extension().is_none_or(|v| v != "mp4") {
+        Self::with_extension(output, "mp4")
+    }
+    pub(crate) fn gif(output: &Path) -> Result<Self, ClipError> {
+        Self::with_extension(output, "gif")
+    }
+    fn with_extension(output: &Path, extension: &str) -> Result<Self, ClipError> {
+        if !output.is_absolute() || output.extension().is_none_or(|v| v != extension) {
             return Err(ClipError::UnsupportedPath);
         }
         let parent_path = output.parent().ok_or(ClipError::UnsupportedPath)?;
@@ -82,15 +89,17 @@ impl Destination {
                 return Err(error);
             }
         };
+        let staging_name = CString::new(format!("output.{extension}")).unwrap();
         let staging_path = parent_path
             .join(directory_name.to_str().unwrap())
-            .join("output.mp4");
+            .join(staging_name.to_str().unwrap());
         let result = Self {
             parent_path: parent_path.to_owned(),
             parent,
             directory,
             directory_name,
             final_name,
+            staging_name,
             staging_path,
             published: None,
             committed: false,
@@ -100,6 +109,21 @@ impl Destination {
     }
     pub(crate) fn path(&self) -> &Path {
         &self.staging_path
+    }
+    pub(crate) fn create_file(&self) -> Result<File, ClipError> {
+        self.check()?;
+        let fd = unsafe {
+            libc::openat(
+                self.directory.as_raw_fd(),
+                self.staging_name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(ClipError::FileUnavailable);
+        }
+        Ok(unsafe { File::from_raw_fd(fd) })
     }
     pub(crate) fn check(&self) -> Result<(), ClipError> {
         for (path, file) in [
@@ -118,7 +142,7 @@ impl Destination {
     }
     pub(crate) fn publish(&mut self, checked_file: &File) -> Result<(), ClipError> {
         self.check()?;
-        let staging = c"output.mp4";
+        let staging = &self.staging_name;
         let actual = open_at(&self.directory, staging, false)?;
         if identity(&actual)? != identity(checked_file)? {
             return Err(ClipError::OutputInvalid);
@@ -165,7 +189,7 @@ impl Drop for Destination {
             }
         }
         unsafe {
-            libc::unlinkat(self.directory.as_raw_fd(), c"output.mp4".as_ptr(), 0);
+            libc::unlinkat(self.directory.as_raw_fd(), self.staging_name.as_ptr(), 0);
         }
         if identity(&self.directory).is_ok_and(|held| {
             open_at(&self.parent, &self.directory_name, true)
