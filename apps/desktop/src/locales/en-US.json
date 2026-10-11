@@ -1025,5 +1025,6 @@
   "预览分辨率": "Preview resolution",
   "原始（100%）": "Original (100%)",
   "这个视频没有音轨，无法导出 MP3": "This video has no audio track to export as MP3",
-  "音频保存结果无效": "Invalid audio export result"
+  "音频保存结果无效": "Invalid audio export result",
+  "重点高亮": "Highlight region"
 }

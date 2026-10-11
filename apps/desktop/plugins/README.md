@@ -48,7 +48,7 @@
 
 `selection.workflow` 必须包含 `id`、`title`、`prompt`、`accepts: ["image"]`。用户在当前选区执行后，宿主把该选区（包括绘制）作为这一轮图片，使用当前连接继续当前会话；原草稿和未发送引用保留。提示词作为实际用户消息持久保存。该轮不向模型授予记忆或 MCP 工具。不会在安装、打开设置、选择会话时自行发送图片。
 
-`selection.drawing-tools` 包含 `id`、`title` 和 `tools`，允许 `pen`（画笔）、`line`（直线）、`arrow`（箭头）、`rect`（矩形）、`ellipse`（椭圆）、`text`（文字）、`highlighter`（荧光笔）、`number`（序号）、`mosaic`（马赛克），每个工具集包含 1 至 9 个不重复的工具。旧版仅声明五种工具的外部插件仍兼容，不会自动获得未声明的工具。参考[绘图工具集示例](examples/drawing-tools/mewu-plugin.json)。宿主提供持久图层、撤销/重做和原图像素坐标。停用、卸载或更新会使旧绘制操作失效，既有图层仍能显示、复制和导出。
+`selection.drawing-tools` 包含 `id`、`title` 和 `tools`，允许 `pen`（画笔）、`line`（直线）、`arrow`（箭头）、`rect`（矩形）、`ellipse`（椭圆）、`text`（文字）、`highlighter`（荧光笔）、`mark`（重点高亮）、`number`（序号）、`mosaic`（马赛克），每个工具集包含 1 至 10 个不重复的工具。旧版仅声明五种工具的外部插件仍兼容，不会自动获得未声明的工具。参考[绘图工具集示例](examples/drawing-tools/mewu-plugin.json)。宿主提供持久图层、撤销/重做和原图像素坐标。停用、卸载或更新会使旧绘制操作失效，既有图层仍能显示、复制和导出。
 
 `selection.ocr` 包含 `id`、`title` 和 `engine: "windows"`。用户明确执行后，由宿主合成当前选区（包括标注），调用 Windows 本机 OCR，不使用模型连接。它调用系统已安装的识别语言；不会下载语言包或发送图片到云端。目前不能通过此字段指定可执行文件、自定义引擎或远程服务。识别结果随会话保存，修改图层或选区几何后失效；停用、卸载和更新取消未完成任务，但保留已保存的文字。词框坐标为裁剪图像素，按 `textAngle` 绕图像中心顺时针旋转以映射到原图。
 

@@ -5,8 +5,8 @@
 //! https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html
 //! https://www.w3.org/TR/compositing-1/#simplealphacompositing
 #[cfg(test)]
-use image::Rgba;
-use image::{DynamicImage, RgbaImage};
+use image::DynamicImage;
+use image::{GenericImageView, Rgba, RgbaImage};
 
 const MAX_PIXELS: u64 = 32 * 1024 * 1024;
 const RADIUS: usize = 6;
@@ -41,8 +41,8 @@ impl Foreground {
     }
 }
 
-pub fn foreground(
-    source: &DynamicImage,
+pub fn foreground<I: GenericImageView<Pixel = Rgba<u8>> + 'static>(
+    source: &I,
     x: u32,
     y: u32,
     width: u32,
@@ -69,9 +69,8 @@ pub fn foreground(
             let sy = (y + top).saturating_sub(halo);
             let right = (x + left + w).saturating_add(halo).min(source.width());
             let bottom = (y + top + h).saturating_add(halo).min(source.height());
-            let input = source
-                .crop_imm(sx, sy, right - sx, bottom - sy)
-                .into_rgba8();
+            let input =
+                image::imageops::crop_imm(source, sx, sy, right - sx, bottom - sy).to_image();
             let tile = separate(&input);
             for ty in 0..h {
                 for tx in 0..w {

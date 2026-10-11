@@ -1047,6 +1047,26 @@ impl Store {
             .ok_or(CoreError::DrawingConflict)
     }
 
+    /// Exact clean raster document for read-only highlight separation. Ordinary
+    /// ink revisions cannot invalidate unchanged pixels. Clone no history,
+    /// messages, translation or full Scene/Snapshot; caller must recheck after IO.
+    pub fn highlight_region_for_preview(&self, scene_id: &str, region_id: &str,
+        background_id: &str, source_id: &str) -> Result<(Asset, Region)> {
+        let background = self.background_for_preview(scene_id, background_id)?;
+        let region = scene(&self.state, scene_id)?.regions.iter()
+            .find(|region| region.id == region_id).ok_or(CoreError::DrawingConflict)?;
+        if region.image_override.as_ref().unwrap_or(&background).id != source_id {
+            return Err(CoreError::DrawingConflict);
+        }
+        Ok((background, Region {
+            id: region.id.clone(), x: region.x, y: region.y, width: region.width, height: region.height,
+            image_override: region.image_override.clone(),
+            drawings: region.drawings.iter().filter(|drawing| drawing.kind == DrawingKind::Mosaic
+                || drawing.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit())).cloned().collect(),
+            ..Default::default()
+        }))
+    }
+
     /// The capture host owns file registration. Replacing a region keeps its
     /// identity, composer references and runs; it cannot replace a replacement
     /// again or masquerade as a reversible drawing edit.

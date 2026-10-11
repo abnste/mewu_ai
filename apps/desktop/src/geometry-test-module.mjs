@@ -2,6 +2,12 @@
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule } from 'node:vm';
+export async function loadHighlightSource(context) {
+  const source = stripTypeScriptTypes(await readFile(new URL('./highlight-source.ts', import.meta.url), 'utf8'), { mode: 'transform' });
+  const module = new SourceTextModule(source, context ? { context } : undefined);
+  await module.link(() => { throw Error('Unexpected highlight source import'); });
+  await module.evaluate(); return module;
+}
 export async function loadProviderPresets(context) {
   const source = stripTypeScriptTypes(await readFile(new URL('./provider-presets.ts', import.meta.url), 'utf8'), { mode: 'transform' });
   const module = new SourceTextModule(source, context ? { context } : undefined);

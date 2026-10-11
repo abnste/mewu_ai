@@ -6,6 +6,8 @@ import { normalizeConnectionPath, validateConnectionProfile } from './connection
 import type { ExitPreparationCanceled, ExitPreparationRequest, ExitPreparationResult } from './exit-preparation';
 import { browserMosaicPreview, MosaicPreviewCache, type MosaicPreview } from './mosaic-preview';
 import type { HighlightPreview } from './highlight-preview';
+import type { Region } from './contracts';
+import { highlightCrop, highlightSourceIdentity, highlightTarget } from './highlight-source';
 import { emptyGeometryHistory, PreviewGeometryHistory } from './region-geometry-history';
 import { IMPORT_ACCEPT, prepareImportFiles } from './asset-import';
 import type { RecordingAudioMode, RecordingAudioSelection, RecordingGrant } from './recording-audio';
@@ -131,15 +133,19 @@ export async function exportRegion(sceneId: string, regionId: string, clipboard:
 const mosaicPreviews = new MosaicPreviewCache();
 const highlightPreviews = new MosaicPreviewCache<HighlightPreview>(4, 1, 24 * 1024 * 1024);
 export interface MosaicSource { regionId: string; source: Asset; drawingRevision: number }
-export function getHighlightPreview(sceneId: string, background: Asset, override?: MosaicSource): Promise<HighlightPreview> {
-  const source = override?.source ?? background;
-  return highlightPreviews.get(JSON.stringify([background.id, source.id]), 0, async () => {
-    const value = native ? await invoke<HighlightPreview>('get_highlight_preview', { sceneId, backgroundId: background.id, ...(override ? { regionId: override.regionId, sourceId: override.source.id, drawingRevision: override.drawingRevision } : {}) }) : await (await import('./highlight-preview')).browserHighlightPreview(source.id, assetUrl(source));
-    if (value.backgroundId !== source.id || value.width !== source.width || value.height !== source.height || !value.dataUrl.startsWith('data:image/png;base64,') || value.dataUrl.length > Math.ceil(16 * 1024 * 1024 * 4 / 3) + 64) throw Error('荧光笔预览已失效');
+export function getHighlightPreview(sceneId: string, background: Asset, region?: Region): Promise<HighlightPreview> {
+  const source = region?.imageOverride ?? background, target = highlightTarget(background, region), crop = highlightCrop(background, region);
+  const identity = highlightSourceIdentity(sceneId, background, region);
+  return highlightPreviews.get(identity, 0, async () => {
+    // Raster edits belong to the native immutable layout store, never arbitrary
+    // browser URLs or unverified replacements. Browser review fails explicitly.
+    if (!native && target?.rasterDrawings.length) throw Error('修补图层预览需要桌面应用');
+    const value = native ? await invoke<HighlightPreview>('get_highlight_preview', { sceneId, backgroundId: background.id, target: target ?? null }) : await (await import('./highlight-preview')).browserHighlightPreview(source.id, assetUrl(source), crop);
+    if (value.backgroundId !== source.id || ['x','y','width','height'].some(key => value[key as keyof typeof crop] !== crop[key as keyof typeof crop]) || !value.dataUrl.startsWith('data:image/png;base64,') || value.dataUrl.length > Math.ceil(16 * 1024 * 1024 * 4 / 3) + 64) throw Error('荧光笔预览已失效');
     const image = new Image(); image.src = value.dataUrl; await image.decode();
     if (image.naturalWidth !== value.width || image.naturalHeight !== value.height) throw Error('荧光笔预览尺寸不符');
     return value;
-  }, JSON.stringify([sceneId, override?.regionId ?? null, override?.drawingRevision ?? null]));
+  }, identity);
 }
 export function getMosaicPreview(sceneId: string, background: Asset, blockSize: number, override?: MosaicSource): Promise<MosaicPreview> {
   if (!Number.isInteger(blockSize) || blockSize < 6 || blockSize > 40) return Promise.reject(new Error('马赛克块大小无效'));
@@ -434,7 +440,7 @@ export async function previewDrawingCommand(command:DrawingCommand):Promise<Snap
     const at=drawings.findIndex(drawing=>drawing.id===id);
     if(command.type==='add_drawing'?at>=0:at<0)throw Error('绘制对象已变化');
     const after=command.type==='remove_drawing'?null:structuredClone(command.drawing);
-    if(after&&(!['pen','line','arrow','rect','ellipse','text','highlighter','number','mosaic'].includes(after.kind)||!after.points.length||after.points.length>4096||after.points.some(point=>![point.x,point.y].every(Number.isFinite))))throw Error('绘制内容无效');
+    if(after&&(!['pen','line','arrow','rect','ellipse','text','highlighter','mark','number','mosaic'].includes(after.kind)||!after.points.length||after.points.length>4096||after.points.some(point=>![point.x,point.y].every(Number.isFinite))))throw Error('绘制内容无效');
     const edit:DrawingEdit={index:at<0?drawings.length:at,before:at<0?null:structuredClone(drawings[at]),after};
     apply(edit,true);history.undo.push(edit);history.redo=[];
     if(history.undo.length>128)history.undo.shift();

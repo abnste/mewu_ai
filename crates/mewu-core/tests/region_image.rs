@@ -129,6 +129,83 @@ fn ocr(width: u32, height: u32) -> OcrDocument {
 }
 
 #[test]
+fn highlight_raster_read_preserves_authority_without_cloning_ink_history_or_revisions() {
+    let mut store = Store::open_in_memory().unwrap();
+    let target = setup(&mut store);
+    let read = |store: &Store| {
+        store
+            .highlight_region_for_preview(
+                &target.scene_id,
+                &target.region_id,
+                &target.background_id,
+                &target.background_id,
+            )
+            .unwrap()
+    };
+    let original = read(&store);
+    add_drawing(
+        &mut store,
+        &target,
+        drawing(DrawingPoint { x: 180., y: 230. }),
+    )
+    .unwrap();
+    assert_eq!(read(&store), original);
+    let updated = target_now(&store, &target);
+    let mut redaction = drawing(DrawingPoint { x: 180., y: 230. });
+    redaction.kind = DrawingKind::Mosaic;
+    redaction.stroke_width = 6.;
+    redaction.points.push(DrawingPoint { x: 220., y: 260. });
+    add_drawing(&mut store, &updated, redaction.clone()).unwrap();
+    let protected = read(&store);
+    assert_ne!(protected, original);
+    assert_eq!(protected.1.drawings, vec![redaction]);
+    assert!(protected.1.drawing_history.is_empty());
+    assert_eq!(protected.1.drawing_revision, 0);
+    assert!(protected.1.ocr.is_none() && protected.1.translation.is_none());
+    for (s, r, b, source) in [
+        (
+            "missing",
+            target.region_id.as_str(),
+            target.background_id.as_str(),
+            target.background_id.as_str(),
+        ),
+        (
+            target.scene_id.as_str(),
+            "missing",
+            target.background_id.as_str(),
+            target.background_id.as_str(),
+        ),
+        (
+            target.scene_id.as_str(),
+            target.region_id.as_str(),
+            "missing",
+            target.background_id.as_str(),
+        ),
+        (
+            target.scene_id.as_str(),
+            target.region_id.as_str(),
+            target.background_id.as_str(),
+            "missing",
+        ),
+    ] {
+        assert!(store.highlight_region_for_preview(s, r, b, source).is_err());
+    }
+    store
+        .apply(SceneCommand::CloseScene {
+            scene_id: target.scene_id.clone(),
+        })
+        .unwrap();
+    assert!(store
+        .highlight_region_for_preview(
+            &target.scene_id,
+            &target.region_id,
+            &target.background_id,
+            &target.background_id
+        )
+        .is_err());
+}
+
+#[test]
 fn replacement_fits_without_distortion_preserves_refs_draft_background_run_and_restart() {
     let db = TestDb::new();
     let mut store = Store::open(&db.0).unwrap();

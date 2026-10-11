@@ -297,3 +297,92 @@ fn ordinary_vectors_never_load_a_layout_and_keep_existing_source_crop_pixels() {
     assert_eq!(output.get_pixel(10, 14), Rgba([0, 0, 255, 255]));
     assert_eq!(output.get_pixel(10, 6), Rgba([20, 40, 100, 255]));
 }
+
+#[test]
+fn protected_highlights_use_repaired_and_lifted_pixels_instead_of_original_text_or_editable_ink() {
+    let original = DynamicImage::ImageRgba8(RgbaImage::from_pixel(180, 120, Rgba([0, 0, 0, 255])));
+    let pixels = RgbaImage::from_fn(100, 60, |x, y| {
+        Rgba(if (25..28).contains(&x) && (10..50).contains(&y) {
+            [0, 0, 0, 255]
+        } else {
+            [255, 255, 255, 255]
+        })
+    });
+    let layout = layout(pixels);
+    for kind in [RichKind::Repair, RichKind::Extracted] {
+        let mut repair = rich(&layout, [(30., 20.), (130., 80.)]);
+        repair.rich.as_mut().unwrap().kind = kind;
+        repair.origin = None;
+        let marker = Drawing {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: DrawingKind::Mark,
+            color: "#ffff00".into(),
+            stroke_width: 1.,
+            points: vec![
+                DrawingPoint { x: 35., y: 25. },
+                DrawingPoint { x: 125., y: 75. },
+            ],
+            text: None,
+            font_size: None,
+            origin: None,
+            rich: None,
+        };
+        let area = region(vec![repair.clone(), marker.clone()], 20., 10., 140., 90.);
+        let mut calls = 0;
+        let once = crop_region_with_layouts(&original, &area, None, |reference| {
+            calls += 1;
+            assert_eq!(reference, repair.rich.as_ref().unwrap());
+            decode(&layout)
+        })
+        .unwrap();
+        assert_eq!(calls, 1, "one decoded raster per un-translated export");
+        assert_eq!(
+            once.get_pixel(36, 40),
+            Rgba([0, 0, 0, 255]),
+            "lifted text is protected"
+        );
+        assert_eq!(
+            once.get_pixel(80, 40),
+            Rgba([255, 255, 171, 255]),
+            "repaired white background remains tintable even over black original"
+        );
+        let twice = region(
+            vec![repair.clone(), marker.clone(), marker],
+            20.,
+            10.,
+            140.,
+            90.,
+        );
+        let twice = crop_region_with_layouts(&original, &twice, None, |_| decode(&layout)).unwrap();
+        assert_eq!(twice.get_pixel(36, 40), Rgba([0, 0, 0, 255]));
+        assert!((113..=116).contains(&twice.get_pixel(80, 40)[2]));
+        let underlay = RgbaImage::from_pixel(140, 90, Rgba([40, 80, 160, 255]));
+        calls = 0;
+        let translated = crop_region_with_layouts(&original, &area, Some(&underlay), |_| {
+            calls += 1;
+            decode(&layout)
+        })
+        .unwrap();
+        assert_eq!(
+            calls, 2,
+            "translation excludes itself from separation, reuses crop storage"
+        );
+        assert_eq!(translated.get_pixel(36, 40), once.get_pixel(36, 40));
+        assert_eq!(translated.get_pixel(80, 40), once.get_pixel(80, 40));
+        assert_eq!(translated.get_pixel(0, 0), Rgba([40, 80, 160, 255]));
+        let mut ink = line("#ff0000", 50.);
+        ink.points = vec![
+            DrawingPoint { x: 65., y: 50. },
+            DrawingPoint { x: 120., y: 50. },
+        ];
+        let mut with_ink = area.clone();
+        with_ink.drawings.insert(1, ink);
+        let result =
+            crop_region_with_layouts(&original, &with_ink, None, |_| decode(&layout)).unwrap();
+        assert!(
+            result.get_pixel(80, 40)[1] > 0,
+            "earlier editable ink is not misclassified as immutable text"
+        );
+    }
+    assert_eq!(original.get_pixel(100, 50), Rgba([0, 0, 0, 255]));
+}

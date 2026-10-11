@@ -485,6 +485,7 @@ pub fn apply_plugin_drawing(
                 K::Ellipse => T::Ellipse,
                 K::Text => T::Text,
                 K::Highlighter => T::Highlighter,
+                K::Mark => T::Mark,
                 K::Number => T::Number,
                 K::Mosaic => T::Mosaic,
                 K::Rich => return Err("富图层只能从文档入口编辑".into()),

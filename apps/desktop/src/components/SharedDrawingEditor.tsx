@@ -21,8 +21,9 @@ import InlineDrawingText from './InlineDrawingText';
 import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview} from './drawing-selection';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
-const labels: Record<ManualDrawingKind, string> = { pen: '画笔', line: '直线', arrow: '箭头', rect: '矩形', ellipse: '椭圆', text: '文字', highlighter: '荧光笔', number: '序号', mosaic: '马赛克' };
-const icons = { pen: Pencil, line: Minus, arrow: ArrowUpRight, rect: Square, ellipse: Circle, text: Type, highlighter: Highlighter, number: Hash, mosaic: Grid2X2 };
+const labels: Record<ManualDrawingKind, string> = { pen: '画笔', line: '直线', arrow: '箭头', rect: '矩形', ellipse: '椭圆', text: '文字', highlighter: '荧光笔', mark: '重点高亮', number: '序号', mosaic: '马赛克' };
+const MarkIcon = (props: { size: number }) => <svg width={props.size} height={props.size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" fill="currentColor" fill-opacity=".16" /><path d="M8 15l8-6m-4 0h4v4" /></svg>;
+const icons = { pen: Pencil, line: Minus, arrow: ArrowUpRight, rect: Square, ellipse: Circle, text: Type, highlighter: Highlighter, mark: MarkIcon, number: Hash, mosaic: Grid2X2 };
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 export default function SharedDrawingEditor(props: Props) {
   let editorShell!:HTMLDivElement;
@@ -150,7 +151,7 @@ export default function SharedDrawingEditor(props: Props) {
     setDraft(undefined); if (next !== 'select') setSelected('');
     if(strokeKinds.includes(next as DrawingKind))setWideBrush(next==='highlighter');
     if (next === 'mosaic' && mosaicFailed()) setMosaicRetry(value => value + 1); setTool(next);
-    if (next === 'highlighter' && highlightFailed()) setHighlightRetry(value => value + 1);
+    if (['highlighter', 'mark'].includes(next) && highlightFailed()) setHighlightRetry(value => value + 1);
   }
   function openText(value: Drawing, existing: boolean) {
     if (disabled() || edit()) return;
@@ -388,7 +389,7 @@ export default function SharedDrawingEditor(props: Props) {
     const hitId = event.target instanceof Element ? event.target.closest('[data-drawing-id]')?.getAttribute('data-drawing-id') : undefined;
     const hit = forcedImage ?? (hitId && editableIds().has(hitId) ? drawings().find(value => value.id === hitId) : undefined);
     if (kind === 'mosaic' && !mosaicReady()) return;
-    if (kind === 'highlighter' && props.port.highlight && !highlightReady()) return;
+    if (['highlighter', 'mark'].includes(kind) && props.port.highlight && !highlightReady()) return;
     const stored=props.port.stored?.().find(value=>value.id===hitId);
     if(kind==='select'&&stored){setSelected(stored.id);void ensureSelection(stored.id);beginStored(event,stored.id);return;}
     if(kind==='text'&&stored?.kind==='text'){setSelected(stored.id);void ensureSelection(stored.id).then(value=>{if(value)openText(value,true);});return;}
@@ -417,7 +418,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (kind === 'select') { setSelectedIds(original?[original.id]:[]);setSelected(original?.id ?? ''); if (!original) return; }
     else setSelected('');
     if(objectMove)trash.begin();
-    let value: Drawing = original ? { ...original, points: original.points.map(value => ({ ...value })) } : { id: crypto.randomUUID(), kind: kind as DrawingKind, color: color(), strokeWidth: kind === 'mosaic' ? blockSize() : kind === 'highlighter' ? highlightWidth() : width(), points: kind === 'pen' || kind === 'highlighter' ? [start] : [start, start] };
+    let value: Drawing = original ? { ...original, points: original.points.map(value => ({ ...value })) } : { id: crypto.randomUUID(), kind: kind as DrawingKind, color: color(), strokeWidth: kind === 'mosaic' ? blockSize() : kind === 'highlighter' ? highlightWidth() : kind === 'mark' ? 1 : width(), points: kind === 'pen' || kind === 'highlighter' ? [start] : [start, start] };
     // Keep sampled ink separate from the straight preview so releasing Shift restores it.
     const strokePoints = !original && (kind === 'pen' || kind === 'highlighter') ? value.points : undefined;
     let changed = false, ended = false, dragStarted = !original;
@@ -483,7 +484,7 @@ export default function SharedDrawingEditor(props: Props) {
       } else latest = { end: point(next, !original||!blackboardImage(original), initialBox, initialFrame), shift: next.shiftKey };
       if (next.type === 'pointerup') publish(); else previewFrame.request();
     };
-    refreshConstraint = shift => { if (!original && ['line', 'arrow', 'rect', 'ellipse', 'highlighter'].includes(kind)) { latest = { end: latest?.end ?? lastEnd, shift }; previewFrame.request(); } };
+    refreshConstraint = shift => { if (!original && ['line', 'arrow', 'rect', 'ellipse', 'highlighter', 'mark'].includes(kind)) { latest = { end: latest?.end ?? lastEnd, shift }; previewFrame.request(); } };
     const cleanup = () => {
       previewFrame.cancel(); latest = undefined;
       window.removeEventListener('pointermove', moved); window.removeEventListener('pointerup', released);
@@ -497,7 +498,7 @@ export default function SharedDrawingEditor(props: Props) {
       if(removeObject){setDraft(undefined);void commit({...target(revision),type:'remove_drawing',drawingId:original!.id}).finally(()=>{if(!disposed)setSelected('');});return;}
       if (!save || !valid || (original && !changed)) { setDraft(undefined); return; }
       const [a, b] = value.points;
-      if (!original && (((kind === 'arrow' || kind === 'line') && Math.hypot(b.x - a.x, b.y - a.y) < 1) || (['rect', 'ellipse', 'mosaic'].includes(kind) && (Math.abs(b.x - a.x) < 1 || Math.abs(b.y - a.y) < 1)))) { setDraft(undefined); return; }
+      if (!original && (((kind === 'arrow' || kind === 'line') && Math.hypot(b.x - a.x, b.y - a.y) < 1) || (['rect', 'ellipse', 'mosaic', 'mark'].includes(kind) && (Math.abs(b.x - a.x) < 1 || Math.abs(b.y - a.y) < 1)))) { setDraft(undefined); return; }
       // A receipt owns an immutable snapshot; late input cannot mutate its point array.
       value = { ...value, points: value.points.map(point => ({ ...point })) };
       void commit({ ...target(revision), type: original ? 'update_drawing' : 'add_drawing', drawing: value }).finally(()=>{if(forcedImage&&!disposed)setSelected('');});
@@ -627,7 +628,7 @@ export default function SharedDrawingEditor(props: Props) {
   createEffect(() => { if (svg) { const observer = new ResizeObserver(() => { const box = svg.getBoundingClientRect(); const before = surfaceSize(); if (before.width !== box.width || before.height !== box.height) { cancelGesture?.(); setSurfaceSize({ width: box.width, height: box.height }); } }); observer.observe(svg); onCleanup(() => observer.disconnect()); } });
   createEffect(() => { if (toolbar) { const observer = new ResizeObserver(() => { setToolbarSize({ width: toolbar.offsetWidth, height: toolbar.offsetHeight }); setToolsWidth(toolsRow.offsetWidth); }); observer.observe(toolbar); observer.observe(toolsRow); onCleanup(() => observer.disconnect()); } });
   const mosaicIdentity = createMemo(() => tool() === 'mosaic' && props.port.mosaic ? JSON.stringify([props.port.sourceIdentity(), blockSize(), mosaicRetry()]) : '');
-  const highlightIdentity = createMemo(() => tool() === 'highlighter' && props.port.highlight ? JSON.stringify([props.port.sourceIdentity(), highlightRetry()]) : '');
+  const highlightIdentity = createMemo(() => ['highlighter', 'mark'].includes(tool()) && props.port.highlight ? JSON.stringify([props.port.highlight.identity?.() ?? props.port.sourceIdentity(), highlightRetry()]) : '');
   createEffect(on(highlightIdentity, key => {
     setHighlightReady(false); setHighlightFailed(false); let alive = true;
     if (key && props.port.highlight) void props.port.highlight.prepare().then(() => { if (alive) setHighlightReady(true); }).catch(error => { if (alive) { setHighlightFailed(true); report(error); } });
@@ -694,7 +695,7 @@ export default function SharedDrawingEditor(props: Props) {
       <Show when={tool()==='heal'}><DrawingWidthSlider label={t('画笔大小')} value={healWidth()} min={1} max={64} disabled={disabled()} onChange={value=>{if(!disabled())setHealWidth(value);}}/></Show>
       <Show when={strokeKinds.includes(propertyKind() as DrawingKind)||tool()==='eraser'}><DrawingWidthSlider label={t('线宽')} value={propertyWidth()} min={1} max={64} disabled={disabled()} onChange={(value,submit)=>changeStyle({strokeWidth:value},submit)}/></Show>
       <Show when={tool() === 'mosaic' && !mosaicReady() && !mosaicFailed()}><LoaderCircle size={15} class="spin" /></Show>
-      <Show when={tool() === 'highlighter' && props.port.highlight && !highlightReady() && !highlightFailed()}><LoaderCircle size={15} class="spin" /></Show>
+      <Show when={['highlighter', 'mark'].includes(tool()) && props.port.highlight && !highlightReady() && !highlightFailed()}><LoaderCircle size={15} class="spin" /></Show>
       <Show when={tool() === 'number'}><input class="drawing-number" type="number" aria-label={t("下个序号")} title={t("下个序号")} min="1" max="9999" step="1" value={nextNumber()} disabled={disabled()} onInput={event => editNumber(event.currentTarget.value)} /></Show>
       <Show when={propertyKind() === 'number'}><select aria-label={t("序号大小")} title={t("序号大小")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([22, 28, 36, 48, 64], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>
       <Show when={propertyKind() === 'text'}><select aria-label={t("字号")} title={t("字号")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([16, 20, 28, 36, 48], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>

@@ -5,7 +5,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { loadProviderPresets, loadAssetImport, loadGeometryHistory } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadAssetImport, loadGeometryHistory, loadHighlightSource } from './geometry-test-module.mjs';
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
 const checks = [];
@@ -92,7 +92,7 @@ const assets = await loadAssetImport(context), history = await loadGeometryHisto
 const coreMock = new SyntheticModule(['isTauri', 'invoke'], function () { this.setExport('isTauri', () => false); this.setExport('invoke', () => { throw Error('Unexpected native call'); }); }, { context });
 const eventMock = new SyntheticModule(['listen'], function () { this.setExport('listen', async () => () => {}); }, { context });
 const actualBridge = new SourceTextModule(await source('./bridge.ts'), { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
-await actualBridge.link(async name => name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? assets : name === './region-geometry-history' ? history : name === './connection-policy' ? connection : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? coreMock : eventMock);
+await actualBridge.link(async name => name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? assets : name === './region-geometry-history' ? history : name === './connection-policy' ? connection : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? coreMock : eventMock);
 await actualBridge.evaluate();
 let realPreview = await actualBridge.namespace.getSnapshot();
 assert.equal(realPreview.agents[0].memoryProvider.bindingId, null); assert.equal(realPreview.agents[0].memoryProvider.revision, 0);

@@ -261,7 +261,7 @@ fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
     }});
     let shape = |kinds: Value, min: usize, max: usize| {
         json!({"type":"object","additionalProperties":false,"required":["kind","color","strokeWidth","points"],"properties":{
-            "kind":{"type":"string","enum":kinds},"color":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"},
+            "kind":{"type":"string","enum":kinds,"description":"mark is a filled rounded rectangular background highlight with a thin border, protecting source text and detail; use opposite corners and strokeWidth=1. rect is an unfilled outline."},"color":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"},
             "strokeWidth":{"type":"number","minimum":0.5,"maximum":max_stroke,"description":"Encoded-image pixels, not normalized coordinates."},
             "points":{"type":"array","minItems":min,"maxItems":max,"items":point}
         }})
@@ -292,7 +292,7 @@ fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
         "tex":{"type":"string","minLength":1,"maxLength":2048},"color":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"},
         "fontSize":{"type":"number","minimum":8,"maximum":(128./scale).min(72.),"description":"Encoded-image pixels, not normalized coordinates. Complete rendered formula fits proportionally within bounds."}
     }});
-    let object = json!({"oneOf":[shape(json!(["pen","highlighter"]),1,128),shape(json!(["line","arrow","rect","ellipse"]),2,2),text,table,formula]});
+    let object = json!({"oneOf":[shape(json!(["pen","highlighter"]),1,128),shape(json!(["line","arrow","rect","ellipse","mark"]),2,2),text,table,formula]});
     let mut group = json!({"type":"object","additionalProperties":false,"required":["target","objects"],"properties":{
         "target":{"const":target.handle},
         "objects":{"type":"array","minItems":1,"maxItems":MAX_VISUAL_OBJECTS,"items":object}
@@ -405,7 +405,7 @@ fn parse_object(value: Value) -> Result<ModelObject, String> {
         "table" => &["points", "table"],
         "formula" => &["points", "tex", "color", "fontSize"],
         "text" => &["points", "text", "fontSize", "color"],
-        "pen" | "highlighter" | "line" | "arrow" | "rect" | "ellipse" => {
+        "pen" | "highlighter" | "line" | "arrow" | "rect" | "ellipse" | "mark" => {
             &["points", "color", "strokeWidth"]
         }
         _ => return Err("kind 不受支持".into()),
@@ -707,9 +707,11 @@ fn validate_vector(drawing: &Drawing) -> Result<(), String> {
     }
     if matches!(drawing.kind, DrawingKind::Line | DrawingKind::Arrow)
         && drawing.points[0] == drawing.points[1]
-        || matches!(drawing.kind, DrawingKind::Rect | DrawingKind::Ellipse)
-            && (drawing.points[0].x == drawing.points[1].x
-                || drawing.points[0].y == drawing.points[1].y)
+        || matches!(
+            drawing.kind,
+            DrawingKind::Rect | DrawingKind::Ellipse | DrawingKind::Mark
+        ) && (drawing.points[0].x == drawing.points[1].x
+            || drawing.points[0].y == drawing.points[1].y)
     {
         return Err("原位作答图元范围无效".into());
     }
@@ -984,6 +986,32 @@ mod tests {
     pub(super) fn args(input: &VerifiedVisualInput) -> Value {
         json!({"groups":[{"target":input.manifest().targets[0].handle,"objects":[{"kind":"text","color":"#ff0000","strokeWidth":1,"points":[{"x":10,"y":20}],"text":"4","fontSize":16}]}]})
     }
+    #[test]
+    fn model_mark_maps_only_two_corners_and_cannot_supply_runtime_or_source_identity() {
+        let input = input();
+        let mut args = args(&input);
+        args["groups"][0]["objects"][0] = json!({"kind":"mark","color":"#ffff00","strokeWidth":1,"points":[{"x":10,"y":20},{"x":80,"y":60}]});
+        let batch = parse_batch(&args.to_string(), &input).unwrap();
+        let mark = &batch.groups[0].drawings[0];
+        assert_eq!(mark.kind, DrawingKind::Mark);
+        assert_eq!(
+            mark.points,
+            vec![
+                DrawingPoint { x: 320., y: 340. },
+                DrawingPoint { x: 460., y: 420. }
+            ]
+        );
+        assert_eq!(mark.stroke_width, 2.);
+        for field in ["origin", "source", "path", "id", "dataUrl"] {
+            let mut bad = args.clone();
+            bad["groups"][0]["objects"][0][field] = json!("untrusted");
+            assert!(parse_batch(&bad.to_string(), &input).is_err());
+        }
+        let mut bad = args.clone();
+        bad["groups"][0]["objects"][0]["points"][1] = json!({"x":10,"y":60});
+        assert!(parse_batch(&bad.to_string(), &input).is_err());
+    }
+
     #[test]
     fn encoded_points_and_style_map_to_source_without_accepting_origins() {
         let input = input();

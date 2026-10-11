@@ -3,37 +3,39 @@ import { createEffect, createMemo, createSignal, createUniqueId, For, Match, on,
 import type { Asset, Drawing, Region } from '../contracts';
 import { getMosaicPreview, getHighlightPreview, type MosaicSource } from '../bridge';
 import type { MosaicPreview } from '../mosaic-preview';
-import { arrowHead, drawingBounds, drawingOrder } from './drawing-geometry';
+import { arrowHead, drawingBounds, drawingOrder, markPaths } from './drawing-geometry';
 import { penSegments } from './drawing-pointer';
 import RichDrawingShape from './RichDrawingShape';
 import type { RichDrawingContext } from '../drawing-layout-preview';
 import './drawing.css';
 import { numberForeground, highlightMaskTable } from '../drawing-colors';
 import type { HighlightPreview } from '../highlight-preview';
+import { highlightSourceIdentity } from '../highlight-source';
 
-interface MosaicContext { sceneId: string; background: Asset; override?: MosaicSource }
+interface MosaicContext { sceneId: string; background: Asset; override?: MosaicSource; region?: Region }
 function HighlighterShape(props: { drawing: Drawing; interactive?: boolean; context?: MosaicContext; onError?: (message: string) => void }) {
   const id = `highlight-${createUniqueId()}`, segment = penSegments();
   const [foreground, setForeground] = createSignal<HighlightPreview>();
-  const identity = createMemo(() => JSON.stringify([props.context?.sceneId, props.context?.background.id, props.context?.override?.source.id]));
+  const identity = createMemo(() => props.context ? highlightSourceIdentity(props.context.sceneId, props.context.background, props.context.region) : '');
   createEffect(on(identity, () => {
     setForeground(undefined); let alive = true; const context = props.context;
-    if (context) void getHighlightPreview(context.sceneId, context.background, context.override).then(value => { if (alive) setForeground(value); }).catch(error => { if (alive) props.onError?.(error instanceof Error ? error.message : '无法生成荧光笔预览'); });
+    if (context) void getHighlightPreview(context.sceneId, context.background, context.region).then(value => { if (alive) setForeground(value); }).catch(error => { if (alive) props.onError?.(error instanceof Error ? error.message : '无法生成荧光笔预览'); });
     onCleanup(() => { alive = false; });
   }));
   const paths = createMemo(() => segment(props.drawing.points));
   const bounds = () => drawingBounds(props.drawing);
-  const ink = () => <Show when={props.drawing.points.length > 1} fallback={<circle cx={props.drawing.points[0]?.x ?? 0} cy={props.drawing.points[0]?.y ?? 0} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show>;
-  return <Show when={props.context} fallback={<g opacity={.35}>{ink()}</g>}>
-    <Show when={foreground()}>{value => <g opacity={.35} stroke="none" pointer-events="none">
+  const mark = createMemo(() => props.drawing.kind === 'mark' ? markPaths(props.drawing) : undefined);
+  const ink = () => <Show when={mark()} fallback={<Show when={props.drawing.points.length > 1} fallback={<circle cx={props.drawing.points[0]?.x ?? 0} cy={props.drawing.points[0]?.y ?? 0} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show>}>{value => <g fill={props.drawing.color} stroke="none"><path d={value().border} fill-rule="evenodd" fill-opacity={190 / 255} /><path d={value().fill} fill-opacity={84 / 255} /></g>}</Show>;
+  return <Show when={props.context} fallback={<g opacity={mark() ? 1 : .35}>{ink()}</g>}>
+    <Show when={foreground()}>{value => <g opacity={mark() ? 1 : .35} stroke="none" pointer-events="none">
       <defs>
         <mask id={`${id}-ink`} maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" {...bounds()} style={{ 'mask-type': 'alpha' }}><g fill="none" stroke="white" stroke-width={props.drawing.strokeWidth} stroke-linecap="round" stroke-linejoin="round">{ink()}</g></mask>
         <filter id={`${id}-coverage`} filterUnits="userSpaceOnUse" {...bounds()} color-interpolation-filters="sRGB"><feComponentTransfer><feFuncA type="discrete" tableValues={highlightMaskTable} /></feComponentTransfer></filter>
-        <mask id={`${id}-mask`} maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" {...bounds()} style={{ 'mask-type': 'alpha' }}><image href={value().dataUrl} width={value().width} height={value().height} filter={`url(#${id}-coverage)`} /></mask>
+        <mask id={`${id}-mask`} maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" {...bounds()} style={{ 'mask-type': 'alpha' }}><image href={value().dataUrl} x={value().x} y={value().y} width={value().width} height={value().height} filter={`url(#${id}-coverage)`} /></mask>
       </defs>
-      <g mask={`url(#${id}-ink)`}><g mask={`url(#${id}-mask)`}><rect width={value().width} height={value().height} fill={props.drawing.color} /><image href={value().dataUrl} width={value().width} height={value().height} onError={() => { setForeground(undefined); props.onError?.('无法生成荧光笔预览'); }} /></g></g>
+      <g mask={`url(#${id}-ink)`}><g mask={`url(#${id}-mask)`}><rect x={value().x} y={value().y} width={value().width} height={value().height} fill={props.drawing.color} /><image href={value().dataUrl} x={value().x} y={value().y} width={value().width} height={value().height} onError={() => { setForeground(undefined); props.onError?.('无法生成荧光笔预览'); }} /></g></g>
     </g>}</Show>
-    <Show when={props.interactive}><g opacity={0} fill="none" stroke={props.drawing.color} pointer-events="stroke"><Show when={props.drawing.points.length > 1} fallback={<circle cx={props.drawing.points[0]?.x ?? 0} cy={props.drawing.points[0]?.y ?? 0} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" pointer-events="fill" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show></g></Show>
+    <Show when={props.interactive}><g opacity={0} fill="none" stroke={props.drawing.color} pointer-events="stroke"><Show when={mark()} fallback={<Show when={props.drawing.points.length > 1} fallback={<circle cx={props.drawing.points[0]?.x ?? 0} cy={props.drawing.points[0]?.y ?? 0} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" pointer-events="fill" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show>}>{value => <path d={value().outer} fill={props.drawing.color} stroke="none" pointer-events="fill" />}</Show></g></Show>
   </Show>;
 }
 function MosaicShape(props: { drawing: Drawing; context?: MosaicContext }) {
@@ -61,7 +63,7 @@ export function DrawingShape(props: { drawing: Drawing; interactive?: boolean; s
     <Switch>
       <Match when={props.drawing.kind === 'rich'}><RichDrawingShape drawing={props.drawing} interactive={props.interactive} context={props.richContext} onError={props.onError} /></Match>
       <Match when={props.drawing.kind === 'pen'}><g><Show when={props.drawing.points.length > 1} fallback={<circle cx={first().x} cy={first().y} r={props.drawing.strokeWidth / 2} fill={props.drawing.color} stroke="none" />}><For each={paths()}>{value => <path d={value.path} />}</For></Show></g></Match>
-      <Match when={props.drawing.kind === 'highlighter'}><HighlighterShape drawing={props.drawing} interactive={props.interactive} context={props.mosaicContext} onError={props.onError} /></Match>
+      <Match when={props.drawing.kind === 'highlighter' || props.drawing.kind === 'mark'}><HighlighterShape drawing={props.drawing} interactive={props.interactive} context={props.mosaicContext} onError={props.onError} /></Match>
       <Match when={props.drawing.kind === 'line'}><line x1={first().x} y1={first().y} x2={second().x} y2={second().y} /></Match>
       <Match when={props.drawing.kind === 'arrow'}><line x1={first().x} y1={first().y} x2={second().x} y2={second().y} /><polyline points={arrowHead(props.drawing.points)} fill="none" /></Match>
       <Match when={props.drawing.kind === 'rect'}><rect {...box()} /></Match>
@@ -76,5 +78,5 @@ export function DrawingShape(props: { drawing: Drawing; interactive?: boolean; s
 export default function DrawingLayer(props: { region: Region; sourceRegion?: Region; sceneId?: string; background?: Asset }) {
   const drawings = createMemo(() => new Map((props.region.drawings ?? []).map(value => [value.id, value])));
   const ids = createMemo(() => drawingOrder(props.region.drawings ?? []).map(value => value.id));
-  return <Show when={props.region.drawings?.length}><svg class="drawing-layer" viewBox={`${props.region.x} ${props.region.y} ${props.region.width} ${props.region.height}`} preserveAspectRatio="none" aria-hidden="true"><For each={ids()}>{id => <Show when={drawings().get(id)}>{drawing => <DrawingShape drawing={drawing()} richContext={props.sceneId && props.background ? { sceneId: props.sceneId, background: props.background, region: props.sourceRegion ?? props.region } : undefined} mosaicContext={props.sceneId && props.background ? { sceneId: props.sceneId, background: props.background, override: props.region.imageOverride ? { regionId: props.region.id, source: props.region.imageOverride, drawingRevision: props.region.drawingRevision ?? 0 } : undefined } : undefined} />}</Show>}</For></svg></Show>;
+  return <Show when={props.region.drawings?.length}><svg class="drawing-layer" viewBox={`${props.region.x} ${props.region.y} ${props.region.width} ${props.region.height}`} preserveAspectRatio="none" aria-hidden="true"><For each={ids()}>{id => <Show when={drawings().get(id)}>{drawing => <DrawingShape drawing={drawing()} richContext={props.sceneId && props.background ? { sceneId: props.sceneId, background: props.background, region: props.sourceRegion ?? props.region } : undefined} mosaicContext={props.sceneId && props.background ? { sceneId: props.sceneId, background: props.background, region: props.sourceRegion ?? props.region, override: props.region.imageOverride ? { regionId: props.region.id, source: props.region.imageOverride, drawingRevision: props.region.drawingRevision ?? 0 } : undefined } : undefined} />}</Show>}</For></svg></Show>;
 }

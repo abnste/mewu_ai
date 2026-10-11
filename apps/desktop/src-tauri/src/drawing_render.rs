@@ -80,13 +80,16 @@ where
     }
     validate_drawings(&region.drawings, image.width(), image.height())?;
     let mut bitmap = image.crop_imm(x, y, width, height).into_rgba8();
-    let foreground = if region
+    let protected = region
         .drawings
         .iter()
-        .any(|d| d.kind == DrawingKind::Highlighter)
-    {
+        .any(|d| matches!(d.kind, DrawingKind::Highlighter | DrawingKind::Mark));
+    // Derive protection from committed raster content, excluding translated
+    // text and editable ink. Borrow the crop: no second full RGBA allocation.
+    let foreground = if protected {
+        paint_raster_base(image, region, &mut bitmap, x, y, &mut load)?;
         Some(crate::highlight_foreground::foreground(
-            image, x, y, width, height,
+            &bitmap, 0, 0, width, height,
         )?)
     } else {
         None
@@ -95,32 +98,20 @@ where
         if layer.dimensions() != (width, height) {
             return Err("译文图层尺寸与选区不符".into());
         }
+        if protected {
+            use image::GenericImageView;
+            // Only translated protected exports need this second raster pass.
+            // Reuse crop storage rather than clone a potentially huge capture.
+            for (px, py, target) in bitmap.enumerate_pixels_mut() {
+                *target = image.get_pixel(x + px, y + py);
+            }
+        }
         for (target, source) in bitmap.pixels_mut().zip(layer.pixels()) {
             blend_rgba(target, source);
         }
     }
-    mosaic::paint_mosaics(image, &region.drawings, &mut bitmap, x, y)?;
-    // Screenshot repairs and lifted pixels are raster content, beneath editable
-    // ink/text. Their exact immutable bytes also drive preview, exports and AI.
-    for drawing in region
-        .drawings
-        .iter()
-        .filter(|d| d.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit()))
-    {
-        let reference = drawing.rich.as_ref().ok_or("修补图层引用缺失")?;
-        let raster = load(reference)?;
-        if raster.dimensions() != (reference.width, reference.height) {
-            return Err("修补图层尺寸已变更".into());
-        }
-        let p = &drawing.points;
-        crate::raster_compositor::paint_raster(
-            &mut bitmap,
-            &raster,
-            p[0].x - f64::from(x),
-            p[0].y - f64::from(y),
-            p[1].x - p[0].x,
-            p[1].y - p[0].y,
-        )?;
+    if !protected || underlay.is_some() {
+        paint_raster_base(image, region, &mut bitmap, x, y, &mut load)?;
     }
     let drawings: Vec<_> = region
         .drawings
@@ -177,6 +168,41 @@ where
     Ok(DynamicImage::ImageRgba8(bitmap))
 }
 
+fn paint_raster_base<F>(
+    image: &DynamicImage,
+    region: &Region,
+    bitmap: &mut image::RgbaImage,
+    x: u32,
+    y: u32,
+    load: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(&mewu_core::RichDrawingRef) -> Result<image::RgbaImage, String>,
+{
+    mosaic::paint_mosaics(image, &region.drawings, bitmap, x, y)?;
+    for drawing in region
+        .drawings
+        .iter()
+        .filter(|d| d.rich.as_ref().is_some_and(|r| r.kind.is_raster_edit()))
+    {
+        let reference = drawing.rich.as_ref().ok_or("修补图层引用缺失")?;
+        let raster = load(reference)?;
+        if raster.dimensions() != (reference.width, reference.height) {
+            return Err("修补图层尺寸已变更".into());
+        }
+        let p = &drawing.points;
+        crate::raster_compositor::paint_raster(
+            bitmap,
+            &raster,
+            p[0].x - f64::from(x),
+            p[0].y - f64::from(y),
+            p[1].x - p[0].x,
+            p[1].y - p[0].y,
+        )?;
+    }
+    Ok(())
+}
+
 fn paint_vectors(
     drawings: &[Drawing],
     source_width: u32,
@@ -193,7 +219,7 @@ fn paint_vectors(
     };
     let mut start = 0;
     for (index, drawing) in drawings.iter().enumerate() {
-        if drawing.kind != DrawingKind::Highlighter {
+        if !matches!(drawing.kind, DrawingKind::Highlighter | DrawingKind::Mark) {
             continue;
         }
         paint_plain_vectors(
@@ -447,7 +473,11 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
             DrawingKind::Line | DrawingKind::Arrow if drawing.points[0] == drawing.points[1] => {
                 return Err("直线或箭头不能只有一个位置".into());
             }
-            DrawingKind::Rect | DrawingKind::Ellipse | DrawingKind::Mosaic | DrawingKind::Rich
+            DrawingKind::Rect
+            | DrawingKind::Ellipse
+            | DrawingKind::Mosaic
+            | DrawingKind::Rich
+            | DrawingKind::Mark
                 if drawing.points[0].x == drawing.points[1].x
                     || drawing.points[0].y == drawing.points[1].y =>
             {
@@ -515,6 +545,10 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
                 let end = drawing.points[1];
                 let _ = write!(svg, "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{color}\" stroke-width=\"{stroke}\" stroke-linecap=\"round\"/>", first.x, first.y, end.x, end.y);
             }
+            DrawingKind::Mark => {
+                let (border, fill) = mark_paths(first, drawing.points[1], stroke);
+                let _ = write!(svg, "<path d=\"{border}\" fill=\"{color}\" fill-rule=\"evenodd\" fill-opacity=\"{}\"/><path d=\"{fill}\" fill=\"{color}\" fill-opacity=\"{}\"/>", 190. / 255., 84. / 255.);
+            }
             DrawingKind::Arrow => {
                 let end = drawing.points[1];
                 let (left, right) = arrow_wings(first, end);
@@ -563,6 +597,26 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
     }
     svg.push_str("</svg>");
     svg
+}
+
+fn mark_paths(a: DrawingPoint, b: DrawingPoint, border: f64) -> (String, String) {
+    fn path(x: f64, y: f64, w: f64, h: f64, r: f64) -> String {
+        if w <= 0. || h <= 0. {
+            return String::new();
+        }
+        format!("M{} {y}h{}a{r} {r} 0 0 1 {r} {r}v{}a{r} {r} 0 0 1 {} {r}h{}a{r} {r} 0 0 1 {} {}v{}a{r} {r} 0 0 1 {r} {}z", x+r, w-2.*r, h-2.*r, -r, 2.*r-w, -r, -r, 2.*r-h, -r)
+    }
+    let (x, y, w, h) = (
+        a.x.min(b.x),
+        a.y.min(b.y),
+        (a.x - b.x).abs(),
+        (a.y - b.y).abs(),
+    );
+    let r = 3_f64.min(w / 2.).min(h / 2.);
+    let t = border.min(w / 2.).min(h / 2.);
+    let outer = path(x, y, w, h, r);
+    let fill = path(x + t, y + t, w - 2. * t, h - 2. * t, (r - t).max(0.));
+    (outer + &fill, fill)
 }
 
 fn number_foreground(color: &str) -> &'static str {
@@ -733,6 +787,58 @@ mod tests {
             drawings,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn rectangle_mark_preserves_frozen_text_and_uses_disjoint_original_fill_border_alpha() {
+        let mut pixels = RgbaImage::from_pixel(200, 100, Rgba([255, 255, 255, 255]));
+        for y in 35..58 {
+            pixels.put_pixel(60, y, Rgba([0, 0, 0, 255]));
+            pixels.put_pixel(61, y, Rgba([128, 128, 128, 255]));
+        }
+        let base = DynamicImage::ImageRgba8(pixels);
+        let mut mark = drawing(DrawingKind::Mark, &[(100., 70.), (30., 20.)]);
+        mark.color = "#ffff00".into();
+        mark.stroke_width = 1.;
+        let once = crop_region(&base, &region(vec![mark.clone()])).unwrap();
+        let twice = crop_region(&base, &region(vec![mark.clone(), mark.clone()])).unwrap();
+        assert_eq!(once.get_pixel(50, 30), Rgba([255, 255, 171, 255]));
+        assert_eq!(once.get_pixel(50, 10), Rgba([255, 255, 65, 255]));
+        assert_eq!(once.get_pixel(40, 30), Rgba([0, 0, 0, 255]));
+        assert_eq!(twice.get_pixel(40, 30), Rgba([0, 0, 0, 255]));
+        assert!((83..=87).contains(&once.get_pixel(41, 30)[2]));
+        assert!((112..=116).contains(&twice.get_pixel(50, 30)[2]));
+        assert_eq!(once.get_pixel(0, 0), Rgba([255, 255, 255, 255]));
+        assert_eq!(base.get_pixel(70, 40), Rgba([255, 255, 255, 255]));
+        assert_eq!(base.get_pixel(61, 40), Rgba([128, 128, 128, 255]));
+        mark.points[1].x = mark.points[0].x;
+        assert!(crop_region(&base, &region(vec![mark])).is_err());
+    }
+
+    #[test]
+    fn highlight_protection_uses_visible_mosaic_pixels_so_redacted_old_text_does_not_leave_holes() {
+        let mut pixels = RgbaImage::from_pixel(180, 120, Rgba([255, 255, 255, 255]));
+        for y in 40..60 {
+            pixels.put_pixel(60, y, Rgba([0, 0, 0, 255]));
+        }
+        let source = DynamicImage::ImageRgba8(pixels);
+        let mut redaction = drawing(DrawingKind::Mosaic, &[(40., 30.), (85., 85.)]);
+        redaction.stroke_width = 40.;
+        let mut mark = drawing(DrawingKind::Mark, &[(35., 25.), (110., 75.)]);
+        mark.color = "#ffff00".into();
+        mark.stroke_width = 1.;
+        let clean = crop_region(&source, &region(vec![redaction.clone()])).unwrap();
+        let result = crop_region(&source, &region(vec![redaction, mark])).unwrap();
+        let old_text = clean.get_pixel(40, 40);
+        let tinted = result.get_pixel(40, 40);
+        assert!(old_text[0] > 180, "mosaic actually conceals old text");
+        assert!(
+            u16::from(tinted[2]) + 30 < u16::from(old_text[2]),
+            "protected source follows mosaic: {tinted:?} / {old_text:?}"
+        );
+        assert_eq!(old_text, Rgba([251, 251, 251, 255]));
+        assert_eq!(tinted, Rgba([252, 252, 168, 255]));
+        assert_eq!(source.get_pixel(60, 50), Rgba([0, 0, 0, 255]));
     }
 
     #[test]

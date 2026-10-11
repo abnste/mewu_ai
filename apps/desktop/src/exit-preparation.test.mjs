@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { loadProviderPresets, loadGeometryHistory, loadAssetImport } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadHighlightSource } from './geometry-test-module.mjs';
 
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
 const module = new SourceTextModule(await source('exit-preparation.ts'));
@@ -94,7 +94,7 @@ async function bridgeFixture(native, failPrepareListen = false) {
   const history = await loadGeometryHistory(context); const importedAssets = await loadAssetImport(context);
   const mosaic = new SourceTextModule(await source('mosaic-preview.ts'), { context }); await mosaic.link(() => { throw new Error('unexpected mosaic import'); });
   const bridge = new SourceTextModule(await source('bridge.ts'), { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
-  await bridge.link(async name => name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : event); await bridge.evaluate();
+  await bridge.link(async name => name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : event); await bridge.evaluate();
   return { api: bridge.namespace, events, calls, stopped };
 }
 const native = await bridgeFixture(true), received = [];

@@ -134,6 +134,61 @@ fn history(
 }
 
 #[test]
+fn rectangular_mark_keeps_revision_fences_and_persisted_edit_history() {
+    let db = TestDb::new();
+    let mut store = Store::open(&db.0).unwrap();
+    let scope = prepare(&mut store);
+    let mark = object(DrawingKind::Mark);
+    add(&mut store, &scope, mark.clone()).unwrap();
+    let mut moved = mark.clone();
+    moved.color = "#00AAFF".into();
+    moved.points.iter_mut().for_each(|p| {
+        p.x += 15.;
+        p.y += 20.;
+    });
+    let update = SceneCommand::UpdateDrawing {
+        scene_id: scope.0.clone(),
+        region_id: scope.2.clone(),
+        background_id: scope.1.clone(),
+        expected_revision: region(&store, &scope).drawing_revision,
+        drawing: moved.clone(),
+    };
+    store.apply(update.clone()).unwrap();
+    assert!(store.apply(update).is_err());
+    assert_eq!(region(&store, &scope).drawings, vec![moved.clone()]);
+    history(&mut store, &scope, false).unwrap();
+    assert_eq!(region(&store, &scope).drawings, vec![mark.clone()]);
+    drop(store);
+    let mut store = Store::open(&db.0).unwrap();
+    history(&mut store, &scope, true).unwrap();
+    assert_eq!(region(&store, &scope).drawings, vec![moved.clone()]);
+    let expected_revision = region(&store, &scope).drawing_revision;
+    store
+        .apply(SceneCommand::RemoveDrawing {
+            scene_id: scope.0.clone(),
+            region_id: scope.2.clone(),
+            background_id: scope.1.clone(),
+            expected_revision,
+            drawing_id: mark.id.clone(),
+        })
+        .unwrap();
+    history(&mut store, &scope, false).unwrap();
+    assert_eq!(region(&store, &scope).drawings, vec![moved]);
+    let before = store.snapshot();
+    let mut invalid = object(DrawingKind::Mark);
+    invalid.points[1].x = invalid.points[0].x;
+    assert!(add(&mut store, &scope, invalid).is_err());
+    assert_eq!(store.snapshot(), before);
+    assert_eq!(
+        Connection::open(&db.0)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
+            .unwrap(),
+        9
+    );
+}
+
+#[test]
 fn five_editable_tools_keep_layer_order_and_undo_redo_branching() {
     let mut store = Store::open_in_memory().unwrap();
     let scope = prepare(&mut store);

@@ -140,7 +140,7 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
         DrawingKind::Line | DrawingKind::Arrow if object.points[0] == object.points[1] => {
             return Err(invalid("直线或箭头不能只有一个位置"))
         }
-        DrawingKind::Rect | DrawingKind::Ellipse | DrawingKind::Mosaic
+        DrawingKind::Rect | DrawingKind::Ellipse | DrawingKind::Mosaic | DrawingKind::Mark
             if object.points[0].x == object.points[1].x
                 || object.points[0].y == object.points[1].y =>
         {

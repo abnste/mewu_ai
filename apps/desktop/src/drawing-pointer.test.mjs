@@ -13,7 +13,7 @@ const transform = value => stripTypeScriptTypes(value, { mode: 'transform' });
 const plain = value => JSON.parse(JSON.stringify(value));
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
 async function pure(path) { const module = new SourceTextModule(transform(await raw(path))); await module.link(() => { throw Error('Unexpected runtime import'); }); await module.evaluate(); return module.namespace; }
-const pointer = await pure('./components/drawing-pointer.ts'), geometry = await pure('./components/drawing-geometry.ts'), properties = await pure('./components/drawing-properties.ts');
+const pointer = await pure('./components/drawing-pointer.ts'), geometry = await pure('./components/drawing-geometry.ts'), properties = await pure('./components/drawing-properties.ts'), highlightSource = await pure('./highlight-source.ts');
 const source = await raw('./components/SharedDrawingEditor.tsx'), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const body = ast.program.body.find(value => value.type === 'ExportDefaultDeclaration').declaration.body.body;
 const declaration = name => { const node = body.find(value => value.type === 'FunctionDeclaration' ? value.id.name === name : value.type === 'VariableDeclaration' && value.declarations.some(declaration => declaration.id.name === name)); assert.ok(node, name); return source.slice(node.start, node.end); };
@@ -61,7 +61,7 @@ function setup(values = []) {
   svg.getBoundingClientRect = () => { layoutReads++; return { ...svg.box }; }; svg.focus = () => {};
   svg.setPointerCapture = id => { svg.captured = id; }; svg.hasPointerCapture = id => svg.captured === id;
   svg.releasePointerCapture = id => { svg.captured = undefined; svg.emit(event('lostpointercapture', 0, 0, { pointerId: id })); };
-  const props = { box: { x: 10, y: 20, width: 2000, height: 500 }, tools: ['pen','highlighter','line','arrow','rect','ellipse','mosaic'],busy:false,inputLocked:false,revision:5,source:'source',
+  const props = { box: { x: 10, y: 20, width: 2000, height: 500 }, tools: ['pen','highlighter','mark','line','arrow','rect','ellipse','mosaic'],busy:false,inputLocked:false,revision:5,source:'source',
     port: { frame:()=>({x:0,y:0,width:1000,height:1000}),sourceSize:()=>({width:1000,height:1000}),sourceIdentity:()=>props.source,draftKey:()=>props.source,revision:()=>props.revision,drawings:()=>values,canSelect:()=>true,allows:()=>props.allowed!==false },
     onCommand:async command=>{commands.push(plain(command));},onError:error=>errors.push(error) };
   return { ...module.namespace.fixture(props,svg,window), props, svg, window, commands, errors, reads:()=>layoutReads };
@@ -105,6 +105,21 @@ test('real highlighter Shift gesture snaps to horizontal, vertical and all diago
     }
     const f=setup();f.tool('highlighter');f.begin(event('pointerdown',950,960,{shiftKey:true}));
     f.window.emit(event('pointerup',1000,1000,{shiftKey:true}));await tick();assert.deepEqual(f.commands[0].drawing.points,[{x:950,y:960},{x:990,y:1000}]);
+  }finally{clock.restore();}
+});
+
+test('actual Mark gesture constrains and releases square shape, keeps one fixed border and rejects zero-area/source changes',async()=>{
+  const clock=frames();try{
+    const f=setup();f.tool('mark');f.begin(event('pointerdown',10,20));
+    f.window.emit(event('pointermove',100,50));clock.paint();assert.deepEqual(plain(f.draft().points),[{x:10,y:20},{x:100,y:50}]);
+    assert.equal(f.draft().strokeWidth,1);f.shift(true);clock.paint();assert.deepEqual(plain(f.draft().points),[{x:10,y:20},{x:100,y:110}]);
+    f.shift(false);clock.paint();f.window.emit(event('pointerup',105,55));await tick();assert.equal(f.commands.length,1);
+    assert.deepEqual(f.commands[0].drawing.points,[{x:10,y:20},{x:105,y:55}]);assert.equal(f.commands[0].drawing.kind,'mark');
+    for(const reason of ['zero-width','zero-height','source','revision']){
+      const g=setup();g.tool('mark');g.begin(event('pointerdown',20,20));
+      if(reason==='source')g.props.source='successor';if(reason==='revision')g.props.revision++;
+      g.window.emit(event('pointerup',reason==='zero-width'?20:80,reason==='zero-height'?20:70));await tick();assert.equal(g.commands.length,0,reason);
+    }
   }finally{clock.restore();}
 });
 
@@ -234,7 +249,7 @@ const colors=await pure('./drawing-colors.ts');
 let highlightLoader=()=>{throw Error('No native IO');};
 const shapeJsx=await jsx(await raw('./components/DrawingLayer.tsx'),{
   '../drawing-colors':colors,
-  './drawing-geometry':geometry,'./drawing-pointer':pointer,'./RichDrawingShape':{default:()=>undefined},'../bridge':{getMosaicPreview:()=>{throw Error('No native IO');},getHighlightPreview:(...args)=>highlightLoader(...args)},'../i18n':{t:value=>value},
+  './drawing-geometry':geometry,'./drawing-pointer':pointer,'./RichDrawingShape':{default:()=>undefined},'../highlight-source':highlightSource,'../bridge':{getMosaicPreview:()=>{throw Error('No native IO');},getHighlightPreview:(...args)=>highlightLoader(...args)},'../i18n':{t:value=>value},
 });
 const itemJsx=await jsx(`import {linkedRepairPreview} from 'selection';import {createMemo,Show} from 'solid-js';import {liveDrawing} from 'pointer';
 export function fixture(props,state){props={...props,port:{...props.port,drawings:state.drawings,stored:state.stored}};const draft=()=>state.draft(),edit=()=>undefined,tool=()=>state.tool(),selected=()=>state.selected(),storedDraft=()=>state.storedDraft(),drawings=state.drawings;
@@ -309,6 +324,22 @@ test('actual highlighter SVG switches between segmented ink and a straight previ
   dispose();
 });
 
+test('actual rectangular highlight renders distinct fill/border masks and limits its hit shape to the rounded rectangle',async()=>{
+  const tick=()=>new Promise(resolve=>setImmediate(resolve));
+  const calls=[];highlightLoader=async(...args)=>{calls.push(args);return {backgroundId:'a',width:120,height:80,dataUrl:'data:image/png;base64,a'};};
+  const [drawing,setDrawing]=solid.createSignal({id:'mark',kind:'mark',color:'#fff200',strokeWidth:1,points:[{x:20,y:15},{x:90,y:55}]});
+  const [interactive,setInteractive]=solid.createSignal(true);
+  const root=renderer.createElement('root'),dispose=renderer.render(()=>renderer.createComponent(shapeJsx.DrawingShape,{get drawing(){return drawing();},get interactive(){return interactive();},mosaicContext:{sceneId:'s',background:{id:'a',width:120,height:80}}}),root);
+  await tick();const images=descendants(root,'image');assert.equal(images.length,2);assert.equal(calls.length,1);
+  const paths=()=>descendants(root,'path');
+  assert.ok(paths().some(node=>node.props['fill-opacity']===84/255));assert.ok(paths().some(node=>node.props['fill-opacity']===190/255&&node.props['fill-rule']==='evenodd'));
+  const hit=paths().find(node=>node.props['pointer-events']==='fill');assert.ok(hit);assert.equal(hit.props.d,geometry.markPaths(drawing()).outer);
+  const before=hit.props.d;setDrawing({...drawing(),color:'#347bf1',points:[{x:25,y:20},{x:100,y:60}]});
+  assert.notEqual(paths().find(node=>node.props['pointer-events']==='fill').props.d,before);assert.deepEqual(descendants(root,'image'),images);assert.equal(calls.length,1);
+  const mask=descendants(root,'mask').find(node=>String(node.props.id).endsWith('-ink'));assert.deepEqual(['x','y','width','height'].map(key=>mask.props[key]),[25,20,75,40]);
+  setInteractive(false);assert.equal(paths().filter(node=>node.props['pointer-events']==='fill').length,0);dispose();
+});
+
 test('actual protected marker fences stale source responses and retains its loaded source while stroke bounds and color change',async()=>{
   const deferred=()=>{let resolve;const promise=new Promise(yes=>{resolve=yes;});return {resolve,promise};};
   const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -325,6 +356,22 @@ test('actual protected marker fences stale source responses and retains its load
   assert.equal(descendants(root,'image')[0],images[0]);assert.equal(descendants(root,'image')[1],images[1]);assert.equal(descendants(root,'path')[0].props.d,'M25,20 L70,20');assert.equal(calls.length,2);
   assert.equal(filter.props.x,16);assert.equal(filter.props.width,63);assert.equal(descendants(root,'rect')[0].props.fill,'#347bf1');
   setContext({sceneId:'s',background:{id:'c',width:80,height:40}});assert.equal(descendants(root,'image').length,0);dispose();waits[2].resolve(receipt('c'));await tick();assert.deepEqual(errors,[]);
+  highlightLoader=()=>{throw Error('No native IO');};
+});
+
+test('protected preview keeps crop mapping and pixels across ink-only commits but fences changed clean raster content',async()=>{
+  const tick=()=>new Promise(resolve=>setImmediate(resolve)),waits=[];highlightLoader=()=>new Promise(resolve=>waits.push(resolve));
+  const raster={id:'mosaic',kind:'mosaic',color:'#ff0000',strokeWidth:6,points:[{x:25,y:20},{x:40,y:35}]};
+  const base={id:'r',x:20,y:10,width:100,height:60,drawings:[raster],drawingRevision:1};
+  const [region,setRegion]=solid.createSignal(base),root=renderer.createElement('root');
+  const dispose=renderer.render(()=>renderer.createComponent(shapeJsx.DrawingShape,{drawing:{id:'h',kind:'highlighter',color:'#ffff00',strokeWidth:18,points:[{x:30,y:30},{x:100,y:30}]},get mosaicContext(){return {sceneId:'s',background:{id:'a',width:180,height:100},region:region()};}}),root);
+  const receipt={backgroundId:'a',x:20,y:10,width:100,height:60,dataUrl:'data:image/png;base64,a'};
+  waits[0](receipt);await tick();const images=descendants(root,'image');assert.equal(images.length,2);assert.ok(images.every(node=>node.props.x===20&&node.props.y===10));
+  setRegion({...base,drawingRevision:2,drawings:[raster,{id:'pen',kind:'pen',color:'#ff0000',strokeWidth:3,points:[{x:60,y:40}]}]});
+  assert.equal(waits.length,1);assert.deepEqual(descendants(root,'image'),images);
+  setRegion({...base,drawingRevision:3,drawings:[]});assert.equal(waits.length,2);assert.equal(descendants(root,'image').length,0);
+  setRegion({...base,x:21});assert.equal(waits.length,3);waits[1](receipt);await tick();assert.equal(descendants(root,'image').length,0);
+  waits[2]({...receipt,x:21});await tick();assert.equal(descendants(root,'image')[0].props.x,21);dispose();
   highlightLoader=()=>{throw Error('No native IO');};
 });
 

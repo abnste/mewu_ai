@@ -491,6 +491,7 @@ pub enum DrawingTool {
     Ellipse,
     Text,
     Highlighter,
+    Mark,
     Number,
     Mosaic,
 }
@@ -829,7 +830,7 @@ fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
             }
             PluginContribution::DrawingTools { id, title, tools } => {
                 if tools.is_empty()
-                    || tools.len() > 9
+                    || tools.len() > 10
                     || tools.iter().collect::<BTreeSet<_>>().len() != tools.len()
                 {
                     return Err("绘制工具必须包含 1 至 9 个不重复的工具".into());
@@ -1461,6 +1462,7 @@ impl PluginStore {
                         DrawingTool::Ellipse,
                         DrawingTool::Text,
                         DrawingTool::Highlighter,
+                        DrawingTool::Mark,
                         DrawingTool::Number,
                         DrawingTool::Mosaic,
                     ]
@@ -2692,7 +2694,7 @@ mod tests {
                 .drawing_tools(CORE_DRAWING, 1, "drawing-tools")
                 .unwrap()
                 .len(),
-            9
+            10
         );
         assert_eq!(
             store
@@ -2897,17 +2899,18 @@ mod tests {
     }
 
     #[test]
-    fn core_drawing_has_nine_tools_without_seeding_an_installation() {
+    fn core_drawing_has_ten_tools_without_seeding_an_installation() {
         let dir = Directory::new();
         let store = PluginStore::open(&dir.0).unwrap();
         assert!(store.read("mewu.drawing").unwrap().is_none());
         let tools = store
             .drawing_tools(CORE_DRAWING, 1, "drawing-tools")
             .unwrap();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10);
         for tool in [
             DrawingTool::Line,
             DrawingTool::Highlighter,
+            DrawingTool::Mark,
             DrawingTool::Number,
             DrawingTool::Mosaic,
         ] {

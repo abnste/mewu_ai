@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { loadProviderPresets, loadGeometryHistory, loadAssetImport } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadHighlightSource } from './geometry-test-module.mjs';
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
 const plain = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -66,7 +66,7 @@ async function mainBridgeFixture(native, probe) {
   const history = await loadGeometryHistory(context); const importedAssets = await loadAssetImport(context);
   const mosaic = new SourceTextModule(await source('mosaic-preview.ts'), { context }); await mosaic.link(() => { throw new Error('unexpected'); });
   const module = new SourceTextModule(await source('bridge.ts') + '\nexport function seedBackground(value) { findScene(preview.activeSceneId).background = value; }', { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
-  await module.link(async name => name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : synthetic({ listen: async () => () => {} }, context)); await module.evaluate();
+  await module.link(async name => name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : synthetic({ listen: async () => () => {} }, context)); await module.evaluate();
   return { api: module.namespace, calls };
 }
 const main = await mainBridgeFixture(true), image = { id: 'long', width: 1200, height: 2400, kind: 'image', path: '/long.png', name: 'long' };

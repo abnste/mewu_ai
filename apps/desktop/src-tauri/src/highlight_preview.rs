@@ -3,7 +3,7 @@
 use crate::{assets, highlight_foreground, Host};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::DynamicImage;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tokio::sync::Semaphore;
@@ -17,9 +17,36 @@ static DECODERS: Semaphore = Semaphore::const_new(1);
 #[serde(rename_all = "camelCase")]
 pub struct HighlightPreview {
     background_id: String,
+    x: u32,
+    y: u32,
     width: u32,
     height: u32,
     data_url: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HighlightTarget {
+    region_id: String,
+    source_id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    raster_drawings: Vec<mewu_core::Drawing>,
+}
+impl HighlightTarget {
+    fn check(&self, region: &mewu_core::Region) -> Result<(), String> {
+        if self.region_id != region.id
+            || self.x != region.x
+            || self.y != region.y
+            || self.width != region.width
+            || self.height != region.height
+            || self.raster_drawings != region.drawings
+        {
+            return Err("截图图层已变更".into());
+        }
+        Ok(())
+    }
 }
 fn validate(owner: &str, width: u32, height: u32) -> Result<(), String> {
     if owner != "space" {
@@ -49,6 +76,8 @@ fn encode(source: &DynamicImage, background_id: String) -> Result<HighlightPrevi
     }
     Ok(HighlightPreview {
         background_id,
+        x: 0,
+        y: 0,
         width: source.width(),
         height: source.height(),
         data_url: format!("data:image/png;base64,{}", STANDARD.encode(bytes)),
@@ -61,9 +90,7 @@ pub async fn get_highlight_preview(
     window: WebviewWindow,
     scene_id: String,
     background_id: String,
-    region_id: Option<String>,
-    source_id: Option<String>,
-    drawing_revision: Option<u64>,
+    target: Option<HighlightTarget>,
 ) -> Result<HighlightPreview, String> {
     if window.label() != "space" {
         return Err("此窗口不能读取截图像素".into());
@@ -74,31 +101,57 @@ pub async fn get_highlight_preview(
         .try_acquire()
         .map_err(|_| "荧光笔预览繁忙，请重试")?;
     let decoder = DECODERS.acquire().await.map_err(|_| "荧光笔预览不可用")?;
-    let target = match (region_id, source_id, drawing_revision) {
-        (None, None, None) => None,
-        (Some(region), Some(source), Some(revision)) => Some((region, source, revision)),
-        _ => return Err("长截图预览目标不完整".into()),
-    };
-    let read = |store: &mewu_core::Store| {
-        if let Some((region, source, revision)) = &target {
-            store.region_image_for_preview(&scene_id, region, &background_id, source, *revision)
+    if target.as_ref().is_some_and(|value| {
+        value.raster_drawings.len() > 4096
+            || serde_json::to_vec(&value.raster_drawings)
+                .map_or(true, |bytes| bytes.len() > 4 * 1024 * 1024)
+    }) {
+        return Err("截图图层过大".into());
+    }
+    let read = |store: &mewu_core::Store| -> Result<(mewu_core::Asset, mewu_core::Region), String> {
+        if let Some(target) = &target {
+            let value = store
+                .highlight_region_for_preview(
+                    &scene_id,
+                    &target.region_id,
+                    &background_id,
+                    &target.source_id,
+                )
+                .map_err(|e| e.to_string())?;
+            target.check(&value.1)?;
+            Ok(value)
         } else {
-            store.background_for_preview(&scene_id, &background_id)
+            store
+                .background_for_preview(&scene_id, &background_id)
+                .map(|asset| (asset, mewu_core::Region::default()))
+                .map_err(|e| e.to_string())
         }
     };
-    let background = {
+    let (background, region) = {
         let engine = host.lock()?;
         host.exit.ensure_running()?;
         read(&engine.store).map_err(|e| e.to_string())?
     };
-    let expected = background.clone();
+    let expected = (background.clone(), region.clone());
+    let has_target = target.is_some();
     let root = host.assets.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let (_request, _decoder) = (request, decoder);
-        let path = assets::verified_path(&background, &root)?;
+        let source = region.image_override.as_ref().unwrap_or(&background);
+        let path = assets::verified_path(source, &root)?;
         let (width, height) = image::image_dimensions(path).map_err(|_| "无法读取图片尺寸")?;
         validate("space", width, height)?;
-        encode(&assets::image(&background, &root)?, background.id)
+        if source.width != Some(width) || source.height != Some(height) {
+            return Err("图片尺寸已变更".into());
+        }
+        if !has_target {
+            return encode(&assets::image(&background, &root)?, background.id);
+        }
+        let (pixels, mapping) = assets::crop_from_parts_with_mapping(&background, &region, &root)?;
+        let mut preview = encode(&pixels, source.id.clone())?;
+        preview.x = mapping.x;
+        preview.y = mapping.y;
+        Ok(preview)
     })
     .await
     .map_err(|_| "荧光笔预览未完成")??;
@@ -113,6 +166,48 @@ pub async fn get_highlight_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn raster_target_rejects_geometry_content_and_unknown_fields_but_does_not_accept_caller_paths()
+    {
+        let region = mewu_core::Region {
+            id: "region".into(),
+            x: 20.,
+            y: 10.,
+            width: 80.,
+            height: 40.,
+            ..Default::default()
+        };
+        let input = serde_json::json!({"regionId":"region","sourceId":"source","x":20,"y":10,"width":80,"height":40,"rasterDrawings":[]});
+        let target: HighlightTarget = serde_json::from_value(input.clone()).unwrap();
+        assert!(target.check(&region).is_ok());
+        for field in ["x", "y", "width", "height"] {
+            let mut changed = input.clone();
+            changed[field] = serde_json::json!(99);
+            assert!(serde_json::from_value::<HighlightTarget>(changed)
+                .unwrap()
+                .check(&region)
+                .is_err());
+        }
+        let mut changed = input.clone();
+        changed["path"] = serde_json::json!("C:/private.png");
+        assert!(serde_json::from_value::<HighlightTarget>(changed).is_err());
+        let mut changed_region = region.clone();
+        changed_region.id = "other".into();
+        assert!(target.check(&changed_region).is_err());
+        changed_region = region.clone();
+        changed_region.drawings.push(mewu_core::Drawing {
+            id: "different".into(),
+            kind: mewu_core::DrawingKind::Pen,
+            color: "#000000".into(),
+            stroke_width: 2.,
+            points: vec![mewu_core::DrawingPoint { x: 30., y: 25. }],
+            text: None,
+            font_size: None,
+            rich: None,
+            origin: None,
+        });
+        assert!(target.check(&changed_region).is_err());
+    }
     #[test]
     fn owners_dimensions_and_encoded_pixels_are_checked() {
         for owner in ["settings", "frozen-widget", "recording-controls", ""] {

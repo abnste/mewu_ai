@@ -14,7 +14,7 @@ interface Props { active: boolean }
 type Kind = PluginContribution['kind'];
 interface Pending { key: string; label: string }
 const kindLabels: Record<Kind, string> = { 'model.connection': '模型接入', 'selection.workflow': '图像处理', 'selection.drawing-tools': '绘制', 'selection.ocr': '文字识别', 'selection.scroll': '长截图', 'selection.translation': '翻译', 'selection.pin': '贴图', 'selection.codes': '二维码与条码', 'selection.recording': '屏幕录制', 'artifact.video-trim': '视频裁剪', 'artifact.video-drawing-tools': '视频绘制', 'artifact.video-gif': 'GIF 导出', 'recording.audio': '声源', 'memory.provider': '长期记忆', 'input.speech-to-text': '语音输入', 'agent.visual-annotations': '原位作答' };
-const toolLabels = { pen: '画笔', line: '直线', arrow: '箭头', rect: '矩形', ellipse: '椭圆', text: '文字', highlighter: '荧光笔', number: '序号', mosaic: '马赛克' };
+const toolLabels = { pen: '画笔', line: '直线', arrow: '箭头', rect: '矩形', ellipse: '椭圆', text: '文字', highlighter: '荧光笔', mark: '重点高亮', number: '序号', mosaic: '马赛克' };
 const sourceLabel = (source: PluginSource) => source.type === 'official' ? t('官方') : source.type === 'local' ? t('本地开发包') : 'GitHub';
 const sourceText = (source: PluginSource) => source.type === 'official' ? t('Mewu 随包插件') : source.type === 'local' ? source.path : `${source.repository}\n${source.path}\n${source.commit}`;
 const githubUrl = (source: Extract<PluginSource, { type: 'github' }>) => `https://github.com/${source.repository}/blob/${encodeURIComponent(source.commit)}/${source.path.split('/').map(encodeURIComponent).join('/')}`;

@@ -212,6 +212,7 @@ pub enum DrawingKind {
     Pen,
     Line,
     Highlighter,
+    Mark,
     Arrow,
     Rect,
     Ellipse,

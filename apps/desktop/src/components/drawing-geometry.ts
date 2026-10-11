@@ -11,11 +11,21 @@ export function drawingBounds(drawing: Drawing) {
     height = Math.max(1, lines.length) * size * 1.25;
   }
   if (drawing.kind === 'number') width = height = drawing.fontSize ?? 28;
-  const margin = ['number', 'mosaic', 'rich'].includes(drawing.kind) ? 0 : drawing.strokeWidth / 2;
+  const margin = ['number', 'mosaic', 'rich', 'mark'].includes(drawing.kind) ? 0 : drawing.strokeWidth / 2;
   return { x: x - margin, y: y - margin, width: Math.max(1, width) + margin * 2, height: Math.max(1, height) + margin * 2 };
 }
+/** Disjoint fill/border paths: original Mark's 84/255 and 190/255 alpha never stack. */
+export function markPaths(drawing: Drawing) {
+  const [a, b] = drawing.points;
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), width = Math.abs(a.x - b.x), height = Math.abs(a.y - b.y);
+  const radius = Math.min(3, width / 2, height / 2), borderWidth = Math.min(drawing.strokeWidth, width / 2, height / 2);
+  const path = (x: number, y: number, w: number, h: number, r: number) => w > 0 && h > 0
+    ? `M${x + r} ${y}h${w - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}v${h - 2 * r}a${r} ${r} 0 0 1 ${-r} ${r}h${2 * r - w}a${r} ${r} 0 0 1 ${-r} ${-r}v${2 * r - h}a${r} ${r} 0 0 1 ${r} ${-r}z` : '';
+  const outer = path(x, y, width, height, radius), fill = path(x + borderWidth, y + borderWidth, width - 2 * borderWidth, height - 2 * borderWidth, Math.max(0, radius - borderWidth));
+  return { outer, fill, border: outer + fill };
+}
 export function constrainedEnd(kind: DrawingKind, start: DrawingPoint, end: DrawingPoint, shift: boolean, region: Pick<Region, 'x' | 'y' | 'width' | 'height'>): DrawingPoint {
-  if (!shift || !['line', 'arrow', 'rect', 'ellipse'].includes(kind)) return end;
+  if (!shift || !['line', 'arrow', 'rect', 'ellipse', 'mark'].includes(kind)) return end;
   const dx = end.x - start.x, dy = end.y - start.y, ax = Math.abs(dx), ay = Math.abs(dy);
   let ux = dx < 0 ? -1 : 1, uy = dy < 0 ? -1 : 1, distance = Math.max(ax, ay);
   if (kind === 'line' || kind === 'arrow') {
@@ -29,7 +39,7 @@ export function constrainedEnd(kind: DrawingKind, start: DrawingPoint, end: Draw
   return { x: start.x + ux * distance, y: start.y + uy * distance };
 }
 export function drawingResizeHandles(drawing: Drawing): DrawingPoint[] {
-  if (drawing.points.length !== 2 || !['line', 'arrow', 'rect', 'ellipse'].includes(drawing.kind)) return [];
+  if (drawing.points.length !== 2 || !['line', 'arrow', 'rect', 'ellipse', 'mark'].includes(drawing.kind)) return [];
   const [a, b] = drawing.points;
   if (![a.x, a.y, b.x, b.y].every(Number.isFinite)) return [];
   if (drawing.kind === 'line' || drawing.kind === 'arrow') return [a, b];

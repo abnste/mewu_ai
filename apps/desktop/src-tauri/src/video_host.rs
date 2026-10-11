@@ -1350,7 +1350,7 @@ pub(crate) mod tests {
                 .drawing_tools(plugins::CORE_DRAWING, 1, "drawing-tools")
                 .unwrap()
                 .len(),
-            9
+            10
         );
         assert_eq!(
             store
@@ -1359,6 +1359,7 @@ pub(crate) mod tests {
                 .len(),
             7
         );
+        assert!(plugins::VideoDrawingTool::try_from("mark".to_string()).is_err());
         assert!(store
             .recording(plugins::CORE_RECORDING, 1, "record")
             .is_ok());

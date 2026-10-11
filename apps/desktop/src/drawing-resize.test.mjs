@@ -71,6 +71,7 @@ const settled = () => new Promise(resolve => setImmediate(resolve));
 
 test('only supported two-point primitives expose geometry handles; rich/text/number remain fixed', () => {
   assert.deepEqual(plain(geometry.drawingResizeHandles(shape())), [{ x: 140, y: 240 }, { x: 260, y: 240 }, { x: 260, y: 320 }, { x: 140, y: 320 }]);
+  assert.deepEqual(plain(geometry.drawingResizeHandles(shape('mark'))), [{ x: 140, y: 240 }, { x: 260, y: 240 }, { x: 260, y: 320 }, { x: 140, y: 320 }]);
   for (const kind of ['line', 'arrow']) assert.deepEqual(plain(geometry.drawingResizeHandles(shape(kind))), shape().points);
   for (const kind of ['rich', 'text', 'number', 'pen', 'highlighter', 'mosaic']) assert.deepEqual(geometry.drawingResizeHandles(shape(kind)), []);
   assert.deepEqual(geometry.drawingResizeHandles(shape('rect', [{ x: 1, y: 2 }])), []);

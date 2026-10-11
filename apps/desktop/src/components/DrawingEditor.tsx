@@ -3,6 +3,7 @@ import type { JSX } from 'solid-js';
 import type { Asset, Drawing, DrawingCommand, ManualDrawingKind, Region, Snapshot } from '../contracts';
 import { applyRasterEdit } from '../raster-edit-bridge';
 import { getMosaicPreview, getHighlightPreview } from "../bridge";
+import { highlightSourceIdentity } from '../highlight-source';
 import { mosaicBlockSize } from "../mosaic-preview";
 import { DrawingShape } from "./DrawingLayer";
 import { drawingDraftKey, drawingPropertyCommand } from "./drawing-properties";
@@ -35,7 +36,7 @@ export default function DrawingEditor(props:Props) {
   const command = (action:EditorDrawingAction):DrawingCommand => {if(action.type==='move_stored')throw Error('截图对象操作无效');return {...target(),...action};};
   const richContext = () => props.background ? {sceneId:props.sceneId,background:props.background,region:props.sourceRegion??props.region} : undefined;
   const mosaicSource = () => props.region.imageOverride ? {regionId:props.region.id,source:props.region.imageOverride,drawingRevision:props.region.drawingRevision??0} : undefined;
-  const mosaicContext = () => props.background ? {sceneId:props.sceneId,background:props.background,override:mosaicSource()} : undefined;
+  const mosaicContext = () => props.background ? {sceneId:props.sceneId,background:props.background,override:mosaicSource(),region:props.sourceRegion??props.region} : undefined;
   const raster:NonNullable<DrawingEditorPort['raster']> = {apply:async(mode,points,width)=>{
     if(!props.background||!props.onRasterSnapshot||props.documentOnly)throw Error('此选区不能修补');
     const receipt=await applyRasterEdit({sceneId:props.sceneId,background:props.background,region:props.sourceRegion??props.region},mode,points,width);
@@ -55,7 +56,7 @@ export default function DrawingEditor(props:Props) {
     historyStep:redo=>(redo?props.region.drawingHistory?.redo:props.region.drawingHistory?.undo)?.at(-1),
     render:(drawing,interactive,selected)=><DrawingShape drawing={drawing} interactive={interactive} selected={selected} richContext={richContext()} mosaicContext={mosaicContext()} onError={props.onError}/>,
     get mosaic(){return props.background?{blockSize:()=>mosaicBlockSize(props.background?.scaleFactor),prepare:()=>getMosaicPreview(props.sceneId,props.background!,mosaicBlockSize(props.background?.scaleFactor),mosaicSource())}:undefined;},
-    get highlight(){return props.background?{prepare:()=>getHighlightPreview(props.sceneId,props.background!,mosaicSource())}:undefined;},
+    get highlight(){return props.background?{identity:()=>highlightSourceIdentity(props.sceneId,props.background!,props.sourceRegion??props.region),prepare:()=>getHighlightPreview(props.sceneId,props.background!,props.sourceRegion??props.region)}:undefined;},
     get raster(){return props.background&&props.onRasterSnapshot&&!props.documentOnly?raster:undefined;},
     get copyTable(){return props.onCopyTable?(drawing:Drawing,format:DrawingTableFormat)=>{const context=richContext(),value=context&&richPreviewTarget(context,drawing);if(!value)throw Error('表格已更新');return props.onCopyTable!(value,format);}:undefined;},
   };
