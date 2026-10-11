@@ -14,7 +14,8 @@ use objc2::{
     MainThreadOnly,
 };
 use objc2_app_kit::{
-    NSModalResponse, NSModalResponseCancel, NSModalResponseOK, NSPopUpButton, NSSavePanel, NSWindow,
+    NSModalResponse, NSModalResponseCancel, NSModalResponseOK, NSPopUpButton, NSSavePanel, NSView,
+    NSWindow,
 };
 use objc2_foundation::{NSArray, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
 use objc2_uniform_type_identifiers::UTType;
@@ -144,6 +145,7 @@ struct Session {
     panel: Retained<NSSavePanel>,
     _parent: Retained<NSWindow>,
     popup: Retained<NSPopUpButton>,
+    _accessory: Retained<NSView>,
     _target: Retained<FormatTarget>,
     types: Vec<Retained<UTType>>,
     kinds: Vec<ContentKind>,
@@ -389,7 +391,7 @@ fn start(
     panel.setNameFieldStringValue(&NSString::from_str(&configuration.name));
     let popup = NSPopUpButton::initWithFrame_pullsDown(
         NSPopUpButton::alloc(mtm),
-        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(280.0, 28.0)),
+        NSRect::new(NSPoint::new(12.0, 10.0), NSSize::new(280.0, 28.0)),
         false,
     );
     for label in configuration.labels {
@@ -407,7 +409,15 @@ fn start(
         popup.setTarget(Some(&target));
         popup.setAction(Some(sel!(formatChanged:)));
     }
-    panel.setAccessoryView(Some(&popup));
+    // Keep a plain view as the panel's accessory root. The remote save-panel
+    // service must lay out the container rather than resize the popup control
+    // itself; a bare popup was absent in both compact and expanded real panels.
+    let accessory = NSView::initWithFrame(
+        NSView::alloc(mtm),
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(304.0, 48.0)),
+    );
+    accessory.addSubview(&popup);
+    panel.setAccessoryView(Some(&accessory));
     let callback_active = std::rc::Rc::new(Cell::new(false));
     let callback_flag = callback_active.clone();
     let completion_sender = sender.clone();
@@ -450,6 +460,7 @@ fn start(
                 panel: panel.clone(),
                 _parent: parent.clone(),
                 popup,
+                _accessory: accessory,
                 _target: target,
                 types,
                 kinds: configuration.kinds,
