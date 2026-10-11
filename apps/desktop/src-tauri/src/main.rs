@@ -1346,9 +1346,9 @@ async fn export_region(
     region_id: String,
     clipboard: bool,
 ) -> Result<bool, String> {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     return image_host::export_region(app, window, scene_id, region_id, clipboard).await;
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let host = app.state::<Host>();
         let root = host.assets.clone();
