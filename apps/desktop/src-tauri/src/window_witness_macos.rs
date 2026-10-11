@@ -581,6 +581,16 @@ impl<'a> CaptureScan<'a> {
 
 /// Performs a fresh WindowServer query without dispatching to the UI thread.
 pub(crate) fn visible(token: usize) -> bool {
+    current_for_label(token, None)
+}
+
+/// Validates an existing admission for the exact owner label. This never admits
+/// a replacement window while a queued native sheet still holds an old token.
+pub(crate) fn current_for(token: usize, label: &str) -> bool {
+    current_for_label(token, Some(label))
+}
+
+fn current_for_label(token: usize, label: Option<&str>) -> bool {
     let witness = match registry().lock() {
         Ok(state) => match state.get(token) {
             Some(witness) => witness.clone(),
@@ -588,6 +598,9 @@ pub(crate) fn visible(token: usize) -> bool {
         },
         Err(_) => return false,
     };
+    if label.is_some_and(|expected| witness.label != expected) {
+        return false;
+    }
     let observed = observe(&witness.native).unwrap_or(false);
     let Ok(mut state) = registry().lock() else {
         return false;

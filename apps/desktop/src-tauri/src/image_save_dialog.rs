@@ -94,6 +94,26 @@ pub fn preference_format(app: &tauri::AppHandle) -> Result<ImageSaveFormat, Stri
     })
 }
 
+/// Mac's native sheet receives the real Tauri owner separately from its opaque
+/// witness token. A token is never cast to an AppKit pointer or window number.
+#[cfg(target_os = "macos")]
+pub fn pick_image_destination_macos_with_default(
+    window: tauri::WebviewWindow,
+    token: usize,
+    name: ImageSaveName,
+    format: ImageSaveFormat,
+    cancel: Arc<AtomicBool>,
+    allowed: impl Fn() -> Result<(), String> + Send + 'static,
+) -> Result<SaveDialogOutcome, SaveDialogError> {
+    save_dialog::macos::pick_destination(
+        window,
+        token,
+        spec_with_default(name, format),
+        cancel,
+        allowed,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
