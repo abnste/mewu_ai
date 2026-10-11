@@ -1960,16 +1960,24 @@ fn start_capture(app: &AppHandle) {
 
 static EARLY_QUIT: AtomicBool = AtomicBool::new(false);
 
+// macOS development builds embed one Info.plist symbol per macro expansion.
+// Share the expansion while constructing a fresh context for each CLI path.
+#[cfg(target_os = "macos")]
+fn macos_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--verify-update") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {
             std::process::exit(2);
         }
-        let result = app_update::verify_cli(
-            tauri::generate_context!(),
-            &std::path::PathBuf::from(&args[2]),
-        );
+        #[cfg(target_os = "macos")]
+        let context = macos_context();
+        #[cfg(not(target_os = "macos"))]
+        let context = tauri::generate_context!();
+        let result = app_update::verify_cli(context, &std::path::PathBuf::from(&args[2]));
         std::process::exit(if result.is_ok() { 0 } else { 2 });
     }
     if std::env::args().nth(1).as_deref() == Some("--storage-info") {
@@ -1977,6 +1985,9 @@ fn main() {
         if args.len() != 3 {
             std::process::exit(2);
         }
+        #[cfg(target_os = "macos")]
+        let context = macos_context();
+        #[cfg(not(target_os = "macos"))]
         let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
         let result = storage_cli::paths(&context.config().identifier)
             .and_then(|paths| storage_cli::write_info(&paths, &std::path::PathBuf::from(&args[2])));
@@ -2023,6 +2034,9 @@ fn main() {
         .as_ref()
         .map(|server| server.origin())
         .unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    let mut context = macos_context();
+    #[cfg(not(target_os = "macos"))]
     let mut context = tauri::generate_context!();
     if quit_only {
         context.config_mut().app.windows.clear();
