@@ -32,6 +32,29 @@ const MODE: &str = "MEWU_LINUX_WORKER_FIXTURE_MODE";
 const SOCKET: &str = "MEWU_LINUX_WORKER_FIXTURE_SOCKET";
 const LIMIT: Duration = Duration::from_secs(5);
 
+#[test]
+fn native_linux_plain_command_refused_before_spawn() {
+    assert_eq!(std::env::var(MARKER).as_deref(), Ok("1"));
+    let dir = std::env::temp_dir().join(format!("mewu-linux-reject-{}", uuid::Uuid::new_v4()));
+    std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
+    let marker = dir.join("unexpected-child-start");
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "printf started > \"$1\"", "mewu-rejection-fixture"])
+        .arg(&marker)
+        .env_clear();
+    let error = match super::ManagedProcess::spawn(&mut command, ()) {
+        Ok(_) => panic!("ordinary command acquired no verified Linux owner"),
+        Err(e) => e,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+    assert!(
+        !marker.exists(),
+        "unsupported command executed before rejection"
+    );
+    std::fs::remove_dir(&dir).unwrap();
+}
+
 fn send_owner(socket: &UnixStream, tag: u8) {
     let owner = pidfd_open(getpid(), PidfdFlags::empty()).expect("self pidfd");
     send_fd(socket, tag, &owner);
@@ -54,18 +77,32 @@ fn send_fd(socket: &UnixStream, tag: u8, owner: &OwnedFd) {
     );
 }
 
-fn receive_owner(socket: &UnixStream) -> (u8, OwnedFd) {
-    socket.set_read_timeout(Some(LIMIT)).unwrap();
+fn receive_owner(socket: &UnixStream, deadline: Instant) -> std::io::Result<(u8, OwnedFd)> {
+    socket.set_nonblocking(true)?;
     let mut tag = [0u8];
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
     let mut control = RecvAncillaryBuffer::new(&mut space);
-    let result = recvmsg(
-        socket,
-        &mut [IoSliceMut::new(&mut tag)],
-        &mut control,
-        RecvFlags::CMSG_CLOEXEC,
-    )
-    .expect("receive actual owned pidfd");
+    let result = loop {
+        if Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "owner receipt deadline",
+            ));
+        }
+        match recvmsg(
+            socket,
+            &mut [IoSliceMut::new(&mut tag)],
+            &mut control,
+            RecvFlags::CMSG_CLOEXEC,
+        ) {
+            Ok(result) => break result,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(rustix::io::Errno::AGAIN) => std::thread::sleep(
+                Duration::from_millis(2).min(deadline.saturating_duration_since(Instant::now())),
+            ),
+            Err(e) => return Err(e.into()),
+        }
+    };
     assert_eq!(result.bytes, 1);
     assert!(!result
         .flags
@@ -78,7 +115,17 @@ fn receive_owner(socket: &UnixStream) -> (u8, OwnedFd) {
         }
     }
     assert_eq!(owners.len(), 1);
-    (tag[0], owners.pop().unwrap())
+    Ok((tag[0], owners.pop().unwrap()))
+}
+
+#[test]
+fn native_linux_silent_receipt_uses_remaining_deadline() {
+    assert_eq!(std::env::var(MARKER).as_deref(), Ok("1"));
+    let (reader, _silent_writer) = UnixStream::pair().unwrap();
+    let start = Instant::now();
+    let error = receive_owner(&reader, start + Duration::from_millis(60)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(start.elapsed() < Duration::from_millis(500));
 }
 
 fn exited(owner: &OwnedFd) -> bool {
@@ -96,11 +143,12 @@ fn exited(owner: &OwnedFd) -> bool {
     }
 }
 
-fn wait_for(mut ready: impl FnMut() -> bool) {
-    let start = Instant::now();
+fn wait_for(deadline: Instant, mut ready: impl FnMut() -> bool) {
     while !ready() {
-        assert!(start.elapsed() < LIMIT, "real owner/IO did not finish");
-        std::thread::sleep(Duration::from_millis(2));
+        assert!(Instant::now() < deadline, "real owner/IO did not finish");
+        std::thread::sleep(
+            Duration::from_millis(2).min(deadline.saturating_duration_since(Instant::now())),
+        );
     }
 }
 
@@ -208,14 +256,16 @@ fn helper(mode: &str, path: &Path) -> ! {
 }
 
 struct Fixture {
-    child: Child,
+    child: Option<Child>,
     dir: PathBuf,
+    listener: Option<UnixListener>,
     owners: HashMap<u8, OwnedFd>,
     sockets: Vec<UnixStream>,
     output: Option<std::thread::JoinHandle<Vec<u8>>>,
 }
 impl Fixture {
     fn start(controller: bool) -> Self {
+        let deadline = Instant::now() + LIMIT;
         let dir = std::env::temp_dir().join(format!("mewu-linux-owner-{}", uuid::Uuid::new_v4()));
         std::fs::DirBuilder::new().mode(0o700).create(&dir).unwrap();
         let path = dir.join("receipt.sock");
@@ -240,17 +290,19 @@ impl Fixture {
             bytes
         });
         let mut fixture = Self {
-            child,
+            child: Some(child),
             dir,
+            listener: Some(listener),
             owners: HashMap::new(),
             sockets: Vec::new(),
             output: Some(output),
         };
         let expected = if controller { 5 } else { 3 };
-        wait_for(|| {
-            match listener.accept() {
+        wait_for(deadline, || {
+            match fixture.listener.as_ref().unwrap().accept() {
                 Ok((socket, _)) => {
-                    let (tag, owner) = receive_owner(&socket);
+                    let (tag, owner) = receive_owner(&socket, deadline)
+                        .expect("receive actual owned pidfd within startup budget");
                     assert!(matches!(tag, b'O' | b'E' | b'L' | b'C' | b'B'));
                     assert!(fixture.owners.insert(tag, owner).is_none());
                     fixture.sockets.push(socket);
@@ -261,7 +313,13 @@ impl Fixture {
             fixture.owners.len() == expected
         });
         assert!(fixture.owners.values().all(|owner| !exited(owner)));
-        assert!(fixture.child.try_wait().unwrap().is_none());
+        assert!(fixture
+            .child
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .unwrap()
+            .is_none());
         assert!(
             !fixture.output.as_ref().unwrap().is_finished(),
             "escaped child must retain actual stdout"
@@ -269,9 +327,12 @@ impl Fixture {
         fixture
     }
     fn finish(&mut self) {
-        wait_for(|| self.owners.values().all(exited));
-        wait_for(|| self.child.try_wait().unwrap().is_some());
-        wait_for(|| self.output.as_ref().unwrap().is_finished());
+        let deadline = Instant::now() + LIMIT;
+        wait_for(deadline, || self.owners.values().all(exited));
+        wait_for(deadline, || {
+            self.child.as_mut().unwrap().try_wait().unwrap().is_some()
+        });
+        wait_for(deadline, || self.output.as_ref().unwrap().is_finished());
         let _ = self.output.take().unwrap().join().unwrap();
         // All known owners, including the stdio-free grandchild, are signaled;
         // the actual original child is reaped and the actual reader is joined.
@@ -279,15 +340,50 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        if let Some(owner) = self.owners.get(&b'O') {
+        let mut child = self.child.take().unwrap();
+        drop(child.stdin.take());
+        for owner in self.owners.values() {
             let _ = pidfd_send_signal(owner, Signal::KILL);
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = child.kill();
         self.sockets.clear();
-        // This exclusively created test directory contains only our socket.
-        let _ = std::fs::remove_file(self.dir.join("receipt.sock"));
-        let _ = std::fs::remove_dir(&self.dir);
+        let deadline = Instant::now() + LIMIT;
+        let mut output = self.output.take();
+        loop {
+            let reaped = matches!(child.try_wait(), Ok(Some(_)));
+            if reaped && output.as_ref().is_none_or(|thread| thread.is_finished()) {
+                if let Some(thread) = output.take() {
+                    if thread.join().is_err() {
+                        eprintln!("FAIL: fixture output reader panicked during failure cleanup");
+                    }
+                }
+                // This exclusively created directory contains only our socket.
+                let _ = std::fs::remove_file(self.dir.join("receipt.sock"));
+                let _ = std::fs::remove_dir(&self.dir);
+                return;
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        eprintln!("FAIL: fixture cleanup deadline exceeded; retaining Child, reader, pidfds and receipt listener until real wait/join; no drain proof");
+        // A failing prerequisite must not discard an unfinished reader handle.
+        // Transfer its entire remaining ownership to a cleanup thread. This is
+        // an explicitly reported failed cleanup, never successful supervision.
+        let owners = std::mem::take(&mut self.owners);
+        let listener = self.listener.take();
+        let dir = self.dir.clone();
+        std::thread::spawn(move || {
+            let _retained_owners = owners;
+            let _retained_listener = listener;
+            let _ = child.wait();
+            if let Some(thread) = output {
+                let _ = thread.join();
+            }
+            let _ = std::fs::remove_file(dir.join("receipt.sock"));
+            let _ = std::fs::remove_dir(dir);
+        });
     }
 }
 
@@ -315,6 +411,8 @@ fn native_linux_namespace_fixture() {
         match mode {
             "normal" => fixture
                 .child
+                .as_mut()
+                .unwrap()
                 .stdin
                 .as_mut()
                 .unwrap()
@@ -330,7 +428,7 @@ fn native_linux_namespace_fixture() {
                 }
                 pidfd_send_signal(&fixture.owners[&b'O'], Signal::KILL).unwrap();
             }
-            "wrapper-kill" => fixture.child.kill().unwrap(),
+            "wrapper-kill" => fixture.child.as_mut().unwrap().kill().unwrap(),
             "parent-death" => pidfd_send_signal(&fixture.owners[&b'C'], Signal::KILL).unwrap(),
             _ => unreachable!(),
         }
