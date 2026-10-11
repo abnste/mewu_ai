@@ -485,34 +485,37 @@ fn start(
     });
     // Returns immediately. AppKit copies/retains this heap completion block;
     // it captures no panel/session, so it cannot create a panel retain cycle.
+    #[cfg(debug_assertions)]
+    diagnose(id, "before_begin");
     panel.beginSheetModalForWindow_completionHandler(&parent, &completion);
+    #[cfg(debug_assertions)]
+    diagnose(id, "after_begin");
     Ok(true)
 }
 
 #[cfg(debug_assertions)]
-fn diagnose(id: uuid::Uuid) {
+fn diagnose(id: uuid::Uuid, stage: &'static str) {
     if std::env::var("MEWU_MAC_SAVE_DIAGNOSTICS").as_deref() != Ok("1") {
         return;
     }
     let Some((panel, parent, container, popup)) = SESSIONS.with(|sessions| {
         let sessions = sessions.try_borrow().ok()?;
         let session = sessions.get(&id)?;
-        if session.diagnostic_logged { return None; }
+        if stage == "maintenance" && session.diagnostic_logged { return None; }
         Some((session.panel.clone(), session._parent.clone(), session._accessory.clone(), session.popup.clone()))
     }) else { return; };
-    if !panel.isVisible() { return; }
-    SESSIONS.with(|sessions| {
+    if stage == "maintenance" { SESSIONS.with(|sessions| {
         if let Ok(mut sessions) = sessions.try_borrow_mut() {
             if let Some(session) = sessions.get_mut(&id) { session.diagnostic_logged = true; }
         }
-    });
+    }); }
     let accessory = panel.accessoryView();
     let popup_window = popup.window();
     // Own panel/control geometry only. No selected path, filename, title,
     // screen pixels, source data or other applications' windows are logged.
     eprintln!(
-        "mewu.mac.save.panel parentLevel={} panelLevel={} sheet={} accessory={} accessoryFrame={:?} accessoryHidden={} popupFrame={:?} popupHidden={} popupWindow={} popupLevel={:?} popupItems={} selected={}",
-        parent.level(), panel.level(),
+        "mewu.mac.save.panel stage={} visible={} parentLevel={} panelLevel={} sheet={} accessory={} accessoryFrame={:?} accessoryHidden={} popupFrame={:?} popupHidden={} popupWindow={} popupLevel={:?} popupItems={} selected={}",
+        stage, panel.isVisible(), parent.level(), panel.level(),
         panel.sheetParent().is_some(), accessory.is_some(),
         container.frame(), container.isHidden(),
         popup.frame(), popup.isHidden(), popup_window.is_some(),
@@ -526,7 +529,7 @@ fn maintain(id: uuid::Uuid) {
         return;
     };
     #[cfg(debug_assertions)]
-    diagnose(id);
+    diagnose(id, "maintenance");
     let pending = SESSIONS.with(|sessions| {
         let sessions = sessions.try_borrow().ok()?;
         let session = sessions.get(&id)?;
