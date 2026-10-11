@@ -621,6 +621,14 @@ fn start_shutdown(
         } else {
             None
         };
+        // The installed bundle may have been replaced while downloading or
+        // while drafts/native panels drained. Refuse while exit is reversible.
+        if let Some(prepared) = update.as_ref() {
+            if let Err(error) = prepared.preflight() {
+                abort(&app, &id, &error);
+                return;
+            }
+        }
         if let Err(error) = crate::mcp_runtime::final_shutdown(&ticket) {
             if let (Some(migration), Some(pending)) = (&migration, &pending) {
                 if migration.cancel_requested(pending).is_err() {
@@ -644,6 +652,14 @@ fn start_shutdown(
                     // MCP final shutdown cannot be rolled back. Restore service
                     // using the current executable, never leave a half-closed app.
                     app.request_restart();
+                } else {
+                    // The macOS updater returns after swapping the bundle;
+                    // Windows's installer exits the process inside install().
+                    #[cfg(target_os = "macos")]
+                    {
+                        app.state::<Host>().exit.complete(&id);
+                        app.request_restart();
+                    }
                 }
             } else if migration.is_some() {
                 app.state::<Host>().exit.complete(&id);

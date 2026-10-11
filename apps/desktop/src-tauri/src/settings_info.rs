@@ -34,6 +34,8 @@ pub enum UpdateSupport {
     SignedInstaller,
     #[cfg(target_os = "macos")]
     ManualOnly,
+    #[cfg(target_os = "macos")]
+    SignedBundle,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,7 +187,7 @@ impl SettingsResources {
             #[cfg(not(target_os = "macos"))]
             update_support: UpdateSupport::SignedInstaller,
             #[cfg(target_os = "macos")]
-            update_support: UpdateSupport::ManualOnly,
+            update_support: if crate::app_update::macos::supported() { UpdateSupport::SignedBundle } else { UpdateSupport::ManualOnly },
             data_directory: self
                 .0
                 .directory

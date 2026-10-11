@@ -2581,7 +2581,7 @@ fn main() {
             frozen::build(app)?;
             app.manage(recording::RecordingState::default());
             app.manage(app_update::UpdateState::default());
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
             app_update::start_background_checks(app.handle().clone());
             app.manage(scroll_host::ScrollState::default());
             app.manage(pixel_sampler::PixelSampler::default());
