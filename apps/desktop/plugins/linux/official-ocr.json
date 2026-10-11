@@ -3,7 +3,7 @@
   "id": "mewu.ocr",
   "version": "1.0.0-linux.1",
   "name": "文字识别",
-  "description": "使用本机 Tesseract 5 识别截图文字，支持拖选和复制；需要安装系统文字识别组件与所需语言包。",
+  "description": "使用本机 Tesseract 4.1 或 5 识别截图文字，支持拖选和复制；需要安装系统文字识别组件与所需语言包。",
   "publisher": "Mewu",
   "license": "MPL-2.0",
   "hostApi": 1,
