@@ -157,14 +157,14 @@ pub(crate) fn capture_witness(window: &tauri::WebviewWindow) -> Result<CaptureWi
     }
     let drawable = widget.window().ok_or("截图窗口尚未创建")?;
     let display = drawable.display();
-    let x11_window_type: Type = unsafe { from_glib(gdkx11_sys::gdk_x11_window_get_type()) };
-    let x11_display_type: Type = unsafe { from_glib(gdkx11_sys::gdk_x11_display_get_type()) };
+    let x11_window_type: Type = unsafe { from_glib(gdk_x11_sys::gdk_x11_window_get_type()) };
+    let x11_display_type: Type = unsafe { from_glib(gdk_x11_sys::gdk_x11_display_get_type()) };
     if !drawable.type_().is_a(x11_window_type) || !display.type_().is_a(x11_display_type) {
         return Err("当前桌面尚未接入屏幕共享授权，请使用 X11 会话".into());
     }
     // GType was checked while both referenced GTK objects are alive on the UI
     // thread. No borrowed pointers or GTK objects leave this callback.
-    let xid = unsafe { gdkx11_sys::gdk_x11_window_get_xid(drawable.as_ptr().cast()) };
+    let xid = unsafe { gdk_x11_sys::gdk_x11_window_get_xid(drawable.as_ptr().cast()) };
     let identity = Identity {
         widget: widget.as_ptr() as usize,
         drawable: drawable.as_ptr() as usize,
