@@ -81,8 +81,8 @@ objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, featu
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGDirectDisplay", "CGImage", "CGDataProvider"] }
 block2 = "=0.6.2"
 core-foundation = "=0.10.1"
-objc2-av-foundation = {version = "=0.3.2", default-features = false, features = ["std", "AVAsset", "AVAssetTrack", "AVMediaFormat", "AVAssetImageGenerator", "AVAsynchronousKeyValueLoading", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-core-graphics"] }
-objc2-core-media = {version = "=0.3.2", default-features = false, features = ["std", "CMTime", "objc2"] }
+objc2-av-foundation = {version = "=0.3.2", default-features = false, features = ["std", "AVAsset", "AVAssetTrack", "AVMediaFormat", "AVAssetImageGenerator", "AVAsynchronousKeyValueLoading", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-core-graphics", "AVAssetExportSession"] }
+objc2-core-media = {version = "=0.3.2", default-features = false, features = ["std", "CMTime", "objc2", "CMTimeRange"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "=0.18.2"
