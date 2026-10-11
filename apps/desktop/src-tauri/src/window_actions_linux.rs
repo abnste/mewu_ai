@@ -33,8 +33,17 @@ impl Registry {
         identity: Identity,
         visible: bool,
     ) -> Result<(usize, u64, bool), String> {
-        // The current region exporter is owned exclusively by the space window.
-        if self.failed || label != "space" || identity.widget == 0 || identity.drawable == 0 {
+        let owned_label = label == "space"
+            || label.strip_prefix("pin-").is_some_and(|id| {
+                uuid::Uuid::parse_str(id).is_ok_and(|value| value.hyphenated().to_string() == id)
+            });
+        // Bound tombstones too: destroyed unique labels must not grow forever.
+        if self.failed
+            || !owned_label
+            || identity.widget == 0
+            || identity.drawable == 0
+            || (!self.owners.contains_key(label) && self.owners.len() >= 4096)
+        {
             return Err(UNAVAILABLE.into());
         }
         if !visible {
@@ -221,6 +230,20 @@ pub(crate) fn copy_image(
     image: image::RgbaImage,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
+    with_display(window, token, cancel, move |display| {
+        publish_image(display, image)
+    })
+}
+
+/// The blocking caller retains actual work until the original UI callback
+/// finishes. The callback receives a GTK display only after its token matches.
+#[cfg(target_os = "linux")]
+pub(crate) fn with_display(
+    window: tauri::WebviewWindow,
+    token: usize,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    publish: impl FnOnce(&gtk::gdk::Display) -> Result<(), String> + Send + 'static,
+) -> Result<(), String> {
     use gtk::prelude::*;
     use std::sync::atomic::Ordering;
     if gtk::is_initialized_main_thread() {
@@ -239,7 +262,7 @@ pub(crate) fn copy_image(
                 if cancel.load(Ordering::Acquire) {
                     return Err("复制请求已取消".into());
                 }
-                publish_image(&display, image)
+                publish(&display)
             })();
             let _ = send.send(result);
         })
@@ -284,6 +307,21 @@ mod tests {
         assert!(r.bind("space", identity(), true).is_err());
         assert!(!r.visible(0));
     }
+    #[test]
+    fn independent_pin_identity_never_reuses_space_or_destroyed_pin_tokens() {
+        let mut r = Registry::default();
+        let label = format!("pin-{}", uuid::Uuid::new_v4());
+        let (space, _, _) = r.bind("space", identity(), true).unwrap();
+        let (pin, generation, _) = r.bind(&label, identity(), true).unwrap();
+        assert_ne!(space, pin);
+        r.update(&label, generation, false);
+        assert!(r.visible(space));
+        assert!(!r.visible(pin));
+        let (remapped, _, _) = r.bind(&label, identity(), true).unwrap();
+        r.revoke(&label, None);
+        assert!(!r.visible(remapped));
+        assert!(r.bind("pin-arbitrary", identity(), true).is_err());
+    }
     #[cfg(all(target_os = "linux", feature = "linux-x11-tests"))]
     #[test]
     fn x11_visibility_native_gtk_action_lifetime() {
@@ -318,6 +356,19 @@ mod tests {
             replacement.destroy();
         }
         assert!(!visible(replaced));
+        let pin = gtk::ApplicationWindow::builder().build();
+        let label = format!("pin-{}", uuid::Uuid::new_v4());
+        pin.show_all();
+        let pin_token = bind_widget(&label, &pin).unwrap();
+        pin.hide();
+        assert!(!visible(pin_token));
+        pin.show_all();
+        let pin_remapped = bind_widget(&label, &pin).unwrap();
+        assert_ne!(pin_token, pin_remapped);
+        unsafe {
+            pin.destroy();
+        }
+        assert!(!visible(pin_remapped));
         // Read through another X11 client after the publishing wrapper and
         // pixel buffer have been dropped; GTK must continue serving the data.
         let expected = vec![19, 41, 73, 255, 211, 101, 7, 255];

@@ -51,6 +51,10 @@ These fixtures require the isolation marker, refuse any existing Secret Service 
 
 Follow the [official AppImage packaging guidance](https://v2.tauri.app/distribute/appimage/) when choosing a build distribution. A build made on a newer distribution does not establish compatibility with older systems. Test normal AppImage execution and extracted execution separately; missing `/dev/fuse` blocks normal mounting even if extraction works.
 
+## Linux pin export
+
+Pin export retains its immutable image source, pixel reservation, actual pin work and export operation through the picker, encoding and publication. Linux uses the same typed PNG/JPEG choice and destination validation as region export, with an asynchronous GTK dialog parented to the original pin and a token invalidated by unmap or destruction. Clipboard publication waits for the original GTK callback and retains GTK ownership for later paste requests. The registry accepts only the space label and canonical UUID pin labels, with bounded identity tombstones. The native X11 fixture exercises a real pin hide/remap/destruction in addition to space lifecycle and clipboard pixels. Portable registry tests do not establish GTK/native success; actual rotated PNG/JPEG export, overwrite/cancel and later desktop paste require separate native acceptance.
+
 ## Native worker lifetime prerequisite
 
 The Linux production `ManagedProcess` adapter remains unsupported and rejects plain commands before spawning them. Its prerequisite fixture uses only the exact current test executable and installed `/usr/bin/bwrap`, with a new user/PID namespace and the fixture worker as PID 1. The writable root bind preserves the helper's normal filesystem view; this is a lifetime prerequisite, not filesystem isolation or support for arbitrary commands/MCP plugins. No bubblewrap source or binary is bundled.

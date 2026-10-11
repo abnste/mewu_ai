@@ -1108,13 +1108,13 @@ pub(crate) async fn export(
     window: &WebviewWindow,
     clipboard: bool,
 ) -> Result<(), String> {
-    #[cfg(windows)]
-    return export_windows(app, window, clipboard).await;
-    #[cfg(not(windows))]
+    #[cfg(any(windows, target_os = "linux"))]
+    return export_supervised(app, window, clipboard).await;
+    #[cfg(not(any(windows, target_os = "linux")))]
     return export_legacy(app, window, clipboard).await;
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 async fn export_legacy(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -1193,8 +1193,8 @@ fn rotate(image: RgbaImage, turns: u8) -> RgbaImage {
         _ => image,
     }
 }
-#[cfg(windows)]
-async fn export_windows(
+#[cfg(any(windows, target_os = "linux"))]
+async fn export_supervised(
     app: &AppHandle,
     window: &WebviewWindow,
     clipboard: bool,
@@ -1237,6 +1237,8 @@ async fn export_windows(
     };
     let work = registry.work.clone();
     let app = app.clone();
+    #[cfg(target_os = "linux")]
+    let export_window = window.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (_permit, _work_lease) = (permit, work_lease);
         let result = (|| {
@@ -1250,19 +1252,26 @@ async fn export_windows(
                 let picker_entry_cancel = cancel.clone();
                 let picker_operation_cancel = export_cancel.clone();
                 let default_format = crate::image_save_dialog::preference_format(&app)?;
+                let allowed = move || {
+                    picker_app.state::<Host>().exit.ensure_running()?;
+                    picker_entry_cancel.check()?;
+                    crate::image_host::check_cancel(&picker_operation_cancel)?;
+                    crate::image_host::ensure_visible(handle)
+                };
+                #[cfg(windows)]
                 let selected = crate::image_save_dialog::pick_image_destination_with_default(
                     handle as isize,
                     ImageSaveName::PinnedImage,
                     default_format,
                     export_cancel.clone(),
-                    move || {
-                        picker_app.state::<Host>().exit.ensure_running()?;
-                        picker_entry_cancel.check()?;
-                        crate::image_host::check_cancel(&picker_operation_cancel)?;
-                        crate::image_host::ensure_visible(handle)
-                    },
+                    allowed,
                 )
                 .map_err(|error| error.to_string())?;
+                #[cfg(target_os = "linux")]
+                let selected = crate::image_save_dialog::pick_image_destination_linux_with_default(
+                    export_window.clone(), handle, ImageSaveName::PinnedImage,
+                    default_format, export_cancel.clone(), allowed,
+                ).map_err(|error| error.to_string())?;
                 match selected {
                     SaveDialogOutcome::Selected { path, format } => Some(
                         crate::image_export::ImageDestination::prepare(&path, format)?,
@@ -1311,14 +1320,21 @@ async fn export_windows(
                         cancel.check()?;
                         crate::image_host::ensure_visible(handle)
                     })?;
-                    let mut board = arboard::Clipboard::new().map_err(|_| "无法打开剪贴板")?;
-                    board
-                        .set_image(arboard::ImageData {
-                            width: pixels.width() as usize,
-                            height: pixels.height() as usize,
-                            bytes: std::borrow::Cow::Owned(pixels.into_raw()),
-                        })
-                        .map_err(|_| "无法复制贴图".into())
+                    #[cfg(target_os = "linux")]
+                    return crate::window_actions_linux::copy_image(
+                        export_window.clone(), handle, pixels, export_cancel.clone(),
+                    );
+                    #[cfg(windows)]
+                    {
+                        let mut board = arboard::Clipboard::new().map_err(|_| "无法打开剪贴板")?;
+                        board
+                            .set_image(arboard::ImageData {
+                                width: pixels.width() as usize,
+                                height: pixels.height() as usize,
+                                bytes: std::borrow::Cow::Owned(pixels.into_raw()),
+                            })
+                            .map_err(|_| "无法复制贴图".into())
+                    }
                 })
             }
         })();
