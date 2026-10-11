@@ -29,7 +29,7 @@ export interface SettingsInfo {
   version: string;
   commit?: string | null;
   channel: 'development' | 'alpha' | 'stable';
-  platform: 'windows';
+  platform: 'windows' | 'macos';
   updateSupport: 'unconfigured' | 'manual_only' | 'signed_installer';
   dataDirectory: string;
   license: string;
@@ -86,7 +86,7 @@ export function validCapturePreferences(value: unknown): value is CapturePrefere
 export function validSettingsInfo(value: unknown): value is SettingsInfo {
   if (!value || typeof value !== 'object') return false;
   const v = value as SettingsInfo;
-  return ['application', 'version', 'dataDirectory', 'license'].every(key => typeof v[key as keyof SettingsInfo] === 'string' && String(v[key as keyof SettingsInfo]).length > 0 && String(v[key as keyof SettingsInfo]).length <= 32768) && (v.commit === undefined || v.commit === null || typeof v.commit === 'string' && v.commit.length <= 128) && ['development', 'alpha', 'stable'].includes(v.channel) && v.platform === 'windows' && ['unconfigured', 'manual_only', 'signed_installer'].includes(v.updateSupport) && typeof v.noticesAvailable === 'boolean';
+  return ['application', 'version', 'dataDirectory', 'license'].every(key => typeof v[key as keyof SettingsInfo] === 'string' && String(v[key as keyof SettingsInfo]).length > 0 && String(v[key as keyof SettingsInfo]).length <= 32768) && (v.commit === undefined || v.commit === null || typeof v.commit === 'string' && v.commit.length <= 128) && ['development', 'alpha', 'stable'].includes(v.channel) && (v.platform === 'windows' || v.platform === 'macos') && ['unconfigured', 'manual_only', 'signed_installer'].includes(v.updateSupport) && typeof v.noticesAvailable === 'boolean';
 }
 export function validLicenseDocument(value: unknown): value is LicenseDocument {
   if (!value || typeof value !== 'object') return false;

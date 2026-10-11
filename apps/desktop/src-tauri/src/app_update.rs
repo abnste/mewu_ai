@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Fixed signed release channel. Only the first-party settings window can install.
 //! Downloads finish and verify before entering the normal save/drain exit protocol.
+#[cfg(target_os = "windows")]
 use crate::Host;
 use serde::Serialize;
-use std::sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex};
+use std::sync::{atomic::{AtomicBool, Ordering}, Mutex};
+#[cfg(target_os = "windows")]
+use std::sync::{atomic::AtomicU64, Arc};
+#[cfg(target_os = "windows")]
 use std::time::Duration;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, WebviewWindow};
+#[cfg(target_os = "windows")]
+use tauri::Manager;
+#[cfg(target_os = "windows")]
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+#[cfg(target_os = "windows")]
 const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -22,13 +30,13 @@ pub struct Status {
     pub total_bytes: Option<u64>,
     pub error: Option<&'static str>,
 }
-struct Inner { status: Status, update: Option<Update> }
+struct Inner { status: Status, #[cfg(target_os = "windows")] update: Option<Update> }
 pub struct UpdateState { inner: Mutex<Inner>, busy: AtomicBool }
 impl Default for UpdateState {
     fn default() -> Self {
         Self { inner: Mutex::new(Inner { status: Status { phase: Phase::Idle,
             current_version: env!("CARGO_PKG_VERSION").into(), available_version: None,
-            downloaded_bytes: 0, total_bytes: None, error: None }, update: None }), busy: AtomicBool::new(false) }
+            downloaded_bytes: 0, total_bytes: None, error: None }, #[cfg(target_os = "windows")] update: None }), busy: AtomicBool::new(false) }
     }
 }
 struct Permit<'a>(&'a AtomicBool);
@@ -59,6 +67,7 @@ pub fn validate_release(current: &str, version: &str, url: &url::Url) -> Result<
         || url.fragment().is_some() || url.path() != expected { return Err("update_invalid"); }
     Ok(())
 }
+#[cfg(target_os = "windows")]
 async fn check(app: &AppHandle) -> Result<Status, String> {
     app.state::<Host>().exit.ensure_new_operation()?;
     let state = app.state::<UpdateState>();
@@ -96,25 +105,62 @@ async fn check(app: &AppHandle) -> Result<Status, String> {
     }
     state.status()
 }
+// The configured release contract accepts only Windows EXE packages. Refuse
+// before obtaining a host or creating an updater on every other platform.
+#[cfg(not(target_os = "windows"))]
+async fn check(app: impl FnOnce() -> AppHandle) -> Result<Status, String> {
+    drop(app);
+    Err("update_unsupported".into())
+}
+#[cfg(not(target_os = "windows"))]
+async fn install(app: impl FnOnce() -> AppHandle) -> Result<(), String> {
+    drop(app);
+    Err("update_unsupported".into())
+}
 /// Created only after the updater verified the bytes and the signed version.
-pub struct PreparedInstall { update: Update, bytes: Vec<u8> }
+pub struct PreparedInstall {
+    #[cfg(target_os = "windows")]
+    update: Update,
+    #[cfg(target_os = "windows")]
+    bytes: Vec<u8>,
+    #[cfg(not(target_os = "windows"))]
+    _private: (),
+}
 impl PreparedInstall {
     pub fn install(self, exit: &crate::lifecycle::ExitState) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
         install_when_ready(exit.is_ready(), || self.update.install(self.bytes).map_err(|_| "update_install_failed".into()))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = exit;
+            Err("update_unsupported".into())
+        }
     }
 }
+#[cfg(target_os = "windows")]
 fn install_when_ready(ready: bool, install: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
     if !ready { return Err("update_save_failed".into()); }
     install()
 }
 #[tauri::command]
 pub fn app_update_status(window: WebviewWindow, app: AppHandle) -> Result<Status, String> {
-    owner(&window)?; app.state::<UpdateState>().status()
+    owner(&window)?;
+    #[cfg(target_os = "windows")]
+    { app.state::<UpdateState>().status() }
+    #[cfg(not(target_os = "windows"))]
+    { let _ = app; Err("update_unsupported".into()) }
 }
 #[tauri::command]
 pub async fn check_app_update(window: WebviewWindow, app: AppHandle) -> Result<Status, String> {
-    owner(&window)?; check(&app).await
+    owner(&window)?;
+    #[cfg(target_os = "windows")]
+    { check(&app).await }
+    #[cfg(not(target_os = "windows"))]
+    { check(|| app).await }
 }
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn install_app_update(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
     owner(&window)?;
@@ -153,6 +199,13 @@ pub async fn install_app_update(window: WebviewWindow, app: AppHandle) -> Result
     if result.is_err() { state.set(Phase::Failed, Some("update_install_failed")); }
     result
 }
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub async fn install_app_update(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
+    owner(&window)?;
+    install(|| app).await
+}
+#[cfg(target_os = "windows")]
 pub fn start_background_checks(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(15)).await;
@@ -164,6 +217,7 @@ pub fn start_background_checks(app: AppHandle) {
 }
 /// Release verification CLI. No windows, business database, credentials or
 /// single-instance commands are initialized. This never installs a package.
+#[cfg(target_os = "windows")]
 pub fn verify_cli(mut context: tauri::Context<tauri::Wry>, report: &std::path::Path) -> Result<(), String> {
     context.config_mut().app.windows.clear();
     let app = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build())
@@ -203,6 +257,10 @@ pub fn verify_cli(mut context: tauri::Context<tauri::Wry>, report: &std::path::P
     file.sync_all().map_err(|_| "update_report_failed")?;
     Ok(())
 }
+#[cfg(not(target_os = "windows"))]
+pub fn verify_cli(_context: tauri::Context<tauri::Wry>, _report: &std::path::Path) -> Result<(), String> {
+    Err("update_unsupported".into())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +281,7 @@ mod tests {
         }
         assert!(validate_release("1.0.0", "1.0.0-preview.2", &url::Url::parse(valid).unwrap()).is_err());
     }
+    #[cfg(target_os = "windows")]
     #[test]
     fn installer_is_not_called_if_saving_or_worker_drain_has_not_completed() {
         let called = AtomicBool::new(false);
@@ -230,6 +289,12 @@ mod tests {
         assert!(!called.load(Ordering::Acquire));
         assert!(install_when_ready(true, || { called.store(true, Ordering::Release); Err("launch failed".into()) }).is_err());
         assert!(called.load(Ordering::Acquire));
+    }
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn unsupported_platform_check_and_install_never_obtain_host_or_start_io() {
+        assert_eq!(check(|| panic!("unsupported check obtained a host")).await.err().as_deref(), Some("update_unsupported"));
+        assert_eq!(install(|| panic!("unsupported install obtained a host")).await.err().as_deref(), Some("update_unsupported"));
     }
     #[test]
     fn update_permit_releases_on_failure() {
