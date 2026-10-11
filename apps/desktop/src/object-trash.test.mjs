@@ -30,13 +30,13 @@ test('dropping a media object does not await its own app flush; movement still w
   const source=await readFile(new URL('./components/ArtifactCard.tsx',import.meta.url),'utf8');
   const body=parse(source,{sourceType:'module',plugins:['typescript','jsx']}).program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
   const declaration=name=>{const node=body.find(node=>node.type==='VariableDeclaration'&&node.declarations.some(value=>value.id.name===name));return source.slice(node.start,node.end);};
-  for(const remove of [true,false]){
+  for(const kind of ['image','video','svg'])for(const remove of [true,false]){
     let flush,removed=0,updated=0,resolveUpdate;
     const listeners=new Map(),target={setPointerCapture(){},hasPointerCapture:()=>false,addEventListener:(name,handler)=>listeners.set(name,handler),removeEventListener:name=>listeners.delete(name)};
     let position={x:.1,y:.1,width:.2,height:.2};
-    const props={blackboard:true,busy:false,item:{...position,asset:{id:'asset'}},trash:{begin(){},move(){},finish:()=>remove,cancel(){}},onRegisterFlush:value=>{flush=value;return()=>{};},onRemove:async()=>{await flush(()=>true);removed++;},onUpdate:async item=>{updated++;await new Promise(resolve=>{resolveUpdate=resolve;});Object.assign(props.item,item);}};
-    const context=vm.createContext({props,position:()=>position,setPosition:value=>{position=value;},savedPosition:()=>({...props.item}),isImage:()=>false,isVideo:()=>false,window:{innerWidth:800,innerHeight:600},innerWidth:800,innerHeight:600,zoomAsset:undefined,flushZoom:async()=>{},moveImageObject,disposed:false,gestureToken:0,gestureFlight:undefined,textFlush:undefined,disposeGesture:undefined,setMoving(){},Promise,Error});
-    vm.runInContext(stripTypeScriptTypes(declaration('unregisterFlush')+'\n'+declaration('gesture')+'\ngesture',{mode:'transform'}),context)({button:0,pointerId:1,currentTarget:target,clientX:100,clientY:100,preventDefault(){},stopPropagation(){}},false,true);
+    const props={blackboard:true,busy:false,item:{...position,asset:{id:'asset',kind,width:400,height:300}},trash:{begin(){},move(){},finish:()=>remove,cancel(){}},onRegisterFlush:value=>{flush=value;return()=>{};},onRemove:async()=>{await flush(()=>true);removed++;},onUpdate:async item=>{updated++;await new Promise(resolve=>{resolveUpdate=resolve;});Object.assign(props.item,item);}};
+    const context=vm.createContext({props,position:()=>position,setPosition:value=>{position=value;},savedPosition:()=>({...props.item}),imageBox:()=>({width:160,height:120}),window:{innerWidth:800,innerHeight:600},innerWidth:800,innerHeight:600,zoomAsset:undefined,flushZoom:async()=>{},moveImageObject,disposed:false,gestureToken:0,gestureFlight:undefined,textFlush:undefined,disposeGesture:undefined,setMoving(){},Promise,Error});
+    vm.runInContext(stripTypeScriptTypes(['isImage','isVideo','isRasterMedia','unregisterFlush','gesture'].map(declaration).join('\n')+'\ngesture',{mode:'transform'}),context)({button:0,pointerId:1,currentTarget:target,clientX:100,clientY:100,preventDefault(){},stopPropagation(){}},false,true);
     listeners.get('pointermove')({clientX:140,clientY:140});
     const completion=listeners.get('pointerup')({type:'pointerup',clientX:140,clientY:140});
     if(!remove){await new Promise(resolve=>setImmediate(resolve));let flushed=false;const pending=flush(()=>true).then(()=>{flushed=true;});await new Promise(resolve=>setImmediate(resolve));assert.equal(updated,1);assert.equal(flushed,false);resolveUpdate();await pending;}
