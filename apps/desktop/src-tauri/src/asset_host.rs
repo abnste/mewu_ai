@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! User-selected files enter one captured scene as an all-or-nothing batch.
 use crate::{assets, Host, HostSnapshot};
-use mewu_core::{Asset, AssetKind, Snapshot};
+use mewu_core::{Asset, AssetKind, Store};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -76,13 +76,9 @@ struct ImportTarget {
     background: Option<Asset>,
 }
 impl ImportTarget {
-    fn capture(snapshot: &Snapshot, scene_id: &str) -> Result<Self, String> {
-        let scene = snapshot
-            .scenes
-            .iter()
-            .find(|scene| scene.id == scene_id)
-            .ok_or("会话不存在")?;
-        if snapshot.active_scene_id != scene_id || scene.closed || scene.frozen {
+    fn capture(store: &Store, scene_id: &str) -> Result<Self, String> {
+        let scene = store.active_scene().map_err(|error| error.to_string())?;
+        if scene.id != scene_id || scene.closed || scene.frozen {
             return Err("会话已切换或关闭，请重新添加文件".into());
         }
         Ok(Self {
@@ -91,8 +87,8 @@ impl ImportTarget {
             background: scene.background.clone(),
         })
     }
-    fn validate(&self, snapshot: &Snapshot) -> Result<(), String> {
-        let current = Self::capture(snapshot, &self.scene_id)?;
+    fn validate(&self, store: &Store) -> Result<(), String> {
+        let current = Self::capture(store, &self.scene_id)?;
         if self.agent_id != current.agent_id || self.background != current.background {
             return Err("当前空间已更改，请重新添加文件".into());
         }
@@ -119,7 +115,7 @@ pub async fn import_assets(
     let cancel = Arc::new(AtomicBool::new(false));
     let _invoke = ImportCancellation(cancel.clone());
     host.exit.ensure_running()?;
-    let target = ImportTarget::capture(&host.lock()?.store.snapshot(), &scene_id)?;
+    let target = ImportTarget::capture(&host.lock()?.store, &scene_id)?;
     let root = host.assets.clone();
     let import_window = window.clone();
     let worker_app = app.clone();
@@ -143,7 +139,7 @@ pub async fn import_assets(
         }
         let host = worker_app.state::<Host>();
         host.exit.ensure_running()?;
-        worker_target.validate(&host.lock()?.store.snapshot())?;
+        worker_target.validate(&host.lock()?.store)?;
         let mut batch = assets::import_batch(&files, &root)?;
         for asset in batch
             .assets
@@ -154,7 +150,7 @@ pub async fn import_assets(
                 return Err("导入已取消".into());
             }
             host.exit.ensure_running()?;
-            worker_target.validate(&host.lock()?.store.snapshot())?;
+            worker_target.validate(&host.lock()?.store)?;
             let (_source, _) = assets::open_video(asset, &root)?;
             let path = assets::verified_path(asset, &root)?;
             // This blocking task retains the import permit and staged files
@@ -171,7 +167,7 @@ pub async fn import_assets(
             imported_video_metadata(asset, result)?;
         }
         host.exit.ensure_running()?;
-        worker_target.validate(&host.lock()?.store.snapshot())?;
+        worker_target.validate(&host.lock()?.store)?;
         Ok::<_, String>((permit, Some(batch)))
     })
     .await
@@ -190,7 +186,7 @@ pub async fn import_assets(
         if host.capturing.load(Ordering::Acquire) {
             return Err("截图尚未完成，请重新添加文件".into());
         }
-        target.validate(&engine.store.snapshot())?;
+        target.validate(&engine.store)?;
         if let Some(mut batch) = prepared {
             let imported_images = batch
                 .assets
@@ -368,31 +364,30 @@ mod tests {
     }
     #[test]
     fn import_identity_rejects_scene_agent_background_and_visibility_changes() {
-        let store = mewu_core::Store::open_in_memory().unwrap();
-        let mut snapshot = store.snapshot();
-        let scene_id = snapshot.active_scene_id.clone();
-        let target = ImportTarget::capture(&snapshot, &scene_id).unwrap();
-        assert!(target.validate(&snapshot).is_ok());
-        snapshot.active_scene_id = "other".into();
-        assert!(target.validate(&snapshot).is_err());
-        snapshot.active_scene_id = scene_id.clone();
-        let index = snapshot
-            .scenes
-            .iter()
-            .position(|s| s.id == scene_id)
-            .unwrap();
-        snapshot.scenes[index].frozen = true;
-        assert!(target.validate(&snapshot).is_err());
-        snapshot.scenes[index].frozen = false;
-        snapshot.scenes[index].closed = true;
-        assert!(target.validate(&snapshot).is_err());
-        snapshot.scenes[index].closed = false;
-        snapshot.scenes[index].agent_id = "another-agent".into();
-        assert!(target.validate(&snapshot).is_err());
-        snapshot.scenes[index].agent_id = target.agent_id.clone();
-        snapshot.scenes[index].background = Some(Asset {
+        use mewu_core::SceneCommand;
+        let mut store = Store::open_in_memory().unwrap();
+        let scene_id = store.active_scene().unwrap().id.clone();
+        let target = ImportTarget::capture(&store, &scene_id).unwrap();
+        assert!(target.validate(&store).is_ok());
+        assert!(ImportTarget::capture(&store, "other").is_err());
+        // A real draft transaction is unrelated to the captured import source.
+        store.apply(SceneCommand::SetDraft {
+            scene_id: scene_id.clone(), draft: "仍在编辑的草稿".into(),
+        }).unwrap();
+        assert!(target.validate(&store).is_ok());
+        let mut agent = store.snapshot().agents[0].clone();
+        agent.id = uuid::Uuid::new_v4().to_string();
+        let agent_id = agent.id.clone();
+        store.apply(SceneCommand::SaveAgent { agent }).unwrap();
+        store.apply(SceneCommand::SetAgent { scene_id: scene_id.clone(), agent_id }).unwrap();
+        assert!(target.validate(&store).is_err());
+        store.apply(SceneCommand::SetAgent {
+            scene_id: scene_id.clone(), agent_id: target.agent_id.clone(),
+        }).unwrap();
+        assert!(target.validate(&store).is_ok());
+        store.set_background(&scene_id, Asset {
             capture_coordinates: None,
-            id: "new-background".into(),
+            id: uuid::Uuid::new_v4().to_string(),
             name: "synthetic".into(),
             path: "unused".into(),
             kind: AssetKind::Image,
@@ -401,7 +396,16 @@ mod tests {
             origin_x: None,
             origin_y: None,
             scale_factor: None,
-        });
-        assert!(target.validate(&snapshot).is_err());
+        }).unwrap();
+        assert!(target.validate(&store).is_err());
+        let target = ImportTarget::capture(&store, &scene_id).unwrap();
+        for command in [SceneCommand::NewScene, SceneCommand::FreezeScene { scene_id: scene_id.clone() }] {
+            store.apply(command).unwrap();
+            assert!(target.validate(&store).is_err());
+            store.apply(SceneCommand::ActivateScene { scene_id: scene_id.clone() }).unwrap();
+            assert!(target.validate(&store).is_ok());
+        }
+        store.apply(SceneCommand::CloseScene { scene_id }).unwrap();
+        assert!(target.validate(&store).is_err());
     }
 }

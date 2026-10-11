@@ -319,6 +319,12 @@ impl Store {
         self.state.clone()
     }
 
+    /// Borrow the active scene for a host identity check. Clone only the small
+    /// fields needed after releasing Engine, never every conversation body.
+    pub fn active_scene(&self) -> Result<&Scene> {
+        scene(&self.state, &self.state.active_scene_id)
+    }
+
     /// Borrow live typed references. The host clones only selected metadata
     /// before releasing its lock, without copying any conversation bodies.
     pub fn asset(&self, id: &str) -> Option<&Asset> {

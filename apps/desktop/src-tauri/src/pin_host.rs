@@ -1108,13 +1108,13 @@ pub(crate) async fn export(
     window: &WebviewWindow,
     clipboard: bool,
 ) -> Result<(), String> {
-    #[cfg(windows)]
-    return export_windows(app, window, clipboard).await;
-    #[cfg(not(windows))]
+    #[cfg(any(windows, target_os = "linux"))]
+    return export_supervised(app, window, clipboard).await;
+    #[cfg(not(any(windows, target_os = "linux")))]
     return export_legacy(app, window, clipboard).await;
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 async fn export_legacy(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -1193,8 +1193,8 @@ fn rotate(image: RgbaImage, turns: u8) -> RgbaImage {
         _ => image,
     }
 }
-#[cfg(windows)]
-async fn export_windows(
+#[cfg(any(windows, target_os = "linux"))]
+async fn export_supervised(
     app: &AppHandle,
     window: &WebviewWindow,
     clipboard: bool,
@@ -1224,6 +1224,8 @@ async fn export_windows(
                 cancel.check()?;
                 crate::image_host::ensure_visible(handle)
             })?;
+    #[cfg(target_os = "linux")]
+    let image_work = Arc::new(image_work);
     let _invoke = image_work.cancel_on_drop();
     let registry = app.state::<PinRegistry>();
     // Include the native picker in actual pin work. An aborted application
@@ -1237,6 +1239,8 @@ async fn export_windows(
     };
     let work = registry.work.clone();
     let app = app.clone();
+    #[cfg(target_os = "linux")]
+    let export_window = window.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (_permit, _work_lease) = (permit, work_lease);
         let result = (|| {
@@ -1250,19 +1254,26 @@ async fn export_windows(
                 let picker_entry_cancel = cancel.clone();
                 let picker_operation_cancel = export_cancel.clone();
                 let default_format = crate::image_save_dialog::preference_format(&app)?;
+                let allowed = move || {
+                    picker_app.state::<Host>().exit.ensure_running()?;
+                    picker_entry_cancel.check()?;
+                    crate::image_host::check_cancel(&picker_operation_cancel)?;
+                    crate::image_host::ensure_visible(handle)
+                };
+                #[cfg(windows)]
                 let selected = crate::image_save_dialog::pick_image_destination_with_default(
                     handle as isize,
                     ImageSaveName::PinnedImage,
                     default_format,
                     export_cancel.clone(),
-                    move || {
-                        picker_app.state::<Host>().exit.ensure_running()?;
-                        picker_entry_cancel.check()?;
-                        crate::image_host::check_cancel(&picker_operation_cancel)?;
-                        crate::image_host::ensure_visible(handle)
-                    },
+                    allowed,
                 )
                 .map_err(|error| error.to_string())?;
+                #[cfg(target_os = "linux")]
+                let selected = crate::image_save_dialog::pick_image_destination_linux_with_default(
+                    export_window.clone(), handle, ImageSaveName::PinnedImage,
+                    default_format, export_cancel.clone(), allowed,
+                ).map_err(|error| error.to_string())?;
                 match selected {
                     SaveDialogOutcome::Selected { path, format } => Some(
                         crate::image_export::ImageDestination::prepare(&path, format)?,
@@ -1305,6 +1316,29 @@ async fn export_windows(
                     },
                 )
             } else {
+                #[cfg(target_os = "linux")]
+                {
+                    let ui_work = work.clone();
+                    let ui_app = app.clone();
+                    let ui_cancel = cancel.clone();
+                    let ui_image_work = image_work.clone();
+                    // Never retain Work.state while dispatching or waiting for
+                    // GTK. Final admission and native publication occur in the
+                    // same short UI callback, with actual leases still owned.
+                    crate::window_actions_linux::with_display(
+                        export_window.clone(), handle, export_cancel.clone(), move |display| {
+                            ui_work.commit(&ui_app, &ui_cancel, || {
+                                ui_image_work.accept_publication(|| {
+                                    ui_app.state::<Host>().exit.ensure_running()?;
+                                    ui_cancel.check()?;
+                                    crate::image_host::ensure_visible(handle)
+                                })?;
+                                crate::window_actions_linux::publish_image(display, pixels)
+                            })
+                        },
+                    )
+                }
+                #[cfg(windows)]
                 work.commit(&app, &cancel, || {
                     image_work.accept_publication(|| {
                         app.state::<Host>().exit.ensure_running()?;

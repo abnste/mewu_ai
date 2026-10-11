@@ -22,6 +22,7 @@ const errors: Record<string, string> = {
   update_not_available: '请先检查更新', update_busy: '正在更新，请稍候', update_too_large: '更新文件过大',
   update_unsupported: '此平台尚未配置在线更新',
   update_install_location: '请将 MewuAI 移到应用程序文件夹后重试',
+  update_appimage_location: '请使用可写目录中的 AppImage 更新',
 };
 type UpdateCommand = 'check_app_update' | 'install_app_update';
 interface UpdateApi {
@@ -42,9 +43,10 @@ export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateAp
   const mode = () => {
     const info = information();
     if (!info) return 'loading';
-    if (info.platform === 'macos' && info.updateSupport === 'manual_only') return 'manual';
+    if (['macos', 'linux'].includes(info.platform) && info.updateSupport === 'manual_only') return 'manual';
     return (info.platform === 'windows' && info.updateSupport === 'signed_installer')
-      || (info.platform === 'macos' && info.updateSupport === 'signed_bundle') ? 'signed' : 'unsupported';
+      || (info.platform === 'macos' && info.updateSupport === 'signed_bundle')
+      || (info.platform === 'linux' && info.updateSupport === 'signed_appimage') ? 'signed' : 'unsupported';
   };
   const busy = () => pending() || ['checking', 'downloading', 'installing'].includes(status()?.phase ?? '');
   async function refresh() {
@@ -96,7 +98,7 @@ export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateAp
 export function AppUpdateSettings(props: { active: boolean }) {
   const { status, error, busy, mode, perform, label } = createAppUpdateSettings(() => props.active);
   return <><Row title={t('软件更新')}>
-    <Show when={mode() === 'manual'}><span class="settings-value">{t('手动更新：请退出 MewuAI，使用新版 Mac 安装包替换应用。')}</span></Show>
+    <Show when={mode() === 'manual'}><span class="settings-value">{t('手动更新：请退出 MewuAI，使用新版安装包替换应用。')}</span></Show>
     <Show when={mode() === 'unsupported'}><span class="settings-value">{t(errors.update_unsupported)}</span></Show>
     <Show when={mode() === 'signed'}>
     <span class="settings-value" aria-live="polite">{label()}</span>
