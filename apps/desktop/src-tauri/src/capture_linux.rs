@@ -154,15 +154,40 @@ mod native {
 
     fn connect() -> Result<(RustConnection, usize), String> {
         session_check()?;
-        x11rb::connect(None).map_err(|_| "无法连接当前 X11 图形会话".into())
+        let (connection, screen) =
+            x11rb::connect(None).map_err(|_| "无法连接当前 X11 图形会话".to_owned())?;
+        let version = connection
+            .randr_query_version(1, 5)
+            .map_err(|_| "无法检查 RandR 截图支持")?
+            .reply()
+            .map_err(|_| "无法检查 RandR 截图支持")?;
+        if version.major_version < 1 || (version.major_version == 1 && version.minor_version < 5) {
+            return Err("当前 X11 桌面需要 RandR 1.5 显示器支持".into());
+        }
+        Ok((connection, screen))
     }
 
-    fn topology(connection: &RustConnection, screen: usize) -> Result<Vec<MonitorInfo>, String> {
+    #[derive(PartialEq)]
+    struct Topology {
+        monitors: Vec<MonitorInfo>,
+        monitor_timestamp: u32,
+        resource_timestamp: u32,
+        config_timestamp: u32,
+    }
+
+    fn topology(connection: &RustConnection, screen: usize) -> Result<Topology, String> {
         let root = connection
             .setup()
             .roots
             .get(screen)
             .ok_or("X11 屏幕不存在")?;
+        // A rotation/transform can retain identical monitor rectangles. Keep
+        // the server's configuration revisions as well as the visible bounds.
+        let resources = connection
+            .randr_get_screen_resources_current(root.root)
+            .map_err(|_| "无法请求 RandR 配置版本")?
+            .reply()
+            .map_err(|_| "无法读取 RandR 配置版本")?;
         let reply = connection
             .randr_get_monitors(root.root, true)
             .map_err(|_| "无法请求显示器配置")?
@@ -205,12 +230,17 @@ mod native {
         if monitors.windows(2).any(|pair| pair[0].id == pair[1].id) {
             return Err("显示器标识不唯一".into());
         }
-        Ok(monitors)
+        Ok(Topology {
+            monitors,
+            monitor_timestamp: reply.timestamp,
+            resource_timestamp: resources.timestamp,
+            config_timestamp: resources.config_timestamp,
+        })
     }
 
     pub(crate) fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
         let (connection, screen) = connect()?;
-        topology(&connection, screen)
+        Ok(topology(&connection, screen)?.monitors)
     }
 
     pub(crate) fn capture(
@@ -241,6 +271,7 @@ mod native {
             .and_then(|cookie| cookie.reply().ok());
         let monitor = if let Some(id) = selected_id {
             before
+                .monitors
                 .iter()
                 .find(|monitor| monitor.id == id)
                 .ok_or("所选显示器已不可用，请重新选择")?
@@ -251,15 +282,15 @@ mod native {
                 .and_then(|pointer| {
                     let x = i64::from(pointer.root_x);
                     let y = i64::from(pointer.root_y);
-                    before.iter().find(|m| {
+                    before.monitors.iter().find(|m| {
                         x >= i64::from(m.origin_x)
                             && y >= i64::from(m.origin_y)
                             && x < i64::from(m.origin_x) + i64::from(m.display_width)
                             && y < i64::from(m.origin_y) + i64::from(m.display_height)
                     })
                 })
-                .or_else(|| before.iter().find(|m| m.is_primary))
-                .or_else(|| before.first())
+                .or_else(|| before.monitors.iter().find(|m| m.is_primary))
+                .or_else(|| before.monitors.first())
                 .ok_or("当前没有可截图的显示器")?
         };
         let geometry = connection
