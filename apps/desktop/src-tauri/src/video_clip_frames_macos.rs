@@ -523,12 +523,38 @@ mod tests {
             assert!(tick < frame.actual_pts_ticks + frame.sample_duration_ticks);
             let bytes = std::fs::read(root.join(format!("{}.jpg", frame.index))).unwrap();
             assert_eq!(frame.jpeg_sha256, format!("{:x}", Sha256::digest(&bytes)));
+            let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
+                .unwrap()
+                .into_rgb8();
             assert_eq!(
-                image::load_from_memory_with_format(&bytes, image::ImageFormat::Jpeg)
-                    .unwrap()
-                    .width(),
-                expected.width
+                decoded.dimensions(),
+                contract::extracted_dimensions(&expected)
             );
+            if let Ok(corners) = std::env::var("MEWU_MAC_MEDIA_TEST_CORNERS") {
+                let colors: Vec<[u8; 3]> =
+                    serde_json::from_str(&corners).expect("explicit synthetic RGB quadrants");
+                assert_eq!(colors.len(), 4);
+                let (w, h) = decoded.dimensions();
+                for ((x, y), rgb) in [
+                    (w / 4, h / 4),
+                    (3 * w / 4, h / 4),
+                    (w / 4, 3 * h / 4),
+                    (3 * w / 4, 3 * h / 4),
+                ]
+                .into_iter()
+                .zip(colors)
+                {
+                    assert!(
+                        decoded
+                            .get_pixel(x, y)
+                            .0
+                            .iter()
+                            .zip(rgb)
+                            .all(|(actual, wanted)| actual.abs_diff(wanted) <= 15),
+                        "actual decoded JPEG orientation pixel ({x},{y})"
+                    );
+                }
+            }
         }
         source.check(&cancel).unwrap();
         assert_eq!(source.hash, hash);
