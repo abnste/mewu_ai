@@ -177,7 +177,7 @@ pub async fn export_text_asset(
     host.exit.ensure_running()?;
     let permit = Permit::acquire(&host.asset_transfers.exporting)?;
     host.exit.ensure_running()?;
-    let asset = assets::resolve(&host.lock()?.store.snapshot(), &asset_id).ok_or("素材不存在")?;
+    let asset = host.lock()?.store.asset(&asset_id).cloned().ok_or("素材不存在")?;
     if asset.kind != AssetKind::Text {
         return Err("此素材不是文本文件".into());
     }
@@ -197,7 +197,7 @@ pub async fn export_text_asset(
         };
         let host = app.state::<Host>();
         host.exit.ensure_running()?;
-        if assets::resolve(&host.lock()?.store.snapshot(), &asset_id).as_ref() != Some(&asset) {
+        if host.lock()?.store.asset(&asset_id) != Some(&asset) {
             return Err("素材已更改，请重新保存".into());
         }
         assets::save_text_copy(&bytes, &path, &managed)

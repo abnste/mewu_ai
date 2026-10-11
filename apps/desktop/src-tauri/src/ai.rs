@@ -986,7 +986,6 @@ where
 }
 
 pub(crate) const MAX_ANSWER_BYTES: usize = 2 * 1024 * 1024;
-const MAX_WIRE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_TOOL_ARGUMENT_BYTES: usize = 16 * 1024;
 const MAX_TURN_ARGUMENT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TURN_CALLS: usize = 8;
@@ -1261,13 +1260,10 @@ where
     S: Stream<Item = Result<B, E>>,
     B: AsRef<[u8]>,
 {
-    let mut wire_bytes = 0usize;
+    let mut budget = crate::sse_budget::SseBudget::new(MAX_ANSWER_BYTES);
     let bounded = bytes.map(move |chunk| -> Result<B, &'static str> {
         let chunk = chunk.map_err(|_| "回复连接中断")?;
-        wire_bytes = wire_bytes.saturating_add(chunk.as_ref().len());
-        if wire_bytes > MAX_WIRE_BYTES {
-            return Err("回复数据超过上限");
-        }
+        budget.accept(chunk.as_ref())?;
         Ok(chunk)
     });
     let events = bounded.eventsource();
@@ -3289,5 +3285,17 @@ pub(crate) mod tests {
         let mut accumulator = ReplyAccumulator::default();
         let data = json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"x".repeat(129)}]}}]}).to_string();
         assert!(accumulator.event(&data, &mut |_| {}, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn unfinished_chat_events_are_rejected_before_the_global_wire_limit() {
+        let pulled = std::cell::Cell::new(0);
+        let fragments = std::iter::repeat_with(|| {
+            pulled.set(pulled.get() + 1);
+            Ok::<_, String>(vec![b'x'; 32 * 1024])
+        }).take(1024);
+        let result = consume_turn_bytes(futures_util::stream::iter(fragments), |_| panic!("No incomplete event may be displayed"), true).await;
+        assert!(result.is_err());
+        assert!(pulled.get() <= 67, "must reject before the old 32MiB wire limit");
     }
 }

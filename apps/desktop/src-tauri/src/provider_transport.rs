@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-const MAX_WIRE: usize = 32 * 1024 * 1024;
+const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CONTINUATION: usize = 4 * 1024 * 1024;
 const MAX_ARGS: usize = 16 * 1024;
 const MAX_TOTAL_ARGS: usize = 64 * 1024;
@@ -369,7 +369,7 @@ pub async fn stream_turn_with_reasoning_before_send(
     on_reasoning_delta: impl FnMut(&str),
     before_send: impl FnOnce() -> Result<(), String> + Send,
 ) -> Result<ModelTurn, String> {
-    if serde_json::to_vec(&body).map_err(|_| "模型请求无效")?.len() > MAX_WIRE {
+    if serde_json::to_vec(&body).map_err(|_| "模型请求无效")?.len() > MAX_REQUEST_BYTES {
         return Err("模型请求过大".into());
     }
     let has_tools = body.get("tools").is_some();
@@ -866,13 +866,10 @@ where
     S: Stream<Item = Result<B, E>>,
     B: AsRef<[u8]>,
 {
-    let mut total = 0usize;
+    let mut budget = crate::sse_budget::SseBudget::new(MAX_CONTINUATION);
     let bounded = bytes.map(move |chunk| -> Result<B, &'static str> {
         let chunk = chunk.map_err(|_| "回复连接中断")?;
-        total = total.saturating_add(chunk.as_ref().len());
-        if total > MAX_WIRE {
-            return Err("回复数据超过上限");
-        }
+        budget.accept(chunk.as_ref())?;
         Ok(chunk)
     });
     let events = bounded.eventsource();
@@ -908,6 +905,19 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[tokio::test]
+    async fn unfinished_events_are_rejected_early_in_both_native_protocols() {
+        for protocol in [ConnectionProtocol::OpenAiResponses, ConnectionProtocol::AnthropicMessages] {
+            let pulled = std::cell::Cell::new(0);
+            let fragments = std::iter::repeat_with(|| {
+                pulled.set(pulled.get() + 1);
+                Ok::<_, String>(vec![b'x'; 32 * 1024])
+            }).take(1024);
+            let result = consume(futures_util::stream::iter(fragments), protocol, |_| panic!("No incomplete event may be displayed")).await;
+            assert!(result.is_err());
+            assert!(pulled.get() <= 131, "must reject before the old 32MiB wire limit");
+        }
+    }
     pub(crate) fn sse(events: Vec<Value>) -> String {
         events
             .iter()

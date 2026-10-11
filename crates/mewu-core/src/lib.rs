@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 mod connections;
+mod asset_lookup;
 mod drawing;
 mod external_memory;
 mod external_memory_types;

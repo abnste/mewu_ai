@@ -4,6 +4,7 @@ import PinObjectLayer from './components/PinObjectLayer';
 import { referencePinObject, subscribePinObjects, type PinObject } from './pin-objects';
 import { syncNativeLanguage } from './language-bridge';
 import { t } from "./i18n";
+import { RunStreamBuffer } from './run-stream-buffer';
 import { preferenceKey, readPreferences } from './interface-preferences';
 import { updateLanguage } from './i18n';
 import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from 'solid-js';
@@ -103,6 +104,7 @@ export default function App() {
   let referenceSerial=0;
   const referenceInserted=(serial:number)=>setReferenceInsertion(request=>request?.serial===serial?undefined:request);
   const [streams, setStreams] = createSignal<Record<string, { runId: string; text: string; reasoning?: string }>>({});
+  const streamBuffer = new RunStreamBuffer(id => snapshot()?.scenes.find(scene => scene.id === id), setStreams);
   const [expanded, setExpanded] = createSignal<Record<string, boolean>>({});
   const [composerPositions, setComposerPositions] = createSignal<Record<string, { x: number; y: number } | undefined>>({});
   const [hotkey, setHotkey] = createSignal('');
@@ -298,6 +300,7 @@ export default function App() {
     if (disposed) return;
     const previous = snapshot();
     if (previous?.revision !== undefined && next.revision !== undefined && next.revision < previous.revision) return;
+    streamBuffer.reconcile(next.scenes);
     for (const current of next.scenes) {
       if (current.closed && previous?.scenes.some(scene => scene.id === current.id && !scene.closed)) clearSceneState(current.id);
     }
@@ -317,12 +320,10 @@ export default function App() {
     clearTimeout(errorTimer); errorTimer = setTimeout(() => setError(''), 6500);
   }
   function runEvent(event: RunEvent) {
+    if (disposed) return;
     const target = snapshot()?.scenes.find(s => s.id === event.sceneId);
     if (!target || target.closed || target.run?.id !== event.runId) return;
-    if (event.text || event.reasoning) setStreams(old => {
-      const previous = old[event.sceneId]?.runId === event.runId ? old[event.sceneId] : undefined;
-      return { ...old, [event.sceneId]: { runId: event.runId, text: (previous?.text ?? '') + (event.text ?? ''), reasoning: (previous?.reasoning ?? '') + (event.reasoning ?? '') } };
-    });
+    streamBuffer.push(event);
     if (event.error) setSendErrors(old => ({ ...old, [event.sceneId]: event.error! }));
   }
   function clearReferenceDraft(sceneId: string) {
@@ -334,7 +335,7 @@ export default function App() {
     setTranslationNotices(old => withoutScene(old, sceneId));
     setDrafts(old => withoutScene(old, sceneId));
     setReferenceDrafts(old => withoutScene(old, sceneId));
-    setStreams(old => withoutScene(old, sceneId));
+    streamBuffer.clear(sceneId);
     setSendErrors(old => withoutScene(old, sceneId));
     setExpanded(old => withoutScene(old, sceneId));
     setComposerPositions(old => withoutScene(old, sceneId));
@@ -412,7 +413,7 @@ export default function App() {
   onCleanup(() => { stopVideoEvents?.(); void videoLane.dispose().catch(() => {}); });
   onMount(() => { if (codeBridge.codeNative) void codeBridge.subscribeCodeInvalidated(id => codes.invalidate(id)).then(stop => { if (disposed) stop(); else { stopCodeEvents = stop; setCodesReady(true); } }).catch(() => {}); });
   onCleanup(() => { codes.dispose(); stopCodeEvents?.(); });
-  onCleanup(() => { disposed = true; pinObjectsSubscription?.stop(); stopImportPins?.(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
+  onCleanup(() => { disposed = true; streamBuffer.dispose(); pinObjectsSubscription?.stop(); stopImportPins?.(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
   createEffect(() => { voiceScope(); voice.reconcile(); });
   createEffect(on(() => scene()?.id, () => { voiceComposing = false; }));
   const voiceVisibility = () => { if (document.visibilityState === 'hidden') void voice.cancel().catch(showError); };
@@ -788,7 +789,7 @@ export default function App() {
       if (scene()?.id !== sceneId || disposed) return;
       if (draft() === oldDraft) setDrafts(old => withoutScene(old, sceneId));
       setReferenceDrafts(old => withoutScene(old, sceneId));
-      setStreams(old => withoutScene(old, sceneId));
+      streamBuffer.clear(sceneId);
       setSendErrors(old => withoutScene(old, sceneId));
       setExpanded(old => ({ ...old, [sceneId]: false }));
       setFocusRequest(value => value + 1);

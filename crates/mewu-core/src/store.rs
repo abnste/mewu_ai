@@ -319,6 +319,12 @@ impl Store {
         self.state.clone()
     }
 
+    /// Borrow live typed references. The host clones only selected metadata
+    /// before releasing its lock, without copying any conversation bodies.
+    pub fn asset(&self, id: &str) -> Option<&Asset> {
+        self.state.asset(id)
+    }
+
     /// Narrow metadata view for host relocation preflight; avoid cloning every
     /// conversation and attachment when only local server paths are needed.
     pub fn mcp_servers(&self) -> &[McpServer] {

@@ -60,6 +60,7 @@ mod plugin_host;
 mod plugin_sources;
 mod plugins;
 mod provider_transport;
+mod sse_budget;
 mod raster_compositor;
 mod recording;
 mod recording_audio;
@@ -1181,7 +1182,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
 
 #[tauri::command]
 fn read_artifact(host: tauri::State<'_, Host>, asset_id: String) -> Result<String, String> {
-    let asset = assets::resolve(&host.lock()?.store.snapshot(), &asset_id).ok_or("素材不存在")?;
+    let asset = host.lock()?.store.asset(&asset_id).cloned().ok_or("素材不存在")?;
     if !matches!(
         asset.kind,
         AssetKind::Html | AssetKind::Svg | AssetKind::Text

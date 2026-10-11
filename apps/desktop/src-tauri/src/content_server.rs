@@ -78,7 +78,7 @@ impl ContentServer {
                 // Drop the state mutex before disk I/O or sending any response.
                 let asset = {
                     let engine = host.lock().ok()?;
-                    super::assets::resolve(&engine.store.snapshot(), id)
+                    engine.store.asset(id).cloned()
                 };
                 let range = video_range_header(request.method().as_str(), request.headers());
                 if let Some(asset) = asset {

@@ -10,31 +10,7 @@ pub const MAX_IMPORT_FILES: usize = 12;
 const MAX_IMPORT_BYTES: usize = 128 * 1024 * 1024;
 
 pub fn resolve(snapshot: &Snapshot, id: &str) -> Option<Asset> {
-    snapshot
-        .scenes
-        .iter()
-        .flat_map(|s| {
-            s.background
-                .iter()
-                .chain(
-                    s.regions
-                        .iter()
-                        .filter_map(|region| region.image_override.as_ref()),
-                )
-                .chain(
-                    s.regions.iter().filter_map(|region| {
-                        region.translation.as_ref().map(|saved| &saved.overlay)
-                    }),
-                )
-                .chain(s.items.iter().map(|i| &i.asset))
-                .chain(
-                    s.messages
-                        .iter()
-                        .flat_map(|m| m.attachments.iter().flatten()),
-                )
-        })
-        .find(|a| a.id == id)
-        .cloned()
+    snapshot.asset(id).cloned()
 }
 pub fn verified_path(asset: &Asset, root: &Path) -> Result<PathBuf, String> {
     let path = crate::asset_locations::resolve_path(Path::new(&asset.path), root)
@@ -1041,6 +1017,7 @@ mod tests {
             Some(replacement.clone())
         );
         assert_eq!(resolve(&snapshot, &historical.id), Some(historical.clone()));
+        assert_eq!(store.asset(&historical.id), Some(&historical));
         snapshot
             .scenes
             .iter_mut()
