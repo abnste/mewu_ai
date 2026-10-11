@@ -757,7 +757,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | x11-dl | 2.21.0 | MIT | transitive | LICENSE-MIT [L004] |
 | Cargo | x11 | 2.21.0 | MIT | transitive | LICENSE-MIT [L004] |
 | Cargo | x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L059]; LICENSE-MIT [L358] |
-| Cargo | x11rb | 0.13.2 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L059]; LICENSE-MIT [L358] |
+| Cargo | x11rb | 0.13.2 | MIT OR Apache-2.0 | direct on Linux and in tests | LICENSE-APACHE [L059]; LICENSE-MIT [L358] |
 | Cargo | xattr | 1.6.1 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L306] |
 | Cargo | xcb | 1.7.1 | MIT | transitive | LICENSE [L360] |
 | Cargo | xkeysym | 0.2.1 | MIT OR Apache-2.0 OR Zlib | transitive | LICENSE-APACHE [L361]; LICENSE-MIT [L362]; LICENSE-ZLIB [L363] |
