@@ -798,6 +798,7 @@ mod tests {
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(evidence.descendant.is_some());
+            assert_eq!(evidence.worker, fixture.process.child_mut().id());
             assert!(fixture.process.try_wait().unwrap().is_none());
             assert!(!fixture.process.tree_empty());
             assert!(!fixture.process.fully_exited());
@@ -805,7 +806,20 @@ mod tests {
             #[cfg(windows)]
             let job = fixture.process.observe_job_for_test().unwrap();
             #[cfg(windows)]
-            assert_eq!(job.active_processes(), Some(2));
+            {
+                assert_eq!(job.contains_process_for_test(evidence.worker), Some(true));
+                assert_eq!(
+                    job.contains_process_for_test(evidence.descendant.unwrap()),
+                    Some(true)
+                );
+                assert_eq!(job.contains_process_for_test(0), None);
+                assert_eq!(
+                    job.contains_process_for_test(unsafe {
+                        windows_sys::Win32::System::Threading::GetCurrentProcessId()
+                    }),
+                    Some(false)
+                );
+            }
             #[cfg(target_os = "macos")]
             assert_eq!(
                 unsafe { libc::kill(evidence.descendant.unwrap() as libc::pid_t, 0) },
@@ -832,8 +846,17 @@ mod tests {
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(evidence.descendant.is_some());
+            assert_eq!(evidence.worker, fixture.process.child_mut().id());
             #[cfg(windows)]
             let job = fixture.process.observe_job_for_test().unwrap();
+            #[cfg(windows)]
+            {
+                assert_eq!(job.contains_process_for_test(evidence.worker), Some(true));
+                assert_eq!(
+                    job.contains_process_for_test(evidence.descendant.unwrap()),
+                    Some(true)
+                );
+            }
             let (tx, rx) = mpsc::channel::<()>();
             let io_done = Arc::new(AtomicBool::new(false));
             let done = io_done.clone();

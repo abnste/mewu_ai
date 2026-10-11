@@ -299,6 +299,33 @@ impl JobObserver {
     pub(crate) fn active_processes(&self) -> Option<u32> {
         self.0.active_processes()
     }
+    pub(crate) fn contains_process_for_test(&self, pid: u32) -> Option<bool> {
+        use windows_sys::Win32::{
+            Foundation::CloseHandle,
+            System::{
+                JobObjects::IsProcessInJob,
+                Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+            },
+        };
+        if pid == 0 || self.0 .0.is_null() {
+            return None;
+        }
+        unsafe {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                return None;
+            }
+            let mut contained = 0;
+            // Query this duplicated Job handle, not NULL ("any Job").
+            let queried = IsProcessInJob(process, self.0 .0, &mut contained);
+            let closed = CloseHandle(process);
+            if queried == 0 || closed == 0 {
+                None
+            } else {
+                Some(contained != 0)
+            }
+        }
+    }
 }
 impl<P: Send + 'static> Drop for ManagedProcess<P> {
     fn drop(&mut self) {
