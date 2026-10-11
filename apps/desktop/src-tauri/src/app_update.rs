@@ -4,21 +4,24 @@
 #[path = "app_update_release.rs"]
 mod release;
 pub use release::{validate_release_for, ReleaseTarget};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::Host;
+#[cfg(target_os = "macos")]
+#[path = "app_update_macos.rs"]
+pub(crate) mod macos;
 use serde::Serialize;
 use std::sync::{atomic::{AtomicBool, Ordering}, Mutex};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::sync::{atomic::AtomicU64, Arc};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::time::Duration;
 use tauri::{AppHandle, WebviewWindow};
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri::Manager;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -33,13 +36,13 @@ pub struct Status {
     pub total_bytes: Option<u64>,
     pub error: Option<&'static str>,
 }
-struct Inner { status: Status, #[cfg(target_os = "windows")] update: Option<Update> }
+struct Inner { status: Status, #[cfg(any(target_os = "windows", target_os = "macos"))] update: Option<Update> }
 pub struct UpdateState { inner: Mutex<Inner>, busy: AtomicBool }
 impl Default for UpdateState {
     fn default() -> Self {
         Self { inner: Mutex::new(Inner { status: Status { phase: Phase::Idle,
             current_version: env!("CARGO_PKG_VERSION").into(), available_version: None,
-            downloaded_bytes: 0, total_bytes: None, error: None }, #[cfg(target_os = "windows")] update: None }), busy: AtomicBool::new(false) }
+            downloaded_bytes: 0, total_bytes: None, error: None }, #[cfg(any(target_os = "windows", target_os = "macos"))] update: None }), busy: AtomicBool::new(false) }
     }
 }
 struct Permit<'a>(&'a AtomicBool);
@@ -61,7 +64,15 @@ fn owner(window: &WebviewWindow) -> Result<(), String> {
 pub fn validate_release(current: &str, version: &str, url: &url::Url) -> Result<(), &'static str> {
     validate_release_for(ReleaseTarget::WindowsX64, current, version, url)
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn validate_native_release(current: &str, version: &str, url: &url::Url) -> Result<(), &'static str> {
+    #[cfg(target_os = "windows")]
+    let target = ReleaseTarget::WindowsX64;
+    #[cfg(target_os = "macos")]
+    let target = ReleaseTarget::MacArm64;
+    validate_release_for(target, current, version, url)
+}
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 async fn check(app: &AppHandle) -> Result<Status, String> {
     app.state::<Host>().exit.ensure_new_operation()?;
     let state = app.state::<UpdateState>();
@@ -70,6 +81,8 @@ async fn check(app: &AppHandle) -> Result<Status, String> {
     let settings = app.state::<Host>().system_preferences.view().map_err(|_| "update_proxy");
     let result = async {
         let prefs = settings?;
+        #[cfg(target_os = "macos")]
+        if !macos::supported() { return Err("update_install_location"); }
         let mut builder = app.updater_builder().timeout(Duration::from_secs(25));
         match prefs.network_proxy_mode {
             crate::system_preferences::ProxyMode::System => {},
@@ -81,7 +94,7 @@ async fn check(app: &AppHandle) -> Result<Status, String> {
         let updater = builder.build().map_err(|_| "update_invalid")?;
         let update = updater.check().await.map_err(|_| "update_check_failed")?;
         if let Some(value) = &update {
-            validate_release(&value.current_version, &value.version, &value.download_url)?;
+            validate_native_release(&value.current_version, &value.version, &value.download_url)?;
         }
         Ok::<_, &str>(update)
     }.await;
@@ -94,46 +107,57 @@ async fn check(app: &AppHandle) -> Result<Status, String> {
             inner.update = update;
         }
         Err(error) => state.set(Phase::Failed, Some(match error {
-            "update_proxy" => "update_proxy", "update_invalid" => "update_invalid", _ => "update_check_failed",
+            "update_proxy" => "update_proxy", "update_invalid" => "update_invalid",
+            "update_install_location" => "update_install_location", _ => "update_check_failed",
         })),
     }
     state.status()
 }
-// The configured release contract accepts only Windows EXE packages. Refuse
-// before obtaining a host or creating an updater on every other platform.
-#[cfg(not(target_os = "windows"))]
+// Unconfigured platforms refuse before obtaining a host or starting IO.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 async fn check(app: impl FnOnce() -> AppHandle) -> Result<Status, String> {
     drop(app);
     Err("update_unsupported".into())
 }
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 async fn install(app: impl FnOnce() -> AppHandle) -> Result<(), String> {
     drop(app);
     Err("update_unsupported".into())
 }
 /// Created only after the updater verified the bytes and the signed version.
 pub struct PreparedInstall {
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     update: Update,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     bytes: Vec<u8>,
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    installation: macos::Installation,
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     _private: (),
 }
 impl PreparedInstall {
+    pub fn preflight(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        self.installation.check().map_err(str::to_string)?;
+        Ok(())
+    }
     pub fn install(self, exit: &crate::lifecycle::ExitState) -> Result<(), String> {
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
-        install_when_ready(exit.is_ready(), || self.update.install(self.bytes).map_err(|_| "update_install_failed".into()))
+        install_when_ready(exit.is_ready(), || {
+            #[cfg(target_os = "macos")]
+            self.installation.check().map_err(str::to_string)?;
+            self.update.install(self.bytes).map_err(|_| "update_install_failed".into())
+        })
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         {
             let _ = exit;
             Err("update_unsupported".into())
         }
     }
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn install_when_ready(ready: bool, install: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
     if !ready { return Err("update_save_failed".into()); }
     install()
@@ -141,20 +165,20 @@ fn install_when_ready(ready: bool, install: impl FnOnce() -> Result<(), String>)
 #[tauri::command]
 pub fn app_update_status(window: WebviewWindow, app: AppHandle) -> Result<Status, String> {
     owner(&window)?;
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     { app.state::<UpdateState>().status() }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     { let _ = app; Err("update_unsupported".into()) }
 }
 #[tauri::command]
 pub async fn check_app_update(window: WebviewWindow, app: AppHandle) -> Result<Status, String> {
     owner(&window)?;
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     { check(&app).await }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     { check(|| app).await }
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 #[tauri::command]
 pub async fn install_app_update(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
     owner(&window)?;
@@ -162,7 +186,10 @@ pub async fn install_app_update(window: WebviewWindow, app: AppHandle) -> Result
     let state = app.state::<UpdateState>();
     let _permit = state.begin()?;
     let mut update = state.inner.lock().map_err(|_| "update_unavailable")?.update.clone().ok_or("update_not_available")?;
-    validate_release(&update.current_version, &update.version, &update.download_url)?;
+    validate_native_release(&update.current_version, &update.version, &update.download_url)?;
+    #[cfg(target_os = "macos")]
+    let installation = tauri::async_runtime::spawn_blocking(macos::Installation::capture).await
+        .map_err(|_| "update_install_location")?.map_err(str::to_string)?;
     update.timeout = Some(Duration::from_secs(300));
     state.set(Phase::Downloading, None);
     let received = Arc::new(AtomicU64::new(0));
@@ -186,20 +213,30 @@ pub async fn install_app_update(window: WebviewWindow, app: AppHandle) -> Result
     let result = async {
         let bytes = bytes.map_err(str::to_string)?;
         if oversized.load(Ordering::Acquire) || bytes.len() as u64 > MAX_DOWNLOAD { return Err("update_too_large".into()); }
+        #[cfg(target_os = "macos")]
+        let (bytes, installation) = {
+            let version = update.version.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                macos::validate_archive(&bytes, &version).map_err(str::to_string)?;
+                installation.check().map_err(str::to_string)?;
+                Ok::<_, String>((bytes, installation))
+            }).await.map_err(|_| "update_invalid")??
+        };
         app.state::<Host>().exit.ensure_new_operation()?;
         state.set(Phase::Installing, None);
-        crate::lifecycle::request_update_restart(&app, PreparedInstall { update, bytes }).await
+        crate::lifecycle::request_update_restart(&app, PreparedInstall { update, bytes,
+            #[cfg(target_os = "macos")] installation }).await
     }.await;
     if result.is_err() { state.set(Phase::Failed, Some("update_install_failed")); }
     result
 }
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 #[tauri::command]
 pub async fn install_app_update(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
     owner(&window)?;
     install(|| app).await
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn start_background_checks(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(15)).await;
@@ -211,7 +248,7 @@ pub fn start_background_checks(app: AppHandle) {
 }
 /// Release verification CLI. No windows, business database, credentials or
 /// single-instance commands are initialized. This never installs a package.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn verify_cli(mut context: tauri::Context<tauri::Wry>, report: &std::path::Path) -> Result<(), String> {
     context.config_mut().app.windows.clear();
     let app = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build())
@@ -222,7 +259,7 @@ pub fn verify_cli(mut context: tauri::Context<tauri::Wry>, report: &std::path::P
         let updater = app.handle().updater_builder().timeout(Duration::from_secs(25))
             .version_comparator(|_, _| true).build().map_err(|_| "update_invalid")?;
         let mut update = updater.check().await.map_err(|_| "update_check_failed")?.ok_or("update_not_available")?;
-        validate_release("0.0.0", &update.version, &update.download_url)?;
+        validate_native_release("0.0.0", &update.version, &update.download_url)?;
         update.timeout = Some(Duration::from_secs(300));
         let oversized = AtomicBool::new(false);
         let count = AtomicU64::new(0);
@@ -238,6 +275,8 @@ pub fn verify_cli(mut context: tauri::Context<tauri::Wry>, report: &std::path::P
             bytes = download => bytes.map_err(|_| "update_download_failed")?,
         };
         if oversized.load(Ordering::Acquire) { return Err("update_too_large"); }
+        #[cfg(target_os = "macos")]
+        macos::validate_archive(&bytes, &update.version)?;
         use sha2::Digest;
         Ok(serde_json::json!({ "currentVersion": env!("CARGO_PKG_VERSION"),
             "offeredVersion": update.version, "signatureVerified": true,
@@ -251,7 +290,7 @@ pub fn verify_cli(mut context: tauri::Context<tauri::Wry>, report: &std::path::P
     file.sync_all().map_err(|_| "update_report_failed")?;
     Ok(())
 }
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub fn verify_cli(_context: tauri::Context<tauri::Wry>, _report: &std::path::Path) -> Result<(), String> {
     Err("update_unsupported".into())
 }
@@ -275,7 +314,7 @@ mod tests {
         }
         assert!(validate_release("1.0.0", "1.0.0-preview.2", &url::Url::parse(valid).unwrap()).is_err());
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     #[test]
     fn installer_is_not_called_if_saving_or_worker_drain_has_not_completed() {
         let called = AtomicBool::new(false);
@@ -284,7 +323,7 @@ mod tests {
         assert!(install_when_ready(true, || { called.store(true, Ordering::Release); Err("launch failed".into()) }).is_err());
         assert!(called.load(Ordering::Acquire));
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     #[tokio::test]
     async fn unsupported_platform_check_and_install_never_obtain_host_or_start_io() {
         assert_eq!(check(|| panic!("unsupported check obtained a host")).await.err().as_deref(), Some("update_unsupported"));

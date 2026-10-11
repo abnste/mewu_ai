@@ -69,17 +69,20 @@ const normalize = value => JSON.parse(JSON.stringify(value));
     await data.perform('check_app_update'); await data.perform('install_app_update'); await data.refresh();
     assert.ok(calls.every(name => name === 'settings_info')); dispose();
   }
-  const calls = [], client = settingsClient({ listen: async () => () => {}, invoke: async name => { calls.push(name); return info({ updateSupport: 'signed_installer' }); } });
+  for (const receipt of [info({ updateSupport: 'signed_installer' }), info({ platform: 'macos', updateSupport: 'signed_bundle' })]) {
+  assert.equal(contracts.validSettingsInfo(receipt), true);
+  const calls = [], client = settingsClient({ listen: async () => () => {}, invoke: async name => { calls.push(name); return receipt; } });
   let data, dispose, next = status();
   reactive.createRoot(cleanup => { dispose = cleanup; data = mod.namespace.createAppUpdateSettings(() => true, { native: () => true, info: client.info, status: async () => { calls.push('app_update_status'); return next; }, perform: async name => { calls.push(name); next = name === 'check_app_update' ? status({ phase: 'available', availableVersion: '1.0.1' }) : status({ phase: 'installing' }); } }); });
   await tick(); assert.equal(data.mode(), 'signed'); await data.perform('check_app_update'); assert.equal(data.status().availableVersion, '1.0.1');
   await data.perform('install_app_update'); assert.equal(data.status().phase, 'installing');
   assert.deepEqual(calls, ['settings_info', 'app_update_status', 'check_app_update', 'app_update_status', 'install_app_update', 'app_update_status']); dispose();
+  }
   const pending = deferred(); let late, stop, reads = 0;
   reactive.createRoot(cleanup => { stop = cleanup; late = mod.namespace.createAppUpdateSettings(() => true, { native: () => true, info: () => pending.promise, status: async () => { reads++; return status(); }, perform: async () => { throw Error('Unexpected install'); } }); });
   await tick(); stop(); pending.resolve(info({ updateSupport: 'signed_installer' })); await tick();
   assert.equal(reads, 0); assert.equal(late.mode(), 'loading');
-  checks.push('Actual update effects never send Windows status/check/install commands for Mac or unknown platforms, retain Windows signed actions, and fence a platform receipt after disposal');
+  checks.push('Actual update effects admit Windows signed installers and Mac signed bundles, refuse manual or unknown platforms, and fence a platform receipt after disposal');
 }
 {
   const calls = [], task = deferred(); let receive, stopped = 0;

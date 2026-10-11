@@ -21,6 +21,7 @@ const errors: Record<string, string> = {
   update_install_failed: '更新未完成，请重试', update_save_failed: '保存未完成，已取消更新',
   update_not_available: '请先检查更新', update_busy: '正在更新，请稍候', update_too_large: '更新文件过大',
   update_unsupported: '此平台尚未配置在线更新',
+  update_install_location: '请将 MewuAI 移到应用程序文件夹后重试',
 };
 type UpdateCommand = 'check_app_update' | 'install_app_update';
 interface UpdateApi {
@@ -42,7 +43,8 @@ export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateAp
     const info = information();
     if (!info) return 'loading';
     if (info.platform === 'macos' && info.updateSupport === 'manual_only') return 'manual';
-    return info.platform === 'windows' && info.updateSupport === 'signed_installer' ? 'signed' : 'unsupported';
+    return (info.platform === 'windows' && info.updateSupport === 'signed_installer')
+      || (info.platform === 'macos' && info.updateSupport === 'signed_bundle') ? 'signed' : 'unsupported';
   };
   const busy = () => pending() || ['checking', 'downloading', 'installing'].includes(status()?.phase ?? '');
   async function refresh() {

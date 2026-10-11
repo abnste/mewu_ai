@@ -30,7 +30,7 @@ export interface SettingsInfo {
   commit?: string | null;
   channel: 'development' | 'alpha' | 'stable';
   platform: 'windows' | 'macos';
-  updateSupport: 'unconfigured' | 'manual_only' | 'signed_installer';
+  updateSupport: 'unconfigured' | 'manual_only' | 'signed_installer' | 'signed_bundle';
   dataDirectory: string;
   license: string;
   noticesAvailable: boolean;
@@ -86,7 +86,7 @@ export function validCapturePreferences(value: unknown): value is CapturePrefere
 export function validSettingsInfo(value: unknown): value is SettingsInfo {
   if (!value || typeof value !== 'object') return false;
   const v = value as SettingsInfo;
-  return ['application', 'version', 'dataDirectory', 'license'].every(key => typeof v[key as keyof SettingsInfo] === 'string' && String(v[key as keyof SettingsInfo]).length > 0 && String(v[key as keyof SettingsInfo]).length <= 32768) && (v.commit === undefined || v.commit === null || typeof v.commit === 'string' && v.commit.length <= 128) && ['development', 'alpha', 'stable'].includes(v.channel) && (v.platform === 'windows' || v.platform === 'macos') && ['unconfigured', 'manual_only', 'signed_installer'].includes(v.updateSupport) && typeof v.noticesAvailable === 'boolean';
+  return ['application', 'version', 'dataDirectory', 'license'].every(key => typeof v[key as keyof SettingsInfo] === 'string' && String(v[key as keyof SettingsInfo]).length > 0 && String(v[key as keyof SettingsInfo]).length <= 32768) && (v.commit === undefined || v.commit === null || typeof v.commit === 'string' && v.commit.length <= 128) && ['development', 'alpha', 'stable'].includes(v.channel) && (v.platform === 'windows' || v.platform === 'macos') && ['unconfigured', 'manual_only', 'signed_installer', 'signed_bundle'].includes(v.updateSupport) && typeof v.noticesAvailable === 'boolean';
 }
 export function validLicenseDocument(value: unknown): value is LicenseDocument {
   if (!value || typeof value !== 'object') return false;
@@ -94,5 +94,5 @@ export function validLicenseDocument(value: unknown): value is LicenseDocument {
   return typeof v.title === 'string' && v.title.length > 0 && v.title.length <= 160 && typeof v.text === 'string' && new TextEncoder().encode(v.text).length <= 8 * 1024 * 1024;
 }
 export function updateSupportLabel(value: SettingsInfo['updateSupport']): string {
-  return { unconfigured: '尚未配置在线更新', manual_only: '手动更新', signed_installer: '已配置签名更新' }[value];
+  return { unconfigured: '尚未配置在线更新', manual_only: '手动更新', signed_installer: '已配置签名更新', signed_bundle: '已配置签名更新' }[value];
 }
