@@ -48,6 +48,8 @@ mod memory_runtime;
 mod memory_tools;
 mod memory_worker;
 mod mosaic_preview;
+mod highlight_foreground;
+mod highlight_preview;
 mod network_policy;
 mod app_update;
 mod ocr;
@@ -2136,6 +2138,7 @@ fn main() {
                 plugin_host::run_plugin_workflow,
                 plugin_host::apply_plugin_drawing,
                 mosaic_preview::get_mosaic_preview,
+                highlight_preview::get_highlight_preview,
                 pixel_sampler::get_pointer_sample,
                 get_window_snap_map,
                 pin_host::run_plugin_pin,

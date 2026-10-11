@@ -8,7 +8,7 @@ Mewu 1.0 is a Windows desktop remake. A shortcut opens the capture space: screen
 
 ## Included
 
-The current `next` source includes MP3 export and preview resolution settings added after preview 2; the published preview 2 downloads do not contain those additions.
+The current `next` source includes MP3 export, preview resolution settings and text-preserving highlighters added after preview 2; the published preview 2 downloads do not contain those additions.
 
 - Region capture, drawing, blackboards, borderless pinned images, OCR, translation, scrolling capture and barcode recognition.
 - Multiple conversations, freeze/resume, Markdown and formulas, collapsible public reasoning, image and text attachments.
@@ -19,7 +19,7 @@ The current `next` source includes MP3 export and preview resolution settings ad
 
 On this branch, opening a blackboard carries existing capture regions, images, HTML/SVG results, recordings and TXT notes into it as independent objects. Other documents stay out of the board. TXT notes have a plain white editing surface and four corner resize handles; edits save a copy without changing the original file. Capture and imported images support hover-wheel resizing and can move beyond any screen edge. The selection tool supports marquee selection and moving drawing objects together; a group move is one undo step. Local extraction repairs follow their source image when it moves or scales. Desktop pinned images use their context menu and have no hover toolbar. Capture images retain saved annotations; HTML remains interactive and videos retain playback, trimming and annotations. Hover over the top center of an object to reveal its move bar; drag it onto Delete to remove it. The eraser only removes ink. Brush width uses a slider; holding the right mouse button temporarily erases with the same diameter, including single-point strokes. Drawing tools use a custom RGB/HEX palette with three recent colors. Toolbar buttons keep the same square dimensions with labels shown or hidden.
 
-Drawing arrows use open heads that adapt to their length. Hold Shift while highlighting to constrain the stroke horizontally, vertically or to 45°; release Shift to return to freehand ink.
+Drawing arrows use open heads that adapt to their length. Screenshot and blackboard highlighters tint the frozen background while preserving dark, light and colored text and antialias detail. Display, image copy, saving and image references use the same foreground separation rules. Hold Shift while highlighting to constrain the stroke horizontally, vertically or to 45°; release Shift to return to freehand ink.
 
 Drawing, recording and AI annotations are built in. Plugins can be disabled or removed. Current plugins are declarative JSON packages: they cannot execute arbitrary downloaded code. Hermes, Codex, WorkBuddy and MiniMax Code agent integrations, macOS delivery, device synchronization and dedicated image/video generation APIs are not included in this preview. The current agent is not a complete replacement for Hermes and Hindsight. Actual annotation quality depends on the model.
 

@@ -46,6 +46,7 @@
     "allow-run-plugin-workflow",
     "allow-apply-plugin-drawing",
     "allow-get-mosaic-preview",
+    "allow-get-highlight-preview",
     "allow-get-pointer-sample",
     "allow-get-provider-presets",
     "allow-save-connection-profile",

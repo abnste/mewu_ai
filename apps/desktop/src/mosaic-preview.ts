@@ -2,12 +2,12 @@
 export interface MosaicPreview { backgroundId: string; width: number; height: number; blockSize: number; columns: number; rows: number; dataUrl: string }
 
 // In-flight work shares an exact CAS target; successful grids share immutable source pixels.
-export class MosaicPreviewCache {
-  private entries = new Map<string, { promise: Promise<MosaicPreview>; bytes: number; settled: boolean }>();
+export class MosaicPreviewCache<Value extends { dataUrl: string } = MosaicPreview> {
+  private entries = new Map<string, { promise: Promise<Value>; bytes: number; settled: boolean }>();
   private running = 0;
   private queue: (() => void)[] = [];
   constructor(private capacity = 16, private concurrency = 2, private maxBytes = 16 * 1024 * 1024) {}
-  get(backgroundId: string, blockSize: number, load: () => Promise<MosaicPreview>, requestIdentity = ''): Promise<MosaicPreview> {
+  get(backgroundId: string, blockSize: number, load: () => Promise<Value>, requestIdentity = ''): Promise<Value> {
     const sourceKey = JSON.stringify(['source', backgroundId, blockSize]), key = JSON.stringify(['pending', backgroundId, blockSize, requestIdentity]);
     const hitKey = this.entries.has(sourceKey) ? sourceKey : key, existing = this.entries.get(hitKey);
     if (existing) { this.entries.delete(hitKey); this.entries.set(hitKey, existing); return existing.promise; }
@@ -15,7 +15,7 @@ export class MosaicPreviewCache {
       const oldest = [...this.entries].find(([, value]) => value.settled);
       if (oldest) this.entries.delete(oldest[0]); else return Promise.reject(new Error('马赛克预览繁忙，请重试'));
     }
-    const request = new Promise<MosaicPreview>((resolve, reject) => {
+    const request = new Promise<Value>((resolve, reject) => {
       const start = () => {
         this.running++;
         Promise.resolve().then(load).then(resolve, reject).finally(() => { this.running--; this.queue.shift()?.(); });

@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
+// A discrete alpha mask keeps partial coverage and excludes alpha=255.
+export const highlightMaskTable = `${'1 '.repeat(255)}0`;
 export const colorPresets = ['#FFFFFF','#242832','#EE4848','#F28B38','#F4C94D','#39A97C','#348BF1','#9467D9'];
 export const colorHistoryKey = 'mewu.drawing-colors.v1';
 export const normalizeColor = (value:string) => /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim().toUpperCase() : undefined;

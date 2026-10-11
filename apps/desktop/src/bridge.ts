@@ -5,6 +5,7 @@ import type { Asset, ConnectionProbe, ConnectionProfile, ConnectionTestResult, D
 import { normalizeConnectionPath, validateConnectionProfile } from './connection-policy';
 import type { ExitPreparationCanceled, ExitPreparationRequest, ExitPreparationResult } from './exit-preparation';
 import { browserMosaicPreview, MosaicPreviewCache, type MosaicPreview } from './mosaic-preview';
+import type { HighlightPreview } from './highlight-preview';
 import { emptyGeometryHistory, PreviewGeometryHistory } from './region-geometry-history';
 import { IMPORT_ACCEPT, prepareImportFiles } from './asset-import';
 import type { RecordingAudioMode, RecordingAudioSelection, RecordingGrant } from './recording-audio';
@@ -128,7 +129,18 @@ export async function exportRegion(sceneId: string, regionId: string, clipboard:
   return result;
 }
 const mosaicPreviews = new MosaicPreviewCache();
+const highlightPreviews = new MosaicPreviewCache<HighlightPreview>(4, 1, 24 * 1024 * 1024);
 export interface MosaicSource { regionId: string; source: Asset; drawingRevision: number }
+export function getHighlightPreview(sceneId: string, background: Asset, override?: MosaicSource): Promise<HighlightPreview> {
+  const source = override?.source ?? background;
+  return highlightPreviews.get(JSON.stringify([background.id, source.id]), 0, async () => {
+    const value = native ? await invoke<HighlightPreview>('get_highlight_preview', { sceneId, backgroundId: background.id, ...(override ? { regionId: override.regionId, sourceId: override.source.id, drawingRevision: override.drawingRevision } : {}) }) : await (await import('./highlight-preview')).browserHighlightPreview(source.id, assetUrl(source));
+    if (value.backgroundId !== source.id || value.width !== source.width || value.height !== source.height || !value.dataUrl.startsWith('data:image/png;base64,') || value.dataUrl.length > Math.ceil(16 * 1024 * 1024 * 4 / 3) + 64) throw Error('荧光笔预览已失效');
+    const image = new Image(); image.src = value.dataUrl; await image.decode();
+    if (image.naturalWidth !== value.width || image.naturalHeight !== value.height) throw Error('荧光笔预览尺寸不符');
+    return value;
+  }, JSON.stringify([sceneId, override?.regionId ?? null, override?.drawingRevision ?? null]));
+}
 export function getMosaicPreview(sceneId: string, background: Asset, blockSize: number, override?: MosaicSource): Promise<MosaicPreview> {
   if (!Number.isInteger(blockSize) || blockSize < 6 || blockSize > 40) return Promise.reject(new Error('马赛克块大小无效'));
   return mosaicPreviews.get(`${background.id}:${override?.source.id ?? ''}`, blockSize, async () => {

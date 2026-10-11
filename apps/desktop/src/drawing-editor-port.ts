@@ -36,6 +36,7 @@ export interface DrawingEditorPort {
   persistedId?:(temporaryId:string)=>string;
   rejectPointOverflow?:boolean;
   mosaic?:{blockSize:()=>number;prepare:()=>Promise<unknown>};
+  highlight?:{prepare:()=>Promise<unknown>};
   raster?:{apply:(mode:'extract'|'heal',points:DrawingPoint[],width:number)=>Promise<{selectedId?:string}>};
   copyTable?:(drawing:Drawing,format:DrawingTableFormat)=>Promise<void>;
 }

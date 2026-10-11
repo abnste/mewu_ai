@@ -2,7 +2,7 @@
 import type { JSX } from 'solid-js';
 import type { Asset, Drawing, DrawingCommand, ManualDrawingKind, Region, Snapshot } from '../contracts';
 import { applyRasterEdit } from '../raster-edit-bridge';
-import { getMosaicPreview } from "../bridge";
+import { getMosaicPreview, getHighlightPreview } from "../bridge";
 import { mosaicBlockSize } from "../mosaic-preview";
 import { DrawingShape } from "./DrawingLayer";
 import { drawingDraftKey, drawingPropertyCommand } from "./drawing-properties";
@@ -55,6 +55,7 @@ export default function DrawingEditor(props:Props) {
     historyStep:redo=>(redo?props.region.drawingHistory?.redo:props.region.drawingHistory?.undo)?.at(-1),
     render:(drawing,interactive,selected)=><DrawingShape drawing={drawing} interactive={interactive} selected={selected} richContext={richContext()} mosaicContext={mosaicContext()} onError={props.onError}/>,
     get mosaic(){return props.background?{blockSize:()=>mosaicBlockSize(props.background?.scaleFactor),prepare:()=>getMosaicPreview(props.sceneId,props.background!,mosaicBlockSize(props.background?.scaleFactor),mosaicSource())}:undefined;},
+    get highlight(){return props.background?{prepare:()=>getHighlightPreview(props.sceneId,props.background!,mosaicSource())}:undefined;},
     get raster(){return props.background&&props.onRasterSnapshot&&!props.documentOnly?raster:undefined;},
     get copyTable(){return props.onCopyTable?(drawing:Drawing,format:DrawingTableFormat)=>{const context=richContext(),value=context&&richPreviewTarget(context,drawing);if(!value)throw Error('表格已更新');return props.onCopyTable!(value,format);}:undefined;},
   };

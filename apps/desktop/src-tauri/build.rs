@@ -52,6 +52,7 @@ fn main() {
             "apply_drawing_document",
             "apply_raster_edit",
             "get_mosaic_preview",
+            "get_highlight_preview",
             "get_pointer_sample",
             "get_window_snap_map",
             "run_plugin_pin",

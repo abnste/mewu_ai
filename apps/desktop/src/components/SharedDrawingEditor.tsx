@@ -49,6 +49,7 @@ export default function SharedDrawingEditor(props: Props) {
   const firstNumber = Math.min(9999, Math.max(0, ...(props.port.drawings()).filter(value => value.kind === 'number').map(value => validNextNumber(value.text ?? '') ?? 0)) + 1);
   const [highlightWidth, setHighlightWidth] = createSignal(18), [nextNumber, setNextNumber] = createSignal(String(firstNumber)), [numberDiameter, setNumberDiameter] = createSignal(28);
   const [mosaicReady, setMosaicReady] = createSignal(false), [mosaicFailed, setMosaicFailed] = createSignal(false), [mosaicRetry, setMosaicRetry] = createSignal(0), [finishing, setFinishing] = createSignal(false);
+  const [highlightReady, setHighlightReady] = createSignal(false), [highlightFailed, setHighlightFailed] = createSignal(false), [highlightRetry, setHighlightRetry] = createSignal(0);
   const [selected, setSelected] = createSignal(''), [draft, setDraft] = createSignal<Drawing>();
   const [selectedIds,setSelectedIds]=createSignal<string[]>([]),[marquee,setMarquee]=createSignal<import('../drawing-editor-port').EditorBox>(),[groupDraft,setGroupDraft]=createSignal<Drawing[]>([]);
   createEffect(on(selected,id=>{if(!id)setSelectedIds([]);else if(!selectedIds().includes(id))setSelectedIds([id]);}));
@@ -149,6 +150,7 @@ export default function SharedDrawingEditor(props: Props) {
     setDraft(undefined); if (next !== 'select') setSelected('');
     if(strokeKinds.includes(next as DrawingKind))setWideBrush(next==='highlighter');
     if (next === 'mosaic' && mosaicFailed()) setMosaicRetry(value => value + 1); setTool(next);
+    if (next === 'highlighter' && highlightFailed()) setHighlightRetry(value => value + 1);
   }
   function openText(value: Drawing, existing: boolean) {
     if (disabled() || edit()) return;
@@ -386,6 +388,7 @@ export default function SharedDrawingEditor(props: Props) {
     const hitId = event.target instanceof Element ? event.target.closest('[data-drawing-id]')?.getAttribute('data-drawing-id') : undefined;
     const hit = forcedImage ?? (hitId && editableIds().has(hitId) ? drawings().find(value => value.id === hitId) : undefined);
     if (kind === 'mosaic' && !mosaicReady()) return;
+    if (kind === 'highlighter' && props.port.highlight && !highlightReady()) return;
     const stored=props.port.stored?.().find(value=>value.id===hitId);
     if(kind==='select'&&stored){setSelected(stored.id);void ensureSelection(stored.id);beginStored(event,stored.id);return;}
     if(kind==='text'&&stored?.kind==='text'){setSelected(stored.id);void ensureSelection(stored.id).then(value=>{if(value)openText(value,true);});return;}
@@ -624,6 +627,12 @@ export default function SharedDrawingEditor(props: Props) {
   createEffect(() => { if (svg) { const observer = new ResizeObserver(() => { const box = svg.getBoundingClientRect(); const before = surfaceSize(); if (before.width !== box.width || before.height !== box.height) { cancelGesture?.(); setSurfaceSize({ width: box.width, height: box.height }); } }); observer.observe(svg); onCleanup(() => observer.disconnect()); } });
   createEffect(() => { if (toolbar) { const observer = new ResizeObserver(() => { setToolbarSize({ width: toolbar.offsetWidth, height: toolbar.offsetHeight }); setToolsWidth(toolsRow.offsetWidth); }); observer.observe(toolbar); observer.observe(toolsRow); onCleanup(() => observer.disconnect()); } });
   const mosaicIdentity = createMemo(() => tool() === 'mosaic' && props.port.mosaic ? JSON.stringify([props.port.sourceIdentity(), blockSize(), mosaicRetry()]) : '');
+  const highlightIdentity = createMemo(() => tool() === 'highlighter' && props.port.highlight ? JSON.stringify([props.port.sourceIdentity(), highlightRetry()]) : '');
+  createEffect(on(highlightIdentity, key => {
+    setHighlightReady(false); setHighlightFailed(false); let alive = true;
+    if (key && props.port.highlight) void props.port.highlight.prepare().then(() => { if (alive) setHighlightReady(true); }).catch(error => { if (alive) { setHighlightFailed(true); report(error); } });
+    onCleanup(() => { alive = false; });
+  }));
   createEffect(on(mosaicIdentity, key => {
     setMosaicReady(false); setMosaicFailed(false); let alive = true;
     if (key && props.port.mosaic) void props.port.mosaic.prepare().then(() => { if (alive) setMosaicReady(true); }).catch(error => { if (alive) { setMosaicFailed(true); report(error); } });
@@ -685,6 +694,7 @@ export default function SharedDrawingEditor(props: Props) {
       <Show when={tool()==='heal'}><DrawingWidthSlider label={t('画笔大小')} value={healWidth()} min={1} max={64} disabled={disabled()} onChange={value=>{if(!disabled())setHealWidth(value);}}/></Show>
       <Show when={strokeKinds.includes(propertyKind() as DrawingKind)||tool()==='eraser'}><DrawingWidthSlider label={t('线宽')} value={propertyWidth()} min={1} max={64} disabled={disabled()} onChange={(value,submit)=>changeStyle({strokeWidth:value},submit)}/></Show>
       <Show when={tool() === 'mosaic' && !mosaicReady() && !mosaicFailed()}><LoaderCircle size={15} class="spin" /></Show>
+      <Show when={tool() === 'highlighter' && props.port.highlight && !highlightReady() && !highlightFailed()}><LoaderCircle size={15} class="spin" /></Show>
       <Show when={tool() === 'number'}><input class="drawing-number" type="number" aria-label={t("下个序号")} title={t("下个序号")} min="1" max="9999" step="1" value={nextNumber()} disabled={disabled()} onInput={event => editNumber(event.currentTarget.value)} /></Show>
       <Show when={propertyKind() === 'number'}><select aria-label={t("序号大小")} title={t("序号大小")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([22, 28, 36, 48, 64], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>
       <Show when={propertyKind() === 'text'}><select aria-label={t("字号")} title={t("字号")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([16, 20, 28, 36, 48], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>

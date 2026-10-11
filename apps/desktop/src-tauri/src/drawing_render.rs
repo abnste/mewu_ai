@@ -80,6 +80,17 @@ where
     }
     validate_drawings(&region.drawings, image.width(), image.height())?;
     let mut bitmap = image.crop_imm(x, y, width, height).into_rgba8();
+    let foreground = if region
+        .drawings
+        .iter()
+        .any(|d| d.kind == DrawingKind::Highlighter)
+    {
+        Some(crate::highlight_foreground::foreground(
+            image, x, y, width, height,
+        )?)
+    } else {
+        None
+    };
     if let Some(layer) = underlay {
         if layer.dimensions() != (width, height) {
             return Err("译文图层尺寸与选区不符".into());
@@ -136,6 +147,7 @@ where
             &mut bitmap,
             x,
             y,
+            foreground.as_ref(),
         )?;
         let reference = drawing.rich.as_ref().ok_or("富图层引用缺失")?;
         let raster = load(reference)?;
@@ -160,6 +172,7 @@ where
         &mut bitmap,
         x,
         y,
+        foreground.as_ref(),
     )?;
     Ok(DynamicImage::ImageRgba8(bitmap))
 }
@@ -171,9 +184,100 @@ fn paint_vectors(
     bitmap: &mut image::RgbaImage,
     x: u32,
     y: u32,
+    foreground: Option<&crate::highlight_foreground::Foreground>,
 ) -> Result<(), String> {
+    // Highlight foreground is estimated from the frozen source, never from a
+    // previous tint. Split vector segments to preserve document paint order.
+    let Some(foreground) = foreground else {
+        return paint_plain_vectors(drawings, source_width, source_height, bitmap, x, y);
+    };
+    let mut start = 0;
+    for (index, drawing) in drawings.iter().enumerate() {
+        if drawing.kind != DrawingKind::Highlighter {
+            continue;
+        }
+        paint_plain_vectors(
+            &drawings[start..index],
+            source_width,
+            source_height,
+            bitmap,
+            x,
+            y,
+        )?;
+        if let Some(overlay) = vector_overlay(
+            std::slice::from_ref(drawing),
+            source_width,
+            source_height,
+            bitmap.width(),
+            bitmap.height(),
+            x,
+            y,
+        )? {
+            let color = [
+                u8::from_str_radix(&drawing.color[1..3], 16),
+                u8::from_str_radix(&drawing.color[3..5], 16),
+                u8::from_str_radix(&drawing.color[5..7], 16),
+            ];
+            let color = color.map(|v| v.expect("validated RGB drawing color"));
+            for (pixel, coverage) in overlay.pixels().iter().enumerate() {
+                if coverage.alpha() == 0 {
+                    continue;
+                }
+                let px = pixel as u32 % bitmap.width();
+                let py = pixel as u32 / bitmap.width();
+                if let Some(rgb) = foreground.tint(px, py, color) {
+                    blend_rgba(
+                        bitmap.get_pixel_mut(px, py),
+                        &image::Rgba([rgb[0], rgb[1], rgb[2], coverage.alpha()]),
+                    );
+                }
+            }
+        }
+        start = index + 1;
+    }
+    paint_plain_vectors(
+        &drawings[start..],
+        source_width,
+        source_height,
+        bitmap,
+        x,
+        y,
+    )
+}
+
+fn paint_plain_vectors(
+    drawings: &[Drawing],
+    source_width: u32,
+    source_height: u32,
+    bitmap: &mut image::RgbaImage,
+    x: u32,
+    y: u32,
+) -> Result<(), String> {
+    if let Some(overlay) = vector_overlay(
+        drawings,
+        source_width,
+        source_height,
+        bitmap.width(),
+        bitmap.height(),
+        x,
+        y,
+    )? {
+        blend_overlay(bitmap, &overlay);
+    }
+    Ok(())
+}
+
+fn vector_overlay(
+    drawings: &[Drawing],
+    source_width: u32,
+    source_height: u32,
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+) -> Result<Option<tiny_skia::Pixmap>, String> {
     if drawings.iter().all(|d| d.kind == DrawingKind::Mosaic) {
-        return Ok(());
+        return Ok(None);
     }
     let xml = drawing_svg(drawings, source_width, source_height);
     let mut options = usvg::Options::default();
@@ -191,8 +295,7 @@ fn paint_vectors(
         options.font_family = "Segoe UI".into();
     }
     let tree = usvg::Tree::from_str(&xml, &options).map_err(|_| "无法排版绘制内容")?;
-    let mut overlay =
-        tiny_skia::Pixmap::new(bitmap.width(), bitmap.height()).ok_or("选区过大，无法合成标注")?;
+    let mut overlay = tiny_skia::Pixmap::new(width, height).ok_or("选区过大，无法合成标注")?;
     resvg::render(
         &tree,
         tiny_skia::Transform::from_translate(-(x as f32), -(y as f32)),
@@ -200,8 +303,7 @@ fn paint_vectors(
     );
     // tiny-skia stores premultiplied RGBA; image::Pixel::blend expects straight
     // alpha. Demultiply before compositing to avoid dark anti-aliased edges.
-    blend_overlay(bitmap, &overlay);
-    Ok(())
+    Ok(Some(overlay))
 }
 
 pub(crate) fn crop_bounds(
@@ -777,6 +879,66 @@ mod tests {
         dot.stroke_width = 10.;
         let dot = crop_region(&background(), &region(vec![dot])).unwrap();
         assert_eq!(dot.get_pixel(50, 40), sample);
+    }
+
+    #[test]
+    fn protected_marker_keeps_frozen_text_pixels_through_repeats_and_crop_offsets() {
+        let mut source = RgbaImage::from_pixel(180, 120, Rgba([255, 255, 255, 255]));
+        for y in 40..60 {
+            source.put_pixel(60, y, Rgba([0, 0, 0, 255]));
+            source.put_pixel(61, y, Rgba([128, 128, 128, 255]));
+        }
+        let source = DynamicImage::ImageRgba8(source);
+        let mut marker = drawing(DrawingKind::Highlighter, &[(30., 50.), (100., 50.)]);
+        marker.color = "#ffff00".into();
+        marker.stroke_width = 18.;
+        let once = crop_region(&source, &region(vec![marker.clone()])).unwrap();
+        let twice = crop_region(&source, &region(vec![marker.clone(), marker])).unwrap();
+        // region starts at 20,10; samples stay in the marker's fully covered interior.
+        for result in [&once, &twice] {
+            assert_eq!(result.get_pixel(40, 40), Rgba([0, 0, 0, 255]));
+            assert!(result.get_pixel(41, 40)[0].abs_diff(128) <= 1);
+            assert!(result.get_pixel(41, 40)[1].abs_diff(128) <= 1);
+        }
+        assert!(once.get_pixel(41, 40)[2] < 128);
+        assert!(twice.get_pixel(41, 40)[2] < once.get_pixel(41, 40)[2]);
+        assert_eq!(once.get_pixel(41, 5), source.get_pixel(61, 15));
+        if let Some(root) = std::env::var_os("MEWU_HIGHLIGHT_PIXEL_PROBE") {
+            let root = std::path::PathBuf::from(root);
+            assert!(root.is_absolute() && root.is_dir());
+            let write_png = |name: &str, image: &DynamicImage| {
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(root.join(name))
+                    .unwrap();
+                image.write_to(&mut file, image::ImageFormat::Png).unwrap();
+            };
+            write_png("source.png", &source);
+            write_png("once.png", &once);
+            write_png("twice.png", &twice);
+            let mut marker = drawing(DrawingKind::Highlighter, &[(30., 50.), (100., 50.)]);
+            marker.color = "#ffff00".into();
+            marker.stroke_width = 18.;
+            let geometry = region(vec![]);
+            let (x, y, w, h) = crop_bounds(&source, &geometry).unwrap();
+            for (name, marks) in [
+                ("plain_once.png", vec![marker.clone()]),
+                ("plain_twice.png", vec![marker.clone(), marker.clone()]),
+            ] {
+                let mut pixels = source.crop_imm(x, y, w, h).into_rgba8();
+                paint_plain_vectors(&marks, source.width(), source.height(), &mut pixels, x, y)
+                    .unwrap();
+                write_png(name, &DynamicImage::ImageRgba8(pixels));
+            }
+            let record = serde_json::json!({"region":region(vec![marker]),"sourceWidth":180,"sourceHeight":120,"nativeExpectedOnce":"once.png","nativeExpectedTwice":"twice.png"});
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(root.join("fixture.json"))
+                .unwrap();
+            std::io::Write::write_all(&mut file, &serde_json::to_vec(&record).unwrap()).unwrap();
+        }
     }
 
     #[test]

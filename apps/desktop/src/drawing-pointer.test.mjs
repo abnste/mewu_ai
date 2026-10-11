@@ -231,9 +231,10 @@ async function jsx(source,dependencies){
   const result=new SourceTextModule(transform(compiled));await result.link(name=>synthetic(name==='test-renderer'?renderer:name==='solid-js'?solid:dependencies[name]??{}));await result.evaluate();return result.namespace;
 }
 const colors=await pure('./drawing-colors.ts');
+let highlightLoader=()=>{throw Error('No native IO');};
 const shapeJsx=await jsx(await raw('./components/DrawingLayer.tsx'),{
   '../drawing-colors':colors,
-  './drawing-geometry':geometry,'./drawing-pointer':pointer,'./RichDrawingShape':{default:()=>undefined},'../bridge':{getMosaicPreview:()=>{throw Error('No native IO');}},'../i18n':{t:value=>value},
+  './drawing-geometry':geometry,'./drawing-pointer':pointer,'./RichDrawingShape':{default:()=>undefined},'../bridge':{getMosaicPreview:()=>{throw Error('No native IO');},getHighlightPreview:(...args)=>highlightLoader(...args)},'../i18n':{t:value=>value},
 });
 const itemJsx=await jsx(`import {linkedRepairPreview} from 'selection';import {createMemo,Show} from 'solid-js';import {liveDrawing} from 'pointer';
 export function fixture(props,state){props={...props,port:{...props.port,drawings:state.drawings,stored:state.stored}};const draft=()=>state.draft(),edit=()=>undefined,tool=()=>state.tool(),selected=()=>state.selected(),storedDraft=()=>state.storedDraft(),drawings=state.drawings;
@@ -306,6 +307,25 @@ test('actual highlighter SVG switches between segmented ink and a straight previ
   setDraft({...draft(),points});assert.equal(descendants(root,'path').length,3);assert.ok(descendants(root,'path').at(-1).props.d.endsWith('L269,23'));
   points.push({x:270,y:24});setDraft({...draft()});assert.ok(descendants(root,'path').at(-1).props.d.endsWith('L270,24'));assert.equal(renders,1);assert.equal(descendants(root,'g').find(node=>node.props.opacity===.35),ink);
   dispose();
+});
+
+test('actual protected marker fences stale source responses and retains its loaded source while stroke bounds and color change',async()=>{
+  const deferred=()=>{let resolve;const promise=new Promise(yes=>{resolve=yes;});return {resolve,promise};};
+  const tick=()=>new Promise(resolve=>setImmediate(resolve));
+  const waits=[],calls=[],errors=[];highlightLoader=(...args)=>{calls.push(args);const wait=deferred();waits.push(wait);return wait.promise;};
+  const [drawing,setDrawing]=solid.createSignal({id:'protected',kind:'highlighter',color:'#fff200',strokeWidth:18,points:[{x:20,y:20},{x:60,y:20}]});
+  const [context,setContext]=solid.createSignal({sceneId:'s',background:{id:'a',width:80,height:40}});
+  const root=renderer.createElement('root');const dispose=renderer.render(()=>renderer.createComponent(shapeJsx.DrawingShape,{get drawing(){return drawing();},get mosaicContext(){return context();},onError:error=>errors.push(error)}),root);
+  const receipt=id=>({backgroundId:id,width:80,height:40,dataUrl:`data:image/png;base64,${id}`});
+  assert.equal(calls.length,1);setContext({sceneId:'s',background:{id:'b',width:80,height:40}});assert.equal(calls.length,2);
+  waits[0].resolve(receipt('a'));await tick();assert.equal(descendants(root,'image').length,0);
+  waits[1].resolve(receipt('b'));await tick();assert.equal(descendants(root,'image').length,2);
+  const images=descendants(root,'image'),filter=descendants(root,'filter')[0];
+  setDrawing({...drawing(),color:'#347bf1',points:[{x:25,y:20},{x:70,y:20}]});
+  assert.equal(descendants(root,'image')[0],images[0]);assert.equal(descendants(root,'image')[1],images[1]);assert.equal(descendants(root,'path')[0].props.d,'M25,20 L70,20');assert.equal(calls.length,2);
+  assert.equal(filter.props.x,16);assert.equal(filter.props.width,63);assert.equal(descendants(root,'rect')[0].props.fill,'#347bf1');
+  setContext({sceneId:'s',background:{id:'c',width:80,height:40}});assert.equal(descendants(root,'image').length,0);dispose();waits[2].resolve(receipt('c'));await tick();assert.deepEqual(errors,[]);
+  highlightLoader=()=>{throw Error('No native IO');};
 });
 
 test('actual stored JSX remains on the native raster port while selection, interactivity and exact preview bounds update',()=>{
