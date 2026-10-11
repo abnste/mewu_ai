@@ -157,6 +157,8 @@ struct Session {
     fault: Option<SaveDialogError>,
     cancel_native: Arc<AtomicBool>,
     sender: Sender<Reply>,
+    #[cfg(debug_assertions)]
+    diagnostic_logged: bool,
 }
 
 thread_local! {
@@ -409,9 +411,7 @@ fn start(
         popup.setTarget(Some(&target));
         popup.setAction(Some(sel!(formatChanged:)));
     }
-    // Keep a plain view as the panel's accessory root. The remote save-panel
-    // service must lay out the container rather than resize the popup control
-    // itself; a bare popup was absent in both compact and expanded real panels.
+    // Give the format control its own stable accessory container and padding.
     let accessory = NSView::initWithFrame(
         NSView::alloc(mtm),
         NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(304.0, 48.0)),
@@ -472,6 +472,8 @@ fn start(
                 fault: None,
                 cancel_native,
                 sender,
+                #[cfg(debug_assertions)]
+                diagnostic_logged: false,
             },
         );
         Ok(())
@@ -487,10 +489,44 @@ fn start(
     Ok(true)
 }
 
+#[cfg(debug_assertions)]
+fn diagnose(id: uuid::Uuid) {
+    if std::env::var("MEWU_MAC_SAVE_DIAGNOSTICS").as_deref() != Ok("1") {
+        return;
+    }
+    let Some((panel, parent, container, popup)) = SESSIONS.with(|sessions| {
+        let sessions = sessions.try_borrow().ok()?;
+        let session = sessions.get(&id)?;
+        if session.diagnostic_logged { return None; }
+        Some((session.panel.clone(), session._parent.clone(), session._accessory.clone(), session.popup.clone()))
+    }) else { return; };
+    if !panel.isVisible() { return; }
+    SESSIONS.with(|sessions| {
+        if let Ok(mut sessions) = sessions.try_borrow_mut() {
+            if let Some(session) = sessions.get_mut(&id) { session.diagnostic_logged = true; }
+        }
+    });
+    let accessory = panel.accessoryView();
+    let popup_window = popup.window();
+    // Own panel/control geometry only. No selected path, filename, title,
+    // screen pixels, source data or other applications' windows are logged.
+    eprintln!(
+        "mewu.mac.save.panel parentLevel={} panelLevel={} sheet={} accessory={} accessoryFrame={:?} accessoryHidden={} popupFrame={:?} popupHidden={} popupWindow={} popupLevel={:?} popupItems={} selected={}",
+        parent.level(), panel.level(),
+        panel.sheetParent().is_some(), accessory.is_some(),
+        container.frame(), container.isHidden(),
+        popup.frame(), popup.isHidden(), popup_window.is_some(),
+        popup_window.as_ref().map(|window| window.level()),
+        popup.numberOfItems(), popup.indexOfSelectedItem(),
+    );
+}
+
 fn maintain(id: uuid::Uuid) {
     let Some(_mtm) = MainThreadMarker::new() else {
         return;
     };
+    #[cfg(debug_assertions)]
+    diagnose(id);
     let pending = SESSIONS.with(|sessions| {
         let sessions = sessions.try_borrow().ok()?;
         let session = sessions.get(&id)?;
