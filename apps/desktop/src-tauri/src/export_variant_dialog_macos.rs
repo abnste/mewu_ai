@@ -112,22 +112,25 @@ fn start(
         return Ok(false);
     }
     let alert = NSAlert::new(mtm);
-    alert.setMessageText(&NSString::from_str(&crate::ui_language::translated(
-        "导出内容",
-    )));
+    use crate::ui_language::text;
+    alert.setMessageText(&NSString::from_str(text("导出版本", "Export version")));
     let message = match media {
-        Media::Image => "选择保存带标注的图片，或没有标注的原图。",
-        Media::Video => "选择保存带标注的视频，或没有标注的原视频。",
+        Media::Image => text(
+            "选择保存带标注的图片，或没有标注的原图。",
+            "Save the image with annotations or a clean copy.",
+        ),
+        Media::Video => text(
+            "选择保存带标注的视频，或没有标注的原视频。",
+            "Save the video with annotations or a clean copy.",
+        ),
     };
-    alert.setInformativeText(&NSString::from_str(&crate::ui_language::translated(
-        message,
-    )));
-    let clean = match media {
-        Media::Image => "原图",
-        Media::Video => "原视频",
-    };
-    for label in ["带标注", clean, "取消"] {
-        alert.addButtonWithTitle(&NSString::from_str(&crate::ui_language::translated(label)));
+    alert.setInformativeText(&NSString::from_str(message));
+    for label in [
+        text("带标注版本", "With annotations"),
+        text("干净原件", "Clean copy"),
+        text("取消", "Cancel"),
+    ] {
+        alert.addButtonWithTitle(&NSString::from_str(label));
     }
     let active = std::rc::Rc::new(Cell::new(false));
     let flag = active.clone();
