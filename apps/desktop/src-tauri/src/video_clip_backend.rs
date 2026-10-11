@@ -21,12 +21,20 @@ pub fn execute(
     {
         platform::execute(job, cancel, on_progress)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::execute(job, cancel, on_progress)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = on_progress;
         Err(ClipError::Unsupported)
     }
 }
+
+#[cfg(target_os = "macos")]
+#[path = "video_clip_macos.rs"]
+mod macos;
 
 #[cfg(windows)]
 mod platform {

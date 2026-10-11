@@ -95,12 +95,12 @@ pub async fn run(
 ) -> Result<ClipJobResult, ClipError> {
     video_clip_backend::check_cancel(&cancel)?;
     job.validate()?;
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = on_progress;
         Err(ClipError::Unsupported)
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     {
         let permit = Permit::acquire(cancel.clone())?;
         let mut guard = CancelOnDrop(Some(cancel.clone()));
