@@ -1224,6 +1224,8 @@ async fn export_supervised(
                 cancel.check()?;
                 crate::image_host::ensure_visible(handle)
             })?;
+    #[cfg(target_os = "linux")]
+    let image_work = Arc::new(image_work);
     let _invoke = image_work.cancel_on_drop();
     let registry = app.state::<PinRegistry>();
     // Include the native picker in actual pin work. An aborted application
@@ -1314,27 +1316,43 @@ async fn export_supervised(
                     },
                 )
             } else {
+                #[cfg(target_os = "linux")]
+                {
+                    let ui_work = work.clone();
+                    let ui_app = app.clone();
+                    let ui_cancel = cancel.clone();
+                    let ui_image_work = image_work.clone();
+                    // Never retain Work.state while dispatching or waiting for
+                    // GTK. Final admission and native publication occur in the
+                    // same short UI callback, with actual leases still owned.
+                    crate::window_actions_linux::with_display(
+                        export_window.clone(), handle, export_cancel.clone(), move |display| {
+                            ui_work.commit(&ui_app, &ui_cancel, || {
+                                ui_image_work.accept_publication(|| {
+                                    ui_app.state::<Host>().exit.ensure_running()?;
+                                    ui_cancel.check()?;
+                                    crate::image_host::ensure_visible(handle)
+                                })?;
+                                crate::window_actions_linux::publish_image(display, pixels)
+                            })
+                        },
+                    )
+                }
+                #[cfg(windows)]
                 work.commit(&app, &cancel, || {
                     image_work.accept_publication(|| {
                         app.state::<Host>().exit.ensure_running()?;
                         cancel.check()?;
                         crate::image_host::ensure_visible(handle)
                     })?;
-                    #[cfg(target_os = "linux")]
-                    return crate::window_actions_linux::copy_image(
-                        export_window.clone(), handle, pixels, export_cancel.clone(),
-                    );
-                    #[cfg(windows)]
-                    {
-                        let mut board = arboard::Clipboard::new().map_err(|_| "无法打开剪贴板")?;
-                        board
-                            .set_image(arboard::ImageData {
-                                width: pixels.width() as usize,
-                                height: pixels.height() as usize,
-                                bytes: std::borrow::Cow::Owned(pixels.into_raw()),
-                            })
-                            .map_err(|_| "无法复制贴图".into())
-                    }
+                    let mut board = arboard::Clipboard::new().map_err(|_| "无法打开剪贴板")?;
+                    board
+                        .set_image(arboard::ImageData {
+                            width: pixels.width() as usize,
+                            height: pixels.height() as usize,
+                            bytes: std::borrow::Cow::Owned(pixels.into_raw()),
+                        })
+                        .map_err(|_| "无法复制贴图".into())
                 })
             }
         })();

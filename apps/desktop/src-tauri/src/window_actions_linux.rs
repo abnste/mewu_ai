@@ -198,7 +198,10 @@ pub(crate) fn parent(
 /// GTK retains the image and serves future selection requests on its existing
 /// main loop. A short-lived arboard owner would lose Linux clipboard contents.
 #[cfg(target_os = "linux")]
-fn publish_image(display: &gtk::gdk::Display, image: image::RgbaImage) -> Result<(), String> {
+pub(crate) fn publish_image(display: &gtk::gdk::Display, image: image::RgbaImage) -> Result<(), String> {
+    if !gtk::is_initialized_main_thread() {
+        return Err("只能在界面线程发布图片".into());
+    }
     let width = image.width();
     let height = image.height();
     if width == 0
