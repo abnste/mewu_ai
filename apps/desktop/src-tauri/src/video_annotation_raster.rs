@@ -451,11 +451,24 @@ mod tests {
 
     #[test]
     fn already_valid_text_keeps_legacy_png_bytes() {
-        for (literal, font_size) in [
+        #[cfg(not(target_os = "linux"))]
+        let fixtures = [
             ("旧文本", 40.),
             ("新内容", 40.),
             ("中文标注\n<svg>&公式 x²", 24.),
-        ] {
+        ];
+        // Noto CJK's measured ascender makes the 40px baseline cross y=0;
+        // that layout was never a successful legacy fixture on Linux. Keep
+        // the byte-equality contract with genuinely nonnegative native glyph
+        // bounds. Large/negative-bounds cases retain the independent full-ink
+        // and translated-edge checks in the complete-canvas test above.
+        #[cfg(target_os = "linux")]
+        let fixtures = [
+            ("旧文本", 16.),
+            ("新内容", 16.),
+            ("中文标注\n<svg>&公式 x²", 16.),
+        ];
+        for (literal, font_size) in fixtures {
             let content = text_content(literal, font_size);
             let (text, baseline) = literal_text_svg(&content).unwrap();
             let opts = options(true).unwrap();
@@ -466,7 +479,8 @@ mod tests {
             let b = measured.root().abs_bounding_box();
             assert!(
                 b.x() >= 0. && b.y() >= 0.,
-                "old successful fixture unexpectedly changed"
+                "old successful fixture unexpectedly changed: literal={literal:?} size={font_size} bounds=({}, {})",
+                b.x(), b.y()
             );
             let (width, height) = dimensions(
                 f64::from(b.right()) + 4.,
