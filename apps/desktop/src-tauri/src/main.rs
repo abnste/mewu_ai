@@ -28,6 +28,8 @@ mod code_open_macos;
 mod code_worker;
 #[cfg(target_os = "macos")]
 mod window_witness_macos;
+#[cfg(any(target_os = "linux", test))]
+mod window_witness_linux;
 mod screen_entities;
 mod connection_host;
 mod content_server;
@@ -925,7 +927,10 @@ fn runtime_info(app: AppHandle, host: tauri::State<'_, Host>) -> Result<RuntimeI
 
 /// A queued hide() from a worker is not proof that the native window is hidden.
 /// Handshake with the main loop before acquiring desktop pixels.
-async fn hide_for_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
+async fn hide_for_capture(
+    window: &tauri::WebviewWindow,
+    #[cfg(target_os = "linux")] allowed: capture::CaptureCheck,
+) -> Result<(), String> {
     let (send, receive) = oneshot::channel();
     let target = window.clone();
     window
@@ -936,6 +941,8 @@ async fn hide_for_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
                     .state::<Host>()
                     .exit
                     .ensure_new_operation()?;
+                #[cfg(target_os = "linux")]
+                allowed()?;
                 #[cfg(windows)]
                 {
                     use windows_sys::Win32::Graphics::Dwm::{
@@ -958,6 +965,8 @@ async fn hide_for_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
                 target.hide().map_err(|_| "无法隐藏截图窗口")?;
                 // The shared floating widget is also part of Mewu and must not be captured.
                 frozen::hide(target.app_handle())?;
+                #[cfg(target_os = "linux")]
+                allowed()?;
                 // Settings has its own lifetime. Capture only hides the space
                 // and conversation widget, as in the original desktop app.
                 #[cfg(windows)]
@@ -978,6 +987,30 @@ async fn hide_for_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
         })
         .map_err(|_| "无法准备截图")?;
     receive.await.map_err(|_| "截图准备中断")?
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_capture_witnesses(
+    window: &tauri::WebviewWindow, work: &Arc<capture_delay_work::Work>,
+) -> Result<Vec<window_witness_linux::CaptureWitness>, String> {
+    let (send, receive) = oneshot::channel();
+    let target = window.clone();
+    let work = work.clone();
+    window.run_on_main_thread(move || {
+        let result = (|| {
+            work.check()?;
+            let app = target.app_handle();
+            app.state::<Host>().exit.ensure_new_operation()?;
+            let widget = app.get_webview_window(frozen::LABEL).ok_or("冻结会话窗口不可用")?;
+            let witnesses = vec![window_witness_linux::capture_witness(&target)?,
+                window_witness_linux::capture_witness(&widget)?];
+            work.check()?;
+            for witness in &witnesses { window_witness_linux::current(witness)?; }
+            Ok(witnesses)
+        })();
+        let _ = send.send(result);
+    }).map_err(|_| "无法检查截图窗口")?;
+    receive.await.map_err(|_| "截图窗口检查中断")?
 }
 
 #[cfg(target_os = "macos")]
@@ -1026,6 +1059,7 @@ fn wait_mac_capture_hidden(
 async fn expand_capture_space(
     window: &tauri::WebviewWindow,
     captured: &capture::CapturedScreen,
+    #[cfg(target_os = "linux")] allowed: capture::CaptureCheck,
 ) -> Result<(), String> {
     let (send, receive) = oneshot::channel();
     let target = window.clone();
@@ -1040,6 +1074,8 @@ async fn expand_capture_space(
                     .ensure_new_operation()?;
                 // Reset the previous monitor's fullscreen placement while hidden,
                 // so a later capture on another screen cannot reuse its bounds.
+                #[cfg(target_os = "linux")]
+                allowed()?;
                 target
                     .set_simple_fullscreen(false)
                     .map_err(|_| "无法调整空间")?;
@@ -1106,6 +1142,8 @@ async fn expand_capture_space(
                 }
                 capture_visibility::apply(&target)?;
                 target.set_always_on_top(true).map_err(|_| "无法置顶空间")?;
+                #[cfg(target_os = "linux")]
+                allowed()?;
                 Ok(())
             })();
             let _ = send.send(result);
@@ -1125,6 +1163,8 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         // or a progress notification, and must not release the current owner.
         return get_snapshot(app.clone(), host);
     };
+    #[cfg(target_os = "linux")]
+    let transition = Arc::new(transition);
     host.system_preferences
         .snapshot_for_operation()
         .map_err(|error| error.to_string())?;
@@ -1136,6 +1176,8 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         return get_snapshot(app.clone(), host);
     };
     let _invoke = work.cancel_on_drop();
+    #[cfg(target_os = "linux")]
+    let work = Arc::new(work);
     #[cfg(target_os = "macos")]
     {
         // Request only for an explicit capture, before hiding windows and
@@ -1156,6 +1198,21 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     pin_host::cancel_pending(&app, "space");
     recording::ensure_idle(&app)?;
     let window = app.get_webview_window("space").ok_or("窗口不存在")?;
+    #[cfg(target_os = "linux")]
+    let capture_witnesses = linux_capture_witnesses(&window, &work).await?;
+    #[cfg(target_os = "linux")]
+    let capture_check: capture::CaptureCheck = {
+        let capture_work = work.clone();
+        let check_app = app.clone();
+        let witnesses = capture_witnesses.clone();
+        Arc::new(move || {
+            capture_work.check()?;
+            check_app.state::<Host>().exit.ensure_new_operation()?;
+            recording::ensure_idle(&check_app)?;
+            for witness in &witnesses { window_witness_linux::current(witness)?; }
+            Ok(())
+        })
+    };
     #[cfg(target_os = "macos")]
     let capture_witnesses = {
         let mut witnesses = vec![window_witness_macos::capture_witness(&window)?];
@@ -1172,8 +1229,15 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             .translation_jobs
             .cancel_scene("space", &engine.store.snapshot().active_scene_id);
     }
-    if let Err(error) = hide_for_capture(&window).await {
+    if let Err(error) = hide_for_capture(
+        &window,
+        #[cfg(target_os = "linux")]
+        capture_check.clone(),
+    ).await {
+        #[cfg(not(target_os = "linux"))]
         show(&app);
+        #[cfg(target_os = "linux")]
+        if capture_check().is_ok() { show(&app); }
         return Err(error);
     }
     if let Err(error) = work
@@ -1184,7 +1248,11 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         .await
     {
         if work.check().is_ok() {
-            show(&app);
+            #[cfg(target_os = "linux")]
+            let restore = capture_check().is_ok();
+            #[cfg(not(target_os = "linux"))]
+            let restore = true;
+            if restore { show(&app); }
         }
         return Err(error);
     }
@@ -1206,9 +1274,9 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             Ok(())
         })
     };
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let native_capture_check = capture_check.clone();
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let adoption_witnesses = capture_witnesses.clone();
     let (work, _transition, captured) = tauri::async_runtime::spawn_blocking(move || {
         let captured = work.check().and_then(|_| {
@@ -1236,7 +1304,12 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
                     native_capture_check,
                 );
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
+            return capture::capture_desktop_with_witnesses(
+                &root, capture::CaptureOptions { include_cursor: preferences.include_cursor },
+                &capture_witnesses, native_capture_check,
+            );
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             capture::capture_desktop_with_options(
                 &root,
                 capture::CaptureOptions {
@@ -1249,12 +1322,33 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     .await
     .map_err(|_| "截图任务中断".to_string())?;
     let result = async {
+        #[cfg(target_os = "linux")]
+        let mut pending = captured?;
+        #[cfg(target_os = "linux")]
+        let mut captured = pending.screen.clone();
+        #[cfg(not(target_os = "linux"))]
         let mut captured = captured?;
         work.check()?;
         host.exit.ensure_new_operation()?;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         capture_check()?;
-        expand_capture_space(&window, &captured).await?;
+        expand_capture_space(
+            &window, &captured,
+            #[cfg(target_os = "linux")]
+            capture_check.clone(),
+        ).await?;
+        #[cfg(target_os = "linux")]
+        {
+            let native_check = pending.native_check.clone().ok_or("截图缺少窗口状态见证")?;
+            let native_transition = _transition.clone();
+            // No X11 socket waits on the UI thread or under Engine locks. If
+            // the invoke is dropped, this worker still owns the transition and
+            // the original capture Work until its bounded native check ends.
+            tauri::async_runtime::spawn_blocking(move || {
+                let _transition = native_transition;
+                native_check()
+            }).await.map_err(|_| "截图状态检查中断")??;
+        }
         let window_map = captured.window_map.take();
         let asset = Asset {
             capture_coordinates: Some(captured.capture_coordinates),
@@ -1274,6 +1368,10 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         #[cfg(target_os = "macos")]
         for witness in &adoption_witnesses {
             window_witness_macos::current(witness)?;
+        }
+        #[cfg(target_os = "linux")]
+        for witness in &adoption_witnesses {
+            window_witness_linux::current(witness)?;
         }
         let current = engine.store.snapshot();
         let active = current
@@ -1296,6 +1394,8 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             .store
             .set_background(&id, asset.clone())
             .map_err(|e| e.to_string())?;
+        #[cfg(target_os = "linux")]
+        pending.retain();
         if let Some(map) = window_map {
             // Metadata is optional: a rejected or unavailable map must never
             // discard the successfully saved screenshot or its new scene.
@@ -1305,7 +1405,11 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     }
     .await;
     if work.check().is_ok() {
-        show(&app);
+        #[cfg(target_os = "linux")]
+        let restore = capture_check().is_ok();
+        #[cfg(not(target_os = "linux"))]
+        let restore = true;
+        if restore { show(&app); }
     }
     result
 }
@@ -2364,6 +2468,16 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            #[cfg(target_os = "linux")]
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                // Revoke before any Engine locks or async cancellation work.
+                window_witness_linux::revoke_owner(window.label());
+                if matches!(window.label(), "space" | frozen::LABEL) {
+                    if let Some(host) = window.app_handle().try_state::<Host>() {
+                        host.capture_jobs.cancel();
+                    }
+                }
+            }
             #[cfg(target_os = "macos")]
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 window_witness_macos::revoke_owner(window.label());

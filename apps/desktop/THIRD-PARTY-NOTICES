@@ -291,7 +291,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | gdk-sys | 0.18.2 | MIT | transitive | LICENSE [L025] |
 | Cargo | gdk | 0.18.2 | MIT | transitive | COPYRIGHT [L026]; LICENSE [L025] |
 | Cargo | gdkwayland-sys | 0.18.2 | MIT | transitive | LICENSE [L025] |
-| Cargo | gdkx11-sys | 0.18.2 | MIT | transitive | LICENSE [L025] |
+| Cargo | gdkx11-sys | 0.18.2 | MIT | direct on Linux | LICENSE [L025] |
 | Cargo | gdkx11 | 0.18.2 | MIT | transitive | COPYRIGHT [L026]; LICENSE [L025] |
 | Cargo | generic-array | 0.14.7 | MIT | transitive | LICENSE [L133] |
 | Cargo | gethostname | 1.1.0 | Apache-2.0 | transitive | LICENSE [L005] |
@@ -309,7 +309,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | global-hotkey | 0.8.0 | Apache-2.0 OR MIT | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L139]; LICENSE.spdx [L140] |
 | Cargo | gobject-sys | 0.18.0 | MIT | transitive | LICENSE [L025] |
 | Cargo | gtk-sys | 0.18.2 | MIT | transitive | LICENSE [L025] |
-| Cargo | gtk | 0.18.2 | MIT | transitive | COPYRIGHT [L026]; LICENSE [L025] |
+| Cargo | gtk | 0.18.2 | MIT | direct on Linux | COPYRIGHT [L026]; LICENSE [L025] |
 | Cargo | gtk3-macros | 0.18.2 | MIT | transitive | COPYRIGHT [L026]; LICENSE [L025] |
 | Cargo | half | 2.7.1 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L001]; LICENSE-MIT [L141] |
 | Cargo | harfrust | 0.12.0 | MIT | transitive | LICENSE [L142] |

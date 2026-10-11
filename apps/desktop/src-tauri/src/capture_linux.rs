@@ -11,6 +11,10 @@ use image::RgbaImage;
 #[path = "capture_linux_stream.rs"]
 mod stream;
 
+#[cfg(any(target_os = "linux", test))]
+#[path = "capture_linux_visibility.rs"]
+mod visibility;
+
 const MAX_SIDE: u32 = 16_384;
 const MAX_PIXELS: u64 = 33_554_432;
 
@@ -120,7 +124,8 @@ fn supported_session(
 #[cfg(any(target_os = "linux", test))]
 mod native {
     use super::super::{
-        CaptureBackend, CaptureOptions, CapturedScreen, CoordinateSpace, MonitorInfo,
+        CaptureBackend, CaptureCheck, CaptureFile, CaptureOptions, CapturedScreen, CoordinateSpace,
+        MonitorInfo, PendingCapture,
     };
     use super::*;
     use std::{
@@ -161,12 +166,16 @@ mod native {
     }
 
     fn connect() -> Result<(NativeConnection, usize), String> {
+        connect_display(None)
+    }
+
+    fn connect_display(display_name: Option<&str>) -> Result<(NativeConnection, usize), String> {
         session_check()?;
         #[cfg(target_os = "linux")]
-        let (connection, screen) = super::stream::connect()?;
+        let (connection, screen) = super::stream::connect_display(display_name)?;
         #[cfg(not(target_os = "linux"))]
         let (connection, screen) =
-            x11rb::connect(None).map_err(|_| "无法连接当前 X11 图形会话".to_owned())?;
+            x11rb::connect(display_name).map_err(|_| "无法连接当前 X11 图形会话".to_owned())?;
         let version = connection
             .randr_query_version(1, 5)
             .map_err(|_| "无法检查 RandR 截图支持")?
@@ -259,6 +268,53 @@ mod native {
         selected_id: Option<u32>,
         options: CaptureOptions,
     ) -> Result<CapturedScreen, String> {
+        capture_inner(
+            asset_dir,
+            selected_id,
+            options,
+            None,
+            &[],
+            std::sync::Arc::new(|| Ok(())),
+        )
+        .map(PendingCapture::into_retained)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn capture_with_witnesses(
+        asset_dir: &Path,
+        options: CaptureOptions,
+        witnesses: &[crate::window_witness_linux::CaptureWitness],
+        allowed: CaptureCheck,
+    ) -> Result<PendingCapture, String> {
+        if witnesses.len() != 2 || witnesses[0].display() != witnesses[1].display() {
+            return Err("截图窗口不属于同一个完整桌面会话".into());
+        }
+        for witness in witnesses {
+            crate::window_witness_linux::current(witness)?;
+        }
+        let windows: Vec<_> = witnesses
+            .iter()
+            .map(|witness| witness.native_id())
+            .collect();
+        capture_inner(
+            asset_dir,
+            None,
+            options,
+            Some(witnesses[0].display()),
+            &windows,
+            allowed,
+        )
+    }
+
+    fn capture_inner(
+        asset_dir: &Path,
+        selected_id: Option<u32>,
+        options: CaptureOptions,
+        display_name: Option<&str>,
+        windows: &[u32],
+        allowed: CaptureCheck,
+    ) -> Result<PendingCapture, String> {
+        allowed()?;
         if options.include_cursor {
             return Err("当前 Linux 截图尚不支持包含光标".into());
         }
@@ -269,7 +325,18 @@ mod native {
             TryLockError::WouldBlock => "正在获取屏幕，请稍后重试".to_owned(),
             TryLockError::Poisoned(_) => "截图服务需要重新启动".to_owned(),
         })?;
-        let (connection, screen_index) = connect()?;
+        let (connection, screen_index) = connect_display(display_name)?;
+        let mut visibility = if windows.is_empty() {
+            None
+        } else {
+            Some(super::visibility::HiddenWindows::subscribe(
+                &connection,
+                windows,
+            )?)
+        };
+        if let Some(visibility) = &mut visibility {
+            visibility.wait_hidden(allowed.as_ref())?;
+        }
         let before = topology(&connection, screen_index)?;
         let root = connection
             .setup()
@@ -318,6 +385,10 @@ mod native {
         {
             return Err("显示器区域不在当前 X11 桌面内".into());
         }
+        allowed()?;
+        if let Some(visibility) = &visibility {
+            visibility.check(allowed.as_ref())?;
+        }
         let reply = connection
             .get_image(
                 ImageFormat::Z_PIXMAP,
@@ -331,6 +402,10 @@ mod native {
             .map_err(|_| "无法请求 X11 截图")?
             .reply()
             .map_err(|_| "无法获取 X11 屏幕像素")?;
+        if let Some(visibility) = &visibility {
+            visibility.check(allowed.as_ref())?;
+        }
+        allowed()?;
         let pixmap = connection
             .setup()
             .pixmap_formats
@@ -360,6 +435,10 @@ mod native {
         if before != topology(&connection, screen_index)? {
             return Err("截图期间显示器设置已改变，请重新截图".into());
         }
+        if let Some(visibility) = &visibility {
+            visibility.check(allowed.as_ref())?;
+        }
+        allowed()?;
         let asset_id = uuid::Uuid::new_v4().to_string();
         fs::create_dir_all(asset_dir).map_err(|_| "无法创建素材目录")?;
         let path = asset_dir.join(format!("{asset_id}.png"));
@@ -368,6 +447,7 @@ mod native {
             .create_new(true)
             .open(&path)
             .map_err(|_| "无法创建截图素材")?;
+        let owned_file = CaptureFile::created(path.clone());
         let encoded = (|| {
             use image::{
                 codecs::png::{CompressionType, FilterType, PngEncoder},
@@ -385,39 +465,58 @@ mod native {
             writer.flush().map_err(|_| "无法保存截图".to_owned())
         })();
         drop(pixels);
-        if let Err(error) = encoded {
-            let _ = fs::remove_file(&path);
-            return Err(error);
+        encoded?;
+        if let Some(visibility) = &visibility {
+            visibility.check(allowed.as_ref())?;
         }
-        Ok(CapturedScreen {
-            window_map: None,
-            asset_id,
-            path,
-            width: monitor.display_width,
-            height: monitor.display_height,
-            origin_x: monitor.origin_x,
-            origin_y: monitor.origin_y,
-            scale_factor: 1.0,
-            monitor_id: monitor.id,
-            display_width: monitor.display_width,
-            display_height: monitor.display_height,
-            coordinate_space: CoordinateSpace::PhysicalPixels,
-            pixels_per_display_unit_x: 1.0,
-            pixels_per_display_unit_y: 1.0,
-            capture_coordinates: mewu_core::CaptureCoordinates {
-                space: mewu_core::CaptureCoordinateSpace::PhysicalPixels,
-                origin_x: f64::from(monitor.origin_x),
-                origin_y: f64::from(monitor.origin_y),
-                width: f64::from(monitor.display_width),
-                height: f64::from(monitor.display_height),
+        allowed()?;
+        let receipt = visibility
+            .as_ref()
+            .map(|visibility| visibility.receipt())
+            .transpose()?;
+        drop(visibility);
+        // Preserve this exact connection and its subscribed event queue across
+        // the async UI layout. Reconnecting would lose transient map events.
+        let native_check = receipt.map(|receipt| {
+            std::sync::Arc::new(move || receipt.check_on(&connection, allowed.as_ref()))
+                as CaptureCheck
+        });
+        Ok(PendingCapture {
+            file: owned_file,
+            native_check,
+            screen: CapturedScreen {
+                window_map: None,
+                asset_id,
+                path,
+                width: monitor.display_width,
+                height: monitor.display_height,
+                origin_x: monitor.origin_x,
+                origin_y: monitor.origin_y,
+                scale_factor: 1.0,
+                monitor_id: monitor.id,
+                display_width: monitor.display_width,
+                display_height: monitor.display_height,
+                coordinate_space: CoordinateSpace::PhysicalPixels,
+                pixels_per_display_unit_x: 1.0,
+                pixels_per_display_unit_y: 1.0,
+                capture_coordinates: mewu_core::CaptureCoordinates {
+                    space: mewu_core::CaptureCoordinateSpace::PhysicalPixels,
+                    origin_x: f64::from(monitor.origin_x),
+                    origin_y: f64::from(monitor.origin_y),
+                    width: f64::from(monitor.display_width),
+                    height: f64::from(monitor.display_height),
+                },
+                backend: CaptureBackend::X11,
             },
-            backend: CaptureBackend::X11,
         })
     }
 }
 
 #[cfg(target_os = "linux")]
 pub(super) use native::{backend_name, capture, list_monitors};
+
+#[cfg(target_os = "linux")]
+pub(super) use native::capture_with_witnesses;
 
 #[cfg(test)]
 mod tests {

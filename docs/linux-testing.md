@@ -6,6 +6,10 @@ The current capture adapter requires an X11 desktop with RandR 1.5 monitor suppo
 
 X11 transport uses the actual local desktop `DISPLAY`, Unix sockets and normal Xauthority lookup. Remote TCP/SSH displays are unsupported. One ten-second socket deadline covers nonblocking connection, setup, writes and replies; it does not restart for each reply. Socket timeout tests must run on Linux, including a silent setup server, write backpressure and actual socket closure. This bounds socket waits, not filesystem access or PNG encoding.
 
+The capture command takes the space and frozen widget's actual GTK-owned XIDs and display name on the UI thread. It does not identify windows through frontend input, PID or title. GTK unrealize/Tauri destruction revokes their lifecycle generations; GTK remapping changes their visibility revisions. After the main-loop hide acknowledgement, the capture worker subscribes to X11 StructureNotify and requires each GetWindowAttributes reply to report UNMAPPED, both before and after acquiring pixels. A map/unmap pair or destruction invalidates the result even if the final state looks hidden. The same bounded X11 connection and event queue survive UI layout and are checked again on a blocking worker before adoption. Cancellation and owner revisions are rechecked before engine adoption. An unadopted PNG is removed when its owning invocation is dropped. These checks do not prove a compositor has removed every visual shadow/fade: actual desktop captures still must verify that separately.
+
+GTK/GDK source packages already present in the pinned Tauri graph are direct Linux dependencies for these native getters. The getters and unrealize lifecycle follow the official [GDK X11 window API](https://docs.gtk.org/gdk3-x11/method.X11Window.get_xid.html), [display name API](https://docs.gtk.org/gdk3/method.Display.get_name.html) and [GTK unrealize signal](https://docs.gtk.org/gtk3/signal.Widget.unrealize.html).
+
 ## Prepare an isolated test environment
 
 Use a separate checkout and empty test data directory. Record the source commit, dirty status, package version, distribution, architecture, session type, desktop and installed dependency versions before testing. For a source archive, record its SHA256 and supplied commit instead of claiming a Git HEAD.
@@ -20,9 +24,12 @@ From the repository root:
 npm ci
 cargo check --workspace --all-targets --locked
 cargo test --workspace --locked
+xvfb-run -a cargo test --locked --features linux-x11-tests x11_visibility_native
 node --experimental-vm-modules --test apps/desktop/src/*.test.mjs
 npm run desktop:build -- --config src-tauri/tauri.linux.conf.json
 ```
+
+The separate Xvfb run exercises real X11 map state, transient map/unmap events, destruction and mapped children under hidden parents. Enabling `linux-x11-tests` requires an actual test X server; absence fails rather than skips these tests. This protocol evidence still does not replace a GTK/Mewu desktop screenshot.
 
 The Linux override selects AppImage, the PNG icon, a non-fullscreen initial window and the media framework bundle. Local candidate packaging does not require an updater private key. The release coordinator signs the final distributable bytes separately. Never transfer signing keys or private application data to a test device.
 
