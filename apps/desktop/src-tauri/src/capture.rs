@@ -12,7 +12,7 @@ pub struct CapturedScreen {
     /// Optional capture-time metadata; absent on unsupported/unstable desktops.
     /// It is registered by the host only after the PNG joins the active scene.
     #[serde(skip)]
-    pub window_map: Option<super::window_snap::FrameSnapMap>,
+    pub(crate) window_map: Option<super::window_snap::CapturedWindowMap>,
     pub asset_id: String,
     pub path: PathBuf,
     pub width: u32,

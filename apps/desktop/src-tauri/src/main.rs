@@ -76,6 +76,12 @@ mod rich_annotation_host;
 mod save_dialog;
 mod scroll_capture;
 mod scroll_host;
+mod application_snapshot;
+mod application_snapshot_worker;
+#[cfg(all(windows, test))]
+mod application_snapshot_probe;
+#[cfg(windows)]
+mod application_snapshot_windows;
 mod scroll_stitch;
 mod settings_host;
 mod session_title;
@@ -1982,6 +1988,9 @@ fn main() {
     }
     if std::env::args().nth(1).as_deref() == Some("--code-worker") {
         std::process::exit(code_worker::worker_main());
+    }
+    if std::env::args().nth(1).as_deref() == Some("--application-snapshot-worker") {
+        std::process::exit(application_snapshot_worker::worker_main());
     }
     if std::env::args().nth(1).as_deref() == Some("--speech-worker") {
         std::process::exit(speech_worker::worker_main());

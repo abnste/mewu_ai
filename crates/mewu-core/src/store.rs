@@ -1071,6 +1071,18 @@ impl Store {
     /// identity, composer references and runs; it cannot replace a replacement
     /// again or masquerade as a reversible drawing edit.
     pub fn set_region_image(&mut self, target: &OcrTarget, asset: Asset) -> Result<Snapshot> {
+        self.set_region_image_inner(target, asset, false)
+    }
+    /// Completed and restored window snapshots become references atomically.
+    pub fn set_region_snapshot(&mut self, target: &OcrTarget, asset: Asset) -> Result<Snapshot> {
+        self.set_region_image_inner(target, asset, true)
+    }
+    fn set_region_image_inner(
+        &mut self,
+        target: &OcrTarget,
+        asset: Asset,
+        reference: bool,
+    ) -> Result<Snapshot> {
         validate_region_image(&asset)?;
         let mut next = self.state.clone();
         let target_scene = next
@@ -1102,6 +1114,17 @@ impl Store {
         region.drawing_history = DrawingHistory::default();
         region.ocr = None;
         region.translation = None;
+        if reference
+            && !target_scene
+                .refs
+                .iter()
+                .any(|r| r.kind == ReferenceKind::Region && r.id == target.region_id)
+        {
+            target_scene.refs.push(Reference {
+                kind: ReferenceKind::Region,
+                id: target.region_id.clone(),
+            });
+        }
         touch(target_scene);
         self.persist(next)
     }

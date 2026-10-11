@@ -4,6 +4,7 @@ import { nativeSelectOwnsEscape } from '../native-select-escape';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from 'solid-js';
 import { Check, ChevronDown, Circle, Copy, Download, Languages, LoaderCircle, Pencil, Pin, Plus, Table2, TextSelect, Trash2, X } from 'lucide-solid';
 import ScrollCaptureIcon from './ScrollCaptureIcon';
+import ApplicationSnapshotIcon from './ApplicationSnapshotIcon';
 import { recordingGrant, recordingTrimGrant } from '../recording-audio';
 import type { DrawingCommand, OcrTarget, Reference, Region, RegionGeometry, Scene, Snapshot, SpaceItem } from '../contracts';
 import { geometryTarget, overlayRegion, sameGeometry, type RegionGeometryCoordinator, type GeometryView } from '../region-geometry';
@@ -36,7 +37,7 @@ import { sameOcrTarget } from '../ocr-selection';
 import { finishCapture } from '../capture-completion';
 import { regionImageProjection } from '../region-image';
 import { getWindowSnapMap } from '../window-snap-bridge';
-import { SnapMapLoader, SnapSelectionGesture, snapImagePoint, snapResize, snapTarget, type FrameSnapMap } from '../window-snap';
+import { SnapMapLoader, SnapSelectionGesture, SnapshotSelections, snapImagePoint, snapResize, snapTarget, type FrameSnapMap } from '../window-snap';
 import './capture.css';
 import type { RegisterDrawingHistory } from '../drawing-editor-port';
 
@@ -74,7 +75,7 @@ interface Props {
   onCopyClose?: (sceneId: string) => Promise<boolean | void>;
   onRecordRegion: (regionId: string) => void;
   onPin?: (pluginId: string, revision: number, contributionId: string, regionId: string) => Promise<boolean>;
-  onScrollCapture?: (pluginId: string, revision: number, contributionId: string, target: OcrTarget) => Promise<void>;
+  onScrollCapture?: (pluginId: string, revision: number, contributionId: string, target: OcrTarget, snapshotNodeId?: number) => Promise<void>;
   plugins: PluginRecord[];
   onPluginWorkflow: (pluginId: string, revision: number, contributionId: string, regionId: string) => Promise<void>;
   onDrawingCommand: (pluginId: string, pluginRevision: number, contributionId: string, command: DrawingCommand) => Promise<void>;
@@ -147,6 +148,10 @@ export default function SpaceCanvas(props: Props) {
   const [natural, setNatural] = createSignal({ width: 0, height: 0 });
   const [selection, setSelection] = createSignal<Box>();
   const [snapMap, setSnapMap] = createSignal<FrameSnapMap>();
+  const snapshotSelections = new SnapshotSelections();
+  const [snapshotVersion, setSnapshotVersion] = createSignal(0);
+  createEffect(() => { snapshotSelections.sync(props.scene.id, props.scene.background?.id, props.scene.regions); setSnapshotVersion(value => value + 1); });
+  const snapshotNode = (region: Region) => { snapshotVersion(); return snapMap()?.backgroundId === props.scene.background?.id ? snapshotSelections.get(region, snapMap()) : undefined; };
   const [snapPreview, setSnapPreview] = createSignal<Box>();
   const [active, setActive] = createSignal('');
   const [activeItemId, setActiveItemId] = createSignal('');
@@ -158,6 +163,7 @@ export default function SpaceCanvas(props: Props) {
   const [flashedRegion, setFlashedRegion] = createSignal('');
   const [drawingSession, setDrawingSession] = createSignal<DrawingSession>();
   const [pluginMenu, setPluginMenu] = createSignal<'workflow' | 'ocr' | 'scroll' | 'translation' | 'pin'>();
+  const [scrollMenuManual, setScrollMenuManual] = createSignal(false);
   const language = () => props.translationLanguage ?? 'zh-Hans';
   const [textMode, setTextMode] = createSignal<Record<string, 'ocr' | 'translation' | 'none'>>({});
   const [ocrPending, setOcrPending] = createSignal<OcrRequest>();
@@ -351,10 +357,10 @@ export default function SpaceCanvas(props: Props) {
     try { return await props.onPin(entry.plugin.manifest.id, entry.plugin.revision, entry.contribution.id, region.id); }
     catch (error) { props.onError(error instanceof Error ? error.message : String(error)); return false; }
   }
-  function runScroll(entry: PluginEntry, region: Region) {
+  function runScroll(entry: PluginEntry, region: Region, manual = false) {
     if (blocked() || region.imageOverride || !props.scene.background || entry.contribution.kind !== 'selection.scroll' || !props.onScrollCapture) return;
     setPluginMenu(undefined); ocrRequests.cancel(); props.onTranslationCancel?.();
-    void settledRegion(region, saved => props.onScrollCapture!(entry.plugin.manifest.id, entry.plugin.revision, entry.contribution.id, ocrTarget(saved)));
+    void settledRegion(region, saved => props.onScrollCapture!(entry.plugin.manifest.id, entry.plugin.revision, entry.contribution.id, ocrTarget(saved), manual ? undefined : snapshotNode(saved)));
   }
   function runOcr(entry: PluginEntry, region: Region) {
     if (blocked() || !props.scene.background || entry.contribution.kind !== 'selection.ocr') return;
@@ -434,6 +440,7 @@ export default function SpaceCanvas(props: Props) {
       setActive(region.id);
       void Promise.resolve().then(() => props.onAddRegion(region)).then(() => {
         if (props.scene.id !== sceneId || interactionVersion !== version) return;
+        if (gesture.isAutomatic) { snapshotSelections.bind(region, automatic); setSnapshotVersion(value => value + 1); }
         revealToolbar(region); props.onSelectionComplete?.(region);
       }).catch(error => props.onError(error instanceof Error ? error.message : '无法添加区域'));
     });
@@ -718,13 +725,13 @@ export default function SpaceCanvas(props: Props) {
       <Show when={ocrEntries().length || savedOcr(region())?.document.lines.length}><button data-caption={t("文字")} class="capture-plugin" classList={{ 'capture-ocr-active': ocrVisible(region()) }} title={t("文字识别 · O")} aria-label={t("文字识别")} disabled={props.busy || exporting()} onClick={() => selectOcr(region())}><TextSelect size={18} /></button></Show>
       <Show when={translationEntries().length || savedTranslation(region())}><button data-caption={t("翻译")} class="capture-plugin" classList={{ 'capture-ocr-active': translationVisible(region()) }} title={t("翻译 · T")} aria-label={t("翻译")} disabled={blocked()} onClick={() => translate(region())}><Languages size={18} /></button></Show>
       <span class="capture-separator" />
-      <Show when={scrollEntries().length}><button data-caption={t("长截图")} class="capture-plugin" title={t("长截图")} aria-label={t("长截图")} disabled={blocked() || Boolean(region().imageOverride)} onClick={() => scrollEntries().length === 1 ? runScroll(scrollEntries()[0], region()) : setPluginMenu(pluginMenu() === 'scroll' ? undefined : 'scroll')}><ScrollCaptureIcon /></button></Show>
+      <Show when={scrollEntries().length}><button data-caption={t(snapshotNode(region()) ? '快照' : '长截图')} class="capture-plugin" title={t(snapshotNode(region()) ? '快照（Shift：手动长截图）' : '长截图')} aria-label={t(snapshotNode(region()) ? '快照' : '长截图')} disabled={blocked() || Boolean(region().imageOverride)} onClick={event => { if (scrollEntries().length === 1) runScroll(scrollEntries()[0], region(), event.shiftKey); else { setScrollMenuManual(event.shiftKey); setPluginMenu(pluginMenu() === 'scroll' ? undefined : 'scroll'); } }}><Show when={snapshotNode(region())} fallback={<ScrollCaptureIcon />}><ApplicationSnapshotIcon /></Show></button></Show>
       <button data-caption={t("录屏")} class="capture-record" title={t("区域录屏 · R")} aria-label={t("录制当前区域")} disabled={blocked() || Boolean(region().imageOverride)} onClick={() => props.onRecordRegion(region().id)}><Circle size={18} fill="currentColor" /></button>
       <span class="capture-separator" />
       <button data-caption={t("复制")} title={t("复制 · C")} aria-label={t("复制区域")} disabled={props.busy || exporting()} onClick={() => void exportRegion(region(), true)}><Copy size={18} /></button>
       <button data-caption={t("保存")} title={t("保存 · S")} aria-label={t("保存区域")} disabled={props.busy || exporting()} onClick={() => void exportRegion(region(), false)}><Download size={18} /></button>
       <Show when={pinEntries().length}><button data-caption={t("贴图")} title={t("贴图 · P")} aria-label={t("贴图")} disabled={blocked()} onClick={() => pinEntries().length === 1 ? void runPin(pinEntries()[0], region()) : setPluginMenu(pluginMenu() === 'pin' ? undefined : 'pin')}><Pin size={18} /></button></Show>
-      <Show when={pluginMenu()}><div class="capture-plugin-menu" classList={{ above: toolbarBox().y + toolbarBox().height + 228 > viewport().height }} role="menu"><For each={pluginMenu() === 'ocr' ? ocrEntries() : pluginMenu() === 'scroll' ? scrollEntries() : pluginMenu() === 'translation' ? translationEntries() : pluginMenu() === 'pin' ? pinEntries() : workflowEntries()}>{entry => <button role="menuitem" disabled={blocked()} onClick={() => entry.contribution.kind === 'selection.ocr' ? runOcr(entry, region()) : entry.contribution.kind === 'selection.scroll' ? runScroll(entry, region()) : entry.contribution.kind === 'selection.translation' ? runTranslation(entry, region()) : entry.contribution.kind === 'selection.pin' ? void runPin(entry, region()) : runWorkflow(entry, region())}>{entry.contribution.title}</button>}</For></div></Show>
+      <Show when={pluginMenu()}><div class="capture-plugin-menu" classList={{ above: toolbarBox().y + toolbarBox().height + 228 > viewport().height }} role="menu"><For each={pluginMenu() === 'ocr' ? ocrEntries() : pluginMenu() === 'scroll' ? scrollEntries() : pluginMenu() === 'translation' ? translationEntries() : pluginMenu() === 'pin' ? pinEntries() : workflowEntries()}>{entry => <button role="menuitem" disabled={blocked()} onClick={event => entry.contribution.kind === 'selection.ocr' ? runOcr(entry, region()) : entry.contribution.kind === 'selection.scroll' ? runScroll(entry, region(), scrollMenuManual() || event.shiftKey) : entry.contribution.kind === 'selection.translation' ? runTranslation(entry, region()) : entry.contribution.kind === 'selection.pin' ? void runPin(entry, region()) : runWorkflow(entry, region())}>{entry.contribution.title}</button>}</For></div></Show>
     </div>}</Show>
     <Show when={drawingSession() && regionById(drawingSession()!.regionId)}>{region => <DrawingEditor onObjectWheel={props.blackboard?wheelObject:undefined} onObjectPointerMove={hoverObject} onObjectPointerLeave={()=>setHoveredObject('')} objects={props.blackboard?interactive=><div class="blackboard-artifact-layer">{renderItems(true,interactive)}</div>:undefined} objectsFlush={props.blackboard?flushObjects:undefined} onRegisterObjectTrash={props.blackboard?registerObjectTrash:undefined} extraTools={props.blackboard ? () => <For each={workflowEntries()}>{entry => <button data-caption={entry.contribution.title} title={entry.contribution.title} aria-label={entry.contribution.title} disabled={blocked()} onClick={() => runWorkflow(entry,region())}><Table2 size={18}/></button>}</For> : undefined} onFinishBlackboard={props.onBlackboardClose} blackboard={props.blackboard} onRegisterHistory={props.onRegisterDrawingHistory} onRasterSnapshot={props.onRasterSnapshot} onRegisterFlush={props.onRegisterDrawingFlush} sceneId={drawingSession()!.sceneId} backgroundId={drawingSession()!.backgroundId} background={props.scene.background} region={imageProjection(region()).region} sourceRegion={props.scene.regions.find(value => value.id === region().id)} documentOnly={drawingSession()!.kind === 'document'} box={imageProjection(region()).box} scale={imageProjection(region()).scale} backgroundWidth={imageProjection(region()).width} backgroundHeight={imageProjection(region()).height} tools={drawingTools()} busy={props.busy} onPin={pinEntries().length ? () => runPin(pinEntries()[0], region()) : undefined} onCommand={command => { const session = drawingSession(); if (!session) return Promise.reject(Error('标注编辑已切换')); if (session.kind === 'document' || usesDrawingDocument(region(), command)) return props.onDrawingDocumentCommand(command); return props.onDrawingCommand(coreDrawingGrant.pluginId, coreDrawingGrant.revision, coreDrawingGrant.contributionId, command); }} onCopyTable={props.onCopyDrawingTable} onError={props.onError} onExport={(copy, closeSpace) => exportRegion(region(), copy, closeSpace)} onClose={closeDrawing} />}</Show>
     <Show when={!props.blackboard||!drawingSession()}><div class="artifact-layer">{renderItems(Boolean(props.blackboard))}</div></Show>

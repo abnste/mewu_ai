@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 export interface SnapBounds { x: number; y: number; width: number; height: number }
-export interface SnapNode { id: number; bounds: SnapBounds; selectable: boolean; children: SnapNode[] }
+export interface SnapNode { id: number; bounds: SnapBounds; selectable: boolean; snapshot?: boolean; children: SnapNode[] }
 export interface FrameSnapMap { version: 1; backgroundId: string; width: number; height: number; roots: SnapNode[] }
 export interface SnapMapRequest { sceneId: string; backgroundId: string; width: number; height: number }
 export type SnapHandle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se';
@@ -20,7 +20,7 @@ export function validateSnapMap(value: unknown, request: SnapMapRequest): FrameS
     if (depth > 12 || nodes.length > 2048) return;
     const result: SnapNode[] = [];
     for (const node of nodes) {
-      if (++count > 2048 || !record(node) || !keys(node, ['id', 'bounds', 'selectable', 'children']) || !integer(node.id) || seen.has(node.id) || typeof node.selectable !== 'boolean' || !Array.isArray(node.children) || !record(node.bounds) || !keys(node.bounds, ['x', 'y', 'width', 'height'])) return;
+      if (++count > 2048 || !record(node) || !(keys(node, ['id', 'bounds', 'selectable', 'children']) || keys(node, ['id', 'bounds', 'selectable', 'snapshot', 'children'])) || !integer(node.id) || seen.has(node.id) || typeof node.selectable !== 'boolean' || (node.snapshot !== undefined && (typeof node.snapshot !== 'boolean' || node.snapshot && !node.selectable)) || !Array.isArray(node.children) || !record(node.bounds) || !keys(node.bounds, ['x', 'y', 'width', 'height'])) return;
       const b = node.bounds;
       if (![b.x, b.y, b.width, b.height].every(integer) || !b.width || !b.height) return;
       const bounds = { x: b.x, y: b.y, width: b.width, height: b.height } as SnapBounds;
@@ -29,7 +29,7 @@ export function validateSnapMap(value: unknown, request: SnapMapRequest): FrameS
       seen.add(node.id);
       const children = node.children.length ? parse(node.children, bounds, depth + 1) : [];
       if (!children) return;
-      result.push({ id: node.id, bounds, selectable: node.selectable, children });
+      result.push({ id: node.id, bounds, selectable: node.selectable, ...(node.snapshot === undefined ? {} : { snapshot: node.snapshot as boolean }), children });
     }
     return result;
   };
@@ -53,6 +53,29 @@ export function snapTarget(map: FrameSnapMap | undefined, x: number, y: number):
     node = child;
   }
   return selected;
+}
+
+const sameBounds = (a: SnapBounds, b: SnapBounds) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+/** This is an advisory UI association, never a native window capability. */
+export class SnapshotSelections {
+  private identity = '';
+  private selected = new Map<string, { node: number; bounds: SnapBounds }>();
+  sync(sceneId: string, backgroundId: string | undefined, regions: { id: string }[]) {
+    const identity = JSON.stringify([sceneId, backgroundId]);
+    if (identity !== this.identity) { this.identity = identity; this.selected.clear(); }
+    const ids = new Set(regions.map(region => region.id));
+    for (const id of this.selected.keys()) if (!ids.has(id)) this.selected.delete(id);
+  }
+  bind(region: SnapBounds & { id: string }, node: SnapNode | undefined) {
+    if (node?.snapshot && node.selectable && sameBounds(region, node.bounds) && this.selected.size < 2048) this.selected.set(region.id, { node: node.id, bounds: { ...node.bounds } });
+  }
+  get(region: SnapBounds & { id: string; imageOverride?: unknown }, map: FrameSnapMap | undefined): number | undefined {
+    const saved = this.selected.get(region.id);
+    if (!saved || !map || region.imageOverride || !sameBounds(region, saved.bounds)) return;
+    const find = (nodes: SnapNode[]): SnapNode | undefined => { for (const node of nodes) { if (node.id === saved.node) return node; const found = find(node.children); if (found) return found; } };
+    const current = find(map.roots);
+    return current?.snapshot && current.selectable && sameBounds(current.bounds, saved.bounds) ? current.id : undefined;
+  }
 }
 
 export function snapImagePoint(x: number, y: number, image: SnapBounds, scale: number): Point | undefined {

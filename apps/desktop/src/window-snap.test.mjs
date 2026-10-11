@@ -6,11 +6,26 @@ import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule } from 'node:vm';
 const source = async name => stripTypeScriptTypes(await readFile(new URL(name, import.meta.url), 'utf8'), { mode: 'transform' });
 const module = new SourceTextModule(await source('./window-snap.ts')); await module.link(() => { throw Error('Unexpected import'); }); await module.evaluate();
-const { validateSnapMap, snapTarget, snapResize, snapImagePoint, SnapSelectionGesture, SnapMapLoader } = module.namespace;
+const { validateSnapMap, snapTarget, snapResize, snapImagePoint, SnapSelectionGesture, SnapMapLoader, SnapshotSelections } = module.namespace;
 const checks = [], request = { sceneId: 'scene', backgroundId: 'bg', width: 1200, height: 800 };
 const box = (x, y, width, height) => ({ x, y, width, height });
 const node = (id, bounds, selectable = true, children = []) => ({ id, bounds, selectable, children });
 const map = roots => ({ version: 1, backgroundId: 'bg', width: 1200, height: 800, roots });
+{
+  const target = { ...node(1, box(100, 100, 400, 300)), snapshot: true }, region = { id: 'selected', ...target.bounds };
+  const value = map([target]), parsed = validateSnapMap(value, request), selected = new SnapshotSelections();
+  assert.equal(parsed.roots[0].snapshot, true);
+  for (const bad of [{ ...target, snapshot: 'true' }, { ...target, selectable: false }, { ...target, hwnd: 123 }]) assert.equal(validateSnapMap(map([bad]), request), undefined);
+  selected.sync('scene', 'bg', [region]); selected.bind(region, parsed.roots[0]); assert.equal(selected.get(region, parsed), 1);
+  assert.equal(selected.get({ ...region, x: 101 }, parsed), undefined); assert.equal(selected.get({ ...region, imageOverride: {} }, parsed), undefined);
+  assert.equal(selected.get(region, map([{ ...target, snapshot: false }])), undefined);
+  assert.equal(selected.get(region, map([{ ...target, bounds: { ...target.bounds, y: 101 } }])), undefined);
+  target.bounds.x = 700; assert.equal(selected.get(region, parsed), 1);
+  selected.sync('other', 'bg', [region]); assert.equal(selected.get(region, parsed), undefined);
+  selected.sync('scene', 'bg', [region]); selected.bind(region, parsed.roots[0]); selected.sync('scene', 'new', [region]); assert.equal(selected.get(region, parsed), undefined);
+  selected.sync('scene', 'bg', [region]); selected.bind(region, parsed.roots[0]); selected.sync('scene', 'bg', []); assert.equal(selected.get(region, parsed), undefined);
+  checks.push('Only capture-issued automatic window selections retain snapshot association; geometry, replacement, deletion, source and scene changes reject stale IDs without exposing native handles');
+}
 {
   const value = map([node(1, box(0, 0, 1200, 40), false), node(2, box(100, 100, 700, 600), true, [node(3, box(150, 150, 400, 350), false, [node(4, box(200, 200, 100, 80))]), node(5, box(150, 150, 100, 100))]), node(6, box(0, 0, 1200, 800))]);
   const parsed = validateSnapMap(value, request); assert.ok(parsed);

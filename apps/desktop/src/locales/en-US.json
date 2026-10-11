@@ -1026,5 +1026,7 @@
   "原始（100%）": "Original (100%)",
   "这个视频没有音轨，无法导出 MP3": "This video has no audio track to export as MP3",
   "音频保存结果无效": "Invalid audio export result",
-  "重点高亮": "Highlight region"
+  "重点高亮": "Highlight region",
+  "快照": "Snapshot",
+  "快照（Shift：手动长截图）": "Snapshot (Shift: manual scrolling)"
 }

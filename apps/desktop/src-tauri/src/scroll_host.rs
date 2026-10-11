@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Explicit user-scrolled capture. No synthetic wheel/input or automatic scrolling.
+//! Manual long capture and explicit, capture-bound automatic window snapshots.
 use crate::{
     capture,
     scroll_capture::FrameSource,
@@ -34,6 +34,8 @@ pub struct Status {
     id: String,
     scene_id: String,
     phase: &'static str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    automatic: bool,
     rect: Rect,
     width: u32,
     height: u32,
@@ -59,8 +61,10 @@ pub enum Action {
     Cancel,
 }
 pub fn busy(app: &AppHandle) -> bool {
-    app.try_state::<ScrollState>()
-        .is_some_and(|state| state.0.lock().map_or(true, |value| value.is_some()))
+    crate::application_snapshot_worker::busy()
+        || app
+            .try_state::<ScrollState>()
+            .is_some_and(|state| state.0.lock().map_or(true, |value| value.is_some()))
 }
 pub fn ensure_idle(app: &AppHandle) -> Result<(), String> {
     if busy(app) {
@@ -80,6 +84,11 @@ fn act(app: &AppHandle, id: Option<&str>, action: Action) -> Result<(), String> 
     if id.is_some_and(|id| current.status.id != id) {
         return Err("长截图已变更".into());
     }
+    let action = if current.status.automatic {
+        Action::Cancel
+    } else {
+        action
+    };
     match action {
         Action::Cancel => {
             current.cancel.store(true, Ordering::Release);
@@ -257,6 +266,42 @@ enum NextFrame {
     Save,
     Cancel,
 }
+
+fn snapshot_target(
+    store: &mewu_core::Store,
+    registry: &crate::window_snap::WindowSnapRegistry,
+    target: &OcrTarget,
+    geometry: &Geometry,
+    node: u32,
+) -> Result<crate::window_snap::SnapshotWindow, String> {
+    let (background, _) = store.region_for_ocr(target).map_err(|e| e.to_string())?;
+    let values = [target.x, target.y, target.width, target.height];
+    if node == 0
+        || values
+            .iter()
+            .any(|v| !v.is_finite() || *v < 0.0 || *v > u32::MAX as f64 || v.fract() != 0.0)
+    {
+        return Err("应用快照选区已改变，请重新选取窗口".into());
+    }
+    let bounds = crate::window_snap::SnapRect {
+        x: target.x as u32,
+        y: target.y as u32,
+        width: target.width as u32,
+        height: target.height as u32,
+    };
+    let window = registry
+        .snapshot_target(&background, node, bounds)
+        .ok_or("应用窗口已变更，请重新截图后选取窗口")?;
+    window.validate()?;
+    if (geometry.x as i64) < window.x as i64
+        || (geometry.y as i64) < window.y as i64
+        || geometry.x as i64 + geometry.width as i64 > window.x as i64 + window.width as i64
+        || geometry.y as i64 + geometry.height as i64 > window.y as i64 + window.height as i64
+    {
+        return Err("应用快照选区越界".into());
+    }
+    Ok(window)
+}
 fn next_frame(request: u8, holding: bool) -> NextFrame {
     match request {
         2 => NextFrame::Cancel,
@@ -302,30 +347,37 @@ pub async fn start_scroll_capture(
     revision: u64,
     contribution_id: String,
     target: OcrTarget,
+    snapshot_node_id: Option<u32>,
 ) -> Result<(), String> {
     if window.label() != "space" {
         return Err("请在截图选区启动长截图".into());
     }
     crate::recording_storage::supported()?;
+    ensure_idle(&app)?;
     let host = app.state::<Host>();
     let _transition = crate::begin_space_transition(&app, &host)?;
     crate::pixel_sampler::invalidate(&app);
     crate::pin_host::cancel_pending(&app, "space");
     crate::recording::ensure_idle(&app)?;
-    let geometry = {
+    let (geometry, snapshot_window) = {
         let runtime = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         runtime
             .store
             .scroll(&plugin_id, revision, &contribution_id)?;
         let engine = host.lock()?;
         host.exit.ensure_running()?;
-        start_geometry(
+        let geometry = start_geometry(
             &engine.store,
             &target,
             window.is_visible().map_err(|_| "截图窗口不可用")?,
-        )?
+        )?;
+        let snapshot = snapshot_node_id
+            .map(|node| snapshot_target(&engine.store, &host.window_snap, &target, &geometry, node))
+            .transpose()?;
+        (geometry, snapshot)
     };
     let verify = geometry.clone();
+    let verify_window = snapshot_window.clone();
     tauri::async_runtime::spawn_blocking(move || {
         if !capture::list_monitors()?.iter().any(|m| {
             m.origin_x == verify.origin_x
@@ -335,6 +387,12 @@ pub async fn start_scroll_capture(
                 && m.scale_factor == verify.scale
         }) {
             return Err("显示器已改变，请重新截图".to_string());
+        }
+        if verify_window
+            .as_ref()
+            .is_some_and(|window| !window.is_current())
+        {
+            return Err("应用窗口已改变，请重新截图".into());
         }
         Ok(())
     })
@@ -372,6 +430,7 @@ pub async fn start_scroll_capture(
             id: id.clone(),
             scene_id: target.scene_id.clone(),
             phase: "starting",
+            automatic: snapshot_window.is_some(),
             rect: Rect {
                 x: target.x / geometry.monitor_width as f64,
                 y: target.y / geometry.monitor_height as f64,
@@ -393,7 +452,7 @@ pub async fn start_scroll_capture(
             revision,
         });
     }
-    if let Err(error) = prepare_windows(&app, &geometry).await {
+    if let Err(error) = prepare_windows(&app, &geometry, snapshot_window.is_some()).await {
         finish(&app, &id, Err(error.clone())).await;
         return Err(error);
     }
@@ -431,6 +490,45 @@ pub async fn start_scroll_capture(
                 return Ok(());
             }
             authorized(&work_app, &target, &plugin_id, revision, &contribution_id)?;
+            if let Some(window) = snapshot_window {
+                let selection = crate::application_snapshot::Viewport {
+                    x: geometry.x,
+                    y: geometry.y,
+                    width: geometry.width,
+                    height: geometry.height,
+                };
+                let mut session = crate::application_snapshot_worker::WorkerSession::start(
+                    window,
+                    selection,
+                    cancel.clone(),
+                )?;
+                update(&work_app, &work_id, |s| s.phase = "capturing");
+                let result =
+                    crate::application_snapshot::capture(&mut session, &cancel, |stitch, state| {
+                        authorized(&work_app, &target, &plugin_id, revision, &contribution_id)?;
+                        progress(&work_app, &work_id, state);
+                        publish_preview(&work_app, &work_id, stitch, &cancel)
+                    });
+                let closed = session.close();
+                let image = result?;
+                closed?;
+                drop(session);
+                if let Some(image) = image {
+                    update(&work_app, &work_id, |s| s.phase = "finishing");
+                    persist(
+                        &work_app,
+                        &work_id,
+                        &target,
+                        &plugin_id,
+                        revision,
+                        &contribution_id,
+                        &cancel,
+                        image,
+                        true,
+                    )?;
+                }
+                return Ok(());
+            }
             // GDI resources, their DPI context and all calls stay on this thread.
             let mut source =
                 FrameSource::new(geometry.x, geometry.y, geometry.width, geometry.height)?;
@@ -518,6 +616,7 @@ pub async fn start_scroll_capture(
                 &contribution_id,
                 &cancel,
                 image,
+                false,
             )
         })
         .await
@@ -587,13 +686,19 @@ fn persist(
     contribution: &str,
     cancel: &AtomicBool,
     image: image::RgbaImage,
+    automatic: bool,
 ) -> Result<(), String> {
     let host = app.state::<Host>();
     let id = uuid::Uuid::new_v4().to_string();
     let path = host.assets.join(format!("{id}.png"));
     let asset = Asset {
         id,
-        name: "长截图.png".into(),
+        name: if automatic {
+            "应用快照.png"
+        } else {
+            "长截图.png"
+        }
+        .into(),
         kind: AssetKind::Image,
         path: path.to_string_lossy().into_owned(),
         width: Some(image.width()),
@@ -641,10 +746,12 @@ fn persist(
         }
         runtime.store.scroll(plugin, revision, contribution)?;
         registration_attempted = true;
-        let snapshot = engine
-            .store
-            .set_region_image(target, asset)
-            .map_err(|error| error.to_string())?;
+        let snapshot = if automatic {
+            engine.store.set_region_snapshot(target, asset)
+        } else {
+            engine.store.set_region_image(target, asset)
+        }
+        .map_err(|error| error.to_string())?;
         crate::publish(app, &snapshot);
         Ok(true)
     })();
@@ -671,7 +778,7 @@ fn settle_file(path: &std::path::Path, registration: Result<bool, String>) -> Re
         Err(_) => Err("长截图未能登记，图片已保留在素材目录".into()),
     }
 }
-async fn prepare_windows(app: &AppHandle, g: &Geometry) -> Result<(), String> {
+async fn prepare_windows(app: &AppHandle, g: &Geometry, automatic: bool) -> Result<(), String> {
     let (send, receive) = tokio::sync::oneshot::channel();
     let target = app.clone();
     let g = g.clone();
@@ -721,6 +828,11 @@ async fn prepare_windows(app: &AppHandle, g: &Geometry) -> Result<(), String> {
                 ))
                 .map_err(|_| "无法放置长截图控制条")?;
             toolbar.show().map_err(|_| "无法显示长截图控制条")?;
+            // Release the overlay so covered Chromium windows keep producing
+            // frames. WGC still captures only the authorized source window.
+            if automatic {
+                main.hide().map_err(|_| "无法释放应用窗口画面")?;
+            }
             Ok(())
         })();
         let _ = send.send(result);
@@ -794,7 +906,7 @@ pub async fn cancel_for_shutdown(app: &AppHandle) -> Result<(), String> {
     cancel(app);
     let started = Instant::now();
     while busy(app) {
-        if started.elapsed() > Duration::from_secs(10) {
+        if started.elapsed() > Duration::from_secs(20) {
             return Err("停止长截图超时，已取消退出".into());
         }
         tokio::time::sleep(Duration::from_millis(30)).await;

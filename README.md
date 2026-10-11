@@ -29,6 +29,8 @@ Settings → General can disable automatic chat titles. By default, after the fi
 
 HTML/SVG/Canvas results are transparent interactive objects with hover controls for moving, reloading and closing. Video actions and quick trim appear below the video by default and avoid nearby controls when space is limited. Long captures show their stitched content in a live side preview.
 
+Automatic window selection enables **Snapshot** on the long-capture button. Supported Windows UI Automation viewports scroll automatically; WGC reads the selected window, the side preview updates as pixels are stitched, and the original scroll position is restored before saving. The result keeps the selection identity and becomes an input reference. Hold Shift when clicking to use manual scrolling. Failed continuity checks, a changed source window or unconfirmed restoration discard the incomplete snapshot. This feature was added after the published preview 2 build.
+
 ## Installation and updates
 
 Windows x64, Windows 10 2004 or later, and Microsoft WebView2 are required. Use the `MewuAI-Remake-Setup-…-win-x64.exe` installer; a portable ZIP is also provided.

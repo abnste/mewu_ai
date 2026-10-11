@@ -644,3 +644,40 @@ fn old_json_defaults_and_corrupt_saved_image_are_not_rewritten() {
         payload
     );
 }
+
+#[test]
+fn window_snapshot_adds_one_reference_with_image_and_rejects_stale_or_failed_commits_atomically() {
+    let db = TestDb::new();
+    let mut store = Store::open(&db.0).unwrap();
+    let target = setup(&mut store);
+    let before = store.snapshot();
+    let sql = Connection::open(&db.0).unwrap();
+    sql.execute_batch("CREATE TRIGGER deny_snapshot BEFORE UPDATE ON app_state BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(store
+        .set_region_snapshot(&target, image(200, 1000))
+        .is_err());
+    assert_eq!(store.snapshot(), before);
+    sql.execute_batch("DROP TRIGGER deny_snapshot").unwrap();
+    let asset = image(200, 1000);
+    let snapshot = store.set_region_snapshot(&target, asset.clone()).unwrap();
+    let current = snapshot
+        .scenes
+        .iter()
+        .find(|s| s.id == target.scene_id)
+        .unwrap();
+    assert_eq!(
+        current.refs,
+        vec![Reference {
+            kind: ReferenceKind::Region,
+            id: target.region_id.clone()
+        }]
+    );
+    assert_eq!(current.regions[0].image_override, Some(asset));
+    assert!(store
+        .set_region_snapshot(&target, image(200, 1000))
+        .is_err());
+    assert_eq!(store.snapshot(), snapshot);
+    drop(store);
+    drop(sql);
+    assert_eq!(Store::open(&db.0).unwrap().snapshot(), snapshot);
+}

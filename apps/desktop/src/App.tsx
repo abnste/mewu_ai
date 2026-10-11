@@ -982,7 +982,7 @@ export default function App() {
     } catch (error) { if (exitPreparing()) exitFailure ??= error; if (!snapshot()?.scenes.find(scene => scene.id === id)?.closed) setSendErrors(old => ({ ...old, [id]: error instanceof Error ? error.message : String(error) })); }
     finally { setSending(false); finishOperation(); }
   }
-  async function startScroll(pluginId: string, revision: number, contributionId: string, target: OcrTarget) {
+  async function startScroll(pluginId: string, revision: number, contributionId: string, target: OcrTarget, snapshotNodeId?: number) {
     const current = scene();
     if (!current || current.id !== target.sceneId || busy() || recording() || scroll() || sending() || exitPreparing() || current.run?.status === 'running') return;
     if (!bridge.native) throw new Error('请在桌面版使用长截图');
@@ -991,7 +991,7 @@ export default function App() {
     const finishOperation = spaceOperations.begin(); setBusy(true);
     try {
       await flush();
-      await scrollBridge.startScrollCapture(pluginId, revision, contributionId, target);
+      await scrollBridge.startScrollCapture(pluginId, revision, contributionId, target, snapshotNodeId);
       clearReferenceDraft(current.id);
     } catch (error) { if (exitPreparing()) exitFailure ??= error; throw error; }
     finally { setBusy(false); finishOperation(); }

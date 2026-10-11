@@ -10,13 +10,15 @@ export interface ScrollStatus {
   status: 'initial' | 'extended' | 'retraced' | 'unchanged' | 'low_information' | 'ambiguous' | 'lost_overlap' | 'limit_reached';
   stopHotkey: string;
   preview?:string;
+  automatic?: boolean;
 }
 export type ScrollAction = 'finish' | 'keep' | 'cancel';
-export function scrollNeedsKeep(status: ScrollStatus): boolean { return ['low_information', 'ambiguous', 'lost_overlap', 'limit_reached'].includes(status.status); }
+export function scrollNeedsKeep(status: ScrollStatus): boolean { return !status.automatic && ['low_information', 'ambiguous', 'lost_overlap', 'limit_reached'].includes(status.status); }
 const native = isTauri();
-export async function startScrollCapture(pluginId: string, revision: number, contributionId: string, target: OcrTarget): Promise<void> {
+export async function startScrollCapture(pluginId: string, revision: number, contributionId: string, target: OcrTarget, snapshotNodeId?: number): Promise<void> {
   if (!native) throw new Error('请在桌面版使用长截图');
-  return invoke('start_scroll_capture', { pluginId, revision, contributionId, target });
+  if (snapshotNodeId !== undefined && (!Number.isSafeInteger(snapshotNodeId) || snapshotNodeId < 1 || snapshotNodeId > 0xffff_ffff)) throw new Error('应用窗口标识无效');
+  return invoke('start_scroll_capture', { pluginId, revision, contributionId, target, ...(snapshotNodeId === undefined ? {} : { snapshotNodeId }) });
 }
 export async function controlScrollCapture(id: string, action: ScrollAction): Promise<void> {
   if (!native) throw new Error('请在桌面版使用长截图');

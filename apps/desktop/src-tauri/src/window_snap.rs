@@ -44,7 +44,12 @@ pub struct SnapNode {
     pub id: u32,
     pub bounds: SnapRect,
     pub selectable: bool,
+    #[serde(default, skip_serializing_if = "not_available")]
+    pub snapshot: bool,
     pub children: Vec<SnapNode>,
+}
+fn not_available(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +92,7 @@ fn validate(map: &FrameSnapMap) -> Result<(), String> {
                 || !ids.insert(node.id)
                 || ids.len() > MAX_NODES
                 || !parent.contains(node.bounds)
+                || (node.snapshot && !node.selectable)
                 || (depth == 1 && !node.selectable && !node.children.is_empty())
             {
                 return Err("窗口地图边界无效".into());
@@ -119,6 +125,7 @@ fn validate(map: &FrameSnapMap) -> Result<(), String> {
 struct CachedFrame {
     source: Asset,
     map: FrameSnapMap,
+    snapshots: Vec<SnapshotBinding>,
     heap_bytes: usize,
 }
 struct Cache {
@@ -144,12 +151,17 @@ fn node_heap(nodes: &Vec<SnapNode>) -> usize {
     nodes.capacity() * size_of::<SnapNode>()
         + nodes.iter().map(|n| node_heap(&n.children)).sum::<usize>()
 }
-fn frame_heap(source: &Asset, map: &FrameSnapMap) -> usize {
+fn frame_heap(source: &Asset, map: &FrameSnapMap, snapshots: &Vec<SnapshotBinding>) -> usize {
     source.id.capacity()
         + source.name.capacity()
         + source.path.capacity()
         + map.background_id.capacity()
         + node_heap(&map.roots)
+        + snapshots.capacity() * size_of::<SnapshotBinding>()
+        + snapshots
+            .iter()
+            .map(|b| b.window.class.capacity())
+            .sum::<usize>()
 }
 fn retained_bytes(cache: &Cache) -> usize {
     size_of::<WindowSnapRegistry>()
@@ -157,7 +169,12 @@ fn retained_bytes(cache: &Cache) -> usize {
         + cache.heap_bytes
 }
 impl WindowSnapRegistry {
-    pub fn insert(&self, source: &Asset, map: FrameSnapMap) -> Result<(), String> {
+    pub fn insert(
+        &self,
+        source: &Asset,
+        captured: impl Into<CapturedWindowMap>,
+    ) -> Result<(), String> {
+        let CapturedWindowMap { map, snapshots } = captured.into();
         validate(&map)?;
         if source.kind != AssetKind::Image
             || source.id != map.background_id
@@ -169,7 +186,7 @@ impl WindowSnapRegistry {
             return Err("窗口地图与截图不一致".into());
         }
         let source = source.clone();
-        let heap_bytes = frame_heap(&source, &map);
+        let heap_bytes = frame_heap(&source, &map, &snapshots);
         let mut cache = self.cache.lock().map_err(|_| "窗口地图缓存不可用")?;
         if heap_bytes
             + size_of::<WindowSnapRegistry>()
@@ -196,6 +213,7 @@ impl WindowSnapRegistry {
         cache.frames.push_back(CachedFrame {
             source,
             map,
+            snapshots,
             heap_bytes,
         });
         Ok(())
@@ -217,6 +235,79 @@ impl WindowSnapRegistry {
             cache.frames.clear();
             cache.heap_bytes = 0;
         }
+    }
+    /// Only the host's capture-time table can mint a native scroll target.
+    /// The WebView supplies a node ID and exact saved selection, never a HWND.
+    pub(crate) fn snapshot_target(
+        &self,
+        source: &Asset,
+        node: u32,
+        bounds: SnapRect,
+    ) -> Option<SnapshotWindow> {
+        let cache = self.cache.lock().ok()?;
+        let frame = cache.frames.iter().find(|f| &f.source == source)?;
+        frame
+            .snapshots
+            .iter()
+            .find(|b| b.node == node && b.bounds == bounds)
+            .map(|b| b.window.clone())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SnapshotWindow {
+    pub handle: usize,
+    pub process: u32,
+    pub thread: u32,
+    pub created: u64,
+    pub class: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+#[derive(Debug, Clone)]
+struct SnapshotBinding {
+    node: u32,
+    bounds: SnapRect,
+    window: SnapshotWindow,
+}
+#[derive(Debug, Clone)]
+pub(crate) struct CapturedWindowMap {
+    map: FrameSnapMap,
+    snapshots: Vec<SnapshotBinding>,
+}
+#[cfg(test)]
+impl From<FrameSnapMap> for CapturedWindowMap {
+    fn from(map: FrameSnapMap) -> Self {
+        Self {
+            map,
+            snapshots: vec![],
+        }
+    }
+}
+impl SnapshotWindow {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.handle == 0
+            || self.process == 0
+            || self.thread == 0
+            || self.created == 0
+            || self.class.is_empty()
+            || self.class.encode_utf16().count() >= 127
+            || !valid_dimensions(self.width, self.height)
+            || self.width < 16
+            || self.height < 64
+        {
+            return Err("应用窗口标识无效".into());
+        }
+        Ok(())
+    }
+    pub fn is_current(&self) -> bool {
+        self.validate().is_ok() && platform::current(self, true)
+    }
+    pub fn is_same_lifetime(&self) -> bool {
+        self.validate().is_ok() && platform::current(self, false)
     }
 }
 
@@ -252,6 +343,7 @@ struct Identity {
     process: u32,
     thread: u32,
     class: String,
+    created: Option<u64>,
 }
 #[derive(Debug, Clone)]
 struct RawNode {
@@ -289,13 +381,17 @@ pub(crate) fn begin_capture(x: i32, y: i32, width: u32, height: u32) -> Option<C
         roots: platform::snapshot(frame)?,
     })
 }
+#[cfg(all(windows, test))]
+pub(crate) fn snapshot_test_window(handle: usize) -> Option<SnapshotWindow> {
+    platform::test_window(handle)
+}
 pub(crate) fn finish_capture(
     probe: Option<CaptureProbe>,
     background_id: &str,
-) -> Option<FrameSnapMap> {
+) -> Option<CapturedWindowMap> {
     let probe = probe?;
     let after = platform::snapshot(probe.frame)?;
-    build_map(probe.frame, background_id, &probe.roots, &after)
+    build_captured_map(probe.frame, background_id, &probe.roots, &after)
 }
 
 fn subtract(rect: DesktopRect, cover: DesktopRect) -> Vec<DesktopRect> {
@@ -340,6 +436,8 @@ fn reconcile(
     frame: DesktopRect,
     depth: usize,
     count: &mut u32,
+    root: Option<&RawNode>,
+    snapshots: &mut Vec<SnapshotBinding>,
 ) -> Option<Vec<SnapNode>> {
     let before_index: HashMap<&Identity, usize> = before
         .iter()
@@ -423,6 +521,7 @@ fn reconcile(
                 id: *count,
                 bounds: bounds.local(frame),
                 selectable: false,
+                snapshot: false,
                 children: vec![],
             });
         }
@@ -436,6 +535,36 @@ fn reconcile(
             return None;
         }
         let id = *count;
+        let capture_root = root.unwrap_or(node);
+        if node.selectable && capture_root.selectable {
+            if let Some(created) = capture_root.identity.created {
+                let r = capture_root.bounds;
+                if r.left >= i32::MIN as i64
+                    && r.top >= i32::MIN as i64
+                    && r.right <= i32::MAX as i64
+                    && r.bottom <= i32::MAX as i64
+                {
+                    let window = SnapshotWindow {
+                        handle: capture_root.identity.handle,
+                        process: capture_root.identity.process,
+                        thread: capture_root.identity.thread,
+                        created,
+                        class: capture_root.identity.class.clone(),
+                        x: r.left as i32,
+                        y: r.top as i32,
+                        width: (r.right - r.left) as u32,
+                        height: (r.bottom - r.top) as u32,
+                    };
+                    if window.validate().is_ok() {
+                        snapshots.push(SnapshotBinding {
+                            node: id,
+                            bounds: bounds.local(frame),
+                            window,
+                        });
+                    }
+                }
+            }
+        }
         let children = if depth < MAX_DEPTH && (depth > 1 || node.selectable) {
             reconcile(
                 &node.children,
@@ -444,6 +573,8 @@ fn reconcile(
                 frame,
                 depth + 1,
                 count,
+                Some(capture_root),
+                snapshots,
             )?
         } else {
             vec![]
@@ -452,19 +583,30 @@ fn reconcile(
             id,
             bounds: bounds.local(frame),
             selectable: node.selectable,
+            snapshot: snapshots.iter().any(|b| b.node == id),
             children,
         });
         let _ = i;
     }
     Some(output)
 }
+#[cfg(test)]
 fn build_map(
     frame: DesktopRect,
     background_id: &str,
     before: &[RawNode],
     after: &[RawNode],
 ) -> Option<FrameSnapMap> {
-    let roots = reconcile(before, after, frame, frame, 1, &mut 0)?;
+    Some(build_captured_map(frame, background_id, before, after)?.map)
+}
+fn build_captured_map(
+    frame: DesktopRect,
+    background_id: &str,
+    before: &[RawNode],
+    after: &[RawNode],
+) -> Option<CapturedWindowMap> {
+    let mut snapshots = Vec::new();
+    let roots = reconcile(before, after, frame, frame, 1, &mut 0, None, &mut snapshots)?;
     let map = FrameSnapMap {
         version: 1,
         background_id: background_id.into(),
@@ -473,7 +615,7 @@ fn build_map(
         roots,
     };
     validate(&map).ok()?;
-    Some(map)
+    Some(CapturedWindowMap { map, snapshots })
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -504,6 +646,9 @@ mod platform {
     pub(super) fn snapshot(_: DesktopRect) -> Option<Vec<RawNode>> {
         None
     }
+    pub(super) fn current(_: &SnapshotWindow, _: bool) -> bool {
+        false
+    }
 }
 #[cfg(target_os = "windows")]
 mod platform {
@@ -513,11 +658,89 @@ mod platform {
         time::{Duration, Instant},
     };
     use windows_sys::Win32::{
-        Foundation::{HWND, LPARAM, RECT},
+        Foundation::{CloseHandle, FILETIME, HWND, LPARAM, RECT},
         Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS},
-        System::Threading::GetCurrentProcessId,
+        System::Threading::{
+            GetCurrentProcessId, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        },
         UI::{Input::KeyboardAndMouse::IsWindowEnabled, WindowsAndMessaging::*},
     };
+    fn process_creation(process: u32) -> Option<u64> {
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process);
+            if handle.is_null() {
+                return None;
+            }
+            let mut created: FILETIME = std::mem::zeroed();
+            let mut exit: FILETIME = std::mem::zeroed();
+            let mut kernel: FILETIME = std::mem::zeroed();
+            let mut user: FILETIME = std::mem::zeroed();
+            let ok = GetProcessTimes(handle, &mut created, &mut exit, &mut kernel, &mut user) != 0;
+            CloseHandle(handle);
+            ok.then_some(
+                (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime),
+            )
+            .filter(|&v| v != 0)
+        }
+    }
+    #[cfg(test)]
+    pub(super) fn test_window(handle: usize) -> Option<SnapshotWindow> {
+        let node = read(handle as HWND, true, unsafe { GetCurrentProcessId() }).ok()??;
+        if !node.selectable {
+            return None;
+        }
+        let bounds = node.bounds;
+        let window = SnapshotWindow {
+            handle,
+            process: node.identity.process,
+            thread: node.identity.thread,
+            created: node.identity.created?,
+            class: node.identity.class,
+            x: i32::try_from(bounds.left).ok()?,
+            y: i32::try_from(bounds.top).ok()?,
+            width: u32::try_from(bounds.right - bounds.left).ok()?,
+            height: u32::try_from(bounds.bottom - bounds.top).ok()?,
+        };
+        window.validate().ok()?;
+        Some(window)
+    }
+    pub(super) fn current(target: &SnapshotWindow, exact_bounds: bool) -> bool {
+        if !exact_bounds {
+            let handle = target.handle as HWND;
+            if unsafe { IsWindow(handle) } == 0 {
+                return false;
+            }
+            let mut process = 0;
+            let thread = unsafe { GetWindowThreadProcessId(handle, &mut process) };
+            let mut class = [0u16; 128];
+            let length = unsafe { GetClassNameW(handle, class.as_mut_ptr(), class.len() as i32) };
+            return process == target.process
+                && thread == target.thread
+                && process_creation(process) == Some(target.created)
+                && length > 0
+                && (length as usize) < class.len() - 1
+                && String::from_utf16_lossy(&class[..length as usize]) == target.class
+                && unsafe { IsWindow(handle) } != 0;
+        }
+        let Ok(Some(node)) = read(target.handle as HWND, true, unsafe {
+            GetCurrentProcessId()
+        }) else {
+            return false;
+        };
+        node.selectable
+            && node.identity.process == target.process
+            && node.identity.thread == target.thread
+            && node.identity.class == target.class
+            && node.identity.created == Some(target.created)
+            && (!exact_bounds
+                || node.bounds
+                    == DesktopRect {
+                        left: target.x as i64,
+                        top: target.y as i64,
+                        right: target.x as i64 + target.width as i64,
+                        bottom: target.y as i64 + target.height as i64,
+                    })
+    }
     const MAX_HANDLES: usize = 4096;
     const MAX_SIBLINGS: usize = 512;
     const PASS_BUDGET: Duration = Duration::from_millis(120);
@@ -607,6 +830,7 @@ mod platform {
                 process,
                 thread,
                 class,
+                created: root.then(|| process_creation(process)).flatten(),
             },
             bounds,
             // Keep uncertain metadata as an opaque, nonselectable footprint.
@@ -755,6 +979,7 @@ mod tests {
                 process: 7,
                 thread: 8,
                 class: "synthetic".into(),
+                created: Some(1),
             },
             bounds: r,
             selectable,
@@ -831,6 +1056,57 @@ mod tests {
             })
         );
         assert_eq!(hit(&m.roots, 800, 600, true), None);
+    }
+
+    #[test]
+    fn automatic_targets_are_capture_issued_and_bound_to_exact_nodes_assets_and_process_lifetimes()
+    {
+        let frame = bounds(-200, 100, 800, 600);
+        let id = uuid::Uuid::new_v4().to_string();
+        let mut root = raw(41, bounds(-180, 120, 400, 300), true);
+        root.children
+            .push(raw(42, bounds(-160, 140, 200, 120), true));
+        let captured = build_captured_map(frame, &id, &[root.clone()], &[root.clone()]).unwrap();
+        let map = captured.map.clone();
+        let source = asset(&map);
+        let registry = WindowSnapRegistry::default();
+        registry.insert(&source, captured).unwrap();
+        let child = &map.roots[0].children[0];
+        assert!(child.snapshot);
+        let target = registry
+            .snapshot_target(&source, child.id, child.bounds)
+            .unwrap();
+        assert_eq!(target.handle, 41);
+        assert_eq!(target.created, 1);
+        assert_eq!(
+            (target.x, target.y, target.width, target.height),
+            (-180, 120, 400, 300)
+        );
+        let wire = serde_json::to_value(&map).unwrap();
+        assert!(wire["roots"][0]["snapshot"].as_bool().unwrap());
+        for key in ["handle", "process", "created", "class"] {
+            assert!(wire["roots"][0].get(key).is_none());
+        }
+        let mut wrong = child.bounds;
+        wrong.x += 1;
+        assert!(registry.snapshot_target(&source, child.id, wrong).is_none());
+        assert!(registry
+            .snapshot_target(&source, 999, child.bounds)
+            .is_none());
+        let mut other = source.clone();
+        other.path = "changed.png".into();
+        assert!(registry
+            .snapshot_target(&other, child.id, child.bounds)
+            .is_none());
+        let mut reused = root.clone();
+        reused.identity.created = Some(2);
+        let changed = build_captured_map(frame, &id, &[root], &[reused]).unwrap();
+        assert!(changed.snapshots.is_empty());
+        assert!(changed.map.roots.iter().all(|r| !r.snapshot));
+        registry.clear();
+        assert!(registry
+            .snapshot_target(&source, child.id, child.bounds)
+            .is_none());
     }
     #[test]
     fn moving_front_window_blocks_both_footprints_without_losing_unrelated_targets() {
@@ -954,6 +1230,7 @@ mod tests {
                         id: 999,
                         bounds: invalid.roots[0].bounds,
                         selectable: true,
+                        snapshot: false,
                         children: vec![],
                     }];
                 }

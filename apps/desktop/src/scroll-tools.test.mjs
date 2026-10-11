@@ -57,6 +57,10 @@ const target = { sceneId: 'scene', regionId: 'region', backgroundId: 'desktop', 
 await ready.api.startScrollCapture('mewu.scroll', 2, 'capture', target); await ready.api.controlScrollCapture('one', 'keep'); await ready.api.controlScrollCapture('one', 'finish');
 assert.deepEqual(plain(ready.calls), [{ command: 'start_scroll_capture', args: { pluginId: 'mewu.scroll', revision: 2, contributionId: 'capture', target } }, { command: 'control_scroll_capture', args: { id: 'one', action: 'keep' } }, { command: 'control_scroll_capture', args: { id: 'one', action: 'finish' } }]);
 const browser = await scrollFixture(false); await assert.rejects(browser.api.startScrollCapture('x', 1, 'x', target), /桌面版/); await assert.rejects(browser.api.controlScrollCapture('one', 'finish'), /桌面版/); const noEvents = []; (await browser.api.subscribeScroll(value => noEvents.push(value)))(); assert.deepEqual(noEvents, [null]); assert.equal(browser.calls.length, 0);
+await ready.api.startScrollCapture('mewu.scroll', 2, 'capture', target, 7);
+assert.deepEqual(plain(ready.calls.at(-1)), { command: 'start_scroll_capture', args: { pluginId: 'mewu.scroll', revision: 2, contributionId: 'capture', target, snapshotNodeId: 7 } });
+for (const id of [0, -1, .5, NaN, Infinity, 0x1_0000_0000]) await assert.rejects(ready.api.startScrollCapture('mewu.scroll', 2, 'capture', target, id));
+assert.equal(scrollNeedsKeep({ ...initial, automatic: true, status: 'ambiguous' }), false);
 checks.push('Exact IPC keeps original screen geometry/background identity; browser never fabricates scroll capture or completion');
 
 async function mainBridgeFixture(native, probe) {
