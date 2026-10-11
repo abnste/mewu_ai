@@ -251,7 +251,15 @@ fn prepare_preview(
         .as_ref()
         .map(|saved| crate::image_host::SourceLease::open(&saved.overlay, root))
         .transpose()?;
-    let pixels = crate::assets::crop_from_parts(background, region, root)?;
+    let pixels = if scene
+        .items
+        .iter()
+        .any(|item| item.asset.kind == AssetKind::Image)
+    {
+        preview_with_images(root, background, region, &scene.items, work)?
+    } else {
+        crate::assets::crop_from_parts(background, region, root)?
+    };
     lease.verify()?;
     if let Some(lease) = translation {
         lease.verify()?;
@@ -289,6 +297,86 @@ fn prepare_preview(
         },
         guard,
     ))
+}
+
+/// Board images sit below editable ink, matching SharedDrawingEditor's layers.
+/// Reuse the trusted raster compositor; never read an isolated iframe's document.
+fn preview_with_images(
+    root: &Path,
+    background: &Asset,
+    region: &mewu_core::Region,
+    items: &[mewu_core::SpaceItem],
+    work: &capture_delay_work::Work,
+) -> Result<image::DynamicImage, String> {
+    work.check()?;
+    let source = region.image_override.as_ref().unwrap_or(background);
+    let underlay = mewu_core::Region {
+        drawings: vec![],
+        ..region.clone()
+    };
+    // Keep the existing translation identity, dimensions and decoding checks.
+    let mut base = crate::assets::crop_from_parts(background, &underlay, root)?.into_rgba8();
+    let (width, height) = base.dimensions();
+    if source.width != Some(width)
+        || source.height != Some(height)
+        || u64::from(width) * u64::from(height) > 32 * 1024 * 1024
+    {
+        return Err("黑板图片尺寸已变化".into());
+    }
+    let (bw, bh) = (f64::from(width), f64::from(height));
+    let mut leases = Vec::new();
+    for item in items
+        .iter()
+        .filter(|item| item.asset.kind == AssetKind::Image)
+    {
+        work.check()?;
+        let iw = item
+            .asset
+            .width
+            .filter(|value| *value > 0)
+            .ok_or("素材图片尺寸无效")?;
+        let ih = item
+            .asset
+            .height
+            .filter(|value| *value > 0)
+            .ok_or("素材图片尺寸无效")?;
+        let ratio = f64::from(iw) / f64::from(ih);
+        // ArtifactCard anchors contain-sized raster media at the item's top left.
+        let w = (item.width * bw).min(item.height * bh * ratio);
+        let h = w / ratio;
+        let (x, y) = (item.x * bw, item.y * bh);
+        if [x, y, w, h].iter().any(|value| !value.is_finite()) || w <= 0. || h <= 0. {
+            return Err("素材图片坐标无效".into());
+        }
+        if x >= bw || y >= bh || x + w <= 0. || y + h <= 0. {
+            continue;
+        }
+        let mut lease = crate::image_host::SourceLease::open(&item.asset, root)?;
+        let raster = lease.decode_rgba(&item.asset)?;
+        work.check()?;
+        crate::raster_compositor::paint_raster(&mut base, &raster, x, y, w, h)?;
+        lease.verify()?;
+        leases.push(lease);
+    }
+    let virtual_region = mewu_core::Region {
+        x: 0.,
+        y: 0.,
+        width: bw,
+        height: bh,
+        image_override: None,
+        ..region.clone()
+    };
+    let pixels = crate::drawing_render::crop_region_with_layouts(
+        &image::DynamicImage::ImageRgba8(base),
+        &virtual_region,
+        None,
+        |reference| crate::rich_annotation_host::load_raster(root, reference),
+    )?;
+    for lease in leases {
+        lease.verify()?;
+    }
+    work.check()?;
+    Ok(pixels)
 }
 
 #[tauri::command]
@@ -372,6 +460,159 @@ pub(crate) fn open_blackboard(
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    fn image_item(asset: Asset, x: f64, y: f64, width: f64, height: f64) -> mewu_core::SpaceItem {
+        mewu_core::SpaceItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            asset,
+            x,
+            y,
+            width,
+            height,
+            state: None,
+            video_edit: None,
+            video_annotations: None,
+        }
+    }
+
+    #[test]
+    fn carried_images_render_at_their_contained_bounds_below_ink_without_mutating_sources() {
+        let root = std::env::temp_dir().join(format!("mewu-board-images-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let jobs = Arc::new(capture_delay_work::CaptureJobs::default());
+        let work = jobs.begin().unwrap().unwrap();
+        let (background, background_file) = prepare(&root, 64, 48, &work).unwrap();
+        let (image, image_file) = prepare(&root, 32, 24, &work).unwrap();
+        RgbaImage::from_pixel(32, 24, Rgba([30, 160, 80, 255]))
+            .save(&image_file.path)
+            .unwrap();
+        let before_background = std::fs::read(&background_file.path).unwrap();
+        let before_image = std::fs::read(&image_file.path).unwrap();
+        let mut store = mewu_core::Store::open_in_memory().unwrap();
+        let parent = store.snapshot().active_scene_id;
+        let snapshot = store
+            .create_blackboard_document(&parent, background.clone())
+            .unwrap();
+        let mut board = snapshot
+            .scenes
+            .into_iter()
+            .find(|s| s.id == snapshot.active_scene_id)
+            .unwrap();
+        board.items = vec![image_item(image, 0.25, 0.125, 0.5, 0.75)];
+        board.regions[0].drawings.push(Drawing {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: mewu_core::DrawingKind::Line,
+            color: "#ffffff".into(),
+            stroke_width: 4.,
+            points: vec![
+                mewu_core::DrawingPoint { x: 8., y: 24. },
+                mewu_core::DrawingPoint { x: 56., y: 24. },
+            ],
+            text: None,
+            font_size: None,
+            origin: None,
+            rich: None,
+        });
+        let original = board.clone();
+        let (_, preview_file) = prepare_preview(&root, &board, &work).unwrap();
+        let pixels = image::open(&preview_file.path).unwrap().to_rgba8();
+        assert_eq!(pixels.dimensions(), (64, 48));
+        assert_eq!(pixels.get_pixel(32, 12).0, [30, 160, 80, 255]);
+        assert_eq!(pixels.get_pixel(32, 24).0, [255, 255, 255, 255]);
+        // Contain is anchored at 16,6; the unused height is below, never centered.
+        assert_eq!(pixels.get_pixel(17, 7).0, [30, 160, 80, 255]);
+        assert_eq!(pixels.get_pixel(32, 32).0, [51, 53, 58, 255]);
+        assert_eq!(pixels.get_pixel(12, 12).0, [51, 53, 58, 255]);
+        assert_eq!(board, original);
+        assert_eq!(
+            std::fs::read(&background_file.path).unwrap(),
+            before_background
+        );
+        assert_eq!(std::fs::read(&image_file.path).unwrap(), before_image);
+        drop(preview_file);
+        drop(image_file);
+        drop(background_file);
+        drop(work);
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn carried_images_preserve_alpha_layer_order_and_clip_negative_positions() {
+        let root = std::env::temp_dir().join(format!("mewu-board-alpha-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let jobs = Arc::new(capture_delay_work::CaptureJobs::default());
+        let work = jobs.begin().unwrap().unwrap();
+        let (background, background_file) = prepare(&root, 64, 48, &work).unwrap();
+        let (green, green_file) = prepare(&root, 32, 24, &work).unwrap();
+        let (red, red_file) = prepare(&root, 32, 24, &work).unwrap();
+        RgbaImage::from_pixel(32, 24, Rgba([20, 160, 80, 255]))
+            .save(&green_file.path)
+            .unwrap();
+        RgbaImage::from_pixel(32, 24, Rgba([220, 20, 20, 128]))
+            .save(&red_file.path)
+            .unwrap();
+        let region = mewu_core::Region {
+            x: 0.,
+            y: 0.,
+            width: 64.,
+            height: 48.,
+            ..Default::default()
+        };
+        let items = vec![
+            image_item(green, -0.125, -0.125, 0.5, 0.5),
+            image_item(red, 0., 0., 0.5, 0.5),
+        ];
+        let pixels = preview_with_images(&root, &background, &region, &items, &work)
+            .unwrap()
+            .into_rgba8();
+        assert_eq!(pixels.get_pixel(4, 4).0, [120, 90, 50, 255]);
+        // The shared compositor quantizes premultiplied RGB before blending.
+        assert_eq!(pixels.get_pixel(28, 20).0, [135, 36, 39, 255]);
+        assert_eq!(pixels.get_pixel(40, 40).0, [51, 53, 58, 255]);
+        drop(red_file);
+        drop(green_file);
+        drop(background_file);
+        drop(work);
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn changed_image_dimensions_or_cancellation_publish_no_preview() {
+        let root =
+            std::env::temp_dir().join(format!("mewu-board-invalid-image-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let jobs = Arc::new(capture_delay_work::CaptureJobs::default());
+        let work = jobs.begin().unwrap().unwrap();
+        let (background, background_file) = prepare(&root, 64, 48, &work).unwrap();
+        let (asset, asset_file) = prepare(&root, 32, 24, &work).unwrap();
+        let mut store = mewu_core::Store::open_in_memory().unwrap();
+        let parent = store.snapshot().active_scene_id;
+        let snapshot = store
+            .create_blackboard_document(&parent, background)
+            .unwrap();
+        let mut board = snapshot
+            .scenes
+            .into_iter()
+            .find(|s| s.id == snapshot.active_scene_id)
+            .unwrap();
+        board.items = vec![image_item(asset, 0., 0., 0.5, 0.5)];
+        RgbaImage::from_pixel(31, 24, Rgba([20, 160, 80, 255]))
+            .save(&asset_file.path)
+            .unwrap();
+        assert!(prepare_preview(&root, &board, &work).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+        RgbaImage::from_pixel(32, 24, Rgba([20, 160, 80, 255]))
+            .save(&asset_file.path)
+            .unwrap();
+        jobs.cancel();
+        assert!(prepare_preview(&root, &board, &work).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+        drop(asset_file);
+        drop(background_file);
+        drop(work);
+        std::fs::remove_dir(root).unwrap();
+    }
+
     #[test]
     fn selected_regions_become_editable_images_with_ink_zoom_history_and_reopen() {
         let directory =
