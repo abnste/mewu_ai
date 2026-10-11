@@ -64,7 +64,17 @@ pub(crate) fn show<T: Send + 'static>(
                 let Some(send) = response_sender.borrow_mut().take() else {
                     return;
                 };
-                let result = collect(dialog, response);
+                let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    collect(dialog, response)
+                })) {
+                    Ok(result) => result,
+                    Err(payload) => {
+                        // Never let a Rust collector panic cross GTK's C signal
+                        // boundary or bypass the same UI cleanup acknowledgement.
+                        std::mem::forget(payload);
+                        Err("无法读取导出选项".into())
+                    }
+                };
                 let dialog = dialog.clone();
                 let display = dialog.display();
                 // Keep an owned reference and unwind the response signal before
