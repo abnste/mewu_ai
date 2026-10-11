@@ -417,6 +417,12 @@ pub enum ClipJob {
         expected: VideoMetadata,
         range: Option<VideoRange>,
     },
+    RenderMp3 {
+        source: PathBuf,
+        output: PathBuf,
+        expected: VideoMetadata,
+        range: Option<VideoRange>,
+    },
     ExtractFrames {
         source: PathBuf,
         output_directory: PathBuf,
@@ -481,8 +487,17 @@ impl ClipJob {
                 output,
                 expected,
                 range,
+            }
+            | Self::RenderMp3 {
+                source,
+                output,
+                expected,
+                range,
             } => {
                 expected.validate_range(range.as_ref())?;
+                if matches!(self, Self::RenderMp3 { .. }) && !expected.has_audio {
+                    return Err(ClipError::NoAudio);
+                }
                 if !output.is_absolute() || output == source {
                     return Err(ClipError::UnsupportedPath);
                 }
@@ -588,6 +603,7 @@ pub enum WorkerEvent {
     Inspected { metadata: VideoMetadata },
     Rendered { metadata: VideoMetadata },
     GifRendered { metadata: GifMetadata },
+    Mp3Rendered { metadata: crate::mp3_file::Metadata },
     FramesExtracted { frames: Vec<FrameDescriptor> },
     Cancelled {},
     Failed { error: ClipError },
@@ -598,6 +614,7 @@ pub enum ClipJobResult {
     Inspected(VideoMetadata),
     Rendered(VideoMetadata),
     GifRendered(GifMetadata),
+    Mp3Rendered(crate::mp3_file::Metadata),
     FramesExtracted { frames: Vec<FrameDescriptor> },
 }
 impl std::fmt::Display for ClipError {
@@ -609,6 +626,7 @@ impl std::fmt::Display for ClipError {
             Self::TimedOut => "视频处理超时",
             Self::CleanupTimedOut => "视频处理尚未停止，请稍后重试",
             Self::InvalidMedia => "视频格式或尺寸不受支持",
+            Self::NoAudio => "这个视频没有音轨，无法导出 MP3",
             Self::InvalidRange => "裁剪范围无效",
             Self::SourceChanged => "视频来源已变化，请重新打开",
             Self::UnsupportedPath => "当前视频路径不受支持",
@@ -630,6 +648,7 @@ pub enum ClipError {
     TimedOut,
     CleanupTimedOut,
     InvalidMedia,
+    NoAudio,
     InvalidRange,
     SourceChanged,
     UnsupportedPath,
@@ -648,6 +667,7 @@ impl From<ClipError> for String {
             ClipError::TimedOut => "timed_out",
             ClipError::CleanupTimedOut => "cleanup_timed_out",
             ClipError::InvalidMedia => "invalid_media",
+            ClipError::NoAudio => "no_audio",
             ClipError::InvalidRange => "invalid_range",
             ClipError::SourceChanged => "source_changed",
             ClipError::UnsupportedPath => "unsupported_path",
@@ -670,6 +690,7 @@ impl TryFrom<String> for ClipError {
             "timed_out" => Ok(Self::TimedOut),
             "cleanup_timed_out" => Ok(Self::CleanupTimedOut),
             "invalid_media" => Ok(Self::InvalidMedia),
+            "no_audio" => Ok(Self::NoAudio),
             "invalid_range" => Ok(Self::InvalidRange),
             "source_changed" => Ok(Self::SourceChanged),
             "unsupported_path" => Ok(Self::UnsupportedPath),

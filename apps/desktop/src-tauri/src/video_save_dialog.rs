@@ -8,16 +8,22 @@ use std::sync::{atomic::AtomicBool, Arc};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VideoSaveFormat {
     Mp4,
+    Mp3,
     Gif,
 }
 
 pub type SaveDialogOutcome = save_dialog::SaveDialogOutcome<VideoSaveFormat>;
 
-static FORMATS: [FormatSpec<VideoSaveFormat>; 2] = [
+static FORMATS: [FormatSpec<VideoSaveFormat>; 3] = [
     FormatSpec {
         format: VideoSaveFormat::Mp4,
         label: "MP4 视频",
         extensions: &["mp4"],
+    },
+    FormatSpec {
+        format: VideoSaveFormat::Mp3,
+        label: "MP3 音频",
+        extensions: &["mp3"],
     },
     FormatSpec {
         format: VideoSaveFormat::Gif,
@@ -29,13 +35,13 @@ static FORMATS: [FormatSpec<VideoSaveFormat>; 2] = [
 pub(crate) fn spec(allow_gif: bool) -> DialogSpec<VideoSaveFormat> {
     DialogSpec {
         basename: "录屏",
-        formats: if allow_gif { &FORMATS } else { &FORMATS[..1] },
+        formats: if allow_gif { &FORMATS } else { &FORMATS[..2] },
         default_index: 1,
     }
 }
 
 /// Compatible with the current product host. Only this request's offered table
-/// may map Shell indices; GIF unavailable means there is no second entry.
+/// may map Shell indices; MP3 is built in and GIF availability is independent.
 pub fn pick_video_destination(
     parent_hwnd: isize,
     allow_gif: bool,
@@ -50,16 +56,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn existing_mp4_gif_indices_and_default_remain_compatible() {
+    fn recording_formats_have_a_stable_default_and_typed_indices() {
         for allow in [false, true] {
             let value = spec(allow);
             value.validate().unwrap();
             assert_eq!(value.default_index, 1);
             assert_eq!(value.selected(1).unwrap().format, VideoSaveFormat::Mp4);
-            assert_eq!(value.formats.len(), if allow { 2 } else { 1 });
+            assert_eq!(value.selected(2).unwrap().format, VideoSaveFormat::Mp3);
+            assert_eq!(value.formats.len(), if allow { 3 } else { 2 });
         }
-        assert_eq!(spec(true).selected(2).unwrap().format, VideoSaveFormat::Gif);
-        for index in [0, 2, 3, u32::MAX] {
+        assert_eq!(spec(true).selected(3).unwrap().format, VideoSaveFormat::Gif);
+        for index in [0, 3, 4, u32::MAX] {
             assert!(spec(false).selected(index).is_err());
         }
     }
@@ -75,7 +82,7 @@ mod tests {
             r"D:\test\clip.mp4.gif",
         ] {
             assert_eq!(
-                spec(true).destination(Path::new(file), 2).unwrap(),
+                spec(true).destination(Path::new(file), 3).unwrap(),
                 VideoSaveFormat::Gif
             );
         }
@@ -85,7 +92,16 @@ mod tests {
             r"D:\test\clip.txt",
             r"clip.gif",
         ] {
-            assert!(spec(true).destination(Path::new(file), 2).is_err());
+            assert!(spec(true).destination(Path::new(file), 3).is_err());
         }
+        assert_eq!(
+            spec(false)
+                .destination(Path::new(r"D:\test\片段.MP3"), 2)
+                .unwrap(),
+            VideoSaveFormat::Mp3
+        );
+        assert!(spec(true)
+            .destination(Path::new(r"D:\test\clip.mp4"), 2)
+            .is_err());
     }
 }

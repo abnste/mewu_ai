@@ -43,6 +43,10 @@ stored = JSON.stringify({ uiLanguage: 'invented', translationLanguage: 'invented
 assert.equal(readPreferences().maskOpacity, .8); assert.equal(readPreferences().textSize, 'default');
 assert.equal(readPreferences().translationLanguage, 'zh-Hans'); assert.equal(storedLanguage(), 'system');
 assert.equal(readPreferences().showButtonLabels, true); assert.equal(readPreferences().thinkingGlowEnabled, true); assert.equal(readPreferences().thinkingGlowColor, '#A7C7FF');
+assert.equal(readPreferences().videoPreviewResolution, 100);
+stored = JSON.stringify({ videoPreviewResolution: 50 }); assert.equal(readPreferences().videoPreviewResolution, 50);
+for (const value of [75, 100]) { stored = JSON.stringify({ videoPreviewResolution: value }); assert.equal(readPreferences().videoPreviewResolution, value); }
+for (const value of ['50', 0, -50, 200, null]) { stored = JSON.stringify({ videoPreviewResolution: value }); assert.equal(readPreferences().videoPreviewResolution, 100); }
 stored = JSON.stringify({ showButtonLabels: false, thinkingGlowEnabled: false, thinkingGlowColor: ' #f0aB91 ' });
 assert.equal(readPreferences().showButtonLabels, false); assert.equal(readPreferences().thinkingGlowEnabled, false); assert.equal(readPreferences().thinkingGlowColor, '#F0AB91');
 stored = JSON.stringify({ thinkingGlowColor: 'red;url(http://evil)' }); assert.equal(readPreferences().thinkingGlowColor, '#A7C7FF');

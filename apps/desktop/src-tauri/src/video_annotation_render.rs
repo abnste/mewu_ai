@@ -2384,6 +2384,89 @@ pub(crate) mod tests {
             }
         }
         #[test]
+        #[ignore = "explicit synthetic Windows MP3 encoding and independent PCM decode; no user media/devices"]
+        fn synthetic_mp3_full_and_trimmed_audio_decode() {
+            use crate::video_clip_contract::{ClipJob, ClipJobResult};
+            let root = private_output();
+            let _runtime = Runtime::new().unwrap();
+            let cancel = AtomicBool::new(false);
+            let source = root.join("原视频.mp4");
+            make_source_audio_format(&source, 30, 1, false, Some((48_000, 2))).unwrap();
+            let original_hash = sha(&source);
+            let original = inspect_source(&source, &cancel);
+            assert!(original.has_audio);
+            let mut evidence = vec![];
+            for (name, range) in [
+                ("完整.mp3", None),
+                (
+                    "裁切.mp3",
+                    Some(VideoRange {
+                        start_ticks: 8_000_000,
+                        end_ticks: 16_000_000,
+                    }),
+                ),
+            ] {
+                let output = root.join(name);
+                let ClipJobResult::Mp3Rendered(actual) = crate::video_clip_backend::execute(
+                    &ClipJob::RenderMp3 {
+                        source: source.clone(),
+                        output: output.clone(),
+                        expected: original.clone(),
+                        range: range.clone(),
+                    },
+                    &cancel,
+                    &|_| {},
+                )
+                .unwrap() else {
+                    panic!("audio result");
+                };
+                actual.validate_for(&original, range.as_ref()).unwrap();
+                let pcm = decode_pcm(&output).unwrap();
+                assert_eq!(pcm.channels, 2);
+                let left_hz = if range.is_some() { 880. } else { 440. };
+                let mut frequencies = vec![];
+                for (channel, expected_hz) in [(0usize, left_hz), (1, 660.)] {
+                    let from = i64::from(pcm.rate) / 10;
+                    let to = i64::from(pcm.rate) * 4 / 10;
+                    let samples: Vec<_> = pcm
+                        .samples
+                        .range(from..to)
+                        .map(|(_, values)| values[channel])
+                        .collect();
+                    assert!(samples.len() > pcm.rate as usize / 4);
+                    let crossings = samples.windows(2).filter(|v| v[0] <= 0 && v[1] > 0).count();
+                    let hz = crossings as f64 * f64::from(pcm.rate) / samples.len() as f64;
+                    assert!(
+                        (hz - expected_hz).abs() < 10.,
+                        "wrong retained audio: {hz} vs {expected_hz}"
+                    );
+                    frequencies.push(hz);
+                }
+                evidence.push(serde_json::json!({"output":name,"durationTicks":actual.duration_ticks,"sampleRate":pcm.rate,"channels":pcm.channels,"decodedFrequencies":frequencies,"sha256":sha(&output)}));
+            }
+            assert_eq!(sha(&source), original_hash);
+            let silent = root.join("无声.mp4");
+            make_source(&silent, 30, 1, false).unwrap();
+            let no_audio = inspect_source(&silent, &cancel);
+            let output = root.join("不会创建.mp3");
+            assert_eq!(
+                crate::video_clip_backend::execute(
+                    &ClipJob::RenderMp3 {
+                        source: silent,
+                        output: output.clone(),
+                        expected: no_audio,
+                        range: None
+                    },
+                    &cancel,
+                    &|_| {}
+                ),
+                Err(ClipError::NoAudio)
+            );
+            assert!(!output.exists());
+            fs::write(root.join("mp3-proof.json"), serde_json::to_vec_pretty(&serde_json::json!({"syntheticOnly":true,"sourceSha256Unchanged":original_hash,"cases":evidence,"noAudioRejectedBeforeOutput":true,"oracle":"independent MF PCM decoder frequency/time/channel inspection + MP3 frame duration"})).unwrap()).unwrap();
+        }
+
+        #[test]
         #[ignore = "explicit synthetic MF original PCM16 -> AAC trim, multichannel identity, decoded timing and cancellation gate"]
         fn synthetic_direct_audio_source_pcm_trim_and_channel_identity() {
             use crate::video_clip_contract::{ClipJob, ClipJobResult};

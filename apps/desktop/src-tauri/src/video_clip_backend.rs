@@ -50,13 +50,15 @@ mod platform {
         Foundation::TimeSpan,
         Media::{
             Editing::{MediaClip, MediaComposition, MediaTrimmingPreference},
-            MediaProperties::{MediaEncodingProfile, VideoEncodingQuality},
-            Transcoding::TranscodeFailureReason,
+            MediaProperties::{AudioEncodingQuality, MediaEncodingProfile, VideoEncodingQuality},
+            Transcoding::{MediaTranscoder, TranscodeFailureReason},
         },
         Storage::{CreationCollisionOption, StorageFile, StorageFolder},
         Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
     };
-    use windows_future::{AsyncOperationProgressHandler, IAsyncInfo, IAsyncOperation};
+    use windows_future::{
+        AsyncActionProgressHandler, AsyncOperationProgressHandler, IAsyncInfo, IAsyncOperation,
+    };
 
     struct Apartment;
     impl Apartment {
@@ -412,6 +414,7 @@ mod platform {
             ClipJob::Inspect { source }
             | ClipJob::Render { source, .. }
             | ClipJob::RenderGif { source, .. }
+            | ClipJob::RenderMp3 { source, .. }
             | ClipJob::RenderAnnotated { source, .. }
             | ClipJob::RenderGifAnnotated { source, .. }
             | ClipJob::ExtractFrames { source, .. } => source,
@@ -425,6 +428,107 @@ mod platform {
             ClipError::InvalidMedia,
         )?;
         let original = metadata(&clip)?;
+        if let ClipJob::RenderMp3 {
+            output,
+            expected,
+            range,
+            ..
+        } = job
+        {
+            if &original != expected {
+                return Err(ClipError::SourceChanged);
+            }
+            original.validate_range(range.as_ref())?;
+            if !original.has_audio {
+                return Err(ClipError::NoAudio);
+            }
+            let encoding = MediaEncodingProfile::CreateMp3(AudioEncodingQuality::High)
+                .map_err(|_| ClipError::EncodingFailed)?;
+            encoding
+                .Audio()
+                .and_then(|v| v.SetBitrate(192_000))
+                .map_err(|_| ClipError::EncodingFailed)?;
+            let transcoder = MediaTranscoder::new().map_err(|_| ClipError::EncodingFailed)?;
+            if let Some(range) = range {
+                transcoder
+                    .SetTrimStartTime(TimeSpan {
+                        Duration: range.start_ticks as i64,
+                    })
+                    .map_err(|_| ClipError::InvalidRange)?;
+                transcoder
+                    .SetTrimStopTime(TimeSpan {
+                        Duration: range.end_ticks as i64,
+                    })
+                    .map_err(|_| ClipError::InvalidRange)?;
+            }
+            let destination = Destination::with_extension(output, "mp3")?;
+            let output_file = destination.create(cancel)?;
+            let prepared = wait(
+                transcoder
+                    .PrepareFileTranscodeAsync(&file, &output_file, &encoding)
+                    .map_err(|_| ClipError::EncodingFailed)?,
+                cancel,
+                ClipError::EncodingFailed,
+            )?;
+            if !prepared
+                .CanTranscode()
+                .map_err(|_| ClipError::EncodingFailed)?
+            {
+                return Err(ClipError::EncodingFailed);
+            }
+            let operation = prepared
+                .TranscodeAsync()
+                .map_err(|_| ClipError::EncodingFailed)?;
+            let percent = Arc::new(AtomicU8::new(0));
+            let updated = percent.clone();
+            operation
+                .SetProgress(&AsyncActionProgressHandler::new(
+                    move |_, value: windows::core::Ref<'_, f64>| {
+                        let value = *value;
+                        if value.is_finite() {
+                            updated.fetch_max(value.clamp(0., 99.) as u8, Ordering::Release);
+                        }
+                        Ok(())
+                    },
+                ))
+                .map_err(|_| ClipError::EncodingFailed)?;
+            let info: IAsyncInfo = operation.cast().map_err(|_| ClipError::EncodingFailed)?;
+            let last = std::cell::Cell::new(0u8);
+            let oversized = std::cell::Cell::new(false);
+            progress(0);
+            let result = wait_info(&info, cancel, ClipError::EncodingFailed, &|| {
+                if fs::metadata(&destination.normal)
+                    .is_ok_and(|v| v.len() > crate::mp3_file::MAX_BYTES)
+                {
+                    oversized.set(true);
+                    let _ = operation.Cancel();
+                }
+                let value = percent.load(Ordering::Acquire);
+                if value > last.get() {
+                    last.set(value);
+                    progress(value);
+                }
+            })
+            .and_then(|_| {
+                operation
+                    .GetResults()
+                    .map_err(|_| ClipError::EncodingFailed)
+            });
+            let _ = info.Close();
+            if oversized.get() {
+                return Err(ClipError::OutputInvalid);
+            }
+            result?;
+            drop(operation);
+            drop(prepared);
+            drop(transcoder);
+            drop(output_file);
+            check_cancel(cancel)?;
+            let actual = crate::mp3_file::inspect(&destination.normal, cancel)?;
+            actual.validate_for(expected, range.as_ref())?;
+            progress(100);
+            return Ok(ClipJobResult::Mp3Rendered(actual));
+        }
         if let ClipJob::RenderGifAnnotated {
             output,
             expected,

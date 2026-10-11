@@ -10,6 +10,7 @@ import { settingsApi } from '../settings-bridge';
 import type { SettingsClient } from '../settings-client';
 import { Row, Toggle } from './SettingControls';
 import RecordingAudioSettings from './RecordingAudioSettings';
+import type { PreviewResolution } from '../video-preview';
 
 export default function CaptureSettings(props: { active: boolean; preferences: Preferences; onPreferences: (value: Preferences) => void; api?: SettingsClient }) {
   const api = props.api ?? settingsApi;
@@ -57,6 +58,8 @@ export default function CaptureSettings(props: { active: boolean; preferences: P
       <Show when={!view().draft && view().error}><button class="secondary-button" disabled={loading()} onClick={() => void initialize()}>{t("重试")}</button></Show>
     </div></Show>
     </div>
-    <div hidden={pane() !== 'recording'}><RecordingAudioSettings active={props.active && pane() === 'recording'} /></div>
+    <div hidden={pane() !== 'recording'}><RecordingAudioSettings active={props.active && pane() === 'recording'} />
+      <Row title={t('预览分辨率')}><select aria-label={t('预览分辨率')} value={props.preferences.videoPreviewResolution ?? 100} onChange={event => props.onPreferences({ ...props.preferences, videoPreviewResolution: Number(event.currentTarget.value) as PreviewResolution })}><option value="100">{t('原始（100%）')}</option><option value="75">75%</option><option value="50">50%</option></select></Row>
+    </div>
   </div>;
 }

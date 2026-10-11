@@ -21,6 +21,16 @@
   object-fit: fill;
   background: var(--surface-subtle);
 }
+.video-reduced-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  pointer-events: none;
+}
+.video-reduced-preview.visible { display: block; }
+.video-reduced-preview.visible ~ .artifact-video { opacity: 0; }
 .artifact-card.video-artifact > .artifact-header,
 .artifact-card.video-artifact > .artifact-footer {
   position: absolute;

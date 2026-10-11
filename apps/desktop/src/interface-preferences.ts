@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { UiLanguage } from './i18n';
 import { translationLanguages, type TranslationLanguage } from './translation-request';
+import type { PreviewResolution } from './video-preview';
 export interface Preferences {
   textSize: 'small' | 'default' | 'large';
   reduceMotion: boolean;
@@ -10,10 +11,11 @@ export interface Preferences {
   showButtonLabels?: boolean;
   thinkingGlowEnabled?: boolean;
   thinkingGlowColor?: string;
+  videoPreviewResolution?: PreviewResolution;
 }
 export const preferenceKey = 'mewu.interface.v1';
 export function readPreferences(): Preferences {
-  const defaults: Preferences = { textSize: 'default', reduceMotion: false, maskOpacity: .58, uiLanguage: 'system', translationLanguage: 'zh-Hans', showButtonLabels: true, thinkingGlowEnabled: true, thinkingGlowColor: '#A7C7FF' };
+  const defaults: Preferences = { textSize: 'default', reduceMotion: false, maskOpacity: .58, uiLanguage: 'system', translationLanguage: 'zh-Hans', showButtonLabels: true, thinkingGlowEnabled: true, thinkingGlowColor: '#A7C7FF', videoPreviewResolution: 100 };
   try {
     const value = JSON.parse(localStorage.getItem(preferenceKey) || '{}');
     if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
@@ -25,6 +27,7 @@ export function readPreferences(): Preferences {
       translationLanguage: translationLanguages.some(([language]) => language === value.translationLanguage) ? value.translationLanguage : defaults.translationLanguage,
       showButtonLabels: value.showButtonLabels !== false,
       thinkingGlowEnabled: value.thinkingGlowEnabled !== false,
+      videoPreviewResolution: [50, 75, 100].includes(value.videoPreviewResolution) ? value.videoPreviewResolution : 100,
       thinkingGlowColor: typeof value.thinkingGlowColor === 'string' && /^#[0-9a-f]{6}$/i.test(value.thinkingGlowColor.trim()) ? value.thinkingGlowColor.trim().toUpperCase() : defaults.thinkingGlowColor,
     };
   } catch { return defaults; }

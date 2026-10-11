@@ -23,11 +23,13 @@ import { VideoManualEditor, videoPoint, type VideoManualView } from '../video-ma
 import { VideoAnnotationReader, type VideoAnnotationReadState } from '../video-annotation-reader';
 import { intersectVideoInterval, sameVideoAnnotationTarget, videoAnnotationIdentity, videoAnnotationTarget, videoAnnotationVisible, videoSourceIdentity } from '../video-annotations';
 import { VideoAnnotationPlaybackHold } from '../video-annotation-playback';
+import { reducedVideoPreview, type PreviewResolution } from '../video-preview';
 
 const metadataCache = new Map<string, VideoMetadata>();
 export interface VideoArtifactProps {
   sceneId: string; item: SpaceItem; active: boolean; busy: boolean; grant?: VideoGrant;
   blackboard?: boolean;
+  previewResolution?: PreviewResolution;
   lane: VideoRequestLane; onRegister: RegisterVideoFlush;
   onActivate?: () => void;
   onRegisterPause?: (pause: () => void) => () => void;
@@ -44,6 +46,12 @@ export interface VideoArtifactProps {
 }
 export default function VideoArtifact(props: VideoArtifactProps) {
   let video!: HTMLVideoElement, popover: HTMLDivElement | undefined, playback: VideoPlayback | undefined, disposed = false;
+  let preview!: HTMLCanvasElement;
+  const [reducedPreview, setReducedPreview] = createSignal(false);
+  createEffect(() => {
+    const percent = props.previewResolution ?? 100;
+    if (video && preview) onCleanup(reducedVideoPreview(video, preview, percent, setReducedPreview));
+  });
   let popoverResize: ResizeObserver | undefined;
   let textEditor: HTMLDivElement | undefined, textResize: ResizeObserver | undefined;
   let annotationGeneration = 0;
@@ -261,6 +269,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
   }
   const toggle = () => { if (playback?.hasIntervalIntent()) { pausePlayback(); return; } previewHold.invalidate(); if (props.busy || drawingOpen() || manualView().text || manualView().pending || manualView().reading || annotationUnavailable() || !range()) return; if (playing()) pausePlayback(); else void playback?.play().catch(report); };
   return <>
+    <canvas ref={preview} class="video-reduced-preview" classList={{ visible: reducedPreview() }} aria-hidden="true" />
     <video ref={video} class="artifact-video" src={assetUrl(props.item.asset)} preload="metadata" playsinline tabIndex={0} aria-label={props.item.asset.name} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }} onClick={() => { video.focus(); toggle(); }} on:keydown={event => { if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return; if (event.key.toLowerCase() === 'd') { event.preventDefault(); event.stopPropagation(); void openDrawing(); } else if (event.key === ' ' || event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if (event.key === ' ') toggle(); else pausePlayback(); } }} onError={() => setFailed(true)} onLoadedMetadata={() => { if (Number.isFinite(video.duration)) setMediaDuration(Math.round(video.duration * TICKS_PER_SECOND)); const saved = range(); if (saved) playback?.seek(saved.startTicks); }} />
     <Show when={!drawingOpen() && annotationState().plan && !annotationState().error && visiblePixels() <= 32 * 1024 * 1024}><svg class="video-annotation-layer" viewBox={`0 0 ${annotationState().plan!.sourceWidth} ${annotationState().plan!.sourceHeight}`} preserveAspectRatio="none" aria-label={t("视频标注")}>
       <For each={visibleAnnotations()}>{entry => <g>

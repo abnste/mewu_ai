@@ -708,13 +708,14 @@ impl Staging {
     fn create(root: &Path, format: VideoSaveFormat) -> Result<Self, String> {
         let extension = match format {
             VideoSaveFormat::Mp4 => "mp4",
+            VideoSaveFormat::Mp3 => "mp3",
             VideoSaveFormat::Gif => "gif",
         };
         let path =
             root.join("video-staging")
                 .join(format!("{}.{}", uuid::Uuid::new_v4(), extension));
         // Backend creates this exact new file. Startup only cleans direct,
-        // ordinary UUID.mp4/UUID.gif leftovers in this separate staging directory.
+        // ordinary UUID.mp4/UUID.mp3/UUID.gif leftovers in this separate staging directory.
         if path.exists() {
             return Err("视频临时文件冲突".into());
         }
@@ -992,22 +993,26 @@ pub async fn export_video(
             let choice_app = app.clone();
             let choice_origin = origin.clone();
             let choice_cancel = cancel.clone();
-            let variant = tauri::async_runtime::spawn_blocking(move || {
-                let allowed_cancel = choice_cancel.clone();
-                export_variant_dialog::pick_variant(
-                    handle as isize,
-                    Media::Video,
-                    choice_origin
-                        .source
-                        .annotations
-                        .as_ref()
-                        .is_some_and(|document| !document.objects.is_empty()),
-                    choice_cancel,
-                    move || recheck(&choice_app, handle, &choice_origin, &allowed_cancel),
-                )
-            })
-            .await
-            .map_err(|_| "视频导出选项已中断")??;
+            let variant = if format == VideoSaveFormat::Mp3 {
+                VariantOutcome::Selected(ExportVariant::Clean)
+            } else {
+                tauri::async_runtime::spawn_blocking(move || {
+                    let allowed_cancel = choice_cancel.clone();
+                    export_variant_dialog::pick_variant(
+                        handle as isize,
+                        Media::Video,
+                        choice_origin
+                            .source
+                            .annotations
+                            .as_ref()
+                            .is_some_and(|document| !document.objects.is_empty()),
+                        choice_cancel,
+                        move || recheck(&choice_app, handle, &choice_origin, &allowed_cancel),
+                    )
+                })
+                .await
+                .map_err(|_| "视频导出选项已中断")??
+            };
             let variant = match variant {
                 VariantOutcome::Selected(variant) => variant,
                 VariantOutcome::UserCanceled => return Ok(()),
@@ -1033,7 +1038,7 @@ pub async fn export_video(
             };
             recheck(&app, handle, &origin, &cancel)?;
             let (input, length) =
-                if format == VideoSaveFormat::Gif || range.is_some() || overlays.is_some() {
+                if format != VideoSaveFormat::Mp4 || range.is_some() || overlays.is_some() {
                     let meta =
                         metadata(&registry, &origin.source.asset, &lease, cancel.clone()).await?;
                     recheck(&app, handle, &origin, &cancel)?;
@@ -1064,6 +1069,18 @@ pub async fn export_video(
                         end_ticks: r.end_ticks,
                     });
                     match format {
+                        VideoSaveFormat::Mp3 => {
+                            let job = backend::ClipJob::RenderMp3 {
+                                source: source_path.clone(),
+                                output: output.clone(),
+                                expected: meta,
+                                range,
+                            };
+                            match native_job(job, cancel.clone(), progress).await? {
+                                backend::ClipJobResult::Mp3Rendered(_) => (),
+                                _ => return Err("音频保存结果无效".into()),
+                            }
+                        }
                         VideoSaveFormat::Gif => {
                             let job = if let Some(overlays) = &overlays {
                                 backend::ClipJob::RenderGifAnnotated {

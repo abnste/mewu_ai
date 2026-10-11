@@ -36,7 +36,7 @@ fn partial_name(path: &Path) -> bool {
 fn partial_name_for(path: &Path, video_export: bool) -> bool {
     if path
         .extension()
-        .is_none_or(|ext| ext != "mp4" && !(video_export && ext == "gif"))
+        .is_none_or(|ext| ext != "mp4" && !(video_export && (ext == "gif" || ext == "mp3")))
     {
         return false;
     }
@@ -290,6 +290,9 @@ mod tests {
         assert!(!partial_name(Path::new("recording.mp4")));
         assert!(!partial_name(Path::new(&format!("{id}.gif"))));
         assert!(partial_name_for(Path::new(&format!("{id}.gif")), true));
+        assert!(partial_name_for(Path::new(&format!("{id}.mp3")), true));
+        assert!(!partial_name_for(Path::new(&format!("{id}.mp3")), false));
+        assert!(!partial_name_for(Path::new("keep.mp3"), true));
         assert!(!partial_name_for(Path::new("keep.gif"), true));
     }
 }

@@ -106,6 +106,7 @@ mod video_annotation_raster;
 mod video_annotation_render;
 mod video_annotation_tool;
 mod video_clip_backend;
+mod mp3_file;
 mod video_clip_contract;
 mod video_clip_worker;
 mod video_drawing_host;

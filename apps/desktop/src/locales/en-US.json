@@ -1021,5 +1021,9 @@
   "长截图预览": "Scrolling capture preview",
   "最小化会话": "Minimize conversation",
   "最小化的会话": "Minimized conversations",
-  "选择 {0} 个最小化会话": "Choose from {0} minimized conversations"
+  "选择 {0} 个最小化会话": "Choose from {0} minimized conversations",
+  "预览分辨率": "Preview resolution",
+  "原始（100%）": "Original (100%)",
+  "这个视频没有音轨，无法导出 MP3": "This video has no audio track to export as MP3",
+  "音频保存结果无效": "Invalid audio export result"
 }

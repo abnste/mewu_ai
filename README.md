@@ -8,9 +8,11 @@ Mewu 1.0 is a Windows desktop remake. A shortcut opens the capture space: screen
 
 ## Included
 
+The current `next` source includes MP3 export and preview resolution settings added after preview 2; the published preview 2 downloads do not contain those additions.
+
 - Region capture, drawing, blackboards, borderless pinned images, OCR, translation, scrolling capture and barcode recognition.
 - Multiple conversations, freeze/resume, Markdown and formulas, collapsible public reasoning, image and text attachments.
-- Screen recording with computer audio by default, pause, trimming, video annotations, MP4 and GIF export.
+- Screen recording with computer audio by default, pause, trimming, video annotations, MP4/MP3/GIF export, and original/75%/50% preview resolution.
 - Agent identity, local SQLite/FTS5 memory, optional Hindsight connection, run history and resumable answers.
 - Chat Completions, OpenAI Responses and Anthropic Messages connections; model templates and declared capabilities can be installed from public GitHub repositories.
 - Local MCP tools, installed plugin management and a configurable GitHub plugin catalog.

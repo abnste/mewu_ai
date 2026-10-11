@@ -229,6 +229,7 @@ impl Protocol {
                 if !matches!(
                     self.job,
                     ClipJob::Render { .. }
+                        | ClipJob::RenderMp3 { .. }
                         | ClipJob::RenderGif { .. }
                         | ClipJob::RenderAnnotated { .. }
                         | ClipJob::RenderGifAnnotated { .. }
@@ -293,6 +294,16 @@ impl Protocol {
                 };
                 metadata.validate_for(expected, range.as_ref())?;
                 self.terminal = Some(Ok(ClipJobResult::GifRendered(metadata)));
+            }
+            WorkerEvent::Mp3Rendered { metadata } => {
+                let ClipJob::RenderMp3 {
+                    expected, range, ..
+                } = &self.job
+                else {
+                    return Err(ClipError::Protocol);
+                };
+                metadata.validate_for(expected, range.as_ref())?;
+                self.terminal = Some(Ok(ClipJobResult::Mp3Rendered(metadata)));
             }
             WorkerEvent::FramesExtracted { frames } => {
                 let ClipJob::ExtractFrames {
@@ -402,6 +413,7 @@ fn supervise(
     let directory = match &job {
         ClipJob::Inspect { source } => source.parent(),
         ClipJob::Render { output, .. }
+        | ClipJob::RenderMp3 { output, .. }
         | ClipJob::RenderGif { output, .. }
         | ClipJob::RenderAnnotated { output, .. }
         | ClipJob::RenderGifAnnotated { output, .. } => output.parent(),
@@ -524,6 +536,22 @@ fn supervise(
             }
             return if eof && protocol.ready {
                 let result = protocol.terminal.take().ok_or(ClipError::Protocol)??;
+                if let (
+                    ClipJob::RenderMp3 {
+                        output,
+                        expected,
+                        range,
+                        ..
+                    },
+                    ClipJobResult::Mp3Rendered(metadata),
+                ) = (&protocol.job, &result)
+                {
+                    let actual = crate::mp3_file::inspect(output, &cancel)?;
+                    actual.validate_for(expected, range.as_ref())?;
+                    if &actual != metadata {
+                        return Err(ClipError::Protocol);
+                    }
+                }
                 if let (ClipJob::RenderGif { output, .. }, ClipJobResult::GifRendered(metadata)) =
                     (&protocol.job, &result)
                 {
@@ -673,6 +701,7 @@ pub fn worker_main() -> i32 {
             Ok(ClipJobResult::Inspected(metadata)) => WorkerEvent::Inspected { metadata },
             Ok(ClipJobResult::Rendered(metadata)) => WorkerEvent::Rendered { metadata },
             Ok(ClipJobResult::GifRendered(metadata)) => WorkerEvent::GifRendered { metadata },
+            Ok(ClipJobResult::Mp3Rendered(metadata)) => WorkerEvent::Mp3Rendered { metadata },
             Ok(ClipJobResult::FramesExtracted { frames }) => {
                 WorkerEvent::FramesExtracted { frames }
             }
@@ -852,6 +881,82 @@ mod tests {
             serde_json::from_str::<WorkerEvent>(r#"{"type":"cancelled","extra":true}"#).is_err()
         );
     }
+    #[test]
+    fn mp3_receipts_reject_wrong_job_duration_channels_and_duplicate_terminal() {
+        let mut source = metadata();
+        source.has_audio = true;
+        let audio = crate::mp3_file::Metadata {
+            duration_ticks: source.duration_ticks,
+            sample_rate: 44100,
+            channels: 2,
+            frames: 77,
+        };
+        let job = ClipJob::RenderMp3 {
+            source: "D:/owned/a.mp4".into(),
+            output: "D:/owned/b.mp3".into(),
+            expected: source.clone(),
+            range: None,
+        };
+        job.validate().unwrap();
+        let mut silent = job.clone();
+        if let ClipJob::RenderMp3 { expected, .. } = &mut silent {
+            expected.has_audio = false;
+        }
+        assert_eq!(silent.validate(), Err(ClipError::NoAudio));
+        for changed in [
+            crate::mp3_file::Metadata {
+                duration_ticks: audio.duration_ticks + 1_000_001,
+                ..audio.clone()
+            },
+            crate::mp3_file::Metadata {
+                channels: 3,
+                ..audio.clone()
+            },
+            crate::mp3_file::Metadata {
+                frames: 0,
+                ..audio.clone()
+            },
+        ] {
+            let mut protocol = Protocol::new(job.clone());
+            protocol
+                .accept(WorkerEvent::Ready { version: VERSION })
+                .unwrap();
+            assert!(protocol
+                .accept(WorkerEvent::Mp3Rendered { metadata: changed })
+                .is_err());
+        }
+        let mut wrong = Protocol::new(ClipJob::Inspect {
+            source: "D:/owned/a.mp4".into(),
+        });
+        wrong
+            .accept(WorkerEvent::Ready { version: VERSION })
+            .unwrap();
+        assert_eq!(
+            wrong.accept(WorkerEvent::Mp3Rendered {
+                metadata: audio.clone()
+            }),
+            Err(ClipError::Protocol)
+        );
+        let mut valid = Protocol::new(job);
+        valid
+            .accept(WorkerEvent::Ready { version: VERSION })
+            .unwrap();
+        valid.accept(WorkerEvent::Progress { percent: 25 }).unwrap();
+        valid
+            .accept(WorkerEvent::Mp3Rendered {
+                metadata: audio.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            valid.terminal,
+            Some(Ok(ClipJobResult::Mp3Rendered(audio.clone())))
+        );
+        assert_eq!(
+            valid.accept(WorkerEvent::Mp3Rendered { metadata: audio }),
+            Err(ClipError::Protocol)
+        );
+    }
+
     #[test]
     fn results_require_ready_and_matching_job_no_duplicate_or_rollback_progress() {
         let inspect = ClipJob::Inspect {
