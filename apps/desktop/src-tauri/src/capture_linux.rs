@@ -7,6 +7,10 @@
 
 use image::RgbaImage;
 
+#[cfg(target_os = "linux")]
+#[path = "capture_linux_stream.rs"]
+mod stream;
+
 const MAX_SIDE: u32 = 16_384;
 const MAX_PIXELS: u64 = 33_554_432;
 
@@ -131,8 +135,12 @@ mod native {
             randr::ConnectionExt as _,
             xproto::{ConnectionExt as _, ImageFormat, ImageOrder, VisualClass},
         },
-        rust_connection::RustConnection,
     };
+
+    #[cfg(target_os = "linux")]
+    type NativeConnection = super::stream::Connection;
+    #[cfg(not(target_os = "linux"))]
+    type NativeConnection = x11rb::rust_connection::RustConnection;
 
     static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -152,8 +160,11 @@ mod native {
         }
     }
 
-    fn connect() -> Result<(RustConnection, usize), String> {
+    fn connect() -> Result<(NativeConnection, usize), String> {
         session_check()?;
+        #[cfg(target_os = "linux")]
+        let (connection, screen) = super::stream::connect()?;
+        #[cfg(not(target_os = "linux"))]
         let (connection, screen) =
             x11rb::connect(None).map_err(|_| "无法连接当前 X11 图形会话".to_owned())?;
         let version = connection
@@ -175,7 +186,7 @@ mod native {
         config_timestamp: u32,
     }
 
-    fn topology(connection: &RustConnection, screen: usize) -> Result<Topology, String> {
+    fn topology(connection: &NativeConnection, screen: usize) -> Result<Topology, String> {
         let root = connection
             .setup()
             .roots

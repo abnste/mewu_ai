@@ -4,6 +4,8 @@ Linux support is under development. A successful Windows build or an X11 decoder
 
 The current capture adapter requires an X11 desktop with RandR 1.5 monitor support. It reads the actual monitor pixel rectangles, image byte order, visual color masks and scanline padding from the X server. Font DPI does not change the stored capture coordinates. Wayland, cursor inclusion and window snapping need separate adapters and are not accepted as passed by this implementation.
 
+X11 transport uses the actual local desktop `DISPLAY`, Unix sockets and normal Xauthority lookup. Remote TCP/SSH displays are unsupported. One ten-second socket deadline covers nonblocking connection, setup, writes and replies; it does not restart for each reply. Socket timeout tests must run on Linux, including a silent setup server, write backpressure and actual socket closure. This bounds socket waits, not filesystem access or PNG encoding.
+
 ## Prepare an isolated test environment
 
 Use a separate checkout and empty test data directory. Record the source commit, dirty status, package version, distribution, architecture, session type, desktop and installed dependency versions before testing. For a source archive, record its SHA256 and supplied commit instead of claiming a Git HEAD.
