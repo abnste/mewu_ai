@@ -52,12 +52,15 @@ jobs:
           set -e
           node scripts/check-glib-backport.mjs
           cargo test -p mewu-desktop --locked --release --test glib_variant_iter -- --nocapture
+      - name: Prepare unsigned candidate configuration
+        run: node -e "const fs=require('node:fs');fs.mkdirSync('out',{recursive:true});fs.writeFileSync('out/native-build-config.json',JSON.stringify({bundle:{createUpdaterArtifacts:false}}))"
       - name: Build native candidate
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           MEWU_BUILD_COMMIT: ${{ github.sha }}
-        run: npm run desktop:build -- --bundles ${{ matrix.bundles }}
+        run: npm run desktop:build -- --bundles ${{ matrix.bundles }} --config "${{ github.workspace }}/out/native-build-config.json"
+      - name: Archive Mac application for later coordinator signing
+        if: runner.os == 'macOS'
+        run: tar -czf target/release/bundle/macos/MewuAI.app.tar.gz -C target/release/bundle/macos MewuAI.app
       - name: Stage explicit native assets
         run: node scripts/prepare-release.mjs out/release-${{ matrix.platform }} ${{ matrix.platform }}
       - name: Preserve candidates for native installation tests
