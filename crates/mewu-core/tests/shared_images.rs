@@ -2,6 +2,7 @@
 use mewu_core::*;
 fn image() -> Asset {
     Asset {
+        capture_coordinates: None,
         id: uuid::Uuid::new_v4().to_string(),
         kind: AssetKind::Image,
         path: "D:/assets/durable.png".into(),

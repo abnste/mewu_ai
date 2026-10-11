@@ -179,6 +179,7 @@ fn prepare_attachment(
     result?;
     Ok((
         Asset {
+            capture_coordinates: None,
             id,
             kind: AssetKind::Image,
             path: path.to_string_lossy().into(),

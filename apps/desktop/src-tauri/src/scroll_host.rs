@@ -693,6 +693,7 @@ fn persist(
     let id = uuid::Uuid::new_v4().to_string();
     let path = host.assets.join(format!("{id}.png"));
     let asset = Asset {
+        capture_coordinates: None,
         id,
         name: if automatic {
             "应用快照.png"
@@ -1024,6 +1025,7 @@ mod tests {
         let mut store = Store::open_in_memory().unwrap();
         let scene_id = store.snapshot().active_scene_id;
         let background = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "screen.png".into(),
             kind: AssetKind::Image,
@@ -1130,6 +1132,7 @@ mod tests {
     #[test]
     fn physical_region_geometry_keeps_negative_monitor_origin_and_rejects_invalid_bounds() {
         let background = Asset {
+            capture_coordinates: None,
             id: "b".into(),
             name: "screen".into(),
             kind: AssetKind::Image,

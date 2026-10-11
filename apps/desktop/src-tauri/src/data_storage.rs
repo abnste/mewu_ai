@@ -245,6 +245,7 @@ mod tests {
     }
     fn asset(path: &Path) -> Asset {
         Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "used.png".into(),
             kind: mewu_core::AssetKind::Image,

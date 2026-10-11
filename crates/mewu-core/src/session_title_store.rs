@@ -277,6 +277,7 @@ mod tests {
             .set_background(
                 &scene,
                 Asset {
+                    capture_coordinates: None,
                     id: id(),
                     kind: AssetKind::Image,
                     name: "fixture.png".into(),

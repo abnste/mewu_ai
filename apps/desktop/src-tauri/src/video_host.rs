@@ -1790,6 +1790,7 @@ pub(crate) mod tests {
             item_id: "item".into(),
             source: mewu_core::VideoSourceView {
                 asset: Asset {
+                    capture_coordinates: None,
                     id: id.clone(),
                     name: "synthetic.mp4".into(),
                     kind: mewu_core::AssetKind::Video,

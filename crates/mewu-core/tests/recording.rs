@@ -49,6 +49,7 @@ fn asset(kind: AssetKind) -> Asset {
     let is_video = kind == AssetKind::Video;
     let extension = if is_video { "mp4" } else { "png" };
     Asset {
+        capture_coordinates: None,
         path: format!("assets/{id}.{extension}"),
         id,
         name: format!("fixture.{extension}"),

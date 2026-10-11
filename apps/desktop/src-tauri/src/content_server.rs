@@ -431,6 +431,7 @@ mod tests {
         let bytes = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
         std::fs::write(&path, bytes).unwrap();
         let mut asset = Asset {
+            capture_coordinates: None,
             id: ID.into(),
             name: "misleading.html".into(),
             kind: AssetKind::Image,
@@ -536,6 +537,7 @@ mod tests {
         bytes.resize(70_000, 0x51);
         std::fs::write(&path, &bytes).unwrap();
         let asset = Asset {
+            capture_coordinates: None,
             id: ID.into(),
             name: "fixture.mp4".into(),
             kind: AssetKind::Video,

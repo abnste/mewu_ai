@@ -16,6 +16,63 @@ pub enum AssetKind {
     File,
 }
 
+/// Host-attested desktop geometry for an entire captured image. Imported,
+/// derived and legacy images carry no coordinate claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CaptureCoordinateSpace {
+    QuartzPoints,
+    PhysicalPixels,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CaptureCoordinates {
+    pub space: CaptureCoordinateSpace,
+    pub origin_x: f64,
+    pub origin_y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl CaptureCoordinates {
+    pub fn valid_for(&self, width: u32, height: u32) -> bool {
+        let minimum = f64::from(i32::MIN);
+        let maximum = f64::from(i32::MAX);
+        [self.origin_x, self.origin_y, self.width, self.height]
+            .iter()
+            .all(|v| v.is_finite())
+            && width > 0
+            && height > 0
+            && width <= 16384
+            && height <= 16384
+            && u64::from(width) * u64::from(height) <= 33_554_432
+            && self.width >= 1.
+            && self.height >= 1.
+            && self.width <= 65536.
+            && self.height <= 65536.
+            && (minimum..=maximum).contains(&self.origin_x)
+            && (minimum..=maximum).contains(&self.origin_y)
+            && (minimum..=maximum + 65536.).contains(&(self.origin_x + self.width))
+            && (minimum..=maximum + 65536.).contains(&(self.origin_y + self.height))
+            && (self.space != CaptureCoordinateSpace::PhysicalPixels
+                || (self.width == f64::from(width)
+                    && self.height == f64::from(height)
+                    && self.origin_x.fract() == 0.
+                    && self.origin_y.fract() == 0.))
+    }
+
+    pub fn point(&self, width: u32, height: u32, x: u32, y: u32) -> Option<(f64, f64)> {
+        if !self.valid_for(width, height) || x >= width || y >= height {
+            return None;
+        }
+        Some((
+            self.origin_x + f64::from(x) * self.width / f64::from(width),
+            self.origin_y + f64::from(y) * self.height / f64::from(height),
+        ))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Asset {
@@ -33,6 +90,8 @@ pub struct Asset {
     pub origin_y: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale_factor: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_coordinates: Option<CaptureCoordinates>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

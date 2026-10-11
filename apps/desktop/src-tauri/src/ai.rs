@@ -666,6 +666,7 @@ pub fn persist_attachments(
         file.flush().map_err(|_| "无法保存引用")?;
         file.sync_all().map_err(|_| "无法保存引用")?;
         output.push(Asset {
+            capture_coordinates: None,
             id,
             name: encoded.name,
             kind: encoded.kind,
@@ -1803,6 +1804,7 @@ pub(crate) mod tests {
                 .unwrap();
             self.files.push(path.clone());
             Asset {
+                capture_coordinates: None,
                 id,
                 name: "fixture.png".into(),
                 kind: AssetKind::Image,
@@ -1826,6 +1828,7 @@ pub(crate) mod tests {
             std::fs::write(&path, text).unwrap();
             self.files.push(path.clone());
             Asset {
+                capture_coordinates: None,
                 id,
                 name: format!("fixture.{extension}"),
                 kind,
@@ -2986,6 +2989,7 @@ pub(crate) mod tests {
         let mut store = Store::open_in_memory().unwrap();
         let scene_id = store.snapshot().active_scene_id;
         let video = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "录屏.mp4".into(),
             kind: AssetKind::Video,

@@ -6,11 +6,12 @@ import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule } from 'node:vm';
 const module = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./pointer-inspector.ts', import.meta.url), 'utf8'), { mode: 'transform' }));
 await module.link(() => { throw Error('Unexpected runtime dependency'); }); await module.evaluate();
-const { PointerInspector, PointerSampleCanceledError, pointerImagePoint, pointerPopupPosition, pointerSelectionDimensions, pointerInspectorSize } = module.namespace;
+const { PointerInspector, PointerSampleCanceledError, pointerImagePoint, pointerPopupPosition, pointerSelectionDimensions, pointerInspectorSize, pointerCoordinatesLabel } = module.namespace;
 const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-const request = (x = 10, sceneId = 'scene', backgroundId = 'background') => ({ sceneId, backgroundId, x, y: 20 });
+const request = (x = 10, sceneId = 'scene', backgroundId = 'background') => ({ sceneId, backgroundId, x, y: 20,
+  source: { width: 256, height: 144, captureCoordinates: { space: 'physicalPixels', originX: -1920, originY: 0, width: 256, height: 144 } } });
 const sample = value => ({ ...value, globalX: value.x - 1920, globalY: value.y, hex: '#1234AB', dataUrl: 'data:image/png;base64,AAAA' });
 const checks = [];
 
@@ -156,5 +157,30 @@ function fixture() {
   const sync = new PointerInspector(() => { calls.push(1); throw Error('synchronous failure'); }, v => outputs.push(v));
   await assert.rejects(sync.sampleExact(request()), /synchronous failure/); assert.equal(outputs.at(-1), undefined);
   checks.push('Repeated exact reads share one promise; synchronous adapter failures release the request slot');
+}
+{
+  const f = fixture(), old = request();
+  const changed = { ...old, source: { ...old.source, captureCoordinates: { ...old.source.captureCoordinates, originX: -2000 } } };
+  const exact = f.gate.sampleExact(old), rejected = assert.rejects(exact, PointerSampleCanceledError);
+  f.gate.request(changed); await rejected; f.waits[0].resolve(sample(old)); await tick();
+  assert.ok(f.outputs.every(v => v === undefined)); assert.equal(f.started.length, 2);
+  f.waits[1].resolve({ ...sample(changed), globalX: changed.x - 2000 }); await tick();
+  assert.equal(f.outputs.at(-1).globalX, changed.x - 2000);
+  checks.push('Same ID with different source geometry cancels exact-copy and rejects late previews');
+}
+{
+  const legacy = { ...request(), source: { width: 256, height: 144 } };
+  const f = fixture(), exact = f.gate.sampleExact(legacy);
+  f.waits[0].resolve({ ...legacy, hex: '#1234AB', dataUrl: 'data:image/png;base64,AAAA' });
+  assert.equal(pointerCoordinatesLabel(await exact), 'X 10 Y 20 px');
+  const quartz = { ...request(), source: { width: 2560, height: 1080, captureCoordinates: { space: 'quartzPoints', originX: -1280.25, originY: 20.5, width: 1280, height: 720 } } };
+  const g = fixture(), points = g.gate.sampleExact(quartz);
+  g.waits[0].resolve({ ...quartz, screenPoint: { x: -1275.25, y: 20.5 + 20 * 720 / 1080, unit: 'pt' }, hex: '#1234AB', dataUrl: 'data:image/png;base64,AAAA' });
+  assert.equal(pointerCoordinatesLabel(await points), 'X -1275.25 Y 33.83 pt');
+  for (const mutate of [v => ({ ...v, globalX: 1 }), v => ({ ...v, screenPoint: { ...v.screenPoint, unit: 'px' } }), v => ({ ...v, screenPoint: { ...v.screenPoint, x: NaN } }), v => ({ ...v, source: { ...v.source, width: 100 } })]) {
+    const h=fixture(), pending=h.gate.sampleExact(quartz), rejected=assert.rejects(pending,/不一致/);
+    h.waits[0].resolve(mutate({ ...quartz, screenPoint: { x: -1275.25, y: 20.5+20*720/1080, unit:'pt' },hex:'#1234AB',dataUrl:'data:image/png;base64,AAAA' })); await rejected;
+  }
+  checks.push('Legacy pixels and fractional Quartz points render explicit units; mixed, malformed and dimension-mismatched responses never reach HEX-copy');
 }
 console.log(JSON.stringify({ passed: checks.length, checks }, null, 2));

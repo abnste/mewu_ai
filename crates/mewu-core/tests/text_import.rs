@@ -38,6 +38,7 @@ fn asset(kind: AssetKind, name: &str) -> Asset {
     let id = Uuid::new_v4().to_string();
     let image = kind == AssetKind::Image;
     Asset {
+        capture_coordinates: None,
         path: format!("assets/{id}.synthetic"),
         id,
         name: name.into(),
@@ -117,7 +118,7 @@ fn batch_import_adds_all_items_and_references_in_one_commit_preserving_draft() {
         .unwrap()
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(pragma, 9);
+    assert_eq!(pragma, 10);
     drop(store);
     assert_eq!(Store::open(&db.0).unwrap().snapshot(), snapshot);
 }

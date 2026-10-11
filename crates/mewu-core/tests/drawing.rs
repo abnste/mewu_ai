@@ -32,6 +32,7 @@ fn prepare(store: &mut Store) -> (String, String, String) {
         .set_background(
             &scene,
             Asset {
+                capture_coordinates: None,
                 id: background.clone(),
                 name: "drawing-test.png".into(),
                 kind: AssetKind::Image,
@@ -184,7 +185,7 @@ fn rectangular_mark_keeps_revision_fences_and_persisted_edit_history() {
             .unwrap()
             .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        9
+        10
     );
 }
 

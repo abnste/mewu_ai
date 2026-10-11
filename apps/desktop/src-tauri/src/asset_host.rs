@@ -246,6 +246,7 @@ mod tests {
         assert!(target.validate(&snapshot).is_err());
         snapshot.scenes[index].agent_id = target.agent_id.clone();
         snapshot.scenes[index].background = Some(Asset {
+            capture_coordinates: None,
             id: "new-background".into(),
             name: "synthetic".into(),
             path: "unused".into(),

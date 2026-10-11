@@ -441,6 +441,7 @@ pub async fn start_recording(
             let host = app2.state::<Host>();
             let final_path = host.assets.join(format!("{asset_id}.mp4"));
             let asset = Asset {
+                capture_coordinates: None,
                 id: asset_id,
                 name: "录屏.mp4".into(),
                 kind: AssetKind::Video,
@@ -960,6 +961,7 @@ mod tests {
     #[test]
     fn recording_geometry_keeps_physical_origin_and_even_crop() {
         let bg = Asset {
+            capture_coordinates: None,
             id: "bg".into(),
             name: "screen".into(),
             kind: AssetKind::Image,

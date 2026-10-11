@@ -101,6 +101,7 @@ fn prepare(store: &mut Store) -> Fixture {
         .set_background(
             &scene,
             Asset {
+                capture_coordinates: None,
                 id: background.clone(),
                 kind: AssetKind::Image,
                 name: "source.png".into(),
@@ -144,6 +145,7 @@ fn prepare(store: &mut Store) -> Fixture {
         .unwrap();
     let context = store.begin_run(&scene).unwrap();
     let attachment = Asset {
+        capture_coordinates: None,
         id: uid(),
         kind: AssetKind::Image,
         name: "input.jpg".into(),
@@ -802,7 +804,7 @@ fn db6_upgrade_and_failed_upgrade_preserve_the_old_document_and_version() {
             assert_eq!(
                 db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
                     .unwrap(),
-                9
+                10
             );
             let after = rows(&db, "app_state");
             assert_eq!(after[0][3], before[0][3]);

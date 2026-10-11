@@ -1257,6 +1257,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         expand_capture_space(&window, &captured).await?;
         let window_map = captured.window_map.take();
         let asset = Asset {
+            capture_coordinates: Some(captured.capture_coordinates),
             id: captured.asset_id,
             name: "截图.png".into(),
             kind: AssetKind::Image,

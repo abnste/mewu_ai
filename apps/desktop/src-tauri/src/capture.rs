@@ -26,6 +26,7 @@ pub struct CapturedScreen {
     pub coordinate_space: CoordinateSpace,
     pub pixels_per_display_unit_x: f64,
     pub pixels_per_display_unit_y: f64,
+    pub capture_coordinates: mewu_core::CaptureCoordinates,
     pub backend: CaptureBackend,
 }
 
@@ -252,6 +253,20 @@ mod implementation {
             validate_pixel_size(entry.1 .0, entry.1 .1)?;
             entry.1
         };
+        #[cfg(target_os = "macos")]
+        let coordinates = topology_before
+            .iter()
+            .find(|entry| entry.0.id == before.id)
+            .ok_or("所选显示器已不可用")?
+            .2;
+        #[cfg(windows)]
+        let coordinates = mewu_core::CaptureCoordinates {
+            space: mewu_core::CaptureCoordinateSpace::PhysicalPixels,
+            origin_x: f64::from(before.origin_x),
+            origin_y: f64::from(before.origin_y),
+            width: f64::from(before.display_width),
+            height: f64::from(before.display_height),
+        };
 
         let asset_id = Uuid::new_v4().to_string();
         let window_probe = super::super::window_snap::begin_capture(
@@ -276,6 +291,7 @@ mod implementation {
                     before.id,
                     physical_before.0,
                     physical_before.1,
+                    coordinates,
                     exclusions,
                     allowed.clone(),
                 )?,
@@ -394,8 +410,9 @@ mod implementation {
             display_width: before.display_width,
             display_height: before.display_height,
             coordinate_space: before.coordinate_space,
-            pixels_per_display_unit_x: f64::from(width) / f64::from(before.display_width),
-            pixels_per_display_unit_y: f64::from(height) / f64::from(before.display_height),
+            pixels_per_display_unit_x: f64::from(width) / coordinates.width,
+            pixels_per_display_unit_y: f64::from(height) / coordinates.height,
+            capture_coordinates: coordinates,
             backend,
         })
     }
@@ -442,8 +459,10 @@ mod implementation {
     }
 
     #[cfg(target_os = "macos")]
-    fn mac_topology(monitors: &[Monitor]) -> Result<Vec<(MonitorInfo, (u32, u32))>, String> {
-        use objc2_core_graphics::{CGDisplayPixelsHigh, CGDisplayPixelsWide};
+    fn mac_topology(
+        monitors: &[Monitor],
+    ) -> Result<Vec<(MonitorInfo, (u32, u32), mewu_core::CaptureCoordinates)>, String> {
+        use objc2_core_graphics::{CGDisplayBounds, CGDisplayPixelsHigh, CGDisplayPixelsWide};
         if monitors.is_empty() || monitors.len() > 64 {
             return Err("显示器配置数量无效".to_owned());
         }
@@ -460,7 +479,20 @@ mod implementation {
             if info.id == 0 || width == 0 || height == 0 {
                 return Err("显示器物理尺寸无效".to_owned());
             }
-            topology.push((info, (width, height)));
+            // Read the actual CGFloat rectangle before xcap's i32/u32 casts.
+            // Its full value participates in both topology snapshots.
+            let bounds = CGDisplayBounds(info.id);
+            let coordinates = mewu_core::CaptureCoordinates {
+                space: mewu_core::CaptureCoordinateSpace::QuartzPoints,
+                origin_x: bounds.origin.x,
+                origin_y: bounds.origin.y,
+                width: bounds.size.width,
+                height: bounds.size.height,
+            };
+            if !coordinates.valid_for(width, height) {
+                return Err("显示器点坐标无效".into());
+            }
+            topology.push((info, (width, height), coordinates));
         }
         topology.sort_by_key(|entry| entry.0.id);
         if topology.windows(2).any(|pair| pair[0].0.id == pair[1].0.id) {

@@ -818,6 +818,7 @@ mod tests {
                 .unwrap();
             fixture.files.push(path.clone());
             Asset {
+                capture_coordinates: None,
                 id,
                 kind: AssetKind::Image,
                 name: "synthetic.png".into(),
@@ -989,6 +990,7 @@ mod tests {
         let mut store = mewu_core::Store::open_in_memory().unwrap();
         let scene_id = store.snapshot().active_scene_id.clone();
         let asset = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             kind: AssetKind::Image,
             name: "test.png".into(),
@@ -1084,6 +1086,7 @@ mod tests {
         let alias = outside.join("alias.png");
         fs::hard_link(&source_path, &alias).unwrap();
         let asset = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "synthetic.png".into(),
             kind: AssetKind::Image,

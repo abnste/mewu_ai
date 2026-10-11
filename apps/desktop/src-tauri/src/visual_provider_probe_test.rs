@@ -237,6 +237,7 @@ fn fixture_with_thinking(
     save_png(&root.join("source.png"), &source)?;
     let source_sha256 = sha(&fs::read(&source_path).map_err(error)?);
     let background = Asset {
+        capture_coordinates: None,
         id: uid(),
         kind: AssetKind::Image,
         name: "synthetic-worksheet.png".into(),

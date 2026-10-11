@@ -52,6 +52,7 @@ fn prepare(store: &mut Store) -> Fixture {
         .set_background(
             &scene,
             Asset {
+                capture_coordinates: None,
                 id: background.clone(),
                 kind: AssetKind::Image,
                 name: "source.png".into(),
@@ -105,6 +106,7 @@ fn prepare(store: &mut Store) -> Fixture {
         .unwrap();
     let run = store.begin_run(&scene).unwrap();
     let asset = Asset {
+        capture_coordinates: None,
         id: uid(),
         kind: AssetKind::Image,
         name: "input.jpg".into(),
@@ -486,7 +488,7 @@ fn db5_migration_preserves_legacy_single_step_and_rejects_ambiguous_or_empty_bat
     assert_eq!(
         db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        9
+        10
     );
     let edit = region(&migrated, &f).drawing_history.undo[0].edits()[0].clone();
     let mut ambiguous = serde_json::to_value(&edit).unwrap();

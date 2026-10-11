@@ -769,6 +769,7 @@ mod tests {
         viewport: Rect,
     ) -> Result<Rect, String> {
         let background = Asset {
+            capture_coordinates: None,
             id: "background".into(),
             name: "screen".into(),
             kind: mewu_core::AssetKind::Image,

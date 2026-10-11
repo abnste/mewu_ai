@@ -52,6 +52,7 @@ impl Drop for TestDb {
 fn setup(store: &mut Store, duration: u64) -> (VideoTarget, VerifiedVideoSource) {
     let scene_id = store.snapshot().active_scene_id;
     let asset = Asset {
+        capture_coordinates: None,
         id: Uuid::new_v4().to_string(),
         name: "synthetic.mp4".into(),
         kind: AssetKind::Video,

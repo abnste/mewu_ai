@@ -1170,6 +1170,7 @@ mod tests {
     fn asset(width: u32, height: u32) -> Asset {
         let id = id();
         Asset {
+            capture_coordinates: None,
             path: format!("{id}.png"),
             id,
             name: "synthetic.png".into(),

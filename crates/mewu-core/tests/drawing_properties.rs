@@ -37,6 +37,7 @@ impl Drop for TestDb {
 fn image(width: u32, height: u32) -> Asset {
     let id = Uuid::new_v4().to_string();
     Asset {
+        capture_coordinates: None,
         name: "synthetic.png".into(),
         path: format!("{id}.png"),
         id,

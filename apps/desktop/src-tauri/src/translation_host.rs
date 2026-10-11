@@ -634,6 +634,7 @@ fn save_overlay(root: &Path, image: &image::RgbaImage) -> Result<PendingOverlay,
         .map_err(|_| "无法创建译文图层")?;
     let output = PendingOverlay {
         asset: Asset {
+            capture_coordinates: None,
             id,
             name: "原位译文.png".into(),
             kind: AssetKind::Image,
@@ -699,6 +700,7 @@ mod tests {
     }
     fn asset() -> Asset {
         Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "synthetic.png".into(),
             kind: AssetKind::Image,

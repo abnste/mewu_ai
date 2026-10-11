@@ -56,6 +56,7 @@ fn prepare(
     work.check()?;
     Ok((
         Asset {
+            capture_coordinates: None,
             id,
             name: "黑板.png".into(),
             kind: AssetKind::Image,
@@ -275,6 +276,7 @@ fn prepare_preview(
     work.check()?;
     Ok((
         Asset {
+            capture_coordinates: None,
             id,
             name: "黑板.png".into(),
             kind: AssetKind::Image,

@@ -166,6 +166,7 @@ impl Fixture {
             .set_background(
                 &scene,
                 Asset {
+                    capture_coordinates: None,
                     id: background.clone(),
                     kind: AssetKind::Image,
                     name: "source.png".into(),
@@ -200,6 +201,7 @@ impl Fixture {
             .unwrap();
         let context = store.begin_run(&scene).unwrap();
         let attachment = Asset {
+            capture_coordinates: None,
             id: id(),
             kind: AssetKind::Image,
             name: "sent.jpg".into(),
@@ -597,6 +599,7 @@ async fn product_formula_worker_renders_four_math_cases_in_mixed_sqlite_document
         assert_eq!(
             crate::assets::image(
                 &Asset {
+                    capture_coordinates: None,
                     id: uuid::Uuid::new_v4().to_string(),
                     kind: AssetKind::Image,
                     name: format!("{case}.png"),

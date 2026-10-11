@@ -803,6 +803,7 @@ mod manual_edit_tests {
             let mut store = Store::open(&db.0).unwrap();
             let scene = store.snapshot().active_scene_id;
             let asset = Asset {
+                capture_coordinates: None,
                 id: uid(),
                 kind: AssetKind::Video,
                 name: "synthetic.mp4".into(),
@@ -1411,6 +1412,7 @@ mod manual_edit_media_gate {
         let mut store = Store::open(&database).unwrap();
         let scene = store.snapshot().active_scene_id;
         let asset = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             kind: AssetKind::Video,
             name: "synthetic.mp4".into(),
@@ -1790,6 +1792,7 @@ mod manual_edit_media_gate {
             let mut store = Store::open(&db).unwrap();
             let scene = store.snapshot().active_scene_id;
             let asset = Asset {
+                capture_coordinates: None,
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: AssetKind::Video,
                 name: "synthetic-vector.mp4".into(),

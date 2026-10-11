@@ -67,6 +67,7 @@ pub(crate) fn capture(
     display_id: u32,
     width_pixels: u32,
     height_pixels: u32,
+    coordinates: mewu_core::CaptureCoordinates,
     exclusions: &[ExcludedWindow],
     allowed: CaptureCheck,
 ) -> Result<RgbaImage, String> {
@@ -87,6 +88,7 @@ pub(crate) fn capture(
         display_id,
         width: width_pixels,
         height: height_pixels,
+        coordinates,
         pid: i32::try_from(std::process::id()).map_err(|_| "当前应用进程标识无效")?,
         exclusions: exclusions.to_vec(),
         allowed,
@@ -214,6 +216,7 @@ struct Request {
     display_id: u32,
     width: u32,
     height: u32,
+    coordinates: mewu_core::CaptureCoordinates,
     pid: i32,
     exclusions: Vec<ExcludedWindow>,
     allowed: CaptureCheck,
@@ -237,9 +240,17 @@ fn begin_screenshot(
             if selected.is_some() {
                 return Err("所选显示器标识不唯一，请重新选择".to_owned());
             }
-            validate_display_size(
+            let frame = unsafe { display.frame() };
+            validate_display_geometry(
                 unsafe { display.width() },
                 unsafe { display.height() },
+                (
+                    frame.origin.x,
+                    frame.origin.y,
+                    frame.size.width,
+                    frame.size.height,
+                ),
+                request.coordinates,
                 request.width,
                 request.height,
             )?;
@@ -424,20 +435,36 @@ fn validate_matching_window(
     Ok(())
 }
 
-fn validate_display_size(
+fn validate_display_geometry(
     width_points: isize,
     height_points: isize,
+    frame: (f64, f64, f64, f64),
+    expected: mewu_core::CaptureCoordinates,
     width_pixels: u32,
     height_pixels: u32,
 ) -> Result<(), String> {
-    if width_points <= 0 || height_points <= 0 {
+    if width_points <= 0
+        || height_points <= 0
+        || !expected.valid_for(width_pixels, height_pixels)
+        || expected.space != mewu_core::CaptureCoordinateSpace::QuartzPoints
+    {
         return Err("所选显示器的原生尺寸无效".to_owned());
     }
-    // SCDisplay geometry is points; SCStreamConfiguration dimensions are pixels.
-    // Validate only this display's aspect ratio, allowing rounding by one pixel.
-    // No origin or mixed-display desktop scale enters the calculation.
-    let expected_height = f64::from(width_pixels) * height_points as f64 / width_points as f64;
-    if !expected_height.is_finite() || (f64::from(height_pixels) - expected_height).abs() > 1.0 {
+    // Identity and full point geometry must match CoreGraphics. Actual returned
+    // pixels are validated separately; each axis can have its own ratio.
+    // SCDisplay's integer dimensions are only a bounded consistency check;
+    // its CGFloat frame is the authoritative full geometry. Do not discard
+    // fractions or assume how AppKit rounds its redundant integer properties.
+    if !(expected.width.floor()..=expected.width.ceil()).contains(&(width_points as f64))
+        || !(expected.height.floor()..=expected.height.ceil()).contains(&(height_points as f64))
+        || frame
+            != (
+                expected.origin_x,
+                expected.origin_y,
+                expected.width,
+                expected.height,
+            )
+    {
         return Err("显示器尺寸已改变，请重新选择并截图".to_owned());
     }
     Ok(())
@@ -661,8 +688,67 @@ mod tests {
     fn invalid_geometry_and_short_or_excessively_padded_rows_fail_before_conversion() {
         assert!(validate_dimensions(0, 1).is_err());
         assert!(validate_dimensions(MAX_SIDE, MAX_SIDE).is_err());
-        assert!(validate_display_size(1280, 720, 2560, 1440).is_ok());
-        assert!(validate_display_size(1280, 720, 2560, 1000).is_err());
+        let expected = mewu_core::CaptureCoordinates {
+            space: mewu_core::CaptureCoordinateSpace::QuartzPoints,
+            origin_x: -1280.25,
+            origin_y: 20.5,
+            width: 1280.,
+            height: 720.,
+        };
+        assert!(validate_display_geometry(
+            1280,
+            720,
+            (-1280.25, 20.5, 1280., 720.),
+            expected,
+            2560,
+            1440
+        )
+        .is_ok());
+        assert!(validate_display_geometry(
+            1280,
+            720,
+            (-1280.25, 20.5, 1280., 720.),
+            expected,
+            2560,
+            1000
+        )
+        .is_ok());
+        // Same aspect ratio, different point extent or fractional origin is a
+        // different topology and must be rejected before issuing the screenshot.
+        assert!(validate_display_geometry(
+            640,
+            360,
+            (-1280.25, 20.5, 640., 360.),
+            expected,
+            2560,
+            1440
+        )
+        .is_err());
+        assert!(validate_display_geometry(
+            1280,
+            720,
+            (-1280., 20.5, 1280., 720.),
+            expected,
+            2560,
+            1440
+        )
+        .is_err());
+        let fractional = mewu_core::CaptureCoordinates {
+            width: 1280.5,
+            height: 720.25,
+            ..expected
+        };
+        for (w, h) in [(1280, 720), (1281, 721)] {
+            assert!(validate_display_geometry(
+                w,
+                h,
+                (-1280.25, 20.5, 1280.5, 720.25),
+                fractional,
+                2560,
+                1440
+            )
+            .is_ok());
+        }
         assert!(validate_stride(1, 1, 3).is_err());
         assert!(validate_stride(1, 1, MAX_ROW_PADDING + 5).is_err());
         let layout =

@@ -1009,6 +1009,7 @@ mod tests {
     }
     fn asset(map: &FrameSnapMap) -> Asset {
         Asset {
+            capture_coordinates: None,
             id: map.background_id.clone(),
             name: "synthetic.png".into(),
             path: format!("{}.png", map.background_id),

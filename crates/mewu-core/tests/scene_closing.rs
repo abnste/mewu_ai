@@ -46,6 +46,7 @@ fn scene<'a>(state: &'a Snapshot, id: &str) -> &'a Scene {
 }
 fn image() -> Asset {
     Asset {
+        capture_coordinates: None,
         id: Uuid::new_v4().to_string(),
         name: "保留的截图.png".into(),
         kind: AssetKind::Image,

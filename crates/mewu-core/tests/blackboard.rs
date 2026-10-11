@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 fn board() -> Asset {
     Asset {
+        capture_coordinates: None,
         id: Uuid::new_v4().to_string(),
         name: "黑板.png".into(),
         kind: AssetKind::Image,

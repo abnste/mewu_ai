@@ -356,6 +356,7 @@ fn read_import(source: &Path, remaining: usize) -> Result<(Asset, Vec<u8>), Stri
     let id = uuid::Uuid::new_v4().to_string();
     Ok((
         Asset {
+            capture_coordinates: None,
             id,
             name: source
                 .file_name()
@@ -444,6 +445,7 @@ pub fn from_code(answer: &str, root: &Path) -> Result<Vec<Asset>, String> {
         let path = root.join(format!("{id}.{language}"));
         std::fs::write(&path, body).map_err(|_| "无法保存生成内容")?;
         result.push(Asset {
+            capture_coordinates: None,
             id,
             name: format!("生成内容.{}", language),
             kind: if language == "html" {
@@ -496,6 +498,7 @@ mod tests {
             .save(&path)
             .unwrap();
         Asset {
+            capture_coordinates: None,
             id,
             name: "synthetic.png".into(),
             kind: AssetKind::Image,
@@ -1161,6 +1164,7 @@ mod tests {
         let bytes = b"\0\0\0\x18ftypmp42\0\0\0\0mp42isom\0\0\0\x08mdat";
         std::fs::write(&path, bytes).unwrap();
         let mut asset = Asset {
+            capture_coordinates: None,
             id,
             name: "recording.mp4".into(),
             kind: AssetKind::Video,

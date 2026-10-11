@@ -10,7 +10,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const APPLICATION_ID: i64 = 0x4d455755;
-pub(crate) const DB_SCHEMA_VERSION: u32 = 9;
+pub(crate) const DB_SCHEMA_VERSION: u32 = 10;
 
 #[path = "agent_cleanup_store.rs"]
 mod agent_cleanup_store;
@@ -225,7 +225,7 @@ impl Store {
                 transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
                 (state, 0)
             }
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | DB_SCHEMA_VERSION => {
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | DB_SCHEMA_VERSION => {
                 if app_id != APPLICATION_ID {
                     return Err(invalid("数据库应用标识不匹配"));
                 }
@@ -285,7 +285,7 @@ impl Store {
             // Connection migration and its version gate are one transaction:
             // a v2 binary must never overwrite the new routing identities.
             validate_snapshot(&state)?;
-            let changed = if matches!(version, 6 | 7 | 8) && !recovering {
+            let changed = if matches!(version, 6 | 7 | 8 | 9) && !recovering {
                 // Rich/video layouts add empty, independent binary tables. Keep
                 // the exact existing document payload during this migration,
                 // including fields derived only for the in-memory view.
@@ -1351,6 +1351,9 @@ impl Store {
     /// File decoding/copying belongs to the host; this final admission rejects a
     /// dialog that returned after its original space was frozen or replaced.
     pub fn import_assets(&mut self, scene_id: &str, assets: Vec<Asset>) -> Result<Snapshot> {
+        if assets.iter().any(|asset| asset.capture_coordinates.is_some()) {
+            return Err(invalid("导入图片不能伪造屏幕坐标"));
+        }
         let target = scene(&self.state, scene_id)?;
         if self.state.active_scene_id != scene_id || target.frozen || target.closed {
             return Err(invalid("会话已切换或关闭，请重新导入"));
@@ -2878,6 +2881,11 @@ fn validate_connection(connection: &Connection) -> Result<()> {
 }
 
 fn validate_asset(asset: &Asset) -> Result<()> {
+    if let Some(coordinates) = asset.capture_coordinates {
+        if asset.kind != AssetKind::Image || !coordinates.valid_for(asset.width.unwrap_or(0), asset.height.unwrap_or(0)) {
+            return Err(invalid("截图坐标元数据无效"));
+        }
+    }
     if asset.id.trim().is_empty() || asset.path.trim().is_empty() || asset.name.trim().is_empty() {
         return Err(invalid("素材缺少 ID、名称或路径"));
     }
@@ -2912,6 +2920,7 @@ fn validate_background(asset: &Asset) -> Result<()> {
 
 fn validate_region_image(asset: &Asset) -> Result<()> {
     validate_background(asset)?;
+    if asset.capture_coordinates.is_some() { return Err(invalid("替换图片不能伪造整屏坐标")); }
     let width = asset.width.unwrap();
     let height = asset.height.unwrap();
     if Uuid::parse_str(&asset.id).is_err()

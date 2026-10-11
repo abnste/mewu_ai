@@ -128,6 +128,7 @@ mod tests {
     use super::*;
     fn asset(kind: AssetKind, width: u32, height: u32) -> Asset {
         Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "synthetic.png".into(),
             kind,

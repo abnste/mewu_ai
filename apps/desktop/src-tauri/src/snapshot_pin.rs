@@ -140,6 +140,7 @@ mod tests {
         let mut store = Store::open_in_memory().unwrap();
         let scene_id = store.snapshot().active_scene_id;
         let background = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "screen.png".into(),
             kind: AssetKind::Image,
@@ -175,6 +176,7 @@ mod tests {
             })
             .unwrap();
         let saved = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "snapshot.png".into(),
             kind: AssetKind::Image,

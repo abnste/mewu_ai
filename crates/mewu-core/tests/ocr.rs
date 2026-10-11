@@ -27,6 +27,7 @@ impl Drop for TestDb {
 
 fn background() -> Asset {
     Asset {
+        capture_coordinates: None,
         id: Uuid::new_v4().to_string(),
         name: "synthetic.png".into(),
         kind: AssetKind::Image,
@@ -185,7 +186,7 @@ fn background_completion_preserves_frozen_scene_and_survives_close_restore_and_r
     let version: u32 = sql
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert_eq!(reopened.snapshot().schema_version, 1);
 }
 

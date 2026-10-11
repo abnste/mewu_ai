@@ -4,6 +4,7 @@ use uuid::Uuid;
 fn asset(preview: bool) -> Asset {
     let id = Uuid::new_v4().to_string();
     Asset {
+        capture_coordinates: None,
         path: format!(
             "D:/assets/{id}.{}.png",
             if preview { "board-preview" } else { "board" }
