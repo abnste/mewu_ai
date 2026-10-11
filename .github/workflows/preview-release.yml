@@ -32,7 +32,7 @@ jobs:
           cache: npm
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk xvfb xauth dbus
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Resolve Mac test temporary directory
@@ -63,6 +63,12 @@ jobs:
           set -e
           node scripts/check-glib-backport.mjs
           cargo test -p mewu-desktop --locked --release --test glib_variant_iter -- --nocapture
+      - name: Test Linux credentials on an isolated real session bus
+        if: runner.os == 'Linux' && !cancelled()
+        shell: bash
+        run: |
+          set -e
+          dbus-run-session -- env MEWU_SECRET_SERVICE_TEST_ISOLATED=1 cargo test -p mewu-desktop --locked --features linux-secret-service-tests native_secret_service -- --nocapture --test-threads=1
       - name: Prepare unsigned candidate configuration
         run: node -e "const fs=require('node:fs');fs.mkdirSync('out',{recursive:true});fs.writeFileSync('out/native-build-config.json',JSON.stringify({bundle:{createUpdaterArtifacts:false}}))"
       - name: Build native candidate
