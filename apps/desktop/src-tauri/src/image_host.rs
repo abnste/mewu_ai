@@ -145,8 +145,9 @@ impl Registry {
         if pending.is_some() {
             return Err("图片正在导出".into());
         }
-        // Only atomics and native IsWindow/IsWindowVisible here. The caller
-        // already owns Engine for region identity; never reacquire it here.
+        // Only atomics and native visibility reads here; Mac witnesses check
+        // generation metadata before querying WindowServer without UI dispatch.
+        // The caller already owns Engine for region identity; never reacquire it here.
         admit()?;
         let id = uuid::Uuid::new_v4().to_string();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -455,7 +456,11 @@ pub(crate) fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
             .map(|h| h.0 as usize)
             .map_err(|_| "图片窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::window_witness_macos::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = window;
         Err("此平台暂不支持图片保存".into())
@@ -469,7 +474,13 @@ pub(crate) fn ensure_visible(handle: usize) -> Result<(), String> {
             return Ok(());
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        if crate::window_witness_macos::visible(handle) {
+            return Ok(());
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     let _ = handle;
     Err("图片窗口已关闭或收起".into())
 }
@@ -500,7 +511,8 @@ fn region_allowed(
 ) -> Result<(), String> {
     let host = app.state::<Host>();
     // This helper retains Engine through registry admission. No filesystem or
-    // Tauri HWND getter in this scope; Windows visibility is a direct API read.
+    // Tauri HWND/title getters in this scope; native visibility checks do not
+    // dispatch to the UI thread on Windows or Mac.
     let engine = host.lock()?;
     let (background, region) = engine
         .store
@@ -552,7 +564,7 @@ pub async fn export_region(
     if window.label() != "space" {
         return Err("此窗口不能导出截图".into());
     }
-    let handle = window_handle(&window)?; // Main-thread getter outside shared locks.
+    let handle = window_handle(&window)?; // Tauri HWND/title queries outside shared locks.
     let (work, cancel, origin, background, region, assets_root, managed_root) = {
         let host = app.state::<Host>();
         let engine = host.lock()?;
