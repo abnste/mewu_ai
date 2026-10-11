@@ -46,6 +46,32 @@ extern "C" {
     static kCGWindowOwnerPID: CFStringRef;
     static kCGWindowName: CFStringRef;
     static kCGWindowIsOnscreen: CFStringRef;
+    #[cfg(debug_assertions)]
+    static kCGWindowLayer: CFStringRef;
+}
+
+#[cfg(debug_assertions)]
+fn diagnostics_enabled() -> bool {
+    std::env::var("MEWU_MAC_WINDOW_DIAGNOSTICS").is_ok_and(|value| value == "1")
+}
+
+/// Preserve the original error and policy; diagnostics never supply identity.
+fn diagnostic_stage<T>(
+    _label: &str,
+    _phase: &str,
+    _step: &str,
+    result: Result<T, String>,
+) -> Result<T, String> {
+    result.map_err(|error| {
+        #[cfg(debug_assertions)]
+        if diagnostics_enabled() {
+            eprintln!(
+                "[mewu-window-witness] own_pid={} label={_label:?} phase={_phase} step={_step} error={error:?}",
+                std::process::id()
+            );
+        }
+        error
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -247,10 +273,23 @@ pub(crate) fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
 /// Hidden or not-yet-listed windows are admitted without granting a code token.
 pub(crate) fn capture_witness(window: &WebviewWindow) -> Result<CaptureWitness, String> {
     let label = window.label().to_owned();
-    let generation = registry().lock().map_err(|_| UNAVAILABLE)?.begin(&label)?;
-    let title = window.title().map_err(|_| UNAVAILABLE)?;
+    let generation = {
+        let mut state = diagnostic_stage(
+            &label,
+            "admit",
+            "registry.lock",
+            registry().lock().map_err(|_| UNAVAILABLE.into()),
+        )?;
+        diagnostic_stage(&label, "admit", "registry.begin", state.begin(&label))?
+    };
+    let title = diagnostic_stage(
+        &label,
+        "admit",
+        "tauri.title",
+        window.title().map_err(|_| UNAVAILABLE.into()),
+    )?;
     if !valid_text(&title, MAX_TITLE_BYTES) {
-        return Err(UNAVAILABLE.into());
+        return diagnostic_stage(&label, "admit", "title.validate", Err(UNAVAILABLE.into()));
     }
     let pid = i32::try_from(std::process::id()).map_err(|_| UNAVAILABLE)?;
     let mut witness = CaptureWitness {
@@ -262,15 +301,25 @@ pub(crate) fn capture_witness(window: &WebviewWindow) -> Result<CaptureWitness, 
     };
     // All includes offscreen windows; neither an empty list nor an offscreen
     // entry grants action authority. Only the checked dictionary supplies IDs.
-    let list = WindowList::copy(OPTION_ALL, 0)?;
-    witness.native_id = capture_match(&list, &witness, false)?.map(|entry| entry.id);
+    let list = diagnostic_stage(
+        &witness.label,
+        "admit.all",
+        "list.copy",
+        WindowList::copy(OPTION_ALL, 0),
+    )?;
+    witness.native_id = capture_match(&list, &witness, false, "admit.all")?.map(|entry| entry.id);
     drop(list);
     if !registry()
         .lock()
         .map_err(|_| UNAVAILABLE)?
         .capture_current(&witness)
     {
-        return Err(UNAVAILABLE.into());
+        return diagnostic_stage(
+            &witness.label,
+            "admit",
+            "generation.after",
+            Err(UNAVAILABLE.into()),
+        );
     }
     Ok(witness)
 }
@@ -341,14 +390,24 @@ pub(crate) fn hidden(witness: &CaptureWitness) -> Result<bool, String> {
     }
     // Check even offscreen reuse of the old number before querying the current
     // onscreen set. A missing old ID is safe only if no matching owner is shown.
-    let all = WindowList::copy(OPTION_ALL, 0)?;
-    capture_match(&all, witness, false)?;
+    let all = diagnostic_stage(
+        &witness.label,
+        "hidden.all",
+        "list.copy",
+        WindowList::copy(OPTION_ALL, 0),
+    )?;
+    capture_match(&all, witness, false, "hidden.all")?;
     drop(all);
     // Apple specifies NullWindowID for OnScreenOnly. The last observation is
     // the onscreen set, so a completed hide between these calls can succeed.
     // https://developer.apple.com/documentation/coregraphics/cgwindowlistoption/optiononscreenonly
-    let onscreen = WindowList::copy(OPTION_ON_SCREEN_ONLY, 0)?;
-    let observed_hidden = capture_match(&onscreen, witness, true)?.is_none();
+    let onscreen = diagnostic_stage(
+        &witness.label,
+        "hidden.onscreen",
+        "list.copy",
+        WindowList::copy(OPTION_ON_SCREEN_ONLY, 0),
+    )?;
+    let observed_hidden = capture_match(&onscreen, witness, true, "hidden.onscreen")?.is_none();
     drop(onscreen);
     if !registry()
         .lock()
@@ -364,18 +423,79 @@ fn capture_match(
     list: &WindowList,
     witness: &CaptureWitness,
     onscreen_only: bool,
+    phase: &str,
 ) -> Result<Option<CaptureObservation>, String> {
     let mut scan = CaptureScan::new(witness, onscreen_only);
+    #[cfg(debug_assertions)]
+    let mut diagnostic_rows = 0;
     for index in 0..list.count {
-        let entry = list.entry(index)?;
-        let id = entry.id()?;
-        let pid = entry.pid()?;
+        let entry = diagnostic_stage(&witness.label, phase, "entry.dictionary", list.entry(index))?;
+        let id = diagnostic_stage(&witness.label, phase, "entry.id", entry.id())?;
+        let pid = diagnostic_stage(&witness.label, phase, "entry.pid", entry.pid())?;
         if pid != witness.pid && Some(id) != witness.native_id {
             continue;
         }
-        scan.consider(id, pid, entry.title()?.as_deref(), entry.onscreen()?)?;
+        #[cfg(debug_assertions)]
+        if pid == witness.pid && diagnostic_rows < MAX_OWNERS {
+            diagnostic_own_entry(witness, phase, id, pid, &entry);
+            diagnostic_rows += 1;
+        }
+        let title = diagnostic_stage(&witness.label, phase, "entry.title", entry.title())?;
+        let onscreen = diagnostic_stage(&witness.label, phase, "entry.onscreen", entry.onscreen())?;
+        diagnostic_stage(
+            &witness.label,
+            phase,
+            "match.consider",
+            scan.consider(id, pid, title.as_deref(), onscreen),
+        )?;
     }
     Ok(scan.candidate)
+}
+
+#[cfg(debug_assertions)]
+fn diagnostic_own_entry(
+    witness: &CaptureWitness,
+    phase: &str,
+    id: u32,
+    pid: i32,
+    entry: &Dictionary<'_>,
+) {
+    if !diagnostics_enabled() || u32::try_from(pid).ok() != Some(std::process::id()) {
+        return;
+    }
+    // Only current-process metadata is inspected here. No title content, owner
+    // name, bounds, or foreign/reused owner's metadata is logged.
+    let raw_type = |value: CFTypeRef| {
+        // SAFETY: Values are borrowed from the retained, checked dictionary.
+        (!value.is_null()).then(|| unsafe { CFGetTypeID(value) })
+    };
+    // SAFETY: Public, linked CoreGraphics keys are immortal CFStrings.
+    let (name, onscreen, layer) = unsafe {
+        (
+            entry.value(kCGWindowName),
+            entry.value(kCGWindowIsOnscreen),
+            entry.value(kCGWindowLayer),
+        )
+    };
+    let title = entry.title();
+    let parsed_title = title.as_ref().ok().and_then(|value| value.as_deref());
+    eprintln!(
+        "[mewu-window-witness] own_pid={pid} label={:?} phase={phase} generation={} target_id={:?} id={id} has_title={} title_ok={} title_bytes={:?} matches_target={} title_cf_type={:?} onscreen={:?} onscreen_cf_type={:?} cf_boolean_type={} layer={:?} layer_cf_type={:?}",
+        witness.label,
+        witness.generation,
+        witness.native_id,
+        !name.is_null(),
+        title.is_ok(),
+        parsed_title.map(str::len),
+        parsed_title == Some(witness.title.as_str()),
+        raw_type(name),
+        entry.onscreen().ok(),
+        raw_type(onscreen),
+        // SAFETY: Public CF type ID getter takes no arguments.
+        unsafe { CFBooleanGetTypeID() },
+        integer(layer).ok(),
+        raw_type(layer),
+    );
 }
 
 struct CaptureScan<'a> {
