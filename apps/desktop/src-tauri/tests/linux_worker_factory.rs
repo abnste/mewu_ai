@@ -331,10 +331,15 @@ fn resource_controller(case: &str) {
     }
     let mut owned = result.unwrap();
     let mut stdout = owned.child_mut().stdout.take().unwrap();
+    let (output_tx, output_rx) = std::sync::mpsc::channel();
     owned.track_io(std::thread::spawn(move || {
         let mut output = Vec::new();
-        stdout.by_ref().take(1024).read_to_end(&mut output).unwrap();
-        assert_eq!(output, b"trusted-domain\n");
+        let result = stdout
+            .by_ref()
+            .take(1024)
+            .read_to_end(&mut output)
+            .map(|_| output);
+        let _ = output_tx.send(result);
     }));
     owned
         .child_mut()
@@ -352,6 +357,13 @@ fn resource_controller(case: &str) {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(owned.try_wait().unwrap().unwrap().success());
+    assert_eq!(
+        output_rx
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+            .unwrap(),
+        b"trusted-domain\n"
+    );
     drop(owned);
     assert_eq!(released.load(Ordering::SeqCst), 1);
     eprintln!("factory resource valid-env: real worker received sealed resources after env_clear/tainted overrides; actual PID1 wait + IO join PASS");
