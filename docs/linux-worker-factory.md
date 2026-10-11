@@ -51,3 +51,18 @@ programs, Windows and macOS lifetime implementations retain their boundaries.
 References: [Rust current_exe security](https://doc.rust-lang.org/std/env/fn.current_exe.html),
 [bubblewrap 0.6.1 source](https://github.com/containers/bubblewrap/blob/v0.6.1/bubblewrap.c),
 [Linux dynamic-loader executable origin](https://github.com/bminor/glibc/blob/master/sysdeps/unix/sysv/linux/dl-origin.c).
+
+The failure fixture uses a separate controller process for each case. Faults
+exist only in that compiled fixture executable, not in production bootstrap
+code. The test feature exposes Rust-only preparation/admission methods so a
+real Child/job/permit can be retained without acknowledgement while testing
+actual owner death before admission; no application IPC or command-line flag
+exposes those methods. Default production builds omit these fixture methods.
+
+Prepared cases cover pre-exec cancellation/expiry, marker-synchronized
+cancellation after bootstrap entry but before a receipt, missing receipt,
+incorrect tag or non-pidfd ancillary data, owner early exit, actual owner death
+before acknowledgement, final executable-FD failure after acknowledgement and
+bridge EOF. Unknown-owner cases explicitly assert UNPROVEN DRAIN and a retained
+permit; their conservative failure assertion must not count as successful
+application exit or update. All cases still require native execution.

@@ -182,7 +182,9 @@ struct ProcessJob(Mutex<self::linux_worker::LifetimeOwner>);
 #[cfg(target_os = "linux")]
 impl ProcessJob {
     fn provisional(bridge: self::linux_worker::Bridge) -> Self {
-        Self(Mutex::new(self::linux_worker::LifetimeOwner::provisional(bridge)))
+        Self(Mutex::new(self::linux_worker::LifetimeOwner::provisional(
+            bridge,
+        )))
     }
     fn admit(
         &self,
@@ -308,23 +310,59 @@ impl<P: Send + 'static> ManagedProcess<P> {
         deadline: std::time::Instant,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> io::Result<Self> {
+        let owned = Self::prepare_trusted(command, permit, deadline, cancel)?;
+        owned.admit_trusted(deadline, cancel)?;
+        Ok(owned)
+    }
+    #[cfg(target_os = "linux")]
+    fn prepare_trusted(
+        command: self::linux_worker::TrustedCommand,
+        permit: P,
+        deadline: std::time::Instant,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<Self> {
         self::linux_worker::check(deadline, cancel)?;
         let (child, bridge) = command.launch(deadline, cancel)?;
-        let owned = Self(Some(Parts {
+        Ok(Self(Some(Parts {
             child,
             job: Some(ProcessJob::provisional(bridge)),
             io: Vec::new(),
             _permit: permit,
-        }));
-        owned
-            .0
+        })))
+    }
+    #[cfg(target_os = "linux")]
+    fn admit_trusted(
+        &self,
+        deadline: std::time::Instant,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<()> {
+        self.0
             .as_ref()
             .unwrap()
             .job
             .as_ref()
             .unwrap()
-            .admit(deadline, cancel)?;
-        Ok(owned)
+            .admit(deadline, cancel)
+    }
+    // Rust-only fixture entrypoints. No main/IPC flag exposes these, and the
+    // default production build does not compile the test feature. The fixture
+    // keeps the exact Child/job/P in real Parts while controlling admission.
+    #[cfg(all(target_os = "linux", feature = "linux-worker-tests"))]
+    pub(crate) fn prepare_unacknowledged_for_fixture(
+        command: self::linux_worker::TrustedCommand,
+        permit: P,
+        deadline: std::time::Instant,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<Self> {
+        Self::prepare_trusted(command, permit, deadline, cancel)
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-worker-tests"))]
+    pub(crate) fn admit_for_fixture(
+        &self,
+        deadline: std::time::Instant,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<()> {
+        self.admit_trusted(deadline, cancel)
     }
     pub fn child_mut(&mut self) -> &mut Child {
         // Use only for stdin/stdout/stderr/id. Reaping through this escape hatch
