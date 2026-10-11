@@ -4,6 +4,10 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
+#[cfg(any(target_os = "linux", test))]
+#[path = "capture_linux.rs"]
+mod linux;
+
 /// PNG dimensions are always physical image pixels. Desktop geometry uses the
 /// explicit coordinate_space below; in particular, a macOS origin is in points.
 #[derive(Debug, Clone, Serialize)]
@@ -43,6 +47,7 @@ pub enum CaptureBackend {
     Gdi,
     CoreGraphics,
     ScreenCaptureKit,
+    X11,
 }
 
 pub fn backend_name() -> &'static str {
@@ -58,7 +63,11 @@ pub fn backend_name() -> &'static str {
             "CoreGraphics"
         }
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::backend_name()
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         "Unsupported"
     }
@@ -695,7 +704,24 @@ mod implementation {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+#[cfg(target_os = "linux")]
+mod implementation {
+    use super::*;
+
+    pub(super) fn capture(
+        asset_dir: &Path,
+        selected_id: Option<u32>,
+        options: CaptureOptions,
+    ) -> Result<CapturedScreen, String> {
+        linux::capture(asset_dir, selected_id, options)
+    }
+
+    pub(super) fn list_monitors() -> Result<Vec<MonitorInfo>, String> {
+        linux::list_monitors()
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 mod implementation {
     use super::*;
 

@@ -884,12 +884,12 @@ mod tests {
     #[test]
     fn mp3_receipts_reject_wrong_job_duration_channels_and_duplicate_terminal() {
         // This protocol fixture validates absolute paths without accessing media.
-        #[cfg(target_os = "macos")]
+        #[cfg(not(windows))]
         let (source_path, output_path) = (
             "/mewu-contract-fixtures/a.mp4",
             "/mewu-contract-fixtures/b.mp3",
         );
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
         let (source_path, output_path) = ("D:/owned/a.mp4", "D:/owned/b.mp3");
         let mut source = metadata();
         source.has_audio = true;

@@ -1486,18 +1486,44 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn answer_budget_is_shared_by_model_rounds_and_visible_deltas() {
         let text = "x".repeat(ai::MAX_ANSWER_BYTES / 2 + 1);
-        let fixture = Fixture::new(vec![calls(&["a"], "remember", &text), final_text(&text)]);
+        // Exercise cumulative deltas across two valid turns. A single 1 MiB
+        // SSE line measures parser/runner throughput instead of this budget.
+        let content = text
+            .as_bytes()
+            .chunks(4096)
+            .map(|chunk| {
+                format!(
+                    "data: {}\n\n",
+                    json!({"choices":[{"index":0,"delta":{"content":std::str::from_utf8(chunk).unwrap()}}]})
+                )
+            })
+            .collect::<String>();
+        let fixture = Fixture::new(vec![
+            format!("{content}{}", calls(&["a"], "remember", "")),
+            format!("{content}{}", final_text("")),
+        ]);
         let mut visible = String::new();
+        let mut executed = 0;
         let result = run(
             fixture.url.clone(),
             "",
             body(),
             tools(),
             |delta| visible.push_str(delta),
-            |_| async { Ok(json!({})) },
+            |_| {
+                executed += 1;
+                async { Ok(json!({})) }
+            },
         )
         .await;
-        assert!(result.unwrap_err().contains("回复超过"));
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("回复超过"),
+            "unexpected fixture result: {error}"
+        );
+        assert_eq!(executed, 1);
+        assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+        assert!(visible.len() > text.len());
         assert!(visible.len() <= ai::MAX_ANSWER_BYTES);
     }
 

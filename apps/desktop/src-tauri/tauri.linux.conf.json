@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": [
+      "appimage"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
+    "createUpdaterArtifacts": false,
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "space",
+        "title": "Mewu 1.0",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 720,
+        "minHeight": 480,
+        "visible": false,
+        "decorations": false,
+        "backgroundColor": "#00000000",
+        "dragDropEnabled": false,
+        "resizable": false,
+        "fullscreen": false,
+        "transparent": true
+      }
+    ]
+  }
+}

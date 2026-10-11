@@ -2004,8 +2004,6 @@ dependencies = [
 [[package]]
 name = "glib"
 version = "0.18.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "233daaf6e83ae6a12a52055f568f9d7cf4671dabb78ff9560ab6da230ce00ee5"
 dependencies = [
  "bitflags 2.13.2",
  "futures-channel",
@@ -3096,6 +3094,7 @@ dependencies = [
  "eventsource-stream",
  "futures-util",
  "gif",
+ "glib",
  "image",
  "jsonschema",
  "libc",
@@ -3121,6 +3120,7 @@ dependencies = [
  "rmcp",
  "roxmltree 0.21.1",
  "rusqlite",
+ "rustix 1.1.5",
  "rxing",
  "same-file",
  "security-framework",
@@ -3143,6 +3143,7 @@ dependencies = [
  "windows-capture",
  "windows-future",
  "windows-sys 0.61.2",
+ "x11rb",
  "xcap",
  "zeroize",
 ]
