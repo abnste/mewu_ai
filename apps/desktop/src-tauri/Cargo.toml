@@ -117,3 +117,9 @@ name = "linux_worker_factory"
 path = "tests/linux_worker_factory.rs"
 harness = false
 required-features = ["linux-worker-tests"]
+
+[[test]]
+name = "linux_package_code_probe"
+path = "tests/linux_package_code_probe.rs"
+harness = false
+required-features = ["linux-worker-tests"]
