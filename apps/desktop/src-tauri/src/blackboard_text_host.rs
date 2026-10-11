@@ -114,6 +114,7 @@ mod tests {
         let path = f.0.join(format!("{id}.txt"));
         std::fs::write(&path, "original\r\n中文").unwrap();
         let asset = Asset {
+            capture_coordinates: None,
             id,
             name: "笔记.txt".into(),
             kind: AssetKind::Text,
@@ -127,6 +128,7 @@ mod tests {
         store.add_asset(&parent, asset.clone()).unwrap();
         let bid = uuid::Uuid::new_v4().to_string();
         let background = Asset {
+            capture_coordinates: None,
             id: bid.clone(),
             name: "黑板.png".into(),
             kind: AssetKind::Image,

@@ -112,6 +112,7 @@ struct Source {
 fn setup(store: &mut Store, duration: u64) -> Source {
     let scene_id = store.snapshot().active_scene_id;
     let asset = Asset {
+        capture_coordinates: None,
         id: uid(),
         name: "synthetic.mp4".into(),
         path: "owned-synthetic.mp4".into(),
@@ -268,6 +269,7 @@ fn make_input(
     let mut frames = Vec::new();
     for (ordinal, tick) in ticks.into_iter().enumerate() {
         let asset = Asset {
+            capture_coordinates: None,
             id: uid(),
             name: format!("frame-{ordinal}.jpg"),
             path: format!("synthetic-frame-{ordinal}.jpg"),
@@ -920,7 +922,7 @@ fn db7_normal_upgrade_preserves_raw_payload_and_all_existing_sql_rows_and_schema
     assert_eq!(
         db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        9
+        10
     );
     assert_eq!(migrated.snapshot(), state);
     for (kind, name, sql) in &schema {
@@ -1339,6 +1341,7 @@ fn prepared_video_input_with_stale_document_fence_keeps_real_draft_and_no_new_ru
 fn extra_context(kind: AssetKind) -> Asset {
     let image = kind == AssetKind::Image;
     Asset {
+        capture_coordinates: None,
         id: uid(),
         name: "其它真实上下文".into(),
         kind,
@@ -1534,7 +1537,8 @@ fn blackboard_video_copy_keeps_ai_origin_receipts_after_reopen_and_original_item
     store.apply_video_annotations_with_receipt(&lease,&run.authority,batch(&run,vec![text(range(sent.frames[0].source_playback_ticks,sent.sent_window.end_ticks),&layout)]),vec![layout]).unwrap();
     store.finish_run(&run.run.scene_id,&run.run.run_id,"synthetic complete").unwrap();
     let original=view(&store,&f).annotations.unwrap();assert!(original.objects[0].origin.is_some());
-    let make_board=|preview:bool|{let id=uid();Asset{id:id.clone(),path:format!("D:/assets/{id}.{}.png",if preview{"board-preview"}else{"board"}),name:"黑板.png".into(),kind:AssetKind::Image,width:Some(1280),height:Some(720),origin_x:None,origin_y:None,scale_factor:None}};
+    let make_board=|preview:bool|{let id=uid();Asset{
+    capture_coordinates: None,id:id.clone(),path:format!("D:/assets/{id}.{}.png",if preview{"board-preview"}else{"board"}),name:"黑板.png".into(),kind:AssetKind::Image,width:Some(1280),height:Some(720),origin_x:None,origin_y:None,scale_factor:None}};
     store.create_blackboard_document(&f.target.scene_id,make_board(false)).unwrap();
     let snapshot=store.snapshot();let board=snapshot.scenes.iter().find(|s|s.id==snapshot.active_scene_id).unwrap().clone();
     let copy=board.items.iter().find(|i|i.asset.kind==AssetKind::Video).unwrap();

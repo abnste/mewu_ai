@@ -5,6 +5,10 @@ use std::sync::{
     Arc,
 };
 
+#[cfg(target_os = "macos")]
+#[path = "export_variant_dialog_macos.rs"]
+mod macos;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExportVariant {
     Annotated,
@@ -69,6 +73,22 @@ pub fn pick_variant(
         .map_err(|_| "无法打开导出选项")?
         .join()
         .map_err(|_| "导出选项已中断")?
+}
+
+/// Mac uses the original host window and token. All source checks remain on
+/// the caller's existing blocking worker; AppKit never acquires host locks.
+#[cfg(target_os = "macos")]
+pub fn pick_variant_macos(
+    window: tauri::WebviewWindow,
+    token: usize,
+    media: Media,
+    has_annotations: bool,
+    cancel: Arc<AtomicBool>,
+    allowed: impl Fn() -> Result<(), String> + Send + 'static,
+) -> Result<Outcome, String> {
+    choose_with(has_annotations, &cancel, &allowed, || {
+        macos::show(window, token, media, &cancel, &allowed)
+    })
 }
 
 #[cfg(windows)]

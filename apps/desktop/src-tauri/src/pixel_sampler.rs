@@ -4,8 +4,8 @@
 use crate::{assets, recording, Host};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::{DynamicImage, Rgba, RgbaImage};
-use mewu_core::{Asset, AssetKind, Snapshot};
-use serde::Serialize;
+use mewu_core::{Asset, AssetKind, CaptureCoordinateSpace, CaptureCoordinates, Snapshot};
+use serde::{Deserialize, Serialize};
 use std::{
     io::Cursor,
     path::Path,
@@ -32,10 +32,39 @@ pub struct PointerSample {
     background_id: String,
     x: u32,
     y: u32,
-    global_x: i64,
-    global_y: i64,
+    source: PointerSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    global_x: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    global_y: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    screen_point: Option<ScreenPoint>,
     hex: String,
     data_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PointerSource {
+    width: u32,
+    height: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    capture_coordinates: Option<CaptureCoordinates>,
+}
+impl PointerSource {
+    fn from_asset(asset: &Asset) -> Result<Self, String> {
+        Ok(Self {
+            width: asset.width.ok_or("截图缺少尺寸")?,
+            height: asset.height.ok_or("截图缺少尺寸")?,
+            capture_coordinates: asset.capture_coordinates,
+        })
+    }
+}
+#[derive(Debug, Serialize)]
+struct ScreenPoint {
+    x: f64,
+    y: f64,
+    unit: &'static str,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -232,8 +261,9 @@ fn validate_source(asset: &Asset, width: u32, height: u32, x: u32, y: u32) -> Re
     if asset.kind != AssetKind::Image
         || asset.width != Some(width)
         || asset.height != Some(height)
-        || asset.origin_x.is_none()
-        || asset.origin_y.is_none()
+        || asset
+            .capture_coordinates
+            .is_some_and(|c| !c.valid_for(width, height))
     {
         return Err("截图像素信息不一致".into());
     }
@@ -311,13 +341,36 @@ fn encode_sample(
     if bytes.len() > MAX_SAMPLE_BYTES {
         return Err("取色预览过大".into());
     }
+    let source = PointerSource::from_asset(&key.asset)?;
+    let (global_x, global_y, screen_point) = match source.capture_coordinates {
+        None => (None, None, None),
+        Some(coordinates) => {
+            let (sx, sy) = coordinates
+                .point(source.width, source.height, x, y)
+                .ok_or("截图坐标无效")?;
+            match coordinates.space {
+                CaptureCoordinateSpace::PhysicalPixels => (Some(sx as i64), Some(sy as i64), None),
+                CaptureCoordinateSpace::QuartzPoints => (
+                    None,
+                    None,
+                    Some(ScreenPoint {
+                        x: sx,
+                        y: sy,
+                        unit: "pt",
+                    }),
+                ),
+            }
+        }
+    };
     Ok(PointerSample {
         scene_id: key.scene_id.clone(),
         background_id: key.asset.id.clone(),
         x,
         y,
-        global_x: i64::from(key.asset.origin_x.ok_or("截图缺少坐标")?) + i64::from(x),
-        global_y: i64::from(key.asset.origin_y.ok_or("截图缺少坐标")?) + i64::from(y),
+        source,
+        global_x,
+        global_y,
+        screen_point,
         hex: format!("#{:02X}{:02X}{:02X}", center[0], center[1], center[2]),
         data_url: format!("data:image/png;base64,{}", STANDARD.encode(bytes)),
     })
@@ -348,6 +401,7 @@ pub async fn get_pointer_sample(
     background_id: String,
     x: u32,
     y: u32,
+    source: PointerSource,
 ) -> Result<PointerSample, String> {
     ensure_window(&app, &window)?;
     let sampler = app.state::<PixelSampler>();
@@ -374,6 +428,9 @@ pub async fn get_pointer_sample(
             .store
             .active_background_for_preview(&scene_id, &background_id)
             .map_err(|error| error.to_string())?;
+        if PointerSource::from_asset(&asset)? != source {
+            return Err("截图来源已变化".into());
+        }
         validate_source(
             &asset,
             asset.width.ok_or("截图缺少尺寸")?,
@@ -454,6 +511,13 @@ mod tests {
         SourceKey {
             scene_id: "scene-a".into(),
             asset: Asset {
+                capture_coordinates: Some(CaptureCoordinates {
+                    space: CaptureCoordinateSpace::PhysicalPixels,
+                    origin_x: -1920.,
+                    origin_y: -1080.,
+                    width: f64::from(width),
+                    height: f64::from(height),
+                }),
                 id: "capture-a".into(),
                 name: "capture.png".into(),
                 kind: AssetKind::Image,
@@ -500,7 +564,10 @@ mod tests {
         assert_eq!(*sample.get_pixel(12, 12), Rgba([127, 191, 255, 255]));
         let result = encode_sample(&key(1, 1), 0, 0, sample).unwrap();
         assert_eq!(result.hex, "#7FBFFF");
-        assert_eq!((result.global_x, result.global_y), (-1920, -1080));
+        assert_eq!(
+            (result.global_x, result.global_y),
+            (Some(-1920), Some(-1080))
+        );
         let bytes = STANDARD
             .decode(
                 result
@@ -513,6 +580,7 @@ mod tests {
         assert_eq!(*decoded.get_pixel(12, 12), Rgba([127, 191, 255, 255]));
         let mut large = key(2, 1);
         large.asset.origin_x = Some(i32::MAX);
+        large.asset.capture_coordinates.as_mut().unwrap().origin_x = f64::from(i32::MAX);
         let result = encode_sample(
             &large,
             1,
@@ -520,7 +588,7 @@ mod tests {
             sample_pixels(&RgbaImage::new(2, 1), 1, 0).unwrap(),
         )
         .unwrap();
-        assert_eq!(result.global_x, i64::from(i32::MAX) + 1);
+        assert_eq!(result.global_x, Some(i64::from(i32::MAX) + 1));
     }
 
     #[test]
@@ -545,6 +613,36 @@ mod tests {
         assert_ne!(cache.begin(&changed), generation);
         assert!(cache.entry.is_none());
         assert!(!cache.matches(&key, generation));
+    }
+
+    #[test]
+    fn quartz_mapping_uses_real_independent_axes_and_metadata_changes_invalidate_same_id() {
+        let mut key = key(2560, 1080);
+        key.asset.capture_coordinates = Some(CaptureCoordinates {
+            space: CaptureCoordinateSpace::QuartzPoints,
+            origin_x: -1280.25,
+            origin_y: 20.5,
+            width: 1280.,
+            height: 720.,
+        });
+        let sample = encode_sample(&key, 100, 270, RgbaImage::new(25, 25)).unwrap();
+        assert!(sample.global_x.is_none() && sample.global_y.is_none());
+        let point = sample.screen_point.unwrap();
+        assert_eq!((point.x, point.y, point.unit), (-1230.25, 200.5, "pt"));
+        let mut cache = CacheState::default();
+        let generation = cache.begin(&key);
+        let mut changed = key.clone();
+        changed.asset.capture_coordinates.as_mut().unwrap().origin_x = -1280.5;
+        assert_ne!(cache.begin(&changed), generation);
+        assert!(!cache.matches(&key, generation));
+        assert_ne!(
+            PointerSource::from_asset(&key.asset).unwrap(),
+            PointerSource::from_asset(&changed.asset).unwrap()
+        );
+        let mut mismatched = key.asset.clone();
+        mismatched.capture_coordinates.as_mut().unwrap().space =
+            CaptureCoordinateSpace::PhysicalPixels;
+        assert!(validate_source(&mismatched, 2560, 1080, 100, 270).is_err());
     }
 
     #[test]
@@ -701,6 +799,21 @@ mod tests {
         assert!(validate_source(&key.asset, 3, 2, 3, 0).is_err());
         let mut no_origin = key.asset.clone();
         no_origin.origin_x = None;
-        assert!(validate_source(&no_origin, 3, 2, 0, 0).is_err());
+        assert!(validate_source(&no_origin, 3, 2, 0, 0).is_ok());
+        no_origin.capture_coordinates = None;
+        assert!(validate_source(&no_origin, 3, 2, 0, 0).is_ok());
+        let result = encode_sample(
+            &SourceKey {
+                asset: no_origin,
+                scene_id: "legacy".into(),
+            },
+            0,
+            0,
+            RgbaImage::new(25, 25),
+        )
+        .unwrap();
+        assert!(
+            result.global_x.is_none() && result.global_y.is_none() && result.screen_point.is_none()
+        );
     }
 }

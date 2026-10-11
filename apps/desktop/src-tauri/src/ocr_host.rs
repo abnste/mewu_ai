@@ -245,9 +245,10 @@ pub async fn run_plugin_ocr(
         if token.load(Ordering::Acquire) {
             return Err("已取消文字识别".into());
         }
-        let document = match provider {
-            OcrEngine::Windows => crate::ocr::recognize(cropped, token.clone())?,
-        };
+        if !provider.supported() {
+            return Err("此文字识别插件不支持当前系统，请重新安装对应系统的官方插件".into());
+        }
+        let document = crate::ocr::recognize(cropped, token.clone())?;
         let host = app.state::<Host>();
         // Revalidate installed package bytes as well as the registry revision.
         // Always plugin -> Engine; no global lock is held during recognition.

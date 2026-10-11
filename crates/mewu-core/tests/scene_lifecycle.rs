@@ -38,6 +38,7 @@ fn draft(store: &mut Store, scene_id: &str, text: &str) {
 }
 fn image() -> Asset {
     Asset {
+        capture_coordinates: None,
         id: Uuid::new_v4().to_string(),
         name: "截图.png".into(),
         kind: AssetKind::Image,
@@ -108,7 +109,7 @@ fn public_reasoning_is_optional_exact_persistent_and_never_part_of_request_text(
     assert_eq!(
         db.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        9
+        10
     );
 }
 
@@ -713,6 +714,7 @@ fn historical_images_survive_region_removal_background_replacement_and_restart()
 fn historical_documents_survive_reference_clearing_background_replacement_and_restart() {
     let file = TestDb::new();
     let html = Asset {
+        capture_coordinates: None,
         id: Uuid::new_v4().to_string(),
         name: "历史.html".into(),
         kind: AssetKind::Html,

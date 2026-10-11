@@ -13,6 +13,10 @@ use std::{
     },
 };
 
+#[cfg(target_os = "macos")]
+#[path = "save_dialog_macos.rs"]
+pub(crate) mod macos;
+
 fn default_filename(basename: &str, local_time: chrono::NaiveDateTime) -> String {
     let name = match basename {
         "截图" | "Mewu-贴图" => crate::ui_language::text("截图", "Screenshot"),
@@ -129,6 +133,8 @@ pub enum SaveDialogError {
     ThreadInterrupted,
     Rejected(String),
     Native { stage: &'static str, hresult: i32 },
+    #[cfg(target_os = "macos")]
+    NativeMac { stage: &'static str, response: isize },
     CancelWatcherUnavailable,
 }
 
@@ -143,6 +149,8 @@ impl std::fmt::Display for SaveDialogError {
             Self::ThreadUnavailable | Self::ThreadInterrupted => f.write_str("保存对话框未完成"),
             Self::Rejected(message) => f.write_str(message),
             Self::Native { .. } => f.write_str("保存窗口无法完成操作"),
+            #[cfg(target_os = "macos")]
+            Self::NativeMac { .. } => f.write_str("保存窗口无法完成操作"),
             Self::CancelWatcherUnavailable => f.write_str("无法准备保存取消操作"),
         }
     }

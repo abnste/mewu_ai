@@ -2,7 +2,7 @@
 import { createEffect, createMemo, createSignal, on, onCleanup, Show } from 'solid-js';
 import type { Asset } from '../contracts';
 import { getPointerSample } from '../pointer-bridge';
-import { PointerInspector as SampleGate, PointerSampleCanceledError, pointerImagePoint, pointerInspectorSize, pointerPopupPosition, type PointerImageBox, type PointerSample, type PointerSampleRequest } from '../pointer-inspector';
+import { PointerInspector as SampleGate, PointerSampleCanceledError, pointerImagePoint, pointerInspectorSize, pointerPopupPosition, pointerSourceKey, pointerCoordinatesLabel, type PointerImageBox, type PointerSample, type PointerSampleRequest } from '../pointer-inspector';
 import './pointer-inspector.css';
 
 export interface PointerInspectorHandle { copy: () => boolean }
@@ -25,7 +25,8 @@ export default function PointerInspector(props: Props) {
   const [size, setSize] = createSignal(pointerInspectorSize(false));
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
   const gate = new SampleGate(getPointerSample, value => { if (!disposed) setSample(value); });
-  const coordinates = () => sample() ? `X ${sample()!.globalX} Y ${sample()!.globalY}` : '';
+  const source = () => ({ width: props.background.width ?? 0, height: props.background.height ?? 0, captureCoordinates: props.background.captureCoordinates });
+  const coordinates = () => sample() ? pointerCoordinatesLabel(sample()!) : '';
   const coordinateWidth = () => Math.max(82, coordinates().length * 6.1);
   const dimensionWidth = () => Math.max(82, (props.dimensions?.length ?? 0) * 6.1);
   const location = createMemo(() => pointerPopupPosition(anchor().x, anchor().y, viewport().width, viewport().height, { width: size().width, height: Math.max(size().height, pointerInspectorSize(Boolean(props.dimensions)).height) }));
@@ -41,7 +42,7 @@ export default function PointerInspector(props: Props) {
     const pixel = pointerImagePoint(point.x, point.y, props.imageBox, { width: props.background.width ?? 0, height: props.background.height ?? 0 });
     if (!pixel) { hide(); return; }
     if (!pointer || pointer.x !== point.x || pointer.y !== point.y) { version++; pointer = point; setAnchor(point); }
-    request = { sceneId: props.sceneId, backgroundId: props.background.id, ...pixel };
+    request = { sceneId: props.sceneId, backgroundId: props.background.id, ...pixel, source: source() };
     gate.request(request);
   }
   function copy(): boolean {
@@ -49,7 +50,7 @@ export default function PointerInspector(props: Props) {
     if (!target || !point || !allowed(point)) { hide(); return false; }
     if (copying) return true;
     const token = version; copying = true;
-    const current = () => !disposed && version === token && request?.sceneId === target.sceneId && request?.backgroundId === target.backgroundId && request?.x === target.x && request?.y === target.y && props.sceneId === target.sceneId && props.background.id === target.backgroundId && allowed(point);
+    const current = () => !disposed && version === token && request?.sceneId === target.sceneId && request?.backgroundId === target.backgroundId && request?.x === target.x && request?.y === target.y && pointerSourceKey(source()) === pointerSourceKey(target.source) && props.sceneId === target.sceneId && props.background.id === target.backgroundId && allowed(point);
     void gate.sampleExact(target).then(async value => { if (current()) await navigator.clipboard.writeText(value.hex); }).catch(error => {
       if (current() && !(error instanceof PointerSampleCanceledError)) props.onError(error instanceof Error ? error.message : String(error));
     }).finally(() => { copying = false; });
@@ -59,7 +60,7 @@ export default function PointerInspector(props: Props) {
   const resize = () => { hide(); setViewport({ width: innerWidth, height: innerHeight }); };
   const focus = (event: FocusEvent) => { if (event.target instanceof Element && event.target.closest(blockedElements)) hide(); };
   const visibility = () => { if (document.hidden) hide(); };
-  const identity = createMemo(() => `${props.sceneId}:${props.background.id}:${props.imageBox.x}:${props.imageBox.y}:${props.imageBox.width}:${props.imageBox.height}:${props.disabled}`);
+  const identity = createMemo(() => `${props.sceneId}:${props.background.id}:${pointerSourceKey(source())}:${props.imageBox.x}:${props.imageBox.y}:${props.imageBox.width}:${props.imageBox.height}:${props.disabled}`);
   createEffect(on(identity, hide, { defer: true }));
   const visible = createMemo(() => Boolean(sample()));
   createEffect(on(visible, showing => {

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createEffect, createSignal, on, onCleanup, Show } from 'solid-js';
+import { createEffect, createSignal, on, onCleanup, Show, type Accessor } from 'solid-js';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { LoaderCircle } from 'lucide-solid';
 import { t } from '../i18n';
 import { Row } from './SettingControls';
+import { settingsApi } from '../settings-bridge';
+import type { SettingsInfo } from '../settings-contracts';
 
 interface UpdateStatus {
   phase: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'installing' | 'failed';
@@ -18,29 +20,60 @@ const errors: Record<string, string> = {
   update_check_failed: '检查更新失败', update_download_failed: '下载或签名验证失败',
   update_install_failed: '更新未完成，请重试', update_save_failed: '保存未完成，已取消更新',
   update_not_available: '请先检查更新', update_busy: '正在更新，请稍候', update_too_large: '更新文件过大',
+  update_unsupported: '此平台尚未配置在线更新',
 };
-export function AppUpdateSettings(props: { active: boolean }) {
+type UpdateCommand = 'check_app_update' | 'install_app_update';
+interface UpdateApi {
+  native: () => boolean;
+  info: () => Promise<SettingsInfo>;
+  status: () => Promise<UpdateStatus>;
+  perform: (command: UpdateCommand) => Promise<unknown>;
+}
+const nativeUpdates: UpdateApi = {
+  native: isTauri, info: () => settingsApi.info(),
+  status: () => invoke<UpdateStatus>('app_update_status'),
+  perform: command => invoke(command),
+};
+export function createAppUpdateSettings(active: Accessor<boolean>, api: UpdateApi = nativeUpdates) {
+  const [information, setInformation] = createSignal<SettingsInfo>();
   const [status, setStatus] = createSignal<UpdateStatus>(), [error, setError] = createSignal(''), [pending, setPending] = createSignal(false);
   let disposed = false, reading = false;
+  const mode = () => {
+    const info = information();
+    if (!info) return 'loading';
+    if (info.platform === 'macos' && info.updateSupport === 'manual_only') return 'manual';
+    return info.platform === 'windows' && info.updateSupport === 'signed_installer' ? 'signed' : 'unsupported';
+  };
   const busy = () => pending() || ['checking', 'downloading', 'installing'].includes(status()?.phase ?? '');
   async function refresh() {
-    if (!isTauri() || disposed || reading || !props.active) return;
+    if (!api.native() || disposed || reading || !active()) return;
     reading = true;
-    try { const value = await invoke<UpdateStatus>('app_update_status'); if (!disposed) setStatus(value); }
-    catch { /* A closed settings window does not interrupt host-owned downloads. */ }
+    try {
+      if (!information()) {
+        const value = await api.info();
+        if (disposed) return;
+        setInformation(value); setError('');
+      }
+      if (mode() !== 'signed') return;
+      const value = await api.status(); if (!disposed) setStatus(value);
+    }
+    catch (cause) {
+      if (!disposed && !information()) setError(cause instanceof Error ? cause.message : String(cause));
+      // A closed settings window does not interrupt host-owned downloads.
+    }
     finally { reading = false; }
   }
-  async function perform(command: 'check_app_update' | 'install_app_update') {
-    if (busy() || disposed || !isTauri()) return;
+  async function perform(command: UpdateCommand) {
+    if (mode() !== 'signed' || busy() || disposed || !api.native()) return;
     setPending(true); setError('');
     try {
-      await invoke(command);
+      await api.perform(command);
       await refresh();
     } catch (cause) {
       if (!disposed) setError(errors[String(cause)] ?? '更新未完成，请重试');
     } finally { if (!disposed) setPending(false); }
   }
-  createEffect(on(() => props.active, active => { if (active) void refresh(); }));
+  createEffect(on(active, visible => { if (visible) void refresh(); }));
   const timer = setInterval(() => void refresh(), 1000);
   onCleanup(() => { disposed = true; clearInterval(timer); });
   const label = () => {
@@ -56,10 +89,18 @@ export function AppUpdateSettings(props: { active: boolean }) {
     if (value.phase === 'failed') return t(errors[value.error ?? ''] ?? '检查更新失败');
     return value.availableVersion ?? '';
   };
+  return { status, error, busy, mode, refresh, perform, label };
+}
+export function AppUpdateSettings(props: { active: boolean }) {
+  const { status, error, busy, mode, perform, label } = createAppUpdateSettings(() => props.active);
   return <><Row title={t('软件更新')}>
+    <Show when={mode() === 'manual'}><span class="settings-value">{t('手动更新：请退出 MewuAI，使用新版 Mac 安装包替换应用。')}</span></Show>
+    <Show when={mode() === 'unsupported'}><span class="settings-value">{t(errors.update_unsupported)}</span></Show>
+    <Show when={mode() === 'signed'}>
     <span class="settings-value" aria-live="polite">{label()}</span>
     <Show when={busy()}><LoaderCircle size={14} class="spin" /></Show>
     <button class="quiet-button" disabled={busy() || !isTauri()} onClick={() => void perform('check_app_update')}>{t('检查更新')}</button>
     <Show when={status()?.availableVersion}><button class="secondary-button" disabled={busy()} onClick={() => void perform('install_app_update')}>{t('更新并重启')}</button></Show>
+    </Show>
   </Row><Show when={error()}><p class="settings-error" role="alert">{t(error())}</p></Show></>;
 }

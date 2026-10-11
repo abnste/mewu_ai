@@ -56,6 +56,7 @@ fn setup(db: &Db) -> (Store, Target, VisualSourceFence) {
     let mut store = Store::open(&db.0).unwrap();
     let scene_id = store.snapshot().active_scene_id;
     let background = Asset {
+        capture_coordinates: None,
         id: uuid::Uuid::new_v4().to_string(),
         name: "synthetic source.png".into(),
         kind: mewu_core::AssetKind::Image,

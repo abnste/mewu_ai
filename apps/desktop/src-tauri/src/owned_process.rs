@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Shared real child/Job/IO lifetime, extracted from the speech worker.
+//! Shared real child/Job/process-group/IO lifetime, extracted from the speech worker.
 //! Protocols, deadlines, permits and callbacks remain owned by each feature.
 use std::{
     io,
@@ -150,16 +150,22 @@ impl Drop for ProcessJob {
         }
     }
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+#[path = "owned_process_macos.rs"]
+mod macos;
+#[cfg(target_os = "macos")]
+use macos::ProcessGroup as ProcessJob;
+
+#[cfg(not(any(windows, target_os = "macos")))]
 struct ProcessJob;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 impl ProcessJob {
     fn attach(_: &Child) -> io::Result<Self> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
     }
     fn kill(&self) {}
     fn empty(&self) -> bool {
-        true
+        false
     }
 }
 
@@ -174,7 +180,18 @@ impl<P: Send + 'static> Parts<P> {
         if let Some(job) = &self.job {
             job.kill();
         }
+        // macOS retains the unreaped group leader as the PGID ownership anchor.
+        // The group adapter handles both leader and descendants; do not signal
+        // an already-reaped/reused numeric PID through Child here.
+        #[cfg(not(target_os = "macos"))]
         let _ = self.child.kill();
+        #[cfg(target_os = "macos")]
+        {
+            self.child.stdin.take();
+            if self.job.is_none() {
+                let _ = self.child.kill();
+            }
+        }
     }
     fn tree_empty(&self) -> bool {
         self.job.as_ref().is_none_or(ProcessJob::empty)
@@ -193,14 +210,25 @@ impl<P: Send + 'static> Parts<P> {
         self.io.is_empty()
     }
     fn fully_exited(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(Some(_))) && self.tree_empty() && self.io_finished()
+        matches!(self.try_wait(), Ok(Some(_))) && self.tree_empty() && self.io_finished()
+    }
+    fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        #[cfg(target_os = "macos")]
+        if let Some(job) = &self.job {
+            return job.try_wait(&mut self.child);
+        }
+        self.child.try_wait()
     }
 }
 pub struct ManagedProcess<P: Send + 'static>(Option<Parts<P>>);
 impl<P: Send + 'static> ManagedProcess<P> {
     /// The child must wait for stdin config before performing domain work. This
-    /// call returns only after Job attachment; callers send no input before it.
+    /// call returns only after supervision is established; callers send no input
+    /// before it. macOS supports trusted same-executable helpers that retain
+    /// their inherited process group, not arbitrary/daemonizing plugin commands.
     pub fn spawn(command: &mut Command, permit: P) -> io::Result<Self> {
+        #[cfg(target_os = "macos")]
+        macos::prepare(command)?;
         let child = command.spawn()?;
         let mut owned = Self(Some(Parts {
             child,
@@ -209,17 +237,30 @@ impl<P: Send + 'static> ManagedProcess<P> {
             _permit: permit,
         }));
         let process = owned.0.as_mut().unwrap();
-        process.job = Some(ProcessJob::attach(&process.child)?);
+        #[cfg(not(target_os = "macos"))]
+        {
+            process.job = Some(ProcessJob::attach(&process.child)?);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // Install the provisional owner before querying the kernel. On a
+            // query/verification failure Drop must still retain the leader and
+            // permit while conservatively attempting cleanup, without stdin.
+            process.job = Some(ProcessJob::new(&process.child)?);
+            process.job.as_ref().unwrap().verify()?;
+        }
         Ok(owned)
     }
     pub fn child_mut(&mut self) -> &mut Child {
+        // Use only for stdin/stdout/stderr/id. Reaping through this escape hatch
+        // bypasses macOS's PGID anchor; call ManagedProcess::try_wait instead.
         &mut self.0.as_mut().unwrap().child
     }
     pub fn track_io(&mut self, thread: JoinHandle<()>) {
         self.0.as_mut().unwrap().io.push(thread);
     }
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child_mut().try_wait()
+        self.0.as_mut().unwrap().try_wait()
     }
     pub fn kill(&mut self) {
         self.0.as_mut().unwrap().kill();
@@ -312,8 +353,9 @@ impl<P: Send + 'static> Drop for ManagedProcess<P> {
             })
             .is_err()
         {
-            // Retain permit/Job/IO ownership on OS thread exhaustion. The host
-            // process closing the Job remains the final cleanup boundary.
+            // Retain permit/Job/IO ownership on OS thread exhaustion. Windows
+            // closing the Job is the final cleanup boundary. macOS process
+            // groups have no kill-on-host-exit guarantee.
             std::mem::forget(held);
         }
     }

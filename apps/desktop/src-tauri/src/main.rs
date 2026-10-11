@@ -8,6 +8,10 @@ mod asset_host;
 mod asset_locations;
 mod assets;
 mod capture;
+#[cfg(target_os = "macos")]
+mod capture_macos;
+#[cfg(target_os = "macos")]
+mod capture_permission_macos;
 mod blackboard;
 mod capture_cursor;
 mod capture_delay_work;
@@ -19,12 +23,18 @@ mod clipboard_video_storage;
 mod code_decode;
 mod code_host;
 mod code_open;
+#[cfg(target_os = "macos")]
+mod code_open_macos;
 mod code_worker;
+#[cfg(target_os = "macos")]
+mod window_witness_macos;
 mod screen_entities;
 mod connection_host;
 mod content_server;
 mod credentials;
 mod drawing_render;
+#[cfg(target_os = "macos")]
+mod font_macos;
 mod raster_edit_algorithm;
 mod raster_edit_host;
 mod export_variant_dialog;
@@ -908,7 +918,7 @@ struct RuntimeInfo {
 fn runtime_info(app: AppHandle, host: tauri::State<'_, Host>) -> Result<RuntimeInfo, String> {
     Ok(RuntimeInfo {
         hotkey: capture_shortcut_host::active_display(&app),
-        capture_backend: if cfg!(windows) { "GDI" } else { "CoreGraphics" },
+        capture_backend: capture::backend_name(),
         content_origin: host.content_origin.clone(),
     })
 }
@@ -968,6 +978,46 @@ async fn hide_for_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
         })
         .map_err(|_| "无法准备截图")?;
     receive.await.map_err(|_| "截图准备中断")?
+}
+
+#[cfg(target_os = "macos")]
+fn mac_capture_hidden(
+    witnesses: &[window_witness_macos::CaptureWitness],
+) -> Result<bool, String> {
+    for witness in witnesses {
+        if !window_witness_macos::hidden(witness)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn wait_mac_capture_hidden(
+    witnesses: &[window_witness_macos::CaptureWitness],
+    work: &capture_delay_work::Work,
+    app: &AppHandle,
+) -> Result<(), String> {
+    // WindowServer can lag the acknowledged main-loop orderOut. Poll its real
+    // state for a bounded interval. A short pause only limits polling traffic;
+    // each observation still proves hiding through Quartz and its generation.
+    // This runs only on the blocking worker.
+    let until = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    loop {
+        work.check()?;
+        app.state::<Host>().exit.ensure_new_operation()?;
+        let hidden = mac_capture_hidden(witnesses)?;
+        work.check()?;
+        app.state::<Host>().exit.ensure_new_operation()?;
+        if hidden {
+            return Ok(());
+        }
+        let remaining = until.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("截图窗口尚未隐藏，请重新截图".into());
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(5)));
+    }
 }
 
 /// Complete the native layout before publishing the new screenshot or showing it.
@@ -1086,6 +1136,16 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         return get_snapshot(app.clone(), host);
     };
     let _invoke = work.cancel_on_drop();
+    #[cfg(target_os = "macos")]
+    {
+        // Request only for an explicit capture, before hiding windows and
+        // without holding Engine/plugin locks across the OS permission UI.
+        tauri::async_runtime::spawn_blocking(capture_permission_macos::request)
+            .await
+            .map_err(|_| "无法检查屏幕录制权限")??;
+        work.check()?;
+        host.exit.ensure_new_operation()?;
+    }
     speech_host::cancel_owner(&app, "space");
     capture_shortcut_host::invalidate_all(&app);
     code_host::cancel_owner(&app, "space");
@@ -1096,6 +1156,14 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     pin_host::cancel_pending(&app, "space");
     recording::ensure_idle(&app)?;
     let window = app.get_webview_window("space").ok_or("窗口不存在")?;
+    #[cfg(target_os = "macos")]
+    let capture_witnesses = {
+        let mut witnesses = vec![window_witness_macos::capture_witness(&window)?];
+        if let Some(widget) = app.get_webview_window(frozen::LABEL) {
+            witnesses.push(window_witness_macos::capture_witness(&widget)?);
+        }
+        witnesses
+    };
     pin_window::capture_begin(&app);
     {
         let engine = host.lock()?;
@@ -1122,9 +1190,53 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     }
     let root = host.assets.clone();
     let capture_app = app.clone();
+    #[cfg(target_os = "macos")]
+    let work = Arc::new(work);
+    #[cfg(target_os = "macos")]
+    let capture_check: capture::CaptureCheck = {
+        let capture_work = work.clone();
+        let check_app = app.clone();
+        let witnesses = capture_witnesses.clone();
+        Arc::new(move || {
+            capture_work.check()?;
+            check_app.state::<Host>().exit.ensure_new_operation()?;
+            if !mac_capture_hidden(&witnesses)? {
+                return Err("截图窗口在捕获期间重新显示，请重新截图".into());
+            }
+            Ok(())
+        })
+    };
+    #[cfg(target_os = "macos")]
+    let native_capture_check = capture_check.clone();
+    #[cfg(target_os = "macos")]
+    let adoption_witnesses = capture_witnesses.clone();
     let (work, _transition, captured) = tauri::async_runtime::spawn_blocking(move || {
         let captured = work.check().and_then(|_| {
             capture_app.state::<Host>().exit.ensure_new_operation()?;
+            #[cfg(target_os = "macos")]
+            {
+                wait_mac_capture_hidden(&capture_witnesses, &work, &capture_app)?;
+                let mut exclusions = Vec::with_capacity(capture_witnesses.len());
+                for witness in &capture_witnesses {
+                    work.check()?;
+                    if !window_witness_macos::hidden(witness)? {
+                        return Err("截图窗口尚未隐藏，请重新截图".into());
+                    }
+                    if let Some(exclusion) = window_witness_macos::exclusion(witness)? {
+                        exclusions.push(exclusion);
+                    }
+                }
+                work.check()?;
+                return capture::capture_desktop_with_exclusions(
+                    &root,
+                    capture::CaptureOptions {
+                        include_cursor: preferences.include_cursor,
+                    },
+                    &exclusions,
+                    native_capture_check,
+                );
+            }
+            #[cfg(not(target_os = "macos"))]
             capture::capture_desktop_with_options(
                 &root,
                 capture::CaptureOptions {
@@ -1140,9 +1252,12 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         let mut captured = captured?;
         work.check()?;
         host.exit.ensure_new_operation()?;
+        #[cfg(target_os = "macos")]
+        capture_check()?;
         expand_capture_space(&window, &captured).await?;
         let window_map = captured.window_map.take();
         let asset = Asset {
+            capture_coordinates: Some(captured.capture_coordinates),
             id: captured.asset_id,
             name: "截图.png".into(),
             kind: AssetKind::Image,
@@ -1156,6 +1271,10 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         let mut engine = host.lock()?;
         work.check()?;
         host.exit.ensure_new_operation()?;
+        #[cfg(target_os = "macos")]
+        for witness in &adoption_witnesses {
+            window_witness_macos::current(witness)?;
+        }
         let current = engine.store.snapshot();
         let active = current
             .scenes
@@ -1960,16 +2079,24 @@ fn start_capture(app: &AppHandle) {
 
 static EARLY_QUIT: AtomicBool = AtomicBool::new(false);
 
+// macOS development builds embed one Info.plist symbol per macro expansion.
+// Share the expansion while constructing a fresh context for each CLI path.
+#[cfg(target_os = "macos")]
+fn macos_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--verify-update") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {
             std::process::exit(2);
         }
-        let result = app_update::verify_cli(
-            tauri::generate_context!(),
-            &std::path::PathBuf::from(&args[2]),
-        );
+        #[cfg(target_os = "macos")]
+        let context = macos_context();
+        #[cfg(not(target_os = "macos"))]
+        let context = tauri::generate_context!();
+        let result = app_update::verify_cli(context, &std::path::PathBuf::from(&args[2]));
         std::process::exit(if result.is_ok() { 0 } else { 2 });
     }
     if std::env::args().nth(1).as_deref() == Some("--storage-info") {
@@ -1977,6 +2104,9 @@ fn main() {
         if args.len() != 3 {
             std::process::exit(2);
         }
+        #[cfg(target_os = "macos")]
+        let context = macos_context();
+        #[cfg(not(target_os = "macos"))]
         let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
         let result = storage_cli::paths(&context.config().identifier)
             .and_then(|paths| storage_cli::write_info(&paths, &std::path::PathBuf::from(&args[2])));
@@ -2023,6 +2153,9 @@ fn main() {
         .as_ref()
         .map(|server| server.origin())
         .unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    let mut context = macos_context();
+    #[cfg(not(target_os = "macos"))]
     let mut context = tauri::generate_context!();
     if quit_only {
         context.config_mut().app.windows.clear();
@@ -2231,6 +2364,15 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window_witness_macos::revoke_owner(window.label());
+                if matches!(window.label(), "space" | frozen::LABEL) {
+                    if let Some(host) = window.app_handle().try_state::<Host>() {
+                        host.capture_jobs.cancel();
+                    }
+                }
+            }
             if window.label() == "settings" && matches!(event, tauri::WindowEvent::Destroyed) {
                 storage_host::invalidate_owner(window.app_handle());
             }
@@ -2439,6 +2581,7 @@ fn main() {
             frozen::build(app)?;
             app.manage(recording::RecordingState::default());
             app.manage(app_update::UpdateState::default());
+            #[cfg(target_os = "windows")]
             app_update::start_background_checks(app.handle().clone());
             app.manage(scroll_host::ScrollState::default());
             app.manage(pixel_sampler::PixelSampler::default());

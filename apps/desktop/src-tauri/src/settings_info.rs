@@ -32,6 +32,8 @@ pub enum ReleaseChannel {
 #[serde(rename_all = "snake_case")]
 pub enum UpdateSupport {
     SignedInstaller,
+    #[cfg(target_os = "macos")]
+    ManualOnly,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -180,7 +182,10 @@ impl SettingsResources {
             commit: build.commit.clone(),
             channel: build.channel,
             platform: std::env::consts::OS.into(),
+            #[cfg(not(target_os = "macos"))]
             update_support: UpdateSupport::SignedInstaller,
+            #[cfg(target_os = "macos")]
+            update_support: UpdateSupport::ManualOnly,
             data_directory: self
                 .0
                 .directory
@@ -367,7 +372,7 @@ mod tests {
         assert!(validate_document(&"a".repeat(MAX_DOCUMENT_BYTES + 1)).is_err());
     }
     #[test]
-    fn info_has_real_fixed_root_signed_update_and_no_inferred_commit() {
+    fn info_has_real_fixed_root_platform_update_support_and_no_inferred_commit() {
         let directory = Directory::new();
         let resources = SettingsResources::open(&directory.0, build()).unwrap();
         let info = resources.info().unwrap();
@@ -376,10 +381,17 @@ mod tests {
             std::fs::canonicalize(&directory.0).unwrap()
         );
         assert_eq!(info.version, "1.0.0-alpha.1");
+        assert_eq!(info.platform, std::env::consts::OS);
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(info.update_support, UpdateSupport::SignedInstaller);
+        #[cfg(target_os = "macos")]
+        assert_eq!(info.update_support, UpdateSupport::ManualOnly);
         assert!(info.commit.is_none());
         let wire = serde_json::to_value(info).unwrap();
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(wire["updateSupport"], "signed_installer");
+        #[cfg(target_os = "macos")]
+        assert_eq!(wire["updateSupport"], "manual_only");
         assert!(wire.get("commit").is_none());
         assert!(wire.get("latestVersion").is_none());
         assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);

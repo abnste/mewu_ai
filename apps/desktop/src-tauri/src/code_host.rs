@@ -157,18 +157,18 @@ impl Grant {
                         id,
                         engine: CodeEngine::Rxing,
                         ..
-                    }
-                    | PluginContribution::Ocr {
-                        id,
-                        engine: crate::plugins::OcrEngine::Windows,
-                        ..
                     } => id == &self.contribution_id,
+                    PluginContribution::Ocr {
+                        id,
+                        engine,
+                        ..
+                    } => id == &self.contribution_id && engine.supported(),
                     _ => false,
                 })
         });
         primary && self.text_grant.as_ref().is_none_or(|grant| snapshot.plugins.iter().any(|p| p.manifest.id == grant.plugin_id && p.revision == grant.revision
             && p.state == PluginState::Enabled && p.error.is_none() && p.manifest.contributions.iter().any(|c| matches!(c,
-                PluginContribution::Ocr {id,engine:crate::plugins::OcrEngine::Windows,..} if id == &grant.contribution_id))))
+                PluginContribution::Ocr {id,engine,..} if id == &grant.contribution_id && engine.supported()))))
     }
     fn authorize(
         &self,
@@ -479,7 +479,11 @@ fn visible(handle: usize) -> bool {
         use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
         handle != 0 && IsWindow(handle as _) != 0 && IsWindowVisible(handle as _) != 0
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::window_witness_macos::visible(handle)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = handle;
         false
@@ -493,7 +497,11 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
             .map(|h| h.0 as usize)
             .map_err(|_| "空间窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::window_witness_macos::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = window;
         Err("此平台暂不支持本机扫码".into())
@@ -1162,6 +1170,7 @@ mod tests {
     fn asset(width: u32, height: u32) -> Asset {
         let id = id();
         Asset {
+            capture_coordinates: None,
             path: format!("{id}.png"),
             id,
             name: "synthetic.png".into(),

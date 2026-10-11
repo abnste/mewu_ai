@@ -59,6 +59,7 @@ fn uuid() -> String {
 fn image(width: u32, height: u32) -> Asset {
     let id = uuid();
     Asset {
+        capture_coordinates: None,
         path: format!("{id}.png"),
         id,
         name: "synthetic.png".into(),

@@ -69,6 +69,7 @@ fn png_asset(root: &Path, name: &str, pixel: [u8; 4]) -> Asset {
         .save(&path)
         .unwrap();
     Asset {
+        capture_coordinates: None,
         id,
         name: name.into(),
         kind: AssetKind::Image,

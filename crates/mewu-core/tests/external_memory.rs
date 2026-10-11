@@ -528,6 +528,7 @@ fn workflow_does_not_capture_provider_authority_or_automatically_retain() {
         .set_background(
             &scene,
             Asset {
+                capture_coordinates: None,
                 id: uid(),
                 kind: AssetKind::Image,
                 name: "synthetic.png".into(),
@@ -1421,7 +1422,7 @@ fn db3_migration_preserves_local_memory_history_and_defaults_without_reimporting
     assert_eq!(
         db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        9
+        10
     );
     assert_eq!(counts(&db), (0, 0, 0, 0));
     drop(store);
@@ -1614,7 +1615,7 @@ fn corrupt_db4_action_kind_and_source_reference_are_rejected_without_overwrite()
         assert_eq!(
             db.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
                 .unwrap(),
-            9
+            10
         );
         // Repair only our injected corruption; the valid database remains readable.
         db.execute(

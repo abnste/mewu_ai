@@ -27,6 +27,7 @@ impl Drop for TestDb {
 fn image(width: u32, height: u32) -> Asset {
     let id = Uuid::new_v4().to_string();
     Asset {
+        capture_coordinates: None,
         name: "synthetic.png".into(),
         path: format!("{id}.png"),
         id,
@@ -312,7 +313,7 @@ fn completion_preserves_frozen_conversation_and_restart_without_switching_scene(
     let version: u32 = sql
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert_eq!(reopened.snapshot().schema_version, 1);
 }
 

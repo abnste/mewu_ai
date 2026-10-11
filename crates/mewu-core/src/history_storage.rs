@@ -300,6 +300,7 @@ mod tests {
         let id = draft(&mut store, "board parent");
         let asset_id = Uuid::new_v4().to_string();
         let asset = Asset {
+            capture_coordinates: None,
             id: asset_id.clone(),
             name: "黑板.png".into(),
             kind: AssetKind::Image,

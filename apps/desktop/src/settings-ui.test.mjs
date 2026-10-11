@@ -30,10 +30,56 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   assert.equal(contracts.validCapturePreferences(state()), true);
   for (const patch of [{ revision: -1 }, { revision: 1.5 }, { version: 2 }, { captureDelaySeconds: 1 }, { captureDelaySeconds: '3' }, { includeCursor: 'false' }, { defaultImageFormat: 'gif' }]) assert.equal(contracts.validCapturePreferences(state(patch)), false);
   assert.equal(contracts.validSettingsInfo(info()), true);
+  for (const platform of ['darwin', 'linux', 'ios', '', null, 1]) assert.equal(contracts.validSettingsInfo(info({ platform })), false);
   assert.equal(contracts.validSettingsInfo(info({ updateSupport: 'up_to_date' })), false);
   assert.equal(contracts.updateSupportLabel('unconfigured'), '尚未配置在线更新');
   assert.equal(contracts.validLicenseDocument({ title: '许可', text: '<script>literal</script>' }), true);
   checks.push('Native DTOs reject malformed values; unavailable updater is never called up-to-date; license is literal text');
+}
+{
+  const receipt = info({ platform: 'macos', updateSupport: 'manual_only', dataDirectory: '/Users/synthetic/.mewu' }), calls = [];
+  const client = settingsClient({ listen: async () => () => {}, invoke: async name => { calls.push(name); return receipt; } });
+  assert.equal(contracts.validSettingsInfo(receipt), true);
+  assert.deepEqual(normalize(await client.info()), receipt);
+  assert.deepEqual(calls, ['settings_info']);
+  assert.equal(contracts.updateSupportLabel('manual_only'), '手动更新');
+  for (const platform of ['darwin', 'linux']) {
+    const invalid = settingsClient({ listen: async () => () => {}, invoke: async () => info({ platform }) });
+    await assert.rejects(invalid.info(), /软件信息无效/);
+  }
+  checks.push('Actual settings client accepts the macos/manual_only receipt and preserves its absolute path; unknown platforms remain invalid');
+}
+{
+  const reactive = await import(new URL('../../../node_modules/solid-js/dist/solid.js', import.meta.url));
+  const source = await raw('./components/AppUpdateSettings.tsx'), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
+  const component = ast.program.body.find(node => node.type === 'ExportNamedDeclaration' && node.declaration?.id?.name === 'AppUpdateSettings');
+  assert.ok(component);
+  const mod = new SourceTextModule(ts(source.slice(0, component.start)));
+  await mod.link(name => name === 'solid-js' ? synthetic(reactive) : name === '@tauri-apps/api/core' ? synthetic({ isTauri: () => true, invoke: async () => { throw Error('Unexpected native IPC'); } }) : name.endsWith('/settings-bridge') ? synthetic({ settingsApi: {} }) : name.endsWith('/i18n') ? synthetic({ t: value => value }) : name.endsWith('/SettingControls') ? synthetic({ Row: () => {} }) : synthetic({ LoaderCircle: () => {} }));
+  await mod.evaluate();
+  const status = extra => ({ phase: 'idle', currentVersion: '1.0.0-test', availableVersion: null, downloadedBytes: 0, totalBytes: null, error: null, ...extra });
+  for (const receipt of [info({ platform: 'macos', updateSupport: 'manual_only', dataDirectory: '/Users/synthetic/.mewu' }), info({ platform: 'macos', updateSupport: 'signed_installer' }), info({ platform: 'linux', updateSupport: 'signed_installer' })]) {
+    const calls = [], client = settingsClient({ listen: async () => () => {}, invoke: async name => { calls.push(name); return receipt; } });
+    let data, dispose, activate;
+    reactive.createRoot(cleanup => { dispose = cleanup; const [active, setActive] = reactive.createSignal(false); activate = setActive; data = mod.namespace.createAppUpdateSettings(active, { native: () => true, info: client.info, status: async () => { calls.push('app_update_status'); return status(); }, perform: async name => calls.push(name) }); });
+    await data.perform('check_app_update'); assert.deepEqual(calls, []);
+    activate(true); await tick();
+    assert.equal(data.mode(), receipt.platform === 'linux' ? 'loading' : receipt.updateSupport === 'manual_only' ? 'manual' : 'unsupported');
+    if (receipt.platform === 'linux') assert.match(data.error(), /软件信息无效/);
+    await data.perform('check_app_update'); await data.perform('install_app_update'); await data.refresh();
+    assert.ok(calls.every(name => name === 'settings_info')); dispose();
+  }
+  const calls = [], client = settingsClient({ listen: async () => () => {}, invoke: async name => { calls.push(name); return info({ updateSupport: 'signed_installer' }); } });
+  let data, dispose, next = status();
+  reactive.createRoot(cleanup => { dispose = cleanup; data = mod.namespace.createAppUpdateSettings(() => true, { native: () => true, info: client.info, status: async () => { calls.push('app_update_status'); return next; }, perform: async name => { calls.push(name); next = name === 'check_app_update' ? status({ phase: 'available', availableVersion: '1.0.1' }) : status({ phase: 'installing' }); } }); });
+  await tick(); assert.equal(data.mode(), 'signed'); await data.perform('check_app_update'); assert.equal(data.status().availableVersion, '1.0.1');
+  await data.perform('install_app_update'); assert.equal(data.status().phase, 'installing');
+  assert.deepEqual(calls, ['settings_info', 'app_update_status', 'check_app_update', 'app_update_status', 'install_app_update', 'app_update_status']); dispose();
+  const pending = deferred(); let late, stop, reads = 0;
+  reactive.createRoot(cleanup => { stop = cleanup; late = mod.namespace.createAppUpdateSettings(() => true, { native: () => true, info: () => pending.promise, status: async () => { reads++; return status(); }, perform: async () => { throw Error('Unexpected install'); } }); });
+  await tick(); stop(); pending.resolve(info({ updateSupport: 'signed_installer' })); await tick();
+  assert.equal(reads, 0); assert.equal(late.mode(), 'loading');
+  checks.push('Actual update effects never send Windows status/check/install commands for Mac or unknown platforms, retain Windows signed actions, and fence a platform receipt after disposal');
 }
 {
   const calls = [], task = deferred(); let receive, stopped = 0;

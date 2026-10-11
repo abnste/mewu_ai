@@ -10,9 +10,9 @@ async function fixture(native) {
   const module = new SourceTextModule(source); await module.link(specifier => { assert.equal(specifier, '@tauri-apps/api/core'); return core; }); await module.evaluate();
   return { api: module.namespace, calls };
 }
-const checks = [], native = await fixture(true), request = { sceneId: 'scene', backgroundId: 'capture', x: 12, y: 34, path: 'ignored-private-path', sourceId: 'ignored-override' };
+const checks = [], native = await fixture(true), sourceIdentity = { width: 100, height: 100 }, request = { sceneId: 'scene', backgroundId: 'capture', x: 12, y: 34, source: sourceIdentity, path: 'ignored-private-path', sourceId: 'ignored-override' };
 assert.equal(await native.api.getPointerSample(request), 'native-response');
-assert.deepEqual(JSON.parse(JSON.stringify(native.calls)), [{ command: 'get_pointer_sample', args: { sceneId: 'scene', backgroundId: 'capture', x: 12, y: 34 } }]);
+assert.deepEqual(JSON.parse(JSON.stringify(native.calls)), [{ command: 'get_pointer_sample', args: { sceneId: 'scene', backgroundId: 'capture', x: 12, y: 34, source: sourceIdentity } }]);
 checks.push('Native bridge submits only original-background identity and integer source point; no paths or override data cross IPC');
 const preview = await fixture(false); assert.equal(preview.api.pointerNative, false); await assert.rejects(preview.api.getPointerSample(request), /桌面版/); assert.equal(preview.calls.length, 0);
 checks.push('Ordinary browser preview explicitly rejects sampling and exposes a disabled availability flag, without fake colors');

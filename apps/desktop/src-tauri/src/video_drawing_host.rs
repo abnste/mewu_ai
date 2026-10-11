@@ -576,6 +576,7 @@ mod tests {
             let mut store = Store::open(&db.0).unwrap();
             let scene = store.snapshot().active_scene_id;
             let asset = Asset {
+                capture_coordinates: None,
                 id: uid(),
                 name: "synthetic.mp4".into(),
                 kind: AssetKind::Video,

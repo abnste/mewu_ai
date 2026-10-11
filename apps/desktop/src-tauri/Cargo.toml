@@ -68,6 +68,16 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Glob
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
+libc = "0.2"
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSWorkspace", "NSSavePanel", "NSPanel", "NSWindow", "NSResponder", "NSApplication", "block2", "NSView", "NSControl", "NSButton", "NSPopUpButton", "NSAlert", "objc2-uniform-type-identifiers"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSIndexSet", "NSObject", "NSRange", "NSString", "NSObjCRuntime", "NSURL", "NSProcessInfo", "NSGeometry"] }
+objc2-uniform-type-identifiers = { version = "=0.3.2", default-features = false, features = ["std", "UTType"] }
+objc2-vision = { version = "=0.3.2", default-features = false, features = ["std", "VNRecognizeTextRequest", "VNObservation", "VNRequest", "VNRequestHandler", "VNTypes", "objc2-core-foundation", "block2"] }
+objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = ["std", "SCShareableContent", "SCStream", "SCScreenshotManager", "block2", "objc2-core-graphics", "objc2-core-foundation", "libc"] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGDirectDisplay", "CGImage", "CGDataProvider"] }
+block2 = "=0.6.2"
+core-foundation = "=0.10.1"
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "=0.62.2", features = ["Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_Variant"] }

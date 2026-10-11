@@ -1474,6 +1474,7 @@ fn stage(
     drop(file);
     let source = Source {
         asset: Asset {
+            capture_coordinates: None,
             id,
             name: "贴图.png".into(),
             kind: AssetKind::Image,
@@ -1543,6 +1544,7 @@ mod tests {
     }
     fn asset() -> Asset {
         Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "synthetic.png".into(),
             kind: AssetKind::Image,

@@ -1,8 +1,40 @@
 // SPDX-License-Identifier: MPL-2.0
 // Pure source-coordinate geometry and a bounded latest-position request gate.
 export interface PointerImageBox { x: number; y: number; width: number; height: number }
-export interface PointerSampleRequest { sceneId: string; backgroundId: string; x: number; y: number }
-export interface PointerSample extends PointerSampleRequest { globalX: number; globalY: number; hex: string; dataUrl: string }
+import type { CaptureCoordinates } from './contracts';
+export interface PointerSource { width: number; height: number; captureCoordinates?: CaptureCoordinates }
+export interface PointerSampleRequest { sceneId: string; backgroundId: string; x: number; y: number; source: PointerSource }
+export interface PointerSample extends PointerSampleRequest { globalX?: number; globalY?: number; screenPoint?: { x: number; y: number; unit: 'pt' }; hex: string; dataUrl: string }
+export const pointerSourceKey = (source: PointerSource) => JSON.stringify([source.width, source.height, source.captureCoordinates?.space,
+  source.captureCoordinates?.originX, source.captureCoordinates?.originY, source.captureCoordinates?.width, source.captureCoordinates?.height]);
+export function pointerCoordinatesLabel(sample: PointerSample): string {
+  if (sample.screenPoint) return `X ${Number(sample.screenPoint.x.toFixed(2))} Y ${Number(sample.screenPoint.y.toFixed(2))} pt`;
+  if (sample.globalX !== undefined && sample.globalY !== undefined) return `X ${sample.globalX} Y ${sample.globalY}`;
+  return `X ${sample.x} Y ${sample.y} px`;
+}
+
+function validSource(source: PointerSource): boolean {
+  if (!source || !Number.isSafeInteger(source.width) || !Number.isSafeInteger(source.height)
+    || source.width <= 0 || source.height <= 0 || source.width > 16384 || source.height > 16384 || source.width * source.height > 33554432) return false;
+  const c = source.captureCoordinates;
+  if (c === undefined) return true;
+  return !!c && (c.space === 'quartzPoints' || c.space === 'physicalPixels')
+    && [c.originX, c.originY, c.width, c.height].every(Number.isFinite)
+    && c.originX >= -2147483648 && c.originX <= 2147483647 && c.originY >= -2147483648 && c.originY <= 2147483647
+    && c.originX + c.width >= -2147483648 && c.originX + c.width <= 2147549183
+    && c.originY + c.height >= -2147483648 && c.originY + c.height <= 2147549183
+    && c.width >= 1 && c.height >= 1 && c.width <= 65536 && c.height <= 65536
+    && (c.space !== 'physicalPixels' || (Number.isSafeInteger(c.originX) && Number.isSafeInteger(c.originY) && c.width === source.width && c.height === source.height));
+}
+
+function validCoordinates(value: PointerSample): boolean {
+  const c = value.source.captureCoordinates;
+  if (!c) return value.globalX === undefined && value.globalY === undefined && value.screenPoint === undefined;
+  const x = c.originX + value.x * c.width / value.source.width, y = c.originY + value.y * c.height / value.source.height;
+  if (c.space === 'physicalPixels') return value.screenPoint === undefined && Number.isSafeInteger(value.globalX) && Number.isSafeInteger(value.globalY) && value.globalX === x && value.globalY === y;
+  return value.globalX === undefined && value.globalY === undefined && value.screenPoint?.unit === 'pt'
+    && Number.isFinite(value.screenPoint.x) && Number.isFinite(value.screenPoint.y) && value.screenPoint.x === x && value.screenPoint.y === y;
+}
 
 /** Use the same rounded source edges as the committed screenshot rectangle. */
 export function pointerSelectionDimensions(preview: PointerImageBox | undefined, image: { x: number; y: number; scale: number }, region?: { width: number; height: number; imageOverride?: { width?: number; height?: number } }): string | undefined {
@@ -52,18 +84,22 @@ interface Slot {
   value?: PointerSample;
   exact?: { promise: Promise<PointerSample>; resolve: (value: PointerSample) => void; reject: (error: Error) => void };
 }
-const same = (a: PointerSampleRequest, b: PointerSampleRequest) => a.sceneId === b.sceneId && a.backgroundId === b.backgroundId && a.x === b.x && a.y === b.y;
-const sameSource = (a: PointerSampleRequest, b: PointerSampleRequest) => a.sceneId === b.sceneId && a.backgroundId === b.backgroundId;
+const same = (a: PointerSampleRequest, b: PointerSampleRequest) => sameSource(a, b) && a.x === b.x && a.y === b.y;
+const sameSource = (a: PointerSampleRequest, b: PointerSampleRequest) => a.sceneId === b.sceneId && a.backgroundId === b.backgroundId && pointerSourceKey(a.source) === pointerSourceKey(b.source);
 function valid(request: PointerSampleRequest) {
   return typeof request.sceneId === 'string' && request.sceneId.length > 0 && typeof request.backgroundId === 'string' && request.backgroundId.length > 0
-    && Number.isSafeInteger(request.x) && request.x >= 0 && Number.isSafeInteger(request.y) && request.y >= 0;
+    && validSource(request.source) && Number.isSafeInteger(request.x) && request.x >= 0 && request.x < request.source.width
+    && Number.isSafeInteger(request.y) && request.y >= 0 && request.y < request.source.height;
 }
 function validated(value: PointerSample, request: PointerSampleRequest): PointerSample {
-  if (!value || !same(value, request) || !Number.isSafeInteger(value.globalX) || !Number.isSafeInteger(value.globalY)
+  if (!value || !valid(value) || !same(value, request) || !validCoordinates(value)
     || typeof value.hex !== 'string' || !/^#[0-9a-f]{6}$/i.test(value.hex)
     || typeof value.dataUrl !== 'string' || value.dataUrl.length > 256 * 1024
     || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value.dataUrl)) throw new Error('取色结果与当前位置不一致');
-  return Object.freeze({ ...value });
+  return Object.freeze({ ...value, source: frozenSource(value.source), screenPoint: value.screenPoint && Object.freeze({ ...value.screenPoint }) });
+}
+function frozenSource(source: PointerSource): PointerSource {
+  return Object.freeze({ ...source, captureCoordinates: source.captureCoordinates && Object.freeze({ ...source.captureCoordinates }) });
 }
 
 export class PointerInspector {
@@ -110,7 +146,7 @@ export class PointerInspector {
     const previous = this.current;
     const sourceChanged = !previous || !sameSource(previous.request, request);
     if (sourceChanged) this.previewEpoch++;
-    const slot: Slot = { request: Object.freeze({ ...request }), generation: ++this.generation, previewEpoch: this.previewEpoch, status: 'waiting' };
+    const slot: Slot = { request: Object.freeze({ ...request, source: frozenSource(request.source) }), generation: ++this.generation, previewEpoch: this.previewEpoch, status: 'waiting' };
     this.current = slot;
     previous?.exact?.reject(new PointerSampleCanceledError());
     // Keep the last completed preview while the pointer moves on this source.

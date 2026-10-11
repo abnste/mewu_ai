@@ -428,6 +428,7 @@ mod tests {
             let mut store = Store::open(db.path()).unwrap();
             let scene = store.snapshot().active_scene_id;
             let asset = Asset {
+                capture_coordinates: None,
                 id: uid(),
                 name: "synthetic-video.mp4".into(),
                 kind: AssetKind::Video,
@@ -489,6 +490,7 @@ mod tests {
                     source_playback_ticks: tick,
                 });
                 assets.push(Asset {
+                    capture_coordinates: None,
                     id,
                     name: format!("frame-{ordinal}.jpg"),
                     kind: AssetKind::Image,

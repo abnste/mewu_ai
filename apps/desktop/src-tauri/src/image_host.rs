@@ -145,8 +145,9 @@ impl Registry {
         if pending.is_some() {
             return Err("图片正在导出".into());
         }
-        // Only atomics and native IsWindow/IsWindowVisible here. The caller
-        // already owns Engine for region identity; never reacquire it here.
+        // Only atomics and native visibility reads here; Mac witnesses check
+        // generation metadata before querying WindowServer without UI dispatch.
+        // The caller already owns Engine for region identity; never reacquire it here.
         admit()?;
         let id = uuid::Uuid::new_v4().to_string();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -455,7 +456,11 @@ pub(crate) fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
             .map(|h| h.0 as usize)
             .map_err(|_| "图片窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::window_witness_macos::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = window;
         Err("此平台暂不支持图片保存".into())
@@ -469,7 +474,13 @@ pub(crate) fn ensure_visible(handle: usize) -> Result<(), String> {
             return Ok(());
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        if crate::window_witness_macos::visible(handle) {
+            return Ok(());
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     let _ = handle;
     Err("图片窗口已关闭或收起".into())
 }
@@ -500,7 +511,8 @@ fn region_allowed(
 ) -> Result<(), String> {
     let host = app.state::<Host>();
     // This helper retains Engine through registry admission. No filesystem or
-    // Tauri HWND getter in this scope; Windows visibility is a direct API read.
+    // Tauri HWND/title getters in this scope; native visibility checks do not
+    // dispatch to the UI thread on Windows or Mac.
     let engine = host.lock()?;
     let (background, region) = engine
         .store
@@ -552,7 +564,7 @@ pub async fn export_region(
     if window.label() != "space" {
         return Err("此窗口不能导出截图".into());
     }
-    let handle = window_handle(&window)?; // Main-thread getter outside shared locks.
+    let handle = window_handle(&window)?; // Tauri HWND/title queries outside shared locks.
     let (work, cancel, origin, background, region, assets_root, managed_root) = {
         let host = app.state::<Host>();
         let engine = host.lock()?;
@@ -594,6 +606,8 @@ pub async fn export_region(
         )
     };
     let guard = work.cancel_on_drop();
+    #[cfg(target_os = "macos")]
+    let picker_window = window;
     // Dropping this invoke future drops only guard. The detached blocking job
     // still owns Work, source handles, picker thread and final I/O to completion.
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -604,6 +618,7 @@ pub async fn export_region(
                 &assets_root,
             )?];
             region_current(&app.state::<Host>(), &origin)?;
+            #[cfg(not(target_os = "macos"))]
             let variant = if clipboard {
                 ExportVariant::Annotated
             } else {
@@ -613,6 +628,34 @@ pub async fn export_region(
                 let picker_origin = origin.clone();
                 match export_variant_dialog::pick_variant(
                     handle as isize,
+                    Media::Image,
+                    has_annotations(&region),
+                    cancel.clone(),
+                    move || {
+                        region_allowed(
+                            &picker_app,
+                            &picker_registry,
+                            &picker_id,
+                            &picker_origin,
+                            handle,
+                        )
+                    },
+                )? {
+                    VariantOutcome::Selected(variant) => variant,
+                    VariantOutcome::UserCanceled | VariantOutcome::RequestCanceled => return Ok(()),
+                }
+            };
+            #[cfg(target_os = "macos")]
+            let variant = if clipboard {
+                ExportVariant::Annotated
+            } else {
+                let picker_app = app.clone();
+                let picker_registry = work.registry.clone();
+                let picker_id = work.id.clone();
+                let picker_origin = origin.clone();
+                match export_variant_dialog::pick_variant_macos(
+                    picker_window.clone(),
+                    handle,
                     Media::Image,
                     has_annotations(&region),
                     cancel.clone(),
@@ -660,8 +703,27 @@ pub async fn export_region(
             let picker_id = work.id.clone();
             let picker_origin = origin.clone();
             let default_format = image_save_dialog::preference_format(&app)?;
+            #[cfg(not(target_os = "macos"))]
             let selected = image_save_dialog::pick_image_destination_with_default(
                 handle as isize,
+                ImageSaveName::Screenshot,
+                default_format,
+                cancel.clone(),
+                move || {
+                    region_allowed(
+                        &picker_app,
+                        &picker_registry,
+                        &picker_id,
+                        &picker_origin,
+                        handle,
+                    )
+                },
+            )
+            .map_err(|error| error.to_string())?;
+            #[cfg(target_os = "macos")]
+            let selected = image_save_dialog::pick_image_destination_macos_with_default(
+                picker_window.clone(),
+                handle,
                 ImageSaveName::Screenshot,
                 default_format,
                 cancel.clone(),
@@ -756,6 +818,7 @@ mod tests {
                 .unwrap();
             fixture.files.push(path.clone());
             Asset {
+                capture_coordinates: None,
                 id,
                 kind: AssetKind::Image,
                 name: "synthetic.png".into(),
@@ -927,6 +990,7 @@ mod tests {
         let mut store = mewu_core::Store::open_in_memory().unwrap();
         let scene_id = store.snapshot().active_scene_id.clone();
         let asset = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             kind: AssetKind::Image,
             name: "test.png".into(),
@@ -1022,6 +1086,7 @@ mod tests {
         let alias = outside.join("alias.png");
         fs::hard_link(&source_path, &alias).unwrap();
         let asset = Asset {
+            capture_coordinates: None,
             id: uuid::Uuid::new_v4().to_string(),
             name: "synthetic.png".into(),
             kind: AssetKind::Image,

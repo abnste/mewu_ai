@@ -116,6 +116,7 @@ fn setup(store: &mut Store, duration: u64) -> Source {
 fn setup_size(store: &mut Store, duration: u64, width: u32, height: u32) -> Source {
     let scene_id = store.snapshot().active_scene_id;
     let asset = Asset {
+        capture_coordinates: None,
         id: uid(),
         name: "synthetic.mp4".into(),
         path: "owned-synthetic.mp4".into(),
@@ -272,6 +273,7 @@ fn make_input(
     let mut frames = Vec::new();
     for (ordinal, tick) in ticks.into_iter().enumerate() {
         let asset = Asset {
+            capture_coordinates: None,
             id: uid(),
             name: format!("frame-{ordinal}.jpg"),
             path: format!("synthetic-frame-{ordinal}.jpg"),
@@ -1351,7 +1353,7 @@ fn db8_to9_preserves_raw_payload_every_old_schema_and_raw_sql_row() {
     assert_eq!(
         db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        9
+        10
     );
     for (kind, name, sql) in &schema {
         let actual: (String, Option<String>) = db
@@ -1568,7 +1570,7 @@ fn db8_running_recovery_is_explicit_and_never_claims_raw_preservation() {
     assert_eq!(
         db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        9
+        10
     );
     assert!(rows(&db, "video_vector_layouts").is_empty());
     assert_eq!(rows(&db, "video_run_inputs").len(), 1);

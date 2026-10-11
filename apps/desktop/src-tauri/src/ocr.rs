@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Local Windows OCR worker. The host owns concurrency and scene/plugin fences.
+//! Local native OCR worker. The host owns concurrency and scene/plugin fences.
 //! Keep the worker permit until this blocking function actually returns, even
 //! after the async caller loses interest. WinRT cancellation is cooperative.
 //! https://learn.microsoft.com/en-us/uwp/api/windows.media.ocr.ocrengine
@@ -25,18 +25,26 @@ const TIMEOUT_ERROR: &str = "文字识别超时，请缩小选区后重试";
 
 /// Consumes an owned, already-cropped/composited RGBA image. No file, display,
 /// network, or model access occurs here. Returns coordinates in original crop
-/// pixels in Windows' OCR coordinate frame; apply text_angle once about center.
+/// pixels in the recognizer's OCR coordinate frame; apply text_angle once about center.
 pub fn recognize(bitmap: PixelBuffer, cancel: Arc<AtomicBool>) -> Result<OcrDocument, String> {
     #[cfg(windows)]
     {
         native::recognize_impl(bitmap, cancel, || {})
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::recognize_impl(bitmap, cancel)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (bitmap, cancel);
         Err("当前系统尚未支持本机文字识别；此插件需要 Windows 10 或更新版本".into())
     }
 }
+
+#[cfg(target_os = "macos")]
+#[path = "ocr_macos.rs"]
+mod macos;
 
 #[derive(Debug, Clone, Copy)]
 struct Geometry {
