@@ -648,6 +648,30 @@ fn main() {
         eprintln!("factory native: pinned inode survives pathname replacement; unrelated/source/bridge FD closed; real PID1 wait + IO join + P retained PASS");
         return;
     }
+    {
+        // Actual Linux syscall result, independent of the sealed factory:
+        // recvmsg echoes CMSG_CLOEXEC even when this ACK carries no FDs.
+        use rustix::net::{recvmsg, RecvAncillaryBuffer, RecvFlags, ReturnFlags};
+        let (mut sender, receiver) = std::os::unix::net::UnixStream::pair().unwrap();
+        sender.write_all(b"A").unwrap();
+        let mut byte = [0];
+        let mut storage = [];
+        let mut ancillary = RecvAncillaryBuffer::new(&mut storage);
+        let result = recvmsg(
+            &receiver,
+            &mut [std::io::IoSliceMut::new(&mut byte)],
+            &mut ancillary,
+            RecvFlags::CMSG_CLOEXEC,
+        )
+        .unwrap();
+        assert_eq!(result.bytes, 1);
+        assert_eq!(byte, [b'A']);
+        assert_eq!(result.flags, ReturnFlags::CMSG_CLOEXEC);
+        eprintln!(
+            "factory native ACK kernel echo: bytes=1 flags={:#x} no ancillary data PASS",
+            result.flags.bits()
+        );
+    }
     let dir = std::env::temp_dir().join(format!("mewu-factory-fixture-{}", std::process::id()));
     std::fs::create_dir(&dir).unwrap();
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();

@@ -92,3 +92,12 @@ copy, test environment clearing/tainted overrides and normal internal SONAME
 symlinks, and reject wrong/replaced loaded inodes, writable resources, escaping
 symlinks and missing required files before exec. They are not an AppImage mount,
 real GTK/GStreamer module load, signed installer, or application GUI acceptance.
+
+The first actual factory run failed after owner admission because ACK validation
+required empty returned flags. Linux returns the requested `MSG_CMSG_CLOEXEC`
+in `msg_flags` even without ancillary data; rustix exposes that returned flag.
+ACK validation accepts only this known echo, one byte and the exact ACK tag;
+truncation and all other flags remain rejected. A native UnixStream fixture
+records the real syscall echo before exercising the actual factory. The failed
+run remains failure evidence until the corrected factory passes native CI.
+See [Linux 6.8 recvmsg implementation](https://github.com/torvalds/linux/blob/v6.8/net/socket.c).

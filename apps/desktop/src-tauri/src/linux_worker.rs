@@ -545,7 +545,19 @@ pub fn bootstrap(worker: Worker, raw: i32, source_raw: i32, deadline: Instant) -
             &mut ancillary,
             RecvFlags::DONTWAIT | RecvFlags::CMSG_CLOEXEC,
         ) {
-            Ok(result) if result.bytes == 1 && bytes[0] == ACK && result.flags.is_empty() => break,
+            // Linux echoes the requested MSG_CMSG_CLOEXEC in msg_flags,
+            // including ACKs with no ancillary data. It is not a bad packet.
+            // Every other flag, including truncation, remains forbidden.
+            Ok(result)
+                if result.bytes == 1
+                    && bytes[0] == ACK
+                    && result
+                        .flags
+                        .difference(ReturnFlags::CMSG_CLOEXEC)
+                        .is_empty() =>
+            {
+                break
+            }
             Ok(_) => return Err(io::ErrorKind::InvalidData.into()),
             Err(rustix::io::Errno::INTR) => (),
             Err(rustix::io::Errno::AGAIN) => ready(&socket, PollFlags::IN, deadline, &no_cancel)?,
