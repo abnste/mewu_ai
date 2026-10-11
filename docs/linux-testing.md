@@ -33,6 +33,8 @@ The separate Xvfb run exercises real X11 map state, transient map/unmap events, 
 
 The Linux override selects AppImage, the PNG icon, a non-fullscreen initial window and the media framework bundle. Local candidate packaging does not require an updater private key. The release coordinator signs the final distributable bytes separately. Never transfer signing keys or private application data to a test device.
 
+Linux settings information reports `platform: linux` and `updateSupport: unconfigured`. About and data information remain readable, while the update panel reports unavailable support and sends no updater status, check or install commands. Linux receipts claiming Windows signed installer or Mac bundle support are rejected. This boundary is not a completed Linux updater; signed AppImage replacement and recovery still require a native implementation and acceptance tests.
+
 Follow the [official AppImage packaging guidance](https://v2.tauri.app/distribute/appimage/) when choosing a build distribution. A build made on a newer distribution does not establish compatibility with older systems. Test normal AppImage execution and extracted execution separately; missing `/dev/fuse` blocks normal mounting even if extraction works.
 
 ## Native acceptance evidence
