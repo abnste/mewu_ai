@@ -33,23 +33,98 @@ const MAX_WORD_CHARS: usize = 512;
 const MAX_PNG_BYTES: usize = MAX_RECOGNITION_PIXELS as usize * 4 + 1024 * 1024;
 static ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 
+// Only fixed stage/reason labels and process-local counters are recorded. Do
+// not add NSError descriptions, image geometry, text, paths or caller IDs.
+#[derive(Clone, Copy)]
+struct OcrDiagnostics {
+    #[cfg(debug_assertions)]
+    id: Option<usize>,
+    #[cfg(debug_assertions)]
+    started: Instant,
+}
+impl OcrDiagnostics {
+    fn new(started: Instant) -> Self {
+        #[cfg(debug_assertions)]
+        {
+            static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+            let enabled =
+                std::env::var_os("MEWU_MAC_OCR_DIAGNOSTICS").is_some_and(|value| value == "1");
+            Self {
+                id: enabled.then(|| NEXT_ID.fetch_add(1, Ordering::Relaxed)),
+                started,
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = started;
+            Self {}
+        }
+    }
+    fn enabled(self) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            self.id.is_some()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            false
+        }
+    }
+    fn event(
+        self,
+        stage: &'static str,
+        reason: &'static str,
+        native_code: Option<isize>,
+        count: Option<usize>,
+    ) {
+        #[cfg(debug_assertions)]
+        if let Some(id) = self.id {
+            eprintln!(
+                "[mewu.mac.ocr] id={id} stage={stage} elapsed_ms={} thread={:?} reason={reason} native_code={native_code:?} count={count:?} active_workers={}",
+                self.started.elapsed().as_millis(),
+                std::thread::current().id(),
+                ACTIVE_WORKERS.load(Ordering::Acquire),
+            );
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = (self, stage, reason, native_code, count);
+    }
+}
+
+fn check_interest_diagnosed(
+    cancel: &AtomicBool,
+    started: Instant,
+    diagnostics: OcrDiagnostics,
+    stage: &'static str,
+) -> Result<(), String> {
+    check_interest(cancel, started).inspect_err(|error| {
+        let reason = if error == CANCEL_ERROR {
+            "cancel_flag"
+        } else {
+            "deadline"
+        };
+        diagnostics.event(stage, reason, None, None);
+    })
+}
+
 // Independent protection also covers translation callers and future host paths.
 // A stuck synchronous Vision call keeps its permit; no abandoned native object
 // or artificial timeout permits a replacement worker to exceed this bound.
-struct WorkerPermit;
+struct WorkerPermit(OcrDiagnostics);
 impl WorkerPermit {
-    fn acquire() -> Result<Self, String> {
+    fn acquire(diagnostics: OcrDiagnostics) -> Result<Self, String> {
         ACTIVE_WORKERS
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < 2).then_some(count + 1)
             })
-            .map(|_| Self)
+            .map(|_| Self(diagnostics))
             .map_err(|_| "已有文字识别正在进行，请稍后重试".to_string())
     }
 }
 impl Drop for WorkerPermit {
     fn drop(&mut self) {
         ACTIVE_WORKERS.fetch_sub(1, Ordering::AcqRel);
+        self.0.event("permit.released", "none", None, None);
     }
 }
 
@@ -193,7 +268,11 @@ fn checked_text(value: &NSString, maximum_chars: usize) -> Result<String, String
     Ok(text)
 }
 
-fn configure_languages(request: &VNRecognizeTextRequest) -> Result<String, String> {
+fn configure_languages(
+    request: &VNRecognizeTextRequest,
+    diagnostics: OcrDiagnostics,
+) -> Result<String, String> {
+    diagnostics.event("languages.begin", "none", None, None);
     request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
     // Revision 3 and automatic language detection require macOS 13.0. The
     // bundle can still support 12.x using revision 2 and explicit languages.
@@ -202,6 +281,7 @@ fn configure_languages(request: &VNRecognizeTextRequest) -> Result<String, Strin
     // VNRequest's base-class implementation. Its declared return is nonnull.
     let revisions: Retained<NSIndexSet> =
         unsafe { objc2::msg_send![VNRecognizeTextRequest::class(), supportedRevisions] };
+    diagnostics.event("languages.revisions", "none", None, None);
     let revision = if objc2::available!(macos = 13.0) && revisions.containsIndex(3) {
         3
     } else if revisions.containsIndex(2) {
@@ -212,8 +292,12 @@ fn configure_languages(request: &VNRecognizeTextRequest) -> Result<String, Strin
         return Err("本机系统没有可用的文字识别版本".into());
     };
     unsafe { request.setRevision(revision) };
-    let supported = unsafe { request.supportedRecognitionLanguagesAndReturnError() }
-        .map_err(|error| native_error("读取文字识别语言", &error))?;
+    let supported =
+        unsafe { request.supportedRecognitionLanguagesAndReturnError() }.map_err(|error| {
+            diagnostics.event("languages.error", "native", Some(error.code()), None);
+            native_error("读取文字识别语言", &error)
+        })?;
+    diagnostics.event("languages.supported", "none", None, Some(supported.len()));
     if supported.is_empty() || supported.len() > 128 {
         return Err("本机系统没有有效的文字识别语言".into());
     }
@@ -242,6 +326,7 @@ fn configure_languages(request: &VNRecognizeTextRequest) -> Result<String, Strin
     if objc2::available!(macos = 13.0) && revision >= 3 {
         request.setAutomaticallyDetectsLanguage(true);
     }
+    diagnostics.event("languages.configured", "none", None, Some(languages.len()));
     // This records configured supported hints, not a fictitious per-line
     // detected language; Vision's recognized text does not expose that value.
     Ok(languages.join(","))
@@ -260,19 +345,46 @@ fn recognize_with_progress(
     on_progress: impl Fn() + Send + Sync + 'static,
 ) -> Result<OcrDocument, String> {
     let started = Instant::now();
-    check_interest(&cancel, started)?;
+    let diagnostics = OcrDiagnostics::new(started);
+    diagnostics.event("module.enter", "blocking_thread", None, None);
+    let result = recognize_diagnosed(bitmap, cancel, on_progress, started, diagnostics);
+    let reason = match &result {
+        Ok(_) => "success",
+        Err(error) if error == CANCEL_ERROR => "cancel_flag",
+        Err(error) if error == TIMEOUT_ERROR => "deadline",
+        Err(_) => "error",
+    };
+    diagnostics.event("module.return", reason, None, None);
+    result
+}
+
+fn recognize_diagnosed(
+    bitmap: PixelBuffer,
+    cancel: Arc<AtomicBool>,
+    on_progress: impl Fn() + Send + Sync + 'static,
+    started: Instant,
+    diagnostics: OcrDiagnostics,
+) -> Result<OcrDocument, String> {
+    check_interest_diagnosed(&cancel, started, diagnostics, "interest.entry")?;
     validate_pixels(&bitmap)?;
-    let _permit = WorkerPermit::acquire()?;
+    diagnostics.event("permit.admission", "none", None, None);
+    let _permit = WorkerPermit::acquire(diagnostics).inspect_err(|_| {
+        diagnostics.event("permit.rejected", "capacity", None, None);
+    })?;
+    diagnostics.event("permit.acquired", "none", None, None);
     let geometry = Geometry::new(bitmap.width(), bitmap.height(), MAX_SIDE)?;
+    diagnostics.event("prepare.begin", "none", None, None);
     let mut rgba = Zeroizing::new(prepare(bitmap, geometry, &cancel, started)?);
+    diagnostics.event("prepare.return", "none", None, None);
     for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
         if index % 16_384 == 0 {
-            check_interest(&cancel, started)?;
+            check_interest_diagnosed(&cancel, started, diagnostics, "interest.rgba")?;
         }
         // Shared preparation returns Windows BGRA. PNG requires RGBA.
         pixel.swap(0, 2);
     }
     let mut png = Zeroizing::new(Vec::new());
+    diagnostics.event("png.begin", "none", None, None);
     PngEncoder::new(&mut *png)
         .write_image(
             &rgba,
@@ -281,53 +393,106 @@ fn recognize_with_progress(
             ExtendedColorType::Rgba8,
         )
         .map_err(|_| "无法准备文字识别图片".to_string())?;
+    diagnostics.event("png.return", "none", None, None);
     drop(rgba);
     if png.len() > MAX_PNG_BYTES {
         return Err("文字识别图片缓冲区超过限制".into());
     }
-    check_interest(&cancel, started)?;
+    check_interest_diagnosed(&cancel, started, diagnostics, "interest.pre_native")?;
     autoreleasepool(move |_| {
+        diagnostics.event("native.data.begin", "none", None, None);
         let data = NSData::with_bytes(&png);
         drop(png);
+        diagnostics.event("native.request.begin", "none", None, None);
         let request = VNRecognizeTextRequest::new();
-        let language = configure_languages(&request)?;
+        diagnostics.event("native.request.created", "none", None, None);
+        let language = configure_languages(&request, diagnostics)?;
         let stop = cancel.clone();
         let cancel_sent = Arc::new(AtomicBool::new(false));
         let sent = cancel_sent.clone();
+        let progress_count = Arc::new(AtomicUsize::new(0));
+        let progress_observed = progress_count.clone();
         // Vision can call progress on a different queue. Only thread-safe Rust
         // state is captured: no Retained native object crosses a Rust thread.
         // The callback uses the valid request pointer supplied by Vision, never
         // a saved/raw pointer shared with an unrelated watchdog.
         let progress = RcBlock::new(
-            move |native: NonNull<VNRequest>, _fraction: f64, _error: *mut NSError| {
+            move |native: NonNull<VNRequest>, _fraction: f64, error: *mut NSError| {
                 on_progress();
-                if (stop.load(Ordering::Acquire) || started.elapsed() >= TIMEOUT)
-                    && !sent.swap(true, Ordering::AcqRel)
-                {
+                if diagnostics.enabled() {
+                    let count = progress_observed.fetch_add(1, Ordering::Relaxed) + 1;
+                    // Vision owns this optional error for the callback's
+                    // duration. Read only its numeric code on this queue.
+                    let code = unsafe { error.as_ref() }.map(NSError::code);
+                    if count <= 64 {
+                        diagnostics.event("perform.progress", "none", code, Some(count));
+                    } else if count == 65 {
+                        diagnostics.event("perform.progress", "log_limit", code, Some(count));
+                    }
+                }
+                let externally_canceled = stop.load(Ordering::Acquire);
+                let deadline_expired = started.elapsed() >= TIMEOUT;
+                if (externally_canceled || deadline_expired) && !sent.swap(true, Ordering::AcqRel) {
+                    let reason = match (externally_canceled, deadline_expired) {
+                        (true, true) => "cancel_flag_and_deadline",
+                        (true, false) => "cancel_flag",
+                        _ => "deadline",
+                    };
+                    diagnostics.event("perform.cancel.request", reason, None, None);
                     // The request is alive for this Vision-owned invocation.
                     // Cancellation is only a request; it is not proof of exit.
                     unsafe { native.as_ref().cancel() };
+                    diagnostics.event("perform.cancel.return", reason, None, None);
                 }
             },
         );
         unsafe { request.setProgressHandler(RcBlock::as_ptr(&progress)) };
         let native_request: &VNRequest = &request;
         let requests = NSArray::from_slice(&[native_request]);
+        diagnostics.event("handler.begin", "none", None, None);
         let handler = VNImageRequestHandler::initWithData_options(
             VNImageRequestHandler::alloc(),
             &data,
             &NSDictionary::new(),
         );
-        check_interest(&cancel, started)?;
+        diagnostics.event("handler.created", "none", None, None);
+        check_interest_diagnosed(&cancel, started, diagnostics, "interest.pre_perform")?;
         // This synchronous call owns all request/input/block allocations until
         // it returns. Do not race it with an async timeout that drops this
         // stack. A stuck call keeps the native and caller-owned host permits.
+        diagnostics.event("perform.begin", "none", None, None);
         let performed = handler.performRequests_error(&requests);
-        check_interest(&cancel, started)?;
+        if diagnostics.enabled() {
+            // The synchronous call has actually returned. Counts may describe
+            // partial results; they never bypass the interest/result checks.
+            diagnostics.event(
+                "perform.return",
+                if performed.is_ok() {
+                    "success"
+                } else {
+                    "native"
+                },
+                performed.as_ref().err().map(|error| error.code()),
+                request.results().map(|results| results.len()),
+            );
+            diagnostics.event(
+                "perform.progress.total",
+                if cancel_sent.load(Ordering::Acquire) {
+                    "cancel_sent"
+                } else {
+                    "none"
+                },
+                None,
+                Some(progress_count.load(Ordering::Relaxed)),
+            );
+        }
+        check_interest_diagnosed(&cancel, started, diagnostics, "interest.post_perform")?;
         performed.map_err(|error| native_error("文字识别", &error))?;
-        let observations = request
-            .results()
-            .ok_or_else(|| "本机文字识别没有返回有效结果".to_string())?;
+        let observations = request.results().ok_or_else(|| {
+            diagnostics.event("results.nil", "native", None, None);
+            "本机文字识别没有返回有效结果".to_string()
+        })?;
+        diagnostics.event("results.begin", "none", None, Some(observations.len()));
         if observations.len() > MAX_LINES {
             return Err("识别行数超过限制，请缩小选区".into());
         }
@@ -335,7 +500,7 @@ fn recognize_with_progress(
         let mut word_count = 0;
         let mut text_bytes = 0usize;
         for index in 0..observations.len() {
-            check_interest(&cancel, started)?;
+            check_interest_diagnosed(&cancel, started, diagnostics, "interest.results")?;
             let observation = observations.objectAtIndex(index);
             let candidates = observation.topCandidates(1);
             if candidates.is_empty() {
@@ -352,9 +517,12 @@ fn recognize_with_progress(
             }
             let mut located = Vec::new();
             for span in text_spans(&text) {
-                check_interest(&cancel, started)?;
+                check_interest_diagnosed(&cancel, started, diagnostics, "interest.word_boxes")?;
                 let rectangle = unsafe { candidate.boundingBoxForRange_error(span.range) }
-                    .map_err(|error| native_error("读取文字位置", &error))?;
+                    .map_err(|error| {
+                        diagnostics.event("word_boxes.error", "native", Some(error.code()), None);
+                        native_error("读取文字位置", &error)
+                    })?;
                 let rect = unsafe { rectangle.boundingBox() };
                 located.push(LocatedSpan {
                     start: span.start,
@@ -389,9 +557,13 @@ fn recognize_with_progress(
             text_angle: None,
             lines,
         };
+        diagnostics.event("results.parsed", "none", None, Some(document.lines.len()));
+        diagnostics.event("results.words", "none", None, Some(word_count));
+        diagnostics.event("validation.begin", "none", None, None);
         validate_ocr_document(&document)
             .map_err(|_| "本机识别结果格式或大小无效，请缩小选区后重试".to_string())?;
-        check_interest(&cancel, started)?;
+        diagnostics.event("validation.return", "success", None, None);
+        check_interest_diagnosed(&cancel, started, diagnostics, "interest.return")?;
         Ok(document)
     })
 }
