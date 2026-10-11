@@ -285,17 +285,15 @@ fn inspect(source: &mut Source, cancel: &AtomicBool) -> Result<VideoMetadata, Cl
 pub(super) fn execute(
     job: &ClipJob,
     cancel: &AtomicBool,
-    on_progress: &dyn Fn(u8),
+    _on_progress: &dyn Fn(u8),
 ) -> Result<ClipJobResult, ClipError> {
     let ClipJob::Inspect { source } = job else {
         return Err(ClipError::Unsupported);
     };
     autoreleasepool(|_| {
         let mut source = Source::open(source, cancel)?;
-        on_progress(0);
         let result = inspect(&mut source, cancel)?;
         check_cancel(cancel)?;
-        on_progress(100);
         Ok(ClipJobResult::Inspected(result))
     })
 }
