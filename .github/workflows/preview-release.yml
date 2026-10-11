@@ -30,7 +30,7 @@ jobs:
           cache: npm
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk xvfb xauth
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Resolve Mac test temporary directory
@@ -48,6 +48,12 @@ jobs:
           node --test scripts/release-contract.test.mjs scripts/release-staging.test.mjs
           npm run build
           cargo test --workspace --locked -- --test-threads=1
+      - name: Test Linux window visibility on a real X server
+        if: runner.os == 'Linux' && !cancelled()
+        shell: bash
+        run: |
+          set -e
+          xvfb-run -a cargo test -p mewu-desktop --locked --features linux-x11-tests x11_visibility_native -- --nocapture --test-threads=1
       - name: Verify Linux GLib source backport and optimized FFI
         if: runner.os == 'Linux' && !cancelled()
         shell: bash
