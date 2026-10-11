@@ -101,3 +101,16 @@ truncation and all other flags remain rejected. A native UnixStream fixture
 records the real syscall echo before exercising the actual factory. The failed
 run remains failure evidence until the corrected factory passes native CI.
 See [Linux 6.8 recvmsg implementation](https://github.com/torvalds/linux/blob/v6.8/net/socket.c).
+
+Runtime prerequisites are separate from the portable application's ELF bundle.
+The factory uses installed `/usr/bin/bwrap`; this AppImage does not include that
+helper. The host must permit the required user/PID namespaces and provide usable
+`/proc`, pidfds, SCM_RIGHTS and `close_range(CLOSE_RANGE_CLOEXEC)`. The last flag
+requires Linux 5.11 or later (including an equivalent backport); pidfd_open starts
+at Linux 5.3. Kernel version alone does not establish namespace/syscall permission.
+Missing helpers or denied syscalls remain unavailable and fail closed, rather
+than falling back to an unowned raw process. No code changes OS policy, installs
+helpers or weakens the existing deadline. This prerequisite set is not a claim
+that portable startup, media backend Ready or application installation passed.
+See [close_range](https://www.man7.org/linux/man-pages/man2/close_range.2.html) and
+[pidfd_open](https://man7.org/linux/man-pages/man2/pidfd_open.2.html).
