@@ -194,7 +194,12 @@ fn space_handle(app: &AppHandle) -> Result<usize, String> {
             .map(|handle| handle.0 as usize)
             .map_err(|_| "空间窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Reuse the actual revocable space-window admission used by video saves.
+        crate::window_witness_macos::window_handle(&window)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = window;
         Err("当前系统不支持视频原位作答".into())
