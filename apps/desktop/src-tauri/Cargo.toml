@@ -92,6 +92,7 @@ rustix = { version = "=1.1.5", features = ["event", "fs", "net", "process"] }
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }
 async-io = "=2.6.0"
 futures-lite = "=2.6.1"
+libc = "0.2"
 
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "=0.62.2", features = ["Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_Variant"] }
@@ -108,3 +109,9 @@ catalog-validator = []
 linux-x11-tests = []
 linux-secret-service-tests = []
 linux-worker-tests = []
+
+[[test]]
+name = "linux_worker_factory"
+path = "tests/linux_worker_factory.rs"
+harness = false
+required-features = ["linux-worker-tests"]

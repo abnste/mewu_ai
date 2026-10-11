@@ -13,6 +13,10 @@ use std::{
 #[path = "owned_process_linux_tests.rs"]
 mod linux_tests;
 
+#[cfg(target_os = "linux")]
+#[path = "linux_worker.rs"]
+pub(crate) mod linux_worker;
+
 #[cfg(windows)]
 #[derive(Debug)]
 struct ProcessJob(windows_sys::Win32::Foundation::HANDLE);
@@ -160,9 +164,9 @@ mod macos;
 #[cfg(target_os = "macos")]
 use macos::ProcessGroup as ProcessJob;
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 struct ProcessJob;
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 impl ProcessJob {
     fn attach(_: &Child) -> io::Result<Self> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "unsupported"))
@@ -170,6 +174,33 @@ impl ProcessJob {
     fn kill(&self) {}
     fn empty(&self) -> bool {
         false
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct ProcessJob(Mutex<self::linux_worker::LifetimeOwner>);
+#[cfg(target_os = "linux")]
+impl ProcessJob {
+    fn provisional(bridge: self::linux_worker::Bridge) -> Self {
+        Self(Mutex::new(self::linux_worker::LifetimeOwner::provisional(bridge)))
+    }
+    fn admit(
+        &self,
+        deadline: std::time::Instant,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<()> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .admit(deadline, cancel)
+    }
+    fn kill(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).kill();
+    }
+    fn empty(&self) -> bool {
+        let mut owner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        owner.collect_late_owner(std::time::Instant::now() + Duration::from_millis(1));
+        owner.empty()
     }
 }
 
@@ -266,6 +297,34 @@ impl<P: Send + 'static> ManagedProcess<P> {
             io::ErrorKind::Unsupported,
             "Linux command has no trusted worker lifetime owner",
         ))
+    }
+    /// Provisional ownership is installed before receiving
+    /// the actual PID1 or acknowledging it. All failure returns run existing
+    /// Drop, retaining the original Child, witness, real IO and operation permit.
+    #[cfg(target_os = "linux")]
+    pub fn spawn_trusted(
+        command: self::linux_worker::TrustedCommand,
+        permit: P,
+        deadline: std::time::Instant,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<Self> {
+        self::linux_worker::check(deadline, cancel)?;
+        let (child, bridge) = command.launch(deadline, cancel)?;
+        let owned = Self(Some(Parts {
+            child,
+            job: Some(ProcessJob::provisional(bridge)),
+            io: Vec::new(),
+            _permit: permit,
+        }));
+        owned
+            .0
+            .as_ref()
+            .unwrap()
+            .job
+            .as_ref()
+            .unwrap()
+            .admit(deadline, cancel)?;
+        Ok(owned)
     }
     pub fn child_mut(&mut self) -> &mut Child {
         // Use only for stdin/stdout/stderr/id. Reaping through this escape hatch
