@@ -46,7 +46,9 @@ pub(crate) fn pick_destination<F: Copy + Eq + Send + Sync + 'static>(
             for extension in format.extensions {
                 filter.add_pattern(&format!("*.{extension}"));
             }
-            chooser.add_filter(&filter);
+            // GTK's transfer-full wrapper consumes its owned reference. Keep
+            // our own clone for the explicit selected-format identity checks.
+            chooser.add_filter(filter.clone());
             filters.push(filter);
         }
         chooser.set_filter(&filters[spec.default_index as usize - 1]);
