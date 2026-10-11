@@ -23,7 +23,7 @@ fn response(value: NSModalResponse) -> Result<Outcome, String> {
     match value {
         1000 => Ok(Outcome::Selected(ExportVariant::Annotated)),
         1001 => Ok(Outcome::Selected(ExportVariant::Clean)),
-        1002 | NSModalResponseCancel => Ok(Outcome::UserCanceled),
+        value if value == 1002 || value == NSModalResponseCancel => Ok(Outcome::UserCanceled),
         _ => Err("导出选项已中断".into()),
     }
 }

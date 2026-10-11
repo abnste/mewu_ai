@@ -234,7 +234,7 @@ fn update_format(id: uuid::Uuid) {
     };
     // One type follows the explicit popup choice. Suffixes never select the
     // encoder. No TLS borrow or Host/Engine/operation lock survives this call.
-    panel.setAllowedContentTypes(&NSArray::from_slice(&[&types[index as usize - 1]]));
+    panel.setAllowedContentTypes(&NSArray::from_slice(&[&*types[index as usize - 1]]));
     SESSIONS.with(|sessions| {
         if let Ok(mut sessions) = sessions.try_borrow_mut() {
             if let Some(session) = sessions.get_mut(&id) {
@@ -381,7 +381,7 @@ fn start(
         .collect::<Result<_, _>>()?;
     let initial = configuration.default_index as usize - 1;
     let kind = types.get(initial).ok_or(SaveDialogError::InvalidFormat)?;
-    panel.setAllowedContentTypes(&NSArray::from_slice(&[kind]));
+    panel.setAllowedContentTypes(&NSArray::from_slice(&[&**kind]));
     panel.setAllowsOtherFileTypes(false);
     panel.setCanSelectHiddenExtension(false);
     panel.setExtensionHidden(false);
