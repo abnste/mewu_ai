@@ -16,11 +16,12 @@ use objc2::{
 use objc2_av_foundation::{
     AVAsset, AVAssetExportPresetHighestQuality, AVAssetExportSession, AVAssetExportSessionStatus,
     AVAssetImageGenerator, AVAssetReferenceRestrictions, AVAsynchronousKeyValueLoading,
-    AVFileTypeMPEG4, AVKeyValueStatus, AVMediaTypeAudio, AVMediaTypeVideo, AVURLAsset,
-    AVURLAssetPreferPreciseDurationAndTimingKey, AVURLAssetReferenceRestrictionsKey,
+    AVFileTypeMPEG4, AVKeyValueStatus, AVMediaTypeAudio, AVMediaTypeVideo,
+    AVMutableVideoComposition, AVURLAsset, AVURLAssetPreferPreciseDurationAndTimingKey,
+    AVURLAssetReferenceRestrictionsKey,
 };
 use objc2_core_graphics::CGImage;
-use objc2_core_media::{CMTime, CMTimeFlags, CMTimeRange};
+use objc2_core_media::{kCMPersistentTrackID_Invalid, CMTime, CMTimeFlags, CMTimeRange};
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSNumber, NSString, NSURL};
 use sha2::{Digest, Sha256};
 use std::{
@@ -436,6 +437,19 @@ fn render(
             .ok_or(ClipError::UnsupportedPath)?,
     ));
     unsafe {
+        // Fractional cuts must use the declared cadence rather than partial source-frame timing.
+        let composition = AVMutableVideoComposition::videoCompositionWithPropertiesOfAsset(&asset);
+        composition.setFrameDuration(CMTime {
+            value: i64::from(original.frame_rate_denominator),
+            timescale: original
+                .frame_rate_numerator
+                .try_into()
+                .map_err(|_| ClipError::InvalidMedia)?,
+            flags: CMTimeFlags::Valid,
+            epoch: 0,
+        });
+        composition.setSourceTrackIDForFrameTiming(kCMPersistentTrackID_Invalid);
+        session.setVideoComposition(Some(&composition));
         session.setOutputURL(Some(&url));
         session.setOutputFileType(Some(AVFileTypeMPEG4.ok_or(ClipError::WorkerUnavailable)?));
         session.setTimeRange(CMTimeRange {
@@ -526,71 +540,90 @@ mod tests {
             (inspect(&mut source, &cancel).unwrap(), source.hash)
         });
         assert!(expected.has_audio);
-        assert!(expected.duration_ticks > 20_000_000);
-        let range = VideoRange {
-            start_ticks: 10_000_000,
-            end_ticks: expected.duration_ticks,
-        };
-        let output = directory.join("实际裁剪.mp4");
-        let job = ClipJob::Render {
-            source: path.clone(),
-            output: output.clone(),
-            expected: expected.clone(),
-            range: range.clone(),
-        };
-        let percent = std::cell::RefCell::new(Vec::new());
-        let ClipJobResult::Rendered(actual) =
-            execute(&job, &cancel, &|value| percent.borrow_mut().push(value)).unwrap()
-        else {
-            panic!("real rendered result");
-        };
-        validate_rendered(&expected, &range, &actual).unwrap();
-        assert!(percent.borrow().windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(percent.borrow().last(), Some(&100));
-        let retained = std::fs::read(&output).unwrap();
-        assert_eq!(
-            execute(&job, &cancel, &|_| {}),
-            Err(ClipError::FileUnavailable)
-        );
-        assert_eq!(std::fs::read(&output).unwrap(), retained);
-        println!(
-            "{}",
-            serde_json::json!({
-                "source": expected,
-                "range": range,
-                "rendered": actual,
-                "output_bytes": retained.len(),
-                "output_sha256": format!("{:x}", Sha256::digest(&retained)),
-                "progress": *percent.borrow(),
-                "existing_output_preserved": true,
-            })
-        );
-        std::fs::remove_file(&output).unwrap();
-        let started = AtomicBool::new(false);
-        assert_eq!(
-            execute(&job, &cancel, &|value| {
-                if value == 0 {
-                    started.store(true, Ordering::Release);
-                    cancel.store(true, Ordering::Release);
-                }
-            }),
-            Err(ClipError::Cancelled)
-        );
-        assert!(started.load(Ordering::Acquire));
-        assert!(!output.exists());
-        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 0);
-        cancel.store(false, Ordering::Release);
-        assert_eq!(Source::open(&path, &cancel).unwrap().hash, source_hash);
-        println!(
-            "{}",
-            serde_json::json!({
-                "cancelled_after_export_api_started": true,
-                "final_output_absent": true,
-                "private_directory_empty": true,
-                "source_sha256": source_hash.iter().map(|v| format!("{v:02x}")).collect::<String>(),
-                "source_unchanged": true,
-            })
-        );
+        assert!(expected.duration_ticks > 37_654_321);
+        for (index, range) in [
+            VideoRange {
+                start_ticks: 10_000_000,
+                end_ticks: expected.duration_ticks,
+            },
+            // The real GUI range that previously failed output validation.
+            VideoRange {
+                start_ticks: 10_882_315,
+                end_ticks: expected.duration_ticks,
+            },
+            VideoRange {
+                start_ticks: 0,
+                end_ticks: 32_345_679,
+            },
+            VideoRange {
+                start_ticks: 1_234_567,
+                end_ticks: 37_654_321,
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let output = directory.join(format!("实际裁剪-{index}.mp4"));
+            let job = ClipJob::Render {
+                source: path.clone(),
+                output: output.clone(),
+                expected: expected.clone(),
+                range: range.clone(),
+            };
+            let percent = std::cell::RefCell::new(Vec::new());
+            let ClipJobResult::Rendered(actual) =
+                execute(&job, &cancel, &|value| percent.borrow_mut().push(value)).unwrap()
+            else {
+                panic!("real rendered result");
+            };
+            validate_rendered(&expected, &range, &actual).unwrap();
+            assert!(percent.borrow().windows(2).all(|pair| pair[0] < pair[1]));
+            assert_eq!(percent.borrow().last(), Some(&100));
+            let retained = std::fs::read(&output).unwrap();
+            assert_eq!(
+                execute(&job, &cancel, &|_| {}),
+                Err(ClipError::FileUnavailable)
+            );
+            assert_eq!(std::fs::read(&output).unwrap(), retained);
+            println!(
+                "{}",
+                serde_json::json!({
+                    "source": expected,
+                    "range": range,
+                    "rendered": actual,
+                    "output_bytes": retained.len(),
+                    "output_sha256": format!("{:x}", Sha256::digest(&retained)),
+                    "progress": *percent.borrow(),
+                    "existing_output_preserved": true,
+                })
+            );
+            std::fs::remove_file(&output).unwrap();
+            let started = AtomicBool::new(false);
+            assert_eq!(
+                execute(&job, &cancel, &|value| {
+                    if value == 0 {
+                        started.store(true, Ordering::Release);
+                        cancel.store(true, Ordering::Release);
+                    }
+                }),
+                Err(ClipError::Cancelled)
+            );
+            assert!(started.load(Ordering::Acquire));
+            assert!(!output.exists());
+            assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 0);
+            cancel.store(false, Ordering::Release);
+            assert_eq!(Source::open(&path, &cancel).unwrap().hash, source_hash);
+            println!(
+                "{}",
+                serde_json::json!({
+                    "cancelled_after_export_api_started": true,
+                    "final_output_absent": true,
+                    "private_directory_empty": true,
+                    "source_sha256": source_hash.iter().map(|v| format!("{v:02x}")).collect::<String>(),
+                    "source_unchanged": true,
+                })
+            );
+        }
         std::fs::remove_dir(directory).unwrap();
     }
     #[test]
