@@ -653,9 +653,9 @@ fn start_shutdown(
                     // using the current executable, never leave a half-closed app.
                     app.request_restart();
                 } else {
-                    // The macOS updater returns after swapping the bundle;
+                    // The Mac/Linux updater returns after replacing its package;
                     // Windows's installer exits the process inside install().
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", target_os = "linux"))]
                     {
                         app.state::<Host>().exit.complete(&id);
                         app.request_restart();

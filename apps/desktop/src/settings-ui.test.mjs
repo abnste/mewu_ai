@@ -55,10 +55,16 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   assert.equal(contracts.validSettingsInfo(receipt), true);
   assert.deepEqual(normalize(await client.info()), receipt);
   assert.deepEqual(calls, ['settings_info']);
-  for (const updateSupport of ['signed_installer', 'manual_only', 'signed_bundle', 'up_to_date']) {
+  for (const updateSupport of ['signed_installer', 'signed_bundle', 'up_to_date']) {
     assert.equal(contracts.validSettingsInfo(info({ platform: 'linux', updateSupport })), false);
   }
-  checks.push('Linux information accepts only its unconfigured update receipt and preserves the real absolute data path');
+  for (const updateSupport of ['manual_only', 'signed_appimage']) {
+    assert.equal(contracts.validSettingsInfo(info({ platform: 'linux', updateSupport })), true);
+  }
+  for (const platform of ['windows', 'macos']) {
+    assert.equal(contracts.validSettingsInfo(info({ platform, updateSupport: 'signed_appimage' })), false);
+  }
+  checks.push('Linux information accepts native AppImage or manual updates, preserves older unconfigured receipts and rejects foreign installer types');
 }
 {
   const reactive = await import(new URL('../../../node_modules/solid-js/dist/solid.js', import.meta.url));
@@ -69,21 +75,21 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   await mod.link(name => name === 'solid-js' ? synthetic(reactive) : name === '@tauri-apps/api/core' ? synthetic({ isTauri: () => true, invoke: async () => { throw Error('Unexpected native IPC'); } }) : name.endsWith('/settings-bridge') ? synthetic({ settingsApi: {} }) : name.endsWith('/i18n') ? synthetic({ t: value => value }) : name.endsWith('/SettingControls') ? synthetic({ Row: () => {} }) : synthetic({ LoaderCircle: () => {} }));
   await mod.evaluate();
   const status = extra => ({ phase: 'idle', currentVersion: '1.0.0-test', availableVersion: null, downloadedBytes: 0, totalBytes: null, error: null, ...extra });
-  for (const receipt of [info({ platform: 'macos', updateSupport: 'manual_only', dataDirectory: '/Users/synthetic/.mewu' }), info({ platform: 'macos', updateSupport: 'signed_installer' }), info({ platform: 'linux', updateSupport: 'signed_installer' }), info({ platform: 'linux', updateSupport: 'unconfigured', dataDirectory: '/home/synthetic/.mewu' })]) {
+  for (const receipt of [info({ platform: 'macos', updateSupport: 'manual_only', dataDirectory: '/Users/synthetic/.mewu' }), info({ platform: 'macos', updateSupport: 'signed_installer' }), info({ platform: 'linux', updateSupport: 'signed_installer' }), info({ platform: 'linux', updateSupport: 'manual_only' }), info({ platform: 'linux', updateSupport: 'unconfigured', dataDirectory: '/home/synthetic/.mewu' })]) {
     const calls = [], client = settingsClient({ listen: async () => () => {}, invoke: async name => { calls.push(name); return receipt; } });
     let data, dispose, activate;
     reactive.createRoot(cleanup => { dispose = cleanup; const [active, setActive] = reactive.createSignal(false); activate = setActive; data = mod.namespace.createAppUpdateSettings(active, { native: () => true, info: client.info, status: async () => { calls.push('app_update_status'); return status(); }, perform: async name => calls.push(name) }); });
     await data.perform('check_app_update'); assert.deepEqual(calls, []);
     activate(true); await tick();
-    assert.equal(data.mode(), receipt.platform === 'linux' && receipt.updateSupport !== 'unconfigured' ? 'loading' : receipt.updateSupport === 'manual_only' ? 'manual' : 'unsupported');
-    if (receipt.platform === 'linux' && receipt.updateSupport !== 'unconfigured') assert.match(data.error(), /软件信息无效/);
+    assert.equal(data.mode(), !contracts.validSettingsInfo(receipt) ? 'loading' : receipt.updateSupport === 'manual_only' ? 'manual' : 'unsupported');
+    if (!contracts.validSettingsInfo(receipt)) assert.match(data.error(), /软件信息无效/);
     if (receipt.platform === 'linux' && receipt.updateSupport === 'unconfigured') {
       assert.equal(data.error(), ''); assert.equal(data.status(), undefined); assert.equal(data.label(), '');
     }
     await data.perform('check_app_update'); await data.perform('install_app_update'); await data.refresh();
     assert.ok(calls.every(name => name === 'settings_info')); dispose();
   }
-  for (const receipt of [info({ updateSupport: 'signed_installer' }), info({ platform: 'macos', updateSupport: 'signed_bundle' })]) {
+  for (const receipt of [info({ updateSupport: 'signed_installer' }), info({ platform: 'macos', updateSupport: 'signed_bundle' }), info({ platform: 'linux', updateSupport: 'signed_appimage' })]) {
   assert.equal(contracts.validSettingsInfo(receipt), true);
   const calls = [], client = settingsClient({ listen: async () => () => {}, invoke: async name => { calls.push(name); return receipt; } });
   let data, dispose, next = status();
@@ -96,7 +102,7 @@ const normalize = value => JSON.parse(JSON.stringify(value));
   reactive.createRoot(cleanup => { stop = cleanup; late = mod.namespace.createAppUpdateSettings(() => true, { native: () => true, info: () => pending.promise, status: async () => { reads++; return status(); }, perform: async () => { throw Error('Unexpected install'); } }); });
   await tick(); stop(); pending.resolve(info({ updateSupport: 'signed_installer' })); await tick();
   assert.equal(reads, 0); assert.equal(late.mode(), 'loading');
-  checks.push('Actual update effects admit Windows signed installers and Mac signed bundles, refuse manual or unknown platforms, and fence a platform receipt after disposal');
+  checks.push('Actual update effects admit Windows installers, Mac bundles and Linux AppImages, refuse manual or unknown platforms, and fence a receipt after disposal');
 }
 {
   const calls = [], task = deferred(); let receive, stopped = 0;

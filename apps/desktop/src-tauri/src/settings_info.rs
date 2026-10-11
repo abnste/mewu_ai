@@ -32,9 +32,9 @@ pub enum ReleaseChannel {
 #[serde(rename_all = "snake_case")]
 pub enum UpdateSupport {
     #[cfg(target_os = "linux")]
-    Unconfigured,
+    SignedAppimage,
     SignedInstaller,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     ManualOnly,
     #[cfg(target_os = "macos")]
     SignedBundle,
@@ -189,7 +189,7 @@ impl SettingsResources {
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             update_support: UpdateSupport::SignedInstaller,
             #[cfg(target_os = "linux")]
-            update_support: UpdateSupport::Unconfigured,
+            update_support: if crate::app_update::linux::supported() { UpdateSupport::SignedAppimage } else { UpdateSupport::ManualOnly },
             #[cfg(target_os = "macos")]
             update_support: if crate::app_update::macos::supported() { UpdateSupport::SignedBundle } else { UpdateSupport::ManualOnly },
             data_directory: self
@@ -391,7 +391,7 @@ mod tests {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         assert_eq!(info.update_support, UpdateSupport::SignedInstaller);
         #[cfg(target_os = "linux")]
-        assert_eq!(info.update_support, UpdateSupport::Unconfigured);
+        assert_eq!(info.update_support, UpdateSupport::ManualOnly);
         #[cfg(target_os = "macos")]
         assert_eq!(info.update_support, UpdateSupport::ManualOnly);
         assert!(info.commit.is_none());
@@ -399,7 +399,7 @@ mod tests {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         assert_eq!(wire["updateSupport"], "signed_installer");
         #[cfg(target_os = "linux")]
-        assert_eq!(wire["updateSupport"], "unconfigured");
+        assert_eq!(wire["updateSupport"], "manual_only");
         #[cfg(target_os = "macos")]
         assert_eq!(wire["updateSupport"], "manual_only");
         assert!(wire.get("commit").is_none());
