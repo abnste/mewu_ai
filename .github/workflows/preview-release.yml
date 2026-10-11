@@ -74,7 +74,13 @@ jobs:
         shell: bash
         run: |
           set -e
-          env MEWU_LINUX_WORKER_TEST_ISOLATED=1 cargo test -p mewu-desktop --locked --features linux-worker-tests native_linux_ -- --nocapture --test-threads=1
+          env MEWU_LINUX_WORKER_TEST_ISOLATED=1 cargo test -p mewu-desktop --bin mewu-desktop --locked --features linux-worker-tests native_linux_ -- --nocapture --test-threads=1
+      - name: Test Linux trusted worker factory and admission failures
+        if: runner.os == 'Linux' && !cancelled()
+        shell: bash
+        run: |
+          set -e
+          env MEWU_LINUX_WORKER_TEST_ISOLATED=1 cargo test -p mewu-desktop --test linux_worker_factory --locked --features linux-worker-tests
       - name: Prepare unsigned candidate configuration
         run: node -e "const fs=require('node:fs');fs.mkdirSync('out',{recursive:true});fs.writeFileSync('out/native-build-config.json',JSON.stringify({bundle:{createUpdaterArtifacts:false}}))"
       - name: Build native candidate
