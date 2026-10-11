@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Fixed signed release channel. Only the first-party settings window can install.
 //! Downloads finish and verify before entering the normal save/drain exit protocol.
+#[path = "app_update_release.rs"]
+mod release;
+pub use release::{validate_release_for, ReleaseTarget};
 #[cfg(target_os = "windows")]
 use crate::Host;
 use serde::Serialize;
@@ -56,16 +59,7 @@ fn owner(window: &WebviewWindow) -> Result<(), String> {
     if window.label() == "settings" { Ok(()) } else { Err("update_forbidden".into()) }
 }
 pub fn validate_release(current: &str, version: &str, url: &url::Url) -> Result<(), &'static str> {
-    let current = semver::Version::parse(current).map_err(|_| "update_invalid")?;
-    let candidate = semver::Version::parse(version).map_err(|_| "update_invalid")?;
-    if candidate <= current || !candidate.build.is_empty() || candidate.major < 1 || version.len() > 64 {
-        return Err("update_invalid");
-    }
-    let expected = format!("/abnste/mewu_ai/releases/download/v{version}/MewuAI-Remake-Setup-{version}-win-x64.exe");
-    if url.scheme() != "https" || url.host_str() != Some("github.com") || url.port().is_some()
-        || !url.username().is_empty() || url.password().is_some() || url.query().is_some()
-        || url.fragment().is_some() || url.path() != expected { return Err("update_invalid"); }
-    Ok(())
+    validate_release_for(ReleaseTarget::WindowsX64, current, version, url)
 }
 #[cfg(target_os = "windows")]
 async fn check(app: &AppHandle) -> Result<Status, String> {
