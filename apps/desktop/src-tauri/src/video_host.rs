@@ -348,7 +348,13 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
             .map(|h| h.0 as usize)
             .map_err(|_| "空间窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Admit the same bounded, revocable native witness used by image saves.
+        // Resolve before Host/Store locks; this token is never an HWND or pointer.
+        crate::window_witness_macos::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = window;
         Err("当前系统不支持视频裁剪".into())
@@ -370,7 +376,15 @@ pub(crate) fn atomic_gate(host: &Host, handle: usize, edit: bool) -> Result<(), 
             return Err("空间已收起".into());
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Fresh WindowServer observation plus the exact owner generation; no
+        // main-thread dispatch while the video registry or Store may be locked.
+        if !crate::window_witness_macos::current_for(handle, "space") {
+            return Err("空间已收起".into());
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = handle;
     }
