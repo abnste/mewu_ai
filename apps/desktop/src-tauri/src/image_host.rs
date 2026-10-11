@@ -460,7 +460,11 @@ pub(crate) fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
     {
         crate::window_witness_macos::window_handle(window)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::window_actions_linux::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = window;
         Err("此平台暂不支持图片保存".into())
@@ -480,7 +484,11 @@ pub(crate) fn ensure_visible(handle: usize) -> Result<(), String> {
             return Ok(());
         }
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        if crate::window_actions_linux::visible(handle) { return Ok(()); }
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     let _ = handle;
     Err("图片窗口已关闭或收起".into())
 }
@@ -606,7 +614,7 @@ pub async fn export_region(
         )
     };
     let guard = work.cancel_on_drop();
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let picker_window = window;
     // Dropping this invoke future drops only guard. The detached blocking job
     // still owns Work, source handles, picker thread and final I/O to completion.
@@ -618,7 +626,7 @@ pub async fn export_region(
                 &assets_root,
             )?];
             region_current(&app.state::<Host>(), &origin)?;
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let variant = if clipboard {
                 ExportVariant::Annotated
             } else {
@@ -673,6 +681,24 @@ pub async fn export_region(
                     VariantOutcome::UserCanceled | VariantOutcome::RequestCanceled => return Ok(()),
                 }
             };
+            #[cfg(target_os = "linux")]
+            let variant = if clipboard {
+                ExportVariant::Annotated
+            } else {
+                let picker_app = app.clone();
+                let picker_registry = work.registry.clone();
+                let picker_id = work.id.clone();
+                let picker_origin = origin.clone();
+                match export_variant_dialog::pick_variant_linux(
+                    picker_window.clone(), handle, Media::Image,
+                    has_annotations(&region), cancel.clone(), move || {
+                        region_allowed(&picker_app, &picker_registry, &picker_id, &picker_origin, handle)
+                    },
+                )? {
+                    VariantOutcome::Selected(variant) => variant,
+                    VariantOutcome::UserCanceled | VariantOutcome::RequestCanceled => return Ok(()),
+                }
+            };
             region_allowed(&app, &work.registry, &work.id, &origin, handle)?;
             let output_region = region_for_export(&region, variant);
             if let Some(saved) = &output_region.translation {
@@ -686,6 +712,14 @@ pub async fn export_region(
             }
             work.check_cancel()?;
             if clipboard {
+                #[cfg(target_os = "linux")]
+                {
+                    accept_region(&app, &work, &origin, handle)?;
+                    crate::window_actions_linux::copy_image(picker_window.clone(), handle, image, cancel.clone())?;
+                    return Ok(());
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
                 let mut board = arboard::Clipboard::new().map_err(|_| "无法打开剪贴板")?;
                 accept_region(&app, &work, &origin, handle)?;
                 // Acceptance locks have been released before native clipboard I/O.
@@ -697,13 +731,14 @@ pub async fn export_region(
                     })
                     .map_err(|_| "无法复制图片".to_string())?;
                 return Ok(());
+                }
             }
             let picker_app = app.clone();
             let picker_registry = work.registry.clone();
             let picker_id = work.id.clone();
             let picker_origin = origin.clone();
             let default_format = image_save_dialog::preference_format(&app)?;
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let selected = image_save_dialog::pick_image_destination_with_default(
                 handle as isize,
                 ImageSaveName::Screenshot,
@@ -738,6 +773,13 @@ pub async fn export_region(
                 },
             )
             .map_err(|error| error.to_string())?;
+            #[cfg(target_os = "linux")]
+            let selected = image_save_dialog::pick_image_destination_linux_with_default(
+                picker_window.clone(), handle, ImageSaveName::Screenshot,
+                default_format, cancel.clone(), move || {
+                    region_allowed(&picker_app, &picker_registry, &picker_id, &picker_origin, handle)
+                },
+            ).map_err(|error| error.to_string())?;
             let (path, format) = match selected {
                 SaveDialogOutcome::Selected { path, format } => (path, format),
                 SaveDialogOutcome::UserCanceled | SaveDialogOutcome::RequestCanceled => {

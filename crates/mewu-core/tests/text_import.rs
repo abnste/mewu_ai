@@ -229,6 +229,64 @@ fn imported_video_is_a_referenced_media_object_and_invalid_batch_keeps_existing_
 }
 
 #[test]
+fn imported_video_keeps_its_aspect_ratio_in_the_actual_viewport_after_reopen() {
+    for (vw, vh) in [(1536, 864), (864, 1536), (1920, 1080)] {
+        for (width, height) in [(286, 268), (1920, 1080), (1080, 1920)] {
+            let db = TestDb::new();
+            let mut store = Store::open(&db.0).unwrap();
+            let scene_id = store.snapshot().active_scene_id;
+            draft(&mut store, &scene_id, "keep draft");
+            let mut video = asset(AssetKind::Video, "selected.mp4");
+            video.width = Some(width);
+            video.height = Some(height);
+            let before = db.stored();
+            let snapshot = store.import_assets_in_viewport(
+                &scene_id, vec![video.clone(), asset(AssetKind::Text, "notes.txt")], vw, vh,
+            ).unwrap();
+            let scene = active(&store);
+            let item = &scene.items[0];
+            let displayed_width = item.width * f64::from(vw);
+            let displayed_height = item.height * f64::from(vh);
+            assert!((displayed_width / displayed_height - f64::from(width) / f64::from(height)).abs() < 1e-10);
+            assert!(displayed_width <= 0.36 * f64::from(vw) + 1e-10);
+            assert!(displayed_height <= 0.5 * f64::from(vh) + 1e-10);
+            assert_eq!(item.asset, video);
+            assert_eq!(scene.items[1].width, 0.36);
+            assert_eq!(scene.items[1].height, 0.5);
+            assert_eq!(scene.draft, "keep draft");
+            assert_eq!(scene.refs.len(), 2);
+            assert_eq!(db.stored().0, before.0 + 1);
+            drop(store);
+            assert_eq!(Store::open(&db.0).unwrap().snapshot(), snapshot);
+        }
+    }
+}
+
+#[test]
+fn invalid_viewport_or_video_in_viewport_import_rolls_back_the_whole_batch() {
+    let db = TestDb::new();
+    let mut store = Store::open(&db.0).unwrap();
+    let scene_id = store.snapshot().active_scene_id;
+    draft(&mut store, &scene_id, "keep draft");
+    let before = db.stored();
+    let snapshot = store.snapshot();
+    let mut video = asset(AssetKind::Video, "selected.mp4");
+    video.width = Some(286);
+    video.height = Some(268);
+    for (vw, vh) in [(0, 864), (1536, 1), (32769, 864), (1536, u32::MAX)] {
+        assert!(store.import_assets_in_viewport(&scene_id, vec![video.clone()], vw, vh).is_err());
+        assert_eq!(db.stored(), before);
+        assert_eq!(store.snapshot(), snapshot);
+    }
+    video.height = Some(0);
+    assert!(store.import_assets_in_viewport(
+        &scene_id, vec![asset(AssetKind::Text, "notes.txt"), video], 1536, 864,
+    ).is_err());
+    assert_eq!(db.stored(), before);
+    assert_eq!(store.snapshot(), snapshot);
+}
+
+#[test]
 fn any_invalid_asset_rejects_the_entire_batch_and_text_never_has_pixel_metadata() {
     let mut store = Store::open_in_memory().unwrap();
     let scene_id = store.snapshot().active_scene_id;

@@ -16,6 +16,9 @@ use std::{
 #[cfg(target_os = "macos")]
 #[path = "save_dialog_macos.rs"]
 pub(crate) mod macos;
+#[cfg(target_os = "linux")]
+#[path = "save_dialog_linux.rs"]
+pub(crate) mod linux;
 
 fn default_filename(basename: &str, local_time: chrono::NaiveDateTime) -> String {
     let name = match basename {

@@ -30,6 +30,10 @@ mod code_worker;
 mod window_witness_macos;
 #[cfg(any(target_os = "linux", test))]
 mod window_witness_linux;
+#[cfg(any(target_os = "linux", test))]
+mod window_actions_linux;
+#[cfg(target_os = "linux")]
+mod gtk_dialog_linux;
 mod screen_entities;
 mod connection_host;
 mod content_server;
@@ -2472,6 +2476,7 @@ fn main() {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 // Revoke before any Engine locks or async cancellation work.
                 window_witness_linux::revoke_owner(window.label());
+                window_actions_linux::revoke_owner(window.label());
                 if matches!(window.label(), "space" | frozen::LABEL) {
                     if let Some(host) = window.app_handle().try_state::<Host>() {
                         host.capture_jobs.cancel();

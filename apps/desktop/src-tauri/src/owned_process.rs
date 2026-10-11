@@ -9,6 +9,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg(all(target_os = "linux", test, feature = "linux-worker-tests"))]
+#[path = "owned_process_linux_tests.rs"]
+mod linux_tests;
+
 #[cfg(windows)]
 #[derive(Debug)]
 struct ProcessJob(windows_sys::Win32::Foundation::HANDLE);
@@ -226,6 +230,7 @@ impl<P: Send + 'static> ManagedProcess<P> {
     /// call returns only after supervision is established; callers send no input
     /// before it. macOS supports trusted same-executable helpers that retain
     /// their inherited process group, not arbitrary/daemonizing plugin commands.
+    #[cfg(not(target_os = "linux"))]
     pub fn spawn(command: &mut Command, permit: P) -> io::Result<Self> {
         #[cfg(target_os = "macos")]
         macos::prepare(command)?;
@@ -250,6 +255,17 @@ impl<P: Send + 'static> ManagedProcess<P> {
             process.job.as_ref().unwrap().verify()?;
         }
         Ok(owned)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn spawn(command: &mut Command, permit: P) -> io::Result<Self> {
+        // A plain Command has no established namespace/owner receipt. Reject
+        // before spawn: killing an unsupervised parent afterwards cannot prove
+        // that it did not create an independently surviving descendant.
+        let _ = (command, permit);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Linux command has no trusted worker lifetime owner",
+        ))
     }
     pub fn child_mut(&mut self) -> &mut Child {
         // Use only for stdin/stdout/stderr/id. Reaping through this escape hatch

@@ -114,6 +114,18 @@ pub fn pick_image_destination_macos_with_default(
     )
 }
 
+#[cfg(target_os = "linux")]
+pub fn pick_image_destination_linux_with_default(
+    window: tauri::WebviewWindow,
+    token: usize,
+    name: ImageSaveName,
+    format: ImageSaveFormat,
+    cancel: Arc<AtomicBool>,
+    allowed: impl Fn() -> Result<(), String> + Send + 'static,
+) -> Result<SaveDialogOutcome, SaveDialogError> {
+    save_dialog::linux::pick_destination(window, token, spec_with_default(name, format), cancel, allowed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

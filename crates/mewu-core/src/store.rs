@@ -1351,6 +1351,32 @@ impl Store {
     /// File decoding/copying belongs to the host; this final admission rejects a
     /// dialog that returned after its original space was frozen or replaced.
     pub fn import_assets(&mut self, scene_id: &str, assets: Vec<Asset>) -> Result<Snapshot> {
+        self.import_assets_with_viewport(scene_id, assets, None)
+    }
+
+    /// The host supplies the actual window's logical size, never an IPC rectangle.
+    /// Video geometry must have the source aspect ratio before its first render.
+    pub fn import_assets_in_viewport(
+        &mut self,
+        scene_id: &str,
+        assets: Vec<Asset>,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) -> Result<Snapshot> {
+        if !(2..=32768).contains(&viewport_width)
+            || !(2..=32768).contains(&viewport_height)
+        {
+            return Err(invalid("空间尺寸无效，请重新导入"));
+        }
+        self.import_assets_with_viewport(scene_id, assets, Some((viewport_width, viewport_height)))
+    }
+
+    fn import_assets_with_viewport(
+        &mut self,
+        scene_id: &str,
+        assets: Vec<Asset>,
+        viewport: Option<(u32, u32)>,
+    ) -> Result<Snapshot> {
         if assets.iter().any(|asset| asset.capture_coordinates.is_some()) {
             return Err(invalid("导入图片不能伪造屏幕坐标"));
         }
@@ -1413,6 +1439,14 @@ impl Store {
         let target = scene_mut(&mut next, scene_id)?;
         for asset in assets {
             let item_id = id();
+            let (width, height) = if let Some((vw, vh)) = viewport.filter(|_| asset.kind == AssetKind::Video) {
+                // Metadata has already been validated for the complete batch.
+                let ratio = f64::from(asset.width.unwrap()) / f64::from(asset.height.unwrap());
+                let displayed_width = (0.36 * f64::from(vw)).min(0.5 * f64::from(vh) * ratio);
+                (displayed_width / f64::from(vw), displayed_width / ratio / f64::from(vh))
+            } else {
+                (0.36, 0.5)
+            };
             target.refs.push(Reference {
                 kind: ReferenceKind::Item,
                 id: item_id.clone(),
@@ -1422,8 +1456,8 @@ impl Store {
                 asset,
                 x: 0.32,
                 y: 0.2,
-                width: 0.36,
-                height: 0.5,
+                width,
+                height,
                 state: None,
                 video_edit: None,
                 video_annotations: None,
