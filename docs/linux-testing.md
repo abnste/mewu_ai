@@ -35,6 +35,16 @@ The Linux override selects AppImage, the PNG icon, a non-fullscreen initial wind
 
 Linux settings information reports `platform: linux` and `updateSupport: unconfigured`. About and data information remain readable, while the update panel reports unavailable support and sends no updater status, check or install commands. Linux receipts claiming Windows signed installer or Mac bundle support are rejected. This boundary is not a completed Linux updater; signed AppImage replacement and recovery still require a native implementation and acceptance tests.
 
+Linux connection and memory credentials use the current user's existing [Secret Service](https://specifications.freedesktop.org/secret-service/latest-single/) and its unlocked default collection. The standard local-bus plain transfer session is used; the desktop keyring owns storage protection. Immutable UUID attributes contain no key. The adapter pins the unique service owner and checks its user identity, rejects duplicate or changed lookup attributes, creates without replacement and verifies the stored value before returning its new reference. There is no plaintext-file fallback, automatic service activation, collection creation or unlock prompt. A missing service or locked keyring is a failure requiring desktop setup, not a successful credential save.
+
+A single five-second deadline covers authentication and all D-Bus methods; the owned connection has no detached executor and is explicitly closed after success or failure. An additional 100 ms bounds socket close. Protocol fixtures must use an isolated bus and only synthetic keys:
+
+```sh
+dbus-run-session -- env MEWU_SECRET_SERVICE_TEST_ISOLATED=1 cargo test -p mewu-desktop --locked --features linux-secret-service-tests native_secret_service -- --nocapture --test-threads=1
+```
+
+These fixtures require the isolation marker, refuse any existing Secret Service owner, and test actual D-Bus round trips, scope and immutable-reference rejection, locked/duplicate/tampered receipts, a stalled method and silent authentication socket closure. They do not prove GNOME Keyring/KWallet persistence, desktop unlock behavior or at-rest protection. Verify real desktop create/read/restart, connection and memory separation, failed commit cleanup and unavailable/locked keyring behavior separately, using test-only credentials.
+
 Follow the [official AppImage packaging guidance](https://v2.tauri.app/distribute/appimage/) when choosing a build distribution. A build made on a newer distribution does not establish compatibility with older systems. Test normal AppImage execution and extracted execution separately; missing `/dev/fuse` blocks normal mounting even if extraction works.
 
 ## Native acceptance evidence
