@@ -39,7 +39,8 @@ fn identity(file: &File) -> Result<(u64, u64), ClipError> {
 struct Directory {
     path: PathBuf,
     held: File,
-    created: Vec<(CString, (u64, u64))>,
+    // Retain each file, preventing inode reuse before identity-checked cleanup.
+    created: Vec<(CString, File)>,
     committed: bool,
 }
 impl Directory {
@@ -95,8 +96,9 @@ impl Directory {
         if fd < 0 {
             return Err(ClipError::FileUnavailable);
         }
-        let mut file = unsafe { File::from_raw_fd(fd) };
-        self.created.push((name, identity(&file)?));
+        let file = unsafe { File::from_raw_fd(fd) };
+        self.created.push((name, file));
+        let file = &mut self.created.last_mut().unwrap().1;
         file.write_all(bytes)
             .and_then(|_| file.sync_all())
             .map_err(|_| ClipError::FileUnavailable)?;
@@ -106,7 +108,7 @@ impl Directory {
 impl Drop for Directory {
     fn drop(&mut self) {
         if !self.committed {
-            for (name, expected) in &self.created {
+            for (name, held) in &self.created {
                 let fd = unsafe {
                     libc::openat(
                         self.held.as_raw_fd(),
@@ -116,7 +118,7 @@ impl Drop for Directory {
                 };
                 if fd >= 0 {
                     let file = unsafe { File::from_raw_fd(fd) };
-                    if identity(&file) == Ok(*expected) {
+                    if identity(&file).is_ok_and(|actual| identity(held) == Ok(actual)) {
                         unsafe {
                             libc::unlinkat(self.held.as_raw_fd(), name.as_ptr(), 0);
                         }
@@ -157,7 +159,14 @@ impl Write for Jpeg {
     }
 }
 fn pts_ticks(t: CMTime) -> Result<u64, ClipError> {
-    if t.value == 0 && t.timescale > 0 && t.epoch == 0 && t.flags == CMTimeFlags::Valid {
+    if t.value == 0
+        && t.timescale > 0
+        && t.epoch == 0
+        && t.flags.contains(CMTimeFlags::Valid)
+        && !t.flags.intersects(
+            CMTimeFlags::PositiveInfinity | CMTimeFlags::NegativeInfinity | CMTimeFlags::Indefinite,
+        )
+    {
         Ok(0)
     } else {
         time_ticks(t)
@@ -336,7 +345,12 @@ pub(super) fn extract(
                     return Err(ClipError::InvalidMedia);
                 }
                 let pts = pts_ticks(unsafe { sample.output_presentation_time_stamp() })?;
-                let duration = time_ticks(unsafe { sample.output_duration() }).ok();
+                let duration = unsafe { sample.output_duration() };
+                let duration = if duration.flags.contains(CMTimeFlags::Valid) {
+                    Some(time_ticks(duration)?)
+                } else {
+                    None
+                };
                 Ok(Some((sample, pts, duration)))
             }
             None if unsafe { flight.0.status() } == AVAssetReaderStatus::Completed => Ok(None),
