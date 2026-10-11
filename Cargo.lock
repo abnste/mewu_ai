@@ -3096,6 +3096,7 @@ dependencies = [
  "gif",
  "image",
  "jsonschema",
+ "libc",
  "mewu-core",
  "process-wrap",
  "pulldown-cmark",
