@@ -38,6 +38,9 @@ const MAX_PATH_BYTES: usize = 32_767;
 enum ContentKind {
     Png,
     Jpeg,
+    Mp4,
+    Mp3,
+    Gif,
 }
 
 impl ContentKind {
@@ -45,6 +48,9 @@ impl ContentKind {
         match self {
             Self::Png => "public.png",
             Self::Jpeg => "public.jpeg",
+            Self::Mp4 => "public.mpeg-4",
+            Self::Mp3 => "public.mp3",
+            Self::Gif => "com.compuserve.gif",
         }
     }
 }
@@ -55,6 +61,9 @@ fn content_kinds<F: Copy + Eq>(spec: &DialogSpec<F>) -> Result<Vec<ContentKind>,
         .iter()
         .map(|format| match format.extensions {
             ["png"] => Ok(ContentKind::Png),
+            ["mp4"] => Ok(ContentKind::Mp4),
+            ["mp3"] => Ok(ContentKind::Mp3),
+            ["gif"] => Ok(ContentKind::Gif),
             extensions
                 if extensions
                     .iter()
@@ -835,6 +844,32 @@ mod tests {
             content_kinds(&unsupported),
             Err(SaveDialogError::InvalidFormat)
         ));
+    }
+
+    #[test]
+    fn video_formats_keep_the_offered_order_and_reject_conflicting_suffixes() {
+        let spec = crate::video_save_dialog::spec(true);
+        assert_eq!(
+            content_kinds(&spec).unwrap(),
+            [ContentKind::Mp4, ContentKind::Mp3, ContentKind::Gif]
+        );
+        for (index, suffix) in [(1, "mp4"), (2, "mp3"), (3, "gif")] {
+            assert!(spec
+                .destination(Path::new(&format!("/private/tmp/视频.{suffix}")), index)
+                .is_ok());
+            assert_eq!(selected_index(index as isize - 1, 3).unwrap(), index);
+        }
+        assert!(spec
+            .destination(Path::new("/private/tmp/视频.mp4"), 2)
+            .is_err());
+        let without_gif = crate::video_save_dialog::spec(false);
+        assert_eq!(
+            content_kinds(&without_gif).unwrap(),
+            [ContentKind::Mp4, ContentKind::Mp3]
+        );
+        assert!(without_gif
+            .destination(Path::new("/private/tmp/视频.gif"), 3)
+            .is_err());
     }
 
     #[test]
