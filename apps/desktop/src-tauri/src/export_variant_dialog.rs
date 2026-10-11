@@ -91,6 +91,30 @@ pub fn pick_variant_macos(
     })
 }
 
+#[cfg(target_os = "linux")]
+pub fn pick_variant_linux(
+    window: tauri::WebviewWindow, token: usize, media: Media, has_annotations: bool,
+    cancel: Arc<AtomicBool>, allowed: impl Fn() -> Result<(), String> + Send + 'static,
+) -> Result<Outcome, String> {
+    use gtk::prelude::*;
+    choose_with(has_annotations, &cancel, &allowed, || {
+        let result = crate::gtk_dialog_linux::show(window, token, &cancel, &allowed, move |parent| {
+            let title = match media { Media::Image => crate::ui_language::text("导出图片", "Export image"), Media::Video => crate::ui_language::text("导出视频", "Export video") };
+            let dialog = gtk::Dialog::with_buttons(Some(title), Some(parent), gtk::DialogFlags::MODAL, &[
+                (crate::ui_language::text("取消", "Cancel"), gtk::ResponseType::Cancel),
+                (crate::ui_language::text("原始内容", "Original content"), gtk::ResponseType::Other(1)),
+                (crate::ui_language::text("包含标注", "Include annotations"), gtk::ResponseType::Other(2)),
+            ]);
+            Ok((dialog, Box::new(|_: &gtk::Dialog, response| Ok(match response {
+                gtk::ResponseType::Other(1) => Outcome::Selected(ExportVariant::Clean),
+                gtk::ResponseType::Other(2) => Outcome::Selected(ExportVariant::Annotated),
+                _ => Outcome::UserCanceled,
+            }))))
+        })?;
+        Ok(result.unwrap_or(Outcome::RequestCanceled))
+    })
+}
+
 #[cfg(windows)]
 mod native {
     use super::*;
