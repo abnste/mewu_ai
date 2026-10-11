@@ -9,7 +9,7 @@ import VideoDrawingEditor, { type VideoDrawingEditorProps } from './VideoDrawing
 import type { VideoDrawingGrant } from '../video-drawing-contracts';
 import { DrawingShape } from './DrawingLayer';
 import type { EditorBox } from '../drawing-editor-port';
-import { assetUrl } from '../bridge';
+import { assetUrl, runtimeInfo } from '../bridge';
 import type { VideoAction, VideoExportState, VideoGrant, VideoMetadata, VideoTarget } from '../video-contracts';
 import { getVideoInfo, videoNative } from '../video-bridge';
 import { VideoRequestLane, type RegisterVideoFlush } from '../video-requests';
@@ -48,9 +48,10 @@ export default function VideoArtifact(props: VideoArtifactProps) {
   let video!: HTMLVideoElement, popover: HTMLDivElement | undefined, playback: VideoPlayback | undefined, disposed = false;
   let preview!: HTMLCanvasElement;
   const [reducedPreview, setReducedPreview] = createSignal(false);
+  const [canvasAtFullResolution, setCanvasAtFullResolution] = createSignal(false);
   createEffect(() => {
     const percent = props.previewResolution ?? 100;
-    if (video && preview) onCleanup(reducedVideoPreview(video, preview, percent, setReducedPreview));
+    if (video && preview) onCleanup(reducedVideoPreview(video, preview, percent, setReducedPreview, canvasAtFullResolution()));
   });
   let popoverResize: ResizeObserver | undefined;
   let textEditor: HTMLDivElement | undefined, textResize: ResizeObserver | undefined;
@@ -163,6 +164,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
   }));
   createEffect(on(() => [props.item.x, props.item.y, props.item.width, props.item.height, props.active, metadata()] as const, () => queueMicrotask(place)));
   onMount(() => {
+    void runtimeInfo().then(info => { if (!disposed) setCanvasAtFullResolution(info.platform === 'macos'); }).catch(report);
     playback = new VideoPlayback(video, { identity: sourceKey, range, position: setPosition, playing: setPlaying, observation: value => { setAnnotationPosition(value.sourcePlaybackTicks); annotationReader.at(value.sourcePlaybackTicks); }, error: report });
     const unregister = props.onRegisterPause?.(() => { stopAnnotationPointer?.(); manual.interrupt(); pausePlayback(); });
     onCleanup(() => unregister?.());

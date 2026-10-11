@@ -5,9 +5,9 @@ export function previewSize(width: number, height: number, percent: PreviewResol
   const scale = [50, 75, 100].includes(percent) ? percent / 100 : 1;
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
-/** Scale only the presented surface; source bytes, clock, trim and export remain unchanged. */
-export function reducedVideoPreview(video: HTMLVideoElement, canvas: HTMLCanvasElement, percent: PreviewResolution, visible: (value: boolean) => void) {
-  const context = percent === 100 ? null : canvas.getContext('2d', { alpha: false });
+/** Scale only presentation. macOS uses a canvas at full resolution too: its native video surface can be white in a transparent window. */
+export function reducedVideoPreview(video: HTMLVideoElement, canvas: HTMLCanvasElement, percent: PreviewResolution, visible: (value: boolean) => void, canvasAtFullResolution = false) {
+  const context = percent === 100 && !canvasAtFullResolution ? null : canvas.getContext('2d', { alpha: false });
   let disposed = false, pending: number | undefined;
   function draw() {
     if (disposed || !context || video.readyState < 2) return;

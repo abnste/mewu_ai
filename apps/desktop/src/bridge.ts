@@ -45,7 +45,7 @@ export interface RecordingStatus {
   audio: RecordingAudioMode;
 }
 export type RecordingAction = 'pause' | 'resume' | 'stop' | 'cancel';
-interface RuntimeInfo { hotkey: string; captureBackend: string; contentOrigin: string }
+interface RuntimeInfo { platform: 'windows' | 'macos' | 'linux' | 'other'; hotkey: string; captureBackend: string; contentOrigin: string }
 let runtime: RuntimeInfo | undefined;
 let runtimeRequest: Promise<RuntimeInfo> | undefined;
 const uid = () => crypto.randomUUID();
@@ -614,13 +614,15 @@ export async function freezeSpace(sceneId: string): Promise<Snapshot> {
   return applyCommand({ type: 'freeze_scene', sceneId });
 }
 export async function runtimeInfo(): Promise<RuntimeInfo> {
-  if (!native) return { hotkey: '', captureBackend: '', contentOrigin: '' };
+  if (!native) return { platform: 'other', hotkey: '', captureBackend: '', contentOrigin: '' };
   if (runtime) return runtime;
   if (!runtimeRequest) {
     runtimeRequest = invoke<RuntimeInfo>('runtime_info').then(info => {
+      const platform = info.platform ?? 'other';
+      if (!['windows', 'macos', 'linux', 'other'].includes(platform)) throw new Error('运行平台无效');
       const origin = new URL(info.contentOrigin);
       if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('内容服务地址无效');
-      runtime = { ...info, contentOrigin: origin.origin };
+      runtime = { ...info, platform, contentOrigin: origin.origin };
       return runtime;
     }).catch(error => {
       runtimeRequest = undefined;

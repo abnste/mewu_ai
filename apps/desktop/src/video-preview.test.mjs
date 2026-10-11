@@ -36,3 +36,24 @@ test('original resolution has no extra frame copy; failed canvas keeps native vi
   reducedVideoPreview(video, canvas, 100, v => visible = v)(); assert.equal(requested, 0);
   reducedVideoPreview(video, canvas, 50, v => visible = v)(); assert.equal(requested, 1); assert.equal(visible, false);
 });
+
+test('Mac full-resolution presentation keeps the source clock and redraws paused seek, then cancels late frames', () => {
+  const listeners = new Map(), callbacks = new Map(), drawn = [], cancelled = [];
+  let next = 0, visible = false;
+  const video = { src: 'source.mp4', currentTime: 0, readyState: 1, paused: true, ended: false, videoWidth: 286, videoHeight: 268,
+    addEventListener: (name, cb) => listeners.set(name, cb), removeEventListener: name => listeners.delete(name),
+    requestVideoFrameCallback: cb => { callbacks.set(++next, cb); return next; }, cancelVideoFrameCallback: id => { cancelled.push(id); callbacks.delete(id); } };
+  const canvas = { width: 1, height: 1, getContext: () => ({ drawImage: (...args) => drawn.push(args) }) };
+  const stop = reducedVideoPreview(video, canvas, 100, value => visible = value, true);
+  assert.equal(drawn.length, 0); assert.equal(visible, false);
+  video.readyState = 2; listeners.get('loadeddata')();
+  assert.equal(visible, true); assert.equal(canvas.width, 286); assert.equal(canvas.height, 268);
+  assert.equal(callbacks.size, 0);
+  video.currentTime = 2; listeners.get('seeked')();
+  assert.equal(drawn.length, 2); assert.equal(video.currentTime, 2); assert.equal(video.src, 'source.mp4');
+  video.paused = false; listeners.get('play')();
+  assert.equal(callbacks.size, 1);
+  const late = callbacks.get(1); stop(); late();
+  assert.equal(drawn.length, 3); assert.equal(cancelled.length, 1); assert.equal(callbacks.size, 0);
+  assert.equal(listeners.size, 0); assert.equal(visible, false);
+});

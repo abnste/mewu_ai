@@ -90,6 +90,7 @@ mod recording_preferences;
 mod recording_storage;
 mod recording_worker;
 mod rich_annotation_host;
+mod runtime_platform;
 mod save_dialog;
 mod scroll_capture;
 mod scroll_host;
@@ -916,6 +917,7 @@ async fn resize_frozen_widget(app: AppHandle, expanded: bool) -> Result<(), Stri
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeInfo {
+    platform: runtime_platform::RuntimePlatform,
     hotkey: String,
     capture_backend: &'static str,
     content_origin: String,
@@ -923,6 +925,7 @@ struct RuntimeInfo {
 #[tauri::command]
 fn runtime_info(app: AppHandle, host: tauri::State<'_, Host>) -> Result<RuntimeInfo, String> {
     Ok(RuntimeInfo {
+        platform: runtime_platform::RuntimePlatform::current(),
         hotkey: capture_shortcut_host::active_display(&app),
         capture_backend: capture::backend_name(),
         content_origin: host.content_origin.clone(),
