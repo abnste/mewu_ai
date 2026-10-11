@@ -89,5 +89,8 @@ windows = { version = "=0.62.2", features = ["Win32_System_Com_StructuredStorage
 rxing = { version = "=0.9.3", default-features = false, features = ["encoders"] }
 x11rb = { version = "=0.13.2", features = ["randr"] }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+glib = "=0.18.5"
+
 [features]
 catalog-validator = []

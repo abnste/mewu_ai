@@ -304,7 +304,7 @@ Reproduce with Cargo, Node.js, and ripgrep on PATH, after npm ci: node apps/desk
 | Cargo | gl | 0.14.0 | Apache-2.0 | transitive | METADATA ONLY — license/copyright text not collected |
 | Cargo | glib-macros | 0.18.5 | MIT | transitive | COPYRIGHT [L026]; LICENSE [L025] |
 | Cargo | glib-sys | 0.18.1 | MIT | transitive | LICENSE [L025] |
-| Cargo | glib | 0.18.5 | MIT | transitive | COPYRIGHT [L026]; LICENSE [L025] |
+| Cargo | glib | 0.18.5 | MIT | transitive; local upstream PR 1343 backport (docs/glib-backport.md); direct Linux tests | COPYRIGHT [L026]; LICENSE [L025] |
 | Cargo | glob | 0.3.4 | MIT OR Apache-2.0 | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L037] |
 | Cargo | global-hotkey | 0.8.0 | Apache-2.0 OR MIT | transitive | LICENSE-APACHE [L005]; LICENSE-MIT [L139]; LICENSE.spdx [L140] |
 | Cargo | gobject-sys | 0.18.0 | MIT | transitive | LICENSE [L025] |
