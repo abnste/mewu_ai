@@ -13,7 +13,7 @@ use std::{
     io::{self, BufWriter, Write},
     path::Path,
     sync::atomic::AtomicBool,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 struct Limited<'a, W> {
@@ -44,11 +44,25 @@ pub(super) fn render(
     cancel: &AtomicBool,
     progress: &dyn Fn(u8),
 ) -> Result<GifMetadata, ClipError> {
-    check_cancel(cancel)?;
+    // The parent still owns its unchanged 600s process/tree/IO deadline.
+    // This supplementary budget shares one origin across inspection, plan,
+    // encoding, validation and publication; decoding never receives a fresh600s.
+    let started = Instant::now();
+    let budget = Duration::from_secs(600);
+    let check = || {
+        check_cancel(cancel)?;
+        if started.elapsed() >= budget {
+            Err(ClipError::TimedOut)
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
     expected.validate_range(range)?;
     if inspect(source, cancel)? != *expected {
         return Err(ClipError::SourceChanged);
     }
+    check()?;
     let start = range.map_or(0, |v| v.start_ticks);
     let end = range.map_or(expected.duration_ticks, |v| v.end_ticks);
     let (metadata, requested, delays, plan) = if overlays.is_empty() {
@@ -76,6 +90,7 @@ pub(super) fn render(
             Some(plan),
         )
     };
+    check()?;
     let mut destination = Destination::gif(output)?;
     let file = destination.create_file()?;
     let limited = Limited {
@@ -100,9 +115,10 @@ pub(super) fn render(
         source,
         expected,
         &requested,
-        Duration::from_secs(600),
+        budget.saturating_sub(started.elapsed()),
         cancel,
         |index, sample, _, _, matrix| {
+            check()?;
             destination.check()?;
             let rgb = frames::decoded_rgb(
                 sample,
@@ -130,7 +146,7 @@ pub(super) fn render(
                 )
                 .into_raw()
             };
-            check_cancel(cancel)?;
+            check()?;
             let mut frame = gif::Frame::from_rgba_speed(
                 metadata.width as u16,
                 metadata.height as u16,
@@ -140,7 +156,7 @@ pub(super) fn render(
             frame.delay = delays[index];
             frame.dispose = gif::DisposalMethod::Background;
             encoder.write_frame(&frame).map_err(convert)?;
-            check_cancel(cancel)?;
+            check()?;
             let percent = ((index + 1) * 99 / requested.len()) as u8;
             if percent > previous {
                 previous = percent;
@@ -149,6 +165,7 @@ pub(super) fn render(
             Ok(())
         },
     )?;
+    check()?;
     let mut writer = encoder.into_inner().map_err(convert)?;
     writer.flush().map_err(|_| ClipError::FileUnavailable)?;
     writer
@@ -157,7 +174,7 @@ pub(super) fn render(
         .sync_all()
         .map_err(|_| ClipError::FileUnavailable)?;
     drop(writer);
-    check_cancel(cancel)?;
+    check()?;
     source.check(cancel)?;
     destination.check()?;
     if file
@@ -178,13 +195,14 @@ pub(super) fn render(
     } else {
         crate::video_gif_backend::validate_file(destination.path(), &metadata, cancel)?;
     }
-    check_cancel(cancel)?;
+    check()?;
     source.check(cancel)?;
     destination.check()?;
     destination.publish(&file)?;
-    check_cancel(cancel)?;
+    check()?;
     source.check(cancel)?;
     destination.check()?;
+    check()?;
     destination.commit();
     progress(100);
     Ok(metadata)
