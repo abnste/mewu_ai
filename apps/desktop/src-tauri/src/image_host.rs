@@ -174,6 +174,16 @@ impl Registry {
     ) -> Result<(Work, Arc<AtomicBool>), String> {
         self.begin(owner, None, admit)
     }
+    #[cfg(target_os = "linux")]
+    pub fn begin_document(
+        &self,
+        owner: String,
+        admit: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(Work, Arc<AtomicBool>), String> {
+        // Document identity is validated under Engine before publication.
+        // This registry tracks actual work/exit/owner lifetime, not its cells.
+        self.begin(owner, None, admit)
+    }
     fn cancel_where(&self, predicate: impl FnOnce(&Pending) -> bool) {
         if let Some(pending) = self.lock().as_ref() {
             if !pending.publishing && predicate(pending) {
