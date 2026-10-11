@@ -694,12 +694,8 @@ mod tests {
         validate_ocr_document(&document).unwrap();
     }
 
-    #[test]
-    #[ignore = "real Apple Vision on an outline-font-supported non-BMP symbol; reports normalization"]
-    fn real_vision_handles_supported_non_bmp_symbol_without_fabricating_boxes() {
-        use resvg::{tiny_skia, usvg};
-        let symbol = '\u{1d7d8}'; // MATHEMATICAL DOUBLE-STRUCK DIGIT ZERO.
-        assert!(symbol as u32 > 0xffff);
+    fn non_bmp_fixture_options(symbol: char) -> (resvg::usvg::Options<'static>, String) {
+        use resvg::usvg;
         let mut options = usvg::Options::default();
         options.fontdb = crate::drawing_render::fonts().unwrap();
         // Load one explicit local outline font, without traversing font folders.
@@ -744,6 +740,16 @@ mod tests {
             resolve_data: Box::new(|_, _, _| None),
             resolve_string: Box::new(|_, _| None),
         };
+        (options, family)
+    }
+
+    #[test]
+    #[ignore = "real Apple Vision on an outline-font-supported non-BMP symbol; reports normalization"]
+    fn real_vision_handles_supported_non_bmp_symbol_without_fabricating_boxes() {
+        use resvg::{tiny_skia, usvg};
+        let symbol = '\u{1d7d8}'; // MATHEMATICAL DOUBLE-STRUCK DIGIT ZERO.
+        assert!(symbol as u32 > 0xffff);
+        let (options, family) = non_bmp_fixture_options(symbol);
         let svg = format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="240"><rect width="1400" height="240" fill="white"/><text x="48" y="140" fill="black" font-size="80" font-family="Helvetica">Before</text><text x="450" y="140" fill="black" font-size="80" font-family="{family}">{symbol}</text><text x="600" y="140" fill="black" font-size="80" font-family="Helvetica">After 34567</text></svg>"#
         );
@@ -800,6 +806,72 @@ mod tests {
                 );
             }
         }
+        validate_ocr_document(&document).unwrap();
+    }
+
+    #[test]
+    #[ignore = "real Apple Vision on a supported non-BMP digit in a complete numeric token"]
+    fn real_vision_recognizes_supported_non_bmp_digit_in_numeric_context() {
+        use resvg::{tiny_skia, usvg};
+        let symbol = '\u{1d7d8}';
+        let (options, family) = non_bmp_fixture_options(symbol);
+        let render = |symbol_fill: &str| {
+            // Adjacent spans retain ordinary numeric context without replacing
+            // the genuine mathematical glyph with an ASCII lookalike.
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="240"><rect width="1400" height="240" fill="white"/><text x="48" y="140" fill="black" font-size="80" font-family="Helvetica">Serial 12<tspan fill="{symbol_fill}" font-family="{family}">{symbol}</tspan><tspan>34567</tspan></text></svg>"#
+            );
+            let tree = usvg::Tree::from_str(&svg, &options).unwrap();
+            let mut pixmap = tiny_skia::Pixmap::new(1400, 240).unwrap();
+            resvg::render(
+                &tree,
+                tiny_skia::Transform::identity(),
+                &mut pixmap.as_mut(),
+            );
+            let image = RgbaImage::from_raw(1400, 240, pixmap.data().to_vec()).unwrap();
+            assert!(image.pixels().all(|pixel| pixel[3] == 255));
+            image
+        };
+        let image = render("black");
+        // Changing only glyph fill preserves advance widths and the positions
+        // of every neighbouring character. Differences identify actual U+1D7D8
+        // ink, rather than counting unrelated text inside a guessed rectangle.
+        let control = render("white");
+        let (mut min_x, mut min_y, mut max_x, mut max_y) = (1400, 240, 0, 0);
+        let mut ink = 0;
+        for (x, y, pixel) in image.enumerate_pixels() {
+            if pixel[0] < 128 && control.get_pixel(x, y)[0] >= 128 {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+                ink += 1;
+            }
+        }
+        assert!(ink > 100, "the contextual non-BMP glyph must produce ink");
+        assert!(min_x > 48 && max_x < 1000 && min_y > 40 && max_y < 160);
+        let document = recognize_impl(image, Arc::new(AtomicBool::new(false))).unwrap();
+        let text = compact_result(&document);
+        eprintln!(
+            "synthetic contextual U+1D7D8 Vision result: {text}; ink={ink} bounds=({min_x},{min_y})..({max_x},{max_y})"
+        );
+        // Exact complete-token recognition permits only styled
+        // digit normalization; dropping the symbol cannot satisfy this check.
+        assert_eq!(text.replace(symbol, "0"), "Serial12034567");
+        assert!(
+            document
+                .lines
+                .iter()
+                .flat_map(|line| &line.words)
+                .any(|word| {
+                    word.text.replace(symbol, "0").contains("12034567")
+                        && word.x < f64::from(max_x)
+                        && word.x + word.width > f64::from(min_x)
+                        && word.y < f64::from(max_y)
+                        && word.y + word.height > f64::from(min_y)
+                }),
+            "the recognized numeric token must overlap the real non-BMP ink: {text}"
+        );
         validate_ocr_document(&document).unwrap();
     }
 

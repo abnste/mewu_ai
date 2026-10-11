@@ -999,19 +999,24 @@ fn wait_mac_capture_hidden(
     app: &AppHandle,
 ) -> Result<(), String> {
     // WindowServer can lag the acknowledged main-loop orderOut. Poll its real
-    // state for a bounded interval, yielding between observations rather than
-    // treating an arbitrary sleep as proof. This runs only on the blocking worker.
+    // state for a bounded interval. A short pause only limits polling traffic;
+    // each observation still proves hiding through Quartz and its generation.
+    // This runs only on the blocking worker.
     let until = std::time::Instant::now() + std::time::Duration::from_millis(250);
     loop {
         work.check()?;
         app.state::<Host>().exit.ensure_new_operation()?;
-        if mac_capture_hidden(witnesses)? {
+        let hidden = mac_capture_hidden(witnesses)?;
+        work.check()?;
+        app.state::<Host>().exit.ensure_new_operation()?;
+        if hidden {
             return Ok(());
         }
-        if std::time::Instant::now() >= until {
+        let remaining = until.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
             return Err("截图窗口尚未隐藏，请重新截图".into());
         }
-        std::thread::yield_now();
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(5)));
     }
 }
 
