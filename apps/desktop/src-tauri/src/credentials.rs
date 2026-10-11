@@ -2,6 +2,10 @@
 use std::path::Path;
 use zeroize::Zeroizing;
 
+#[cfg(target_os = "linux")]
+#[path = "credentials_linux.rs"]
+mod linux;
+
 /// Credentials are immutable. The database points to a fresh, opaque UUID only
 /// after its encrypted file is durable; failed commits cannot overwrite a key
 /// still in use by another request or by the previous database revision.
@@ -315,7 +319,12 @@ fn read_scoped(
             .map(Zeroizing::new)
             .map_err(|_| "连接密钥损坏")?
     };
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    let key = {
+        ordinary(root, true)?;
+        linux::read(namespace, owner_id, credential_id)?
+    };
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     let key: Zeroizing<String> = {
         return Err("此平台尚未接入凭据存储".into());
     };
@@ -373,7 +382,12 @@ fn create_scoped(
         )
         .map_err(|_| "无法写入连接钥匙串")?;
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        ordinary(root, true)?;
+        linux::create(namespace, connection_id, &credential_id, key)?;
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     return Err("此平台尚未接入凭据存储".into());
     Ok(credential_id)
 }
@@ -394,6 +408,10 @@ fn discard_scoped(root: &Path, namespace: &str, connection_id: &str, credential_
         || credential_id == mewu_core::LEGACY_CREDENTIAL_ID
     {
         return;
+    }
+    #[cfg(target_os = "linux")]
+    if ordinary(root, true).is_ok() {
+        linux::discard(namespace, connection_id, credential_id);
     }
     #[cfg(windows)]
     if let Ok(path) = blob_path(root, namespace, connection_id, credential_id, false) {

@@ -3086,6 +3086,7 @@ name = "mewu-desktop"
 version = "1.0.0-preview.2"
 dependencies = [
  "arboard",
+ "async-io",
  "base64 0.22.1",
  "block2",
  "chrono",
@@ -3093,6 +3094,7 @@ dependencies = [
  "dirs",
  "eventsource-stream",
  "flate2",
+ "futures-lite",
  "futures-util",
  "gdkx11-sys",
  "gif",
@@ -3152,6 +3154,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "x11rb",
  "xcap",
+ "zbus",
  "zeroize",
 ]
 

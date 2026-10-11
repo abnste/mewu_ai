@@ -170,6 +170,65 @@ fn importing_during_a_run_changes_only_future_references_and_rejects_stale_space
 }
 
 #[test]
+fn imported_video_is_a_referenced_media_object_and_invalid_batch_keeps_existing_draft() {
+    let db = TestDb::new();
+    let mut store = Store::open(&db.0).unwrap();
+    let scene_id = store.snapshot().active_scene_id;
+    draft(&mut store, &scene_id, "keep draft");
+    let mut video = asset(AssetKind::Video, "selected.mp4");
+    video.width = Some(640);
+    video.height = Some(360);
+    let snapshot = store
+        .import_assets(
+            &scene_id,
+            vec![video.clone(), asset(AssetKind::Text, "notes.txt")],
+        )
+        .unwrap();
+    let scene = active(&store);
+    let item = scene
+        .items
+        .iter()
+        .find(|item| item.asset.id == video.id)
+        .unwrap();
+    assert_eq!(item.asset, video);
+    assert_eq!(scene.draft, "keep draft");
+    assert!(scene.refs.contains(&Reference {
+        kind: ReferenceKind::Item,
+        id: item.id.clone()
+    }));
+    drop(store);
+    let mut store = Store::open(&db.0).unwrap();
+    assert_eq!(store.snapshot(), snapshot);
+    for field in [
+        "missing_width",
+        "missing_height",
+        "zero_width",
+        "origin",
+        "scale",
+    ] {
+        let mut invalid = video.clone();
+        invalid.id = Uuid::new_v4().to_string();
+        match field {
+            "missing_width" => invalid.width = None,
+            "missing_height" => invalid.height = None,
+            "zero_width" => invalid.width = Some(0),
+            "origin" => invalid.origin_x = Some(10),
+            "scale" => invalid.scale_factor = Some(1.0),
+            _ => unreachable!(),
+        }
+        assert!(
+            store
+                .import_assets(&scene_id, vec![asset(AssetKind::Text, "late.txt"), invalid])
+                .is_err(),
+            "{field}"
+        );
+        assert_eq!(store.snapshot(), snapshot, "{field}");
+    }
+    assert!(store.import_assets(&scene_id, vec![video]).is_err());
+    assert_eq!(store.snapshot(), snapshot);
+}
+
+#[test]
 fn any_invalid_asset_rejects_the_entire_batch_and_text_never_has_pixel_metadata() {
     let mut store = Store::open_in_memory().unwrap();
     let scene_id = store.snapshot().active_scene_id;

@@ -31,6 +31,8 @@ pub enum ReleaseChannel {
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateSupport {
+    #[cfg(target_os = "linux")]
+    Unconfigured,
     SignedInstaller,
     #[cfg(target_os = "macos")]
     ManualOnly,
@@ -184,8 +186,10 @@ impl SettingsResources {
             commit: build.commit.clone(),
             channel: build.channel,
             platform: std::env::consts::OS.into(),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             update_support: UpdateSupport::SignedInstaller,
+            #[cfg(target_os = "linux")]
+            update_support: UpdateSupport::Unconfigured,
             #[cfg(target_os = "macos")]
             update_support: if crate::app_update::macos::supported() { UpdateSupport::SignedBundle } else { UpdateSupport::ManualOnly },
             data_directory: self
@@ -384,14 +388,18 @@ mod tests {
         );
         assert_eq!(info.version, "1.0.0-alpha.1");
         assert_eq!(info.platform, std::env::consts::OS);
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         assert_eq!(info.update_support, UpdateSupport::SignedInstaller);
+        #[cfg(target_os = "linux")]
+        assert_eq!(info.update_support, UpdateSupport::Unconfigured);
         #[cfg(target_os = "macos")]
         assert_eq!(info.update_support, UpdateSupport::ManualOnly);
         assert!(info.commit.is_none());
         let wire = serde_json::to_value(info).unwrap();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         assert_eq!(wire["updateSupport"], "signed_installer");
+        #[cfg(target_os = "linux")]
+        assert_eq!(wire["updateSupport"], "unconfigured");
         #[cfg(target_os = "macos")]
         assert_eq!(wire["updateSupport"], "manual_only");
         assert!(wire.get("commit").is_none());
