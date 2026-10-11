@@ -101,3 +101,35 @@ truncation and all other flags remain rejected. A native UnixStream fixture
 records the real syscall echo before exercising the actual factory. The failed
 run remains failure evidence until the corrected factory passes native CI.
 See [Linux 6.8 recvmsg implementation](https://github.com/torvalds/linux/blob/v6.8/net/socket.c).
+
+Runtime prerequisites are separate from the portable application's ELF bundle.
+The factory uses installed `/usr/bin/bwrap`; this AppImage does not include that
+helper. The host must permit the required user/PID namespaces and provide usable
+`/proc`, pidfds, SCM_RIGHTS and `close_range(CLOSE_RANGE_CLOEXEC)`. The last flag
+requires Linux 5.11 or later (including an equivalent backport); pidfd_open starts
+at Linux 5.3. Kernel version alone does not establish namespace/syscall permission.
+Missing helpers or denied syscalls remain unavailable and fail closed, rather
+than falling back to an unowned raw process. No code changes OS policy, installs
+helpers or weakens the existing deadline. This prerequisite set is not a claim
+that portable startup, media backend Ready or application installation passed.
+See [close_range](https://www.man7.org/linux/man-pages/man2/close_range.2.html) and
+[pidfd_open](https://man7.org/linux/man-pages/man2/pidfd_open.2.html).
+
+### Actual application package admission phase
+
+`linux-worker-tests` alone compiles a package verification entry before ordinary
+application initialization. `--mewu-linux-package-code-probe` takes no additional
+arguments; stdin uses the existing bounded Code header plus grayscale bytes,
+with only `codes` mode accepted. The expected single QR is `MEWU CODE ONLY`.
+The actual AppDir Mewu ELF runs the parent supervisor, so the sealed factory
+pins that loaded inode, rather than a cargo test binary or a caller-selected
+executable. It uses the original 3-second startup, 10-second total and 2-second
+cleanup budgets. Success requires real Ready, the expected result, original
+Child wait, PID1 owner empty, tracked IO joined and the original permit released.
+
+Default production builds do not include this entry/bootstrap admission, and
+ordinary Linux `run_scan` remains unavailable. CI first stages the normal native
+candidate and only then rebuilds and normalizes the separate verification-feature
+AppDir. That feature package is never substituted for the staged installer.
+Native package proof from this phase is a prerequisite for later production
+admission, not application GUI, installation or update acceptance.

@@ -24,10 +24,12 @@ const OFFICIAL_DRAWING_V1_0_0: &[u8] =
     include_bytes!("../../plugins/migrations/official-drawing-1.0.0.json");
 const OFFICIAL_DRAWING_V1_1_0: &[u8] =
     include_bytes!("../../plugins/migrations/official-drawing-1.1.0.json");
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 const OFFICIAL_OCR: &[u8] = include_bytes!("../../plugins/official-ocr.json");
 #[cfg(target_os = "macos")]
 const OFFICIAL_OCR: &[u8] = include_bytes!("../../plugins/macos/official-ocr.json");
+#[cfg(target_os = "linux")]
+const OFFICIAL_OCR: &[u8] = include_bytes!("../../plugins/linux/official-ocr.json");
 const OFFICIAL_SCROLL: &[u8] = include_bytes!("../../plugins/official-scroll.json");
 const OFFICIAL_TRANSLATION: &[u8] = include_bytes!("../../plugins/official-translation.json");
 const OFFICIAL_PIN: &[u8] = include_bytes!("../../plugins/official-pin.json");
@@ -345,6 +347,8 @@ pub enum OcrEngine {
     Windows,
     #[serde(rename = "apple.vision")]
     AppleVision,
+    #[serde(rename = "linux.tesseract")]
+    LinuxTesseract,
 }
 
 impl OcrEngine {
@@ -352,6 +356,7 @@ impl OcrEngine {
         match self {
             Self::Windows => cfg!(windows),
             Self::AppleVision => cfg!(target_os = "macos"),
+            Self::LinuxTesseract => cfg!(target_os = "linux"),
         }
     }
 }
@@ -4674,7 +4679,7 @@ mod tests {
     fn ocr_engine_is_canonical_and_foreign_packages_do_not_gain_native_authority() {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
-        for (engine, native) in [("windows", cfg!(windows)), ("apple.vision", cfg!(target_os = "macos"))] {
+        for (engine, native) in [("windows", cfg!(windows)), ("apple.vision", cfg!(target_os = "macos")), ("linux.tesseract", cfg!(target_os = "linux"))] {
             let mut manifest = parse_manifest(OFFICIAL_OCR).unwrap();
             manifest.id = format!("example.ocr-{}", engine.replace('.', "-"));
             manifest.contributions = vec![PluginContribution::Ocr {
@@ -4687,7 +4692,7 @@ mod tests {
             store.install_bytes(&bytes, source(), None).unwrap();
             assert_eq!(store.ocr(&manifest.id, 1, "recognize").is_ok(), native);
         }
-        for engine in ["AppleVision", "apple", "vision", "apple.vision ", "remote"] {
+        for engine in ["AppleVision", "apple", "vision", "apple.vision ", "remote", "LinuxTesseract", "tesseract", "linux.tesseract "] {
             assert!(serde_json::from_value::<OcrEngine>(serde_json::json!(engine)).is_err());
         }
         assert!(serde_json::from_slice::<PluginContribution>(br#"{"kind":"selection.ocr","id":"recognize","title":"OCR","engine":"windows","engine":"apple.vision"}"#).is_err());
@@ -4695,6 +4700,7 @@ mod tests {
         let reopened = PluginStore::open(&dir.0).unwrap();
         assert_eq!(reopened.ocr("example.ocr-windows", 1, "recognize").is_ok(), cfg!(windows));
         assert_eq!(reopened.ocr("example.ocr-apple-vision", 1, "recognize").is_ok(), cfg!(target_os = "macos"));
+        assert_eq!(reopened.ocr("example.ocr-linux-tesseract", 1, "recognize").is_ok(), cfg!(target_os = "linux"));
     }
 
     #[test]
@@ -4706,12 +4712,8 @@ mod tests {
         let expected_engine = Ok(OcrEngine::AppleVision);
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let expected_engine = Ok(OcrEngine::Windows);
-        // Linux has no native OCR adapter yet. The same lifecycle/package
-        // checks must still run, with an exact fail-closed platform result.
         #[cfg(target_os = "linux")]
-        let expected_engine: Result<OcrEngine, String> = Err(
-            "此文字识别插件不支持当前系统，请重新安装对应系统的官方插件".into()
-        );
+        let expected_engine = Ok(OcrEngine::LinuxTesseract);
         assert_eq!(
             store.ocr("mewu.ocr", 1, "recognize"),
             expected_engine

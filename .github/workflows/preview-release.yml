@@ -32,7 +32,7 @@ jobs:
           cache: npm
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk xvfb xauth dbus bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract5 tesseract-ocr-eng
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Resolve Mac test temporary directory
@@ -83,15 +83,82 @@ jobs:
           env MEWU_LINUX_WORKER_TEST_ISOLATED=1 cargo test -p mewu-desktop --test linux_worker_factory --locked --features linux-worker-tests
       - name: Prepare unsigned candidate configuration
         run: node -e "const fs=require('node:fs');fs.mkdirSync('out',{recursive:true});fs.writeFileSync('out/native-build-config.json',JSON.stringify({bundle:{createUpdaterArtifacts:false}}))"
+      - name: Test Linux package permission normalization
+        if: runner.os == 'Linux'
+        run: node --test scripts/normalize-linux-appimage.test.mjs
+      - name: Verify native Linux OCR with known English and blank images
+        if: runner.os == 'Linux'
+        run: cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
       - name: Build native candidate
         env:
           MEWU_BUILD_COMMIT: ${{ github.sha }}
         run: npm run desktop:build -- --bundles ${{ matrix.bundles }} --config "${{ github.workspace }}/out/native-build-config.json"
+      - name: Normalize and verify new Linux AppImage permissions
+        if: runner.os == 'Linux'
+        env:
+          MEWU_BUILD_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -e
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import os from 'node:os';
+          import { rebuildAppImage } from './scripts/normalize-linux-appimage.mjs';
+          const version = JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8')).version;
+          const receipt = await rebuildAppImage(
+            path.resolve('target/release/bundle/appimage/MewuAI.AppDir'),
+            path.resolve('target/release/bundle/appimage/MewuAI_' + version + '_amd64.AppImage'),
+            path.join(os.homedir(), '.cache/tauri/linuxdeploy-plugin-appimage.AppImage'),
+          );
+          console.log(JSON.stringify(receipt));
+          JS
       - name: Archive Mac application for later coordinator signing
         if: runner.os == 'macOS'
         run: tar -czf target/release/bundle/macos/MewuAI.app.tar.gz -C target/release/bundle/macos MewuAI.app
       - name: Stage explicit native assets
         run: node scripts/prepare-release.mjs out/release-${{ matrix.platform }} ${{ matrix.platform }}
+      # This rebuild is a feature-only native verification package. The normal
+      # installer was already copied to out/release above and stays unchanged.
+      - name: Build isolated Linux package worker verification feature
+        if: runner.os == 'Linux'
+        env:
+          MEWU_BUILD_COMMIT: ${{ github.sha }}
+        run: npm run desktop:build -- --bundles appimage --features linux-worker-tests --config "${{ github.workspace }}/out/native-build-config.json"
+      - name: Verify isolated Linux package permissions and real Code worker
+        if: runner.os == 'Linux'
+        env:
+          MEWU_BUILD_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -e
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import os from 'node:os';
+          import { rebuildAppImage } from './scripts/normalize-linux-appimage.mjs';
+          const version = JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8')).version;
+          const receipt = await rebuildAppImage(
+            path.resolve('target/release/bundle/appimage/MewuAI.AppDir'),
+            path.resolve('target/release/bundle/appimage/MewuAI_' + version + '_amd64.AppImage'),
+            path.join(os.homedir(), '.cache/tauri/linuxdeploy-plugin-appimage.AppImage'),
+          );
+          console.log(JSON.stringify({ ...receipt, kind: 'feature_only_permission_proof' }));
+          JS
+          env MEWU_LINUX_PACKAGE_CODE_PROBE_APPDIR="${{ github.workspace }}/target/release/bundle/appimage/MewuAI.AppDir" cargo test -p mewu-desktop --locked --features linux-worker-tests --test linux_package_code_probe -- --nocapture --test-threads=1
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { fingerprint } from './scripts/release-contract.mjs';
+          const staged = path.resolve('out/release-linux-x86_64');
+          const build = JSON.parse(fs.readFileSync(path.join(staged, '.metadata/build.json'), 'utf8'));
+          if (build.sourceCommit !== process.env.MEWU_BUILD_COMMIT) throw Error('Staged source changed');
+          for (const asset of build.assets) {
+            const actual = fingerprint(path.join(staged, asset.name));
+            if (actual.sha256 !== asset.sha256 || actual.bytes !== asset.bytes) throw Error('Normal installer was replaced by verification package');
+          }
+          console.log(JSON.stringify({ kind: 'normal_staged_installer_unchanged', sourceCommit: build.sourceCommit, verified: true }));
+          JS
       - name: Preserve candidates for native installation tests
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

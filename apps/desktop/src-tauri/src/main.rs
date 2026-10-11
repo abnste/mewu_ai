@@ -2200,6 +2200,17 @@ fn macos_context() -> tauri::Context<tauri::Wry> {
 }
 
 fn main() {
+    // Test-feature admission phase only. The ordinary Linux build keeps the
+    // sealed worker bootstrap and Code parent disabled until package proof.
+    #[cfg(all(target_os = "linux", feature = "linux-worker-tests"))]
+    {
+        if let Some(code) = owned_process::linux_worker::bootstrap_entry() {
+            std::process::exit(code);
+        }
+        if std::env::args().nth(1).as_deref() == Some("--mewu-linux-package-code-probe") {
+            std::process::exit(code_worker::linux_package_probe_main());
+        }
+    }
     if std::env::args().nth(1).as_deref() == Some("--verify-update") {
         let args: Vec<_> = std::env::args_os().collect();
         if args.len() != 3 {

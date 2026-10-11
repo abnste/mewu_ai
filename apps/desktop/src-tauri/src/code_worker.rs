@@ -325,25 +325,43 @@ fn supervise_executable(
     if cancel.load(Ordering::Acquire) {
         return Err(CodeError::Cancelled);
     }
-    let mut command = Command::new(executable);
-    command
-        .arg("--code-worker")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .env_clear();
-    for name in ["SystemRoot", "WINDIR"] {
-        if let Some(value) = std::env::var_os(name) {
-            command.env(name, value);
+    #[cfg(all(target_os = "linux", feature = "linux-worker-tests"))]
+    let mut process = {
+        use crate::owned_process::linux_worker::{TrustedCommand, Worker};
+        // The factory pins this actual loaded Mewu ELF. No candidate pathname
+        // can replace it, even in the explicit package verification phase.
+        let _ = executable;
+        let mut command = TrustedCommand::new(Worker::Code)
+            .map_err(|_| CodeError::WorkerUnavailable)?;
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .env_clear();
+        ManagedProcess::spawn_trusted(command, permit, started + START_TIMEOUT, &cancel)
+            .map_err(|_| CodeError::WorkerUnavailable)?
+    };
+    #[cfg(not(all(target_os = "linux", feature = "linux-worker-tests")))]
+    let mut process = {
+        let mut command = Command::new(executable);
+        command
+            .arg("--code-worker")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .env_clear();
+        for name in ["SystemRoot", "WINDIR"] {
+            if let Some(value) = std::env::var_os(name) {
+                command.env(name, value);
+            }
         }
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    let mut process =
-        ManagedProcess::spawn(&mut command, permit).map_err(|_| CodeError::WorkerUnavailable)?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        ManagedProcess::spawn(&mut command, permit).map_err(|_| CodeError::WorkerUnavailable)?
+    };
     let (output, writer) = attach_io(&mut process, image, mode)?;
     supervise_process(
         process,
@@ -415,6 +433,8 @@ fn supervise_process(
                 return Err(error);
             }
             if eof && ready && write_done {
+                #[cfg(all(target_os = "linux", feature = "linux-worker-tests"))]
+                eprintln!("package code probe: actual Child wait + PID1 owner empty + actual IO join PASS");
                 return terminal.ok_or(CodeError::Protocol)?;
             }
         }
@@ -432,6 +452,8 @@ fn supervise_process(
                     match event {
                         Event::Ready { version } if !ready && version == VERSION => {
                             ready = true;
+                            #[cfg(all(target_os = "linux", feature = "linux-worker-tests"))]
+                            eprintln!("package code probe: actual Code Ready version={version} PASS");
                             Ok(())
                         }
                         Event::Completed { codes } if ready => {
@@ -476,6 +498,38 @@ fn supervise_process(
                 std::thread::sleep(Duration::from_millis(5));
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "linux-worker-tests"))]
+pub(crate) fn linux_package_probe_main() -> i32 {
+    // The CI-owned known QR comes through the normal bounded worker protocol.
+    // This feature-only process runs before storage, content server and Tauri.
+    if std::env::args_os().count() != 2 || std::env::var_os("APPDIR").is_none() {
+        return 2;
+    }
+    let (image, mode) = match read_scan(&mut BufReader::new(std::io::stdin())) {
+        Ok((image, mode @ ScanMode::Codes)) => (image, mode),
+        _ => return 2,
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let permit = match Permit::acquire(cancel.clone()) {
+        Ok(permit) => permit,
+        Err(_) => return 2,
+    };
+    let result = supervise(image, mode, cancel, permit);
+    match &result {
+        Ok(codes) if codes.len() == 1
+            && codes[0].format == code_decode::CodeFormat::QrCode
+            && codes[0].text == "MEWU CODE ONLY"
+            && !busy() => {
+            println!("{{\"schemaVersion\":1,\"kind\":\"feature_only_appdir_code_probe\",\"knownQrVerified\":true,\"actualReadyVerified\":true,\"actualChildTreeIoDrained\":true,\"permitReleased\":true,\"productionAdmitted\":false,\"guiVerified\":false}}");
+            0
+        }
+        _ => {
+            eprintln!("package code probe failed: result={result:?} slot_busy={}", busy());
+            2
         }
     }
 }

@@ -3103,6 +3103,7 @@ dependencies = [
  "image",
  "jsonschema",
  "libc",
+ "libloading 0.8.9",
  "mewu-core",
  "objc2",
  "objc2-app-kit",
