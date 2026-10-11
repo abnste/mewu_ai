@@ -1044,5 +1044,6 @@
   "无法打开应用": "Unable to open the application",
   "无法打开应用，可复制内容后重试": "Unable to open the application. Copy the content and try again.",
   "打开应用的任务已中断": "The application opening task was interrupted",
-  "此平台尚未接入打开应用": "Opening applications is not supported on this platform"
+  "此平台尚未接入打开应用": "Opening applications is not supported on this platform",
+  "快照已保存，未能置顶图片": "Snapshot saved, but the image could not be pinned"
 }

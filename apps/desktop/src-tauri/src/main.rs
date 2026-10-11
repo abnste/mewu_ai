@@ -77,6 +77,7 @@ mod rich_annotation_host;
 mod save_dialog;
 mod scroll_capture;
 mod scroll_host;
+mod snapshot_pin;
 mod application_snapshot;
 mod application_snapshot_worker;
 #[cfg(all(windows, test))]

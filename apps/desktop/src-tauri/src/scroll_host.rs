@@ -487,7 +487,7 @@ pub async fn start_scroll_capture(
         let work_id = id.clone();
         let result = tauri::async_runtime::spawn_blocking(move || {
             if cancel.load(Ordering::Acquire) {
-                return Ok(());
+                return Ok(None);
             }
             authorized(&work_app, &target, &plugin_id, revision, &contribution_id)?;
             if let Some(window) = snapshot_window {
@@ -513,7 +513,7 @@ pub async fn start_scroll_capture(
                 let image = result?;
                 closed?;
                 drop(session);
-                if let Some(image) = image {
+                return if let Some(image) = image {
                     update(&work_app, &work_id, |s| s.phase = "finishing");
                     persist(
                         &work_app,
@@ -525,9 +525,10 @@ pub async fn start_scroll_capture(
                         &cancel,
                         image,
                         true,
-                    )?;
-                }
-                return Ok(());
+                    )
+                } else {
+                    Ok(None)
+                };
             }
             // GDI resources, their DPI context and all calls stay on this thread.
             let mut source =
@@ -548,10 +549,10 @@ pub async fn start_scroll_capture(
             let mut holding = false;
             loop {
                 if cancel.load(Ordering::Acquire) {
-                    return Ok(());
+                    return Ok(None);
                 }
                 if !work_app.state::<Host>().exit.is_running() {
-                    return Ok(());
+                    return Ok(None);
                 }
                 if preview_dirty && preview_at.elapsed() >= Duration::from_millis(200) {
                     publish_preview(&work_app, &work_id, &stitch, &cancel)?;
@@ -565,7 +566,7 @@ pub async fn start_scroll_capture(
                     });
                 }
                 let finish_after = match next_frame(action.swap(0, Ordering::AcqRel), holding) {
-                    NextFrame::Cancel => return Ok(()),
+                    NextFrame::Cancel => return Ok(None),
                     NextFrame::Save => break,
                     NextFrame::Wait => {
                         std::thread::sleep(Duration::from_millis(80));
@@ -588,7 +589,7 @@ pub async fn start_scroll_capture(
                 };
                 let state = match stitch.accept_with_cancel(frame, &cancel) {
                     Ok(s) => s,
-                    Err(crate::scroll_stitch::StitchError::Canceled) => return Ok(()),
+                    Err(crate::scroll_stitch::StitchError::Canceled) => return Ok(None),
                     Err(e) => return Err(e.to_string()),
                 };
                 progress(&work_app, &work_id, state);
@@ -603,7 +604,7 @@ pub async fn start_scroll_capture(
                 std::thread::sleep(Duration::from_millis(80));
             }
             if cancel.load(Ordering::Acquire) {
-                return Ok(());
+                return Ok(None);
             }
             update(&work_app, &work_id, |s| s.phase = "finishing");
             let image = stitch.finish().map_err(|e| e.to_string())?;
@@ -684,10 +685,10 @@ fn persist(
     plugin: &str,
     revision: u64,
     contribution: &str,
-    cancel: &AtomicBool,
+    cancel: &Arc<AtomicBool>,
     image: image::RgbaImage,
     automatic: bool,
-) -> Result<(), String> {
+) -> Result<Option<crate::snapshot_pin::CompletedSnapshotPin>, String> {
     let host = app.state::<Host>();
     let id = uuid::Uuid::new_v4().to_string();
     let path = host.assets.join(format!("{id}.png"));
@@ -707,6 +708,7 @@ fn persist(
         origin_y: None,
         scale_factor: None,
     };
+    let pin_asset = asset.clone();
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -726,6 +728,7 @@ fn persist(
         return Err(error.into());
     }
     let mut registration_attempted = false;
+    let mut completed_pin = None;
     let mut registration = (|| {
         // Cancel, revoke and final registration serialize on Active. Maintain
         // plugins -> Engine -> Active order; never call back into these locks.
@@ -752,13 +755,25 @@ fn persist(
             engine.store.set_region_image(target, asset)
         }
         .map_err(|error| error.to_string())?;
+        if automatic {
+            if let Ok(plugins) = runtime.store.snapshot() {
+                completed_pin = crate::snapshot_pin::CompletedSnapshotPin::prepare(
+                    &snapshot,
+                    target,
+                    &pin_asset,
+                    &plugins,
+                    cancel.clone(),
+                );
+            }
+        }
         crate::publish(app, &snapshot);
         Ok(true)
     })();
     if !registration_attempted && (cancel.load(Ordering::Acquire) || !host.exit.is_running()) {
         registration = Ok(false);
     }
-    settle_file(&path, registration)
+    settle_file(&path, registration)?;
+    Ok(completed_pin)
 }
 
 /// The caller created this exact UUID file exclusively. Cancellation discards
@@ -779,66 +794,60 @@ fn settle_file(path: &std::path::Path, registration: Result<bool, String>) -> Re
     }
 }
 async fn prepare_windows(app: &AppHandle, g: &Geometry, automatic: bool) -> Result<(), String> {
-    let (send, receive) = tokio::sync::oneshot::channel();
+    // WebView2 creation must stay on this async worker, outside synchronous
+    // main-thread callbacks. Tauri dispatches ordinary window mutations itself.
     let target = app.clone();
-    let g = g.clone();
-    app.run_on_main_thread(move || {
-        let result = (|| {
-            target.state::<Host>().exit.ensure_running()?;
-            let main = target.get_webview_window("space").ok_or("截图窗口不存在")?;
-            crate::recording::exclude(&main, true)?;
-            main.set_ignore_cursor_events(true)
-                .map_err(|_| "无法穿透截图覆盖层")?;
-            main.set_focusable(false).map_err(|_| "无法释放桌面输入")?;
-            let toolbar = tauri::WebviewWindowBuilder::new(
-                &target,
-                LABEL,
-                tauri::WebviewUrl::App("index.html?surface=scroll".into()),
-            )
-            .title("Mewu · 长截图")
-            .inner_size(preview_size(&g).0, preview_size(&g).1)
-            .decorations(false)
-            .transparent(true)
-            .background_color(tauri::window::Color(0, 0, 0, 0))
-            .shadow(false)
-            .resizable(false)
-            .maximizable(false)
-            .minimizable(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .focused(false)
-            .visible(false)
-            .disable_drag_drop_handler()
-            .on_navigation(|url| {
-                (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
-                    || (matches!(url.scheme(), "http" | "https")
-                        && url.host_str() == Some("tauri.localhost"))
-                    || (cfg!(debug_assertions)
-                        && url.scheme() == "http"
-                        && url.host_str() == Some("127.0.0.1")
-                        && url.port() == Some(1420))
-            })
-            .build()
-            .map_err(|_| "无法打开长截图控制条")?;
-            crate::recording::exclude(&toolbar, true)?;
-            toolbar
-                .set_position(tauri::PhysicalPosition::new(
-                    preview_placement(&g).0,
-                    preview_placement(&g).1,
-                ))
-                .map_err(|_| "无法放置长截图控制条")?;
-            toolbar.show().map_err(|_| "无法显示长截图控制条")?;
-            // Release the overlay so covered Chromium windows keep producing
-            // frames. WGC still captures only the authorized source window.
-            if automatic {
-                main.hide().map_err(|_| "无法释放应用窗口画面")?;
-            }
-            Ok(())
-        })();
-        let _ = send.send(result);
+    target.state::<Host>().exit.ensure_running()?;
+    let main = target.get_webview_window("space").ok_or("截图窗口不存在")?;
+    crate::recording::exclude(&main, true)?;
+    main.set_ignore_cursor_events(true)
+        .map_err(|_| "无法穿透截图覆盖层")?;
+    main.set_focusable(false).map_err(|_| "无法释放桌面输入")?;
+    let toolbar = tauri::WebviewWindowBuilder::new(
+        &target,
+        LABEL,
+        tauri::WebviewUrl::App("index.html?surface=scroll".into()),
+    )
+    .title("Mewu · 长截图")
+    .inner_size(preview_size(&g).0, preview_size(&g).1)
+    .decorations(false)
+    .transparent(true)
+    .background_color(tauri::window::Color(0, 0, 0, 0))
+    .shadow(false)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    .visible(false)
+    .disable_drag_drop_handler()
+    .on_navigation(|url| {
+        (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+            || (matches!(url.scheme(), "http" | "https")
+                && url.host_str() == Some("tauri.localhost"))
+            || (cfg!(debug_assertions)
+                && url.scheme() == "http"
+                && url.host_str() == Some("127.0.0.1")
+                && url.port() == Some(1420))
     })
-    .map_err(|_| "长截图窗口准备失败")?;
-    receive.await.map_err(|_| "长截图窗口准备中断")?
+    .build()
+    .map_err(|_| "无法打开长截图控制条")?;
+    crate::recording::exclude(&toolbar, true)?;
+    toolbar
+        .set_position(tauri::PhysicalPosition::new(
+            preview_placement(&g).0,
+            preview_placement(&g).1,
+        ))
+        .map_err(|_| "无法放置长截图控制条")?;
+    target.state::<Host>().exit.ensure_running()?;
+    toolbar.show().map_err(|_| "无法显示长截图控制条")?;
+    // Release the overlay so covered Chromium windows keep producing
+    // frames. WGC still captures only the authorized source window.
+    if automatic {
+        main.hide().map_err(|_| "无法释放应用窗口画面")?;
+    }
+    Ok(())
 }
 fn preview_size(g: &Geometry) -> (f64, f64) {
     let available_width = (g.monitor_width as f64 / g.scale - 12.).max(1.);
@@ -870,7 +879,11 @@ fn preview_placement(g: &Geometry) -> (i32, i32) {
             .round() as i32,
     )
 }
-async fn finish(app: &AppHandle, id: &str, result: Result<(), String>) {
+async fn finish(
+    app: &AppHandle,
+    id: &str,
+    result: Result<Option<crate::snapshot_pin::CompletedSnapshotPin>, String>,
+) {
     let (send, receive) = tokio::sync::oneshot::channel();
     let target = app.clone();
     if app
@@ -889,17 +902,30 @@ async fn finish(app: &AppHandle, id: &str, result: Result<(), String>) {
     {
         let _ = receive.await;
     }
+    let mut released = false;
     if let Ok(mut state) = app.state::<ScrollState>().0.lock() {
         if state.as_ref().is_some_and(|a| a.status.id == id) {
             *state = None;
             emit(app, &None);
+            released = true;
         }
     }
-    if app.state::<Host>().exit.is_running() {
-        crate::show(app);
+    if !released || !app.state::<Host>().exit.is_running() {
+        return;
     }
-    if let Err(error) = result {
-        let _ = app.emit_to("space", "host-error", error);
+    // Restore the overlay and end the scroll lease before admitting a pin.
+    // The saved receipt then uses the ordinary strict pin-ready handshake.
+    crate::show(app);
+    match result {
+        Ok(Some(pin)) => {
+            if pin.start(app).await.is_err() && app.state::<Host>().exit.is_running() {
+                let _ = app.emit_to("space", "host-error", "快照已保存，未能置顶图片");
+            }
+        }
+        Err(error) => {
+            let _ = app.emit_to("space", "host-error", error);
+        }
+        Ok(None) => {}
     }
 }
 pub async fn cancel_for_shutdown(app: &AppHandle) -> Result<(), String> {
