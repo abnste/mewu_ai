@@ -34,6 +34,10 @@ mod window_witness_linux;
 mod capture_wayland_host;
 #[cfg(target_os = "linux")]
 mod capture_wayland_portal;
+#[cfg(target_os = "linux")]
+mod recording_portal_linux;
+#[cfg(target_os = "linux")]
+mod recording_pipewire_linux;
 #[cfg(any(target_os = "linux", test))]
 mod window_actions_linux;
 #[cfg(target_os = "linux")]

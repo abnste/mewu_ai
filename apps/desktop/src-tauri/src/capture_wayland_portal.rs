@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! User-initiated Screenshot portal capture. A returned bitmap has no desktop
+//! User-initiated ScreenCast portal first-frame capture. A bitmap has no desktop
 //! coordinate claim. Call on the real capture worker, retaining Work/transition.
 use crate::capture::{CaptureCheck, CaptureOptions};
 use futures_lite::StreamExt;
@@ -77,9 +77,60 @@ pub(crate) fn capture(
         return Err("截图素材目录必须是绝对路径".into());
     }
     allowed()?;
-    let uri = async_io::block_on(request_screenshot(&allowed))?;
+    // A ScreenCast lease supplies one frame through its restricted remote FD.
+    // GNOME 46's interactive Screenshot portal can report cancellation before
+    // its asynchronous screenshot file is saved (upstream GNOME issue 8499).
+    // Never recover such a result by scanning Pictures or reading clipboard.
+    let mut permission_check = || allowed().is_ok();
+    let session = crate::recording_portal_linux::PortalSession::open(
+        Instant::now() + REQUEST_TIMEOUT,
+        &mut permission_check,
+    ).map_err(|error| allowed().err().unwrap_or(error))?;
     allowed()?;
-    import_portal_image(&uri, asset_dir, &allowed)
+    let frames = crate::recording_pipewire_linux::Frames::connect(&session)?;
+    let expires = Instant::now() + Duration::from_secs(10);
+    let frame = loop {
+        allowed()?;
+        if Instant::now() >= expires { return Err("桌面截图超时".into()); }
+        if let Some(frame) = frames.next(Duration::from_millis(20))? { break frame; }
+    };
+    // Release both the streaming pipeline and the portal lease before PNG
+    // encoding or store adoption; an accepted screenshot never streams on.
+    drop(frames);
+    drop(session);
+    allowed()?;
+    save_rgba_frame(frame.width, frame.height, &frame.rgba, asset_dir, &allowed)
+}
+
+fn save_rgba_frame(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    asset_dir: &Path,
+    allowed: &CaptureCheck,
+) -> Result<PendingPortalCapture, String> {
+    allowed()?;
+    if !valid_dimensions(width, height)
+        || usize::try_from(u64::from(width) * u64::from(height) * 4).ok() != Some(rgba.len()) {
+        return Err("截图像素超过限制".into());
+    }
+    let asset_id = Uuid::new_v4().to_string();
+    let path = asset_dir.join(format!("{asset_id}.png"));
+    let destination = OpenOptions::new().write(true).create_new(true).mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path).map_err(|_| "无法保存截图")?;
+    let pending = PendingPortalCapture {
+        asset_id, path, width, height, retained: false,
+    };
+    let mut writer = LimitedWriter {
+        inner: BufWriter::new(destination), written: 0, allowed,
+    };
+    PngEncoder::new_with_quality(&mut writer, CompressionType::Fast, FilterType::Adaptive)
+        .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|_| "无法保存截图")?;
+    writer.flush().map_err(|_| "无法保存截图")?;
+    allowed()?;
+    Ok(pending)
 }
 
 /// Keep the same future pinned between ticks: never resend a method while
@@ -594,6 +645,31 @@ impl Seek for CheckedReader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn first_frame_asset_is_private_bounded_and_removed_until_adopted() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("mewu-first-frame-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let allowed: CaptureCheck = std::sync::Arc::new(|| Ok(()));
+        assert!(save_rgba_frame(2, 2, &[0; 15], &root, &allowed).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        let capture = save_rgba_frame(2, 2, &[255; 16], &root, &allowed).unwrap();
+        let path = capture.path.clone();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(image::image_dimensions(&path).unwrap(), (2, 2));
+        drop(capture);
+        assert!(!path.exists());
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let check_calls = calls.clone();
+        let cancelled: CaptureCheck = std::sync::Arc::new(move || {
+            if check_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0 {
+                Err(crate::capture_delay_work::CANCELED.into())
+            } else { Ok(()) }
+        });
+        assert!(save_rgba_frame(2, 2, &[255; 16], &root, &cancelled).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        std::fs::remove_dir(root).unwrap();
+    }
     #[test]
     fn portal_uris_are_local_files_only() {
         assert_eq!(
