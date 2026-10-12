@@ -161,13 +161,14 @@ pub(crate) fn supervise(config:PrepareConfig,
     use std::{process::Stdio, sync::atomic::AtomicBool};
     let permit=crate::recording_worker::Permit::acquire()?;
     let mut command=TrustedCommand::new(Worker::Recording).map_err(|_|"无法准备录屏进程")?;
-    command.env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    command.env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for name in ["HOME","XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS","PULSE_SERVER","PULSE_COOKIE"] {
         if let Some(value)=std::env::var_os(name){command.env(name,value);}
     }
     let started=Instant::now();
-    let mut process=ManagedProcess::spawn_trusted(command,permit,started+Duration::from_secs(5),&AtomicBool::new(false))
-        .map_err(|_|"无法管理录屏进程")?;
+    let mut process=ManagedProcess::spawn_trusted_with_diagnostics(command,permit,started+Duration::from_secs(5),&AtomicBool::new(false))
+        .map_err(|error|{eprintln!("mewu-recording-startup stage=admission kind={:?} errno={:?}",error.kind(),error.raw_os_error());
+            "无法启动隔离录屏进程，请检查 bwrap 和系统授权配置".to_string()})?;
     let mut input=process.child_mut().stdin.take().ok_or("无法控制录屏进程")?;
     let output=process.child_mut().stdout.take().ok_or("无法读取录屏进程")?;
     let (tx,rx)=mpsc::sync_channel::<Control>(8);let (bad_tx,bad_rx)=mpsc::sync_channel(1);

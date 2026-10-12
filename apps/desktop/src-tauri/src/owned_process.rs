@@ -314,6 +314,39 @@ impl<P: Send + 'static> ManagedProcess<P> {
         owned.admit_trusted(deadline, cancel)?;
         Ok(owned)
     }
+    /// Drain requested diagnostic stderr before admitting the PID1 bridge too.
+    /// Only fixed classifications and byte counts are logged, never worker text,
+    /// media, paths, environment values or credentials. The real reader remains
+    /// part of Parts/permit ownership even if bootstrap admission fails.
+    #[cfg(target_os = "linux")]
+    pub fn spawn_trusted_with_diagnostics(
+        command: self::linux_worker::TrustedCommand, permit:P,
+        deadline:std::time::Instant, cancel:&std::sync::atomic::AtomicBool,
+    )->io::Result<Self>{
+        let mut owned=Self::prepare_trusted(command,permit,deadline,cancel)?;
+        if let Some(mut stderr)=owned.child_mut().stderr.take(){
+            owned.track_io(std::thread::Builder::new().name("mewu-native-stderr".into()).spawn(move||{
+                use std::io::Read;
+                let mut prefix=Vec::with_capacity(8192);let mut block=[0u8;1024];let mut total=0usize;
+                loop {match stderr.read(&mut block){
+                    Ok(0)=>break,Ok(count)=>{total=total.saturating_add(count);
+                        let retain=count.min(8192-prefix.len());prefix.extend_from_slice(&block[..retain]);},
+                    Err(error) if error.kind()==io::ErrorKind::Interrupted=>{},Err(_)=>break,
+                }}
+                if total!=0{
+                    let text=String::from_utf8_lossy(&prefix).to_ascii_lowercase();
+                    let reason=if text.contains("uid map")&&text.contains("permission denied"){"namespace-denied"}
+                        else if text.contains("bootstrap refused"){"bootstrap-refused"}
+                        else if text.contains("error while loading shared libraries"){"runtime-missing"}
+                        else if text.contains("client.conf")||text.contains("spa plugin"){"pipewire-runtime"}
+                        else{"native-stderr"};
+                    eprintln!("mewu-worker-diagnostic reason={reason} bytes={total} retained={} truncated={}",prefix.len(),total>prefix.len());
+                }
+            })?);
+        }
+        owned.admit_trusted(deadline,cancel)?;
+        Ok(owned)
+    }
     #[cfg(target_os = "linux")]
     fn prepare_trusted(
         command: self::linux_worker::TrustedCommand,
