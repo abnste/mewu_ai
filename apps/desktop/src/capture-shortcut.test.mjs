@@ -102,12 +102,19 @@ async function bridgeFixture(native,failAt='') {
   checks.push('Four exact host commands, settings-scoped three event listeners with partial cleanup, browser no simulated registration');
 }
 {
+  const f = await bridgeFixture(true);
+  await f.api.configureCaptureShortcutPortal(12, 'owned-request'); await f.api.cancelCaptureShortcutPortal('owned-request'); await f.api.openCaptureShortcutSystemSettings();
+  assert.deepEqual(f.calls, [{ name: 'configure_capture_shortcut_portal', args: { expectedRevision: 12, requestId: 'owned-request' } }, { name: 'cancel_capture_shortcut_portal', args: { requestId: 'owned-request' } }, { name: 'open_capture_shortcut_system_settings', args: undefined }]);
+  const browser = await bridgeFixture(false); await assert.rejects(browser.api.configureCaptureShortcutPortal(12, 'owned-request'), /桌面版/); await assert.rejects(browser.api.openCaptureShortcutSystemSettings(), /桌面版/); await browser.api.cancelCaptureShortcutPortal('owned-request'); assert.equal(browser.calls.length, 0);
+  checks.push('Portal configure binds exact revision and nonce, independent cancellation only carries its nonce, system-settings command has no arbitrary path and browser cannot configure');
+}
+{
   const directory = new URL('../src-tauri/capabilities/', import.meta.url);
   const capabilities = await Promise.all((await readdir(directory)).filter(name => name.endsWith('.json')).map(async name => JSON.parse(await readFile(new URL(name, directory), 'utf8'))));
   const conf = JSON.parse(await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
   const settings = capabilities.find(value => value.identifier === 'settings'), space = capabilities.find(value => value.identifier === 'space');
   assert.deepEqual(settings.windows, ['settings']); assert.ok(conf.app.security.capabilities.includes('settings'));
-  for (const permission of ['allow-set-capture-shortcut','allow-begin-capture-shortcut-edit','allow-end-capture-shortcut-edit']) {
+  for (const permission of ['allow-set-capture-shortcut','allow-begin-capture-shortcut-edit','allow-end-capture-shortcut-edit','allow-configure-capture-shortcut-portal','allow-cancel-capture-shortcut-portal','allow-open-capture-shortcut-system-settings']) {
     assert.ok(settings.permissions.includes(permission));
     assert.deepEqual(capabilities.filter(value => value.permissions.includes(permission)).map(value => value.identifier), ['settings']);
   }

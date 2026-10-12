@@ -1047,5 +1047,9 @@
   "此平台尚未接入打开应用": "Opening applications is not supported on this platform",
   "快照已保存，未能置顶图片": "Snapshot saved, but the image could not be pinned",
   "请使用可写目录中的 AppImage 更新": "Use an AppImage in a writable folder to update",
-  "手动更新：请退出 MewuAI，使用新版安装包替换应用。": "Manual update: quit MewuAI and replace the application using the new installer."
+  "手动更新：请退出 MewuAI，使用新版安装包替换应用。": "Manual update: quit MewuAI and replace the application using the new installer.",
+  "未设置": "Not set",
+  "修改": "Change",
+  "取消快捷键设置": "Cancel shortcut setup",
+  "设置中…": "Configuring…"
 }

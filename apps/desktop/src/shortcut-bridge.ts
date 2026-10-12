@@ -12,6 +12,17 @@ export async function setCaptureShortcut(expectedRevision: number, shortcut: Sho
   if (!shortcutNative) throw unsupported();
   return invoke('set_capture_shortcut', { expectedRevision, shortcut });
 }
+export async function configureCaptureShortcutPortal(expectedRevision: number, requestId: string): Promise<CaptureShortcutState> {
+  if (!shortcutNative) throw unsupported();
+  return invoke('configure_capture_shortcut_portal', { expectedRevision, requestId });
+}
+export async function cancelCaptureShortcutPortal(requestId: string): Promise<void> {
+  if (shortcutNative) await invoke('cancel_capture_shortcut_portal', { requestId });
+}
+export async function openCaptureShortcutSystemSettings(): Promise<void> {
+  if (!shortcutNative) throw unsupported();
+  await invoke('open_capture_shortcut_system_settings');
+}
 export async function beginCaptureShortcutEdit(leaseId: string): Promise<ShortcutEditLease> {
   if (!shortcutNative) throw unsupported();
   return invoke('begin_capture_shortcut_edit', { leaseId });

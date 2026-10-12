@@ -6,9 +6,15 @@ export interface CaptureShortcutState {
   sequence: number;
   configured: ShortcutChord | null;
   active: ShortcutChord | null;
-  status: 'active' | 'disabled' | 'fallback' | 'unavailable' | 'cleanup_pending';
+  status: 'active' | 'disabled' | 'fallback' | 'unavailable' | 'cleanup_pending' | 'needs_setup';
   editable: boolean;
   message?: string | null;
+  backend?: 'native' | 'wayland_portal';
+  actualTriggerDescription?: string | null;
+  configurationPending?: boolean;
+  systemSettingsAvailable?: boolean;
+  portalEnabled?: boolean;
+  configurationRequestId?: string | null;
 }
 export interface ShortcutEditLease { leaseId: string; expiresAt: number }
 export interface ShortcutRecorded { leaseId: string; shortcut: ShortcutChord }
