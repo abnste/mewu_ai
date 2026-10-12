@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-capture-shortcut-portal"
+description = "Enables the cancel_capture_shortcut_portal command without any pre-configured scope."
+commands.allow = ["cancel_capture_shortcut_portal"]
+
+[[permission]]
+identifier = "deny-cancel-capture-shortcut-portal"
+description = "Denies the cancel_capture_shortcut_portal command without any pre-configured scope."
+commands.deny = ["cancel_capture_shortcut_portal"]
