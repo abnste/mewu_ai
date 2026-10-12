@@ -281,6 +281,14 @@ fn push(source:&gstreamer_app::AppSrc,bytes:Vec<u8>,pts:u64,duration:u64)->Resul
     writable.set_pts(gst::ClockTime::from_nseconds(pts*100));writable.set_duration(gst::ClockTime::from_nseconds(duration*100));
     source.push_buffer(buffer).map_err(|_|ClipError::EncodingFailed)?;Ok(())
 }
+fn frame_tick(index:u64,numerator:u32,denominator:u32)->Result<u64,ClipError>{
+    if numerator==0||denominator==0{return Err(ClipError::InvalidMedia);}
+    // A legal reduced fraction can have an almost-i32::MAX denominator.
+    // Its intermediate product exceeds u64 even for a 30-minute clip,
+    // though the final source time still fits the existing duration budget.
+    (u128::from(index)*10_000_000*u128::from(denominator)/u128::from(numerator))
+        .try_into().map_err(|_|ClipError::InvalidMedia)
+}
 /// Independently decode every exported MPEG audio packet through the curated
 /// native MP3 decoder. Only the exact output inode can be opened here.
 fn decode_mp3(path:&Path,owned:&File,metadata:&crate::mp3_file::Metadata,cancel:&AtomicBool,until:Instant)->Result<(u64,f64),ClipError>{
@@ -333,14 +341,17 @@ fn transcode(source:&mut Source,output:&Path,expected:&VideoMetadata,range:Optio
                     // Decode the real covering sample at an explicit CFR clock.
                     // Clipping the first/last compressed sample durations would
                     // silently change MP4's reported rate (31 frames / 2s).
-                    let clock=|index:u64|index*10_000_000*u64::from(expected.frame_rate_denominator)/u64::from(expected.frame_rate_numerator);
-                    let tick=start+clock(video_count);
+                    let position=frame_tick(video_count,expected.frame_rate_numerator,expected.frame_rate_denominator)?;
+                    let next_position=frame_tick(video_count.checked_add(1).ok_or(ClipError::InvalidMedia)?,expected.frame_rate_numerator,expected.frame_rate_denominator)?;
+                    let tick=start.checked_add(position).ok_or(ClipError::InvalidMedia)?;
+                    let next_tick=start.checked_add(next_position).ok_or(ClipError::InvalidMedia)?;
                     if tick.saturating_add(2)<pts{return Err(ClipError::InvalidRange);}
                     if tick<end&&tick<right.saturating_add(2){
                         let mut pixels=rgba(sample,expected)?;if let Some(plan)=&plan{plan.paint(&mut pixels,SourcePlaybackTicks(tick),cancel)?;}
-                        push(target,pixels.into_raw(),clock(video_count),clock(video_count+1)-clock(video_count))?;video_count+=1;
+                        push(target,pixels.into_raw(),position,next_position-position)?;video_count+=1;
                     }
-                    if start+clock(video_count)>=right.saturating_add(2)||start+clock(video_count)>=end{pending=None;}
+                    let pending_tick=if tick<end&&tick<right.saturating_add(2){next_tick}else{tick};
+                    if pending_tick>=right.saturating_add(2)||pending_tick>=end{pending=None;}
                 }else{pending=None;}
                 let percent=((right.saturating_sub(start))*98/(end-start)).min(98)as u8;if percent>previous{previous=percent;progress(percent);}
             }else if reader.video.is_eos(){video_end=true;if let Some(s)=&encoder.video{s.end_of_stream().map_err(|_|ClipError::EncodingFailed)?;}}
@@ -412,6 +423,16 @@ pub(super) fn execute(job:&ClipJob,cancel:&AtomicBool,on_progress:&dyn Fn(u8))->
 #[cfg(test)]mod tests{
     use super::*;
     use std::sync::atomic::Ordering;
+    #[test]fn large_reduced_frame_rate_keeps_exact_time_without_overflow(){
+        // Near1fps, already reduced, and inside the admitted source duration.
+        // Golden values are exact rational long division, not float rounding.
+        assert_eq!(frame_tick(1800,2_147_483_647,2_147_483_646),Ok(17_999_999_991));
+        assert_eq!(frame_tick(1801,2_147_483_647,2_147_483_646),Ok(18_009_999_991));
+        assert_eq!(frame_tick(1800,15,1),Ok(1_200_000_000));
+        assert_eq!(frame_tick(0,0,1),Err(ClipError::InvalidMedia));
+        assert_eq!(frame_tick(1,1,0),Err(ClipError::InvalidMedia));
+        assert_eq!(frame_tick(u64::MAX,1,u32::MAX),Err(ClipError::InvalidMedia));
+    }
     fn fixture(audio:bool)->(PathBuf,PathBuf){
         let root=std::env::temp_dir().join(format!("mewu-linux-video-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();
         let path=root.join("source.mp4");let file=OpenOptions::new().write(true).read(true).create_new(true).mode(0o600).open(&path).unwrap();
