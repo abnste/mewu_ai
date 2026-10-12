@@ -84,7 +84,8 @@
 .drawing-property-controls>*,.drawing-history-actions>*{flex-shrink:0}
 /* Scroll tools/properties independently; history/trash/done keep real space.
    Sticky controls in the shared scroller used to cover Undo/Redo hit targets. */
-.drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-property-controls{display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;min-width:48px;max-width:none;overflow-x:auto;scrollbar-width:thin}
+.drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-property-controls{display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;min-width:48px;max-width:none;overflow-x:auto;scrollbar-width:none}
+.drawing-blackboard .drawing-tools-row::-webkit-scrollbar,.drawing-blackboard .drawing-property-controls::-webkit-scrollbar{display:none}
 .drawing-blackboard .drawing-tools-row{flex:1 1 auto}
 .drawing-blackboard .drawing-property-controls{flex:0 1 auto}
 .drawing-blackboard .drawing-property-controls>*{flex-shrink:0}
