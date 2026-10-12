@@ -21,6 +21,27 @@ struct Lease { nonce:String, scene_id:String, background:Option<Asset>, region:O
     grant:Option<crate::plugins::RecordingGrant>, audio_grant:Option<crate::recording_audio_host::RecordingAudioGrant> }
 #[derive(Default)] struct State { lease:Option<Lease>, finished:Option<(String,Result<(),String>)> }
 fn state()->&'static Mutex<State> {static STATE:OnceLock<Mutex<State>>=OnceLock::new();STATE.get_or_init(||Mutex::new(State::default()))}
+struct PreparingGuard { nonce:String, armed:bool }
+impl Drop for PreparingGuard {
+    fn drop(&mut self){if self.armed{if let Ok(s)=state().lock(){
+        if let Some(l)=s.lease.as_ref().filter(|l|l.nonce==self.nonce&&l.status.is_none()){
+            let _=control_locked(l,true);
+        }
+    }}}
+}
+fn preparation_current(app:&AppHandle,nonce:&str)->Result<(),String>{
+    let host=app.state::<Host>();host.exit.ensure_new_operation()?;
+    let (scene_id,background)={let s=state().lock().map_err(|_|"录屏状态不可用")?;
+        let l=s.lease.as_ref().filter(|l|l.nonce==nonce&&l.status.is_none()).ok_or("录屏准备已结束")?;
+        if l.controls.lock().map_err(|_|"录屏控制不可用")?.terminal.is_some(){return Err("录屏准备已取消".into());}
+        (l.scene_id.clone(),l.background.clone().ok_or("录屏预览未完成")?)
+    };
+    let snapshot=host.lock()?.store.snapshot();
+    if snapshot.active_scene_id!=scene_id||!snapshot.scenes.iter().any(|scene|
+        scene.id==scene_id&&!scene.closed&&!scene.frozen&&scene.background.as_ref()==Some(&background)){
+        return Err("录屏会话已经改变".into());
+    }Ok(())
+}
 pub(crate) fn selecting()->bool { state().lock().is_ok_and(|s|s.lease.as_ref().is_some_and(|l|l.status.is_none())) }
 pub(crate) fn has_lease()->bool { state().lock().is_ok_and(|s|s.lease.is_some()) }
 pub(crate) fn status()->Result<Option<recording::Status>,String>{Ok(state().lock().map_err(|_|"录屏状态不可用")?.lease.as_ref().and_then(|l|l.status.clone()))}
@@ -97,7 +118,7 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     }
     crate::scroll_host::ensure_idle(&app)?;
     if recording::busy(&app){return Err("请先停止录屏".into());}
-    let _transition=crate::begin_space_transition(&app,&host)?;
+    let transition=Arc::new(crate::begin_space_transition(&app,&host)?);
     let nonce=uuid::Uuid::new_v4().to_string();let controls=Arc::new(Mutex::new(Controls::default()));
     let preview=host.assets.join(format!("{nonce}.png"));
     let config=worker::PrepareConfig{nonce:nonce.clone(),preview:preview.clone()};
@@ -109,8 +130,9 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
         s.lease=Some(Lease{nonce:nonce.clone(),scene_id:scene_id.clone(),background:None,region:None,
             controls:controls.clone(),status:None,finalized:false,suppress_reveal:false,grant:None,audio_grant:None});s.finished=None;
     }
+    let mut preparing=PreparingGuard{nonce:nonce.clone(),armed:true};
     let (ready_tx,ready_rx)=tokio::sync::oneshot::channel();
-    let owner=app.clone();let worker_nonce=nonce.clone();let source_scene=old.clone();
+    let owner=app.clone();let worker_nonce=nonce.clone();let source_scene=old.clone();let present_nonce=nonce.clone();
     tauri::async_runtime::spawn(async move{
         let run_app=owner.clone();let output=run_app.state::<Host>().root.join("recording-staging").join(format!("{worker_nonce}.mp4"));
         let run_preview=preview.clone();let run_output=output.clone();let mut ready_tx=Some(ready_tx);
@@ -172,9 +194,13 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
         if reveal{crate::show(&owner);}
         if let Err(error)=receipt{let _=owner.emit_to("space","host-error",error);}
     });
-    let result=match ready_rx.await {Ok(result)=>result.map(Some),Err(_)=>Err("录屏授权未完成".into())};
-    if host.exit.accepts_new_operations(){crate::show(&app);}
-    result
+    let snapshot=match ready_rx.await {Ok(result)=>result?,Err(_)=>return Err("录屏授权未完成".into())};
+    let checked_app=app.clone();let checked_nonce=present_nonce.clone();
+    let allowed:crate::capture::CaptureCheck=Arc::new(move||preparation_current(&checked_app,&checked_nonce));
+    crate::capture_wayland_host::present_recording(&window,allowed,transition).await?;
+    preparation_current(&app,&present_nonce)?;
+    preparing.armed=false;
+    Ok(Some(snapshot))
 }
 
 pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,region_id:String,
