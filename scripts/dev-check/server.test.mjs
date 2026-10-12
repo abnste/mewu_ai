@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import net from 'node:net';
 import {randomUUID} from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import {browserFixtureUrl, commandFor, redact, root, start, validMutation} from './server.mjs';
 
 test('write requests require exact loopback host, origin, JSON and CSRF token', () => {
@@ -51,6 +55,21 @@ test('HTTP does not expose files or execute cross-origin mutations', async () =>
     const first = await (await fetch(`${base}/api/state`)).json();
     const second = await (await fetch(`${base}/api/state`)).json();
     assert.equal(first.currentSource.checkedAt, second.currentSource.checkedAt);
+    const evidence = `.private/dev-check/${options.privateStateName}/browser-receipt.json`;
+    await fs.writeFile(path.join(root, evidence), JSON.stringify({testOnly: true, sourceCommit: first.currentSource.head}), {flag: 'wx'});
+    await promisify(execFile)(process.execPath, [path.join(root, 'scripts/dev-check/server.mjs'), 'record', '--private-state', options.privateStateName,
+      '--lane', 'browser', '--status', 'passed', '--source', first.currentSource.head, '--kind', 'browser-gui', '--fingerprint', first.currentSource.fingerprint,
+      '--url', 'http://127.0.0.1:49371/.private/remake-review/snapshot-ui-fixture.html', '--evidence', evidence], {cwd: root, timeout: 10000});
+    const recordedResponse = await fetch(`${base}/api/state`);
+    assert.equal(recordedResponse.status, 200);
+    const recorded = await recordedResponse.json();
+    assert.equal(recorded.lanes.browser.source, first.currentSource.head);
+    assert.equal(recorded.lanes.browser.status, 'passed');
+    for (const lane of ['windows', 'linux', 'mac']) assert.equal(recorded.lanes[lane].status, 'pending');
+    const invalidLanes = structuredClone(recorded.lanes); invalidLanes.mac = {status: 'passed', reported: true};
+    await fs.writeFile(path.join(root, `.private/dev-check/${options.privateStateName}/lanes.json`), JSON.stringify(invalidLanes));
+    assert.equal((await fetch(`${base}/api/state`)).status, 400);
+    await fs.writeFile(path.join(root, `.private/dev-check/${options.privateStateName}/lanes.json`), JSON.stringify(recorded.lanes));
     const page = await fetch(base);
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);

@@ -95,7 +95,8 @@ async function readLanes() {
     const lanes = JSON.parse(await fs.readFile(lanesFile, 'utf8'));
     return Object.fromEntries(laneNames.map(lane => {
       const item = lanes[lane];
-      if (item && (!states.includes(item.status) || !/^[a-f0-9]{40}$/.test(item.source))) throw Error('Invalid external receipt state');
+      const placeholder = item?.status === 'pending' && item.reported === true && Object.keys(item).every(key => ['status', 'reported'].includes(key));
+      if (item && !placeholder && (!states.includes(item.status) || !/^[a-f0-9]{40}$/.test(item.source))) throw Error('Invalid external receipt state');
       return [lane, item || {status: 'pending', reported: true}];
     }));
   } catch (error) { if (error.code === 'ENOENT') return initial().lanes; throw error; }
@@ -266,7 +267,7 @@ export async function start(port = 49370, options = {}) {
   return server;
 }
 
-async function record(args) {
+export async function record(args) {
   const options = {};
   for (let i = 0; i < args.length; i += 2) {
     if (!['--lane', '--status', '--source', '--evidence', '--kind', '--fingerprint', '--url'].includes(args[i]) || !args[i + 1] || options[args[i]]) throw Error('Invalid record arguments');
@@ -301,9 +302,16 @@ async function record(args) {
   console.log(JSON.stringify({lane, status, source: head, evidenceSha256: sha(bytes)}));
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (!testStateName && process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    if (process.argv[2] === 'record') await record(process.argv.slice(3));
+    if (process.argv[2] === 'record') {
+      const args = process.argv.slice(3);
+      if (args[0] === '--private-state') {
+        if (!/^test-[a-f0-9-]{36}$/.test(args[1] || '')) throw Error('Invalid isolated test state');
+        const isolatedUrl = new URL(import.meta.url); isolatedUrl.searchParams.set('privateStateName', args[1]);
+        await (await import(isolatedUrl.href)).record(args.slice(2));
+      } else await record(args);
+    }
     else if (process.argv[2] === 'serve' && process.argv.length <= 4) await start(Number(process.argv[3] || 49370));
     else throw Error('Usage: node scripts/dev-check/server.mjs serve [port] | record --lane ... --status ... --source ... --kind ... --evidence ...');
   } catch (error) { console.error(redact(error.message)); process.exitCode = 1; }
