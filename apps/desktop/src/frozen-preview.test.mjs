@@ -37,3 +37,15 @@ test('lower placement stays near the video and avoids the composer and object ac
   const placed=module.namespace.placeVideoControls(box,screen,108,composer,controls);
   assert.equal(placed.top,controls.top+controls.height+6);assert.ok(placed.top+108<composer.top);
 });
+
+
+test('video object actions prefer above independently of the lower playback and trim bar',async()=>{
+  const module=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./video-placement.ts',import.meta.url),'utf8'),{mode:'transform'}));await module.link(()=>{throw Error('dependency');});await module.evaluate();
+  const box={left:200,top:200,width:640,height:360},screen={width:1280,height:900};
+  const actions=module.namespace.placeVideoControls(box,screen,58,undefined,undefined,{side:'above',width:318});
+  const trim=module.namespace.placeVideoControls(box,screen,64);
+  assert.ok(actions.top+58<box.top);assert.ok(trim.top>box.top+box.height);
+  assert.equal(actions.width,318);assert.equal(trim.width,640);
+  const edge=module.namespace.placeVideoControls({...box,top:4},screen,58,undefined,undefined,{side:'above',width:318});
+  assert.ok(edge.top>=8);assert.ok(edge.top+58<=screen.height-8);
+});

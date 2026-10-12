@@ -33,7 +33,7 @@
 .capture-handle-sw{left:0;top:100%;cursor:nesw-resize}.capture-handle-se{left:100%;top:100%;cursor:nwse-resize}
 .capture-surface.capture-add-mode,.capture-add-mode .capture-region,.capture-add-mode .capture-handle,.capture-add-mode .capture-edge{cursor:crosshair}
 .capture-dragging .capture-region{cursor:grabbing}
-.capture-toolbar{position:absolute;z-index:25;display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:1px solid #d7e1ef;border-radius:14px;background:#fafcff;box-shadow:0 6px 24px #3347623d,0 1px 4px #3347621a;cursor:default;user-select:none;touch-action:none;flex-wrap:wrap}
+.capture-toolbar{position:absolute;z-index:25;display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a;cursor:default;user-select:none;touch-action:none;flex-wrap:wrap}
 .capture-toolbar>button{color:#52637a;border:1px solid transparent;background:transparent}
 .capture-toolbar>button:hover{background:#eaf1fa;border-color:#d7e1ef}.capture-toolbar>button:active{background:#dfeafa}
 .capture-toolbar>button:focus-visible{outline:2px solid #6e83f2;outline-offset:1px}
