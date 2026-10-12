@@ -189,7 +189,8 @@ use image::ImageEncoder;
 pub(crate) fn supervise(config:PrepareConfig,
     mut control:impl FnMut()->Result<Option<Control>,String>,
     mut prepared:impl FnMut(Prepared)->Result<(),String>,
-    mut progress:impl FnMut(Progress), mut finalized:impl FnMut()) ->Result<Option<Report>,String> {
+    mut progress:impl FnMut(Progress), mut finalizing:impl FnMut(FinalizeStage,u64,u64),
+    mut finalized:impl FnMut()) ->Result<Option<Report>,String> {
     use crate::owned_process::{ManagedProcess,linux_worker::{TrustedCommand,Worker}};
     use std::{process::Stdio, sync::atomic::AtomicBool};
     let permit=crate::recording_worker::Permit::acquire()?;
@@ -249,6 +250,7 @@ pub(crate) fn supervise(config:PrepareConfig,
                             // Static stages/counters only: never print paths,
                             // nonce, screen pixels, PCM bytes or environment.
                             eprintln!("mewu-recording-finalize stage={stage:?} frames={frames} pcm={pcm_frames}");
+                            finalizing(stage,frames,pcm_frames);
                             if stopped.is_none(){stopped=Some(Instant::now());}
                         },
                         Event::Completed(report)=>{let value=selection.as_ref().ok_or("录屏尚未开始")?;

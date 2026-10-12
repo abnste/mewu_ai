@@ -48,13 +48,18 @@ fn preparation_current(app:&AppHandle,nonce:&str)->Result<(),String>{
 async fn restore_preparation_failure(app:&AppHandle,window:&WebviewWindow,nonce:&str,
     previous_scene:&str,previous_background:Option<Asset>,transition:Arc<crate::SpaceTransition>,fallback:String)->String{
     cancel_pending();
+    eprintln!("mewu-recording-restore stage=waiting-for-worker");
     let until=std::time::Instant::now()+Duration::from_secs(25);
     let error=loop {
         let result=state().lock().ok().and_then(|s|s.finished.as_ref().filter(|(id,_)|id==nonce).map(|(_,r)|r.clone()));
         if let Some(result)=result.filter(|_|!crate::recording_worker::busy()){break result.err().unwrap_or(fallback);}
-        if std::time::Instant::now()>=until{return "录屏进程尚未退出，请稍后重试".into();}
+        if std::time::Instant::now()>=until{
+            eprintln!("mewu-recording-restore stage=worker-timeout busy={}",crate::recording_worker::busy());
+            return "录屏进程尚未退出，请稍后重试".into();
+        }
         tokio::time::sleep(Duration::from_millis(25)).await;
     };
+    eprintln!("mewu-recording-restore stage=worker-drained");
     let checked_app=app.clone();let checked_nonce=nonce.to_owned();let previous_scene=previous_scene.to_owned();
     let allowed:crate::capture::CaptureCheck=Arc::new(move||{
         let host=checked_app.state::<Host>();host.exit.ensure_new_operation()?;
@@ -67,8 +72,9 @@ async fn restore_preparation_failure(app:&AppHandle,window:&WebviewWindow,nonce:
         if scene.closed||scene.frozen||(!unchanged&&!adopted){return Err("录屏会话已变化".into());}
         Ok(())
     });
-    if crate::capture_wayland_host::present_recording(window,allowed,transition).await.is_ok(){
-        let _=app.emit_to("space","host-error",&error);
+    match crate::capture_wayland_host::present_recording(window,allowed,transition).await{
+        Ok(())=>{eprintln!("mewu-recording-restore stage=presented");let _=app.emit_to("space","host-error",&error);},
+        Err(_)=>{eprintln!("mewu-recording-restore stage=presentation-rejected");},
     }
     error
 }
@@ -197,6 +203,9 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
                 if let Some(tx)=ready_tx.take(){let _=tx.send(Ok(published));}Ok(())
             },|progress|{if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().and_then(|l|l.status.as_mut()){
                 status.phase=if progress.paused{"paused"}else{"recording"};status.countdown=0;status.elapsed_ms=progress.elapsed_ms;emit(&run_app,&Some(status.clone()));}}},
+            |_stage,_frames,_pcm|{if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().and_then(|l|l.status.as_mut()){
+                status.phase="stopping";status.countdown=0;emit(&run_app,&Some(status.clone()));
+            }}},
             ||{if let Ok(mut s)=state().lock(){if let Some(l)=s.lease.as_mut(){l.finalized=true;}}}
         )).await.map_err(|_|"录屏任务中断".to_string()).and_then(|r|r);
         while crate::recording_worker::busy(){tokio::time::sleep(Duration::from_millis(25)).await;}
