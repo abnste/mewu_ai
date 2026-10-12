@@ -132,14 +132,22 @@ impl Codec {
         if Instant::now() >= self.expires || !allowed() {
             return Err("录屏原始预算或宿主授权已结束".into());
         }
-        if let Some(message) = self
-            .pipeline
-            .bus()
-            .ok_or("录屏总线不可用")?
-            .pop_filtered(&[gst::MessageType::Error])
-        {
-            if matches!(message.view(), gst::MessageView::Error(_)) {
-                return Err("本机录屏编码失败".into());
+        Ok(())
+    }
+
+    fn check_feeding(&self, allowed: &impl Fn() -> bool) -> Result<(), String> {
+        self.check(allowed)?;
+        let bus = self.pipeline.bus().ok_or("录屏总线不可用")?;
+        // pop_filtered discards other messages, including EOS. Never use it
+        // while finalizing: the finish loop must consume the real EOS itself.
+        // Bound progress polling so native message traffic cannot starve the
+        // original deadline or host cancellation checks.
+        for _ in 0..16 {
+            let Some(message) = bus.pop() else { break };
+            match message.view() {
+                gst::MessageView::Error(_) => return Err("本机录屏编码失败".into()),
+                gst::MessageView::Eos(_) => return Err("录屏编码图提前结束".into()),
+                _ => {}
             }
         }
         Ok(())
@@ -152,17 +160,17 @@ impl Codec {
         frame: Vec<u8>,
         allowed: &impl Fn() -> bool,
     ) -> Result<(), String> {
-        self.check(allowed)?;
+        self.check_feeding(allowed)?;
         if frame.len() != self.bytes || self.frames >= FPS * 600 {
             return Err("录屏原始帧长度或数量无效".into());
         }
         while self.source.current_level_buffers() >= QUEUED_FRAMES
             || self.source.current_level_bytes() >= QUEUED_FRAMES * self.bytes as u64
         {
-            self.check(allowed)?;
+            self.check_feeding(allowed)?;
             std::thread::sleep(Duration::from_millis(1));
         }
-        self.check(allowed)?;
+        self.check_feeding(allowed)?;
         let mut buffer = gst::Buffer::from_mut_slice(frame);
         let writable = buffer.get_mut().ok_or("无法准备录屏帧")?;
         writable.set_pts(gst::ClockTime::from_nseconds(
