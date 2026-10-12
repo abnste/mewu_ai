@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Identity { widget: usize, drawable: usize }
 #[derive(Clone, Debug)]
-struct Witness { label: String, generation: u64, revision: u64, identity: Identity, visible: bool, fullscreen: bool }
+struct Witness { label: String, generation: u64, revision: u64, identity: Identity, visible: bool, fullscreen: bool, resizable: bool }
 #[derive(Default)]
 struct Owner { generation: u64, revision: u64, identity: Option<Identity> }
 #[derive(Default)]
@@ -34,7 +34,7 @@ impl Registry {
             owner.revision = 0;
             owner.identity = Some(identity.clone());
         }
-        Ok((Witness { label: label.into(), generation: owner.generation, revision: owner.revision, identity, visible, fullscreen:false }, changed))
+        Ok((Witness { label: label.into(), generation: owner.generation, revision: owner.revision, identity, visible, fullscreen:false, resizable:false }, changed))
     }
     fn current(&self, witness: &Witness, hidden: bool) -> Result<(), String> {
         if !self.failed && self.owners.get(&witness.label).is_some_and(|o| {
@@ -69,6 +69,7 @@ fn witness(window: &WebviewWindow) -> Result<Witness, String> {
     let identity = Identity { widget: widget.as_ptr() as usize, drawable: drawable.as_ptr() as usize };
     let (mut w, subscribe) = registry().lock().map_err(|_| "截图窗口服务不可用")?.bind(window.label(), identity, widget.is_visible())?;
     w.fullscreen=drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN);
+    w.resizable=widget.is_resizable();
     if subscribe {
         let label = w.label.clone(); let generation = w.generation;
         widget.connect_unrealize(move |_| { if let Ok(mut r) = registry().lock() { r.revoke(&label, Some(generation)); } });
@@ -216,6 +217,25 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
     Ok((owned,hidden))
 }
 
+#[cfg(debug_assertions)]
+fn log_layout(widget: &gtk::ApplicationWindow, stage: &str) {
+    eprintln!("mewu-wayland-layout stage={stage} allocation={}x{} default={:?} resizable={} fullscreen={}",
+        widget.allocated_width(), widget.allocated_height(), widget.default_size(), widget.is_resizable(),
+        widget.window().is_some_and(|window| window.state().contains(gtk::gdk::WindowState::FULLSCREEN)));
+    fn webview_layout(widget: &gtk::Widget, stage: &str, depth: u8) {
+        if widget.type_().name() == "WebKitWebView" {
+            eprintln!("mewu-wayland-layout stage={stage} webview={}x{} requested={}x{}",
+                widget.allocated_width(), widget.allocated_height(), widget.width_request(), widget.height_request());
+        }
+        if depth < 4 {
+            if let Some(container) = widget.dynamic_cast_ref::<gtk::Container>() {
+                for child in container.children().into_iter().take(16) { webview_layout(&child, stage, depth + 1); }
+            }
+        }
+    }
+    webview_layout(widget.upcast_ref(), stage, 0);
+}
+
 async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, transition: Arc<SpaceTransition>) -> Result<Witness,String> {
     let (tx,rx)=oneshot::channel(); let target=window.clone();
     window.run_on_main_thread(move || {
@@ -223,7 +243,12 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
         let start=(|| {
             base_check(target.app_handle(),&work)?; current(&owned,true)?;
             let widget=target.gtk_window().map_err(|_| "截图窗口不可用")?;
+            #[cfg(debug_assertions)] log_layout(&widget, "before-fullscreen");
             widget.set_opacity(0.0);
+            // GTK fixes a nonresizable window's minimum/maximum at its default
+            // width (1200 here), even when the compositor's output is smaller.
+            // Real fullscreen already disables resize edges and decorations.
+            widget.set_resizable(true);
             widget.fullscreen();
             target.show().map_err(|_| "无法显示截图空间")?;
             Ok(widget)
@@ -238,8 +263,17 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
                         base_check(target.app_handle(),&work)?; owned_set_current(target.app_handle(),&owned)?; current(&owned,false)?;
                         for w in owned.iter().filter(|w|w.label!="space") {current(std::slice::from_ref(w),true)?;}
                         let drawable=widget.window().ok_or("截图窗口已关闭")?;
+                        // Tao applies its initial resizable flag on the first
+                        // configure event. Reassert after that event if needed,
+                        // then wait for GTK to allocate the fullscreen contents.
+                        if !widget.is_resizable() {
+                            if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
+                            widget.set_resizable(true);
+                            return Ok(None);
+                        }
                         if drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN) && widget.is_mapped()
                             && widget.allocated_width()>0 && widget.allocated_height()>0 {
+                            #[cfg(debug_assertions)] log_layout(&widget, "fullscreen-confirmed");
                             return witness(&target).map(Some);
                         }
                         if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
@@ -301,6 +335,9 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
             if let Ok(widget)=space.gtk_window(){
                 if !allowed {widget.hide();}
                 widget.set_opacity(1.0);
+                if !success {
+                    if let Some(previous)=owned.iter().find(|w|w.label=="space") {widget.set_resizable(previous.resizable);}
+                }
                 if !success && !owned.iter().any(|w|w.label=="space"&&w.fullscreen) {widget.unfullscreen();}
             }
             if allowed && (success || owned.iter().any(|w|w.label=="space"&&w.visible)){crate::show(&restore_app);}
