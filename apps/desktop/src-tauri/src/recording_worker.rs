@@ -183,6 +183,8 @@ pub fn run(
     on_stopping: impl FnMut(),
     on_finalized: impl FnMut(),
 ) -> Result<Option<backend::Report>, String> {
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    mac_diagnostic(MacStage::WorkerLaunch, MacOutcome::Pending);
     let mut command = Command::new(std::env::current_exe().map_err(|_| "无法启动录屏进程")?);
     command.arg("--recording-worker").env_clear();
     for name in [
@@ -235,8 +237,13 @@ fn supervise(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
-    let mut process =
-        ManagedProcess::spawn(&mut command, permit).map_err(|_| "无法管理录屏进程")?;
+    let mut process = ManagedProcess::spawn(&mut command, permit).map_err(|_| {
+        #[cfg(all(target_os = "macos", debug_assertions))]
+        mac_diagnostic(MacStage::WorkerSpawn, MacOutcome::Failed);
+        "无法管理录屏进程"
+    })?;
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    mac_diagnostic(MacStage::WorkerSpawn, MacOutcome::Ok);
     let mut input = process.child_mut().stdin.take().ok_or("无法控制录屏进程")?;
     let output = process
         .child_mut()
@@ -328,6 +335,10 @@ fn supervise(
                             if progress.elapsed_ms < elapsed_ms || progress.elapsed_ms > 600_100 {
                                 return Err("无效录屏进度".into());
                             }
+                            #[cfg(all(target_os = "macos", debug_assertions))]
+                            if !ready {
+                                mac_diagnostic(MacStage::WorkerReady, MacOutcome::Ok);
+                            }
                             ready = true;
                             elapsed_ms = progress.elapsed_ms;
                             last_progress = Instant::now();
@@ -336,6 +347,8 @@ fn supervise(
                             }
                         }
                         WorkerEvent::Completed(report) => {
+                            #[cfg(all(target_os = "macos", debug_assertions))]
+                            mac_diagnostic(MacStage::WorkerTerminal, MacOutcome::Completed);
                             validate_report(&config, &report)?;
                             on_finalized();
                             terminal = Some(Ok(Some(report)));
@@ -343,6 +356,8 @@ fn supervise(
                             stopping = Some(Instant::now());
                         }
                         WorkerEvent::StoppedBeforeReady {} => {
+                            #[cfg(all(target_os = "macos", debug_assertions))]
+                            mac_diagnostic(MacStage::WorkerTerminal, MacOutcome::Canceled);
                             if ready || stopping.is_none() {
                                 return Err("无效录屏停止状态".into());
                             }
@@ -351,6 +366,8 @@ fn supervise(
                             stopping = Some(Instant::now());
                         }
                         WorkerEvent::Failed { error } => {
+                            #[cfg(all(target_os = "macos", debug_assertions))]
+                            mac_diagnostic(MacStage::WorkerTerminal, mac_failure_category(&error));
                             if error.is_empty() || error.len() > 4096 {
                                 return Err("无效录屏结果".into());
                             }
@@ -429,6 +446,100 @@ fn supervise(
     // ManagedProcess's reaper retains Permit if a driver/pipe has not exited.
     drop(process);
     result
+}
+
+// Parent-only diagnostics: stdout protocol, stderr disposition, device access,
+// process supervision, and all deadlines remain unchanged. Never print the
+// backend's raw error, which may include an OS object or filesystem path.
+#[cfg(all(target_os = "macos", debug_assertions))]
+#[derive(Debug)]
+pub(crate) enum MacStage {
+    HostAdmitted,
+    OverlayPrepared,
+    CountdownComplete,
+    WorkerLaunch,
+    WorkerSpawn,
+    WorkerReady,
+    WorkerTerminal,
+    HostFinished,
+}
+#[cfg(all(target_os = "macos", debug_assertions))]
+#[derive(Debug)]
+pub(crate) enum MacOutcome {
+    Pending,
+    Ok,
+    Failed,
+    Completed,
+    Canceled,
+    InvalidConfiguration,
+    ShareableContent,
+    ParentExclusion,
+    StreamSetup,
+    FirstSamples,
+    Encoding,
+    OutputGuard,
+    AudioContinuity,
+    ArtifactValidation,
+    OtherBackendFailure,
+}
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub(crate) fn mac_diagnostic(stage: MacStage, outcome: MacOutcome) {
+    if std::env::var_os("MEWU_MAC_RECORDING_DIAGNOSTICS").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        eprintln!("mewu_mac_recording stage={stage:?} outcome={outcome:?}");
+    }
+}
+#[cfg(all(target_os = "macos", debug_assertions))]
+fn mac_failure_category(error: &str) -> MacOutcome {
+    // Match only product-authored, fixed prefixes. Unrecognized errors stay
+    // opaque; no NSError details, paths, frames, audio, or credentials escape.
+    if ["录制文件必须", "录制区域", "Mac 录屏屏幕坐标"]
+        .iter()
+        .any(|p| error.starts_with(p))
+    {
+        MacOutcome::InvalidConfiguration
+    } else if error.starts_with("无法获取录屏显示器") || error.starts_with("录屏显示器回调")
+    {
+        MacOutcome::ShareableContent
+    } else if error.starts_with("无法排除当前应用") || error.starts_with("录屏父进程")
+    {
+        MacOutcome::ParentExclusion
+    } else if ["无法接入", "无法开始", "无法启动屏幕", "无法启动电脑"]
+        .iter()
+        .any(|p| error.starts_with(p))
+    {
+        MacOutcome::StreamSetup
+    } else if error == "等待屏幕画面或电脑声音超时" {
+        MacOutcome::FirstSamples
+    } else if [
+        "无法创建 MP4",
+        "无法配置 H264",
+        "无法配置 AAC",
+        "无法启动 MP4",
+        "无法编码",
+        "录屏编码",
+        "录屏文件未完成",
+    ]
+    .iter()
+    .any(|p| error.starts_with(p))
+    {
+        MacOutcome::Encoding
+    } else if ["录屏输出", "录屏文件已", "无法持有", "无法同步录屏"]
+        .iter()
+        .any(|p| error.starts_with(p))
+    {
+        MacOutcome::OutputGuard
+    } else if ["电脑声音", "声音编码"]
+        .iter()
+        .any(|p| error.starts_with(p))
+    {
+        MacOutcome::AudioContinuity
+    } else if error.starts_with("录屏文件核验") || error.starts_with("录屏文件尺寸") {
+        MacOutcome::ArtifactValidation
+    } else {
+        MacOutcome::OtherBackendFailure
+    }
 }
 
 fn validate_report(config: &backend::Config, report: &backend::Report) -> Result<(), String> {

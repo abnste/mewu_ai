@@ -410,11 +410,26 @@ pub async fn start_recording(
             suppress_reveal: false,
         });
     }
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    crate::recording_worker::mac_diagnostic(
+        crate::recording_worker::MacStage::HostAdmitted,
+        crate::recording_worker::MacOutcome::Ok,
+    );
     emit(&app, &Some(status));
     if let Err(error) = prepare_windows(&app, &config, monitor.scale_factor).await {
+        #[cfg(all(target_os = "macos", debug_assertions))]
+        crate::recording_worker::mac_diagnostic(
+            crate::recording_worker::MacStage::OverlayPrepared,
+            crate::recording_worker::MacOutcome::Failed,
+        );
         finish(&app, &id, Err(error.clone())).await;
         return Err(error);
     }
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    crate::recording_worker::mac_diagnostic(
+        crate::recording_worker::MacStage::OverlayPrepared,
+        crate::recording_worker::MacOutcome::Ok,
+    );
     let f8 = app
         .global_shortcut()
         .on_shortcut("F8", |app, _, event| {
@@ -640,6 +655,15 @@ async fn prepare_windows(
     receive.await.map_err(|_| "录屏窗口准备中断")?
 }
 async fn finish(app: &AppHandle, id: &str, result: Result<(), String>) {
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    crate::recording_worker::mac_diagnostic(
+        crate::recording_worker::MacStage::HostFinished,
+        if result.is_ok() {
+            crate::recording_worker::MacOutcome::Ok
+        } else {
+            crate::recording_worker::MacOutcome::Failed
+        },
+    );
     let (send, receive) = tokio::sync::oneshot::channel();
     let target = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -738,6 +762,11 @@ fn supervise(
         s.phase = "starting";
         s.countdown = 0;
     });
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    crate::recording_worker::mac_diagnostic(
+        crate::recording_worker::MacStage::CountdownComplete,
+        crate::recording_worker::MacOutcome::Ok,
+    );
     crate::recording_worker::run(
         config,
         || {
