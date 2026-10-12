@@ -7,13 +7,14 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$SourceCommit,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$BaselineCommit,
     [Parameter(Mandatory)][switch]$UiOnly,
-    [string]$WindowLifecycleReview
+    [string]$WindowLifecycleReview,
+    [string]$SourceRoot
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (-not $IsWindows) { throw 'This updater is Windows-only' }
 if (-not $UiOnly) { throw 'UI-only scope must be explicit' }
-$taskRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$taskRepo = [IO.Path]::GetFullPath($(if ($SourceRoot) { $SourceRoot } else { Join-Path $PSScriptRoot '../..' }))
 $taskInstall = Join-Path $env:LOCALAPPDATA 'MewuAI/MewuAI.exe'
 $taskPrivate = Join-Path $taskRepo '.private/dev-check'
 $taskRun = 'daily-' + [Guid]::NewGuid().ToString('N')
@@ -26,7 +27,7 @@ $taskCandidatePin = $null
 $taskLock = $null
 
 function Git([string[]]$ArgsList) {
-    $text = & git --no-optional-locks -C $taskRepo @ArgsList
+    $text = & (Get-Command git.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source --no-optional-locks -C $taskRepo @ArgsList
     if ($LASTEXITCODE -ne 0) { throw 'Git source inspection failed' }
     return [string]::Join("`n", @($text))
 }
@@ -58,6 +59,8 @@ function Cold {
     if (@(OwnedProcesses).Count) { throw 'Installed application or worker is still running' }
 }
 function Scope {
+    $null=Ordinary $taskRepo
+    if (-not (Git @('rev-parse','--show-toplevel')).Trim().Equals($taskRepo.Replace('\','/'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Source root must be the Git checkout root' }
     if ((Git @('rev-parse','HEAD')).Trim() -cne $SourceCommit -or (Git @('status','--porcelain')).Length) { throw 'Candidate source must be current and clean' }
     $null=Git @('cat-file','-e',($BaselineCommit+'^{commit}'))
     $null=Git @('merge-base','--is-ancestor',$BaselineCommit,$SourceCommit)

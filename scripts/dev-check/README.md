@@ -32,4 +32,6 @@ node --test scripts/dev-check/server.test.mjs
 
 Windows 小更新使用 `update-windows.ps1`，显式指定已安装源码、候选源码与候选 SHA256。它正常退出旧程序、做一次冷备份、替换并启动；用户负责实机界面验收。数据模型、迁移、凭据与更新器改动不能使用此 UI 更新入口。入口涉及 `main.rs` 的窗口生命周期修改时，开发者必须先审查并提供绑定前后 Git blob 的私有 JSON 回执，不能把整个宿主文件无条件加入白名单。
 
+候选来自另一份干净工作树时，传入 `-SourceRoot` 指定它的 Git 根目录。候选、回执和源码检查都绑定该目录；开发检查工具可单独更新，不修改已经编译冻结的产品源码。PowerShell 必须显式调用 Git 可执行文件，避免辅助函数与 Git 命令同名造成递归。
+
 本机增量构建可用 Cargo `daily` 配置：`tauri build --no-bundle --ci -- --locked --profile=daily`。首次需建立独立缓存，后续复用增量编译；运行时仍启用优化，不启用调试断言。正式发布继续使用 `release` 的完整优化与安装包构建。不要把本机更新当作公开发布。
