@@ -131,7 +131,13 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
             .map(|v| v.0 as usize)
             .map_err(|_| "空间窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        // Resolve the same revocable native space witness used by metadata,
+        // document editing and export, before taking any Host/Store locks.
+        crate::window_actions_linux::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         Err("当前系统不支持视频绘制".into())
     }
