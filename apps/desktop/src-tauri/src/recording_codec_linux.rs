@@ -27,6 +27,7 @@ pub(crate) struct Codec {
     expires: Instant,
     bytes: usize,
     frames: u64,
+    video_ended:bool,
     audio: Option<Audio>,
 }
 
@@ -141,6 +142,7 @@ impl Codec {
             expires,
             bytes,
             frames: 0,
+            video_ended:false,
             audio,
         };
         codec
@@ -151,6 +153,18 @@ impl Codec {
     }
 
     pub(crate) fn pcm_frames(&self)->u64 {self.audio.as_ref().map_or(0,|a|a.pcm)}
+    pub(crate) fn pcm_feed_limit(&self,allowed:&impl Fn()->bool)->Result<u64,String>{
+        self.check_feeding(allowed)?;
+        let audio=self.audio.as_ref().ok_or("录屏没有音轨")?;
+        // Reserve two worst-case packets before entering FDK with at most one
+        // native frame of PCM, including any prior fractional input. Only this
+        // producer adds buffers; streaming threads can only free these slots.
+        let room=16u64.saturating_sub(audio.source.current_level_buffers());
+        let bytes=262144u64.saturating_sub(audio.source.current_level_bytes());
+        Ok(if room>=2&&bytes>=u64::from(audio.encoder.info.maxOutBufBytes)*2 {
+            u64::from(audio.encoder.info.frameLength)
+        }else{0})
+    }
     #[cfg(debug_assertions)]
     pub(crate) fn input_levels(&self)->(u64,u64){
         (self.source.current_level_buffers(),self.audio.as_ref().map_or(0,|audio|audio.source.current_level_buffers()))
@@ -206,7 +220,7 @@ impl Codec {
         allowed: &impl Fn() -> bool,
     ) -> Result<(), String> {
         self.check_feeding(allowed)?;
-        if frame.len() != self.bytes || self.frames >= FPS * 600 {
+        if frame.len() != self.bytes || self.frames >= FPS * 600 || self.video_ended {
             return Err("录屏原始帧长度或数量无效".into());
         }
         while !self.video_ready(allowed)? {
@@ -234,6 +248,14 @@ impl Codec {
     pub(crate) fn finish(self, allowed: &impl Fn() -> bool) -> Result<u64, String> {
         self.finish_with_progress(allowed, |_|Ok(()))
     }
+    pub(crate) fn begin_video_eos(&mut self,allowed:&impl Fn()->bool)->Result<(),String>{
+        self.check(allowed)?;
+        if !self.video_ended {
+            self.source.end_of_stream().map_err(|_|"无法结束录屏帧源")?;
+            self.video_ended=true;
+        }
+        Ok(())
+    }
     pub(crate) fn finish_with_progress(mut self, allowed: &impl Fn() -> bool,
         mut progress:impl FnMut(FinalizeStage)->Result<(),String>) -> Result<u64, String> {
         self.check(allowed)?;
@@ -244,8 +266,8 @@ impl Codec {
         // mp4mux is an aggregator: draining AAC while its video input is still
         // open can fill the bounded AAC queue and wait for a video buffer that
         // this same producer will never submit. Queue video EOS first.
-        progress(FinalizeStage::VideoEos)?;
-        self.source.end_of_stream().map_err(|_|"无法结束录屏帧源")?;
+        if !self.video_ended{progress(FinalizeStage::VideoEos)?;}
+        self.begin_video_eos(allowed)?;
         if let Some(audio)=self.audio.as_mut(){
             let required=self.frames*48000/FPS;
             if audio.pcm<required{return Err("电脑声音未覆盖录屏尾点".into());}

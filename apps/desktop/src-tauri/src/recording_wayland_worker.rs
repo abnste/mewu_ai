@@ -85,7 +85,9 @@ fn feed_audio_to(codec:&mut Codec,pending:&mut PendingPcm,target:u64,
             if bytes.is_empty()||bytes.len()%4!=0||bytes.len()>96_000{return Err("电脑声音帧长度无效".into());}
             pending.bytes=bytes;pending.offset=0;
         }
-        let remaining=(target-codec.pcm_frames())as usize*4;
+        let limit=codec.pcm_feed_limit(allowed)?;
+        if limit==0{break;}
+        let remaining=(target-codec.pcm_frames()).min(limit)as usize*4;
         let end=(pending.offset+remaining).min(pending.bytes.len());
         codec.push_pcm(&pending.bytes[pending.offset..end],allowed)?;pending.offset=end;
     }
@@ -173,6 +175,10 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
     if count==0{return Ok(None);}
     let final_deadline=(Instant::now()+Duration::from_secs(10)).min(expires);
     emit(Event::Finalizing{stage:FinalizeStage::AudioTail,frames:count,pcm_frames:codec.pcm_frames()})?;
+    // Close the real video input before replenishing its final PCM budget:
+    // otherwise the mux can keep audio backpressured waiting for more video.
+    emit(Event::Finalizing{stage:FinalizeStage::VideoEos,frames:count,pcm_frames:codec.pcm_frames()})?;
+    codec.begin_video_eos(&||Instant::now()<final_deadline)?;
     if let Some(audio)=&audio {let drain=(Instant::now()+Duration::from_secs(1)).min(final_deadline);
         while codec.pcm_frames()<count*3200 {
             if Instant::now()>=drain{return Err("电脑声音未覆盖录屏尾点".into());}
@@ -319,6 +325,40 @@ pub(crate) fn supervise(config:PrepareConfig,
 
 #[cfg(test)]mod tests {
     use super::*;
+    #[test]fn recording_wayland_audio_backpressure_keeps_paired_video_producer_available(){
+        let output=PathBuf::from(format!("/tmp/recording-audio-recovery-{}.mp4",uuid::Uuid::new_v4()));
+        let file=OpenOptions::new().create_new(true).read(true).write(true).mode(0o600).open(&output).unwrap();
+        let expires=Instant::now()+Duration::from_secs(5);let allowed=||Instant::now()<expires;
+        let mut codec=Codec::with_audio(file,64,48,expires,true).unwrap();
+        let mut pending=PendingPcm::default();let mut remaining=96000usize;
+        let mut poll=||{
+            if remaining==0{return Ok(None);}
+            let block=remaining.min(24000);remaining-=block;
+            Ok(Some([1000i16.to_le_bytes(),(-1000i16).to_le_bytes()].concat().repeat(block)))
+        };
+        // Starve actual mp4mux's video input until native AAC appsrc reaches
+        // the reserved capacity. Feeding must return to this same producer,
+        // which can then provide the missing video without another thread.
+        feed_audio_to(&mut codec,&mut pending,96000,&mut poll,&allowed).unwrap();
+        assert!(codec.pcm_frames()>0&&codec.pcm_frames()<96000);
+        let before=Instant::now();assert_eq!(codec.pcm_feed_limit(&allowed).unwrap(),0);
+        assert!(before.elapsed()<Duration::from_millis(100));
+        let mut frames=0;
+        while frames<30{
+            feed_audio_to(&mut codec,&mut pending,(frames+1)*3200,&mut poll,&allowed).unwrap();
+            if codec.video_ready(&allowed).unwrap(){
+                codec.push_rgba([20,120,220,255].repeat(64*48),&allowed).unwrap();frames+=1;
+            }else{std::thread::sleep(Duration::from_millis(1));}
+        }
+        codec.begin_video_eos(&allowed).unwrap();
+        while codec.pcm_frames()<96000{
+            feed_audio_to(&mut codec,&mut pending,96000,&mut poll,&allowed).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(codec.pcm_frames(),96000);
+        assert_eq!(codec.finish(&allowed).unwrap(),30);
+        std::fs::remove_file(output).unwrap();
+    }
     #[test]fn recording_wayland_video_backpressure_keeps_paired_audio_producer_available(){
         let output=PathBuf::from(format!("/tmp/recording-input-recovery-{}.mp4",uuid::Uuid::new_v4()));
         let file=OpenOptions::new().create_new(true).read(true).write(true).mode(0o600).open(&output).unwrap();
