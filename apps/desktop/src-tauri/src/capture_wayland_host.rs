@@ -275,6 +275,7 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
             Ok(widget)=> {
                 let until=Instant::now()+Duration::from_secs(3);
                 let mut final_size=None;
+                let mut monitor_size=None;
                 let mut stable_ticks=0;
                 gtk::glib::timeout_add_local(Duration::from_millis(15),move || {
                     let _transition=&transition;
@@ -291,28 +292,43 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
                             widget.set_resizable(true);
                             return Ok(None);
                         }
-                        if drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN) && widget.is_mapped()
-                            && widget.allocated_width()>0 && widget.allocated_height()>0 {
-                            let size=(widget.allocated_width(),widget.allocated_height());
-                            if final_size.is_none() {
-                                #[cfg(debug_assertions)] log_layout(&widget, "fullscreen-confirmed");
-                                // Use only this owned window's actual fullscreen
-                                // allocation. A later show/deiconify otherwise
-                                // negotiates again with the startup default1200.
-                                widget.set_default_size(size.0,size.1);
-                                crate::show(target.app_handle());
-                                final_size=Some(size);
-                                return Ok(None);
-                            }
-                            if final_size==Some(size) && (drawable.width(),drawable.height())==size
-                                && webview_size(widget.upcast_ref(),0)==Some(size) {
-                                stable_ticks+=1;
-                                if stable_ticks>=2 {
-                                    #[cfg(debug_assertions)] log_layout(&widget, "after-final-show-stable");
-                                    return witness(&target).map(Some);
-                                }
-                            } else {stable_ticks=0;}
+                        // FULLSCREEN may arrive before the new allocation. In
+                        // that interval the startup1200x780 is still positive,
+                        // so it cannot establish the fullscreen target. Read
+                        // only logical dimensions of this own surface's monitor;
+                        // no monitor origin or screenshot dimensions are used.
+                        let expected=drawable.display().monitor_at_window(&drawable).map(|monitor| {
+                            let geometry=monitor.geometry();
+                            (geometry.width(),geometry.height())
+                        }).filter(|size|size.0>0 && size.1>0);
+                        if monitor_size!=expected {
+                            monitor_size=expected;
+                            final_size=None;
+                            stable_ticks=0;
+                            #[cfg(debug_assertions)] eprintln!("mewu-wayland-layout stage=monitor-target logical-size={expected:?}");
                         }
+                        let size=(widget.allocated_width(),widget.allocated_height());
+                        let ready=drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN) && widget.is_mapped()
+                            && expected==Some(size) && (drawable.width(),drawable.height())==size
+                            && webview_size(widget.upcast_ref(),0)==Some(size);
+                        if ready {
+                            stable_ticks+=1;
+                            if stable_ticks>=2 {
+                                if final_size.is_none() {
+                                    #[cfg(debug_assertions)] log_layout(&widget, "fullscreen-confirmed");
+                                    // Rebase only after GTK, GDK and WebKit all
+                                    // match the actual monitor twice. The final
+                                    // show/deiconify can then negotiate safely.
+                                    widget.set_default_size(size.0,size.1);
+                                    crate::show(target.app_handle());
+                                    final_size=Some(size);
+                                    stable_ticks=0;
+                                    return Ok(None);
+                                }
+                                #[cfg(debug_assertions)] log_layout(&widget, "after-final-show-stable");
+                                return witness(&target).map(Some);
+                            }
+                        } else {stable_ticks=0;}
                         if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
                         Ok(None)
                     })();
