@@ -263,6 +263,282 @@ mod native {
         Ok(topology(&connection, screen)?.monitors)
     }
 
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) struct RecordingCapture {
+        connection: NativeConnection,
+        screen: usize,
+        initial: Topology,
+        hidden: super::visibility::HiddenReceipt,
+        region: crate::recording_backend::Config,
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    impl RecordingCapture {
+        // The host supplies native identities from CaptureWitness. This method
+        // receives no frontend window ids and never maps/unmaps a window.
+        pub(crate) fn new(
+            region: crate::recording_backend::Config,
+            display: &str,
+            windows: &[u32; 2],
+            expires: std::time::Instant,
+            allowed: &dyn Fn() -> Result<(), String>,
+        ) -> Result<Self, String> {
+            session_check()?;
+            if display.is_empty() || display.len() > 128 || display.contains('\0') {
+                return Err("录屏图形会话无效".into());
+            }
+            if region.width < 2
+                || region.height < 2
+                || region.width % 2 != 0
+                || region.height % 2 != 0
+                || u64::from(region.width) * u64::from(region.height) > 4_000_000
+                || region
+                    .x
+                    .checked_add(region.width)
+                    .is_none_or(|end| end > region.monitor_width)
+                || region
+                    .y
+                    .checked_add(region.height)
+                    .is_none_or(|end| end > region.monitor_height)
+            {
+                return Err("录屏选区无效".into());
+            }
+            allowed()?;
+            #[cfg(target_os = "linux")]
+            let (connection, screen) =
+                super::stream::connect_display_until(Some(display), expires)?;
+            #[cfg(not(target_os = "linux"))]
+            let (connection, screen) = {
+                let _ = expires;
+                connect_display(Some(display))?
+            };
+            let mut visibility = super::visibility::HiddenWindows::subscribe(&connection, windows)?;
+            visibility.wait_hidden(allowed)?;
+            let hidden = visibility.receipt()?;
+            drop(visibility);
+            let initial = topology(&connection, screen)?;
+            if !initial.monitors.iter().any(|monitor| {
+                monitor.origin_x == region.origin_x
+                    && monitor.origin_y == region.origin_y
+                    && monitor.display_width == region.monitor_width
+                    && monitor.display_height == region.monitor_height
+            }) {
+                return Err("录屏显示器已改变，请重新选择".into());
+            }
+            allowed()?;
+            let capture = Self {
+                connection,
+                screen,
+                initial,
+                hidden,
+                region,
+            };
+            capture.check(allowed)?;
+            Ok(capture)
+        }
+
+        pub(crate) fn check(&self, allowed: &dyn Fn() -> Result<(), String>) -> Result<(), String> {
+            #[cfg(target_os = "linux")]
+            self.connection
+                .stream()
+                .begin_request(std::time::Duration::from_secs(1))
+                .map_err(|_| "录屏图形连接预算已结束")?;
+            self.hidden.check_on(&self.connection, allowed)?;
+            if self.initial != topology(&self.connection, self.screen)? {
+                return Err("录屏期间显示器设置已改变，请重新选择".into());
+            }
+            self.hidden.check_on(&self.connection, allowed)
+        }
+
+        pub(crate) fn frame(
+            &self,
+            allowed: &dyn Fn() -> Result<(), String>,
+        ) -> Result<RgbaImage, String> {
+            self.check(allowed)?;
+            let root = self
+                .connection
+                .setup()
+                .roots
+                .get(self.screen)
+                .ok_or("X11 屏幕不存在")?;
+            let geometry = self
+                .connection
+                .get_geometry(root.root)
+                .map_err(|_| "无法检查录屏桌面尺寸")?
+                .reply()
+                .map_err(|_| "无法检查录屏桌面尺寸")?;
+            let x = i64::from(self.region.origin_x) + i64::from(self.region.x);
+            let y = i64::from(self.region.origin_y) + i64::from(self.region.y);
+            if x < 0
+                || y < 0
+                || x > i64::from(i16::MAX)
+                || y > i64::from(i16::MAX)
+                || x + i64::from(self.region.width) > i64::from(geometry.width)
+                || y + i64::from(self.region.height) > i64::from(geometry.height)
+                || self.region.width > u32::from(u16::MAX)
+                || self.region.height > u32::from(u16::MAX)
+            {
+                return Err("录屏选区已超出当前 X11 桌面".into());
+            }
+            self.hidden.check_on(&self.connection, allowed)?;
+            // Request only the exact region. GetImage never falls back to a
+            // full desktop when coordinates are stale or invalid.
+            let reply = self
+                .connection
+                .get_image(
+                    ImageFormat::Z_PIXMAP,
+                    root.root,
+                    x as i16,
+                    y as i16,
+                    self.region.width as u16,
+                    self.region.height as u16,
+                    u32::MAX,
+                )
+                .map_err(|_| "无法请求 X11 录屏像素")?
+                .reply()
+                .map_err(|_| "无法读取 X11 录屏像素")?;
+            self.hidden.check_on(&self.connection, allowed)?;
+            let pixmap = self
+                .connection
+                .setup()
+                .pixmap_formats
+                .iter()
+                .find(|format| format.depth == reply.depth)
+                .ok_or("X11 录屏像素格式不存在")?;
+            let visual = root
+                .allowed_depths
+                .iter()
+                .flat_map(|depth| &depth.visuals)
+                .find(|visual| visual.visual_id == reply.visual)
+                .ok_or("X11 录屏颜色格式不存在")?;
+            if visual.class != VisualClass::TRUE_COLOR {
+                return Err("此 X11 调色板格式尚未支持".into());
+            }
+            let pixels = decode_zpixmap(
+                &reply.data,
+                self.region.width,
+                self.region.height,
+                PixelFormat {
+                    bits_per_pixel: pixmap.bits_per_pixel,
+                    scanline_pad: pixmap.scanline_pad,
+                    little_endian: self.connection.setup().image_byte_order
+                        == ImageOrder::LSB_FIRST,
+                    masks: [visual.red_mask, visual.green_mask, visual.blue_mask],
+                },
+            )?;
+            // Do not renew the request budget between the before/after proof.
+            if self.initial != topology(&self.connection, self.screen)? {
+                return Err("录屏期间显示器设置已改变，请重新选择".into());
+            }
+            self.hidden.check_on(&self.connection, allowed)?;
+            Ok(pixels)
+        }
+    }
+
+    #[cfg(all(test, target_os = "linux", feature = "linux-x11-tests"))]
+    mod recording_tests {
+        use super::*;
+        use x11rb::protocol::xproto::{CreateWindowAux, WindowClass};
+
+        #[test]
+        #[ignore = "isolated real Xvfb recording pixel source; no audio/encoder/GUI acceptance"]
+        fn x11_visibility_native_recording_exact_region_and_transient_remap() {
+            let display = std::env::var("DISPLAY").unwrap();
+            let (producer, screen) = connect_display(Some(&display)).unwrap();
+            let root = &producer.setup().roots[screen];
+            let monitor = topology(&producer, screen).unwrap().monitors.remove(0);
+            let windows = [
+                producer.generate_id().unwrap(),
+                producer.generate_id().unwrap(),
+            ];
+            let painted = producer.generate_id().unwrap();
+            struct Owners<'a> {
+                connection: &'a NativeConnection,
+                windows: [u32; 3],
+            }
+            impl Drop for Owners<'_> {
+                fn drop(&mut self) {
+                    for window in self.windows {
+                        let _ = self.connection.destroy_window(window);
+                    }
+                    let _ = self.connection.flush();
+                }
+            }
+            let _owners = Owners {
+                connection: &producer,
+                windows: [windows[0], windows[1], painted],
+            };
+            for &window in &windows {
+                producer
+                    .create_window(
+                        x11rb::COPY_DEPTH_FROM_PARENT,
+                        window,
+                        root.root,
+                        1,
+                        1,
+                        10,
+                        10,
+                        0,
+                        WindowClass::INPUT_OUTPUT,
+                        0,
+                        &CreateWindowAux::new(),
+                    )
+                    .unwrap()
+                    .check()
+                    .unwrap();
+            }
+            let left = monitor.origin_x + 20;
+            let top = monitor.origin_y + 30;
+            producer
+                .create_window(
+                    x11rb::COPY_DEPTH_FROM_PARENT,
+                    painted,
+                    root.root,
+                    left as i16,
+                    top as i16,
+                    64,
+                    48,
+                    0,
+                    WindowClass::INPUT_OUTPUT,
+                    0,
+                    &CreateWindowAux::new().background_pixel(root.white_pixel),
+                )
+                .unwrap()
+                .check()
+                .unwrap();
+            producer.map_window(painted).unwrap().check().unwrap();
+            let config = crate::recording_backend::Config {
+                output: std::path::PathBuf::from("/tmp/not-created-native-recording-test.mp4"),
+                origin_x: monitor.origin_x,
+                origin_y: monitor.origin_y,
+                monitor_width: monitor.display_width,
+                monitor_height: monitor.display_height,
+                x: 20,
+                y: 30,
+                width: 64,
+                height: 48,
+                audio: crate::recording_audio::AudioMode::Mute,
+            };
+            let capture = RecordingCapture::new(
+                config,
+                &display,
+                &windows,
+                std::time::Instant::now() + std::time::Duration::from_secs(10),
+                &|| Ok(()),
+            )
+            .unwrap();
+            let frame = capture.frame(&|| Ok(())).unwrap();
+            assert_eq!(frame.dimensions(), (64, 48));
+            assert!(frame.pixels().all(|pixel| pixel.0 == [255, 255, 255, 255]));
+            producer.map_window(windows[0]).unwrap().check().unwrap();
+            producer.unmap_window(windows[0]).unwrap().check().unwrap();
+            assert!(
+                capture.frame(&|| Ok(())).is_err(),
+                "same subscribed connection must remember even a transient remap"
+            );
+        }
+    }
+
     pub(crate) fn capture(
         asset_dir: &Path,
         selected_id: Option<u32>,
@@ -517,6 +793,9 @@ pub(super) use native::{backend_name, capture, list_monitors};
 
 #[cfg(target_os = "linux")]
 pub(super) use native::capture_with_witnesses;
+
+#[cfg(target_os = "linux")]
+pub(super) use native::RecordingCapture;
 
 #[cfg(test)]
 mod tests {
