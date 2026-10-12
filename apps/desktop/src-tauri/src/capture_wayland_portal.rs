@@ -218,7 +218,12 @@ async fn screenshot_on(connection: &Connection, allowed: &CaptureCheck) -> Resul
         allowed,
     )
     .await?;
-    if version < 1 {
+    // Interactive capture is part of Screenshot v2. A noninteractive request
+    // asks for persistent screenshot access; GNOME 46 only opens that access
+    // dialog for the currently focused app. Our own surfaces are intentionally
+    // hidden before capture, so this user-initiated operation must instead use
+    // the portal's compositor-owned screenshot chooser and its consent.
+    if version < 2 {
         return Err(UNAVAILABLE.into());
     }
     let sender = connection
@@ -262,9 +267,7 @@ async fn screenshot_on(connection: &Connection, allowed: &CaptureCheck) -> Resul
         let mut options: HashMap<&str, Value<'_>> = HashMap::new();
         options.insert("handle_token", Value::from(token.as_str()));
         options.insert("modal", Value::from(false));
-        if version >= 2 {
-            options.insert("interactive", Value::from(false));
-        }
+        options.insert("interactive", Value::from(true));
         let returned: OwnedObjectPath = checked(
             async {
                 proxy
@@ -667,7 +670,7 @@ mod tests {
             assert!(parent_window.is_empty());
             assert_eq!(
                 bool::try_from(options.get("interactive").unwrap()).unwrap(),
-                false
+                true
             );
             let token = <&str>::try_from(options.get("handle_token").unwrap()).unwrap();
             assert!(token.starts_with("mewu_"));
