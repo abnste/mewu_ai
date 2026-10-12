@@ -29,6 +29,21 @@ const MAX_WORDS: usize = 4096;
 const MAX_TEXT: usize = 128 * 1024;
 static ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(test)]
+thread_local! {
+    static NATIVE_TEST_TRACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+// Only the explicit synthetic native fixture enables these content-free
+// markers. Release builds contain neither the flag nor diagnostic output.
+macro_rules! native_trace {
+    ($stage:literal) => {
+        #[cfg(test)]
+        if NATIVE_TEST_TRACE.with(std::cell::Cell::get) {
+            eprintln!("MEWU_LINUX_OCR_STAGE {}", $stage);
+        }
+    };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Abi {
     Five,
@@ -316,6 +331,13 @@ impl Api {
     }
 }
 
+#[cfg(test)]
+impl Drop for Api {
+    fn drop(&mut self) {
+        native_trace!("api_release_begin");
+    }
+}
+
 struct Handle {
     pointer: NonNull<c_void>,
     delete: Delete,
@@ -333,7 +355,9 @@ impl Handle {
 }
 impl Drop for Handle {
     fn drop(&mut self) {
+        native_trace!("handle_release_begin");
         unsafe { (self.delete)(self.raw()) };
+        native_trace!("handle_release_end");
     }
 }
 struct Text {
@@ -396,15 +420,19 @@ pub(super) fn recognize_impl(
     let resources = Resources::capture();
     check_interest(&cancel, started)?;
     let resources = resources?;
+    native_trace!("resources_captured");
     let api = Api::load(&resources.library, resources.abi);
     check_interest(&cancel, started)?;
     let api = api?;
+    native_trace!("api_loaded");
     let engine = Handle::new(unsafe { (api.create)() }, api.delete)?;
+    native_trace!("engine_created");
     if unsafe { (api.variable)(engine.raw(), c"debug_file".as_ptr(), c"/dev/null".as_ptr()) } == 0 {
         return Err(NATIVE_ERROR.into());
     }
     // No detach: Init3 may outlive cancellation; the native API and permits
     // are retained until it really returns, then the original budget is tested.
+    native_trace!("init_begin");
     let initialized = unsafe {
         (api.init)(
             engine.raw(),
@@ -412,6 +440,7 @@ pub(super) fn recognize_impl(
             resources.language.as_ptr(),
         )
     };
+    native_trace!("init_end");
     check_interest(&cancel, started)?;
     if initialized != 0 {
         return Err(UNAVAILABLE.into());
@@ -428,6 +457,7 @@ pub(super) fn recognize_impl(
             geometry.width as c_int * 3,
         );
     }
+    native_trace!("image_set");
     check_interest(&cancel, started)?;
     let mut interest = Box::new(Interest {
         cancel: cancel.clone(),
@@ -443,7 +473,9 @@ pub(super) fn recognize_impl(
         (api.cancel_this)(monitor.raw(), (&mut *interest as *mut Interest).cast());
         (api.deadline)(monitor.raw(), remaining.min(c_int::MAX as u128) as c_int);
     }
+    native_trace!("recognize_begin");
     let recognized = unsafe { (api.recognize)(engine.raw(), monitor.raw()) };
+    native_trace!("recognize_end");
     check_interest(&cancel, started)?;
     if recognized != 0 {
         return Err(NATIVE_ERROR.into());
@@ -460,7 +492,9 @@ pub(super) fn recognize_impl(
         text_angle: None,
         lines: Vec::new(),
     };
+    native_trace!("iterator_begin");
     let pointer = unsafe { (api.iterator)(engine.raw()) };
+    native_trace!("iterator_end");
     if !pointer.is_null() {
         let iterator = Handle::new(pointer, api.iterator_delete)?;
         // Borrowed base-class view, never separately destroyed.
@@ -477,10 +511,12 @@ pub(super) fn recognize_impl(
             if visited > MAX_WORDS {
                 return Err(RESULT_ERROR.into());
             }
+            native_trace!("word_text_begin");
             let text = Text {
                 pointer: unsafe { (api.text)(iterator.raw(), 3) },
                 delete: api.text_delete,
             };
+            native_trace!("word_text_end");
             if !text.pointer.is_null() {
                 let text = unsafe { bounded_text(text.pointer, 512 * 4 + 1)? };
                 let text = text.trim();
@@ -541,13 +577,17 @@ pub(super) fn recognize_impl(
                     });
                 }
             }
-            if unsafe { (api.next)(iterator.raw(), 3) } == 0 {
+            native_trace!("iterator_next_begin");
+            let next = unsafe { (api.next)(iterator.raw(), 3) };
+            native_trace!("iterator_next_end");
+            if next == 0 {
                 break;
             }
         }
     }
     check_interest(&cancel, started)?;
     validate_ocr_document(&document).map_err(|_| RESULT_ERROR.to_owned())?;
+    native_trace!("result_validated");
     Ok(document)
 }
 
@@ -653,6 +693,15 @@ mod tests {
     #[test]
     #[ignore = "explicit native Linux Tesseract 4.1/5/system English model test; synthetic image only, no screen/network access"]
     fn real_linux_tesseract_recognizes_known_english_and_blank() {
+        struct TraceScope;
+        impl Drop for TraceScope {
+            fn drop(&mut self) {
+                NATIVE_TEST_TRACE.with(|flag| flag.set(false));
+            }
+        }
+        NATIVE_TEST_TRACE.with(|flag| flag.set(true));
+        let _trace = TraceScope;
+        native_trace!("synthetic_english_begin");
         let image = synthetic_english();
         assert!(image.pixels().filter(|pixel| pixel[0] < 128).count() > 1000);
         let document = recognize_impl(image, Arc::new(AtomicBool::new(false))).unwrap();
@@ -680,6 +729,7 @@ mod tests {
             .expect("known word with its actual native rectangle");
         assert!(word.x >= 40. && word.x < 100. && word.width > 100. && word.height > 30.);
         validate_ocr_document(&document).unwrap();
+        native_trace!("blank_begin");
         let blank = recognize_impl(
             RgbaImage::from_pixel(200, 100, Rgba([255, 255, 255, 255])),
             Arc::new(AtomicBool::new(false)),
