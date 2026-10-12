@@ -442,16 +442,27 @@ pub(crate) fn supervise(config:PrepareConfig,
             }).collect();bursts.push_back(bytes);
         }
         let mut pending=PendingPcm::default();
-        for index in 0..480u64 {
+        let mut index=0u64;
+        while index<480 {
             feed_audio_to(&mut codec,&mut pending,(index+1)*3200,||Ok(bursts.pop_front()),&||Instant::now()<expires).unwrap();
-            assert_eq!(codec.pcm_frames(),(index+1)*3200);
+            // Capacity defers input, so its intermediate count may lag. The
+            // completed output must still contain every original PCM sample.
+            assert!(codec.pcm_frames()<=(index+1)*3200);
             assert!(pending.bytes.len()<=96_000);
-            codec.push_rgba([20,120,220,255].repeat(64*48),&||Instant::now()<expires).unwrap();
+            if codec.video_ready(&||Instant::now()<expires).unwrap(){
+                codec.push_rgba([20,120,220,255].repeat(64*48),&||Instant::now()<expires).unwrap();index+=1;
+            }else{std::thread::sleep(Duration::from_millis(1));}
         }
+        codec.begin_video_eos(&||Instant::now()<expires).unwrap();
+        while codec.pcm_frames()<480*3200 {
+            feed_audio_to(&mut codec,&mut pending,480*3200,||Ok(bursts.pop_front()),&||Instant::now()<expires).unwrap();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(codec.pcm_frames(),480*3200);
         assert!(bursts.is_empty());
         let mut stages=Vec::new();
         assert_eq!(codec.finish_with_progress(&||Instant::now()<expires,|stage|{stages.push(stage);Ok(())}).unwrap(),480);
-        assert_eq!(stages,[FinalizeStage::VideoEos,FinalizeStage::AacTail,FinalizeStage::MuxEos,FinalizeStage::FileSync]);
+        assert_eq!(stages,[FinalizeStage::AacTail,FinalizeStage::MuxEos,FinalizeStage::FileSync]);
         assert!(std::fs::metadata(&output).unwrap().len()>1000);
         std::fs::copy(&output,"/tmp/last-recording-burst-32s.mp4").unwrap();
         std::fs::remove_file(output).unwrap();
