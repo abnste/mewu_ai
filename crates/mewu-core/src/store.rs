@@ -105,6 +105,35 @@ pub struct Store {
     geometry_group: Option<crate::geometry_history::ActiveEdit>,
 }
 
+#[cfg(test)]
+mod capture_adoption_tests {
+    use super::*;
+    fn image() -> Asset {
+        Asset { id:Uuid::new_v4().to_string(),name:"截图.png".into(),kind:AssetKind::Image,
+            path:"capture.png".into(),width:Some(320),height:Some(200),
+            origin_x:None,origin_y:None,scale_factor:None,capture_coordinates:None }
+    }
+    #[test]
+    fn screenshot_adoption_failure_preserves_prior_scene_and_durable_payload() {
+        let mut store=Store::open_in_memory().unwrap();
+        store.adopt_capture_background(image()).unwrap();
+        let before=serde_json::to_string(&store.state).unwrap();
+        let revision=store.revision;
+        let payload:String=store.db.query_row("SELECT payload FROM app_state WHERE id=1",[],|row|row.get(0)).unwrap();
+        store.db.execute_batch("CREATE TRIGGER reject_capture BEFORE UPDATE ON app_state BEGIN SELECT RAISE(ABORT,'forced capture failure'); END;").unwrap();
+        assert!(store.adopt_capture_background(image()).is_err());
+        assert_eq!(serde_json::to_string(&store.state).unwrap(),before);
+        assert_eq!(store.revision,revision);
+        assert_eq!(store.db.query_row::<String,_,_>("SELECT payload FROM app_state WHERE id=1",[],|row|row.get(0)).unwrap(),payload);
+        store.db.execute_batch("DROP TRIGGER reject_capture;").unwrap();
+        let next=store.adopt_capture_background(image()).unwrap();
+        assert_eq!(next.scenes.len(),2);
+        assert_eq!(store.revision,revision+1);
+        assert!(next.scenes.iter().all(|scene|scene.background.is_some()));
+        assert!(next.scenes.iter().all(|scene|scene.background.as_ref().unwrap().capture_coordinates.is_none()));
+    }
+}
+
 /// An independent read snapshot for explicit exports. Opening it never migrates
 /// data or settles live runs. Keep it only for the duration of one export: WAL
 /// writers may proceed, but checkpoint reclamation waits for older readers.
@@ -955,6 +984,25 @@ impl Store {
         target.background = Some(asset);
         target.regions.clear();
         target.refs.retain(|r| r.kind != ReferenceKind::Region);
+        touch(target);
+        self.persist(next)
+    }
+
+    /// Adopt a host screenshot and, when needed, its new scene in one commit.
+    /// A failed persist must not leave an empty scene or replace prior content.
+    pub fn adopt_capture_background(&mut self, asset: Asset) -> Result<Snapshot> {
+        validate_background(&asset)?;
+        let active = scene(&self.state, &self.state.active_scene_id)?;
+        if is_running(active) { return Err(CoreError::RunInProgress); }
+        let needs_scene = active.closed || active.frozen || active.background.is_some()
+            || !active.messages.is_empty() || !active.items.is_empty() || !active.draft.is_empty();
+        let mut next = self.state.clone();
+        if needs_scene { create_scene(&mut next)?; }
+        let id = next.active_scene_id.clone();
+        let target = scene_mut(&mut next, &id)?;
+        target.background = Some(asset);
+        target.regions.clear();
+        target.refs.retain(|reference| reference.kind != ReferenceKind::Region);
         touch(target);
         self.persist(next)
     }

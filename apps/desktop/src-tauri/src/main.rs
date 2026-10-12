@@ -30,6 +30,10 @@ mod code_worker;
 mod window_witness_macos;
 #[cfg(any(target_os = "linux", test))]
 mod window_witness_linux;
+#[cfg(target_os = "linux")]
+mod capture_wayland_host;
+#[cfg(target_os = "linux")]
+mod capture_wayland_portal;
 #[cfg(any(target_os = "linux", test))]
 mod window_actions_linux;
 #[cfg(target_os = "linux")]
@@ -1211,6 +1215,10 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     pin_host::cancel_pending(&app, "space");
     recording::ensure_idle(&app)?;
     let window = app.get_webview_window("space").ok_or("窗口不存在")?;
+    #[cfg(target_os = "linux")]
+    if capture_wayland_host::is_wayland(&window, work.clone(), transition.clone()).await? {
+        return capture_wayland_host::capture(app.clone(), window, work, transition, preferences).await;
+    }
     #[cfg(target_os = "linux")]
     let capture_witnesses = linux_capture_witnesses(&window, &work).await?;
     #[cfg(target_os = "linux")]
@@ -2503,6 +2511,7 @@ fn main() {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 // Revoke before any Engine locks or async cancellation work.
                 window_witness_linux::revoke_owner(window.label());
+                capture_wayland_host::revoke_owner(window.label());
                 window_actions_linux::revoke_owner(window.label());
                 if matches!(window.label(), "space" | frozen::LABEL) {
                     if let Some(host) = window.app_handle().try_state::<Host>() {
