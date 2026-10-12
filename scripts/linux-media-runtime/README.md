@@ -39,7 +39,11 @@ locked artifact. The media stage replaces the entire old Gst plugin/helper
 trees, assigns relative ELF RUNPATHs, verifies every surviving Gst family
 provider against the runtime, retains the matched GTK/WebKit resources and
 removes library-only leftovers from obsolete plugins. System libc and graphics
-dispatch remain platform providers. It never modifies or executes the input
+dispatch, GLES frontends and the Wayland/X11/XCB connection libraries remain
+platform providers. Mixing an old GLES frontend with a newer host dispatcher
+can resolve every symbol yet produce no pixels. `verify_graphics.py` checks a
+real EGL context and rendered pixel in both system and AppDir library environments;
+this does not certify native Wayland GUI behavior. It never modifies or executes the input
 application.
 The matched build distro also supplies the dynamically loaded Ayatana tray
 closure and its exact copyrights. Canonical SONAME links are retained after

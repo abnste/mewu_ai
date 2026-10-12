@@ -10,11 +10,7 @@
     "createUpdaterArtifacts": false,
     "linux": {
       "appimage": {
-        "bundleMediaFramework": true,
-        "files": {
-          "usr/lib/libGLESv2.so.2": "/usr/lib/x86_64-linux-gnu/libGLESv2.so.2",
-          "usr/share/doc/libgles2/copyright": "/usr/share/doc/libgles2/copyright"
-        }
+        "bundleMediaFramework": true
       }
     }
   },

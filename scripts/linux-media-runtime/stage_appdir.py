@@ -10,9 +10,18 @@ from elftools.elf.elffile import ELFFile
 
 FORBIDDEN = {'libjbig.so.0','libgpm.so.2','libslang.so.2','libaa.so.1','libcaca.so.0',
              'libfaad.so.2','libx264.so.163','libx265.so.199','libpostproc.so.55'}
+# These providers must follow the installed graphics driver/compositor. SDK
+# closure discovery must not undo linuxdeploy's host-driver exclusions.
+# https://github.com/AppImageCommunity/pkg2appimage/blob/master/excludelist
+HOST_GRAPHICS = {'libGL.so.1','libEGL.so.1','libGLX.so.0','libGLdispatch.so.0',
+                 'libGLESv2.so.2','libGLESv1_CM.so.1',
+                 'libOpenGL.so.0','libglapi.so.0','libgbm.so.1','libdrm.so.2',
+                 'libEGL_mesa.so.0','libGLX_mesa.so.0',
+                 'libX11.so.6','libX11-xcb.so.1','libxcb.so.1',
+                 'libwayland-client.so.0','libwayland-cursor.so.0',
+                 'libwayland-egl.so.1','libwayland-server.so.0'}
 HOST_LIBS = {'libc.so.6','libm.so.6','libpthread.so.0','libdl.so.2','librt.so.1',
-             'ld-linux-x86-64.so.2','libgcc_s.so.1','libstdc++.so.6',
-             'libGL.so.1','libEGL.so.1','libGLX.so.0','libGLdispatch.so.0','libX11-xcb.so.1'}
+             'ld-linux-x86-64.so.2','libgcc_s.so.1','libstdc++.so.6'} | HOST_GRAPHICS
 
 def digest(path):
     with path.open('rb') as handle:
@@ -124,7 +133,7 @@ def stage(appdir,runtime,destination,receipt):
     # Old FFmpeg ABI/plugin-only GPL providers are removed only after the new
     # roots have been staged and an exact DT_NEEDED check can reject survivors.
     entries=scan(destination)
-    obsolete={p for p,e in entries.items() if set(e['soname'])&FORBIDDEN
+    obsolete={p for p,e in entries.items() if set(e['soname'])&(FORBIDDEN|HOST_GRAPHICS)
         or any(name.startswith(('libavcodec.so.58','libavformat.so.58','libavutil.so.56','libavfilter.so.7','libswresample.so.3','libswscale.so.5')) for name in e['soname'])}
     assert not any(set(e['needed'])&FORBIDDEN for p,e in entries.items() if p not in obsolete), 'Forbidden codec still reachable'
     targets={(destination/p).resolve() for p in obsolete}
@@ -152,7 +161,7 @@ def stage(appdir,runtime,destination,receipt):
     by_name={name:path for path,e in entries.items() for name in e['soname']}
     for path,e in new_roots.items():
         for name in e['soname']:by_name[name]=path
-    roots={path for path,e in entries.items() if pathlib.PurePosixPath(path).parent.as_posix()!='usr/lib' or path=='usr/lib/libGLESv2.so.2' or 'libayatana-appindicator3.so.1' in e['soname']}
+    roots={path for path,e in entries.items() if pathlib.PurePosixPath(path).parent.as_posix()!='usr/lib' or 'libayatana-appindicator3.so.1' in e['soname']}
     retained=set();pending=list(roots)
     while pending:
         path=pending.pop()
@@ -211,7 +220,7 @@ export PIPEWIRE_CONFIG_NAME=client.conf
     after=scan(destination)
     assert after['usr/bin/MewuAI']['sha256']==before['usr/bin/MewuAI']['sha256']
     assert all(not(set(e['needed'])&FORBIDDEN) for e in after.values())
-    assert not any(p.endswith(('libGLdispatch.so.0','libEGL.so.1','libGLX.so.0')) for p in after)
+    assert not any(set(e['soname'])&HOST_GRAPHICS for e in after.values())
     # Prove the trusted worker does not depend on the inherited LD_* env.
     assert '$ORIGIN/../lib' in ':'.join(after['usr/bin/MewuAI']['runpath']),after['usr/bin/MewuAI']['runpath']
     evidence={'schemaVersion':1,'scope':'Real Tauri AppDir, media-only staging, product not executed',

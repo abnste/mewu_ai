@@ -12,7 +12,6 @@ import { fileURLToPath } from 'node:url';
 const MAX_ENTRIES = 4096, MAX_DEPTH = 16, MAX_FILE = 512 * 1024 * 1024, MAX_TOTAL = 2 * 1024 * 1024 * 1024;
 const REQUIRED = [
   ['usr/bin/MewuAI', 'file'], ['usr/lib/gtk-3.0', 'dir'],
-  ['usr/lib/libGLESv2.so.2', 'file'], ['usr/share/doc/libgles2/copyright', 'file'],
   ['usr/lib/gtk-3.0/3.0.0/immodules.cache', 'file'],
   ['usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache', 'file'],
   ['usr/lib/girepository-1.0', 'dir'], ['usr/lib/gio/modules', 'dir'],
@@ -65,6 +64,10 @@ export async function inspectAppDir(input, { normalized = false, requireResource
     } else fail('Special AppDir entry refused');
   }
   await visit(root, 0);
+  if (requireResources && entries.some(e => e.relative.startsWith('usr/lib/')
+      && /^(?:libGL(?:dispatch|X(?:_mesa)?)?|libEGL(?:_mesa)?|libGLESv[12](?:_CM)?|libOpenGL|libglapi|libgbm|libdrm|libX11(?:-xcb)?|libxcb|libwayland-(?:client|cursor|egl|server))\.so(?:\.|$)/.test(path.basename(e.relative)))) {
+    fail('Host graphics provider must not be bundled');
+  }
   if (requireResources) for (const [relative, kind] of REQUIRED) {
     const entry = entries.find(e => e.relative === relative);
     if (!entry || entry.kind !== kind) fail('Required package resource missing');

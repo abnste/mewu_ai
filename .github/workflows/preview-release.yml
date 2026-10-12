@@ -158,30 +158,12 @@ jobs:
       - name: Archive Mac application for later coordinator signing
         if: runner.os == 'macOS'
         run: tar -czf target/release/bundle/macos/MewuAI.app.tar.gz -C target/release/bundle/macos MewuAI.app
-      - name: Load the packaged GLES wrapper with host dispatch
+      - name: Verify host graphics providers with actual EGL pixels
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
-          readelf --file-header --dynamic --version-info target/release/bundle/appimage/MewuAI.AppDir/usr/lib/libGLESv2.so.2
-          env -u LD_LIBRARY_PATH -u LD_PRELOAD /usr/bin/python3 - <<'PY'
-          import ctypes, hashlib, json, pathlib
-          root = pathlib.Path('target/release/bundle/appimage/MewuAI.AppDir').resolve(strict=True)
-          library = root / 'usr/lib/libGLESv2.so.2'
-          if library.is_symlink() or not library.is_file():
-              raise RuntimeError('Packaged GLES wrapper must be a regular file')
-          for name in ('libGLdispatch.so.0', 'libEGL.so.1', 'libGLX.so.0'):
-              if any(root.rglob(name)):
-                  raise RuntimeError('Host graphics library unexpectedly bundled: ' + name)
-          handle = ctypes.CDLL(str(library))
-          for symbol in ('glGetString', 'glClear', 'glViewport'):
-              getattr(handle, symbol)
-          source = pathlib.Path('/usr/share/doc/libgles2/copyright').read_bytes()
-          copied = (root / 'usr/share/doc/libgles2/copyright').read_bytes()
-          if source != copied:
-              raise RuntimeError('GLES copyright changed during bundling')
-          print(json.dumps({'kind': 'packaged_gles_host_dispatch', 'librarySha256': hashlib.sha256(library.read_bytes()).hexdigest(), 'copyrightSha256': hashlib.sha256(copied).hexdigest(), 'loaded': True, 'nativeGuiVerified': False, 'installerVerified': False}))
-          PY
+          /usr/bin/python3 scripts/linux-media-runtime/verify_graphics.py --appdir target/release/bundle/appimage/MewuAI.AppDir
       - name: Stage explicit native assets
         run: node scripts/prepare-release.mjs out/release-${{ matrix.platform }} ${{ matrix.platform }}
       # This rebuild is a feature-only native verification package. The normal

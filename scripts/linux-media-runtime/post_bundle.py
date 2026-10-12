@@ -36,7 +36,7 @@ def install(workspace,runtime,tiff):
         # even though stat.dev matches. Copy and verify every byte/mode before
         # removing this exact, generated build directory. No arbitrary target.
         identity=original.stat();shutil.copytree(original,backup,symlinks=True)
-        comparison="import {inspectAppDir} from './scripts/normalize-linux-appimage.mjs'; const [a,b]=await Promise.all(process.argv.slice(1).map(p=>inspectAppDir(p))); const content=x=>x.entries.map(({relative,kind,target,bytes,sha256,mode})=>({relative,kind,target,bytes,sha256,mode})).sort((a,b)=>a.relative.localeCompare(b.relative)); if(JSON.stringify(content(a))!==JSON.stringify(content(b)))throw Error('Original rollback backup differs');"
+        comparison="import {inspectAppDir} from './scripts/normalize-linux-appimage.mjs'; const [a,b]=await Promise.all(process.argv.slice(1).map(p=>inspectAppDir(p,{requireResources:false}))); const content=x=>x.entries.map(({relative,kind,target,bytes,sha256,mode})=>({relative,kind,target,bytes,sha256,mode})).sort((a,b)=>a.relative.localeCompare(b.relative)); if(JSON.stringify(content(a))!==JSON.stringify(content(b)))throw Error('Original rollback backup differs');"
         subprocess.run(['node','--input-type=module','-e',comparison,str(original),str(backup)],cwd=workspace,check=True)
         current=original.stat();assert (identity.st_dev,identity.st_ino)==(current.st_dev,current.st_ino)
         assert original.resolve()==parent/'MewuAI.AppDir' and backup.resolve().parent==scratch

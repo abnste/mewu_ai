@@ -57,6 +57,19 @@ test('native missing resources reject before repack', { skip: process.platform !
   finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('native graphics frontend cannot silently bypass the host driver policy', { skip: process.platform !== 'linux' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mewu-appdir-old-gles-'));
+  try {
+    await fs.mkdir(path.join(root, 'usr/lib'), { recursive: true });
+    await fs.writeFile(path.join(root, 'usr/lib/libGLESv2.so.2'), 'controlled inert old frontend fixture');
+    await assert.rejects(inspectAppDir(root), /Host graphics provider/);
+    // Raw rollback copies are compared byte-for-byte without pretending the
+    // pre-staging input already satisfies the final runtime resource contract.
+    const original = await inspectAppDir(root, { requireResources: false });
+    assert.ok(original.entries.some(entry => entry.relative === 'usr/lib/libGLESv2.so.2'));
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('unsupported platforms do not change output or launch tools', { skip: process.platform === 'linux' && process.arch === 'x64' }, async () => {
   await assert.rejects(rebuildAppImage('nonexistent-AppDir', 'nonexistent-output', 'nonexistent-tool'), /native Linux/);
 });
