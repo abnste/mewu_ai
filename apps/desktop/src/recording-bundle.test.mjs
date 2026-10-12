@@ -16,6 +16,25 @@ const manifest = { id: 'mewu.recording', contributions: [
 const plugin = (changes = {}) => ({ manifest: structuredClone(manifest), source: { type: 'official' }, state: 'enabled', revision: 4, hasRollback: false, ...changes });
 const base = { pluginId: 'mewu.core.recording', revision: 1, contributionId: 'record' }, sound = { ...base, contributionId: 'audio' };
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+
+test('native sound capabilities constrain choices before a save request, without guessing OS', async () => {
+  const receipt = { revision: 0, sequence: 0, mode: 'system', grant: sound, editable: true, supportedModes: ['mute', 'system'] };
+  assert.equal(audio.validRecordingAudioState(receipt), true);
+  assert.deepEqual(audio.supportedAudioModes(receipt), ['mute', 'system']);
+  assert.deepEqual(audio.supportedAudioModes(), ['mute', 'system']);
+  for (const supportedModes of [['system', 'system'], ['future'], 'system', [...audio.audioModes, 'mute']]) {
+    assert.equal(audio.validRecordingAudioState({ ...receipt, supportedModes }), false);
+  }
+  const calls = [];
+  const controller = new audio.RecordingAudioController(async (revision, mode, grant) => {
+    calls.push(mode); return { ...receipt, revision: revision + 1, sequence: 1, mode, grant };
+  }, () => {});
+  controller.reconcile(audio.recordingAudioGrants()); controller.readSucceeded(receipt);
+  await controller.choose('microphone', sound); await controller.choose('both', sound);
+  assert.deepEqual(calls, []); assert.equal(controller.selection().mode, 'system');
+  await controller.choose('mute', null);
+  assert.deepEqual(calls, ['mute']); assert.equal(controller.selection().mode, 'mute');
+});
 const turn = () => new Promise(resolve => setImmediate(resolve));
 async function functionFrom(file, name, context) {
   const text = await read(file), tree = parse(text, { sourceType: 'module', plugins: ['typescript', 'jsx'] }); let declaration;
