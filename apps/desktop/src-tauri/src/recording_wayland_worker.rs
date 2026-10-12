@@ -315,6 +315,39 @@ pub(crate) fn supervise(config:PrepareConfig,
 
 #[cfg(test)]mod tests {
     use super::*;
+    #[test]fn recording_wayland_real_mux_survives_long_wall_pause_without_timeline_growth(){
+        let output=PathBuf::from(format!("/tmp/recording-wall-pause-{}.mp4",uuid::Uuid::new_v4()));
+        let file=OpenOptions::new().create_new(true).read(true).write(true).mode(0o600).open(&output).unwrap();
+        let expires=Instant::now()+Duration::from_secs(50);
+        let mut codec=Codec::with_audio(file,64,48,expires,true).unwrap();
+        let mut pending=PendingPcm::default();let mut sample_index=0u64;
+        let mut pulse_block=||{
+            let bytes:Vec<_>=(sample_index..sample_index+24000).flat_map(|sample|{
+                let frequency=if sample>=285*3200-4800{880.}else{440.};
+                let value=((sample as f64*frequency*std::f64::consts::TAU/48000.).sin()*10000.)as i16;
+                [value.to_le_bytes(),value.to_le_bytes()].concat()
+            }).collect();sample_index+=24000;Ok(Some(bytes))
+        };
+        for index in 0..255u64 {
+            feed_audio_to(&mut codec,&mut pending,(index+1)*3200,&mut pulse_block,&||Instant::now()<expires).unwrap();
+            codec.push_rgba([20,120,220,255].repeat(64*48),&||Instant::now()<expires).unwrap();
+        }
+        let pcm_before_pause=codec.pcm_frames();pending.clear();
+        // Real wall time exceeds the host's 20s heartbeat threshold. This
+        // isolates native mux clock behavior; it is not a portal/control test.
+        let paused_at=Instant::now();std::thread::sleep(Duration::from_secs(22));
+        assert!(paused_at.elapsed()>=Duration::from_secs(22));
+        assert_eq!(codec.pcm_frames(),pcm_before_pause);
+        for index in 255..285u64 {
+            feed_audio_to(&mut codec,&mut pending,(index+1)*3200,&mut pulse_block,&||Instant::now()<expires).unwrap();
+            codec.push_rgba([20,120,220,255].repeat(64*48),&||Instant::now()<expires).unwrap();
+        }
+        assert_eq!(codec.pcm_frames(),19*48000);
+        let finish_deadline=(Instant::now()+Duration::from_secs(10)).min(expires);
+        assert_eq!(codec.finish(&||Instant::now()<finish_deadline).unwrap(),285);
+        std::fs::copy(&output,"/tmp/last-recording-wall-pause-19s.mp4").unwrap();
+        std::fs::remove_file(output).unwrap();
+    }
     #[test]fn recording_wayland_real_mux_handles_long_pcm_bursts_with_bounded_lead(){
         use std::collections::VecDeque;
         let output=PathBuf::from(format!("/tmp/recording-burst-{}.mp4",uuid::Uuid::new_v4()));
