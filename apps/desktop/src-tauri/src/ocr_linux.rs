@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Blocking Tesseract 5 C API, never a CLI or executable plugin. Native handles,
+//! Blocking Tesseract 4.1/5 C API, never a CLI or executable plugin. Native handles,
 //! owned pixels and the caller's worker lease survive cooperative cancellation
 //! until the synchronous call returns. Init3 itself is not cancellable.
 //! https://github.com/tesseract-ocr/tesseract/blob/5.5.1/include/tesseract/capi.h
 //! https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/api/capi.cpp
+//! https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.h
+//! https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.cpp
 use super::*;
 use libloading::Library;
 use mewu_core::{validate_ocr_document, OcrLine, OcrWord};
@@ -18,7 +20,7 @@ use std::{
 use zeroize::Zeroizing;
 
 const UNAVAILABLE: &str =
-    "本机文字识别需要受保护的 Tesseract 5 和英语语言包，请安装对应系统软件包后重试";
+    "本机文字识别需要受保护的 Tesseract 4.1 或 5 和英语语言包，请安装对应系统软件包后重试";
 const NATIVE_ERROR: &str = "本机文字识别失败，请检查系统文字识别组件";
 const RESULT_ERROR: &str = "本机文字识别结果无效或超过上限";
 const MAX_FILE: u64 = 64 * 1024 * 1024;
@@ -26,6 +28,53 @@ const MAX_LINES: usize = 512;
 const MAX_WORDS: usize = 4096;
 const MAX_TEXT: usize = 128 * 1024;
 static ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Abi {
+    Five,
+    FourOne,
+}
+impl Abi {
+    fn soname(self) -> &'static str {
+        match self {
+            Self::Five => "libtesseract.so.5",
+            Self::FourOne => "libtesseract.so.4",
+        }
+    }
+    fn model_roots(self) -> [&'static str; 2] {
+        [
+            match self {
+                Self::Five => "/usr/share/tesseract-ocr/5/tessdata",
+                Self::FourOne => "/usr/share/tesseract-ocr/4.00/tessdata",
+            },
+            "/usr/share/tessdata",
+        ]
+    }
+    fn accepts_version(self, version: &str) -> bool {
+        version.starts_with(match self {
+            Self::Five => "5.",
+            Self::FourOne => "4.1.",
+        })
+    }
+}
+
+// Only an absent preferred SONAME permits fallback. Permission errors,
+// dangling symlinks and unsafe existing libraries must fail closed.
+fn select_abi(mut present: impl FnMut(&str) -> Result<bool, String>) -> Result<Abi, String> {
+    for abi in [Abi::Five, Abi::FourOne] {
+        if present(abi.soname())? {
+            return Ok(abi);
+        }
+    }
+    Err(UNAVAILABLE.into())
+}
+fn path_present(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(UNAVAILABLE.into()),
+    }
+}
 
 struct Permit;
 impl Permit {
@@ -76,6 +125,7 @@ fn protected_path(path: &Path, base: &Path, directory: bool) -> Result<PathBuf, 
 }
 
 struct Resources {
+    abi: Abi,
     library: File,
     models: Vec<(PathBuf, File)>,
     data: CString,
@@ -91,17 +141,22 @@ impl Resources {
         return Err(UNAVAILABLE.into());
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
+            let abi = select_abi(|soname| path_present(&library_root.join(soname)))?;
             let library_path =
-                protected_path(&library_root.join("libtesseract.so.5"), library_root, false)?;
+                protected_path(&library_root.join(abi.soname()), library_root, false)?;
             let library = File::open(library_path).map_err(|_| UNAVAILABLE.to_owned())?;
             let mut chosen = None;
-            for root in ["/usr/share/tesseract-ocr/5/tessdata", "/usr/share/tessdata"] {
+            for root in abi.model_roots() {
                 let root = Path::new(root);
-                if let Ok(data) = protected_path(root, root, true) {
-                    if protected_path(&data.join("eng.traineddata"), &data, false).is_ok() {
-                        chosen = Some(data);
-                        break;
-                    }
+                if !path_present(root)? {
+                    continue;
+                }
+                let data = protected_path(root, root, true)?;
+                let english = data.join("eng.traineddata");
+                if path_present(&english)? {
+                    protected_path(&english, &data, false)?;
+                    chosen = Some(data);
+                    break;
                 }
             }
             let data = chosen.ok_or_else(|| UNAVAILABLE.to_owned())?;
@@ -133,6 +188,7 @@ impl Resources {
                 .map_err(|_| UNAVAILABLE.to_owned())?;
             let language = CString::new(languages.join("+")).map_err(|_| UNAVAILABLE.to_owned())?;
             let resources = Self {
+                abi,
                 library,
                 models,
                 data,
@@ -210,7 +266,7 @@ struct Api {
     _library: Library,
 }
 impl Api {
-    fn load(file: &File) -> Result<Self, String> {
+    fn load(file: &File, abi: Abi) -> Result<Self, String> {
         // Bind dlopen to the held inode, without choosing a loader search path
         // from caller settings, environment variables or a plugin manifest.
         let library: Library = unsafe {
@@ -231,7 +287,7 @@ impl Api {
             };
         }
         let version: unsafe extern "C" fn() -> *const c_char = symbol!("TessVersion");
-        if !unsafe { bounded_text(version(), 128)? }.starts_with("5.") {
+        if !abi.accepts_version(&unsafe { bounded_text(version(), 128)? }) {
             return Err(UNAVAILABLE.into());
         }
         Ok(Self {
@@ -340,7 +396,7 @@ pub(super) fn recognize_impl(
     let resources = Resources::capture();
     check_interest(&cancel, started)?;
     let resources = resources?;
-    let api = Api::load(&resources.library);
+    let api = Api::load(&resources.library, resources.abi);
     check_interest(&cancel, started)?;
     let api = api?;
     let engine = Handle::new(unsafe { (api.create)() }, api.delete)?;
@@ -501,6 +557,37 @@ mod tests {
     use image::{DynamicImage, Rgba};
 
     #[test]
+    fn abi_selection_preserves_preference_and_does_not_hide_probe_errors() {
+        assert_eq!(select_abi(|_| Ok(true)).unwrap(), Abi::Five);
+        assert_eq!(
+            select_abi(|soname| Ok(soname == "libtesseract.so.4")).unwrap(),
+            Abi::FourOne
+        );
+        assert!(select_abi(|_| Ok(false)).is_err());
+        let mut probes = 0;
+        assert!(select_abi(|_| {
+            probes += 1;
+            Err("unreadable preferred library".into())
+        })
+        .is_err());
+        assert_eq!(probes, 1);
+        for version in ["4.0.0", "4.2.0", "3.05.02", "6.0.0", "5.5.1"] {
+            assert!(!Abi::FourOne.accepts_version(version));
+        }
+        assert!(Abi::FourOne.accepts_version("4.1.1"));
+        assert!(!Abi::Five.accepts_version("4.1.1"));
+        assert!(Abi::Five.accepts_version("5.5.1"));
+        assert_eq!(
+            Abi::FourOne.model_roots()[0],
+            "/usr/share/tesseract-ocr/4.00/tessdata"
+        );
+        assert_eq!(
+            Abi::Five.model_roots()[0],
+            "/usr/share/tesseract-ocr/5/tessdata"
+        );
+    }
+
+    #[test]
     fn cancellation_and_original_deadline_reject_before_native_resources() {
         let bitmap = RgbaImage::new(16, 16);
         assert_eq!(
@@ -564,7 +651,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "explicit native Linux Tesseract 5/system English model test; synthetic image only, no screen/network access"]
+    #[ignore = "explicit native Linux Tesseract 4.1/5/system English model test; synthetic image only, no screen/network access"]
     fn real_linux_tesseract_recognizes_known_english_and_blank() {
         let image = synthetic_english();
         assert!(image.pixels().filter(|pixel| pixel[0] < 128).count() > 1000);
