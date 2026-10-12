@@ -157,12 +157,16 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
         #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::PollScreen,count,paused,&mut emit)?;}
         if let Some(frame)=frames.next(Duration::ZERO)?{latest=frame;}
         if paused{std::thread::sleep(Duration::from_millis(10));}
-        else if Instant::now()>=next {
+        else if Instant::now()>=next && codec.video_ready(&||Instant::now()<expires)? {
             #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::PushVideo,count,paused,&mut emit)?;}
             codec.push_rgba(crop(&latest,&selection,&prepared)?,&||Instant::now()<expires)?;
             count+=1;next+=Duration::from_nanos(1_000_000_000/15);
-            if next.elapsed()>Duration::from_millis(300){return Err("录屏编码积压超出限制".into());}
         } else {std::thread::sleep(Duration::from_millis(2));}
+        // A muxer may be waiting for the other input. Do not wait inside the
+        // video push while the same producer must poll audio/control. The
+        // original bounded backlog still fails rather than growing queues or
+        // sending synthetic progress indefinitely through a stalled encoder.
+        if !paused && next.elapsed()>Duration::from_millis(300){return Err("录屏编码积压超出限制".into());}
         if heartbeat.elapsed()>=Duration::from_millis(250){emit(Event::Progress(Progress{elapsed_ms:count*1000/15,paused}))?;heartbeat=Instant::now();}
         #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::Alive,count,paused,&mut emit)?;diagnostic=Instant::now();}
     }
@@ -315,6 +319,38 @@ pub(crate) fn supervise(config:PrepareConfig,
 
 #[cfg(test)]mod tests {
     use super::*;
+    #[test]fn recording_wayland_video_backpressure_keeps_paired_audio_producer_available(){
+        let output=PathBuf::from(format!("/tmp/recording-input-recovery-{}.mp4",uuid::Uuid::new_v4()));
+        let file=OpenOptions::new().create_new(true).read(true).write(true).mode(0o600).open(&output).unwrap();
+        let expires=Instant::now()+Duration::from_secs(5);
+        let allowed=||Instant::now()<expires;
+        let mut codec=Codec::with_audio(file,64,48,expires,true).unwrap();
+        // Real mp4mux waits for its audio input. Fill the actual bounded video
+        // appsrc without audio, then prove the producer returns to its caller
+        // so the missing real PCM can be supplied by that same thread.
+        let mut frames=0;
+        while codec.video_ready(&allowed).unwrap(){
+            assert!(frames<12,"mux must backpressure missing audio within its fixed queue");
+            codec.push_rgba([20,120,220,255].repeat(64*48),&allowed).unwrap();
+            frames+=1;std::thread::sleep(Duration::from_millis(10));
+        }
+        let before=Instant::now();assert!(!codec.video_ready(&allowed).unwrap());
+        assert!(before.elapsed()<Duration::from_millis(100));
+        let mut pending=PendingPcm::default();
+        let mut remaining=frames as usize*3200;
+        feed_audio_to(&mut codec,&mut pending,frames*3200,||{
+            if remaining==0{return Ok(None);}
+            let block=remaining.min(24000);remaining-=block;
+            Ok(Some([1000i16.to_le_bytes(),(-1000i16).to_le_bytes()].concat().repeat(block)))
+        },&allowed).unwrap();
+        while !codec.video_ready(&allowed).unwrap(){std::thread::sleep(Duration::from_millis(2));}
+        let mut next_pcm=Some([1000i16.to_le_bytes(),(-1000i16).to_le_bytes()].concat().repeat(3200));
+        feed_audio_to(&mut codec,&mut pending,(frames+1)*3200,||Ok(next_pcm.take()),&allowed).unwrap();
+        codec.push_rgba([20,120,220,255].repeat(64*48),&allowed).unwrap();
+        assert_eq!(codec.pcm_frames(),(frames+1)*3200);
+        assert_eq!(codec.finish(&allowed).unwrap(),frames+1);
+        std::fs::remove_file(output).unwrap();
+    }
     #[test]fn recording_wayland_real_mux_survives_long_wall_pause_without_timeline_growth(){
         let output=PathBuf::from(format!("/tmp/recording-wall-pause-{}.mp4",uuid::Uuid::new_v4()));
         let file=OpenOptions::new().create_new(true).read(true).write(true).mode(0o600).open(&output).unwrap();

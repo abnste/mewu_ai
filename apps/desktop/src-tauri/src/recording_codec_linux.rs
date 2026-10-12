@@ -195,6 +195,11 @@ impl Codec {
 
     // Sole producer is enforced by &mut self. appsrc's max settings alone are
     // insufficient with block=false; check actual levels before every push.
+    pub(crate) fn video_ready(&self,allowed:&impl Fn()->bool)->Result<bool,String>{
+        self.check_feeding(allowed)?;
+        Ok(self.source.current_level_buffers()<QUEUED_FRAMES
+            && self.source.current_level_bytes()<QUEUED_FRAMES*self.bytes as u64)
+    }
     pub(crate) fn push_rgba(
         &mut self,
         frame: Vec<u8>,
@@ -204,10 +209,7 @@ impl Codec {
         if frame.len() != self.bytes || self.frames >= FPS * 600 {
             return Err("录屏原始帧长度或数量无效".into());
         }
-        while self.source.current_level_buffers() >= QUEUED_FRAMES
-            || self.source.current_level_bytes() >= QUEUED_FRAMES * self.bytes as u64
-        {
-            self.check_feeding(allowed)?;
+        while !self.video_ready(allowed)? {
             std::thread::sleep(Duration::from_millis(1));
         }
         self.check_feeding(allowed)?;
