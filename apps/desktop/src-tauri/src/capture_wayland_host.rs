@@ -255,6 +255,53 @@ fn webview_size(widget: &gtk::Widget, depth: u8) -> Option<(i32,i32)> {
     None
 }
 
+fn monitor_size(drawable: &gtk::gdk::Window) -> Option<(i32,i32)> {
+    drawable.display().monitor_at_window(drawable).map(|monitor| {
+        let geometry=monitor.geometry();
+        (geometry.width(),geometry.height())
+    }).filter(|size|size.0>0 && size.1>0)
+}
+
+// Only this presentation's own GTK events, at most32 and at most the existing
+// three-second presentation lifetime. Disconnect on every completion/error.
+struct PresentationTrace {
+    #[cfg(debug_assertions)] widget: gtk::ApplicationWindow,
+    #[cfg(debug_assertions)] handlers: Vec<gtk::glib::SignalHandlerId>,
+}
+impl PresentationTrace {
+    fn new(_widget: &gtk::ApplicationWindow) -> Self {
+        #[cfg(debug_assertions)] {
+            use std::{cell::Cell,rc::Rc};
+            let remaining=Rc::new(Cell::new(32u8));
+            let quota=remaining.clone();
+            let resizable=_widget.connect_notify_local(Some("resizable"),move |widget,_| {
+                if quota.get()>0 {
+                    quota.set(quota.get()-1);
+                    eprintln!("mewu-wayland-layout stage=resizable-notify resizable={} default={:?} allocation={}x{} mapped={}",
+                        widget.is_resizable(),widget.default_size(),widget.allocated_width(),widget.allocated_height(),widget.is_mapped());
+                }
+            });
+            let configure=_widget.connect_configure_event(move |widget,event| {
+                if remaining.get()>0 {
+                    remaining.set(remaining.get()-1);
+                    eprintln!("mewu-wayland-layout stage=configure-event event-size={:?} resizable={} default={:?} fullscreen={} mapped={}",
+                        event.size(),widget.is_resizable(),widget.default_size(),
+                        widget.window().is_some_and(|drawable|drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN)),widget.is_mapped());
+                }
+                false
+            });
+            Self {widget:_widget.clone(),handlers:vec![resizable,configure]}
+        }
+        #[cfg(not(debug_assertions))] {Self {}}
+    }
+}
+#[cfg(debug_assertions)]
+impl Drop for PresentationTrace {
+    fn drop(&mut self) {
+        for handler in self.handlers.drain(..) {self.widget.disconnect(handler);}
+    }
+}
+
 fn presentation_timeout(_widget: &gtk::ApplicationWindow, _monitor_size: Option<(i32,i32)>, _final_size: Option<(i32,i32)>) -> String {
     #[cfg(debug_assertions)] {
         log_layout(_widget,"fullscreen-timeout");
@@ -284,11 +331,23 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
             permit.check(target.app_handle(),&owned)?; current(&owned,true)?;
             let widget=target.gtk_window().map_err(|_| "截图窗口不可用")?;
             #[cfg(debug_assertions)] log_layout(&widget, "before-fullscreen");
+            let trace=PresentationTrace::new(&widget);
+            let drawable=widget.window().ok_or("截图窗口尚未创建")?;
+            let initial_size=monitor_size(&drawable).ok_or("截图显示器不可用")?;
             widget.set_opacity(0.0);
             // GTK fixes a nonresizable window's minimum/maximum at its default
             // width (1200 here), even when the compositor's output is smaller.
             // Real fullscreen already disables resize edges and decorations.
             widget.set_resizable(true);
+            // Prepare the owned monitor size BEFORE the first map/configure.
+            // Tao's first-configure callback may restore resizable(false).
+            // GTK then constrains fullscreen against this default and caches
+            // that fixed size; resizing only after configure cannot undo it.
+            // This is a request, never proof: the timer still checks the actual
+            // monitor and every native allocation after the final show.
+            widget.set_default_size(initial_size.0,initial_size.1);
+            widget.resize(initial_size.0,initial_size.1);
+            #[cfg(debug_assertions)] eprintln!("mewu-wayland-layout stage=before-first-show monitor-logical-size={initial_size:?} default={:?} resizable={}",widget.default_size(),widget.is_resizable());
             widget.fullscreen();
             target.show().map_err(|_| "无法显示截图空间")?;
             // The approved image is already acquired. Present this actual
@@ -298,27 +357,28 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
             // is created before the user's portal consent.
             target.unminimize().map_err(|_| "无法显示截图空间")?;
             target.set_focus().map_err(|_| "无法显示截图空间")?;
-            Ok(widget)
+            Ok((widget,initial_size,trace))
         })();
         match start {
             Err(error)=>{ if let Some(tx)=tx.take(){let _=tx.send(Err(error));} }
-            Ok(widget)=> {
+            Ok((widget,initial_size,trace))=> {
                 let until=Instant::now()+Duration::from_secs(3);
                 let mut final_size=None;
-                let mut monitor_size=None;
+                let mut expected_monitor=Some(initial_size);
                 let mut stable_ticks=0;
                 gtk::glib::timeout_add_local(Duration::from_millis(15),move || {
                     let _transition=&transition;
+                    let _trace=&trace;
                     let result=(|| {
                         permit.check(target.app_handle(),&owned)?; current(&owned,false)?;
                         for w in owned.iter().filter(|w|w.label!="space") {current(std::slice::from_ref(w),true)?;}
                         let drawable=widget.window().ok_or("截图窗口已关闭")?;
-                        if Instant::now()>=until { return Err(presentation_timeout(&widget,monitor_size,final_size)); }
+                        if Instant::now()>=until { return Err(presentation_timeout(&widget,expected_monitor,final_size)); }
                         // Tao applies its initial resizable flag on the first
                         // configure event. Reassert after that event if needed,
                         // then wait for GTK to allocate the fullscreen contents.
                         if !widget.is_resizable() {
-                            if Instant::now()>=until { return Err(presentation_timeout(&widget,monitor_size,final_size)); }
+                            if Instant::now()>=until { return Err(presentation_timeout(&widget,expected_monitor,final_size)); }
                             widget.set_resizable(true);
                             stable_ticks=0;
                             return Ok(None);
@@ -328,12 +388,9 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
                         // so it cannot establish the fullscreen target. Read
                         // only logical dimensions of this own surface's monitor;
                         // no monitor origin or screenshot dimensions are used.
-                        let expected=drawable.display().monitor_at_window(&drawable).map(|monitor| {
-                            let geometry=monitor.geometry();
-                            (geometry.width(),geometry.height())
-                        }).filter(|size|size.0>0 && size.1>0);
-                        if monitor_size!=expected {
-                            monitor_size=expected;
+                        let expected=monitor_size(&drawable);
+                        if expected_monitor!=expected {
+                            expected_monitor=expected;
                             final_size=None;
                             stable_ticks=0;
                             #[cfg(debug_assertions)] eprintln!("mewu-wayland-layout stage=monitor-target logical-size={expected:?}");
@@ -372,7 +429,7 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
                                 return witness(&target).map(Some);
                             }
                         } else {stable_ticks=0;}
-                        if Instant::now()>=until { return Err(presentation_timeout(&widget,monitor_size,final_size)); }
+                        if Instant::now()>=until { return Err(presentation_timeout(&widget,expected_monitor,final_size)); }
                         Ok(None)
                     })();
                     match result {
