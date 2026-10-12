@@ -361,7 +361,9 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
     {
         crate::window_witness_macos::window_handle(window)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os="linux")]
+    {crate::window_actions_linux::window_handle(window)}
+    #[cfg(not(any(windows, target_os = "macos",target_os="linux")))]
     {
         let _ = window;
         Err("当前平台尚不支持录屏声音".into())
@@ -377,7 +379,9 @@ fn visible(handle: usize) -> bool {
     {
         crate::window_witness_macos::visible(handle)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os="linux")]
+    {crate::window_actions_linux::current_for(handle,"space")||crate::window_actions_linux::current_for(handle,"settings")}
+    #[cfg(not(any(windows, target_os = "macos",target_os="linux")))]
     {
         let _ = handle;
         false
@@ -423,6 +427,10 @@ pub async fn set_recording_audio(
     #[cfg(target_os = "macos")]
     if matches!(mode, AudioMode::Microphone | AudioMode::Both) {
         return Err("当前 Mac 录屏支持电脑声音或静音，麦克风录制尚未实现".into());
+    }
+    #[cfg(target_os="linux")]
+    if matches!(mode,AudioMode::Microphone|AudioMode::Both){
+        return Err("当前 Linux 录屏支持电脑声音或静音，麦克风录制尚未实现".into());
     }
     let handle = window_handle(&window)?; // Never inside plugins, Engine or our data mutex.
     if !admission(&app, handle) {
