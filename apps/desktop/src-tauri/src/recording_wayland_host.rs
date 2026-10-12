@@ -132,7 +132,7 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
             controls:controls.clone(),status:None,finalized:false,suppress_reveal:false,grant:None,audio_grant:None});s.finished=None;
     }
     let mut preparing=PreparingGuard{nonce:nonce.clone(),armed:true};
-    let (ready_tx,ready_rx)=tokio::sync::oneshot::channel();
+    let (ready_tx,ready_rx)=tokio::sync::oneshot::channel::<Result<HostSnapshot,String>>();
     let owner=app.clone();let worker_nonce=nonce.clone();let source_scene=old.clone();let present_nonce=nonce.clone();
     tauri::async_runtime::spawn(async move{
         let run_app=owner.clone();let output=run_app.state::<Host>().root.join("recording-staging").join(format!("{worker_nonce}.mp4"));
