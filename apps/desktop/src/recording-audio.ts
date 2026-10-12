@@ -5,10 +5,12 @@ export type RecordingAudioMode = 'mute' | 'system' | 'microphone' | 'both';
 export interface RecordingGrant { pluginId: string; revision: number; contributionId: string }
 export interface RecordingAudioGrant { pluginId: string; revision: number; contributionId: string }
 export interface RecordingAudioSelection { revision: number; mode: RecordingAudioMode; grant: RecordingAudioGrant | null }
-export interface RecordingAudioState extends RecordingAudioSelection { sequence: number; editable: boolean; message?: string }
+export interface RecordingAudioState extends RecordingAudioSelection { sequence: number; editable: boolean; supportedModes?: RecordingAudioMode[]; message?: string }
 export interface RecordingAudioDraft { mode: RecordingAudioMode; grant: RecordingAudioGrant | null }
 export interface RecordingAudioView { state?: RecordingAudioState; mode: RecordingAudioMode; draft?: RecordingAudioDraft; pending: boolean; error: string }
 export const audioModes: RecordingAudioMode[] = ['mute', 'system', 'microphone', 'both'];
+/** Native backend capabilities; absent legacy receipts use a conservative menu. */
+export const supportedAudioModes = (state?: RecordingAudioState): RecordingAudioMode[] => state?.supportedModes ?? ['mute', 'system'];
 export const audioLabels: Record<RecordingAudioMode, string> = { mute: '静音', system: '电脑声', microphone: '麦克风', both: '两者' };
 export const sameAudioGrant = (a: RecordingAudioGrant | null, b: RecordingAudioGrant | null) => a === b || Boolean(a && b && a.pluginId === b.pluginId && a.revision === b.revision && a.contributionId === b.contributionId);
 export const sameAudioSelection = (a: RecordingAudioSelection, b: RecordingAudioSelection) => a.revision === b.revision && a.mode === b.mode && sameAudioGrant(a.grant, b.grant);
@@ -25,6 +27,7 @@ export function validRecordingTrimGrant(value: RecordingGrant): boolean {
 export function validRecordingAudioState(value: unknown): value is RecordingAudioState {
   if (!value || typeof value !== 'object') return false;
   const v = value as RecordingAudioState, g = v.grant;
+  if (v.supportedModes !== undefined && (!Array.isArray(v.supportedModes) || v.supportedModes.length > audioModes.length || new Set(v.supportedModes).size !== v.supportedModes.length || !v.supportedModes.every(mode => audioModes.includes(mode)))) return false;
   return Number.isSafeInteger(v.revision) && v.revision >= 0 && Number.isSafeInteger(v.sequence) && v.sequence >= 0 && typeof v.editable === 'boolean' && audioModes.includes(v.mode) && (v.message === undefined || typeof v.message === 'string') && (v.mode === 'mute' ? g === null : Boolean(g && typeof g.pluginId === 'string' && g.pluginId.length && Number.isSafeInteger(g.revision) && g.revision > 0 && typeof g.contributionId === 'string' && g.contributionId.length));
 }
 
@@ -63,6 +66,7 @@ export class RecordingAudioController {
     const save = this.save;
     if (!save) { this.readFailed('声音设置尚未就绪'); return Promise.resolve(); }
     if (!this.state?.editable) { this.readFailed(this.state?.message || '声音设置尚未就绪'); return Promise.resolve(); }
+    if (this.state.supportedModes && !this.state.supportedModes.includes(mode)) { this.readFailed('当前平台不支持此声源'); return Promise.resolve(); }
     const draft: RecordingAudioDraft = { mode, grant: mode === 'mute' ? null : grant && { ...grant } };
     if (mode !== 'mute' && !this.allowed(draft.grant)) { this.readFailed('录音不可用'); return Promise.resolve(); }
     this.draft = draft; this.error = '';

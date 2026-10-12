@@ -3,7 +3,7 @@ import { t } from "../i18n";
 import { createEffect, createSignal, For, on, onCleanup, Show } from 'solid-js';
 import { LoaderCircle } from 'lucide-solid';
 import { getRecordingAudio, setRecordingAudio, subscribeRecordingAudio } from '../recording-audio-bridge';
-import { audioLabels, audioModes, recordingAudioGrants, RecordingAudioController, type RecordingAudioMode, type RecordingAudioView } from '../recording-audio';
+import { audioLabels, supportedAudioModes, recordingAudioGrants, RecordingAudioController, type RecordingAudioMode, type RecordingAudioView } from '../recording-audio';
 import { Row } from './SettingControls';
 
 export default function RecordingAudioSettings(props: { active: boolean }) {
@@ -34,7 +34,7 @@ export default function RecordingAudioSettings(props: { active: boolean }) {
   createEffect(on(() => props.active, active => { if (active && !started) { started = true; void initialize(); } }));
   onCleanup(() => { disposed = true; stops.forEach(stop => stop()); controller.dispose(); });
   return <>
-    <Row title={t("声音")}><Show when={!loading()} fallback={<LoaderCircle size={15} class="spin" aria-label={t("加载录屏声音")} />}><select aria-label={t("录屏声音")} disabled={view().pending || !view().state?.editable} value={view().mode} onChange={event => void controller.choose(event.currentTarget.value as RecordingAudioMode, grant)}><For each={audioModes}>{mode => <option value={mode}>{t(audioLabels[mode])}</option>}</For></select></Show></Row>
+    <Row title={t("声音")}><Show when={!loading()} fallback={<LoaderCircle size={15} class="spin" aria-label={t("加载录屏声音")} />}><select aria-label={t("录屏声音")} disabled={view().pending || !view().state?.editable} value={view().mode} onChange={event => void controller.choose(event.currentTarget.value as RecordingAudioMode, grant)}><For each={supportedAudioModes(view().state)}>{mode => <option value={mode}>{t(audioLabels[mode])}</option>}</For></select></Show></Row>
     <Show when={view().error || view().state?.message}><p class="settings-error" role="alert">{view().error || view().state?.message}</p></Show>
     <Show when={view().error}><div class="settings-actions"><Show when={view().draft}><button class="secondary-button" disabled={view().pending} onClick={() => controller.discard()}>{t("取消")}</button></Show><button class="secondary-button" disabled={view().pending || loading()} onClick={() => void retry()}>{t("重试")}</button></div></Show>
   </>;

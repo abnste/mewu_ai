@@ -26,8 +26,17 @@ pub struct RecordingAudioState {
     pub mode: AudioMode,
     pub grant: Option<RecordingAudioGrant>,
     pub editable: bool,
+    pub supported_modes: Vec<AudioMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+fn supported_modes()->Vec<AudioMode>{
+    #[cfg(windows)]
+    {vec![AudioMode::Mute,AudioMode::System,AudioMode::Microphone,AudioMode::Both]}
+    #[cfg(any(target_os="linux",target_os="macos"))]
+    {vec![AudioMode::Mute,AudioMode::System]}
+    #[cfg(not(any(windows,target_os="linux",target_os="macos")))]
+    {vec![AudioMode::Mute]}
 }
 impl RecordingAudioState {
     fn selection(&self) -> RecordingAudioSelection {
@@ -136,6 +145,7 @@ impl Data {
                 mode: AudioMode::Mute,
                 grant: None,
                 editable: false,
+                supported_modes: supported_modes(),
                 message: None,
             },
         };
@@ -174,6 +184,7 @@ impl Data {
             },
             grant: if unavailable { None } else { selection.grant },
             editable: !unavailable,
+            supported_modes: supported_modes(),
             message,
         };
         if next == self.view {
