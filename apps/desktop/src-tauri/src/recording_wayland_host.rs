@@ -42,7 +42,8 @@ fn preparation_current(app:&AppHandle,nonce:&str)->Result<(),String>{
         return Err("录屏会话已经改变".into());
     }Ok(())
 }
-pub(crate) fn selecting()->bool { state().lock().is_ok_and(|s|s.lease.as_ref().is_some_and(|l|l.status.is_none())) }
+pub(crate) fn selecting()->bool { state().lock().is_ok_and(|s|s.lease.as_ref().is_some_and(|l|
+    l.status.is_none()&&l.controls.lock().is_ok_and(|c|c.terminal.is_none()))) }
 pub(crate) fn has_lease()->bool { state().lock().is_ok_and(|s|s.lease.is_some()) }
 pub(crate) fn status()->Result<Option<recording::Status>,String>{Ok(state().lock().map_err(|_|"录屏状态不可用")?.lease.as_ref().and_then(|l|l.status.clone()))}
 fn emit(app:&AppHandle,value:&Option<recording::Status>){let _=app.emit_to("space","recording-status",value);let _=app.emit_to("recording-controls","recording-status",value);}
