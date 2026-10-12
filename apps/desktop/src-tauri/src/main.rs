@@ -2329,6 +2329,9 @@ fn main() {
     // Resolve the business data root before it can populate the legacy path.
     #[cfg(target_os = "linux")]
     let deferred_windows = startup_webviews::defer(context.config_mut());
+    #[cfg(target_os = "linux")]
+    let mut startup_capture =
+        lifecycle::LinuxStartupCapture::new(&std::env::args().collect::<Vec<_>>());
     context.config_mut().app.security.csp=Some(tauri::utils::config::Csp::Policy(format!("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' {origin} blob: data:; font-src 'self'; connect-src ipc: http://ipc.localhost; media-src {origin}; frame-src {origin}; object-src 'none'; base-uri 'none'; form-action 'none'")));
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2872,7 +2875,11 @@ fn main() {
             .show();
     }
     if let Ok(application) = application {
-        application.run(|app, event| {
+        application.run(move |app, event| {
+            #[cfg(target_os = "linux")]
+            if startup_capture.take_ready(&event) {
+                start_capture(app);
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app
                     .try_state::<Host>()

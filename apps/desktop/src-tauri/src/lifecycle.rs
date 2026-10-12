@@ -33,6 +33,24 @@ pub fn launch_action(args: &[String]) -> LaunchAction {
     }
 }
 
+/// A normal Linux launch has no usable AppIndicator click callback. Dispatch
+/// its capture intent once, after Tauri has completed native initialization.
+#[cfg(target_os = "linux")]
+pub(crate) struct LinuxStartupCapture {
+    pending: bool,
+}
+#[cfg(target_os = "linux")]
+impl LinuxStartupCapture {
+    pub(crate) fn new(startup_args: &[String]) -> Self {
+        Self {
+            pending: launch_action(startup_args) == LaunchAction::Capture,
+        }
+    }
+    pub(crate) fn take_ready(&mut self, event: &tauri::RunEvent) -> bool {
+        matches!(event, tauri::RunEvent::Ready) && std::mem::take(&mut self.pending)
+    }
+}
+
 struct Attempt {
     id: String,
     reply: Option<oneshot::Sender<Result<(), String>>>,
@@ -896,6 +914,37 @@ mod tests {
             launch_action(&["mewu".into(), "--settings".into()]),
             LaunchAction::Settings
         );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_startup_capture_waits_for_ready_and_dispatches_once() {
+        let mut startup = LinuxStartupCapture::new(&["mewu".into()]);
+        assert!(!startup.take_ready(&tauri::RunEvent::MainEventsCleared));
+        assert!(!startup.take_ready(&tauri::RunEvent::Resumed));
+        assert!(startup.take_ready(&tauri::RunEvent::Ready));
+        assert!(!startup.take_ready(&tauri::RunEvent::Ready));
+        assert!(!startup.take_ready(&tauri::RunEvent::MainEventsCleared));
+        assert!(!startup.take_ready(&tauri::RunEvent::Resumed));
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_startup_capture_preserves_background_settings_and_exact_arguments() {
+        for args in [
+            vec!["mewu", "--background"],
+            vec!["mewu", "--background", "--startup-owner=test"],
+            vec!["mewu", "--settings"],
+            vec!["mewu", "--quit"],
+            vec!["mewu", "--settings", "extra"],
+            vec!["mewu", "--verify-update", "/tmp/update"],
+            vec!["mewu", "--mewu-linux-worker"],
+            vec!["mewu", "file"],
+            vec![],
+        ] {
+            let args = args.into_iter().map(String::from).collect::<Vec<_>>();
+            let mut startup = LinuxStartupCapture::new(&args);
+            assert!(!startup.take_ready(&tauri::RunEvent::Ready), "{args:?}");
+            assert!(!startup.take_ready(&tauri::RunEvent::Ready), "{args:?}");
+        }
     }
     #[tokio::test]
     async fn acknowledgement_is_nonce_and_owner_bound_and_deduplicated() {
