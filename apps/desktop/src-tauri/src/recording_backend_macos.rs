@@ -22,7 +22,7 @@ use objc2::{
 use objc2_av_foundation::*;
 use objc2_avf_audio::{AVEncoderBitRateKey, AVFormatIDKey, AVNumberOfChannelsKey, AVSampleRateKey};
 use objc2_core_foundation::{CFRange, CGPoint, CGRect, CGSize};
-use objc2_core_graphics::CGDisplayBounds;
+use objc2_core_graphics::{CGDisplayBounds, CGDisplayPixelsHigh, CGDisplayPixelsWide};
 use objc2_core_media::{
     CMAudioFormatDescriptionGetStreamBasicDescription, CMClock, CMSampleBuffer, CMSampleTimingInfo,
     CMTime, CMTimeFlags,
@@ -93,7 +93,9 @@ define_class!(
     unsafe impl SCStreamOutput for Handler {
         #[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
         unsafe fn output(&self, _: &SCStream, sample: &CMSampleBuffer, kind: SCStreamOutputType) {
-            let result = catch_unwind(AssertUnwindSafe(|| self.accept(sample, kind)));
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                autoreleasepool(|_| self.accept(sample, kind))
+            }));
             let error = match result {
                 Ok(Ok(())) => return,
                 Ok(Err(e)) => e,
@@ -308,12 +310,13 @@ fn shareable() -> Result<Retained<SCShareableContent>, String> {
 }
 struct Capture {
     stream: Retained<SCStream>,
+    audio_stream: Option<Retained<SCStream>>,
     handler: Retained<Handler>,
     dispatch: DispatchRetained<DispatchQueue>,
-    audio: bool,
     active: bool,
     display: u32,
     coordinates: mewu_core::CaptureCoordinates,
+    pixels: (u32, u32),
 }
 impl Capture {
     fn new(config: &Config, queue: Arc<Mutex<Queue>>) -> Result<Self, String> {
@@ -392,11 +395,9 @@ impl Capture {
                         * wanted.height,
                 },
             });
-            sc.setCapturesAudio(config.audio == AudioMode::System);
+            sc.setCapturesAudio(false);
             sc.setSampleRate(RATE as isize);
             sc.setChannelCount(2);
-            // The user asked for computer sound, including this app's playback.
-            sc.setExcludesCurrentProcessAudio(false);
         }
         let handler = Handler::new(queue, config);
         let stream = unsafe {
@@ -417,9 +418,43 @@ impl Capture {
                 )
                 .map_err(|e| failure("无法接入屏幕帧", &e))?;
         }
-        if config.audio == AudioMode::System {
+        // Application exclusion must not filter computer sound. A separate
+        // audio-only output uses the same display/host clock without excluding
+        // apps. It delivers real PCM only; no microphone or synthetic silence.
+        let audio_stream = if config.audio == AudioMode::System {
+            let audio_filter = unsafe {
+                SCContentFilter::initWithDisplay_excludingWindows(
+                    SCContentFilter::alloc(),
+                    display,
+                    &windows,
+                )
+            };
+            let audio_config = unsafe { SCStreamConfiguration::new() };
             unsafe {
-                stream
+                audio_config.setWidth(2);
+                audio_config.setHeight(2);
+                audio_config.setMinimumFrameInterval(CMTime {
+                    value: 1,
+                    timescale: 1,
+                    flags: CMTimeFlags::Valid,
+                    epoch: 0,
+                });
+                audio_config.setQueueDepth(3);
+                audio_config.setCapturesAudio(true);
+                audio_config.setSampleRate(RATE as isize);
+                audio_config.setChannelCount(2);
+                audio_config.setExcludesCurrentProcessAudio(false);
+            }
+            let audio_stream = unsafe {
+                SCStream::initWithFilter_configuration_delegate(
+                    SCStream::alloc(),
+                    &audio_filter,
+                    &audio_config,
+                    Some(ProtocolObject::from_ref(&*handler)),
+                )
+            };
+            unsafe {
+                audio_stream
                     .addStreamOutput_type_sampleHandlerQueue_error(
                         ProtocolObject::from_ref(&*handler),
                         SCStreamOutputType::Audio,
@@ -427,15 +462,19 @@ impl Capture {
                     )
                     .map_err(|e| failure("无法接入电脑声音", &e))?;
             }
-        }
+            Some(audio_stream)
+        } else {
+            None
+        };
         let mut capture = Self {
             stream,
+            audio_stream,
             handler,
             dispatch,
-            audio: config.audio == AudioMode::System,
             active: true,
             display: unsafe { display.displayID() },
             coordinates: *wanted,
+            pixels: (config.monitor_width, config.monitor_height),
         };
         let result = completion(
             |block| unsafe {
@@ -449,6 +488,16 @@ impl Capture {
             let _ = capture.stop();
             return Err(error);
         }
+        if let Some(audio_stream) = &capture.audio_stream {
+            let result = completion(
+                |block| unsafe { audio_stream.startCaptureWithCompletionHandler(Some(block)) },
+                "无法启动电脑声音采集",
+            );
+            if let Err(error) = result {
+                let _ = capture.stop();
+                return Err(error);
+            }
+        }
         capture.check_display()?;
         Ok(capture)
     }
@@ -459,6 +508,8 @@ impl Capture {
             || b.origin.y != c.origin_y
             || b.size.width != c.width
             || b.size.height != c.height
+            || CGDisplayPixelsWide(self.display) != self.pixels.0 as usize
+            || CGDisplayPixelsHigh(self.display) != self.pixels.1 as usize
         {
             Err("显示器已改变，录制已停止".into())
         } else {
@@ -480,14 +531,19 @@ impl Capture {
             )
         }
         .map_err(|e| failure("无法移除屏幕回调", &e));
-        let audio = if self.audio {
-            unsafe {
-                self.stream.removeStreamOutput_type_error(
+        let audio = if let Some(audio_stream) = &self.audio_stream {
+            let result = completion(
+                |block| unsafe { audio_stream.stopCaptureWithCompletionHandler(Some(block)) },
+                "停止电脑声音采集失败",
+            );
+            let remove = unsafe {
+                audio_stream.removeStreamOutput_type_error(
                     ProtocolObject::from_ref(&*self.handler),
                     SCStreamOutputType::Audio,
                 )
             }
-            .map_err(|e| failure("无法移除声音回调", &e))
+            .map_err(|e| failure("无法移除声音回调", &e));
+            result.and(remove)
         } else {
             Ok(())
         };
@@ -1080,4 +1136,54 @@ pub(super) fn run(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn output_refuses_existing_files_and_never_deletes_replacements() {
+        let root =
+            std::env::temp_dir().join(format!("mewu-recording-output-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let path = root.join("actual.mp4");
+        std::fs::write(&path, b"existing").unwrap();
+        assert!(Output::new(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+        std::fs::remove_file(&path).unwrap();
+        let mut output = Output::new(&path).unwrap();
+        std::fs::write(&path, b"original").unwrap();
+        output.hold().unwrap();
+        std::fs::rename(&path, root.join("retained.mp4")).unwrap();
+        std::fs::write(&path, b"replacement").unwrap();
+        assert!(output.check().is_err());
+        drop(output);
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(root.join("retained.mp4")).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn actual_partial_is_removed_and_finalized_file_stays_at_parent_observed_path() {
+        let root =
+            std::env::temp_dir().join(format!("mewu-recording-output-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let path = root.join("actual.mp4");
+        let mut output = Output::new(&path).unwrap();
+        std::fs::write(&path, b"partial").unwrap();
+        output.hold().unwrap();
+        drop(output);
+        assert!(!path.exists());
+        let mut output = Output::new(&path).unwrap();
+        std::fs::write(&path, b"finalized").unwrap();
+        output.hold().unwrap();
+        output.finish().unwrap();
+        drop(output);
+        assert_eq!(std::fs::read(&path).unwrap(), b"finalized");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
 }
