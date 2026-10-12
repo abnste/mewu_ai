@@ -20,4 +20,14 @@ xvfb-run -a cargo test -p mewu-desktop --locked --features linux-x11-tests x11_v
 
 该测试仅核对真正 X server 的选区尺寸、已知白色像素及瞬时 remap 拒绝。它不代替真正 GTK producer 的身份见证、编码成品或 GUI 测试。录屏原生验收还须覆盖默认系统声音已知音调、Mute 无连接、麦克风明确授权、Both 混合、暂停/继续、停止/取消、路由变化、编码过载、文件最终化、设备与线程真实退出，以及最终 source/hash 对应的安装与更新。
 
-依据：[X11 协议](https://www.x.org/docs/XProtocol/proto.pdf)、[GStreamer X11 越界行为](https://github.com/GStreamer/gstreamer/blob/1.20.3/subprojects/gst-plugins-good/sys/ximage/gstximagesrc.c)、[GStreamer Pulse source](https://github.com/GStreamer/gstreamer/blob/1.20.3/subprojects/gst-plugins-good/ext/pulse/pulsesrc.c)、[PulseAudio 显式 server 与 autospawn](https://github.com/pulseaudio/pulseaudio/blob/v16.1/src/pulse/context.c)、[GStreamer 时钟](https://gstreamer.freedesktop.org/documentation/application-development/advanced/clocks.html)。实现与测试为 Mewu 自有 MPL-2.0 代码，不复制第三方源码或模型。
+固定 typed 编码图的独立准备模块 `recording_codec_linux.rs` 当前仅由 `linux-recording-tests` 的显式原生测试引入，没有生产宿主、worker 或 GUI 路由。它接收宿主持有的新空普通文件与原始截止时间，使用 RGBA appsrc、I420、OpenH264、AVC、MP4 和持有文件描述符的 fdsink。单生产者在每次提交前检查 appsrc 的实际缓冲数量与字节数，最多两帧；仅设置 `max-buffers/max-bytes` 且 `block=false` 不能自动保证这个上限。EOS 后真实同步切到 Null，再完成文件同步；原生关闭或文件同步仍可能阻塞，不能将此模块的返回或 Drop 等同于 Child/PID1/IO 域回收。
+
+以下测试必须在完整的隔离 Docker 镜像构建中显式执行，提供官方 GStreamer 1.20+、OpenH264 编解码及 MP4 插件。它用三十帧已知双色原始像素生成 MP4，并再次通过 typed 解码检查确切尺寸、每帧颜色与 PTS；中途模拟生产者暂停 150ms，检查输出 PTS 不含这段等待。它不采集用户屏幕、不连接音频、不验证真实暂停指令、4M 性能、受保护系统插件准入、worker 域或成品 GUI。
+
+```sh
+cargo test -p mewu-desktop --locked --features linux-recording-tests --test linux_recording_codec linux_native_fixed_mp4_roundtrip -- --ignored --nocapture --test-threads=1
+```
+
+原生 SDK stderr 必须保留，不以成品断言通过宣称 stderr 为空。GStreamer 1.20.3 的 OpenH264 finish 会用 NULL 帧调用编码器进行 drain，并将该调用的非成功结果视为 EOS；这是部分 SDK 在最终化时打印 `cmInitParaError` 的可能原因，不能代替实际调用栈证明或错误路径测试。生产准入仍须完整满足上文帧源、声音、控制、资源与实际退出契约。
+
+依据：[X11 协议](https://www.x.org/docs/XProtocol/proto.pdf)、[GStreamer X11 越界行为](https://github.com/GStreamer/gstreamer/blob/1.20.3/subprojects/gst-plugins-good/sys/ximage/gstximagesrc.c)、[GStreamer Pulse source](https://github.com/GStreamer/gstreamer/blob/1.20.3/subprojects/gst-plugins-good/ext/pulse/pulsesrc.c)、[PulseAudio 显式 server 与 autospawn](https://github.com/pulseaudio/pulseaudio/blob/v16.1/src/pulse/context.c)、[GStreamer 时钟](https://gstreamer.freedesktop.org/documentation/application-development/advanced/clocks.html)、[appsrc 队列语义](https://gstreamer.freedesktop.org/documentation/app/appsrc.html)、[OpenH264 最终化实现](https://github.com/GStreamer/gstreamer/blob/1.20.3/subprojects/gst-plugins-bad/ext/openh264/gstopenh264enc.cpp)。实现与测试为 Mewu 自有 MPL-2.0 代码，不复制第三方源码或模型。
