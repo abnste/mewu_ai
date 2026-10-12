@@ -3,6 +3,7 @@ import { t } from './i18n';
 import { nativeSelectOwnsEscape } from './native-select-escape';
 import { createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { CircleAlert, LoaderCircle, Pause, Play, Square, X } from 'lucide-solid';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { controlRecording, subscribeRecording, type RecordingAction, type RecordingStatus } from './bridge';
 import './recording.css';
 
@@ -65,6 +66,13 @@ export default function RecordingSurface() {
     finally { if (!disposed) setPending(false); }
   }
   const stopOrCancel = () => void act(canceling() ? 'cancel' : 'stop');
+  function beginDrag(event: PointerEvent) {
+    if (!nativeLinux || disposed || !status() || event.button !== 0 || event.pointerType !== 'mouse') return;
+    event.preventDefault();
+    void getCurrentWindow().startDragging().catch(cause => {
+      if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }
   const keyboard = (event: KeyboardEvent) => {
     if (nativeSelectOwnsEscape(event)) return;
     if (event.key !== 'Escape' || !status() || status()?.phase === 'stopping') return;
@@ -76,7 +84,7 @@ export default function RecordingSurface() {
     <Show when={status()} fallback={<Show when={error()}><div class="recording-controls recording-control-error" role="alert"><CircleAlert size={16} /><span title={error()}>{error()}</span></div></Show>}>
       {current => <div class="recording-controls" role="toolbar" aria-label={t("录屏控制")}>
         <Show when={!error()} fallback={<CircleAlert size={13} class="recording-status-icon" />}><Show when={!waiting()} fallback={<LoaderCircle size={13} class="spin recording-status-icon" />}><span class="recording-status-dot" classList={{ paused: current().phase === 'paused' }} title={label()} /></Show></Show>
-        <output class="recording-elapsed" classList={{ 'recording-control-error': Boolean(error()) }} title={error() || label()} role={error() ? 'alert' : undefined} aria-label={error() ? t('录屏错误') : t('录制时长')}>{error() || timeLabel(current().elapsedMs)}</output>
+        <output class="recording-elapsed" classList={{ 'recording-control-error': Boolean(error()), 'recording-control-draggable': nativeLinux }} onPointerDown={beginDrag} title={error() || label()} role={error() ? 'alert' : undefined} aria-label={error() ? t('录屏错误') : t('录制时长')}>{error() || timeLabel(current().elapsedMs)}</output>
         <button class="recording-control-button" disabled={pending() || !canPause()} title={current().phase === 'paused' ? t('继续录制') : t('暂停录制')} aria-label={current().phase === 'paused' ? t('继续录制') : t('暂停录制')} onClick={() => void act(current().phase === 'paused' ? 'resume' : 'pause')}><Show when={current().phase === 'paused'} fallback={<Pause size={16} />}><Play size={16} /></Show></button>
         <button class="recording-control-button recording-stop" disabled={pending() || current().phase === 'stopping'} title={canceling() ? t('取消录屏') : t("停止录屏{0}").replaceAll("{0}", () => String(current().stopHotkey ? ` · ${current().stopHotkey}` : ''))} aria-label={canceling() ? t('取消录屏') : t('停止录屏')} onClick={stopOrCancel}><Show when={canceling()} fallback={<Square size={13} fill="currentColor" />}><X size={17} /></Show></button>
       </div>}
