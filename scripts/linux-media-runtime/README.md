@@ -19,6 +19,9 @@ features disabled, the official OpenH264 shared library, and the selected Gst
 plugins. GstGL and all Gst base libraries are included because WebKit imports
 additional libraries that a recording-only plugin closure would miss. The
 PTP helper has no setuid/setgid permissions.
+MP3 export uses the LGPL LAME plugin; playback uses FFmpeg's native MP3
+decoder. FFmpeg and Gst libav are built together so normal plugin registry
+invalidation can detect the new decoder without clearing users' caches.
 
 The image contains `/opt/mewu-gst-next` for native build headers/libraries,
 `/opt/mewu-media-runtime` for packaging, and
@@ -38,6 +41,17 @@ provider against the runtime, retains the matched GTK/WebKit resources and
 removes library-only leftovers from obsolete plugins. System libc and graphics
 dispatch remain platform providers. It never modifies or executes the input
 application.
+The matched build distro also supplies the dynamically loaded Ayatana tray
+closure and its exact copyrights. Canonical SONAME links are retained after
+pruning to prevent newer host Pango/Ayatana falling into older bundled GLib.
+AppRun sets its canonical AppDir before loading any hooks, including when
+launched directly from an extracted installer.
+
+The Linux preview workflow runs `prepare_ci.sh` to build this SDK and the
+locked TIFF artifact in Docker. `post_bundle.py` stages both into the generated
+AppDir and verifies it before replacing the build directory. The existing
+normalizer then repacks and checks the actual AppImage's extracted bytes and
+permissions. The Windows and macOS build paths are unchanged.
 
 After staging, run `../normalize-linux-appimage.mjs` and its normal AppImage
 repack verification. Debug-only native candidates may need standard

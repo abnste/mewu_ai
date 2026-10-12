@@ -32,7 +32,11 @@ jobs:
           cache: npm
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract4 tesseract-ocr-eng libgles2
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract4 tesseract-ocr-eng libgles2 file python3-pyelftools
+      - name: Build verified Linux media SDK and TIFF dependency in Docker
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash scripts/linux-media-runtime/prepare_ci.sh
       - name: Inspect the system GLES wrapper and license
         if: runner.os == 'Linux'
         shell: bash
@@ -123,6 +127,14 @@ jobs:
         env:
           MEWU_BUILD_COMMIT: ${{ github.sha }}
         run: npm run desktop:build -- --bundles ${{ matrix.bundles }} --config "${{ github.workspace }}/out/native-build-config.json"
+      - name: Stage verified Linux media runtime
+        if: runner.os == 'Linux'
+        env:
+          MEWU_BUILD_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 scripts/linux-media-runtime/post_bundle.py --runtime "$MEWU_LINUX_MEDIA_RUNTIME" --tiff-artifact "$MEWU_LINUX_TIFF_ARTIFACT"
       - name: Normalize and verify new Linux AppImage permissions
         if: runner.os == 'Linux'
         env:
@@ -179,6 +191,14 @@ jobs:
         env:
           MEWU_BUILD_COMMIT: ${{ github.sha }}
         run: npm run desktop:build -- --bundles appimage --features linux-worker-tests --config "${{ github.workspace }}/out/native-build-config.json"
+      - name: Stage verified media runtime for feature-only Linux package
+        if: runner.os == 'Linux'
+        env:
+          MEWU_BUILD_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/python3 scripts/linux-media-runtime/post_bundle.py --runtime "$MEWU_LINUX_MEDIA_RUNTIME" --tiff-artifact "$MEWU_LINUX_TIFF_ARTIFACT"
       - name: Verify isolated Linux package permissions and real Code worker
         if: runner.os == 'Linux'
         env:

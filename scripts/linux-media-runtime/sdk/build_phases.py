@@ -32,7 +32,7 @@ if step=='verify':
     (ROOT/'ffmpeg-signature.log').write_text(signature)
 elif step=='ffmpeg':
     source=ROOT/'ffmpeg-7.1.5'
-    flags=['--prefix='+str(PREFIX),'--disable-everything','--disable-autodetect','--disable-programs','--disable-doc','--disable-debug','--disable-network','--disable-gpl','--disable-nonfree','--disable-static','--enable-shared','--disable-avdevice','--disable-postproc','--enable-avcodec','--enable-avformat','--enable-avfilter','--enable-swscale','--enable-swresample','--enable-decoder=aac,h264','--enable-encoder=aac','--enable-parser=aac,h264','--enable-demuxer=mov','--enable-protocol=file']
+    flags=['--prefix='+str(PREFIX),'--disable-everything','--disable-autodetect','--disable-programs','--disable-doc','--disable-debug','--disable-network','--disable-gpl','--disable-nonfree','--disable-static','--enable-shared','--disable-avdevice','--disable-postproc','--enable-avcodec','--enable-avformat','--enable-avfilter','--enable-swscale','--enable-swresample','--enable-decoder=aac,h264,mp3,mp3float','--enable-encoder=aac','--enable-parser=aac,h264,mpegaudio','--enable-demuxer=mov,mp3','--enable-protocol=file']
     run(['./configure',*flags],source);run(['make','-j2'],source);run(['make','install'],source)
     # FFmpeg uses !CONFIG_GPL=yes for the *disabled* feature. Query the actual
     # GNU make variables instead of substring-matching that inverse marker.
@@ -52,7 +52,7 @@ elif step=='gstreamer':
 elif step=='gst-plugins-base':
     configure(step,['-Dx11=enabled','-Dgl=enabled','-Dgl_api=opengl,gles2','-Dgl_platform=egl,glx','-Dgl_winsys=x11,wayland,egl,surfaceless','-Dapp=enabled','-Daudioconvert=enabled','-Daudioresample=enabled','-Daudiotestsrc=enabled','-Dvideoconvertscale=enabled','-Dvideorate=enabled','-Dvideotestsrc=enabled','-Dtypefind=enabled','-Dplayback=enabled','-Dvolume=enabled','-Dorc=enabled','-Dintrospection=disabled','-Dexamples=disabled','-Dnls=disabled'])
 elif step=='gst-plugins-good':
-    configure(step,['-Daudioparsers=enabled','-Disomp4=enabled','-Dpulse=enabled','-Dautodetect=enabled','-Dvideocrop=enabled','-Dexamples=disabled','-Dnls=disabled','-Dorc=enabled'])
+    configure(step,['-Dlame=enabled','-Daudioparsers=enabled','-Disomp4=enabled','-Dpulse=enabled','-Dautodetect=enabled','-Dvideocrop=enabled','-Dexamples=disabled','-Dnls=disabled','-Dorc=enabled'])
 elif step=='gst-plugins-bad':
     configure(step,['-Dvideoparsers=enabled','-Dopenh264=enabled','-Dvoaacenc=enabled','-Dgpl=disabled','-Dexamples=disabled','-Dnls=disabled','-Dorc=enabled','-Dintrospection=disabled'])
 elif step=='gst-libav':

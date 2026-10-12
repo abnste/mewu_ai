@@ -46,6 +46,46 @@ def safe_tree(root):
             assert stat.S_ISDIR(mode) or stat.S_ISREG(mode),str(path)
             path.chmod(stat.S_IMODE(mode)&~0o6022)
 
+def desktop_roots(destination):
+    # libappindicator-sys uses dlopen; it is absent from the main DT_NEEDED
+    # graph. Copy the matched build-distro tray family, never host24's new
+    # Ayatana into the older bundled GLib/GTK closure.
+    providers={name:path for path,e in scan(destination).items() for name in e['soname']}
+    search=[pathlib.Path('/usr/lib/x86_64-linux-gnu'),pathlib.Path('/lib/x86_64-linux-gnu')]
+    copied=[];pending=['libayatana-appindicator3.so.1'];visited=set()
+    while pending:
+        name=pending.pop()
+        assert pathlib.Path(name).name==name
+        if name in visited:continue
+        visited.add(name)
+        if name in providers or name in HOST_LIBS:continue
+        choices=[directory/name for directory in search if (directory/name).is_file()]
+        assert choices,'Missing matched desktop runtime: '+name
+        source=choices[0].resolve(strict=True)
+        metadata=source.stat();assert metadata.st_uid==0 and not metadata.st_mode&0o022
+        entry=record(source);assert entry and entry['soname']==[name],name
+        assert not(set(entry['needed'])&FORBIDDEN),name
+        target=destination/'usr/lib'/source.name;assert not target.exists()
+        shutil.copyfile(source,target);target.chmod(0o644)
+        subprocess.run(['patchelf','--set-rpath','$ORIGIN',str(target)],check=True)
+        alias=target.parent/name
+        if alias!=target:assert not alias.exists() and not alias.is_symlink();alias.symlink_to(target.name)
+        owners=[]
+        for candidate in (source,pathlib.Path(str(source)[4:]) if str(source).startswith('/usr/lib/') else source):
+            if not candidate.is_file() or candidate.resolve()!=source:continue
+            owner=subprocess.run(['dpkg-query','-S',str(candidate)],text=True,capture_output=True)
+            if owner.returncode==0:owners.append(owner.stdout.strip());break
+        assert owners,'Missing exact package ownership: '+str(source)
+        package=owners[0].rsplit(': ',1)[0];package_name=package.split(':',1)[0]
+        copyright=pathlib.Path('/usr/share/doc')/package_name/'copyright';assert copyright.is_file()
+        notice=destination/'usr/share/doc'/package_name/'copyright';notice.parent.mkdir(parents=True,exist_ok=True)
+        if notice.exists():assert notice.read_bytes()==copyright.read_bytes(),package_name
+        else:shutil.copyfile(copyright,notice);notice.chmod(0o644)
+        copied.append({'path':target.relative_to(destination).as_posix(),'sourceSha256':entry['sha256'],
+                       'package':package,'packageVersion':subprocess.check_output(['dpkg-query','-W','-f=${Version}',package],text=True),
+                       'copyrightSha256':digest(copyright),**record(target)})
+        providers[name]=target.relative_to(destination).as_posix();pending.extend(entry['needed'])
+    return copied
 def stage(appdir,runtime,destination,receipt):
     appdir=appdir.resolve(strict=True);runtime=runtime.resolve(strict=True)
     destination=destination.absolute();assert not destination.exists() and not destination.is_symlink()
@@ -105,11 +145,14 @@ def stage(appdir,runtime,destination,receipt):
         if name!=source.name:
             link=target.parent/name;assert not link.exists() and not link.is_symlink();link.symlink_to(source.name)
         providers[name]=target.relative_to(destination).as_posix()
+    desktop_added=desktop_roots(destination)
     # Trace real roots after plugin replacement, then remove library-only
     # leftovers deployed for obsolete plugins (e.g. libchromaprint -> avcodec58).
     entries=scan(destination)
     by_name={name:path for path,e in entries.items() for name in e['soname']}
-    roots={path for path,e in entries.items() if pathlib.PurePosixPath(path).parent.as_posix()!='usr/lib' or path=='usr/lib/libGLESv2.so.2'}
+    for path,e in new_roots.items():
+        for name in e['soname']:by_name[name]=path
+    roots={path for path,e in entries.items() if pathlib.PurePosixPath(path).parent.as_posix()!='usr/lib' or path=='usr/lib/libGLESv2.so.2' or 'libayatana-appindicator3.so.1' in e['soname']}
     retained=set();pending=list(roots)
     while pending:
         path=pending.pop()
@@ -123,6 +166,16 @@ def stage(appdir,runtime,destination,receipt):
         if path.is_symlink() and path.resolve() in targets:path.unlink()
     for relative in sorted(unused):(destination/relative).unlink();removed.append(relative)
     providers={name:path for path,e in scan(destination).items() for name in e['soname']}
+    # linuxdeploy may create several physical filenames with the same SONAME.
+    # Pruning keeps one provider; restore its canonical DT_NEEDED filename so
+    # a newer host Pango/GTK never falls through into the old bundled GLib.
+    for name,relative in providers.items():
+        if pathlib.PurePosixPath(relative).parent.as_posix()!='usr/lib':continue
+        assert pathlib.Path(name).name==name
+        target=destination/relative;alias=destination/'usr/lib'/name
+        if alias.exists() or alias.is_symlink():
+            assert alias.resolve(strict=True)==target.resolve(strict=True),name
+        else:alias.symlink_to(target.name)
     # All surviving Gst family providers (including WebKit's GL/pbutils/FFT
     # imports) must originate in this exact audited runtime. SONAME alone is
     # insufficient: the old distro provider has the same SONAME.
@@ -146,6 +199,11 @@ export PIPEWIRE_CONFIG_DIR="$APPDIR/usr/share/pipewire"
 export PIPEWIRE_CONFIG_NAME=client.conf
 ''',encoding='utf-8');hook.chmod(0o755)
     apprun=destination/'AppRun';launcher=apprun.read_text(encoding='utf-8')
+    root_marker='this_dir="$(readlink -f "$(dirname "$0")")"'
+    assert launcher.count(root_marker)==1,'Unknown linuxdeploy AppRun root contract'
+    # AppImage runtime sets APPDIR, but a legitimate extracted AppRun must be
+    # coherent before the Gst hook (GTK's workaround runs after that hook).
+    launcher=launcher.replace(root_marker,root_marker+'\nexport APPDIR="$this_dir"')
     invoke='exec "$this_dir"/AppRun.wrapped "$@"'
     assert launcher.count(invoke)==1,'Unknown linuxdeploy AppRun hook contract'
     apprun.write_text(launcher.replace(invoke,'source "$this_dir"/apprun-hooks/"mewu-media.sh"\n'+invoke),encoding='utf-8')
@@ -157,7 +215,7 @@ export PIPEWIRE_CONFIG_NAME=client.conf
     # Prove the trusted worker does not depend on the inherited LD_* env.
     assert '$ORIGIN/../lib' in ':'.join(after['usr/bin/MewuAI']['runpath']),after['usr/bin/MewuAI']['runpath']
     evidence={'schemaVersion':1,'scope':'Real Tauri AppDir, media-only staging, product not executed',
-        'gstreamerVersion':'1.28.8','originalProduct':before['usr/bin/MewuAI'],
+        'desktopDynamicLibraries':desktop_added,'gstreamerVersion':'1.28.8','originalProduct':before['usr/bin/MewuAI'],
         'stagedProduct':after['usr/bin/MewuAI'],'removed':removed,'mediaReplacements':replaced,
         'gstreamerFamilyProviders':gst_providers,'runtimeProviders':{e['soname']:providers.get(e['soname'],'host-platform-provider') for e in manifest['libraries']},
         'sourceManifest':manifest['sourceManifest'],'elfCount':len(after)}
