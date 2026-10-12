@@ -4,7 +4,7 @@
 //! https://developer.apple.com/documentation/screencapturekit/scstream
 //! https://developer.apple.com/documentation/avfoundation/avassetwriter
 use super::{AudioMode, Config, Control, Progress, Report, FPS, MAX_ACTIVE};
-use crate::recording_audio_timeline::{Timeline, TICKS_PER_SECOND};
+use crate::recording_audio_timeline::{PacketPart, Timeline, TICKS_PER_SECOND};
 use block2::RcBlock;
 use core_foundation::{
     array::{CFArrayGetCount, CFArrayGetValueAtIndex},
@@ -58,6 +58,24 @@ use std::{
 const RATE: u32 = 48_000;
 const MAX_AUDIO_FRAMES: usize = RATE as usize * 2;
 const POLL: Duration = Duration::from_millis(15);
+const MAX_BACKPRESSURE: Duration = Duration::from_secs(2);
+
+#[derive(Default)]
+struct Backpressure {
+    since: Option<Instant>,
+}
+impl Backpressure {
+    fn waiting(&mut self, now: Instant) -> Result<(), String> {
+        let since = *self.since.get_or_insert(now);
+        if now.duration_since(since) >= MAX_BACKPRESSURE {
+            return Err("录屏编码积压超过两秒".into());
+        }
+        Ok(())
+    }
+    fn accepted(&mut self) {
+        self.since = None;
+    }
+}
 
 // SCK delivers immutable, ready samples. We retain them, never invalidate or
 // modify them, and only create separately owned timing/range copies for writing.
@@ -733,6 +751,8 @@ struct Writer {
     video: Retained<AVAssetWriterInput>,
     audio: Option<Retained<AVAssetWriterInput>>,
     finished: bool,
+    video_finished: bool,
+    backpressure: Mutex<[Backpressure; 2]>,
 }
 impl Writer {
     fn new(
@@ -831,6 +851,8 @@ impl Writer {
             video,
             audio,
             finished: false,
+            video_finished: false,
+            backpressure: Mutex::new([Backpressure::default(), Backpressure::default()]),
         };
         if !unsafe { this.writer.startWriting() } {
             return Err(this.error("无法启动 MP4 编码"));
@@ -844,23 +866,40 @@ impl Writer {
     fn error(&self, stage: &str) -> String {
         unsafe { self.writer.error() }.map_or_else(|| stage.into(), |e| failure(stage, &e))
     }
-    fn append(&self, input: &AVAssetWriterInput, sample: &CMSampleBuffer) -> Result<(), String> {
+    fn append(&self, input: &AVAssetWriterInput, sample: &CMSampleBuffer) -> Result<bool, String> {
+        if unsafe { self.writer.status() } != AVAssetWriterStatus::Writing {
+            return Err(self.error("录屏编码器已停止接收样本"));
+        }
+        let channel = usize::from(!std::ptr::eq(input, &*self.video));
+        let mut gates = self.backpressure.lock().map_err(|_| "录屏编码状态不可用")?;
         if !unsafe { input.isReadyForMoreMediaData() } {
-            return Err(self.error("录屏编码队列无法及时接收样本"));
+            gates[channel].waiting(Instant::now())?;
+            return Ok(false);
         }
         if !unsafe { input.appendSampleBuffer(sample) } {
+            if unsafe { self.writer.status() } == AVAssetWriterStatus::Writing
+                && !unsafe { input.isReadyForMoreMediaData() }
+            {
+                gates[channel].waiting(Instant::now())?;
+                return Ok(false);
+            }
             return Err(self.error("无法编码录屏样本"));
         }
-        Ok(())
+        gates[channel].accepted();
+        Ok(true)
     }
-    fn video(&self, sample: &CMSampleBuffer, start: u64, end: u64) -> Result<(), String> {
-        let copy = copied_timing(sample, start, time(end - start))?;
-        self.append(&self.video, &copy)
+    fn finish_video(&mut self) {
+        if !self.video_finished {
+            unsafe {
+                self.video.markAsFinished();
+            }
+            self.video_finished = true;
+        }
     }
     fn finish(&mut self, end: u64) -> Result<(), String> {
+        self.finish_video();
         unsafe {
             self.writer.endSessionAtSourceTime(time(end));
-            self.video.markAsFinished();
             if let Some(audio) = &self.audio {
                 audio.markAsFinished();
             }
@@ -895,41 +934,105 @@ impl Drop for Writer {
     }
 }
 
+struct PendingAudio {
+    source: Sample,
+    frames: usize,
+    parts: VecDeque<PacketPart>,
+    copied: Option<Retained<CMSampleBuffer>>,
+}
+
+// A packet remains charged against the existing two-second queue budget until
+// every accepted part is written. One copied part is retained across readiness
+// retries; a rejected append never advances PCM position or drops source data.
 fn audio(
     queue: &Arc<Mutex<Queue>>,
-    writer: &Writer,
     clock: &Timeline,
     last_end: &mut u64,
-) -> Result<(), String> {
-    loop {
+    pending: &mut Option<PendingAudio>,
+    mut append: impl FnMut(&CMSampleBuffer) -> Result<bool, String>,
+) -> Result<bool, String> {
+    if pending.is_none() {
         let sample = {
             let mut queue = queue.lock().map_err(|_| "电脑声音队列不可用")?;
-            let sample = queue.audio.pop_front();
-            if let Some(sample) = &sample {
-                queue.audio_frames -= unsafe { sample.0.num_samples() } as usize;
-            }
-            sample
+            queue.audio.pop_front()
         };
         let Some(sample) = sample else {
-            return Ok(());
+            return Ok(true);
         };
         let pts = host_ticks(unsafe { sample.0.presentation_time_stamp() })?;
         let count = unsafe { sample.0.num_samples() } as usize;
-        for part in clock
-            .parts(pts, count, RATE)
-            .map_err(|_| "电脑声音时间无效")?
-        {
+        *pending = Some(PendingAudio {
+            source: sample,
+            frames: count,
+            parts: clock
+                .parts(pts, count, RATE)
+                .map_err(|_| "电脑声音时间无效")?
+                .into(),
+            copied: None,
+        });
+    }
+    let batch = pending.as_mut().unwrap();
+    if let Some(part) = batch.parts.front() {
+        if batch.copied.is_none() {
             if part.active_ticks < *last_end
                 || part.active_ticks.saturating_sub(*last_end) > TICKS_PER_SECOND / 10
             {
                 return Err("电脑声音时间不连续，录制已停止".into());
             }
-            let sample = pcm_part(&sample.0, part.first, part.end, part.active_ticks)?;
-            writer.append(writer.audio.as_ref().ok_or("电脑声音编码器缺失")?, &sample)?;
-            *last_end = part.active_ticks
-                + (part.end - part.first) as u64 * TICKS_PER_SECOND / u64::from(RATE);
+            batch.copied = Some(pcm_part(
+                &batch.source.0,
+                part.first,
+                part.end,
+                part.active_ticks,
+            )?);
         }
+        if !append(batch.copied.as_ref().unwrap())? {
+            return Ok(false);
+        }
+        *last_end =
+            part.active_ticks + (part.end - part.first) as u64 * TICKS_PER_SECOND / u64::from(RATE);
+        batch.parts.pop_front();
+        batch.copied = None;
     }
+    if batch.parts.is_empty() {
+        queue.lock().map_err(|_| "电脑声音队列不可用")?.audio_frames -= batch.frames;
+        *pending = None;
+    }
+    Ok(pending.is_none()
+        && queue
+            .lock()
+            .map_err(|_| "电脑声音队列不可用")?
+            .audio
+            .is_empty())
+}
+
+fn video(
+    writer: &Writer,
+    last: &Sample,
+    frames: &mut u64,
+    end: &mut u64,
+    target: u64,
+    pending: &mut Option<(Retained<CMSampleBuffer>, u64)>,
+    mut accepted: impl FnMut() -> Result<(), String>,
+) -> Result<(), String> {
+    if target.saturating_sub(*frames) > u64::from(FPS) * 2 {
+        return Err("屏幕编码积压超出限制".into());
+    }
+    while *frames < target {
+        if pending.is_none() {
+            let next = (*frames + 1) * TICKS_PER_SECOND / u64::from(FPS);
+            *pending = Some((copied_timing(&last.0, *end, time(next - *end))?, next));
+        }
+        let (sample, next) = pending.as_ref().unwrap();
+        if !writer.append(&writer.video, sample)? {
+            return Ok(());
+        }
+        accepted()?;
+        *end = *next;
+        *frames += 1;
+        *pending = None;
+    }
+    Ok(())
 }
 
 // AudioBufferList has a C flexible tail. Use the framework's AudioBuffer and
@@ -1131,6 +1234,8 @@ pub(super) fn run(
             let mut audio_end = 0u64;
             let mut next_progress = Instant::now();
             let mut last = first;
+            let mut pending_video = None;
+            let mut pending_audio = None;
             loop {
                 destination.check()?;
                 queue_check(&queue)?;
@@ -1175,21 +1280,30 @@ pub(super) fn run(
                 {
                     last = frame.duplicate();
                 }
-                if !clock.paused() {
-                    let target = elapsed * u64::from(FPS) / TICKS_PER_SECOND + 1;
-                    if target.saturating_sub(frames) > u64::from(FPS) * 2 {
-                        return Err("屏幕编码积压超出限制".into());
-                    }
-                    while frames < target {
-                        let next = (frames + 1) * TICKS_PER_SECOND / u64::from(FPS);
-                        writer.video(&last.0, end, next)?;
-                        destination.hold()?;
-                        end = next;
-                        frames += 1;
-                    }
+                if !clock.paused() || pending_video.is_some() {
+                    let target = if clock.paused() {
+                        frames + 1
+                    } else {
+                        elapsed * u64::from(FPS) / TICKS_PER_SECOND + 1
+                    };
+                    video(
+                        &writer,
+                        &last,
+                        &mut frames,
+                        &mut end,
+                        target,
+                        &mut pending_video,
+                        || destination.hold(),
+                    )?;
                 }
                 if writer.audio.is_some() {
-                    audio(&queue, &writer, &clock, &mut audio_end)?;
+                    audio(
+                        &queue,
+                        &clock,
+                        &mut audio_end,
+                        &mut pending_audio,
+                        |sample| writer.append(writer.audio.as_ref().unwrap(), sample),
+                    )?;
                 }
                 clock.prune_before(stamp.saturating_sub(TICKS_PER_SECOND * 3));
                 if Instant::now() >= next_progress {
@@ -1220,11 +1334,53 @@ pub(super) fn run(
                 }
             }
             capture.stop()?;
+            let target = clock.elapsed(now()?).map_err(|_| "录制结束时钟无效")? * u64::from(FPS)
+                / TICKS_PER_SECOND
+                + 1;
+            let drain = Instant::now();
+            loop {
+                destination.check()?;
+                queue_check(&queue)?;
+                match commands.try_recv() {
+                    Ok(Control::Cancel) => return Err("录制已取消".into()),
+                    Err(TryRecvError::Disconnected) => return Err("录制控制连接已断开".into()),
+                    _ => {}
+                }
+                video(
+                    &writer,
+                    &last,
+                    &mut frames,
+                    &mut end,
+                    target,
+                    &mut pending_video,
+                    || destination.hold(),
+                )?;
+                if frames == target {
+                    writer.finish_video();
+                }
+                let audio_done = if let Some(input) = &writer.audio {
+                    audio(
+                        &queue,
+                        &clock,
+                        &mut audio_end,
+                        &mut pending_audio,
+                        |sample| writer.append(input, sample),
+                    )?
+                } else {
+                    true
+                };
+                if frames == target && audio_done {
+                    break;
+                }
+                if drain.elapsed() >= MAX_BACKPRESSURE {
+                    return Err("录屏编码结束积压超过两秒".into());
+                }
+                std::thread::sleep(POLL);
+            }
             if frames == 0 {
                 return Err("录制尚未形成可保存的画面".into());
             }
             if writer.audio.is_some() {
-                audio(&queue, &writer, &clock, &mut audio_end)?;
                 if end.abs_diff(audio_end) > TICKS_PER_SECOND / 10 {
                     return Err("电脑声音未覆盖录屏时间，文件未发布".into());
                 }
@@ -1282,6 +1438,287 @@ mod tests {
     };
     use objc2_core_foundation::CFRange;
     use objc2_core_media::CMAudioFormatDescriptionCreate;
+
+    #[test]
+    fn backpressure_keeps_a_bounded_deadline_until_a_sample_is_accepted() {
+        let mut gate = Backpressure::default();
+        let start = Instant::now();
+        gate.waiting(start).unwrap();
+        gate.waiting(start + Duration::from_millis(1900)).unwrap();
+        assert!(gate.waiting(start + MAX_BACKPRESSURE).is_err());
+        gate.accepted();
+        gate.waiting(start + Duration::from_secs(10)).unwrap();
+        gate.waiting(start + Duration::from_millis(11999)).unwrap();
+        assert!(gate.waiting(start + Duration::from_secs(12)).is_err());
+    }
+
+    #[test]
+    fn backpressure_preserves_real_pcm_pause_parts_and_queue_budget_until_acceptance() {
+        autoreleasepool(|_| {
+            let epoch = TICKS_PER_SECOND * 5;
+            let (source, expected) = stereo_fixture(true, epoch - 10_000);
+            let mut clock = Timeline::new(epoch, false);
+            clock.set_paused(true, epoch + 10_000).unwrap();
+            clock.set_paused(false, epoch + 40_000).unwrap();
+            clock.set_paused(true, epoch + 60_000).unwrap();
+            let queue = Arc::new(Mutex::new(Queue::default()));
+            {
+                let mut q = queue.lock().unwrap();
+                q.audio.push_back(Sample(source.clone()));
+                q.audio_frames = 2048;
+            }
+            let mut pending = None;
+            let mut end = 0;
+            let mut address = None;
+            for _ in 0..3 {
+                assert!(!audio(&queue, &clock, &mut end, &mut pending, |part| {
+                    assert_eq!(read_pcm(part, true), expected[48..96]);
+                    let pointer = part as *const CMSampleBuffer;
+                    if let Some(previous) = address {
+                        assert_eq!(pointer, previous);
+                    } else {
+                        address = Some(pointer);
+                    }
+                    Ok(false)
+                })
+                .unwrap());
+                assert_eq!(end, 0);
+                assert_eq!(queue.lock().unwrap().audio_frames, 2048);
+            }
+            assert!(!audio(&queue, &clock, &mut end, &mut pending, |part| {
+                assert_eq!(read_pcm(part, true), expected[48..96]);
+                Ok(true)
+            })
+            .unwrap());
+            assert_eq!(end, 10_000);
+            assert_eq!(queue.lock().unwrap().audio_frames, 2048);
+            assert!(audio(&queue, &clock, &mut end, &mut pending, |part| {
+                assert_eq!(read_pcm(part, true), expected[240..336]);
+                Ok(true)
+            })
+            .unwrap());
+            assert_eq!(end, 30_000);
+            assert_eq!(queue.lock().unwrap().audio_frames, 0);
+            assert!(pending.is_none());
+            assert_eq!(read_pcm(&source, true), expected);
+        });
+    }
+
+    fn owned_video_sample() -> Sample {
+        use objc2_core_video::*;
+        struct OwnedCf(core_foundation::base::CFTypeRef);
+        impl Drop for OwnedCf {
+            fn drop(&mut self) {
+                unsafe {
+                    core_foundation::base::CFRelease(self.0);
+                }
+            }
+        }
+        let mut pixel = std::ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                CVPixelBufferCreate(
+                    None,
+                    64,
+                    48,
+                    kCVPixelFormatType_32BGRA,
+                    None,
+                    NonNull::from(&mut pixel),
+                )
+            },
+            0
+        );
+        let _pixel = OwnedCf(pixel.cast());
+        let pixel = unsafe { &*pixel };
+        assert_eq!(
+            unsafe { CVPixelBufferLockBaseAddress(pixel, CVPixelBufferLockFlags(0)) },
+            0
+        );
+        let stride = CVPixelBufferGetBytesPerRow(pixel);
+        let base = CVPixelBufferGetBaseAddress(pixel).cast::<u8>();
+        assert!(!base.is_null());
+        for row in 0..48 {
+            for col in 0..64 {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        [64, 128, 200, 255].as_ptr(),
+                        base.add(row * stride + col * 4),
+                        4,
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            unsafe { CVPixelBufferUnlockBaseAddress(pixel, CVPixelBufferLockFlags(0)) },
+            0
+        );
+        let mut format = std::ptr::null();
+        assert_eq!(
+            unsafe {
+                objc2_core_media::CMVideoFormatDescriptionCreateForImageBuffer(
+                    None,
+                    pixel,
+                    NonNull::from(&mut format),
+                )
+            },
+            0
+        );
+        let _format = OwnedCf(format.cast());
+        let mut timing = CMSampleTimingInfo {
+            duration: time(TICKS_PER_SECOND / u64::from(FPS)),
+            presentationTimeStamp: time(0),
+            decodeTimeStamp: time(0),
+        };
+        let mut sample = std::ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                CMSampleBuffer::create_ready_with_image_buffer(
+                    None,
+                    pixel,
+                    &*format,
+                    NonNull::from(&mut timing),
+                    NonNull::from(&mut sample),
+                )
+            },
+            0
+        );
+        Sample(unsafe { Retained::from_raw(sample) }.unwrap())
+    }
+
+    #[test]
+    fn backpressure_native_writer_keeps_real_audio_and_video_under_short_cpu_pressure() {
+        autoreleasepool(|_| {
+            let root =
+                std::env::temp_dir().join(format!("mewu-writer-pressure-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let root = root.canonicalize().unwrap();
+            let path = root.join("owned.mp4");
+            let config = Config {
+                output: path.clone(),
+                origin_x: 0,
+                origin_y: 0,
+                monitor_width: 64,
+                monitor_height: 48,
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 48,
+                audio: AudioMode::System,
+                capture_coordinates: mewu_core::CaptureCoordinates {
+                    space: mewu_core::CaptureCoordinateSpace::QuartzPoints,
+                    origin_x: 0.,
+                    origin_y: 0.,
+                    width: 64.,
+                    height: 48.,
+                },
+            };
+            let (source, _) = stereo_fixture(false, 0);
+            let queue = Arc::new(Mutex::new(Queue::default()));
+            // Two seconds of real PCM, separated by a two-second host pause.
+            // Pause removal occurs through Timeline, not invented output PCM.
+            for epoch in [0, 3 * TICKS_PER_SECOND] {
+                let mut frame = 0usize;
+                while frame < RATE as usize {
+                    let count = 2048.min(RATE as usize - frame);
+                    let sample = pcm_part(
+                        &source,
+                        0,
+                        count,
+                        epoch + frame as u64 * TICKS_PER_SECOND / u64::from(RATE),
+                    )
+                    .unwrap();
+                    let mut q = queue.lock().unwrap();
+                    q.audio.push_back(Sample(sample));
+                    q.audio_frames += count;
+                    frame += count;
+                }
+            }
+            assert_eq!(queue.lock().unwrap().audio_frames, MAX_AUDIO_FRAMES);
+            let mut clock = Timeline::new(0, false);
+            clock.set_paused(true, TICKS_PER_SECOND).unwrap();
+            clock.set_paused(false, 3 * TICKS_PER_SECOND).unwrap();
+            clock.set_paused(true, 4 * TICKS_PER_SECOND).unwrap();
+            let mut writer = Writer::new(&path, &config, Some(&source)).unwrap();
+            let last = owned_video_sample();
+            let mut pending_video = None;
+            let mut pending_audio = None;
+            let mut frames = 0;
+            let mut end = 0;
+            let mut audio_end = 0;
+            let pressure = std::thread::spawn(|| {
+                let until = Instant::now() + Duration::from_millis(400);
+                let mut sum = 1u64;
+                while Instant::now() < until {
+                    sum = sum.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    std::hint::black_box(sum);
+                }
+            });
+            let started = Instant::now();
+            let mut retries = 0;
+            loop {
+                assert!(started.elapsed() < Duration::from_secs(5));
+                let before = frames;
+                let target = (frames + 1).min(30);
+                video(
+                    &writer,
+                    &last,
+                    &mut frames,
+                    &mut end,
+                    target,
+                    &mut pending_video,
+                    || Ok(()),
+                )
+                .unwrap();
+                if frames == before && frames < 30 {
+                    retries += 1;
+                }
+                if frames == 30 {
+                    writer.finish_video();
+                }
+                let audio_done = audio(
+                    &queue,
+                    &clock,
+                    &mut audio_end,
+                    &mut pending_audio,
+                    |sample| writer.append(writer.audio.as_ref().unwrap(), sample),
+                )
+                .unwrap();
+                if frames == 30 && audio_done {
+                    break;
+                }
+                std::thread::sleep(POLL);
+            }
+            pressure.join().unwrap();
+            assert_eq!(audio_end, 2 * TICKS_PER_SECOND);
+            assert_eq!(end, audio_end);
+            writer.finish(end).unwrap();
+            drop(writer);
+            let result = crate::video_clip_backend::execute(
+                &crate::video_clip_contract::ClipJob::Inspect {
+                    source: path.clone(),
+                },
+                &std::sync::atomic::AtomicBool::new(false),
+                &|_| {},
+            )
+            .unwrap();
+            let crate::video_clip_contract::ClipJobResult::Inspected(metadata) = result else {
+                panic!("Missing real MP4 metadata");
+            };
+            assert_eq!((metadata.width, metadata.height), (64, 48));
+            assert_eq!(
+                (
+                    metadata.frame_rate_numerator,
+                    metadata.frame_rate_denominator
+                ),
+                (15, 1)
+            );
+            assert!(metadata.has_audio);
+            assert!(metadata.duration_ticks.abs_diff(end) <= TICKS_PER_SECOND / 10);
+            println!("actual_writer_frames={frames} readiness_retries={retries} pcm_frames={} duration_ticks={}", MAX_AUDIO_FRAMES, metadata.duration_ticks);
+            std::fs::remove_file(path).unwrap();
+            std::fs::remove_dir(root).unwrap();
+        });
+    }
 
     fn read_pcm(source: &CMSampleBuffer, planar: bool) -> Vec<[u32; 2]> {
         let frames = unsafe { source.num_samples() } as usize;

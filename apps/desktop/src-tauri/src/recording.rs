@@ -17,6 +17,30 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 const LABEL: &str = "recording-controls";
 const CONTROLS_WIDTH: f64 = 176.;
 const CONTROLS_HEIGHT: f64 = 44.;
+#[cfg(target_os = "macos")]
+fn mac_hud_position(
+    display: &mewu_core::CaptureCoordinates,
+    work: (f64, f64, f64, f64),
+    hud: (f64, f64),
+) -> Result<tauri::LogicalPosition<f64>, String> {
+    let (x, y, width, height) = work;
+    if [x, y, width, height, hud.0, hud.1]
+        .iter()
+        .any(|v| !v.is_finite())
+        || hud.0 <= 0.
+        || hud.1 <= 0.
+        || width < hud.0
+        || height < hud.1
+    {
+        return Err("录屏控制条显示范围无效".into());
+    }
+    Ok(tauri::LogicalPosition::new(
+        (display.origin_x + (display.width - hud.0) / 2.).clamp(x, x + width - hud.0),
+        (display.origin_y + 10.)
+            .max(y + 10.)
+            .min(y + height - hud.1),
+    ))
+}
 #[derive(Clone, Serialize)]
 pub struct Rect {
     x: f64,
@@ -640,12 +664,56 @@ async fn prepare_windows(
             .build()
             .map_err(|_| "无法打开录屏控制条")?;
             exclude(&toolbar, true)?;
-            let x = config.origin_x as f64
-                + (config.monitor_width as f64 - CONTROLS_WIDTH * scale) / 2.;
-            let y = config.origin_y as f64 + 10. * scale;
-            toolbar
-                .set_position(tauri::PhysicalPosition::new(x as i32, y as i32))
-                .map_err(|_| "无法放置录屏控制条")?;
+            #[cfg(target_os = "macos")]
+            {
+                // Quartz origins and display sizes are points, not screenshot
+                // pixels. Tauri converts a PhysicalPosition using the window's
+                // current screen scale, which may still be the primary screen.
+                let display = &config.capture_coordinates;
+                let monitor = toolbar
+                    .available_monitors()
+                    .map_err(|_| "无法定位录屏显示器")?
+                    .into_iter()
+                    .find(|monitor| {
+                        let factor = monitor.scale_factor();
+                        let position = monitor.position().to_logical::<f64>(factor);
+                        let size = monitor.size().to_logical::<f64>(factor);
+                        (position.x - display.origin_x).abs() < 1.
+                            && (position.y - display.origin_y).abs() < 1.
+                            && (size.width - display.width).abs() < 1.
+                            && (size.height - display.height).abs() < 1.
+                    })
+                    .ok_or("显示器已改变，请重新截图")?;
+                let factor = monitor.scale_factor();
+                let work = monitor.work_area();
+                let origin = work.position.to_logical::<f64>(factor);
+                let size = work.size.to_logical::<f64>(factor);
+                let hud = toolbar
+                    .inner_size()
+                    .map_err(|_| "无法读取录屏控制条大小")?
+                    .to_logical::<f64>(
+                        toolbar
+                            .scale_factor()
+                            .map_err(|_| "无法读取录屏控制条缩放")?,
+                    );
+                toolbar
+                    .set_position(mac_hud_position(
+                        display,
+                        (origin.x, origin.y, size.width, size.height),
+                        (hud.width, hud.height),
+                    )?)
+                    .map_err(|_| "无法放置录屏控制条")?;
+                let _ = scale;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let x = config.origin_x as f64
+                    + (config.monitor_width as f64 - CONTROLS_WIDTH * scale) / 2.;
+                let y = config.origin_y as f64 + 10. * scale;
+                toolbar
+                    .set_position(tauri::PhysicalPosition::new(x as i32, y as i32))
+                    .map_err(|_| "无法放置录屏控制条")?;
+            }
             toolbar.show().map_err(|_| "无法显示录屏控制条")?;
             Ok(())
         })();
@@ -797,6 +865,22 @@ fn supervise(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_hud_uses_quartz_points_real_size_and_visible_work_area() {
+        let display = mewu_core::CaptureCoordinates {
+            space: mewu_core::CaptureCoordinateSpace::QuartzPoints,
+            origin_x: -1920.,
+            origin_y: -200.,
+            width: 1920.,
+            height: 1080.,
+        };
+        let point = mac_hud_position(&display, (-1920., -176., 1836., 1056.), (220., 44.)).unwrap();
+        assert_eq!((point.x, point.y), (-1070., -166.));
+        // No screenshot pixel width or primary-screen Retina multiplier enters
+        // these coordinates; a wider actual HUD stays centered on this screen.
+        assert!(mac_hud_position(&display, (-1920., -176., 100., 20.), (220., 44.)).is_err());
+    }
     fn recording_plugins() -> crate::plugins::PluginSnapshot {
         crate::plugins::PluginSnapshot {
             revision: 1,
