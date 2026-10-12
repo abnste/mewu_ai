@@ -223,7 +223,11 @@ impl<P: Send + 'static> Parts<P> {
         // macOS retains the unreaped group leader as the PGID ownership anchor.
         // The group adapter handles both leader and descendants; do not signal
         // an already-reaped/reused numeric PID through Child here.
-        #[cfg(not(target_os = "macos"))]
+        // Linux's fixed bwrap monitor must reap namespace init and return
+        // normally. Killing the monitor destroys that cleanup evidence in
+        // the EOF-before-wait race. Signal only a retained PID1 pidfd, or NACK
+        // the not-yet-acknowledged bootstrap through its owned bridge above.
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let _ = self.child.kill();
         #[cfg(target_os = "macos")]
         {
@@ -261,6 +265,39 @@ impl<P: Send + 'static> Parts<P> {
         #[cfg(target_os="linux")]
         if let Some(status)=&status {if let Some(job)=&self.job{job.observe_launcher_exit(status);}}
         Ok(status)
+    }
+}
+
+#[cfg(all(test,target_os="linux"))]
+mod linux_failure_race_tests {
+    use super::*;
+    use std::{io::Read,os::{fd::AsRawFd,unix::{net::UnixStream,process::CommandExt}},process::Stdio,sync::{mpsc,atomic::{AtomicBool,Ordering}},time::Instant};
+    struct Held(Arc<AtomicBool>);
+    impl Drop for Held{fn drop(&mut self){self.0.store(true,Ordering::Release);}}
+    #[test]
+    fn closed_bridge_before_normal_launcher_exit_does_not_turn_wait_into_a_signal(){
+        let released=Arc::new(AtomicBool::new(false));
+        let (socket,peer)=UnixStream::pair().unwrap();socket.set_nonblocking(true).unwrap();
+        let fd=peer.as_raw_fd();let mut command=Command::new("/usr/bin/python3");
+        // An explicit stdin barrier holds the real launcher after bridge EOF,
+        // so this regression never passes merely because wait won the race.
+        command.args(["-c","import os,sys; os.close(int(sys.argv[1])); sys.stdout.write('E'); sys.stdout.flush(); sys.stdin.buffer.read(); sys.exit(1)",&fd.to_string()])
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        unsafe{command.pre_exec(move||{if libc::fcntl(fd,libc::F_SETFD,0)==-1{return Err(io::Error::last_os_error());}Ok(())});}
+        let child=command.spawn().unwrap();drop(peer);
+        let mut process=ManagedProcess(Some(Parts{child,job:Some(ProcessJob::provisional(linux_worker::Bridge::for_race_fixture(socket))),io:Vec::new(),_permit:Held(released.clone())}));
+        let stdin=process.child_mut().stdin.take().unwrap();let (finish_tx,finish_rx)=mpsc::channel();
+        process.track_io(std::thread::spawn(move||{finish_rx.recv().unwrap();drop(stdin);}));
+        let (eof_tx,eof_rx)=mpsc::channel();let mut stdout=process.child_mut().stdout.take().unwrap();
+        process.track_io(std::thread::spawn(move||{let mut tag=[0u8;1];stdout.read_exact(&mut tag).unwrap();assert_eq!(&tag,b"E");eof_tx.send(()).unwrap();
+            let mut bytes=Vec::new();stdout.read_to_end(&mut bytes).unwrap();assert!(bytes.is_empty());}));
+        eof_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let cancel=AtomicBool::new(false);
+        assert_eq!(process.admit_trusted(Instant::now()+Duration::from_secs(1),&cancel).unwrap_err().kind(),io::ErrorKind::UnexpectedEof);
+        assert!(!process.fully_exited());assert!(!released.load(Ordering::Acquire));drop(process);
+        assert!(!released.load(Ordering::Acquire));finish_tx.send(()).unwrap();
+        let until=Instant::now()+Duration::from_secs(3);
+        while !released.load(Ordering::Acquire){assert!(Instant::now()<until,"clean EOF must retain monitor until its normal wait, then release only after real IO joining");std::thread::sleep(Duration::from_millis(10));}
     }
 }
 pub struct ManagedProcess<P: Send + 'static>(Option<Parts<P>>);

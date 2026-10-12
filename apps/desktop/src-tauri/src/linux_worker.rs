@@ -220,6 +220,11 @@ impl TrustedCommand {
 // Own received descriptors before validating the packet. A malformed packet
 // must not silently discard a possible kernel owner while its permit is held.
 pub(crate) struct Bridge { socket:UnixStream, candidates:Vec<OwnedFd>, clean_eof:bool, invalid:bool }
+#[cfg(test)]
+impl Bridge{
+    pub(super) fn for_race_fixture(socket:UnixStream)->Self{Self{socket,candidates:Vec::new(),clean_eof:false,invalid:false}}
+}
+
 
 /// Conservative ownership sketch. Retained permits/IO belong to the caller's
 /// actual Parts. A failed, never-admitted bootstrap may finish only with a
