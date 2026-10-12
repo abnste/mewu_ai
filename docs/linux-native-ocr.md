@@ -8,7 +8,11 @@ Linux 适配器通过已安装的 Tesseract 4.1 或 5 C API 识别宿主提供�
 
 库、模型及路径父目录必须由当前命名空间中可验证的 root 所有，普通文件和目录不能被 group/other 写入。符号链接的原始路径和解析路径均检查；模型目标限制在固定模型目录，单文件最多 64 MiB。库使用保留的文件描述符加载，模型文件描述符与 dev/ino/size/mtime 在初始化后再核对。此约束防止普通用户替换资源，不承诺抵御宿主 root 对已信任系统组件的修改。
 
+系统库和其文件描述符在进程内保留一份，直到进程退出。原生识别返回以及 engine/monitor 的删除不等于库的后台辅助线程已停止；每次请求结束时 `dlclose` 卸载代码会导致已完成识别后的崩溃。每次请求仍重新核对受保护资源，并匹配已保留库的 ABI、dev/ino、大小及修改时间。系统库改变时要求重启，不增加新的常驻映射，不通过文件描述符编号复用选择旧库。每次请求的 engine、monitor、iterator、文本、模型文件和像素仍分别释放，识别许可仍保持到同步调用真正返回。
+
 用户命名空间显示的 UID 65534 不等于已验证的宿主 root。普通宿主适配器不会放宽这一要求；以后若 Code worker 使用不同命名空间，需要独立的、不可由调用者伪造的外层资源证明。命令沙箱探测不代替桌面宿主测试。
+
+GitHub 托管 Ubuntu 构建镜像的[系统初始化脚本](https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/configure-system.sh)会将 `/usr/share` 递归设为所有用户可写。CI 原生 OCR 因此会正确拒绝其下的模型，不能把该失败当作识别通过。工作流保留修正前的系统资源元数据，核实 `/usr/share` 是 root 所有的固定目录后，仅在一次性构建机上将这个父目录恢复为 `0755`，再记录完整元数据并运行必需的原生识别测试。不递归更改其他系统目录、不跳过测试，也不在用户的软件启动或识别过程中修改系统权限。
 
 图像遵守共享的 3200 万源像素与 400 万识别像素限制，透明部分合成白色，居中等比缩放，然后将 BGRA 转为 Tesseract 的 RGB。词边界映射回原选区，并由共享文档校验器核查行数、词数、文本长度与坐标。
 
@@ -20,6 +24,8 @@ Linux 适配器通过已安装的 Tesseract 4.1 或 5 C API 识别宿主提供�
 cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
 ```
 
-该测试用现有绘图器生成已知英文，检查真实文本和词边界，以及空白图像结果。它不读取桌面，不证明中文识别或完整 GUI 功能。普通源码测试覆盖提前取消、原始截止时间和有界 UTF-8 读取。Windows 编译或 Linux 交叉类型检查不能代替这一原生验收。
+该测试用现有绘图器生成已知英文，检查真实文本和词边界、空白图像结果，以及同一进程内再次识别相同图像。两个独立 engine 的真实原生取消回调以最多两秒的测试专用等待核验同步识别重叠、两个许可在场及结果一致；等待仍受各请求原始预算约束，发布构建没有此测试钩子。测试再用自有临时文件中的相同库字节核验新 inode 被拒绝，并检查原系统库仍能识别；不修改安装的库。它不读取桌面，不证明中文识别或完整 GUI 功能。普通源码测试覆盖提前取消、原始截止时间和有界 UTF-8 读取。Windows 编译或 Linux 交叉类型检查不能代替这一原生验收。
+
+`debug_file` 在两个支持的 ABI 中都是全局参数，首次 engine 初始化前仅在驻留库锁内设置一次为 `/dev/null`，后续请求不重复写入，避免与其他 engine 的原生读取竞争。锁不覆盖同步识别，也不改变两个 worker 或原始 15 秒预算。依据：[4.1.1 全局诊断参数](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/ccutil/tprintf.cpp)、[参数设置实现](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/ccutil/params.cpp) 与 [5.5.1 全局诊断参数](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/ccutil/tprintf.cpp)。
 
 接口和所有权依据：[Tesseract 5.5.1 C API](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/include/tesseract/capi.h)、[对应实现](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/api/capi.cpp)、[显式模型路径优先级](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/ccutil/ccutil.cpp)，以及 [4.1.1 C API](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.h)、[对应实现](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.cpp) 与 [4.1.1 显式模型路径优先级](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/ccutil/mainblk.cpp)。仅使用两者签名一致的函数和不透明句柄；不依赖内部结构布局。实现为 Mewu 的 MPL-2.0 代码，没有复制第三方库源码或模型。

@@ -32,7 +32,16 @@ jobs:
           cache: npm
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract4 tesseract-ocr-eng
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract4 tesseract-ocr-eng libgles2
+      - name: Inspect the system GLES wrapper and license
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' libgles2 libglvnd0
+          test -r /usr/share/doc/libgles2/copyright
+          readelf --file-header --dynamic --version-info /usr/lib/x86_64-linux-gnu/libGLESv2.so.2
+          sha256sum /usr/lib/x86_64-linux-gnu/libGLESv2.so.2 /usr/share/doc/libgles2/copyright
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Resolve Mac test temporary directory
@@ -86,6 +95,24 @@ jobs:
       - name: Test Linux package permission normalization
         if: runner.os == 'Linux'
         run: node --test scripts/normalize-linux-appimage.test.mjs
+      - name: Diagnose fixed Linux OCR system resources
+        if: runner.os == 'Linux'
+        run: node scripts/diagnose-linux-ocr-resources.mjs
+      - name: Protect the hosted runner system resource parent
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # runner-images makes /usr/share world-writable. Restore only this
+          # fixed parent in the disposable runner; never relax the OCR policy.
+          test ! -L /usr/share
+          test -d /usr/share
+          test "$(realpath /usr/share)" = /usr/share
+          test "$(stat -c '%u' /usr/share)" = 0
+          stat -c 'OCR parent before: %n uid=%u gid=%g mode=%a' /usr/share
+          sudo chmod 0755 /usr/share
+          stat -c 'OCR parent after: %n uid=%u gid=%g mode=%a' /usr/share
+          node scripts/diagnose-linux-ocr-resources.mjs
       - name: Verify native Linux OCR with known English and blank images
         if: runner.os == 'Linux'
         run: cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
@@ -116,6 +143,30 @@ jobs:
       - name: Archive Mac application for later coordinator signing
         if: runner.os == 'macOS'
         run: tar -czf target/release/bundle/macos/MewuAI.app.tar.gz -C target/release/bundle/macos MewuAI.app
+      - name: Load the packaged GLES wrapper with host dispatch
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf --file-header --dynamic --version-info target/release/bundle/appimage/MewuAI.AppDir/usr/lib/libGLESv2.so.2
+          env -u LD_LIBRARY_PATH -u LD_PRELOAD /usr/bin/python3 - <<'PY'
+          import ctypes, hashlib, json, pathlib
+          root = pathlib.Path('target/release/bundle/appimage/MewuAI.AppDir').resolve(strict=True)
+          library = root / 'usr/lib/libGLESv2.so.2'
+          if library.is_symlink() or not library.is_file():
+              raise RuntimeError('Packaged GLES wrapper must be a regular file')
+          for name in ('libGLdispatch.so.0', 'libEGL.so.1', 'libGLX.so.0'):
+              if any(root.rglob(name)):
+                  raise RuntimeError('Host graphics library unexpectedly bundled: ' + name)
+          handle = ctypes.CDLL(str(library))
+          for symbol in ('glGetString', 'glClear', 'glViewport'):
+              getattr(handle, symbol)
+          source = pathlib.Path('/usr/share/doc/libgles2/copyright').read_bytes()
+          copied = (root / 'usr/share/doc/libgles2/copyright').read_bytes()
+          if source != copied:
+              raise RuntimeError('GLES copyright changed during bundling')
+          print(json.dumps({'kind': 'packaged_gles_host_dispatch', 'librarySha256': hashlib.sha256(library.read_bytes()).hexdigest(), 'copyrightSha256': hashlib.sha256(copied).hexdigest(), 'loaded': True, 'nativeGuiVerified': False, 'installerVerified': False}))
+          PY
       - name: Stage explicit native assets
         run: node scripts/prepare-release.mjs out/release-${{ matrix.platform }} ${{ matrix.platform }}
       # This rebuild is a feature-only native verification package. The normal

@@ -1126,34 +1126,19 @@ mod tests {
             revision: 1,
             contribution_id: "recognize".into(),
         });
-        #[cfg(not(target_os = "linux"))]
-        {
-            assert_eq!(
-                combined.authorize(&store).unwrap(),
-                code_worker::ScanMode::CodesAndText
-            );
-            assert!(combined.current(&store.snapshot().unwrap()));
-        }
-        #[cfg(target_os = "linux")]
-        {
-            assert_eq!(combined.authorize(&store).unwrap_err(),
-                "此文字识别插件不支持当前系统，请重新安装对应系统的官方插件");
-            assert!(!combined.current(&store.snapshot().unwrap()));
-        }
+        assert_eq!(
+            combined.authorize(&store).unwrap(),
+            code_worker::ScanMode::CodesAndText
+        );
+        assert!(combined.current(&store.snapshot().unwrap()));
         let text = Grant {
             plugin_id: "mewu.ocr".into(),
             revision: 1,
             contribution_id: "recognize".into(),
             text_grant: None,
         };
-        #[cfg(not(target_os = "linux"))]
         assert_eq!(text.authorize(&store).unwrap(), code_worker::ScanMode::Text);
-        #[cfg(target_os = "linux")]
-        {
-            assert_eq!(text.authorize(&store).unwrap_err(),
-                "此文字识别插件不支持当前系统，请重新安装对应系统的官方插件");
-            assert!(!text.current(&store.snapshot().unwrap()));
-        }
+        assert!(text.current(&store.snapshot().unwrap()));
         let mut state = State::default();
         state
             .cache_put(

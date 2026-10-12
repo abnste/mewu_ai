@@ -1982,6 +1982,46 @@ mod tests {
         }
     }
     #[test]
+    fn browser_cache_after_first_storage_resolution_does_not_replace_the_business_root() {
+        let mut f = Fixture::new();
+        f.paths.legacy_root = f.base.join("fresh-legacy");
+        let runtime = acquire_runtime_lock(&f.paths, Duration::from_secs(1)).unwrap();
+        let initial = resolve_startup(&f.paths).unwrap();
+        assert_eq!(initial.root, f.paths.default_root);
+        let core = crate::Store::open(initial.root.join("spaces.db")).unwrap();
+        let plugins = crate::plugin_host::PluginRuntime::open(&initial.root).unwrap();
+        mark_initialized(&f.paths, &initial).unwrap();
+        drop(plugins);
+        drop(core);
+        let before = inventory(&initial.root, None, &mut |_| Ok(())).unwrap();
+        let cache = f.paths.legacy_root.join("mediakeys/v1");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("salt"), b"synthetic browser cache, no user data").unwrap();
+        drop(initial);
+        drop(runtime);
+        let _restart_lock = acquire_runtime_lock(&f.paths, Duration::from_secs(1)).unwrap();
+        let restarted = resolve_startup(&f.paths).unwrap();
+        assert_eq!(restarted.root, f.paths.default_root);
+        assert_eq!(restarted.generation, 0);
+        assert_eq!(inventory(&restarted.root, None, &mut |_| Ok(())).unwrap(), before);
+        assert_eq!(fs::read(cache.join("salt")).unwrap(), b"synthetic browser cache, no user data");
+    }
+
+    #[test]
+    fn unknown_legacy_files_without_database_still_require_recovery_and_are_preserved() {
+        let mut f = Fixture::new();
+        f.paths.legacy_root = f.base.join("incomplete-legacy");
+        fs::create_dir_all(f.paths.legacy_root.join("mediakeys/v1")).unwrap();
+        fs::write(f.paths.legacy_root.join("mediakeys/v1/salt"), b"synthetic old cache").unwrap();
+        fs::write(f.paths.legacy_root.join("unknown.bin"), b"retained unknown data").unwrap();
+        let before = inventory(&f.paths.legacy_root, None, &mut |_| Ok(())).unwrap();
+        let _runtime = acquire_runtime_lock(&f.paths, Duration::from_secs(1)).unwrap();
+        assert_eq!(resolve_startup(&f.paths).unwrap_err().code, "legacy_root_needs_recovery");
+        assert_eq!(inventory(&f.paths.legacy_root, None, &mut |_| Ok(())).unwrap(), before);
+        assert!(!f.paths.default_root.exists());
+        assert!(!ledger_path(&f.paths).exists());
+    }
+    #[test]
     fn copies_whole_tree_raw_sqlite_ciphertext_empty_dirs_and_aliases() {
         let f = Fixture::new();
         let before = f.source_plan();

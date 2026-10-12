@@ -12,6 +12,7 @@ use rustix::{
 use std::{
     io::{self, IoSlice},
     os::unix::net::UnixStream,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 use x11rb::{
@@ -108,6 +109,18 @@ pub(super) fn connect() -> Result<(Connection, usize), String> {
 
 pub(super) fn connect_display(display_name: Option<&str>) -> Result<(Connection, usize), String> {
     let deadline = Instant::now() + SOCKET_BUDGET;
+    connect_display_until(display_name, deadline)
+}
+
+// Recording retains this same subscribed connection across frames and pauses.
+// Per-request deadlines may be renewed only within its original hard deadline;
+// ordinary snapshots still have their original immutable ten-second ceiling.
+pub(super) fn connect_display_until(
+    display_name: Option<&str>,
+    expires: Instant,
+) -> Result<(Connection, usize), String> {
+    let deadline = (Instant::now() + SOCKET_BUDGET).min(expires);
+    remaining(deadline).map_err(|_| "X11 图形连接预算已结束")?;
     let display = x11rb::reexports::x11rb_protocol::parse_display::parse_display(display_name)
         .map_err(|_| "X11 图形会话地址无效")?;
     let path = local_socket(&display).map_err(|_| "截图需要本机 X11 桌面会话")?;
@@ -129,7 +142,8 @@ pub(super) fn connect_display(display_name: Option<&str>) -> Result<(Connection,
     let stream = DeadlineStream {
         inner,
         poll_socket,
-        deadline,
+        deadline: Mutex::new(deadline),
+        expires,
     };
     let connection = Connection::connect_to_stream_with_auth_info(
         stream,
@@ -146,7 +160,26 @@ pub(super) struct DeadlineStream {
     // This duplicate owns the same nonblocking socket, allowing safe borrowed
     // descriptor polling. Dropping the stream closes both descriptors.
     poll_socket: UnixStream,
-    deadline: Instant,
+    deadline: Mutex<Instant>,
+    expires: Instant,
+}
+
+impl DeadlineStream {
+    fn deadline(&self) -> io::Result<Instant> {
+        self.deadline
+            .lock()
+            .map(|deadline| *deadline)
+            .map_err(|_| io::Error::other("X11 deadline lock unavailable"))
+    }
+    pub(super) fn begin_request(&self, budget: Duration) -> io::Result<()> {
+        let deadline = (Instant::now() + budget).min(self.expires);
+        remaining(deadline)?;
+        *self
+            .deadline
+            .lock()
+            .map_err(|_| io::Error::other("X11 deadline lock unavailable"))? = deadline;
+        Ok(())
+    }
 }
 
 impl Stream for DeadlineStream {
@@ -158,16 +191,16 @@ impl Stream for DeadlineStream {
         if mode.writable() {
             flags |= PollFlags::OUT;
         }
-        wait(&self.poll_socket, flags, self.deadline)
+        wait(&self.poll_socket, flags, self.deadline()?)
     }
 
     fn read(&self, buf: &mut [u8], fds: &mut Vec<RawFdContainer>) -> io::Result<usize> {
-        remaining(self.deadline)?;
+        remaining(self.deadline()?)?;
         self.inner.read(buf, fds)
     }
 
     fn write(&self, buf: &[u8], fds: &mut Vec<RawFdContainer>) -> io::Result<usize> {
-        remaining(self.deadline)?;
+        remaining(self.deadline()?)?;
         self.inner.write(buf, fds)
     }
 
@@ -176,7 +209,7 @@ impl Stream for DeadlineStream {
         bufs: &[IoSlice<'_>],
         fds: &mut Vec<RawFdContainer>,
     ) -> io::Result<usize> {
-        remaining(self.deadline)?;
+        remaining(self.deadline()?)?;
         self.inner.write_vectored(bufs, fds)
     }
 }
@@ -189,11 +222,41 @@ mod tests {
     fn stream(socket: UnixStream, budget: Duration) -> DeadlineStream {
         let poll_socket = socket.try_clone().unwrap();
         let (inner, _) = DefaultStream::from_unix_stream(socket).unwrap();
+        let expires = Instant::now() + budget;
         DeadlineStream {
             inner,
             poll_socket,
-            deadline: Instant::now() + budget,
+            deadline: Mutex::new(expires),
+            expires,
         }
+    }
+
+    #[test]
+    fn request_renewal_never_extends_the_original_hard_deadline() {
+        let (client, _server) = UnixStream::pair().unwrap();
+        let stream = stream(client, Duration::from_secs(1));
+        let expires = stream.expires;
+        stream.begin_request(Duration::from_secs(60)).unwrap();
+        assert_eq!(stream.deadline().unwrap(), expires);
+        stream.begin_request(Duration::from_millis(10)).unwrap();
+        assert!(stream.deadline().unwrap() < expires);
+        stream.begin_request(Duration::from_secs(60)).unwrap();
+        assert_eq!(stream.deadline().unwrap(), expires);
+        let (client, _server) = UnixStream::pair().unwrap();
+        let expired = stream_for_expired_deadline(client);
+        assert_eq!(
+            expired
+                .begin_request(Duration::from_secs(60))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+    }
+
+    fn stream_for_expired_deadline(socket: UnixStream) -> DeadlineStream {
+        let mut stream = stream(socket, Duration::from_secs(1));
+        stream.expires = Instant::now() - Duration::from_secs(1);
+        stream
     }
 
     #[test]

@@ -89,6 +89,8 @@ objc2-avf-audio = {version = "=0.3.2", default-features = false, features = ["st
 dispatch2 = {version = "=0.3.1", default-features = false, features = ["std", "block2", "objc2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+gstreamer = { version = "=0.21.3", features = ["v1_20"], optional = true }
+gstreamer-app = { version = "=0.21.2", features = ["v1_20"], optional = true }
 libloading = "=0.8.9"
 gtk = "=0.18.2"
 gdkx11-sys = "=0.18.2"
@@ -114,6 +116,7 @@ catalog-validator = []
 linux-x11-tests = []
 linux-secret-service-tests = []
 linux-worker-tests = []
+linux-recording-tests = ["dep:gstreamer", "dep:gstreamer-app"]
 
 [[test]]
 name = "linux_worker_factory"
@@ -126,3 +129,8 @@ name = "linux_package_code_probe"
 path = "tests/linux_package_code_probe.rs"
 harness = false
 required-features = ["linux-worker-tests"]
+
+[[test]]
+name = "linux_recording_codec"
+path = "tests/linux_recording_codec.rs"
+required-features = ["linux-recording-tests"]

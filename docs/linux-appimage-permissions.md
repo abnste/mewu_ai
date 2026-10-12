@@ -38,6 +38,29 @@ Native permission fixtures and a real cached-plugin repack plus extracted-tree
 comparison must pass on Linux before this step is accepted. No native repack
 result is claimed by this preparation packet.
 
+## GLES entry points
+
+WebKit loads `libGLESv2.so.2` dynamically, so scanning the main executable's
+direct dependencies does not ensure its presence. The x86_64 Ubuntu builder
+installs the official `libgles2` package and copies its GLES wrapper and full
+copyright file through Tauri's AppImage `files` mapping. The copied `.so.2` is a
+regular file, rather than a symlink to a path outside the package. Both entries
+are required before repacking and are included in the extracted-tree hash check.
+CI retains the package versions, ELF headers, dependency/version sections and
+source hashes. Missing files fail the build rather than producing an incomplete
+candidate.
+
+The wrapper dispatches through the host's `libGLdispatch`; this change does not
+bundle or replace GLdispatch, EGL, GLX, Mesa or vendor graphics drivers. A real
+desktop must provide compatible graphics libraries. The earlier test that used
+an isolated prefix containing both GLES and GLdispatch proves neither this
+wrapper-only route nor the new AppImage. A fresh native launch of the exact new
+package is still required, without that prefix's GLdispatch.
+
+References: [libglvnd wrapper architecture](https://github.com/NVIDIA/libglvnd/blob/master/README.md),
+[official Ubuntu libgles2 package](https://packages.ubuntu.com/jammy/libgles2),
+[AppImage graphics exclusions](https://github.com/AppImage/pkg2appimage/blob/master/excludelist).
+
 References: [pinned Tauri 2.12.1 bundler](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.1/crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs),
 [standalone output plugin](https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/blob/master/src/main.cpp),
 [system SquashFS tools](https://github.com/plougher/squashfs-tools).

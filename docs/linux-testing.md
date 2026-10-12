@@ -12,6 +12,25 @@ GTK/GDK source packages already present in the pinned Tauri graph are direct Lin
 
 ## Prepare an isolated test environment
 
+### First-start storage order
+
+Tauri 2.12.1 creates configured webviews before its application setup hook.
+On Linux, WebKit's default browser-data directory overlaps the legacy business
+data path. Creating it first can write `mediakeys` before storage resolution and
+incorrectly trigger `legacy_root_needs_recovery` on a fresh installation.
+Linux now defers the originally enabled window configurations, resolves storage
+and installs the Host, then builds those windows from their original settings.
+Windows and macOS keep their existing startup order. See the official
+[Tauri window creation contract](https://docs.rs/tauri-utils/2.10.1/tauri_utils/config/struct.WindowConfig.html#structfield.create).
+
+The existing nonempty legacy-directory protection remains in force. An old
+failed test directory is retained and is not a fresh-root test; do not delete
+or ignore its unknown files to report success. Verify the new candidate with
+a new isolated home/data/config root, then normal exit and restart of that
+same root. Capture the actual startup result, database path, browser-cache
+metadata and native desktop UI. Configuration and storage regression tests
+alone do not establish that the Linux GUI launched successfully.
+
 Use a separate checkout and empty test data directory. Record the source commit, dirty status, package version, distribution, architecture, session type, desktop and installed dependency versions before testing. For a source archive, record its SHA256 and supplied commit instead of claiming a Git HEAD.
 
 Install Node.js 24, Rust stable and the [official Tauri Linux development dependencies](https://v2.tauri.app/start/prerequisites/#linux). Check WebKitGTK 4.1, GTK3 and appindicator development packages with `pkg-config`; runtime libraries alone do not prove a build environment is ready. Verify that a marker created in the build directory is visible through the desktop file manager, then verify an actual local executable can be launched through the supported desktop tools. Opening a terminal alone does not prove this.

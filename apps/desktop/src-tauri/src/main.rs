@@ -112,6 +112,8 @@ mod speech_backend;
 mod speech_host;
 mod speech_worker;
 mod startup_windows;
+#[cfg(any(target_os = "linux", test))]
+mod startup_webviews;
 mod system_preferences;
 mod storage_cli;
 mod storage_dependencies;
@@ -1616,7 +1618,7 @@ async fn send_message(
                 .cloned()
                 .ok_or("请引用需要处理的截图选区")?;
             visual_annotation_host::RunScope::new(scene_id.clone(), grant.clone(), input)
-                .map(Arc::new)
+                .map(|scope| Arc::new(scope.for_connection(&preflight.connection)))
         })
         .transpose()?;
     let memory_grant = memory_host::grant_for_scene(&engine.store, &plugins.store, &scene_id)?;
@@ -2284,6 +2286,10 @@ fn main() {
     if quit_only {
         context.config_mut().app.windows.clear();
     }
+    // WebKit writes its browser data as soon as a webview is constructed.
+    // Resolve the business data root before it can populate the legacy path.
+    #[cfg(target_os = "linux")]
+    let deferred_windows = startup_webviews::defer(context.config_mut());
     context.config_mut().app.security.csp=Some(tauri::utils::config::Csp::Policy(format!("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' {origin} blob: data:; font-src 'self'; connect-src ipc: http://ipc.localhost; media-src {origin}; frame-src {origin}; object-src 'none'; base-uri 'none'; form-action 'none'")));
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2713,6 +2719,10 @@ fn main() {
                 video: video_host::VideoRegistry::default(),
                 image_exports: image_host::Registry::default(),
             });
+            #[cfg(target_os = "linux")]
+            for config in &deferred_windows {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), config)?.build()?;
+            }
             frozen::build(app)?;
             app.manage(recording::RecordingState::default());
             app.manage(app_update::UpdateState::default());

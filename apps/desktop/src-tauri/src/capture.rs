@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 #[path = "capture_linux.rs"]
 mod linux;
 
+#[cfg(target_os = "linux")]
+pub(crate) use linux::RecordingCapture as LinuxRecordingCapture;
+
 /// PNG dimensions are always physical image pixels. Desktop geometry uses the
 /// explicit coordinate_space below; in particular, a macOS origin is in points.
 #[derive(Debug, Clone, Serialize)]

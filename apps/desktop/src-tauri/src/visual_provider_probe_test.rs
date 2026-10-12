@@ -6,7 +6,7 @@
 //! gate below. It reserves a persistent once-only marker before its sole send.
 //! This probes transport/parser/core/compositor, not the UI sender/revocation gate.
 
-use super::{parse_batch, RunScope};
+use super::{parse_batch, vector_batch, RunScope};
 use crate::{
     agent_tools, ai, assets, connection_host, credentials, drawing_render, mcp_host,
     plugins::PluginStore, provider_transport, visual_annotation_input::VisualCoordinateProfile,
@@ -365,7 +365,7 @@ fn fixture_with_thinking(
         .find(|s| s.id == scene_id)
         .ok_or("绑定后会话不存在")?
         .messages;
-    let scope = Arc::new(RunScope::new(scene_id, grant, input)?);
+    let scope = Arc::new(RunScope::new(scene_id, grant, input)?.for_connection(selected));
     let tools = mcp_host::RunTools::with_visual(&context, Some(scope.clone()))?;
     let definitions = tools.definitions();
     require(
@@ -399,7 +399,7 @@ fn fixture_with_thinking(
     write_json(
         &root.join("preflight.json"),
         &json!({
-            "model":SELECTED_MODEL,"protocol":"chat_completions","coordinateProfile":coordinate_profile.id(),
+            "model":context.connection_profile.model,"protocol":"chat_completions","coordinateProfile":coordinate_profile.id(),
             "testOnlyThinkingOverride":if disable_thinking {json!("disabled")} else {Value::Null},
             "requestSha256":request_sha256,"outputLimit":2048,"requestLimit":1,
             "manifestSha256":scope.input.sha256(),"attachmentSha256":target_hash(&scope),
@@ -487,7 +487,7 @@ fn commit_turn(f: &mut Fixture, model: &DispatchLease, turn: ai::ModelTurn) -> R
         &f.root.join("public-response.json"),
         &json!({"publicReply":turn.content,"toolName":call.name,"arguments":call.arguments}),
     )?;
-    let batch = match parse_batch(&call.arguments, &f.scope.input) {
+    let batch = match f.scope.parse_plan(&call.arguments).and_then(vector_batch) {
         Ok(value) => value,
         Err(e) => {
             f.store
@@ -899,6 +899,15 @@ fn normalized_effect_database_failure_preserves_prepared_receipt_and_all_geometr
 }
 
 fn selected_profile_read_only(root: &Path) -> Result<ConnectionProfile> {
+    selected_profile_at_schema_read_only(root, SELECTED_ID, SELECTED_MODEL, 6)
+}
+
+fn selected_profile_at_schema_read_only(
+    root: &Path,
+    profile_id: &str,
+    model: &str,
+    expected_schema: i64,
+) -> Result<ConnectionProfile> {
     require(root.is_absolute(), "MEWU_PROBE_DATA_ROOT 必须为绝对路径")?;
     // No Store::open/recovery/migration touches the real database.
     let db = Connection::open_with_flags(
@@ -911,7 +920,7 @@ fn selected_profile_read_only(root: &Path) -> Result<ConnectionProfile> {
     let version: i64 = db
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|_| "无法读取用户数据库版本".to_string())?;
-    require(version == 6, "仅允许升级完成后的 DB6 配置")?;
+    require(version == expected_schema, "用户数据库版本与探针不匹配")?;
     let payload:Option<String>=db.query_row("SELECT CASE WHEN length(CAST(payload AS BLOB))<=67108864 THEN payload ELSE NULL END FROM app_state WHERE id=1",[],|row|row.get(0))
         .map_err(|_|"无法只读获取连接配置".to_string())?;
     let payload = payload.ok_or("配置超过探针读取预算")?;
@@ -922,10 +931,10 @@ fn selected_profile_read_only(root: &Path) -> Result<ConnectionProfile> {
     let mut selected = snapshot
         .connections
         .into_iter()
-        .filter(|p| p.id == SELECTED_ID);
+        .filter(|p| p.id == profile_id);
     let profile = selected.next().ok_or("未找到精确指定连接")?;
     require(selected.next().is_none(), "指定连接身份重复")?;
-    require(profile.model == SELECTED_MODEL, "指定连接模型已变更")?;
+    require(profile.model == model, "指定连接模型已变更")?;
     require(
         profile.has_key && profile.credential_id.is_some(),
         "指定连接尚未完成密钥导入",
@@ -1054,6 +1063,166 @@ async fn real_doubao_one_request_prepared_annotation_and_compositor() -> Result<
 
 // Separate root-authorized post-fix check: its own immutable gate/marker.
 // The original failed attempt and its protocol are never replayed or changed.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "Real paid MiniMax request; explicit profile/gate and persistent once-only marker required"]
+async fn real_minimax_m3_normalized_v2_one_request() -> Result<()> {
+    minimax_one_request(
+        "one-request-minimax-m3-normalized-v2",
+        "minimax-m3-normalized-v2-real-request-reserved.once",
+        "live-minimax-m3-v2",
+    )
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "Real paid MiniMax post-fix request; separate explicit gate and immutable once-only marker"]
+async fn real_minimax_m3_wire_v1_one_request() -> Result<()> {
+    minimax_one_request(
+        "one-request-minimax-m3-wire-v1",
+        "minimax-m3-wire-v1-real-request-reserved.once",
+        "live-minimax-m3-wire-v1",
+    )
+    .await
+}
+
+async fn minimax_one_request(gate: &str, marker_name: &str, kind: &str) -> Result<()> {
+    require(
+        std::env::var("MEWU_PROBE_ALLOW_HTTP").ok().as_deref() == Some(gate),
+        "未显式开启一次真实请求",
+    )?;
+    let profile_id = std::env::var("MEWU_PROBE_MINIMAX_PROFILE_ID")
+        .map_err(|_| "缺少精确 MiniMax 连接身份".to_string())?;
+    uuid::Uuid::parse_str(&profile_id).map_err(|_| "MiniMax 连接身份无效".to_string())?;
+    let data_root = fs::canonicalize(PathBuf::from(
+        std::env::var_os("MEWU_PROBE_DATA_ROOT").ok_or("缺少用户数据根目录")?,
+    ))
+    .map_err(|_| "用户数据根目录不可用".to_string())?;
+    let base = PathBuf::from(OUTPUT_BASE);
+    fs::create_dir_all(&base).map_err(error)?;
+    let base = fs::canonicalize(base).map_err(error)?;
+    require(
+        !data_root.starts_with(&base) && !base.starts_with(&data_root),
+        "探针输出与用户数据根目录必须独立",
+    )?;
+    let marker = base.join(marker_name);
+    require(
+        !marker.try_exists().map_err(error)?,
+        "请求已预留；禁止自动重试",
+    )?;
+    let profile = selected_profile_at_schema_read_only(&data_root, &profile_id, "MiniMax-M3", 10)?;
+    require(
+        matches!(
+            profile.base_url.as_str(),
+            "https://api.minimax.cn/v1"
+                | "https://api.minimaxi.com/v1"
+                | "https://api.minimax.io/v1"
+        ),
+        "此探针仅允许 MiniMax 官方 Chat 地址",
+    )?;
+    let transport = connection_host::transport_for(&profile)?;
+    let root = new_output(kind)?;
+    let mut f = fixture_with_profile(
+        root.clone(),
+        &profile,
+        VisualCoordinateProfile::ExplicitNormalized1000V2,
+    )?;
+    let key = credentials::read_profile(&data_root, &profile)
+        .map_err(|_| "无法读取指定连接的受保护密钥".to_string())?;
+    require(!key.is_empty(), "指定连接密钥为空")?;
+    let sends = AtomicUsize::new(0);
+    let mut lease = None;
+    let body = f.body.clone();
+    let received = tokio::time::timeout(
+        Duration::from_secs(60),
+        provider_transport::stream_turn_before_send(
+            &transport,
+            &key,
+            body,
+            |_| {},
+            || {
+                require(
+                    sends
+                        .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok(),
+                    "禁止第二次发送",
+                )?;
+                let mut reserved = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&marker)
+                    .map_err(|_| "请求标记已存在；禁止重试".to_string())?;
+                reserved
+                    .write_all(
+                        b"One real MiniMax request reserved. Never delete or retry this marker.\n",
+                    )
+                    .map_err(error)?;
+                reserved.sync_all().map_err(error)?;
+                f.plugins.visual_annotations(&f.scope.origin.grant)?;
+                lease = Some(model_dispatch(&mut f)?);
+                Ok(())
+            },
+        ),
+    )
+    .await;
+    drop(key);
+    let turn = match received {
+        Ok(Ok(turn)) => turn,
+        other => {
+            if let Some(lease) = &lease {
+                f.store
+                    .record_request_unknown(lease, NoResponseReason::IncompleteResponse)
+                    .map_err(error)?;
+            }
+            if f.store
+                .run_is_active(&f.context.scene_id, &f.context.run_id)
+            {
+                f.store.cancel_run(&f.context.scene_id).map_err(error)?;
+            }
+            write_json(
+                &root.join("probe-report.json"),
+                &json!({
+                    "passed":false, "stage":"provider", "timeout":other.is_err(),
+                    "sendGateCount":sends.load(Ordering::SeqCst), "requestLimit":1, "retryCount":0,
+                    "model":"MiniMax-M3", "nativeGuiVerified":false
+                }),
+            )?;
+            return Err("真实请求未完成；不重试、不记录密钥或思考内容".into());
+        }
+    };
+    let observed = commit_turn(&mut f, &lease.ok_or("缺少实际派发记录")?, turn);
+    let report = match observed {
+        Ok(report) => report,
+        Err(reason) => {
+            if f.store
+                .run_is_active(&f.context.scene_id, &f.context.run_id)
+            {
+                f.store.cancel_run(&f.context.scene_id).map_err(error)?;
+            }
+            write_json(
+                &root.join("probe-report.json"),
+                &json!({
+                    "passed":false, "stage":"local-tool", "reason":reason,
+                    "sendGateCount":sends.load(Ordering::SeqCst), "requestLimit":1, "retryCount":0,
+                    "model":"MiniMax-M3", "nativeGuiVerified":false
+                }),
+            )?;
+            return Err("真实工具参数未通过；仅保存合成图片的参数，不重试".into());
+        }
+    };
+    let (root, mut report) = finish_local_checks(f, report)?;
+    report["kind"] = json!("real MiniMax single normalized1000-v2 request");
+    report["model"] = json!("MiniMax-M3");
+    report["sendGateCount"] = json!(sends.load(Ordering::SeqCst));
+    report["requestLimit"] = json!(1);
+    report["retryCount"] = json!(0);
+    report["nativeGuiVerified"] = json!(false);
+    write_json(&root.join("probe-report.json"), &report)?;
+    require(
+        report["passed"] == true,
+        "工具已提交但合成位置未达标；不重新请求",
+    )
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "Real paid provider request; root only; explicit env gate and once-only marker required"]
 async fn real_doubao_normalized_v2_one_request() -> Result<()> {
