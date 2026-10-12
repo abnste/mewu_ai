@@ -1,0 +1,7 @@
+evidence
+*.AppImage
+*.deb
+*.tar.*
+*.so*
+*.log
+__pycache__
