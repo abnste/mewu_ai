@@ -4,12 +4,11 @@
 .drawing-editor{position:absolute;inset:0;z-index:24;touch-action:none;cursor:default}
 .drawing-edit-surface{position:absolute;overflow:hidden;cursor:crosshair;touch-action:none}
 .drawing-edit-surface:focus{outline:none}
-.drawing-blackboard .drawing-toolbar{flex-direction:row;align-items:center;flex-wrap:nowrap;gap:var(--toolbar-button-gap);overflow-x:auto;scrollbar-width:thin;border-radius:15px;padding:6px}
+.drawing-blackboard .drawing-toolbar{flex-direction:row;align-items:center;flex-wrap:nowrap;gap:var(--toolbar-button-gap);overflow:visible;border-radius:15px;padding:6px;box-sizing:border-box;max-width:calc(100vw - 24px)}
 .drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-properties-row{display:contents}
 .drawing-blackboard{pointer-events:none}
 .drawing-blackboard .drawing-edit-surface{z-index:1;pointer-events:auto}
 .drawing-blackboard .drawing-toolbar{z-index:5;pointer-events:auto}
-.drawing-blackboard .drawing-trash{position:sticky;right:54px;background:var(--surface,#fafcff)}
 .drawing-trash.object-dragging{color:var(--danger,#dc4455)}
 .drawing-trash.object-trash-over{background:#dc4455!important;color:#fff!important}
 .blackboard-artifact-layer{position:absolute;inset:0;pointer-events:none}
@@ -25,7 +24,6 @@
 .blackboard-text-corner.se{bottom:-6px;right:-6px;cursor:nwse-resize}
 .drawing-blackboard .drawing-toolbar>*{flex-shrink:0}
 .drawing-blackboard .drawing-divider{margin:0 5px}
-.drawing-blackboard .drawing-done{position:sticky;right:0;background:var(--surface,#fafcff);box-shadow:-5px 0 8px var(--surface,#fafcff)}
 .drawing-blackboard .drawing-hit{cursor:crosshair}
 .drawing-edit-surface.drawing-select-mode{cursor:default}.drawing-edit-surface.drawing-text-mode{cursor:text}
 .drawing-edit-surface.drawing-eraser-mode .drawing-hit{cursor:inherit}
@@ -82,5 +80,14 @@
 .drawing-tools-row,.drawing-properties-row{display:flex;flex-wrap:nowrap;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 12px);padding:5px;border:0;border-radius:12px;background:var(--surface,#fafcff);box-shadow:0 4px 18px #3347623d,0 1px 4px #3347621a;overflow-x:auto;scrollbar-width:thin;box-sizing:border-box}
 .drawing-tools-row>*,.drawing-properties-row>*{flex-shrink:0}
 .drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-properties-row{padding:0;border-radius:0;background:transparent;box-shadow:none;overflow:visible}
+.drawing-property-controls,.drawing-history-actions{display:contents}
+.drawing-property-controls>*,.drawing-history-actions>*{flex-shrink:0}
+/* Scroll tools/properties independently; history/trash/done keep real space.
+   Sticky controls in the shared scroller used to cover Undo/Redo hit targets. */
+.drawing-blackboard .drawing-tools-row,.drawing-blackboard .drawing-property-controls{display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;min-width:48px;max-width:none;overflow-x:auto;scrollbar-width:thin}
+.drawing-blackboard .drawing-tools-row{flex:1 1 auto}
+.drawing-blackboard .drawing-property-controls{flex:0 1 auto}
+.drawing-blackboard .drawing-property-controls>*{flex-shrink:0}
+.drawing-blackboard .drawing-history-actions{display:flex;align-items:center;gap:var(--toolbar-button-gap);flex:0 0 auto}
 
 .drawing-selection-background{position:absolute;z-index:-1;pointer-events:auto;background:transparent}
