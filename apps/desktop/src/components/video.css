@@ -92,8 +92,9 @@
 .video-annotation-layer image { pointer-events: none; }
 .video-annotation-hit { fill: transparent; stroke: transparent; pointer-events: all; cursor: pointer; }
 .video-annotation-hit.selected { stroke: var(--accent, #2563eb); stroke-width: 1.5px; stroke-dasharray: 4 3; }
-.video-annotation-tools { display: flex; align-items: center; gap: 4px; padding: 4px 0 0; }
-.video-annotation-tools .inline-error { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.video-preview-actions { position:fixed;z-index:29;display:flex;align-items:center;gap:var(--toolbar-button-gap);width:max-content;max-width:calc(100vw - 16px);overflow-x:auto;scrollbar-width:thin;pointer-events:auto;user-select:none;touch-action:none; }
+.video-preview-annotation-actions { display:contents; }
+.video-preview-actions .inline-error { flex:1;min-width:80px;overflow:hidden;text-overflow:ellipsis; }
 .video-answer-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .video-answer-actions button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .video-annotation-hit { touch-action: none; }
@@ -104,7 +105,5 @@
 .video-annotation-text-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 4px; }
 .video-annotation-text-actions .inline-error { margin-right: auto; min-width: 0; }
 
-.video-object-tools{position:absolute;bottom:-62px;left:0;z-index:30;display:flex;gap:4px;width:max-content;padding:6px;border:1px solid var(--line);border-radius:15px;background:var(--surface,#fcfdff);box-shadow:var(--shadow-menu);opacity:0;pointer-events:none}
-.video-artifact:is(:hover,:focus-within,.moving,.active) .video-object-tools{opacity:1;pointer-events:auto}
-.video-object-tools button,.video-trim-bar .icon-button,.video-annotation-tools .icon-button{display:grid;place-items:center;padding:0;border:0;background:transparent;color:var(--secondary)}
-.video-object-tools button:hover,.video-trim-bar .icon-button:hover,.video-annotation-tools .icon-button:hover{background:var(--accent-soft);color:var(--accent)}
+.video-trim-bar .icon-button{padding:0;border:0;background:transparent;color:var(--secondary)}
+.video-trim-bar .icon-button:hover{background:var(--accent-soft);color:var(--accent)}
