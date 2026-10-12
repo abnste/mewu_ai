@@ -313,7 +313,9 @@ pub(crate) fn supervise(config:PrepareConfig,
             codec.push_rgba([20,120,220,255].repeat(64*48),&||Instant::now()<expires).unwrap();
         }
         assert!(bursts.is_empty());
-        assert_eq!(codec.finish(&||Instant::now()<expires).unwrap(),480);
+        let mut stages=Vec::new();
+        assert_eq!(codec.finish_with_progress(&||Instant::now()<expires,|stage|{stages.push(stage);Ok(())}).unwrap(),480);
+        assert_eq!(stages,[FinalizeStage::VideoEos,FinalizeStage::AacTail,FinalizeStage::MuxEos,FinalizeStage::FileSync]);
         assert!(std::fs::metadata(&output).unwrap().len()>1000);
         std::fs::copy(&output,"/tmp/last-recording-burst-32s.mp4").unwrap();
         std::fs::remove_file(output).unwrap();

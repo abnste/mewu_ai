@@ -15,7 +15,7 @@ use std::{
 
 const FPS: u64 = 15;
 const MAX_PIXELS: u64 = 4_000_000;
-#[derive(Clone,Copy,Debug,serde::Serialize,serde::Deserialize)]
+#[derive(Clone,Copy,Debug,PartialEq,Eq,serde::Serialize,serde::Deserialize)]
 #[serde(rename_all="snake_case")]
 pub(crate) enum FinalizeStage { AudioTail, VideoEos, AacTail, MuxEos, FileSync, CloseCapture }
 const QUEUED_FRAMES: u64 = 2;
