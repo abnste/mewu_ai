@@ -21,7 +21,8 @@ use objc2::{
 };
 use objc2_av_foundation::*;
 use objc2_avf_audio::{AVEncoderBitRateKey, AVFormatIDKey, AVNumberOfChannelsKey, AVSampleRateKey};
-use objc2_core_foundation::{CFRange, CGPoint, CGRect, CGSize};
+use objc2_core_audio_types::{kAudioFormatFlagIsNonInterleaved, AudioBuffer, AudioBufferList};
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGDisplayBounds, CGDisplayPixelsHigh, CGDisplayPixelsWide};
 use objc2_core_media::{
     CMAudioFormatDescriptionGetStreamBasicDescription, CMClock, CMSampleBuffer, CMSampleTimingInfo,
@@ -890,37 +891,135 @@ fn audio(
             {
                 return Err("电脑声音时间不连续，录制已停止".into());
             }
-            let mut sub = std::ptr::null_mut();
-            if unsafe {
-                CMSampleBuffer::copy_sample_buffer_for_range(
-                    None,
-                    &sample.0,
-                    CFRange {
-                        location: part.first as isize,
-                        length: (part.end - part.first) as isize,
-                    },
-                    NonNull::from(&mut sub),
-                )
-            } != 0
-            {
-                return Err("无法裁切电脑声音样本".into());
-            }
-            let sub = unsafe { Retained::from_raw(sub) }.ok_or("电脑声音裁切样本缺失")?;
-            let sample = copied_timing(
-                &sub,
-                part.active_ticks,
-                CMTime {
-                    value: 1,
-                    timescale: RATE as i32,
-                    flags: CMTimeFlags::Valid,
-                    epoch: 0,
-                },
-            )?;
+            let sample = pcm_part(&sample.0, part.first, part.end, part.active_ticks)?;
             writer.append(writer.audio.as_ref().ok_or("电脑声音编码器缺失")?, &sample)?;
             *last_end = part.active_ticks
                 + (part.end - part.first) as u64 * TICKS_PER_SECOND / u64::from(RATE);
         }
     }
+}
+
+// AudioBufferList has a C flexible tail. Use the framework's AudioBuffer and
+// enough aligned storage for stereo's two planes; the advertised count is one
+// for interleaved PCM and two for planar PCM.
+#[repr(C)]
+struct StereoBufferList {
+    count: u32,
+    buffers: [AudioBuffer; 2],
+}
+impl StereoBufferList {
+    fn pointer(&mut self) -> NonNull<AudioBufferList> {
+        const {
+            assert!(
+                std::mem::align_of::<StereoBufferList>() == std::mem::align_of::<AudioBufferList>()
+            );
+            assert!(
+                std::mem::offset_of!(StereoBufferList, buffers)
+                    == std::mem::offset_of!(AudioBufferList, mBuffers)
+            );
+        }
+        NonNull::from(self).cast()
+    }
+}
+
+fn pcm_part(
+    source: &CMSampleBuffer,
+    first: usize,
+    end: usize,
+    active_ticks: u64,
+) -> Result<Retained<CMSampleBuffer>, String> {
+    let count = usize::try_from(unsafe { source.num_samples() }).map_err(|_| "电脑声音帧数无效")?;
+    if first >= end || end > count || count > RATE as usize / 2 {
+        return Err("电脑声音帧区间无效".into());
+    }
+    let format = unsafe { source.format_description() }.ok_or("电脑声音格式缺失")?;
+    let asbd = unsafe { CMAudioFormatDescriptionGetStreamBasicDescription(&format).as_ref() }
+        .ok_or("电脑声音 PCM 格式缺失")?;
+    let bytes_per_frame = asbd.mBytesPerFrame as usize;
+    if asbd.mFormatID != u32::from_be_bytes(*b"lpcm")
+        || asbd.mSampleRate != f64::from(RATE)
+        || asbd.mChannelsPerFrame != 2
+        || bytes_per_frame == 0
+        || bytes_per_frame > 16
+    {
+        return Err("电脑声音 PCM 布局不支持".into());
+    }
+    let planar = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0;
+    let frames = end - first;
+    let bytes = frames * bytes_per_frame; // bounded to 24k frames × 16 bytes
+    let mut left = vec![0u8; bytes];
+    let mut right = if planar { vec![0u8; bytes] } else { Vec::new() };
+    let mut list = StereoBufferList {
+        count: if planar { 2 } else { 1 },
+        buffers: [
+            AudioBuffer {
+                mNumberChannels: if planar { 1 } else { 2 },
+                mDataByteSize: bytes as u32,
+                mData: left.as_mut_ptr().cast(),
+            },
+            AudioBuffer {
+                mNumberChannels: 1,
+                mDataByteSize: if planar { bytes as u32 } else { 0 },
+                mData: if planar {
+                    right.as_mut_ptr().cast()
+                } else {
+                    std::ptr::null_mut()
+                },
+            },
+        ],
+    };
+    // CopySampleBufferForRange explicitly does not support planar audio.
+    // This API copies only the requested real PCM frames into matching planes.
+    if unsafe {
+        source.copy_pcm_data_into_audio_buffer_list(first as i32, frames as i32, list.pointer())
+    } != 0
+    {
+        return Err("电脑声音 PCM 区间拷贝失败".into());
+    }
+    let timing = CMSampleTimingInfo {
+        duration: CMTime {
+            value: 1,
+            timescale: RATE as i32,
+            flags: CMTimeFlags::Valid,
+            epoch: 0,
+        },
+        presentationTimeStamp: time(active_ticks),
+        decodeTimeStamp: CMTime {
+            value: 0,
+            timescale: 0,
+            flags: CMTimeFlags(0),
+            epoch: 0,
+        },
+    };
+    let mut output = std::ptr::null_mut();
+    if unsafe {
+        CMSampleBuffer::create(
+            None,
+            None,
+            false,
+            None,
+            std::ptr::null_mut(),
+            Some(&format),
+            frames as isize,
+            1,
+            &timing,
+            0,
+            std::ptr::null(),
+            NonNull::from(&mut output),
+        )
+    } != 0
+    {
+        return Err("电脑声音 PCM 样本创建失败".into());
+    }
+    let output = unsafe { Retained::from_raw(output) }.ok_or("电脑声音 PCM 样本缺失")?;
+    // CoreMedia owns a copy before these local buffers are dropped. Preserve
+    // the original format description, plane order, and 1/48k frame timing.
+    if unsafe { output.set_data_buffer_from_audio_buffer_list(None, None, 0, list.pointer()) } != 0
+        || unsafe { output.set_data_ready() } != 0
+    {
+        return Err("电脑声音 PCM 样本写入失败".into());
+    }
+    Ok(output)
 }
 fn queue_check(queue: &Arc<Mutex<Queue>>) -> Result<(), String> {
     let state = queue.lock().map_err(|_| "录屏帧状态不可用")?;
@@ -1141,6 +1240,263 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2_core_audio_types::{
+        kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, AudioStreamBasicDescription,
+    };
+    use objc2_core_foundation::CFRange;
+    use objc2_core_media::CMAudioFormatDescriptionCreate;
+
+    fn read_pcm(source: &CMSampleBuffer, planar: bool) -> Vec<[u32; 2]> {
+        let frames = unsafe { source.num_samples() } as usize;
+        let mut first = vec![0f32; frames * if planar { 1 } else { 2 }];
+        let mut second = if planar {
+            vec![0f32; frames]
+        } else {
+            Vec::new()
+        };
+        let mut list = StereoBufferList {
+            count: if planar { 2 } else { 1 },
+            buffers: [
+                AudioBuffer {
+                    mNumberChannels: if planar { 1 } else { 2 },
+                    mDataByteSize: (first.len() * 4) as u32,
+                    mData: first.as_mut_ptr().cast(),
+                },
+                AudioBuffer {
+                    mNumberChannels: 1,
+                    mDataByteSize: (second.len() * 4) as u32,
+                    mData: if planar {
+                        second.as_mut_ptr().cast()
+                    } else {
+                        std::ptr::null_mut()
+                    },
+                },
+            ],
+        };
+        assert_eq!(
+            unsafe {
+                source.copy_pcm_data_into_audio_buffer_list(0, frames as i32, list.pointer())
+            },
+            0
+        );
+        (0..frames)
+            .map(|n| {
+                if planar {
+                    [first[n].to_bits(), second[n].to_bits()]
+                } else {
+                    [first[n * 2].to_bits(), first[n * 2 + 1].to_bits()]
+                }
+            })
+            .collect()
+    }
+
+    fn stereo_fixture(planar: bool, pts: u64) -> (Retained<CMSampleBuffer>, Vec<[u32; 2]>) {
+        let frames = 2048usize;
+        let tones: Vec<[f32; 2]> = (0..frames)
+            .map(|n| {
+                [440.0, 880.0].map(|hz| {
+                    (0.08 * (std::f64::consts::TAU * hz * n as f64 / f64::from(RATE)).sin()) as f32
+                })
+            })
+            .collect();
+        let expected = tones.iter().map(|pair| pair.map(f32::to_bits)).collect();
+        let mut first: Vec<f32> = if planar {
+            tones.iter().map(|p| p[0]).collect()
+        } else {
+            tones.iter().flat_map(|p| *p).collect()
+        };
+        let mut second: Vec<f32> = if planar {
+            tones.iter().map(|p| p[1]).collect()
+        } else {
+            Vec::new()
+        };
+        let mut list = StereoBufferList {
+            count: if planar { 2 } else { 1 },
+            buffers: [
+                AudioBuffer {
+                    mNumberChannels: if planar { 1 } else { 2 },
+                    mDataByteSize: (first.len() * 4) as u32,
+                    mData: first.as_mut_ptr().cast(),
+                },
+                AudioBuffer {
+                    mNumberChannels: 1,
+                    mDataByteSize: (second.len() * 4) as u32,
+                    mData: if planar {
+                        second.as_mut_ptr().cast()
+                    } else {
+                        std::ptr::null_mut()
+                    },
+                },
+            ],
+        };
+        let stride = if planar { 4 } else { 8 };
+        let asbd = AudioStreamBasicDescription {
+            mSampleRate: f64::from(RATE),
+            mFormatID: u32::from_be_bytes(*b"lpcm"),
+            mFormatFlags: kAudioFormatFlagIsFloat
+                | kAudioFormatFlagIsPacked
+                | if planar {
+                    kAudioFormatFlagIsNonInterleaved
+                } else {
+                    0
+                },
+            mBytesPerPacket: stride,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: stride,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 32,
+            mReserved: 0,
+        };
+        let mut format = std::ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                CMAudioFormatDescriptionCreate(
+                    None,
+                    &asbd,
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    None,
+                    NonNull::from(&mut format),
+                )
+            },
+            0
+        );
+        let format = unsafe { Retained::from_raw(format) }.unwrap();
+        let timing = CMSampleTimingInfo {
+            duration: CMTime {
+                value: 1,
+                timescale: RATE as i32,
+                flags: CMTimeFlags::Valid,
+                epoch: 0,
+            },
+            presentationTimeStamp: time(pts),
+            decodeTimeStamp: CMTime {
+                value: 0,
+                timescale: 0,
+                flags: CMTimeFlags(0),
+                epoch: 0,
+            },
+        };
+        let mut source = std::ptr::null_mut();
+        assert_eq!(
+            unsafe {
+                CMSampleBuffer::create(
+                    None,
+                    None,
+                    false,
+                    None,
+                    std::ptr::null_mut(),
+                    Some(&format),
+                    frames as isize,
+                    1,
+                    &timing,
+                    0,
+                    std::ptr::null(),
+                    NonNull::from(&mut source),
+                )
+            },
+            0
+        );
+        let source = unsafe { Retained::from_raw(source) }.unwrap();
+        assert_eq!(
+            unsafe { source.set_data_buffer_from_audio_buffer_list(None, None, 0, list.pointer()) },
+            0
+        );
+        assert_eq!(unsafe { source.set_data_ready() }, 0);
+        (source, expected)
+    }
+
+    fn check_pcm_ranges(planar: bool) {
+        autoreleasepool(|_| {
+            let epoch = TICKS_PER_SECOND * 5;
+            let (source, expected) = stereo_fixture(planar, epoch - 10_000);
+            assert_eq!(read_pcm(&source, planar), expected);
+            let original_format = unsafe { source.format_description() }.unwrap();
+            let original_asbd = *unsafe {
+                CMAudioFormatDescriptionGetStreamBasicDescription(&original_format).as_ref()
+            }
+            .unwrap();
+            let mut legacy = std::ptr::null_mut();
+            let legacy_status = unsafe {
+                CMSampleBuffer::copy_sample_buffer_for_range(
+                    None,
+                    &source,
+                    CFRange {
+                        location: 1,
+                        length: 7,
+                    },
+                    NonNull::from(&mut legacy),
+                )
+            };
+            drop(unsafe { Retained::from_raw(legacy) });
+            if planar {
+                assert_ne!(
+                    legacy_status, 0,
+                    "Official legacy API rejects planar subranges"
+                );
+            } else {
+                assert_eq!(legacy_status, 0);
+            }
+            for (first, end) in [(0, 2048), (1, 37), (2039, 2048)] {
+                let part = pcm_part(&source, first, end, 1_234_567).unwrap();
+                assert_eq!(read_pcm(&part, planar), expected[first..end]);
+                assert_eq!(unsafe { part.num_samples() } as usize, end - first);
+                assert!(unsafe { part.data_is_ready() });
+                assert_eq!(
+                    host_ticks(unsafe { part.presentation_time_stamp() }).unwrap(),
+                    1_234_567
+                );
+                assert_eq!(
+                    host_ticks(unsafe { part.duration() }).unwrap(),
+                    (end - first) as u64 * TICKS_PER_SECOND / u64::from(RATE)
+                );
+                let format = unsafe { part.format_description() }.unwrap();
+                let asbd =
+                    unsafe { CMAudioFormatDescriptionGetStreamBasicDescription(&format).as_ref() }
+                        .unwrap();
+                assert_eq!(*asbd, original_asbd);
+            }
+            assert!(pcm_part(&source, 1, 1, 0).is_err());
+            assert!(pcm_part(&source, 0, 2049, 0).is_err());
+            // 1 ms before the start and the 3 ms pause are excluded; the stop
+            // boundary truncates the real packet at 6 ms, with no made-up PCM.
+            let mut clock = Timeline::new(epoch, false);
+            clock.set_paused(true, epoch + 10_000).unwrap();
+            clock.set_paused(false, epoch + 40_000).unwrap();
+            clock.set_paused(true, epoch + 60_000).unwrap();
+            let parts = clock.parts(epoch - 10_000, 2048, RATE).unwrap();
+            assert_eq!(
+                parts
+                    .iter()
+                    .map(|p| (p.first, p.end, p.active_ticks))
+                    .collect::<Vec<_>>(),
+                vec![(48, 96, 0), (240, 336, 10_000)]
+            );
+            for part in parts {
+                let copied = pcm_part(&source, part.first, part.end, part.active_ticks).unwrap();
+                assert_eq!(read_pcm(&copied, planar), expected[part.first..part.end]);
+                assert_eq!(
+                    host_ticks(unsafe { copied.presentation_time_stamp() }).unwrap(),
+                    part.active_ticks
+                );
+            }
+            assert_eq!(read_pcm(&source, planar), expected);
+            assert_eq!(
+                host_ticks(unsafe { source.presentation_time_stamp() }).unwrap(),
+                epoch - 10_000
+            );
+        });
+    }
+    #[test]
+    fn planar_pcm_subranges_preserve_tones_timing_pause_boundaries_and_source() {
+        check_pcm_ranges(true);
+    }
+    #[test]
+    fn interleaved_pcm_subranges_preserve_tones_timing_pause_boundaries_and_source() {
+        check_pcm_ranges(false);
+    }
     #[test]
     fn output_refuses_existing_files_and_never_deletes_replacements() {
         let root =

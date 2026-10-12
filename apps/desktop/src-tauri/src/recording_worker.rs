@@ -479,6 +479,11 @@ pub(crate) enum MacOutcome {
     Encoding,
     OutputGuard,
     AudioContinuity,
+    AudioPcmCopy,
+    AudioPcmCreate,
+    AudioPcmAttach,
+    CaptureEnded,
+    CaptureDrain,
     ScreenBacklog,
     FrameCallback,
     SampleTiming,
@@ -501,7 +506,26 @@ pub(crate) fn mac_diagnostic(stage: MacStage, outcome: MacOutcome) {
 fn mac_failure_category(error: &str) -> MacOutcome {
     // Match only product-authored, fixed prefixes. Unrecognized errors stay
     // opaque; no NSError details, paths, frames, audio, or credentials escape.
-    if error == "录制已取消" {
+    if error == "无法裁切电脑声音样本" || error == "电脑声音 PCM 区间拷贝失败" {
+        MacOutcome::AudioPcmCopy
+    } else if error == "电脑声音 PCM 样本创建失败" || error == "电脑声音 PCM 样本缺失"
+    {
+        MacOutcome::AudioPcmCreate
+    } else if error == "电脑声音 PCM 样本写入失败" {
+        MacOutcome::AudioPcmAttach
+    } else if error.starts_with("屏幕或电脑声音采集已结束") {
+        MacOutcome::CaptureEnded
+    } else if [
+        "无法移除屏幕回调",
+        "无法移除声音回调",
+        "无法停止屏幕",
+        "无法停止电脑",
+    ]
+    .iter()
+    .any(|p| error.starts_with(p))
+    {
+        MacOutcome::CaptureDrain
+    } else if error == "录制已取消" {
         MacOutcome::Canceled
     } else if error == "屏幕编码积压超出限制" {
         MacOutcome::ScreenBacklog
@@ -554,9 +578,16 @@ fn mac_failure_category(error: &str) -> MacOutcome {
     .any(|p| error.starts_with(p))
     {
         MacOutcome::Encoding
-    } else if ["录屏输出", "录屏文件已", "无法持有", "无法同步录屏"]
-        .iter()
-        .any(|p| error.starts_with(p))
+    } else if [
+        "录屏输出",
+        "录屏文件已",
+        "无法持有",
+        "无法同步录屏",
+        "无法检查录屏文件",
+        "实际录屏文件缺失",
+    ]
+    .iter()
+    .any(|p| error.starts_with(p))
     {
         MacOutcome::OutputGuard
     } else if ["电脑声音", "声音编码"]

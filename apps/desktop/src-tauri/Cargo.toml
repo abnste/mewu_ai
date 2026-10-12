@@ -82,7 +82,8 @@ objc2-core-graphics = { version = "=0.3.2", default-features = false, features =
 block2 = "=0.6.2"
 core-foundation = "=0.10.1"
 objc2-av-foundation = {version = "=0.3.2", default-features = false, features = ["std", "AVAsset", "AVAssetTrack", "AVMediaFormat", "AVAssetImageGenerator", "AVAsynchronousKeyValueLoading", "block2", "objc2-core-foundation", "objc2-core-media", "objc2-core-graphics", "AVAssetExportSession", "AVVideoComposition", "AVAssetReader", "AVAssetReaderOutput", "AVAssetWriter", "AVAssetWriterInput", "AVVideoSettings"] }
-objc2-core-media = {version = "=0.3.2", default-features = false, features = ["std", "CMTime", "objc2", "CMTimeRange", "CMBase", "CMSampleBuffer", "objc2-core-video", "CMFormatDescription", "CMSync", "objc2-core-audio-types"] }
+objc2-core-media = {version = "=0.3.2", default-features = false, features = ["std", "CMTime", "objc2", "CMTimeRange", "CMBase", "CMSampleBuffer", "objc2-core-video", "CMFormatDescription", "CMSync", "objc2-core-audio-types", "CMBlockBuffer"] }
+objc2-core-audio-types = {version = "=0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 objc2-core-video = {version = "=0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
 objc2-core-foundation = {version = "=0.3.2", default-features = false, features = ["std", "CFCGTypes", "CFBase"] }
 objc2-avf-audio = {version = "=0.3.2", default-features = false, features = ["std", "AVAudioSettings"] }
