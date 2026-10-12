@@ -32392,3 +32392,21 @@ www.iis.fraunhofer.de/amm
 amm-info@iis.fraunhofer.de
 
 
+
+## Linux AppImage media runtime supplement
+
+The Linux media package uses GStreamer 1.28.8, Orc 0.4.44, FFmpeg 7.1.5,
+OpenH264 2.6.0 and PipeWire 1.4.11. Exact source URLs, hashes and build scripts
+are in `scripts/linux-media-runtime/sdk`. Component licenses remain separate
+from Mewu's MPL-2.0 license. The shared FFmpeg build disables GPL, nonfree and
+version3 features and reports LGPL-2.1-or-later; this is not a license claim
+about the whole application or all platform libraries.
+
+The final AppDir retains complete source license texts, exact dependency
+package copyrights, and the PTP helper's actual Rust standard-library notices
+under `usr/share/doc/mewu-media-runtime/licenses`. Its source/closure metadata
+is alongside these files. Gtk/WebKit and other desktop dependency notices are
+retained in their corresponding `usr/share/doc` entries. The final package
+must be checked separately from the SDK: source inventory alone is not proof
+that a distribution library or plugin was bundled. Fixed official sources
+and the matching build recipes are retained for corresponding-source review.

@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
+set -eu
+runtime_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+test -r "$runtime_root/usr/share/doc/mewu-media-runtime/runtime.json"
+test -x "$runtime_root/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"
+test "$#" -gt 0
+unset LD_PRELOAD LD_AUDIT GST_PLUGIN_PATH GST_PLUGIN_SYSTEM_PATH GST_PLUGIN_LOAD
+unset GST_REGISTRY GST_REGISTRY_1_0 GST_PLUGIN_SCANNER
+export LD_LIBRARY_PATH="$runtime_root/usr/lib"
+export GST_PLUGIN_PATH_1_0="$runtime_root/usr/lib/gstreamer-1.0"
+export GST_PLUGIN_SYSTEM_PATH_1_0="$runtime_root/usr/lib/gstreamer-1.0"
+export GST_PLUGIN_SCANNER_1_0="$runtime_root/usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner"
+export GST_PTP_HELPER_1_0="$runtime_root/usr/lib/gstreamer1.0/gstreamer-1.0/gst-ptp-helper"
+export GST_REGISTRY_REUSE_PLUGIN_SCANNER=no
+export PIPEWIRE_MODULE_DIR="$runtime_root/usr/lib/pipewire-0.3"
+export SPA_PLUGIN_DIR="$runtime_root/usr/lib/spa-0.2"
+export PIPEWIRE_CONFIG_DIR="$runtime_root/usr/share/pipewire"
+export PIPEWIRE_CONFIG_NAME=client.conf
+exec "$@"

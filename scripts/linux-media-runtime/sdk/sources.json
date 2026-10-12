@@ -1,0 +1,53 @@
+{
+  "sources": [
+    {
+      "file": "gstreamer-1.28.8.tar.xz",
+      "sha256": "baa8e86985ad6417cc0ad6e7b79ff2884c6779c8b1c7a6240e7121822c86e524",
+      "url": "https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-1.28.8.tar.xz"
+    },
+    {
+      "file": "gst-plugins-base-1.28.8.tar.xz",
+      "sha256": "ade70e3381fcbb024f1f20aa9ede9b5654aeed39d5bd70b1a98f53015e501117",
+      "url": "https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-1.28.8.tar.xz"
+    },
+    {
+      "file": "gst-plugins-good-1.28.8.tar.xz",
+      "sha256": "a7670ed900d3d03be744d25c1873b239896e9a82ce6d17f8febc6fffbaee9521",
+      "url": "https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-1.28.8.tar.xz"
+    },
+    {
+      "file": "gst-plugins-bad-1.28.8.tar.xz",
+      "sha256": "670d888bde8242579b0d8e91f60cf337aa7be20ca7c315ebfbdd6e5a9218d104",
+      "url": "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-1.28.8.tar.xz"
+    },
+    {
+      "file": "gst-libav-1.28.8.tar.xz",
+      "sha256": "98ad3d7f8932c495e268708903f1c3388d5f26a0db34727a9f861ee23b724177",
+      "url": "https://gstreamer.freedesktop.org/src/gst-libav/gst-libav-1.28.8.tar.xz"
+    },
+    {
+      "file": "orc-0.4.44.tar.xz",
+      "sha256": "4aeb97aea2b58224029dc2b23d7d064cfa990cb4fb8c4da440bcbe9c95bc5d2d",
+      "url": "https://gstreamer.freedesktop.org/src/orc/orc-0.4.44.tar.xz"
+    },
+    {
+      "file": "ffmpeg-7.1.5.tar.xz",
+      "sha256": "de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f",
+      "url": "https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz"
+    },
+    {
+      "file": "openh264-2.6.0.tar.gz",
+      "sha256": "558544ad358283a7ab2930d69a9ceddf913f4a51ee9bf1bfb9e377322af81a69",
+      "url": "https://codeload.github.com/cisco/openh264/tar.gz/refs/tags/v2.6.0"
+    },
+    {
+      "file": "pipewire-1.4.11.tar.gz",
+      "sha256": "4f28b9480f542b1589915a6d2a3b857372c65207c415121d092c764803166336",
+      "url": "https://codeload.github.com/PipeWire/pipewire/tar.gz/255541eac34370e312f0c5c8c18e46dc1911352f"
+    }
+  ],
+  "officialGstreamerVersion": "1.28.8",
+  "ffmpegSigner": "FCF986EA15E6E293A5644F10B4322F04D67658D8",
+  "pipewireCommit": "255541eac34370e312f0c5c8c18e46dc1911352f",
+  "sourceOrigin": "official GStreamer sha256sum HTTPS; FFmpeg signed7.1.5; official GitHub mirrors for OpenH264 and PipeWire"
+}
