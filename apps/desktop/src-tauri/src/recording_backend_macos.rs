@@ -1655,6 +1655,7 @@ mod tests {
             });
             let started = Instant::now();
             let mut retries = 0;
+            let mut encoded_pcm_frames = 0usize;
             loop {
                 assert!(started.elapsed() < Duration::from_secs(5));
                 let before = frames;
@@ -1680,7 +1681,13 @@ mod tests {
                     &clock,
                     &mut audio_end,
                     &mut pending_audio,
-                    |sample| writer.append(writer.audio.as_ref().unwrap(), sample),
+                    |sample| {
+                        let accepted = writer.append(writer.audio.as_ref().unwrap(), sample)?;
+                        if accepted {
+                            encoded_pcm_frames += unsafe { sample.num_samples() } as usize;
+                        }
+                        Ok(accepted)
+                    },
                 )
                 .unwrap();
                 if frames == 30 && audio_done {
@@ -1689,8 +1696,13 @@ mod tests {
                 std::thread::sleep(POLL);
             }
             pressure.join().unwrap();
-            assert_eq!(audio_end, 2 * TICKS_PER_SECOND);
-            assert_eq!(end, audio_end);
+            let last_start = RATE as usize / 2048 * 2048;
+            let expected_audio_end = TICKS_PER_SECOND
+                + last_start as u64 * TICKS_PER_SECOND / u64::from(RATE)
+                + (RATE as usize - last_start) as u64 * TICKS_PER_SECOND / u64::from(RATE);
+            assert_eq!(encoded_pcm_frames, MAX_AUDIO_FRAMES);
+            assert_eq!(audio_end, expected_audio_end);
+            assert_eq!(end, 2 * TICKS_PER_SECOND);
             writer.finish(end).unwrap();
             drop(writer);
             let result = crate::video_clip_backend::execute(
@@ -1714,7 +1726,7 @@ mod tests {
             );
             assert!(metadata.has_audio);
             assert!(metadata.duration_ticks.abs_diff(end) <= TICKS_PER_SECOND / 10);
-            println!("actual_writer_frames={frames} readiness_retries={retries} pcm_frames={} duration_ticks={}", MAX_AUDIO_FRAMES, metadata.duration_ticks);
+            println!("actual_writer_frames={frames} readiness_retries={retries} pcm_frames={} duration_ticks={}", encoded_pcm_frames, metadata.duration_ticks);
             std::fs::remove_file(path).unwrap();
             std::fs::remove_dir(root).unwrap();
         });
