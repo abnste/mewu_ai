@@ -86,6 +86,9 @@ jobs:
       - name: Test Linux package permission normalization
         if: runner.os == 'Linux'
         run: node --test scripts/normalize-linux-appimage.test.mjs
+      - name: Diagnose fixed Linux OCR system resources
+        if: runner.os == 'Linux'
+        run: node scripts/diagnose-linux-ocr-resources.mjs
       - name: Verify native Linux OCR with known English and blank images
         if: runner.os == 'Linux'
         run: cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
