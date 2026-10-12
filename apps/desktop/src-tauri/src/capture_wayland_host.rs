@@ -253,12 +253,25 @@ fn webview_size(widget: &gtk::Widget, depth: u8) -> Option<(i32,i32)> {
     None
 }
 
-async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, transition: Arc<SpaceTransition>) -> Result<Witness,String> {
+enum PresentationPermit {
+    Screenshot(Arc<Work>),
+    Recording(capture::CaptureCheck),
+}
+impl PresentationPermit {
+    fn check(&self, app: &AppHandle, owned: &[Witness]) -> Result<(),String> {
+        match self {
+            Self::Screenshot(work) => {base_check(app,work)?;owned_set_current(app,owned)},
+            Self::Recording(allowed) => {app.state::<Host>().exit.ensure_new_operation()?;allowed()},
+        }
+    }
+}
+
+async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: PresentationPermit, transition: Arc<SpaceTransition>) -> Result<Witness,String> {
     let (tx,rx)=oneshot::channel(); let target=window.clone();
     window.run_on_main_thread(move || {
         let mut tx=Some(tx);
         let start=(|| {
-            base_check(target.app_handle(),&work)?; current(&owned,true)?;
+            permit.check(target.app_handle(),&owned)?; current(&owned,true)?;
             let widget=target.gtk_window().map_err(|_| "截图窗口不可用")?;
             #[cfg(debug_assertions)] log_layout(&widget, "before-fullscreen");
             widget.set_opacity(0.0);
@@ -280,7 +293,7 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
                 gtk::glib::timeout_add_local(Duration::from_millis(15),move || {
                     let _transition=&transition;
                     let result=(|| {
-                        base_check(target.app_handle(),&work)?; owned_set_current(target.app_handle(),&owned)?; current(&owned,false)?;
+                        permit.check(target.app_handle(),&owned)?; current(&owned,false)?;
                         for w in owned.iter().filter(|w|w.label!="space") {current(std::slice::from_ref(w),true)?;}
                         let drawable=widget.window().ok_or("截图窗口已关闭")?;
                         if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
@@ -290,6 +303,7 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
                         if !widget.is_resizable() {
                             if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
                             widget.set_resizable(true);
+                            stable_ticks=0;
                             return Ok(None);
                         }
                         // FULLSCREEN may arrive before the new allocation. In
@@ -346,6 +360,49 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
     rx.await.map_err(|_| "截图空间配置中断")?
 }
 
+// Recording has an already granted, nonce-bound live session. It cannot use
+// Screenshot's idle admission, nor authorize any other application's surface.
+pub(crate) async fn present_recording(window: &WebviewWindow, allowed: capture::CaptureCheck, transition: Arc<SpaceTransition>) -> Result<(),String> {
+    if window.label()!="space" {return Err("此窗口不能开始录屏".into());}
+    let (tx,rx)=oneshot::channel();let target=window.clone();let check=allowed.clone();let initial_transition=transition.clone();
+    window.run_on_main_thread(move || {
+        let _transition=initial_transition;
+        let result=(|| {
+            target.app_handle().state::<Host>().exit.ensure_new_operation()?;check()?;
+            let widget=target.gtk_window().map_err(|_|"截图窗口不可用")?;
+            if widget.is_mapped(){return Err("截图窗口尚未取消映射".into());}
+            witness(&target)
+        })();
+        let _=tx.send(result);
+    }).map_err(|_|"无法准备截图空间")?;
+    let previous=rx.await.map_err(|_|"截图空间配置中断")??;
+    let configured=present(window,vec![previous.clone()],PresentationPermit::Recording(allowed.clone()),transition.clone()).await;
+    let (tx,rx)=oneshot::channel();let target=window.clone();
+    window.run_on_main_thread(move || {
+        let _transition=transition;
+        let result=(|| {
+            current(std::slice::from_ref(&previous),false)?;
+            let widget=target.gtk_window().map_err(|_|"截图窗口不可用")?;
+            let result=configured.and_then(|configured| {
+                target.app_handle().state::<Host>().exit.ensure_new_operation()?;allowed()?;
+                current(std::slice::from_ref(&configured),true)
+            });
+            if result.is_err(){
+                widget.hide();
+                widget.set_default_size(previous.default_size.0,previous.default_size.1);
+                widget.set_resizable(previous.resizable);
+                if !previous.fullscreen{widget.unfullscreen();}
+            }
+            // No second show/deiconify: stable native allocation is already
+            // established. Cancellation restores opacity but keeps it hidden.
+            widget.set_opacity(1.0);
+            result
+        })();
+        let _=tx.send(result);
+    }).map_err(|_|"无法准备截图空间")?;
+    rx.await.map_err(|_|"截图空间配置中断")?
+}
+
 pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>, preferences: crate::capture_preferences::CapturePreferences) -> Result<HostSnapshot,String> {
     crate::pin_window::capture_begin(&app);
     {
@@ -366,7 +423,7 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
             capture_wayland_portal::capture(&capture_root,capture::CaptureOptions {include_cursor:preferences.include_cursor},native_check)
         }).await.map_err(|_|"截图任务中断")??;
         allowed()?;
-        let configured=present(&window,owned.clone(),work.clone(),transition.clone()).await?;
+        let configured=present(&window,owned.clone(),PresentationPermit::Screenshot(work.clone()),transition.clone()).await?;
         let asset=Asset {id:pending.asset_id.clone(),name:"截图.png".into(),kind:AssetKind::Image,path:pending.path.to_string_lossy().into_owned(),width:Some(pending.width),height:Some(pending.height),capture_coordinates:None,origin_x:None,origin_y:None,scale_factor:None};
         let host=app.state::<Host>(); let mut engine=host.lock()?;
         base_check(&app,&work)?; owned_set_current(&app,&owned)?; current(std::slice::from_ref(&configured),true)?;
