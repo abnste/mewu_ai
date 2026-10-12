@@ -33,7 +33,7 @@ impl Registry {
         identity: Identity,
         visible: bool,
     ) -> Result<(usize, u64, bool), String> {
-        let owned_label = label == "space"
+        let owned_label = matches!(label,"space"|"settings")
             || label.strip_prefix("pin-").is_some_and(|id| {
                 uuid::Uuid::parse_str(id).is_ok_and(|value| value.hyphenated().to_string() == id)
             });
@@ -338,6 +338,24 @@ mod tests {
         assert!(!r.visible(remapped));
         assert!(!r.current_for(remapped,&label));
         assert!(r.bind("pin-arbitrary", identity(), true).is_err());
+    }
+    #[test]
+    fn settings_action_identity_cannot_authorize_space_or_survive_hide() {
+        let mut r=Registry::default();
+        let (space,_,_)=r.bind("space",identity(),true).unwrap();
+        let (settings,generation,_)=r.bind("settings",identity(),true).unwrap();
+        assert!(r.current_for(settings,"settings"));
+        assert!(!r.current_for(settings,"space"));
+        assert!(!r.current_for(space,"settings"));
+        r.update("settings",generation,false);
+        assert!(!r.current_for(settings,"settings"));
+        r.update("settings",generation,true);
+        assert!(!r.current_for(settings,"settings"));
+        let (fresh,_,_)=r.bind("settings",identity(),true).unwrap();
+        assert_ne!(fresh,settings);
+        assert!(r.current_for(fresh,"settings"));
+        r.revoke("settings",None);
+        assert!(!r.current_for(fresh,"settings"));
     }
     #[cfg(all(target_os = "linux", feature = "linux-x11-tests"))]
     #[test]
