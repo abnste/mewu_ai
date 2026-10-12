@@ -90,6 +90,7 @@ objc2-avf-audio = {version = "=0.3.2", default-features = false, features = ["st
 dispatch2 = {version = "=0.3.1", default-features = false, features = ["std", "block2", "objc2"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+fdk-aac-sys = "=0.5.0"
 gstreamer = { version = "=0.21.3", features = ["v1_20"] }
 gstreamer-app = { version = "=0.21.2", features = ["v1_20"] }
 gstreamer-video = { version = "=0.21.2", features = ["v1_20"] }
@@ -135,4 +136,10 @@ required-features = ["linux-worker-tests"]
 [[test]]
 name = "linux_recording_codec"
 path = "tests/linux_recording_codec.rs"
+required-features = ["linux-recording-tests"]
+
+[[test]]
+name = "linux_wayland_recording_probe"
+path = "tests/linux_wayland_recording_probe.rs"
+harness = false
 required-features = ["linux-recording-tests"]

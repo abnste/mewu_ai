@@ -130,6 +130,7 @@ fn main() {
             "get_recording_audio",
             "set_recording_audio",
             "start_recording",
+            "recording_wayland_host_prepare",
             "control_recording",
             "export_video",
             "copy_video",

@@ -19,9 +19,9 @@ const TOTAL_OUTPUT: usize = 4 * 1024 * 1024;
 pub fn busy() -> bool {
     BUSY.load(Ordering::Acquire)
 }
-struct Permit;
+pub(crate) struct Permit;
 impl Permit {
-    fn acquire() -> Result<Self, String> {
+    pub(crate) fn acquire() -> Result<Self, String> {
         BUSY.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| "录屏进程尚未结束")?;
         Ok(Self)
@@ -113,6 +113,10 @@ fn read_line(reader: &mut impl BufRead) -> Result<Option<String>, String> {
 }
 
 pub fn worker_main() -> i32 {
+    #[cfg(target_os="linux")]
+    { return crate::recording_wayland_worker::worker_main(); }
+    #[cfg(not(target_os="linux"))]
+    {
     let mut input = BufReader::new(std::io::stdin());
     let config = match read_line(&mut input).and_then(|line| {
         serde_json::from_str::<backend::Config>(&line.ok_or("缺少录屏配置")?)
@@ -167,6 +171,7 @@ pub fn worker_main() -> i32 {
         0
     } else {
         1
+    }
     }
 }
 

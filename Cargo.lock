@@ -1500,6 +1500,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fdk-aac-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24516d2611506d5cb1833555adc75f6baf9fe2706b9c13e6fc33a6b22c51ca83"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "field-offset"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3231,6 +3240,7 @@ dependencies = [
  "dirs",
  "dispatch2",
  "eventsource-stream",
+ "fdk-aac-sys",
  "flate2",
  "futures-lite",
  "futures-util",

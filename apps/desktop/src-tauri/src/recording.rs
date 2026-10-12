@@ -43,22 +43,22 @@ fn mac_hud_position(
 }
 #[derive(Clone, Serialize)]
 pub struct Rect {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    id: String,
-    scene_id: String,
-    phase: &'static str,
-    countdown: u8,
-    elapsed_ms: u64,
-    rect: Rect,
-    stop_hotkey: String,
-    audio: backend::AudioMode,
+    pub(crate) id: String,
+    pub(crate) scene_id: String,
+    pub(crate) phase: &'static str,
+    pub(crate) countdown: u8,
+    pub(crate) elapsed_ms: u64,
+    pub(crate) rect: Rect,
+    pub(crate) stop_hotkey: String,
+    pub(crate) audio: backend::AudioMode,
 }
 struct Active {
     status: Status,
@@ -114,7 +114,10 @@ impl RecordingState {
     }
 }
 pub fn busy(app: &AppHandle) -> bool {
-    crate::recording_worker::busy()
+    (crate::recording_worker::busy() && {
+        #[cfg(target_os="linux")] { !crate::recording_wayland_host::selecting() }
+        #[cfg(not(target_os="linux"))] { true }
+    })
         || app
             .try_state::<RecordingState>()
             .is_some_and(|s| s.0.lock().map(|v| v.is_some()).unwrap_or(true))
@@ -129,6 +132,8 @@ pub fn ensure_idle(app: &AppHandle) -> Result<(), String> {
 }
 #[tauri::command]
 pub fn get_recording_status(app: AppHandle) -> Result<Option<Status>, String> {
+    #[cfg(target_os="linux")]
+    if let Some(status)=crate::recording_wayland_host::status()?{return Ok(Some(status));}
     Ok(app
         .state::<RecordingState>()
         .0
@@ -154,6 +159,8 @@ pub fn control_recording(app: AppHandle, id: String, action: String) -> Result<(
     if !matches!(action.as_str(), "stop" | "cancel") {
         app.state::<Host>().exit.ensure_new_operation()?;
     }
+    #[cfg(target_os="linux")]
+    if crate::recording_wayland_host::control(&id,&action)?{return Ok(());}
     let control = match action.as_str() {
         "pause" => backend::Control::Pause,
         "resume" => backend::Control::Resume,
@@ -178,6 +185,8 @@ pub fn control_recording(app: AppHandle, id: String, action: String) -> Result<(
         .map_err(|_| "录屏正在结束".into())
 }
 pub fn request_stop(app: &AppHandle) {
+    #[cfg(target_os="linux")]
+    crate::recording_wayland_host::request_stop();
     if let Some(state) = app.try_state::<RecordingState>() {
         if let Ok(state) = state.0.lock() {
             if let Some(active) = state.as_ref() {
@@ -199,6 +208,8 @@ pub fn begin_shutdown<T>(
     app: &AppHandle,
     begin: impl FnOnce() -> Option<T>,
 ) -> Result<Option<(T, Option<String>)>, String> {
+    #[cfg(target_os="linux")]
+    if crate::recording_wayland_host::has_lease(){return crate::recording_wayland_host::begin_exit(begin);}
     app.try_state::<RecordingState>()
         .ok_or("录屏状态尚未就绪")?
         .begin_exit(begin)
@@ -207,6 +218,8 @@ pub async fn stop_for_shutdown(app: &AppHandle, target: Option<String>) -> Resul
     let Some(id) = target else {
         return Ok(());
     };
+    #[cfg(target_os="linux")]
+    if crate::recording_wayland_host::stop_for_exit(&id).await?{return Ok(());}
     {
         let state = app.state::<RecordingState>();
         let active = state.0.lock().map_err(|_| "录屏状态不可用，已取消退出")?;
@@ -288,6 +301,8 @@ pub async fn start_recording(
         return Err("此窗口不能开始录屏".into());
     }
     app.state::<Host>().exit.ensure_new_operation()?;
+    #[cfg(target_os="linux")]
+    if crate::recording_wayland_host::start(app.clone(),window.clone(),scene_id.clone(),region_id.clone(),audio.clone(),grant.clone()).await?{return Ok(());}
     #[cfg(windows)]
     let window_handle = window.hwnd().map_err(|_| "空间窗口不可用")?.0 as usize;
     #[cfg(target_os = "macos")]
@@ -581,7 +596,7 @@ pub async fn start_recording(
     Ok(())
 }
 
-fn validate_recording_grants(
+pub(crate) fn validate_recording_grants(
     grant: &crate::plugins::RecordingGrant,
     audio: &crate::recording_audio_host::RecordingAudioSelection,
     plugins: &crate::plugins::PluginSnapshot,
@@ -601,7 +616,7 @@ fn validate_recording_grants(
     Ok(())
 }
 
-fn retain_completed_output<T>(
+pub(crate) fn retain_completed_output<T>(
     staging: &std::path::Path,
     destination: &std::path::Path,
     register: impl FnOnce() -> Result<T, String>,

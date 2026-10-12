@@ -932,6 +932,8 @@ export default function App() {
       const audio = await recordingAudio.prepare();
       await flush();
       if (disposed || exitPreparing() || scene()?.id !== current.id || scene()?.background?.id !== current.background.id || scene()?.closed || scene()?.frozen) throw new Error('录屏选区已变化');
+      const prepared=await bridge.prepareWaylandRecording(current.id);
+      if(prepared){if(!disposed&&!exitPreparing())accept(prepared);return;}
       if (!sameAudioGrant(grant, recordingGrant())) throw new Error('屏幕录制已变化，请重试');
       if (!sameAudioSelection(audio, recordingAudio.selection())) throw new Error('声音设置已变化，请重新录屏');
       await bridge.startRecording(current.id, regionId, audio, grant);

@@ -169,6 +169,11 @@ export async function startRecording(sceneId: string, regionId: string, audio: R
   if (!native) throw new Error('仅桌面版可录屏');
   return invoke('start_recording', { sceneId, regionId, audio, grant });
 }
+export async function prepareWaylandRecording(sceneId:string):Promise<Snapshot|null> {
+  if (!native) return null;
+  const value=await invoke<Snapshot|null>('recording_wayland_host_prepare',{sceneId});
+  return value ? normalizeSnapshot(value) : null;
+}
 export async function controlRecording(id: string, action: RecordingAction): Promise<void> {
   if (!native) throw new Error('仅桌面版可录屏');
   return invoke('control_recording', { id, action });

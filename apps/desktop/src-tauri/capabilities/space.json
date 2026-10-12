@@ -27,6 +27,7 @@
     "allow-restore-frozen-scene",
     "allow-get-recording-status",
     "allow-start-recording",
+    "allow-recording-wayland-host-prepare",
     "allow-control-recording",
     "allow-export-video",
     "allow-copy-video",

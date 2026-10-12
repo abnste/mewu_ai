@@ -97,6 +97,26 @@ mod recording_backend;
 mod recording_preferences;
 mod recording_storage;
 mod recording_worker;
+#[cfg(target_os = "linux")]
+mod recording_wayland_worker;
+#[cfg(target_os = "linux")]
+mod recording_wayland_host;
+#[cfg(target_os = "linux")]
+mod recording_codec_linux;
+#[cfg(target_os = "linux")]
+mod recording_system_audio_linux;
+#[cfg(target_os="linux")]
+mod recording_aac_linux;
+#[cfg(target_os="linux")]
+mod recording_mp4_audio_linux;
+
+#[tauri::command]
+async fn recording_wayland_host_prepare(app: AppHandle, window: tauri::WebviewWindow, scene_id: String) -> Result<Option<HostSnapshot>,String> {
+    #[cfg(target_os="linux")]
+    { crate::recording_wayland_host::prepare_wayland_recording(app,window,scene_id).await }
+    #[cfg(not(target_os="linux"))]
+    { let _=(app,window,scene_id); Ok(None) }
+}
 mod rich_annotation_host;
 mod runtime_platform;
 #[cfg(target_os = "macos")]
@@ -268,6 +288,8 @@ fn emit_run_event(app: &AppHandle, value: serde_json::Value) -> tauri::Result<()
     app.emit_to(frozen::LABEL, "run-event", &value)
 }
 fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
+    #[cfg(target_os="linux")]
+    recording_wayland_host::reconcile(snapshot);
     app.state::<Host>().session_titles.reconcile(snapshot);
     speech_host::reconcile(app, snapshot);
     code_host::reconcile(app, snapshot);
@@ -648,6 +670,8 @@ pub(crate) async fn hide_space_checked(
     app: AppHandle,
     current: impl FnOnce(&Snapshot) -> bool,
 ) -> Result<(), String> {
+    #[cfg(target_os="linux")]
+    recording_wayland_host::cancel_pending();
     let host = app.state::<Host>();
     host.exit.ensure_new_operation()?;
     host.capture_jobs.cancel();
@@ -2356,6 +2380,7 @@ fn main() {
         })
         .invoke_handler({
             let handlers: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                recording_wayland_host_prepare,
                 get_snapshot,
                 capture_shortcut_host::get_capture_shortcut,
                 settings_host::get_system_preferences,

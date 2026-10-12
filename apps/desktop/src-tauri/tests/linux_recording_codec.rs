@@ -3,6 +3,8 @@
 
 #[path = "../src/recording_codec_linux.rs"]
 mod recording_codec_linux;
+#[path = "../src/recording_aac_linux.rs"]mod recording_aac_linux;
+#[path = "../src/recording_mp4_audio_linux.rs"]mod recording_mp4_audio_linux;
 
 use gst::prelude::*;
 use gstreamer as gst;
