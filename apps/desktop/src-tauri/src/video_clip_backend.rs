@@ -372,9 +372,17 @@ mod platform {
             video
                 .PixelAspectRatio()?
                 .SetDenominator(source.PixelAspectRatio()?.Denominator()?)?;
-            if source.Bitrate()? > 0 {
-                video.SetBitrate(source.Bitrate()?)?;
-            }
+            // A static VBR recording can report only a few kbit/s. That is
+            // the compressed source's average, not a usable re-encode target:
+            // MediaComposition rejects it or loses screen detail. Retain the
+            // recorder's existing 8 Mbit/s encoding budget as the minimum, and
+            // keep a higher source bitrate when present. This preserves the
+            // pre-VBR export target, rather than deriving quality from bytes.
+            video.SetBitrate(
+                source
+                    .Bitrate()?
+                    .max(crate::video_clip_contract::H264_SCREEN_BITRATE),
+            )?;
             Ok(profile)
         };
         let result = build().map_err(|_| ClipError::EncodingFailed)?;
@@ -701,6 +709,14 @@ mod platform {
         }
         original.validate_range(Some(range))?;
         let encoding = profile(&clip, &file, &original, cancel)?;
+        #[cfg(test)]
+        eprintln!(
+            "synthetic clip profile: width={} height={} video_bitrate={:?} audio_bitrate={:?}",
+            original.width,
+            original.height,
+            encoding.Video().and_then(|v| v.Bitrate()),
+            encoding.Audio().and_then(|v| v.Bitrate())
+        );
         clip.SetTrimTimeFromStart(TimeSpan {
             Duration: range.start_ticks as i64,
         })
@@ -754,6 +770,8 @@ mod platform {
                 .map_err(|_| ClipError::EncodingFailed)
         })
         .and_then(|reason| {
+            #[cfg(test)]
+            eprintln!("synthetic clip transcode result: {reason:?}");
             if reason == TranscodeFailureReason::None {
                 Ok(())
             } else {
@@ -778,6 +796,8 @@ mod platform {
             ClipError::OutputInvalid,
         )?;
         let actual = metadata(&actual_clip).map_err(|_| ClipError::OutputInvalid)?;
+        #[cfg(test)]
+        eprintln!("synthetic clipped metadata: {actual:?}, source={original:?}, range={range:?}");
         validate_rendered(&original, range, &actual)?;
         drop(actual_clip);
         drop(output_file);
