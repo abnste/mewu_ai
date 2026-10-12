@@ -656,7 +656,7 @@ mod tests {
     }
     #[zbus::interface(name = "org.freedesktop.portal.Screenshot")]
     impl TestScreenshot {
-        #[zbus(property)]
+        #[zbus(property, name = "version")]
         fn version(&self) -> u32 {
             2
         }
@@ -692,11 +692,12 @@ mod tests {
             Ok(path)
         }
     }
-    struct TestBus(std::process::Child);
+    struct TestBus(std::process::Child, PathBuf);
     impl Drop for TestBus {
         fn drop(&mut self) {
             let _ = self.0.kill();
             let _ = self.0.wait();
+            let _ = std::fs::remove_dir_all(&self.1);
         }
     }
     #[test]
@@ -710,13 +711,24 @@ mod tests {
         };
         // A dedicated bus, not DBUS_SESSION_BUS_ADDRESS, prevents impersonating
         // or reading any real desktop service during protocol regression.
+        // dbus-daemon checks the activation catalog before even checking an
+        // existing owner. Keep that catalog private; the registered server
+        // owns the name, and the sentinel executable must never be launched.
+        use std::os::unix::fs::PermissionsExt;
+        let data_home = std::env::temp_dir().join(format!("mewu-portal-bus-{}", Uuid::new_v4()));
+        let services = data_home.join("dbus-1/services");
+        std::fs::create_dir_all(&services).unwrap();
+        std::fs::set_permissions(&data_home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(services.join(format!("{SERVICE}.service")), format!("[D-BUS Service]\nName={SERVICE}\nExec=/bin/false\n")).unwrap();
         let mut bus = TestBus(
             std::process::Command::new("dbus-daemon")
                 .args(["--session", "--nofork", "--print-address=1"])
+                .env("XDG_DATA_HOME", &data_home)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
                 .spawn()
                 .unwrap(),
+            data_home,
         );
         let mut address = String::new();
         BufReader::new(bus.0.stdout.take().unwrap())
@@ -760,8 +772,8 @@ mod tests {
             cancel_jobs.cancel();
         });
         let error = async_io::block_on(request_at(address, &allowed)).unwrap_err();
+        assert_eq!(error, crate::capture_delay_work::CANCELED, "request failed before cancellation reached the portal");
         cancel.join().unwrap();
-        assert_eq!(error, crate::capture_delay_work::CANCELED);
         assert_eq!(started.load(Ordering::SeqCst), 1);
         assert_eq!(closed.load(Ordering::SeqCst), 1);
         assert!(jobs.begin().unwrap().is_none());
