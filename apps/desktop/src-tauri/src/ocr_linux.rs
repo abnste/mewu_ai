@@ -32,6 +32,14 @@ static ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(test)]
 thread_local! {
     static NATIVE_TEST_TRACE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static NATIVE_TEST_OVERLAP: std::cell::RefCell<Option<Arc<NativeOverlap>>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(test)]
+#[derive(Default)]
+struct NativeOverlap {
+    entered: AtomicUsize,
+    two_permits: AtomicBool,
+    timed_out: AtomicBool,
 }
 // Only the explicit synthetic native fixture enables these content-free
 // markers. Release builds contain neither the flag nor diagnostic output.
@@ -259,6 +267,7 @@ struct ResidentLibrary {
     // pathname cache even though the new fd refers to a different file.
     _file: File,
     library: Arc<Library>,
+    debug_configured: bool,
 }
 // Tesseract dependencies can retain native helper threads after Recognize
 // returns. Engine deletion does not authorize unloading their executable code.
@@ -276,7 +285,9 @@ fn resident_library(file: &File, abi: Abi) -> Result<Arc<Library>, String> {
         metadata.mtime(),
         metadata.mtime_nsec(),
     );
-    let mut resident = RESIDENT_LIBRARY.lock().map_err(|_| NATIVE_ERROR.to_owned())?;
+    let mut resident = RESIDENT_LIBRARY
+        .lock()
+        .map_err(|_| NATIVE_ERROR.to_owned())?;
     if let Some(resident) = resident.as_ref() {
         if resident.identity != identity {
             return Err("系统文字识别组件已改变，请重启应用后重试".into());
@@ -286,7 +297,11 @@ fn resident_library(file: &File, abi: Abi) -> Result<Arc<Library>, String> {
     let held = file.try_clone().map_err(|_| UNAVAILABLE.to_owned())?;
     let library: Library = unsafe {
         libloading::os::unix::Library::open(
-            Some(format!("/proc/{}/fd/{}", std::process::id(), held.as_raw_fd())),
+            Some(format!(
+                "/proc/{}/fd/{}",
+                std::process::id(),
+                held.as_raw_fd()
+            )),
             libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL,
         )
     }
@@ -297,6 +312,7 @@ fn resident_library(file: &File, abi: Abi) -> Result<Arc<Library>, String> {
         identity,
         _file: held,
         library: library.clone(),
+        debug_configured: false,
     });
     Ok(library)
 }
@@ -332,6 +348,26 @@ struct Api {
     _library: Arc<Library>,
 }
 impl Api {
+    fn configure_debug_once(&self, engine: *mut c_void) -> Result<(), String> {
+        // debug_file is a GLOBAL StringParam in both supported ABIs. Writing
+        // it per engine can race a different engine's native diagnostic read.
+        let mut slot = RESIDENT_LIBRARY
+            .lock()
+            .map_err(|_| NATIVE_ERROR.to_owned())?;
+        let resident = slot.as_mut().ok_or_else(|| NATIVE_ERROR.to_owned())?;
+        if !Arc::ptr_eq(&resident.library, &self._library) {
+            return Err(NATIVE_ERROR.into());
+        }
+        if !resident.debug_configured {
+            if unsafe { (self.variable)(engine, c"debug_file".as_ptr(), c"/dev/null".as_ptr()) }
+                == 0
+            {
+                return Err(NATIVE_ERROR.into());
+            }
+            resident.debug_configured = true;
+        }
+        Ok(())
+    }
     fn load(file: &File, abi: Abi) -> Result<Self, String> {
         // Bind dlopen to the held inode, without choosing a loader search path
         // from caller settings, environment variables or a plugin manifest.
@@ -432,12 +468,38 @@ unsafe fn bounded_text(pointer: *const c_char, limit: usize) -> Result<String, S
 struct Interest {
     cancel: Arc<AtomicBool>,
     started: Instant,
+    #[cfg(test)]
+    overlap: Option<Arc<NativeOverlap>>,
+    #[cfg(test)]
+    overlap_entered: AtomicBool,
 }
 unsafe extern "C" fn cancelled(context: *mut c_void, _: c_int) -> bool {
     std::panic::catch_unwind(|| {
         let Some(interest) = (unsafe { context.cast::<Interest>().as_ref() }) else {
             return true;
         };
+        #[cfg(test)]
+        if let Some(overlap) = &interest.overlap {
+            if !interest.overlap_entered.swap(true, Ordering::AcqRel) {
+                // This callback is reached FROM the real Recognize call. Hold
+                // the first call briefly until the second real engine enters;
+                // a missing callback fails the fixture instead of hanging it.
+                overlap.entered.fetch_add(1, Ordering::AcqRel);
+                let waiting = Instant::now();
+                while overlap.entered.load(Ordering::Acquire) < 2 {
+                    if waiting.elapsed() >= Duration::from_secs(2)
+                        || check_interest(&interest.cancel, interest.started).is_err()
+                    {
+                        overlap.timed_out.store(true, Ordering::Release);
+                        return true;
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                if ACTIVE_WORKERS.load(Ordering::Acquire) == 2 {
+                    overlap.two_permits.store(true, Ordering::Release);
+                }
+            }
+        }
         check_interest(&interest.cancel, interest.started).is_err()
     })
     .unwrap_or(true)
@@ -471,9 +533,8 @@ pub(super) fn recognize_impl(
     native_trace!("api_loaded");
     let engine = Handle::new(unsafe { (api.create)() }, api.delete)?;
     native_trace!("engine_created");
-    if unsafe { (api.variable)(engine.raw(), c"debug_file".as_ptr(), c"/dev/null".as_ptr()) } == 0 {
-        return Err(NATIVE_ERROR.into());
-    }
+    api.configure_debug_once(engine.raw())?;
+    check_interest(&cancel, started)?;
     // No detach: Init3 may outlive cancellation; the native API and permits
     // are retained until it really returns, then the original budget is tested.
     native_trace!("init_begin");
@@ -506,6 +567,10 @@ pub(super) fn recognize_impl(
     let mut interest = Box::new(Interest {
         cancel: cancel.clone(),
         started,
+        #[cfg(test)]
+        overlap: NATIVE_TEST_OVERLAP.with(|hook| hook.borrow().clone()),
+        #[cfg(test)]
+        overlap_entered: AtomicBool::new(false),
     });
     let monitor = Handle::new(unsafe { (api.monitor_create)() }, api.monitor_delete)?;
     let remaining = TIMEOUT.saturating_sub(started.elapsed()).as_millis();
@@ -681,6 +746,8 @@ mod tests {
         let mut interest = Interest {
             cancel: Arc::new(AtomicBool::new(false)),
             started: Instant::now(),
+            overlap: None,
+            overlap_entered: AtomicBool::new(false),
         };
         let context = (&mut interest as *mut Interest).cast();
         assert!(!unsafe { cancelled(context, 0) });
@@ -781,13 +848,75 @@ mod tests {
         .unwrap();
         assert!(blank.lines.is_empty());
         native_trace!("repeat_english_begin");
-        let repeated = recognize_impl(
-            synthetic_english(),
-            Arc::new(AtomicBool::new(false)),
-        )
-        .unwrap();
+        let repeated =
+            recognize_impl(synthetic_english(), Arc::new(AtomicBool::new(false))).unwrap();
         assert_eq!(repeated.lines, document.lines);
         native_trace!("repeat_complete");
         assert_eq!(ACTIVE_WORKERS.load(Ordering::Acquire), 0);
+
+        native_trace!("parallel_english_begin");
+        let overlap = Arc::new(NativeOverlap::default());
+        let documents = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..2)
+                .map(|_| {
+                    let overlap = overlap.clone();
+                    scope.spawn(move || {
+                        NATIVE_TEST_OVERLAP.with(|hook| *hook.borrow_mut() = Some(overlap));
+                        recognize_impl(synthetic_english(), Arc::new(AtomicBool::new(false)))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(overlap.entered.load(Ordering::Acquire), 2);
+        assert!(overlap.two_permits.load(Ordering::Acquire));
+        assert!(!overlap.timed_out.load(Ordering::Acquire));
+        for parallel in documents {
+            assert_eq!(parallel.lines, document.lines);
+        }
+        assert_eq!(ACTIVE_WORKERS.load(Ordering::Acquire), 0);
+        native_trace!("parallel_complete");
+
+        // Copy only this fixture's already verified system component into a
+        // fresh private file. Never modify or replace an installed library.
+        let resources = Resources::capture().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "mewu-ocr-identity-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut replacement = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        struct RemoveFile(PathBuf);
+        impl Drop for RemoveFile {
+            fn drop(&mut self) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+        let _remove = RemoveFile(path);
+        std::io::copy(
+            &mut resources.library.try_clone().unwrap(),
+            &mut replacement,
+        )
+        .unwrap();
+        let error = resident_library(&replacement, resources.abi)
+            .err()
+            .expect("changed inode must require restart");
+        assert_eq!(error, "系统文字识别组件已改变，请重启应用后重试");
+        let restored =
+            recognize_impl(synthetic_english(), Arc::new(AtomicBool::new(false))).unwrap();
+        assert_eq!(restored.lines, document.lines);
+        assert_eq!(ACTIVE_WORKERS.load(Ordering::Acquire), 0);
+        native_trace!("identity_change_rejected_original_still_usable");
     }
 }

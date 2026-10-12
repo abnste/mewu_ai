@@ -22,6 +22,8 @@ Linux 适配器通过已安装的 Tesseract 4.1 或 5 C API 识别宿主提供�
 cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
 ```
 
-该测试用现有绘图器生成已知英文，检查真实文本和词边界、空白图像结果，以及同一进程内再次识别相同图像。它不读取桌面，不证明中文识别或完整 GUI 功能。普通源码测试覆盖提前取消、原始截止时间和有界 UTF-8 读取。Windows 编译或 Linux 交叉类型检查不能代替这一原生验收。
+该测试用现有绘图器生成已知英文，检查真实文本和词边界、空白图像结果，以及同一进程内再次识别相同图像。两个独立 engine 的真实原生取消回调以最多两秒的测试专用等待核验同步识别重叠、两个许可在场及结果一致；等待仍受各请求原始预算约束，发布构建没有此测试钩子。测试再用自有临时文件中的相同库字节核验新 inode 被拒绝，并检查原系统库仍能识别；不修改安装的库。它不读取桌面，不证明中文识别或完整 GUI 功能。普通源码测试覆盖提前取消、原始截止时间和有界 UTF-8 读取。Windows 编译或 Linux 交叉类型检查不能代替这一原生验收。
+
+`debug_file` 在两个支持的 ABI 中都是全局参数，首次 engine 初始化前仅在驻留库锁内设置一次为 `/dev/null`，后续请求不重复写入，避免与其他 engine 的原生读取竞争。锁不覆盖同步识别，也不改变两个 worker 或原始 15 秒预算。依据：[4.1.1 全局诊断参数](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/ccutil/tprintf.cpp)、[参数设置实现](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/ccutil/params.cpp) 与 [5.5.1 全局诊断参数](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/ccutil/tprintf.cpp)。
 
 接口和所有权依据：[Tesseract 5.5.1 C API](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/include/tesseract/capi.h)、[对应实现](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/api/capi.cpp)、[显式模型路径优先级](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/ccutil/ccutil.cpp)，以及 [4.1.1 C API](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.h)、[对应实现](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.cpp) 与 [4.1.1 显式模型路径优先级](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/ccutil/mainblk.cpp)。仅使用两者签名一致的函数和不透明句柄；不依赖内部结构布局。实现为 Mewu 的 MPL-2.0 代码，没有复制第三方库源码或模型。
