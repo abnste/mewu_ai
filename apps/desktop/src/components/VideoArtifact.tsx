@@ -299,9 +299,9 @@ export default function VideoArtifact(props: VideoArtifactProps) {
       <Show when={authority()} fallback={<div class="video-trim-loading"><Show when={reading()} fallback={<><span>{readError() || t('无法读取视频')}</span><button class="icon-button compact" title={t("重试")} aria-label={t("重新读取视频")} onClick={() => setRetry(value => value + 1)}><RefreshCw size={15} /></button></>}><LoaderCircle class="spin" size={16} /></Show></div>}>
         <VideoTrimBar authority={authority()} positionTicks={position()} playing={playing()} busy={props.busy || drawingOpen() || Boolean(props.exporting) || manualView().pending || Boolean(manualView().text)} onPause={pausePlayback} onSeek={ticks => { pausePlayback(); playback?.seek(ticks); }} onResume={ticks => { previewHold.invalidate(); if (!annotationUnavailable()) void playback?.play(ticks).catch(report); }} onTogglePlayback={toggle} onCommit={commit} onError={report} canUndo={Boolean(props.item.videoEdit?.undo.length)} canRedo={Boolean(props.item.videoEdit?.redo.length)} onReplay={replay} onRegister={flush => { flushTrim = flush; const stop = props.onRegister(async active => { pausePlayback(); await flush(active); }); return () => { if (flushTrim === flush) flushTrim = undefined; stop(); }; }} />
       </Show>
-      <div class="video-preview-actions" on:keydown={event => { if (nativeSelectOwnsEscape(event)) return; if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSelectedAnnotation(undefined); video.focus(); } }}>
+      <div class="video-preview-actions">
         {props.objectActions}
-        <Show when={drawingAvailable() || props.item.videoAnnotations}>
+        <Show when={drawingAvailable() || props.item.videoAnnotations}><div class="video-preview-annotation-actions" on:keydown={event => { if (nativeSelectOwnsEscape(event)) return; if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setSelectedAnnotation(undefined); video.focus(); } }}>
         <Show when={drawingAvailable()}><button class="icon-button compact" title={t("绘制 · D")} aria-label={t("绘制视频标注")} disabled={props.busy || props.annotationBusy || props.inputLocked || props.drawingAllowed === false || drawingOpen()} onClick={() => void openDrawing()}><Pencil size={15} /></button></Show>
         <Show when={props.item.videoAnnotations && (props.item.videoAnnotations.objects.length || props.item.videoAnnotations.undo.length || props.item.videoAnnotations.redo.length)}>
         <button class="icon-button compact" title={t("撤销标注")} aria-label={t("撤销视频标注")} disabled={annotationDisabled() || !props.item.videoAnnotations?.undo.length} onClick={() => replayAnnotations('undo')}><Undo2 size={15} /></button>
@@ -310,7 +310,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
         </Show>
         <Show when={annotationState().loading || annotationEditing()}><LoaderCircle class="spin" size={14} /></Show>
         <Show when={annotationState().error || visiblePixels() > 32 * 1024 * 1024}><span class="inline-error">{annotationState().error || t('视频标注预览过大')}</span><button class="icon-button compact" title={t("重试")} aria-label={t("重新读取视频标注")} disabled={props.busy} onClick={() => setAnnotationRetry(value => value + 1)}><RefreshCw size={14} /></button></Show>
-        </Show>
+        </div></Show>
       </div>
       <Show when={ownedExport()}>{value => <div class="video-export-state"><LoaderCircle class="spin" size={13} /><span>{value().canceling ? t('取消中') : value().percent === undefined ? (value().kind === 'copy' ? t('复制中') : t('保存中')) : `${Math.round(value().percent!)}%`}</span><button class="icon-button compact" aria-label={value().kind === 'copy' ? t('取消复制视频') : t('取消保存视频')} title={t("取消")} disabled={value().canceling} onClick={props.onCancelExport}><X size={14} /></button></div>}</Show>
     </div></Portal></Show>

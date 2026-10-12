@@ -26,4 +26,3 @@
 .video-trim-range-time{display:block;color:var(--secondary,#52647c);font-size:11px;font-variant-numeric:tabular-nums}
 .video-trim-clock{display:grid;gap:3px;min-width:106px;font-variant-numeric:tabular-nums;white-space:nowrap}.video-trim-clock small{font-size:11px;color:var(--secondary,#52647c)}
 .video-trim-actions{display:flex;gap:2px;margin-left:auto}.video-trim-bar .icon-button{border:0;background:transparent}
-
