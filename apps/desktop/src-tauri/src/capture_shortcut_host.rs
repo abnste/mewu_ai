@@ -439,6 +439,10 @@ pub fn initialize(app: &AppHandle, root: &Path) -> Result<(), String> {
     if app.try_state::<HostRuntime>().is_some() {
         return Err("快捷键状态已初始化".into());
     }
+    #[cfg(target_os = "linux")]
+    if crate::capture_shortcut_wayland_host::is_wayland() {
+        return crate::capture_shortcut_portal_linux::Runtime::initialize(app, root);
+    }
     let (preferences, loaded) = match PreferencesFile::open(root) {
         Ok(file) => {
             let value = file.load();
@@ -500,6 +504,8 @@ pub fn get_capture_shortcut(
     if !matches!(window.label(), "settings" | "space") {
         return Err("此窗口不能读取截图快捷键".into());
     }
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = app.try_state::<crate::capture_shortcut_portal_linux::Runtime>() { return Ok(runtime.view()); }
     Ok(app.state::<HostRuntime>().view())
 }
 
@@ -512,6 +518,11 @@ pub async fn set_capture_shortcut(
 ) -> Result<CaptureShortcutState, String> {
     if window.label() != "settings" {
         return Err("请在设置中修改截图快捷键".into());
+    }
+    #[cfg(target_os = "linux")]
+    if app.try_state::<crate::capture_shortcut_portal_linux::Runtime>().is_some() {
+        if shortcut.is_some() { return Err("请通过系统授权设置截图快捷键".into()); }
+        return crate::capture_shortcut_wayland_host::disable(app, window, expected_revision).await;
     }
     let owner = window_handle(&window)?; // Never inside any shared mutex.
     let runtime = app.state::<HostRuntime>().inner().clone();
@@ -614,6 +625,8 @@ pub fn end_capture_shortcut_edit(
     if window.label() != "settings" {
         return Err("请在设置中结束快捷键编辑".into());
     }
+    #[cfg(target_os = "linux")]
+    if app.try_state::<crate::capture_shortcut_portal_linux::Runtime>().is_some() { return Ok(()); }
     // Cleanup must remain legal in PREPARING/DRAINING and after focus loss.
     let runtime = app.state::<HostRuntime>();
     let now = Instant::now();
@@ -632,6 +645,8 @@ pub fn end_capture_shortcut_edit(
 }
 
 pub fn active_display(app: &AppHandle) -> String {
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = app.try_state::<crate::capture_shortcut_portal_linux::Runtime>() { return runtime.view().actual_trigger_description.unwrap_or_default(); }
     app.try_state::<HostRuntime>()
         .and_then(|runtime| runtime.view().active.as_ref().map(display))
         .unwrap_or_default()
@@ -700,6 +715,8 @@ pub fn route_pressed(app: &AppHandle, key: &Shortcut) -> bool {
     active == Some(key.id())
 }
 pub fn invalidate_owner(app: &AppHandle, owner: &str) {
+    #[cfg(target_os = "linux")]
+    if owner == "settings" { if let Some(runtime) = app.try_state::<crate::capture_shortcut_portal_linux::Runtime>() { runtime.invalidate_settings(); } }
     let Some(runtime) = app.try_state::<HostRuntime>() else {
         return;
     };
@@ -711,7 +728,16 @@ pub fn invalidate_owner(app: &AppHandle, owner: &str) {
         .invalidate(Some(owner), Instant::now());
     emit_ended(app, old);
 }
+/// Wayland consent legitimately moves focus to the system dialog. The portal
+/// adapter separately observes actual GTK unmap/unrealize; other backends keep
+/// their existing foreground recorder cancellation behavior.
+pub(crate) fn owner_event_invalidates(event:&tauri::WindowEvent,wayland_portal:bool)->bool {
+    matches!(event,tauri::WindowEvent::Destroyed)
+        || (!wayland_portal&&matches!(event,tauri::WindowEvent::Focused(false)))
+}
 pub fn invalidate_all(app: &AppHandle) {
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = app.try_state::<crate::capture_shortcut_portal_linux::Runtime>() { runtime.invalidate_settings(); }
     let Some(runtime) = app.try_state::<HostRuntime>() else {
         return;
     };
@@ -724,6 +750,8 @@ pub fn invalidate_all(app: &AppHandle) {
     emit_ended(app, old);
 }
 pub async fn drain(app: &AppHandle, timeout: Duration) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if let Some(runtime) = app.try_state::<crate::capture_shortcut_portal_linux::Runtime>() { return runtime.inner().clone().drain(timeout).await; }
     let Some(runtime) = app
         .try_state::<HostRuntime>()
         .map(|state| state.inner().clone())
@@ -745,6 +773,15 @@ pub async fn drain(app: &AppHandle, timeout: Duration) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wayland_system_dialog_focus_loss_preserves_request_but_destroy_always_revokes() {
+        use tauri::WindowEvent;
+        assert!(!owner_event_invalidates(&WindowEvent::Focused(false),true));
+        assert!(owner_event_invalidates(&WindowEvent::Focused(false),false));
+        assert!(owner_event_invalidates(&WindowEvent::Destroyed,true));
+        assert!(owner_event_invalidates(&WindowEvent::Destroyed,false));
+        assert!(!owner_event_invalidates(&WindowEvent::Focused(true),true));
+    }
     fn id() -> String {
         uuid::Uuid::new_v4().to_string()
     }
@@ -904,4 +941,26 @@ mod tests {
         assert!(!runtime.0.abort.load(Ordering::Acquire));
         drop(next);
     }
+}
+
+#[tauri::command]
+pub async fn configure_capture_shortcut_portal(app: AppHandle, window: WebviewWindow, expected_revision: u64, request_id: String) -> Result<CaptureShortcutState,String> {
+    #[cfg(target_os = "linux")]
+    { return crate::capture_shortcut_wayland_host::configure(app,window,expected_revision,request_id).await; }
+    #[cfg(not(target_os = "linux"))]
+    { let _=(app,window,expected_revision,request_id); Err("此平台不使用系统快捷键授权".into()) }
+}
+#[tauri::command]
+pub async fn cancel_capture_shortcut_portal(app: AppHandle, window: WebviewWindow, request_id: String) -> Result<(),String> {
+    #[cfg(target_os = "linux")]
+    { return crate::capture_shortcut_wayland_host::cancel(&app,&window,&request_id).await; }
+    #[cfg(not(target_os = "linux"))]
+    { let _=(app,window,request_id); Err("此平台不使用系统快捷键授权".into()) }
+}
+#[tauri::command]
+pub fn open_capture_shortcut_system_settings(app: AppHandle, window: WebviewWindow) -> Result<(),String> {
+    #[cfg(target_os = "linux")]
+    { return crate::capture_shortcut_wayland_host::open_system_settings(&app,&window); }
+    #[cfg(not(target_os = "linux"))]
+    { let _=(app,window); Err("此平台不使用系统快捷键授权".into()) }
 }

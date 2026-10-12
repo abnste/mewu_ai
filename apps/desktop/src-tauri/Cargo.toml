@@ -120,6 +120,7 @@ linux-x11-tests = []
 linux-secret-service-tests = []
 linux-worker-tests = []
 linux-recording-tests = []
+linux-ui-diagnostics = []
 
 [[test]]
 name = "linux_worker_factory"

@@ -82,6 +82,7 @@ impl StorageRuntime {
                     | "get_recording_status"
                     | "get_recording_audio"
                     | "get_capture_shortcut"
+                    | "cancel_capture_shortcut_portal"
                     | "get_capture_preferences"
                     | "get_system_preferences"
             )

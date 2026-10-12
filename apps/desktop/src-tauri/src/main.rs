@@ -19,6 +19,12 @@ mod capture_preferences;
 mod capture_visibility;
 mod capture_shortcut;
 mod capture_shortcut_host;
+#[cfg(target_os = "linux")]
+mod capture_shortcut_desktop_linux;
+#[cfg(target_os = "linux")]
+mod capture_shortcut_portal_linux;
+#[cfg(target_os = "linux")]
+mod capture_shortcut_wayland_host;
 mod clipboard_video_storage;
 mod code_decode;
 mod code_host;
@@ -2227,6 +2233,8 @@ fn start_capture(app: &AppHandle) {
                 let _ = app.emit_to("space", "host-error", error);
             }
         }
+        #[cfg(target_os = "linux")]
+        capture_shortcut_portal_linux::restore_after_ready(&app);
     });
 }
 
@@ -2369,6 +2377,20 @@ fn main() {
         )
         .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
         .on_page_load(|webview, _| {
+            #[cfg(target_os = "linux")]
+            if webview.label() == "settings" {
+                if let Some(window) = webview.app_handle().get_webview_window("settings") {
+                    let _ = capture_shortcut_wayland_host::observe_settings(&window);
+                }
+            }
+            #[cfg(all(target_os = "linux", feature = "linux-ui-diagnostics"))]
+            {
+                let _ = webview.with_webview(|native| {
+                    use gtk::glib::prelude::ObjectExt;
+                    let settings = native.inner().property::<gtk::glib::Object>("settings");
+                    settings.set_property("enable-write-console-messages-to-stdout", true);
+                });
+            }
             #[cfg(windows)]
             {
                 // This applies to every frame, including generated HTML artifacts.
@@ -2405,6 +2427,9 @@ fn main() {
                 data_host::clean_data,
                 blackboard_text_host::save_blackboard_text,
                 capture_shortcut_host::set_capture_shortcut,
+                capture_shortcut_host::configure_capture_shortcut_portal,
+                capture_shortcut_host::cancel_capture_shortcut_portal,
+                capture_shortcut_host::open_capture_shortcut_system_settings,
                 capture_shortcut_host::begin_capture_shortcut_edit,
                 capture_shortcut_host::end_capture_shortcut_edit,
                 lifecycle::begin_exit_preparation,
@@ -2564,12 +2589,13 @@ fn main() {
             if window.label() == "settings" && matches!(event, tauri::WindowEvent::Destroyed) {
                 storage_host::invalidate_owner(window.app_handle());
             }
-            if window.label() == "settings"
-                && matches!(
-                    event,
-                    tauri::WindowEvent::Focused(false) | tauri::WindowEvent::Destroyed
-                )
-            {
+            let wayland_shortcut = {
+                #[cfg(target_os = "linux")]
+                { window.app_handle().try_state::<capture_shortcut_portal_linux::Runtime>().is_some() }
+                #[cfg(not(target_os = "linux"))]
+                { false }
+            };
+            if window.label() == "settings" && capture_shortcut_host::owner_event_invalidates(&event, wayland_shortcut) {
                 capture_shortcut_host::invalidate_owner(window.app_handle(), window.label());
             }
             if pin_host::is_pin_label(window.label()) {
@@ -2877,8 +2903,9 @@ fn main() {
     if let Ok(application) = application {
         application.run(move |app, event| {
             #[cfg(target_os = "linux")]
-            if startup_capture.take_ready(&event) {
-                start_capture(app);
+            if matches!(event, tauri::RunEvent::Ready) {
+                if startup_capture.take_ready(&event) { start_capture(app); }
+                else { capture_shortcut_portal_linux::restore_after_ready(app); }
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app

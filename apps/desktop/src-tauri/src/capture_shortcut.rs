@@ -15,6 +15,7 @@ pub enum ShortcutStatus {
     Fallback,
     Unavailable,
     CleanupPending,
+    NeedsSetup,
 }
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +28,18 @@ pub struct CaptureShortcutState {
     pub editable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_trigger_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration_pending: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_settings_available: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configuration_request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portal_enabled: Option<bool>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RegistrationError {
@@ -150,6 +163,12 @@ impl ShortcutModel {
                 self.preferences.capture_shortcut.clone()
             },
             active: self.active.clone(),
+            backend: None,
+            actual_trigger_description: None,
+            configuration_pending: None,
+            system_settings_available: None,
+            configuration_request_id: None,
+            portal_enabled: None,
             status,
             editable: self.fault.is_none(),
             message: message.or_else(|| {
@@ -316,6 +335,7 @@ impl ShortcutModel {
             version: 1,
             revision: next_revision,
             capture_shortcut: shortcut.clone(),
+            wayland_shortcut_enabled: self.preferences.wayland_shortcut_enabled,
         };
         let receipt = match backend.persist(&self.stamp, &next) {
             Ok(receipt) => receipt,
@@ -557,6 +577,7 @@ mod tests {
                 version: 1,
                 revision: 4,
                 capture_shortcut: Some(desired.clone()),
+                wayland_shortcut_enabled: false,
             })
             .unwrap(),
         )
@@ -613,6 +634,7 @@ mod tests {
                 version: 1,
                 revision: 2,
                 capture_shortcut: None,
+                wayland_shortcut_enabled: false,
             })
             .unwrap(),
         );

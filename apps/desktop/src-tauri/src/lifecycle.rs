@@ -136,6 +136,7 @@ impl ExitState {
                     | "apply_video_annotation_document"
                     | "edit_video_annotation_text"
                     | "end_capture_shortcut_edit"
+                    | "cancel_capture_shortcut_portal"
                     | "get_capture_shortcut"
                     | "get_capture_preferences"
                     | "get_system_preferences"

@@ -57,7 +57,10 @@ pub struct HostPreferences {
     pub version: u32,
     pub revision: u64,
     pub capture_shortcut: Option<ShortcutChord>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wayland_shortcut_enabled: bool,
 }
+fn is_false(value: &bool) -> bool { !*value }
 impl<'de> Deserialize<'de> for HostPreferences {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Option fields normally accept a missing key as None. Here null is an
@@ -74,11 +77,14 @@ impl<'de> Deserialize<'de> for HostPreferences {
             version: u32,
             revision: u64,
             capture_shortcut: RequiredNullable,
+            #[serde(default)]
+            wayland_shortcut_enabled: bool,
         }
         let wire = Wire::deserialize(deserializer)?;
         Ok(Self {
             version: wire.version,
             revision: wire.revision,
+            wayland_shortcut_enabled: wire.wayland_shortcut_enabled,
             capture_shortcut: match wire.capture_shortcut {
                 RequiredNullable::Disabled(()) => None,
                 RequiredNullable::Chord(chord) => Some(chord),
@@ -104,6 +110,7 @@ impl HostPreferences {
             version: 1,
             revision: 0,
             capture_shortcut: Some(ShortcutChord::default_capture()),
+            wayland_shortcut_enabled: false,
         }
     }
 }
@@ -422,7 +429,19 @@ mod tests {
             version: 1,
             revision,
             capture_shortcut: chord,
+            wayland_shortcut_enabled: false,
         }
+    }
+    #[test]
+    fn wayland_receipt_is_explicit_and_legacy_native_bytes_stay_unchanged() {
+        let legacy = br#"{"version":1,"revision":1,"captureShortcut":{"code":"KeyS","ctrl":false,"shift":true,"alt":true}}"#;
+        let loaded = LoadedPreferences::from_bytes(legacy.to_vec()).unwrap();
+        assert!(!loaded.preferences.wayland_shortcut_enabled);
+        assert_eq!(serde_json::to_vec(&loaded.preferences).unwrap(), legacy);
+        let mut next=loaded.preferences.clone();next.wayland_shortcut_enabled=true;
+        let enabled=LoadedPreferences::from_bytes(serde_json::to_vec(&next).unwrap()).unwrap();
+        assert!(enabled.preferences.wayland_shortcut_enabled);
+        assert_eq!(enabled.preferences.capture_shortcut, loaded.preferences.capture_shortcut);
     }
     struct TestDir(PathBuf);
     fn test_root() -> PathBuf {

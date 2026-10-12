@@ -66,6 +66,9 @@
     "allow-check-app-update",
     "allow-install-app-update",
     "allow-get-data-usage",
-    "allow-clean-data"
+    "allow-clean-data",
+    "allow-configure-capture-shortcut-portal",
+    "allow-cancel-capture-shortcut-portal",
+    "allow-open-capture-shortcut-system-settings"
   ]
 }
