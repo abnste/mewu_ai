@@ -1347,12 +1347,12 @@ mod tests {
             mBitsPerChannel: 32,
             mReserved: 0,
         };
-        let mut format = std::ptr::null_mut();
+        let mut format = std::ptr::null();
         assert_eq!(
             unsafe {
                 CMAudioFormatDescriptionCreate(
                     None,
-                    &asbd,
+                    NonNull::from(&asbd),
                     0,
                     std::ptr::null(),
                     0,
@@ -1363,7 +1363,7 @@ mod tests {
             },
             0
         );
-        let format = unsafe { Retained::from_raw(format) }.unwrap();
+        let format = unsafe { Retained::from_raw(format.cast_mut()) }.unwrap();
         let timing = CMSampleTimingInfo {
             duration: CMTime {
                 value: 1,
