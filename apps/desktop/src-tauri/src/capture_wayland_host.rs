@@ -232,8 +232,8 @@ fn log_layout(widget: &gtk::ApplicationWindow, stage: &str) {
         style.list_classes(), style.padding(style.state()), style.border(style.state()), style.margin(style.state()));
     fn webview_layout(widget: &gtk::Widget, stage: &str, depth: u8) {
         let allocation = widget.allocation();
-        eprintln!("mewu-wayland-layout stage={stage} own-child-depth={depth} class={} allocation={},{},{}x{} requested={}x{}",
-            widget.type_().name(), allocation.x(), allocation.y(), allocation.width(), allocation.height(), widget.width_request(), widget.height_request());
+        eprintln!("mewu-wayland-layout stage={stage} own-child-depth={depth} class={} allocation={},{},{}x{} requested={}x{} preferred-width={:?} preferred-height={:?}",
+            widget.type_().name(), allocation.x(), allocation.y(), allocation.width(), allocation.height(), widget.width_request(), widget.height_request(), widget.preferred_width(), widget.preferred_height());
         if depth < 4 {
             if let Some(container) = widget.dynamic_cast_ref::<gtk::Container>() {
                 for child in container.children().into_iter().take(16) { webview_layout(&child, stage, depth + 1); }
@@ -337,6 +337,18 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
                             final_size=None;
                             stable_ticks=0;
                             #[cfg(debug_assertions)] eprintln!("mewu-wayland-layout stage=monitor-target logical-size={expected:?}");
+                            if let Some((width,height))=expected {
+                                // GTK remembers the previous mapped size. A
+                                // fullscreen flag alone need not replace its
+                                // startup width; default_size alone also does
+                                // not resize an already realized window. Request
+                                // the owned monitor's logical size once, then
+                                // await actual allocations instead of assuming
+                                // the request was accepted by the compositor.
+                                widget.set_default_size(width,height);
+                                widget.resize(width,height);
+                                return Ok(None);
+                            }
                         }
                         let size=(widget.allocated_width(),widget.allocated_height());
                         let ready=drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN) && widget.is_mapped()
