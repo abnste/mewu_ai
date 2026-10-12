@@ -1431,7 +1431,7 @@ mod mf_composition {
             ))?;
             native(output_type.SetUINT32(
                 &MF_MT_AVG_BITRATE,
-                if bitrate == 0 { 8_000_000 } else { bitrate },
+                bitrate.max(crate::video_clip_contract::H264_SCREEN_BITRATE),
             ))?;
             let stream = native(sink.AddStream(&output_type))?;
             let input = native(video_type(

@@ -361,6 +361,31 @@ mod native {
 
     impl Writer {
         fn new(config: &Config) -> Result<Self, String> {
+            // Hardware transforms can default to CBR even though Microsoft's
+            // software encoder defaults to VBR. Keep the existing bitrate target
+            // and request VBR explicitly, so static screens do not get padding
+            // solely to fill a constant bitrate. Do not use quality-based mode:
+            // the actual hardware probe lost fine screen detail in that mode.
+            // https://learn.microsoft.com/windows/win32/medfound/h-264-video-encoder
+            let encoding = unsafe {
+                let mut encoding = None;
+                MFCreateAttributes(&mut encoding, 1).map_err(|e| failure("无法配置录屏编码", e))?;
+                let encoding = encoding.ok_or("无法配置录屏编码")?;
+                encoding
+                    .SetUINT32(
+                        &CODECAPI_AVEncCommonRateControlMode,
+                        eAVEncCommonRateControlMode_UnconstrainedVBR.0 as u32,
+                    )
+                    .map_err(|e| failure("无法配置录屏码率", e))?;
+                encoding
+            };
+            Self::new_with_encoding(config, Some(&encoding))
+        }
+
+        fn new_with_encoding(
+            config: &Config,
+            encoding: Option<&IMFAttributes>,
+        ) -> Result<Self, String> {
             let create = || -> windows::core::Result<Self> {
                 unsafe {
                     let mut attributes = None;
@@ -376,7 +401,10 @@ mod native {
                     let output = MFCreateMediaType()?;
                     output.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
                     output.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
-                    output.SetUINT32(&MF_MT_AVG_BITRATE, 8_000_000)?;
+                    output.SetUINT32(
+                        &MF_MT_AVG_BITRATE,
+                        crate::video_clip_contract::H264_SCREEN_BITRATE,
+                    )?;
                     set_geometry(&output, config)?;
                     let stream = sink.AddStream(&output)?;
                     let input = MFCreateMediaType()?;
@@ -386,7 +414,7 @@ mod native {
                     input.SetUINT32(&MF_MT_DEFAULT_STRIDE, config.width * 4)?;
                     input.SetUINT32(&MF_MT_FIXED_SIZE_SAMPLES, 1)?;
                     input.SetUINT32(&MF_MT_SAMPLE_SIZE, config.width * config.height * 4)?;
-                    sink.SetInputMediaType(stream, &input, None)?;
+                    sink.SetInputMediaType(stream, &input, encoding)?;
                     let audio_stream = if config.audio.enabled() {
                         let output = MFCreateMediaType()?;
                         output.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
@@ -553,6 +581,239 @@ mod native {
     #[cfg(test)]
     mod codec_tests {
         use super::*;
+        use windows::core::Interface;
+
+        #[test]
+        #[ignore = "requires actual Windows H.264 encode/decode; uses synthetic screen pixels only"]
+        fn explicit_vbr_preserves_screen_details_without_cbr_padding() {
+            let _runtime = Runtime::new().unwrap();
+            struct RemoveFile(PathBuf);
+            impl Drop for RemoveFile {
+                fn drop(&mut self) {
+                    let _ = fs::remove_file(&self.0);
+                }
+            }
+            for (width, height) in [(628u32, 290u32), (1920, 1080)] {
+                let mut lengths = Vec::new();
+                let mut modes = Vec::new();
+                for variable_rate in [false, true] {
+                    let output =
+                        std::env::temp_dir().join(format!("mewu-vbr-{}.mp4", uuid::Uuid::new_v4()));
+                    let _cleanup = RemoveFile(output.clone());
+                    let config = Config {
+                        output: output.clone(),
+                        origin_x: 0,
+                        origin_y: 0,
+                        monitor_width: width,
+                        monitor_height: height,
+                        x: 0,
+                        y: 0,
+                        width,
+                        height,
+                        audio: AudioMode::Mute,
+                    };
+                    unsafe {
+                        let writer = if variable_rate {
+                            Writer::new(&config)
+                        } else {
+                            Writer::new_with_encoding(&config, None)
+                        }
+                        .unwrap();
+                        let mut codec = std::ptr::null_mut();
+                        writer
+                            .sink
+                            .GetServiceForStream(
+                                writer.stream,
+                                &windows::core::GUID::zeroed(),
+                                &ICodecAPI::IID,
+                                &mut codec,
+                            )
+                            .unwrap();
+                        assert!(!codec.is_null());
+                        let codec = ICodecAPI::from_raw(codec);
+                        modes.push(
+                            u32::try_from(
+                                &codec
+                                    .GetValue(&CODECAPI_AVEncCommonRateControlMode)
+                                    .unwrap(),
+                            )
+                            .unwrap(),
+                        );
+                        println!("NATIVE_ENCODER_PROPERTIES explicit_unconstrained_vbr={variable_rate} mode={:?}", codec.GetValue(&CODECAPI_AVEncCommonRateControlMode));
+                        if variable_rate {
+                            assert_eq!(
+                                u32::try_from(
+                                    &codec
+                                        .GetValue(&CODECAPI_AVEncCommonRateControlMode)
+                                        .unwrap()
+                                )
+                                .unwrap(),
+                                eAVEncCommonRateControlMode_UnconstrainedVBR.0 as u32
+                            );
+                        }
+                        let mut expected = Vec::new();
+                        for frame in 0..30i64 {
+                            let mut pixels = vec![255u8; width as usize * height as usize * 4];
+                            // Narrow black strokes exercise high-contrast screen detail;
+                            // the moving red block also detects lost or repeated frames.
+                            for y in 24..88u32 {
+                                for x in 24..240u32 {
+                                    if (x / 3) % 2 == 0 {
+                                        let offset = (y as usize * width as usize + x as usize) * 4;
+                                        pixels[offset..offset + 3].fill(0);
+                                    }
+                                }
+                            }
+                            for y in 120..152u32 {
+                                for x in 24 + frame as u32 * 4..56 + frame as u32 * 4 {
+                                    let offset = (y as usize * width as usize + x as usize) * 4;
+                                    pixels[offset..offset + 3].copy_from_slice(&[0, 0, 255]);
+                                }
+                            }
+                            writer
+                                .write(&pixels, frame * FRAME_TICKS, FRAME_TICKS)
+                                .unwrap();
+                            expected.push(pixels);
+                        }
+                        writer.finish().unwrap();
+                        lengths.push(fs::metadata(&output).unwrap().len());
+                        let mut attributes = None;
+                        MFCreateAttributes(&mut attributes, 1).unwrap();
+                        let attributes = attributes.unwrap();
+                        attributes
+                            .SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1)
+                            .unwrap();
+                        let path = HSTRING::from(output.as_os_str());
+                        let reader =
+                            MFCreateSourceReaderFromURL(PCWSTR(path.as_ptr()), &attributes)
+                                .unwrap();
+                        let stream = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32;
+                        let decoded_type = MFCreateMediaType().unwrap();
+                        decoded_type
+                            .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
+                            .unwrap();
+                        decoded_type
+                            .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_RGB32)
+                            .unwrap();
+                        reader
+                            .SetCurrentMediaType(stream, None, &decoded_type)
+                            .unwrap();
+                        let decoded_type = reader.GetCurrentMediaType(stream).unwrap();
+                        assert_eq!(
+                            decoded_type.GetUINT64(&MF_MT_FRAME_SIZE).unwrap(),
+                            (u64::from(width) << 32) | u64::from(height)
+                        );
+                        let stride = decoded_type.GetUINT32(&MF_MT_DEFAULT_STRIDE).unwrap() as i32;
+                        let mut count = 0usize;
+                        let mut ended = false;
+                        let mut previous = -1i64;
+                        for _ in 0..64 {
+                            let (mut flags, mut pts, mut sample) = (0, 0, None);
+                            reader
+                                .ReadSample(
+                                    stream,
+                                    0,
+                                    None,
+                                    Some(&mut flags),
+                                    Some(&mut pts),
+                                    Some(&mut sample),
+                                )
+                                .unwrap();
+                            if let Some(sample) = sample {
+                                assert!(count < expected.len() && pts >= previous);
+                                assert!((pts - count as i64 * FRAME_TICKS).abs() <= 1000);
+                                previous = pts;
+                                let buffer = sample.GetBufferByIndex(0).unwrap();
+                                let mut decoded =
+                                    Vec::with_capacity(width as usize * height as usize * 4);
+                                let (mut top, mut pitch, mut start, mut length) =
+                                    (std::ptr::null_mut(), 0i32, std::ptr::null_mut(), 0u32);
+                                let surface = buffer.cast::<IMF2DBuffer2>().ok();
+                                if let Some(surface) = &surface {
+                                    surface
+                                        .Lock2DSize(
+                                            MF2DBuffer_LockFlags_Read,
+                                            &mut top,
+                                            &mut pitch,
+                                            &mut start,
+                                            &mut length,
+                                        )
+                                        .unwrap();
+                                } else {
+                                    // ReadSample can negotiate a new output stride. The
+                                    // media type queried before decoding is not authoritative.
+                                    pitch = reader
+                                        .GetCurrentMediaType(stream)
+                                        .unwrap()
+                                        .GetUINT32(&MF_MT_DEFAULT_STRIDE)
+                                        .unwrap()
+                                        as i32;
+                                    buffer.Lock(&mut start, None, Some(&mut length)).unwrap();
+                                    let offset = if pitch < 0 {
+                                        (height as usize - 1) * pitch.unsigned_abs() as usize
+                                    } else {
+                                        0
+                                    };
+                                    top = (start as usize).checked_add(offset).unwrap() as *mut u8;
+                                }
+                                let bounds_start = start as usize;
+                                let bounds_end = bounds_start.checked_add(length as usize).unwrap();
+                                for y in 0..height as isize {
+                                    let address = (top as usize)
+                                        .checked_add_signed(y * pitch as isize)
+                                        .unwrap();
+                                    let end = address.checked_add(width as usize * 4).unwrap();
+                                    assert!(address >= bounds_start && end <= bounds_end);
+                                    decoded.extend_from_slice(std::slice::from_raw_parts(
+                                        address as *const u8,
+                                        width as usize * 4,
+                                    ));
+                                }
+                                if let Some(surface) = surface {
+                                    surface.Unlock2D().unwrap();
+                                } else {
+                                    buffer.Unlock().unwrap();
+                                }
+                                if count == 0 {
+                                    println!("NATIVE_DECODE_LAYOUT width={width} declared_stride={stride} actual_pitch={pitch} bytes={length}");
+                                }
+                                let row = |y: usize| y * width as usize * 4;
+                                for y in [30usize, 50, 70] {
+                                    for x in 24..240usize {
+                                        let actual = &decoded[row(y) + x * 4..row(y) + x * 4 + 3];
+                                        let source = &expected[count][(y * width as usize + x) * 4
+                                            ..(y * width as usize + x) * 4 + 3];
+                                        assert!(actual.iter().zip(source).all(|(&a, &b)| a.abs_diff(b) <= 32), "screen contrast lost: variable_rate={variable_rate} frame={count} x={x} y={y} actual={actual:?} source={source:?} stride={stride}");
+                                    }
+                                }
+                                let x = 40 + count * 4;
+                                let marker = &decoded[row(136) + x * 4..row(136) + x * 4 + 3];
+                                assert!(
+                                    marker[2] > 220 && marker[0] < 40 && marker[1] < 40,
+                                    "moving source frame lost: {count} {marker:?}"
+                                );
+                                count += 1;
+                            }
+                            if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                                ended = true;
+                                break;
+                            }
+                        }
+                        assert!(ended);
+                        assert_eq!(count, 30);
+                        println!("NATIVE_SCREEN_H264_COMPARE width={width} height={height} explicit_unconstrained_vbr={variable_rate} target_bitrate=8000000 bytes={} decoded_frames={count} screen_contrast=verified moving_frames=verified", lengths.last().unwrap());
+                    }
+                }
+                // Microsoft's software encoder already defaults to VBR. Only
+                // a real CBR baseline can prove this avoids CBR padding.
+                if modes[0] == eAVEncCommonRateControlMode_CBR.0 as u32 {
+                    assert!(
+                        lengths[1] * 2 < lengths[0],
+                        "CBR padding was not reduced: {lengths:?}"
+                    );
+                }
+            }
+        }
 
         #[test]
         #[ignore = "requires the Windows Media Foundation H.264 codec; captures no desktop"]
@@ -1065,6 +1326,69 @@ mod native {
                 clipped.duration_ticks,
                 clipped_audio.len()
             );
+            // An annotation adds new visual detail that is absent from the
+            // low-bitrate source. Exercise the real overlay export as well.
+            let overlay_path = directory.join("blue-overlay.png");
+            image::RgbaImage::from_pixel(32, 16, image::Rgba([0, 0, 255, 255]))
+                .save(&overlay_path)
+                .unwrap();
+            let overlay = crate::video_clip_contract::OverlayRaster {
+                png: overlay_path.clone(),
+                png_sha256: format!("{:x}", Sha256::digest(fs::read(&overlay_path).unwrap())),
+                width: 32,
+                height: 16,
+                bounds: crate::video_clip_contract::OverlayBounds {
+                    x: 16.,
+                    y: 16.,
+                    width: 32.,
+                    height: 16.,
+                },
+                interval: range.clone(),
+            };
+            let annotated_path = directory.join("annotated-audio.mp4");
+            let ClipJobResult::Rendered(annotated) = crate::video_clip_backend::execute(
+                &ClipJob::RenderAnnotated {
+                    source: output.clone(),
+                    output: annotated_path.clone(),
+                    expected: original.clone(),
+                    range: Some(range.clone()),
+                    overlays: vec![overlay],
+                },
+                &cancel,
+                &|_| {},
+            )
+            .unwrap() else {
+                panic!("render annotated VBR recording");
+            };
+            crate::video_clip_contract::validate_annotated_rendered(&original, &range, &annotated)
+                .unwrap();
+            let annotated_audio = unsafe { decode_audio(&annotated_path) };
+            assert!(annotated_audio.len().abs_diff(2 * SAMPLE_RATE as usize) <= 4096);
+            for frequency in [440.0, 880.0] {
+                assert!(energy_window(&annotated_audio, frequency, 0.5, 1.5) > 1500.0);
+            }
+            {
+                let mut reader = crate::video_gif_backend::source_stream::Reader::open(
+                    &annotated_path,
+                    config.width,
+                    config.height,
+                )
+                .unwrap();
+                let frame = reader
+                    .next(&cancel)
+                    .unwrap()
+                    .expect("annotated output has a frame");
+                let image = reader.rgba(&frame, &cancel).unwrap();
+                let marker = image.get_pixel(32, 24).0;
+                assert!(
+                    marker[2] > 220 && marker[0] < 40 && marker[1] < 40,
+                    "new annotation detail was lost: {marker:?}"
+                );
+            }
+            assert_eq!(source_sha, Sha256::digest(fs::read(&output).unwrap()));
+            println!("synthetic annotated VBR MP4: audio tones and new blue overlay independently decoded, source SHA unchanged");
+            fs::remove_file(&annotated_path).unwrap();
+            fs::remove_file(&overlay_path).unwrap();
             // Leave only opt-in evidence in a caller-controlled temporary root.
             println!(
                 "synthetic MP4: {} ({} PCM frames; no devices)",

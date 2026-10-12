@@ -9,6 +9,9 @@ pub const MIN_RANGE_TICKS: u64 = 1_000_000; // 100ms
 pub const MAX_DURATION_TICKS: u64 = 18_000_000_000; // 30min source admission only
 pub const MAX_SOURCE_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_SOURCE_PIXELS: u64 = 4_000_000; // current internally recorded assets
+/// Existing screen-recording target, also the re-encode floor. A static VBR
+/// file's observed average bitrate must not become the next encoder's budget.
+pub const H264_SCREEN_BITRATE: u32 = 8_000_000;
 pub const MAX_GIF_BYTES: u64 = 128 * 1024 * 1024;
 pub const MAX_GIF_FRAMES: u32 = 240;
 pub const MAX_GIF_PIXELS: u64 = 24_000_000;
