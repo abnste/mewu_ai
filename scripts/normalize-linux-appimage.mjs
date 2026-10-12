@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const MAX_ENTRIES = 4096, MAX_DEPTH = 16, MAX_FILE = 512 * 1024 * 1024, MAX_TOTAL = 2 * 1024 * 1024 * 1024;
 const REQUIRED = [
   ['usr/bin/MewuAI', 'file'], ['usr/lib/gtk-3.0', 'dir'],
+  ['usr/lib/libGLESv2.so.2', 'file'], ['usr/share/doc/libgles2/copyright', 'file'],
   ['usr/lib/gtk-3.0/3.0.0/immodules.cache', 'file'],
   ['usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache', 'file'],
   ['usr/lib/girepository-1.0', 'dir'], ['usr/lib/gio/modules', 'dir'],
