@@ -102,6 +102,26 @@ fn near(actual: f64, expected: f64) {
 }
 
 #[test]
+fn recording_video_lookup_never_aliases_its_authorized_preview() {
+    let file = TestDb::new();
+    let mut store = Store::open(&file.path).unwrap();
+    let (scene_id, background, region) = prepare(&mut store);
+    let before = persisted(&file.path);
+    let mut aliased_video = asset(AssetKind::Video);
+    aliased_video.id = background.id.clone();
+    assert!(store.finish_recording(&scene_id, &background.id, &region, aliased_video).is_err());
+    assert_eq!(persisted(&file.path), before);
+    assert_eq!(store.asset(&background.id), Some(&background));
+
+    let video = asset(AssetKind::Video);
+    let snapshot = store.finish_recording(&scene_id, &background.id, &region, video.clone()).unwrap();
+    // These are the same typed lookups used by the media content server.
+    assert_eq!(snapshot.asset(&video.id), Some(&video));
+    assert_eq!(snapshot.asset(&background.id), Some(&background));
+    assert_eq!(Store::open(&file.path).unwrap().asset(&video.id), Some(&video));
+}
+
+#[test]
 fn recording_replaces_only_its_region_and_refs_in_one_persisted_revision() {
     let file = TestDb::new();
     let mut store = Store::open(&file.path).unwrap();

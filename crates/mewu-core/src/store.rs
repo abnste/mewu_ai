@@ -1664,6 +1664,9 @@ impl Store {
         if asset.kind != AssetKind::Video {
             return Err(invalid("录屏必须是视频素材"));
         }
+        if self.state.asset(&asset.id).is_some() {
+            return Err(invalid("录屏素材标识重复，拒绝覆盖已有素材"));
+        }
         let mut next = self.state.clone();
         let target = scene_mut(&mut next, scene_id)?;
         let background = target

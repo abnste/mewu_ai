@@ -174,8 +174,9 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
             if let Some(report)=report {
                 let (scene_id,background,region)={let s=state().lock().map_err(|_|"录屏状态不可用")?;let l=s.lease.as_ref().ok_or("录屏会话已变化")?;
                     (l.scene_id.clone(),l.background.clone().ok_or("录屏预览缺失")?,l.region.clone().ok_or("录屏选区缺失")?)};
-                let host=owner.state::<Host>();let final_path=host.assets.join(format!("{worker_nonce}.mp4"));
-                let asset=Asset{id:worker_nonce.clone(),name:"录屏.mp4".into(),kind:AssetKind::Video,path:final_path.to_string_lossy().into_owned(),
+                let host=owner.state::<Host>();let video_id=uuid::Uuid::new_v4().to_string();
+                let final_path=host.assets.join(format!("{video_id}.mp4"));
+                let asset=Asset{id:video_id,name:"录屏.mp4".into(),kind:AssetKind::Video,path:final_path.to_string_lossy().into_owned(),
                     width:Some(report.width),height:Some(report.height),origin_x:None,origin_y:None,scale_factor:None,capture_coordinates:None};
                 let snapshot=recording::retain_completed_output(&run_output,&final_path,||{
                     crate::assets::open_video(&asset,&host.assets)?;
