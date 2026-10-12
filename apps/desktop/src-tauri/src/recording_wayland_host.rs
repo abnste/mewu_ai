@@ -22,6 +22,10 @@ struct Lease { nonce:String, scene_id:String, background:Option<Asset>, region:O
 #[derive(Default)] struct State { lease:Option<Lease>, finished:Option<(String,Result<(),String>)> }
 fn state()->&'static Mutex<State> {static STATE:OnceLock<Mutex<State>>=OnceLock::new();STATE.get_or_init(||Mutex::new(State::default()))}
 struct PreparingGuard { nonce:String, armed:bool }
+struct StartingGuard { nonce:String, armed:bool }
+impl Drop for StartingGuard {
+    fn drop(&mut self){if self.armed{let _=control(&self.nonce,"cancel");}}
+}
 impl Drop for PreparingGuard {
     fn drop(&mut self){if self.armed{if let Ok(s)=state().lock(){
         if let Some(l)=s.lease.as_ref().filter(|l|l.nonce==self.nonce&&l.status.is_none()){
@@ -298,6 +302,9 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
             rect:recording::Rect{x:region.x/mw as f64,y:region.y/mh as f64,width:region.width/mw as f64,height:region.height/mh as f64},stop_hotkey:String::new(),audio:mode};
         l.region=Some(region);l.status=Some(status.clone());l.grant=Some(grant);l.audio_grant=audio.grant.clone();
         (l.nonce.clone(),l.controls.clone(),status,selection)};
+    // The prepared worker is already alive. Every early error or dropped
+    // invoke must cancel this exact lease until the countdown task owns it.
+    let mut starting=StartingGuard{nonce:id.clone(),armed:true};
     emit(&app,&Some(status));
     // Wayland does not offer WDA/SCK window exclusion. Hide the source canvas;
     // the ordinary native controller is independently accessible for stopping.
@@ -322,5 +329,6 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
         }
         if let Ok(mut c)=controls.lock(){if c.terminal.is_none(){c.start=Some(selection);}}
     });
+    starting.armed=false;
     Ok(true)
 }
