@@ -178,6 +178,15 @@ mod barrier {
     }
 }
 
+fn hide_widget(widget: &gtk::Widget) -> Result<(), String> {
+    // Tao0.37.1 set_visible only queues WindowRequest::Visible, even when
+    // Tauri dispatches Hide on this GTK thread. Hide this witnessed native
+    // widget synchronously before checking unmap and requesting wl_display.sync.
+    // https://github.com/tauri-apps/tao/blob/tao-v0.37.1/src/platform_impl/linux/window.rs
+    widget.hide();
+    if widget.is_mapped() { Err("截图窗口尚未取消映射".into()) } else { Ok(()) }
+}
+
 async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>) -> Result<(Vec<Witness>,Result<(),String>),String> {
     let (tx, rx) = oneshot::channel(); let target = window.clone(); let app = app.clone();
     let hide_work=work.clone(); let hide_transition=transition.clone();
@@ -192,8 +201,8 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
             let hidden=(|| {
                 for w in &owned {
                     let candidate = app.get_webview_window(&w.label).ok_or("截图窗口已关闭")?;
-                    candidate.hide().map_err(|_| "无法隐藏截图窗口")?;
-                    if candidate.gtk_window().map_err(|_| "截图窗口不可用")?.is_mapped() { return Err("截图窗口尚未取消映射".into()); }
+                    let widget=candidate.gtk_window().map_err(|_| "截图窗口不可用")?;
+                    hide_widget(widget.upcast_ref())?;
                 }
                 current(&owned,true)
             })();
@@ -566,6 +575,23 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn mapped_window_is_hidden_before_the_wayland_sync_barrier() {
+        gtk::init().expect("GTK display required for native unmap regression");
+        let window=gtk::Window::new(gtk::WindowType::Toplevel);
+        window.show_all();
+        assert!(window.is_visible() && window.is_mapped());
+        let unmapped=std::rc::Rc::new(std::cell::Cell::new(false));
+        let observed=unmapped.clone();
+        window.connect_unmap(move |_|observed.set(true));
+        // No event-loop iteration or delay may conceal Tao's queued-hide race.
+        hide_widget(window.upcast_ref()).unwrap();
+        assert!(unmapped.get());
+        assert!(!window.is_visible() && !window.is_mapped());
+        // A pre-hidden owned surface must keep the cold-start path valid.
+        hide_widget(window.upcast_ref()).unwrap();
+        assert!(!window.is_mapped());
+        window.close();
+    }
     #[test] fn remapped_or_reused_surface_cannot_authorize_a_pending_portal_capture() {
         let mut r=Registry::default(); let identity=Identity{widget:1,drawable:2};
         let (old,_)=r.bind("space",identity.clone(),true).unwrap();
