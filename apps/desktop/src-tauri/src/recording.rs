@@ -423,8 +423,30 @@ pub async fn start_recording(
             }
         })
         .is_ok();
+    #[cfg(target_os = "macos")]
+    let esc = app
+        .global_shortcut()
+        .on_shortcut("Escape", |app, _, event| {
+            if event.state() == ShortcutState::Pressed {
+                request_stop(app);
+            }
+        })
+        .is_ok();
     update(&app, &id, |s| {
-        s.stop_hotkey = if f8 { "F8 / Esc" } else { "Esc" }.into()
+        #[cfg(not(target_os = "macos"))]
+        {
+            s.stop_hotkey = if f8 { "F8 / Esc" } else { "Esc" }.into();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            s.stop_hotkey = match (f8, esc) {
+                (true, true) => "F8 / Esc",
+                (true, false) => "F8",
+                (false, true) => "Esc",
+                (false, false) => "停止按钮",
+            }
+            .into();
+        }
     });
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -489,6 +511,10 @@ pub async fn start_recording(
         });
         if f8 {
             let _ = app2.global_shortcut().unregister("F8");
+        }
+        #[cfg(target_os = "macos")]
+        if esc {
+            let _ = app2.global_shortcut().unregister("Escape");
         }
         let saved = had_output && result.is_ok();
         let revoked = app2
@@ -993,7 +1019,22 @@ mod tests {
     #[test]
     fn recording_geometry_keeps_physical_origin_and_even_crop() {
         let bg = Asset {
-            capture_coordinates: None,
+            capture_coordinates: {
+                #[cfg(target_os = "macos")]
+                {
+                    Some(mewu_core::CaptureCoordinates {
+                        space: mewu_core::CaptureCoordinateSpace::QuartzPoints,
+                        origin_x: -1920.,
+                        origin_y: 0.,
+                        width: 1920.,
+                        height: 1080.,
+                    })
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    None
+                }
+            },
             id: "bg".into(),
             name: "screen".into(),
             kind: AssetKind::Image,

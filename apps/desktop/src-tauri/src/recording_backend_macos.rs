@@ -38,6 +38,13 @@ use objc2_screen_capture_kit::*;
 use std::{
     collections::VecDeque,
     fs::File,
+    os::{
+        fd::AsRawFd,
+        unix::{
+            ffi::OsStrExt,
+            fs::{MetadataExt, OpenOptionsExt},
+        },
+    },
     panic::{catch_unwind, AssertUnwindSafe},
     ptr::NonNull,
     sync::{
@@ -526,6 +533,111 @@ fn copied_timing(
     }
     unsafe { Retained::from_raw(result) }.ok_or_else(|| "录屏样本时间副本缺失".into())
 }
+// The host's private recording-staging/UUID.mp4 remains the actual file.
+// Parent size monitoring, crash recovery and fully-exited cleanup keep their
+// original target; no untracked hidden staging directory is introduced.
+struct Output {
+    path: std::path::PathBuf,
+    parent_path: std::path::PathBuf,
+    parent: File,
+    file: Option<File>,
+    complete: bool,
+}
+fn file_identity(file: &File) -> Result<(u64, u64), String> {
+    let m = file.metadata().map_err(|_| "无法检查录屏文件句柄")?;
+    Ok((m.dev(), m.ino()))
+}
+impl Output {
+    fn new(path: &std::path::Path) -> Result<Self, String> {
+        let parent_path = path.parent().ok_or("录屏输出目录缺失")?;
+        if parent_path
+            .canonicalize()
+            .map_err(|_| "录屏输出目录不可用")?
+            != parent_path
+        {
+            return Err("录屏输出目录不能经过链接".into());
+        }
+        let parent = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(parent_path)
+            .map_err(|_| "无法持有录屏输出目录")?;
+        match std::fs::symlink_metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            _ => return Err("录屏输出文件已存在，不能覆盖".into()),
+        }
+        let result = Self {
+            path: path.to_owned(),
+            parent_path: parent_path.to_owned(),
+            parent,
+            file: None,
+            complete: false,
+        };
+        result.check()?;
+        Ok(result)
+    }
+    fn check(&self) -> Result<(), String> {
+        let parent =
+            std::fs::symlink_metadata(&self.parent_path).map_err(|_| "录屏输出目录不可用")?;
+        if !parent.is_dir()
+            || parent.file_type().is_symlink()
+            || (parent.dev(), parent.ino()) != file_identity(&self.parent)?
+        {
+            return Err("录屏输出目录已改变".into());
+        }
+        if let Some(file) = &self.file {
+            let m = std::fs::symlink_metadata(&self.path).map_err(|_| "录屏文件已移走")?;
+            if !m.is_file()
+                || m.file_type().is_symlink()
+                || (m.dev(), m.ino()) != file_identity(file)?
+            {
+                return Err("录屏文件已改变".into());
+            }
+        }
+        Ok(())
+    }
+    fn hold(&mut self) -> Result<(), String> {
+        self.check()?;
+        if self.file.is_none() {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(&self.path)
+                .map_err(|_| "无法持有实际录屏文件")?;
+            if !file.metadata().map_err(|_| "无法检查录屏文件")?.is_file() {
+                return Err("录屏输出不是普通文件".into());
+            }
+            self.file = Some(file);
+            self.check()?;
+        }
+        Ok(())
+    }
+    fn finish(&mut self) -> Result<(), String> {
+        self.check()?;
+        self.file
+            .as_ref()
+            .ok_or("实际录屏文件缺失")?
+            .sync_all()
+            .map_err(|_| "无法同步录屏文件")?;
+        self.complete = true;
+        Ok(())
+    }
+}
+impl Drop for Output {
+    fn drop(&mut self) {
+        // Writer drops first; cancelWriting blocks until its actual work ends.
+        // Keep the old FD alive and never unlink a replacement file.
+        if !self.complete && self.file.is_some() && self.check().is_ok() {
+            if let Some(name) = self.path.file_name() {
+                if let Ok(name) = std::ffi::CString::new(name.as_bytes()) {
+                    unsafe {
+                        libc::unlinkat(self.parent.as_raw_fd(), name.as_ptr(), 0);
+                    }
+                }
+            }
+        }
+    }
+}
 struct Writer {
     writer: Retained<AVAssetWriter>,
     video: Retained<AVAssetWriterInput>,
@@ -814,10 +926,9 @@ pub(super) fn run(
             if !startup(&commands, &mut paused)? {
                 return Ok(None);
             }
-            let mut destination = crate::video_clip_output_macos::Destination::new(&config.output)
-                .map_err(|e| e.to_string())?;
+            let mut destination = Output::new(&config.output)?;
             let mut writer = Writer::new(
-                destination.path(),
+                &destination.path,
                 &config,
                 first_audio.as_ref().map(|s| &*s.0),
             )?;
@@ -829,13 +940,14 @@ pub(super) fn run(
             let mut next_progress = Instant::now();
             let mut last = first;
             loop {
+                destination.check()?;
                 queue_check(&queue)?;
                 capture.check_display()?;
                 let stamp = now()?;
                 let mut stopped = false;
                 loop {
                     match commands.try_recv() {
-                        Ok(Control::Cancel) => return Ok(None),
+                        Ok(Control::Cancel) => return Err("录制已取消".into()),
                         Ok(Control::Stop) => {
                             clock
                                 .set_paused(true, stamp)
@@ -879,6 +991,7 @@ pub(super) fn run(
                     while frames < target {
                         let next = (frames + 1) * TICKS_PER_SECOND / u64::from(FPS);
                         writer.video(&last.0, end, next)?;
+                        destination.hold()?;
                         end = next;
                         frames += 1;
                     }
@@ -895,7 +1008,7 @@ pub(super) fn run(
                     next_progress = Instant::now() + Duration::from_millis(200);
                 }
                 match commands.recv_timeout(POLL) {
-                    Ok(Control::Cancel) => return Ok(None),
+                    Ok(Control::Cancel) => return Err("录制已取消".into()),
                     Ok(Control::Stop) => {
                         clock
                             .set_paused(true, now()?)
@@ -916,7 +1029,7 @@ pub(super) fn run(
             }
             capture.stop()?;
             if frames == 0 {
-                return Ok(None);
+                return Err("录制尚未形成可保存的画面".into());
             }
             if writer.audio.is_some() {
                 audio(&queue, &writer, &clock, &mut audio_end)?;
@@ -926,10 +1039,10 @@ pub(super) fn run(
             }
             writer.finish(end)?;
             drop(writer);
-            destination.check().map_err(|e| e.to_string())?;
+            destination.check()?;
             let checked = crate::video_clip_backend::execute(
                 &crate::video_clip_contract::ClipJob::Inspect {
-                    source: destination.path().to_owned(),
+                    source: destination.path.clone(),
                 },
                 &std::sync::atomic::AtomicBool::new(false),
                 &|_| {},
@@ -945,9 +1058,7 @@ pub(super) fn run(
             {
                 return Err("录屏文件尺寸、声音或时长核验失败".into());
             }
-            let file = File::open(destination.path()).map_err(|_| "无法核验录屏文件")?;
-            destination.publish(&file).map_err(|e| e.to_string())?;
-            destination.commit();
+            destination.finish()?;
             Ok(Some(Report {
                 width: config.width,
                 height: config.height,
