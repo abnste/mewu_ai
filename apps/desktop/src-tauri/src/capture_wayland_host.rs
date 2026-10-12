@@ -226,6 +226,8 @@ fn log_layout(widget: &gtk::ApplicationWindow, stage: &str) {
         widget.window().map(|window| (window.width(), window.height())), widget.default_size(), widget.is_resizable(), widget.is_decorated(),
         widget.window().is_some_and(|window| window.state().contains(gtk::gdk::WindowState::FULLSCREEN)), widget.is_mapped());
     let style = widget.style_context();
+    eprintln!("mewu-wayland-layout stage={stage} active={} transient-parent={:?}", widget.is_active(),
+        widget.transient_for().map(|parent|(parent.is_mapped(),parent.is_active(),parent.allocated_width(),parent.allocated_height())));
     eprintln!("mewu-wayland-layout stage={stage} classes={:?} padding={:?} border={:?} margin={:?}",
         style.list_classes(), style.padding(style.state()), style.border(style.state()), style.margin(style.state()));
     fn webview_layout(widget: &gtk::Widget, stage: &str, depth: u8) {
@@ -289,6 +291,13 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
             widget.set_resizable(true);
             widget.fullscreen();
             target.show().map_err(|_| "无法显示截图空间")?;
+            // The approved image is already acquired. Present this actual
+            // space now: a visible settings toplevel may otherwise keep focus,
+            // while waiting for fullscreen before focus creates a deadlock.
+            // No settings window is hidden/destroyed and no permission anchor
+            // is created before the user's portal consent.
+            target.unminimize().map_err(|_| "无法显示截图空间")?;
+            target.set_focus().map_err(|_| "无法显示截图空间")?;
             Ok(widget)
         })();
         match start {
