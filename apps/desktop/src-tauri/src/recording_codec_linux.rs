@@ -15,6 +15,9 @@ use std::{
 
 const FPS: u64 = 15;
 const MAX_PIXELS: u64 = 4_000_000;
+#[derive(Clone,Copy,Debug,serde::Serialize,serde::Deserialize)]
+#[serde(rename_all="snake_case")]
+pub(crate) enum FinalizeStage { AudioTail, VideoEos, AacTail, MuxEos, FileSync, CloseCapture }
 const QUEUED_FRAMES: u64 = 2;
 
 pub(crate) struct Codec {
@@ -222,24 +225,32 @@ impl Codec {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self, allowed: &impl Fn() -> bool) -> Result<u64, String> {
+    pub(crate) fn finish(self, allowed: &impl Fn() -> bool) -> Result<u64, String> {
+        self.finish_with_progress(allowed, |_|Ok(()))
+    }
+    pub(crate) fn finish_with_progress(mut self, allowed: &impl Fn() -> bool,
+        mut progress:impl FnMut(FinalizeStage)->Result<(),String>) -> Result<u64, String> {
         self.check(allowed)?;
         if self.frames == 0 {
             return Err("录屏未产生任何帧".into());
         }
         let mut audio_end=None;
+        // mp4mux is an aggregator: draining AAC while its video input is still
+        // open can fill the bounded AAC queue and wait for a video buffer that
+        // this same producer will never submit. Queue video EOS first.
+        progress(FinalizeStage::VideoEos)?;
+        self.source.end_of_stream().map_err(|_|"无法结束录屏帧源")?;
         if let Some(audio)=self.audio.as_mut(){
             let required=self.frames*48000/FPS;
             if audio.pcm<required{return Err("电脑声音未覆盖录屏尾点".into());}
             let source=&audio.source;let delay=audio.encoder.info.nDelayCore;let frame=audio.encoder.info.frameLength;
             let packets=&mut audio.packets;let expires=self.expires;
+            progress(FinalizeStage::AacTail)?;
             audio.encoder.drain(|encoded|push_aac(source,encoded,packets,delay,frame,expires,allowed))?;
             source.end_of_stream().map_err(|_|"无法结束AAC帧源")?;
             audio_end=Some((required,delay,audio.packets*frame as u64));
         }
-        self.source
-            .end_of_stream()
-            .map_err(|_| "无法结束录屏帧源")?;
+        progress(FinalizeStage::MuxEos)?;
         let bus = self.pipeline.bus().ok_or("录屏总线不可用")?;
         loop {
             self.check(allowed)?;
@@ -261,6 +272,7 @@ impl Codec {
         }
         self.check(allowed)?;
         if let Some((pcm,delay,packets))=audio_end{crate::recording_mp4_audio_linux::finalize_edit(&self.file,pcm,delay,packets)?;}
+        progress(FinalizeStage::FileSync)?;
         self.file.sync_all().map_err(|_| "无法完成录屏文件写入")?;
         self.check(allowed)?;
         Ok(self.frames)

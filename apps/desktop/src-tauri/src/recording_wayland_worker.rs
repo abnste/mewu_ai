@@ -2,7 +2,8 @@
 //! Two-phase recording over one user-approved portal session. The preview and
 //! subsequent crop belong to this exact session, never a previous screenshot.
 use crate::{recording_backend::{AudioMode, Progress, Report}, recording_codec_linux::Codec,
-    recording_pipewire_linux::{Frame, Frames}, recording_portal_linux::PortalSession};
+    recording_pipewire_linux::{Frame, Frames}, recording_portal_linux::PortalSession,
+    recording_codec_linux::FinalizeStage};
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, io::{BufRead, BufReader, Write}, os::unix::fs::OpenOptionsExt,
     path::PathBuf, sync::mpsc, time::{Duration, Instant}};
@@ -23,6 +24,7 @@ pub(crate) enum Control { Start(Selection), Pause{}, Resume{}, Stop{}, Cancel{} 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag="type", rename_all="snake_case", deny_unknown_fields)]
 pub(crate) enum Event { Prepared(Prepared), Progress(Progress), Completed(Report),
+    Finalizing{stage:FinalizeStage,frames:u64,pcm_frames:u64},
     Canceled{}, Failed{error:String} }
 const LINE:usize=16*1024;
 fn read(reader:&mut impl BufRead)->Result<Option<String>,String> {
@@ -59,6 +61,23 @@ fn crop(frame:&Frame, selection:&Selection, prepared:&Prepared)->Result<Vec<u8>,
         output.extend_from_slice(&frame.rgba[y*stride+x..y*stride+x+row]);
     }
     Ok(output)
+}
+#[derive(Default)]
+struct PendingPcm { bytes:Vec<u8>, offset:usize }
+impl PendingPcm { fn clear(&mut self){self.bytes.clear();self.offset=0;} }
+fn feed_audio_to(codec:&mut Codec,pending:&mut PendingPcm,target:u64,
+    mut poll:impl FnMut()->Result<Option<Vec<u8>>,String>,allowed:&impl Fn()->bool)->Result<(),String>{
+    while codec.pcm_frames()<target {
+        if pending.offset==pending.bytes.len(){
+            let Some(bytes)=poll()?else{break};
+            if bytes.is_empty()||bytes.len()%4!=0||bytes.len()>96_000{return Err("电脑声音帧长度无效".into());}
+            pending.bytes=bytes;pending.offset=0;
+        }
+        let remaining=(target-codec.pcm_frames())as usize*4;
+        let end=(pending.offset+remaining).min(pending.bytes.len());
+        codec.push_pcm(&pending.bytes[pending.offset..end],allowed)?;pending.offset=end;
+    }
+    Ok(())
 }
 fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl FnMut(Event)->Result<(),String>)
     ->Result<Option<Report>,String> {
@@ -104,14 +123,22 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
     let audio=if selection.audio==AudioMode::System{Some(crate::recording_system_audio_linux::SystemAudio::connect()?)}else{None};
     let mut codec=Codec::with_audio(file,selection.width,selection.height,expires,audio.is_some())?;
     let mut paused=false;let mut count=0u64;let mut next=Instant::now();let mut heartbeat=next;
+    let mut pending_pcm=PendingPcm::default();
     emit(Event::Progress(Progress{elapsed_ms:0,paused:false}))?;
     loop {
         match controls.try_recv(){Ok(Control::Stop{})=>break,Ok(Control::Cancel{})|Err(mpsc::TryRecvError::Disconnected)=>return Ok(None),
             Ok(Control::Pause{})=>paused=true,Ok(Control::Resume{})=>{paused=false;next=Instant::now();},
             Ok(Control::Start(_))=>return Err("录屏已经开始".into()),Err(mpsc::TryRecvError::Empty)=>{}}
         if Instant::now()>=expires || count>=9000{break;}
-        if let Some(audio)=&audio {for _ in 0..8{let Some(bytes)=audio.poll()?else{break};
-            if !paused{codec.push_pcm(&bytes,&||Instant::now()<expires)?;}}}
+        if let Some(audio)=&audio {
+            if paused {pending_pcm.clear();for _ in 0..8{if audio.poll()?.is_none(){break;}}}
+            else {
+                // Keep the two mux inputs within one video frame. Feeding an
+                // entire Pulse burst first can deadlock bounded appsrc queues
+                // before this same thread reaches its next video/Stop poll.
+                feed_audio_to(&mut codec,&mut pending_pcm,(count+1)*3200,||audio.poll(),&||Instant::now()<expires)?;
+            }
+        }
         if let Some(frame)=frames.next(Duration::ZERO)?{latest=frame;}
         if paused{std::thread::sleep(Duration::from_millis(10));}
         else if Instant::now()>=next {
@@ -122,14 +149,20 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
         if heartbeat.elapsed()>=Duration::from_millis(250){emit(Event::Progress(Progress{elapsed_ms:count*1000/15,paused}))?;heartbeat=Instant::now();}
     }
     if count==0{return Ok(None);}
-    if let Some(audio)=&audio {let drain=(Instant::now()+Duration::from_secs(1)).min(expires);
+    let final_deadline=(Instant::now()+Duration::from_secs(10)).min(expires);
+    emit(Event::Finalizing{stage:FinalizeStage::AudioTail,frames:count,pcm_frames:codec.pcm_frames()})?;
+    if let Some(audio)=&audio {let drain=(Instant::now()+Duration::from_secs(1)).min(final_deadline);
         while codec.pcm_frames()<count*3200 {
             if Instant::now()>=drain{return Err("电脑声音未覆盖录屏尾点".into());}
             if matches!(controls.try_recv(),Ok(Control::Cancel{})|Err(mpsc::TryRecvError::Disconnected)){return Ok(None);}
-            if let Some(bytes)=audio.poll()?{codec.push_pcm(&bytes,&||Instant::now()<expires)?;}else{std::thread::sleep(Duration::from_millis(2));}
+            feed_audio_to(&mut codec,&mut pending_pcm,count*3200,||audio.poll(),&||Instant::now()<drain)?;
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
-    let encoded=codec.finish(&||Instant::now()<expires)?;
+    let pcm_frames=codec.pcm_frames();
+    let encoded=codec.finish_with_progress(&||Instant::now()<final_deadline,
+        |stage|emit(Event::Finalizing{stage,frames:count,pcm_frames}))?;
+    emit(Event::Finalizing{stage:FinalizeStage::CloseCapture,frames:count,pcm_frames})?;
     drop(frames);drop(session);
     Ok(Some(Report{width:selection.width,height:selection.height,duration_ms:encoded*1000/15,
         frames:encoded,audio:selection.audio,stop_reason:None}))
@@ -211,6 +244,13 @@ pub(crate) fn supervise(config:PrepareConfig,
                         },
                         Event::Progress(value)=>{if selection.is_none()||value.elapsed_ms<elapsed||value.elapsed_ms>600_100{return Err("无效录屏进度".into());}
                             elapsed=value.elapsed_ms;last=Instant::now();if stopped.is_none(){progress(value);}},
+                        Event::Finalizing{stage,frames,pcm_frames}=>{
+                            if selection.is_none()||frames==0||frames>9000||pcm_frames>48000*601{return Err("无效录屏终结进度".into());}
+                            // Static stages/counters only: never print paths,
+                            // nonce, screen pixels, PCM bytes or environment.
+                            eprintln!("mewu-recording-finalize stage={stage:?} frames={frames} pcm={pcm_frames}");
+                            if stopped.is_none(){stopped=Some(Instant::now());}
+                        },
                         Event::Completed(report)=>{let value=selection.as_ref().ok_or("录屏尚未开始")?;
                             if report.width!=value.width||report.height!=value.height||report.audio!=value.audio
                                 ||report.frames==0||report.frames>9000||report.duration_ms!=report.frames*1000/15{return Err("无效录屏结果".into());}
@@ -248,6 +288,36 @@ pub(crate) fn supervise(config:PrepareConfig,
 
 #[cfg(test)]mod tests {
     use super::*;
+    #[test]fn recording_wayland_real_mux_handles_long_pcm_bursts_with_bounded_lead(){
+        use std::collections::VecDeque;
+        let output=PathBuf::from(format!("/tmp/recording-burst-{}.mp4",uuid::Uuid::new_v4()));
+        let file=OpenOptions::new().create_new(true).read(true).write(true).mode(0o600).open(&output).unwrap();
+        let expires=Instant::now()+Duration::from_secs(12);
+        let mut codec=Codec::with_audio(file,64,48,expires,true).unwrap();
+        // A real native source is allowed to return half-second PCM blocks.
+        // Feed them through the production split/budget logic into the actual
+        // AAC/H264/mp4mux pipeline, rather than mocking appsrc or its queues.
+        let mut bursts=VecDeque::new();
+        for block in 0..64u64 {
+            let bytes:Vec<_>=(block*24000..(block+1)*24000).flat_map(|sample|{
+                let frequency=if sample>=480*3200-4800{880.}else{440.};
+                let value=((sample as f64*frequency*std::f64::consts::TAU/48000.).sin()*10000.)as i16;
+                [value.to_le_bytes(),value.to_le_bytes()].concat()
+            }).collect();bursts.push_back(bytes);
+        }
+        let mut pending=PendingPcm::default();
+        for index in 0..480u64 {
+            feed_audio_to(&mut codec,&mut pending,(index+1)*3200,||Ok(bursts.pop_front()),&||Instant::now()<expires).unwrap();
+            assert_eq!(codec.pcm_frames(),(index+1)*3200);
+            assert!(pending.bytes.len()<=96_000);
+            codec.push_rgba([20,120,220,255].repeat(64*48),&||Instant::now()<expires).unwrap();
+        }
+        assert!(bursts.is_empty());
+        assert_eq!(codec.finish(&||Instant::now()<expires).unwrap(),480);
+        assert!(std::fs::metadata(&output).unwrap().len()>1000);
+        std::fs::copy(&output,"/tmp/last-recording-burst-32s.mp4").unwrap();
+        std::fs::remove_file(output).unwrap();
+    }
     #[test]fn recording_wayland_nonce_crop_and_bounds_are_one_source(){
         let prepared=Prepared{nonce:uuid::Uuid::new_v4().to_string(),width:6,height:4};
         let mut selection=Selection{nonce:prepared.nonce.clone(),output:PathBuf::from("/tmp/test.mp4"),x:2,y:1,width:2,height:2,audio:AudioMode::Mute};
