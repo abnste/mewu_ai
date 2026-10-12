@@ -58,6 +58,10 @@ const RESERVED: &[&str] = &[
     "GST_PLUGIN_SCANNER_1_0",
     "GST_PTP_HELPER_1_0",
     "GST_REGISTRY_REUSE_PLUGIN_SCANNER",
+    "PIPEWIRE_MODULE_DIR",
+    "SPA_PLUGIN_DIR",
+    "PIPEWIRE_CONFIG_DIR",
+    "PIPEWIRE_CONFIG_NAME",
     "PYTHONHOME",
     "PYTHONPATH",
     "PERLLIB",
@@ -108,6 +112,9 @@ impl ResourceEnvironment {
             ("GSETTINGS_SCHEMA_DIR", "usr/share/glib-2.0/schemas", true),
             ("GST_PLUGIN_PATH_1_0", "usr/lib/gstreamer-1.0", true),
             ("GST_PLUGIN_SYSTEM_PATH_1_0", "usr/lib/gstreamer-1.0", true),
+            ("PIPEWIRE_MODULE_DIR", "usr/lib/pipewire-0.3", true),
+            ("SPA_PLUGIN_DIR", "usr/lib/spa-0.2", true),
+            ("PIPEWIRE_CONFIG_DIR", "usr/share/pipewire", true),
             (
                 "GST_PLUGIN_SCANNER_1_0",
                 "usr/lib/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner",
@@ -134,6 +141,7 @@ impl ResourceEnvironment {
             values.push((name, path.into_os_string()));
         }
         values.push(("GST_REGISTRY_REUSE_PLUGIN_SCANNER", OsString::from("no")));
+        values.push(("PIPEWIRE_CONFIG_NAME", OsString::from("client.conf")));
         values.push(("GTK_THEME", OsString::from("Adwaita")));
         let mut data = root.join("usr/share").into_os_string();
         data.push(":/usr/local/share:/usr/share");

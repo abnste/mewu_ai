@@ -43,6 +43,9 @@ pub(crate) enum Worker {
     Recording,
 }
 impl Worker {
+    fn admitted(self)->bool {
+        matches!(self, Self::Recording) || cfg!(feature="linux-worker-tests")
+    }
     pub fn flag(self) -> &'static str {
         match self {
             Self::Code => "--code-worker",
@@ -77,6 +80,7 @@ pub(crate) struct TrustedCommand {
 
 impl TrustedCommand {
     pub fn new(worker: Worker) -> io::Result<Self> {
+        if !worker.admitted(){return Err(io::ErrorKind::PermissionDenied.into());}
         // Freeze the actual loaded executable inode, not its replaceable path.
         // /proc/self/exe is the kernel-owned identity of this running process.
         let loaded = File::open("/proc/self/exe")?;
@@ -489,6 +493,7 @@ pub fn bootstrap_entry() -> Option<i32> {
 /// This is ordinary code after exec, not a pre_exec hook. The caller exits PID1
 /// on any error; it must never fall through to normal GUI or worker dispatch.
 pub fn bootstrap(worker: Worker, raw: i32, source_raw: i32, deadline: Instant) -> io::Result<()> {
+    if !worker.admitted(){return Err(io::ErrorKind::PermissionDenied.into());}
     if raw < 3 || source_raw < 3 || raw == source_raw || getpid().as_raw_nonzero().get() != 1 {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
