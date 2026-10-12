@@ -79,6 +79,8 @@ struct Queue {
     audio: VecDeque<Sample>,
     audio_frames: usize,
     error: Option<String>,
+    #[cfg(debug_assertions)]
+    audio_metadata_logged: bool,
 }
 struct HandlerState {
     queue: Arc<Mutex<Queue>>,
@@ -179,6 +181,11 @@ impl Handler {
                 return Err("电脑声音采集队列已满，录制已停止".into());
             }
             queue.audio_frames += count;
+            #[cfg(debug_assertions)]
+            if !queue.audio_metadata_logged {
+                audio_metadata_diagnostic(asbd);
+                queue.audio_metadata_logged = true;
+            }
             queue.audio.push_back(Sample(
                 unsafe { Retained::retain(sample as *const _ as *mut _) }
                     .ok_or("无法持有电脑声音")?,
@@ -186,6 +193,32 @@ impl Handler {
         }
         Ok(())
     }
+}
+// Public Foundation ABI, also declared in the installed Apple SDK's
+// NSObjCRuntime.h. Only bounded numeric ASBD metadata reaches the system log;
+// worker stdout/stderr and the recording protocol remain unchanged.
+// https://developer.apple.com/documentation/Foundation/NSLog
+#[cfg(debug_assertions)]
+fn audio_metadata_diagnostic(asbd: &objc2_core_audio_types::AudioStreamBasicDescription) {
+    if std::env::var_os("MEWU_MAC_RECORDING_DIAGNOSTICS").as_deref()
+        != Some(std::ffi::OsStr::new("1"))
+        || asbd.mSampleRate != f64::from(RATE)
+        || asbd.mChannelsPerFrame != 2
+        || !(1..=16).contains(&asbd.mBytesPerFrame)
+        || !(1..=64).contains(&asbd.mBitsPerChannel)
+    {
+        return;
+    }
+    let planar = u8::from(asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0);
+    let message = NSString::from_str(&format!(
+        "mewu_mac_recording_audio planar={planar} rate={RATE} channels=2 bits={} bpf={} flags={}",
+        asbd.mBitsPerChannel, asbd.mBytesPerFrame, asbd.mFormatFlags
+    ));
+    unsafe extern "C-unwind" {
+        fn NSLog(format: *const NSString, ...);
+    }
+    // This format contains only our literals and decimal integers, never '%'.
+    unsafe { NSLog(&*message) };
 }
 fn complete_frame(sample: &CMSampleBuffer) -> Result<bool, String> {
     let attachments = unsafe { sample.sample_attachments_array(false) }.ok_or("屏幕帧状态缺失")?;
@@ -1003,8 +1036,12 @@ fn pcm_part(
             frames as isize,
             1,
             &timing,
-            0,
-            std::ptr::null(),
+            if planar { 0 } else { 1 },
+            if planar {
+                std::ptr::null()
+            } else {
+                &bytes_per_frame
+            },
             NonNull::from(&mut output),
         )
     } != 0
@@ -1380,6 +1417,7 @@ mod tests {
             },
         };
         let mut source = std::ptr::null_mut();
+        let sample_bytes = stride as usize;
         assert_eq!(
             unsafe {
                 CMSampleBuffer::create(
@@ -1392,8 +1430,12 @@ mod tests {
                     frames as isize,
                     1,
                     &timing,
-                    0,
-                    std::ptr::null(),
+                    if planar { 0 } else { 1 },
+                    if planar {
+                        std::ptr::null()
+                    } else {
+                        &sample_bytes
+                    },
                     NonNull::from(&mut source),
                 )
             },

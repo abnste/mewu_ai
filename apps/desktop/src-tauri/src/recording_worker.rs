@@ -187,6 +187,12 @@ pub fn run(
     mac_diagnostic(MacStage::WorkerLaunch, MacOutcome::Pending);
     let mut command = Command::new(std::env::current_exe().map_err(|_| "无法启动录屏进程")?);
     command.arg("--recording-worker").env_clear();
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    if std::env::var_os("MEWU_MAC_RECORDING_DIAGNOSTICS").as_deref()
+        == Some(std::ffi::OsStr::new("1"))
+    {
+        command.env("MEWU_MAC_RECORDING_DIAGNOSTICS", "1");
+    }
     for name in [
         "SystemRoot",
         "WINDIR",
