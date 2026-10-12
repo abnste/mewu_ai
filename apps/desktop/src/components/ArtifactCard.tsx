@@ -208,13 +208,6 @@ export default function ArtifactCard(props: Props) {
       <button title={t('重新载入')} aria-label={t('重新载入内容')} disabled={props.busy} onClick={()=>setReload(value=>value+1)}><RotateCcw size={18}/></button>
       <button title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={18}/></button>
     </div></Show>
-    <Show when={isVideo()&&!props.blackboard}><div class="video-object-tools" role="toolbar" aria-label={t('视频工具')}>
-      <button title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={20}/></button>
-      <button title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
-      <button title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>
-      <button title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event=>gesture(event,true)}><Maximize2 size={20}/></button>
-      <button title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={20}/></button>
-    </div></Show>
     <div class="artifact-content">
       <Show when={props.item.asset.kind === 'image'}>
         <Show when={!failed()} fallback={<span class="inline-error">{t("无法打开图片")}</span>}>
@@ -222,7 +215,13 @@ export default function ArtifactCard(props: Props) {
         </Show>
       </Show>
       <Show when={props.item.asset.kind === 'video'}>
-        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} />}</Show>
+        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} objectActions={<Show when={!props.blackboard}>
+          <button title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={20}/></button>
+          <button title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
+          <button title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>
+          <button title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event=>gesture(event,true)}><Maximize2 size={20}/></button>
+          <button title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={20}/></button>
+        </Show>} />}</Show>
       </Show>
       <Show when={isDocument()}>
         <Show when={reload()+1} keyed>{_revision => <>
