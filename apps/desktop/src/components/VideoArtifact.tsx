@@ -21,7 +21,7 @@ import type { RegisterVideoPlayer, VideoAnnotationAction, VideoAnnotationTarget,
 import { getVideoAnnotationPlan, getVideoAnnotationPreview, getVideoAnnotationText } from '../video-annotation-bridge';
 import { VideoManualEditor, videoPoint, type VideoManualView } from '../video-manual-edit';
 import { VideoAnnotationReader, type VideoAnnotationReadState } from '../video-annotation-reader';
-import { intersectVideoInterval, sameVideoAnnotationTarget, videoAnnotationIdentity, videoAnnotationTarget, videoAnnotationVisible, videoSourceIdentity } from '../video-annotations';
+import { intersectVideoInterval, sameVideoAnnotationTarget, videoAnnotationIdentity, videoAnnotationPreviewTicks, videoAnnotationTarget, videoAnnotationVisible, videoSourceIdentity } from '../video-annotations';
 import { VideoAnnotationPlaybackHold } from '../video-annotation-playback';
 import { reducedVideoPreview, type PreviewResolution } from '../video-preview';
 
@@ -174,7 +174,10 @@ export default function VideoArtifact(props: VideoArtifactProps) {
   createEffect(on(() => [props.item.x, props.item.y, props.item.width, props.item.height, props.active, metadata()] as const, () => queueMicrotask(place)));
   onMount(() => {
     void runtimeInfo().then(info => { if (!disposed) setCanvasAtFullResolution(info.platform === 'macos'); }).catch(report);
-    playback = new VideoPlayback(video, { identity: sourceKey, range, position: setPosition, playing: setPlaying, observation: value => { setAnnotationPosition(value.sourcePlaybackTicks); annotationReader.at(value.sourcePlaybackTicks); }, error: report });
+    playback = new VideoPlayback(video, { identity: sourceKey, range, position: setPosition, playing: setPlaying, observation: value => {
+      const previewTicks = videoAnnotationPreviewTicks(value.sourcePlaybackTicks, range(), video.paused, video.seeking);
+      setAnnotationPosition(previewTicks); annotationReader.at(previewTicks);
+    }, error: report });
     const unregister = props.onRegisterPause?.(() => { stopAnnotationPointer?.(); manual.interrupt(); pausePlayback(); });
     onCleanup(() => unregister?.());
     const resize = new ResizeObserver(place); resize.observe(video);

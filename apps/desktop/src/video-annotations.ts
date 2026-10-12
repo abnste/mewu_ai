@@ -23,6 +23,13 @@ export function intersectVideoInterval(a: VideoRange, b: VideoRange): VideoRange
   return startTicks < endTicks ? { startTicks, endTicks } : undefined;
 }
 export const videoAnnotationVisible = (interval: VideoRange, range: VideoRange, sourcePlaybackTicks?: number) => sourcePlaybackTicks !== undefined && Number.isSafeInteger(sourcePlaybackTicks) && sourcePlaybackTicks >= Math.max(interval.startTicks, range.startTicks) && sourcePlaybackTicks < Math.min(interval.endTicks, range.endTicks);
+/** The stopped end cursor represents the last retained instant for preview only.
+ * Source time, frame PTS, document intervals and export ranges remain unchanged. */
+export function videoAnnotationPreviewTicks(sourcePlaybackTicks: number | undefined, range: VideoRange | undefined, paused: boolean, seeking: boolean): number | undefined {
+  if (seeking || sourcePlaybackTicks === undefined || !Number.isSafeInteger(sourcePlaybackTicks) || sourcePlaybackTicks < 0) return;
+  if (paused && range && Number.isSafeInteger(range.startTicks) && Number.isSafeInteger(range.endTicks) && range.startTicks >= 0 && range.endTicks > range.startTicks && sourcePlaybackTicks === range.endTicks) return range.endTicks - 1;
+  return sourcePlaybackTicks;
+}
 // Links only come from committed document provenance, never model Markdown URLs.
 export function videoAnswerActions(scene: Scene, runId?: string): VideoAnswerAction[] {
   if (!runId) return [];

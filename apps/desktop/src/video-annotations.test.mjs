@@ -56,6 +56,30 @@ test('source clock uses half-open intervals intersected with trim, including 100
   assert.deepEqual(annotations.videoAnswerActions(scene, 'unrelated-run'), []);
 });
 
+test('stopped trim end previews its last retained tick without widening timed annotations or changing source time', () => {
+  const range = { startTicks: 20 * T, endTicks: 45 * T }, sourceTicks = range.endTicks;
+  const projected = annotations.videoAnnotationPreviewTicks(sourceTicks, range, true, false);
+  assert.equal(projected, range.endTicks - 1);
+  assert.equal(sourceTicks, 45 * T); assert.deepEqual(range, { startTicks: 20 * T, endTicks: 45 * T });
+  assert.equal(annotations.videoAnnotationVisible({ startTicks: 0, endTicks: 100 * T }, range, projected), true);
+  assert.equal(annotations.videoAnnotationVisible({ startTicks: 44 * T, endTicks: 45 * T }, range, projected), true);
+  assert.equal(annotations.videoAnnotationVisible({ startTicks: 44 * T, endTicks: 45 * T - 1 }, range, projected), false);
+  assert.equal(annotations.videoAnnotationVisible({ startTicks: 45 * T, endTicks: 46 * T }, range, projected), false);
+  assert.equal(annotations.videoAnnotationVisible({ startTicks: 0, endTicks: 100 * T }, range, sourceTicks), false);
+  assert.equal(annotations.videoAnnotationPreviewTicks(21, { startTicks: 20, endTicks: 21 }, true, false), 20);
+});
+
+test('preview projection never clamps playing, pending seeks, missing or invalid clocks, or out-of-range positions', () => {
+  const range = { startTicks: 20, endTicks: 40 };
+  assert.equal(annotations.videoAnnotationPreviewTicks(40, range, false, false), 40);
+  assert.equal(annotations.videoAnnotationPreviewTicks(40, range, true, true), undefined);
+  assert.equal(annotations.videoAnnotationPreviewTicks(undefined, range, true, false), undefined);
+  for (const ticks of [NaN, Infinity, -1, 20.5, Number.MAX_SAFE_INTEGER + 1]) assert.equal(annotations.videoAnnotationPreviewTicks(ticks, range, true, false), undefined);
+  for (const ticks of [0, 19, 20, 39, 41]) assert.equal(annotations.videoAnnotationPreviewTicks(ticks, range, true, false), ticks);
+  assert.equal(annotations.videoAnnotationPreviewTicks(40, undefined, true, false), 40);
+  for (const invalid of [{ startTicks: 40, endTicks: 40 }, { startTicks: 41, endTicks: 40 }, { startTicks: -1, endTicks: 40 }, { startTicks: .5, endTicks: 40 }, { startTicks: 0, endTicks: Infinity }]) assert.equal(annotations.videoAnnotationPreviewTicks(40, invalid, true, false), 40);
+});
+
 test('plan validates exact source/range/document order and text PNG identity', () => {
   const { plan, item, scene } = fixture();
   assert.deepEqual(preview.validateVideoAnnotationPlan(plan, scene.id, item), plan);
@@ -158,6 +182,33 @@ class FakeVideo extends EventTarget {
   present(time) { const [id, callback] = this.callbacks.entries().next().value; this.callbacks.delete(id); callback(0, { mediaTime: time }); }
   removeAttribute() {} load() { this.sourceLoads++; }
 }
+test('queued pause at trim completion resamples preview and reader; seek or source replacement clears it', async () => {
+  const f = fixture(), range = { startTicks: 0, endTicks: 4.5 * T };
+  f.plan.range = range; f.plan.entries[0].interval = { startTicks: 0, endTicks: 10 * T };
+  const video = new FakeVideo(), states = [], seen = [], positions = [], errors = [];
+  let source = 'a';
+  const reader = new VideoAnnotationReader(async () => f.plan, async target => reply(target), state => states.push(state));
+  reader.select(f.scene.id, f.item, source); await turn();
+  video.currentTime = 4.5; video.paused = false;
+  video.pause = () => { const changed = !video.paused; video.paused = true; if (changed) queueMicrotask(() => video.dispatchEvent(new Event('pause'))); };
+  const player = new VideoPlayback(video, { identity: () => source, range: () => range, position: value => positions.push(value), playing() {}, observation: value => {
+    const ticks = annotations.videoAnnotationPreviewTicks(value.sourcePlaybackTicks, range, video.paused, video.seeking);
+    seen.push({ source: value.sourcePlaybackTicks, preview: ticks }); reader.at(ticks);
+  }, error: error => errors.push(error) });
+  try {
+    video.dispatchEvent(new Event('timeupdate')); await turn(); await player.seeks.flush(); await turn();
+    assert.equal(video.paused, true); assert.equal(video.currentTime, 4.5); assert.equal(positions.at(-1), 4.5 * T);
+    assert.ok(seen.some(value => value.source === range.endTicks && value.preview === range.endTicks));
+    assert.deepEqual(seen.at(-1), { source: range.endTicks, preview: range.endTicks - 1 });
+    assert.deepEqual([...states.at(-1).images.keys()], [f.plan.entries[0].annotationId]);
+    video.seeking = true; video.dispatchEvent(new Event('seeking')); await turn();
+    assert.deepEqual(seen.at(-1), { source: undefined, preview: undefined }); assert.equal(states.at(-1).images.size, 0);
+    video.seeking = false; source = 'replacement'; player.invalidate();
+    video.dispatchEvent(new Event('seeked')); await turn();
+    assert.equal(states.at(-1).images.size, 0); assert.equal(video.playCalls, 0); assert.deepEqual(errors, []);
+  } finally { player.dispose(); reader.dispose(); }
+});
+
 test('logical currentTime and presented PTS stay separate, held frames update via real clock without trim offset', async () => {
   const video = new FakeVideo(), seen = [], animation = new Map(); let id = 0;
   const oldRequest = globalThis.requestAnimationFrame, oldCancel = globalThis.cancelAnimationFrame;
