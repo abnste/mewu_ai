@@ -40,6 +40,7 @@ pub struct RunScope {
     pub origin: RunOrigin,
     pub input: VerifiedVisualInput,
     authority: VerifiedVisualAuthority,
+    minimax_wire: bool,
 }
 
 impl RunScope {
@@ -62,7 +63,25 @@ impl RunScope {
             },
             input,
             authority,
+            minimax_wire: false,
         })
+    }
+    pub fn for_connection(mut self, profile: &mewu_core::ConnectionProfile) -> Self {
+        self.minimax_wire = profile.model == "MiniMax-M3"
+            && profile.advanced.protocol == mewu_core::ConnectionProtocol::ChatCompletions
+            && crate::provider_transport::endpoint(profile).is_ok_and(|url| {
+                url.scheme() == "https"
+                    && url.port().is_none()
+                    && url.path() == "/v1/chat/completions"
+                    && matches!(
+                        url.host_str(),
+                        Some("api.minimax.cn" | "api.minimaxi.com" | "api.minimax.io")
+                    )
+            });
+        self
+    }
+    fn parse_plan(&self, arguments: &str) -> Result<ParsedBatch, String> {
+        parse_plan_with_wire(arguments, &self.input, self.minimax_wire)
     }
     pub fn binding(&self) -> ToolBinding {
         self.origin.grant.binding(&self.origin.manifest_sha256)
@@ -108,7 +127,7 @@ impl RunScope {
                 "本次运行未启用该工具".into(),
             );
         }
-        let plan = match parse_plan(&call.arguments, &self.input) {
+        let plan = match self.parse_plan(&call.arguments) {
             Ok(plan) => plan,
             Err(error) => {
                 self.check_live(app, scene, run)?;
@@ -517,7 +536,10 @@ fn rich_bounds(
 
 #[cfg(test)]
 fn parse_batch(arguments: &str, input: &VerifiedVisualInput) -> Result<VisualAppendBatch, String> {
-    let plan = parse_plan(arguments, input)?;
+    vector_batch(parse_plan(arguments, input)?)
+}
+#[cfg(test)]
+fn vector_batch(plan: ParsedBatch) -> Result<VisualAppendBatch, String> {
     let mut groups = Vec::new();
     for group in plan.groups {
         let drawings = group
@@ -537,10 +559,68 @@ fn parse_batch(arguments: &str, input: &VerifiedVisualInput) -> Result<VisualApp
 }
 
 fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatch, String> {
+    parse_plan_with_wire(arguments, input, false)
+}
+
+// An actual MiniMax M3 response serialized numeric fields as JSON strings and
+// point arrays as {"item":...}. Decode only those observed representations;
+// the original target, unit, field, size and geometry checks still run below.
+fn minimax_object_wire(value: &mut Value) -> Result<(), String> {
+    fn number(value: &mut Value) -> Result<(), String> {
+        if let Some(text) = value.as_str() {
+            if text.len() > 64 || text.trim() != text {
+                return Err("批注数值格式无效".into());
+            }
+            let parsed: serde_json::Number =
+                serde_json::from_str(text).map_err(|_| "批注数值格式无效")?;
+            *value = Value::Number(parsed);
+        }
+        Ok(())
+    }
+    let Some(object) = value.as_object_mut() else {
+        return Ok(());
+    };
+    for field in ["fontSize", "strokeWidth"] {
+        if let Some(value) = object.get_mut(field) {
+            number(value)?;
+        }
+    }
+    if let Some(points) = object.get_mut("points") {
+        if let Some(wrapper) = points.as_object_mut() {
+            if wrapper.len() != 1 || !wrapper.contains_key("item") {
+                return Err("批注点数组格式无效".into());
+            }
+            let inner = wrapper.remove("item").ok_or("批注点数组格式无效")?;
+            *points = match inner {
+                Value::Array(_) => inner,
+                Value::Object(_) => Value::Array(vec![inner]),
+                _ => return Err("批注点数组格式无效".into()),
+            };
+        }
+        if let Some(points) = points.as_array_mut() {
+            for point in points {
+                if let Some(point) = point.as_object_mut() {
+                    for axis in ["x", "y"] {
+                        if let Some(value) = point.get_mut(axis) {
+                            number(value)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_plan_with_wire(
+    arguments: &str,
+    input: &VerifiedVisualInput,
+    minimax_wire: bool,
+) -> Result<ParsedBatch, String> {
     if arguments.len() > 32 * 1024 {
         return Err("原位作答内容过长".into());
     }
-    let args: Arguments = serde_json::from_str(arguments)
+    let mut args: Arguments = serde_json::from_str(arguments)
         .map_err(|_| "批注参数需要包含 groups 数组，每组包含 target、objects 和规定的坐标单位")?;
     let count = args
         .groups
@@ -549,6 +629,13 @@ fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatc
         .ok_or("原位作答图元过多")?;
     if args.groups.is_empty() || args.groups.len() > 6 || count == 0 || count > MAX_VISUAL_OBJECTS {
         return Err("一次最多添加 48 个批注图元".into());
+    }
+    if minimax_wire {
+        for group in &mut args.groups {
+            for object in &mut group.objects {
+                minimax_object_wire(object)?;
+            }
+        }
     }
     let mut seen = std::collections::HashSet::new();
     let mut groups = Vec::new();
@@ -895,6 +982,10 @@ mod provider_probe_tests;
 #[cfg(test)]
 #[path = "visual_rich_annotation_test.rs"]
 mod rich_tests;
+
+#[cfg(test)]
+#[path = "visual_minimax_wire_test.rs"]
+mod minimax_wire_tests;
 
 #[cfg(test)]
 mod tests {

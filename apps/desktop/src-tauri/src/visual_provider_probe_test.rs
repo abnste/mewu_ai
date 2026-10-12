@@ -6,7 +6,7 @@
 //! gate below. It reserves a persistent once-only marker before its sole send.
 //! This probes transport/parser/core/compositor, not the UI sender/revocation gate.
 
-use super::{parse_batch, RunScope};
+use super::{parse_batch, vector_batch, RunScope};
 use crate::{
     agent_tools, ai, assets, connection_host, credentials, drawing_render, mcp_host,
     plugins::PluginStore, provider_transport, visual_annotation_input::VisualCoordinateProfile,
@@ -365,7 +365,7 @@ fn fixture_with_thinking(
         .find(|s| s.id == scene_id)
         .ok_or("绑定后会话不存在")?
         .messages;
-    let scope = Arc::new(RunScope::new(scene_id, grant, input)?);
+    let scope = Arc::new(RunScope::new(scene_id, grant, input)?.for_connection(selected));
     let tools = mcp_host::RunTools::with_visual(&context, Some(scope.clone()))?;
     let definitions = tools.definitions();
     require(
@@ -487,7 +487,7 @@ fn commit_turn(f: &mut Fixture, model: &DispatchLease, turn: ai::ModelTurn) -> R
         &f.root.join("public-response.json"),
         &json!({"publicReply":turn.content,"toolName":call.name,"arguments":call.arguments}),
     )?;
-    let batch = match parse_batch(&call.arguments, &f.scope.input) {
+    let batch = match f.scope.parse_plan(&call.arguments).and_then(vector_batch) {
         Ok(value) => value,
         Err(e) => {
             f.store
@@ -1066,9 +1066,28 @@ async fn real_doubao_one_request_prepared_annotation_and_compositor() -> Result<
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "Real paid MiniMax request; explicit profile/gate and persistent once-only marker required"]
 async fn real_minimax_m3_normalized_v2_one_request() -> Result<()> {
+    minimax_one_request(
+        "one-request-minimax-m3-normalized-v2",
+        "minimax-m3-normalized-v2-real-request-reserved.once",
+        "live-minimax-m3-v2",
+    )
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "Real paid MiniMax post-fix request; separate explicit gate and immutable once-only marker"]
+async fn real_minimax_m3_wire_v1_one_request() -> Result<()> {
+    minimax_one_request(
+        "one-request-minimax-m3-wire-v1",
+        "minimax-m3-wire-v1-real-request-reserved.once",
+        "live-minimax-m3-wire-v1",
+    )
+    .await
+}
+
+async fn minimax_one_request(gate: &str, marker_name: &str, kind: &str) -> Result<()> {
     require(
-        std::env::var("MEWU_PROBE_ALLOW_HTTP").ok().as_deref()
-            == Some("one-request-minimax-m3-normalized-v2"),
+        std::env::var("MEWU_PROBE_ALLOW_HTTP").ok().as_deref() == Some(gate),
         "未显式开启一次真实请求",
     )?;
     let profile_id = std::env::var("MEWU_PROBE_MINIMAX_PROFILE_ID")
@@ -1085,7 +1104,7 @@ async fn real_minimax_m3_normalized_v2_one_request() -> Result<()> {
         !data_root.starts_with(&base) && !base.starts_with(&data_root),
         "探针输出与用户数据根目录必须独立",
     )?;
-    let marker = base.join("minimax-m3-normalized-v2-real-request-reserved.once");
+    let marker = base.join(marker_name);
     require(
         !marker.try_exists().map_err(error)?,
         "请求已预留；禁止自动重试",
@@ -1101,7 +1120,7 @@ async fn real_minimax_m3_normalized_v2_one_request() -> Result<()> {
         "此探针仅允许 MiniMax 官方 Chat 地址",
     )?;
     let transport = connection_host::transport_for(&profile)?;
-    let root = new_output("live-minimax-m3-v2")?;
+    let root = new_output(kind)?;
     let mut f = fixture_with_profile(
         root.clone(),
         &profile,

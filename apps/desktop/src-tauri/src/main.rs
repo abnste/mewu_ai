@@ -1616,7 +1616,7 @@ async fn send_message(
                 .cloned()
                 .ok_or("请引用需要处理的截图选区")?;
             visual_annotation_host::RunScope::new(scene_id.clone(), grant.clone(), input)
-                .map(Arc::new)
+                .map(|scope| Arc::new(scope.for_connection(&preflight.connection)))
         })
         .transpose()?;
     let memory_grant = memory_host::grant_for_scene(&engine.store, &plugins.store, &scene_id)?;
