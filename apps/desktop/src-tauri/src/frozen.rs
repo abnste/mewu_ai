@@ -1,11 +1,96 @@
 // SPDX-License-Identifier: MPL-2.0
-//! One small, first-party window for every frozen scene. Run completion only emits
+//! One on-demand, first-party window for minimized scenes. Run completion only emits
 //! summaries; showing or focusing windows is restricted to explicit user actions.
 use mewu_core::{MessageRole, RunStatus, Scene, Snapshot};
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const LABEL: &str = "frozen-widget";
+
+/// Serialize creation, layout and retirement without blocking the window thread.
+/// The native Destroyed acknowledgement releases the label before any recreation.
+#[derive(Default)]
+pub struct Lifecycle {
+    operations: tokio::sync::Mutex<()>,
+    retiring: AtomicBool,
+    retired: tokio::sync::Notify,
+    cleanup_pending: AtomicBool,
+}
+
+fn is_minimized(scene: &Scene) -> bool {
+    scene.frozen && scene.minimized && !scene.closed && has_content(scene)
+}
+
+pub fn destroyed(app: &AppHandle) {
+    if let Some(lifecycle) = app.try_state::<Lifecycle>() {
+        lifecycle.retiring.store(false, Ordering::Release);
+        lifecycle.retired.notify_one();
+    }
+}
+
+async fn wait_retired(lifecycle: &Lifecycle) -> Result<(), String> {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while lifecycle.retiring.load(Ordering::Acquire) {
+            lifecycle.retired.notified().await;
+        }
+    })
+    .await
+    .map_err(|_| "冻结会话窗口尚未关闭".to_string())
+}
+
+/// A background answer may update an existing widget, but cannot create or show
+/// one. Once no minimized scene remains, retire its renderer as well as its HWND.
+pub fn reconcile(app: &AppHandle, snapshot: &Snapshot) {
+    if snapshot.scenes.iter().any(is_minimized) || app.get_webview_window(LABEL).is_none() {
+        return;
+    }
+    let lifecycle = app.state::<Lifecycle>();
+    if lifecycle.cleanup_pending.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let lifecycle = app.state::<Lifecycle>();
+        struct Pending<'a>(&'a AtomicBool);
+        impl Drop for Pending<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _pending = Pending(&lifecycle.cleanup_pending);
+        let host = app.state::<crate::Host>();
+        loop {
+            if !host.exit.accepts_new_operations() {
+                return;
+            }
+            let _operation = lifecycle.operations.lock().await;
+            // Capture witnesses must not lose a window during pixel acquisition.
+            // Do not hold the lifecycle lock while a user transition owns it.
+            let Some(_transition) = crate::SpaceTransition::try_begin(&host.capturing) else {
+                drop(_operation);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                continue;
+            };
+            let empty = host
+                .lock()
+                .is_ok_and(|engine| !engine.store.snapshot().scenes.iter().any(is_minimized));
+            if !empty || !host.exit.accepts_new_operations() {
+                return;
+            }
+            if let Some(window) = app.get_webview_window(LABEL) {
+                lifecycle.retiring.store(true, Ordering::Release);
+                if window.destroy().is_err() {
+                    lifecycle.retiring.store(false, Ordering::Release);
+                    return;
+                }
+                // Do not reuse a label merely because destroy() was queued.
+                let _ = wait_retired(&lifecycle).await;
+            }
+            return;
+        }
+    });
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,7 +155,7 @@ pub fn snapshot(state: &Snapshot, revision: u64) -> FrozenSnapshot {
     let mut scenes: Vec<_> = state
         .scenes
         .iter()
-        .filter(|scene| scene.frozen && scene.minimized && !scene.closed && has_content(scene))
+        .filter(|scene| is_minimized(scene))
         .map(|scene| {
             let preview = scene
                 .messages
@@ -120,7 +205,7 @@ pub fn snapshot(state: &Snapshot, revision: u64) -> FrozenSnapshot {
     FrozenSnapshot { revision, scenes }
 }
 
-pub fn build(app: &tauri::App) -> tauri::Result<()> {
+fn build(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     tauri::WebviewWindowBuilder::new(
         app,
         LABEL,
@@ -152,8 +237,7 @@ pub fn build(app: &tauri::App) -> tauri::Result<()> {
             && url.port() == Some(1420);
         local_app || local_dev
     })
-    .build()?;
-    Ok(())
+    .build()
 }
 
 pub fn hide(app: &AppHandle) -> Result<(), String> {
@@ -280,7 +364,34 @@ fn resize_anchor(
 }
 
 pub async fn layout(app: &AppHandle, expanded: bool, reveal: bool) -> Result<(), String> {
-    let window = app.get_webview_window(LABEL).ok_or("冻结会话窗口不可用")?;
+    let lifecycle = app.state::<Lifecycle>();
+    let _operation = lifecycle.operations.lock().await;
+    wait_retired(&lifecycle).await?;
+    app.state::<crate::Host>().exit.ensure_new_operation()?;
+    if !app
+        .state::<crate::Host>()
+        .lock()?
+        .store
+        .snapshot()
+        .scenes
+        .iter()
+        .any(is_minimized)
+    {
+        return Err("没有最小化的会话".into());
+    }
+    let window = if let Some(window) = app.get_webview_window(LABEL) {
+        window
+    } else if reveal {
+        // WebView2 creation in a synchronous event/main-thread closure can
+        // deadlock. Let Tauri dispatch native work from this blocking worker.
+        let target = app.clone();
+        tauri::async_runtime::spawn_blocking(move || build(&target))
+            .await
+            .map_err(|_| "冻结会话窗口创建中断")?
+            .map_err(|_| "无法创建冻结会话窗口")?
+    } else {
+        return Err("冻结会话窗口不可用".into());
+    };
     let handle = app.clone();
     let (sender, receiver) = tokio::sync::oneshot::channel();
     window
@@ -341,6 +452,25 @@ pub async fn layout(app: &AppHandle, expanded: bool, reveal: bool) -> Result<(),
 mod tests {
     use super::*;
     use mewu_core::{SceneCommand, Store};
+
+    #[tokio::test]
+    async fn stale_destroy_notification_cannot_release_a_new_retirement() {
+        let lifecycle = Lifecycle::default();
+        lifecycle.retired.notify_one();
+        lifecycle.retiring.store(true, Ordering::Release);
+        let waiting = wait_retired(&lifecycle);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
+        lifecycle.retiring.store(false, Ordering::Release);
+        lifecycle.retired.notify_one();
+        assert!(waiting.await.is_ok());
+        // An acknowledgement before wait_retired starts is also safe.
+        assert!(wait_retired(&lifecycle).await.is_ok());
+    }
 
     #[test]
     fn summary_title_identifies_the_first_question_without_overwriting_explicit_names() {

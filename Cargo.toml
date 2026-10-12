@@ -11,3 +11,12 @@ glib = { path = "vendor/glib-0.18.5" }
 codegen-units = 1
 lto = "thin"
 strip = true
+
+# Local iteration keeps an optimized runtime without whole-program LTO.
+# Published installers continue to use the release profile above.
+[profile.daily]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 16
+incremental = true

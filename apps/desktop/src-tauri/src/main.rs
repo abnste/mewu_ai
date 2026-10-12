@@ -280,6 +280,7 @@ fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
         "frozen-scenes",
         frozen::snapshot(&snapshot.snapshot, revision),
     );
+    frozen::reconcile(app, &snapshot.snapshot);
     snapshot
 }
 fn show(app: &AppHandle) {
@@ -1012,9 +1013,10 @@ async fn linux_capture_witnesses(
             work.check()?;
             let app = target.app_handle();
             app.state::<Host>().exit.ensure_new_operation()?;
-            let widget = app.get_webview_window(frozen::LABEL).ok_or("冻结会话窗口不可用")?;
-            let witnesses = vec![window_witness_linux::capture_witness(&target)?,
-                window_witness_linux::capture_witness(&widget)?];
+            let mut witnesses = vec![window_witness_linux::capture_witness(&target)?];
+            if let Some(widget) = app.get_webview_window(frozen::LABEL) {
+                witnesses.push(window_witness_linux::capture_witness(&widget)?);
+            }
             work.check()?;
             for witness in &witnesses { window_witness_linux::current(witness)?; }
             Ok(witnesses)
@@ -2494,6 +2496,9 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            if window.label() == frozen::LABEL && matches!(event, tauri::WindowEvent::Destroyed) {
+                frozen::destroyed(window.app_handle());
+            }
             #[cfg(target_os = "linux")]
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 // Revoke before any Engine locks or async cancellation work.
@@ -2719,11 +2724,11 @@ fn main() {
                 video: video_host::VideoRegistry::default(),
                 image_exports: image_host::Registry::default(),
             });
+            app.manage(frozen::Lifecycle::default());
             #[cfg(target_os = "linux")]
             for config in &deferred_windows {
                 tauri::WebviewWindowBuilder::from_config(app.handle(), config)?.build()?;
             }
-            frozen::build(app)?;
             app.manage(recording::RecordingState::default());
             app.manage(app_update::UpdateState::default());
             #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]

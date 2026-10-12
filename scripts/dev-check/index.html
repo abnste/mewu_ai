@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mewu 开发检查</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><main><header><h1>Mewu 开发检查</h1><span id="connection">连接中</span></header>
+<div id="source" class="source"></div><p id="error" role="alert"></p>
+<section><h2>日常更新</h2><div class="actions"><button data-action="typecheck">类型检查</button><button data-action="frontend-build">前端构建</button><button id="run-tests">运行所选测试</button></div>
+<details><summary>相关测试 <span id="selected-count">0</span></summary><div id="tests"></div></details>
+<div id="jobs"></div></section>
+<section><h2>浏览器与本机更新</h2><div id="daily-lanes" class="lanes"></div></section>
+<section><h2>发布验收</h2><div id="release-lanes" class="lanes"></div><p class="muted">发布时检查 Linux Docker 与内网 Mac，Windows 由用户验收。CLI 检查不代替界面验收。</p></section>
+</main></body></html>
