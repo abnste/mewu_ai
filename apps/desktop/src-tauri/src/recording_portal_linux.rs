@@ -114,9 +114,13 @@ impl PortalSession {
             let builder = zbus::connection::Builder::address(address).map_err(|_| error())?
                 .max_queued(16).method_timeout(TRANSPORT_TIMEOUT);
             let connection = transport(builder.build(), expires, allowed).await?;
-            let bus = transport(zbus::fdo::DBusProxy::new(&connection), expires, allowed).await?;
-            let name = "org.freedesktop.portal.Desktop".try_into().map_err(|_| error())?;
-            let owner = transport(bus.get_name_owner(name), expires, allowed).await?.to_string();
+            let bus = transport(Proxy::new(&connection, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus"), expires, allowed).await?;
+            // GetNameOwner alone never activates an idle desktop portal. This
+            // explicit user operation may start the installed portal service,
+            // then pin all permission calls/signals to its unique bus owner.
+            let _: u32 = transport(bus.call("StartServiceByName", &("org.freedesktop.portal.Desktop", 0u32)), expires, allowed).await?;
+            let owner: String = transport(bus.call("GetNameOwner", &("org.freedesktop.portal.Desktop",)), expires, allowed).await?;
+            if !owner.starts_with(':') { return Err(error()); }
             drop(bus);
             let desktop = transport(Proxy::new(&connection, owner.as_str(), DESKTOP, SCREENCAST), expires, allowed).await?;
             let version: u32 = transport(desktop.get_property("version"), expires, allowed).await?;
