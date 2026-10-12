@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Identity { widget: usize, drawable: usize }
 #[derive(Clone, Debug)]
-struct Witness { label: String, generation: u64, revision: u64, identity: Identity, visible: bool, fullscreen: bool, resizable: bool }
+struct Witness { label: String, generation: u64, revision: u64, identity: Identity, visible: bool, fullscreen: bool, resizable: bool, default_size: (i32,i32) }
 #[derive(Default)]
 struct Owner { generation: u64, revision: u64, identity: Option<Identity> }
 #[derive(Default)]
@@ -34,7 +34,7 @@ impl Registry {
             owner.revision = 0;
             owner.identity = Some(identity.clone());
         }
-        Ok((Witness { label: label.into(), generation: owner.generation, revision: owner.revision, identity, visible, fullscreen:false, resizable:false }, changed))
+        Ok((Witness { label: label.into(), generation: owner.generation, revision: owner.revision, identity, visible, fullscreen:false, resizable:false, default_size:(-1,-1) }, changed))
     }
     fn current(&self, witness: &Witness, hidden: bool) -> Result<(), String> {
         if !self.failed && self.owners.get(&witness.label).is_some_and(|o| {
@@ -70,6 +70,7 @@ fn witness(window: &WebviewWindow) -> Result<Witness, String> {
     let (mut w, subscribe) = registry().lock().map_err(|_| "截图窗口服务不可用")?.bind(window.label(), identity, widget.is_visible())?;
     w.fullscreen=drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN);
     w.resizable=widget.is_resizable();
+    w.default_size=widget.default_size();
     if subscribe {
         let label = w.label.clone(); let generation = w.generation;
         widget.connect_unrealize(move |_| { if let Ok(mut r) = registry().lock() { r.revoke(&label, Some(generation)); } });
@@ -240,6 +241,18 @@ fn log_layout(widget: &gtk::ApplicationWindow, stage: &str) {
     webview_layout(widget.upcast_ref(), stage, 0);
 }
 
+fn webview_size(widget: &gtk::Widget, depth: u8) -> Option<(i32,i32)> {
+    if widget.type_().name()=="WebKitWebView" {return Some((widget.allocated_width(),widget.allocated_height()));}
+    if depth<4 {
+        if let Some(container)=widget.dynamic_cast_ref::<gtk::Container>() {
+            for child in container.children().into_iter().take(16) {
+                if let Some(size)=webview_size(&child,depth+1){return Some(size);}
+            }
+        }
+    }
+    None
+}
+
 async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, transition: Arc<SpaceTransition>) -> Result<Witness,String> {
     let (tx,rx)=oneshot::channel(); let target=window.clone();
     window.run_on_main_thread(move || {
@@ -261,12 +274,15 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
             Err(error)=>{ if let Some(tx)=tx.take(){let _=tx.send(Err(error));} }
             Ok(widget)=> {
                 let until=Instant::now()+Duration::from_secs(3);
+                let mut final_size=None;
+                let mut stable_ticks=0;
                 gtk::glib::timeout_add_local(Duration::from_millis(15),move || {
                     let _transition=&transition;
                     let result=(|| {
                         base_check(target.app_handle(),&work)?; owned_set_current(target.app_handle(),&owned)?; current(&owned,false)?;
                         for w in owned.iter().filter(|w|w.label!="space") {current(std::slice::from_ref(w),true)?;}
                         let drawable=widget.window().ok_or("截图窗口已关闭")?;
+                        if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
                         // Tao applies its initial resizable flag on the first
                         // configure event. Reassert after that event if needed,
                         // then wait for GTK to allocate the fullscreen contents.
@@ -277,8 +293,25 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, work: Arc<Work>, t
                         }
                         if drawable.state().contains(gtk::gdk::WindowState::FULLSCREEN) && widget.is_mapped()
                             && widget.allocated_width()>0 && widget.allocated_height()>0 {
-                            #[cfg(debug_assertions)] log_layout(&widget, "fullscreen-confirmed");
-                            return witness(&target).map(Some);
+                            let size=(widget.allocated_width(),widget.allocated_height());
+                            if final_size.is_none() {
+                                #[cfg(debug_assertions)] log_layout(&widget, "fullscreen-confirmed");
+                                // Use only this owned window's actual fullscreen
+                                // allocation. A later show/deiconify otherwise
+                                // negotiates again with the startup default1200.
+                                widget.set_default_size(size.0,size.1);
+                                crate::show(target.app_handle());
+                                final_size=Some(size);
+                                return Ok(None);
+                            }
+                            if final_size==Some(size) && (drawable.width(),drawable.height())==size
+                                && webview_size(widget.upcast_ref(),0)==Some(size) {
+                                stable_ticks+=1;
+                                if stable_ticks>=2 {
+                                    #[cfg(debug_assertions)] log_layout(&widget, "after-final-show-stable");
+                                    return witness(&target).map(Some);
+                                }
+                            } else {stable_ticks=0;}
                         }
                         if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
                         Ok(None)
@@ -340,12 +373,17 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
                 if !allowed {widget.hide();}
                 widget.set_opacity(1.0);
                 if !success {
-                    if let Some(previous)=owned.iter().find(|w|w.label=="space") {widget.set_resizable(previous.resizable);}
+                    if let Some(previous)=owned.iter().find(|w|w.label=="space") {
+                        widget.set_default_size(previous.default_size.0,previous.default_size.1);
+                        widget.set_resizable(previous.resizable);
+                    }
                 }
                 if !success && !owned.iter().any(|w|w.label=="space"&&w.fullscreen) {widget.unfullscreen();}
             }
             if allowed && (success || owned.iter().any(|w|w.label=="space"&&w.visible)){
-                crate::show(&restore_app);
+                // Successful capture already completed its final native show
+                // and allocation checks before committing/publishing the image.
+                if !success {crate::show(&restore_app);}
                 #[cfg(debug_assertions)] {
                     let diagnostic_space=space.clone(); let diagnostic_owned=owned.clone();
                     gtk::glib::idle_add_local_once(move || {
