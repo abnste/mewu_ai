@@ -151,6 +151,10 @@ impl Codec {
     }
 
     pub(crate) fn pcm_frames(&self)->u64 {self.audio.as_ref().map_or(0,|a|a.pcm)}
+    #[cfg(debug_assertions)]
+    pub(crate) fn input_levels(&self)->(u64,u64){
+        (self.source.current_level_buffers(),self.audio.as_ref().map_or(0,|audio|audio.source.current_level_buffers()))
+    }
     pub(crate) fn push_pcm(&mut self,bytes:&[u8],allowed:&impl Fn()->bool)->Result<(),String>{
         self.check_feeding(allowed)?;
         if bytes.is_empty()||bytes.len()%4!=0||bytes.len()>96000{return Err("电脑声音帧长度无效".into());}

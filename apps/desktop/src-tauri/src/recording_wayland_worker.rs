@@ -24,8 +24,20 @@ pub(crate) enum Control { Start(Selection), Pause{}, Resume{}, Stop{}, Cancel{} 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag="type", rename_all="snake_case", deny_unknown_fields)]
 pub(crate) enum Event { Prepared(Prepared), Progress(Progress), Completed(Report),
+    #[cfg(debug_assertions)]
+    CaptureDiagnostic{stage:CaptureStage,frames:u64,pcm_frames:u64,paused:bool,video_queue:u64,audio_queue:u64},
     Finalizing{stage:FinalizeStage,frames:u64,pcm_frames:u64},
     Canceled{}, Failed{error:String} }
+#[cfg(debug_assertions)]
+#[derive(Clone,Copy,Debug,Serialize,Deserialize)]
+#[serde(rename_all="snake_case")]
+pub(crate) enum CaptureStage { PollAudio, PollScreen, PushVideo, Alive }
+#[cfg(debug_assertions)]
+fn capture_diagnostic(codec:&Codec,stage:CaptureStage,frames:u64,paused:bool,
+    emit:&mut impl FnMut(Event)->Result<(),String>)->Result<(),String>{
+    let (video_queue,audio_queue)=codec.input_levels();
+    emit(Event::CaptureDiagnostic{stage,frames,pcm_frames:codec.pcm_frames(),paused,video_queue,audio_queue})
+}
 const LINE:usize=16*1024;
 fn read(reader:&mut impl BufRead)->Result<Option<String>,String> {
     use std::io::Read;
@@ -124,12 +136,15 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
     let mut codec=Codec::with_audio(file,selection.width,selection.height,expires,audio.is_some())?;
     let mut paused=false;let mut count=0u64;let mut next=Instant::now();let mut heartbeat=next;
     let mut pending_pcm=PendingPcm::default();
+    #[cfg(debug_assertions)] let mut diagnostic=Instant::now();
     emit(Event::Progress(Progress{elapsed_ms:0,paused:false}))?;
     loop {
         match controls.try_recv(){Ok(Control::Stop{})=>break,Ok(Control::Cancel{})|Err(mpsc::TryRecvError::Disconnected)=>return Ok(None),
             Ok(Control::Pause{})=>paused=true,Ok(Control::Resume{})=>{paused=false;next=Instant::now();},
             Ok(Control::Start(_))=>return Err("录屏已经开始".into()),Err(mpsc::TryRecvError::Empty)=>{}}
         if Instant::now()>=expires || count>=9000{break;}
+        #[cfg(debug_assertions)] let trace=diagnostic.elapsed()>=Duration::from_secs(1);
+        #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::PollAudio,count,paused,&mut emit)?;}
         if let Some(audio)=&audio {
             if paused {pending_pcm.clear();for _ in 0..8{if audio.poll()?.is_none(){break;}}}
             else {
@@ -139,14 +154,17 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
                 feed_audio_to(&mut codec,&mut pending_pcm,(count+1)*3200,||audio.poll(),&||Instant::now()<expires)?;
             }
         }
+        #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::PollScreen,count,paused,&mut emit)?;}
         if let Some(frame)=frames.next(Duration::ZERO)?{latest=frame;}
         if paused{std::thread::sleep(Duration::from_millis(10));}
         else if Instant::now()>=next {
+            #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::PushVideo,count,paused,&mut emit)?;}
             codec.push_rgba(crop(&latest,&selection,&prepared)?,&||Instant::now()<expires)?;
             count+=1;next+=Duration::from_nanos(1_000_000_000/15);
             if next.elapsed()>Duration::from_millis(300){return Err("录屏编码积压超出限制".into());}
         } else {std::thread::sleep(Duration::from_millis(2));}
         if heartbeat.elapsed()>=Duration::from_millis(250){emit(Event::Progress(Progress{elapsed_ms:count*1000/15,paused}))?;heartbeat=Instant::now();}
+        #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::Alive,count,paused,&mut emit)?;diagnostic=Instant::now();}
     }
     if count==0{return Ok(None);}
     let final_deadline=(Instant::now()+Duration::from_secs(10)).min(expires);
@@ -245,6 +263,13 @@ pub(crate) fn supervise(config:PrepareConfig,
                         },
                         Event::Progress(value)=>{if selection.is_none()||value.elapsed_ms<elapsed||value.elapsed_ms>600_100{return Err("无效录屏进度".into());}
                             elapsed=value.elapsed_ms;last=Instant::now();if stopped.is_none(){progress(value);}},
+                        #[cfg(debug_assertions)]
+                        Event::CaptureDiagnostic{stage,frames,pcm_frames,paused,video_queue,audio_queue}=>{
+                            if selection.is_none()||frames>9000||pcm_frames>48000*601||video_queue>2||audio_queue>16{return Err("无效录屏采集诊断".into());}
+                            eprintln!("mewu-recording-capture stage={stage:?} frames={frames} pcm={pcm_frames} paused={paused} video_queue={video_queue} audio_queue={audio_queue}");
+                            // Diagnostics are not heartbeats or completion: a
+                            // stalled native call still fails the original gate.
+                        },
                         Event::Finalizing{stage,frames,pcm_frames}=>{
                             if selection.is_none()||frames==0||frames>9000||pcm_frames>48000*601{return Err("无效录屏终结进度".into());}
                             // Static stages/counters only: never print paths,
