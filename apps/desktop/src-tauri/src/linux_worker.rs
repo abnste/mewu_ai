@@ -580,3 +580,19 @@ pub fn bootstrap(worker: Worker, raw: i32, source_raw: i32, deadline: Instant) -
         .arg(worker.flag())
         .exec())
 }
+
+#[cfg(all(test,not(feature="linux-worker-tests")))]
+mod production_tests {
+    use super::*;
+    #[test]
+    fn production_bootstrap_admission_keeps_non_recording_domains_closed(){
+        assert!(Worker::Recording.admitted());
+        for worker in [Worker::Code,Worker::Formula,Worker::VideoClip,Worker::Snapshot,Worker::Speech]{
+            assert!(!worker.admitted());
+            assert_eq!(TrustedCommand::new(worker).err().unwrap().kind(),io::ErrorKind::PermissionDenied);
+            assert_eq!(bootstrap(worker,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
+        }
+        // Production admission never grants an invalid/missing PID1 bridge.
+        assert_eq!(bootstrap(Worker::Recording,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
+    }
+}
