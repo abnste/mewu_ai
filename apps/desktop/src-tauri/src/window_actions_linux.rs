@@ -79,6 +79,10 @@ impl Registry {
                 .values()
                 .any(|o| o.visible && o.identity.is_some() && o.token == Some(token))
     }
+    fn current_for(&self, token: usize, label: &str) -> bool {
+        !self.failed && token!=0 && self.owners.get(label).is_some_and(|owner|
+            owner.visible && owner.identity.is_some() && owner.token==Some(token))
+    }
     fn update(&mut self, label: &str, generation: u64, visible: bool) {
         if let Some(owner) = self.owners.get_mut(label) {
             if owner.generation == generation {
@@ -105,6 +109,11 @@ fn registry() -> &'static Mutex<Registry> {
 }
 pub(crate) fn visible(token: usize) -> bool {
     registry().lock().is_ok_and(|r| r.visible(token))
+}
+/// Match the already registered GTK owner without UI dispatch under Store/Job
+/// locks. Tokens are revoked on unmap/unrealize and never reused across owners.
+pub(crate) fn current_for(token: usize, label: &str) -> bool {
+    registry().lock().is_ok_and(|registry|registry.current_for(token,label))
 }
 pub(crate) fn revoke_owner(label: &str) {
     if let Ok(mut r) = registry().lock() {
@@ -317,12 +326,17 @@ mod tests {
         let (space, _, _) = r.bind("space", identity(), true).unwrap();
         let (pin, generation, _) = r.bind(&label, identity(), true).unwrap();
         assert_ne!(space, pin);
+        assert!(r.current_for(space,"space"));
+        assert!(!r.current_for(pin,"space"));
+        assert!(!r.current_for(space,&label));
         r.update(&label, generation, false);
         assert!(r.visible(space));
         assert!(!r.visible(pin));
+        assert!(!r.current_for(pin,&label));
         let (remapped, _, _) = r.bind(&label, identity(), true).unwrap();
         r.revoke(&label, None);
         assert!(!r.visible(remapped));
+        assert!(!r.current_for(remapped,&label));
         assert!(r.bind("pin-arbitrary", identity(), true).is_err());
     }
     #[cfg(all(target_os = "linux", feature = "linux-x11-tests"))]

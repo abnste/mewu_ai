@@ -354,7 +354,13 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
         // Resolve before Host/Store locks; this token is never an HWND or pointer.
         crate::window_witness_macos::window_handle(window)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        // Opaque GTK action witness, resolved before video/Store locks. It is
+        // not a raw pointer and works with Wayland as well as X11.
+        crate::window_actions_linux::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = window;
         Err("当前系统不支持视频裁剪".into())
@@ -384,7 +390,13 @@ pub(crate) fn atomic_gate(host: &Host, handle: usize, edit: bool) -> Result<(), 
             return Err("空间已收起".into());
         }
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        if !crate::window_actions_linux::current_for(handle,"space") {
+            return Err("空间已收起".into());
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = handle;
     }
