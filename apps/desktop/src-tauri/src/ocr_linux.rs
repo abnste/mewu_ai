@@ -165,24 +165,31 @@ impl Resources {
         #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
         {
             let abi = select_abi(|soname| path_present(&library_root.join(soname)))?;
+            native_trace!("resource_abi_selected");
             let library_path =
                 protected_path(&library_root.join(abi.soname()), library_root, false)?;
+            native_trace!("resource_library_path_protected");
             let library = File::open(library_path).map_err(|_| UNAVAILABLE.to_owned())?;
+            native_trace!("resource_library_opened");
             let mut chosen = None;
             for root in abi.model_roots() {
                 let root = Path::new(root);
                 if !path_present(root)? {
                     continue;
                 }
+                native_trace!("resource_model_root_present");
                 let data = protected_path(root, root, true)?;
+                native_trace!("resource_model_root_protected");
                 let english = data.join("eng.traineddata");
                 if path_present(&english)? {
                     protected_path(&english, &data, false)?;
+                    native_trace!("resource_english_model_protected");
                     chosen = Some(data);
                     break;
                 }
             }
             let data = chosen.ok_or_else(|| UNAVAILABLE.to_owned())?;
+            native_trace!("resource_model_root_selected");
             let mut models = Vec::new();
             let mut languages = Vec::new();
             for language in ["eng", "chi_sim", "chi_tra"] {
@@ -196,6 +203,7 @@ impl Resources {
                         }
                         models.push((path, file));
                         languages.push(language);
+                        native_trace!("resource_language_model_opened");
                     }
                     // Absence is optional; an existing unsafe Chinese model
                     // must not be silently represented as unavailable.
@@ -218,6 +226,7 @@ impl Resources {
                 language,
             };
             resources.recheck()?;
+            native_trace!("resource_identity_rechecked");
             Ok(resources)
         }
     }
@@ -372,6 +381,7 @@ impl Api {
         // Bind dlopen to the held inode, without choosing a loader search path
         // from caller settings, environment variables or a plugin manifest.
         let library = resident_library(file, abi)?;
+        native_trace!("api_library_resident");
         macro_rules! symbol {
             ($name:literal) => {
                 unsafe {
@@ -385,6 +395,7 @@ impl Api {
         if !abi.accepts_version(&unsafe { bounded_text(version(), 128)? }) {
             return Err(UNAVAILABLE.into());
         }
+        native_trace!("api_version_accepted");
         Ok(Self {
             create: symbol!("TessBaseAPICreate"),
             delete: symbol!("TessBaseAPIDelete"),
