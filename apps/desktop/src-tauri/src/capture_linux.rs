@@ -795,7 +795,7 @@ pub(super) use native::{backend_name, capture, list_monitors};
 pub(super) use native::capture_with_witnesses;
 
 #[cfg(target_os = "linux")]
-pub(super) use native::RecordingCapture;
+pub(crate) use native::RecordingCapture;
 
 #[cfg(test)]
 mod tests {
