@@ -258,6 +258,86 @@ const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()];
 ${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer,selection:{linkedRepairPreview:(drawing)=>drawing}});
 const descendants=(node,tag)=>[...(node.tag===tag?[node]:[]),...node.children.flatMap(child=>descendants(child,tag))];
 
+// Exercise the actual screenshot callsite and actual DrawingLayer together.
+// Native/WebKit paint acceptance is separate; this gate proves node lifetime.
+const canvasCode=await raw('./components/SpaceCanvas.tsx');
+const canvasAst=parse(canvasCode,{sourceType:'module',plugins:['typescript','jsx']});
+const layerSites=[];
+function findLayerSite(node,ancestors=[]){
+  if(!node||typeof node!=='object')return;
+  if(node.type==='JSXElement'&&node.openingElement.name.name==='DrawingLayer'){
+    const parent=ancestors.findLast(value=>value.type==='JSXElement');
+    layerSites.push(parent?.openingElement.name.name==='Show'?parent:node);
+  }
+  for(const [key,value] of Object.entries(node)){
+    if(['loc','comments','tokens'].includes(key))continue;
+    if(Array.isArray(value))value.forEach(child=>findLayerSite(child,[...ancestors,node]));
+    else if(value&&typeof value==='object')findLayerSite(value,[...ancestors,node]);
+  }
+}
+findLayerSite(canvasAst);assert.equal(layerSites.length,1);
+const layerSite=layerSites[0];
+const captureLayerJsx=await jsx(`import DrawingLayer from 'layer';import {Show} from 'solid-js';
+export function fixture(props,id,image,drawingSession){return ${canvasCode.slice(layerSite.start,layerSite.end)};}`,{layer:{default:shapeJsx.default}});
+
+function captureLayerFixture(initial=[]){
+  const pen={id:'pen',kind:'pen',color:'#ee4848',strokeWidth:4,points:[{x:20,y:30},{x:90,y:75}]};
+  const [drawings,setDrawings]=solid.createSignal(initial),[session,setSession]=solid.createSignal();
+  const region=()=>({id:'selection',x:10,y:15,width:180,height:120,drawings:drawings()});
+  const props={get scene(){return{id:'scene',background:undefined,regions:[region()]};}};
+  const root=renderer.createElement('root');
+  const dispose=renderer.render(()=>captureLayerJsx.fixture(props,'selection',()=>({region:region()}),session),root);
+  return{pen,root,setDrawings,setSession,dispose};
+}
+test('actual screenshot layer keeps its SVG and stored strokes when entering and leaving drawing',()=>{
+  const text={id:'text',kind:'text',color:'#ee4848',strokeWidth:4,points:[{x:25,y:40}],text:'note',fontSize:20};
+  const view=captureLayerFixture([{id:'pen',kind:'pen',color:'#ee4848',strokeWidth:4,points:[{x:20,y:30},{x:90,y:75}]},text]);
+  try{
+    const svg=descendants(view.root,'svg')[0],path=descendants(view.root,'path')[0];
+    assert.equal(svg.props.style?.visibility??'visible','visible');
+    view.setSession({regionId:'selection'});
+    assert.equal(descendants(view.root,'svg')[0],svg);
+    assert.equal(svg.props.style.visibility,'hidden');
+    assert.equal(descendants(view.root,'path')[0],path);
+    view.setDrawings([{...view.pen,points:[{x:20,y:30},{x:100,y:85}]},text]);
+    const committed=descendants(view.root,'path')[0];
+    assert.equal(committed.props.d,'M20,30 L100,85');
+    view.setSession(undefined);
+    assert.equal(descendants(view.root,'svg')[0],svg);
+    assert.equal(descendants(view.root,'path')[0],committed);
+    assert.equal(svg.props.style.visibility,'visible');
+    assert.equal(descendants(view.root,'svg').length,1);
+    assert.equal(descendants(view.root,'text').length,1);
+    view.setSession({regionId:'other-selection'});
+    assert.equal(svg.props.style.visibility,'visible');
+  }finally{view.dispose();}
+});
+test('first screenshot stroke is retained hidden during editing and deleted drawings are not resurrected',()=>{
+  const view=captureLayerFixture();
+  try{
+    view.setSession({regionId:'selection'});
+    assert.equal(descendants(view.root,'svg').length,0);
+    view.setDrawings([view.pen]);
+    const svg=descendants(view.root,'svg')[0],path=descendants(view.root,'path')[0];
+    assert.ok(svg,'committed strokes must keep the ordinary layer mounted while editing');
+    assert.equal(svg.props.style.visibility,'hidden');
+    view.setSession(undefined);
+    assert.equal(descendants(view.root,'svg')[0],svg);
+    assert.equal(descendants(view.root,'path')[0],path);
+    assert.equal(svg.props.style.visibility,'visible');
+    view.setSession({regionId:'selection'});view.setDrawings([]);
+    assert.equal(descendants(view.root,'svg').length,0);
+    view.setDrawings([{...view.pen,id:'replacement'}]);
+    const replacement=descendants(view.root,'svg')[0];
+    assert.notEqual(replacement,svg);
+    assert.equal(replacement.props.style.visibility,'hidden');
+    view.setSession(undefined);
+    assert.equal(descendants(view.root,'svg')[0],replacement);
+    assert.equal(replacement.props.style.visibility,'visible');
+    assert.equal(descendants(view.root,'svg').length,1);
+  }finally{view.dispose();}
+});
+
 const videoCode=await raw('./components/VideoDrawingEditor.tsx');
 const videoBody=parse(videoCode,{sourceType:'module',plugins:['typescript','jsx']}).program.body.find(n=>n.type==='ExportDefaultDeclaration').declaration.body.body;
 const videoRender=videoBody.find(n=>n.type==='VariableDeclaration'&&n.declarations[0].id.name==='port').declarations[0].init.properties.find(n=>n.key.name==='render').value;
