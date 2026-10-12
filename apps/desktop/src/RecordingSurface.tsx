@@ -41,6 +41,8 @@ const timeLabel = (elapsedMs: number) => {
 
 export default function RecordingSurface() {
   document.documentElement.dataset.surface = 'recording';
+  const nativeLinux = new URLSearchParams(location.search).get('native-platform') === 'linux';
+  if (nativeLinux) document.documentElement.dataset.recordingPlatform = 'linux';
   const [status, setStatus] = createSignal<RecordingStatus | null>(null);
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal('');
@@ -69,7 +71,7 @@ export default function RecordingSurface() {
     event.preventDefault(); event.stopPropagation(); stopOrCancel();
   };
   document.addEventListener('keydown', keyboard);
-  onCleanup(() => { disposed = true; stop?.(); document.removeEventListener('keydown', keyboard); });
+  onCleanup(() => { disposed = true; stop?.(); document.removeEventListener('keydown', keyboard); if (nativeLinux) delete document.documentElement.dataset.recordingPlatform; });
   return <div class="recording-control-window">
     <Show when={status()} fallback={<Show when={error()}><div class="recording-controls recording-control-error" role="alert"><CircleAlert size={16} /><span title={error()}>{error()}</span></div></Show>}>
       {current => <div class="recording-controls" role="toolbar" aria-label={t("录屏控制")}>

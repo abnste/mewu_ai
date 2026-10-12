@@ -236,6 +236,43 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     Ok(Some(snapshot))
 }
 
+async fn present_controls(window:&WebviewWindow,nonce:&str)->Result<(),String>{
+    use gtk::prelude::*;
+    let (tx,rx)=tokio::sync::oneshot::channel::<Result<(),String>>();
+    let target=window.clone();let nonce=nonce.to_owned();
+    window.with_webview(move|native|{
+        // Wry's GtkFixed child retains the initial (unconfigured) native size
+        // as its minimum request. Resize that owned child before the first map;
+        // resizing only the Tauri window cannot shrink the retained minimum.
+        let result=(||{
+            if tx.is_closed(){return Err("录屏控制条初始化已取消".into());}
+            target.app_handle().state::<Host>().exit.ensure_new_operation()?;
+            let s=state().lock().map_err(|_|"录屏状态不可用")?;
+            let lease=s.lease.as_ref().filter(|l|l.nonce==nonce&&l.status.is_some()).ok_or("录屏已结束")?;
+            let controls=lease.controls.lock().map_err(|_|"录屏控制不可用")?;
+            if controls.terminal.is_some(){return Err("录屏已结束".into());}
+            let widget=target.gtk_window().map_err(|_|"录屏控制条不可用")?;
+            let webview=native.inner();
+            webview.set_size_request(176,44);
+            if let Some(parent)=webview.parent(){parent.set_size_request(176,44);}
+            widget.set_size_request(176,44);
+            widget.set_default_size(176,44);
+            widget.resize(176,44);
+            let style=gtk::CssProvider::new();
+            style.load_from_data(b"window { background-color: transparent; border: 0; padding: 0; margin: 0; box-shadow: none; }")
+                .map_err(|_|"录屏控制条样式不可用")?;
+            // Provider is attached only to this owned GTK window, never a screen.
+            widget.style_context().add_provider(&style,gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            target.show().map_err(|_|"无法显示录屏控制条")?;
+            #[cfg(debug_assertions)]
+            eprintln!("mewu-recording-controls request=176x44 webview-request={}x{}",webview.width_request(),webview.height_request());
+            Ok(())
+        })();let _=tx.send(result);
+    }).map_err(|_|"无法初始化录屏控制条")?;
+    tokio::time::timeout(Duration::from_secs(2),rx).await
+        .map_err(|_|"录屏控制条初始化超时")?.map_err(|_|"录屏控制条初始化中断")?
+}
+
 pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,region_id:String,
     audio:crate::recording_audio_host::RecordingAudioSelection,grant:crate::plugins::RecordingGrant)->Result<bool,String>{
     if !wayland(&window).await?{return Ok(false);}
@@ -265,15 +302,18 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
     // Wayland does not offer WDA/SCK window exclusion. Hide the source canvas;
     // the ordinary native controller is independently accessible for stopping.
     window.hide().map_err(|_|"无法隐藏录屏选区窗口")?;
-    let toolbar=tauri::WebviewWindowBuilder::new(&app,"recording-controls",tauri::WebviewUrl::App("index.html?surface=recording".into()))
-        .title("Mewu · 录屏").inner_size(176.,44.).decorations(false).transparent(false)
-        .background_color(tauri::window::Color(252,253,255,255)).resizable(false).maximizable(false)
+    let toolbar=tauri::WebviewWindowBuilder::new(&app,"recording-controls",tauri::WebviewUrl::App("index.html?surface=recording&native-platform=linux".into()))
+        .title("Mewu · 录屏").inner_size(176.,44.).decorations(false).transparent(true).shadow(false).visible(false)
+        .background_color(tauri::window::Color(0,0,0,0)).resizable(false).maximizable(false)
         .minimizable(false).always_on_top(true).skip_taskbar(true).focused(false).disable_drag_drop_handler()
         .on_navigation(|url|(url.scheme()=="tauri"&&url.host_str()==Some("localhost"))
             ||(matches!(url.scheme(),"http"|"https")&&url.host_str()==Some("tauri.localhost"))
             ||(cfg!(debug_assertions)&&url.scheme()=="http"&&url.host_str()==Some("127.0.0.1")&&url.port()==Some(1420)))
         .build();
-    if toolbar.is_err(){let _=control(&id,"cancel");return Err("无法显示录屏控制条".into());}
+    let toolbar=match toolbar{Ok(toolbar)=>toolbar,Err(_)=>{let _=control(&id,"cancel");return Err("无法显示录屏控制条".into());}};
+    if let Err(error)=present_controls(&toolbar,&id).await{
+        let _=control(&id,"cancel");let _=toolbar.destroy();return Err(error);
+    }
     let owner=app.clone();tauri::async_runtime::spawn(async move {
         for number in (1..=3).rev(){
             if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().filter(|l|l.nonce==id).and_then(|l|l.status.as_mut()){
