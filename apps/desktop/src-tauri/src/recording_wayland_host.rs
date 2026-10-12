@@ -332,3 +332,43 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
     starting.armed=false;
     Ok(true)
 }
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    struct RestoreState(Option<State>);
+    impl Drop for RestoreState {
+        fn drop(&mut self){if let Some(previous)=self.0.take(){*state().lock().unwrap()=previous;}}
+    }
+    fn lease(nonce:&str)->(Lease,Arc<Mutex<Controls>>){
+        let controls=Arc::new(Mutex::new(Controls::default()));
+        (Lease{nonce:nonce.into(),scene_id:"scene".into(),background:None,region:None,
+            controls:controls.clone(),status:Some(recording::Status{id:nonce.into(),scene_id:"scene".into(),
+                phase:"countdown",countdown:3,elapsed_ms:0,rect:recording::Rect{x:0.,y:0.,width:1.,height:1.},
+                stop_hotkey:String::new(),audio:backend::AudioMode::Mute}),finalized:false,suppress_reveal:false,grant:None,audio_grant:None},controls)
+    }
+    #[test]
+    fn starting_invoke_drop_cancels_only_its_live_lease_and_preserves_stop(){
+        let saved=std::mem::take(&mut *state().lock().unwrap());let _restore=RestoreState(Some(saved));
+        let (current,commands)=lease("current");state().lock().unwrap().lease=Some(current);
+        drop(StartingGuard{nonce:"current".into(),armed:true});
+        let mut commands=commands.lock().unwrap();
+        assert!(matches!(commands.take(),Some(worker::Control::Cancel{})));
+        assert!(commands.take().is_none());drop(commands);
+
+        // A replaced source must never be canceled by an old invoke's destructor.
+        let (replacement,commands)=lease("replacement");state().lock().unwrap().lease=Some(replacement);
+        drop(StartingGuard{nonce:"current".into(),armed:true});
+        assert!(commands.lock().unwrap().take().is_none());
+        // Likewise, cancellation of a late HUD invoke cannot discard an already
+        // requested real Stop and change its completed video into Cancel.
+        control("replacement","stop").unwrap();
+        drop(StartingGuard{nonce:"replacement".into(),armed:true});
+        assert!(matches!(commands.lock().unwrap().take(),Some(worker::Control::Stop{})));
+
+        let (transferred,commands)=lease("transferred");state().lock().unwrap().lease=Some(transferred);
+        drop(StartingGuard{nonce:"transferred".into(),armed:false});
+        assert!(commands.lock().unwrap().take().is_none());
+    }
+}
