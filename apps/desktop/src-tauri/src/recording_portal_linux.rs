@@ -2,7 +2,7 @@
 //! A single user-approved ScreenCast session. Never restores permission or
 //! connects to the unrestricted PipeWire daemon; the remote FD is session-owned.
 use futures_util::StreamExt;
-use std::{collections::HashMap, os::fd::OwnedFd, time::{Duration, Instant}};
+use std::{collections::HashMap, future::Future, os::fd::OwnedFd, time::{Duration, Instant}};
 use zbus::{zvariant::{OwnedObjectPath, OwnedValue, Value}, Connection, Proxy};
 
 type Options<'a> = HashMap<&'a str, Value<'a>>;
@@ -11,9 +11,42 @@ const DESKTOP: &str = "/org/freedesktop/portal/desktop";
 const SCREENCAST: &str = "org.freedesktop.portal.ScreenCast";
 const SESSION: &str = "org.freedesktop.portal.Session";
 const REQUEST: &str = "org.freedesktop.portal.Request";
+const TRANSPORT_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn token() -> String { format!("mewu_{}", uuid::Uuid::new_v4().simple()) }
 fn error() -> String { "系统屏幕共享服务不可用".into() }
+
+// zbus method_timeout bounds method replies, not connection authentication or
+// every proxy/subscription setup await. Poll the same future without resending
+// it, and apply both Work cancellation and the operation's overall deadline.
+async fn checked<T, E>(
+    future: impl Future<Output = Result<T, E>>,
+    expires: Instant,
+    allowed: &mut impl FnMut() -> bool,
+) -> Result<T, String> {
+    futures_lite::pin!(future);
+    loop {
+        if !allowed() { return Err("屏幕共享已取消".into()); }
+        let now = Instant::now();
+        if now >= expires { return Err("屏幕共享授权超时".into()); }
+        let tick = (now + Duration::from_millis(20)).min(expires);
+        let result = futures_lite::future::race(async { Some(future.as_mut().await) }, async {
+            async_io::Timer::at(tick).await; None
+        }).await;
+        if let Some(result) = result {
+            if !allowed() { return Err("屏幕共享已取消".into()); }
+            if Instant::now() >= expires { return Err("屏幕共享授权超时".into()); }
+            return result.map_err(|_| error());
+        }
+    }
+}
+async fn transport<T, E>(
+    future: impl Future<Output = Result<T, E>>,
+    expires: Instant,
+    allowed: &mut impl FnMut() -> bool,
+) -> Result<T, String> {
+    checked(future, expires.min(Instant::now() + TRANSPORT_TIMEOUT), allowed).await
+}
 
 async fn bounded_close(connection: &Connection, owner: &str, path: &str, interface: &str) {
     let closing = async {
@@ -45,30 +78,16 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
     let path = format!("/org/freedesktop/portal/desktop/request/{sender}/{token}");
     // Subscribe before sending: the portal may emit Response before the method
     // reply. Pin the actual bus owner as well as the exact unpredictable path.
-    let response = Proxy::new(connection, owner, path.as_str(), REQUEST).await.map_err(|_| error())?;
-    let mut signals = response.receive_signal("Response").await.map_err(|_| error())?;
-    let mut guard = RequestGuard { connection, owner, path, ended: false };
-    let desktop = Proxy::new(connection, owner, DESKTOP, SCREENCAST).await.map_err(|_| error())?;
-    let reply = desktop.call::<_, _, OwnedObjectPath>(method, body);
-    futures_lite::pin!(reply);
-    let returned = loop {
-        if !allowed() || Instant::now() >= expires { return Err("录屏授权已取消或超时".into()); }
-        let next = futures_lite::future::race(async { Some(reply.as_mut().await) }, async {
-            async_io::Timer::after(Duration::from_millis(20)).await; None
-        }).await;
-        if let Some(result) = next { break result.map_err(|_| error())?; }
-    };
+    let response = transport(Proxy::new(connection, owner, path.as_str(), REQUEST), expires, allowed).await?;
+    let mut signals = transport(response.receive_signal("Response"), expires, allowed).await?;
+    let mut guard = RequestGuard { connection, owner, path: path.clone(), ended: false };
+    let desktop = transport(Proxy::new(connection, owner, DESKTOP, SCREENCAST), expires, allowed).await?;
+    let returned = transport(desktop.call::<_, _, OwnedObjectPath>(method, body), expires, allowed).await?;
     if returned.as_str() != guard.path { return Err("屏幕共享请求身份不匹配".into()); }
-    loop {
-        if !allowed() || Instant::now() >= expires { return Err("录屏授权已取消或超时".into()); }
-        let next = futures_lite::future::race(signals.next(), async {
-            async_io::Timer::after(Duration::from_millis(20)).await; None
-        }).await;
-        let Some(signal) = next else { continue; };
-        let (code, results): (u32, Results) = signal.body().deserialize().map_err(|_| error())?;
-        guard.ended = true;
-        return match code { 0 => Ok(results), 1 => Err("已取消屏幕共享".into()), _ => Err(error()) };
-    }
+    let signal = checked(async { signals.next().await.ok_or_else(error) }, expires, allowed).await?;
+    let (code, results): (u32, Results) = signal.body().deserialize().map_err(|_| error())?;
+    guard.ended = true;
+    match code { 0 => Ok(results), 1 => Err("已取消屏幕共享".into()), _ => Err(error()) }
 }
 
 pub(crate) struct PortalSession {
@@ -87,15 +106,22 @@ impl Drop for PortalSession {
 }
 impl PortalSession {
     pub(crate) fn open(expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
-        futures_lite::future::block_on(async {
-            let connection = Connection::session().await.map_err(|_| error())?;
-            let bus = zbus::fdo::DBusProxy::new(&connection).await.map_err(|_| error())?;
-            let owner = bus.get_name_owner("org.freedesktop.portal.Desktop".try_into().map_err(|_| error())?)
-                .await.map_err(|_| error())?.to_string();
-            let desktop = Proxy::new(&connection, owner.as_str(), DESKTOP, SCREENCAST).await.map_err(|_| error())?;
-            let version: u32 = desktop.get_property("version").await.map_err(|_| error())?;
-            let types: u32 = desktop.get_property("AvailableSourceTypes").await.map_err(|_| error())?;
-            let cursors: u32 = desktop.get_property("AvailableCursorModes").await.map_err(|_| error())?;
+        let address = zbus::Address::session().map_err(|_| error())?;
+        futures_lite::future::block_on(Self::open_at(address, expires, allowed))
+    }
+    async fn open_at(address: zbus::Address, expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
+            if !matches!(address.transport(), zbus::address::transport::Transport::Unix(_)) { return Err(error()); }
+            let builder = zbus::connection::Builder::address(address).map_err(|_| error())?
+                .max_queued(16).method_timeout(TRANSPORT_TIMEOUT);
+            let connection = transport(builder.build(), expires, allowed).await?;
+            let bus = transport(zbus::fdo::DBusProxy::new(&connection), expires, allowed).await?;
+            let name = "org.freedesktop.portal.Desktop".try_into().map_err(|_| error())?;
+            let owner = transport(bus.get_name_owner(name), expires, allowed).await?.to_string();
+            drop(bus);
+            let desktop = transport(Proxy::new(&connection, owner.as_str(), DESKTOP, SCREENCAST), expires, allowed).await?;
+            let version: u32 = transport(desktop.get_property("version"), expires, allowed).await?;
+            let types: u32 = transport(desktop.get_property("AvailableSourceTypes"), expires, allowed).await?;
+            let cursors: u32 = transport(desktop.get_property("AvailableCursorModes"), expires, allowed).await?;
             if version < 3 || types & 1 == 0 || cursors & 1 == 0 { return Err(error()); }
             let create_token = token();
             let session_token = token();
@@ -126,7 +152,7 @@ impl PortalSession {
                 let (node, properties) = single_monitor(streams)?;
                 if !allowed() || Instant::now() >= expires { return Err("录屏已取消".into()); }
                 let empty = Options::new();
-                let remote: zbus::zvariant::OwnedFd = desktop.call("OpenPipeWireRemote", &(&path, empty)).await.map_err(|_| error())?;
+                let remote: zbus::zvariant::OwnedFd = transport(desktop.call("OpenPipeWireRemote", &(&path, empty)), expires, allowed).await?;
                 let size = properties.get("size").and_then(|v| v.try_clone().ok()).and_then(|v| v.try_into().ok());
                 let position = properties.get("position").and_then(|v| v.try_clone().ok()).and_then(|v| v.try_into().ok());
                 Ok((node, remote.into(), size, position))
@@ -136,7 +162,6 @@ impl PortalSession {
                 Ok((node, remote, logical_size, logical_position)) => Ok(Self { connection, owner, path, node, remote, logical_size, logical_position }),
                 Err(error) => { bounded_close(&connection, &owner, path.as_str(), SESSION).await; Err(error) }
             }
-        })
     }
 }
 
