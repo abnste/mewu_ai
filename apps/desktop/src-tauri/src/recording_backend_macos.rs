@@ -1302,7 +1302,13 @@ pub(super) fn run(
                         &clock,
                         &mut audio_end,
                         &mut pending_audio,
-                        |sample| writer.append(writer.audio.as_ref().unwrap(), sample),
+                        |sample| {
+                            let accepted = writer.append(writer.audio.as_ref().unwrap(), sample)?;
+                            if accepted {
+                                destination.hold()?;
+                            }
+                            Ok(accepted)
+                        },
                     )?;
                 }
                 clock.prune_before(stamp.saturating_sub(TICKS_PER_SECOND * 3));
@@ -1364,7 +1370,13 @@ pub(super) fn run(
                         &clock,
                         &mut audio_end,
                         &mut pending_audio,
-                        |sample| writer.append(input, sample),
+                        |sample| {
+                            let accepted = writer.append(input, sample)?;
+                            if accepted {
+                                destination.hold()?;
+                            }
+                            Ok(accepted)
+                        },
                     )?
                 } else {
                     true
