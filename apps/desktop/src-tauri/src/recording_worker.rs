@@ -479,6 +479,13 @@ pub(crate) enum MacOutcome {
     Encoding,
     OutputGuard,
     AudioContinuity,
+    ScreenBacklog,
+    FrameCallback,
+    SampleTiming,
+    ClockInvalid,
+    DisplayChanged,
+    ControlDisconnected,
+    NoSavableFrames,
     ArtifactValidation,
     OtherBackendFailure,
 }
@@ -494,7 +501,29 @@ pub(crate) fn mac_diagnostic(stage: MacStage, outcome: MacOutcome) {
 fn mac_failure_category(error: &str) -> MacOutcome {
     // Match only product-authored, fixed prefixes. Unrecognized errors stay
     // opaque; no NSError details, paths, frames, audio, or credentials escape.
-    if ["录制文件必须", "录制区域", "Mac 录屏屏幕坐标"]
+    if error == "录制已取消" {
+        MacOutcome::Canceled
+    } else if error == "屏幕编码积压超出限制" {
+        MacOutcome::ScreenBacklog
+    } else if ["原生录屏回调", "原生录屏帧", "录屏帧状态", "屏幕帧状态"]
+        .iter()
+        .any(|p| error.starts_with(p))
+    {
+        MacOutcome::FrameCallback
+    } else if error.starts_with("录屏时间戳") || error == "无法重设录屏样本时间" {
+        MacOutcome::SampleTiming
+    } else if ["录制时钟", "录制结束时钟", "录制暂停时钟", "录制恢复时钟"]
+        .iter()
+        .any(|p| error.starts_with(p))
+    {
+        MacOutcome::ClockInvalid
+    } else if error.starts_with("显示器已改变") {
+        MacOutcome::DisplayChanged
+    } else if error == "录制控制连接已断开" {
+        MacOutcome::ControlDisconnected
+    } else if error == "录制尚未形成可保存的画面" {
+        MacOutcome::NoSavableFrames
+    } else if ["录制文件必须", "录制区域", "Mac 录屏屏幕坐标"]
         .iter()
         .any(|p| error.starts_with(p))
     {
