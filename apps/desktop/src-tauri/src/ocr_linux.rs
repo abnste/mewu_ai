@@ -250,6 +250,57 @@ impl Resources {
 type Create = unsafe extern "C" fn() -> *mut c_void;
 type Delete = unsafe extern "C" fn(*mut c_void);
 type Cancel = unsafe extern "C" fn(*mut c_void, c_int) -> bool;
+
+type LibraryIdentity = (Abi, u64, u64, u64, i64, i64);
+struct ResidentLibrary {
+    identity: LibraryIdentity,
+    // Keep the fd name unique for this process as well as retaining the mapped
+    // library. Reusing /proc/self/fd/N for a replaced inode can hit dlopen's
+    // pathname cache even though the new fd refers to a different file.
+    _file: File,
+    library: Arc<Library>,
+}
+// Tesseract dependencies can retain native helper threads after Recognize
+// returns. Engine deletion does not authorize unloading their executable code.
+// This single resident library survives until process exit; changing the system
+// component requires a restart rather than accumulating additional mappings.
+static RESIDENT_LIBRARY: std::sync::Mutex<Option<ResidentLibrary>> = std::sync::Mutex::new(None);
+
+fn resident_library(file: &File, abi: Abi) -> Result<Arc<Library>, String> {
+    let metadata = file.metadata().map_err(|_| UNAVAILABLE.to_owned())?;
+    let identity = (
+        abi,
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+    );
+    let mut resident = RESIDENT_LIBRARY.lock().map_err(|_| NATIVE_ERROR.to_owned())?;
+    if let Some(resident) = resident.as_ref() {
+        if resident.identity != identity {
+            return Err("系统文字识别组件已改变，请重启应用后重试".into());
+        }
+        return Ok(resident.library.clone());
+    }
+    let held = file.try_clone().map_err(|_| UNAVAILABLE.to_owned())?;
+    let library: Library = unsafe {
+        libloading::os::unix::Library::open(
+            Some(format!("/proc/{}/fd/{}", std::process::id(), held.as_raw_fd())),
+            libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL,
+        )
+    }
+    .map_err(|_| UNAVAILABLE.to_owned())?
+    .into();
+    let library = Arc::new(library);
+    *resident = Some(ResidentLibrary {
+        identity,
+        _file: held,
+        library: library.clone(),
+    });
+    Ok(library)
+}
+
 struct Api {
     create: Create,
     delete: Delete,
@@ -278,20 +329,13 @@ struct Api {
     cancel_func: unsafe extern "C" fn(*mut c_void, Cancel),
     cancel_this: unsafe extern "C" fn(*mut c_void, *mut c_void),
     deadline: unsafe extern "C" fn(*mut c_void, c_int),
-    _library: Library,
+    _library: Arc<Library>,
 }
 impl Api {
     fn load(file: &File, abi: Abi) -> Result<Self, String> {
         // Bind dlopen to the held inode, without choosing a loader search path
         // from caller settings, environment variables or a plugin manifest.
-        let library: Library = unsafe {
-            libloading::os::unix::Library::open(
-                Some(format!("/proc/self/fd/{}", file.as_raw_fd())),
-                libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL,
-            )
-        }
-        .map_err(|_| UNAVAILABLE.to_owned())?
-        .into();
+        let library = resident_library(file, abi)?;
         macro_rules! symbol {
             ($name:literal) => {
                 unsafe {
@@ -736,6 +780,14 @@ mod tests {
         )
         .unwrap();
         assert!(blank.lines.is_empty());
+        native_trace!("repeat_english_begin");
+        let repeated = recognize_impl(
+            synthetic_english(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(repeated.lines, document.lines);
+        native_trace!("repeat_complete");
         assert_eq!(ACTIVE_WORKERS.load(Ordering::Acquire), 0);
     }
 }

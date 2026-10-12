@@ -8,6 +8,8 @@ Linux 适配器通过已安装的 Tesseract 4.1 或 5 C API 识别宿主提供�
 
 库、模型及路径父目录必须由当前命名空间中可验证的 root 所有，普通文件和目录不能被 group/other 写入。符号链接的原始路径和解析路径均检查；模型目标限制在固定模型目录，单文件最多 64 MiB。库使用保留的文件描述符加载，模型文件描述符与 dev/ino/size/mtime 在初始化后再核对。此约束防止普通用户替换资源，不承诺抵御宿主 root 对已信任系统组件的修改。
 
+系统库和其文件描述符在进程内保留一份，直到进程退出。原生识别返回以及 engine/monitor 的删除不等于库的后台辅助线程已停止；每次请求结束时 `dlclose` 卸载代码会导致已完成识别后的崩溃。每次请求仍重新核对受保护资源，并匹配已保留库的 ABI、dev/ino、大小及修改时间。系统库改变时要求重启，不增加新的常驻映射，不通过文件描述符编号复用选择旧库。每次请求的 engine、monitor、iterator、文本、模型文件和像素仍分别释放，识别许可仍保持到同步调用真正返回。
+
 用户命名空间显示的 UID 65534 不等于已验证的宿主 root。普通宿主适配器不会放宽这一要求；以后若 Code worker 使用不同命名空间，需要独立的、不可由调用者伪造的外层资源证明。命令沙箱探测不代替桌面宿主测试。
 
 图像遵守共享的 3200 万源像素与 400 万识别像素限制，透明部分合成白色，居中等比缩放，然后将 BGRA 转为 Tesseract 的 RGB。词边界映射回原选区，并由共享文档校验器核查行数、词数、文本长度与坐标。
@@ -20,6 +22,6 @@ Linux 适配器通过已安装的 Tesseract 4.1 或 5 C API 识别宿主提供�
 cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
 ```
 
-该测试用现有绘图器生成已知英文，检查真实文本和词边界，以及空白图像结果。它不读取桌面，不证明中文识别或完整 GUI 功能。普通源码测试覆盖提前取消、原始截止时间和有界 UTF-8 读取。Windows 编译或 Linux 交叉类型检查不能代替这一原生验收。
+该测试用现有绘图器生成已知英文，检查真实文本和词边界、空白图像结果，以及同一进程内再次识别相同图像。它不读取桌面，不证明中文识别或完整 GUI 功能。普通源码测试覆盖提前取消、原始截止时间和有界 UTF-8 读取。Windows 编译或 Linux 交叉类型检查不能代替这一原生验收。
 
 接口和所有权依据：[Tesseract 5.5.1 C API](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/include/tesseract/capi.h)、[对应实现](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/api/capi.cpp)、[显式模型路径优先级](https://github.com/tesseract-ocr/tesseract/blob/5.5.1/src/ccutil/ccutil.cpp)，以及 [4.1.1 C API](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.h)、[对应实现](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/api/capi.cpp) 与 [4.1.1 显式模型路径优先级](https://github.com/tesseract-ocr/tesseract/blob/4.1.1/src/ccutil/mainblk.cpp)。仅使用两者签名一致的函数和不透明句柄；不依赖内部结构布局。实现为 Mewu 的 MPL-2.0 代码，没有复制第三方库源码或模型。
