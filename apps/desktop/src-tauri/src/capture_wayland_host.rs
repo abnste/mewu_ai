@@ -219,14 +219,18 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
 
 #[cfg(debug_assertions)]
 fn log_layout(widget: &gtk::ApplicationWindow, stage: &str) {
-    eprintln!("mewu-wayland-layout stage={stage} allocation={}x{} default={:?} resizable={} fullscreen={}",
-        widget.allocated_width(), widget.allocated_height(), widget.default_size(), widget.is_resizable(),
+    let allocation = widget.allocation();
+    eprintln!("mewu-wayland-layout stage={stage} allocation={},{},{}x{} surface={:?} default={:?} resizable={} decorated={} fullscreen={}",
+        allocation.x(), allocation.y(), allocation.width(), allocation.height(),
+        widget.window().map(|window| (window.width(), window.height())), widget.default_size(), widget.is_resizable(), widget.is_decorated(),
         widget.window().is_some_and(|window| window.state().contains(gtk::gdk::WindowState::FULLSCREEN)));
+    let style = widget.style_context();
+    eprintln!("mewu-wayland-layout stage={stage} classes={:?} padding={:?} border={:?} margin={:?}",
+        style.list_classes(), style.padding(style.state()), style.border(style.state()), style.margin(style.state()));
     fn webview_layout(widget: &gtk::Widget, stage: &str, depth: u8) {
-        if widget.type_().name() == "WebKitWebView" {
-            eprintln!("mewu-wayland-layout stage={stage} webview={}x{} requested={}x{}",
-                widget.allocated_width(), widget.allocated_height(), widget.width_request(), widget.height_request());
-        }
+        let allocation = widget.allocation();
+        eprintln!("mewu-wayland-layout stage={stage} own-child-depth={depth} class={} allocation={},{},{}x{} requested={}x{}",
+            widget.type_().name(), allocation.x(), allocation.y(), allocation.width(), allocation.height(), widget.width_request(), widget.height_request());
         if depth < 4 {
             if let Some(container) = widget.dynamic_cast_ref::<gtk::Container>() {
                 for child in container.children().into_iter().take(16) { webview_layout(&child, stage, depth + 1); }
@@ -340,7 +344,17 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
                 }
                 if !success && !owned.iter().any(|w|w.label=="space"&&w.fullscreen) {widget.unfullscreen();}
             }
-            if allowed && (success || owned.iter().any(|w|w.label=="space"&&w.visible)){crate::show(&restore_app);}
+            if allowed && (success || owned.iter().any(|w|w.label=="space"&&w.visible)){
+                crate::show(&restore_app);
+                #[cfg(debug_assertions)] {
+                    let diagnostic_space=space.clone(); let diagnostic_owned=owned.clone();
+                    gtk::glib::idle_add_local_once(move || {
+                        if current(&diagnostic_owned,false).is_ok() {
+                            if let Ok(widget)=diagnostic_space.gtk_window(){log_layout(&widget,"post-show-idle");}
+                        }
+                    });
+                }
+            }
             else {let _=space.hide();}
         }
         for w in owned.iter().filter(|w|allowed&&w.visible&&w.label!="space"&&(!success||w.label!="frozen-widget")) {
