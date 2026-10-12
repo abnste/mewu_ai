@@ -204,6 +204,9 @@ impl ProcessJob {
         owner.collect_late_owner(std::time::Instant::now() + Duration::from_millis(1));
         owner.empty()
     }
+    fn observe_launcher_exit(&self,status:&ExitStatus){
+        self.0.lock().unwrap_or_else(|e|e.into_inner()).observe_launcher_exit(status);
+    }
 }
 
 struct Parts<P: Send + 'static> {
@@ -254,7 +257,10 @@ impl<P: Send + 'static> Parts<P> {
         if let Some(job) = &self.job {
             return job.try_wait(&mut self.child);
         }
-        self.child.try_wait()
+        let status=self.child.try_wait()?;
+        #[cfg(target_os="linux")]
+        if let Some(status)=&status {if let Some(job)=&self.job{job.observe_launcher_exit(status);}}
+        Ok(status)
     }
 }
 pub struct ManagedProcess<P: Send + 'static>(Option<Parts<P>>);

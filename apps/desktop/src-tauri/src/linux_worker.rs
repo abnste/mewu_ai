@@ -213,25 +213,29 @@ impl TrustedCommand {
             .spawn()?;
         drop(self.child.take());
         drop(self.source.take());
-        Ok((child, Bridge(self.parent.take().unwrap(), Vec::new())))
+        Ok((child, Bridge{socket:self.parent.take().unwrap(),candidates:Vec::new(),clean_eof:false,invalid:false}))
     }
 }
 
 // Own received descriptors before validating the packet. A malformed packet
 // must not silently discard a possible kernel owner while its permit is held.
-pub(crate) struct Bridge(UnixStream, Vec<OwnedFd>);
+pub(crate) struct Bridge { socket:UnixStream, candidates:Vec<OwnedFd>, clean_eof:bool, invalid:bool }
 
 /// Conservative ownership sketch. Retained permits/IO belong to the caller's
-/// actual Parts; Unknown is never an empty tree even after wrapper exit.
+/// actual Parts. A failed, never-admitted bootstrap may finish only with a
+/// normally reaped fixed bwrap launcher AND a clean bridge EOF with no candidate
+/// receipt. Signaled launchers, bad packets and unknown descriptors stay held.
 pub(crate) struct LifetimeOwner {
     bridge: Option<Bridge>,
     owner: Option<OwnedFd>,
+    launcher_normal_exit:bool,
 }
 impl LifetimeOwner {
     pub fn provisional(bridge: Bridge) -> Self {
         Self {
             bridge: Some(bridge),
             owner: None,
+            launcher_normal_exit:false,
         }
     }
     /// Call only after this owner, the original Child and permit are installed
@@ -253,7 +257,8 @@ impl LifetimeOwner {
     /// namespace-init pidfd. Wait/reap and real IO joining remain separate.
     pub fn empty(&self) -> bool {
         let Some(owner) = self.owner.as_ref() else {
-            return false;
+            return self.launcher_normal_exit&&self.bridge.as_ref().is_some_and(|bridge|
+                bridge.clean_eof&&!bridge.invalid&&bridge.candidates.is_empty());
         };
         let mut fds = [PollFd::new(owner, PollFlags::IN)];
         matches!(
@@ -277,7 +282,7 @@ impl LifetimeOwner {
             let mut storage = [];
             let mut ancillary = SendAncillaryBuffer::new(&mut storage);
             let _ = sendmsg(
-                &bridge.0,
+                &bridge.socket,
                 &[IoSlice::new(b"N")],
                 &mut ancillary,
                 SendFlags::DONTWAIT | SendFlags::NOSIGNAL,
@@ -296,6 +301,12 @@ impl LifetimeOwner {
                 self.kill();
             }
         }
+    }
+    /// Only the owner of the actual Child may provide its wait result. Fixed
+    /// bwrap's normal monitor return waits for namespace init to exit (upstream
+    /// 0.9.0 monitor_child). A signal delivered to the wrapper is not that proof.
+    pub(super) fn observe_launcher_exit(&mut self,status:&std::process::ExitStatus){
+        self.launcher_normal_exit=status.code().is_some();
     }
 }
 pub(super) fn check(deadline: Instant, cancel: &AtomicBool) -> io::Result<()> {
@@ -345,7 +356,7 @@ impl Bridge {
         // This sealed bootstrap sends one receipt. After a malformed receipt,
         // retain its descriptors and remain unadmitted; do not read an unbounded
         // sequence of new descriptors or acknowledge a subsequent packet.
-        if !self.1.is_empty() {
+        if self.invalid||!self.candidates.is_empty() {
             return Err(io::ErrorKind::InvalidData.into());
         }
         loop {
@@ -354,7 +365,7 @@ impl Bridge {
             let mut storage = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(1))];
             let mut ancillary = RecvAncillaryBuffer::new(&mut storage);
             let result = match recvmsg(
-                &self.0,
+                &self.socket,
                 &mut [IoSliceMut::new(&mut bytes)],
                 &mut ancillary,
                 RecvFlags::CMSG_CLOEXEC | RecvFlags::DONTWAIT,
@@ -362,7 +373,7 @@ impl Bridge {
                 Ok(v) => v,
                 Err(rustix::io::Errno::INTR) => continue,
                 Err(rustix::io::Errno::AGAIN) => {
-                    ready(&self.0, PollFlags::IN, deadline, cancel)?;
+                    ready(&self.socket, PollFlags::IN, deadline, cancel)?;
                     continue;
                 }
                 Err(e) => return Err(e.into()),
@@ -371,22 +382,27 @@ impl Bridge {
             for message in ancillary.drain() {
                 match message {
                     RecvAncillaryMessage::ScmRights(fds) => {
-                        self.1.extend(fds);
+                        self.candidates.extend(fds);
                     }
                     _ => unknown_control = true,
                 }
             }
+            if result.bytes==0&&self.candidates.is_empty()&&!unknown_control
+                &&result.flags.difference(ReturnFlags::CMSG_CLOEXEC).is_empty(){
+                self.clean_eof=true;return Err(io::ErrorKind::UnexpectedEof.into());
+            }
             if unknown_control
-                || self.1.len() != 1
+                || self.candidates.len() != 1
                 || result.bytes != 1
                 || bytes[0] != RECEIPT
                 || result
                     .flags
                     .intersects(ReturnFlags::CTRUNC | ReturnFlags::TRUNC)
             {
+                self.invalid=true;
                 return Err(io::ErrorKind::InvalidData.into());
             }
-            let owner = &self.1[0];
+            let owner = &self.candidates[0];
             // SIG0 validates that this is actually a kernel pidfd. It changes
             // no target state. A regular-file/closed/malformed receipt is refused.
             let validity = unsafe {
@@ -404,10 +420,11 @@ impl Bridge {
                 // Retain it so the actual parent wait/IO cleanup can finish;
                 // no ACK will be sent for a signaled owner.
                 if error.raw_os_error() != Some(libc::ESRCH) {
+                    self.invalid=true;
                     return Err(error);
                 }
             }
-            return Ok(self.1.pop().unwrap());
+            return Ok(self.candidates.pop().unwrap());
         }
     }
     pub fn acknowledge(&self, deadline: Instant, cancel: &AtomicBool) -> io::Result<()> {
@@ -416,7 +433,7 @@ impl Bridge {
             let mut storage = [];
             let mut ancillary = SendAncillaryBuffer::new(&mut storage);
             match sendmsg(
-                &self.0,
+                &self.socket,
                 &[IoSlice::new(&[ACK])],
                 &mut ancillary,
                 SendFlags::DONTWAIT | SendFlags::NOSIGNAL,
@@ -424,7 +441,7 @@ impl Bridge {
                 Ok(1) => return Ok(()),
                 Ok(_) => return Err(io::ErrorKind::WriteZero.into()),
                 Err(rustix::io::Errno::INTR) => (),
-                Err(rustix::io::Errno::AGAIN) => ready(&self.0, PollFlags::OUT, deadline, cancel)?,
+                Err(rustix::io::Errno::AGAIN) => ready(&self.socket, PollFlags::OUT, deadline, cancel)?,
                 Err(e) => return Err(e.into()),
             }
         }
@@ -594,5 +611,57 @@ mod production_tests {
         }
         // Production admission never grants an invalid/missing PID1 bridge.
         assert_eq!(bootstrap(Worker::Recording,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
+    }
+    fn closed_bridge()->Bridge{
+        let (socket,peer)=UnixStream::pair().unwrap();socket.set_nonblocking(true).unwrap();drop(peer);
+        Bridge{socket,candidates:Vec::new(),clean_eof:false,invalid:false}
+    }
+    #[test]
+    fn production_pre_admission_eof_requires_real_normal_launcher_wait(){
+        let mut owner=LifetimeOwner::provisional(closed_bridge());
+        assert!(owner.admit(Instant::now()+Duration::from_secs(1),&AtomicBool::new(false)).is_err());
+        assert!(!owner.empty(),"EOF alone never releases a namespace permit");
+        let status=Command::new("/usr/bin/true").status().unwrap();
+        owner.observe_launcher_exit(&status);
+        assert!(owner.empty(),"clean unadmitted EOF plus actual normal launcher wait");
+
+        let mut signaled=LifetimeOwner::provisional(closed_bridge());
+        assert!(signaled.admit(Instant::now()+Duration::from_secs(1),&AtomicBool::new(false)).is_err());
+        let mut child=Command::new("/usr/bin/sleep").arg("10").spawn().unwrap();
+        child.kill().unwrap();let status=child.wait().unwrap();assert!(status.code().is_none());
+        signaled.observe_launcher_exit(&status);
+        assert!(!signaled.empty(),"signaled wrapper is not kernel namespace-init exit proof");
+    }
+    #[test]
+    fn production_bad_owner_receipt_stays_held_after_launcher_exit(){
+        let (socket,peer)=UnixStream::pair().unwrap();socket.set_nonblocking(true).unwrap();
+        let pidfd=pidfd_open(getpid(),PidfdFlags::empty()).unwrap();
+        let fds=[pidfd.as_fd()];let mut storage=[MaybeUninit::uninit();rustix::cmsg_space!(ScmRights(1))];
+        let mut ancillary=SendAncillaryBuffer::new(&mut storage);
+        assert!(ancillary.push(SendAncillaryMessage::ScmRights(&fds)));
+        assert_eq!(sendmsg(&peer,&[IoSlice::new(b"X")],&mut ancillary,SendFlags::NOSIGNAL).unwrap(),1);drop(peer);
+        let mut owner=LifetimeOwner::provisional(Bridge{socket,candidates:Vec::new(),clean_eof:false,invalid:false});
+        assert!(owner.admit(Instant::now()+Duration::from_secs(1),&AtomicBool::new(false)).is_err());
+        owner.observe_launcher_exit(&Command::new("/usr/bin/true").status().unwrap());
+        owner.collect_late_owner(Instant::now()+Duration::from_millis(10));
+        assert!(!owner.empty(),"bad packet retains its real live pidfd; no absent-owner shortcut");
+        assert_eq!(owner.bridge.as_ref().unwrap().candidates.len(),1);
+    }
+    #[test]
+    fn production_failed_sealed_startup_reaps_real_launcher_and_io_before_release(){
+        use std::sync::Arc;
+        struct Held(Arc<AtomicBool>);impl Drop for Held{fn drop(&mut self){self.0.store(true,Ordering::Release);}}
+        let released=Arc::new(AtomicBool::new(false));
+        let mut command=TrustedCommand::new(Worker::Recording).unwrap();
+        command.env_clear().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        // Actual sealed bwrap launch. This test ELF deliberately has no normal
+        // application's bootstrap entry, so no PID1 receipt/ACK/domain config
+        // is possible. Docker may instead deny namespace creation even earlier.
+        // Both exercise real pre-admission launcher failure, not a fake Ready.
+        assert!(crate::owned_process::ManagedProcess::spawn_trusted_with_diagnostics(
+            command,Held(released.clone()),Instant::now()+Duration::from_secs(3),&AtomicBool::new(false)).is_err());
+        let until=Instant::now()+Duration::from_secs(5);
+        while !released.load(Ordering::Acquire){assert!(Instant::now()<until,"actual failed launcher/IO permit leaked");
+            std::thread::sleep(Duration::from_millis(10));}
     }
 }
