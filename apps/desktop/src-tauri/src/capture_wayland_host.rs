@@ -221,10 +221,10 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
 #[cfg(debug_assertions)]
 fn log_layout(widget: &gtk::ApplicationWindow, stage: &str) {
     let allocation = widget.allocation();
-    eprintln!("mewu-wayland-layout stage={stage} allocation={},{},{}x{} surface={:?} default={:?} resizable={} decorated={} fullscreen={}",
+    eprintln!("mewu-wayland-layout stage={stage} allocation={},{},{}x{} surface={:?} default={:?} resizable={} decorated={} fullscreen={} mapped={}",
         allocation.x(), allocation.y(), allocation.width(), allocation.height(),
         widget.window().map(|window| (window.width(), window.height())), widget.default_size(), widget.is_resizable(), widget.is_decorated(),
-        widget.window().is_some_and(|window| window.state().contains(gtk::gdk::WindowState::FULLSCREEN)));
+        widget.window().is_some_and(|window| window.state().contains(gtk::gdk::WindowState::FULLSCREEN)), widget.is_mapped());
     let style = widget.style_context();
     eprintln!("mewu-wayland-layout stage={stage} classes={:?} padding={:?} border={:?} margin={:?}",
         style.list_classes(), style.padding(style.state()), style.border(style.state()), style.margin(style.state()));
@@ -251,6 +251,14 @@ fn webview_size(widget: &gtk::Widget, depth: u8) -> Option<(i32,i32)> {
         }
     }
     None
+}
+
+fn presentation_timeout(_widget: &gtk::ApplicationWindow, _monitor_size: Option<(i32,i32)>, _final_size: Option<(i32,i32)>) -> String {
+    #[cfg(debug_assertions)] {
+        log_layout(_widget,"fullscreen-timeout");
+        eprintln!("mewu-wayland-layout stage=fullscreen-timeout monitor-logical-size={_monitor_size:?} final-show-size={_final_size:?}");
+    }
+    "桌面未确认全屏空间".into()
 }
 
 enum PresentationPermit {
@@ -296,12 +304,12 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
                         permit.check(target.app_handle(),&owned)?; current(&owned,false)?;
                         for w in owned.iter().filter(|w|w.label!="space") {current(std::slice::from_ref(w),true)?;}
                         let drawable=widget.window().ok_or("截图窗口已关闭")?;
-                        if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
+                        if Instant::now()>=until { return Err(presentation_timeout(&widget,monitor_size,final_size)); }
                         // Tao applies its initial resizable flag on the first
                         // configure event. Reassert after that event if needed,
                         // then wait for GTK to allocate the fullscreen contents.
                         if !widget.is_resizable() {
-                            if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
+                            if Instant::now()>=until { return Err(presentation_timeout(&widget,monitor_size,final_size)); }
                             widget.set_resizable(true);
                             stable_ticks=0;
                             return Ok(None);
@@ -343,7 +351,7 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
                                 return witness(&target).map(Some);
                             }
                         } else {stable_ticks=0;}
-                        if Instant::now()>=until { return Err("桌面未确认全屏空间".into()); }
+                        if Instant::now()>=until { return Err(presentation_timeout(&widget,monitor_size,final_size)); }
                         Ok(None)
                     })();
                     match result {
