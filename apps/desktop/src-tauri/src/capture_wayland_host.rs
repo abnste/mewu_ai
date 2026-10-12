@@ -181,7 +181,7 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
     let hide_work=work.clone(); let hide_transition=transition.clone();
     window.run_on_main_thread(move || {
         let _transition=hide_transition; let work=hide_work;
-        let result = (|| {
+        let result: Result<(Vec<Witness>, Result<(), String>), String> = (|| {
             base_check(&app,&work)?;
             let mut owned = Vec::new();
             for (label, candidate) in app.webview_windows() {
