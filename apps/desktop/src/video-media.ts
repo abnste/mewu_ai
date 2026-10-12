@@ -13,6 +13,7 @@ export class VideoPlayback {
   private playOwner?: { current: () => boolean };
   private abortReady?: () => void;
   private boundarySeek = false;
+  private completedRange?: { source: string; startTicks: number; endTicks: number };
   private frame?: number;
   private clockFrame?: number;
   private frameGeneration = 0;
@@ -42,7 +43,8 @@ export class VideoPlayback {
     // source playback time. Trim start is never added. PTS is separate evidence.
     this.hooks.observation?.(!this.video.seeking && this.video.readyState >= 2 ? { sourcePlaybackTicks: ticks, sourceFramePts: this.sourceFramePts } : {});
     if (!this.video.paused && range && (ticks < range.startTicks || ticks >= range.endTicks)) {
-      this.pause(); this.seek(clampPosition(ticks, range)); return;
+      this.completedRange = ticks >= range.endTicks ? { source: this.hooks.identity(), ...range } : undefined;
+      this.pause(); this.requestSeek(clampPosition(ticks, range)); return;
     }
     this.hooks.position(ticks);
   };
@@ -51,9 +53,9 @@ export class VideoPlayback {
     if (this.frame !== undefined) this.video.cancelVideoFrameCallback?.(this.frame);
     this.frame = undefined; if (!this.disposed) this.hooks.observation?.({});
   };
-  private unavailable = () => { this.pause(); this.clearFrame(); };
+  private unavailable = () => { this.completedRange = undefined; this.pause(); this.clearFrame(); };
   private seeking = () => { if (!this.video.seeking) return; if (this.interval && !this.interval.seeking) this.pause(); this.clearFrame(); };
-  private mediaReady = () => { this.mediaIdentity = this.hooks.identity(); this.clearFrame(); this.sample(); };
+  private mediaReady = () => { this.completedRange = undefined; this.mediaIdentity = this.hooks.identity(); this.clearFrame(); this.sample(); };
   private seeked = () => { this.sample(); this.frames(true); };
   private playing = () => {
     if (this.video.paused) return;
@@ -117,8 +119,9 @@ export class VideoPlayback {
     });
   }
   private requestSeek(ticks: number) { this.boundarySeek = false; this.seeks.request({ identity: this.hooks.identity(), ticks }); }
-  seek(ticks: number) { if (this.interval) this.pause(); this.requestSeek(ticks); }
+  seek(ticks: number) { this.completedRange = undefined; if (this.interval) this.pause(); this.requestSeek(ticks); }
   async seekAndWait(ticks: number, active: () => boolean): Promise<number> {
+    this.completedRange = undefined;
     const generation = this.generation, source = this.hooks.identity();
     const current = () => !this.disposed && generation === this.generation && source === this.hooks.identity() && active();
     if (!current()) throw new TrimCanceled();
@@ -193,15 +196,17 @@ export class VideoPlayback {
     const generation = this.generation, playGeneration = ++this.playGeneration, identity = this.hooks.identity(), range = this.hooks.range(); if (!range || this.disposed) return;
     const current = Math.round(this.video.currentTime * TICKS_PER_SECOND);
     const requested = position ?? current;
-    // Both the play button and a resumed timeline gesture can supply the
-    // exclusive endpoint. Replay the retained interval rather than seek/play
-    // at its end and immediately stop. Native ended may precede rounded ticks.
-    const start = (position === undefined && this.video.ended) || requested < range.startTicks || requested >= range.endTicks ? range.startTicks : requested;
+    // A completed boundary seek may land slightly before the requested time.
+    // Remember actual playback completion instead of treating every position
+    // near the end as finished; an explicit scrub still owns its exact intent.
+    const completed = this.completedRange;
+    const finished = completed?.source === identity && completed.startTicks === range.startTicks && completed.endTicks === range.endTicks;
+    const start = (position === undefined && (this.video.ended || finished)) || requested < range.startTicks || requested >= range.endTicks ? range.startTicks : requested;
     this.seek(clampPosition(start, range)); await this.seeks.flush(() => !this.disposed && generation === this.generation && playGeneration === this.playGeneration && identity === this.hooks.identity());
     if (this.disposed || generation !== this.generation || playGeneration !== this.playGeneration || identity !== this.hooks.identity()) throw new TrimCanceled();
     await this.ownedPlay(() => !this.disposed && generation === this.generation && playGeneration === this.playGeneration && identity === this.hooks.identity());
   }
-  invalidate() { this.generation++; this.pause(); this.seeks.cancel(); this.abortSeek?.(); this.clearFrame(); }
+  invalidate() { this.completedRange = undefined; this.generation++; this.pause(); this.seeks.cancel(); this.abortSeek?.(); this.clearFrame(); }
   dispose() {
     if (this.disposed) return; this.invalidate(); this.disposed = true; this.seeks.dispose();
     if (this.frame !== undefined) this.video.cancelVideoFrameCallback?.(this.frame);

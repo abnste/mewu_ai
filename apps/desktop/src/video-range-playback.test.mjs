@@ -158,6 +158,53 @@ test('an explicit valid resume position wins over ended while canceled replay ca
   } finally { f.player.dispose(); }
 });
 
+test('completed trim replays after its boundary seek lands just before the endpoint', async () => {
+  const f = fixture(); f.range = { startTicks: 0, endTicks: 93_213_559 };
+  try {
+    f.node.time = 9.4; f.node.paused = false;
+    f.node.dispatchEvent(new Event('timeupdate')); await turn();
+    assert.equal(f.node.paused, true);
+    f.node.finishSeek(9.321); await f.player.seeks.flush();
+    assert.equal(f.node.currentTime, 9.321);
+    const replay = f.player.play(); await turn();
+    const assigned = f.node.assignments.at(-1);
+    f.node.finishSeek(); await replay;
+    assert.equal(assigned, 0);
+    assert.equal(f.node.paused, false); assert.deepEqual(f.errors, []);
+  } finally { f.player.dispose(); }
+});
+
+test('user seek, explicit resume and range replacement clear or supersede trim completion', async () => {
+  for (const action of ['seek', 'explicit-resume', 'range', 'source']) {
+    const f = fixture();
+    try {
+      f.node.time = 8.1; f.node.paused = false;
+      f.node.dispatchEvent(new Event('timeupdate')); await turn();
+      f.node.finishSeek(7.999); await f.player.seeks.flush();
+      if (action === 'seek') { f.player.seek(7.999 * T); await turn(); f.node.finishSeek(); await f.player.seeks.flush(); }
+      if (action === 'range') f.range = { startTicks: 1 * T, endTicks: 9 * T };
+      if (action === 'source') { f.source = 'replacement-source'; f.player.invalidate(); f.node.dispatchEvent(new Event('loadedmetadata')); }
+      const replay = f.player.play(action === 'explicit-resume' ? 7.999 * T : undefined); await turn();
+      assert.equal(f.node.assignments.at(-1), 7.999, action);
+      f.node.finishSeek(); await replay; assert.equal(f.node.paused, false, action);
+    } finally { f.player.dispose(); }
+  }
+});
+
+test('pausing preserves a completed trim but a canceled replay never revives playback', async () => {
+  const f = fixture();
+  try {
+    f.node.time = 8.1; f.node.paused = false;
+    f.node.dispatchEvent(new Event('timeupdate')); await turn();
+    f.node.finishSeek(7.999); await f.player.seeks.flush();
+    f.player.pause(); f.node.dispatchEvent(new Event('pause'));
+    const pending = f.player.play(), rejected = assert.rejects(pending, TrimCanceled);
+    await turn(); assert.equal(f.node.assignments.at(-1), 2.5);
+    f.player.pause(); f.node.finishSeek(); await rejected;
+    assert.equal(f.node.paused, true); assert.equal(f.node.playCalls, 0);
+  } finally { f.player.dispose(); }
+});
+
 test('interval ending at trim/source endpoint never requests a seek outside retained source', async () => {
   const f = fixture(); f.range = { startTicks: 2.5 * T, endTicks: 3 * T };
   try {
