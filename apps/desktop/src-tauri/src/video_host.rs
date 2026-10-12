@@ -975,13 +975,13 @@ pub async fn export_video(
                 candidate
             };
             let allow_gif = candidate.is_some();
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             let picker_window = window.clone();
             let prepared = tauri::async_runtime::spawn_blocking(move || {
                 let lease = SourceLease::open(&asset, &root)?;
                 recheck(&picker_app, handle, &picker_origin, &picker_cancel)?;
                 let allowed_cancel = picker_cancel.clone();
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let destination = video_save_dialog::pick_video_destination(
                     handle as isize,
                     allow_gif,
@@ -989,6 +989,11 @@ pub async fn export_video(
                     move || recheck(&picker_app, handle, &picker_origin, &allowed_cancel),
                 )
                 .map_err(|e| e.to_string())?;
+                #[cfg(target_os = "linux")]
+                let destination = video_save_dialog::pick_video_destination_linux(
+                    picker_window, handle, allow_gif, picker_cancel,
+                    move || recheck(&picker_app, handle, &picker_origin, &allowed_cancel),
+                ).map_err(|e|e.to_string())?;
                 #[cfg(target_os = "macos")]
                 let destination = video_save_dialog::pick_video_destination_macos(
                     picker_window,
@@ -1031,14 +1036,14 @@ pub async fn export_video(
             let choice_app = app.clone();
             let choice_origin = origin.clone();
             let choice_cancel = cancel.clone();
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             let choice_window = window.clone();
             let variant = if format == VideoSaveFormat::Mp3 {
                 VariantOutcome::Selected(ExportVariant::Clean)
             } else {
                 tauri::async_runtime::spawn_blocking(move || {
                     let allowed_cancel = choice_cancel.clone();
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                     let outcome = export_variant_dialog::pick_variant(
                         handle as isize,
                         Media::Video,
@@ -1049,6 +1054,13 @@ pub async fn export_video(
                             .is_some_and(|document| !document.objects.is_empty()),
                         choice_cancel,
                         move || recheck(&choice_app, handle, &choice_origin, &allowed_cancel),
+                    );
+                    #[cfg(target_os = "linux")]
+                    let outcome = export_variant_dialog::pick_variant_linux(
+                        choice_window, handle, Media::Video,
+                        choice_origin.source.annotations.as_ref().is_some_and(|document|!document.objects.is_empty()),
+                        choice_cancel,
+                        move || recheck(&choice_app,handle,&choice_origin,&allowed_cancel),
                     );
                     #[cfg(target_os = "macos")]
                     let outcome = export_variant_dialog::pick_variant_macos(

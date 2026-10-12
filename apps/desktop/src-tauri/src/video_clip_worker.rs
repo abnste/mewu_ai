@@ -95,12 +95,12 @@ pub async fn run(
 ) -> Result<ClipJobResult, ClipError> {
     video_clip_backend::check_cancel(&cancel)?;
     job.validate()?;
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = on_progress;
         Err(ClipError::Unsupported)
     }
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     {
         let permit = Permit::acquire(cancel.clone())?;
         let mut guard = CancelOnDrop(Some(cancel.clone()));
@@ -422,14 +422,21 @@ fn supervise(
         } => Some(output_directory.as_path()),
     }
     .ok_or(ClipError::UnsupportedPath)?;
+    #[cfg(not(target_os="linux"))]
     let mut command = Command::new(worker_executable()?);
+    #[cfg(target_os="linux")]
+    let mut command = crate::owned_process::linux_worker::TrustedCommand::new(
+        crate::owned_process::linux_worker::Worker::VideoClip
+    ).map_err(|_|ClipError::WorkerUnavailable)?;
+    #[cfg(not(target_os="linux"))]
+    command.arg("--video-clip-worker");
     command
-        .arg("--video-clip-worker")
         .current_dir(directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .env_clear();
+    #[cfg(not(target_os = "linux"))]
     for name in [
         "SystemRoot",
         "WINDIR",
@@ -454,8 +461,16 @@ fn supervise(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    #[cfg(not(target_os="linux"))]
     let mut process =
         ManagedProcess::spawn(&mut command, permit).map_err(|_| ClipError::WorkerUnavailable)?;
+    #[cfg(target_os="linux")]
+    let mut process = ManagedProcess::spawn_trusted(command,permit,
+        started+READY_TIMEOUT.min(timeout),&cancel).map_err(|_|{
+            if cancel.load(Ordering::Acquire){ClipError::Cancelled}
+            else if started.elapsed()>=READY_TIMEOUT.min(timeout){ClipError::TimedOut}
+            else{ClipError::WorkerUnavailable}
+        })?;
     let (output, sender) = attach_io(
         &mut process,
         WorkerConfig {

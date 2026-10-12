@@ -44,7 +44,7 @@ pub(crate) enum Worker {
 }
 impl Worker {
     fn admitted(self)->bool {
-        matches!(self, Self::Recording) || cfg!(feature="linux-worker-tests")
+        matches!(self, Self::Recording | Self::VideoClip) || cfg!(feature="linux-worker-tests")
     }
     pub fn flag(self) -> &'static str {
         match self {
@@ -224,7 +224,6 @@ pub(crate) struct Bridge { socket:UnixStream, candidates:Vec<OwnedFd>, clean_eof
 impl Bridge{
     pub(super) fn for_race_fixture(socket:UnixStream)->Self{Self{socket,candidates:Vec::new(),clean_eof:false,invalid:false}}
 }
-
 
 /// Conservative ownership sketch. Retained permits/IO belong to the caller's
 /// actual Parts. A failed, never-admitted bootstrap may finish only with a
@@ -607,15 +606,17 @@ pub fn bootstrap(worker: Worker, raw: i32, source_raw: i32, deadline: Instant) -
 mod production_tests {
     use super::*;
     #[test]
-    fn production_bootstrap_admission_keeps_non_recording_domains_closed(){
+    fn production_bootstrap_admission_keeps_unimplemented_domains_closed(){
         assert!(Worker::Recording.admitted());
-        for worker in [Worker::Code,Worker::Formula,Worker::VideoClip,Worker::Snapshot,Worker::Speech]{
+        assert!(Worker::VideoClip.admitted());
+        for worker in [Worker::Code,Worker::Formula,Worker::Snapshot,Worker::Speech]{
             assert!(!worker.admitted());
             assert_eq!(TrustedCommand::new(worker).err().unwrap().kind(),io::ErrorKind::PermissionDenied);
             assert_eq!(bootstrap(worker,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
         }
         // Production admission never grants an invalid/missing PID1 bridge.
         assert_eq!(bootstrap(Worker::Recording,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
+        assert_eq!(bootstrap(Worker::VideoClip,-1,-1,Instant::now()).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
     }
     fn closed_bridge()->Bridge{
         let (socket,peer)=UnixStream::pair().unwrap();socket.set_nonblocking(true).unwrap();drop(peer);
@@ -656,8 +657,9 @@ mod production_tests {
     fn production_failed_sealed_startup_reaps_real_launcher_and_io_before_release(){
         use std::sync::Arc;
         struct Held(Arc<AtomicBool>);impl Drop for Held{fn drop(&mut self){self.0.store(true,Ordering::Release);}}
+        for domain in [Worker::Recording,Worker::VideoClip]{
         let released=Arc::new(AtomicBool::new(false));
-        let mut command=TrustedCommand::new(Worker::Recording).unwrap();
+        let mut command=TrustedCommand::new(domain).unwrap();
         command.env_clear().stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         // Actual sealed bwrap launch. This test ELF deliberately has no normal
         // application's bootstrap entry, so no PID1 receipt/ACK/domain config
@@ -668,5 +670,6 @@ mod production_tests {
         let until=Instant::now()+Duration::from_secs(5);
         while !released.load(Ordering::Acquire){assert!(Instant::now()<until,"actual failed launcher/IO permit leaked");
             std::thread::sleep(Duration::from_millis(10));}
+        }
     }
 }

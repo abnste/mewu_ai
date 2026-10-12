@@ -50,7 +50,7 @@ impl Destination {
     pub(crate) fn gif(output: &Path) -> Result<Self, ClipError> {
         Self::with_extension(output, "gif")
     }
-    fn with_extension(output: &Path, extension: &str) -> Result<Self, ClipError> {
+    pub(crate) fn with_extension(output: &Path, extension: &str) -> Result<Self, ClipError> {
         if !output.is_absolute() || output.extension().is_none_or(|v| v != extension) {
             return Err(ClipError::UnsupportedPath);
         }

@@ -106,7 +106,11 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
             .map(|v| v.0 as usize)
             .map_err(|_| "空间窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::window_actions_linux::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = window;
         Ok(0)

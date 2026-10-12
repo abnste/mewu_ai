@@ -25,7 +25,11 @@ pub fn execute(
     {
         macos::execute(job, cancel, on_progress)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::execute(job, cancel, on_progress)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = on_progress;
         Err(ClipError::Unsupported)
@@ -35,6 +39,15 @@ pub fn execute(
 #[cfg(target_os = "macos")]
 #[path = "video_clip_macos.rs"]
 mod macos;
+
+#[cfg(target_os = "linux")]
+#[path = "video_clip_linux.rs"]
+mod linux;
+
+// The same descriptor-bound, no-replace Unix publication contract is shared.
+#[cfg(target_os = "linux")]
+#[path = "video_clip_output_macos.rs"]
+mod unix_output;
 
 #[cfg(windows)]
 mod platform {

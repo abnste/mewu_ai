@@ -62,6 +62,17 @@ pub fn pick_video_destination_macos(
     save_dialog::macos::pick_destination(window, token, spec(allow_gif), cancel, allowed)
 }
 
+#[cfg(target_os = "linux")]
+pub fn pick_video_destination_linux(
+    window: tauri::WebviewWindow,
+    token: usize,
+    allow_gif: bool,
+    cancel: Arc<AtomicBool>,
+    allowed: impl Fn() -> Result<(), String> + Send + 'static,
+) -> Result<SaveDialogOutcome, SaveDialogError> {
+    save_dialog::linux::pick_destination(window, token, spec(allow_gif), cancel, allowed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
