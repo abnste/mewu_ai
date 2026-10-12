@@ -89,6 +89,21 @@ jobs:
       - name: Diagnose fixed Linux OCR system resources
         if: runner.os == 'Linux'
         run: node scripts/diagnose-linux-ocr-resources.mjs
+      - name: Protect the hosted runner system resource parent
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # runner-images makes /usr/share world-writable. Restore only this
+          # fixed parent in the disposable runner; never relax the OCR policy.
+          test ! -L /usr/share
+          test -d /usr/share
+          test "$(realpath /usr/share)" = /usr/share
+          test "$(stat -c '%u' /usr/share)" = 0
+          stat -c 'OCR parent before: %n uid=%u gid=%g mode=%a' /usr/share
+          sudo chmod 0755 /usr/share
+          stat -c 'OCR parent after: %n uid=%u gid=%g mode=%a' /usr/share
+          node scripts/diagnose-linux-ocr-resources.mjs
       - name: Verify native Linux OCR with known English and blank images
         if: runner.os == 'Linux'
         run: cargo test -p mewu-desktop --bin mewu-desktop --locked real_linux_tesseract_recognizes_known_english_and_blank -- --ignored --nocapture --test-threads=1
