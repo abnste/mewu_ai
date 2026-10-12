@@ -196,6 +196,8 @@ pub fn request_stop(app: &AppHandle) {
     }
 }
 pub fn revoke_plugins(app: &AppHandle, plugins: &crate::plugins::PluginSnapshot) {
+    #[cfg(target_os="linux")]
+    crate::recording_wayland_host::revoke_plugins(plugins);
     if let Some(state) = app.try_state::<RecordingState>() {
         if let Ok(mut state) = state.0.lock() {
             if let Some(active) = state.as_mut() {

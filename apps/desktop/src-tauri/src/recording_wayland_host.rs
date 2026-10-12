@@ -17,7 +17,8 @@ impl Controls {
     }
 }
 struct Lease { nonce:String, scene_id:String, background:Option<Asset>, region:Option<Region>,
-    controls:Arc<Mutex<Controls>>, status:Option<recording::Status>, finalized:bool, suppress_reveal:bool }
+    controls:Arc<Mutex<Controls>>, status:Option<recording::Status>, finalized:bool, suppress_reveal:bool,
+    grant:Option<crate::plugins::RecordingGrant>, audio_grant:Option<crate::recording_audio_host::RecordingAudioGrant> }
 #[derive(Default)] struct State { lease:Option<Lease>, finished:Option<(String,Result<(),String>)> }
 fn state()->&'static Mutex<State> {static STATE:OnceLock<Mutex<State>>=OnceLock::new();STATE.get_or_init(||Mutex::new(State::default()))}
 pub(crate) fn selecting()->bool { state().lock().is_ok_and(|s|s.lease.as_ref().is_some_and(|l|l.status.is_none())) }
@@ -45,6 +46,14 @@ pub(crate) fn control(id:&str,action:&str)->Result<bool,String> {
         "cancel"=>{c.terminal=Some(true);c.paused=None;},_=>return Err("无效录屏操作".into())}Ok(true)
 }
 pub(crate) fn request_stop(){if let Ok(s)=state().lock(){if let Some(l)=&s.lease{let _=control_locked(l,false);}}}
+pub(crate) fn revoke_plugins(plugins:&crate::plugins::PluginSnapshot){
+    if let Ok(s)=state().lock(){if let Some(l)=&s.lease{
+        if l.grant.as_ref().is_some_and(|g|!crate::plugins::recording_grant_is_current(g,plugins))
+            ||l.audio_grant.as_ref().is_some_and(|g|!crate::recording_audio_host::grant_is_current(g,plugins)){
+            let _=control_locked(l,false);
+        }
+    }}
+}
 fn control_locked(l:&Lease,cancel:bool)->Result<(),String>{let mut c=l.controls.lock().map_err(|_|"录屏控制不可用")?;
     if c.terminal.is_none(){c.terminal=Some(cancel);c.start=None;c.paused=None;}Ok(())}
 pub(crate) fn begin_exit<T>(begin:impl FnOnce()->Option<T>)->Result<Option<(T,Option<String>)>,String>{
@@ -98,7 +107,7 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     {let mut s=state().lock().map_err(|_|"录屏状态不可用")?;host.exit.ensure_new_operation()?;
         if s.lease.is_some(){return Err("请先完成当前录屏准备".into());}
         s.lease=Some(Lease{nonce:nonce.clone(),scene_id:scene_id.clone(),background:None,region:None,
-            controls:controls.clone(),status:None,finalized:false,suppress_reveal:false});s.finished=None;
+            controls:controls.clone(),status:None,finalized:false,suppress_reveal:false,grant:None,audio_grant:None});s.finished=None;
     }
     let (ready_tx,ready_rx)=tokio::sync::oneshot::channel();
     let owner=app.clone();let worker_nonce=nonce.clone();let source_scene=old.clone();
@@ -191,7 +200,7 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
         if u64::from(selection.width)*u64::from(selection.height)>4_000_000{return Err("录制区域不能超过400万像素".into());}
         let status=recording::Status{id:l.nonce.clone(),scene_id:scene_id.clone(),phase:"countdown",countdown:3,elapsed_ms:0,
             rect:recording::Rect{x:region.x/mw as f64,y:region.y/mh as f64,width:region.width/mw as f64,height:region.height/mh as f64},stop_hotkey:String::new(),audio:mode};
-        l.region=Some(region);l.status=Some(status.clone());
+        l.region=Some(region);l.status=Some(status.clone());l.grant=Some(grant);l.audio_grant=audio.grant.clone();
         (l.nonce.clone(),l.controls.clone(),status,selection)};
     emit(&app,&Some(status));
     // Wayland does not offer WDA/SCK window exclusion. Hide the source canvas;
