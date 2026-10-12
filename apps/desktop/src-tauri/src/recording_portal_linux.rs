@@ -59,10 +59,12 @@ async fn bounded_close(connection: &Connection, owner: &str, path: &str, interfa
     }).await;
 }
 
-struct RequestGuard<'a> { connection: &'a Connection, owner: &'a str, path: String, ended: bool }
+#[derive(Clone, Copy)]
+enum RequestCleanup { CloseRequest, ViaSession }
+struct RequestGuard<'a> { connection: &'a Connection, owner: &'a str, path: String, ended: bool, cleanup: RequestCleanup }
 impl Drop for RequestGuard<'_> {
     fn drop(&mut self) {
-        if !self.ended {
+        if !self.ended && matches!(self.cleanup, RequestCleanup::CloseRequest) {
             futures_lite::future::block_on(bounded_close(self.connection, self.owner, &self.path, REQUEST));
         }
     }
@@ -70,7 +72,7 @@ impl Drop for RequestGuard<'_> {
 
 async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
     connection: &Connection, owner: &str, method: &str, token: &str,
-    body: &B, expires: Instant, allowed: &mut impl FnMut() -> bool,
+    body: &B, cleanup: RequestCleanup, expires: Instant, allowed: &mut impl FnMut() -> bool,
 ) -> Result<Results, String> {
     if !allowed() || Instant::now() >= expires { return Err("录屏已取消".into()); }
     let sender = connection.unique_name().ok_or_else(error)?.as_str()
@@ -80,7 +82,12 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
     // reply. Pin the actual bus owner as well as the exact unpredictable path.
     let response = transport(Proxy::new(connection, owner, path.as_str(), REQUEST), expires, allowed).await?;
     let mut signals = transport(response.receive_signal("Response"), expires, allowed).await?;
-    let mut guard = RequestGuard { connection, owner, path: path.clone(), ended: false };
+    // Once a session exists, Session.Close ends its pending chooser too. Do not
+    // send Request.Close followed by Session.Close: GNOME portal 46.2 frees the
+    // chooser in the former without clearing its session pointer (upstream
+    // 9a4dffa), so the latter would free that same handle twice. The enclosing
+    // setup error path awaits one bounded Session.Close before returning.
+    let mut guard = RequestGuard { connection, owner, path: path.clone(), ended: false, cleanup };
     let desktop = transport(Proxy::new(connection, owner, DESKTOP, SCREENCAST), expires, allowed).await?;
     let returned = transport(desktop.call::<_, _, OwnedObjectPath>(method, body), expires, allowed).await?;
     if returned.as_str() != guard.path { return Err("屏幕共享请求身份不匹配".into()); }
@@ -132,7 +139,7 @@ impl PortalSession {
             let mut options = Options::new();
             options.insert("handle_token", Value::from(create_token.as_str()));
             options.insert("session_handle_token", Value::from(session_token.as_str()));
-            let result = request(&connection, &owner, "CreateSession", &create_token, &(options,), expires, allowed).await?;
+            let result = request(&connection, &owner, "CreateSession", &create_token, &(options,), RequestCleanup::CloseRequest, expires, allowed).await?;
             let path = result.get("session_handle").and_then(|v| <&str>::try_from(v).ok()).ok_or_else(error)?;
             let sender = connection.unique_name().ok_or_else(error)?.as_str().trim_start_matches(':').replace('.', "_");
             let expected = format!("/org/freedesktop/portal/desktop/session/{sender}/{session_token}");
@@ -146,11 +153,11 @@ impl PortalSession {
                 options.insert("multiple", Value::from(false));
                 options.insert("cursor_mode", Value::from(1u32));
                 if version >= 4 { options.insert("persist_mode", Value::from(0u32)); }
-                request(&connection, &owner, "SelectSources", &select_token, &(&path, options), expires, allowed).await?;
+                request(&connection, &owner, "SelectSources", &select_token, &(&path, options), RequestCleanup::ViaSession, expires, allowed).await?;
                 let start_token = token();
                 let mut options = Options::new();
                 options.insert("handle_token", Value::from(start_token.as_str()));
-                let mut result = request(&connection, &owner, "Start", &start_token, &(&path, "", options), expires, allowed).await?;
+                let mut result = request(&connection, &owner, "Start", &start_token, &(&path, "", options), RequestCleanup::ViaSession, expires, allowed).await?;
                 let streams: Vec<(u32, HashMap<String, OwnedValue>)> = result.remove("streams")
                     .ok_or_else(error)?.try_into().map_err(|_| error())?;
                 let (node, properties) = single_monitor(streams)?;
