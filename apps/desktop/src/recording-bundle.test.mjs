@@ -154,7 +154,7 @@ test('actual App core start survives retired plugin changes and preserves delaye
     const start = await functionFrom('./App.tsx', 'startRecording', {
       scene: () => current, busy: () => false, recording: () => null, scroll: () => null, exitPreparing: () => exiting,
       recordingGrant: () => audio.recordingGrant(records),
-      bridge: { native: true, startRecording: async (...args) => events.push(['start', ...args]) },
+      bridge: { native: true, prepareWaylandRecording: async () => null, startRecording: async (...args) => events.push(['start', ...args]) },
       showError: value => errors.push(value.message ?? value), recordingReady: () => true, setBusy: value => events.push(['busy', value]),
       spaceOperations: { begin: () => () => events.push('finish') }, videoPlayers: { pauseAll: () => events.push('pause') },
       recordingAudio: { prepare: async () => selected, selection: () => latestAudio }, flush: () => { events.push('flush'); return gate.promise; },
