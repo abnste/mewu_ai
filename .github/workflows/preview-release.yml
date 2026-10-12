@@ -32,7 +32,7 @@ jobs:
           cache: npm
       - name: Install Linux native build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract5 tesseract-ocr-eng
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2 fonts-noto-cjk fonts-dejavu-core xvfb xauth dbus bubblewrap squashfs-tools libtesseract4 tesseract-ocr-eng
       - name: Install locked frontend dependencies
         run: npm ci
       - name: Resolve Mac test temporary directory
