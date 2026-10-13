@@ -3,7 +3,7 @@
 use super::*;
 use std::{io::BufRead, path::PathBuf, sync::atomic::AtomicUsize};
 
-#[derive(Default)] struct State { registered:AtomicBool,binds:AtomicUsize,events:Mutex<Vec<&'static str>>,hang:bool,fail_close:bool,bind_code:u32,fail_session_close:bool }
+#[derive(Default)] struct State { registered:AtomicBool,binds:AtomicUsize,events:Mutex<Vec<&'static str>>,hang:bool,fail_close:bool,bind_code:u32,fail_session_close:bool,restore:bool }
 struct Registry(Arc<State>);
 #[zbus::interface(name="org.freedesktop.host.portal.Registry")]
 impl Registry {
@@ -54,7 +54,7 @@ impl Global {
     async fn bind_shortcuts(&self,session:OwnedObjectPath,shortcuts:Shortcuts,parent:&str,options:Results,#[zbus(connection)]connection:&Connection,#[zbus(header)]header:zbus::message::Header<'_>)->OwnedObjectPath{
         assert!(session.as_str().contains("/session/"));assert_eq!(shortcuts.len(),1);assert_eq!(shortcuts[0].0,ACTION);
         assert_eq!(<&str>::try_from(shortcuts[0].1.get("preferred_trigger").unwrap()).unwrap(),"ALT+SHIFT+s");
-        assert_eq!(parent,"wayland:fixture");
+        assert_eq!(parent,if self.0.restore{""}else{"wayland:fixture"});
         let request=request_path(&header,&options);connection.object_server().at(request.clone(),Request(self.0.clone())).await.unwrap();
         self.0.binds.fetch_add(1,Ordering::AcqRel);self.0.events.lock().unwrap().push("bind");
         if !self.0.hang {
@@ -68,7 +68,10 @@ impl Global {
     }
     async fn list_shortcuts(&self,_session:OwnedObjectPath,options:Results,#[zbus(connection)]connection:&Connection,#[zbus(header)]header:zbus::message::Header<'_>)->OwnedObjectPath{
         let request=request_path(&header,&options);connection.object_server().at(request.clone(),Request(self.0.clone())).await.unwrap();
-        connection.emit_signal(header.sender().map(|v|v.as_str()),request.clone(),REQUEST,"Response",&(2u32,Results::new())).await.unwrap();request
+        self.0.events.lock().unwrap().push("list");
+        let mut result=Results::new();
+        if self.0.restore {result.insert("shortcuts".into(),OwnedValue::try_from(Value::from(Shortcuts::new())).unwrap());}
+        connection.emit_signal(header.sender().map(|v|v.as_str()),request.clone(),REQUEST,"Response",&(if self.0.restore{0u32}else{2u32},result)).await.unwrap();request
     }
 }
 struct Bus { child:std::process::Child,root:PathBuf }
@@ -96,6 +99,17 @@ async fn open(address:zbus::Address,state:Arc<State>)->(Connection,Portal){
         assert_eq!(portal.bind("wayland:fixture",tokio::time::Instant::now()+METHOD,&||true).await.unwrap(),"Alt + Shift + S");
         assert!(portal.pending.is_none());assert!(portal.close().await);
         let events=state.events.lock().unwrap().clone();assert_eq!(&events[..2],&["register","version"]);assert_eq!(state.binds.load(Ordering::Acquire),1);assert_eq!(events.iter().filter(|x|**x=="request-close").count(),0);assert_eq!(events.last(),Some(&"session-close"));
+        drop(portal);server.close().await.unwrap();
+    });
+}
+#[test]fn cold_session_empty_list_still_requires_actual_bind_before_restore_is_active(){
+    let (_bus,address)=bus();let state=Arc::new(State{restore:true,..Default::default()});runtime().block_on(async{
+        let (server,mut portal)=open(address,state.clone()).await;
+        assert_eq!(portal.list(tokio::time::Instant::now()+METHOD,&||true).await.unwrap(),None);
+        assert_eq!(state.binds.load(Ordering::Acquire),0);
+        assert_eq!(portal.bind("",tokio::time::Instant::now()+METHOD,&||true).await.unwrap(),"Alt + Shift + S");
+        assert_eq!(state.binds.load(Ordering::Acquire),1);assert!(portal.pending.is_none());assert!(portal.close().await);
+        assert_eq!(*state.events.lock().unwrap(),vec!["register","version","create","list","bind","session-close"]);
         drop(portal);server.close().await.unwrap();
     });
 }

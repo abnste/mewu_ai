@@ -2892,7 +2892,13 @@ fn main() {
             {
                 let app = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(error) = open_settings(app.clone()).await {
+                    let result = open_settings(app.clone()).await;
+                    // open_settings has dropped its SpaceTransition now. A
+                    // Ready-time restore would see capturing=true and remain
+                    // deferred with no subsequent idle notification.
+                    #[cfg(target_os = "linux")]
+                    capture_shortcut_portal_linux::restore_after_ready(&app);
+                    if let Err(error) = result {
                         let _ = app.emit_to("space", "host-error", error);
                     }
                 });
@@ -2913,7 +2919,7 @@ fn main() {
             #[cfg(target_os = "linux")]
             if matches!(event, tauri::RunEvent::Ready) {
                 if startup_capture.take_ready(&event) { start_capture(app); }
-                else { capture_shortcut_portal_linux::restore_after_ready(app); }
+                else if startup_capture.restore_at_ready() { capture_shortcut_portal_linux::restore_after_ready(app); }
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app
