@@ -343,7 +343,7 @@ export default function SpaceCanvas(props: Props) {
     if (activity() === value) return;
     setActivity(value); props.onSelectionActivity?.(value);
   }
-  function closeDrawing() { if(props.blackboard){void props.onBlackboardClose?.();return;} setDrawingSession(undefined); setSelectionActivity(false); const region = activeRegion(); if (region) revealToolbar(region); }
+  function closeDrawing() { if(props.blackboard){void props.onBlackboardClose?.();return;} setDrawingSession(undefined); setSelectionActivity(false); const region = activeRegion(); if (region) revealToolbar(region); props.onFocusComposer?.(); }
   function beginDrawing(region: Region) {
     if (blocked() || !props.scene.background) return;
     void settledRegion(region, region => {
