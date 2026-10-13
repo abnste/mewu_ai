@@ -2630,7 +2630,7 @@ mod tests {
     fn model_connection_seed_upgrade_only_adds_eighteen_exact_packages_once() {
         let dir=Directory::new(); let store=PluginStore::open(&dir.0).unwrap();
         // Recreate the previous eight-package registry in this owned fixture.
-        for manifest in bundled_manifests().into_iter().filter(|value|value.id.starts_with("mewu.provider.")) {
+        for manifest in bundled_manifests().into_iter().filter(|value|value.id.starts_with("mewu.provider.") || matches!(value.id.as_str(), "mewu.agent" | "mewu.blackboard")) {
             store.connection.execute("DELETE FROM registry WHERE id=?1",[&manifest.id]).unwrap();
             fs::remove_file(path(&dir.0,&manifest.id,&manifest.version)).unwrap();
             fs::remove_dir(path(&dir.0,&manifest.id,&manifest.version).parent().unwrap()).unwrap();

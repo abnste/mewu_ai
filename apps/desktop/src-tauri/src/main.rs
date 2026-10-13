@@ -2165,7 +2165,8 @@ mod run_authorization_tests {
         let run = engine.store.begin_run(&scene_id).unwrap();
         let (sender, _receiver) = oneshot::channel();
         engine.runs.insert(run.run_id.clone(), sender);
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), engine.optional.require_agent().unwrap()));
+        let agent_grant = engine.optional.require_agent().unwrap();
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone()));
         let origin = (scene_id.clone(), "example.table".to_owned(), 3);
         engine
             .plugin_runs
@@ -2188,6 +2189,10 @@ mod run_authorization_tests {
             &run.run_id,
             Some(&origin)
         ));
+        // Restore Agent admission so the next assertion isolates the workflow
+        // origin revision rather than failing only on the missing Agent grant.
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone()));
+        assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, Some(&origin)));
         engine
             .plugin_runs
             .insert(run.run_id.clone(), (scene_id.clone(), origin.1.clone(), 4));
@@ -2197,7 +2202,28 @@ mod run_authorization_tests {
             &run.run_id,
             Some(&origin)
         ));
-        // Ordinary conversation does not depend on a plugin registry entry.
+        // Ordinary conversation requires its accepted Agent grant but does not
+        // require a workflow origin. Missing admission never gains authority.
+        assert!(run_is_authorized(&engine, &scene_id, &run.run_id, None));
+        engine.agent_runs.remove(&run.run_id);
+        assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone()));
+        engine.optional.agent = None;
+        assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
+        let revised_agent = optional_capabilities::Grant { revision: agent_grant.revision + 1, ..agent_grant.clone() };
+        engine.optional.agent = Some(revised_agent);
+        assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
+        // Disable then re-enable under a newer revision cannot revive the old
+        // admitted run even though the plugin and contribution IDs are equal.
+        engine.optional.agent = None;
+        assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
+        let reenabling_agent = optional_capabilities::Grant { revision: agent_grant.revision + 2, ..agent_grant };
+        engine.optional.agent = Some(reenabling_agent.clone());
+        assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
+        assert!(engine.store.run_is_active(&scene_id, &run.run_id));
+        // Give this synthetic run fresh matching admission to isolate the
+        // remaining transport and durable-run cancellation fences below.
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), reenabling_agent));
         assert!(run_is_authorized(&engine, &scene_id, &run.run_id, None));
         // External memory has no workflow origin. Removing the transport
         // registration still fences late effects if durable cancellation fails.
