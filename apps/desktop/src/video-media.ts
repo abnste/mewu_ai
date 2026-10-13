@@ -187,8 +187,13 @@ export class VideoPlayback {
   pause() {
     this.eosReset?.cancel();
     const ownedSeek = Boolean(this.interval) || this.boundarySeek;
-    this.intentGeneration++; this.playGeneration++; this.interval = undefined; this.rasterHeld = false; this.abortReady?.(); this.video.pause();
+    this.intentGeneration++; this.playGeneration++; this.interval = undefined; this.rasterHeld = false; this.abortReady?.();
+    const generation = this.generation, playGeneration = this.playGeneration;
+    this.video.pause();
     if (ownedSeek) { this.boundarySeek = false; this.seeks.cancel(); this.abortSeek?.(); }
+    // pause events are queued, and pausing an already paused native element
+    // need not emit one. Publish its observed state only for this live owner.
+    if (!this.disposed && generation === this.generation && playGeneration === this.playGeneration && this.mediaIdentity === this.hooks.identity() && this.video.paused) this.hooks.playing(false);
   }
   holdForRaster() { this.rasterHeld = true; this.video.pause(); }
   private ownsInterval(value: IntervalPlayback) {

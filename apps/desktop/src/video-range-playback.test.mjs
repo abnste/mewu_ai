@@ -62,6 +62,41 @@ function animations() {
   return { frames, run() { const [id, callback] = frames.entries().next().value; frames.delete(id); callback(0); }, restore() { [globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame] = saved; } };
 }
 
+test('an explicit pause synchronizes observed native pause before queued events, including an already paused trim boundary', async () => {
+  for (const phase of ['queued-event', 'already-paused', 'trim-boundary']) {
+    const node = new Media(), states = [];
+    const player = new VideoPlayback(node, { identity: () => 'source', range: () => ({ startTicks: 0, endTicks: 8 * T }), position() {}, playing: value => states.push(value), error: error => { throw error; } });
+    try {
+      node.paused = false; node.dispatchEvent(new Event('play')); assert.equal(states.at(-1), true);
+      node.queued = true;
+      if (phase === 'already-paused') node.paused = true;
+      if (phase === 'trim-boundary') { node.time = 8; node.dispatchEvent(new Event('timeupdate')); }
+      else player.pause();
+      assert.equal(node.paused, true, phase); assert.equal(states.at(-1), false, phase);
+      assert.equal(node.sourceLoads, 0, phase);
+      if (node.mediaEvents.includes('pause')) node.dispatchQueued('pause');
+      assert.equal(states.at(-1), false, phase);
+    } finally { player.dispose(); await turn(); }
+  }
+});
+
+test('pause never publishes a false state for a retired source, a refused native pause or a reentrant newer play', async () => {
+  for (const phase of ['retired-source', 'refused-pause', 'new-play']) {
+    const node = new Media(), states = []; let source = 'source', next;
+    const player = new VideoPlayback(node, { identity: () => source, range: () => ({ startTicks: 0, endTicks: 8 * T }), position() {}, playing: value => states.push(value), error: error => { throw error; } });
+    try {
+      node.paused = false; node.dispatchEvent(new Event('play')); node.queued = true;
+      if (phase === 'retired-source') source = 'new-source';
+      if (phase === 'refused-pause') node.pause = () => {};
+      if (phase === 'new-play') node.pause = () => { node.paused = true; next = player.resumeCurrent(); };
+      const count = states.length; player.pause();
+      if (next) { await next; node.dispatchQueued('play'); }
+      assert.equal(states.slice(count).includes(false), false, phase);
+      assert.equal(states.at(-1), true, phase);
+    } finally { node.pause = Media.prototype.pause; player.dispose(); }
+  }
+});
+
 test('disposed media never notifies the retired view owner and drains listeners, frames and a pending seek', async () => {
   class TrackedMedia extends Media {
     listeners = new Map();
