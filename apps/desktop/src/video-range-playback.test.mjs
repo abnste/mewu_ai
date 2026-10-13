@@ -56,6 +56,38 @@ function animations() {
   return { frames, run() { const [id, callback] = frames.entries().next().value; frames.delete(id); callback(0); }, restore() { [globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame] = saved; } };
 }
 
+test('disposed media never notifies the retired view owner and drains listeners, frames and a pending seek', async () => {
+  class TrackedMedia extends Media {
+    listeners = new Map();
+    addEventListener(name, callback, options) {
+      const listeners = this.listeners.get(name) ?? new Set(); listeners.add(callback); this.listeners.set(name, listeners);
+      super.addEventListener(name, callback, options);
+    }
+    removeEventListener(name, callback, options) {
+      this.listeners.get(name)?.delete(callback); super.removeEventListener(name, callback, options);
+    }
+    get listenerCount() { return [...this.listeners.values()].reduce((total, listeners) => total + listeners.size, 0); }
+  }
+  const node = new TrackedMedia(), raf = animations(); let ownerAlive = true, notifications = 0;
+  const notify = () => { assert.equal(ownerAlive, true, 'a terminal media callback accessed its retired view owner'); notifications++; };
+  const player = new VideoPlayback(node, { identity: () => 'source', range: () => ({ startTicks: 0, endTicks: 8 * T }), position: notify, playing: notify, observation: notify, error: notify });
+  try {
+    node.paused = false; node.dispatchEvent(new Event('play'));
+    assert.ok(notifications > 0); assert.ok(node.frames.size > 0); assert.ok(raf.frames.size > 0);
+    player.seek(3 * T); await turn(); assert.equal(node.seeking, true);
+    // Native HTML media events are queued tasks. Disposal must remove their
+    // listeners and abort the in-flight seek before any late event can run.
+    node.queued = true; ownerAlive = false; const before = notifications;
+    player.dispose(); await turn();
+    assert.equal(notifications, before); assert.equal(node.listenerCount, 0);
+    assert.equal(node.frames.size, 0); assert.equal(raf.frames.size, 0); assert.equal(node.sourceLoads, 1);
+    node.finishSeek(); node.dispatchEvent(new Event('loadedmetadata')); node.dispatchEvent(new Event('pause')); node.dispatchEvent(new Event('error'));
+    await turn(); assert.equal(notifications, before); assert.equal(node.listenerCount, 0);
+    await assert.rejects(player.seeks.flush(() => true), TrimCanceled);
+    player.dispose(); assert.equal(node.sourceLoads, 1);
+  } finally { ownerAlive = true; player.dispose(); raf.restore(); }
+});
+
 test('non-frame-aligned 100ms interval waits real seek and PNG, held-frame RAF stops at end without trim offset', async () => {
   const f = fixture(), raf = animations(), interval = { startTicks: 25_300_000, endTicks: 26_300_000 }, before = structuredClone(f.range);
   f.ready = false;
@@ -276,6 +308,39 @@ function visit(node) {
   for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(visit); else if (value && typeof value === 'object') visit(value);
 }
 visit(ast); assert.ok(port);
+
+test('actual component foreign-view callbacks ignore retired owners before reading range or media', () => {
+  const constructors = [];
+  function collect(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'NewExpression') constructors.push(node);
+    for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(collect); else if (value && typeof value === 'object') collect(value);
+  }
+  collect(ast);
+  const property = (constructor, index, name) => constructors.find(node => node.callee?.name === constructor)?.arguments[index]?.properties.find(node => node.key?.name === name)?.value;
+  const callbacks = {
+    position: property('VideoPlayback', 1, 'position'), playing: property('VideoPlayback', 1, 'playing'),
+    observation: property('VideoPlayback', 1, 'observation'), manual: property('VideoManualEditor', 0, 'publish'),
+    reader: constructors.find(node => node.callee?.name === 'VideoAnnotationReader')?.arguments[2],
+  };
+  let reads = 0; const calls = [];
+  const live = () => { assert.equal(context.disposed, false, 'retired callback read view authority'); reads++; };
+  const context = { disposed: false, videoAnnotationPreviewTicks: annotations.videoAnnotationPreviewTicks,
+    range: () => { live(); return { startTicks: 0, endTicks: T }; },
+    video: { get paused() { live(); return true; }, get seeking() { live(); return false; } },
+    setPosition: value => calls.push(['position', value]), setPlaying: value => calls.push(['playing', value]),
+    setAnnotationPosition: value => calls.push(['observation', value]), annotationReader: { at: value => calls.push(['at', value]) },
+    setManualView: value => calls.push(['manual', value]), setAnnotationState: value => calls.push(['reader', value]),
+  };
+  vm.createContext(context);
+  for (const [name, callback] of Object.entries(callbacks)) {
+    assert.ok(callback, name);
+    vm.runInContext(stripTypeScriptTypes(`globalThis.${name} = ${componentSource.slice(callback.start, callback.end)};`, { mode: 'transform' }), context);
+  }
+  const invoke = () => { context.position(0); context.playing(false); context.observation({ sourcePlaybackTicks: 0 }); context.manual({ pending: false }); context.reader({ loading: false }); };
+  invoke(); assert.equal(calls.length, 6); assert.equal(reads, 3);
+  context.disposed = true; invoke(); assert.equal(calls.length, 6); assert.equal(reads, 3);
+});
 test('the real video context-menu handler suppresses browser commands without starting playback', () => {
   assert.ok(mediaContextMenu);
   const event = new Event('contextmenu', { cancelable: true }); let propagation = 0;

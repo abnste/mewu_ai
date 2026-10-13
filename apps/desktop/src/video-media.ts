@@ -208,8 +208,9 @@ export class VideoPlayback {
   }
   invalidate() { this.completedRange = undefined; this.generation++; this.pause(); this.seeks.cancel(); this.abortSeek?.(); this.clearFrame(); }
   dispose() {
-    if (this.disposed) return; this.invalidate(); this.disposed = true; this.seeks.dispose();
+    if (this.disposed) return; this.disposed = true; this.invalidate(); this.seeks.dispose();
     if (this.frame !== undefined) this.video.cancelVideoFrameCallback?.(this.frame);
+    if (this.clockFrame !== undefined) cancelAnimationFrame(this.clockFrame); this.clockFrame = undefined;
     this.video.removeEventListener('timeupdate', this.sample); this.video.removeEventListener('play', this.playing); this.video.removeEventListener('pause', this.paused); this.video.removeEventListener('ended', this.paused);
     this.video.removeEventListener('seeking', this.seeking); this.video.removeEventListener('seeked', this.seeked); this.video.removeEventListener('loadeddata', this.seeked); this.video.removeEventListener('emptied', this.unavailable); this.video.removeEventListener('error', this.unavailable);
     this.video.removeEventListener('loadedmetadata', this.mediaReady);

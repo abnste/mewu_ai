@@ -89,7 +89,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
   const report = (error: unknown) => { if (!disposed && !(error instanceof TrimCanceled)) props.onError(error); };
   const previewHold = new VideoAnnotationPlaybackHold();
   const pausePlayback = () => { previewHold.invalidate(); playback?.pause(); };
-  const annotationReader = new VideoAnnotationReader(getVideoAnnotationPlan, getVideoAnnotationPreview, setAnnotationState);
+  const annotationReader = new VideoAnnotationReader(getVideoAnnotationPlan, getVideoAnnotationPreview, value => { if (!disposed) setAnnotationState(value); });
   createEffect(on(() => [annotationKey(), annotationRetry()] as const, () => {
     annotationGeneration++; setSelectedAnnotation(undefined); setDecodedImages(new Set<string>()); pausePlayback();
     annotationReader.select(props.sceneId, props.item, sourceKey());
@@ -110,7 +110,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
     move: (target, action) => props.onAnnotationEdit!(target, action),
     read: (target, id, reference) => props.lane.request('text-read', requestId => getVideoAnnotationText(requestId, target, id, reference)),
     edit: draft => props.lane.request('text-edit', requestId => props.onAnnotationTextEdit!(requestId, draft.target, draft.annotationId, draft.reference, draft.content)),
-    pause: () => { props.onPauseAll?.(); pausePlayback(); }, publish: setManualView,
+    pause: () => { props.onPauseAll?.(); pausePlayback(); }, publish: value => { if (!disposed) setManualView(value); },
   });
   const stopManualFlush = props.onRegister(async active => { stopAnnotationPointer?.(); pausePlayback(); await manual.flush(active); });
   const annotationDisabled = () => props.busy || props.annotationBusy || drawingOpen() || annotationEditing() || manualView().pending || manualView().reading || Boolean(manualView().text) || !props.onAnnotationEdit;
@@ -174,7 +174,8 @@ export default function VideoArtifact(props: VideoArtifactProps) {
   createEffect(on(() => [props.item.x, props.item.y, props.item.width, props.item.height, props.active, metadata()] as const, () => queueMicrotask(place)));
   onMount(() => {
     void runtimeInfo().then(info => { if (!disposed) setCanvasAtFullResolution(info.platform === 'macos'); }).catch(report);
-    playback = new VideoPlayback(video, { identity: sourceKey, range, position: setPosition, playing: setPlaying, observation: value => {
+    playback = new VideoPlayback(video, { identity: sourceKey, range, position: value => { if (!disposed) setPosition(value); }, playing: value => { if (!disposed) setPlaying(value); }, observation: value => {
+      if (disposed) return;
       const previewTicks = videoAnnotationPreviewTicks(value.sourcePlaybackTicks, range(), video.paused, video.seeking);
       setAnnotationPosition(previewTicks); annotationReader.at(previewTicks);
     }, error: report });
