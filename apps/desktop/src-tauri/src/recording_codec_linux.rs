@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Fixed native codec used by the supervised Linux Wayland recording worker.
 //! Synthetic codec tests exercise the same bounded production pipeline.
-//! The caller must own the protected output file and the original hard deadline.
+//! The caller owns the protected output and capture deadline. Finalization may
+//! enter a separate, once-only ten-second budget without accepting new video.
 //! Native shutdown/fsync may block: use the real supervised worker process before
 //! any production admission, and retain its permit until Child/PID1/IO drain.
 
@@ -25,6 +26,7 @@ pub(crate) struct Codec {
     source: gstreamer_app::AppSrc,
     file: File,
     expires: Instant,
+    finalization_expires: Option<Instant>,
     bytes: usize,
     frames: u64,
     video_ended:bool,
@@ -140,6 +142,7 @@ impl Codec {
             source,
             file,
             expires,
+            finalization_expires: None,
             bytes,
             frames: 0,
             video_ended:false,
@@ -161,9 +164,10 @@ impl Codec {
         // producer adds buffers; streaming threads can only free these slots.
         let room=16u64.saturating_sub(audio.source.current_level_buffers());
         let bytes=262144u64.saturating_sub(audio.source.current_level_bytes());
-        Ok(if room>=2&&bytes>=u64::from(audio.encoder.info.maxOutBufBytes)*2 {
+        let limit=if room>=2&&bytes>=u64::from(audio.encoder.info.maxOutBufBytes)*2 {
             u64::from(audio.encoder.info.frameLength)
-        }else{0})
+        }else{0};
+        Ok(if self.finalization_expires.is_some(){limit.min((self.frames*48000/FPS).saturating_sub(audio.pcm))}else{limit})
     }
     #[cfg(debug_assertions)]
     pub(crate) fn input_levels(&self)->(u64,u64){
@@ -173,17 +177,18 @@ impl Codec {
         self.check_feeding(allowed)?;
         if bytes.is_empty()||bytes.len()%4!=0||bytes.len()>96000{return Err("电脑声音帧长度无效".into());}
         let audio=self.audio.as_mut().ok_or("录屏没有音轨")?;
-        if audio.pcm+bytes.len()as u64/4>48000*600+48000{return Err("电脑声音超出预算".into());}
+        let maximum=if self.finalization_expires.is_some(){self.frames*48000/FPS}else{48000*600+48000};
+        if audio.pcm+bytes.len()as u64/4>maximum{return Err("电脑声音超出预算".into());}
         let samples:Vec<_>=bytes.chunks_exact(2).map(|v|i16::from_le_bytes([v[0],v[1]])).collect();
         let source=&audio.source;let delay=audio.encoder.info.nDelayCore;let frame=audio.encoder.info.frameLength;
-        let packets=&mut audio.packets;let expires=self.expires;
+        let packets=&mut audio.packets;let expires=self.finalization_expires.unwrap_or(self.expires);
         audio.encoder.feed(&samples,|encoded|{
             push_aac(source,encoded,packets,delay,frame,expires,allowed)
         })?;audio.pcm+=bytes.len()as u64/4;Ok(())
     }
 
     fn check(&self, allowed: &impl Fn() -> bool) -> Result<(), String> {
-        if Instant::now() >= self.expires || !allowed() {
+        if Instant::now() >= self.finalization_expires.unwrap_or(self.expires) || !allowed() {
             return Err("录屏原始预算或宿主授权已结束".into());
         }
         Ok(())
@@ -211,6 +216,7 @@ impl Codec {
     // insufficient with block=false; check actual levels before every push.
     pub(crate) fn video_ready(&self,allowed:&impl Fn()->bool)->Result<bool,String>{
         self.check_feeding(allowed)?;
+        if self.finalization_expires.is_some() || self.video_ended {return Err("录屏视频采集已结束".into());}
         Ok(self.source.current_level_buffers()<QUEUED_FRAMES
             && self.source.current_level_bytes()<QUEUED_FRAMES*self.bytes as u64)
     }
@@ -220,7 +226,7 @@ impl Codec {
         allowed: &impl Fn() -> bool,
     ) -> Result<(), String> {
         self.check_feeding(allowed)?;
-        if frame.len() != self.bytes || self.frames >= FPS * 600 || self.video_ended {
+        if frame.len() != self.bytes || self.frames >= FPS * 600 || self.video_ended || self.finalization_expires.is_some() {
             return Err("录屏原始帧长度或数量无效".into());
         }
         while !self.video_ready(allowed)? {
@@ -248,6 +254,16 @@ impl Codec {
     pub(crate) fn finish(self, allowed: &impl Fn() -> bool) -> Result<u64, String> {
         self.finish_with_progress(allowed, |_|Ok(()))
     }
+    pub(crate) fn begin_finalization(&mut self,deadline:Instant,allowed:&impl Fn()->bool)->Result<(),String>{
+        let now=Instant::now();
+        if self.finalization_expires.is_some() || self.frames==0 || self.frames>FPS*600
+            || deadline<=now || deadline.duration_since(now)>Duration::from_secs(10) || !allowed() {
+            return Err("录屏收尾预算或宿主授权无效".into());
+        }
+        // This transition never extends capture or admits another video frame.
+        // It is not repeatable, even when the original deadline has elapsed.
+        self.finalization_expires=Some(deadline);Ok(())
+    }
     pub(crate) fn begin_video_eos(&mut self,allowed:&impl Fn()->bool)->Result<(),String>{
         self.check(allowed)?;
         if !self.video_ended {
@@ -272,7 +288,7 @@ impl Codec {
             let required=self.frames*48000/FPS;
             if audio.pcm<required{return Err("电脑声音未覆盖录屏尾点".into());}
             let source=&audio.source;let delay=audio.encoder.info.nDelayCore;let frame=audio.encoder.info.frameLength;
-            let packets=&mut audio.packets;let expires=self.expires;
+            let packets=&mut audio.packets;let expires=self.finalization_expires.unwrap_or(self.expires);
             progress(FinalizeStage::AacTail)?;
             audio.encoder.drain(|encoded|push_aac(source,encoded,packets,delay,frame,expires,allowed))?;
             source.end_of_stream().map_err(|_|"无法结束AAC帧源")?;
@@ -337,40 +353,76 @@ impl Drop for Codec {
         roundtrip("faad");
     }
     #[test]fn recording_wayland_libav_mux_preserves_real_aac_delay_full_pcm_and_tail(){
-        roundtrip("avdec_aac");
+        roundtrip_case("avdec_aac",30,0,true);
     }
     #[test]fn recording_wayland_libav_parsed_sample_lattice_preserves_head_body_and_tail(){
         for (frames,extra) in [(15u32,0usize),(30,37),(31,0)]{roundtrip_case("avdec_aac",frames,extra,true);}
+    }
+    #[test]fn expired_capture_still_finalizes_once_with_real_eos_and_decoded_audio_tail(){
+        roundtrip_case_with_expiry("avdec_aac",15,0,true,true);
     }
     fn roundtrip(decoder:&'static str){
         roundtrip_case(decoder,30,0,false);
     }
     fn roundtrip_case(decoder:&'static str,frame_count:u32,extra:usize,quantized:bool){
+        roundtrip_case_with_expiry(decoder,frame_count,extra,quantized,false);
+    }
+    fn roundtrip_case_with_expiry(decoder:&'static str,frame_count:u32,extra:usize,quantized:bool,expired_capture:bool){
         use std::os::unix::fs::OpenOptionsExt;
         let path=std::env::temp_dir().join(format!("mewu-aac-{}.mp4",uuid::Uuid::new_v4()));
         struct Cleanup(std::path::PathBuf);impl Drop for Cleanup{fn drop(&mut self){let _=std::fs::remove_file(&self.0);}}
         let _cleanup=Cleanup(path.clone());
         let file=std::fs::OpenOptions::new().read(true).write(true).create_new(true).mode(0o600).open(&path).unwrap();
         let expires=Instant::now()+Duration::from_secs(15);
-        let mut codec=Codec::with_audio(file,64,48,expires,true).unwrap();
+        let capture_expires=if expired_capture{Instant::now()+Duration::from_secs(1)}else{expires};
+        let mut codec=Codec::with_audio(file,64,48,capture_expires,true).unwrap();
         let actual_delay=codec.audio.as_ref().unwrap().encoder.info.nDelayCore as u64;
         let frame_samples=codec.audio.as_ref().unwrap().encoder.info.frameLength as u64;
         let expected_samples=frame_count as usize*3200;
         let input_samples=expected_samples+extra;
         let mut expected=Vec::new();
+        let mut deferred_pcm=Vec::new();
         for index in 0..frame_count{
             let mut pcm=Vec::new();for sample in index*3200..(index+1)*3200{
                 let frequency=if (sample as usize)<expected_samples-4800{440.}else{880.};
                 let value=((sample as f64*frequency*std::f64::consts::TAU/48000.).sin()*12000.)as i16;
                 expected.push(value);pcm.extend_from_slice(&value.to_le_bytes());pcm.extend_from_slice(&value.to_le_bytes());
             }
-            codec.push_pcm(&pcm,&||true).unwrap();
+            if expired_capture && index+2>=frame_count {deferred_pcm.extend_from_slice(&pcm);}
+            else{codec.push_pcm(&pcm,&||true).unwrap();}
             codec.push_rgba([20,120,220,255].repeat(64*48),&||true).unwrap();
         }
         if extra>0{let pcm:Vec<_>=(expected_samples..input_samples).flat_map(|sample|{
             let value=((sample as f64*880.*std::f64::consts::TAU/48000.).sin()*12000.)as i16;
             [value.to_le_bytes(),value.to_le_bytes()].concat()}).collect();codec.push_pcm(&pcm,&||true).unwrap();}
-        assert_eq!(codec.finish(&||true).unwrap(),frame_count as u64);
+        if expired_capture {
+            std::thread::sleep(capture_expires.saturating_duration_since(Instant::now())+Duration::from_millis(20));
+            assert_eq!(codec.frames,15);assert_eq!(codec.pcm_frames(),41600);
+            assert!(codec.begin_video_eos(&||true).is_err(),"expired capture cannot feed or send EOS under its spent budget");
+            assert!(codec.begin_finalization(Instant::now()+Duration::from_secs(11),&||true).is_err());
+            assert!(codec.begin_finalization(Instant::now()+Duration::from_secs(10),&||false).is_err());
+            let deadline=Instant::now()+Duration::from_secs(10);
+            codec.begin_finalization(deadline,&||true).unwrap();
+            assert!(codec.begin_finalization(deadline,&||true).is_err(),"cannot refresh finalization budget");
+            assert!(codec.video_ready(&||true).is_err());
+            assert!(codec.push_rgba([20,120,220,255].repeat(64*48),&||true).is_err());
+            codec.begin_video_eos(&||Instant::now()<deadline).unwrap();
+            let mut offset=0;
+            while offset<deferred_pcm.len(){
+                assert!(Instant::now()<deadline,"bounded final PCM tail");
+                let limit=codec.pcm_feed_limit(&||Instant::now()<deadline).unwrap();
+                assert!(limit<=(expected_samples as u64).saturating_sub(codec.pcm_frames()));
+                let bytes=(limit as usize*4).min(deferred_pcm.len()-offset);
+                if bytes>0{codec.push_pcm(&deferred_pcm[offset..offset+bytes],&||Instant::now()<deadline).unwrap();offset+=bytes;}
+                else{std::thread::sleep(Duration::from_millis(1));}
+            }
+            assert_eq!(codec.pcm_frames(),48000);
+            assert_eq!(codec.pcm_feed_limit(&||true).unwrap(),0);
+            assert!(codec.push_pcm(&[0;4],&||true).is_err(),"no PCM beyond already recorded frames");
+            let mut stages=vec![FinalizeStage::VideoEos];
+            assert_eq!(codec.finish_with_progress(&||Instant::now()<deadline,|stage|{stages.push(stage);Ok(())}).unwrap(),frame_count as u64);
+            assert_eq!(stages,vec![FinalizeStage::VideoEos,FinalizeStage::AacTail,FinalizeStage::MuxEos,FinalizeStage::FileSync]);
+        }else{assert_eq!(codec.finish(&||true).unwrap(),frame_count as u64);}
         std::fs::copy(&path,format!("/tmp/last-aac-roundtrip-{decoder}.mp4")).unwrap();
         let pipeline=gst::Pipeline::new();
         struct Native(gst::Pipeline);impl Drop for Native{fn drop(&mut self){let _=self.0.set_state(gst::State::Null);}}

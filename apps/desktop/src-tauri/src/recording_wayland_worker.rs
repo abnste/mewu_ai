@@ -173,7 +173,8 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
         #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::Alive,count,paused,&mut emit)?;diagnostic=Instant::now();}
     }
     if count==0{return Ok(None);}
-    let final_deadline=(Instant::now()+Duration::from_secs(10)).min(expires);
+    let final_deadline=Instant::now()+Duration::from_secs(10);
+    codec.begin_finalization(final_deadline,&||Instant::now()<final_deadline)?;
     emit(Event::Finalizing{stage:FinalizeStage::AudioTail,frames:count,pcm_frames:codec.pcm_frames()})?;
     // Close the real video input before replenishing its final PCM budget:
     // otherwise the mux can keep audio backpressured waiting for more video.
