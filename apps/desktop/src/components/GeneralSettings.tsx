@@ -6,9 +6,10 @@ import type { Preferences } from '../interface-preferences';
 import { SystemPreferencesController, type SystemPreferencesView } from '../system-preferences';
 import { settingsApi } from '../settings-bridge';
 import type { SettingsClient } from '../settings-client';
+import type { SettingsInfo } from '../settings-contracts';
 import { Row, Toggle } from './SettingControls';
 
-export default function GeneralSettings(props: { active: boolean; preferences: Preferences; onPreferences: (value: Preferences) => void; api?: SettingsClient }) {
+export default function GeneralSettings(props: { active: boolean; preferences: Preferences; onPreferences: (value: Preferences) => void; platform?: SettingsInfo['platform']; api?: SettingsClient }) {
   const api = props.api ?? settingsApi;
   const [view, setView] = createSignal<SystemPreferencesView>({ pending: false, conflict: false, error: '' });
   const [loading, setLoading] = createSignal(false);
@@ -44,7 +45,7 @@ export default function GeneralSettings(props: { active: boolean; preferences: P
     <Row title={t('减少动态效果')}><Toggle label={t('减少动态效果')} checked={props.preferences.reduceMotion} onChange={value => props.onPreferences({ ...props.preferences, reduceMotion: value })} /></Row>
     <Show when={view().values} fallback={<Show when={loading()}><LoaderCircle size={16} class="spin" aria-label={t('加载系统设置')} /></Show>}>
       <Row title={t('自动生成会话标题')}><Toggle label={t('自动生成会话标题')} checked={view().values!.autoGenerateTitle} disabled={view().pending} onChange={value => controller.edit({ autoGenerateTitle: value })} /></Row>
-      <Row title={t('登录 Windows 后自动启动')}><Toggle label={t('登录 Windows 后自动启动')} checked={startup()} disabled={view().pending} onChange={value => controller.edit({ launchAtStartup: value })} /></Row>
+      <Show when={props.platform === 'windows'}><Row title={t('登录 Windows 后自动启动')}><Toggle label={t('登录 Windows 后自动启动')} checked={startup()} disabled={view().pending} onChange={value => controller.edit({ launchAtStartup: value })} /></Row></Show>
       <Show when={view().state?.startupWarning}><p class="settings-error" role="alert">{t(view().state!.startupWarning!)}</p></Show>
       <Row title={t('允许屏幕共享看到框选和标注')}><Toggle label={t('允许屏幕共享看到框选和标注')} checked={view().values!.allowScreenShare} disabled={view().pending} onChange={value => controller.edit({ allowScreenShare: value })} /></Row>
       <Row title={t('网络代理')}><select aria-label={t('网络代理')} value={view().values!.networkProxyMode} onChange={event => controller.edit({ networkProxyMode: event.currentTarget.value as 'system' | 'direct' | 'custom' })}><option value="system">{t('跟随系统')}</option><option value="direct">{t('直接连接')}</option><option value="custom">{t('自定义代理')}</option></select></Row>

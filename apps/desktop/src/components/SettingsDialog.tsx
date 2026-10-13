@@ -40,7 +40,7 @@ export default function SettingsDialog(props: Props) {
   const optional = createOptionalFeatureState(() => props.snapshot.connections);
   const agentEnabled = () => Boolean(optional()?.agent);
   const [tab, setTab] = createSignal(props.initialTab);
-  const facts = createSettingsInformation(() => tab() === 'data' || tab() === 'about');
+  const facts = createSettingsInformation(() => tab() === 'general' || tab() === 'data' || tab() === 'about');
   const [agentId, setAgentId] = createSignal(props.snapshot.scenes.find(s => s.id === props.snapshot.activeSceneId)?.agentId || props.snapshot.agents[0]?.id || '');
   const [agentPane, setAgentPane] = createSignal<'identity' | 'connection' | 'tools'>(props.initialTab === 'agent' ? 'connection' : 'identity');
   createEffect(() => { if (!agentEnabled()) setAgentPane('connection'); });
@@ -74,7 +74,7 @@ export default function SettingsDialog(props: Props) {
       <div class="settings-body">
         <nav class="settings-nav" aria-label={t("设置分类")}><For each={nav}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.id === 'agent' && !agentEnabled() ? '连接' : entry.label)}</span></button>}</For></nav>
         <div class="settings-content">
-          <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} preferences={props.preferences} onPreferences={props.onPreferences} /></div>
+          <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
           <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} /></div>
           <div hidden={tab() !== 'agent'}><header class="settings-page-heading"><h2>{t(agentEnabled() ? "Agent 与连接" : "连接")}</h2></header>
             <div class="segmented"><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'identity'} classList={{ selected: agentPane() === 'identity' }} onClick={() => setAgentPane('identity')}><UserRound size={13} />Agent</button></Show><button aria-pressed={agentPane() === 'connection'} classList={{ selected: agentPane() === 'connection' }} onClick={() => setAgentPane('connection')}><Link2 size={13} />{t("连接")}</button><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'tools'} classList={{ selected: agentPane() === 'tools' }} onClick={() => setAgentPane('tools')}><Wrench size={13} />MCP</button></Show></div>

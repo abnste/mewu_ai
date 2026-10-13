@@ -464,6 +464,7 @@ pub(crate) struct PlaybackFrames {
     current: crate::video_gif_backend::source_stream::Frame,
     next: Option<crate::video_gif_backend::source_stream::Frame>,
     duration: u64,
+    has_audio: bool,
     last_requested: Option<u64>,
 }
 #[cfg(windows)]
@@ -505,6 +506,7 @@ impl PlaybackFrames {
             current,
             next,
             duration: expected.duration_ticks,
+            has_audio: expected.has_audio,
             last_requested: None,
         })
     }
@@ -520,13 +522,15 @@ impl PlaybackFrames {
             self.current = self.next.take().unwrap();
             self.next = self.reader.next(cancel).map_err(media_error)?;
         }
+        let sample_end = self.current.pts.checked_add(self.current.duration)
+            .ok_or(ClipError::InvalidRange)?;
+        // MF's EndOfStream belongs to the selected video stream. The verified
+        // MediaClip presentation can continue with audio after its last image.
+        // Retain that already decoded image only within the actual presentation;
+        // do not alter source samples, widen the range or shift audio samples.
+        let audio_tail = self.next.is_none() && self.has_audio && sample_end < self.duration;
         if self.current.pts > time.0
-            || self.next.is_none()
-                && self
-                    .current
-                    .pts
-                    .checked_add(self.current.duration)
-                    .is_none_or(|end| time.0 >= end)
+            || self.next.is_none() && time.0 >= sample_end && !audio_tail
         {
             return Err(ClipError::InvalidRange);
         }
@@ -2602,6 +2606,72 @@ pub(crate) mod tests {
                 _ => panic!("inspect"),
             }
         }
+        #[test]
+        #[ignore = "explicit owned MF fixture with a shorter video stream than its audio presentation"]
+        fn owned_audio_tail_reuses_final_decoded_frame_without_extending_presentation() {
+            use std::os::windows::fs::OpenOptionsExt;
+            let root = private_output();
+            let source = PathBuf::from(std::env::var_os("MEWU_VIDEO_ANNOTATION_TEST_SOURCE")
+                .expect("explicit repository .private owned input required"));
+            let private = root.ancestors().find(|p| p.file_name().is_some_and(|name| name == ".private"))
+                .expect("private output root");
+            assert!(!fs::symlink_metadata(&source).unwrap().file_type().is_symlink());
+            let resolved = source.canonicalize().unwrap();
+            let relative = resolved.strip_prefix(private.canonicalize().unwrap()).unwrap();
+            assert!(!relative.as_os_str().is_empty() && resolved.is_file());
+            // Keep an ordinary StorageFile path after canonical containment.
+            let source = private.join(relative);
+            // This fixture is immutable through both independent decode and the
+            // production reader; a host-owned read lease rejects writes/removal.
+            let _lease = fs::OpenOptions::new().read(true).share_mode(1).open(&source).unwrap();
+            let original_hash = sha(&source);
+            let _runtime = Runtime::new().unwrap();
+            let cancel = AtomicBool::new(false);
+            let info = inspect_source(&source, &cancel);
+            assert!(info.has_audio);
+            let mut native = Reader::open(&source, info.width, info.height).unwrap();
+            let mut last = None;
+            let mut decoded = 0;
+            while let Some(frame) = native.next(&cancel).unwrap() {
+                decoded += 1;
+                assert!(decoded <= 240, "bounded own fixture");
+                last = Some(frame);
+            }
+            let last = last.unwrap();
+            let sample_end = last.pts.checked_add(last.duration).unwrap();
+            let original_rgba = native.rgba(&last, &cancel).unwrap();
+            let (numerator, denominator) = video_clip_contract::annotated_output_cadence(&info).unwrap();
+            let count = (u128::from(info.duration_ticks) * u128::from(numerator))
+                .div_ceil(10_000_000 * u128::from(denominator)) as u64;
+            let tick = ((u128::from(count - 1) * 10_000_000 * u128::from(denominator))
+                / u128::from(numerator)) as u64;
+            assert_eq!(decoded, 94);
+            assert_eq!(count, 95);
+            assert!(tick >= sample_end && tick < info.duration_ticks);
+            let mut playback = PlaybackFrames::open(&source, &info, 0, &cancel).unwrap();
+            let selected = playback.rgba_at(SourcePlaybackTicks(tick), &cancel);
+            eprintln!("owned audio-tail native gate: sourceFrames={decoded}, outputFrames={count}, sampleEnd={sample_end}, requestedTick={tick}, presentationDuration={}, result={:?}", info.duration_ticks, selected.as_ref().map(|pixels| pixels.dimensions()));
+            assert_eq!(selected.unwrap(), original_rgba);
+            assert_eq!(playback.rgba_at(SourcePlaybackTicks(info.duration_ticks), &cancel).unwrap_err(), ClipError::InvalidRange);
+            assert_eq!(playback.rgba_at(SourcePlaybackTicks(tick - 1), &cancel).unwrap_err(), ClipError::InvalidRange);
+            cancel.store(true, std::sync::atomic::Ordering::Release);
+            assert_eq!(playback.rgba_at(SourcePlaybackTicks(tick), &cancel).unwrap_err(), ClipError::Cancelled);
+            cancel.store(false, std::sync::atomic::Ordering::Release);
+            // Missing audio authority cannot license projection past a sample.
+            let mut no_audio = info.clone(); no_audio.has_audio = false;
+            let mut playback = PlaybackFrames::open(&source, &no_audio, 0, &cancel).unwrap();
+            assert_eq!(playback.rgba_at(SourcePlaybackTicks(tick), &cancel).unwrap_err(), ClipError::InvalidRange);
+            let silent_source = root.join("silent-source.mp4");
+            make_source(&silent_source, 30, 1, false).unwrap();
+            let silent = inspect_source(&silent_source, &cancel); assert!(!silent.has_audio);
+            let mut playback = PlaybackFrames::open(&silent_source, &silent, 0, &cancel).unwrap();
+            assert_eq!(playback.rgba_at(SourcePlaybackTicks(silent.duration_ticks), &cancel).unwrap_err(), ClipError::InvalidRange);
+            assert_eq!(sha(&source), original_hash);
+            fs::write(root.join("audio-presentation-tail.json"), serde_json::to_vec_pretty(
+                &serde_json::json!({"sourceSha256":original_hash,"sourceFrames":decoded,"outputCadence":[numerator,denominator],"outputFrames":count,"lastVideoSampleEndTicks":sample_end,"requestedTick":tick,"presentationDurationTicks":info.duration_ticks,"terminalPixelsMatch":true,"atPresentationEndRejected":true,"reverseRequestRejected":true,"cancelRejected":true,"missingAudioAuthorityRejected":true,"realSilentSourceEndRejected":true})
+            ).unwrap()).unwrap();
+        }
+
         // Insert within video_annotation_render::tests::media_gate; not production.
         pub(crate) fn verify_manual_points(
             source: &Path,
