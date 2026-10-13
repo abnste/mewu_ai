@@ -17,6 +17,8 @@ const ACTION: &str = "capture";
 const METHOD: Duration = Duration::from_secs(5);
 const CONSENT: Duration = Duration::from_secs(180);
 const UNAVAILABLE: &str = "系统快捷键服务不可用";
+const CANCELED: &str = "快捷键设置已取消";
+const NOT_BOUND: &str = "系统未设置截图快捷键";
 type Options<'a> = HashMap<&'a str, Value<'a>>;
 type Results = HashMap<String, OwnedValue>;
 type Shortcuts = Vec<(String, Results)>;
@@ -185,6 +187,9 @@ async fn registered_connection(address:zbus::Address,until:tokio::time::Instant,
         Ok((connection,owner))
 }
 
+fn service_owner_changed(body:&zbus::message::Body,owner:&str)->bool{
+    body.deserialize::<(String,String,String)>().is_ok_and(|(name,old,new)|name==SERVICE&&old==owner&&new!=owner)
+}
 struct Portal { connection:Connection,owner:String,path:OwnedObjectPath,session_token:String,pending:Option<String>,live:Arc<AtomicBool>,owner_gone:Arc<AtomicBool>,closing:Arc<AtomicBool>,wake:Arc<Notify>,monitor:Option<tauri::async_runtime::JoinHandle<()>>,generation:u64 }
 impl Drop for Portal {fn drop(&mut self){if let Some(monitor)=self.monitor.take(){monitor.abort();}}}
 impl Portal {
@@ -221,7 +226,7 @@ impl Portal {
         let shared=shared.clone();let owner=self.owner.clone();let path=self.path.clone();let live=self.live.clone();let owner_gone=self.owner_gone.clone();let closing=self.closing.clone();let generation=self.generation;
         self.monitor=Some(tauri::async_runtime::spawn(async move {
             loop {tokio::select!{biased;
-                signal=owners.next()=> {let Some(signal)=signal else{break};if signal.body().deserialize::<(String,String,String)>().is_ok_and(|(name,old,new)|name==SERVICE&&old==owner&&new!=owner){owner_gone.store(true,Ordering::Release);break}},
+                signal=owners.next()=> {let Some(signal)=signal else{break};if service_owner_changed(&signal.body(),&owner){owner_gone.store(true,Ordering::Release);break}},
                 _=closed.next()=>break,
                 signal=activated.next()=>{
                     let Some(signal)=signal else{break};
@@ -261,7 +266,15 @@ impl Portal {
         },until,&admitted).await?;
         if signal.data().bytes().len()>16*1024{return Err("系统快捷键响应过大".into())}
         let (code,result):(u32,Results)=signal.body().deserialize().map_err(|_|UNAVAILABLE)?;self.pending=None;
-        if code==0{Ok(result)}else if code==1{Err("快捷键设置已取消".into())}else{Err(UNAVAILABLE.into())}
+        match code {
+            0 => Ok(result),
+            1 => Err(CANCELED.into()),
+            // GNOME50 maps the settings dialog's AccessDenied (Cancel) to
+            // Response2. This means no binding, not a missing portal service.
+            // Other methods and unknown response codes remain real failures.
+            2 if method=="BindShortcuts" => Err(NOT_BOUND.into()),
+            _ => Err(UNAVAILABLE.into()),
+        }
     }
     async fn list(&mut self,until:tokio::time::Instant,allowed:&impl Fn()->bool)->Result<Option<String>,String>{
         let until=until.min(tokio::time::Instant::now()+METHOD);
@@ -296,6 +309,21 @@ fn label(shortcuts:Shortcuts)->Result<String,String>{
     let label=properties.get("trigger_description").and_then(|v|<&str>::try_from(v).ok()).ok_or(UNAVAILABLE)?;
     if label.trim().is_empty()||label.len()>512||label.chars().any(char::is_control){return Err("系统未分配截图快捷键".into())}
     Ok(label.into())
+}
+fn interaction_ended(error:&str)->bool{matches!(error,CANCELED|NOT_BOUND)}
+fn service_result(result:Result<CaptureShortcutState,String>,service_live:bool)->Result<CaptureShortcutState,String>{
+    // Cancellation text from checked() also covers a revoked live admission.
+    // Preserve the actual service-loss fact before our own Session.Close.
+    if service_live{result}else{Err(UNAVAILABLE.into())}
+}
+fn configuration_reply(result:Result<CaptureShortcutState,String>,state:CaptureShortcutState)->Result<CaptureShortcutState,String>{
+    if result.as_ref().err().is_some_and(|error|interaction_ended(error)){
+        // A normal non-binding response is quiet only AFTER acknowledged
+        // cleanup. Never clear a pending session or claim it is retryable.
+        if state.status==ShortcutStatus::NeedsSetup && state.configuration_pending==Some(false){return Ok(state)}
+        if state.status==ShortcutStatus::CleanupPending{return Err("系统快捷键清理尚未确认".into())}
+    }
+    result
 }
 async fn actor(shared:Arc<Shared>,mut receiver:mpsc::Receiver<Command>,file:Option<PreferencesFile>,mut loaded:Option<LoadedPreferences>){
     let mut session:Option<Portal>=None;
@@ -345,10 +373,13 @@ async fn actor(shared:Arc<Shared>,mut receiver:mpsc::Receiver<Command>,file:Opti
                     shared.publish(if arm{ShortcutStatus::Active}else{ShortcutStatus::NeedsSetup},arm.then_some(label),false,receipt.durability_warning.then(||"设置已保存，存储同步状态未确认".into()));
                     Ok(shared.view.lock().unwrap_or_else(|e|e.into_inner()).clone())
                 }.await;
+                let service_live=session.as_ref().is_none_or(|p|p.live.load(Ordering::Acquire));
+                let result=service_result(result,service_live);
                 if !existing&&(result.is_err()||!shared.route.load(Ordering::Acquire)){
                     let clean=match session.as_mut(){Some(p)=>p.close().await,None=>true};
-                    if clean{session=None;shared.publish(ShortcutStatus::NeedsSetup,None,false,result.as_ref().err().filter(|e|e.as_str()!="快捷键设置已取消").cloned())}else{shared.publish(ShortcutStatus::CleanupPending,None,false,Some("系统快捷键清理尚未确认".into()));}
+                    if clean{session=None;shared.publish(ShortcutStatus::NeedsSetup,None,false,result.as_ref().err().filter(|e|!interaction_ended(e)).cloned())}else{shared.publish(ShortcutStatus::CleanupPending,None,false,Some("系统快捷键清理尚未确认".into()));}
                 }
+                let result=configuration_reply(result,shared.view.lock().unwrap_or_else(|e|e.into_inner()).clone());
                 shared.nonces.lock().unwrap_or_else(|e|e.into_inner()).end(&id);shared.settled.notify_waiters();let _=reply.send(result);
             }
             Command::Disable{revision,owner,reply}=>{
@@ -384,7 +415,7 @@ async fn actor(shared:Arc<Shared>,mut receiver:mpsc::Receiver<Command>,file:Opti
                     if !allowed(){return Err("快捷键恢复已取消".into())}
                     shared.route.store(true,Ordering::Release);shared.publish(ShortcutStatus::Active,Some(label),false,None);Ok::<(),String>(())
                 }.await;
-                if let Err(error)=result{let clean=match session.as_mut(){Some(p)=>p.close().await,None=>true};if clean{session=None;shared.publish(ShortcutStatus::NeedsSetup,None,false,Some(error))}else{shared.publish(ShortcutStatus::CleanupPending,None,false,Some("系统快捷键清理尚未确认".into()))}}
+                if let Err(error)=result{let service_live=session.as_ref().is_none_or(|p|p.live.load(Ordering::Acquire));let error=if service_live{error}else{UNAVAILABLE.into()};let clean=match session.as_mut(){Some(p)=>p.close().await,None=>true};if clean{session=None;shared.publish(ShortcutStatus::NeedsSetup,None,false,(!interaction_ended(&error)).then_some(error))}else{shared.publish(ShortcutStatus::CleanupPending,None,false,Some("系统快捷键清理尚未确认".into()))}}
                 shared.nonces.lock().unwrap_or_else(|e|e.into_inner()).end(&id);
                 shared.settled.notify_waiters();
             }

@@ -3,7 +3,7 @@
 use super::*;
 use std::{io::BufRead, path::PathBuf, sync::atomic::AtomicUsize};
 
-#[derive(Default)] struct State { registered:AtomicBool,binds:AtomicUsize,events:Mutex<Vec<&'static str>>,hang:bool,fail_close:bool }
+#[derive(Default)] struct State { registered:AtomicBool,binds:AtomicUsize,events:Mutex<Vec<&'static str>>,hang:bool,fail_close:bool,bind_code:u32,fail_session_close:bool }
 struct Registry(Arc<State>);
 #[zbus::interface(name="org.freedesktop.host.portal.Registry")]
 impl Registry {
@@ -24,7 +24,7 @@ impl Request {
 struct TestSession(Arc<State>);
 #[zbus::interface(name="org.freedesktop.portal.Session")]
 impl TestSession {
-    fn close(&self){self.0.events.lock().unwrap().push("session-close");}
+    fn close(&self)->zbus::fdo::Result<()>{self.0.events.lock().unwrap().push("session-close");if self.0.fail_session_close{Err(zbus::fdo::Error::Failed("fixture unconfirmed session close".into()))}else{Ok(())}}
 }
 struct Global(Arc<State>);
 fn sender(header:&zbus::message::Header<'_>)->String{header.sender().unwrap().as_str().trim_start_matches(':').replace('.',"_")}
@@ -62,9 +62,13 @@ impl Global {
             let mut result=Results::new();result.insert("shortcuts".into(),OwnedValue::try_from(Value::from(vec![(ACTION,props)])).unwrap());
             // The real signal is emitted BEFORE the method reply; production
             // must already have subscribed to the exact path and owner.
-            connection.emit_signal(header.sender().map(|v|v.as_str()),request.clone(),REQUEST,"Response",&(0u32,result)).await.unwrap();
+            connection.emit_signal(header.sender().map(|v|v.as_str()),request.clone(),REQUEST,"Response",&(self.0.bind_code,result)).await.unwrap();
         }
         request
+    }
+    async fn list_shortcuts(&self,_session:OwnedObjectPath,options:Results,#[zbus(connection)]connection:&Connection,#[zbus(header)]header:zbus::message::Header<'_>)->OwnedObjectPath{
+        let request=request_path(&header,&options);connection.object_server().at(request.clone(),Request(self.0.clone())).await.unwrap();
+        connection.emit_signal(header.sender().map(|v|v.as_str()),request.clone(),REQUEST,"Response",&(2u32,Results::new())).await.unwrap();request
     }
 }
 struct Bus { child:std::process::Child,root:PathBuf }
@@ -115,3 +119,54 @@ fn pending(cancel:bool,fail_close:bool){
 #[test]fn pending_bind_cancel_closes_request_before_session(){pending(true,false)}
 #[test]fn pending_bind_deadline_closes_request_before_session(){pending(false,false)}
 #[test]fn request_close_failure_retains_session_and_does_not_claim_cleanup(){pending(true,true)}
+
+fn unbound_state(clean:bool)->CaptureShortcutState{
+    CaptureShortcutState{revision:7,sequence:1,configured:None,active:None,status:if clean{ShortcutStatus::NeedsSetup}else{ShortcutStatus::CleanupPending},editable:clean,message:if clean{None}else{Some("系统快捷键清理尚未确认".into())},backend:Some("wayland_portal"),actual_trigger_description:None,configuration_pending:Some(false),system_settings_available:Some(false),configuration_request_id:None,portal_enabled:Some(false)}
+}
+fn completed_nonbinding(code:u32,fail_session_close:bool){
+    let (_bus,address)=bus();let state=Arc::new(State{bind_code:code,fail_session_close,..Default::default()});runtime().block_on(async{
+        let (server,mut portal)=open(address,state.clone()).await;
+        let error=portal.bind("wayland:fixture",tokio::time::Instant::now()+METHOD,&||true).await.unwrap_err();
+        assert_eq!(error,if code==1{CANCELED}else if code==2{NOT_BOUND}else{UNAVAILABLE});
+        assert!(portal.pending.is_none(),"a completed Response owns no pending Request");
+        let clean=portal.close().await;assert_eq!(clean,!fail_session_close);
+        let reply=configuration_reply(Err(error),unbound_state(clean));
+        if code<=2&&clean{
+            let reply=reply.unwrap();assert_eq!(reply.status,ShortcutStatus::NeedsSetup);assert_eq!(reply.revision,7);assert_eq!(reply.portal_enabled,Some(false));assert!(reply.message.is_none());assert!(reply.active.is_none()&&reply.actual_trigger_description.is_none());
+        }else{assert_eq!(reply.unwrap_err(),if fail_session_close{"系统快捷键清理尚未确认"}else{UNAVAILABLE});}
+        let events=state.events.lock().unwrap();assert_eq!(state.binds.load(Ordering::Acquire),1);assert_eq!(events.iter().filter(|x|**x=="request-close").count(),0);assert_eq!(events.iter().filter(|x|**x=="session-close").count(),1);drop(events);
+        drop(portal);server.close().await.unwrap();
+    });
+}
+#[test]fn response_one_is_quiet_unbound_only_after_confirmed_cleanup(){completed_nonbinding(1,false)}
+#[test]fn gnome_response_two_is_quiet_unbound_not_service_failure(){completed_nonbinding(2,false)}
+#[test]fn unconfirmed_session_cleanup_is_not_quiet_or_retryable(){completed_nonbinding(2,true)}
+#[test]fn unknown_response_remains_a_real_service_error(){completed_nonbinding(3,false)}
+#[test]fn list_response_two_is_not_misclassified_as_normal_bind_end(){
+    let (_bus,address)=bus();let state=Arc::new(State::default());runtime().block_on(async{
+        let (server,mut portal)=open(address,state.clone()).await;
+        let error=portal.list(tokio::time::Instant::now()+METHOD,&||true).await.unwrap_err();assert_eq!(error,UNAVAILABLE);
+        assert!(portal.pending.is_none());assert!(portal.close().await);
+        assert_eq!(configuration_reply(Err(error),unbound_state(true)).unwrap_err(),UNAVAILABLE);
+        assert_eq!(state.binds.load(Ordering::Acquire),0);drop(portal);server.close().await.unwrap();
+    });
+}
+#[test]fn real_service_owner_loss_during_pending_bind_is_not_a_quiet_cancel(){
+    let (_bus,address)=bus();let state=Arc::new(State{hang:true,..Default::default()});runtime().block_on(async{
+        let (server,mut portal)=open(address,state.clone()).await;
+        let bus=Proxy::new_owned(portal.connection.clone(),"org.freedesktop.DBus","/org/freedesktop/DBus","org.freedesktop.DBus").await.unwrap();
+        let mut changes=bus.receive_signal_with_args("NameOwnerChanged",&[(0,SERVICE)]).await.unwrap();
+        let live=portal.live.clone();let gone=portal.owner_gone.clone();let wake=portal.wake.clone();let owner=portal.owner.clone();let observed=state.clone();
+        let watcher=tokio::spawn(async move{
+            let until=tokio::time::Instant::now()+METHOD;
+            while observed.binds.load(Ordering::Acquire)==0{assert!(tokio::time::Instant::now()<until);tokio::time::sleep(Duration::from_millis(2)).await;}
+            server.close().await.unwrap();
+            let signal=tokio::time::timeout_at(until,changes.next()).await.unwrap().unwrap();
+            assert!(service_owner_changed(&signal.body(),&owner));gone.store(true,Ordering::Release);live.store(false,Ordering::Release);wake.notify_one();
+        });
+        let error=portal.bind("wayland:fixture",tokio::time::Instant::now()+METHOD,&||true).await.unwrap_err();watcher.await.unwrap();
+        assert!(!portal.live.load(Ordering::Acquire));assert!(portal.owner_gone.load(Ordering::Acquire));assert_eq!(state.binds.load(Ordering::Acquire),1);
+        let result=service_result(Err(error),portal.live.load(Ordering::Acquire));assert!(portal.close().await);
+        assert_eq!(configuration_reply(result,unbound_state(true)).unwrap_err(),UNAVAILABLE);
+    });
+}
