@@ -22,6 +22,7 @@
         "decorations": false,
         "backgroundColor": "#00000000",
         "dragDropEnabled": false,
+        "acceptFirstMouse": true,
         "resizable": false,
         "fullscreen": true,
         "transparent": true
