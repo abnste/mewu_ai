@@ -137,7 +137,11 @@ fn window_handle(window: &WebviewWindow) -> Result<usize, String> {
         // document editing and export, before taking any Host/Store locks.
         crate::window_actions_linux::window_handle(window)
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::window_witness_macos::window_handle(window)
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Err("当前系统不支持视频绘制".into())
     }
