@@ -2247,6 +2247,16 @@ fn macos_context() -> tauri::Context<tauri::Wry> {
     tauri::generate_context!()
 }
 
+#[cfg(all(target_os = "linux", feature = "linux-ui-diagnostics"))]
+fn enable_console_diagnostics(view: &webkit2gtk::WebView) {
+    use gtk::glib::prelude::ObjectExt;
+    use webkit2gtk::WebViewExt;
+    // WebView's "settings" property is write-only; use its public getter.
+    if let Some(settings) = view.settings() {
+        settings.set_property("enable-write-console-messages-to-stdout", true);
+    }
+}
+
 fn main() {
     // Production admits only the fixed native recording worker. Other sealed
     // worker domains and the Code parent retain their explicit test admission.
@@ -2386,9 +2396,7 @@ fn main() {
             #[cfg(all(target_os = "linux", feature = "linux-ui-diagnostics"))]
             {
                 let _ = webview.with_webview(|native| {
-                    use gtk::glib::prelude::ObjectExt;
-                    let settings = native.inner().property::<gtk::glib::Object>("settings");
-                    settings.set_property("enable-write-console-messages-to-stdout", true);
+                    enable_console_diagnostics(&native.inner());
                 });
             }
             #[cfg(windows)]

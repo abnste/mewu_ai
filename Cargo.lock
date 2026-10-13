@@ -3304,6 +3304,7 @@ dependencies = [
  "unicode-width",
  "url",
  "uuid",
+ "webkit2gtk",
  "windows",
  "windows-capture",
  "windows-future",
