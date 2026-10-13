@@ -174,7 +174,8 @@ pub(crate) async fn create_blackboard(
     let host = app.state::<Host>();
     host.exit.ensure_new_operation()?;
     let transition = SpaceTransition::try_begin(&host.capturing).ok_or("空间正在切换")?;
-    let original = {
+    let (original, blackboard_grant) = {
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let engine = host.lock()?;
         let snapshot = engine.store.snapshot();
         if snapshot.active_scene_id != scene_id {
@@ -186,7 +187,7 @@ pub(crate) async fn create_blackboard(
             .find(|scene| scene.id == scene_id)
             .ok_or("会话不存在")?;
         check_source(&scene, &scene)?;
-        scene
+        (scene, engine.optional.require_blackboard()?)
     };
     let size = window.inner_size().map_err(|_| "无法读取黑板尺寸")?;
     let work = host.capture_jobs.begin()?.ok_or("空间正在切换")?;
@@ -208,7 +209,11 @@ pub(crate) async fn create_blackboard(
     work.check()?;
     host.exit.ensure_new_operation()?;
     let snapshot = {
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let mut engine = host.lock()?;
+        if engine.optional.blackboard.as_ref() != Some(&blackboard_grant) {
+            return Err("电子黑板插件已变更".into());
+        }
         work.check()?;
         host.exit.ensure_new_operation()?;
         let snapshot = engine.store.snapshot();
@@ -394,6 +399,7 @@ pub(crate) async fn finish_blackboard(
     host.exit.ensure_new_operation()?;
     let transition = SpaceTransition::try_begin(&host.capturing).ok_or("空间正在切换")?;
     let original = {
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let engine = host.lock()?;
         let snapshot = engine.store.snapshot();
         if snapshot.active_scene_id != scene_id {
@@ -421,6 +427,7 @@ pub(crate) async fn finish_blackboard(
     work.check()?;
     host.exit.ensure_new_operation()?;
     let snapshot = {
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let mut engine = host.lock()?;
         work.check()?;
         host.exit.ensure_new_operation()?;
@@ -448,9 +455,10 @@ pub(crate) fn open_blackboard(
     let host = app.state::<Host>();
     host.exit.ensure_new_operation()?;
     let _transition = SpaceTransition::try_begin(&host.capturing).ok_or("空间正在切换")?;
-    let snapshot = host
-        .lock()?
-        .store
+    let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+    let mut engine = host.lock()?;
+    engine.optional.require_blackboard()?;
+    let snapshot = engine.store
         .open_blackboard_document(&scene_id, &item_id)
         .map_err(|error| error.to_string())?;
     Ok(crate::publish(&app, &snapshot))

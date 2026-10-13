@@ -18,6 +18,7 @@ import './image-object.css';
 import VideoArtifact, { type VideoArtifactProps } from './VideoArtifact';
 
 interface Props {
+  aiAvailable?: boolean;
   item: SpaceItem;
   active?: boolean;
   onActivate?: () => void;
@@ -199,7 +200,7 @@ export default function ArtifactCard(props: Props) {
     </header>
     </Show>
     <Show when={isImage()&&!props.blackboard}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
-      <button class="icon-button compact" classList={{ selected: props.referenced }} title={props.referenced ? t('取消引用') : t('引用')} aria-label={props.referenced ? t('取消引用') : t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={15} /></button>
+      <Show when={props.aiAvailable !== false}><button class="icon-button compact" classList={{ selected: props.referenced }} title={props.referenced ? t('取消引用') : t('引用')} aria-label={props.referenced ? t('取消引用') : t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={15} /></button></Show>
       <Show when={props.onOpenBlackboard}><button class="icon-button compact" title={t('编辑黑板')} aria-label={t('编辑黑板')} disabled={props.busy} onClick={() => props.onOpenBlackboard?.()}><Pencil size={15} /></button></Show>
       <button class="icon-button compact" title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event => gesture(event, true)}><Maximize2 size={15} /></button>
       <button class="icon-button compact" title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}', () => props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={15} /></button>
@@ -216,7 +217,7 @@ export default function ArtifactCard(props: Props) {
       </Show>
       <Show when={props.item.asset.kind === 'video'}>
         <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} objectActions={<Show when={!props.blackboard}>
-          <button data-caption={t('引用')} class="capture-reference" classList={{ 'capture-referenced': props.referenced }} title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}>@</button>
+          <Show when={props.aiAvailable !== false}><button data-caption={t('引用')} class="capture-reference" classList={{ 'capture-referenced': props.referenced }} title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}>@</button></Show>
           <button data-caption={t('复制')} title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
           <button data-caption={t('保存')} title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>
           <button data-caption={t('调整尺寸')} title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event=>gesture(event,true)}><Maximize2 size={20}/></button>
@@ -239,7 +240,7 @@ export default function ArtifactCard(props: Props) {
       <Show when={moving()}><div class="iframe-drag-cover" /></Show>
     </div>
     <Show when={!isImage()&&!isDocument()&&!isVideo()&&!props.blackboard}><footer class="artifact-footer">
-      <button class="quiet-button" classList={{ selected: props.referenced }} onClick={props.onReference}><Link2 size={13} />{props.referenced ? t('已引用') : t('引用')}</button>
+      <Show when={props.aiAvailable !== false}><button class="quiet-button" classList={{ selected: props.referenced }} onClick={props.onReference}><Link2 size={13} />{props.referenced ? t('已引用') : t('引用')}</button></Show>
       <Show when={isVideo() && props.onCopy}><button class="quiet-button" title={t("复制视频文件 (C)")} aria-label={t("复制视频文件")} disabled={props.busy} onClick={() => props.onCopy?.()}><Copy size={13} />{t("复制")}</button></Show>
       <Show when={['video', 'text'].includes(props.item.asset.kind) && props.onExport}><button class="quiet-button" disabled={props.busy} onClick={() => props.onExport?.()}><Download size={13} />{t("保存")}</button></Show>
       <span class="artifact-kind">{props.item.asset.kind.toUpperCase()}</span>

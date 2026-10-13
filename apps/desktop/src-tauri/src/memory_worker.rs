@@ -65,6 +65,11 @@ async fn dispatch_one(app: &AppHandle) -> Result<bool, String> {
         }
         let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let mut engine = host.lock()?;
+        // Pausing the whole Agent must not rewrite individual memory-source
+        // settings or discard accepted work. Explicit re-enable can resume it.
+        if engine.optional.agent.is_none() || plugins.store.require_agent().is_err() {
+            return Ok(false);
+        }
         let pending = engine
             .store
             .pending_memory_work(now(), 32)

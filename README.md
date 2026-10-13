@@ -2,19 +2,19 @@
 
 [简体中文](README.zh-CN.md)
 
-Mewu 1.0 is a Windows desktop remake. A shortcut opens the capture space: screenshots, conversation, files, annotations and interactive HTML/SVG results share the same surface.
+Mewu 1.0 is a desktop remake for Windows x64, macOS ARM64 and Linux x64. A shortcut opens the capture space: screenshots, conversation, files, annotations and interactive HTML/SVG results share the same surface.
 
-**This branch contains the 1.0 preview.** Download [preview 2](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.2): [installer EXE](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Setup-1.0.0-preview.2-win-x64.exe) or [portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Portable-1.0.0-preview.2-win-x64.zip). The stable 0.7.x application remains on [master](https://github.com/abnste/mewu_ai/tree/master).
+Preview 3 packages are listed on the [release page](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.3): Windows installer and portable ZIP, macOS ARM64 DMG, and Linux x64 AppImage. Stable 0.7.x remains on [master](https://github.com/abnste/mewu_ai/tree/master).
 
 ## Included
 
-The current `next` source includes MP3 export, preview resolution settings, text-preserving pen and rectangular highlighters, window snapshots and link/email/phone recognition added after preview 2; the published preview 2 downloads do not contain those additions.
+Agent and blackboard are optional plugins. A fresh installation presents capture controls until a model connection is configured; explicitly configured providers that require no API key are also supported.
 
-- Region capture, drawing, blackboards, borderless pinned images, OCR, translation, scrolling capture and barcode recognition.
+- Region capture, drawing, borderless pinned images, OCR, translation, scrolling capture and barcode recognition; blackboards are available through the optional official plugin.
 - With the OCR plugin enabled, stable selections locally recognize links, email addresses and phone numbers. Click a result to copy it, open a webpage, compose a message or hand a number to the dialer. Recognition makes no network requests and does not send messages or place calls automatically.
 - Multiple conversations, freeze/resume, Markdown and formulas, collapsible public reasoning, image and text attachments.
 - Screen recording with computer audio by default, pause, trimming, video annotations, MP4/MP3/GIF export, and original/75%/50% preview resolution.
-- Agent identity, local SQLite/FTS5 memory, optional Hindsight connection, run history and resumable answers.
+- Optional Agent plugin: identity, local SQLite/FTS5 memory, Hindsight connection, run history and resumable answers.
 - Chat Completions, OpenAI Responses and Anthropic Messages connections; model templates and declared capabilities can be installed from public GitHub repositories.
 - Local MCP tools, installed plugin management and a configurable GitHub plugin catalog.
 
@@ -22,19 +22,27 @@ On this branch, opening a blackboard carries existing capture regions, images, H
 
 Drawing arrows use open heads that adapt to their length. Screenshot and blackboard highlighters tint the background while preserving dark, light and colored text and antialias detail, including committed mosaic, repair and extracted-image content. Display, image copy, saving and image references use the same foreground separation rules. Hold Shift with the highlighter pen to constrain the stroke horizontally, vertically or to 45°; release Shift to return to freehand ink. Highlight region draws a filled rounded rectangle with a thin border; select it to move, resize or recolor it, and hold Shift for a square. Highlights currently follow the saved screenshot document; tracking refreshed desktop content is not yet available.
 
-Drawing, recording and AI annotations are built in. Plugins can be disabled or removed. Current plugins are declarative JSON packages: they cannot execute arbitrary downloaded code. Hermes, Codex, WorkBuddy and MiniMax Code agent integrations, macOS delivery, device synchronization and dedicated image/video generation APIs are not included in this preview. The current agent is not a complete replacement for Hermes and Hindsight. Actual annotation quality depends on the model.
+Drawing and recording remain built in. Agent and blackboard are optional official plugins that can be disabled or removed. Without a ready model connection, capture is the default interface and AI conversation controls stay hidden. Current plugins are declarative JSON packages: they cannot execute arbitrary downloaded code. Hermes, Codex, WorkBuddy and MiniMax Code agent integrations, device synchronization and dedicated image/video generation APIs are not included. The Agent plugin is not a complete replacement for Hermes and Hindsight. Actual annotation quality depends on the model.
 
 Only explicitly minimized conversations appear in the floating list and its count. Escape closes ordinary conversations into history; a restored minimized conversation returns to the floating list. Its preview follows the latest public reasoning and answer chunks, then shows the beginning of the final answer with “...” for long content. Adding a reference inserts the corresponding @image or @video name at the input caret while retaining its attachment identity.
 
 Settings → General can disable automatic chat titles. By default, after the first user request receives a complete answer, a separate request asks the same selected model for a short task title. It uses only the first prompt, excludes memory and attachments, and does not add another chat message. Title failures leave the answer intact; manual names are preserved.
 
-HTML/SVG/Canvas results are transparent interactive objects with hover controls for moving, reloading and closing. Video actions and quick trim appear below the video by default and avoid nearby controls when space is limited. Long captures show their stitched content in a live side preview.
+HTML/SVG/Canvas results are transparent interactive objects with hover controls for moving, reloading and closing. Video actions appear above the video and quick trim below it by default and avoid nearby controls when space is limited. Long captures show their stitched content in a live side preview.
 
-Automatic window selection enables **Snapshot** on the long-capture button. Supported Windows UI Automation viewports scroll automatically; WGC reads the selected window, the side preview updates as pixels are stitched, and the original scroll position is restored before saving. The result keeps the selection identity and becomes an input reference. With the official pin plugin enabled, it also becomes an independent pinned image that remains available after closing the capture or switching conversations. Hold Shift when clicking to use manual scrolling. Failed continuity checks, a changed source window or unconfirmed restoration discard the incomplete snapshot. This feature was added after the published preview 2 build.
+Automatic window selection enables **Snapshot** on the long-capture button. Supported Windows UI Automation viewports scroll automatically; WGC reads the selected window, the side preview updates as pixels are stitched, and the original scroll position is restored before saving. The result keeps the selection identity and becomes an input reference. With the official pin plugin enabled, it also becomes an independent pinned image that remains available after closing the capture or switching conversations. Hold Shift when clicking to use manual scrolling. Failed continuity checks, a changed source window or unconfirmed restoration discard the incomplete snapshot.
 
 ## Installation and updates
 
-Windows x64, Windows 10 2004 or later, and Microsoft WebView2 are required. Use the `MewuAI-Remake-Setup-…-win-x64.exe` installer; a portable ZIP is also provided.
+Preview 3 package names follow the existing release layout:
+
+| Platform | Planned download |
+| --- | --- |
+| Windows x64 | `MewuAI-Remake-Setup-1.0.0-preview.3-win-x64.exe` · `MewuAI-Remake-Portable-1.0.0-preview.3-win-x64.zip` |
+| macOS ARM64 | `MewuAI-Remake-1.0.0-preview.3-mac-arm64.dmg` |
+| Linux x64 | `MewuAI-Remake-1.0.0-preview.3-linux-x64.AppImage` |
+
+Windows requires Windows 10 2004 or later and WebView2. macOS uses the system WKWebView. Linux uses WebKitGTK; Wayland capture and recording request permission through the desktop portal.
 
 The application checks for updates in the background. Settings → About provides **Check for updates** and **Update and restart**. Every update requires an installer signature bound to its version; the installer starts after the application saves and drains active work. Updates use a fixed release channel, not a branch URL. Moving this code to master or renaming next does not change the installed updater.
 
@@ -59,7 +67,7 @@ cargo test --workspace --locked
 npm run build
 ```
 
-Signed releases are built by the [release workflow](.github/workflows/preview-release.yml). Local builds require a protected updater signing key via `TAURI_SIGNING_PRIVATE_KEY`. Never put private keys in source or distributable folders. Browser development mode previews the interface and does not provide native capture, recording or storage.
+The [release workflow](.github/workflows/preview-release.yml) builds unsigned candidates for native testing. Publishing requires matching acceptance records for all three platforms and updater signatures from a protected private key. Signatures are embedded in the fixed update manifest; standalone `.sig`, checksum and private metadata files are not added to the version downloads. Browser development mode previews the interface and does not provide native capture, recording or storage.
 
 | Directory | Purpose |
 | --- | --- |

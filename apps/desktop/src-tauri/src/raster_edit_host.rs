@@ -54,8 +54,9 @@ pub struct Receipt {
     selected_id: Option<String>,
 }
 
-fn read_target(app: &AppHandle, target: &Target) -> Result<(VisualSourceFence, u64), String> {
+fn read_target(app: &AppHandle, target: &Target) -> Result<(VisualSourceFence, u64, Option<crate::optional_capabilities::Grant>), String> {
     let host = app.state::<crate::Host>();
+    let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
     let engine = host.lock()?;
     host.exit.ensure_running()?;
     if host.capturing.load(Ordering::Acquire) {
@@ -86,6 +87,7 @@ fn read_target(app: &AppHandle, target: &Target) -> Result<(VisualSourceFence, u
         mewu_core::visual_source_fence(&target.background, &target.region)
             .map_err(|e| e.to_string())?,
         host.revision.load(Ordering::Acquire),
+        crate::optional_capabilities::scene_authoring(&engine, &target.scene_id)?,
     ))
 }
 pub(crate) fn layout(
@@ -182,7 +184,7 @@ pub async fn apply_raster_edit(
     let jobs = JOBS.get_or_init(|| Arc::new(crate::capture_delay_work::CaptureJobs::default()));
     let work = jobs.begin()?.ok_or("修补正在处理")?;
     let _cancel_invoke = work.cancel_on_drop();
-    let (expected, epoch) = read_target(&app, &target)?;
+    let (expected, epoch, authoring_grant) = read_target(&app, &target)?;
     let request = REQUESTS.try_acquire().map_err(|_| "修补正在处理")?;
     let worker = WORKERS.acquire().await.map_err(|_| "修补处理不可用")?;
     let started = Instant::now();
@@ -193,7 +195,7 @@ pub async fn apply_raster_edit(
             if started.elapsed() > Duration::from_secs(30) {
                 return Err("修补超时，请缩小范围".into());
             }
-            if read_target(&app, &target)? != (expected.clone(), epoch) {
+            if read_target(&app, &target)? != (expected.clone(), epoch, authoring_grant.clone()) {
                 return Err("空间状态已更改，请重试".into());
             }
             Ok(())
@@ -318,8 +320,10 @@ pub async fn apply_raster_edit(
         };
         check()?;
         let host = app.state::<crate::Host>();
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let mut engine = host.lock()?;
         host.exit.ensure_running()?;
+        crate::optional_capabilities::scene_authoring_current(&engine, &target.scene_id, &authoring_grant)?;
         work.check().map_err(|_| "修补已取消".to_string())?;
         if host.revision.load(Ordering::Acquire) != epoch {
             return Err("空间状态已更改，请重试".into());

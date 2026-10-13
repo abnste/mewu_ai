@@ -49,6 +49,7 @@ pub(crate) fn authorize(
     plugins: &plugins::PluginStore,
     grant: &MemoryAuthorityGrant,
 ) -> Result<(), String> {
+    plugins.require_agent()?;
     plugins.memory_provider(
         &grant.plugin_id,
         grant.plugin_revision,
@@ -170,6 +171,7 @@ pub async fn probe_memory_provider(
     )?;
     {
         let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
         plugins
             .store
             .memory_provider(&plugin_id, plugin_revision, &contribution_id)?;
@@ -194,6 +196,7 @@ pub async fn probe_memory_provider(
         .map_err(adapter_error)?;
     {
         let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
         plugins
             .store
             .memory_provider(&plugin_id, plugin_revision, &contribution_id)?;
@@ -250,6 +253,7 @@ pub async fn create_memory_binding(
         let _permit = permit;
         let host = app.state::<Host>();
         let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
         plugins
             .store
             .memory_provider(&plugin_id, plugin_revision, &contribution_id)?;

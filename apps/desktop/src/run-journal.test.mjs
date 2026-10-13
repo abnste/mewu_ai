@@ -14,6 +14,7 @@ const ts = text => stripTypeScriptTypes(text, { mode: 'transform' });
 const api = await import(`data:text/javascript;base64,${Buffer.from(ts(await raw('run-journal.ts'))).toString('base64')}`);
 const { JournalReader, ContinuationController, ProjectionPreview, latestReply } = api;
 const exitApi = await import(`data:text/javascript;base64,${Buffer.from(ts(await raw('exit-preparation.ts'))).toString('base64')}`);
+const { sameOptionalGrant } = await import(`data:text/javascript;base64,${Buffer.from(ts(await raw('optional-capabilities.ts'))).toString('base64')}`);
 const checks = [];
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve,reject; const promise=new Promise((yes,no)=>{resolve=yes;reject=no;}); return {promise,resolve,reject}; };
@@ -203,21 +204,60 @@ const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,l
   const source=await raw('App.tsx'), ast=parse(source,{sourceType:'module',plugins:['typescript','jsx']});
   const app=ast.program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration;
   const method=app.body.body.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='continueJournal');
-  assert.ok(method);const executable=ts(source.slice(method.start,method.end));
-  function mounted() {
+  const predicates=['agentAvailable','agentReady'].map(name=>{
+    const declaration=app.body.body.flatMap(node=>node.type==='VariableDeclaration'?node.declarations:[]).find(node=>node.id.name===name);
+    assert.ok(declaration,'actual App predicate '+name);
+    return 'const '+name+'='+source.slice(declaration.init.start,declaration.init.end)+';';
+  }).join('\n');
+  assert.ok(method);const executable=ts(predicates+'\n'+source.slice(method.start,method.end));
+  function mounted({queued=false}={}) {
     const flush=deferred(),request=deferred(),calls=[],accepted=[],errors={};
     const scene={id:'scene-a',agentId:'agent-a',connectionId:'connection-a',run:{id:'run-a',status:'failed'},draft:'A',refs:[{kind:'region',id:'r'}],closed:false,frozen:false};
     const snapshot={scenes:[scene],connections:[{id:'connection-a',revision:2}]};
-    const operations=new exitApi.SpaceOperations();let busy=false,sending=false,exiting=false;
-    const context={Promise,Error,ContinuationController,disposed:false,scene:()=>scene,snapshot:()=>snapshot,busy:()=>busy,sending:()=>sending,recording:()=>null,scroll:()=>null,exitPreparing:()=>exiting,spaceOperations:operations,flush:()=>flush.promise,commands:Promise.resolve(),exitFailure:undefined,
+    const state={capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection-a']}};
+    const queue=deferred(),operations=new exitApi.SpaceOperations();let busy=false,sending=false,exiting=false,flushCalls=0;
+    const context={Promise,Error,ContinuationController,sameOptionalGrant,capabilities:()=>state.capabilities,disposed:false,scene:()=>scene,snapshot:()=>snapshot,busy:()=>busy,sending:()=>sending,recording:()=>null,scroll:()=>null,exitPreparing:()=>exiting,spaceOperations:operations,flush:()=>{flushCalls++;return flush.promise;},commands:queued?queue.promise:Promise.resolve(),exitFailure:undefined,
       bridge:{continueRunFromJournal:input=>{calls.push(input);return request.promise;}},accept:value=>accepted.push(value),setSending:value=>sending=value,setBusy:value=>busy=value,setSendErrors:fn=>Object.assign(errors,fn(errors))};
     const invoke=runInNewContext(`${executable}; continueJournal`,context);
-    return {invoke,flush,request,calls,accepted,errors,scene,snapshot,operations,context,exit:()=>exiting=true,busy:()=>busy};
+    return {invoke,flush,queue,request,calls,accepted,errors,scene,snapshot,state,operations,context,exit:()=>exiting=true,busy:()=>busy,sending:()=>sending,flushCalls:()=>flushCalls};
   }
   const f=mounted(),pending=f.invoke(summary(),decision());assert.equal(f.busy(),true);let drained=false;const drain=f.operations.drain(()=>true).then(()=>drained=true);await tick();assert.equal(drained,false);
   f.scene.draft='B';f.flush.resolve();await tick();assert.equal(f.calls.length,1);f.scene.draft='C';f.request.resolve({revision:10});assert.equal(await pending,true);await drain;assert.equal(f.scene.draft,'C');assert.deepEqual(f.scene.refs,[{kind:'region',id:'r'}]);assert.equal(drained,true);assert.equal(f.busy(),false);
   const second=mounted(),p=second.invoke(summary(),decision());second.exit();second.flush.resolve();assert.equal(await p,false);assert.equal(second.calls.length,0);assert.equal(second.busy(),false);
   const failed=mounted(),q=failed.invoke(summary(),decision());failed.flush.reject(Error('草稿保存失败'));assert.equal(await q,false);assert.equal(failed.scene.draft,'A');assert.equal(failed.calls.length,0);assert.equal(failed.errors['scene-a'],'草稿保存失败');
   checks.push('Actual App continuation method holds real SpaceOperations through native acknowledgement, preserves drafts/refs and denies post-exit admission or failed flush');
+  const revoke={
+    disabled:f=>{f.state.capabilities.agent=null;},
+    'no-ready-connection':f=>{f.state.capabilities.readyConnectionIds=[];},
+    'other-ready-connection':f=>{f.state.capabilities.readyConnectionIds=['other-connection'];},
+    'unavailable-capabilities':f=>{f.state.capabilities=undefined;},
+  };
+  for(const [reason,change] of Object.entries(revoke)){
+    const blocked=mounted();change(blocked);
+    assert.equal(await blocked.invoke(summary(),decision()),false,reason);
+    assert.equal(blocked.flushCalls(),0,reason+' must not start prerequisite work');
+    assert.equal(blocked.calls.length,0,reason+' must not start native continuation');
+    let drained=false;const drain=blocked.operations.drain(()=>true).then(()=>drained=true);await tick();assert.equal(drained,true);await drain;
+    assert.equal(blocked.accepted.length,0);assert.equal(blocked.busy(),false);assert.equal(blocked.sending(),false);
+    assert.equal(blocked.scene.draft,'A');assert.deepEqual(blocked.scene.refs,[{kind:'region',id:'r'}]);
+  }
+  checks.push('Actual App continuation with real capability predicates refuses disabled Agent, absent readiness and another selected connection before flushing or dispatching');
+  const invalidate={...revoke,
+    'revised-agent':f=>{f.state.capabilities.agent={...f.state.capabilities.agent,revision:2};},
+    'disable-reenable-agent':f=>{f.state.capabilities.agent=null;f.state.capabilities.agent={pluginId:'mewu.agent',contributionId:'agent',revision:3};},
+    'replaced-contribution':f=>{f.state.capabilities.agent={...f.state.capabilities.agent,contributionId:'different-contribution'};},
+  };
+  for(const stage of ['flush','queue'])for(const [reason,change] of Object.entries(invalidate)){
+    const blocked=mounted({queued:stage==='queue'}),pending=blocked.invoke(summary(),decision());
+    assert.equal(blocked.busy(),true);let drained=false;const drain=blocked.operations.drain(()=>true).then(()=>drained=true);await tick();assert.equal(drained,false);
+    if(stage==='queue'){blocked.flush.resolve();await tick();assert.equal(blocked.calls.length,0);}
+    change(blocked);blocked.scene.draft='new draft';blocked.scene.refs.push({kind:'item',id:'new-ref'});
+    blocked.flush.resolve();blocked.queue.resolve();blocked.request.resolve({revision:10});
+    assert.equal(await pending,false,stage+' '+reason);
+    assert.equal(blocked.calls.length,0,stage+' '+reason+' must not dispatch a continuation');assert.equal(blocked.accepted.length,0);
+    await drain;assert.equal(drained,true);assert.equal(blocked.busy(),false);assert.equal(blocked.sending(),false);
+    assert.equal(blocked.scene.draft,'new draft');assert.deepEqual(blocked.scene.refs,[{kind:'region',id:'r'},{kind:'item',id:'new-ref'}]);
+  }
+  checks.push('Actual App continuation rechecks readiness and the exact accepted Agent grant after slow flush and queue waits, rejects revised or disable-reenable grants, and preserves newer drafts/refs');
 }
 console.log(JSON.stringify({passed:checks.length,checks},null,2));

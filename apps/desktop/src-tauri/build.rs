@@ -3,6 +3,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "get_snapshot",
+            "get_optional_capabilities",
             "create_blackboard",
             "finish_blackboard",
             "open_blackboard",

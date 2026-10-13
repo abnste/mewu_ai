@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { PluginCatalog, PluginManifest, PluginProposal, PluginSnapshot } from './plugin-contracts';
 import type { DrawingCommand, OcrTarget, Snapshot } from './contracts';
 import { previewDrawingCommand } from './bridge';
+import type { OptionalCapabilities } from './optional-capabilities';
 
 export const pluginNative = isTauri();
 const bundled = import.meta.glob('../plugins/official-*.json', { eager: true, import: 'default' }) as Record<string, PluginManifest>;
@@ -11,6 +12,10 @@ function desktop() { if (!pluginNative) throw new Error('请在桌面版管理�
 
 export async function getPlugins(): Promise<PluginSnapshot> {
   return pluginNative ? invoke('get_plugins') : { revision: 0, plugins: [] };
+}
+export async function getOptionalCapabilities(): Promise<OptionalCapabilities> {
+  if (!pluginNative) return { pluginRevision: 0, connectionRevisions: {}, agent: null, blackboard: null, readyConnectionIds: [] };
+  return invoke('get_optional_capabilities');
 }
 export async function getPluginCatalog(sourceUrl?: string): Promise<PluginCatalog> {
   if (pluginNative) return invoke('get_plugin_catalog', { sourceUrl: sourceUrl ?? null });

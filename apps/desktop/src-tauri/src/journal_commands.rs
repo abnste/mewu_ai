@@ -112,6 +112,8 @@ pub async fn continue_run_from_journal(
     recording::ensure_idle(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let host = app.state::<Host>();
+        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
         let mut engine = host.lock()?;
         host.exit.ensure_running()?;
         recording::ensure_idle(&app)?;

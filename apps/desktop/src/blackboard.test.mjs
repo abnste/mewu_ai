@@ -14,6 +14,7 @@ const {ObjectEraser,eraserStrokeHits,clipEraserSweep}=await pure('./components/d
 const {drawingPointerSamples}=await pure('./components/drawing-pointer.ts');
 const {isBlackboard}=await pure('./blackboard.ts');
 const {blackboardImage}=await pure('./blackboard-image.ts');
+const {sameOptionalGrant}=await pure('./optional-capabilities.ts');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(blackboard=true){
   let captured=false,revision=0,mode='pen',erasing=false;
@@ -72,21 +73,28 @@ test('native pin refresh never hides editable media carried into the blackboard'
   let current={background:{id:'board',kind:'image',name:'黑板.png',path:'D:/assets/board.board.png'},items:[{id:'carried',asset:{id:'pinned-image',kind:'image'}},{id:'video',asset:{id:'video',kind:'video'}}]};
   const before=structuredClone(current);let pins=[];
   const project=vm.runInNewContext(stripTypeScriptTypes('('+appSource.slice(declaration.init.start,declaration.init.end)+')',{mode:'transform'}),{scene:()=>current,pinObjects:()=>pins,isBlackboard});
-  assert.equal(project(),current);
+  assert.equal(project(current),current);
   pins=[{attachmentAssetId:'pinned-image'}];
-  assert.equal(project(),current);assert.deepEqual(current,before);
+  assert.equal(project(current),current);assert.deepEqual(current,before);
   current={...current,background:undefined};
-  assert.deepEqual(Array.from(project().items,item=>item.id),['video']);
+  assert.deepEqual(Array.from(project(current).items,item=>item.id),['video']);
   assert.equal(current.items.length,2);
   pins=[];
-  assert.deepEqual(Array.from(project().items,item=>item.id),['carried','video']);
+  assert.deepEqual(Array.from(project(current).items,item=>item.id),['carried','video']);
 });
 const opening=appBody.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='openBlackboard');
-function closeFixture(flushDrawing,finishBlackboard=async()=>({activeSceneId:'parent'})){
-  let editing='board',busy=false,operations=0;const errors=[];
-  const context=vm.createContext({scene:()=>({id:'board'}),busy:()=>busy,sending:()=>false,recording:()=>false,scroll:()=>false,exitPreparing:()=>false,disposed:false,isBlackboard:()=>true,blackboardEditing:()=>editing,setBlackboardEditing:value=>{editing=value;},spaceOperations:{begin:()=>{operations++;return()=>{operations--;};}},setBusy:value=>{busy=value;},setReferenceDrafts:()=>{},withoutScene:()=>{},flushDrawing,bridge:{finishBlackboard},accept:()=>{},showError:error=>errors.push(error.message)});
-  vm.runInContext(stripTypeScriptTypes(appSource.slice(opening.start,opening.end),{mode:'transform'}),context);
-  return {close:()=>context.openBlackboard(),editing:()=>editing,busy:()=>busy,operations:()=>operations,errors};
+const reopening=appBody.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='reopenBlackboard');
+const boardAvailable=appBody.flatMap(node=>node.type==='VariableDeclaration'?node.declarations:[]).find(node=>node.id.name==='blackboardAvailable');
+const boardScene=()=>({id:'board',background:{id:'board-pixels',kind:'image',name:'黑板.png',path:'D:/synthetic/board-pixels.board.png'}});
+function closeFixture(flushDrawing,finishBlackboard=async()=>({activeSceneId:'parent'}),options={}){
+  let current=options.parent?{id:'parent'}:boardScene(),editing=options.parent?undefined:'board',busy=false,operations=0,created=0,opened=0;
+  let capability={blackboard:{pluginId:'mewu.blackboard',contributionId:'blackboard',revision:1}};
+  const errors=[];
+  const context=vm.createContext({scene:()=>current,capabilities:()=>capability,sameOptionalGrant,busy:()=>busy,sending:()=>false,recording:()=>false,scroll:()=>false,exitPreparing:()=>false,disposed:false,isBlackboard,blackboardEditing:()=>editing,setBlackboardEditing:value=>{editing=value;},spaceOperations:{begin:()=>{operations++;return()=>{operations--;};}},setBusy:value=>{busy=value;},setReferenceDrafts:()=>{},withoutScene:()=>{},flushDrawing,flush:options.flush??(async()=>{}),
+    bridge:{finishBlackboard,createBlackboard:async()=>{created++;return{activeSceneId:'board',scenes:[boardScene()]};},openBlackboard:async()=>{opened++;return{activeSceneId:'board',scenes:[boardScene()]};}},
+    accept:next=>{current=next.scenes?.find(scene=>scene.id===next.activeSceneId)??{id:next.activeSceneId};},showError:error=>errors.push(error.message)});
+  vm.runInContext(stripTypeScriptTypes('const blackboardAvailable='+appSource.slice(boardAvailable.init.start,boardAvailable.init.end)+';\n'+appSource.slice(opening.start,opening.end)+'\n'+appSource.slice(reopening.start,reopening.end),{mode:'transform'}),context);
+  return {close:()=>context.openBlackboard(),reopen:()=>context.reopenBlackboard('saved-board'),editing:()=>editing,busy:()=>busy,operations:()=>operations,created:()=>created,opened:()=>opened,setGrant:grant=>{capability={blackboard:grant};},errors};
 }
 test('closing blackboard authoring waits for its real draft flush before removing the editor',async()=>{
   let settle;const gate=new Promise(resolve=>{settle=resolve;}),f=closeFixture(()=>gate),closing=f.close();
@@ -101,6 +109,24 @@ test('preview save must finish before exiting and failed materialization keeps a
   let settle;const gate=new Promise(resolve=>{settle=resolve;}),f=closeFixture(async()=>{},()=>gate),closing=f.close();
   await tick();assert.equal(f.editing(),'board');assert.equal(f.busy(),true);settle({activeSceneId:'parent'});await closing;assert.equal(f.editing(),undefined);
   const failure=closeFixture(async()=>{},async()=>{throw Error('图片保存失败');});await failure.close();assert.equal(failure.editing(),'board');assert.deepEqual(failure.errors,['图片保存失败']);assert.equal(failure.operations(),0);
+});
+test('disabled or missing blackboard capability never creates or reopens a board',async()=>{
+  for(const grant of [null,undefined]){
+    const f=closeFixture(async()=>{},undefined,{parent:true});f.setGrant(grant);
+    await f.close();await f.reopen();
+    assert.equal(f.created(),0);assert.equal(f.opened(),0);assert.equal(f.operations(),0);assert.equal(f.editing(),undefined);assert.equal(f.busy(),false);
+  }
+});
+test('blackboard create and reopen reject disabled, revised and disable-reenable grants after a slow flush',async()=>{
+  for(const action of ['close','reopen'])for(const mode of ['disabled','revised','disable-reenable']){
+    let release;const gate=new Promise(resolve=>{release=resolve;});
+    const f=closeFixture(async()=>{},undefined,{parent:true,flush:()=>gate});
+    const pending=f[action]();await tick();assert.equal(f.busy(),true);assert.equal(f.operations(),1);
+    if(mode==='disabled'||mode==='disable-reenable')f.setGrant(null);
+    if(mode!=='disabled')f.setGrant({pluginId:'mewu.blackboard',contributionId:'blackboard',revision:mode==='revised'?2:3});
+    release();await pending;
+    assert.equal(f.created(),0,action+' '+mode);assert.equal(f.opened(),0,action+' '+mode);assert.equal(f.editing(),undefined);assert.equal(f.busy(),false);assert.equal(f.operations(),0);assert.ok(f.errors.length);
+  }
 });
 test('successful board finish removes only the parent reference draft so automatic image references remain visible',async()=>{
   const node=appBody.find(node=>node.type==='FunctionDeclaration'&&node.id.name==='finishBlackboard');

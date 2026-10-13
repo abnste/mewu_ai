@@ -348,6 +348,19 @@ impl Store {
         self.state.clone()
     }
 
+    /// Host metadata queries can borrow rows without cloning chat history.
+    pub fn scenes(&self) -> &[Scene] {
+        &self.state.scenes
+    }
+
+    pub fn scene(&self, id: &str) -> Result<&Scene> {
+        scene(&self.state, id)
+    }
+
+    pub fn connection_profiles(&self) -> &[ConnectionProfile] {
+        &self.state.connections
+    }
+
     /// Borrow the active scene for a host identity check. Clone only the small
     /// fields needed after releasing Engine, never every conversation body.
     pub fn active_scene(&self) -> Result<&Scene> {

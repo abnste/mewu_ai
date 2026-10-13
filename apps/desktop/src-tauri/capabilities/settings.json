@@ -12,6 +12,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "allow-get-snapshot",
+    "allow-get-optional-capabilities",
     "allow-apply-scene-command",
     "allow-discover-mcp-server",
     "allow-runtime-info",

@@ -297,6 +297,7 @@ pub async fn get_voice_capabilities(
     let host = app.state::<Host>();
     host.exit.ensure_running()?;
     let id = uuid::Uuid::new_v4().to_string();
+    host.lock()?.optional.require_agent()?;
     let token = host.speech.start_if(&id, window.label(), None, None, || {
         host.exit.ensure_running()
     })?;
@@ -349,6 +350,7 @@ pub async fn run_plugin_dictation(
             .speech_to_text(&grant.plugin_id, grant.revision, &grant.contribution_id)?;
         let engine = host.lock()?;
         host.exit.ensure_running()?;
+        engine.optional.require_agent()?;
         if host.capturing.load(Ordering::Acquire) {
             return Err("截图正在切换".into());
         }
@@ -415,6 +417,7 @@ pub async fn run_plugin_dictation(
         .speech_to_text(&grant.plugin_id, grant.revision, &grant.contribution_id)?;
     let engine = host.lock()?;
     host.exit.ensure_running()?;
+    engine.optional.require_agent()?;
     ensure_visible(native_window)?;
     if host.capturing.load(Ordering::Acquire)
         || !target.current(&engine.store.snapshot())

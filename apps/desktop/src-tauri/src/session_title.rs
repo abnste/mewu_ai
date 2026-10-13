@@ -130,6 +130,7 @@ fn authorized(
     lease: &Lease,
 ) -> bool {
     enabled(host)
+        && engine.optional.agent.is_some()
         && lease.runtime.live(&lease.id)
         && engine.store.session_title_request_is_current(request)
         && engine
@@ -196,6 +197,7 @@ pub(crate) fn schedule(
 ) {
     let host = app.state::<Host>();
     if !enabled(&host)
+        || engine.optional.agent.is_none()
         || !engine
             .store
             .connection_for_scene(scene)
@@ -215,6 +217,8 @@ pub(crate) fn schedule(
         // The normal answer was already persisted and published before schedule.
         let work = generate(&transport, &key, &profile, &request.prompt, || {
             let host = app.state::<Host>();
+            let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+            plugins.store.require_agent()?;
             let engine = host.lock()?;
             if authorized(&host, &engine, &request, &profile, &lease) {
                 Ok(())
@@ -228,6 +232,8 @@ pub(crate) fn schedule(
         };
         if let Some(title) = result {
             let host = app.state::<Host>();
+            let Ok(plugins) = host.plugins.lock() else { return; };
+            if plugins.store.require_agent().is_err() { return; }
             if let Ok(mut engine) = host.lock() {
                 if authorized(&host, &engine, &request, &profile, &lease) {
                     if let Ok(snapshot) = engine.store.finish_session_title(&request, title) {

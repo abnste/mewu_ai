@@ -562,10 +562,12 @@ export default function SharedDrawingEditor(props: Props) {
     void request.catch(error => { if (!disposed && origin === identity()) report(error); }).finally(() => { if (tableCopy === request) tableCopy = undefined; if (!disposed && origin === identity()) setFinishing(false); });
   }
   async function done(closeSpace = false, copy = true, exitDrawing = true) {
-    if (disabled() || cancelGesture) return;
+    const closingDisabledBoard = Boolean(props.blackboard && props.inputLocked && !props.busy && !pending() && !finishing());
+    if ((disabled() && !closingDisabledBoard) || cancelGesture) return;
     const currentIdentity = identity(); setFinishing(true);
     try {
       if (props.blackboard && exitDrawing && props.onFinishBlackboard) {
+        if (closingDisabledBoard) { await props.onFinishBlackboard(); return; }
         if (await saveText() && !disposed && currentIdentity === identity()) await props.onFinishBlackboard();
         return;
       }
@@ -594,7 +596,10 @@ export default function SharedDrawingEditor(props: Props) {
   function keyboard(event: KeyboardEvent) {
     if ((event.target instanceof Element ? event.target : document.activeElement)?.closest('.drawing-color-panel')) return;
     if ((event.target instanceof Element ? event.target : document.activeElement)?.closest(props.keyboardIgnore ?? '.video-trim-popover,.artifact-video,.blackboard-object,[data-run-journal]')) return;
-    if (props.inputLocked) return;
+    if (props.inputLocked) {
+      if (props.blackboard && event.type === 'keydown' && event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); event.stopImmediatePropagation(); void done(); }
+      return;
+    }
     if (document.querySelector('.drawing-drafts-dialog')) return;
     if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Shift') { refreshConstraint?.(event.shiftKey); return; }
@@ -709,7 +714,7 @@ export default function SharedDrawingEditor(props: Props) {
       <button data-caption={t("重做")} title={t("重做 · Ctrl + Shift + Z")} aria-label={t("重做绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(true)} disabled={disabled() || !!edit() || !historyAvailable(true)} onClick={() => history(true)}><Redo2 size={17} /></button>
       <button ref={trashButton} class="drawing-trash" classList={{'object-dragging':objectDragging(),'object-trash-over':trashOver()}} data-unavailable={!!edit() || (!objectDragging()&&(!(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))||Boolean(props.blackboard&&selectedDrawing()&&blackboardImage(selectedDrawing()!))))} data-caption={t("删除")} title={props.blackboard?t('拖入删除'):t("删除对象 · Delete")} aria-label={props.blackboard?t('删除对象'):t("删除绘制对象")} disabled={disabled() || !!edit() || (!objectDragging()&&(!(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))||Boolean(props.blackboard&&selectedDrawing()&&blackboardImage(selectedDrawing()!))))} onClick={remove}><Trash2 size={16} /></button>
       <Show when={props.onPin}><button data-caption={t("贴图")} title={t("贴图 · P")} aria-label={t("贴图")} disabled={disabled()} onClick={() => void pin()}><Pin size={17} /></button></Show>
-      <button data-caption={t("完成")} class="drawing-done" title={props.retainOnDone ? t("完成") : t("完成并复制")} aria-label={props.retainOnDone ? t("完成") : t("完成并复制")} disabled={disabled()} onClick={() => void done()}><Check size={18} /></button>
+      <button data-caption={t("完成")} class="drawing-done" title={props.retainOnDone ? t("完成") : t("完成并复制")} aria-label={props.retainOnDone ? t("完成") : t("完成并复制")} disabled={props.blackboard && props.inputLocked ? props.busy || pending() || finishing() : disabled()} onClick={() => void done()}><Check size={18} /></button>
       </div>
       </div>
     </div>

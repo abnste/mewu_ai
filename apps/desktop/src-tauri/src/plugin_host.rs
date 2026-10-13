@@ -36,8 +36,11 @@ pub struct PluginRuntime {
 }
 impl PluginRuntime {
     pub fn open(root: &Path) -> Result<Self, String> {
+        Self::open_with_blackboard(root, false)
+    }
+    pub fn open_with_blackboard(root: &Path, existing_blackboard: bool) -> Result<Self, String> {
         Ok(Self {
-            store: PluginStore::open(root)?,
+            store: PluginStore::open_with_blackboard(root, existing_blackboard)?,
             proposals: HashMap::new(),
             catalog_generation: 0,
         })
@@ -125,9 +128,17 @@ fn revoked_runs(
         .collect()
 }
 fn settle_engine(engine: &mut crate::Engine, snapshot: &PluginSnapshot) -> Result<(), String> {
+    let previous_agent = engine.optional.agent.clone();
+    engine.optional = crate::optional_capabilities::Authorizations::from_snapshot(snapshot);
+    if previous_agent != engine.optional.agent {
+        engine.translation_jobs.cancel_all();
+    }
     engine.ocr_jobs.revoke_plugins(snapshot);
     engine.translation_jobs.revoke_plugins(snapshot);
     let mut ended = revoked_runs(&engine.plugin_runs, snapshot);
+    ended.extend(engine.agent_runs.iter()
+        .filter(|(_, (_, grant))| engine.optional.agent.as_ref() != Some(grant))
+        .map(|(run, (scene, _))| (run.clone(), scene.clone())));
     ended.extend(
         engine
             .visual_runs
@@ -153,12 +164,15 @@ fn settle_engine(engine: &mut crate::Engine, snapshot: &PluginSnapshot) -> Resul
             }
         }
     }
+    ended.sort();
+    ended.dedup();
     let mut failure = None;
     for (run, scene) in ended {
         if let Some(sender) = engine.runs.remove(&run) {
             let _ = sender.send(());
         }
         engine.plugin_runs.remove(&run);
+        engine.agent_runs.remove(&run);
         if let Some(origin) = engine.visual_runs.remove(&run) {
             let revoked = match origin.source_kind {
                 crate::visual_annotation_host::SourceKind::Image => engine.store.revoke_visual_authority(&scene, &run),
@@ -178,6 +192,12 @@ fn settle_engine(engine: &mut crate::Engine, snapshot: &PluginSnapshot) -> Resul
 }
 /// All plugin mutations and starts use plugin -> Engine lock order.
 fn settle_runs(app: &AppHandle, host: &Host, snapshot: &PluginSnapshot) -> Result<(), String> {
+    let next_agent = crate::optional_capabilities::Authorizations::from_snapshot(snapshot).agent;
+    if host.lock()?.optional.agent != next_agent {
+        host.session_titles.cancel_all();
+        host.memory.cancel_where(|_| true);
+        crate::speech_host::cancel_owner(app, "space");
+    }
     crate::video_host::revoke_plugins(app, snapshot);
     crate::recording::revoke_plugins(app, snapshot);
     crate::recording_audio_host::reconcile(app, snapshot);
@@ -195,6 +215,7 @@ fn settle_runs(app: &AppHandle, host: &Host, snapshot: &PluginSnapshot) -> Resul
     crate::pin_host::revoke_plugins(app, snapshot);
     let mut engine = host.lock()?;
     let settled = settle_engine(&mut engine, snapshot);
+    host.memory.wake.notify_one();
     crate::publish(app, &engine.store.snapshot());
     settled
 }
@@ -501,6 +522,7 @@ pub fn apply_plugin_drawing(
     }
     let mut engine = host.lock()?;
     host.exit.ensure_scene_command(&command)?;
+    crate::optional_capabilities::authoring_command(&engine, &command)?;
     crate::recording::ensure_idle(&app)?;
     let snapshot = engine.store.apply(command).map_err(|e| e.to_string())?;
     engine.ocr_jobs.reconcile(&snapshot);
@@ -566,6 +588,7 @@ pub async fn run_plugin_workflow(
     {
         return Err("会话或连接已变更，请重试".into());
     }
+    crate::optional_capabilities::require_agent_current(&engine, &preflight.agent_grant)?;
     let mut context = engine
         .store
         .begin_workflow(&scene_id, &workflow.prompt, &region_id)
@@ -594,6 +617,8 @@ mod tests {
     ) {
         let mut engine = crate::Engine {
             store,
+            optional: crate::optional_capabilities::Authorizations::test_defaults(),
+            agent_runs: HashMap::new(),
             runs: HashMap::new(),
             plugin_runs: HashMap::new(),
             visual_runs: HashMap::new(),
@@ -611,6 +636,7 @@ mod tests {
         let run = engine.store.begin_run(&scene).unwrap();
         let (send, receive) = tokio::sync::oneshot::channel();
         engine.runs.insert(run.run_id.clone(), send);
+        engine.agent_runs.insert(run.run_id.clone(), (scene.clone(), engine.optional.require_agent().unwrap()));
         engine.plugin_runs.insert(
             run.run_id.clone(),
             (scene.clone(), plugin.manifest.id.clone(), plugin.revision),
@@ -629,6 +655,27 @@ mod tests {
             .to_string_lossy()
             .starts_with("mewu-proposals-"));
         std::fs::remove_dir_all(resolved).unwrap();
+    }
+    #[test]
+    fn agent_disable_revokes_plain_runs_and_keeps_history() {
+        let root = root();
+        let mut runtime = PluginRuntime::open(&root).unwrap();
+        let agent = runtime.store.list().unwrap().into_iter().find(|record| record.manifest.id == "mewu.agent").unwrap();
+        let (mut engine, scene, run, mut receiver) = active_engine(mewu_core::Store::open_in_memory().unwrap(), &agent);
+        engine.plugin_runs.clear(); // Ordinary sends have no workflow origin.
+        let before = engine.store.snapshot().scenes.into_iter().find(|value| value.id == scene).unwrap();
+        assert!(crate::run_is_authorized(&engine, &scene, &run, None));
+        runtime.store.set_enabled(&agent.manifest.id, agent.revision, false).unwrap();
+        settle_engine(&mut engine, &runtime.store.snapshot().unwrap()).unwrap();
+        assert_eq!(receiver.try_recv().unwrap(), ());
+        assert!(!crate::run_is_authorized(&engine, &scene, &run, None));
+        assert!(engine.agent_runs.is_empty());
+        let after = engine.store.snapshot().scenes.into_iter().find(|value| value.id == scene).unwrap();
+        assert_eq!(after.messages.len(), before.messages.len());
+        assert_eq!(after.background, before.background);
+        assert_eq!(after.items, before.items);
+        assert!(!engine.store.run_is_active(&scene, &run));
+        drop(engine); drop(runtime); remove_test_root(&root);
     }
     #[test]
     fn committed_disable_still_revokes_when_another_registry_row_breaks_snapshot() {

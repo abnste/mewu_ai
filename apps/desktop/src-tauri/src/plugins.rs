@@ -48,7 +48,9 @@ const OFFICIAL_ANNOTATIONS: &[u8] =
     include_bytes!("../../plugins/migrations/official-annotations-1.0.0.json");
 const RECORDING_MIGRATION_KEY: &str = "migration.recording-bundle.v1";
 const LEGACY_RECORDING_IDS: [&str; 3] = ["mewu.video-trim", "mewu.recording-audio", "mewu.gif"];
-const BUNDLED: [&[u8]; 26] = [
+const BUNDLED: [&[u8]; 28] = [
+    include_bytes!("../../plugins/official-agent.json"),
+    include_bytes!("../../plugins/official-blackboard.json"),
     OFFICIAL_TABLE,
     OFFICIAL_OCR,
     OFFICIAL_SCROLL,
@@ -148,6 +150,10 @@ pub enum PluginTag {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum PluginContribution {
+    #[serde(rename = "agent.runtime")]
+    AgentRuntime { id: String, title: String, engine: AgentRuntimeEngine },
+    #[serde(rename = "space.blackboard")]
+    Blackboard { id: String, title: String, engine: BlackboardEngine },
     #[serde(rename = "model.connection")]
     ModelConnection {
         id: String,
@@ -233,6 +239,17 @@ pub enum PluginContribution {
         title: String,
         engine: OcrEngine,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AgentRuntimeEngine {
+    #[serde(rename = "host.agent-v1")]
+    HostAgentV1,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BlackboardEngine {
+    #[serde(rename = "host.blackboard-v1")]
+    HostBlackboardV1,
 }
 
 /// Declarative connection defaults, not executable adapters. Only the host's
@@ -865,7 +882,9 @@ fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
                 }
                 (id, title)
             }
-            PluginContribution::SelectionRecording { id, title, .. }
+            PluginContribution::AgentRuntime { id, title, .. }
+            | PluginContribution::Blackboard { id, title, .. }
+            | PluginContribution::SelectionRecording { id, title, .. }
             | PluginContribution::AgentVisualAnnotations { id, title, .. }
             | PluginContribution::ArtifactVideoGif { id, title, .. }
             | PluginContribution::RecordingAudio { id, title, .. }
@@ -982,6 +1001,10 @@ fn json<T: Serialize>(value: &T) -> Result<String, String> {
 
 impl PluginStore {
     pub fn open(app_data: &Path) -> Result<Self, String> {
+        Self::open_with_blackboard(app_data, false)
+    }
+
+    pub fn open_with_blackboard(app_data: &Path, existing_blackboard: bool) -> Result<Self, String> {
         if !app_data.is_absolute() {
             return Err("应用数据目录必须为绝对路径".into());
         }
@@ -1032,7 +1055,10 @@ impl PluginStore {
         for seed in BUNDLED {
             let manifest = parse_manifest(seed)?;
             if store.read(&manifest.id)?.is_none() {
-                store.install_package(manifest, PluginSource::Official, None, true)?;
+                let state = if manifest.id == "mewu.blackboard" && !existing_blackboard {
+                    PluginState::Disabled
+                } else { PluginState::Enabled };
+                store.install_package_with_state(manifest, PluginSource::Official, None, true, state)?;
             }
         }
         Ok(store)
@@ -1171,6 +1197,9 @@ impl PluginStore {
             revision: self.global_revision()?,
             plugins: self.list()?,
         })
+    }
+    pub(crate) fn require_agent(&self) -> Result<crate::optional_capabilities::Grant, String> {
+        crate::optional_capabilities::Authorizations::from_snapshot(&self.snapshot()?).require_agent()
     }
 
     /// Only intact, enabled packages provide defaults for *new* user profiles.
@@ -1319,6 +1348,17 @@ impl PluginStore {
         expected: Option<u64>,
         official: bool,
     ) -> Result<PluginRecord, String> {
+        self.install_package_with_state(manifest, source, expected, official, PluginState::Enabled)
+    }
+
+    fn install_package_with_state(
+        &mut self,
+        manifest: PluginManifest,
+        source: PluginSource,
+        expected: Option<u64>,
+        official: bool,
+        initial_state: PluginState,
+    ) -> Result<PluginRecord, String> {
         self.ready()?;
         validate_manifest(&manifest)?;
         validate_source(&source)?;
@@ -1354,7 +1394,7 @@ impl PluginStore {
             state: before
                 .as_ref()
                 .filter(|r| r.state != PluginState::Removed)
-                .map_or(PluginState::Enabled, |r| r.state),
+                .map_or(initial_state, |r| r.state),
             previous: before
                 .as_ref()
                 .filter(|r| r.state != PluginState::Removed)
@@ -2420,6 +2460,27 @@ mod tests {
     use super::*;
 
     struct Directory(PathBuf);
+    #[test]
+    fn optional_agent_and_blackboard_seed_defaults_preserve_user_choices() {
+        let fresh = Directory::new();
+        let mut store = PluginStore::open(&fresh.0).unwrap();
+        let records = store.list().unwrap();
+        let agent = records.iter().find(|record| record.manifest.id == "mewu.agent").unwrap();
+        let board = records.iter().find(|record| record.manifest.id == "mewu.blackboard").unwrap();
+        assert_eq!(agent.state, PluginState::Enabled);
+        assert_eq!(board.state, PluginState::Disabled);
+        assert_eq!(board.revision, 1);
+        store.set_enabled("mewu.agent", agent.revision, false).unwrap();
+        store.uninstall("mewu.blackboard", board.revision).unwrap();
+        drop(store);
+        let reopened = PluginStore::open_with_blackboard(&fresh.0, true).unwrap();
+        let records = reopened.list().unwrap();
+        assert_eq!(records.iter().find(|record| record.manifest.id == "mewu.agent").unwrap().state, PluginState::Disabled);
+        assert_eq!(records.iter().find(|record| record.manifest.id == "mewu.blackboard").unwrap().state, PluginState::Removed);
+        let legacy = Directory::new();
+        let store = PluginStore::open_with_blackboard(&legacy.0, true).unwrap();
+        assert_eq!(store.list().unwrap().iter().find(|record| record.manifest.id == "mewu.blackboard").unwrap().state, PluginState::Enabled);
+    }
     impl Directory {
         fn new() -> Self {
             let root =
@@ -2578,7 +2639,7 @@ mod tests {
         let old_rows:Vec<(String,String)>=store.connection.prepare("SELECT id,payload FROM registry ORDER BY id").unwrap().query_map([],|row|Ok((row.get(0)?,row.get(1)?))).unwrap().map(Result::unwrap).collect();
         let old_files:Vec<(PathBuf,Vec<u8>)>=store.records().unwrap().into_iter().map(|record| {let file=path(&dir.0,&record.package.manifest.id,&record.package.manifest.version);let bytes=fs::read(&file).unwrap();(file,bytes)}).collect();
         assert_eq!(old_rows.len(),8); drop(store);
-        let store=PluginStore::open(&dir.0).unwrap(); assert_eq!(store.global_revision().unwrap(),26); assert_eq!(store.model_connection_presets().unwrap().len(),23);
+        let store=PluginStore::open(&dir.0).unwrap(); assert_eq!(store.global_revision().unwrap(),BUNDLED.len() as u64); assert_eq!(store.model_connection_presets().unwrap().len(),23);
         for (id,raw) in old_rows { let current:String=store.connection.query_row("SELECT payload FROM registry WHERE id=?1",[id],|row|row.get(0)).unwrap(); assert_eq!(current,raw); }
         for (file,raw) in old_files { assert_eq!(fs::read(file).unwrap(),raw); }
         let mut canonical = Vec::new();

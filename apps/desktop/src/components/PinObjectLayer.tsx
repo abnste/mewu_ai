@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createEffect, createMemo, createSignal, For, onCleanup } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { Link2, X } from 'lucide-solid';
 import { t } from '../i18n';
 import { controlPinObject, type PinObject } from '../pin-objects';
 import './pin-objects.css';
 import {moveImageObject} from '../image-object-geometry';
-interface Props { objects: PinObject[]; busy: boolean; referenced: (object: PinObject) => boolean; onReference: (object: PinObject) => void; onError: (error: unknown) => void }
+interface Props { aiAvailable?: boolean; objects: PinObject[]; busy: boolean; referenced: (object: PinObject) => boolean; onReference: (object: PinObject) => void; onError: (error: unknown) => void }
 function ImageObject(props: Props & { object: PinObject }) {
   const [position, setPosition] = createSignal({ x: props.object.x, y: props.object.y });
   let moving = false, disposed=false, zooming=false,zoomSteps=0, cleanup: (() => void) | undefined;
@@ -32,7 +32,7 @@ function ImageObject(props: Props & { object: PinObject }) {
   return <section class="space-pin-object" tabindex={0} aria-label={t('贴图')} onPointerDown={down} onWheel={wheel} style={{left:`${position().x*100}%`,top:`${position().y*100}%`,width:`${props.object.displayWidth*100}%`,height:`${props.object.displayHeight*100}%`,opacity:props.object.opacity}}>
     <img src={props.object.imageUrl} alt={t('贴图')} draggable={false} style={{width:props.object.quarterTurns%2?`${props.object.displayHeight/props.object.displayWidth*innerHeight/innerWidth*100}%`:'100%',height:props.object.quarterTurns%2?`${props.object.displayWidth/props.object.displayHeight*innerWidth/innerHeight*100}%`:'100%',transform:`translate(-50%,-50%) rotate(${props.object.quarterTurns*90}deg)`}}/>
     <div class="image-object-tools" role="toolbar" aria-label={t('图片工具')} onPointerDown={e=>e.stopPropagation()}>
-      <button class="icon-button compact" classList={{selected:props.referenced(props.object)}} title={props.referenced(props.object)?t('取消引用'):t('引用')} aria-label={props.referenced(props.object)?t('取消引用'):t('引用')} disabled={props.busy} onClick={()=>props.onReference(props.object)}><Link2 size={15}/></button>
+      <Show when={props.aiAvailable !== false}><button class="icon-button compact" classList={{selected:props.referenced(props.object)}} title={props.referenced(props.object)?t('取消引用'):t('引用')} aria-label={props.referenced(props.object)?t('取消引用'):t('引用')} disabled={props.busy} onClick={()=>props.onReference(props.object)}><Link2 size={15}/></button></Show>
       <button class="icon-button compact" title={t('关闭贴图')} aria-label={t('关闭贴图')} disabled={props.busy} onClick={()=>void controlPinObject(props.object.id,{type:'close'}).catch(props.onError)}><X size={15}/></button>
     </div>
   </section>;

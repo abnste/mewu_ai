@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.agent",
+  "version": "1.0.0",
+  "name": "Agent",
+  "description": "对话、原位作答、MCP 与长期记忆",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": ["agi"],
+  "contributions": [
+    { "id": "agent", "title": "Agent", "kind": "agent.runtime", "engine": "host.agent-v1" }
+  ]
+}

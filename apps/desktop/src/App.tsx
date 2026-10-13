@@ -7,8 +7,10 @@ import { t } from "./i18n";
 import { RunStreamBuffer } from './run-stream-buffer';
 import { preferenceKey, readPreferences } from './interface-preferences';
 import { updateLanguage } from './i18n';
-import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack } from 'solid-js';
-import { CircleAlert, LoaderCircle, Pencil, Redo2, SquarePen, Undo2, X } from 'lucide-solid';
+import { createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, Show, untrack } from 'solid-js';
+import { CircleAlert, LoaderCircle, Pencil, Redo2, Undo2, X } from 'lucide-solid';
+import { createOptionalFeatureState } from './optional-feature-state';
+import { sameOptionalGrant } from './optional-capabilities';
 import { isBlackboard } from './blackboard';
 import { coreDrawingGrant } from './core-drawing';
 import type { DrawingHistoryControls, RegisterDrawingHistory } from './drawing-editor-port';
@@ -22,9 +24,10 @@ import { usesDrawingDocument } from './drawing-document';
 import type { DrawingLayoutTarget, DrawingTableFormat } from './drawing-layout-preview';
 import type { AgentProfile, ConnectionProfile, DiscoverMcpServer, Reference, Region, RunEvent, Scene, SceneCommand, Snapshot, VisualAnnotationGrant } from './contracts';
 import SpaceCanvas from './components/SpaceCanvas';
-import Composer from './components/Composer';
+const Composer = lazy(() => import('./components/Composer'));
 import SessionDock from './components/SessionDock';
-import SettingsDialog, { type Preferences, type SettingsTab } from './components/SettingsDialog';
+import type { Preferences, SettingsTab } from './components/SettingsDialog';
+const SettingsDialog = lazy(() => import('./components/SettingsDialog'));
 import { RecordingBackdrop } from './RecordingSurface';
 import { ScrollBackdrop } from './ScrollSurface';
 import * as scrollBridge from './scroll-bridge';
@@ -92,6 +95,10 @@ export default function App() {
   const [pendingDrawingDrafts, setPendingDrawingDrafts] = createSignal<PendingDrawingDraft[]>([]);
   const [snapshot, setSnapshot] = createSignal<Snapshot>();
   const [pluginSnapshot, setPluginSnapshot] = createSignal<PluginSnapshot>({ revision: -1, plugins: [] });
+  const capabilities = createOptionalFeatureState(() => snapshot()?.connections ?? [], pluginSnapshot);
+  const agentAvailable = () => Boolean(capabilities()?.agent && capabilities()?.readyConnectionIds.length);
+  const agentReady = () => agentAvailable() && Boolean(scene()?.connectionId && capabilities()?.readyConnectionIds.includes(scene()!.connectionId!));
+  const blackboardAvailable = () => Boolean(capabilities()?.blackboard);
   const [voiceCapabilities, setVoiceCapabilities] = createSignal<VoiceCapabilities>();
   const [voiceCapabilitiesRetry, setVoiceCapabilitiesRetry] = createSignal(false);
   const [voiceCapabilitiesReading, setVoiceCapabilitiesReading] = createSignal(false);
@@ -424,7 +431,7 @@ export default function App() {
     if (current) translationRequests.retain(request => translationScopeValid(request, current, installed, translationConnections.get(request.requestId) ?? ''));
   });
   function startTranslation(request: TranslationRequest) {
-    if (exitPreparing() || busy() || recording() || scroll()) return;
+    if (!agentReady() || exitPreparing() || busy() || recording() || scroll()) return;
     const current = snapshot(), target = current?.scenes.find(value => value.id === request.target.sceneId);
     const connection = current?.connections.find(value => value.id === target?.connectionId);
     if (!connection) { setTranslationNotices(old => ({ ...old, [request.target.sceneId]: { regionId: request.target.regionId, text: '请先选择连接' } })); return; }
@@ -673,6 +680,7 @@ export default function App() {
     void exportRequest?.cancel().catch(showError);
   }
   async function runWorkflow(pluginId: string, pluginRevision: number, contributionId: string, regionId: string) {
+    if (!agentReady()) return;
     const current = scene(); if (!current || busy() || sending() || recording() || scroll() || exitPreparing()) return;
     const finishOperation = spaceOperations.begin();
     setSending(true);
@@ -777,14 +785,14 @@ export default function App() {
   }
   async function newConversation() {
     const current = scene();
-    if (!current || busy() || sending() || recording() || scroll() || exitPreparing() || current.run?.status === 'running') return;
+    if (!agentAvailable() || !current || busy() || sending() || recording() || scroll() || exitPreparing() || current.run?.status === 'running') return;
     const sceneId = current.id;
     const oldDraft = draft();
     const finishOperation = spaceOperations.begin();
     setBusy(true);
     try {
       await flush();
-      if (scene()?.id !== sceneId || disposed || exitPreparing()) throw new Error('会话已变化');
+      if (!agentAvailable() || scene()?.id !== sceneId || disposed || exitPreparing()) throw new Error('会话已变化');
       await command({ type: 'new_conversation', sceneId });
       if (scene()?.id !== sceneId || disposed) return;
       if (draft() === oldDraft) setDrafts(old => withoutScene(old, sceneId));
@@ -843,8 +851,8 @@ export default function App() {
     finally { setBusy(false); finishOperation(); }
   }
   async function openBlackboard() {
-    const current=scene();
-    if(!current||busy()||sending()||recording()||scroll()||exitPreparing()||current.run?.status==='running')return;
+    const current=scene(), boardGrant=capabilities()?.blackboard;
+    if(!blackboardAvailable()||!current||busy()||sending()||recording()||scroll()||exitPreparing()||current.run?.status==='running')return;
     if(isBlackboard(current)&&blackboardEditing()!==current.id){setBlackboardEditing(current.id);return;}
     const finish=spaceOperations.begin();setBusy(true);
     try{
@@ -854,7 +862,7 @@ export default function App() {
         return;
       }
       await flush();
-      if(scene()?.id!==current.id||disposed||exitPreparing())throw Error('会话已变化');
+      if(!sameOptionalGrant(boardGrant,capabilities()?.blackboard)||scene()?.id!==current.id||disposed||exitPreparing())throw Error('会话已变化');
       const next=await bridge.createBlackboard(current.id);accept(next);
       if(!disposed&&isBlackboard(scene()))setBlackboardEditing(next.activeSceneId);
     }catch(error){showError(error);}finally{setBusy(false);finish();}
@@ -869,9 +877,9 @@ export default function App() {
     }catch(error){showError(error);return false;}finally{setBusy(false);finish();}
   }
   async function reopenBlackboard(itemId:string){
-    const current=scene();if(!current||busy()||sending()||recording()||scroll()||exitPreparing()||current.run?.status==='running')return;
+    const current=scene(),boardGrant=capabilities()?.blackboard;if(!blackboardAvailable()||!current||busy()||sending()||recording()||scroll()||exitPreparing()||current.run?.status==='running')return;
     const finish=spaceOperations.begin();setBusy(true);
-    try{await flush();if(disposed||scene()?.id!==current.id||exitPreparing())throw Error('会话已变化');const next=await bridge.openBlackboard(current.id,itemId);accept(next);setBlackboardEditing(next.activeSceneId);}
+    try{await flush();if(!sameOptionalGrant(boardGrant,capabilities()?.blackboard)||disposed||scene()?.id!==current.id||exitPreparing())throw Error('会话已变化');const next=await bridge.openBlackboard(current.id,itemId);accept(next);setBlackboardEditing(next.activeSceneId);}
     catch(error){showError(error);}finally{setBusy(false);finish();}
   }
   const canReplaySpace=(redo:boolean)=>{
@@ -943,13 +951,13 @@ export default function App() {
   }
   async function send() {
     const current = scene();
-    if (!current || busy() || recording() || scroll() || sending() || exitPreparing() || current.run?.status === 'running' || (!draft().trim() && refs().length === 0)) return;
+    if (!agentReady() || !current || busy() || recording() || scroll() || sending() || exitPreparing() || current.run?.status === 'running' || (!draft().trim() && refs().length === 0)) return;
     const candidateGrant = visualAnnotationGrant();
     let grant: VisualAnnotationGrant | undefined;
     const identity = annotationSendIdentity(current);
     let sourceIdentity: string | undefined;
     const check = (text: string, references: Reference[]) => {
-      if (disposed || exitPreparing() || scene()?.id !== current.id || scene()?.closed || scene()?.frozen) throw new Error('会话已变化');
+      if (!agentReady() || disposed || exitPreparing() || scene()?.id !== current.id || scene()?.closed || scene()?.frozen) throw new Error('会话已变化');
       if (grant) assertAnnotationSend({ identity, sourceIdentity, grant, scene: scene(), references, draft: text, plugins: pluginSnapshot().plugins, active: !recording() && !scroll() });
     };
     const finishOperation = spaceOperations.begin();
@@ -1004,6 +1012,8 @@ export default function App() {
     catch (error) { showError(error); }
   }
   async function continueJournal(summary: RunJournalSummary, decision: ContinuationDecision, selected?: string[]): Promise<boolean> {
+    if (!agentReady()) return false;
+    const agentGrant = capabilities()?.agent;
     const current = scene(), connection = snapshot()?.connections.find(value => value.id === current?.connectionId);
     if (!current || current.id !== summary.sceneId || !connection || disposed || busy() || sending() || recording() || scroll() || exitPreparing() || current.closed || current.frozen || current.run?.status === 'running') return false;
     const id = current.id;
@@ -1014,7 +1024,7 @@ export default function App() {
         return { sceneId: value.id, agentId: value.agentId, viewedRunId: summary.runId, sourceRunId: decision.sourceRunId, currentRunId: value.run?.id ?? null,
           connectionId: model.id, connectionRevision: model.revision, journalRevision: decision.journalRevision, checkpointSeq: decision.checkpointSeq };
       },
-      allowed: () => !disposed && !exitPreparing() && !recording() && !scroll() && !scene()?.closed && !scene()?.frozen,
+      allowed: () => agentReady() && sameOptionalGrant(agentGrant, capabilities()?.agent) && !disposed && !exitPreparing() && !recording() && !scroll() && !scene()?.closed && !scene()?.frozen,
       beginOperation: () => spaceOperations.begin(), flush,
       enqueue: operation => {
         const next = commands.then(operation);
@@ -1109,17 +1119,16 @@ export default function App() {
         const ownedRefs=()=>referenceDrafts()[currentId]??ownedScene().refs;
         const ownedDraft=()=>drafts()[currentId]??ownedScene().draft;
         return <Show when={!ownedScene().closed}>
-        <SpaceCanvas onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={id=>void reopenBlackboard(id)} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing()} busy={busy() || sending() || exitPreparing()} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={() => setFocusRequest(v => v + 1)} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
-        <Show when={blackboardEditing()!==currentId}><PinObjectLayer objects={pinObjects()} busy={busy()||sending()||exitPreparing()} referenced={pinReferenced} onReference={object=>void referencePin(object)} onError={showError}/></Show>
+        <SpaceCanvas blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing()} busy={busy() || sending() || exitPreparing()} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={() => setFocusRequest(v => v + 1)} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
+        <Show when={blackboardEditing()!==currentId}><PinObjectLayer aiAvailable={agentAvailable()} objects={pinObjects()} busy={busy()||sending()||exitPreparing()} referenced={pinReferenced} onReference={object=>void referencePin(object)} onError={showError}/></Show>
         <Show when={blackboardEditing()!==currentId}><nav class="space-utilities" aria-label={t('空间操作')}>
           <button class="icon-button" aria-label={t('退出')} title={t('退出')} disabled={busy()||exitPreparing()} onClick={()=>void closeScene(currentId)}><X size={17}/></button>
-          <button class="icon-button" aria-label={t('新建对话')} title={t('新建对话')} disabled={busy()||sending()||exitPreparing()||ownedScene().run?.status==='running'} onClick={()=>void newConversation()}><SquarePen size={17}/></button>
-          <button class="icon-button" classList={{selected:isBlackboard(ownedScene())&&blackboardEditing()===currentId}} aria-label={t('绘制')} title={t('绘制')} aria-pressed={isBlackboard(ownedScene())&&blackboardEditing()===currentId} disabled={busy()||sending()||exitPreparing()||ownedScene().run?.status==='running'} onClick={()=>void openBlackboard()}><Pencil size={17}/></button>
+          <Show when={blackboardAvailable()}><button class="icon-button" classList={{selected:isBlackboard(ownedScene())&&blackboardEditing()===currentId}} aria-label={t('电子黑板')} title={t('电子黑板')} aria-pressed={isBlackboard(ownedScene())&&blackboardEditing()===currentId} disabled={busy()||sending()||exitPreparing()||ownedScene().run?.status==='running'} onClick={()=>void openBlackboard()}><Pencil size={17}/></button></Show>
           <span class="space-utility-divider"/>
           <button class="icon-button" aria-label={t('撤销')} title={t('撤销 · Ctrl+Z')} disabled={busy()||sending()||exitPreparing()||ownedScene().run?.status==='running'||!canReplaySpace(false)} onClick={()=>replaySpace(false)}><Undo2 size={17}/></button>
           <button class="icon-button" aria-label={t('重做')} title={t('重做 · Ctrl+Shift+Z')} disabled={busy()||sending()||exitPreparing()||ownedScene().run?.status==='running'||!canReplaySpace(true)} onClick={()=>replaySpace(true)}><Redo2 size={17}/></button>
         </nav>
-        <Composer onReferenceInserted={referenceInserted} referenceInsertion={referenceInsertion()} showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={ownedScene()} agents={snapshot()!.agents} connections={snapshot()!.connections} draft={ownedDraft()} refs={ownedRefs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show>
+        <Show when={agentAvailable()}><Composer onReferenceInserted={referenceInserted} referenceInsertion={referenceInsertion()} showButtonLabels={preferences().showButtonLabels} thinkingGlowEnabled={preferences().thinkingGlowEnabled} thinkingGlowColor={preferences().thinkingGlowColor} onVideoAnswer={action => void jumpToVideoAnswer(action)} onContinueJournal={continueJournal} voice={voiceControl()} onComposition={active => { if (scene()?.id !== currentId) return; voiceComposing = active; if (!active) voice.compositionEnded(); }} scene={ownedScene()} agents={snapshot()!.agents} connections={snapshot()!.connections.filter(value=>capabilities()?.readyConnectionIds.includes(value.id))} draft={ownedDraft()} refs={ownedRefs()} stream={streams()[currentId]} error={sendErrors()[currentId]} expanded={expanded()[currentId] ?? false} position={composerPositions()[currentId]} onPosition={value => setComposerPositions(old => ({ ...old, [currentId]: value }))} selectionActive={selectionActive()} focusRequest={focusRequest()} sending={sending()} closing={Boolean(closingScene())} onDraft={setDraft} onSend={() => void send()} onCancel={() => void cancel()} onImport={() => void importFiles()} onFreeze={() => void freeze()} onClose={() => void closeScene(currentId)} onNew={() => void newConversation()} onCapture={() => void capture()} onSessions={() => setSessionsOpen(true)} onFocusRef={focusReference} onRemoveRef={toggleReference} onExpanded={value => setExpanded(old => ({ ...old, [currentId]: value }))} onAgent={agentId => void command({ type: 'set_agent', sceneId: currentId, agentId }).catch(showError)} onSelectConnection={connectionId => void command({ type: 'set_scene_connection', sceneId: currentId, connectionId }).catch(showError)} onConnection={() => void openConnection()} onError={showError} /></Show></Show>
         <Show when={sessionsOpen()}><SessionDock scenes={snapshot()!.scenes.filter(scene=>!scene.blackboardLink)} activeId={snapshot()!.activeSceneId} busy={busy()} onClose={() => setSessionsOpen(false)} onCloseScene={id => void closeScene(id)} onActivate={id => { if (id !== scene()!.id) void switchScene({ type: 'activate_scene', sceneId: id }); else setSessionsOpen(false); }} /></Show>
       </Show>;}}
     </Show>

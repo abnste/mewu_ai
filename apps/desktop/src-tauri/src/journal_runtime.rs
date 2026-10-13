@@ -79,15 +79,11 @@ impl RunJournal {
 
     pub fn active(&self) -> Result<(), String> {
         let host = self.app.state::<Host>();
-        let _plugins = self
-            .visual_origin
-            .as_ref()
-            .map(|origin| {
-                let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
-                plugins.store.visual_annotations(&origin.grant)?;
-                Ok::<_, String>(plugins)
-            })
-            .transpose()?;
+        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
+        if let Some(origin) = &self.visual_origin {
+            plugins.store.visual_annotations(&origin.grant)?;
+        }
         let engine = host.lock()?;
         if self
             .visual_origin
@@ -112,15 +108,11 @@ impl RunJournal {
     /// Hash identifies this request, not a durable copy of its private body.
     pub fn begin_model(&self, round: u32, request_sha256: String) -> Result<DispatchLease, String> {
         let host = self.app.state::<Host>();
-        let _plugins = self
-            .visual_origin
-            .as_ref()
-            .map(|origin| {
-                let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
-                plugins.store.visual_annotations(&origin.grant)?;
-                Ok::<_, String>(plugins)
-            })
-            .transpose()?;
+        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
+        if let Some(origin) = &self.visual_origin {
+            plugins.store.visual_annotations(&origin.grant)?;
+        }
         let mut engine = host.lock()?;
         if self
             .visual_origin

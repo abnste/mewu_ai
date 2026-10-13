@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-optional-capabilities"
+description = "Enables the get_optional_capabilities command without any pre-configured scope."
+commands.allow = ["get_optional_capabilities"]
+
+[[permission]]
+identifier = "deny-get-optional-capabilities"
+description = "Denies the get_optional_capabilities command without any pre-configured scope."
+commands.deny = ["get_optional_capabilities"]

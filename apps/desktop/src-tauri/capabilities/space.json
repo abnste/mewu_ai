@@ -9,6 +9,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-get-snapshot",
+    "allow-get-optional-capabilities",
     "allow-begin-exit-preparation",
     "allow-finish-exit-preparation",
     "allow-apply-scene-command",

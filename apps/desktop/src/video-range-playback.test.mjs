@@ -38,7 +38,13 @@ class Media extends EventTarget {
   requestVideoFrameCallback(callback) { const id = ++this.serial; this.frames.set(id, callback); return id; }
   cancelVideoFrameCallback(id) { this.frames.delete(id); }
   present(time) { const [id, callback] = this.frames.entries().next().value; this.frames.delete(id); callback(0, { mediaTime: time }); }
-  removeAttribute() {} load() { this.sourceLoads++; }
+  removeAttribute() {} load() {
+    this.sourceLoads++;
+    if (!this.ended) return;
+    this.ended = false; this.readyState = 0; this.time = 0; this.seeking = false; this.paused = true;
+    this.dispatchEvent(new Event('emptied'));
+    queueMicrotask(() => { this.readyState = 2; this.dispatchEvent(new Event('loadedmetadata')); });
+  }
 }
 function fixture() {
   const node = new Media(), positions = [], observations = [], errors = []; let source = 'original-source', range = { startTicks: 2.5 * T, endTicks: 8 * T }, active = true, ready = true;
@@ -168,7 +174,7 @@ test('play restarts from the retained beginning after source end or an explicit 
       f.node.finishSeek(); await pending;
       assert.equal(f.node.paused, false, action);
       assert.equal(f.node.playCalls, 1);
-      assert.equal(f.node.sourceLoads, 0);
+      assert.equal(f.node.sourceLoads, action === 'rounded-native-end' ? 1 : 0);
       assert.deepEqual(f.errors, []);
     } finally { f.player.dispose(); }
   }
@@ -186,7 +192,7 @@ test('an explicit valid resume position wins over ended while canceled replay ca
     await turn(); f.player.invalidate(); f.node.finishSeek(); await rejected;
     assert.equal(f.node.playCalls, 1);
     assert.equal(f.node.paused, true);
-    assert.equal(f.node.sourceLoads, 0);
+    assert.equal(f.node.sourceLoads, 1, 'a real ended source resets once, including explicit retained resume');
   } finally { f.player.dispose(); }
 });
 
@@ -379,4 +385,142 @@ test('actual video click/space toggle cancels an interval even while paused wait
   const context = { playback: { hasIntervalIntent: () => true, play: () => { plays++; return Promise.resolve(); } }, pausePlayback: () => { pauses++; }, previewHold: { invalidate() {} }, props: { busy: false }, annotationUnavailable: () => true, range: () => ({ startTicks: 0, endTicks: T }), playing: () => false, report() {} };
   vm.createContext(context); vm.runInContext(stripTypeScriptTypes(`const toggle = ${componentSource.slice(toggle.start, toggle.end)}; toggle();`, { mode: 'transform' }), context);
   assert.equal(pauses, 1); assert.equal(plays, 0);
+});
+
+
+let metadataHandlerSource;
+async function eosFixture(emptyOrder = 'sync') {
+  if (!metadataHandlerSource) {
+    const code = await readFile(new URL('./components/VideoArtifact.tsx', import.meta.url), 'utf8');
+    const ast = parse(code, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
+    let handler;
+    const visit = node => {
+      if (!node || typeof node !== 'object') return;
+      if (node.type === 'JSXAttribute' && node.name.name === 'onLoadedMetadata') handler = node.value.expression;
+      for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(visit); else if (value && typeof value === 'object') visit(value);
+    };
+    visit(ast); assert.ok(handler);
+    metadataHandlerSource = code.slice(handler.start, handler.end);
+  }
+  class EosMedia extends Media {
+    duration = 97.2666667; time = this.duration; presentedTime = this.duration; ended = true; eosLocked = true; loading = false; src = 'owned-fixture.mp4';
+    pendingEmpty = false; listeners = new Map();
+    addEventListener(name, listener, options) { const values = this.listeners.get(name) ?? new Set(); values.add(listener); this.listeners.set(name, values); super.addEventListener(name, listener, options); }
+    removeEventListener(name, listener, options) { this.listeners.get(name)?.delete(listener); super.removeEventListener(name, listener, options); }
+    get listenerCount() { return [...this.listeners.values()].reduce((n, values) => n + values.size, 0); }
+    load() {
+      this.sourceLoads++; this.loading = true; this.eosLocked = false;
+      this.ended = false; this.time = 0; this.readyState = 0; this.seeking = false; this.paused = true;
+      if (emptyOrder === 'sync') this.dispatchEvent(new Event('emptied')); else this.pendingEmpty = true;
+    }
+    metadata() { this.loading = false; this.readyState = 2; this.dispatchEvent(new Event('loadedmetadata')); }
+    empty() { assert.equal(this.pendingEmpty, true); this.pendingEmpty = false; this.dispatchEvent(new Event('emptied')); }
+    finishSeek(actual = this.time) { if (!this.eosLocked && !this.loading) { this.presentedTime = actual; super.finishSeek(actual); } }
+  }
+  const node = new EosMedia(), errors = [], positions = []; let source = 'owned-source', range = { startTicks: 2.5 * T, endTicks: Math.round(node.duration * T) };
+  const context = { video: node, TICKS_PER_SECOND: T, range: () => range, setMediaDuration() {}, playback: undefined };
+  const metadata = vm.runInNewContext(`(${metadataHandlerSource})`, context);
+  // Match the real JSX registration before the onMount media adapter. Reload
+  // metadata must not overwrite a user seek with the default trim beginning.
+  node.addEventListener('loadedmetadata', metadata);
+  const player = new VideoPlayback(node, { identity: () => source, range: () => range, position: value => positions.push(value), playing() {}, error: value => errors.push(value) });
+  context.playback = player;
+  return { node, player, errors, positions, get range() { return range; }, set range(value) { range = value; }, set source(value) { source = value; }, close() { player.dispose(); node.removeEventListener('loadedmetadata', metadata); } };
+}
+
+test('real ended media preparation reloads once before seek and the production metadata handler cannot replace a paused 19s target', async () => {
+  for (const emptyOrder of ['sync', 'queued']) {
+    const f = await eosFixture(emptyOrder), range = structuredClone(f.range), node = f.node, src = node.src;
+    try {
+      f.player.seek(19 * T); const flushed = f.player.seeks.flush(); const observed = flushed.catch(() => {}); await turn();
+      assert.equal(node.playCalls, 0);
+      if (node.readyState === 0) { f.node.metadata(); await turn(); }
+      assert.deepEqual(node.assignments, [19], 'initial metadata must not insert an unrelated default seek');
+      if (node.pendingEmpty) node.empty();
+      node.finishSeek(); await flushed; await observed;
+      assert.equal(node.presentedTime, 19, 'the actual presented frame must leave the old ending, not only its optimistic clock');
+      assert.equal(node.currentTime, 19); assert.equal(node.seeking, false); assert.equal(node.paused, true);
+      assert.equal(node.sourceLoads, 1);
+      assert.equal(node.playCalls, 0); assert.equal(node.src, src); assert.equal(f.node, node);
+      assert.deepEqual(f.range, range); assert.deepEqual(f.errors, []);
+      f.player.seek(20 * T); await turn(); node.finishSeek(); await f.player.seeks.flush();
+      assert.equal(node.sourceLoads, 1, 'ordinary seeks must not reload again');
+    } finally { f.close(); await turn(); assert.equal(node.listenerCount, 0); }
+  }
+});
+
+test('EOS replay preserves a nonzero trim beginning and delayed owned emptied cannot revoke the accepted new player', async () => {
+  const f = await eosFixture('queued'); let pending;
+  try {
+    pending = f.player.play(); const rejected = pending.catch(() => {}); await turn();
+    assert.equal(f.node.sourceLoads, 1); assert.equal(f.node.playCalls, 0);
+    f.node.metadata(); await turn(); assert.deepEqual(f.node.assignments, [2.5]);
+    assert.equal(f.node.playCalls, 0, 'no audio may start before the actual retained seek completes');
+    f.node.finishSeek(); await pending; assert.equal(f.node.paused, false);
+    f.node.empty(); await turn(); assert.equal(f.node.paused, false);
+    assert.equal(f.node.playCalls, 1); assert.deepEqual(f.errors, []);
+    // An unrelated later emptied still has the original cancellation contract.
+    f.node.dispatchEvent(new Event('emptied')); assert.equal(f.node.paused, true);
+    await rejected;
+  } finally { f.close(); await pending?.catch(() => {}); }
+});
+
+test('EOS metadata preparation is canceled by pause, source, range or disposal and no late event restarts playback', async () => {
+  for (const change of [f => f.player.pause(), f => { f.source = 'different'; f.player.invalidate(); }, f => { f.range = { startTicks: 3 * T, endTicks: 8 * T }; }, f => f.player.dispose()]) {
+    const f = await eosFixture('queued'); const pending = f.player.play(), rejected = assert.rejects(pending, TrimCanceled);
+    try {
+      await turn(); assert.equal(f.node.sourceLoads, 1); change(f);
+      f.node.metadata(); if (f.node.pendingEmpty) f.node.empty(); f.node.finishSeek();
+      await rejected; await turn(); assert.equal(f.node.playCalls, 0); assert.equal(f.node.paused, true);
+    } finally { f.close(); }
+  }
+});
+
+test('EOS reset reports actual metadata failure without looping reload or hiding it as cancellation', async () => {
+  const f = await eosFixture(); const pending = f.player.play(), rejected = assert.rejects(pending, /无法定位视频/);
+  try {
+    await turn(); f.node.error = { code: 3 }; f.node.dispatchEvent(new Event('error'));
+    await rejected; f.node.metadata(); await turn();
+    assert.equal(f.node.sourceLoads, 1); assert.equal(f.node.playCalls, 0);
+  } finally { f.close(); }
+});
+
+test('reload metadata and actual seek share one eight-second absolute deadline rather than two budgets', async () => {
+  const f = await eosFixture(), originalPerformance = globalThis.performance, originalTimeout = globalThis.setTimeout, delays = [];
+  let now = 0, pending;
+  globalThis.performance = { now: () => now };
+  globalThis.setTimeout = (callback, delay, ...args) => { delays.push(delay); return originalTimeout(callback, delay, ...args); };
+  try {
+    pending = f.player.play(); const rejected = assert.rejects(pending, /无法定位视频/); await turn();
+    now = 7000; f.node.metadata(); await turn();
+    assert.ok(delays.includes(8000)); assert.ok(delays.includes(1000));
+    assert.equal(f.node.playCalls, 0);
+    now = 8001; f.node.finishSeek(); await rejected;
+    assert.equal(f.node.playCalls, 0); assert.equal(f.node.sourceLoads, 1);
+  } finally { f.close(); await pending?.catch(() => {}); globalThis.performance = originalPerformance; globalThis.setTimeout = originalTimeout; }
+});
+
+test('EOS replay never plays a seek acknowledged just before the retained trim beginning', async () => {
+  const f = await eosFixture(); const pending = f.player.play(), rejected = assert.rejects(pending, /无法定位视频/);
+  try {
+    await turn(); f.node.metadata(); await turn();
+    f.node.finishSeek(2.49); await rejected;
+    assert.equal(f.node.playCalls, 0); assert.equal(f.node.paused, true);
+  } finally { f.close(); }
+});
+
+test('an EOS annotation interval is established after metadata and still waits for raster readiness and owns cancellation', async () => {
+  const f = await eosFixture(); let ready = false;
+  const interval = { startTicks: 25_300_000, endTicks: 26_300_000 };
+  const pending = f.player.playInterval(interval, () => true, () => ready);
+  try {
+    await turn(); f.node.metadata(); await turn(); assert.equal(f.node.assignments.at(-1), 2.53);
+    f.node.finishSeek(); await turn(); assert.equal(f.node.playCalls, 0);
+    ready = true; await pending; assert.equal(f.node.paused, false);
+    const hold = new VideoAnnotationPlaybackHold();
+    const update = loading => hold.update({ source: 'document', intent: f.player.playIntent(), loading, failed: false, playing: !f.node.paused, allowed: true }, () => f.player.holdForRaster(), () => f.player.resumeCurrent(), error => f.errors.push(error));
+    update(true); assert.equal(f.node.paused, true);
+    f.player.pause(); update(false); await turn(); assert.equal(f.node.paused, true);
+    assert.deepEqual(f.errors, []);
+  } finally { f.close(); await pending.catch(() => {}); }
 });

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createSignal, For, onCleanup, onMount } from 'solid-js';
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { createOptionalFeatureState } from '../optional-feature-state';
 import { Database, Info, Link2, Puzzle, ScanLine, Settings2, UserRound, Wrench, X } from 'lucide-solid';
 import type { AgentProfile, ConnectionProfile, DiscoverMcpServer, Snapshot } from '../contracts';
 import type { DeleteMemory, SaveMemory } from './MemoryList';
@@ -36,10 +37,13 @@ interface Props {
 }
 
 export default function SettingsDialog(props: Props) {
+  const optional = createOptionalFeatureState(() => props.snapshot.connections);
+  const agentEnabled = () => Boolean(optional()?.agent);
   const [tab, setTab] = createSignal(props.initialTab);
   const facts = createSettingsInformation(() => tab() === 'data' || tab() === 'about');
   const [agentId, setAgentId] = createSignal(props.snapshot.scenes.find(s => s.id === props.snapshot.activeSceneId)?.agentId || props.snapshot.agents[0]?.id || '');
   const [agentPane, setAgentPane] = createSignal<'identity' | 'connection' | 'tools'>(props.initialTab === 'agent' ? 'connection' : 'identity');
+  createEffect(() => { if (!agentEnabled()) setAgentPane('connection'); });
   let dialog!: HTMLElement, closeButton!: HTMLButtonElement;
   const nav = [
     { id: 'general' as const, label: '通用', icon: Settings2 },
@@ -68,17 +72,17 @@ export default function SettingsDialog(props: Props) {
     <section ref={dialog} class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="settings-header" data-tauri-drag-region={props.draggable ? true : undefined}><h1 id="settings-title" data-tauri-drag-region={props.draggable ? true : undefined}>{t("设置")}</h1><button ref={closeButton} class="icon-button" title={t("关闭")} aria-label={t("关闭设置")} onClick={props.onClose}><X size={18} /></button></header>
       <div class="settings-body">
-        <nav class="settings-nav" aria-label={t("设置分类")}><For each={nav}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For></nav>
+        <nav class="settings-nav" aria-label={t("设置分类")}><For each={nav}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.id === 'agent' && !agentEnabled() ? '连接' : entry.label)}</span></button>}</For></nav>
         <div class="settings-content">
           <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} preferences={props.preferences} onPreferences={props.onPreferences} /></div>
           <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} /></div>
-          <div hidden={tab() !== 'agent'}><header class="settings-page-heading"><h2>{t("Agent 与连接")}</h2></header>
-            <div class="segmented"><button aria-pressed={agentPane() === 'identity'} classList={{ selected: agentPane() === 'identity' }} onClick={() => setAgentPane('identity')}><UserRound size={13} />Agent</button><button aria-pressed={agentPane() === 'connection'} classList={{ selected: agentPane() === 'connection' }} onClick={() => setAgentPane('connection')}><Link2 size={13} />{t("连接")}</button><button aria-pressed={agentPane() === 'tools'} classList={{ selected: agentPane() === 'tools' }} onClick={() => setAgentPane('tools')}><Wrench size={13} />MCP</button></div>
+          <div hidden={tab() !== 'agent'}><header class="settings-page-heading"><h2>{t(agentEnabled() ? "Agent 与连接" : "连接")}</h2></header>
+            <div class="segmented"><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'identity'} classList={{ selected: agentPane() === 'identity' }} onClick={() => setAgentPane('identity')}><UserRound size={13} />Agent</button></Show><button aria-pressed={agentPane() === 'connection'} classList={{ selected: agentPane() === 'connection' }} onClick={() => setAgentPane('connection')}><Link2 size={13} />{t("连接")}</button><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'tools'} classList={{ selected: agentPane() === 'tools' }} onClick={() => setAgentPane('tools')}><Wrench size={13} />MCP</button></Show></div>
             <div hidden={agentPane() !== 'identity'}>
-              <AgentsPanel agents={props.snapshot.agents} connections={props.snapshot.connections} scenes={props.snapshot.scenes} memoryStats={props.snapshot.memoryStats} active={tab() === 'agent' && agentPane() === 'identity'} onSelect={setAgentId} onSave={props.onSaveAgent} onSaveMemory={props.onSaveMemory} onDeleteMemory={props.onDeleteMemory} />
+              <Show when={agentEnabled()}><AgentsPanel agents={props.snapshot.agents} connections={props.snapshot.connections} scenes={props.snapshot.scenes} memoryStats={props.snapshot.memoryStats} active={tab() === 'agent' && agentPane() === 'identity'} onSelect={setAgentId} onSave={props.onSaveAgent} onSaveMemory={props.onSaveMemory} onDeleteMemory={props.onDeleteMemory} /></Show>
             </div>
             <div hidden={agentPane() !== 'connection'}><ConnectionsPanel connections={props.snapshot.connections} defaultConnectionId={props.snapshot.defaultConnectionId} active={tab() === 'agent' && agentPane() === 'connection'} onSave={props.onSaveConnectionProfile} onDelete={props.onDeleteConnectionProfile} onDefault={props.onSetDefaultConnection} /></div>
-            <div hidden={agentPane() !== 'tools'}><ToolsPanel snapshot={props.snapshot} agentId={agentId()} onAgent={setAgentId} onDiscover={props.onDiscoverMcpServer} onCommand={props.onMcpCommand} /></div>
+            <div hidden={agentPane() !== 'tools'}><Show when={agentEnabled()}><ToolsPanel snapshot={props.snapshot} agentId={agentId()} onAgent={setAgentId} onDiscover={props.onDiscoverMcpServer} onCommand={props.onMcpCommand} /></Show></div>
           </div>
           <div hidden={tab() !== 'plugins'}><PluginsPanel active={tab() === 'plugins'} /></div>
           <div hidden={tab() !== 'data'}><DataSettings data={facts} active={tab() === 'data'} /></div>

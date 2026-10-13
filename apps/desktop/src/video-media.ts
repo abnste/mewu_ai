@@ -2,6 +2,8 @@
 import { LatestVideoSeek, TICKS_PER_SECOND, TrimCanceled, clampPosition, type VideoRange } from './video-trim';
 export interface VideoMediaObservation { sourcePlaybackTicks?: number; sourceFramePts?: number }
 interface IntervalPlayback { source: string; range: VideoRange; retained: VideoRange; active: () => boolean; ready: () => boolean; seeking: boolean; started: boolean }
+interface EosReset { identity: string; generation: number; deadline: number; promise: Promise<void>; current: () => boolean; cancel: () => void; fail: () => void }
+interface EosLoad { identity: string; generation: number; initialSeek: boolean; emptied: boolean }
 /** A stable media element. Range edits never replace its src or node. */
 export class VideoPlayback {
   private disposed = false;
@@ -20,6 +22,9 @@ export class VideoPlayback {
   private sourceFramePts?: number;
   private mediaIdentity: string;
   private abortSeek?: () => void;
+  private eosReset?: EosReset;
+  private eosLoad?: EosLoad;
+  private seekDeadline = 0;
   readonly seeks: LatestVideoSeek;
   constructor(private video: HTMLVideoElement, private hooks: { identity: () => string; range: () => VideoRange | undefined; position: (ticks: number) => void; playing: (value: boolean) => void; observation?: (value: VideoMediaObservation) => void; error: (error: unknown) => void }) {
     this.mediaIdentity = hooks.identity();
@@ -29,7 +34,7 @@ export class VideoPlayback {
     video.addEventListener('loadedmetadata', this.mediaReady);
   }
   private sample = () => {
-    if (this.disposed || this.mediaIdentity !== this.hooks.identity()) return;
+    if (this.disposed || this.eosReset || this.mediaIdentity !== this.hooks.identity()) return;
     const ticks = Math.round(this.video.currentTime * TICKS_PER_SECOND), range = this.hooks.range();
     if (!Number.isSafeInteger(ticks) || ticks < 0) { this.hooks.observation?.({}); return; }
     const interval = this.interval;
@@ -53,7 +58,49 @@ export class VideoPlayback {
     if (this.frame !== undefined) this.video.cancelVideoFrameCallback?.(this.frame);
     this.frame = undefined; if (!this.disposed) this.hooks.observation?.({});
   };
-  private unavailable = () => { this.completedRange = undefined; this.pause(); this.clearFrame(); };
+  private eosLoadCurrent() { return !!this.eosLoad && !this.disposed && this.eosLoad.generation === this.generation && this.eosLoad.identity === this.hooks.identity(); }
+  private clearEosLoad() { if (this.eosLoad && !this.eosLoad.initialSeek && !this.eosLoad.emptied) this.eosLoad = undefined; }
+  private unavailable = (event?: Event) => {
+    this.completedRange = undefined;
+    if (event?.type === 'emptied' && this.eosLoadCurrent() && this.eosLoad!.emptied) { this.eosLoad!.emptied = false; this.clearEosLoad(); this.clearFrame(); return; }
+    if (event?.type === 'error') { this.eosReset?.fail(); this.eosLoad = undefined; }
+    this.pause(); this.clearFrame();
+  };
+  /** The initial metadata handler must not replace an owned reload's seek. */
+  seekInitial(ticks: number) {
+    if (this.disposed) return;
+    if (this.eosLoadCurrent() && this.eosLoad!.initialSeek) { this.eosLoad!.initialSeek = false; this.clearEosLoad(); return; }
+    this.seek(ticks);
+  }
+  private prepareEos(): EosReset | undefined {
+    if (this.eosReset) return this.eosReset;
+    if (this.disposed || !this.video.ended || this.video.error) return;
+    const identity = this.hooks.identity(), retained = this.hooks.range(); if (!retained) return;
+    const range = { ...retained };
+    const completed = this.completedRange;
+    // Revoke retired owners before load() resets the media and queues emptied.
+    this.invalidate(); this.playOwner = undefined;
+    if (completed?.source === identity && completed.startTicks === range.startTicks && completed.endTicks === range.endTicks) this.completedRange = completed;
+    const generation = this.generation, deadline = performance.now() + 8000;
+    let reset!: EosReset, cancel!: () => void, fail!: () => void;
+    const current = () => {
+      if (this.disposed || generation !== this.generation || identity !== this.hooks.identity()) return false;
+      const retained = this.hooks.range(); return !!retained && retained.startTicks === range.startTicks && retained.endTicks === range.endTicks;
+    };
+    const promise = new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const cleanup = () => { clearTimeout(timer); this.video.removeEventListener('loadedmetadata', ready); this.video.removeEventListener('error', fail); if (this.eosReset === reset) this.eosReset = undefined; };
+      cancel = () => { cleanup(); reject(new TrimCanceled()); };
+      fail = () => { cleanup(); reject(new Error('无法定位视频')); };
+      const ready = () => { if (!current()) { cancel(); return; } if (performance.now() >= deadline) { fail(); return; } if (this.video.readyState >= 1) { cleanup(); resolve(); } };
+      timer = setTimeout(fail, Math.max(0, deadline - performance.now()));
+      this.video.addEventListener('loadedmetadata', ready); this.video.addEventListener('error', fail);
+    });
+    reset = { identity, generation, deadline, promise, current, cancel, fail }; this.eosReset = reset;
+    this.eosLoad = { identity, generation, initialSeek: true, emptied: true };
+    if (!current()) cancel(); else { try { this.video.load(); } catch { fail(); } }
+    return reset;
+  }
   private seeking = () => { if (!this.video.seeking) return; if (this.interval && !this.interval.seeking) this.pause(); this.clearFrame(); };
   private mediaReady = () => { this.completedRange = undefined; this.mediaIdentity = this.hooks.identity(); this.clearFrame(); this.sample(); };
   private seeked = () => { this.sample(); this.frames(true); };
@@ -96,7 +143,10 @@ export class VideoPlayback {
     });
     this.frame = id;
   }
-  private seekActual(identity: string, ticks: number): Promise<number> {
+  private async seekActual(identity: string, ticks: number): Promise<number> {
+    const reset = this.eosReset, deadline = this.seekDeadline;
+    if (reset) await reset.promise;
+    if (this.disposed || identity !== this.hooks.identity() || (reset && !reset.current())) throw new TrimCanceled();
     const generation = this.generation;
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout>;
@@ -106,32 +156,36 @@ export class VideoPlayback {
       const failed = () => { cleanup(); reject(new Error('无法定位视频')); };
       const ended = () => {
         if (!current()) { abort(); return; }
+        if (performance.now() >= deadline) { failed(); return; }
         if (this.video.seeking) return;
         const actual = Math.round(this.video.currentTime * TICKS_PER_SECOND);
         if (!Number.isSafeInteger(actual) || Math.abs(actual - ticks) > 200_000) return;
         if (this.boundarySeek && actual > ticks) { failed(); return; }
         cleanup(); resolve(actual);
       };
-      const ready = () => { if (!current()) { abort(); return; } try { this.video.currentTime = ticks / TICKS_PER_SECOND; queueMicrotask(ended); } catch { failed(); } };
-      timer = setTimeout(failed, 8000); this.abortSeek = abort;
+      const ready = () => { if (!current()) { abort(); return; } if (performance.now() >= deadline) { failed(); return; } try { this.video.currentTime = ticks / TICKS_PER_SECOND; queueMicrotask(ended); } catch { failed(); } };
+      timer = setTimeout(failed, Math.max(0, deadline - performance.now())); this.abortSeek = abort;
       this.video.addEventListener('error', failed); this.video.addEventListener('seeked', ended);
       if (this.video.readyState >= 1) ready(); else this.video.addEventListener('loadedmetadata', ready, { once: true });
     });
   }
-  private requestSeek(ticks: number) { this.boundarySeek = false; this.seeks.request({ identity: this.hooks.identity(), ticks }); }
-  seek(ticks: number) { this.completedRange = undefined; if (this.interval) this.pause(); this.requestSeek(ticks); }
-  async seekAndWait(ticks: number, active: () => boolean): Promise<number> {
+  private requestSeek(ticks: number, deadline?: number) { if (this.disposed) return; const reset = this.prepareEos(); this.boundarySeek = false; this.seekDeadline = deadline ?? reset?.deadline ?? performance.now() + 8000; this.seeks.request({ identity: this.hooks.identity(), ticks }); }
+  private seekWithin(ticks: number, deadline?: number) { if (this.disposed) return; this.completedRange = undefined; if (this.interval) this.pause(); const reset = this.prepareEos(); this.requestSeek(ticks, deadline ?? reset?.deadline); }
+  seek(ticks: number) { this.seekWithin(ticks); }
+  async seekAndWait(ticks: number, active: () => boolean, deadline?: number): Promise<number> {
     this.completedRange = undefined;
+    const reset = this.prepareEos();
     const generation = this.generation, source = this.hooks.identity();
     const current = () => !this.disposed && generation === this.generation && source === this.hooks.identity() && active();
     if (!current()) throw new TrimCanceled();
-    this.requestSeek(ticks); await this.seeks.flush(current);
+    this.requestSeek(ticks, deadline ?? reset?.deadline); await this.seeks.flush(current);
     if (!current() || this.video.seeking) throw new TrimCanceled();
     return Math.round(this.video.currentTime * TICKS_PER_SECOND);
   }
   playIntent() { return this.intentGeneration; }
   hasIntervalIntent() { return Boolean(this.interval); }
   pause() {
+    this.eosReset?.cancel();
     const ownedSeek = Boolean(this.interval) || this.boundarySeek;
     this.intentGeneration++; this.playGeneration++; this.interval = undefined; this.rasterHeld = false; this.abortReady?.(); this.video.pause();
     if (ownedSeek) { this.boundarySeek = false; this.seeks.cancel(); this.abortSeek?.(); }
@@ -170,10 +224,12 @@ export class VideoPlayback {
     const retained = this.hooks.range();
     if (!retained || !active() || !Number.isSafeInteger(range.startTicks) || !Number.isSafeInteger(range.endTicks) || range.startTicks < retained.startTicks || range.endTicks > retained.endTicks || range.startTicks >= range.endTicks) throw new TrimCanceled();
     this.pause();
+    const reset = this.prepareEos(), preparation = this.intentGeneration;
+    if (reset) { await reset.promise; if (preparation !== this.intentGeneration || !reset.current() || !active()) throw new TrimCanceled(); }
     const value: IntervalPlayback = { source: this.hooks.identity(), range: { ...range }, retained: { ...retained }, active, ready, seeking: true, started: false };
     this.interval = value;
     try {
-      const actual = await this.seekAndWait(range.startTicks, () => this.ownsInterval(value));
+      const actual = await this.seekAndWait(range.startTicks, () => this.ownsInterval(value), reset?.deadline);
       if (!this.ownsInterval(value)) throw new TrimCanceled();
       if (actual < range.startTicks || actual >= range.endTicks) throw Error('未能定位到视频标注');
       value.seeking = false;
@@ -192,21 +248,29 @@ export class VideoPlayback {
     await this.ownedPlay(() => !this.disposed && generation === this.generation && identity === this.hooks.identity() && playGeneration === this.playGeneration && (!interval || this.ownsInterval(interval)));
   }
   async play(position?: number) {
-    this.pause();
-    const generation = this.generation, playGeneration = ++this.playGeneration, identity = this.hooks.identity(), range = this.hooks.range(); if (!range || this.disposed) return;
+    if (this.disposed) return; const range = this.hooks.range(); if (!range) return;
     const current = Math.round(this.video.currentTime * TICKS_PER_SECOND);
     const requested = position ?? current;
     // A completed boundary seek may land slightly before the requested time.
     // Remember actual playback completion instead of treating every position
     // near the end as finished; an explicit scrub still owns its exact intent.
     const completed = this.completedRange;
-    const finished = completed?.source === identity && completed.startTicks === range.startTicks && completed.endTicks === range.endTicks;
+    const finished = completed?.source === this.hooks.identity() && completed.startTicks === range.startTicks && completed.endTicks === range.endTicks;
     const start = (position === undefined && (this.video.ended || finished)) || requested < range.startTicks || requested >= range.endTicks ? range.startTicks : requested;
-    this.seek(clampPosition(start, range)); await this.seeks.flush(() => !this.disposed && generation === this.generation && playGeneration === this.playGeneration && identity === this.hooks.identity());
-    if (this.disposed || generation !== this.generation || playGeneration !== this.playGeneration || identity !== this.hooks.identity()) throw new TrimCanceled();
-    await this.ownedPlay(() => !this.disposed && generation === this.generation && playGeneration === this.playGeneration && identity === this.hooks.identity());
+    this.pause(); const reset = this.prepareEos(), preparation = this.intentGeneration;
+    if (reset) { await reset.promise; if (preparation !== this.intentGeneration || !reset.current()) throw new TrimCanceled(); }
+    const generation = this.generation, playGeneration = ++this.playGeneration, identity = this.hooks.identity();
+    const currentOwner = () => {
+      if (this.disposed || generation !== this.generation || playGeneration !== this.playGeneration || identity !== this.hooks.identity()) return false;
+      const retained = this.hooks.range(); return !!retained && retained.startTicks === range.startTicks && retained.endTicks === range.endTicks;
+    };
+    this.seekWithin(clampPosition(start, range), reset?.deadline); await this.seeks.flush(currentOwner);
+    if (!currentOwner()) throw new TrimCanceled();
+    const actual = Math.round(this.video.currentTime * TICKS_PER_SECOND);
+    if (this.video.seeking || !Number.isSafeInteger(actual) || actual < range.startTicks || actual >= range.endTicks) throw new Error('无法定位视频');
+    await this.ownedPlay(currentOwner);
   }
-  invalidate() { this.completedRange = undefined; this.generation++; this.pause(); this.seeks.cancel(); this.abortSeek?.(); this.clearFrame(); }
+  invalidate() { this.completedRange = undefined; this.generation++; this.pause(); this.eosLoad = undefined; this.seeks.cancel(); this.abortSeek?.(); this.clearFrame(); }
   dispose() {
     if (this.disposed) return; this.disposed = true; this.invalidate(); this.seeks.dispose();
     if (this.frame !== undefined) this.video.cancelVideoFrameCallback?.(this.frame);

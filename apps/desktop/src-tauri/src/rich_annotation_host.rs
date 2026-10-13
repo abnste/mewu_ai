@@ -189,6 +189,7 @@ fn read_target(app: &AppHandle, owner: &str, target: &LayoutTarget) -> Result<Ri
         return Err("此窗口不能读取截图图层".into());
     }
     let host = app.state::<crate::Host>();
+    let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
     let engine = host.lock()?;
     host.exit.ensure_running()?;
     let snapshot = engine.store.snapshot();
@@ -336,8 +337,10 @@ pub fn apply_drawing_document(
         return Err("此窗口不能编辑截图图层".into());
     }
     let host = app.state::<crate::Host>();
+    let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
     let mut engine = host.lock()?;
     crate::ensure_scene_command_admission(&app, &host, window.label(), &command)?;
+    crate::optional_capabilities::authoring_command(&engine, &command)?;
     let snapshot = engine.store.snapshot();
     match &command {
         SceneCommand::UpdateDrawings { .. } => { /* Core validates the entire geometry-only batch and immutable references. */

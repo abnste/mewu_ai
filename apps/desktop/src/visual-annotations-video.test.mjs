@@ -13,6 +13,11 @@ async function moduleAt(path) {
 const helpers = await moduleAt('./visual-annotations-send.ts');
 const submission = await moduleAt('./scene-submission.ts');
 const app = await raw('./App.tsx'), ast = parse(app, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
+const appBody=ast.program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
+const predicateSource=['agentAvailable','agentReady'].map(name=>{
+  const declaration=appBody.flatMap(node=>node.type==='VariableDeclaration'?node.declarations:[]).find(node=>node.id.name===name);
+  return 'const '+name+'='+app.slice(declaration.init.start,declaration.init.end)+';';
+}).join('\n');
 let sendNode;
 function visit(node) { if (!node || typeof node !== 'object') return; if (node.type === 'FunctionDeclaration' && node.id?.name === 'send') sendNode = node; for (const value of Object.values(node)) Array.isArray(value) ? value.forEach(visit) : visit(value); }
 visit(ast); assert.ok(sendNode);
@@ -27,10 +32,10 @@ const fixture = () => ({ id: 'scene', agentId: 'agent', connectionId: 'connectio
 const turn = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve; const promise = new Promise(yes => resolve = yes); return { resolve, promise }; }
 function actualApp() {
-  const f = { scene: fixture(), plugin: plugin(), pending: false, exiting: false, calls: [], errors: {}, drafts: {}, operations: 0, afterSave: undefined, flushVideo: undefined };
+  const f = { scene: fixture(), plugin: plugin(), capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection']}, pending: false, exiting: false, calls: [], errors: {}, drafts: {}, operations: 0, afterSave: undefined, flushVideo: undefined };
   const snapshot = () => ({ scenes: [f.scene] });
   const scope = { ...helpers, ...submission, t: value => value, disposed: false, commands: Promise.resolve(), exitFailure: undefined, autosaveVersion: 0, debounce: undefined, clearTimeout,
-    scene: () => f.scene, snapshot, busy: () => false, recording: () => false, scroll: () => false, sending: () => f.pending, exitPreparing: () => f.exiting,
+    scene: () => f.scene, capabilities:()=>f.capabilities, snapshot, busy: () => false, recording: () => false, scroll: () => false, sending: () => f.pending, exitPreparing: () => f.exiting,
     draft: () => f.scene.draft, refs: () => f.scene.refs, visualAnnotationGrant: () => helpers.annotationGrant([f.plugin]), pluginSnapshot: () => ({ plugins: [f.plugin] }),
     spaceOperations: { begin() { f.operations++; return () => f.operations--; } }, voice: { cancel: async () => f.calls.push('voice') },
     flushVideo: async () => { f.calls.push('video-flush'); await f.flushVideo?.(); }, flushDrawing: async () => f.calls.push('drawing-flush'), regionGeometry: { flush: async () => f.calls.push('geometry-flush') },
@@ -41,8 +46,34 @@ function actualApp() {
       sendMessage: async (sceneId, annotation) => { f.calls.push({ type: 'send', sceneId, annotation: structuredClone(annotation) }); const next = structuredClone(f.scene); next.draft = ''; return { scenes: [next] }; },
     },
   };
-  vm.createContext(scope); vm.runInContext(sendBody, scope); return { f, scope };
+  vm.createContext(scope); vm.runInContext(stripTypeScriptTypes(predicateSource,{mode:'transform'})+'\n'+sendBody, scope); return { f, scope };
 }
+
+test('actual send refuses disabled Agent and unavailable selected connections before any flush or bridge call',async()=>{
+  for(const mode of ['disabled','no-ready','other-ready','unavailable']){
+    const {f,scope}=actualApp(),draft=f.scene.draft,refs=JSON.stringify(f.scene.refs);
+    if(mode==='disabled')f.capabilities.agent=null;
+    if(mode==='no-ready')f.capabilities.readyConnectionIds=[];
+    if(mode==='other-ready')f.capabilities.readyConnectionIds=['another-connection'];
+    if(mode==='unavailable')f.capabilities=undefined;
+    await scope.send();
+    assert.equal(f.calls.length,0,mode);assert.equal(f.pending,false);assert.equal(f.operations,0);assert.equal(f.scene.draft,draft);assert.equal(JSON.stringify(f.scene.refs),refs);
+  }
+});
+test('Agent or connection readiness revoked during real send flush yields no bridge send and preserves draft and refs',async()=>{
+  for(const mode of ['disabled','no-ready','other-ready','unavailable']){
+    const {f,scope}=actualApp(),draft=f.scene.draft,refs=JSON.stringify(f.scene.refs),wait=deferred();
+    f.flushVideo=()=>wait.promise;const sending=scope.send();await turn();
+    assert.equal(f.pending,true);assert.equal(f.operations,1);
+    if(mode==='disabled')f.capabilities.agent=null;
+    if(mode==='no-ready')f.capabilities.readyConnectionIds=[];
+    if(mode==='other-ready')f.capabilities.readyConnectionIds=['another-connection'];
+    if(mode==='unavailable')f.capabilities=undefined;
+    wait.resolve();await sending;
+    assert.equal(f.calls.some(call=>call?.type==='send'),false,mode);assert.equal(f.calls.some(call=>call?.type==='set_draft'||call?.type==='set_refs'),false,mode);
+    assert.ok(f.errors.scene);assert.equal(f.scene.draft,draft);assert.equal(JSON.stringify(f.scene.refs),refs);assert.equal(f.pending,false);assert.equal(f.operations,0);
+  }
+});
 
 test('only one referenced real video exposes visual tools; no background required and selection never rewrites refs', () => {
   const scene = fixture(), before = JSON.stringify(scene.refs);

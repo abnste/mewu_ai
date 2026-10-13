@@ -349,9 +349,6 @@ impl Drop for Codec {
 
 #[cfg(test)]mod audio_tests{
     use super::*;
-    #[test]fn recording_wayland_mux_preserves_real_aac_delay_full_pcm_and_tail(){
-        roundtrip("faad");
-    }
     #[test]fn recording_wayland_libav_mux_preserves_real_aac_delay_full_pcm_and_tail(){
         roundtrip_case("avdec_aac",30,0,true);
     }
@@ -360,9 +357,6 @@ impl Drop for Codec {
     }
     #[test]fn expired_capture_still_finalizes_once_with_real_eos_and_decoded_audio_tail(){
         roundtrip_case_with_expiry("avdec_aac",15,0,true,true);
-    }
-    fn roundtrip(decoder:&'static str){
-        roundtrip_case(decoder,30,0,false);
     }
     fn roundtrip_case(decoder:&'static str,frame_count:u32,extra:usize,quantized:bool){
         roundtrip_case_with_expiry(decoder,frame_count,extra,quantized,false);

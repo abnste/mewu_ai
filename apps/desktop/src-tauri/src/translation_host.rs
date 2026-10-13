@@ -165,6 +165,9 @@ impl TranslationRegistry {
             job.cancel.cancel();
         }
     }
+    pub(crate) fn cancel_all(&self) {
+        for job in self.jobs.values() { job.cancel.cancel(); }
+    }
     pub(crate) fn cancel_scene(&self, owner: &str, scene_id: &str) {
         for job in self
             .jobs
@@ -813,6 +816,7 @@ mod tests {
         fn preflight(&self, protocol: ConnectionProtocol) -> RunPreflight {
             let connection = profile(protocol, &self.url);
             RunPreflight {
+                agent_grant: crate::optional_capabilities::Authorizations::test_defaults().require_agent().unwrap(),
                 transport: crate::connection_host::transport_for(&connection).unwrap(),
                 key: zeroize::Zeroizing::new(String::new()),
                 connection,

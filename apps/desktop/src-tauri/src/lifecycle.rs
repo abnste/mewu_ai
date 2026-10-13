@@ -840,6 +840,8 @@ mod tests {
         let (sender, mut receiver) = oneshot::channel();
         let mut engine = crate::Engine {
             store,
+            optional: crate::optional_capabilities::Authorizations::test_defaults(),
+            agent_runs: Default::default(),
             runs: std::collections::HashMap::from([(run.run_id.clone(), sender)]),
             plugin_runs: Default::default(),
             visual_runs: Default::default(),

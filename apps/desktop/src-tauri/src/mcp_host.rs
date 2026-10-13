@@ -40,10 +40,14 @@ pub async fn discover_mcp_server(
     }
     // Check a stale editor before launching anything. The final CAS below also
     // protects changes made while this discovery process is running.
-    {
+    let agent_grant = {
         let host = app.state::<Host>();
         host.exit.ensure_running()?;
-        let snapshot = host.lock()?.store.snapshot();
+        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
+        let engine = host.lock()?;
+        let grant = engine.optional.require_agent()?;
+        let snapshot = engine.store.snapshot();
         match id.as_deref() {
             Some(id) => {
                 let server = snapshot
@@ -59,14 +63,18 @@ pub async fn discover_mcp_server(
             None if snapshot.mcp_servers.len() >= 8 => return Err("最多添加 8 个工具程序".into()),
             None => {}
         }
-    }
+        grant
+    };
     let mut session = McpSession::connect(&command).await?;
     let result = session.catalog().await;
     session.close().await;
     let tools = result?;
     let host = app.state::<Host>();
+    let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+    plugins.store.require_agent()?;
     let mut engine = host.lock()?;
     host.exit.ensure_running()?;
+    crate::optional_capabilities::require_agent_current(&engine, &agent_grant)?;
     let snapshot = engine
         .store
         .upsert_mcp_server(id, expected_revision, label, command, tools)

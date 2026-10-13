@@ -2,19 +2,19 @@
 
 [English](README.md)
 
-Mewu 1.0 是 Windows 桌面重制版。快捷键唤起截图空间，对话、截图、文件、标注与交互式 HTML/SVG 结果共处同一界面。
+Mewu 1.0 是面向 Windows x64、macOS ARM64 和 Linux x64 的桌面重制版。快捷键唤起截图空间，对话、截图、文件、标注与交互式 HTML/SVG 结果共处同一界面。
 
-**当前分支为 1.0 预览版。** 下载[预览版 2](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.2)：[安装版 EXE](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Setup-1.0.0-preview.2-win-x64.exe) 或[便携版 ZIP](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Portable-1.0.0-preview.2-win-x64.zip)。0.7.x 稳定版继续保留在 [master](https://github.com/abnste/mewu_ai/tree/master)。
+[预览版 3](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.3)提供 Windows 安装版与便携版、macOS ARM64 DMG、Linux x64 AppImage。0.7.x 稳定版保留在 [master](https://github.com/abnste/mewu_ai/tree/master)。
 
 ## 当前功能
 
-以下介绍 `next` 分支的当前实现。MP3 导出、预览分辨率设置、保护底图文字的荧光笔、矩形重点高亮、窗口快照及链接/邮箱/电话识别是预览版 2 发布后的新增功能，已发布的预览版 2 下载包尚未包含。
+Agent 和电子黑板是可选插件。全新安装未配置模型连接时仅显示截图操作；显式配置且无需 API 密钥的模型连接也可使用。
 
-- 区域截图、绘制、电子黑板、无边框贴图、OCR、翻译、长截图和扫码。
+- 区域截图、绘制、无边框贴图、OCR、翻译、长截图和扫码；电子黑板通过可选官方插件提供。
 - 启用文字识别插件时，选区稳定后在本机识别链接、邮箱和电话号码，点击结果可复制、打开网页、创建邮件或交给拨号应用；停用插件即停止此类识别，不自动联网、发送邮件或拨打电话。
 - 多会话、最小化与历史恢复、Markdown 和公式、可收纳的公开思考、图片及文本附件。
 - 屏幕录制，默认电脑声音，支持暂停、裁剪、视频批注及 MP4/MP3/GIF 导出；预览分辨率可选原始、75% 或 50%。
-- Agent 身份、本地 SQLite/FTS5 记忆、可选 Hindsight 接入、运行记录和续答。
+- 可选 Agent 插件：身份、本地 SQLite/FTS5 记忆、Hindsight 接入、运行记录和续答。
 - Chat Completions、OpenAI Responses、Anthropic Messages 三种模型接入，以及可从公开 GitHub 安装的模型模板和声明式能力插件。
 - 本地 MCP、插件启停/卸载/更新/回退、可配置的 GitHub 社区插件目录。
 
@@ -22,19 +22,27 @@ Mewu 1.0 是 Windows 桌面重制版。快捷键唤起截图空间，对话、�
 
 绘制箭头使用随长度变化的开口线条箭头。截图与黑板中的荧光笔保护底图的深色、浅色和彩色文字及抗锯齿细节，也包括已保存的马赛克、修补和提取图层；显示、复制、保存和图片引用使用相同的前景分离规则。荧光笔按住 Shift 可画水平、垂直或 45° 斜线，松开 Shift 恢复自由笔迹。重点高亮绘制带细边线的圆角填充矩形，可选中移动、缩放、改色，按住 Shift 绘制正方形。目前高亮基于已保存的截图文档，尚不支持跟随刷新后的桌面内容。
 
-绘制、录屏与 AI 标注属于软件内置能力。当前扩展为 JSON 声明式包，不运行下载的任意代码。Hermes、Codex、WorkBuddy、MiniMax Code 外部 Agent 接入，macOS、跨设备同步及专用图片/视频生成接口尚未交付；当前 Agent 还不能完整替代 Hermes 与 Hindsight。原位和视频批注质量取决于实际模型。
+绘制和录屏保持内置。Agent 与黑板是可选官方插件，可以停用或卸载；未配置可用模型连接时默认进入截图界面，不显示 AI 对话控件。当前扩展为 JSON 声明式包，不运行下载的任意代码。Hermes、Codex、WorkBuddy、MiniMax Code 外部 Agent 接入、跨设备同步及专用图片/视频生成接口尚未交付；Agent 插件还不能完整替代 Hermes 与 Hindsight。原位和视频批注质量取决于实际模型。
 
 只有主动最小化过的会话进入悬浮列表和计数。普通会话按 Esc 后关闭到历史；恢复过的最小化会话按 Esc 返回悬浮列表。悬浮预览随思考和回答显示最新内容，完成后显示最终答复开头，长内容用“...”截断。点击引用会在输入框光标处插入对应的 @图片或 @视频名称，并保留附件关联。
 
 通用设置可关闭「自动生成会话标题」，默认开启。首次用户任务完整回复后，再单独请求当前模型，根据第一条提示词生成简短任务标题；不附带记忆或附件，也不增加对话消息。标题生成失败不影响正常回答，手动命名不会被覆盖。
 
-HTML/SVG/Canvas 结果使用透明的交互对象，悬浮显示移动、刷新和关闭控件；正文可直接交互。视频动作工具条和快速剪辑默认在视频下方，空间不足时自动避让。长截图在选区旁实时预览已拼接内容。
+HTML/SVG/Canvas 结果使用透明的交互对象，悬浮显示移动、刷新和关闭控件；正文可直接交互。视频动作工具条默认在上方，快速剪辑在下方，空间不足时自动避让。长截图在选区旁实时预览已拼接内容。
 
 自动选取窗口后，长截图按钮变为「快照」。支持 Windows UI Automation 的滚动区域可自动获取完整画面，旁边实时显示拼接预览，确认恢复原滚动位置后才保存，并自动加入输入引用。启用官方置顶插件时，成品会自动置顶，退出截图或切换会话后仍可使用。成品保留原选区，可继续绘制、识别、复制及保存；按住 Shift 点击按钮可改用手动长截图。窗口发生变化、画面连续性无法确认或未确认恢复时，不保存未完成的快照。
 
 ## 安装与更新
 
-支持 Windows x64，要求 Windows 10 2004 及以上和 Microsoft WebView2。下载安装器 `MewuAI-Remake-Setup-…-win-x64.exe`，或使用便携 ZIP。
+预览版 3 沿用已有下载命名：
+
+| 平台 | 安装包 |
+| --- | --- |
+| Windows x64 | `MewuAI-Remake-Setup-1.0.0-preview.3-win-x64.exe` · `MewuAI-Remake-Portable-1.0.0-preview.3-win-x64.zip` |
+| macOS ARM64 | `MewuAI-Remake-1.0.0-preview.3-mac-arm64.dmg` |
+| Linux x64 | `MewuAI-Remake-1.0.0-preview.3-linux-x64.AppImage` |
+
+Windows 要求 Windows 10 2004 或以上和 WebView2；macOS 使用系统 WKWebView；Linux 使用 WebKitGTK，Wayland 截图与录屏通过桌面 portal 申请授权。
 
 启动后后台检查更新，“设置 → 关于”也可检查、下载并重启。安装前验证版本绑定签名，再保存会话、结束录屏并等待后台任务收尾。固定的发行更新入口不依赖 next、master 或其他分支名称。
 
@@ -56,7 +64,7 @@ cargo test --workspace --locked
 npm run build
 ```
 
-带签名安装包由[发行工作流](.github/workflows/preview-release.yml)构建。本地发行构建须通过 `TAURI_SIGNING_PRIVATE_KEY` 提供妥善保管的私钥，禁止把私钥写进源码或发布目录。浏览器开发预览只提供界面，没有原生截图、录屏和数据保存能力。
+[发行工作流](.github/workflows/preview-release.yml)生成供真机测试的未签名候选包。发布前需要三端匹配的安装验收记录，以及受保护私钥生成的更新签名。签名仅嵌入固定更新清单，版本下载不附带独立 `.sig`、校验文件或私有元数据。浏览器开发预览只提供界面，没有原生截图、录屏与数据保存能力。
 
 项目采用 Rust + Tauri 2 + Solid/TypeScript + SQLite，Windows 界面使用系统 WebView2。核心在 `crates/mewu-core`，原生宿主与界面在 `apps/desktop`。[插件文档](apps/desktop/plugins/README.md)和[社区目录工具](tools/plugin-catalog/README.md)可用于扩展开发。
 

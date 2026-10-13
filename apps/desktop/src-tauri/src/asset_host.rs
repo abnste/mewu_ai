@@ -115,7 +115,11 @@ pub async fn import_assets(
     let cancel = Arc::new(AtomicBool::new(false));
     let _invoke = ImportCancellation(cancel.clone());
     host.exit.ensure_running()?;
-    let target = ImportTarget::capture(&host.lock()?.store, &scene_id)?;
+    let (target, authoring_grant) = {
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        let engine = host.lock()?;
+        (ImportTarget::capture(&engine.store, &scene_id)?, crate::optional_capabilities::scene_authoring(&engine, &scene_id)?)
+    };
     let root = host.assets.clone();
     let import_window = window.clone();
     let worker_app = app.clone();
@@ -180,6 +184,7 @@ pub async fn import_assets(
         .inner_size().map_err(|_| "无法读取空间尺寸")?
         .to_logical::<u32>(import_window.scale_factor().map_err(|_| "无法读取空间缩放")?);
     let (published, imported_images) = {
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let mut engine = host.lock()?;
         host.exit.ensure_running()?;
         crate::recording::ensure_idle(&app)?;
@@ -187,6 +192,7 @@ pub async fn import_assets(
             return Err("截图尚未完成，请重新添加文件".into());
         }
         target.validate(&engine.store)?;
+        crate::optional_capabilities::scene_authoring_current(&engine, &scene_id, &authoring_grant)?;
         if let Some(mut batch) = prepared {
             let imported_images = batch
                 .assets

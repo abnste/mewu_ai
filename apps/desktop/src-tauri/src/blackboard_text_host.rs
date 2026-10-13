@@ -243,13 +243,18 @@ pub async fn save_blackboard_text(
     }
     let host = app.state::<Host>();
     host.exit.ensure_running()?;
+    let blackboard_grant = host.lock()?.optional.require_blackboard()?;
     let permit = host.storage.maintenance()?;
     tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
         let host = app.state::<Host>();
         host.exit.ensure_running()?;
+        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let mut engine = host.lock()?;
         host.exit.ensure_running()?;
+        if engine.optional.blackboard.as_ref() != Some(&blackboard_grant) {
+            return Err("电子黑板插件已变更".into());
+        }
         let snapshot = save(
             &mut engine.store,
             &host.assets,

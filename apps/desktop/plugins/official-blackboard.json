@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.blackboard",
+  "version": "1.0.0",
+  "name": "电子黑板",
+  "description": "绘制与编辑黑板",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": ["tools"],
+  "contributions": [
+    { "id": "blackboard", "title": "电子黑板", "kind": "space.blackboard", "engine": "host.blackboard-v1" }
+  ]
+}

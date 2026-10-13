@@ -13,6 +13,7 @@ mod capture_macos;
 #[cfg(target_os = "macos")]
 mod capture_permission_macos;
 mod blackboard;
+mod optional_capabilities;
 mod capture_cursor;
 mod capture_delay_work;
 mod capture_preferences;
@@ -205,6 +206,8 @@ use zeroize::Zeroizing;
 
 pub(crate) struct Engine {
     store: Store,
+    optional: optional_capabilities::Authorizations,
+    agent_runs: HashMap<String, (String, optional_capabilities::Grant)>,
     runs: HashMap<String, oneshot::Sender<()>>,
     plugin_runs: HashMap<String, (String, String, u64)>,
     visual_runs: HashMap<String, visual_annotation_host::RunOrigin>,
@@ -222,6 +225,7 @@ fn run_is_authorized(
 ) -> bool {
     engine.runs.contains_key(run_id)
         && engine.store.run_is_active(scene_id, run_id)
+        && engine.agent_runs.get(run_id).is_some_and(|(scene, grant)| scene == scene_id && engine.optional.agent.as_ref() == Some(grant))
         && plugin_origin.is_none_or(|origin| engine.plugin_runs.get(run_id) == Some(origin))
 }
 pub(crate) struct Host {
@@ -412,8 +416,10 @@ async fn apply_scene_command(
         | SceneCommand::RedoDrawing { .. } => return Err("请从绘制工具操作".into()),
         command => command,
     };
+    let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
     let mut engine = host.lock()?;
     ensure_scene_command_admission(&app, &host, window.label(), &command)?;
+    optional_capabilities::authoring_command(&engine, &command)?;
     let finishing_geometry = lifecycle::is_geometry_finish_command(&command);
     let disabled_memory = match &command {
         SceneCommand::SaveAgent { agent } if !agent.memory_enabled => Some(agent.id.clone()),
@@ -641,6 +647,7 @@ fn cancel_ended_runs(engine: &mut Engine, snapshot: &Snapshot) {
         .collect();
     for id in ended {
         engine.plugin_runs.remove(&id);
+        engine.agent_runs.remove(&id);
         engine.visual_runs.remove(&id);
         if let Some(cancel) = engine.runs.remove(&id) {
             let _ = cancel.send(());
@@ -1568,6 +1575,8 @@ async fn send_message(
             .visual_annotations(grant)?;
     }
     let (scene, preflight) = {
+        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        plugins.store.require_agent()?;
         let engine = host.lock()?;
         let scene = engine
             .store
@@ -1675,6 +1684,7 @@ async fn send_message(
         )?;
     }
     host.exit.ensure_new_operation()?;
+    optional_capabilities::require_agent_current(&engine, &preflight.agent_grant)?;
     let context = if let Some(prepared) = video_prepared.as_mut() {
         prepared.ensure_current()?;
         let input = mewu_core::VerifiedVideoRunInput::new(
@@ -1709,6 +1719,7 @@ async fn send_message(
 /// Host-only credentials for one already-validated connection. Never serialize
 /// or expose these to manifests, plugin processes, window state, or diagnostics.
 pub(crate) struct RunPreflight {
+    agent_grant: optional_capabilities::Grant,
     transport: provider_transport::Transport,
     key: Zeroizing<String>,
     connection: ConnectionProfile,
@@ -1754,6 +1765,7 @@ pub(crate) fn preflight_run(
     scene_id: &str,
 ) -> Result<RunPreflight, String> {
     host.exit.ensure_new_operation()?;
+    let agent_grant = engine.optional.require_agent()?;
     let connection = engine
         .store
         .connection_for_scene(scene_id)
@@ -1768,10 +1780,15 @@ pub(crate) fn preflight_run(
     } else {
         credentials::read_profile(&host.root, &connection)?
     };
+    if connection.advanced.auth_mode != mewu_core::ConnectionAuthMode::None && key.trim().is_empty() {
+        return Err("请先填写连接密钥".into());
+    }
+    credentials::validate_key(&key)?;
     if !key.is_empty() && reqwest::header::HeaderValue::from_str(key.as_str()).is_err() {
         return Err("连接密钥格式无效".into());
     }
     Ok(RunPreflight {
+        agent_grant,
         transport,
         key,
         connection,
@@ -1817,12 +1834,15 @@ fn start_run_with_annotations(
     video: Option<Arc<video_annotation_tool::RunScope>>,
 ) -> Result<HostSnapshot, String> {
     let scene_id = context.scene_id.clone();
+    optional_capabilities::require_agent_current(engine, &preflight.agent_grant)?;
     if !engine.store.run_is_active(&scene_id, &context.run_id) {
         engine.plugin_runs.remove(&context.run_id);
+        engine.agent_runs.remove(&context.run_id);
         return Err("运行已取消、结束或被替换".into());
     }
     if context.connection_profile != preflight.connection {
         engine.plugin_runs.remove(&context.run_id);
+        engine.agent_runs.remove(&context.run_id);
         let snapshot = engine
             .store
             .fail_run(&scene_id, &context.run_id, "连接已更改，请重新发送")
@@ -1830,16 +1850,19 @@ fn start_run_with_annotations(
         return Ok(publish(app, &snapshot));
     }
     let RunPreflight {
+        agent_grant,
         transport,
         key,
         connection,
     } = preflight;
+    engine.agent_runs.insert(context.run_id.clone(), (scene_id.clone(), agent_grant));
     let title_transport = transport.clone();
     let run_tools =
         match mcp_host::RunTools::with_annotations(&context, visual.clone(), video.clone()) {
             Ok(tools) => Arc::new(tools),
             Err(error) => {
                 engine.plugin_runs.remove(&context.run_id);
+                engine.agent_runs.remove(&context.run_id);
                 let snapshot = engine
                     .store
                     .fail_run(&scene_id, &context.run_id, error)
@@ -1868,6 +1891,7 @@ fn start_run_with_annotations(
         Ok(bindings) => bindings,
         Err(error) => {
             engine.plugin_runs.remove(&context.run_id);
+            engine.agent_runs.remove(&context.run_id);
             let snapshot = engine
                 .store
                 .fail_run(&scene_id, &context.run_id, error)
@@ -2066,6 +2090,7 @@ fn start_run_with_annotations(
             if let Ok(mut engine) = host.lock() {
                 engine.runs.remove(&run_id);
                 engine.plugin_runs.remove(&run_id);
+                engine.agent_runs.remove(&run_id);
                 engine.visual_runs.remove(&run_id);
             }
             return;
@@ -2076,6 +2101,7 @@ fn start_run_with_annotations(
             let authorized = run_is_authorized(&engine, &scene_id, &run_id, plugin_origin.as_ref());
             engine.runs.remove(&run_id);
             engine.plugin_runs.remove(&run_id);
+            engine.agent_runs.remove(&run_id);
             engine.visual_runs.remove(&run_id);
             if !authorized {
                 return;
@@ -2120,6 +2146,8 @@ mod run_authorization_tests {
     fn revoked_plugin_origin_rejects_late_effects_even_if_scene_is_still_running() {
         let mut engine = Engine {
             store: Store::open_in_memory().unwrap(),
+            optional: optional_capabilities::Authorizations::test_defaults(),
+            agent_runs: HashMap::new(),
             runs: HashMap::new(),
             plugin_runs: HashMap::new(),
             visual_runs: HashMap::new(),
@@ -2137,6 +2165,7 @@ mod run_authorization_tests {
         let run = engine.store.begin_run(&scene_id).unwrap();
         let (sender, _receiver) = oneshot::channel();
         engine.runs.insert(run.run_id.clone(), sender);
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), engine.optional.require_agent().unwrap()));
         let origin = (scene_id.clone(), "example.table".to_owned(), 3);
         engine
             .plugin_runs
@@ -2151,6 +2180,7 @@ mod run_authorization_tests {
         // leave the durable run in Running. Neither prepared attachments, late
         // deltas nor a response already waiting for cleanup may pass this fence.
         engine.plugin_runs.remove(&run.run_id);
+        engine.agent_runs.remove(&run.run_id);
         assert!(engine.store.run_is_active(&scene_id, &run.run_id));
         assert!(!run_is_authorized(
             &engine,
@@ -2211,6 +2241,7 @@ fn cancel_run(
         .map_err(|e| e.to_string())?;
     if let Some(id) = run_id {
         engine.plugin_runs.remove(&id);
+        engine.agent_runs.remove(&id);
         engine.visual_runs.remove(&id);
         if let Some(sender) = engine.runs.remove(&id) {
             let _ = sender.send(());
@@ -2519,6 +2550,7 @@ fn main() {
                 translation_host::cancel_plugin_translation,
                 translation_host::clear_region_translation,
                 send_message,
+                optional_capabilities::get_optional_capabilities,
                 cancel_run,
                 hide_space,
                 open_settings,
@@ -2742,7 +2774,9 @@ fn main() {
                 }
                 Err(_) => true,
             };
-            let plugins = plugin_host::PluginRuntime::open(&root)?;
+            let existing_blackboard = store.scenes().iter().any(optional_capabilities::is_blackboard);
+            let plugins = plugin_host::PluginRuntime::open_with_blackboard(&root, existing_blackboard)?;
+            let optional = optional_capabilities::Authorizations::from_snapshot(&plugins.store.snapshot()?);
             let system_preferences = system_preferences::SystemPreferencesActor::open(&root);
             network_policy::initialize(system_preferences.view());
             if let Ok(value) = system_preferences.view() {
@@ -2753,6 +2787,8 @@ fn main() {
                 _storage_lock: storage_lock,
                 engine: Mutex::new(Engine {
                     store,
+                    optional,
+                    agent_runs: HashMap::new(),
                     runs: HashMap::new(),
                     plugin_runs: HashMap::new(),
                     visual_runs: HashMap::new(),

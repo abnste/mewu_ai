@@ -15,7 +15,7 @@ import SharedDrawingEditor from './SharedDrawingEditor';
 import type {ObjectTrashPort} from '../object-trash';
 interface Props {
   sceneId:string;backgroundId:string;region:Region;box:EditorBox;scale:number;backgroundWidth:number;backgroundHeight:number;
-  background?:Asset;sourceRegion?:Region;documentOnly?:boolean;tools:ManualDrawingKind[];busy:boolean;
+  background?:Asset;sourceRegion?:Region;documentOnly?:boolean;tools:ManualDrawingKind[];busy:boolean;inputLocked?:boolean;
   onCommand:(command:DrawingCommand)=>Promise<void>;onError:(message:string)=>void;onClose:()=>void;
   onExport:(copy:boolean,closeSpace:boolean)=>Promise<boolean>;onPin?:()=>Promise<boolean>;
   onRegisterFlush?:RegisterDrawingFlush;onCopyTable?:(target:DrawingLayoutTarget,format:DrawingTableFormat)=>Promise<void>;
@@ -60,5 +60,5 @@ export default function DrawingEditor(props:Props) {
     get raster(){return props.background&&props.onRasterSnapshot&&!props.documentOnly?raster:undefined;},
     get copyTable(){return props.onCopyTable?(drawing:Drawing,format:DrawingTableFormat)=>{const context=richContext(),value=context&&richPreviewTarget(context,drawing);if(!value)throw Error('表格已更新');return props.onCopyTable!(value,format);}:undefined;},
   };
-  return <SharedDrawingEditor onObjectWheel={props.onObjectWheel} onObjectPointerMove={props.onObjectPointerMove} onObjectPointerLeave={props.onObjectPointerLeave} objects={props.objects} objectsFlush={props.objectsFlush} onRegisterObjectTrash={props.onRegisterObjectTrash} extraTools={props.extraTools} onFinishBlackboard={props.onFinishBlackboard} port={port} box={props.box} tools={props.tools} busy={props.busy} documentOnly={props.documentOnly} blackboard={props.blackboard} retainOnDone={props.blackboard} onRegisterHistory={props.onRegisterHistory} onCommand={action=>props.onCommand(command(action))} onClose={props.onClose} onError={props.onError} onExport={props.onExport} onPin={props.onPin} onRegisterFlush={props.onRegisterFlush}/>;
+  return <SharedDrawingEditor inputLocked={props.inputLocked} onObjectWheel={props.onObjectWheel} onObjectPointerMove={props.onObjectPointerMove} onObjectPointerLeave={props.onObjectPointerLeave} objects={props.objects} objectsFlush={props.objectsFlush} onRegisterObjectTrash={props.onRegisterObjectTrash} extraTools={props.extraTools} onFinishBlackboard={props.onFinishBlackboard} port={port} box={props.box} tools={props.tools} busy={props.busy} documentOnly={props.documentOnly} blackboard={props.blackboard} retainOnDone={props.blackboard} onRegisterHistory={props.onRegisterHistory} onCommand={action=>props.onCommand(command(action))} onClose={props.onClose} onError={props.onError} onExport={props.onExport} onPin={props.onPin} onRegisterFlush={props.onRegisterFlush}/>;
 }
