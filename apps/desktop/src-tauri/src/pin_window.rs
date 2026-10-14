@@ -405,10 +405,12 @@ pub(crate) fn apply_rect(window: &WebviewWindow, rect: Rect) -> Result<(), Strin
     {
         macos::apply_rect(window, rect)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
     {
-        #[cfg(target_os = "linux")]
-        linux::remember_rect(window, rect)?;
+        linux::apply_rect(window, rect)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
         window
             .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
             .map_err(|_| "无法定位贴图")?;

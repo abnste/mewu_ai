@@ -173,7 +173,59 @@ fn atom_words(data: &[u8]) -> Result<Vec<usize>, String> {
         .collect())
 }
 
+pub(super) fn apply_rect(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
+    if gtk::is_initialized_main_thread() {
+        remember_rect(window, rect)?;
+        return place_native(window, rect);
+    }
+    let own = window.clone();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    window
+        .run_on_main_thread(move || {
+            let result = remember_rect(&own, rect).and_then(|()| place_native(&own, rect));
+            let _ = tx.send(result);
+        })
+        .map_err(|_| "无法调整贴图")?;
+    rx.recv_timeout(std::time::Duration::from_secs(2))
+        .map_err(|_| "贴图尺寸调整中断")?
+}
+
+fn request_logical_size(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
+    if !gtk::is_initialized_main_thread() {
+        return Err("贴图窗口只能在界面线程操作".into());
+    }
+    let widget = window.gtk_window().map_err(|_| "贴图窗口不可用")?;
+    let scale = widget.scale_factor();
+    if scale <= 0 {
+        return Err("贴图原位尺寸不可用".into());
+    }
+    let logical = tauri::PhysicalSize::new(rect.width, rect.height)
+        .to_logical::<i32>(f64::from(scale));
+    if logical.width <= 0 || logical.height <= 0 {
+        return Err("贴图原位尺寸不可用".into());
+    }
+    // GTK otherwise promotes the previous WebKit natural size to a fixed
+    // minimum. Keep programmatic resizing enabled internally, but lock both
+    // native bounds to this target so users cannot freely resize the object.
+    widget.set_resizable(true);
+    widget.set_geometry_hints(
+        None::<&gtk::Window>,
+        Some(&gtk::gdk::Geometry::new(
+            logical.width, logical.height, logical.width, logical.height,
+            0, 0, 0, 0, 0., 0., gtk::gdk::Gravity::Center,
+        )),
+        gtk::gdk::WindowHints::MIN_SIZE | gtk::gdk::WindowHints::MAX_SIZE,
+    );
+    // Update the real child requisition before every resize and restore.
+    window
+        .with_webview(move |platform| {
+            platform.inner().set_size_request(logical.width, logical.height);
+        })
+        .map_err(|_| "无法调整贴图内容".into())
+}
+
 fn place_native(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
+    request_logical_size(window, rect)?;
     // A restore job's target is immutable. Do not call the object-edit wrapper:
     // it would overwrite a newer desired rectangle while this job is pending.
     window
