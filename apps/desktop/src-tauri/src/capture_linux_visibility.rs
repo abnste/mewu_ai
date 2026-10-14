@@ -62,6 +62,40 @@ impl<'a, C: Connection> HiddenWindows<'a, C> {
         })
     }
 
+    // Independent pins have an eight-window quota. Keep the ordinary capture
+    // and recording subscribe() admission above limited to its original two.
+    pub(super) fn subscribe_pins(connection: &'a C, windows: &[u32]) -> Result<Self, String> {
+        let own = Self::resume_subscribed_pins(connection, windows)?;
+        for &window in windows {
+            connection
+                .change_window_attributes(
+                    window,
+                    &ChangeWindowAttributesAux::new().event_mask(EventMask::STRUCTURE_NOTIFY),
+                )
+                .map_err(|_| "无法订阅贴图窗口状态")?
+                .check()
+                .map_err(|_| "贴图窗口已不可用")?;
+        }
+        Ok(own)
+    }
+
+    // Called exactly once after subscribe_pins() on this same connection and
+    // synchronous UI hide. Do not resubscribe or drain its notification queue.
+    // wait_hidden() arms it; all later checks use its existing HiddenReceipt.
+    pub(super) fn resume_subscribed_pins(
+        connection: &'a C,
+        windows: &[u32],
+    ) -> Result<Self, String> {
+        if !pin_windows_valid(windows) {
+            return Err("贴图窗口集合无效".into());
+        }
+        Ok(Self {
+            connection,
+            windows: windows.to_vec(),
+            armed: false,
+        })
+    }
+
     fn events(&self) -> Result<(), String> {
         // A hostile or busy display must not create an unbounded drain loop.
         for _ in 0..4096 {
@@ -150,6 +184,27 @@ impl<'a, C: Connection> HiddenWindows<'a, C> {
     }
 }
 
+fn pin_windows_valid(windows: &[u32]) -> bool {
+    !windows.is_empty()
+        && windows.len() <= 8
+        && !windows.contains(&0)
+        && windows.iter().enumerate().all(|(i, window)| !windows[..i].contains(window))
+}
+
+#[cfg(test)]
+mod pin_admission_tests {
+    use super::*;
+
+    #[test]
+    fn independent_pin_quota_rejects_empty_zero_duplicate_and_ninth_drawable() {
+        assert!(pin_windows_valid(&[7, 14, 21, 28, 35, 42, 49, 56]));
+        assert!(!pin_windows_valid(&[]));
+        assert!(!pin_windows_valid(&[7, 14, 0, 28]));
+        assert!(!pin_windows_valid(&[7, 14, 21, 7]));
+        assert!(!pin_windows_valid(&[7, 14, 21, 28, 35, 42, 49, 56, 63]));
+    }
+}
+
 // Run separately under a real Xvfb server, after the ordinary source gate:
 // xvfb-run -a cargo test --locked --features linux-x11-tests x11_visibility_native
 // The feature has no production behavior. Absence of a server fails these tests.
@@ -213,6 +268,32 @@ mod x11_visibility_native {
             MapState::UNMAPPED
         );
         assert!(guard.check(&|| Ok(())).is_err());
+    }
+
+    #[test]
+    fn one_pin_subscription_preserves_all_eight_windows_remap_events() {
+        let (connection, screen) =
+            x11rb::connect(None).expect("a real X11 test display is required");
+        let windows: Vec<_> = (0..8)
+            .map(|_| window(&connection, connection.setup().roots[screen].root))
+            .collect();
+        // The original capture/recording admission cannot accept this group.
+        assert!(HiddenWindows::subscribe(&connection, &windows).is_err());
+        let initial = HiddenWindows::subscribe_pins(&connection, &windows).unwrap();
+        drop(initial);
+        let mut group = HiddenWindows::resume_subscribed_pins(&connection, &windows).unwrap();
+        group.wait_hidden(&|| Ok(())).unwrap();
+        let receipt = group.receipt().unwrap();
+        drop(group);
+        // A notification for another group member cannot be swallowed by a
+        // per-pin observer before the final server state returns to UNMAPPED.
+        connection.map_window(windows[7]).unwrap().check().unwrap();
+        connection.unmap_window(windows[7]).unwrap().check().unwrap();
+        assert_eq!(connection.get_window_attributes(windows[7]).unwrap().reply().unwrap().map_state, MapState::UNMAPPED);
+        assert!(receipt.check_on(&connection, &|| Ok(())).is_err());
+        for window in windows {
+            connection.destroy_window(window).unwrap().check().unwrap();
+        }
     }
     #[test]
     fn destroyed_window_and_mapped_child_of_hidden_parent_are_rejected() {

@@ -683,6 +683,15 @@ pub(crate) fn menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), String
         .map_err(|_| "无法打开贴图菜单".into())
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn hide_for_wayland_capture(window: &WebviewWindow) -> Result<(), String> {
+    linux::hide_for_capture(window)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn finish_wayland_capture(labels: &[String]) {
+    linux::finish_capture_hides(labels);
+}
+
 pub fn capture_begin(app: &AppHandle) {
     if let Some(r) = app.try_state::<PinRegistry>() {
         if let Ok(mut s) = r.state.lock() {

@@ -258,6 +258,9 @@ fn sha(bytes: &[u8]) -> String {
 struct FileIdentity {
     volume: u64,
     file: u64,
+    #[cfg(target_os = "macos")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    volume_uuid: Option<[u8; 16]>,
 }
 #[cfg(windows)]
 fn identity(file: &File) -> Result<FileIdentity, StorageError> {
@@ -293,7 +296,7 @@ fn identity(file: &File) -> Result<FileIdentity, StorageError> {
         file: ((info.index_hi as u64) << 32) | info.index_lo as u64,
     })
 }
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn identity(file: &File) -> Result<FileIdentity, StorageError> {
     use std::os::unix::fs::MetadataExt;
     let m = file.metadata().map_err(ioe)?;
@@ -301,6 +304,89 @@ fn identity(file: &File) -> Result<FileIdentity, StorageError> {
         volume: m.dev(),
         file: m.ino(),
     })
+}
+#[cfg(target_os = "macos")]
+fn identity(file: &File) -> Result<FileIdentity, StorageError> {
+    use std::os::{fd::AsRawFd, unix::fs::MetadataExt};
+    // XNU sys/attr.h: full filesystem UUID from this already-owned FD. Never
+    // reopen a path or substitute the boot-dependent device/fsid for the UUID.
+    #[repr(C)]
+    struct AttrList {
+        bitmap_count: u16,
+        reserved: u16,
+        common: u32,
+        volume: u32,
+        directory: u32,
+        file: u32,
+        fork: u32,
+    }
+    extern "C" {
+        fn fgetattrlist(
+            fd: libc::c_int,
+            attributes: *mut AttrList,
+            buffer: *mut libc::c_void,
+            size: libc::size_t,
+            options: libc::c_ulong,
+        ) -> libc::c_int;
+    }
+    let m = file.metadata().map_err(ioe)?;
+    let mut attributes = AttrList {
+        bitmap_count: 5,
+        reserved: 0,
+        common: 0,
+        volume: 0x8000_0000 | 0x0004_0000, // ATTR_VOL_INFO | ATTR_VOL_UUID
+        directory: 0,
+        file: 0,
+        fork: 0,
+    };
+    // Larger than the one requested fixed attribute, so length20 cannot be
+    // mistaken for truncation. Unsupported/empty/short UUIDs fail closed.
+    let mut buffer = [0u8; 64];
+    if unsafe {
+        fgetattrlist(
+            file.as_raw_fd(),
+            &mut attributes,
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            0,
+        )
+    } != 0
+    {
+        return Err(ioe(std::io::Error::last_os_error()));
+    }
+    if u32::from_ne_bytes(buffer[..4].try_into().unwrap()) != 20 {
+        return Err(err("volume_identity_invalid"));
+    }
+    let uuid: [u8; 16] = buffer[4..20].try_into().unwrap();
+    if uuid == [0; 16] {
+        return Err(err("volume_identity_invalid"));
+    }
+    let after = file.metadata().map_err(ioe)?;
+    if (m.dev(), m.ino()) != (after.dev(), after.ino()) {
+        return Err(err("volume_identity_changed"));
+    }
+    Ok(FileIdentity {
+        volume: m.dev(),
+        file: m.ino(),
+        volume_uuid: Some(uuid),
+    })
+}
+// Persisted roots outlive a mount/boot. Runtime and temporary/destructive
+// identities still use FileIdentity's full Eq, including the actual st_dev.
+fn durable_root_identity_matches(actual: &FileIdentity, stored: &FileIdentity) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(uuid) = stored.volume_uuid {
+            return actual.volume_uuid == Some(uuid) && actual.file == stored.file;
+        }
+        // Old records have no historical UUID. Retain their exact original
+        // device+inode comparison unless the narrow startup upgrade below ran.
+        return actual.volume == stored.volume && actual.file == stored.file;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        actual == stored
+    }
 }
 #[cfg(not(any(unix, windows)))]
 fn identity(_file: &File) -> Result<FileIdentity, StorageError> {
@@ -340,7 +426,36 @@ struct RootPin {
 }
 fn pin_root(path: &Path) -> Result<RootPin, StorageError> {
     local(path)?;
+    #[cfg(not(target_os = "macos"))]
     let parents = asset_locations::pin_ancestors(path).map_err(ioe)?;
+    #[cfg(target_os = "macos")]
+    let parents = {
+        use std::os::{fd::{AsRawFd, FromRawFd}, unix::ffi::OsStrExt};
+        let flags = libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY;
+        let fd = unsafe { libc::open(b"/\0".as_ptr().cast(), flags) };
+        if fd < 0 {
+            return Err(ioe(std::io::Error::last_os_error()));
+        }
+        let mut parents = vec![unsafe { File::from_raw_fd(fd) }];
+        for component in path.components() {
+            let std::path::Component::Normal(name) = component else {
+                if component == std::path::Component::RootDir {
+                    continue;
+                }
+                return Err(err("unsafe_path"));
+            };
+            let name = std::ffi::CString::new(name.as_bytes()).map_err(|_| err("unsafe_path"))?;
+            let parent = parents.last().ok_or_else(|| err("root_pin"))?;
+            let fd = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
+            if fd < 0 {
+                return Err(ioe(std::io::Error::last_os_error()));
+            }
+            let file = unsafe { File::from_raw_fd(fd) };
+            asset_locations::ordinary(&file.metadata().map_err(ioe)?, true).map_err(ioe)?;
+            parents.push(file);
+        }
+        parents
+    };
     let last = parents.last().ok_or_else(|| err("root_pin"))?;
     let stamp = identity(last)?;
     Ok(RootPin {
@@ -821,7 +936,7 @@ pub fn resolve_startup_with_hook(
         }
     }
     let root_pin = pin_root(&p.root)?;
-    if root_pin.stamp != p.stamp {
+    if !durable_root_identity_matches(&root_pin.stamp, &p.stamp) {
         return Err(err("active_root_identity_changed"));
     }
     let db_pins = required_db_pins(&p.root, &p.required_dbs)?;
@@ -830,7 +945,7 @@ pub fn resolve_startup_with_hook(
         if t.phase != StoragePhase::Activated || !same(&p.root, &t.target)? {
             return Err(err("ledger_trial"));
         }
-        if root_pin.stamp != t.target_stamp {
+        if !durable_root_identity_matches(&root_pin.stamp, &t.target_stamp) {
             return Err(err("root_identity_changed"));
         }
         exact_control(
@@ -873,6 +988,112 @@ fn has_marker(root: &Path) -> Result<bool, StorageError> {
         }
     }
     Ok(false)
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn prepare_macos_storage_identity(
+    paths: &StoragePaths,
+    runtime_lock: &RuntimeLock,
+) -> Result<(), StorageError> {
+    let home = dirs::home_dir().ok_or_else(|| err("home_unavailable"))?;
+    prepare_macos_storage_identity_in_home(paths, runtime_lock, &home)
+}
+#[cfg(target_os = "macos")]
+fn prepare_macos_storage_identity_in_home(
+    paths: &StoragePaths,
+    runtime_lock: &RuntimeLock,
+    home: &Path,
+) -> Result<(), StorageError> {
+    use std::os::unix::fs::MetadataExt;
+    validate_paths(paths)?;
+    if !ledger_path(paths).exists() {
+        return Ok(());
+    }
+    let bootstrap_pin = pin_root(&paths.bootstrap)?;
+    if bootstrap_pin.stamp != runtime_lock._root.stamp {
+        return Err(err("runtime_lock_root_changed"));
+    }
+    let mut db = open_ledger(paths, true)?;
+    let tx = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql)?;
+    let p = profile(&tx)?;
+    if p.stamp.volume_uuid.is_some() {
+        return Ok(());
+    }
+    // v1 never recorded a stable volume UUID. This is a deliberately narrow
+    // recovery of the original, unmigrated default home dataset, not a general
+    // inference that a historical device number identifies the current volume.
+    if p.pending.is_some()
+        || p.generation != 0
+        || !p.aliases.is_empty()
+        || !same(&paths.default_root, &home.join(".mewu"))?
+        || !same(&p.root, &paths.default_root)?
+        || p.required_dbs != ["spaces.db", "plugins/plugins.db"]
+        || tx
+            .query_row("SELECT count(*) FROM transfers", [], |r| r.get::<_, i64>(0))
+            .map_err(sql)?
+            != 0
+        || tx
+            .query_row("SELECT count(*) FROM entries", [], |r| r.get::<_, i64>(0))
+            .map_err(sql)?
+            != 0
+        || has_marker(&paths.default_root)?
+        || has_marker(&paths.legacy_root)?
+    {
+        return Ok(());
+    }
+    let root_pin = pin_root(&p.root)?;
+    let home_pin = pin_root(home)?;
+    let owner = unsafe { libc::geteuid() };
+    for pin in [&root_pin, &home_pin, &bootstrap_pin] {
+        if pin
+            ._parents
+            .last()
+            .ok_or_else(|| err("root_pin"))?
+            .metadata()
+            .map_err(ioe)?
+            .uid()
+            != owner
+        {
+            return Err(err("legacy_identity_owner_changed"));
+        }
+    }
+    let uuid = root_pin
+        .stamp
+        .volume_uuid
+        .ok_or_else(|| err("volume_identity_invalid"))?;
+    if home_pin.stamp.volume_uuid != Some(uuid)
+        || bootstrap_pin.stamp.volume_uuid != Some(uuid)
+        || root_pin.stamp.file != p.stamp.file
+    {
+        return Err(err("active_root_identity_changed"));
+    }
+    let _required = required_db_pins(&p.root, &p.required_dbs)?;
+    let old_json: String = tx
+        .query_row("SELECT active_identity FROM profile WHERE id=1", [], |r| r.get(0))
+        .map_err(sql)?;
+    let fresh_pin = pin_root(&p.root)?;
+    if fresh_pin.stamp != root_pin.stamp
+        || pin_root(&paths.bootstrap)?.stamp != runtime_lock._root.stamp
+    {
+        return Err(err("root_identity_changed"));
+    }
+    let changed = tx
+        .execute(
+            "UPDATE profile SET active_identity=?1 WHERE id=1 AND dataset_id=?2 AND generation=0 AND active_root=?3 AND aliases='[]' AND pending_id IS NULL AND active_identity=?4",
+            params![
+                serde_json::to_string(&fresh_pin.stamp).map_err(json)?,
+                p.dataset_id,
+                path_text(&p.root)?,
+                old_json
+            ],
+        )
+        .map_err(sql)?;
+    if changed != 1 {
+        return Err(err("legacy_identity_cas"));
+    }
+    tx.commit().map_err(sql)?;
+    Ok(())
 }
 fn initialize(paths: &StoragePaths) -> Result<(), StorageError> {
     // Missing ledger may never resurrect a retained, migrated-out source.
@@ -982,7 +1203,7 @@ pub fn request_migration(
     if p.required_dbs.is_empty() {
         return Err(err("dataset_not_initialized"));
     }
-    if source.stamp != p.stamp {
+    if !durable_root_identity_matches(&source.stamp, &p.stamp) {
         return Err(err("active_root_identity_changed"));
     }
     let _required = required_db_pins(&p.root, &p.required_dbs)?;
@@ -1044,7 +1265,9 @@ pub fn abandon_failed_migration(paths: &StoragePaths, id: &str) -> Result<bool, 
         return Err(err("migration_not_abandonable"));
     }
     let _source = pin_root(&t.source)?;
-    if _source.stamp != p.stamp || _source.stamp != t.source_stamp {
+    if !durable_root_identity_matches(&_source.stamp, &p.stamp)
+        || !durable_root_identity_matches(&_source.stamp, &t.source_stamp)
+    {
         return Err(err("active_root_identity_changed"));
     }
     let _required = required_db_pins(&p.root, &p.required_dbs)?;
@@ -1079,7 +1302,7 @@ pub fn mark_initialized(
         return Err(err("startup_state_changed"));
     }
     let root = pin_root(&p.root)?;
-    if root.stamp != p.stamp {
+    if !durable_root_identity_matches(&root.stamp, &p.stamp) {
         return Err(err("active_root_identity_changed"));
     }
     let required = vec!["spaces.db".to_owned(), "plugins/plugins.db".to_owned()];
@@ -1161,7 +1384,7 @@ fn finish_trial(
         return Err(err("startup_trial_stale"));
     }
     let target_guard = pin_root(&t.target)?;
-    if target_guard.stamp != t.target_stamp {
+    if !durable_root_identity_matches(&target_guard.stamp, &t.target_stamp) {
         return Err(err("root_identity_changed"));
     }
     let source_guard = if !commit {
@@ -1171,7 +1394,7 @@ fn finish_trial(
     };
     if source_guard
         .as_ref()
-        .is_some_and(|p| p.stamp != t.source_stamp)
+        .is_some_and(|p| !durable_root_identity_matches(&p.stamp, &t.source_stamp))
     {
         return Err(err("root_identity_changed"));
     }
@@ -1208,7 +1431,7 @@ pub fn readonly_state(paths: &StoragePaths) -> Result<Option<StorageState>, Stor
     let tx = db.unchecked_transaction().map_err(sql)?;
     let p = profile(&tx)?;
     let root = pin_root(&p.root)?;
-    if root.stamp != p.stamp {
+    if !durable_root_identity_matches(&root.stamp, &p.stamp) {
         return Err(err("active_root_identity_changed"));
     }
     let _required = required_db_pins(&p.root, &p.required_dbs)?;
@@ -1283,7 +1506,9 @@ fn perform_copy(
     let source = pin_root(&t.source)?;
     let target = pin_root(&t.target)?;
     supports_copy_publication(&t.target)?;
-    if source.stamp != t.source_stamp || target.stamp != t.target_stamp {
+    if !durable_root_identity_matches(&source.stamp, &t.source_stamp)
+        || !durable_root_identity_matches(&target.stamp, &t.target_stamp)
+    {
         return Err(err("root_identity_changed"));
     }
     let control = control_dir(t);
@@ -1979,6 +2204,128 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    fn macos_default_legacy_fixture() -> (Fixture, RuntimeLock, FileIdentity) {
+        let mut f = Fixture::new();
+        f.paths.legacy_root = f.base.join("unused-legacy");
+        let runtime = acquire_runtime_lock(&f.paths, Duration::from_secs(1)).unwrap();
+        let initial = resolve_startup(&f.paths).unwrap();
+        let core = crate::Store::open(initial.root.join("spaces.db")).unwrap();
+        let plugins = crate::plugin_host::PluginRuntime::open(&initial.root).unwrap();
+        mark_initialized(&f.paths, &initial).unwrap();
+        drop(plugins);
+        drop(core);
+        let actual = pin_root(&initial.root).unwrap().stamp;
+        let mut old = actual.clone();
+        old.volume ^= 1; // Simulate the observed remount device change, not inode/UUID.
+        old.volume_uuid = None;
+        let db = open_ledger(&f.paths, true).unwrap();
+        db.execute(
+            "UPDATE profile SET active_identity=?1 WHERE id=1",
+            [serde_json::to_string(&old).unwrap()],
+        )
+        .unwrap();
+        drop(db);
+        drop(initial);
+        (f, runtime, actual)
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_persisted_full_volume_uuid_survives_boot_device_change_but_runtime_does_not() {
+        let f = Fixture::new();
+        let pin = pin_root(&f.paths.legacy_root).unwrap();
+        let actual = pin.stamp.clone();
+        assert!(actual.volume_uuid.is_some_and(|uuid| uuid != [0; 16]));
+        let mut previous_boot = actual.clone();
+        previous_boot.volume ^= 1;
+        assert!(durable_root_identity_matches(&actual, &previous_boot));
+        assert_ne!(actual, previous_boot); // Runtime/destructive full Eq is unchanged.
+        let mut other_volume = actual.clone();
+        other_volume.volume_uuid.as_mut().unwrap()[15] ^= 1;
+        assert!(!durable_root_identity_matches(&actual, &other_volume));
+        let mut replaced_directory = actual.clone();
+        replaced_directory.file ^= 1;
+        assert!(!durable_root_identity_matches(&actual, &replaced_directory));
+        previous_boot.volume_uuid = None;
+        assert!(!durable_root_identity_matches(&actual, &previous_boot));
+        previous_boot.volume = actual.volume;
+        assert!(durable_root_identity_matches(&actual, &previous_boot));
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_root_fd_chain_rejects_final_and_ancestor_symlinks() {
+        let f = Fixture::new();
+        let alias = f.base.join("synthetic-directory-link");
+        std::os::unix::fs::symlink(&f.paths.legacy_root, &alias).unwrap();
+        assert!(pin_root(&alias).is_err());
+        assert!(pin_root(&alias.join("assets")).is_err());
+        let actual = pin_root(&f.paths.legacy_root).unwrap();
+        assert_eq!(
+            identity(actual._parents.last().unwrap()).unwrap(),
+            actual.stamp
+        );
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_default_gen0_legacy_upgrade_only_changes_root_identity_metadata() {
+        let (f, runtime, actual) = macos_default_legacy_fixture();
+        assert_eq!(readonly_state(&f.paths).unwrap_err().code, "active_root_identity_changed");
+        let before_files = inventory(&f.paths.default_root, None, &mut |_| Ok(())).unwrap();
+        let before = profile(&open_ledger(&f.paths, false).unwrap()).unwrap();
+        prepare_macos_storage_identity_in_home(&f.paths, &runtime, &f.base).unwrap();
+        let after = profile(&open_ledger(&f.paths, false).unwrap()).unwrap();
+        assert_eq!(after.stamp, actual);
+        assert_eq!(after.dataset_id, before.dataset_id);
+        assert_eq!(after.generation, before.generation);
+        assert_eq!(after.root, before.root);
+        assert_eq!(after.aliases, before.aliases);
+        assert_eq!(after.pending, before.pending);
+        assert_eq!(after.required_dbs, before.required_dbs);
+        assert_eq!(inventory(&f.paths.default_root, None, &mut |_| Ok(())).unwrap(), before_files);
+        assert_eq!(readonly_state(&f.paths).unwrap().unwrap().generation, 0);
+        assert_eq!(resolve_startup(&f.paths).unwrap().root, f.paths.default_root);
+        prepare_macos_storage_identity_in_home(&f.paths, &runtime, &f.base).unwrap();
+        assert_eq!(profile(&open_ledger(&f.paths, false).unwrap()).unwrap().stamp, actual);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_legacy_upgrade_rejects_another_inode_without_rebinding() {
+        let (f, runtime, actual) = macos_default_legacy_fixture();
+        let db = open_ledger(&f.paths, true).unwrap();
+        let mut old = profile(&db).unwrap().stamp;
+        old.file ^= 1;
+        let original = serde_json::to_string(&old).unwrap();
+        db.execute("UPDATE profile SET active_identity=?1 WHERE id=1", [&original]).unwrap();
+        drop(db);
+        assert_eq!(prepare_macos_storage_identity_in_home(&f.paths, &runtime, &f.base).unwrap_err().code, "active_root_identity_changed");
+        let after = profile(&open_ledger(&f.paths, false).unwrap()).unwrap();
+        assert_eq!(after.stamp, old);
+        assert_ne!(after.stamp.file, actual.file);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_legacy_upgrade_does_not_rebind_history_alias_pending_or_marked_roots() {
+        for case in ["generation", "aliases", "pending", "history", "marker", "wrong-home"] {
+            let (f, runtime, _) = macos_default_legacy_fixture();
+            let db = open_ledger(&f.paths, true).unwrap();
+            let old = profile(&db).unwrap().stamp;
+            match case {
+                "generation" => { db.execute("UPDATE profile SET generation=1 WHERE id=1", []).unwrap(); }
+                "aliases" => { db.execute("UPDATE profile SET aliases=?1 WHERE id=1", [serde_json::to_string(&[f.base.join("old-assets")]).unwrap()]).unwrap(); }
+                "pending" => { db.execute("UPDATE profile SET pending_id=?1 WHERE id=1", [Uuid::new_v4().to_string()]).unwrap(); }
+                "history" => {
+                    db.execute("INSERT INTO transfers VALUES(?1,?2,?3,0,'[]',?4,?4,'Committed',NULL)",params![Uuid::new_v4().to_string(),path_text(&f.paths.default_root).unwrap(),path_text(&f.target).unwrap(),serde_json::to_string(&old).unwrap()]).unwrap();
+                }
+                "marker" => { fs::write(f.paths.default_root.join(".mewu-migrated-synthetic"), b"owned synthetic marker").unwrap(); }
+                "wrong-home" => {}
+                _ => unreachable!(),
+            }
+            drop(db);
+            let home = if case == "wrong-home" { f.base.join("other-home") } else { f.base.clone() };
+            prepare_macos_storage_identity_in_home(&f.paths, &runtime, &home).unwrap();
+            assert_eq!(profile(&open_ledger(&f.paths, false).unwrap()).unwrap().stamp, old, "case {case}");
         }
     }
     #[test]

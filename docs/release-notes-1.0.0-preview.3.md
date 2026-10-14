@@ -8,9 +8,10 @@
 - Windows 连续截图复用同屏全屏窗口，等待原图解码后呈现；高 DPI 下原始截图与标注共享像素比例。
 - 补齐 macOS 带标注 MP4 导出，保留裁切范围、标注显示时段与原音轨。
 - 补齐 macOS、Linux 原位贴图；Linux 安装包使用系统网络库，避免阻断本机文字识别。
+- 修复 macOS 系统重启后无法启动，以及 Ubuntu Wayland 保留置顶图片时再次截图失败。
 
 Windows 提供安装版和便携版；macOS 提供 ARM64 DMG；Linux 提供 x64 AppImage。软件更新仍使用固定预览通道，数据目录和已有连接保留。0.7.3 用户应先升级到 0.7.4；旧版不会自动安装预览版。
 
 Wayland 截图与录屏需要通过桌面授权对话框。GNOME Wayland 下录屏计时条暂不能保证始终置顶，框选包含计时条时可能录入画面。
 
-Agent and blackboard are optional official plugins. A fresh installation starts with capture only until a model is configured. This preview adds Windows, macOS ARM64 and Linux x64 packages, retains the preview update channel, and fixes Wayland capture startup and recording/playback lifecycle issues. Full-length annotated exports retain the final video frame through the valid audio tail. General settings show only options available on the current platform. Repeated Windows captures reuse the fullscreen window on the same monitor and wait for the original image to decode before showing it. High-DPI screenshots and annotations share the same pixel scale. macOS annotated MP4 exports preserve the selected range, annotation timing and original audio tracks. Independent image pins now support macOS and Linux. The Linux package uses the system network library to keep local OCR compatible with the host.
+Agent and blackboard are optional official plugins. A fresh installation starts with capture only until a model is configured. This preview adds Windows, macOS ARM64 and Linux x64 packages, retains the preview update channel, and fixes Wayland capture startup and recording/playback lifecycle issues. Full-length annotated exports retain the final video frame through the valid audio tail. General settings show only options available on the current platform. Repeated Windows captures reuse the fullscreen window on the same monitor and wait for the original image to decode before showing it. High-DPI screenshots and annotations share the same pixel scale. macOS annotated MP4 exports preserve the selected range, annotation timing and original audio tracks. Independent image pins now support macOS and Linux. The Linux package uses the system network library to keep local OCR compatible with the host. This preview also fixes macOS startup after a system reboot and repeated Ubuntu Wayland capture with pinned images.

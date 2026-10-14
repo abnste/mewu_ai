@@ -23,6 +23,7 @@ thread_local! {
     static SPACE_BINDINGS: RefCell<HashSet<usize>> = RefCell::default();
     static HIDDEN_FOR_SPACE: RefCell<HashMap<String, Rect>> = RefCell::default();
     static RESTORING: RefCell<HashMap<String, PendingRestore>> = RefCell::default();
+    static CAPTURE_HIDDEN: RefCell<HashSet<String>> = RefCell::default();
 }
 
 fn local_display_name(value: &str) -> bool {
@@ -449,6 +450,37 @@ async fn show_with_state(
     result
 }
 
+pub(super) fn hide_for_capture(window: &WebviewWindow) -> Result<(), String> {
+    let native=drawable(window)?;
+    let widget=window.gtk_window().map_err(|_|"贴图窗口不可用")?;
+    // current_rect prefers HIDDEN_FOR_SPACE's saved object rectangle, including
+    // a pin already withdrawn while Space renders it. Never overwrite it with
+    // the window manager's unmapped/reparented position.
+    let rect=current_rect(window)?;
+    RESTORING.with(|pending| {
+        if let Some(restore)=pending.borrow().get(window.label()) {
+            restore.cancel.store(true,Ordering::Release);
+        }
+    });
+    // Preserve the last true object position before GTK withdraws it. The
+    // normal Space-unmap path, not an unchecked raw show, restores this target.
+    HIDDEN_FOR_SPACE.with(|hidden| {hidden.borrow_mut().insert(window.label().into(),rect);});
+    CAPTURE_HIDDEN.with(|hidden| {hidden.borrow_mut().insert(window.label().into());});
+    widget.hide();
+    // This flush alone is not evidence. The subscribed bounded X11 guard reads
+    // actual UNMAPPED and all StructureNotify events before portal admission.
+    // https://docs.gtk.org/gdk3/method.Display.flush.html
+    native.display().flush();
+    if widget.is_mapped(){Err("贴图窗口尚未取消映射".into())}else{Ok(())}
+}
+
+pub(super) fn finish_capture_hides(labels: &[String]) {
+    CAPTURE_HIDDEN.with(|hidden| {
+        let mut hidden=hidden.borrow_mut();
+        for label in labels {hidden.remove(label);}
+    });
+}
+
 pub(super) fn restack(app: &AppHandle) {
     let Some(space) = app.get_webview_window("space") else {
         return;
@@ -473,6 +505,7 @@ pub(super) fn restack(app: &AppHandle) {
     HIDDEN_FOR_SPACE.with(|hidden| {
         let mut hidden = hidden.borrow_mut();
         hidden.retain(|label, _| labels.iter().any(|(live, _)| live == label));
+        CAPTURE_HIDDEN.with(|capture|capture.borrow_mut().retain(|label|labels.iter().any(|(live,_)|live==label)));
         RESTORING.with(|pending| {
             pending.borrow_mut().retain(|label, restore| {
                 let live = labels.iter().any(|(live, _)| live == label);
@@ -483,6 +516,10 @@ pub(super) fn restack(app: &AppHandle) {
             });
         });
         for (label, topmost) in labels {
+            // Hiding the Wayland Space emits unmap before permission is shown.
+            // That ordinary callback must not remap a pin while this capture's
+            // subscribed native guard owns its hidden lifetime.
+            if CAPTURE_HIDDEN.with(|hidden|hidden.borrow().contains(&label)){continue;}
             let Some(pin) = app.get_webview_window(&label) else {
                 continue;
             };

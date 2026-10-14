@@ -2891,6 +2891,8 @@ fn main() {
                 &storage_paths,
                 std::time::Duration::from_secs(15),
             )?;
+            #[cfg(target_os = "macos")]
+            storage_root::prepare_macos_storage_identity(&storage_paths, &storage_lock)?;
             let resolved = storage_root::resolve_startup(&storage_paths)?;
             asset_locations::install_context(resolved.locations.clone())?;
             let storage = storage_host::StorageRuntime::new(storage_paths.clone(), &resolved);

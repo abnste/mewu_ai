@@ -323,6 +323,78 @@ pub(crate) fn storage_assets(app: &AppHandle) -> Result<Vec<Asset>, String> {
 pub fn is_pin_label(label: &str) -> bool {
     label.strip_prefix("pin-").is_some_and(valid_uuid)
 }
+
+// Mixed Wayland capture transfers only this immutable lease and scalar owner
+// identity to its X11 observer. GTK/WebView pointers stay on the UI thread.
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+pub(crate) struct PinCaptureOwner {
+    label: String,
+    id: String,
+    revision: u64,
+    source: PinAssetLease,
+    cancel: Cancel,
+}
+
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for PinCaptureOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PinCaptureOwner")
+            .field("label", &self.label)
+            .field("id", &self.id)
+            .field("revision", &self.revision)
+            .field("source_asset_id", &self.source.asset().id)
+            .finish()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl PinCaptureOwner {
+    fn from_entry(label: &str, entry: &Entry) -> Result<Self, String> {
+        if !is_pin_label(label) || !entry.live || !entry.built {
+            return Err("贴图尚未就绪".into());
+        }
+        entry.cancel.check()?;
+        Ok(Self {
+            label: label.into(),
+            id: entry.id.clone(),
+            revision: entry.revision,
+            source: entry.source.clone(),
+            cancel: entry.cancel.clone(),
+        })
+    }
+
+    fn check_entry(&self, entry: &Entry) -> Result<(), String> {
+        self.cancel.check()?;
+        entry.cancel.check()?;
+        if !entry.live
+            || !entry.built
+            || entry.id != self.id
+            || entry.revision != self.revision
+            || !Arc::ptr_eq(&entry.source.0, &self.source.0)
+            || !Arc::ptr_eq(&entry.cancel.flag, &self.cancel.flag)
+        {
+            return Err("贴图已改变，请重新截图".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check(&self, app: &AppHandle) -> Result<(), String> {
+        let registry = app.try_state::<PinRegistry>().ok_or("贴图已关闭")?;
+        let state = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+        let entry = state.entries.get(&self.label).ok_or("贴图已关闭")?;
+        self.check_entry(entry)
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn capture_owner(app: &AppHandle, label: &str) -> Result<PinCaptureOwner, String> {
+    let registry = app.try_state::<PinRegistry>().ok_or("贴图已关闭")?;
+    let state = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+    let entry = state.entries.get(label).ok_or("贴图已关闭")?;
+    PinCaptureOwner::from_entry(label, entry)
+}
+
 fn valid_uuid(id: &str) -> bool {
     uuid::Uuid::parse_str(id).is_ok_and(|u| u.hyphenated().to_string() == id)
 }
@@ -1603,6 +1675,86 @@ mod tests {
             origin_x: Some(-800),
             origin_y: Some(0),
             scale_factor: Some(1.5),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    mod capture_owner_tests {
+        use super::*;
+
+        fn live_entry(root: &TestRoot, registry: &PinRegistry) -> (String, Entry) {
+            let id = uuid::Uuid::new_v4().to_string();
+            let source = stage(
+                &root.0,
+                &RgbaImage::new(2, 2),
+                registry.pixels.clone().try_acquire_many_owned(4).unwrap(),
+            ).unwrap();
+            (format!("pin-{id}"), Entry {
+                id: id.clone(), revision: 1, source, object_assets: HashMap::new(),
+                quarter_turns: 0, topmost: true, opacity: 1., epoch: 0,
+                original: pin_window::Rect { x: 0, y: 0, width: 26, height: 26 },
+                source_viewport: pin_window::Rect { x: 0, y: 0, width: 26, height: 26 },
+                live: true, built: true, request_id: id, cancel: Cancel::default(), ready: None,
+                _window_slot: Arc::new(registry.windows.clone().try_acquire_owned().unwrap()),
+            })
+        }
+
+        #[test]
+        fn capture_owner_rejects_revoked_pending_revised_and_reused_sources() {
+            let root = TestRoot::new();
+            let registry = PinRegistry::default();
+            let (label, mut entry) = live_entry(&root, &registry);
+            assert!(PinCaptureOwner::from_entry("space", &entry).is_err());
+            entry.built = false;
+            assert!(PinCaptureOwner::from_entry(&label, &entry).is_err());
+            entry.built = true;
+            entry.live = false;
+            assert!(PinCaptureOwner::from_entry(&label, &entry).is_err());
+            entry.live = true;
+            let owner = PinCaptureOwner::from_entry(&label, &entry).unwrap();
+            owner.check_entry(&entry).unwrap();
+            // Live pins intentionally survive later capture/session epochs.
+            entry.epoch += 1;
+            owner.check_entry(&entry).unwrap();
+            entry.revision += 1;
+            assert!(owner.check_entry(&entry).is_err());
+            entry.revision -= 1;
+            let old_cancel = entry.cancel.clone();
+            entry.cancel = Cancel::default();
+            assert!(owner.check_entry(&entry).is_err());
+            entry.cancel = old_cancel;
+            let old_source = entry.source.clone();
+            let mut replacement = stage(
+                &root.0,
+                &RgbaImage::new(2, 2),
+                registry.pixels.clone().try_acquire_many_owned(4).unwrap(),
+            ).unwrap();
+            // Even a copied public asset ID cannot replace the held source.
+            Arc::get_mut(&mut replacement.0).unwrap().asset.id = old_source.asset().id.clone();
+            entry.source = replacement;
+            assert!(owner.check_entry(&entry).is_err());
+            entry.source = old_source;
+            owner.check_entry(&entry).unwrap();
+            entry.cancel.cancel();
+            assert!(owner.check_entry(&entry).is_err());
+        }
+
+        #[test]
+        fn capture_owner_holds_original_pixels_until_its_last_reader_drops() {
+            let root = TestRoot::new();
+            let registry = PinRegistry::default();
+            let initial = registry.pixels.available_permits();
+            let (label, entry) = live_entry(&root, &registry);
+            let path = PathBuf::from(&entry.source.asset().path);
+            let owner = PinCaptureOwner::from_entry(&label, &entry).unwrap();
+            let reader = owner.clone();
+            drop(entry);
+            drop(owner);
+            assert!(path.is_file());
+            assert_eq!(registry.pixels.available_permits(), initial - 4);
+            drop(reader);
+            assert!(!path.exists());
+            assert_eq!(registry.pixels.available_permits(), initial);
         }
     }
     fn region_origin() -> RegionOrigin {
