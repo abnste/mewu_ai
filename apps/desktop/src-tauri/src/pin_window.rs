@@ -401,7 +401,11 @@ pub(crate) fn apply_rect(window: &WebviewWindow, rect: Rect) -> Result<(), Strin
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::apply_rect(window, rect)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         #[cfg(target_os = "linux")]
         linux::remember_rect(window, rect)?;
