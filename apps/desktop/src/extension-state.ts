@@ -23,14 +23,26 @@ export function mergeExtensionBindings(previous: ExtensionBinding[], incoming: E
   return [...bindings.values()];
 }
 export function selectionExtensionServices(records: ExtensionRecord[]): ExtensionServiceChoice[] {
+  return placedExtensionServices(records, 'selection-toolbar');
+}
+export function spaceExtensionServices(records: ExtensionRecord[]): ExtensionServiceChoice[] {
+  return placedExtensionServices(records, 'space-toolbar');
+}
+function placedExtensionServices(records: ExtensionRecord[], placement: string): ExtensionServiceChoice[] {
   return extensionServices(records, 'command').filter(({ service }) => service.metadata !== null && typeof service.metadata === 'object'
-    && !Array.isArray(service.metadata) && (service.metadata as Record<string, unknown>).placement === 'selection-toolbar');
+    && !Array.isArray(service.metadata) && (service.metadata as Record<string, unknown>).placement === placement);
+}
+export function extensionCommandInput(service: ExtensionService): Record<string, unknown> {
+  const metadata = service.metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+  const input = (metadata as Record<string, unknown>).input;
+  return input !== null && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
 }
 export const extensionServiceKey = (choice: ExtensionServiceChoice): string => JSON.stringify([choice.record.manifest.id, choice.service.id]);
 export function extensionResultText(result: unknown): string {
   if (typeof result === 'string') return result;
   if (result && typeof result === 'object' && !Array.isArray(result)) {
-    for (const field of ['text', 'answer', 'message']) {
+    for (const field of ['text', 'answer', 'message', 'content']) {
       const value = (result as Record<string, unknown>)[field];
       if (typeof value === 'string') return value;
     }

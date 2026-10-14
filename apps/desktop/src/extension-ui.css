@@ -8,3 +8,8 @@
 .extension-task-result{display:flex;gap:8px;max-height:180px;overflow:auto;font-size:12px;line-height:1.6}
 .extension-task-result p{flex:1;margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .extension-task-result button{flex:none}
+.extension-space-commands{position:relative;display:inline-flex;align-items:center}
+.extension-space-commands .extension-space-menu,.extension-space-commands .extension-space-result{top:auto;bottom:calc(100% + 10px);left:0;right:auto}
+.extension-space-commands .extension-space-menu{max-height:min(220px,calc(100vh - 90px))}
+.space-utilities .extension-space-result .icon-button{color:var(--secondary)}
+.space-utilities .extension-space-result .icon-button:hover{background:var(--accent-soft)}

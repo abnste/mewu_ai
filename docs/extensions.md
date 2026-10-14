@@ -51,7 +51,7 @@ All registrations use the same lifecycle and executable handler. A handler recei
 
 | Registration | Purpose |
 | --- | --- |
-| `ctx.commands.register` | User actions; `metadata.placement: "selection-toolbar"` adds a selection action |
+| `ctx.commands.register` | User actions; `metadata.placement: "selection-toolbar"` adds a selection action, and `"space-toolbar"` adds an action to the lower-left space controls |
 | `ctx.tools.register` | A plugin-defined callable tool |
 | `ctx.agents.register` | An execution strategy selectable in Agent settings |
 | `ctx.memory.register` | A memory implementation selectable for an Agent |
@@ -60,6 +60,8 @@ All registrations use the same lifecycle and executable handler. A handler recei
 | `ctx.services.register` | An author's own named service contract; the core need not know its business domain |
 
 Services can declare `inputSchema`. Other plugins use `ctx.services.list` and `ctx.services.call("plugin-id/service-id", input)`. Cross-plugin calls require a declared, compatible dependency; permissions are attenuated across the call chain. Use `metadata.contract` to identify a custom contract and its version. Do not treat module tags as permissions or service protocols.
+
+Space actions receive `metadata.input` when it is a JSON object, otherwise `{}`, and the current scene identity. They receive no implicit region grant; region operations must start from an explicitly authorized selection action.
 
 Select an Agent or memory provider from an existing Agent's settings. Normal conversation persistence and cancellation remain owned by Mewu. A memory provider receives `operation: "recall"` with a query, or `operation: "retain"` with the completed conversation text. The memory switch still controls whether these calls happen. Provider data is isolated by plugin and Agent. Storage is paginated; it has no fixed total record-count limit. `compareAndSet` supports concurrent updates without overwriting another invocation.
 
