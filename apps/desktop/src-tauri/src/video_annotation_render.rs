@@ -440,6 +440,21 @@ impl RasterPlan {
         crate::video_clip_backend::check_cancel(cancel)?;
         Ok(Self { entries: output })
     }
+    /// Borrow only verified, decoded pixels while their opened PNG leases remain
+    /// alive. Native Apple layers copy these pixels; they never reopen a path.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn visit_rasters(
+        &self,
+        mut visit: impl FnMut(
+            &crate::video_clip_contract::OverlayRaster,
+            &image::RgbaImage,
+        ) -> Result<(), ClipError>,
+    ) -> Result<(), ClipError> {
+        for (entry, pixels, _lease) in &self.entries {
+            visit(entry, pixels)?;
+        }
+        Ok(())
+    }
     pub(crate) fn paint(
         &self,
         rgba: &mut image::RgbaImage,

@@ -40,6 +40,8 @@ use std::{
 mod frames;
 #[path = "video_clip_gif_macos.rs"]
 mod gif;
+#[path = "video_clip_annotated_macos.rs"]
+mod annotated;
 
 struct Source {
     path: PathBuf,
@@ -540,6 +542,25 @@ pub(super) fn execute(
                 cancel,
             )
             .map(|frames| ClipJobResult::FramesExtracted { frames })
+        }
+        ClipJob::RenderAnnotated {
+            source,
+            output,
+            expected,
+            range,
+            overlays,
+        } => {
+            let mut source = Source::open(source, cancel)?;
+            annotated::render(
+                &mut source,
+                output,
+                expected,
+                range.as_ref(),
+                overlays,
+                cancel,
+                on_progress,
+            )
+            .map(ClipJobResult::Rendered)
         }
         ClipJob::RenderGif {
             source,
