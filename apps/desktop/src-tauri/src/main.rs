@@ -16,6 +16,8 @@ mod blackboard;
 mod optional_capabilities;
 mod capture_cursor;
 mod capture_delay_work;
+#[cfg(windows)]
+mod capture_presentation;
 mod capture_preferences;
 mod capture_visibility;
 mod capture_shortcut;
@@ -237,6 +239,8 @@ pub(crate) struct Host {
     assets: PathBuf,
     capturing: Arc<AtomicBool>,
     capture_jobs: Arc<capture_delay_work::CaptureJobs>,
+    #[cfg(windows)]
+    capture_presentation: Arc<capture_presentation::Registry>,
     capture_preferences: capture_preferences::CapturePreferencesActor,
     system_preferences: system_preferences::SystemPreferencesActor,
     session_titles: session_title::Runtime,
@@ -1134,6 +1138,7 @@ async fn expand_capture_space(
                 // so a later capture on another screen cannot reuse its bounds.
                 #[cfg(target_os = "linux")]
                 allowed()?;
+                #[cfg(not(windows))]
                 target
                     .set_simple_fullscreen(false)
                     .map_err(|_| "无法调整空间")?;
@@ -1152,30 +1157,62 @@ async fn expand_capture_space(
                         }) {
                             return Err("显示器已变化，请重新截图".into());
                         }
-                        target
-                            .set_position(tauri::PhysicalPosition::new(
-                                captured.origin_x,
-                                captured.origin_y,
-                            ))
-                            .map_err(|_| "无法定位空间")?;
-                        target
-                            .set_size(tauri::PhysicalSize::new(
-                                captured.display_width,
-                                captured.display_height,
-                            ))
-                            .map_err(|_| "无法调整空间")?;
-                        // Use a point inside the captured screen, including for
-                        // negative virtual-desktop origins and mixed-DPI screens.
-                        target
-                            .set_fullscreen_on_monitor(tauri::PhysicalPosition::new(
-                                f64::from(captured.origin_x)
-                                    + f64::from(captured.display_width) / 2.,
-                                f64::from(captured.origin_y)
-                                    + f64::from(captured.display_height) / 2.,
-                            ))
-                            .map_err(|_| "无法全屏显示空间")?;
-                        if !target.is_fullscreen().map_err(|_| "无法确认全屏状态")? {
-                            return Err("无法全屏显示空间".into());
+                        // A hidden fullscreen window already on this monitor
+                        // needs no resize or shell/fullscreen transition. Repeating
+                        // them invalidates the WebView composition surface.
+                        #[cfg(windows)]
+                        let already_placed = target
+                            .is_fullscreen()
+                            .map_err(|_| "无法确认全屏状态")?
+                            && !target.is_minimized().map_err(|_| "无法确认空间状态")?
+                            && target.inner_size().map_err(|_| "无法确认空间尺寸")?
+                                == tauri::PhysicalSize::new(
+                                    captured.display_width,
+                                    captured.display_height,
+                                )
+                            && target.outer_position().map_err(|_| "无法确认空间位置")?
+                                == tauri::PhysicalPosition::new(captured.origin_x, captured.origin_y)
+                            && target
+                                .current_monitor()
+                                .map_err(|_| "无法定位显示器")?
+                                .is_some_and(|monitor| {
+                                    monitor.position().x == captured.origin_x
+                                        && monitor.position().y == captured.origin_y
+                                        && monitor.size().width == captured.display_width
+                                        && monitor.size().height == captured.display_height
+                                });
+                        #[cfg(not(windows))]
+                        let already_placed = false;
+                        if !already_placed {
+                            #[cfg(windows)]
+                            if target.is_fullscreen().map_err(|_| "无法确认全屏状态")? {
+                                target.set_fullscreen(false).map_err(|_| "无法调整空间")?;
+                            }
+                            target
+                                .set_position(tauri::PhysicalPosition::new(
+                                    captured.origin_x,
+                                    captured.origin_y,
+                                ))
+                                .map_err(|_| "无法定位空间")?;
+                            target
+                                .set_size(tauri::PhysicalSize::new(
+                                    captured.display_width,
+                                    captured.display_height,
+                                ))
+                                .map_err(|_| "无法调整空间")?;
+                            // Use a point inside the captured screen, including for
+                            // negative virtual-desktop origins and mixed-DPI screens.
+                            target
+                                .set_fullscreen_on_monitor(tauri::PhysicalPosition::new(
+                                    f64::from(captured.origin_x)
+                                        + f64::from(captured.display_width) / 2.,
+                                    f64::from(captured.origin_y)
+                                        + f64::from(captured.display_height) / 2.,
+                                ))
+                                .map_err(|_| "无法全屏显示空间")?;
+                            if !target.is_fullscreen().map_err(|_| "无法确认全屏状态")? {
+                                return Err("无法全屏显示空间".into());
+                            }
                         }
                     }
                     capture::CoordinateSpace::LogicalPoints => {
@@ -1208,6 +1245,53 @@ async fn expand_capture_space(
         })
         .map_err(|_| "无法展开空间")?;
     receive.await.map_err(|_| "空间展开中断")?
+}
+
+/// Only the first-party Space can acknowledge its current, newly captured image.
+/// This command cannot initiate capture, switch scenes, or show a window.
+#[tauri::command]
+fn capture_background_ready(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    scene_id: String,
+    background_id: String,
+    width: u32,
+    height: u32,
+    success: bool,
+) -> Result<bool, String> {
+    if window.label() != "space" {
+        return Err("此窗口不能确认截图呈现".into());
+    }
+    let host = app.state::<Host>();
+    host.exit.ensure_new_operation()?;
+    #[cfg(windows)]
+    {
+        if window.is_visible().map_err(|_| "无法检查截图窗口")? {
+            return Ok(false);
+        }
+        let engine = host.lock()?;
+        let asset = engine
+            .store
+            .active_background_for_preview(&scene_id, &background_id)
+            .map_err(|error| error.to_string())?;
+        if asset.width != Some(width) || asset.height != Some(height) {
+            return Ok(false);
+        }
+        host.capture_presentation.acknowledge(
+            &capture_presentation::Identity {
+                scene: scene_id,
+                background: background_id,
+                width,
+                height,
+            },
+            success,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (scene_id, background_id, width, height, success);
+        Ok(false)
+    }
 }
 
 #[tauri::command]
@@ -1383,6 +1467,8 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     })
     .await
     .map_err(|_| "截图任务中断".to_string())?;
+    #[cfg(windows)]
+    let mut presentation_required = false;
     let result = async {
         #[cfg(target_os = "linux")]
         let mut pending = captured?;
@@ -1424,53 +1510,85 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             origin_y: Some(captured.origin_y),
             scale_factor: Some(captured.scale_factor),
         };
-        let mut engine = host.lock()?;
-        work.check()?;
-        host.exit.ensure_new_operation()?;
-        #[cfg(target_os = "macos")]
-        for witness in &adoption_witnesses {
-            window_witness_macos::current(witness)?;
-        }
-        #[cfg(target_os = "linux")]
-        for witness in &adoption_witnesses {
-            window_witness_linux::current(witness)?;
-        }
-        let current = engine.store.snapshot();
-        let active = current
-            .scenes
-            .iter()
-            .find(|s| s.id == current.active_scene_id)
-            .ok_or("场景不存在")?;
-        if active.background.is_some()
-            || !active.messages.is_empty()
-            || !active.items.is_empty()
-            || !active.draft.is_empty()
-        {
-            engine
+        // Keep the synchronous adoption separate from the async render wait:
+        // neither Engine nor its SQLite connection crosses an await.
+        let (id, snapshot) = {
+            let mut engine = host.lock()?;
+            work.check()?;
+            host.exit.ensure_new_operation()?;
+            #[cfg(target_os = "macos")]
+            for witness in &adoption_witnesses {
+                window_witness_macos::current(witness)?;
+            }
+            #[cfg(target_os = "linux")]
+            for witness in &adoption_witnesses {
+                window_witness_linux::current(witness)?;
+            }
+            let current = engine.store.snapshot();
+            let active = current
+                .scenes
+                .iter()
+                .find(|s| s.id == current.active_scene_id)
+                .ok_or("场景不存在")?;
+            if active.background.is_some()
+                || !active.messages.is_empty()
+                || !active.items.is_empty()
+                || !active.draft.is_empty()
+            {
+                engine
+                    .store
+                    .apply(SceneCommand::NewScene)
+                    .map_err(|e| e.to_string())?;
+            }
+            let id = engine.store.snapshot().active_scene_id;
+            let snapshot = engine
                 .store
-                .apply(SceneCommand::NewScene)
+                .set_background(&id, asset.clone())
                 .map_err(|e| e.to_string())?;
+            #[cfg(target_os = "linux")]
+            pending.retain();
+            if let Some(map) = window_map {
+                // Metadata is optional: a rejected or unavailable map must never
+                // discard the successfully saved screenshot or its new scene.
+                let _ = host.window_snap.insert(&asset, map);
+            }
+            (id, snapshot)
+        };
+        #[cfg(windows)]
+        {
+            presentation_required = true;
         }
-        let id = engine.store.snapshot().active_scene_id;
-        let snapshot = engine
-            .store
-            .set_background(&id, asset.clone())
-            .map_err(|e| e.to_string())?;
-        #[cfg(target_os = "linux")]
-        pending.retain();
-        if let Some(map) = window_map {
-            // Metadata is optional: a rejected or unavailable map must never
-            // discard the successfully saved screenshot or its new scene.
-            let _ = host.window_snap.insert(&asset, map);
-        }
-        Ok(publish(&app, &snapshot))
+        #[cfg(windows)]
+        let presentation = host.capture_presentation.begin(capture_presentation::Identity {
+            scene: id.clone(),
+            background: asset.id.clone(),
+            width: captured.width,
+            height: captured.height,
+        })?;
+        let published = publish(&app, &snapshot);
+        #[cfg(windows)]
+        presentation
+            .wait(|| {
+                work.check()?;
+                host.exit.ensure_new_operation()?;
+                recording::ensure_idle(&app)?;
+                host.lock()?
+                    .store
+                    .active_background_for_preview(&id, &asset.id)
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .await?;
+        Ok(published)
     }
     .await;
     if work.check().is_ok() {
         #[cfg(target_os = "linux")]
         let restore = capture_check().is_ok();
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", windows)))]
         let restore = true;
+        #[cfg(windows)]
+        let restore = !presentation_required || result.is_ok();
         if restore { show(&app); }
     }
     result
@@ -2518,6 +2636,7 @@ fn main() {
                 memory_host::forget_external_memory,
                 apply_scene_command,
                 capture_screen,
+                capture_background_ready,
                 blackboard::create_blackboard,
                 blackboard::finish_blackboard,
                 blackboard::open_blackboard,
@@ -2837,6 +2956,8 @@ fn main() {
                 )
                 .and_then(|build| settings_info::SettingsResources::open(&root, build)),
                 capture_jobs: Arc::new(capture_delay_work::CaptureJobs::default()),
+                #[cfg(windows)]
+                capture_presentation: Arc::new(capture_presentation::Registry::default()),
                 root,
                 assets,
                 capturing: Arc::new(AtomicBool::new(false)),

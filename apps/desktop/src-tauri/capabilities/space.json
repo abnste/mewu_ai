@@ -14,6 +14,7 @@
     "allow-finish-exit-preparation",
     "allow-apply-scene-command",
     "allow-capture-screen",
+    "allow-capture-background-ready",
     "allow-create-blackboard",
     "allow-import-assets",
     "allow-read-artifact",

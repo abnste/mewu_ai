@@ -105,6 +105,7 @@ fn main() {
             "forget_external_memory",
             "apply_scene_command",
             "capture_screen",
+            "capture_background_ready",
             "import_assets",
             "open_web_link",
             "set_ui_language",

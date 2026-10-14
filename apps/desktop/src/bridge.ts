@@ -13,8 +13,13 @@ import { IMPORT_ACCEPT, prepareImportFiles } from './asset-import';
 import type { RecordingAudioMode, RecordingAudioSelection, RecordingGrant } from './recording-audio';
 import type { PluginManifest } from './plugin-contracts';
 import { bundledProviderPresets } from './provider-presets';
+import type { CaptureBackgroundReady } from './capture-presentation';
 
 export const native = isTauri();
+export async function captureBackgroundReady(ready: CaptureBackgroundReady): Promise<boolean> {
+  if (!native) return false;
+  return invoke<boolean>('capture_background_ready', { ...ready });
+}
 export async function subscribeExitPreparation(prepare: (request: ExitPreparationRequest) => void, cancel: (request: ExitPreparationCanceled) => void): Promise<() => void> {
   if (!native) return () => undefined;
   let stopped = false;

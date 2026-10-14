@@ -10,7 +10,9 @@ import type { DrawingCommand, OcrTarget, Reference, Region, RegionGeometry, Scen
 import { geometryTarget, overlayRegion, sameGeometry, type RegionGeometryCoordinator, type GeometryView } from '../region-geometry';
 import { geometryHistoryKey, type GeometryDirection } from '../region-geometry-history';
 import type { PluginContribution, PluginRecord } from '../plugin-contracts';
-import { assetUrl, exportRegion as exportNativeRegion, exportTextAsset, native } from '../bridge';
+import { assetUrl, captureBackgroundReady, exportRegion as exportNativeRegion, exportTextAsset, native } from '../bridge';
+import { prepareCaptureBackground } from '../capture-presentation';
+import { captureDisplayGeometry } from '../capture-display';
 import ArtifactCard from './ArtifactCard';
 import {isBlackboardObject} from '../blackboard-objects';
 import { videoCopyKey } from '../video-copy';
@@ -124,6 +126,30 @@ function persistBackgroundItem(item: SpaceItem, background: Box, viewport: { wid
 }
 
 export default function SpaceCanvas(props: Props) {
+  function backgroundLoaded(image: HTMLImageElement, backgroundId: string) {
+    setNatural({ width: image.naturalWidth, height: image.naturalHeight });
+    setBackgroundError(false);
+    if (!native) return;
+    const sceneId = props.scene.id, background = props.scene.background;
+    if (background?.id !== backgroundId || !background.width || !background.height) return;
+    const source = image.getAttribute('src');
+    void prepareCaptureBackground(image, {
+      sceneId, backgroundId, width: background.width, height: background.height,
+    }, () => !disposed && !props.scene.closed && !props.scene.frozen
+      && props.scene.id === sceneId && props.scene.background?.id === backgroundId
+      && image.getAttribute('src') === source, captureBackgroundReady).catch(() => {
+      // The capture owner reports a failed/canceled IPC. A stale callback cannot
+      // wake it, show a window, or add another notification to a later scene.
+    });
+  }
+  function backgroundFailed(backgroundId: string) {
+    setBackgroundError(true); props.onError('无法读取屏幕截图');
+    const background = props.scene.background;
+    if (native && background?.id === backgroundId && background.width && background.height) {
+      void captureBackgroundReady({ sceneId: props.scene.id, backgroundId,
+        width: background.width, height: background.height, success: false }).catch(() => {});
+    }
+  }
   const videoGrant = createMemo(() => {
     if (props.scene.run?.status === 'running') return;
     return recordingTrimGrant();
@@ -146,7 +172,7 @@ export default function SpaceCanvas(props: Props) {
   let snapIdentity = '';
   const heldArrows = new Set<string>();
   const [settling, setSettling] = createSignal(false);
-  const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
+  const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight, deviceScale: devicePixelRatio });
   const [natural, setNatural] = createSignal({ width: 0, height: 0 });
   const [selection, setSelection] = createSignal<Box>();
   const [snapMap, setSnapMap] = createSignal<FrameSnapMap>();
@@ -195,9 +221,7 @@ export default function SpaceCanvas(props: Props) {
   const geometry = createMemo(() => {
     const width = props.scene.background?.width || natural().width;
     const height = props.scene.background?.height || natural().height;
-    if (!width || !height) return { x: 0, y: 0, width: 0, height: 0, scale: 1 };
-    const scale = Math.min(viewport().width / width, viewport().height / height);
-    return { x: (viewport().width - width * scale) / 2, y: (viewport().height - height * scale) / 2, width: width * scale, height: height * scale, scale };
+    return captureDisplayGeometry(props.scene.background, width, height, viewport(), viewport().deviceScale);
   });
   const regionById = (id: string) => {
     const saved = props.scene.regions.find(region => region.id === id);
@@ -486,7 +510,7 @@ export default function SpaceCanvas(props: Props) {
       }).catch(() => {});
     });
   }
-  const resize = () => { clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); setViewport({ width: innerWidth, height: innerHeight }); const region = activeRegion(); if (region && toolbarVisible()) placeToolbar(region); };
+  const resize = () => { clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); setViewport({ width: innerWidth, height: innerHeight, deviceScale: devicePixelRatio }); const region = activeRegion(); if (region && toolbarVisible()) placeToolbar(region); };
   const leave = () => { clearSnapPreview(); scheduleHide(); };
   const blur = () => { setCodeFocused(false); clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); hideToolbar(); };
   const codeFocus = () => setCodeFocused(!document.hidden);
@@ -692,7 +716,7 @@ export default function SpaceCanvas(props: Props) {
   return <main ref={canvas} tabIndex={-1} class="space-canvas capture-surface" classList={{ 'capture-blackboard':props.blackboard, 'can-select': !props.blackboard&&Boolean(props.scene.background), 'capture-dragging': activity(), 'capture-add-mode': forceNew() }} onPointerDown={begin} aria-label={t("AI 空间")}>
     <Show when={visibleCodes()}>{view => <SelectionCodeCard result={view().result} region={display(props.scene.regions.find(region => region.id === view().result.regionId)!)} toolbar={toolbarVisible() ? toolbarBox() : undefined} hidden={codesPaused()} disabled={Boolean(props.codeActionBusy)} onAction={(token, id, action) => props.onCodeAction?.(token, id, action) ?? Promise.resolve(false)} />}</Show>
     <Show when={!props.blackboard && pointerNative && props.scene.background}>{background => <PointerInspector sceneId={props.scene.id} background={background()} imageBox={geometry()} dimensions={pointerSelectionDimensions(selection(), geometry(), activeRegion())} disabled={props.busy || exporting() || props.scene.frozen || props.scene.closed || backgroundError() || Boolean(drawingSession() || pluginMenu() || ocrPending() || props.translationPending) || props.scene.regions.some(region => ocrVisible(region) || translationVisible(region))} blockedAt={(x, y) => toolbarVisible() && contains(toolbarBox(), x, y, TOLERANCE)} onReady={value => { pointerInspector = value; }} onError={props.onError} />}</Show>
-    <Show when={props.scene.background?.id} keyed>{id => <img class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} alt={t("屏幕截图")} draggable={false} onLoad={event => { setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight }); setBackgroundError(false); }} onError={() => { setBackgroundError(true); props.onError('无法读取屏幕截图'); }} />}</Show>
+    <Show when={props.scene.background?.id} keyed>{id => <img class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} style={geometry().nativePixels ? { left: '0px', top: '0px', width: `${geometry().width}px`, height: `${geometry().height}px` } : undefined} alt={t("屏幕截图")} draggable={false} decoding="sync" onLoad={event => backgroundLoaded(event.currentTarget, id)} onError={() => backgroundFailed(id)} />}</Show>
     <svg class="capture-mask" width="100%" height="100%" aria-hidden="true">
       <defs><mask id="region-cutouts" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white" />
         <For each={regions()}>{entry => <rect x={entry.box.x} y={entry.box.y} width={entry.box.width} height={entry.box.height} fill="black" />}</For>

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-capture-background-ready"
+description = "Enables the capture_background_ready command without any pre-configured scope."
+commands.allow = ["capture_background_ready"]
+
+[[permission]]
+identifier = "deny-capture-background-ready"
+description = "Denies the capture_background_ready command without any pre-configured scope."
+commands.deny = ["capture_background_ready"]
