@@ -64,6 +64,10 @@ fn blocked(state: &Snapshot, r: &j::Record) -> Result<Option<ContinueBlockedReas
         .is_none_or(|ordinal| ordinal < s.conversation_start.unwrap_or(0))
     {
         Some(ContinueBlockedReason::ConversationChanged)
+    } else if r.external_runtime.is_some() {
+        // Native tool-receipt continuation cannot silently replace an external
+        // provider with a host model. A normal new message uses its bound Agent.
+        Some(ContinueBlockedReason::ContextUnavailable)
     } else if s.connection_id.is_none() {
         Some(ContinueBlockedReason::ConnectionUnselected)
     } else {
@@ -873,8 +877,8 @@ impl Store {
             let mut agent=state.agents.iter().find(|a|a.id==r.agent).cloned().ok_or(CoreError::JournalConflict)?;agent.memory_enabled=false;
             let new_id=id();let user_id=id();let scene=scene_mut(state,&r.scene)?;
             scene.messages.push(Message{id:user_id.clone(),role:MessageRole::User,text:"继续回答".into(),reasoning:None,conversation_start:None,created_at:now(),run_id:Some(new_id.clone()),refs:Some(vec![]),attachments:Some(vec![]),tool_steps:vec![]});
-            scene.run=Some(Run{id:new_id.clone(),kind:RecordedRunKind::Continuation,status:RunStatus::Running,connection_id:Some(connection.id.clone()),connection_revision:Some(connection.revision),memory_authority:None,error:None,steps:vec![]});touch(scene);
-            let t=j::stamp();let record=j::Record{id:new_id.clone(),scene:r.scene.clone(),agent:r.agent.clone(),user:user_id,kind:RecordedRunKind::Continuation,status:RecordedRunStatus::Running,revision:1,checkpoint:0,created:t,updated:t,connection_id:connection.id.clone(),connection_revision:connection.revision,provenance:Some(projection.provenance.clone())};
+            scene.run=Some(Run{id:new_id.clone(),kind:RecordedRunKind::Continuation,status:RunStatus::Running,connection_id:Some(connection.id.clone()),connection_revision:Some(connection.revision),external_runtime:None,memory_authority:None,error:None,steps:vec![]});touch(scene);
+            let t=j::stamp();let record=j::Record{id:new_id.clone(),scene:r.scene.clone(),agent:r.agent.clone(),user:user_id,kind:RecordedRunKind::Continuation,status:RecordedRunStatus::Running,revision:1,checkpoint:0,created:t,updated:t,connection_id:Some(connection.id.clone()),connection_revision:Some(connection.revision),external_runtime:None,provenance:Some(projection.provenance.clone())};
             db.execute("INSERT INTO agent_run_records(id,scene_id,created_at,revision,data) VALUES(?1,?2,?3,1,?4)",params![record.id,record.scene,t as i64,j::encode(&record)?])?;
             Ok(RunContext{scene_id:r.scene,run_id:new_id,memory_authority:None,agent,memories:vec![],mcp_servers:vec![],connection:connection.connection(),connection_profile:connection,messages:scene.messages.iter().skip(scene.conversation_start.unwrap_or(0)).cloned().collect(),background:None,regions:vec![],items:vec![],refs:vec![],projection:RunProjection::RecordedContinuation(projection)})
         })

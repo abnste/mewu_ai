@@ -1,0 +1,27 @@
+# @mewu/sdk
+
+Mewu API 2 插件运行在独立 QuickJS worker 中。宿主提供 SDK 模块，安装插件不需要 Node.js；此 npm 包用于开发时的类型提示与契约测试。
+
+```js
+import { definePlugin } from '@mewu/sdk';
+
+export default definePlugin(ctx => {
+  ctx.commands.register({ id: 'example.hello', title: '你好' }, async input => {
+    return { message: `你好，${input.name || 'Mewu'}` };
+  });
+});
+```
+
+插件目录只包含 `mewu-plugin.json` 与 `.js` / `.mjs` 模块。清单需声明 `schemaVersion: 2`、`hostApi: 2`、`runtime: "javascript"` 和入口文件。完整示例在仓库 `extensions/examples`。
+
+可注册命令、工具、Agent、记忆、模型、通讯渠道、渲染器和 UI 服务。注册发生在激活阶段；返回的函数可注销服务，`ctx.onDispose` 可登记卸载清理。服务的设置、菜单位置等通过 descriptor 的 `metadata` 声明。API 类型以 `index.d.ts` 为准。
+
+宿主按插件和 Agent 隔离持久存储。每条记忆可以独立保存，通过分页键目录检索；不存在固定 64 条的模型记忆槽位。`storage.list` 的 cursor 用于分页，prefix 用于过滤，不能互相替代。并发读改写使用 `storage.compareAndSet(key, expected, value)`：返回是否成功，`expected: null` 明确表示键不存在，不匹配已保存的 JSON null。单值及一次请求有资源限制，长期数据应拆分为独立记录。
+
+模型调用使用宿主已配置的连接，插件不获得 API Key。区域观察返回宿主图片 artifact ID；将该 ID 放到 `ctx.model.invoke({ prompt, images: [artifactId] })`，由宿主提供真实图片。区域操作还需要用户此次明确发起的运行授权，仅有清单权限不够。坐标是观察图内的像素，不能传桌面全局坐标。
+
+当前区域自动操作的原生适配器仅支持 Windows。macOS 与 Linux 的截图交互不受影响，但它们的输入适配器尚未实现，会返回明确的不支持错误。Windows 区域须来自真实截图、位于同一个前台应用内容区，目标身份、显示器、选区与输入焦点会持续校验；Esc 或宿主停止可撤权。
+
+运行时没有 `process`、`require`、任意文件访问或直接网络接口。Node.js 的包不是可直接移植的宿主库；需要使用 SDK 服务或在插件包内提供兼容的 ESM 模块。
+
+发布包的 `index.mjs` 是 `crates/mewu-extension/src/sdk.js` 的精确副本。修改嵌入式源后运行 `npm run sync`，`npm run check:sync` 与 `prepack` 拒绝两个版本分叉；npm 包不引用仓库外路径。

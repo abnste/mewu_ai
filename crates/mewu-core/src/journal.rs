@@ -163,8 +163,10 @@ pub(crate) struct Record {
     pub checkpoint: u64,
     pub created: u64,
     pub updated: u64,
-    pub connection_id: String,
-    pub connection_revision: u64,
+    pub connection_id: Option<String>,
+    pub connection_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_runtime: Option<crate::ExternalRunOrigin>,
     pub provenance: Option<ContinuationProvenance>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -474,13 +476,9 @@ pub(crate) fn on_snapshot_change(
                 checkpoint: 0,
                 created: t,
                 updated: t,
-                connection_id: run
-                    .connection_id
-                    .clone()
-                    .ok_or(CoreError::ConnectionUnselected)?,
-                connection_revision: run
-                    .connection_revision
-                    .ok_or(CoreError::ConnectionUnselected)?,
+                connection_id: run.connection_id.clone(),
+                connection_revision: run.connection_revision,
+                external_runtime: run.external_runtime.clone(),
                 provenance: None,
             };
             db.execute("INSERT INTO agent_run_records(id,scene_id,created_at,revision,data) VALUES(?1,?2,?3,1,?4)",params![created.id,created.scene,number(t)?,encode(&created)?])?;
@@ -539,13 +537,16 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
         uuid(&r.user)?;
         uuid(&r.scene)?;
         uuid(&r.agent)?;
-        uuid(&r.connection_id)?;
+        match (&r.connection_id, r.connection_revision, &r.external_runtime) {
+            (Some(id), Some(revision), None) if revision > 0 => uuid(id)?,
+            (None, None, Some(origin)) if origin.validate() && r.kind == RecordedRunKind::Chat => (),
+            _ => return Err(bad("执行记录运行来源无效")),
+        }
         if row.get::<_, String>(0)? != r.id
             || row.get::<_, String>(1)? != r.scene
             || row.get::<_, i64>(2)? != number(r.created)?
             || row.get::<_, i64>(3)? != number(r.revision)?
             || r.revision == 0
-            || r.connection_revision == 0
             || r.updated < r.created
         {
             return Err(bad("执行记录身份无效"));

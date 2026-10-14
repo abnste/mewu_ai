@@ -440,12 +440,33 @@ pub struct Run {
     pub connection_id: Option<String>,
     #[serde(default)]
     pub connection_revision: Option<u64>,
+    /// Executable provider identity; external runs have no invented model connection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_runtime: Option<ExternalRunOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_authority: Option<RunMemoryAuthority>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default)]
     pub steps: Vec<ToolStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExternalRunOrigin {
+    pub plugin_id: String,
+    pub service_id: String,
+    pub revision: u64,
+    pub sha256: String,
+}
+
+impl ExternalRunOrigin {
+    pub(crate) fn validate(&self) -> bool {
+        let valid_id = |id: &str| !id.is_empty() && id.len() <= 128
+            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b));
+        valid_id(&self.plugin_id) && valid_id(&self.service_id) && self.revision > 0
+            && self.sha256.len() == 64 && self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -951,6 +972,21 @@ pub struct RunContext {
     pub refs: Vec<Reference>,
     #[serde(skip)]
     pub projection: crate::RunProjection,
+}
+
+/// A plugin-owned Agent receives conversation input without host credentials or
+/// a fabricated connection. Its own runtime decides which services to invoke.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalRunContext {
+    pub scene_id: String,
+    pub run_id: String,
+    pub agent: AgentProfile,
+    pub messages: Vec<Message>,
+    pub background: Option<Asset>,
+    pub regions: Vec<Region>,
+    pub items: Vec<SpaceItem>,
+    pub refs: Vec<Reference>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

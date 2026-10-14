@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "id": "example.interactive-widget",
+  "version": "0.1.0",
+  "name": "交互圆角尺",
+  "description": "可移动空间对象中的交互式透明 SVG 尺。",
+  "publisher": "Mewu contributors",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": ["ui.render"],
+  "tags": ["ui", "renderers"],
+  "dependencies": {}
+}

@@ -61,10 +61,10 @@ function capabilities(snapshot, connections, patch = {}) {
     pluginRevision: snapshot.revision,
     connectionRevisions: Object.fromEntries(connections.map(value => [value.id, value.revision])),
     agent: record?.state === 'enabled' && !record.error ? agentGrant(record.revision) : null,
-    blackboard: null, readyConnectionIds: [connectionId], ...patch,
+    blackboard: null, readyConnectionIds: [connectionId], readyAgentIds: [], boundAgentIds: [], ...patch,
   };
 }
-async function fixture({ initialPlugins = plugins(), supplied = true, delayedSubscription = false, initialConnections = [connection()] } = {}) {
+async function fixture({ initialPlugins = plugins(), supplied = true, delayedSubscription = false, initialConnections = [connection()], initialAgentConfig } = {}) {
   const reads = [], listeners = new Set(), subscription = deferred();
   let pluginReads = 0, subscribes = 0, stops = 0, currentPlugins = initialPlugins;
   const bridge = synthetic({
@@ -80,6 +80,11 @@ async function fixture({ initialPlugins = plugins(), supplied = true, delayedSub
       return stop;
     },
   });
+  const extensionListeners = new Set(), bindingListeners = new Set(); let extensionStops = 0;
+  const extensions = synthetic({
+    subscribeExtensions: async callback => { extensionListeners.add(callback); return () => { extensionStops++; extensionListeners.delete(callback); }; },
+    subscribeExtensionBindings: async callback => { bindingListeners.add(callback); return () => { extensionStops++; bindingListeners.delete(callback); }; },
+  });
   const policy = new SourceTextModule(compile(policySource), { identifier: 'actual-optional-capabilities.ts' });
   await policy.link(specifier => { throw new Error('Unexpected product policy dependency: ' + specifier); });
   await policy.evaluate();
@@ -88,20 +93,25 @@ async function fixture({ initialPlugins = plugins(), supplied = true, delayedSub
   await hook.link(specifier => {
     if (specifier === 'solid-js') return solid;
     if (specifier === './plugin-bridge') return bridge;
+    if (specifier === './extension-bridge') return extensions;
     if (specifier === './optional-capabilities') return policy;
     throw new Error('Unexpected product hook dependency: ' + specifier);
   });
   await hook.evaluate();
-  let state, dispose, setSnapshot, setPlugins, readSnapshot, readPlugins;
+  let state, dispose, setSnapshot, setPlugins, readSnapshot, readPlugins, setConfiguration, configuration;
   reactive.createRoot(cleanup => {
     dispose = cleanup;
     [readSnapshot, setSnapshot] = reactive.createSignal({ revision: 1, connections: initialConnections, scenes: [] });
     [readPlugins, setPlugins] = reactive.createSignal(initialPlugins);
-    state = hook.namespace.createOptionalFeatureState(() => readSnapshot().connections, supplied ? readPlugins : undefined);
+    [configuration, setConfiguration] = reactive.createSignal(initialAgentConfig);
+    state = hook.namespace.createOptionalFeatureState(() => readSnapshot().connections, supplied ? readPlugins : undefined, initialAgentConfig ? configuration : undefined);
   });
   await tick();
   return {
-    state, dispose, reads, setSnapshot, setPlugins,
+    state, dispose, reads, setSnapshot, setPlugins, setConfiguration,
+    emitExtension() { for(const listener of extensionListeners)listener([]); },
+    emitBindings() { for(const listener of bindingListeners)listener([]); },
+    extensionListenerCount:()=>extensionListeners.size+bindingListeners.size, extensionStops:()=>extensionStops,
     snapshot: readSnapshot, plugins: readPlugins,
     emit(snapshot) { currentPlugins = snapshot; for (const accept of [...listeners]) accept(snapshot); },
     releaseSubscription: () => subscription.resolve(),
@@ -250,6 +260,25 @@ test('scope disposal ignores pending results and events and cleans both active a
   assert.equal(pending.pluginReads(), 0);
   assert.equal(pending.reads.length, 0);
   assert.equal(pending.state(), undefined);
+});
+
+test('extension lifecycle and binding events revoke readiness immediately and fence late responses', async t => {
+  const f=await fixture();t.after(f.dispose);
+  const ready=capabilities(f.plugins(),f.snapshot().connections,{agent:null,readyConnectionIds:[],boundAgentIds:['independent'],readyAgentIds:['independent']});
+  f.reads[0].resolve(ready);await tick();assert.deepEqual(Array.from(f.state().readyAgentIds),['independent']);
+  assert.equal(f.extensionListenerCount(),2);f.emitExtension();assert.equal(f.state(),undefined);await tick();assert.equal(f.reads.length,2);
+  f.emitBindings();await tick();assert.equal(f.reads.length,3);
+  const revoked={...ready,readyAgentIds:[]};f.reads[2].resolve(revoked);await tick();f.reads[1].resolve(ready);await tick();
+  assert.equal(f.state(),revoked);f.dispose();assert.equal(f.extensionListenerCount(),0);assert.equal(f.extensionStops(),2);
+});
+
+test('active scene model/Agent and defaults refresh credentials while ordinary screenshot changes do not', async t => {
+  const configuration={activeSceneId:'scene',activeScene:{id:'scene',agentId:'independent',connectionId:connectionId},agents:[{id:'independent',defaultConnectionId:null}],defaultConnectionId:connectionId};
+  const f=await fixture({initialAgentConfig:configuration});t.after(f.dispose);
+  f.reads[0].resolve(capabilities(f.plugins(),f.snapshot().connections));await tick();
+  f.setConfiguration({...configuration,activeScene:{...configuration.activeScene,drawings:['different']}});await tick();assert.equal(f.reads.length,1);
+  f.setConfiguration({...configuration,activeScene:{...configuration.activeScene,connectionId:null}});assert.equal(f.state(),undefined);await tick();assert.equal(f.reads.length,2);
+  f.setConfiguration({...configuration,agents:[{id:'independent',defaultConnectionId:otherConnectionId}]});await tick();assert.equal(f.reads.length,3);
 });
 
 console.log(JSON.stringify({

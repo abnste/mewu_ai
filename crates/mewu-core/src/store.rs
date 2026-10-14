@@ -357,6 +357,11 @@ impl Store {
         scene(&self.state, id)
     }
 
+    pub fn agent_profile(&self, agent_id: &str) -> Result<&AgentProfile> {
+        self.state.agents.iter().find(|agent| agent.id == agent_id)
+            .ok_or_else(|| not_found("Agent", agent_id))
+    }
+
     pub fn connection_profiles(&self) -> &[ConnectionProfile] {
         &self.state.connections
     }
@@ -1722,6 +1727,48 @@ impl Store {
         self.begin_run_with_input(scene_id, None, None, None)
     }
 
+    pub fn begin_external_run(
+        &mut self,
+        scene_id: &str,
+        origin: ExternalRunOrigin,
+    ) -> Result<ExternalRunContext> {
+        if !origin.validate() { return Err(invalid("外部 Agent 来源无效")); }
+        let mut next = self.state.clone();
+        let target = scene_mut(&mut next, scene_id)?;
+        if target.closed { return Err(invalid("会话已关闭，请先恢复会话")); }
+        if is_running(target) { return Err(CoreError::RunInProgress); }
+        if target.draft.trim().is_empty() && target.refs.is_empty() {
+            return Err(CoreError::EmptyInput);
+        }
+        let run_id = id();
+        let refs = target.refs.clone();
+        let conversation_start = target.conversation_start
+            .filter(|start| *start > 0 && *start == target.messages.len());
+        target.messages.push(Message {
+            id: id(), role: MessageRole::User,
+            text: std::mem::take(&mut target.draft), reasoning: None,
+            conversation_start, created_at: now(), run_id: Some(run_id.clone()),
+            refs: Some(refs.clone()), attachments: None, tool_steps: vec![],
+        });
+        target.run = Some(Run {
+            id: run_id.clone(), kind: RecordedRunKind::Chat, status: RunStatus::Running,
+            connection_id: None, connection_revision: None, external_runtime: Some(origin),
+            memory_authority: None, error: None, steps: vec![],
+        });
+        touch(target);
+        let target = scene(&next, scene_id)?;
+        let context = ExternalRunContext {
+            scene_id: scene_id.into(), run_id,
+            agent: next.agents.iter().find(|a| a.id == target.agent_id)
+                .ok_or_else(|| not_found("Agent", &target.agent_id))?.clone(),
+            messages: target.messages.iter().skip(target.conversation_start.unwrap_or(0)).cloned().collect(),
+            background: target.background.clone(), regions: target.regions.clone(),
+            items: target.items.clone(), refs,
+        };
+        self.persist(next)?;
+        Ok(context)
+    }
+
     pub fn begin_run_with_memory(
         &mut self,
         scene_id: &str,
@@ -1823,6 +1870,7 @@ impl Store {
             status: RunStatus::Running,
             connection_id: Some(connection_profile.id.clone()),
             connection_revision: Some(connection_profile.revision),
+            external_runtime: None,
             memory_authority: memory_authority.clone(),
             error: None,
             steps: vec![],

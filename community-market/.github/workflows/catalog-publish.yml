@@ -1,0 +1,49 @@
+name: Publish verified catalog
+on:
+  push:
+    branches: [main]
+    paths: ['entries/**', 'host-source.json', '.github/workflows/catalog-publish.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: catalog-publish
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - id: host
+        run: node scripts/host-source.mjs
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ steps.host.outputs.repository }}
+          ref: ${{ steps.host.outputs.commit }}
+          path: trusted-host
+          persist-credentials: false
+      - name: Build trusted native contract validator
+        working-directory: trusted-host
+        run: cargo build -p mewu-desktop --bin mewu-plugin-validator --features catalog-validator --locked
+      - name: Verify every release and rebuild public index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted-host/tools/extension-market/cli.mjs build entries --out mewu-catalog.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
+      - name: Commit generated index only
+        shell: pwsh
+        run: |
+          git add -- mewu-catalog.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          if ($LASTEXITCODE -ne 1) { throw 'Cannot inspect generated catalog diff' }
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m '更新已验证的社区插件目录'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot commit generated catalog' }
+          git push origin HEAD:main
+          if ($LASTEXITCODE -ne 0) { throw 'Catalog publish raced with another commit; old public index retained' }

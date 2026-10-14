@@ -105,6 +105,15 @@
     "allow-get-pin-objects",
     "allow-control-pin-object",
     "allow-reference-pin-object",
-    "allow-save-blackboard-text"
+    "allow-save-blackboard-text",
+    "allow-get-extensions",
+    "allow-get-extension-catalog",
+    "allow-prepare-extension",
+    "allow-install-extension",
+    "allow-control-extension",
+    "allow-invoke-extension",
+    "allow-stop-extension",
+    "allow-get-extension-bindings",
+    "allow-set-extension-binding"
   ]
 }

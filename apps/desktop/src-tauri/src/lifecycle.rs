@@ -363,6 +363,9 @@ pub fn begin_exit_preparation(
 ) -> Result<(), String> {
     let host = app.state::<Host>();
     host.exit.prepare_with(window.label(), &request_id, || {
+        if let Some(extensions) = app.try_state::<crate::extension_host::ExtensionHost>() {
+            extensions.cancel_all();
+        }
         crate::video_host::cancel_all(&app);
         crate::image_host::cancel_all(&app);
         crate::raster_edit_host::cancel_all();
@@ -470,6 +473,9 @@ fn start_shutdown(
     }
     // Revoke listening before the renderer collects its final draft state.
     crate::speech_host::cancel_all(app);
+    if let Some(extensions) = app.try_state::<crate::extension_host::ExtensionHost>() {
+        extensions.cancel_all();
+    }
     crate::code_host::cancel_all(app);
     host.session_titles.cancel_all();
     // The renderer first locks fresh input and drains already registered manual
@@ -621,6 +627,13 @@ fn start_shutdown(
         if let Err(error) = crate::mcp_runtime::drain(&ticket, Duration::from_secs(5)).await {
             abort(&app, &id, &error);
             return;
+        }
+        // Durable relocation intent is created only after every reversible exit
+        if let Some(extensions) = app.try_state::<crate::extension_host::ExtensionHost>() {
+            if let Err(error) = extensions.drain(Duration::from_secs(5)).await {
+                abort(&app, &id, &error);
+                return;
+            }
         }
         // Durable relocation intent is created only after every reversible exit
         // step has succeeded. The new process copies after the old lifetime lock

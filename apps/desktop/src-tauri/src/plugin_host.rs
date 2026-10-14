@@ -137,7 +137,7 @@ fn settle_engine(engine: &mut crate::Engine, snapshot: &PluginSnapshot) -> Resul
     engine.translation_jobs.revoke_plugins(snapshot);
     let mut ended = revoked_runs(&engine.plugin_runs, snapshot);
     ended.extend(engine.agent_runs.iter()
-        .filter(|(_, (_, grant))| engine.optional.agent.as_ref() != Some(grant))
+        .filter(|(_, (scene, grant))| !grant.is_current(engine,scene))
         .map(|(run, (scene, _))| (run.clone(), scene.clone())));
     ended.extend(
         engine
@@ -636,7 +636,7 @@ mod tests {
         let run = engine.store.begin_run(&scene).unwrap();
         let (send, receive) = tokio::sync::oneshot::channel();
         engine.runs.insert(run.run_id.clone(), send);
-        engine.agent_runs.insert(run.run_id.clone(), (scene.clone(), engine.optional.require_agent().unwrap()));
+        engine.agent_runs.insert(run.run_id.clone(), (scene.clone(), engine.optional.require_agent().unwrap().into()));
         engine.plugin_runs.insert(
             run.run_id.clone(),
             (scene.clone(), plugin.manifest.id.clone(), plugin.revision),

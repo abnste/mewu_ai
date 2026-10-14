@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "id": "example.region-agent",
+  "version": "0.1.0",
+  "name": "区域操作 Agent",
+  "description": "根据真实选区截图观察、操作并再次截图反馈。",
+  "publisher": "Mewu contributors",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": ["model.invoke", "region.observe", "region.input"],
+  "tags": ["agi", "tools", "vision"],
+  "dependencies": {}
+}

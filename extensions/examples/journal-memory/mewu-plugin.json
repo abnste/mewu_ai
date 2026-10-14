@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "id": "example.journal-memory",
+  "version": "0.1.0",
+  "name": "独立日志记忆",
+  "description": "每条记忆单独持久化，按 Agent 隔离并分页检索。",
+  "publisher": "Mewu contributors",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": ["storage.read", "storage.write"],
+  "tags": ["memory"],
+  "dependencies": {}
+}

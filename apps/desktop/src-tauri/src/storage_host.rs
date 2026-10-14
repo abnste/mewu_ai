@@ -175,6 +175,9 @@ fn running_idle(app: &AppHandle) -> Result<(), String> {
 }
 
 pub fn migration_preflight(app: &AppHandle) -> Result<(), String> {
+    if let Some(extensions) = app.try_state::<crate::extension_host::ExtensionHost>() {
+        if !extensions.is_idle() { return Err("请先停止正在运行的插件".into()); }
+    }
     let host = app.state::<Host>();
     let (servers, sources, catalog) = {
         // Established plugin -> Engine order; only owned SQLite metadata and

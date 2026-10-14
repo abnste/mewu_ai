@@ -12,6 +12,7 @@ async function moduleAt(path) {
 }
 const helpers = await moduleAt('./visual-annotations-send.ts');
 const submission = await moduleAt('./scene-submission.ts');
+const optional = await moduleAt('./optional-capabilities.ts');
 const app = await raw('./App.tsx'), ast = parse(app, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const appBody=ast.program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
 const predicateSource=['agentAvailable','agentReady'].map(name=>{
@@ -32,9 +33,9 @@ const fixture = () => ({ id: 'scene', agentId: 'agent', connectionId: 'connectio
 const turn = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve; const promise = new Promise(yes => resolve = yes); return { resolve, promise }; }
 function actualApp() {
-  const f = { scene: fixture(), plugin: plugin(), capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection']}, pending: false, exiting: false, calls: [], errors: {}, drafts: {}, operations: 0, afterSave: undefined, flushVideo: undefined };
+  const f = { scene: fixture(), plugin: plugin(), capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection'],readyAgentIds:[],boundAgentIds:[]}, pending: false, exiting: false, calls: [], errors: {}, drafts: {}, operations: 0, afterSave: undefined, flushVideo: undefined };
   const snapshot = () => ({ scenes: [f.scene] });
-  const scope = { ...helpers, ...submission, t: value => value, disposed: false, commands: Promise.resolve(), exitFailure: undefined, autosaveVersion: 0, debounce: undefined, clearTimeout,
+  const scope = { ...helpers, ...submission, ...optional, t: value => value, disposed: false, commands: Promise.resolve(), exitFailure: undefined, autosaveVersion: 0, debounce: undefined, clearTimeout,
     scene: () => f.scene, capabilities:()=>f.capabilities, snapshot, busy: () => false, recording: () => false, scroll: () => false, sending: () => f.pending, exitPreparing: () => f.exiting,
     draft: () => f.scene.draft, refs: () => f.scene.refs, visualAnnotationGrant: () => helpers.annotationGrant([f.plugin]), pluginSnapshot: () => ({ plugins: [f.plugin] }),
     spaceOperations: { begin() { f.operations++; return () => f.operations--; } }, voice: { cancel: async () => f.calls.push('voice') },
@@ -48,6 +49,16 @@ function actualApp() {
   };
   vm.createContext(scope); vm.runInContext(stripTypeScriptTypes(predicateSource,{mode:'transform'})+'\n'+sendBody, scope); return { f, scope };
 }
+
+test('actual App sends a bound keyless independent Agent without a host connection, and refuses invalid binding fallback',async()=>{
+  const {f,scope}=actualApp();f.scene.connectionId=null;
+  f.capabilities={agent:null,readyConnectionIds:[],readyAgentIds:['agent'],boundAgentIds:['agent']};
+  const question=f.scene.draft;await scope.send();
+  assert.equal(f.calls.filter(call=>call?.type==='send').length,1);assert.equal(f.scene.connectionId,null);
+  assert.equal(f.calls.find(call=>call?.type==='set_draft').draft,question);
+  const invalid=actualApp();invalid.f.capabilities={...invalid.f.capabilities,readyAgentIds:[],boundAgentIds:['agent']};
+  await invalid.scope.send();assert.equal(invalid.f.calls.length,0,'bound but unavailable Agent cannot use the old ready model');
+});
 
 test('actual send refuses disabled Agent and unavailable selected connections before any flush or bridge call',async()=>{
   for(const mode of ['disabled','no-ready','other-ready','unavailable']){

@@ -77,6 +77,8 @@ async function sourceFingerprint() {
   const hash = createHash('sha256');
   hash.update(await readBounded(path.join(ROOT, 'apps/desktop/src-tauri/src/plugins.rs'), 1024 * 1024));
   hash.update(Buffer.from([0]));
+  hash.update(await readBounded(path.join(ROOT, 'apps/desktop/src-tauri/src/optional_authorizations.rs'), 1024 * 1024));
+  hash.update(Buffer.from([0]));
   hash.update(await readBounded(path.join(ROOT, 'apps/desktop/src-tauri/src/plugin_sources.rs'), 1024 * 1024));
   hash.update(Buffer.from([0]));
   hash.update(await readBounded(path.join(ROOT, 'crates/mewu-core/src/model.rs'), 1024 * 1024));

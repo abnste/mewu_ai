@@ -163,6 +163,13 @@ pub(crate) fn validate(state: &Snapshot) -> Result<()> {
     }
     for scene in &state.scenes {
         if let Some(run) = &scene.run {
+            if let Some(origin) = &run.external_runtime {
+                if !origin.validate() || run.connection_id.is_some() || run.connection_revision.is_some()
+                    || run.memory_authority.is_some() || run.kind != crate::RecordedRunKind::Chat {
+                    return Err(invalid("外部 Agent 运行来源不完整"));
+                }
+                continue;
+            }
             match (&run.connection_id, run.connection_revision) {
                 (None, None) if run.status != RunStatus::Running => (),
                 (Some(id), Some(revision)) if Uuid::parse_str(id).is_ok() && revision > 0 => {

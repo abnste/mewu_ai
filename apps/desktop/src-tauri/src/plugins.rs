@@ -1198,8 +1198,8 @@ impl PluginStore {
             plugins: self.list()?,
         })
     }
-    pub(crate) fn require_agent(&self) -> Result<crate::optional_capabilities::Grant, String> {
-        crate::optional_capabilities::Authorizations::from_snapshot(&self.snapshot()?).require_agent()
+    pub(crate) fn require_agent(&self) -> Result<crate::optional_authorizations::Grant, String> {
+        crate::optional_authorizations::Authorizations::from_snapshot(&self.snapshot()?).require_agent()
     }
 
     /// Only intact, enabled packages provide defaults for *new* user profiles.

@@ -1,0 +1,41 @@
+name: Verify plugin submission
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths: ['entries/**']
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted-market
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - id: host
+        run: node trusted-market/scripts/host-source.mjs
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ steps.host.outputs.repository }}
+          ref: ${{ steps.host.outputs.commit }}
+          path: trusted-host
+          persist-credentials: false
+      - name: Build trusted native contract validator
+        working-directory: trusted-host
+        run: cargo build -p mewu-desktop --bin mewu-plugin-validator --features catalog-validator --locked
+      - name: Read PR entries as data, never execute author code
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted-host/tools/extension-market/collect-pr.mjs candidate-entries
+      - name: Verify published assets and generate candidate index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted-host/tools/extension-market/cli.mjs build candidate-entries --out candidate-catalog.json --previous trusted-market/mewu-catalog.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json

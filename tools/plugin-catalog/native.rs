@@ -13,6 +13,12 @@ mod plugin_sources;
 #[allow(dead_code)]
 #[path = "../../apps/desktop/src-tauri/src/plugins.rs"]
 mod plugins;
+#[allow(dead_code)]
+#[path = "../../apps/desktop/src-tauri/src/optional_authorizations.rs"]
+mod optional_authorizations;
+#[allow(dead_code)]
+#[path = "../../apps/desktop/src-tauri/src/extension_market.rs"]
+mod extension_market;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -28,6 +34,10 @@ fn fingerprint() -> String {
     ));
     digest.update([0]);
     digest.update(include_bytes!(
+        "../../apps/desktop/src-tauri/src/optional_authorizations.rs"
+    ));
+    digest.update([0]);
+    digest.update(include_bytes!(
         "../../apps/desktop/src-tauri/src/plugin_sources.rs"
     ));
     digest.update([0]);
@@ -39,6 +49,9 @@ fn fingerprint() -> String {
 
 fn validate(kind: &str, bytes: &[u8]) -> Result<Value, String> {
     match kind {
+        "extension-manifest" => serde_json::to_value(extension_market::parse_manifest(bytes)?).map_err(|e|e.to_string()),
+        "extension-entry" => serde_json::to_value(extension_market::parse_entry(bytes)?).map_err(|e|e.to_string()),
+        "extension-catalog" => serde_json::to_value(extension_market::parse_catalog(bytes)?).map_err(|e|e.to_string()),
         "manifest" | "bundled-manifest" => {
             let manifest = plugins::parse_manifest(bytes)?;
             if kind == "manifest" && manifest.id.starts_with("mewu.") {
@@ -75,6 +88,8 @@ fn run() -> Result<Value, String> {
         );
     }
     let limit = match args[0].as_str() {
+        "extension-manifest" => mewu_extension::MAX_MANIFEST_BYTES,
+        "extension-entry" | "extension-catalog" => MAX_CATALOG,
         "manifest" | "bundled-manifest" => plugins::MAX_MANIFEST_BYTES,
         "catalog" | "entry" => MAX_CATALOG,
         _ => return Err("不支持的校验模式".into()),
@@ -94,7 +109,7 @@ fn run() -> Result<Value, String> {
 fn main() {
     let result = run();
     let status = if result.is_ok() { 0 } else { 1 };
-    let output = match result {
+    let mut output = match result {
         Ok(value) => {
             json!({"protocolVersion": PROTOCOL, "contractSha256": fingerprint(), "ok": true, "value": value})
         }
@@ -102,6 +117,12 @@ fn main() {
             json!({"protocolVersion": PROTOCOL, "contractSha256": fingerprint(), "ok": false, "error": error})
         }
     };
+    let mut extension_digest = Sha256::new();
+    for (index,source) in [include_bytes!("../../crates/mewu-extension/src/contract.rs").as_slice(),include_bytes!("../../crates/mewu-extension/src/package.rs").as_slice(),include_bytes!("../../crates/mewu-extension/src/sdk.js").as_slice(),include_bytes!("../../apps/desktop/src-tauri/src/extension_market.rs").as_slice()].iter().enumerate() {
+        if index>0 {extension_digest.update([0]);} extension_digest.update(source);
+    }
+    output["extensionContractVersion"] = json!(2);
+    output["extensionContractSha256"] = json!(format!("{:x}",extension_digest.finalize()));
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
     if serde_json::to_writer(&mut stdout, &output).is_err()

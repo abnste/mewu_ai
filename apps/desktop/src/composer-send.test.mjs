@@ -77,10 +77,11 @@ test('running button stops the current run while Enter never sends or stops it',
   f.actual.click();
   assert.equal(f.canceled.length, 1);
   assert.equal(f.sent.length, 0);
+  f.props.ready=false;assert.equal(f.actual.disabled(),false);f.actual.click();assert.equal(f.canceled.length,2,'revoked readiness cannot disable stopping an existing run');
 });
 
 test('sending, closing and empty input block both submit paths without changing focus/reply state', () => {
-  for (const change of [{ sending: true }, { closing: true }, { draft: ' \n\t ' }]) {
+  for (const change of [{ sending: true }, { closing: true }, { ready: false }, { draft: ' \n\t ' }]) {
     const f = fixture(change);
     assert.equal(f.actual.disabled(), true);
     f.actual.keydown(event());

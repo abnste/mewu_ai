@@ -176,5 +176,13 @@
     "source": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
     "file": "webview2-rs-edc2caf-LICENSE.txt",
     "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73"
+  },
+  {
+    "name": "rquickjs-core",
+    "version": "0.14.0",
+    "commit": "d7ef5eeae702fea24c03643064de454f1c1dd4b0",
+    "source": "https://raw.githubusercontent.com/DelSkayn/rquickjs/d7ef5eeae702fea24c03643064de454f1c1dd4b0/LICENSE",
+    "file": "rquickjs-d7ef5ee-LICENSE-MIT.txt",
+    "sha256": "976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70"
   }
 ]

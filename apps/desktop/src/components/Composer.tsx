@@ -38,6 +38,7 @@ interface Props {
   showButtonLabels?: boolean;
   thinkingGlowEnabled?: boolean;
   thinkingGlowColor?: string;
+  ready?: boolean;
 }
 
 export default function Composer(props: Props) {
@@ -178,7 +179,7 @@ export default function Composer(props: Props) {
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', end); target.addEventListener('pointercancel', end);
   }
   const send = () => {
-    if (running() || props.sending || props.closing || (!props.draft.trim() && props.refs.length === 0)) return;
+    if (running() || props.sending || props.closing || props.ready === false || (!props.draft.trim() && props.refs.length === 0)) return;
     setAtEnd(true); focusAnchor = { ...lastPointer }; reveal(); props.onSend();
   };
   const togglePicker = (kind: 'agent' | 'model') => setPicker(picker() === kind ? undefined : kind);
@@ -223,18 +224,18 @@ export default function Composer(props: Props) {
             <Show when={position()}><button class="picker-entry" onClick={() => act(() => { setPosition(undefined); props.onPosition(undefined); })}><RotateCcw size={15} /><span>{t('归位')}</span></button></Show>
           </div></Show>
         </div>
-        <div class="channel-container composer-tool"><button class="composer-round channel-trigger" data-picker="model" title={t('选择模型')} aria-label={t('选择模型')} aria-haspopup="dialog" aria-expanded={picker() === 'model'} on:keydown={event => pickerKey(event, 'model')} onClick={() => togglePicker('model')}><Cpu size={18} /></button><Show when={props.showButtonLabels !== false}><span class="composer-button-label">{t('模型')}</span></Show>
+        <Show when={props.connections.length}><div class="channel-container composer-tool"><button class="composer-round channel-trigger" data-picker="model" title={t('选择模型')} aria-label={t('选择模型')} aria-haspopup="dialog" aria-expanded={picker() === 'model'} on:keydown={event => pickerKey(event, 'model')} onClick={() => togglePicker('model')}><Cpu size={18} /></button><Show when={props.showButtonLabels !== false}><span class="composer-button-label">{t('模型')}</span></Show>
           <Show when={picker() === 'model'}><div ref={menu} role="dialog" aria-label={t('模型')} class="channel-popover popover" classList={{ 'opens-down': pickerBelow() }} style={{ 'max-height': `${pickerHeight()}px`, left: `${pickerLeft()}px` }}>
             <For each={props.connections.map(value => value.id)}>{id => <Show when={props.connections.find(value => value.id === id)}>{value => <button class="picker-entry" disabled={running() || props.sending} title={running() ? t('请求进行中') : `${value().name} · ${value().model}`} onClick={() => act(() => props.onSelectConnection(id))}><Link2 size={15} /><span class="channel-connection-label"><span>{value().name}</span><small>{value().model}</small></span><Show when={props.scene.connectionId === id}><Check size={14} /></Show></button>}</Show>}</For>
           </div></Show>
-        </div>
+        </div></Show>
         <div class="composer-field"><Show when={props.refs.length > 0}><div class="reference-list"><For each={props.refs}>{reference => <span class="reference-chip"><button class="reference-name" title={referenceLabel(reference)} onClick={() => props.onFocusRef(reference)}>@{referenceLabel(reference)}</button><button class="reference-remove" aria-label={`${t('移除引用')} ${referenceLabel(reference)}`} title={t('移除引用')} onClick={() => props.onRemoveRef(reference)}><X size={13} /></button></span>}</For></div></Show>
           <div class="composer-text-entry"><textarea ref={input} aria-label={t('输入消息')} placeholder={t(props.refs.length ? '询问选中内容…' : '输入消息…')} rows={1} value={props.draft} onFocus={() => setHidden(false)} onCompositionStart={() => props.onComposition?.(true)} onCompositionEnd={event => { props.onDraft(event.currentTarget.value); props.onComposition?.(false); }} onInput={event => props.onDraft(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!running()) send(); } }} />
             <button class="composer-attach" title={t('添加文件')} aria-label={t('添加文件')} disabled={props.closing} onClick={props.onImport}><FolderOpen size={18} stroke-width={1.7} /></button>
           </div>
         </div>
         <Show when={props.voice}>{voice => <div class="composer-tool voice-tool"><VoiceInputButton {...voice()} onMenu={setVoiceMenu} /><Show when={props.showButtonLabels !== false}><span class="composer-button-label">{t('语音')}</span></Show></div>}</Show>
-        <div class="composer-tool"><button class="composer-round composer-send" disabled={props.closing || (!running() && (props.sending || (!props.draft.trim() && props.refs.length === 0)))} aria-label={t(running() ? '停止' : '发送')} title={t(running() ? '停止' : '发送')} onClick={() => running() ? props.onCancel() : send()}><Show when={running()} fallback={<Show when={!props.sending} fallback={<LoaderCircle size={17} class="spin" />}><Send size={18} /></Show>}><Square size={13} fill="currentColor" /></Show></button><Show when={props.showButtonLabels !== false}><span class="composer-button-label">{t(running() ? '停止' : '发送')}</span></Show></div>
+        <div class="composer-tool"><button class="composer-round composer-send" disabled={props.closing || (!running() && (props.ready === false || props.sending || (!props.draft.trim() && props.refs.length === 0)))} aria-label={t(running() ? '停止' : '发送')} title={t(running() ? '停止' : '发送')} onClick={() => running() ? props.onCancel() : send()}><Show when={running()} fallback={<Show when={!props.sending} fallback={<LoaderCircle size={17} class="spin" />}><Send size={18} /></Show>}><Square size={13} fill="currentColor" /></Show></button><Show when={props.showButtonLabels !== false}><span class="composer-button-label">{t(running() ? '停止' : '发送')}</span></Show></div>
       </div>
       <Show when={props.error || props.scene.run?.error}><div class="composer-error"><CircleAlert size={13} /><span>{props.error || props.scene.run?.error}</span></div></Show>
     </section>

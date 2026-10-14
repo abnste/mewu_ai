@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-invoke-extension"
+description = "Enables the invoke_extension command without any pre-configured scope."
+commands.allow = ["invoke_extension"]
+
+[[permission]]
+identifier = "deny-invoke-extension"
+description = "Denies the invoke_extension command without any pre-configured scope."
+commands.deny = ["invoke_extension"]

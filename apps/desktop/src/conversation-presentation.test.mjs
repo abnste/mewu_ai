@@ -85,15 +85,25 @@ test('actual compact Composer keeps prompt and answer as separate bubbles while 
 
 test('actual running Composer displays just one live response and a passive bottom glow with unchanged toolbar controls', async () => {
   const scene = { ...props().scene, messages: [user('user', 'run', '当前问题')], run: { id: 'run', status: 'running' } };
-  const compact = await render({ scene, stream: { runId: 'run', text: '流式回答' }, voice: {} });
+  const connections = [{ id: 'connection', name: 'Configured model', model: 'model' }];
+  const compact = await render({ scene: { ...scene, connectionId: 'connection' }, connections, stream: { runId: 'run', text: '流式回答' }, voice: {} });
   assert.equal((compact.match(/流式回答/g) ?? []).length, 1);
   assert.match(compact, /space-thinking-glow/); assert.match(compact, /aria-hidden="true"/);
   assert.equal((compact.match(/composer-button-label/g) ?? []).length, 4);
   assert.match(compact, /composer-button-label">停止/);
-  const disabled = await render({ scene, showButtonLabels: false, thinkingGlowEnabled: false, voice: {} });
+  assert.match(compact, /aria-label="选择模型"/);
+  const disabled = await render({ scene, connections, showButtonLabels: false, thinkingGlowEnabled: false, voice: {} });
   assert.doesNotMatch(disabled, /space-thinking-glow|composer-button-label/);
   assert.equal((disabled.match(/<button\b/g) ?? []).length, (compact.match(/<button\b/g) ?? []).length);
   assert.match(disabled, /aria-label="停止"/);
+  const independent = await render({ scene: { ...scene, connectionId: null }, connections: [], ready: true, voice: {} });
+  assert.equal((independent.match(/composer-button-label/g) ?? []).length, 3);
+  assert.doesNotMatch(independent, /aria-label="选择模型"|data-picker="model"/);
+  assert.match(independent, /aria-label="选择 Agent"/); assert.match(independent, /aria-label="停止"/); assert.match(independent, /space-thinking-glow/);
+  assert.equal((independent.match(/<button\b/g) ?? []).length, (compact.match(/<button\b/g) ?? []).length - 1, 'keyless independent Agent removes only the empty host-model picker');
+  const independentWithoutLabels = await render({ scene: { ...scene, connectionId: null }, connections: [], ready: true, showButtonLabels: false, thinkingGlowEnabled: false, voice: {} });
+  assert.doesNotMatch(independentWithoutLabels, /space-thinking-glow|composer-button-label|data-picker="model"/);
+  assert.equal((independentWithoutLabels.match(/<button\b/g) ?? []).length, (independent.match(/<button\b/g) ?? []).length);
   assert.doesNotMatch(await render({ scene: { ...scene, frozen: true } }), /space-thinking-glow/);
 });
 

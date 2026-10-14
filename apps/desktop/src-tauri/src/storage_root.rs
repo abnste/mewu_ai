@@ -669,9 +669,9 @@ fn profile(db: &Connection) -> Result<Profile, StorageError> {
     let required_dbs: Vec<String> = serde_json::from_str(&row.6).map_err(json)?;
     if required_dbs
         .iter()
-        .any(|s| !matches!(s.as_str(), "spaces.db" | "plugins/plugins.db"))
-        || required_dbs.len() > 2
-        || required_dbs.len() == 2 && required_dbs[0] == required_dbs[1]
+        .any(|s| !matches!(s.as_str(), "spaces.db" | "plugins/plugins.db" | "extensions.db"))
+        || required_dbs.len() > 3
+        || required_dbs.iter().enumerate().any(|(index,path)|required_dbs[index+1..].contains(path))
         || !required_dbs.is_empty() && !required_dbs.iter().any(|s| s == "spaces.db")
     {
         return Err(err("ledger_required_dbs"));
@@ -1132,6 +1132,9 @@ fn initialize(paths: &StoragePaths) -> Result<(), StorageError> {
         if root.join("plugins/plugins.db").exists() {
             required.push("plugins/plugins.db".to_owned());
         }
+        if root.join("extensions.db").exists() {
+            required.push("extensions.db".to_owned());
+        }
     }
     let _db_pins = required_db_pins(&root, &required)?;
     create_root(&paths.bootstrap)?;
@@ -1305,7 +1308,8 @@ pub fn mark_initialized(
     if !durable_root_identity_matches(&root.stamp, &p.stamp) {
         return Err(err("active_root_identity_changed"));
     }
-    let required = vec!["spaces.db".to_owned(), "plugins/plugins.db".to_owned()];
+    let mut required = vec!["spaces.db".to_owned(), "plugins/plugins.db".to_owned()];
+    if p.root.join("extensions.db").exists() { required.push("extensions.db".to_owned()); }
     let _db_pins = required_db_pins(&p.root, &required)?;
     tx.execute(
         "UPDATE profile SET required_dbs=?1 WHERE id=1",
@@ -1399,7 +1403,8 @@ fn finish_trial(
         return Err(err("root_identity_changed"));
     }
     if commit {
-        let required = vec!["spaces.db".to_owned(), "plugins/plugins.db".to_owned()];
+        let mut required = vec!["spaces.db".to_owned(), "plugins/plugins.db".to_owned()];
+        if t.target.join("extensions.db").exists() { required.push("extensions.db".to_owned()); }
         let _pins = required_db_pins(&t.target, &required)?;
         phase(&tx, &trial.id, StoragePhase::Committed)?;
         tx.execute(
@@ -2205,6 +2210,28 @@ mod tests {
                 Ok(())
             }
         }
+    }
+    #[test]
+    fn executable_extension_database_moves_with_data_and_cannot_silently_disappear() {
+        let f=Fixture::new();
+        let source=f.paths.legacy_root.join("extensions.db");
+        let db=Connection::open(&source).unwrap();
+        db.execute_batch("CREATE TABLE extension_values(plugin_id TEXT,scope TEXT,key TEXT,value BLOB);INSERT INTO extension_values VALUES('thirdparty.memory','agent-a','fact',X'0001FEFF');").unwrap();
+        drop(db);
+        let initialized=f.initial();
+        mark_initialized(&f.paths,&initialized).unwrap();
+        f.request();
+        let trial=resolve_startup(&f.paths).unwrap();
+        commit_startup(&f.paths,trial.trial.as_ref().unwrap()).unwrap();
+        let db=Connection::open(f.target.join("extensions.db")).unwrap();
+        let payload:Vec<u8>=db.query_row("SELECT value FROM extension_values WHERE plugin_id='thirdparty.memory'",[],|row|row.get(0)).unwrap();
+        assert_eq!(payload,[0,1,254,255]);
+        drop(db);
+        drop(trial);
+        drop(initialized);
+        assert_eq!(resolve_startup(&f.paths).unwrap().root,f.target);
+        fs::remove_file(f.target.join("extensions.db")).unwrap();
+        assert!(resolve_startup(&f.paths).is_err(),"a missing installed extension database must not be recreated as an empty registry");
     }
     #[cfg(target_os = "macos")]
     fn macos_default_legacy_fixture() -> (Fixture, RuntimeLock, FileIdentity) {

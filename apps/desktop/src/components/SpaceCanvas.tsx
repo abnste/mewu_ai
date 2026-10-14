@@ -5,6 +5,7 @@ import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, untra
 import { Check, ChevronDown, Circle, Copy, Download, Languages, LoaderCircle, Pencil, Pin, Plus, Table2, TextSelect, Trash2, X } from 'lucide-solid';
 import ScrollCaptureIcon from './ScrollCaptureIcon';
 import ApplicationSnapshotIcon from './ApplicationSnapshotIcon';
+import ExtensionSelectionTools from './ExtensionSelectionTools';
 import { recordingGrant, recordingTrimGrant } from '../recording-audio';
 import type { DrawingCommand, OcrTarget, Reference, Region, RegionGeometry, Scene, Snapshot, SpaceItem } from '../contracts';
 import { geometryTarget, overlayRegion, sameGeometry, type RegionGeometryCoordinator, type GeometryView } from '../region-geometry';
@@ -191,6 +192,8 @@ export default function SpaceCanvas(props: Props) {
   const [flashedRegion, setFlashedRegion] = createSignal('');
   const [drawingSession, setDrawingSession] = createSignal<DrawingSession>();
   const [pluginMenu, setPluginMenu] = createSignal<'workflow' | 'ocr' | 'scroll' | 'translation' | 'pin'>();
+  const [extensionButtonCount, setExtensionButtonCount] = createSignal(0);
+  const [extensionInteracting, setExtensionInteracting] = createSignal(false), [extensionRunning, setExtensionRunning] = createSignal(false);
   const [scrollMenuManual, setScrollMenuManual] = createSignal(false);
   const language = () => props.translationLanguage ?? 'zh-Hans';
   const [textMode, setTextMode] = createSignal<Record<string, 'ocr' | 'translation' | 'none'>>({});
@@ -216,7 +219,7 @@ export default function SpaceCanvas(props: Props) {
   const scrollEntries = createMemo(() => pluginEntries().filter(value => value.contribution.kind === 'selection.scroll'));
   const translationEntries = createMemo(() => props.aiAvailable === false ? [] : pluginEntries().filter(value => value.contribution.kind === 'selection.translation'));
   const pinEntries = createMemo(() => pluginEntries().filter(value => value.contribution.kind === 'selection.pin'));
-  const toolbarWidth = () => TOOLBAR_WIDTH - (props.aiAvailable === false ? 52 : 0) + 52 * [pinEntries().length, workflowEntries().length, ocrEntries().length || activeRegion()?.ocr, scrollEntries().length, translationEntries().length || activeRegion()?.translation].filter(Boolean).length;
+  const toolbarWidth = () => TOOLBAR_WIDTH - (props.aiAvailable === false ? 52 : 0) + 52 * ([pinEntries().length, workflowEntries().length, ocrEntries().length || activeRegion()?.ocr, scrollEntries().length, translationEntries().length || activeRegion()?.translation].filter(Boolean).length + extensionButtonCount());
   const drawingTools = () => [...coreDrawingTools];
   const geometry = createMemo(() => {
     const width = props.scene.background?.width || natural().width;
@@ -263,7 +266,7 @@ export default function SpaceCanvas(props: Props) {
   const regions = () => props.scene.regions.map(region => ({ region, box: display(regionById(region.id)!) }));
   const point = (event: PointerEvent) => ({ x: clamp(event.clientX, geometry().x, geometry().x + geometry().width), y: clamp(event.clientY, geometry().y, geometry().y + geometry().height) });
   const referenced = (id: string) => props.refs.some(ref => ref.kind === 'region' && ref.id === id);
-  const blocked = () => props.busy || exporting() || settling() || props.scene.run?.status === 'running';
+  const blocked = () => props.busy || exporting() || settling() || extensionRunning() || props.scene.run?.status === 'running';
   const scanSource = createMemo(() => {
     if (!props.onCodeSource || !codeFocused() || props.busy || drawingSession() || selection() || forceNew() || backgroundError() || props.geometryView.pending || props.geometryView.held) return;
     return codeSource(props.scene, active(), props.plugins);
@@ -319,9 +322,9 @@ export default function SpaceCanvas(props: Props) {
   function clearHideTimer() { if (hideTimer !== undefined) clearTimeout(hideTimer); hideTimer = undefined; }
   function hideToolbar() { clearHideTimer(); setToolbarVisible(false); setPluginMenu(undefined); }
   function scheduleHide() {
-    if (!toolbarVisible() || hideTimer !== undefined) return;
+    if (!toolbarVisible() || extensionInteracting() || hideTimer !== undefined) return;
     // One timer per departure. Continuous movement outside must not reset it.
-    hideTimer = setTimeout(() => { hideTimer = undefined; setToolbarVisible(false); }, 300);
+    hideTimer = setTimeout(() => { hideTimer = undefined; if (!extensionInteracting()) setToolbarVisible(false); }, 300);
   }
   function composerBox(): Box | undefined {
     const element = document.querySelector<HTMLElement>('.composer');
@@ -353,6 +356,7 @@ export default function SpaceCanvas(props: Props) {
     clearHideTimer(); setActive(region.id); placeToolbar(region); setToolbarVisible(true);
   }
   function hover(event: PointerEvent) {
+    if (extensionInteracting()) { clearHideTimer(); return; }
     if (event.target instanceof Element && event.target.closest('.selection-code-card')) { clearSnapPreview(); clearHideTimer(); return; }
     updateSnapPreview({ x: event.clientX, y: event.clientY, shiftKey: event.shiftKey });
     if (activity() || forceNew() || exporting() || props.geometryView.held || props.geometryView.pending) return;
@@ -531,7 +535,7 @@ export default function SpaceCanvas(props: Props) {
     if (props.onVideoCopy && videoCopyKey(event, { active: Boolean(videoItem), sceneId: props.scene.id, itemId: videoItem?.id ?? '', focused: document.hasFocus(), selectedText: Boolean(window.getSelection()?.toString()), target: event.target instanceof Element ? event.target : document.activeElement, blocked: activity() || Boolean(drawingSession()) || exporting() || forceNew() || blocked() || Boolean(pluginMenu() || document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu,[role="menu"]')) })) {
       event.preventDefault(); event.stopImmediatePropagation(); void props.onVideoCopy(videoItem!.id).catch(error => props.onError(error instanceof Error ? error.message : String(error))); return;
     }
-    if ((event.target instanceof Element ? event.target : document.activeElement)?.closest('.selection-code-card,.video-trim-popover,.artifact-video,[data-run-journal]')) return;
+    if ((event.target instanceof Element ? event.target : document.activeElement)?.closest('.selection-code-card,.video-trim-popover,.artifact-video,[data-run-journal],.extension-task-popover,.extension-command-menu')) return;
     if (event.key === 'Shift') { setSnapPreview(undefined); if (snapPointer) snapPointer.shiftKey = true; forceManualSelection?.(); }
     if (event.key === 'Escape' && cancelGesture) { cancelGesture(); event.preventDefault(); event.stopImmediatePropagation(); return; }
     if (event.key === 'Escape' && pluginMenu()) { setPluginMenu(undefined); event.preventDefault(); event.stopImmediatePropagation(); return; }
@@ -754,6 +758,7 @@ export default function SpaceCanvas(props: Props) {
       <span class="capture-separator" />
       <button data-caption={t("绘制")} class="capture-plugin" title={t("绘制 · D")} aria-label={t("绘制")} disabled={blocked()} onClick={() => beginDrawing(region())}><Pencil size={18} /></button>
       <Show when={workflowEntries().length}><button data-caption={workflowEntries().length === 1 ? workflowEntries()[0].contribution.title : t("图像处理")} class="capture-plugin" title={workflowEntries().length === 1 ? workflowEntries()[0].contribution.title : t("图像处理")} aria-label={workflowEntries().length === 1 ? workflowEntries()[0].contribution.title : t("图像处理")} disabled={blocked()} onClick={() => workflowEntries().length === 1 ? runWorkflow(workflowEntries()[0], region()) : setPluginMenu(pluginMenu() === 'workflow' ? undefined : 'workflow')}><Table2 size={18} /></button></Show>
+      <ExtensionSelectionTools sceneId={props.scene.id} regionId={region().id} draft={props.scene.draft} disabled={blocked() || Boolean(region().imageOverride)} onCountChange={setExtensionButtonCount} onInteractionChange={setExtensionInteracting} onRunningChange={setExtensionRunning} onError={props.onError}/>
       <Show when={ocrEntries().length || savedOcr(region())?.document.lines.length}><button data-caption={t("文字")} class="capture-plugin" classList={{ 'capture-ocr-active': ocrVisible(region()) }} title={t("文字识别 · O")} aria-label={t("文字识别")} disabled={props.busy || exporting()} onClick={() => selectOcr(region())}><TextSelect size={18} /></button></Show>
       <Show when={translationEntries().length || savedTranslation(region())}><button data-caption={t("翻译")} class="capture-plugin" classList={{ 'capture-ocr-active': translationVisible(region()) }} title={t("翻译 · T")} aria-label={t("翻译")} disabled={blocked()} onClick={() => translate(region())}><Languages size={18} /></button></Show>
       <span class="capture-separator" />

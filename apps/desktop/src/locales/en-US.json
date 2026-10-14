@@ -1051,5 +1051,22 @@
   "未设置": "Not set",
   "修改": "Change",
   "取消快捷键设置": "Cancel shortcut setup",
-  "设置中…": "Configuring…"
+  "设置中…": "Configuring…",
+  "请在桌面版管理插件": "Manage plugins in the desktop app",
+  "安装 ZIP 插件": "Install ZIP plugin",
+  "添加声明包": "Add declarative package",
+  "权限": "Permissions",
+  "能力": "Capabilities",
+  "插件状态已变化": "Plugin state changed",
+  "选区插件": "Selection plugins",
+  "停止插件执行": "Stop plugin execution",
+  "任务": "Task",
+  "输入任务": "Enter a task",
+  "执行": "Run",
+  "Agent 引擎": "Agent engine",
+  "记忆提供方": "Memory provider",
+  "Mewu 默认": "Mewu default",
+  "当前记忆设置": "Current memory settings",
+  "不可用": "Unavailable",
+  "UI 增强": "UI enhancements"
 }

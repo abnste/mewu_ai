@@ -1,0 +1,1703 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Executable extension lifecycle and capability bridge. No plugin receives a
+//! Tauri handle, an API key, a filesystem path, or an ambient OS API.
+use crate::{
+    extension_market as market, extension_region as region,
+    extension_store::{Binding, Record, Source, Store},
+    Host,
+};
+use base64::Engine as _;
+use mewu_extension::{
+    ExtensionPackage, ProtocolError, ServiceRegistration, WorkerRequest, WorkerResponse,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    io::{BufRead, BufReader, Read, Write},
+    path::Path,
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
+use tauri::{AppHandle, Emitter, Manager};
+
+pub struct ExtensionHost {
+    store: Mutex<Store>,
+    pending: Mutex<HashMap<String, Pending>>,
+    runs: Mutex<HashMap<String, ActiveRun>>,
+    // SQLite is dropped before this final lease owner releases the root lock.
+    _storage_lock: Arc<crate::storage_root::RuntimeLock>,
+}
+struct Pending {
+    package: ExtensionPackage,
+    bytes: Vec<u8>,
+    source: Source,
+    expected: Option<u64>,
+    created: Instant,
+}
+struct ActiveRun {
+    plugin: String,
+    scope: String,
+    canceled: Arc<AtomicBool>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Proposal {
+    id: String,
+    manifest: mewu_extension::ExtensionManifest,
+    sha256: String,
+    source: Source,
+    expected_revision: Option<u64>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Invocation {
+    plugin_id: String,
+    revision: u64,
+    service_id: String,
+    #[serde(default)]
+    input: Value,
+    scene_id: Option<String>,
+    region_id: Option<String>,
+}
+pub(crate) struct ExternalAgentProvider {
+    pub agent_id: String,
+    pub record: Record,
+    pub service_id: String,
+    pub authority: crate::extension_agent_authority::ExternalAgentAuthority,
+}
+pub(crate) fn external_agent_for_scene(
+    app: &AppHandle,
+    scene_id: &str,
+) -> Result<Option<ExternalAgentProvider>, String> {
+    let agent_id = {
+        let host = app.state::<Host>();
+        let engine = host.lock()?;
+        let scene = engine.store.scene(scene_id).map_err(|e| e.to_string())?;
+        if scene.closed {
+            return Err("会话已关闭".into());
+        }
+        scene.agent_id.clone()
+    };
+    let extensions = app.state::<ExtensionHost>();
+    let store = extensions.store()?;
+    let Some(binding) = store.binding(&agent_id, "agent")? else {
+        return Ok(None);
+    };
+    let (Some(plugin), Some(service)) = (binding.plugin_id.as_ref(), binding.service_id.as_ref())
+    else {
+        return Ok(None);
+    };
+    let record = store.get(plugin)?;
+    if record.state != "enabled"
+        || !record
+            .services
+            .iter()
+            .any(|s| &s.id == service && s.kind == mewu_extension::ServiceKind::Agent)
+    {
+        return Err("已选的 Agent 扩展不可用".into());
+    }
+    store.validate_dependencies(&record.manifest)?;
+    let authority = crate::extension_agent_authority::ExternalAgentAuthority {
+        agent_id: agent_id.clone(),
+        plugin_id: plugin.clone(),
+        service_id: service.clone(),
+        plugin_revision: record.revision,
+        binding_revision: binding.revision,
+        sha256: record.sha256.clone(),
+        canceled: Arc::new(AtomicBool::new(false)),
+    };
+    crate::extension_agent_authority::register(
+        &authority,
+        record.manifest.dependencies.keys().cloned().collect(),
+    )?;
+    Ok(Some(ExternalAgentProvider {
+        agent_id,
+        service_id: service.clone(),
+        record,
+        authority,
+    }))
+}
+impl ExtensionHost {
+    pub fn open(
+        root: &Path,
+        storage_lock: Arc<crate::storage_root::RuntimeLock>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            store: Mutex::new(Store::open(root)?),
+            pending: Mutex::new(HashMap::new()),
+            runs: Mutex::new(HashMap::new()),
+            _storage_lock: storage_lock,
+        })
+    }
+    pub(crate) fn store(&self) -> Result<std::sync::MutexGuard<'_, Store>, String> {
+        self.store.lock().map_err(|_| "扩展存储不可用".into())
+    }
+    pub fn cancel_all(&self) {
+        crate::extension_agent_authority::cancel_all();
+        if let Ok(runs) = self.runs.lock() {
+            for run in runs.values() {
+                run.canceled.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    pub(crate) fn is_idle(&self) -> bool {
+        self.runs.lock().is_ok_and(|runs| runs.is_empty())
+    }
+    pub async fn drain(&self, timeout: Duration) -> Result<(), String> {
+        self.cancel_all();
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.is_idle() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("扩展运行时尚未退出".into());
+            }
+            tokio::time::sleep(Duration::from_millis(80)).await;
+        }
+    }
+    fn cancel_plugin(&self, id: &str) {
+        crate::extension_agent_authority::cancel_plugin(id);
+        if let Ok(runs) = self.runs.lock() {
+            for run in runs.values().filter(|r| r.plugin == id) {
+                run.canceled.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    fn cancel_agent(&self, id: &str) {
+        crate::extension_agent_authority::cancel_agent(id);
+        if let Ok(runs) = self.runs.lock() {
+            for run in runs.values().filter(|r| r.scope == id) {
+                run.canceled.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+fn trusted(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if !["space", "settings"].contains(&window.label()) {
+        return Err("此窗口不能管理扩展".into());
+    }
+    Ok(())
+}
+fn publish(app: &AppHandle) {
+    if let Ok(records) = app.state::<ExtensionHost>().store().and_then(|s| s.list()) {
+        let _ = app.emit("extension-state", records);
+    }
+}
+#[tauri::command]
+pub fn get_extensions(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, ExtensionHost>,
+) -> Result<Vec<Record>, String> {
+    trusted(&window)?;
+    state.store()?.list()
+}
+#[tauri::command]
+pub async fn get_extension_catalog(
+    window: tauri::WebviewWindow,
+) -> Result<market::Catalog, String> {
+    trusted(&window)?;
+    market::get_catalog().await
+}
+#[tauri::command]
+pub async fn prepare_extension(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    entry: Option<market::Entry>,
+) -> Result<Option<Proposal>, String> {
+    trusted(&window)?;
+    app.state::<Host>().exit.ensure_new_operation()?;
+    let (package, bytes, source) = if let Some(entry) = entry {
+        if !market::supports_platform(&entry) {
+            return Err("此插件不支持当前平台".into());
+        }
+        let (package, bytes) = market::get_package(&entry).await?;
+        (package, bytes, Source::Github { entry })
+    } else {
+        let picked = tauri::async_runtime::spawn_blocking(|| {
+            rfd::FileDialog::new()
+                .add_filter("Mewu 插件", &["zip"])
+                .pick_file()
+        })
+        .await
+        .map_err(|_| "选择插件中断")?;
+        let Some(path) = picked else { return Ok(None) };
+        let text = path.to_str().ok_or("插件路径不是 UTF-8")?.to_owned();
+        let bytes = tauri::async_runtime::spawn_blocking(move || {
+            let file = std::fs::File::open(path).map_err(|_| "无法读取插件")?;
+            let mut bytes = Vec::new();
+            file.take(market::MAX_ARCHIVE as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "无法读取插件")?;
+            Ok::<_, String>(bytes)
+        })
+        .await
+        .map_err(|_| "读取插件中断")??;
+        let package = market::decode_package(&bytes)?;
+        (package, bytes, Source::Local { path: text })
+    };
+    let state = app.state::<ExtensionHost>();
+    let expected = state
+        .store()?
+        .get_optional(&package.manifest.id)?
+        .map(|p| p.revision);
+    let proposal = Proposal {
+        id: uuid::Uuid::new_v4().to_string(),
+        manifest: package.manifest.clone(),
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+        source: source.clone(),
+        expected_revision: expected,
+    };
+    let mut pending = state.pending.lock().map_err(|_| "扩展预览不可用")?;
+    pending.retain(|_, p| p.created.elapsed() < Duration::from_secs(600));
+    if pending.len() >= 8 {
+        return Err("待安装扩展过多".into());
+    }
+    pending.insert(
+        proposal.id.clone(),
+        Pending {
+            package,
+            bytes,
+            source,
+            expected,
+            created: Instant::now(),
+        },
+    );
+    Ok(Some(proposal))
+}
+#[tauri::command]
+pub async fn install_extension(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    proposal_id: String,
+) -> Result<Vec<Record>, String> {
+    trusted(&window)?;
+    app.state::<Host>().exit.ensure_new_operation()?;
+    let record = {
+        let state = app.state::<ExtensionHost>();
+        let pending = state
+            .pending
+            .lock()
+            .map_err(|_| "扩展预览不可用")?
+            .remove(&proposal_id)
+            .ok_or("安装预览已失效")?;
+        if pending.created.elapsed() > Duration::from_secs(600) {
+            return Err("安装预览已失效".into());
+        }
+        state.cancel_plugin(&pending.package.manifest.id);
+        let mut store = state.store()?;
+        let result = store.install(
+            &pending.package,
+            &pending.bytes,
+            &pending.source,
+            pending.expected,
+        )?;
+        state.cancel_plugin(&pending.package.manifest.id);
+        result
+    };
+    finish_activation(&app, &record).await?;
+    let result = app.state::<ExtensionHost>().store()?.list();
+    result
+}
+#[tauri::command]
+pub async fn control_extension(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    plugin_id: String,
+    revision: u64,
+    action: String,
+) -> Result<Vec<Record>, String> {
+    trusted(&window)?;
+    app.state::<Host>().exit.ensure_new_operation()?;
+    let record = {
+        let state = app.state::<ExtensionHost>();
+        state.cancel_plugin(&plugin_id);
+        let mut store = state.store()?;
+        let result = if action == "rollback" {
+            store.rollback(&plugin_id, revision)?
+        } else {
+            store.set_state(
+                &plugin_id,
+                revision,
+                match action.as_str() {
+                    "enable" => "enabled",
+                    "disable" => "disabled",
+                    "remove" => "removed",
+                    _ => return Err("扩展操作无效".into()),
+                },
+            )?
+        };
+        state.cancel_plugin(&plugin_id);
+        result
+    };
+    finish_activation(&app, &record).await?;
+    let result = app.state::<ExtensionHost>().store()?.list();
+    result
+}
+
+async fn finish_activation(app: &AppHandle, record: &Record) -> Result<(), String> {
+    if record.state == "enabled" {
+        let app2 = app.clone();
+        let record2 = record.clone();
+        match tauri::async_runtime::spawn_blocking(move || activate(&app2, &record2)).await {
+            Ok(result) => result?,
+            // A worker in the unwinding blocking task has already been dropped
+            // (shutdown/kill/wait). Join failure still needs registry compensation.
+            Err(_) => return Err(activation_failed(app, record, "扩展激活中断".into())),
+        }
+    }
+    publish(app);
+    Ok(())
+}
+
+fn activation_failed(app: &AppHandle, record: &Record, cause: String) -> String {
+    let compensated = (|| {
+        let state = app.state::<ExtensionHost>();
+        let mut store = state.store()?;
+        if store
+            .fail_activation(&record.manifest.id, record.revision)?
+            .is_some()
+        {
+            // Keep this post-write cancellation inside the Store guard. A new
+            // provider authority cannot be issued between the CAS and revocation.
+            state.cancel_plugin(&record.manifest.id);
+        }
+        Ok::<_, String>(())
+    })();
+    // Publish the actual registry even when compensation fails or a newer
+    // revision wins. Never report a failed activation as successful installation.
+    publish(app);
+    match compensated {
+        Ok(()) => cause,
+        Err(error) => format!("{cause}；{error}"),
+    }
+}
+
+struct Worker {
+    child: Child,
+    input: ChildStdin,
+    output: mpsc::Receiver<Result<WorkerResponse, String>>,
+}
+impl Worker {
+    fn spawn() -> Result<Self, String> {
+        let mut command = Command::new(std::env::current_exe().map_err(|_| "无法定位扩展运行时")?);
+        command
+            .arg("--extension-worker")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut child = command.spawn().map_err(|_| "无法启动扩展运行时")?;
+        let input = child.stdin.take().ok_or("扩展输入不可用")?;
+        let output = child.stdout.take().ok_or("扩展输出不可用")?;
+        let (send, receive) = mpsc::sync_channel(2);
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(output);
+            loop {
+                let mut bytes = Vec::new();
+                let read = reader
+                    .by_ref()
+                    .take(mewu_extension::MAX_PROTOCOL_BYTES as u64 + 1)
+                    .read_until(b'\n', &mut bytes);
+                if matches!(read, Ok(0)) {
+                    break;
+                }
+                if read.is_err()
+                    || bytes.len() > mewu_extension::MAX_PROTOCOL_BYTES
+                    || bytes.last() != Some(&b'\n')
+                {
+                    let _ = send.send(Err("扩展协议过大或读取失败".into()));
+                    break;
+                }
+                let result = serde_json::from_slice(&bytes).map_err(|_| "扩展返回无效协议".into());
+                if send.send(result).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Self {
+            child,
+            input,
+            output: receive,
+        })
+    }
+    fn send(&mut self, value: &WorkerRequest) -> Result<(), String> {
+        serde_json::to_writer(&mut self.input, value).map_err(|_| "无法向扩展发送请求")?;
+        self.input
+            .write_all(b"\n")
+            .and_then(|_| self.input.flush())
+            .map_err(|_| "扩展输入已关闭".into())
+    }
+    fn receive(
+        &mut self,
+        app: &AppHandle,
+        context: &mut Context,
+        id: &str,
+        initialize: bool,
+    ) -> Result<Value, String> {
+        let deadline = Instant::now()
+            + if initialize {
+                Duration::from_secs(20)
+            } else {
+                Duration::from_secs(600)
+            };
+        loop {
+            context.check(app)?;
+            if Instant::now() > deadline {
+                return Err("扩展执行超时".into());
+            }
+            match self.output.recv_timeout(Duration::from_millis(80)) {
+                Ok(Ok(WorkerResponse::HostCall { id, method, params })) => {
+                    let result = bridge(app, context, &method, params);
+                    let request = match result {
+                        Ok(result) => WorkerRequest::HostResult {
+                            id,
+                            result: Some(result),
+                            error: None,
+                        },
+                        Err(message) => WorkerRequest::HostResult {
+                            id,
+                            result: None,
+                            error: Some(ProtocolError {
+                                code: "HOST_ERROR".into(),
+                                message,
+                            }),
+                        },
+                    };
+                    self.send(&request)?;
+                }
+                Ok(Ok(WorkerResponse::Initialized {
+                    id: reply,
+                    registrations,
+                })) if initialize && reply == id => {
+                    return serde_json::to_value(registrations).map_err(|_| "服务目录无效".into())
+                }
+                Ok(Ok(WorkerResponse::Result { id: reply, result }))
+                    if !initialize && reply == id =>
+                {
+                    return Ok(result)
+                }
+                Ok(Ok(WorkerResponse::Error { error, .. })) => {
+                    return Err(format!("扩展执行失败：{}", error.message))
+                }
+                Ok(Ok(_)) => return Err("扩展返回意外的协议顺序".into()),
+                Ok(Err(e)) => return Err(e),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => return Err("扩展运行时已退出".into()),
+            }
+        }
+    }
+}
+impl Drop for Worker {
+    fn drop(&mut self) {
+        let _ = self.send(&WorkerRequest::Shutdown {
+            id: "shutdown".into(),
+        });
+        let start = Instant::now();
+        loop {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            if start.elapsed() > Duration::from_millis(300) {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+struct Context {
+    record: Record,
+    run_id: String,
+    canceled: Arc<AtomicBool>,
+    scene_id: Option<String>,
+    region_id: Option<String>,
+    scope: String,
+    region: Option<Arc<region::RegionSession>>,
+    frames: HashMap<String, region::RegionFrame>,
+    default_messages: Vec<Value>,
+    history: Option<Value>,
+    default_images: Vec<String>,
+    binding: Option<(String, u64)>,
+    delegated_permissions: Option<Vec<String>>,
+    authority_chain: Vec<(String, u64)>,
+    public_reasoning: Option<Arc<Mutex<String>>>,
+    memory_enabled_required: bool,
+    depth: u8,
+}
+impl Context {
+    fn check(&self, app: &AppHandle) -> Result<(), String> {
+        if self.canceled.load(Ordering::SeqCst) {
+            return Err("扩展运行已停止".into());
+        }
+        let host = app.state::<Host>();
+        host.exit.ensure_background()?;
+        {
+            let extensions = app.state::<ExtensionHost>();
+            let store = extensions.store()?;
+            let record = store.get(&self.record.manifest.id)?;
+            if record.state != "enabled" || record.revision != self.record.revision {
+                return Err("扩展已停用或版本已变化".into());
+            }
+            store.validate_dependencies(&record.manifest)?;
+            for (id, revision) in &self.authority_chain {
+                let ancestor = store.get(id)?;
+                if ancestor.state != "enabled" || ancestor.revision != *revision {
+                    return Err("调用方扩展授权已撤销".into());
+                }
+                store.validate_dependencies(&ancestor.manifest)?;
+            }
+            if let Some((kind, revision)) = &self.binding {
+                let live = store.binding(&self.scope, kind)?.ok_or("扩展绑定已撤销")?;
+                if live.revision != *revision
+                    || live.plugin_id.as_deref() != Some(&self.record.manifest.id)
+                {
+                    return Err("扩展绑定已变化".into());
+                }
+            }
+        }
+        if let Some(scene_id) = &self.scene_id {
+            let engine = host.lock()?;
+            let scene = engine
+                .store
+                .scenes()
+                .iter()
+                .find(|s| &s.id == scene_id)
+                .ok_or("会话已关闭")?;
+            if scene.closed || scene.agent_id != self.scope {
+                return Err("扩展所属会话已变化".into());
+            }
+            if self.memory_enabled_required
+                && !engine
+                    .store
+                    .agent_profile(&self.scope)
+                    .map_err(|e| e.to_string())?
+                    .memory_enabled
+            {
+                return Err("长期记忆已关闭".into());
+            }
+        }
+        Ok(())
+    }
+    fn permission(&self, name: &str) -> Result<(), String> {
+        if !self.record.manifest.permissions.iter().any(|p| p == name)
+            || self
+                .delegated_permissions
+                .as_ref()
+                .is_some_and(|permissions| !permissions.iter().any(|p| p == name))
+        {
+            return Err(format!("插件未声明权限：{name}"));
+        }
+        Ok(())
+    }
+}
+fn start_worker(
+    app: &AppHandle,
+    context: &mut Context,
+) -> Result<(Worker, Vec<ServiceRegistration>), String> {
+    context.check(app)?;
+    let package = {
+        let state = app.state::<ExtensionHost>();
+        let store = state.store()?;
+        store.validate_dependencies(&context.record.manifest)?;
+        store.package(&context.record.manifest.id, context.record.revision)?
+    };
+    let mut worker = Worker::spawn()?;
+    let id = uuid::Uuid::new_v4().to_string();
+    worker.send(&WorkerRequest::Initialize {
+        id: id.clone(),
+        manifest: package.manifest,
+        modules: package.modules,
+    })?;
+    let registrations: Vec<ServiceRegistration> =
+        serde_json::from_value(worker.receive(app, context, &id, true)?)
+            .map_err(|_| "扩展服务目录无效")?;
+    Ok((worker, registrations))
+}
+fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
+    let mut context = Context {
+        record: record.clone(),
+        run_id: uuid::Uuid::new_v4().to_string(),
+        canceled: Arc::new(AtomicBool::new(false)),
+        scene_id: None,
+        region_id: None,
+        scope: "default".into(),
+        region: None,
+        frames: HashMap::new(),
+        default_messages: vec![],
+        history: None,
+        default_images: vec![],
+        binding: None,
+        delegated_permissions: None,
+        authority_chain: vec![],
+        public_reasoning: None,
+        memory_enabled_required: false,
+        depth: 0,
+    };
+    let result = (|| {
+        let mut registration = register_run(app, &context)?;
+        let result = (|| {
+            let (worker, registrations) = start_worker(app, &mut context)?;
+            let result = {
+                let state = app.state::<ExtensionHost>();
+                let mut store = state.store()?;
+                store.set_services(&record.manifest.id, record.revision, &registrations)
+            };
+            // Do not hold a SQLite guard across the process shutdown/wait.
+            drop(worker);
+            result
+        })();
+        registration.success = result.is_ok();
+        result
+    })();
+    result.map_err(|cause| activation_failed(app, record, cause))
+}
+#[tauri::command]
+pub async fn invoke_extension(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    invocation: Invocation,
+) -> Result<Value, String> {
+    trusted(&window)?;
+    if invocation.region_id.is_some() && window.label() != "space" {
+        return Err("请从截图选区启动区域操作".into());
+    }
+    app.state::<Host>().exit.ensure_new_operation()?;
+    let record = app
+        .state::<ExtensionHost>()
+        .store()?
+        .get(&invocation.plugin_id)?;
+    if record.revision != invocation.revision || record.state != "enabled" {
+        return Err("扩展已停用或版本已变化".into());
+    }
+    let scope = if let Some(scene_id) = &invocation.scene_id {
+        let host = app.state::<Host>();
+        let engine = host.lock()?;
+        let scene = engine
+            .store
+            .scenes()
+            .iter()
+            .find(|s| &s.id == scene_id)
+            .ok_or("会话不存在")?;
+        if engine.store.snapshot().active_scene_id != *scene_id {
+            return Err("请使用当前会话".into());
+        }
+        scene.agent_id.clone()
+    } else {
+        "default".into()
+    };
+    let context = Context {
+        record,
+        run_id: uuid::Uuid::new_v4().to_string(),
+        canceled: Arc::new(AtomicBool::new(false)),
+        scene_id: invocation.scene_id,
+        region_id: invocation.region_id,
+        scope,
+        region: None,
+        frames: HashMap::new(),
+        default_messages: vec![],
+        history: None,
+        default_images: vec![],
+        binding: None,
+        delegated_permissions: None,
+        authority_chain: vec![],
+        public_reasoning: None,
+        memory_enabled_required: false,
+        depth: 0,
+    };
+    run_context(app, context, invocation.service_id, invocation.input).await
+}
+#[tauri::command]
+pub fn stop_extension(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    plugin_id: Option<String>,
+) -> Result<(), String> {
+    trusted(&window)?;
+    let state = app.state::<ExtensionHost>();
+    if let Some(id) = plugin_id {
+        state.cancel_plugin(&id)
+    } else {
+        state.cancel_all()
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BindingChange {
+    agent_id: String,
+    kind: String,
+    plugin_id: Option<String>,
+    service_id: Option<String>,
+    expected_revision: Option<u64>,
+}
+#[tauri::command]
+pub fn get_extension_bindings(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, ExtensionHost>,
+) -> Result<Vec<Binding>, String> {
+    trusted(&window)?;
+    state.store()?.bindings()
+}
+#[tauri::command]
+pub fn set_extension_binding(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    binding: BindingChange,
+) -> Result<Vec<Binding>, String> {
+    trusted(&window)?;
+    app.state::<Host>().exit.ensure_new_operation()?;
+    if !["agent", "memory"].contains(&binding.kind.as_str())
+        || binding.plugin_id.is_some() != binding.service_id.is_some()
+    {
+        return Err("扩展绑定无效".into());
+    }
+    // Same extension -> Engine order as UI persistence. No I/O awaits in locks.
+    let extensions = app.state::<ExtensionHost>();
+    let mut store = extensions.store()?;
+    {
+        let host = app.state::<Host>();
+        let engine = host.lock()?;
+        if !engine
+            .store
+            .snapshot()
+            .agents
+            .iter()
+            .any(|a| a.id == binding.agent_id)
+        {
+            return Err("Agent 不存在".into());
+        }
+    }
+    if let (Some(plugin), Some(service)) = (&binding.plugin_id, &binding.service_id) {
+        let record = store.get(plugin)?;
+        let expected_kind = if binding.kind == "agent" {
+            mewu_extension::ServiceKind::Agent
+        } else {
+            mewu_extension::ServiceKind::Memory
+        };
+        if record.state != "enabled"
+            || !record
+                .services
+                .iter()
+                .any(|s| &s.id == service && s.kind == expected_kind)
+        {
+            return Err("扩展未启用或没有对应服务".into());
+        }
+        store.validate_dependencies(&record.manifest)?;
+    }
+    store.set_binding(
+        &binding.agent_id,
+        &binding.kind,
+        binding.plugin_id.as_deref(),
+        binding.service_id.as_deref(),
+        binding.expected_revision,
+    )?;
+    let bindings = store.bindings()?;
+    extensions.cancel_agent(&binding.agent_id);
+    drop(store);
+    let _ = app.emit("extension-bindings", &bindings);
+    Ok(bindings)
+}
+pub(crate) fn has_binding(app: &AppHandle, agent_id: &str, kind: &str) -> Result<bool, String> {
+    let binding = app
+        .state::<ExtensionHost>()
+        .store()?
+        .binding(agent_id, kind)?;
+    Ok(binding.is_some_and(|b| b.plugin_id.is_some() && b.service_id.is_some()))
+}
+
+// Dropping the calling future revokes authority immediately. The blocking task
+// retains the registry entry until the child process has actually drained.
+struct FutureCancellation {
+    signal: Arc<AtomicBool>,
+    armed: bool,
+}
+impl Drop for FutureCancellation {
+    fn drop(&mut self) {
+        if self.armed {
+            self.signal.store(true, Ordering::SeqCst);
+        }
+    }
+}
+struct RunRegistration {
+    app: AppHandle,
+    id: String,
+    success: bool,
+}
+impl Drop for RunRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut runs) = self.app.state::<ExtensionHost>().runs.lock() {
+            runs.remove(&self.id);
+        }
+        let _ = self.app.emit(
+            "extension-run-ended",
+            json!({"runId":self.id,"success":self.success}),
+        );
+    }
+}
+impl Drop for Context {
+    fn drop(&mut self) {
+        if let Some(region) = self.region.take() {
+            region.revoke();
+        }
+    }
+}
+async fn run_context(
+    app: AppHandle,
+    mut context: Context,
+    service: String,
+    input: Value,
+) -> Result<Value, String> {
+    context.check(&app)?;
+    let registration = register_run(&app, &context)?;
+    let mut cancellation = FutureCancellation {
+        signal: context.canceled.clone(),
+        armed: true,
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut registration = registration;
+        let result = execute(&app, &mut context, &service, input);
+        registration.success = result.is_ok();
+        result
+    })
+    .await
+    .map_err(|_| "扩展执行中断".to_string());
+    cancellation.armed = false;
+    result?
+}
+fn register_run(app: &AppHandle, context: &Context) -> Result<RunRegistration, String> {
+    let extensions = app.state::<ExtensionHost>();
+    let mut runs = extensions.runs.lock().map_err(|_| "扩展运行状态不可用")?;
+    if runs.len() >= 8 {
+        return Err("扩展运行过多".into());
+    }
+    runs.insert(
+        context.run_id.clone(),
+        ActiveRun {
+            plugin: context.record.manifest.id.clone(),
+            scope: context.scope.clone(),
+            canceled: context.canceled.clone(),
+        },
+    );
+    Ok(RunRegistration {
+        app: app.clone(),
+        id: context.run_id.clone(),
+        success: false,
+    })
+}
+
+pub async fn run_bound_service(
+    app: AppHandle,
+    agent_id: String,
+    kind: &str,
+    scene_id: String,
+    input: Value,
+) -> Result<Option<Value>, String> {
+    if !["agent", "memory"].contains(&kind) {
+        return Err("扩展提供方类型无效".into());
+    }
+    let (binding, record, service) = {
+        let extensions = app.state::<ExtensionHost>();
+        let store = extensions.store()?;
+        let Some(binding) = store.binding(&agent_id, kind)? else {
+            return Ok(None);
+        };
+        let (Some(plugin), Some(service)) =
+            (binding.plugin_id.as_ref(), binding.service_id.as_ref())
+        else {
+            return Ok(None);
+        };
+        let record = store.get(plugin)?;
+        let expected_kind = if kind == "agent" {
+            mewu_extension::ServiceKind::Agent
+        } else {
+            mewu_extension::ServiceKind::Memory
+        };
+        if record.state != "enabled"
+            || !record
+                .services
+                .iter()
+                .any(|s| &s.id == service && s.kind == expected_kind)
+        {
+            return Err("已选的扩展提供方不可用".into());
+        }
+        (binding.clone(), record, service.clone())
+    };
+    let prepared = crate::extension_input::prepare(input)?;
+    let images = prepared
+        .input
+        .get("images")
+        .and_then(Value::as_array)
+        .map(|v| {
+            v.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let context = Context {
+        record,
+        run_id: uuid::Uuid::new_v4().to_string(),
+        canceled: Arc::new(AtomicBool::new(false)),
+        scene_id: Some(scene_id),
+        region_id: None,
+        scope: agent_id,
+        region: None,
+        frames: prepared.frames,
+        default_messages: prepared.messages,
+        history: prepared.history,
+        default_images: images,
+        binding: Some((kind.into(), binding.revision)),
+        delegated_permissions: None,
+        authority_chain: vec![],
+        public_reasoning: None,
+        memory_enabled_required: kind == "memory",
+        depth: 0,
+    };
+    run_context(app, context, service, prepared.input)
+        .await
+        .map(Some)
+}
+pub(crate) struct ExternalAgentResult {
+    pub output: Value,
+    pub reasoning: Option<String>,
+}
+pub(crate) async fn run_external_agent(
+    app: AppHandle,
+    provider: ExternalAgentProvider,
+    scene_id: String,
+    run_id: String,
+    input: Value,
+) -> Result<ExternalAgentResult, String> {
+    let authority = &provider.authority;
+    if authority.canceled.load(Ordering::SeqCst)
+        || provider.agent_id != authority.agent_id
+        || provider.record.manifest.id != authority.plugin_id
+        || provider.record.revision != authority.plugin_revision
+        || provider.record.sha256 != authority.sha256
+        || provider.service_id != authority.service_id
+    {
+        return Err("Agent 扩展授权已变化".into());
+    }
+    let prepared = crate::extension_input::prepare(input)?;
+    let images = prepared
+        .input
+        .get("images")
+        .and_then(Value::as_array)
+        .map(|v| {
+            v.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let reasoning = Arc::new(Mutex::new(String::new()));
+    let context = Context {
+        record: provider.record,
+        run_id,
+        canceled: authority.canceled.clone(),
+        scene_id: Some(scene_id),
+        region_id: None,
+        scope: provider.agent_id,
+        region: None,
+        frames: prepared.frames,
+        default_messages: prepared.messages,
+        history: prepared.history,
+        default_images: images,
+        binding: Some(("agent".into(), authority.binding_revision)),
+        delegated_permissions: None,
+        authority_chain: vec![],
+        public_reasoning: Some(reasoning.clone()),
+        memory_enabled_required: false,
+        depth: 0,
+    };
+    context.check(&app)?;
+    let output = run_context(app, context, provider.service_id, prepared.input).await?;
+    let reasoning = reasoning
+        .lock()
+        .map_err(|_| "Agent 思考状态不可用")?
+        .clone();
+    Ok(ExternalAgentResult {
+        output,
+        reasoning: if reasoning.is_empty() {
+            None
+        } else {
+            Some(reasoning)
+        },
+    })
+}
+fn execute(
+    app: &AppHandle,
+    context: &mut Context,
+    service_id: &str,
+    input: Value,
+) -> Result<Value, String> {
+    let (mut worker, registrations) = start_worker(app, context)?;
+    let registration = registrations
+        .iter()
+        .find(|s| s.id == service_id)
+        .ok_or("插件没有注册此服务")?;
+    if let Some(schema) = &registration.input_schema {
+        let validator = jsonschema::validator_for(schema).map_err(|_| "插件服务参数规范无效")?;
+        if !validator.is_valid(&input) {
+            return Err("插件参数不符合服务规范".into());
+        }
+    }
+    let _=app.emit_to("space","extension-run-started",json!({"runId":context.run_id,"pluginId":context.record.manifest.id,"serviceId":service_id,"title":registration.title}));
+    let id = uuid::Uuid::new_v4().to_string();
+    worker.send(&WorkerRequest::Invoke{id:id.clone(),service_id:service_id.into(),input,context:json!({"runId":context.run_id,"sceneId":context.scene_id,"regionId":context.region_id,"agentId":context.scope,"platform":std::env::consts::OS,"history":context.history})})?;
+    worker.receive(app, context, &id, false)
+}
+
+fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("缺少参数：{key}"))
+}
+fn live_store<T>(
+    app: &AppHandle,
+    context: &Context,
+    operation: impl FnOnce(&mut Store) -> Result<T, String>,
+) -> Result<T, String> {
+    let extensions = app.state::<ExtensionHost>();
+    let mut store = extensions.store()?;
+    if context.canceled.load(Ordering::SeqCst) {
+        return Err("扩展运行已停止".into());
+    }
+    let record = store.get(&context.record.manifest.id)?;
+    if record.state != "enabled" || record.revision != context.record.revision {
+        return Err("扩展授权已撤销".into());
+    }
+    for (id, revision) in &context.authority_chain {
+        let caller = store.get(id)?;
+        if caller.state != "enabled" || caller.revision != *revision {
+            return Err("调用方扩展授权已撤销".into());
+        }
+    }
+    if let Some((kind, revision)) = &context.binding {
+        let binding = store
+            .binding(&context.scope, kind)?
+            .ok_or("扩展绑定已撤销")?;
+        if binding.revision != *revision {
+            return Err("扩展绑定已变化".into());
+        }
+    }
+    operation(&mut store)
+}
+fn bridge(
+    app: &AppHandle,
+    context: &mut Context,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    context.check(app)?;
+    let permission = match method {
+        "storage.get" | "storage.list" => "storage.read",
+        "storage.set" | "storage.delete" | "storage.compareAndSet" => "storage.write",
+        "model.invoke" => "model.invoke",
+        "region.observe" => "region.observe",
+        "region.action" => "region.input",
+        "services.list" | "services.call" => "services.call",
+        "ui.render" => "ui.render",
+        "network.fetch" => "network.fetch",
+        "events.emit" => "events.emit",
+        _ => return Err("宿主不支持此扩展接口".into()),
+    };
+    context.permission(permission)?;
+    let result = match method {
+        "storage.get" => live_store(app, context, |store| {
+            store.value(
+                &context.record.manifest.id,
+                &context.scope,
+                string(&params, "key")?,
+            )
+        }),
+        "storage.set" => {
+            live_store(app, context, |store| {
+                store.set_value(
+                    &context.record.manifest.id,
+                    &context.scope,
+                    string(&params, "key")?,
+                    params.get("value").ok_or("缺少插件数据")?,
+                )
+            })?;
+            Ok(Value::Null)
+        }
+        "storage.delete" => {
+            live_store(app, context, |store| {
+                store.delete_value(
+                    &context.record.manifest.id,
+                    &context.scope,
+                    string(&params, "key")?,
+                )
+            })?;
+            Ok(Value::Null)
+        }
+        "storage.compareAndSet" => Ok(Value::Bool(live_store(app, context, |store| {
+            store.compare_and_set(
+                &context.record.manifest.id,
+                &context.scope,
+                string(&params, "key")?,
+                params.get("expected").ok_or("缺少比较值")?,
+                params.get("value").ok_or("缺少插件数据")?,
+            )
+        })?)),
+        "storage.list" => live_store(app, context, |store| {
+            store.keys(
+                &context.record.manifest.id,
+                &context.scope,
+                params.get("prefix").and_then(Value::as_str).unwrap_or(""),
+                params.get("cursor").and_then(Value::as_str).unwrap_or(""),
+            )
+        }),
+        "services.list" => {
+            let records = app.state::<ExtensionHost>().store()?.list()?;
+            Ok(Value::Array(records.iter().filter(|r|r.state=="enabled").flat_map(|r|r.services.iter().filter(|s|params.get("kind").is_none_or(|k|serde_json::to_value(s.kind).ok().as_ref()==Some(k))).map(|s|json!({"pluginId":r.manifest.id,"revision":r.revision,"serviceId":s.id,"kind":s.kind,"title":s.title}))).collect()))
+        }
+        "services.call" => {
+            if context.depth >= 3 {
+                return Err("插件服务调用层级过深".into());
+            }
+            let target = string(&params, "serviceId")?;
+            let (plugin_id, service_id) = target
+                .split_once('/')
+                .ok_or("服务地址须为 pluginId/serviceId")?;
+            let record = app.state::<ExtensionHost>().store()?.get(plugin_id)?;
+            if plugin_id == context.record.manifest.id {
+                return Err("插件不能通过宿主递归调用自身".into());
+            }
+            let requirement = context
+                .record
+                .manifest
+                .dependencies
+                .get(plugin_id)
+                .ok_or("调用其他插件前必须声明依赖")?;
+            if !semver::VersionReq::parse(requirement)
+                .map_err(|_| "依赖版本规范无效")?
+                .matches(
+                    &semver::Version::parse(&record.manifest.version)
+                        .map_err(|_| "依赖版本无效")?,
+                )
+            {
+                return Err("依赖插件版本不匹配".into());
+            }
+            let delegated_permissions = record
+                .manifest
+                .permissions
+                .iter()
+                .filter(|p| context.permission(p).is_ok())
+                .cloned()
+                .collect();
+            let mut authority_chain = context.authority_chain.clone();
+            authority_chain.push((context.record.manifest.id.clone(), context.record.revision));
+            let mut child = Context {
+                record,
+                run_id: context.run_id.clone(),
+                canceled: context.canceled.clone(),
+                scene_id: context.scene_id.clone(),
+                region_id: None,
+                scope: context.scope.clone(),
+                region: None,
+                frames: HashMap::new(),
+                default_messages: vec![],
+                history: context.history.clone(),
+                default_images: vec![],
+                binding: None,
+                delegated_permissions: Some(delegated_permissions),
+                authority_chain,
+                public_reasoning: context.public_reasoning.clone(),
+                memory_enabled_required: context.memory_enabled_required,
+                depth: context.depth + 1,
+            };
+            execute(
+                app,
+                &mut child,
+                service_id,
+                params.get("input").cloned().unwrap_or(Value::Null),
+            )
+        }
+        "region.observe" | "region.action" => {
+            if params.get("regionId").and_then(Value::as_str) != context.region_id.as_deref()
+                || context.region_id.is_none()
+            {
+                return Err("插件不能访问未授权的选区".into());
+            }
+            if context.region.is_none() {
+                context.region = Some(begin_region(app, context)?);
+            }
+            let region = context.region.as_ref().unwrap().clone();
+            if method == "region.action" {
+                let action =
+                    serde_json::from_value(params.get("action").cloned().ok_or("缺少区域动作")?)
+                        .map_err(|_| "区域动作无效")?;
+                region.execute(action).map_err(|e| e.to_string())?;
+                Ok(json!({"ok":true}))
+            } else {
+                if context.frames.len() >= 32 {
+                    context.frames.clear();
+                }
+                let frame = region.observe().map_err(|e| e.to_string())?;
+                let id = uuid::Uuid::new_v4().to_string();
+                let info = json!({"artifactId":id,"width":frame.width,"height":frame.height,"sha256":frame.sha256,"mimeType":"image/png"});
+                context.frames.insert(id, frame);
+                Ok(info)
+            }
+        }
+        "model.invoke" => model_invoke(app, context, params),
+        "ui.render" => {
+            let html = string(&params, "html")?;
+            let scene = context
+                .scene_id
+                .as_deref()
+                .ok_or("此服务没有会话界面授权")?;
+            context.check(app)?;
+            let value = crate::extension_ui::render(
+                app,
+                scene,
+                &context.record.manifest.id,
+                context.record.revision,
+                html,
+                params
+                    .get("width")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(400)
+                    .clamp(80, 1600) as u32,
+                params
+                    .get("height")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(300)
+                    .clamp(40, 1200) as u32,
+            )?;
+            context.check(app)?;
+            Ok(value)
+        }
+        "events.emit" => {
+            let name = string(&params, "name")?;
+            if matches!(name, "agent.text" | "agent.reasoning") {
+                let text = params
+                    .get("data")
+                    .and_then(|value| {
+                        value
+                            .as_str()
+                            .or_else(|| value.get("text").and_then(Value::as_str))
+                    })
+                    .ok_or("Agent 流事件缺少文本")?;
+                if text.len() > 64 * 1024 {
+                    return Err("Agent 单次流事件过大".into());
+                }
+                let scene = context
+                    .scene_id
+                    .as_deref()
+                    .ok_or("Agent 流事件没有会话授权")?;
+                let host = app.state::<Host>();
+                let engine = host.lock()?;
+                if !crate::run_is_authorized(&engine, scene, &context.run_id, None) {
+                    return Err("Agent 对话运行授权已撤销".into());
+                }
+                if name == "agent.reasoning" {
+                    if let Some(reasoning) = &context.public_reasoning {
+                        let mut reasoning = reasoning.lock().map_err(|_| "Agent 思考状态不可用")?;
+                        if reasoning.len().saturating_add(text.len()) > 2 * 1024 * 1024 {
+                            return Err("Agent 公开思考内容过长".into());
+                        }
+                        reasoning.push_str(text);
+                    }
+                }
+                let mut event = json!({"sceneId":scene,"runId":context.run_id,"status":"running"});
+                event[if name == "agent.text" {
+                    "text"
+                } else {
+                    "reasoning"
+                }] = Value::String(text.into());
+                crate::emit_run_event(app, event).map_err(|_| "无法发送 Agent 流事件")?;
+            }
+            app.emit("extension-event",json!({"pluginId":context.record.manifest.id,"runId":context.run_id,"name":string(&params,"name")?,"data":params.get("data")})).map_err(|_|"无法发送插件事件")?;
+            Ok(Value::Null)
+        }
+        "network.fetch" => network_fetch(app, context, params),
+        _ => unreachable!(),
+    };
+    context.check(app)?;
+    result
+}
+fn model_invoke(app: &AppHandle, context: &Context, params: Value) -> Result<Value, String> {
+    let scene_id = context
+        .scene_id
+        .as_deref()
+        .ok_or("此服务没有会话模型授权")?;
+    let host = app.state::<Host>();
+    let connection = {
+        let engine = host.lock()?;
+        engine
+            .store
+            .connection_for_scene(scene_id)
+            .map_err(|e| e.to_string())?
+    };
+    let transport = crate::connection_host::transport_for(&connection)?;
+    let key = if connection.advanced.auth_mode == mewu_core::ConnectionAuthMode::None {
+        zeroize::Zeroizing::new(String::new())
+    } else {
+        crate::credentials::read_profile(&host.root, &connection)?
+    };
+    if key.is_empty() && connection.advanced.auth_mode != mewu_core::ConnectionAuthMode::None {
+        return Err("请先配置模型密钥".into());
+    }
+    let mut messages = match params.get("messages") {
+        Some(messages) => messages.as_array().cloned().ok_or("模型消息必须是列表")?,
+        None => context.default_messages.clone(),
+    };
+    if messages.len() > 128 {
+        return Err("插件模型上下文过长".into());
+    }
+    for message in &messages {
+        if !matches!(
+            message.get("role").and_then(Value::as_str),
+            Some("user" | "assistant" | "system")
+        ) || !message.get("content").is_some_and(Value::is_string)
+        {
+            return Err("模型消息仅接受明确的角色和文本".into());
+        }
+    }
+    // Only the public text protocol crosses this API, never caller-supplied
+    // private continuation, tool authority or transport fields.
+    messages = messages
+        .iter()
+        .map(|m| json!({"role":m["role"],"content":m["content"]}))
+        .collect();
+    let mut content = vec![
+        json!({"type":"text","text":params.get("prompt").and_then(Value::as_str).unwrap_or("")}),
+    ];
+    let images = if let Some(images) = params.get("images") {
+        images
+            .as_array()
+            .ok_or("模型图片必须是引用列表")?
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned).ok_or("图片引用无效"))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        context.default_images.clone()
+    };
+    if images.len() > 8 {
+        return Err("单次模型图片过多".into());
+    }
+    for id in images {
+        let frame = context.frames.get(&id).ok_or("图片不属于当前插件运行")?;
+        content.push(json!({"type":"image_url","image_url":{"url":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(&frame.png))}}));
+    }
+    messages.push(json!({"role":"user","content":content}));
+    let canonical = json!({"model":connection.model,"messages":messages,"stream":true});
+    let body = crate::provider_transport::request_body(transport.protocol, canonical)?;
+    tauri::async_runtime::block_on(async {
+        context.check(app)?;
+        let request = crate::provider_transport::stream_turn(&transport, &key, body, |text| {
+            if context.check(app).is_ok() {
+                let _ = app.emit_to(
+                    "space",
+                    "extension-model-delta",
+                    json!({"runId":context.run_id,"text":text}),
+                );
+            }
+        });
+        tokio::pin!(request);
+        loop {
+            tokio::select! {result=&mut request=>{let turn=result?;context.check(app)?;return Ok(json!({"content":turn.content,"toolCalls":turn.tool_calls.into_iter().map(|c|json!({"id":c.id,"name":c.name,"arguments":c.arguments})).collect::<Vec<_>>()}))},_=tokio::time::sleep(Duration::from_millis(80))=>{context.check(app)?;}}
+        }
+    })
+}
+fn network_fetch(app: &AppHandle, context: &Context, params: Value) -> Result<Value, String> {
+    let url = url::Url::parse(string(&params, "url")?).map_err(|_| "插件网络地址无效")?;
+    if !(url.scheme() == "https"
+        || (url.scheme() == "http" && crate::network_policy::is_local(&url)))
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("插件网络接口只接受 HTTPS 或本机 HTTP 地址，不能在地址中包含凭据".into());
+    }
+    let method = params
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("GET");
+    if !["GET", "POST", "PUT", "DELETE"].contains(&method) {
+        return Err("网络方法不支持".into());
+    }
+    let body = params.get("body").cloned();
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(values) = params.get("headers") {
+        let values = values.as_object().ok_or("网络请求头必须是对象")?;
+        if values.len() > 32 {
+            return Err("网络请求头过多".into());
+        }
+        let mut total = 0usize;
+        for (name, value) in values {
+            let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|_| "网络请求头名称无效")?;
+            if matches!(
+                name.as_str(),
+                "host"
+                    | "content-length"
+                    | "transfer-encoding"
+                    | "connection"
+                    | "proxy-authorization"
+                    | "cookie"
+            ) {
+                return Err("网络请求头不能覆盖传输或浏览器凭据".into());
+            }
+            let value = value.as_str().ok_or("网络请求头值必须是文本")?;
+            total = total.saturating_add(name.as_str().len() + value.len());
+            if total > 16 * 1024 {
+                return Err("网络请求头过大".into());
+            }
+            headers.insert(
+                name,
+                reqwest::header::HeaderValue::from_str(value).map_err(|_| "网络请求头值无效")?,
+            );
+        }
+    }
+    tauri::async_runtime::block_on(async {
+        context.check(app)?;
+        let client = crate::network_policy::apply(reqwest::Client::builder(), Some(&url))?
+            .timeout(Duration::from_secs(60))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| "网络接口不可用")?;
+        let mut request = client
+            .request(method.parse().map_err(|_| "网络方法无效")?, url)
+            .headers(headers);
+        if let Some(body) = body {
+            request = if let Some(text) = body.as_str() {
+                request.body(text.to_owned())
+            } else {
+                request.json(&body)
+            }
+        }
+        let request = request.send();
+        tokio::pin!(request);
+        let response = loop {
+            tokio::select! {r=&mut request=>break r.map_err(|_|"插件网络请求失败")?,_=tokio::time::sleep(Duration::from_millis(80))=>{context.check(app)?;}}
+        };
+        let status = response.status().as_u16();
+        let mut stream = futures_util::StreamExt::boxed(response.bytes_stream());
+        let mut bytes = Vec::new();
+        loop {
+            let part = tokio::select! {part=futures_util::StreamExt::next(&mut stream)=>part,_=tokio::time::sleep(Duration::from_millis(80))=>{context.check(app)?;continue;}};
+            let Some(part) = part else { break };
+            let part = part.map_err(|_| "网络读取失败")?;
+            if bytes.len().saturating_add(part.len()) > 512 * 1024 {
+                return Err("插件网络结果过大".into());
+            }
+            bytes.extend_from_slice(&part);
+        }
+        context.check(app)?;
+        let text = String::from_utf8(bytes).map_err(|_| "插件网络结果不是文本")?;
+        Ok(json!({"status":status,"body":text}))
+    })
+}
+
+struct OverlayHooks {
+    app: AppHandle,
+    plugin: String,
+    revision: u64,
+    canceled: Arc<AtomicBool>,
+    hidden: Arc<Mutex<Vec<String>>>,
+}
+impl region::RegionOverlayHooks for OverlayHooks {
+    fn validate_source(&self, binding: &region::RegionBinding) -> Result<(), String> {
+        if self.canceled.load(Ordering::SeqCst) {
+            return Err("区域运行已停止".into());
+        }
+        let record = self
+            .app
+            .state::<ExtensionHost>()
+            .store()?
+            .get(&self.plugin)?;
+        if record.revision != self.revision || record.state != "enabled" {
+            return Err("插件授权已撤销".into());
+        }
+        let host = self.app.state::<Host>();
+        host.exit.ensure_background()?;
+        let engine = host.lock()?;
+        let scene = engine
+            .store
+            .scenes()
+            .iter()
+            .find(|s| s.id == binding.scene_id)
+            .ok_or("会话已关闭")?;
+        if engine.store.snapshot().active_scene_id != binding.scene_id
+            || scene.closed
+            || scene.background.as_ref().map(|b| &b.id) != Some(&binding.background_id)
+            || scene.background.as_ref().is_none_or(|b| {
+                b.width != Some(binding.source_width)
+                    || b.height != Some(binding.source_height)
+                    || b.capture_coordinates != Some(binding.coordinates)
+                    || b.kind != mewu_core::AssetKind::Image
+            })
+        {
+            return Err("截图来源已变化".into());
+        }
+        let selection = scene
+            .regions
+            .iter()
+            .find(|r| r.id == binding.region_id)
+            .ok_or("选区已删除")?;
+        if mewu_core::RegionGeometry::from(selection) != binding.selection
+            || selection.drawing_revision != binding.drawing_revision
+            || selection.image_override.is_some()
+        {
+            return Err("选区已变化".into());
+        }
+        Ok(())
+    }
+    fn hide_owned_overlays(&self) -> Result<(), String> {
+        let app = self.app.clone();
+        let hidden = self.hidden.clone();
+        let abandoned = Arc::new(AtomicBool::new(false));
+        let ticket = abandoned.clone();
+        let (send, receive) = mpsc::sync_channel(1);
+        self.app
+            .run_on_main_thread(move || {
+                let result = (|| {
+                    for (label, window) in app.webview_windows() {
+                        if label == "space" || label == "frozen" || label.starts_with("pin-") {
+                            let mut hidden = hidden.lock().map_err(|_| "覆盖层状态无效")?;
+                            if ticket.load(Ordering::SeqCst) {
+                                return Err("截图覆盖层操作已撤销");
+                            }
+                            if window.is_visible().unwrap_or(false) {
+                                window.hide().map_err(|_| "无法隐藏截图覆盖层")?;
+                                hidden.push(label);
+                            }
+                        }
+                    }
+                    Ok(())
+                })();
+                if send.send(result).is_err() {
+                    let labels = hidden
+                        .lock()
+                        .map(|mut v| std::mem::take(&mut *v))
+                        .unwrap_or_default();
+                    restore_ui_windows(&app, labels);
+                }
+            })
+            .map_err(|_| "无法隐藏截图覆盖层")?;
+        match receive.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(())) => {}
+            failed => {
+                abandoned.store(true, Ordering::SeqCst);
+                self.restore_owned_overlays();
+                return Err(match failed {
+                    Ok(Err(message)) => message.into(),
+                    _ => "隐藏截图覆盖层超时".into(),
+                });
+            }
+        }
+        #[cfg(windows)]
+        unsafe {
+            let _ = windows_sys::Win32::Graphics::Dwm::DwmFlush();
+        }
+        std::thread::sleep(Duration::from_millis(32));
+        Ok(())
+    }
+    fn restore_owned_overlays(&self) {
+        let labels = self
+            .hidden
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default();
+        let app = self.app.clone();
+        let _ = self
+            .app
+            .run_on_main_thread(move || restore_ui_windows(&app, labels));
+    }
+}
+fn restore_ui_windows(app: &AppHandle, labels: Vec<String>) {
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            #[cfg(windows)]
+            {
+                if let Ok(hwnd) = window.hwnd() {
+                    unsafe {
+                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                            hwnd.0 as _,
+                            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
+                        );
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            let _ = window.show();
+        }
+    }
+}
+fn begin_region(app: &AppHandle, context: &Context) -> Result<Arc<region::RegionSession>, String> {
+    let scene_id = context.scene_id.as_ref().ok_or("没有当前会话授权")?;
+    let region_id = context.region_id.as_ref().ok_or("没有当前选区授权")?;
+    let (mut background, selection) = {
+        let host = app.state::<Host>();
+        let engine = host.lock()?;
+        let scene = engine
+            .store
+            .scenes()
+            .iter()
+            .find(|s| &s.id == scene_id)
+            .ok_or("会话不存在")?;
+        let background = scene.background.clone().ok_or("没有截图背景")?;
+        let selection = scene
+            .regions
+            .iter()
+            .find(|r| &r.id == region_id)
+            .ok_or("选区不存在")?
+            .clone();
+        (background, selection)
+    };
+    let host = app.state::<Host>();
+    background.path = crate::assets::verified_path(&background, &host.assets)?
+        .to_str()
+        .ok_or("截图路径无效")?
+        .into();
+    let mut file = std::fs::File::open(&background.path)
+        .map_err(|_| "无法读取截图")?
+        .take(128 * 1024 * 1024 + 1);
+    let mut hash = Sha256::new();
+    let mut total = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|_| "无法读取截图")?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        if total > 128 * 1024 * 1024 {
+            return Err("截图源文件过大".into());
+        }
+        hash.update(&buffer[..read]);
+        context.check(app)?;
+    }
+    let source = region::RegionSource {
+        scene_id: scene_id.clone(),
+        background,
+        selection,
+        asset_sha256: format!("{:x}", hash.finalize()),
+    };
+    let hooks = Arc::new(OverlayHooks {
+        app: app.clone(),
+        plugin: context.record.manifest.id.clone(),
+        revision: context.record.revision,
+        canceled: context.canceled.clone(),
+        hidden: Arc::new(Mutex::new(vec![])),
+    });
+    region::RegionSession::begin(source, hooks).map_err(|e| e.to_string())
+}

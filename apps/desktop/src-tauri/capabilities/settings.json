@@ -70,6 +70,15 @@
     "allow-clean-data",
     "allow-configure-capture-shortcut-portal",
     "allow-cancel-capture-shortcut-portal",
-    "allow-open-capture-shortcut-system-settings"
+    "allow-open-capture-shortcut-system-settings",
+    "allow-get-extensions",
+    "allow-get-extension-catalog",
+    "allow-prepare-extension",
+    "allow-install-extension",
+    "allow-control-extension",
+    "allow-invoke-extension",
+    "allow-stop-extension",
+    "allow-get-extension-bindings",
+    "allow-set-extension-binding"
   ]
 }

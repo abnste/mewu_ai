@@ -14,7 +14,7 @@ const ts = text => stripTypeScriptTypes(text, { mode: 'transform' });
 const api = await import(`data:text/javascript;base64,${Buffer.from(ts(await raw('run-journal.ts'))).toString('base64')}`);
 const { JournalReader, ContinuationController, ProjectionPreview, latestReply } = api;
 const exitApi = await import(`data:text/javascript;base64,${Buffer.from(ts(await raw('exit-preparation.ts'))).toString('base64')}`);
-const { sameOptionalGrant } = await import(`data:text/javascript;base64,${Buffer.from(ts(await raw('optional-capabilities.ts'))).toString('base64')}`);
+const { sameOptionalGrant, optionalAgentAvailable, optionalAgentReady } = await import(`data:text/javascript;base64,${Buffer.from(ts(await raw('optional-capabilities.ts'))).toString('base64')}`);
 const checks = [];
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve,reject; const promise=new Promise((yes,no)=>{resolve=yes;reject=no;}); return {promise,resolve,reject}; };
@@ -214,9 +214,9 @@ const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,l
     const flush=deferred(),request=deferred(),calls=[],accepted=[],errors={};
     const scene={id:'scene-a',agentId:'agent-a',connectionId:'connection-a',run:{id:'run-a',status:'failed'},draft:'A',refs:[{kind:'region',id:'r'}],closed:false,frozen:false};
     const snapshot={scenes:[scene],connections:[{id:'connection-a',revision:2}]};
-    const state={capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection-a']}};
+    const state={capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection-a'],readyAgentIds:[],boundAgentIds:[]}};
     const queue=deferred(),operations=new exitApi.SpaceOperations();let busy=false,sending=false,exiting=false,flushCalls=0;
-    const context={Promise,Error,ContinuationController,sameOptionalGrant,capabilities:()=>state.capabilities,disposed:false,scene:()=>scene,snapshot:()=>snapshot,busy:()=>busy,sending:()=>sending,recording:()=>null,scroll:()=>null,exitPreparing:()=>exiting,spaceOperations:operations,flush:()=>{flushCalls++;return flush.promise;},commands:queued?queue.promise:Promise.resolve(),exitFailure:undefined,
+    const context={Promise,Error,ContinuationController,sameOptionalGrant,optionalAgentAvailable,optionalAgentReady,capabilities:()=>state.capabilities,disposed:false,scene:()=>scene,snapshot:()=>snapshot,busy:()=>busy,sending:()=>sending,recording:()=>null,scroll:()=>null,exitPreparing:()=>exiting,spaceOperations:operations,flush:()=>{flushCalls++;return flush.promise;},commands:queued?queue.promise:Promise.resolve(),exitFailure:undefined,
       bridge:{continueRunFromJournal:input=>{calls.push(input);return request.promise;}},accept:value=>accepted.push(value),setSending:value=>sending=value,setBusy:value=>busy=value,setSendErrors:fn=>Object.assign(errors,fn(errors))};
     const invoke=runInNewContext(`${executable}; continueJournal`,context);
     return {invoke,flush,queue,request,calls,accepted,errors,scene,snapshot,state,operations,context,exit:()=>exiting=true,busy:()=>busy,sending:()=>sending,flushCalls:()=>flushCalls};

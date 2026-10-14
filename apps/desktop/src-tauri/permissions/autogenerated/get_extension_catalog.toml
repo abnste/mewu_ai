@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-extension-catalog"
+description = "Enables the get_extension_catalog command without any pre-configured scope."
+commands.allow = ["get_extension_catalog"]
+
+[[permission]]
+identifier = "deny-get-extension-catalog"
+description = "Denies the get_extension_catalog command without any pre-configured scope."
+commands.deny = ["get_extension_catalog"]

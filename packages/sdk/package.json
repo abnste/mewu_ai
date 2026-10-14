@@ -1,0 +1,27 @@
+{
+  "name": "@mewu/sdk",
+  "version": "0.1.0",
+  "description": "Mewu API 2 executable extension SDK",
+  "type": "module",
+  "license": "MPL-2.0",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    }
+  },
+  "types": "./index.d.ts",
+  "files": ["index.mjs", "index.d.ts", "README.md", "LICENSE"],
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "check:sync": "node tools/sync.mjs --check",
+    "sync": "node tools/sync.mjs --write",
+    "prepack": "node tools/sync.mjs --check",
+    "test": "node --import ./test/register-loader.mjs --test test/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abnste/mewu_ai.git",
+    "directory": "packages/sdk"
+  }
+}

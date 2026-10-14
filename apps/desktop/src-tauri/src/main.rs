@@ -14,6 +14,7 @@ mod capture_macos;
 mod capture_permission_macos;
 mod blackboard;
 mod optional_capabilities;
+mod optional_authorizations;
 mod capture_cursor;
 mod capture_delay_work;
 #[cfg(windows)]
@@ -93,6 +94,14 @@ mod pin_host;
 mod pin_window;
 mod pixel_sampler;
 mod plugin_host;
+mod extension_host;
+mod extension_market;
+mod extension_region;
+mod extension_store;
+mod extension_ui;
+mod extension_input;
+mod extension_agent;
+mod extension_agent_authority;
 mod plugin_sources;
 mod plugins;
 mod provider_transport;
@@ -209,7 +218,7 @@ use zeroize::Zeroizing;
 pub(crate) struct Engine {
     store: Store,
     optional: optional_capabilities::Authorizations,
-    agent_runs: HashMap<String, (String, optional_capabilities::Grant)>,
+    agent_runs: HashMap<String, (String, extension_agent_authority::RunAgentAuthority)>,
     runs: HashMap<String, oneshot::Sender<()>>,
     plugin_runs: HashMap<String, (String, String, u64)>,
     visual_runs: HashMap<String, visual_annotation_host::RunOrigin>,
@@ -227,7 +236,7 @@ fn run_is_authorized(
 ) -> bool {
     engine.runs.contains_key(run_id)
         && engine.store.run_is_active(scene_id, run_id)
-        && engine.agent_runs.get(run_id).is_some_and(|(scene, grant)| scene == scene_id && engine.optional.agent.as_ref() == Some(grant))
+        && engine.agent_runs.get(run_id).is_some_and(|(scene, grant)| scene == scene_id && grant.is_current(engine,scene_id))
         && plugin_origin.is_none_or(|origin| engine.plugin_runs.get(run_id) == Some(origin))
 }
 pub(crate) struct Host {
@@ -259,7 +268,7 @@ pub(crate) struct Host {
     image_exports: image_host::Registry,
     // Struct fields drop in declaration order: close Engine/Store, plugin DBs,
     // preference actors and all asset owners before releasing this lock.
-    _storage_lock: storage_root::RuntimeLock,
+    _storage_lock: Arc<storage_root::RuntimeLock>,
 }
 /// Reads only the immutable map collected beside this background image. No OS
 /// window enumeration occurs here. A capture publishes its new background while
@@ -1685,6 +1694,9 @@ async fn send_message(
     host.exit.ensure_new_operation()?;
     recording::ensure_idle(&app)?;
     speech_host::cancel_owner(&app, "space");
+    if let Some(provider)=extension_host::external_agent_for_scene(&app,&scene_id)?{
+        return extension_agent::start_external_run(app.clone(),scene_id,provider).await;
+    }
     if let Some(grant) = &visual_annotations {
         host.plugins
             .lock()
@@ -1973,7 +1985,7 @@ fn start_run_with_annotations(
         key,
         connection,
     } = preflight;
-    engine.agent_runs.insert(context.run_id.clone(), (scene_id.clone(), agent_grant));
+    engine.agent_runs.insert(context.run_id.clone(), (scene_id.clone(), agent_grant.into()));
     let title_transport = transport.clone();
     let run_tools =
         match mcp_host::RunTools::with_annotations(&context, visual.clone(), video.clone()) {
@@ -2043,6 +2055,9 @@ fn start_run_with_annotations(
         let mut public_reasoning = String::new();
         let result = {
             let work = async {
+                let extension_agent_id = context.agent.id.clone();
+                let extension_memory_enabled = context.agent.memory_enabled;
+                let extension_custom_memory = extension_memory_enabled && extension_host::has_binding(&app2, &extension_agent_id, "memory")?;
                 let app3 = app2.clone();
                 let tools3 = run_tools.clone();
                 let origin3 = plugin_origin.clone();
@@ -2059,6 +2074,11 @@ fn start_run_with_annotations(
                     tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
                         let host = app3.state::<Host>();
                         let mut context = context;
+                        if extension_custom_memory {
+                            context.memories.clear();
+                            context.memory_authority = None;
+                            context.agent.memory_enabled = false;
+                        }
                         let snapshot = if let Some(scope) = &video3 {
                             let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
                             plugins.store.visual_annotations(&scope.origin.grant)?;
@@ -2156,13 +2176,21 @@ fn start_run_with_annotations(
                     })
                     .await
                     .map_err(|_| "准备消息失败")??;
-                memory_tools::augment_initial(&app2, &scene_id, &run_id, &memory_query, &mut body)
-                    .await?;
-                agent_loop::run_recorded_with_reasoning(
+                if !extension_custom_memory {
+                    memory_tools::augment_initial(&app2, &scene_id, &run_id, &memory_query, &mut body).await?;
+                }
+                let extension_filtered_tools: Vec<_> = run_tools.definitions().into_iter().filter(|tool| {
+                    !extension_custom_memory || tool.pointer("/function/name").and_then(serde_json::Value::as_str).is_none_or(|name| agent_tools::label(name).is_none())
+                }).collect();
+                if extension_custom_memory { body["tools"] = serde_json::Value::Array(extension_filtered_tools.clone()); }
+                if extension_memory_enabled {
+                    extension_agent::recall(&app2, &extension_agent_id, &scene_id, &memory_query, &mut body).await?;
+                }
+                let answer = agent_loop::run_recorded_with_reasoning(
                     transport,
                     &key,
                     body,
-                    run_tools.definitions(),
+                    extension_filtered_tools,
                     |text| {
                         let host = app2.state::<Host>();
                         if let Ok(engine) = host.lock() {
@@ -2198,7 +2226,13 @@ fn start_run_with_annotations(
                             }
                         }
                     },
-                ).await
+                ).await?;
+                if extension_memory_enabled {
+                    if let Err(error) = extension_agent::retain(&app2, &extension_agent_id, &scene_id, &memory_query, &answer).await {
+                        eprintln!("[extension-memory] retain failed: {error}");
+                    }
+                }
+                Ok::<String, String>(answer)
             };
             tokio::select! {biased; _=receiver=>None,result=work=>Some(result)}
         };
@@ -2284,7 +2318,7 @@ mod run_authorization_tests {
         let (sender, _receiver) = oneshot::channel();
         engine.runs.insert(run.run_id.clone(), sender);
         let agent_grant = engine.optional.require_agent().unwrap();
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone()));
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone().into()));
         let origin = (scene_id.clone(), "example.table".to_owned(), 3);
         engine
             .plugin_runs
@@ -2309,7 +2343,7 @@ mod run_authorization_tests {
         ));
         // Restore Agent admission so the next assertion isolates the workflow
         // origin revision rather than failing only on the missing Agent grant.
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone()));
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone().into()));
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, Some(&origin)));
         engine
             .plugin_runs
@@ -2325,7 +2359,7 @@ mod run_authorization_tests {
         assert!(run_is_authorized(&engine, &scene_id, &run.run_id, None));
         engine.agent_runs.remove(&run.run_id);
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone()));
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), agent_grant.clone().into()));
         engine.optional.agent = None;
         assert!(!run_is_authorized(&engine, &scene_id, &run.run_id, None));
         let revised_agent = optional_capabilities::Grant { revision: agent_grant.revision + 1, ..agent_grant.clone() };
@@ -2341,7 +2375,7 @@ mod run_authorization_tests {
         assert!(engine.store.run_is_active(&scene_id, &run.run_id));
         // Give this synthetic run fresh matching admission to isolate the
         // remaining transport and durable-run cancellation fences below.
-        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), reenabling_agent));
+        engine.agent_runs.insert(run.run_id.clone(), (scene_id.clone(), reenabling_agent.into()));
         assert!(run_is_authorized(&engine, &scene_id, &run.run_id, None));
         // External memory has no workflow origin. Removing the transport
         // registration still fences late effects if durable cancellation fails.
@@ -2433,6 +2467,11 @@ fn enable_console_diagnostics(view: &webkit2gtk::WebView) {
 }
 
 fn main() {
+    // A code extension has only piped protocol access; do not open user storage,
+    // register the single-instance plugin, or create any WebView in this child.
+    if std::env::args().nth(1).as_deref() == Some("--extension-worker") {
+        std::process::exit(if mewu_extension::run_stdio_worker().is_ok() { 0 } else { 1 });
+    }
     // Production admits only the fixed native recording worker. Other sealed
     // worker domains and the Code parent retain their explicit test admission.
     #[cfg(target_os = "linux")]
@@ -2653,6 +2692,15 @@ fn main() {
                 connection_host::cancel_connection_probe,
                 mcp_host::discover_mcp_server,
                 plugin_host::get_plugins,
+                extension_host::get_extensions,
+                extension_host::get_extension_bindings,
+                extension_host::set_extension_binding,
+                extension_host::get_extension_catalog,
+                extension_host::prepare_extension,
+                extension_host::install_extension,
+                extension_host::control_extension,
+                extension_host::invoke_extension,
+                extension_host::stop_extension,
                 plugin_host::get_plugin_catalog,
                 plugin_host::prepare_plugin,
                 plugin_host::install_plugin,
@@ -2893,6 +2941,7 @@ fn main() {
             )?;
             #[cfg(target_os = "macos")]
             storage_root::prepare_macos_storage_identity(&storage_paths, &storage_lock)?;
+            let storage_lock = Arc::new(storage_lock);
             let resolved = storage_root::resolve_startup(&storage_paths)?;
             asset_locations::install_context(resolved.locations.clone())?;
             let storage = storage_host::StorageRuntime::new(storage_paths.clone(), &resolved);
@@ -2929,6 +2978,7 @@ fn main() {
             if let Ok(value) = system_preferences.view() {
                 startup_windows::initialize(&value);
             }
+            app.manage(extension_host::ExtensionHost::open(&root, storage_lock.clone())?);
             app.manage(Host {
                 storage,
                 _storage_lock: storage_lock,

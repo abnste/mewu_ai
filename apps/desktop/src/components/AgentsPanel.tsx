@@ -5,6 +5,7 @@ import type { AgentProfile, ConnectionProfile, MemoryStats, Scene } from '../con
 import { t } from '../i18n';
 import MemoryList, { type DeleteMemory, type SaveMemory } from './MemoryList';
 import MemoryProviderSettings from './MemoryProviderSettings';
+import ExtensionProviders from './ExtensionProviders';
 import { Row, SettingsAddButton, Toggle } from './SettingControls';
 import '../connections.css';
 
@@ -77,6 +78,7 @@ export default function AgentsPanel(props: Props) {
         <label class="field-label">{t('灵魂设定')}<textarea rows={5} value={view(id).instructions} onInput={event => edit(id, { instructions: event.currentTarget.value })} /></label>
         <label class="field-label">{t('模型')}<select aria-label={t('Agent 模型')} value={view(id).defaultConnectionId ?? ''} onChange={event => edit(id, { defaultConnectionId: event.currentTarget.value || null })}><option value="">{t('使用默认模型')}</option><For each={props.connections.map(connection => connection.id)}>{connectionId => <option value={connectionId}>{(() => { const connection = props.connections.find(connection => connection.id === connectionId); return connection?.model ? `${connection.model} · ${connection.name}` : connection?.name; })()}</option>}</For></select></label>
         <Row title={t('长期记忆')}><Toggle label={t('长期记忆')} checked={view(id).memoryEnabled !== false} onChange={value => edit(id, { memoryEnabled: value })} /></Row>
+        <ExtensionProviders agentId={id} active={props.active && expanded() === id} saved={Boolean(profile(id))}/>
         <Show when={errors()[id]}><p class="settings-error" role="alert">{errors()[id]}</p></Show>
         <div class="settings-actions"><Show when={saved() === id}><span class="saved-label"><Check size={13} />{t('已保存')}</span></Show><button class="primary-button" disabled={Boolean(pending())} onClick={() => void save(id)}><Show when={pending() === id}><LoaderCircle size={14} class="spin" /></Show>{t('保存')}</button></div>
         <MemoryProviderSettings agentId={id} agent={profile(id)} active={props.active && expanded() === id} scenes={props.scenes} />
