@@ -36,13 +36,15 @@ Automatic window selection enables **Snapshot** on the long-capture button. Supp
 
 Preview 3 package names follow the existing release layout:
 
-| Platform | Planned download |
+| Platform | Download |
 | --- | --- |
 | Windows x64 | `MewuAI-Remake-Setup-1.0.0-preview.3-win-x64.exe` · `MewuAI-Remake-Portable-1.0.0-preview.3-win-x64.zip` |
 | macOS ARM64 | `MewuAI-Remake-1.0.0-preview.3-mac-arm64.dmg` |
 | Linux x64 | `MewuAI-Remake-1.0.0-preview.3-linux-x64.AppImage` |
 
 Windows requires Windows 10 2004 or later and WebView2. macOS uses the system WKWebView. Linux uses WebKitGTK; Wayland capture and recording request permission through the desktop portal.
+
+Linux requires the system `libnghttp2.so.14` provider (`libnghttp2-14` on Ubuntu). Local OCR uses system Tesseract 4.1 or 5 and English language data (`tesseract-ocr-eng` on Ubuntu).
 
 The application checks for updates in the background. Settings → About provides **Check for updates** and **Update and restart**. Every update requires an installer signature bound to its version; the installer starts after the application saves and drains active work. Updates use a fixed release channel, not a branch URL. Moving this code to master or renaming next does not change the installed updater.
 

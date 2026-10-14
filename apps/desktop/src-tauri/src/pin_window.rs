@@ -14,6 +14,12 @@ use std::sync::{
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 pub const PADDING: u32 = 12;
+#[cfg(target_os = "macos")]
+#[path = "pin_window_macos.rs"]
+mod macos;
+#[cfg(target_os = "linux")]
+#[path = "pin_window_linux.rs"]
+mod linux;
 const MAX_SIDE: f64 = 8192.;
 const MAX_SURFACE_PIXELS: f64 = 16. * 1024. * 1024.;
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -150,7 +156,7 @@ fn transformed(rect: Rect, ratio: f64, scale: f64, swap: bool) -> Result<Rect, S
     })
 }
 pub(crate) async fn build(app: &AppHandle, label: &str, original: Rect) -> Result<(), String> {
-    let window = tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
         label,
         tauri::WebviewUrl::App("index.html?surface=pin".into()),
@@ -179,14 +185,20 @@ pub(crate) async fn build(app: &AppHandle, label: &str, original: Rect) -> Resul
                 && url.host_str() == Some("127.0.0.1")
                 && url.port() == Some(1420))
     })
-    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-    .build()
-    .map_err(|_| "无法创建贴图窗口")?;
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+    #[cfg(target_os = "macos")]
+    let builder = builder.accept_first_mouse(true);
+    let window = builder.build().map_err(|_| "无法创建贴图窗口")?;
     let initial_window = window.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     window
         .run_on_main_thread(move || {
-            let _ = tx.send(apply_rect(&initial_window, original));
+            let result = (|| {
+                #[cfg(target_os = "linux")]
+                linux::prepare(&initial_window)?;
+                apply_rect(&initial_window, original)
+            })();
+            let _ = tx.send(result);
         })
         .map_err(|_| "无法定位贴图")?;
     rx.await.map_err(|_| "贴图初始化中断")??;
@@ -336,6 +348,26 @@ pub(crate) async fn start_drag(window: &WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|_| "无法拖动贴图".into())
 }
 pub(crate) fn current_rect(window: &WebviewWindow) -> Result<Rect, String> {
+    #[cfg(target_os = "linux")]
+    {
+        if gtk::is_initialized_main_thread() {
+            return linux::current_rect(window);
+        }
+        // Object IPC runs on workers. Query GTK on its event loop without
+        // moving a native pointer to the worker or holding the pin registry.
+        let own = window.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        window
+            .run_on_main_thread(move || {
+                let _ = tx.send(linux::current_rect(&own));
+            })
+            .map_err(|_| "无法读取贴图位置")?;
+        return rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .map_err(|_| "贴图位置读取中断")?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
     let position = window.outer_position().map_err(|_| "无法读取贴图位置")?;
     let size = window.outer_size().map_err(|_| "无法读取贴图尺寸")?;
     Ok(Rect {
@@ -344,6 +376,7 @@ pub(crate) fn current_rect(window: &WebviewWindow) -> Result<Rect, String> {
         width: size.width,
         height: size.height,
     })
+    }
 }
 pub(crate) fn apply_rect(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
     #[cfg(windows)]
@@ -370,6 +403,8 @@ pub(crate) fn apply_rect(window: &WebviewWindow, rect: Rect) -> Result<(), Strin
     }
     #[cfg(not(windows))]
     {
+        #[cfg(target_os = "linux")]
+        linux::remember_rect(window, rect)?;
         window
             .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
             .map_err(|_| "无法定位贴图")?;
@@ -385,7 +420,9 @@ pub(crate) async fn show_without_activation(
     original: Rect,
 ) -> Result<(), String> {
     let target = window.clone();
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    #[cfg(target_os = "linux")]
+    let linux_cancel = cancelled.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
     window
         .run_on_main_thread(move || {
             let result = (|| {
@@ -397,6 +434,7 @@ pub(crate) async fn show_without_activation(
                 }
                 crate::capture_visibility::apply(&target)?;
                 apply_rect(&target, original)?;
+                #[cfg(not(target_os = "linux"))]
                 if current_rect(&target)? != original {
                     return Err("贴图尺寸未能保持，请重试".into());
                 }
@@ -410,14 +448,23 @@ pub(crate) async fn show_without_activation(
                         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     }
                 }
-                #[cfg(not(windows))]
+                #[cfg(target_os = "macos")]
+                macos::show_without_activation(&target)?;
+                #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
                 target.show().map_err(|_| "无法显示贴图")?;
                 Ok(())
             })();
             let _ = tx.send(result);
         })
         .map_err(|_| "无法显示贴图")?;
-    rx.await.map_err(|_| "贴图显示中断")?
+    rx.await.map_err(|_| "贴图显示中断")??;
+    #[cfg(target_os = "linux")]
+    {
+        // GTK/X11 confirms the mapped original physical rectangle through its
+        // actual configure event. Never relax the original-size admission gate.
+        linux::show(window, original, linux_cancel).await?;
+    }
+    Ok(())
 }
 
 fn space_rect(app: &AppHandle) -> Result<Rect, String> {
@@ -727,7 +774,36 @@ fn restack(app: &AppHandle) {
             }
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let Some(space) = app
+            .get_webview_window("space")
+            .filter(|window| window.is_visible().unwrap_or(false))
+        else {
+            return;
+        };
+        let Some(registry) = app.try_state::<PinRegistry>() else {
+            return;
+        };
+        // Release registry locks before asking Tauri/AppKit for any window.
+        let labels = match registry.state.lock() {
+            Ok(state) => state
+                .entries
+                .iter()
+                .filter(|(_, entry)| entry.live && entry.topmost)
+                .map(|(label, _)| label.clone())
+                .collect::<Vec<_>>(),
+            Err(_) => return,
+        };
+        for label in labels {
+            if let Some(window) = app.get_webview_window(&label) {
+                let _ = macos::beneath_space(&window, &space);
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    linux::restack(app);
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = app;
     }

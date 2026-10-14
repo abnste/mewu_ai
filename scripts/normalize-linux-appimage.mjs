@@ -68,6 +68,10 @@ export async function inspectAppDir(input, { normalized = false, requireResource
       && /^(?:libGL(?:dispatch|X(?:_mesa)?)?|libEGL(?:_mesa)?|libGLESv[12](?:_CM)?|libOpenGL|libglapi|libgbm|libdrm|libX11(?:-xcb)?|libxcb|libwayland-(?:client|cursor|egl|server))\.so(?:\.|$)/.test(path.basename(e.relative)))) {
     fail('Host graphics provider must not be bundled');
   }
+  if (requireResources && entries.some(e => e.relative.startsWith('usr/lib/')
+      && /^libnghttp2\.so(?:\.|$)/.test(path.basename(e.relative)))) {
+    fail('Host network provider must not be bundled');
+  }
   if (requireResources) for (const [relative, kind] of REQUIRED) {
     const entry = entries.find(e => e.relative === relative);
     if (!entry || entry.kind !== kind) fail('Required package resource missing');

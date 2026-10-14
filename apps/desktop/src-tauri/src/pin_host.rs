@@ -345,10 +345,21 @@ fn space_handle(app: &AppHandle) -> Result<usize, String> {
             .map(|h| h.0 as usize)
             .map_err(|_| "空间窗口不可用".into())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Resolve a bounded, revocable native witness before Host/Store locks.
+        crate::window_witness_macos::window_handle(&window)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // GTK action witnesses support both Wayland and X11. Capture witnesses
+        // identify X11 drawables and must not be used as action authorization.
+        crate::window_actions_linux::window_handle(&window)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = window;
-        Err("当前贴图窗口仅支持 Windows".into())
+        Err("当前系统不支持贴图".into())
     }
 }
 fn locked_gate(app: &AppHandle, space_handle: usize) -> Result<(), String> {
@@ -362,7 +373,11 @@ fn locked_gate(app: &AppHandle, space_handle: usize) -> Result<(), String> {
         use windows_sys::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible};
         IsWindow(space_handle as _) != 0 && IsWindowVisible(space_handle as _) != 0
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let visible = crate::window_witness_macos::current_for(space_handle, "space");
+    #[cfg(target_os = "linux")]
+    let visible = crate::window_actions_linux::current_for(space_handle, "space");
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     let visible = {
         let _ = space_handle;
         false
@@ -610,9 +625,9 @@ pub async fn run_plugin_pin(
     if !valid_uuid(&request_id) {
         return Err("贴图请求无效".into());
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        return Err("当前贴图窗口仅支持 Windows".into());
+        return Err("当前系统不支持贴图".into());
     }
     gate(&app)?;
     let space_handle = space_handle(&app)?;

@@ -73,3 +73,18 @@ test('native graphics frontend cannot silently bypass the host driver policy', {
 test('unsupported platforms do not change output or launch tools', { skip: process.platform === 'linux' && process.arch === 'x64' }, async () => {
   await assert.rejects(rebuildAppImage('nonexistent-AppDir', 'nonexistent-output', 'nonexistent-tool'), /native Linux/);
 });
+
+test('host nghttp2 cannot shadow the system OCR curl provider', { skip: process.platform !== 'linux' }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mewu-appdir-host-network-'));
+  try {
+    await fs.mkdir(path.join(root, 'usr/lib'), { recursive: true });
+    for (const name of ['libnghttp2.so.14', 'libnghttp2.so.14.17.1']) {
+      const fixture = path.join(root, 'usr/lib', name);
+      await fs.writeFile(fixture, 'controlled inert old network provider fixture');
+      await assert.rejects(inspectAppDir(root), /Host network provider/);
+      const original = await inspectAppDir(root, { requireResources: false });
+      assert.ok(original.entries.some(entry => entry.relative === `usr/lib/${name}`));
+      await fs.unlink(fixture);
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

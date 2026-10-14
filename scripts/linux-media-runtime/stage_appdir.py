@@ -20,8 +20,12 @@ HOST_GRAPHICS = {'libGL.so.1','libEGL.so.1','libGLX.so.0','libGLdispatch.so.0',
                  'libX11.so.6','libX11-xcb.so.1','libxcb.so.1',
                  'libwayland-client.so.0','libwayland-cursor.so.0',
                  'libwayland-egl.so.1','libwayland-server.so.0'}
+# System OCR's curl and the bundled Soup client share this stable SONAME.
+# A copied older nghttp2 shadows newer host-curl API requirements.
+# Keep the provider with the host, as with existing driver/runtime boundaries.
+HOST_NETWORK = {'libnghttp2.so.14'}
 HOST_LIBS = {'libc.so.6','libm.so.6','libpthread.so.0','libdl.so.2','librt.so.1',
-             'ld-linux-x86-64.so.2','libgcc_s.so.1','libstdc++.so.6'} | HOST_GRAPHICS
+             'ld-linux-x86-64.so.2','libgcc_s.so.1','libstdc++.so.6'} | HOST_GRAPHICS | HOST_NETWORK
 
 def digest(path):
     with path.open('rb') as handle:
@@ -133,7 +137,7 @@ def stage(appdir,runtime,destination,receipt):
     # Old FFmpeg ABI/plugin-only GPL providers are removed only after the new
     # roots have been staged and an exact DT_NEEDED check can reject survivors.
     entries=scan(destination)
-    obsolete={p for p,e in entries.items() if set(e['soname'])&(FORBIDDEN|HOST_GRAPHICS)
+    obsolete={p for p,e in entries.items() if set(e['soname'])&(FORBIDDEN|HOST_GRAPHICS|HOST_NETWORK)
         or any(name.startswith(('libavcodec.so.58','libavformat.so.58','libavutil.so.56','libavfilter.so.7','libswresample.so.3','libswscale.so.5')) for name in e['soname'])}
     assert not any(set(e['needed'])&FORBIDDEN for p,e in entries.items() if p not in obsolete), 'Forbidden codec still reachable'
     targets={(destination/p).resolve() for p in obsolete}
@@ -174,6 +178,7 @@ def stage(appdir,runtime,destination,receipt):
     for path in destination.rglob('*'):
         if path.is_symlink() and path.resolve() in targets:path.unlink()
     for relative in sorted(unused):(destination/relative).unlink();removed.append(relative)
+    assert not any(set(e['soname']) & HOST_NETWORK for e in scan(destination).values()), 'Host network provider must not be bundled'
     providers={name:path for path,e in scan(destination).items() for name in e['soname']}
     # linuxdeploy may create several physical filenames with the same SONAME.
     # Pruning keeps one provider; restore its canonical DT_NEEDED filename so
