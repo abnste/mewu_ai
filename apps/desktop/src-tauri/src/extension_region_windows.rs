@@ -10,7 +10,7 @@
 use super::*;
 use std::{ffi::c_void, marker::PhantomData, rc::Rc};
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, FILETIME, HWND, LPARAM, POINT, RECT},
+    Foundation::{CloseHandle, GetLastError, SetLastError, FILETIME, HWND, LPARAM, POINT, RECT},
     Graphics::{
         Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED},
         Gdi::ClientToScreen,
@@ -212,10 +212,29 @@ fn contains(client: [i32; 4], viewport: Viewport) -> bool {
         && i64::from(viewport.y) + i64::from(viewport.height) <= i64::from(client[3])
 }
 
-/// Reject every visible foreign top-level window above the target that overlaps
-/// the grant, rather than sampling only corners and accidentally reading an
-/// unrelated floating dialog. Unknown bounds are conservatively rejected.
-fn unobscured(target: &Target, viewport: Viewport) -> Result<()> {
+fn mouse_passthrough_overlay(handle: HWND) -> bool {
+    // Zero is also a valid extended style, so clear the thread-local error before
+    // distinguishing an unreadable window from a successful zero-style read.
+    let style = unsafe {
+        SetLastError(0);
+        let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+        if style == 0 && GetLastError() != 0 {
+            return false;
+        }
+        style as u32
+    };
+    // Windows defines this combination as passing mouse events to windows
+    // underneath. WS_EX_TRANSPARENT alone describes paint ordering, not input.
+    // No process/class whitelist or assumption about the overlay's pixels.
+    // https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows
+    style & (WS_EX_LAYERED | WS_EX_TRANSPARENT) == (WS_EX_LAYERED | WS_EX_TRANSPARENT)
+}
+
+/// Reject foreign input-obstructing top-level windows above the target that
+/// overlap the grant. System-defined layered mouse-pass-through overlays do not
+/// obstruct input, but their visible pixels may remain in the observed ROI.
+/// Unknown bounds/styles stay blocked; every action also checks its real hit target.
+fn input_unobstructed(target: &Target, viewport: Viewport) -> Result<()> {
     struct Pass {
         target: usize,
         viewport: Viewport,
@@ -261,6 +280,9 @@ fn unobscured(target: &Target, viewport: Viewport) -> Result<()> {
             && r.top < v.y.saturating_add_unsigned(v.height)
             && r.bottom > v.y
         {
+            if mouse_passthrough_overlay(handle) {
+                return 1;
+            }
             pass.blocked = true;
             return 0;
         }
@@ -310,7 +332,16 @@ pub(super) fn validate(target: &Target, viewport: Viewport) -> Result<()> {
     {
         return Err(unavailable());
     }
-    unobscured(target, viewport)
+    // Re-observation must still hit the same actual application, including
+    // after a pass-through overlay changed between previous operations.
+    let center = POINT {
+        x: viewport.x + (viewport.width / 2) as i32,
+        y: viewport.y + (viewport.height / 2) as i32,
+    };
+    if root(unsafe { WindowFromPoint(center) }) != handle {
+        return Err(unavailable());
+    }
+    input_unobstructed(target, viewport)
 }
 
 fn modifiers_clear() -> Result<()> {
@@ -608,6 +639,92 @@ pub(super) fn execute(session: &RegionSession, action: RegionAction) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct OwnedWindow(HWND);
+    impl Drop for OwnedWindow {
+        fn drop(&mut self) {
+            unsafe { DestroyWindow(self.0) };
+        }
+    }
+
+    #[test]
+    fn only_native_layered_and_transparent_combination_passes_mouse_input() {
+        // Real own HWNDs, all below an always-hidden parent: no desktop window,
+        // activation or physical input. Exercise the production native reader,
+        // including a successful GWL_EXSTYLE=0 and styles that do not imply pass-through.
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let parent = OwnedWindow(unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                std::ptr::null(),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        });
+        assert!(!parent.0.is_null());
+        for (style, expected) in [
+            (0, false),
+            (WS_EX_TRANSPARENT, false),
+            (WS_EX_LAYERED, false),
+            (WS_EX_NOACTIVATE, false),
+            (WS_EX_TOOLWINDOW, false),
+            (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, false),
+            (WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, false),
+            (
+                WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                false,
+            ),
+            (WS_EX_LAYERED | WS_EX_TRANSPARENT, true),
+            (
+                WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                true,
+            ),
+        ] {
+            let child = OwnedWindow(unsafe {
+                CreateWindowExW(
+                    style,
+                    class.as_ptr(),
+                    std::ptr::null(),
+                    WS_CHILD | WS_VISIBLE,
+                    0,
+                    0,
+                    1,
+                    1,
+                    parent.0,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                )
+            });
+            assert!(
+                !child.0.is_null(),
+                "native fixture rejected style {style:x}"
+            );
+            assert_eq!(unsafe { IsWindowVisible(parent.0) }, 0);
+            assert_eq!(unsafe { IsWindowVisible(child.0) }, 0);
+            assert_eq!(
+                mouse_passthrough_overlay(child.0),
+                expected,
+                "style {style:x}"
+            );
+        }
+        assert_eq!(unsafe { IsWindowVisible(parent.0) }, 0);
+    }
+
+    #[test]
+    fn unreadable_native_window_style_cannot_authorize_passthrough() {
+        assert!(!mouse_passthrough_overlay(std::ptr::null_mut()));
+        assert_ne!(unsafe { GetLastError() }, 0);
+    }
+
     #[test]
     fn absolute_coordinates_handle_negative_monitors_and_desktop_edges() {
         assert_eq!(

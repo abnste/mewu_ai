@@ -34,6 +34,8 @@ export default definePlugin(ctx => {
 
 当前区域自动操作的原生适配器仅支持 Windows。macOS 与 Linux 的截图交互不受影响，但它们的输入适配器尚未实现，会返回明确的不支持错误。Windows 区域须来自真实截图、位于同一个前台应用内容区，目标身份、显示器、选区与输入焦点会持续校验；Esc 或宿主停止可撤权。
 
+Windows 的 layered 窗口同时具有 `WS_EX_TRANSPARENT` 时，鼠标输入由系统穿透到下方应用，这类叠层不会阻止区域操作，但仍可能出现在授权区域的截图中。宿主不承诺截图只包含目标应用的像素；观察和鼠标操作仍校验实际命中目标，检查不能锁住外部窗口的后续变化。
+
 运行时没有 `process`、`require`、任意文件访问或直接网络接口。Node.js 的包不是可直接移植的宿主库；需要使用 SDK 服务或在插件包内提供兼容的 ESM 模块。
 
 发布包的 `index.mjs` 是 `crates/mewu-extension/src/sdk.js` 的精确副本。修改嵌入式源后运行 `npm run sync`，`npm run check:sync` 与 `prepack` 拒绝两个版本分叉；npm 包不引用仓库外路径。

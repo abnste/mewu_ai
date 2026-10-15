@@ -86,7 +86,9 @@ Each invocation receives a bounded recent conversation window, preserving the Ag
 
 The independent [region Agent](../extensions/examples/region-agent) registers its own selection command and Agent implementation. It observes the authorized region, passes the new image artifact to the model, interprets the model's decision, performs one action, and obtains another screenshot. The core contains neither that plugin's identity nor its decision algorithm.
 
-The host binds a region grant to a real capture, current selection and application window. Image imports, long screenshots and blackboard images do not authorize desktop input. Each operation rechecks the source, display layout, window identity, occlusion and grant. Coordinates are relative to the observed region. Keyboard input also requires a verified focus target. Every action requires a successful new observation.
+The host binds a region grant to a real capture, current selection and application window. Image imports, long screenshots and blackboard images do not authorize desktop input. Each operation rechecks the source, display layout, window identity, input obstruction and grant. Coordinates are relative to the observed region. Keyboard input also requires a verified focus target. Every action requires a successful new observation.
+
+On Windows, layered windows with `WS_EX_TRANSPARENT` pass mouse input to the application underneath and do not block the grant. These overlays may still contribute visible pixels to the authorized region's screenshot; the host does not promise an image containing only the target application's pixels. Observation rechecks the actual hit-tested application, and mouse actions additionally check their hit-tested target immediately before input. These checks do not lock external windows against later changes.
 
 This first input adapter supports **Windows**. macOS and Wayland input grants are not implemented by this adapter and report unsupported rather than borrowing an unrelated screenshot permission. Screenshot and drawing features on those platforms remain independent of executable plugins.
 
