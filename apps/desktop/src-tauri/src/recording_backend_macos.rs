@@ -934,11 +934,71 @@ impl Drop for Writer {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct AudioClock {
+    end: u64,
+    segment: Option<u64>,
+    bias: u64,
+}
+#[derive(Clone, Copy)]
+struct AudioPlacement {
+    start: u64,
+    after: AudioClock,
+}
+impl AudioClock {
+    fn place(&self, part: &PacketPart) -> Result<AudioPlacement, String> {
+        let invalid = || "电脑声音时间不连续，录制已停止".to_string();
+        let frames = part
+            .end
+            .checked_sub(part.first)
+            .filter(|n| *n > 0)
+            .ok_or_else(invalid)?;
+        let mut bias = self.bias;
+        let mut start = part.active_ticks.checked_add(bias).ok_or_else(invalid)?;
+        if let Some(previous) = self.segment {
+            if part.segment < previous {
+                return Err(invalid());
+            }
+            if part.segment > previous && start < self.end {
+                // Timeline keeps every sample starting before a pause cutoff.
+                // Its final sample may extend strictly less than 1/48,000 s
+                // beyond that cutoff. Join a new active segment to that sample
+                // end, then keep ONE constant bias for the entire new segment.
+                // Never clamp each packet: that would hide real overlapping PCM.
+                let overlap = self.end - start;
+                if u128::from(overlap) * u128::from(RATE) >= u128::from(TICKS_PER_SECOND) {
+                    return Err(invalid());
+                }
+                bias = bias.checked_add(overlap).ok_or_else(invalid)?;
+                start = self.end;
+            }
+        }
+        if start < self.end || start - self.end > TICKS_PER_SECOND / 10 {
+            return Err(invalid());
+        }
+        let duration =
+            u64::try_from(frames as u128 * u128::from(TICKS_PER_SECOND) / u128::from(RATE))
+                .map_err(|_| invalid())?;
+        let end = start.checked_add(duration).ok_or_else(invalid)?;
+        // Every start is still projected from the source's absolute PTS plus
+        // the fixed segment bias, not accumulated from packet durations. The
+        // 48 kHz rational duration is rounded only at this packet's endpoint.
+        Ok(AudioPlacement {
+            start,
+            after: Self {
+                end,
+                segment: Some(part.segment),
+                bias,
+            },
+        })
+    }
+}
+
 struct PendingAudio {
     source: Sample,
     frames: usize,
     parts: VecDeque<PacketPart>,
-    copied: Option<Retained<CMSampleBuffer>>,
+    copied: Option<(Retained<CMSampleBuffer>, AudioPlacement)>,
 }
 
 // A packet remains charged against the existing two-second queue budget until
@@ -947,7 +1007,7 @@ struct PendingAudio {
 fn audio(
     queue: &Arc<Mutex<Queue>>,
     clock: &Timeline,
-    last_end: &mut u64,
+    position: &mut AudioClock,
     pending: &mut Option<PendingAudio>,
     mut append: impl FnMut(&CMSampleBuffer) -> Result<bool, String>,
 ) -> Result<bool, String> {
@@ -974,23 +1034,17 @@ fn audio(
     let batch = pending.as_mut().unwrap();
     if let Some(part) = batch.parts.front() {
         if batch.copied.is_none() {
-            if part.active_ticks < *last_end
-                || part.active_ticks.saturating_sub(*last_end) > TICKS_PER_SECOND / 10
-            {
-                return Err("电脑声音时间不连续，录制已停止".into());
-            }
-            batch.copied = Some(pcm_part(
-                &batch.source.0,
-                part.first,
-                part.end,
-                part.active_ticks,
-            )?);
+            let placement = position.place(part)?;
+            batch.copied = Some((
+                pcm_part(&batch.source.0, part.first, part.end, placement.start)?,
+                placement,
+            ));
         }
-        if !append(batch.copied.as_ref().unwrap())? {
+        let (sample, placement) = batch.copied.as_ref().unwrap();
+        if !append(sample)? {
             return Ok(false);
         }
-        *last_end =
-            part.active_ticks + (part.end - part.first) as u64 * TICKS_PER_SECOND / u64::from(RATE);
+        *position = placement.after;
         batch.parts.pop_front();
         batch.copied = None;
     }
@@ -1231,7 +1285,7 @@ pub(super) fn run(
             let mut clock = Timeline::new(epoch, paused);
             let mut frames = 0u64;
             let mut end = 0u64;
-            let mut audio_end = 0u64;
+            let mut audio_end = AudioClock::default();
             let mut next_progress = Instant::now();
             let mut last = first;
             let mut pending_video = None;
@@ -1393,7 +1447,7 @@ pub(super) fn run(
                 return Err("录制尚未形成可保存的画面".into());
             }
             if writer.audio.is_some() {
-                if end.abs_diff(audio_end) > TICKS_PER_SECOND / 10 {
+                if end.abs_diff(audio_end.end) > TICKS_PER_SECOND / 10 {
                     return Err("电脑声音未覆盖录屏时间，文件未发布".into());
                 }
             }
@@ -1480,7 +1534,7 @@ mod tests {
                 q.audio_frames = 2048;
             }
             let mut pending = None;
-            let mut end = 0;
+            let mut end = AudioClock::default();
             let mut address = None;
             for _ in 0..3 {
                 assert!(!audio(&queue, &clock, &mut end, &mut pending, |part| {
@@ -1494,7 +1548,7 @@ mod tests {
                     Ok(false)
                 })
                 .unwrap());
-                assert_eq!(end, 0);
+                assert_eq!(end, AudioClock::default());
                 assert_eq!(queue.lock().unwrap().audio_frames, 2048);
             }
             assert!(!audio(&queue, &clock, &mut end, &mut pending, |part| {
@@ -1502,18 +1556,173 @@ mod tests {
                 Ok(true)
             })
             .unwrap());
-            assert_eq!(end, 10_000);
+            assert_eq!(end.end, 10_000);
             assert_eq!(queue.lock().unwrap().audio_frames, 2048);
             assert!(audio(&queue, &clock, &mut end, &mut pending, |part| {
                 assert_eq!(read_pcm(part, true), expected[240..336]);
                 Ok(true)
             })
             .unwrap());
-            assert_eq!(end, 30_000);
+            assert_eq!(end.end, 30_000);
             assert_eq!(queue.lock().unwrap().audio_frames, 0);
             assert!(pending.is_none());
             assert_eq!(read_pcm(&source, true), expected);
         });
+    }
+
+    fn off_grid_pause_audio(planar: bool) {
+        autoreleasepool(|_| {
+            let (source, original) = stereo_fixture(planar, 0);
+            let queue = Arc::new(Mutex::new(Queue::default()));
+            for (stamp, count) in [(0, 5), (10_000, 480), (110_000, 480)] {
+                let sample = pcm_part(&source, 0, count, stamp).unwrap();
+                let mut q = queue.lock().unwrap();
+                q.audio.push_back(Sample(sample));
+                q.audio_frames += count;
+            }
+            // These three source ranges never overlap. The five real samples
+            // before Pause end at 5/48000 s, just beyond the 1000-tick cutoff.
+            let mut clock = Timeline::new(0, false);
+            clock.set_paused(true, 1000).unwrap();
+            clock.set_paused(false, 10_000).unwrap();
+            let mut position = AudioClock::default();
+            let mut pending = None;
+            let mut accepted = Vec::new();
+            assert!(!audio(&queue, &clock, &mut position, &mut pending, |part| {
+                assert_eq!(read_pcm(part, planar), original[..5]);
+                assert_eq!(host_ticks(unsafe { part.presentation_time_stamp() })?, 0);
+                accepted.extend(read_pcm(part, planar));
+                Ok(true)
+            })
+            .unwrap());
+            assert_eq!(position.end, 1041);
+            // The old guard rejected this legitimate new segment: 1000<1041.
+            assert_eq!(
+                clock.parts(10_000, 480, RATE).unwrap()[0].active_ticks,
+                1000
+            );
+            let before = position;
+            let mut address = None;
+            for _ in 0..3 {
+                assert!(!audio(&queue, &clock, &mut position, &mut pending, |part| {
+                    assert_eq!(read_pcm(part, planar), original[..480]);
+                    assert_eq!(host_ticks(unsafe { part.presentation_time_stamp() })?, 1041);
+                    let pointer = part as *const CMSampleBuffer;
+                    if let Some(previous) = address {
+                        assert_eq!(pointer, previous);
+                    } else {
+                        address = Some(pointer);
+                    }
+                    Ok(false)
+                })
+                .unwrap());
+                assert_eq!(
+                    position, before,
+                    "rejected append must not commit timing or bias"
+                );
+                assert_eq!(queue.lock().unwrap().audio_frames, 960);
+            }
+            assert!(!audio(&queue, &clock, &mut position, &mut pending, |part| {
+                assert_eq!(host_ticks(unsafe { part.presentation_time_stamp() })?, 1041);
+                accepted.extend(read_pcm(part, planar));
+                Ok(true)
+            })
+            .unwrap());
+            assert_eq!((position.end, position.bias), (101_041, 41));
+            assert!(audio(&queue, &clock, &mut position, &mut pending, |part| {
+                // The next packet must keep that same 41-tick segment mapping.
+                assert_eq!(
+                    host_ticks(unsafe { part.presentation_time_stamp() })?,
+                    101_041
+                );
+                assert_eq!(read_pcm(part, planar), original[..480]);
+                accepted.extend(read_pcm(part, planar));
+                Ok(true)
+            })
+            .unwrap());
+            assert_eq!((position.end, position.bias), (201_041, 41));
+            assert_eq!(
+                accepted,
+                [&original[..5], &original[..480], &original[..480]].concat()
+            );
+            assert_eq!(
+                accepted.len(),
+                965,
+                "every selected real PCM frame is retained exactly once"
+            );
+            assert_eq!(queue.lock().unwrap().audio_frames, 0);
+            assert!(pending.is_none());
+            assert_eq!(read_pcm(&source, planar), original);
+            assert_eq!(
+                host_ticks(unsafe { source.presentation_time_stamp() }).unwrap(),
+                0
+            );
+        });
+    }
+    #[test]
+    fn off_grid_pause_resume_preserves_planar_pcm_and_constant_segment_timing() {
+        off_grid_pause_audio(true);
+    }
+    #[test]
+    fn off_grid_pause_resume_preserves_interleaved_pcm_and_constant_segment_timing() {
+        off_grid_pause_audio(false);
+    }
+    #[test]
+    fn audio_clock_rejects_real_overlap_large_gap_and_invalid_segment_without_mutation() {
+        let position = AudioClock {
+            end: 100_000,
+            segment: Some(10_000),
+            bias: 41,
+        };
+        let part = |active_ticks, segment| PacketPart {
+            first: 0,
+            end: 480,
+            active_ticks,
+            segment,
+        };
+        // Same-segment overlap, even one 100ns tick, is never clamped.
+        assert!(position.place(&part(99_958, 10_000)).is_err());
+        // A real gap beyond the original 100ms allowance is still rejected.
+        assert!(position.place(&part(1_099_960, 10_000)).is_err());
+        assert!(position.place(&part(99_959, 9999)).is_err());
+        // 208 ticks is strictly under one 48kHz frame; 209 is not.
+        assert!(position.place(&part(99_751, 20_000)).is_ok());
+        assert!(position.place(&part(99_750, 20_000)).is_err());
+        assert_eq!(
+            position,
+            AudioClock {
+                end: 100_000,
+                segment: Some(10_000),
+                bias: 41
+            }
+        );
+    }
+    #[test]
+    fn fixed_segment_mapping_uses_absolute_pts_without_per_packet_rounding_drift() {
+        let first = PacketPart {
+            first: 0,
+            end: 5,
+            active_ticks: 0,
+            segment: 0,
+        };
+        let mut position = AudioClock::default().place(&first).unwrap().after;
+        let packets = 20_000u64;
+        for index in 0..packets {
+            let absolute = 1000 + index * 1024 * TICKS_PER_SECOND / u64::from(RATE);
+            let part = PacketPart {
+                first: 0,
+                end: 1024,
+                active_ticks: absolute,
+                segment: 10_000,
+            };
+            position = position.place(&part).unwrap().after;
+            assert_eq!(position.bias, 41);
+        }
+        let rational_end = 1041 + packets * 1024 * TICKS_PER_SECOND / u64::from(RATE);
+        assert!(
+            position.end.abs_diff(rational_end) <= 1,
+            "packet floors must not accumulate over seven minutes"
+        );
     }
 
     fn owned_video_sample() -> Sample {
@@ -1656,7 +1865,7 @@ mod tests {
             let mut pending_audio = None;
             let mut frames = 0;
             let mut end = 0;
-            let mut audio_end = 0;
+            let mut audio_end = AudioClock::default();
             let pressure = std::thread::spawn(|| {
                 let until = Instant::now() + Duration::from_millis(400);
                 let mut sum = 1u64;
@@ -1713,7 +1922,7 @@ mod tests {
                 + last_start as u64 * TICKS_PER_SECOND / u64::from(RATE)
                 + (RATE as usize - last_start) as u64 * TICKS_PER_SECOND / u64::from(RATE);
             assert_eq!(encoded_pcm_frames, MAX_AUDIO_FRAMES);
-            assert_eq!(audio_end, expected_audio_end);
+            assert_eq!(audio_end.end, expected_audio_end);
             assert_eq!(end, 2 * TICKS_PER_SECOND);
             writer.finish(end).unwrap();
             drop(writer);
