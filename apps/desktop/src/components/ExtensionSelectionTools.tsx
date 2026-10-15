@@ -15,11 +15,13 @@ export default function ExtensionSelectionTools(props: Props) {
   const [result, setResult] = createSignal('');
   let disposed = false, generation = 0, eventSerial = 0, unsubscribe: (() => void) | undefined;
   const services = createMemo(() => selectionExtensionServices(records()));
+  const sourceIdentity = createMemo(() => [props.sceneId, props.regionId] as const, undefined,
+    { equals: (previous, next) => previous[0] === next[0] && previous[1] === next[1] });
   const accept = (value: ExtensionRecord[]) => { if (!disposed) setRecords(old => mergeExtensionRecords(old, value)); };
   createEffect(() => { props.onCountChange(services().length || running() ? 1 : 0); });
   createEffect(() => props.onInteractionChange(Boolean(menu() || taskChoice() || running() || result())));
   createEffect(() => props.onRunningChange(Boolean(running())));
-  createEffect(on(() => [props.sceneId, props.regionId] as const, () => {
+  createEffect(on(sourceIdentity, () => {
     generation++; setMenu(false); setTaskChoice(undefined); setResult('');
     const value = running(); if (value) void api.stopExtension(value.record.manifest.id).catch(() => {});
   }, { defer: true }));

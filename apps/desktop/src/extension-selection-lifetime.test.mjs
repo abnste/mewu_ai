@@ -138,6 +138,61 @@ test('a blurred empty-draft task editor hands off to running without an intermed
   } finally { f.dispose(); }
 });
 
+test('same-ID deep-cloned snapshots retain the running invocation and publish its result', async () => {
+  const f = await fixture();
+  try {
+    f.button('选区插件').props.onClick(); await tick();
+    const toolbar = f.toolbarNode(), stop = f.button('停止插件执行'); assert.ok(stop);
+    for (let revision = 1; revision <= 2; revision++) {
+      f.setScene(previous => ({ ...structuredClone(previous), revision })); await tick();
+      assert.deepEqual(f.stops, [], 'a refreshed snapshot with the same primitive IDs is not a cancellation boundary');
+      assert.equal(f.toolbarNode(), toolbar); assert.equal(f.button('停止插件执行'), stop);
+      assert.equal(f.subscriptions, 1); assert.equal(f.released, 0); assert.equal(f.calls.length, 1);
+    }
+    f.request.resolve({ content: 'Result survives the refreshed snapshot' }); await tick();
+    assert.ok(f.find(node => node.props?.role === 'status'));
+    assert.ok(f.all().some(node => 'text' in node && node.text === 'Result survives the refreshed snapshot'));
+    assert.deepEqual(f.errors, []);
+  } finally { f.dispose(); }
+});
+
+test('same-ID deep-cloned snapshots retain an open command menu and typed task editor', async () => {
+  const f = await fixture({ draft: '', multiple: true });
+  try {
+    f.button('选区插件').props.onClick(); f.control.blur();
+    const menu = f.find(node => node.props?.role === 'menu'); assert.ok(menu);
+    f.setScene(previous => structuredClone(previous)); await tick();
+    assert.equal(f.find(node => node.props?.role === 'menu'), menu);
+    f.find(node => node.props?.role === 'menuitem').props.onClick();
+    f.typeTask('Keep this task while the scene snapshot refreshes');
+    const form = f.find(node => node.type === 'form'), input = f.find(node => node.type === 'textarea');
+    for (let revision = 1; revision <= 2; revision++) {
+      f.setScene(previous => ({ ...structuredClone(previous), revision })); await tick();
+      assert.equal(f.find(node => node.type === 'form'), form); assert.equal(f.find(node => node.type === 'textarea'), input);
+      assert.equal(input.props.value, 'Keep this task while the scene snapshot refreshes');
+      assert.equal(f.subscriptions, 1); assert.equal(f.released, 0); assert.deepEqual(f.stops, []);
+    }
+    f.submit(); await tick();
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].input.task, 'Keep this task while the scene snapshot refreshes');
+    f.request.resolve({ content: 'Done' }); await tick();
+  } finally { f.dispose(); }
+});
+
+test('same-ID deep-cloned snapshots retain the completed result until an actual region change', async () => {
+  const f = await fixture();
+  try {
+    f.button('选区插件').props.onClick(); await tick(); f.request.resolve({ content: 'Keep the completed result' }); await tick();
+    const status = f.find(node => node.props?.role === 'status'), toolbar = f.toolbarNode(); assert.ok(status);
+    for (let revision = 1; revision <= 2; revision++) {
+      f.setScene(previous => ({ ...structuredClone(previous), revision })); await tick();
+      assert.equal(f.find(node => node.props?.role === 'status'), status); assert.equal(f.toolbarNode(), toolbar);
+      assert.equal(f.subscriptions, 1); assert.equal(f.released, 0); assert.deepEqual(f.stops, []);
+    }
+    f.setScene(previous => ({ ...structuredClone(previous), regions: [{ id: 'other-region' }] })); await tick();
+    assert.equal(f.find(node => node.props?.role === 'status'), undefined, 'a genuinely different region clears the previous result');
+  } finally { f.dispose(); }
+});
+
 test('blurred multi-command menus hand off to task input and direct execution without losing the owner', async () => {
   for (const draft of ['', 'Click only the test button']) {
     const f = await fixture({ draft, multiple: true });

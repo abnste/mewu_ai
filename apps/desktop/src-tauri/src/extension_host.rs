@@ -1885,6 +1885,12 @@ impl region::RegionOverlayHooks for OverlayHooks {
                                 let pin = if crate::pin_host::is_pin_label(&label) {
                                     Some(crate::pin_host::PinRestoreToken::capture(&app, &label).ok_or("贴图已改变")?)
                                 } else { None };
+                                #[cfg(windows)]
+                                {
+                                    let handle = window.hwnd().map_err(|_| "无法隐藏截图覆盖层")?;
+                                    hide_overlay_window(handle.0 as _)?;
+                                }
+                                #[cfg(not(windows))]
                                 window.hide().map_err(|_| "无法隐藏截图覆盖层")?;
                                 hidden.push(HiddenWindow { window, pin });
                             }
@@ -1934,6 +1940,119 @@ impl region::RegionOverlayHooks for OverlayHooks {
             .run_on_main_thread(move || restore_ui_windows(&app, &source, labels));
     }
 }
+#[cfg(windows)]
+fn hide_overlay_window(handle: windows_sys::Win32::Foundation::HWND) -> Result<(), &'static str> {
+    use windows_sys::Win32::{
+        System::Threading::GetCurrentProcessId,
+        UI::WindowsAndMessaging::{
+            GetWindowThreadProcessId, IsWindow, IsWindowVisible, ShowWindow, SW_HIDE,
+        },
+    };
+    let mut process = 0;
+    unsafe {
+        GetWindowThreadProcessId(handle, &mut process);
+        if IsWindow(handle) == 0 || process != GetCurrentProcessId() {
+            return Err("无法隐藏截图覆盖层");
+        }
+        // Restoration below uses User32 without activating the window. Mixing
+        // that with Tao's cached VISIBLE=false makes its next hide a no-op.
+        // Keep both halves on this UI thread's actual HWND state instead.
+        ShowWindow(handle, SW_HIDE);
+        if IsWindowVisible(handle) != 0 {
+            return Err("无法隐藏截图覆盖层");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn show_overlay_window(handle: windows_sys::Win32::Foundation::HWND) {
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+            handle,
+            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
+        );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod overlay_visibility_tests {
+    use super::{hide_overlay_window, show_overlay_window};
+    use windows_sys::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, GetWindowLongPtrW, IsWindowVisible, GWL_STYLE,
+            WS_CHILD, WS_POPUP, WS_VISIBLE,
+        },
+    };
+
+    struct OwnedWindow(HWND);
+    impl Drop for OwnedWindow {
+        fn drop(&mut self) {
+            unsafe { DestroyWindow(self.0) };
+        }
+    }
+
+    #[test]
+    fn repeated_region_hide_after_nonactivating_restore_uses_real_hwnd_state() {
+        // A visible-style child of an always-hidden parent exercises real
+        // User32 visibility changes without displaying a desktop test window.
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        let parent = OwnedWindow(unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                std::ptr::null(),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        });
+        assert!(!parent.0.is_null());
+        let child = OwnedWindow(unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                std::ptr::null(),
+                WS_CHILD | WS_VISIBLE,
+                0,
+                0,
+                1,
+                1,
+                parent.0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        });
+        assert!(!child.0.is_null());
+        let visible_style =
+            || unsafe { GetWindowLongPtrW(child.0, GWL_STYLE) as u32 & WS_VISIBLE != 0 };
+        assert!(visible_style());
+        for _ in 0..3 {
+            hide_overlay_window(child.0).unwrap();
+            assert!(!visible_style(), "a restored HWND must actually hide again");
+            show_overlay_window(child.0);
+            assert!(visible_style());
+            assert_eq!(unsafe { IsWindowVisible(parent.0) }, 0);
+            assert_eq!(unsafe { IsWindowVisible(child.0) }, 0);
+        }
+        hide_overlay_window(child.0).unwrap();
+        assert!(!visible_style());
+    }
+
+    #[test]
+    fn invalid_overlay_handle_is_rejected_before_any_visibility_change() {
+        assert!(hide_overlay_window(std::ptr::null_mut()).is_err());
+    }
+}
+
 fn restore_ui_windows(
     app: &AppHandle,
     source: &crate::extension_overlay_policy::RestoreSource,
@@ -1959,12 +2078,7 @@ fn restore_ui_windows(
                 #[cfg(windows)]
                 {
                     if let Ok(hwnd) = window.hwnd() {
-                        unsafe {
-                            windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
-                                hwnd.0 as _,
-                                windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
-                            );
-                        }
+                        show_overlay_window(hwnd.0 as _);
                     }
                 }
                 #[cfg(not(windows))]
