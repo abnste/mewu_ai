@@ -1419,6 +1419,51 @@ impl Store {
         self.persist(next)
     }
 
+    /// Add a host-created HTML interface at its declared CSS viewport size in
+    /// one commit. This does not change ordinary file imports or add references.
+    pub fn add_html_asset_in_viewport(
+        &mut self,
+        scene_id: &str,
+        asset: Asset,
+        viewport_width: u32,
+        viewport_height: u32,
+    ) -> Result<Snapshot> {
+        validate_asset(&asset)?;
+        if !(2..=32768).contains(&viewport_width)
+            || !(2..=32768).contains(&viewport_height)
+            || asset.kind != AssetKind::Html
+            || asset.origin_x.is_some()
+            || asset.origin_y.is_some()
+            || asset.scale_factor.is_some()
+            || asset.capture_coordinates.is_some()
+        {
+            return Err(invalid("界面类型或空间尺寸无效"));
+        }
+        let width = f64::from(asset.width.ok_or_else(|| invalid("界面缺少宽度"))?)
+            / f64::from(viewport_width);
+        let height = f64::from(asset.height.ok_or_else(|| invalid("界面缺少高度"))?)
+            / f64::from(viewport_height);
+        let target = scene(&self.state, scene_id)?;
+        if self.state.active_scene_id != scene_id || target.frozen || target.closed {
+            return Err(invalid("会话已切换或关闭，请重新添加界面"));
+        }
+        let mut next = self.state.clone();
+        let target = scene_mut(&mut next, scene_id)?;
+        target.items.push(SpaceItem {
+            id: id(),
+            asset,
+            x: 0.32_f64.min((1. - width).max(0.)),
+            y: 0.2_f64.min((1. - height).max(0.)),
+            width,
+            height,
+            state: None,
+            video_edit: None,
+            video_annotations: None,
+        });
+        touch(target);
+        self.persist(next)
+    }
+
     /// Register a user-selected batch and append its references in one commit.
     /// File decoding/copying belongs to the host; this final admission rejects a
     /// dialog that returned after its original space was frozen or replaced.

@@ -6,18 +6,24 @@ import { extensionServiceKey, extensionServices, mergeExtensionBindings, mergeEx
 import { Row } from './SettingControls';
 import { t } from '../i18n';
 
-interface Props { agentId: string; active: boolean; saved: boolean }
+interface Props { agentId: string; active: boolean; saved: boolean; onMemoryBinding?: (external: boolean | undefined) => void }
 export default function ExtensionProviders(props: Props) {
   const [records, setRecords] = createSignal<ExtensionRecord[]>([]), [bindings, setBindings] = createSignal<ExtensionBinding[]>([]);
   const [pending, setPending] = createSignal(''), [error, setError] = createSignal('');
+  const [memoryKnownFor, setMemoryKnownFor] = createSignal<string>();
+  const agentId = createMemo(() => props.agentId);
   let disposed = false, epoch = 0, initialized = false, eventSerial = 0, unsubscribe: (() => void) | undefined, unsubscribeBindings: (() => void) | undefined, listening: Promise<void> | undefined;
   const accept = (value: ExtensionRecord[]) => { if (!disposed) setRecords(old => mergeExtensionRecords(old, value)); };
   const agents = createMemo(() => extensionServices(records(), 'agent')), memories = createMemo(() => extensionServices(records(), 'memory'));
   const choices = (kind: 'agent' | 'memory') => kind === 'agent' ? agents() : memories();
   const binding = (kind: 'agent' | 'memory') => bindings().find(binding => binding.agentId === props.agentId && binding.kind === kind);
-  const acceptBindings = (value: ExtensionBinding[]) => { if (!disposed) setBindings(old => mergeExtensionBindings(old, value)); };
+  // Native acknowledgements/events contain the complete binding set. Retain a
+  // known selection through refreshes, but never reuse another Agent's state.
+  const acceptBindings = (value: ExtensionBinding[]) => { if (!disposed) { setBindings(old => mergeExtensionBindings(old, value)); setMemoryKnownFor(agentId()); } };
   const selected = (kind: 'agent' | 'memory') => { const value = binding(kind); return value?.pluginId && value?.serviceId ? JSON.stringify([value.pluginId, value.serviceId]) : ''; };
   const unavailable = (kind: 'agent' | 'memory') => Boolean(selected(kind)) && !choices(kind).some(choice => extensionServiceKey(choice) === selected(kind));
+  const externalMemory = createMemo(() => !api.extensionNative || !props.saved ? false : memoryKnownFor() === agentId() ? Boolean(selected('memory')) : undefined);
+  createEffect(() => props.onMemoryBinding?.(externalMemory()));
   async function ensureListening() {
     if (!listening) listening = (async () => {
       const stop = await api.subscribeExtensions(value => { eventSerial++; accept(value); });

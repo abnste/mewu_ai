@@ -28,6 +28,7 @@ export default function AgentsPanel(props: Props) {
   const [pending, setPending] = createSignal('');
   const [saved, setSaved] = createSignal('');
   const [errors, setErrors] = createSignal<Record<string, string>>({});
+  const [externalMemory, setExternalMemory] = createSignal<Record<string, boolean | undefined>>({});
   let disposed = false;
   onCleanup(() => { disposed = true; });
   const profile = (id: string) => props.agents.find(agent => agent.id === id);
@@ -78,11 +79,13 @@ export default function AgentsPanel(props: Props) {
         <label class="field-label">{t('灵魂设定')}<textarea rows={5} value={view(id).instructions} onInput={event => edit(id, { instructions: event.currentTarget.value })} /></label>
         <label class="field-label">{t('模型')}<select aria-label={t('Agent 模型')} value={view(id).defaultConnectionId ?? ''} onChange={event => edit(id, { defaultConnectionId: event.currentTarget.value || null })}><option value="">{t('使用默认模型')}</option><For each={props.connections.map(connection => connection.id)}>{connectionId => <option value={connectionId}>{(() => { const connection = props.connections.find(connection => connection.id === connectionId); return connection?.model ? `${connection.model} · ${connection.name}` : connection?.name; })()}</option>}</For></select></label>
         <Row title={t('长期记忆')}><Toggle label={t('长期记忆')} checked={view(id).memoryEnabled !== false} onChange={value => edit(id, { memoryEnabled: value })} /></Row>
-        <ExtensionProviders agentId={id} active={props.active && expanded() === id} saved={Boolean(profile(id))}/>
+        <ExtensionProviders agentId={id} active={props.active && expanded() === id} saved={Boolean(profile(id))} onMemoryBinding={value => setExternalMemory(old => ({ ...old, [id]: value }))}/>
         <Show when={errors()[id]}><p class="settings-error" role="alert">{errors()[id]}</p></Show>
         <div class="settings-actions"><Show when={saved() === id}><span class="saved-label"><Check size={13} />{t('已保存')}</span></Show><button class="primary-button" disabled={Boolean(pending())} onClick={() => void save(id)}><Show when={pending() === id}><LoaderCircle size={14} class="spin" /></Show>{t('保存')}</button></div>
-        <MemoryProviderSettings agentId={id} agent={profile(id)} active={props.active && expanded() === id} scenes={props.scenes} />
-        <MemoryList agentId={id} stats={props.memoryStats.find(stats => stats.agentId === id)} scenes={props.scenes} savedAgent={Boolean(profile(id))} active={props.active && expanded() === id} onSave={props.onSaveMemory} onDelete={props.onDeleteMemory} />
+        <Show when={externalMemory()[id] === false}>
+          <MemoryProviderSettings agentId={id} agent={profile(id)} active={props.active && expanded() === id} scenes={props.scenes} />
+          <MemoryList agentId={id} stats={props.memoryStats.find(stats => stats.agentId === id)} scenes={props.scenes} savedAgent={Boolean(profile(id))} active={props.active && expanded() === id} onSave={props.onSaveMemory} onDelete={props.onDeleteMemory} />
+        </Show>
       </div></Show>
       <Show when={errors()[id] && expanded() !== id}><p class="settings-error connection-collapsed-error" role="alert">{errors()[id]}</p></Show>
     </article>}</For>

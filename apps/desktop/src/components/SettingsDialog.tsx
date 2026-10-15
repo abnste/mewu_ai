@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { createOptionalFeatureState } from '../optional-feature-state';
+import * as extensions from '../extension-bridge';
+import type { ExtensionRecord } from '../extension-contracts';
+import { extensionServices, mergeExtensionRecords } from '../extension-state';
 import { Database, Info, Link2, Puzzle, ScanLine, Settings2, UserRound, Wrench, X } from 'lucide-solid';
 import type { AgentProfile, ConnectionProfile, DiscoverMcpServer, Snapshot } from '../contracts';
 import type { DeleteMemory, SaveMemory } from './MemoryList';
@@ -38,7 +41,26 @@ interface Props {
 
 export default function SettingsDialog(props: Props) {
   const optional = createOptionalFeatureState(() => props.snapshot.connections);
-  const agentEnabled = () => Boolean(optional()?.agent);
+  // Presentation only: a pending authorization read must not destroy editors.
+  // Execution continues to use the current, fail-closed capability accessor.
+  const hostAgentVisible = createMemo(previous => {
+    const value = optional(); return value === undefined ? previous : Boolean(value.agent);
+  }, false);
+  const [extensionRecords, setExtensionRecords] = createSignal<ExtensionRecord[]>([]);
+  const externalAgentVisible = createMemo(() => extensionServices(extensionRecords(), 'agent').length > 0);
+  const agentEnabled = () => hostAgentVisible() || externalAgentVisible();
+  let extensionDisposed = false, extensionEvents = 0, stopExtensions: (() => void) | undefined;
+  onMount(async () => {
+    if (!extensions.extensionNative) return;
+    const accept = (values: ExtensionRecord[]) => { if (!extensionDisposed) setExtensionRecords(old => mergeExtensionRecords(old, values)); };
+    try {
+      stopExtensions = await extensions.subscribeExtensions(values => { extensionEvents++; accept(values); });
+      if (extensionDisposed) { stopExtensions(); return; }
+      const beforeEvents = extensionEvents, installed = await extensions.getExtensions();
+      if (beforeEvents === extensionEvents) accept(installed);
+    } catch { /* Unavailable discovery does not grant execution authority. */ }
+  });
+  onCleanup(() => { extensionDisposed = true; stopExtensions?.(); });
   const [tab, setTab] = createSignal(props.initialTab);
   const facts = createSettingsInformation(() => tab() === 'general' || tab() === 'data' || tab() === 'about');
   const [agentId, setAgentId] = createSignal(props.snapshot.scenes.find(s => s.id === props.snapshot.activeSceneId)?.agentId || props.snapshot.agents[0]?.id || '');

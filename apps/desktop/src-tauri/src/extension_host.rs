@@ -379,6 +379,237 @@ fn activation_failed(app: &AppHandle, record: &Record, cause: String) -> String 
     }
 }
 
+/// Only host-owned static diagnostics cross the error boundary. Arbitrary JS
+/// errors, provider bodies, OS paths and arguments never become diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RegionDiagnostic {
+    code: &'static str,
+    reason: &'static str,
+}
+fn safe_region_reason(message: &str) -> &'static str {
+    const REASONS: &[&str] = &[
+        "无法确认物理屏幕坐标",
+        "目标窗口已改变或失去焦点，区域操作已停止",
+        "请选择应用内容区域",
+        "操作区域被其他窗口遮挡",
+        "选区必须完整位于同一个应用的内容区域",
+        "请先松开键盘修饰键",
+        "请先松开鼠标按钮",
+        "无法确认选区内的输入焦点",
+        "请将输入框完整包含在操作选区内",
+        "系统拒绝了区域输入",
+        "区域操作已停止",
+        "鼠标位置受到系统限制",
+        "桌面坐标范围已改变",
+        "请选择原始截图中的有效区域",
+        "操作区域不能超过 4 Mi 像素",
+        "当前平台尚不支持区域自动操作",
+        "操作坐标超出授权区域",
+        "截图文件已不可用",
+        "截图文件大小无效",
+        "无法读取截图文件",
+        "截图文件已改变",
+        "已有区域操作正在运行",
+        "显示器设置已改变，请重新选择区域",
+        "无法编码区域截图",
+        "请先观察当前区域，再执行下一步操作",
+        "拖动路径需要 2 至 256 个坐标",
+        "单次拖动路径过长",
+        "请输入不含控制字符的短文本",
+        "滚动量超出单次范围",
+        "显示器配置不可用",
+        "显示器标识不唯一",
+        "截图与当前显示器坐标不一致，请重新截图",
+        "区域运行已停止",
+        "插件授权已撤销",
+        "会话已关闭",
+        "截图来源已变化",
+        "选区已删除",
+        "选区已变化",
+        "覆盖层状态无效",
+        "截图覆盖层操作已撤销",
+        "无法隐藏截图覆盖层",
+        "隐藏截图覆盖层超时",
+        "插件不能访问未授权的选区",
+        "缺少区域动作",
+        "区域动作无效",
+        "没有当前会话授权",
+        "没有当前选区授权",
+        "会话不存在",
+        "没有截图背景",
+        "选区不存在",
+        "截图路径无效",
+        "无法读取截图",
+        "截图源文件过大",
+        "素材不存在或路径无效",
+        "素材目录不可用",
+        "素材路径超出范围",
+    ];
+    REASONS
+        .iter()
+        .copied()
+        .find(|known| *known == message)
+        .unwrap_or("区域操作失败")
+}
+fn record_region_error(
+    diagnostic: &mut Option<RegionDiagnostic>,
+    error: region::RegionError,
+) -> String {
+    let code = match error.code {
+        code @ ("region_authority_revoked"
+        | "region_coordinates_unavailable"
+        | "region_cursor_clipped"
+        | "region_display_changed"
+        | "region_input_busy"
+        | "region_input_failed"
+        | "region_keyboard_focus_denied"
+        | "region_system_target_denied"
+        | "region_target_changed"
+        | "region_target_obscured"
+        | "region_window_boundary"
+        | "overlay_hide_failed"
+        | "region_busy"
+        | "region_capture_failed"
+        | "region_observation_required"
+        | "region_path_invalid"
+        | "region_platform_unsupported"
+        | "region_point_outside"
+        | "region_scroll_invalid"
+        | "region_source_changed"
+        | "region_source_invalid"
+        | "region_source_missing"
+        | "region_stopped"
+        | "region_text_invalid"
+        | "region_too_large") => code,
+        _ => "region_operation_failed",
+    };
+    *diagnostic = Some(RegionDiagnostic {
+        code,
+        reason: safe_region_reason(&error.message),
+    });
+    error.to_string()
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct HostCallFailure {
+    method: &'static str,
+    code: &'static str,
+    reason: &'static str,
+}
+impl HostCallFailure {
+    fn from_error(method: &str, message: &str, region: Option<RegionDiagnostic>) -> Self {
+        let (method, code, reason) = match method {
+            "region.observe" => (
+                "region.observe",
+                "REGION_OPERATION_FAILED",
+                safe_region_reason(message),
+            ),
+            "region.action" => (
+                "region.action",
+                "REGION_OPERATION_FAILED",
+                safe_region_reason(message),
+            ),
+            "model.invoke" => ("model.invoke", "MODEL_REQUEST_FAILED", "模型请求失败"),
+            "network.fetch" => ("network.fetch", "NETWORK_REQUEST_FAILED", "网络请求失败"),
+            "storage.get" => (
+                "storage.get",
+                "STORAGE_OPERATION_FAILED",
+                "插件存储操作失败",
+            ),
+            "storage.set" => (
+                "storage.set",
+                "STORAGE_OPERATION_FAILED",
+                "插件存储操作失败",
+            ),
+            "storage.delete" => (
+                "storage.delete",
+                "STORAGE_OPERATION_FAILED",
+                "插件存储操作失败",
+            ),
+            "storage.compareAndSet" => (
+                "storage.compareAndSet",
+                "STORAGE_OPERATION_FAILED",
+                "插件存储操作失败",
+            ),
+            "storage.list" => (
+                "storage.list",
+                "STORAGE_OPERATION_FAILED",
+                "插件存储操作失败",
+            ),
+            "services.list" => (
+                "services.list",
+                "SERVICE_OPERATION_FAILED",
+                "插件服务调用失败",
+            ),
+            "services.call" => (
+                "services.call",
+                "SERVICE_OPERATION_FAILED",
+                "插件服务调用失败",
+            ),
+            "ui.render" => ("ui.render", "RENDER_OPERATION_FAILED", "界面生成失败"),
+            "events.emit" => ("events.emit", "EVENT_OPERATION_FAILED", "插件事件发送失败"),
+            _ => ("unsupported", "HOST_UNSUPPORTED", "宿主不支持此扩展接口"),
+        };
+        if matches!(method, "region.observe" | "region.action") {
+            if let Some(region) = region {
+                return Self {
+                    method,
+                    code: region.code,
+                    reason: region.reason,
+                };
+            }
+        }
+        if message.starts_with("插件未声明权限：") {
+            return Self {
+                method,
+                code: "HOST_PERMISSION_DENIED",
+                reason: "插件未声明所需权限",
+            };
+        }
+        if matches!(
+            message,
+            "扩展运行已停止"
+                | "扩展已停用或版本已变化"
+                | "调用方扩展授权已撤销"
+                | "扩展绑定已撤销"
+                | "扩展绑定已变化"
+                | "扩展所属会话已变化"
+        ) {
+            return Self {
+                method,
+                code: "HOST_AUTHORITY_REVOKED",
+                reason: "扩展授权已变化或操作已停止",
+            };
+        }
+        Self {
+            method,
+            code,
+            reason,
+        }
+    }
+    fn public_message(self) -> String {
+        format!("{}：{} [{}]", self.method, self.reason, self.code)
+    }
+    fn protocol_error(self) -> ProtocolError {
+        ProtocolError {
+            code: self.code.into(),
+            message: self.public_message(),
+        }
+    }
+}
+fn worker_failure(error: &ProtocolError, last_host_failure: Option<HostCallFailure>) -> String {
+    let code = match error.code.as_str() {
+        code @ ("INVALID_PACKAGE" | "INVALID_PROTOCOL" | "RUNTIME_ERROR" | "TIMEOUT"
+        | "CANCELED" | "TRANSPORT_ERROR") => code,
+        _ => "RUNTIME_ERROR",
+    };
+    let mut message = format!("扩展执行失败 [{code}]");
+    if let Some(failure) = last_host_failure {
+        message.push_str("；最近宿主调用失败：");
+        message.push_str(&failure.public_message());
+    }
+    message
+}
+
 struct Worker {
     child: Child,
     input: ChildStdin,
@@ -451,6 +682,7 @@ impl Worker {
             } else {
                 Duration::from_secs(600)
             };
+        let mut last_host_failure = None;
         loop {
             context.check(app)?;
             if Instant::now() > deadline {
@@ -465,14 +697,14 @@ impl Worker {
                             result: Some(result),
                             error: None,
                         },
-                        Err(message) => WorkerRequest::HostResult {
-                            id,
-                            result: None,
-                            error: Some(ProtocolError {
-                                code: "HOST_ERROR".into(),
-                                message,
-                            }),
-                        },
+                        Err(failure) => {
+                            last_host_failure = Some(failure);
+                            WorkerRequest::HostResult {
+                                id,
+                                result: None,
+                                error: Some(failure.protocol_error()),
+                            }
+                        }
                     };
                     self.send(&request)?;
                 }
@@ -487,8 +719,8 @@ impl Worker {
                 {
                     return Ok(result)
                 }
-                Ok(Ok(WorkerResponse::Error { error, .. })) => {
-                    return Err(format!("扩展执行失败：{}", error.message))
+                Ok(Ok(WorkerResponse::Error { id: reply, error })) if reply == id => {
+                    return Err(worker_failure(&error, last_host_failure))
                 }
                 Ok(Ok(_)) => return Err("扩展返回意外的协议顺序".into()),
                 Ok(Err(e)) => return Err(e),
@@ -1102,6 +1334,17 @@ fn bridge(
     context: &mut Context,
     method: &str,
     params: Value,
+) -> Result<Value, HostCallFailure> {
+    let mut diagnostic = None;
+    bridge_impl(app, context, method, params, &mut diagnostic)
+        .map_err(|message| HostCallFailure::from_error(method, &message, diagnostic))
+}
+fn bridge_impl(
+    app: &AppHandle,
+    context: &mut Context,
+    method: &str,
+    params: Value,
+    diagnostic: &mut Option<RegionDiagnostic>,
 ) -> Result<Value, String> {
     context.check(app)?;
     let permission = match method {
@@ -1236,20 +1479,24 @@ fn bridge(
                 return Err("插件不能访问未授权的选区".into());
             }
             if context.region.is_none() {
-                context.region = Some(begin_region(app, context)?);
+                context.region = Some(begin_region(app, context, diagnostic)?);
             }
             let region = context.region.as_ref().unwrap().clone();
             if method == "region.action" {
                 let action =
                     serde_json::from_value(params.get("action").cloned().ok_or("缺少区域动作")?)
                         .map_err(|_| "区域动作无效")?;
-                region.execute(action).map_err(|e| e.to_string())?;
+                region
+                    .execute(action)
+                    .map_err(|e| record_region_error(diagnostic, e))?;
                 Ok(json!({"ok":true}))
             } else {
                 if context.frames.len() >= 32 {
                     context.frames.clear();
                 }
-                let frame = region.observe().map_err(|e| e.to_string())?;
+                let frame = region
+                    .observe()
+                    .map_err(|e| record_region_error(diagnostic, e))?;
                 let id = uuid::Uuid::new_v4().to_string();
                 let info = json!({"artifactId":id,"width":frame.width,"height":frame.height,"sha256":frame.sha256,"mimeType":"image/png"});
                 context.frames.insert(id, frame);
@@ -1642,7 +1889,11 @@ fn restore_ui_windows(app: &AppHandle, labels: Vec<String>) {
         }
     }
 }
-fn begin_region(app: &AppHandle, context: &Context) -> Result<Arc<region::RegionSession>, String> {
+fn begin_region(
+    app: &AppHandle,
+    context: &Context,
+    diagnostic: &mut Option<RegionDiagnostic>,
+) -> Result<Arc<region::RegionSession>, String> {
     let scene_id = context.scene_id.as_ref().ok_or("没有当前会话授权")?;
     let region_id = context.region_id.as_ref().ok_or("没有当前选区授权")?;
     let (mut background, selection) = {
@@ -1699,5 +1950,111 @@ fn begin_region(app: &AppHandle, context: &Context) -> Result<Arc<region::Region
         canceled: context.canceled.clone(),
         hidden: Arc::new(Mutex::new(vec![])),
     });
-    region::RegionSession::begin(source, hooks).map_err(|e| e.to_string())
+    region::RegionSession::begin(source, hooks).map_err(|e| record_region_error(diagnostic, e))
+}
+
+#[cfg(test)]
+mod failure_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn region_host_failure_keeps_real_typed_guard_code_and_fixed_reason() {
+        let mut diagnostic = None;
+        let message = record_region_error(
+            &mut diagnostic,
+            region::RegionError {
+                code: "region_target_obscured",
+                message: "操作区域被其他窗口遮挡".into(),
+            },
+        );
+        let failure = HostCallFailure::from_error("region.observe", &message, diagnostic);
+        assert_eq!(failure.code, "region_target_obscured");
+        assert_eq!(failure.reason, "操作区域被其他窗口遮挡");
+        let public = worker_failure(
+            &ProtocolError {
+                code: "RUNTIME_ERROR".into(),
+                message: "service handler failed".into(),
+            },
+            Some(failure),
+        );
+        assert!(public.contains("region.observe"));
+        assert!(public.contains("region_target_obscured"));
+        assert!(public.contains("操作区域被其他窗口遮挡"));
+        assert!(!public.contains("service handler failed"));
+        assert!(public.len() <= 512);
+    }
+
+    #[test]
+    fn host_diagnostics_never_forward_provider_bodies_paths_keys_or_unknown_methods() {
+        let sensitive = "HTTP 403 {\"token\":\"sk-private-test-token\"} C:\\Users\\Private\\secret.json\nBearer private-test-token";
+        for (method, code) in [
+            ("model.invoke", "MODEL_REQUEST_FAILED"),
+            ("network.fetch", "NETWORK_REQUEST_FAILED"),
+            ("storage.set", "STORAGE_OPERATION_FAILED"),
+        ] {
+            let failure = HostCallFailure::from_error(method, sensitive, None);
+            assert_eq!(failure.code, code);
+            let protocol = failure.protocol_error();
+            assert!(protocol.message.contains(method));
+            let public = worker_failure(
+                &ProtocolError {
+                    code: sensitive.into(),
+                    message: sensitive.into(),
+                },
+                Some(failure),
+            );
+            for output in [protocol.message, public] {
+                for secret in [
+                    "sk-private-test-token",
+                    "C:\\Users",
+                    "Bearer",
+                    "HTTP 403",
+                    "secret.json",
+                ] {
+                    assert!(!output.contains(secret), "unsafe diagnostic for {method}");
+                }
+                assert!(output.len() <= 512);
+            }
+        }
+        let failure = HostCallFailure::from_error(sensitive, sensitive, None);
+        assert_eq!(failure.method, "unsupported");
+        assert_eq!(failure.code, "HOST_UNSUPPORTED");
+        assert!(!failure.public_message().contains(sensitive));
+    }
+
+    #[test]
+    fn region_codes_survive_without_trusting_underlying_error_text_or_prefixes() {
+        let sensitive = "操作区域被其他窗口遮挡\nBearer private-test-token";
+        let mut diagnostic = None;
+        let message = record_region_error(
+            &mut diagnostic,
+            region::RegionError {
+                code: "region_capture_failed",
+                message: sensitive.into(),
+            },
+        );
+        let failure = HostCallFailure::from_error("region.observe", &message, diagnostic);
+        assert_eq!(failure.code, "region_capture_failed");
+        assert_eq!(failure.reason, "区域操作失败");
+        assert!(!failure.public_message().contains("private-test-token"));
+        let mut diagnostic = None;
+        let message = record_region_error(
+            &mut diagnostic,
+            region::RegionError {
+                code: "unknown_internal_code_with_private_test_token",
+                message: sensitive.into(),
+            },
+        );
+        let failure = HostCallFailure::from_error("region.action", &message, diagnostic);
+        assert_eq!(failure.code, "region_operation_failed");
+        let public = worker_failure(
+            &ProtocolError {
+                code: "RUNTIME_ERROR".into(),
+                message: "arbitrary JS stack with private-test-token".into(),
+            },
+            Some(failure),
+        );
+        assert!(!public.contains("private-test-token"));
+        assert!(!public.contains("unknown_internal_code"));
+    }
 }
