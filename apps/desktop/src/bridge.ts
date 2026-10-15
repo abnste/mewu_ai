@@ -599,8 +599,8 @@ export async function deleteConnectionProfile(id: string, expectedRevision: numb
   return publish();
 }
 
-export async function sendMessage(sceneId: string, visualAnnotations?: VisualAnnotationGrant): Promise<Snapshot> {
-  if (native) return invokeSnapshot('send_message', { sceneId, visualAnnotations: visualAnnotations ?? null });
+export async function sendMessage(sceneId: string, visualAnnotations?: VisualAnnotationGrant, regionId?: string): Promise<Snapshot> {
+  if (native) return invokeSnapshot('send_message', { sceneId, visualAnnotations: visualAnnotations ?? null, regionId: regionId ?? null });
   throw new Error('浏览器预览不连接模型，请在桌面应用发送');
 }
 export async function cancelRun(sceneId: string): Promise<Snapshot> {

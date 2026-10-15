@@ -13,6 +13,11 @@ async function moduleAt(path) {
 const helpers = await moduleAt('./visual-annotations-send.ts');
 const submission = await moduleAt('./scene-submission.ts');
 const optional = await moduleAt('./optional-capabilities.ts');
+const blackboardModule = new vm.SourceTextModule(stripTypeScriptTypes(await raw('./blackboard.ts'), { mode: 'transform' }));
+await blackboardModule.link(() => { throw Error('Unexpected runtime dependency'); }); await blackboardModule.evaluate();
+const chatModule = new vm.SourceTextModule(stripTypeScriptTypes(await raw('./chat-region.ts'), { mode: 'transform' }));
+await chatModule.link(name => { assert.equal(name, './blackboard'); return blackboardModule; }); await chatModule.evaluate();
+const chatHelpers = chatModule.namespace;
 const app = await raw('./App.tsx'), ast = parse(app, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const appBody=ast.program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
 const predicateSource=['agentAvailable','agentReady'].map(name=>{
@@ -35,7 +40,7 @@ function deferred() { let resolve; const promise = new Promise(yes => resolve = 
 function actualApp() {
   const f = { scene: fixture(), plugin: plugin(), capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection'],readyAgentIds:[],boundAgentIds:[]}, pending: false, exiting: false, calls: [], errors: {}, drafts: {}, operations: 0, afterSave: undefined, flushVideo: undefined };
   const snapshot = () => ({ scenes: [f.scene] });
-  const scope = { ...helpers, ...submission, ...optional, t: value => value, disposed: false, commands: Promise.resolve(), exitFailure: undefined, autosaveVersion: 0, debounce: undefined, clearTimeout,
+  const scope = { ...helpers, ...submission, ...optional, ...chatHelpers, activeCaptureRegions: () => f.activeRegions ?? {}, t: value => value, disposed: false, commands: Promise.resolve(), exitFailure: undefined, autosaveVersion: 0, debounce: undefined, clearTimeout,
     scene: () => f.scene, capabilities:()=>f.capabilities, snapshot, busy: () => false, recording: () => false, scroll: () => false, sending: () => f.pending, exitPreparing: () => f.exiting,
     draft: () => f.scene.draft, refs: () => f.scene.refs, visualAnnotationGrant: () => helpers.annotationGrant([f.plugin]), pluginSnapshot: () => ({ plugins: [f.plugin] }),
     spaceOperations: { begin() { f.operations++; return () => f.operations--; } }, voice: { cancel: async () => f.calls.push('voice') },
@@ -44,11 +49,27 @@ function actualApp() {
     accept: next => f.scene = next.scenes[0],
     bridge: {
       applyCommand: async command => { f.calls.push(structuredClone(command)); if (command.type === 'set_draft') f.scene.draft = command.draft; if (command.type === 'set_refs') f.scene.refs = structuredClone(command.refs); await f.afterSave?.(command); return snapshot(); },
-      sendMessage: async (sceneId, annotation) => { f.calls.push({ type: 'send', sceneId, annotation: structuredClone(annotation) }); const next = structuredClone(f.scene); next.draft = ''; return { scenes: [next] }; },
+      sendMessage: async (sceneId, annotation, regionId) => { f.calls.push({ type: 'send', sceneId, annotation: structuredClone(annotation), regionId }); const next = structuredClone(f.scene); next.draft = ''; return { scenes: [next] }; },
     },
   };
   vm.createContext(scope); vm.runInContext(stripTypeScriptTypes(predicateSource,{mode:'transform'})+'\n'+sendBody, scope); return { f, scope };
 }
+
+test('the existing send carries the selected referenced region and annotation capability together without changing the question', async () => {
+  const { f, scope } = actualApp(); const question = f.scene.draft;
+  f.scene.regions.push({ ...f.scene.regions[0], id: 'another' });
+  f.scene.refs.push({ kind: 'region', id: 'another' }); f.activeRegions = { scene: 'another' };
+  await scope.send();
+  const sent = f.calls.find(call => call?.type === 'send');
+  assert.equal(sent.regionId, 'another'); assert.deepEqual(sent.annotation, grant);
+  assert.equal(f.calls.find(call => call?.type === 'set_draft').draft, question);
+});
+
+test('a queued send refuses a changed region selection instead of operating the old or newly selected target', async () => {
+  const { f, scope } = actualApp(); f.activeRegions = { scene: 'region' }; const wait = deferred(); scope.commands = wait.promise;
+  const sending = scope.send(); await turn(); f.activeRegions.scene = 'another'; wait.resolve(); await sending;
+  assert.equal(f.calls.some(call => call?.type === 'send'), false); assert.ok(f.errors.scene); assert.ok(f.scene.draft);
+});
 
 test('actual App sends a bound keyless independent Agent without a host connection, and refuses invalid binding fallback',async()=>{
   const {f,scope}=actualApp();f.scene.connectionId=null;

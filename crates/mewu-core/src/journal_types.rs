@@ -148,6 +148,15 @@ pub struct JournalEntryDetail {
     deny_unknown_fields
 )]
 pub enum ToolBinding {
+    Extension {
+        plugin_id: String,
+        plugin_revision: u64,
+        version: String,
+        sha256: String,
+        service_id: String,
+        advertised_alias: String,
+        name: String,
+    },
     VideoAnnotation {
         plugin_id: String,
         plugin_revision: u64,
@@ -182,6 +191,13 @@ pub enum ToolBinding {
     Rejected {
         advertised_name: String,
     },
+}
+
+/// A deterministic model-safe alias. Identity fields remain separately recorded
+/// and checked; a model-visible name is never an execution capability.
+pub fn extension_tool_alias(plugin_id: &str, service_id: &str) -> String {
+    let digest = crate::journal::digest(format!("{plugin_id}\0{service_id}").as_bytes());
+    format!("ext_{}", &digest[..60])
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(

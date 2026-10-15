@@ -65,6 +65,7 @@ import { RegionGeometryCoordinator, geometryReceipt, geometryTarget, type Geomet
 import type { RegionGeometryCommand } from './contracts';
 import { submitSceneDraft } from './scene-submission';
 import { annotationGrant, annotationSendIdentity, assertAnnotationSend, hasAnnotationTarget } from './visual-annotations-send';
+import { chatRegion, chatRegionIdentity } from './chat-region';
 import { geometryHistoryCommand, geometryHistoryReceipt, type GeometryDirection } from './region-geometry-history';
 import { DrawingFlushRegistry } from './drawing-flush';
 import DrawingDraftsDialog from './components/DrawingDraftsDialog';
@@ -112,6 +113,9 @@ export default function App() {
   let voiceComposing = false, voiceSubscribed = false, stopVoiceEvents: (() => void) | undefined;
   const [drafts, setDrafts] = createSignal<Record<string, string>>({});
   const [referenceDrafts, setReferenceDrafts] = createSignal<Record<string, Reference[]>>({});
+  const [activeCaptureRegions, setActiveCaptureRegions] = createSignal<Record<string, string | undefined>>({});
+  const activeCaptureRegionChanged = (sceneId: string, regionId: string | undefined) => setActiveCaptureRegions(previous =>
+    previous[sceneId] === regionId ? previous : regionId ? { ...previous, [sceneId]: regionId } : withoutScene(previous, sceneId));
   const [referenceInsertion,setReferenceInsertion]=createSignal<{sceneId:string;reference:Reference;serial:number}>();
   let referenceSerial=0;
   const referenceInserted=(serial:number)=>setReferenceInsertion(request=>request?.serial===serial?undefined:request);
@@ -961,9 +965,11 @@ export default function App() {
     let grant: VisualAnnotationGrant | undefined;
     const identity = annotationSendIdentity(current);
     let sourceIdentity: string | undefined;
+    let regionId: string | undefined, regionIdentity: string | undefined;
     const check = (text: string, references: Reference[]) => {
       if (!agentReady() || disposed || exitPreparing() || scene()?.id !== current.id || scene()?.closed || scene()?.frozen) throw new Error('会话已变化');
       if (grant) assertAnnotationSend({ identity, sourceIdentity, grant, scene: scene(), references, draft: text, plugins: pluginSnapshot().plugins, active: !recording() && !scroll() });
+      if (regionId && (chatRegion(scene(), references, activeCaptureRegions()[current.id]) !== regionId || chatRegionIdentity(scene(), regionId) !== regionIdentity)) throw new Error('截图选区已变化');
     };
     const finishOperation = spaceOperations.begin();
     const stopVoice = voice.cancel();
@@ -976,6 +982,8 @@ export default function App() {
       await regionGeometry.flush();
       if (scene()?.id !== id) throw new Error('会话已变化');
       const submittedDraft = draft(), submittedRefs = refs().map(reference => ({ ...reference }));
+      regionId = chatRegion(scene(), submittedRefs, activeCaptureRegions()[id]);
+      regionIdentity = chatRegionIdentity(scene(), regionId);
       // Enable available tools for the committed references; the model chooses
       // whether to use them. Keep the revision captured before asynchronous work.
       grant = hasAnnotationTarget(scene(), submittedRefs) ? candidateGrant : undefined;
@@ -987,7 +995,7 @@ export default function App() {
       // this payload's draft/refs and the native read that creates its message.
       const submission = commands.then(() => submitSceneDraft({ sceneId: id, draft: submittedDraft, refs: submittedRefs }, {
         save: async value => { check(submittedDraft, submittedRefs); accept(await bridge.applyCommand(value)); },
-        send: sceneId => { check(submittedDraft, submittedRefs); return bridge.sendMessage(sceneId, grant); },
+        send: sceneId => { check(submittedDraft, submittedRefs); return bridge.sendMessage(sceneId, grant, regionId); },
       }));
       commands = submission.then(() => {}, error => { if (exitPreparing()) exitFailure ??= error; });
       const next = await submission;
@@ -1124,7 +1132,7 @@ export default function App() {
         const ownedRefs=()=>referenceDrafts()[currentId]??ownedScene().refs;
         const ownedDraft=()=>drafts()[currentId]??ownedScene().draft;
         return <Show when={!ownedScene().closed}>
-        <SpaceCanvas blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing()} busy={busy() || sending() || exitPreparing()} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={() => setFocusRequest(v => v + 1)} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
+        <SpaceCanvas onActiveRegionChange={activeCaptureRegionChanged} blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing()} busy={busy() || sending() || exitPreparing()} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={() => setFocusRequest(v => v + 1)} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
         <Show when={blackboardEditing()!==currentId}><PinObjectLayer aiAvailable={agentAvailable()} objects={pinObjects()} busy={busy()||sending()||exitPreparing()} referenced={pinReferenced} onReference={object=>void referencePin(object)} onError={showError}/></Show>
         <Show when={blackboardEditing()!==currentId}><nav class="space-utilities" aria-label={t('空间操作')}>
           <button class="icon-button" aria-label={t('退出')} title={t('退出')} disabled={busy()||exitPreparing()} onClick={()=>void closeScene(currentId)}><X size={17}/></button>

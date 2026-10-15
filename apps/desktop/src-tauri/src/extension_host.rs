@@ -20,7 +20,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc, Arc, Mutex, Weak,
     },
     time::{Duration, Instant},
 };
@@ -763,6 +763,9 @@ struct Context {
     region_id: Option<String>,
     scope: String,
     region: Option<Arc<region::RegionSession>>,
+    chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
+    native_run: Option<(String, String)>,
+    tool_preparing: bool,
     #[cfg(windows)]
     escape: crate::extension_escape::RunEscapeLease,
     #[cfg(windows)]
@@ -809,8 +812,18 @@ impl Context {
                 }
             }
         }
+        if let Some(scope) = &self.chat_region {
+            scope.check(app)?;
+        }
         if let Some(scene_id) = &self.scene_id {
             let engine = host.lock()?;
+            if self
+                .native_run
+                .as_ref()
+                .is_some_and(|(scene, run)| !crate::run_is_authorized(&engine, scene, run, None))
+            {
+                return Err("Agent 运行已结束或授权已变化".into());
+            }
             let scene = engine
                 .store
                 .scenes()
@@ -876,6 +889,9 @@ fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
         region_id: None,
         scope: "default".into(),
         region: None,
+        chat_region: None,
+        native_run: None,
+        tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
         #[cfg(windows)]
@@ -946,7 +962,11 @@ pub async fn invoke_extension(
     let run_id = uuid::Uuid::new_v4().to_string();
     #[cfg(windows)]
     let focus_return = invocation.region_id.as_ref().and_then(|_| {
-        crate::extension_focus::FocusTicket::new(&app, run_id.clone(), invocation.scene_id.as_deref()?)
+        crate::extension_focus::FocusTicket::new(
+            &app,
+            run_id.clone(),
+            invocation.scene_id.as_deref()?,
+        )
     });
     let context = Context {
         record,
@@ -956,6 +976,9 @@ pub async fn invoke_extension(
         region_id: invocation.region_id,
         scope,
         region: None,
+        chat_region: None,
+        native_run: None,
+        tool_preparing: false,
         #[cfg(windows)]
         focus_return,
         #[cfg(windows)]
@@ -1105,7 +1128,12 @@ impl Drop for RunRegistration {
 impl Drop for Context {
     fn drop(&mut self) {
         if let Some(region) = self.region.take() {
-            region.revoke();
+            // Chat tools borrow the run's session. Ending one worker must not
+            // revoke its target or release Escape while the next tool runs.
+            if self.chat_region.is_none() {
+                region.revoke();
+            }
+            drop(region);
         }
         #[cfg(windows)]
         self.escape.release();
@@ -1216,6 +1244,9 @@ pub async fn run_bound_service(
         region_id: None,
         scope: agent_id,
         region: None,
+        chat_region: None,
+        native_run: None,
+        tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
         #[cfg(windows)]
@@ -1239,11 +1270,205 @@ pub(crate) struct ExternalAgentResult {
     pub output: Value,
     pub reasoning: Option<String>,
 }
+
+fn validate_tool_record(
+    store: &Store,
+    descriptor: &crate::extension_tools::ToolDescriptor,
+) -> Result<Record, String> {
+    let record = store.get(&descriptor.plugin_id)?;
+    if record.state != "enabled"
+        || record.revision != descriptor.revision
+        || record.manifest.version != descriptor.version
+        || record.sha256 != descriptor.sha256
+        || descriptor.service.kind != mewu_extension::ServiceKind::Tool
+        || !record.services.contains(&descriptor.service)
+    {
+        return Err("扩展工具目录或授权已变化".into());
+    }
+    store.validate_dependencies(&record.manifest)?;
+    Ok(record)
+}
+
+pub(crate) fn tool_catalog(
+    app: &AppHandle,
+) -> Result<Vec<crate::extension_tools::ToolDescriptor>, String> {
+    let extensions = app.state::<ExtensionHost>();
+    let store = extensions.store()?;
+    let mut tools = vec![];
+    for record in store.list()? {
+        if record.state != "enabled" {
+            continue;
+        }
+        // An installed but unsatisfied dependency cannot advertise executable
+        // tools. The same check runs again under the dispatch lock.
+        if store.validate_dependencies(&record.manifest).is_err() {
+            continue;
+        }
+        for service in &record.services {
+            if service.kind == mewu_extension::ServiceKind::Tool {
+                tools.push(crate::extension_tools::ToolDescriptor {
+                    plugin_id: record.manifest.id.clone(),
+                    revision: record.revision,
+                    version: record.manifest.version.clone(),
+                    sha256: record.sha256.clone(),
+                    service: service.clone(),
+                });
+            }
+        }
+    }
+    Ok(tools)
+}
+
+pub(crate) async fn invoke_tool_for_run(
+    app: AppHandle,
+    descriptor: crate::extension_tools::ToolDescriptor,
+    scene_id: String,
+    run_id: String,
+    canceled: Arc<AtomicBool>,
+    chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
+    input: Value,
+    lease: mewu_core::DispatchLease,
+) -> crate::extension_tools::ToolInvocationOutcome {
+    use crate::extension_tools::ToolInvocationOutcome;
+    use mewu_core::{NoResponseReason, NotSentReason};
+    let prepare = (|| -> Result<Context, NotSentReason> {
+        if canceled.load(Ordering::SeqCst) {
+            return Err(NotSentReason::RunEnded);
+        }
+        if chat_region.as_ref().is_some_and(|s| {
+            s.scene_id() != scene_id
+                || s.run_id() != run_id
+                || !Arc::ptr_eq(&s.cancel_token(), &canceled)
+        }) {
+            return Err(NotSentReason::AuthorityChanged);
+        }
+        let record = {
+            let extensions = app.state::<ExtensionHost>();
+            let store = extensions
+                .store()
+                .map_err(|_| NotSentReason::PreparationFailed)?;
+            validate_tool_record(&store, &descriptor).map_err(|_| NotSentReason::CatalogChanged)?
+        };
+        if descriptor
+            .requires_region()
+            .map_err(|_| NotSentReason::CatalogChanged)?
+            && chat_region.is_none()
+        {
+            return Err(NotSentReason::AuthorityChanged);
+        }
+        if let Some(schema) = &descriptor.service.input_schema {
+            let validator =
+                jsonschema::validator_for(schema).map_err(|_| NotSentReason::CatalogChanged)?;
+            if !validator.is_valid(&input) {
+                return Err(NotSentReason::InvalidArguments);
+            }
+        }
+        let host = app.state::<Host>();
+        host.exit
+            .ensure_background()
+            .map_err(|_| NotSentReason::RunEnded)?;
+        let engine = host.lock().map_err(|_| NotSentReason::PreparationFailed)?;
+        if !crate::run_is_authorized(&engine, &scene_id, &run_id, None) {
+            return Err(NotSentReason::RunEnded);
+        }
+        if let Some(scope) = &chat_region {
+            scope
+                .check_engine(&engine)
+                .map_err(|_| NotSentReason::AuthorityChanged)?;
+        }
+        let agent_id = engine
+            .store
+            .scene(&scene_id)
+            .map_err(|_| NotSentReason::RunEnded)?
+            .agent_id
+            .clone();
+        Ok(Context {
+            record,
+            run_id: uuid::Uuid::new_v4().to_string(),
+            canceled: canceled.clone(),
+            scene_id: Some(scene_id.clone()),
+            region_id: chat_region.as_ref().map(|s| s.region_id().into()),
+            scope: agent_id,
+            region: None,
+            chat_region,
+            native_run: Some((scene_id.clone(), run_id.clone())),
+            tool_preparing: true,
+            #[cfg(windows)]
+            escape: crate::extension_escape::RunEscapeLease::default(),
+            #[cfg(windows)]
+            focus_return: None,
+            frames: HashMap::new(),
+            default_messages: vec![],
+            history: None,
+            default_images: vec![],
+            binding: None,
+            delegated_permissions: None,
+            authority_chain: vec![],
+            public_reasoning: None,
+            memory_enabled_required: false,
+            depth: 0,
+        })
+    })();
+    let mut context = match prepare {
+        Ok(context) => context,
+        Err(reason) => return ToolInvocationOutcome::NotSent(reason),
+    };
+    if context.check(&app).is_err() {
+        return ToolInvocationOutcome::NotSent(NotSentReason::AuthorityChanged);
+    }
+    let registration = match register_run(&app, &context) {
+        Ok(registration) => registration,
+        Err(_) => return ToolInvocationOutcome::NotSent(NotSentReason::PreparationFailed),
+    };
+    let sent = Arc::new(AtomicBool::new(false));
+    let dispatch = ToolDispatch {
+        descriptor: descriptor.clone(),
+        scene_id,
+        run_id,
+        lease,
+        sent: sent.clone(),
+    };
+    let mut cancellation = FutureCancellation {
+        signal: canceled.clone(),
+        armed: true,
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut registration = registration;
+        let result = execute_with_dispatch(
+            &app,
+            &mut context,
+            &descriptor.service.id,
+            input,
+            Some(&dispatch),
+        );
+        registration.success = result.is_ok();
+        result
+    })
+    .await;
+    cancellation.armed = false;
+    match result {
+        Ok(Ok(output)) => ToolInvocationOutcome::Responded(output),
+        _ if sent.load(Ordering::SeqCst) => {
+            ToolInvocationOutcome::Unknown(if canceled.load(Ordering::SeqCst) {
+                NoResponseReason::Canceled
+            } else {
+                NoResponseReason::IncompleteResponse
+            })
+        }
+        _ => ToolInvocationOutcome::NotSent(if canceled.load(Ordering::SeqCst) {
+            NotSentReason::RunEnded
+        } else {
+            NotSentReason::PreparationFailed
+        }),
+    }
+}
+
 pub(crate) async fn run_external_agent(
     app: AppHandle,
     provider: ExternalAgentProvider,
     scene_id: String,
     run_id: String,
+    chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
     input: Value,
 ) -> Result<ExternalAgentResult, String> {
     let authority = &provider.authority;
@@ -1271,12 +1496,15 @@ pub(crate) async fn run_external_agent(
     let reasoning = Arc::new(Mutex::new(String::new()));
     let context = Context {
         record: provider.record,
-        run_id,
+        run_id: run_id.clone(),
         canceled: authority.canceled.clone(),
-        scene_id: Some(scene_id),
-        region_id: None,
+        scene_id: Some(scene_id.clone()),
+        region_id: chat_region.as_ref().map(|s| s.region_id().to_owned()),
         scope: provider.agent_id,
         region: None,
+        chat_region,
+        native_run: Some((scene_id, run_id)),
+        tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
         #[cfg(windows)]
@@ -1313,6 +1541,22 @@ fn execute(
     service_id: &str,
     input: Value,
 ) -> Result<Value, String> {
+    execute_with_dispatch(app, context, service_id, input, None)
+}
+struct ToolDispatch {
+    descriptor: crate::extension_tools::ToolDescriptor,
+    scene_id: String,
+    run_id: String,
+    lease: mewu_core::DispatchLease,
+    sent: Arc<AtomicBool>,
+}
+fn execute_with_dispatch(
+    app: &AppHandle,
+    context: &mut Context,
+    service_id: &str,
+    input: Value,
+    dispatch: Option<&ToolDispatch>,
+) -> Result<Value, String> {
     let (mut worker, registrations) = start_worker(app, context)?;
     let registration = registrations
         .iter()
@@ -1323,6 +1567,38 @@ fn execute(
         if !validator.is_valid(&input) {
             return Err("插件参数不符合服务规范".into());
         }
+    }
+    if let Some(dispatch) = dispatch {
+        if registration != &dispatch.descriptor.service {
+            return Err("扩展工具目录已变化".into());
+        }
+        context.check(app)?;
+        let extensions = app.state::<ExtensionHost>();
+        let store = extensions.store()?;
+        validate_tool_record(&store, &dispatch.descriptor)?;
+        let host = app.state::<Host>();
+        let mut engine = host.lock()?;
+        host.exit.ensure_background()?;
+        if context.canceled.load(Ordering::SeqCst)
+            || !crate::run_is_authorized(&engine, &dispatch.scene_id, &dispatch.run_id, None)
+        {
+            return Err("Agent 运行已结束".into());
+        }
+        if let Some(scope) = &context.chat_region {
+            scope.check_engine(&engine)?;
+        }
+        let commit = engine
+            .store
+            .mark_extension_tool_dispatched(&dispatch.lease, &dispatch.descriptor.binding())
+            .map_err(crate::journal_runtime::store_error)?;
+        crate::journal_runtime::emit_changed(
+            app,
+            &dispatch.scene_id,
+            &dispatch.run_id,
+            commit.journal_revision,
+        );
+        dispatch.sent.store(true, Ordering::SeqCst);
+        context.tool_preparing = false;
     }
     let _=app.emit_to("space","extension-run-started",json!({"runId":context.run_id,"pluginId":context.record.manifest.id,"serviceId":service_id,"title":registration.title}));
     let id = uuid::Uuid::new_v4().to_string();
@@ -1376,6 +1652,10 @@ fn bridge(
     bridge_impl(app, context, method, params, &mut diagnostic)
         .map_err(|message| HostCallFailure::from_error(method, &message, diagnostic))
 }
+fn tool_initialization_read(method: &str) -> bool {
+    matches!(method, "storage.get" | "storage.list" | "services.list")
+}
+
 fn bridge_impl(
     app: &AppHandle,
     context: &mut Context,
@@ -1384,6 +1664,9 @@ fn bridge_impl(
     diagnostic: &mut Option<RegionDiagnostic>,
 ) -> Result<Value, String> {
     context.check(app)?;
+    if context.tool_preparing && !tool_initialization_read(method) {
+        return Err("工具初始化阶段不能执行宿主操作".into());
+    }
     let permission = match method {
         "storage.get" | "storage.list" => "storage.read",
         "storage.set" | "storage.delete" | "storage.compareAndSet" => "storage.write",
@@ -1491,6 +1774,9 @@ fn bridge_impl(
                 region_id: None,
                 scope: context.scope.clone(),
                 region: None,
+                chat_region: None,
+                native_run: None,
+                tool_preparing: false,
                 #[cfg(windows)]
                 focus_return: None,
                 #[cfg(windows)]
@@ -1800,6 +2086,7 @@ struct OverlayHooks {
     plugin: String,
     revision: u64,
     canceled: Arc<AtomicBool>,
+    chat_region: Option<Weak<crate::extension_chat_region::ChatRegionScope>>,
     source: crate::extension_overlay_policy::RestoreSource,
     #[cfg(windows)]
     _escape: Arc<crate::extension_escape::EscapeLease>,
@@ -1816,13 +2103,17 @@ impl region::RegionOverlayHooks for OverlayHooks {
         if self.canceled.load(Ordering::SeqCst) {
             return Err("区域运行已停止".into());
         }
-        let record = self
-            .app
-            .state::<ExtensionHost>()
-            .store()?
-            .get(&self.plugin)?;
-        if record.revision != self.revision || record.state != "enabled" {
-            return Err("插件授权已撤销".into());
+        if let Some(scope) = &self.chat_region {
+            scope.upgrade().ok_or("区域会话已结束")?.check(&self.app)?;
+        } else {
+            let record = self
+                .app
+                .state::<ExtensionHost>()
+                .store()?
+                .get(&self.plugin)?;
+            if record.revision != self.revision || record.state != "enabled" {
+                return Err("插件授权已撤销".into());
+            }
         }
         let host = self.app.state::<Host>();
         host.exit.ensure_background()?;
@@ -1870,7 +2161,9 @@ impl region::RegionOverlayHooks for OverlayHooks {
         self.app
             .run_on_main_thread(move || {
                 #[cfg(windows)]
-                if let Some(ticket) = &focus_return { ticket.before_hide(); }
+                if let Some(ticket) = &focus_return {
+                    ticket.before_hide();
+                }
                 let result = (|| {
                     for (label, window) in app.webview_windows() {
                         if label == "space"
@@ -1883,8 +2176,13 @@ impl region::RegionOverlayHooks for OverlayHooks {
                             }
                             if window.is_visible().unwrap_or(false) {
                                 let pin = if crate::pin_host::is_pin_label(&label) {
-                                    Some(crate::pin_host::PinRestoreToken::capture(&app, &label).ok_or("贴图已改变")?)
-                                } else { None };
+                                    Some(
+                                        crate::pin_host::PinRestoreToken::capture(&app, &label)
+                                            .ok_or("贴图已改变")?,
+                                    )
+                                } else {
+                                    None
+                                };
                                 #[cfg(windows)]
                                 {
                                     let handle = window.hwnd().map_err(|_| "无法隐藏截图覆盖层")?;
@@ -1899,7 +2197,9 @@ impl region::RegionOverlayHooks for OverlayHooks {
                     Ok(())
                 })();
                 #[cfg(windows)]
-                if let Some(ticket) = &focus_return { ticket.after_hide(); }
+                if let Some(ticket) = &focus_return {
+                    ticket.after_hide();
+                }
                 if send.send(result).is_err() {
                     let labels = hidden
                         .lock()
@@ -2072,8 +2372,12 @@ fn restore_ui_windows(
         |scene_current| {
             for hidden in windows.drain(..) {
                 if let Some(pin) = &hidden.pin {
-                    if !pin.is_current(app) { continue; }
-                } else if !scene_current { continue; }
+                    if !pin.is_current(app) {
+                        continue;
+                    }
+                } else if !scene_current {
+                    continue;
+                }
                 let window = hidden.window;
                 #[cfg(windows)]
                 {
@@ -2096,7 +2400,8 @@ fn restore_ui_windows(
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 let dispatcher = app.clone();
-                let _ = dispatcher.run_on_main_thread(move || restore_ui_windows(&app, &source, windows));
+                let _ = dispatcher
+                    .run_on_main_thread(move || restore_ui_windows(&app, &source, windows));
             });
         }
     }
@@ -2106,9 +2411,23 @@ fn begin_region(
     context: &Context,
     diagnostic: &mut Option<RegionDiagnostic>,
 ) -> Result<Arc<region::RegionSession>, String> {
+    if let Some(scope) = &context.chat_region {
+        scope.check(app)?;
+        return scope.session(|| begin_region_inner(app, context, diagnostic));
+    }
+    begin_region_inner(app, context, diagnostic)
+}
+fn begin_region_inner(
+    app: &AppHandle,
+    context: &Context,
+    diagnostic: &mut Option<RegionDiagnostic>,
+) -> Result<Arc<region::RegionSession>, String> {
     let scene_id = context.scene_id.as_ref().ok_or("没有当前会话授权")?;
     let region_id = context.region_id.as_ref().ok_or("没有当前选区授权")?;
-    let (mut background, selection) = {
+    let (mut background, selection) = if let Some(scope) = &context.chat_region {
+        scope.check(app)?;
+        scope.source()
+    } else {
         let host = app.state::<Host>();
         let engine = host.lock()?;
         let scene = engine
@@ -2156,16 +2475,34 @@ fn begin_region(
         asset_sha256: format!("{:x}", hash.finalize()),
     };
     #[cfg(windows)]
-    let escape = context.escape.acquire(context.canceled.clone())
-        .map_err(|message| record_region_error(diagnostic, region::RegionError {
-            code: "region_stop_unavailable",
-            message: message.into(),
-        }))?;
+    let escape = context
+        .chat_region
+        .as_ref()
+        .map_or_else(
+            || context.escape.acquire(context.canceled.clone()),
+            |scope| scope.escape(),
+        )
+        .map_err(|message| {
+            record_region_error(
+                diagnostic,
+                region::RegionError {
+                    code: "region_stop_unavailable",
+                    message: message.into(),
+                },
+            )
+        })?;
+    #[cfg(windows)]
+    let focus_return = if let Some(scope) = &context.chat_region {
+        scope.focus(app)?
+    } else {
+        context.focus_return.clone()
+    };
     let hooks = Arc::new(OverlayHooks {
         app: app.clone(),
         plugin: context.record.manifest.id.clone(),
         revision: context.record.revision,
         canceled: context.canceled.clone(),
+        chat_region: context.chat_region.as_ref().map(Arc::downgrade),
         source: crate::extension_overlay_policy::RestoreSource {
             scene_id: source.scene_id.clone(),
             background_id: source.background.id.clone(),
@@ -2173,10 +2510,112 @@ fn begin_region(
         #[cfg(windows)]
         _escape: escape,
         #[cfg(windows)]
-        focus_return: context.focus_return.clone(),
+        focus_return,
         hidden: Arc::new(Mutex::new(vec![])),
     });
     region::RegionSession::begin(source, hooks).map_err(|e| record_region_error(diagnostic, e))
+}
+
+#[cfg(test)]
+mod extension_tool_registry_tests {
+    use super::*;
+    #[test]
+    fn tool_activation_cannot_perform_side_effects_before_the_dispatch_receipt() {
+        for method in ["storage.get", "storage.list", "services.list"] {
+            assert!(tool_initialization_read(method));
+        }
+        for method in [
+            "storage.set",
+            "storage.delete",
+            "storage.compareAndSet",
+            "region.observe",
+            "region.action",
+            "model.invoke",
+            "ui.render",
+            "network.fetch",
+            "services.call",
+            "events.emit",
+            "unknown",
+        ] {
+            assert!(!tool_initialization_read(method));
+        }
+    }
+    #[test]
+    fn a_frozen_tool_requires_the_actual_installed_revision_digest_schema_and_enabled_state() {
+        let root = std::env::temp_dir().join(format!("mewu-chat-tool-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut store = Store::open(&root).unwrap();
+        let manifest = json!({"schemaVersion":2,"hostApi":2,"runtime":"javascript",
+            "id":"community.chat-tool","version":"1.0.0","name":"Chat tool","description":"",
+            "license":"MPL-2.0","entry":"index.mjs"});
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file("mewu-plugin.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&serde_json::to_vec(&manifest).unwrap())
+            .unwrap();
+        zip.start_file("index.mjs", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"export default ctx=>ctx.tools.register({id:'read',title:'Read'},()=>42);")
+            .unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let package = crate::extension_market::decode_package(&bytes).unwrap();
+        let installed = store
+            .install(
+                &package,
+                &bytes,
+                &Source::Local {
+                    path: "own-test-package.zip".into(),
+                },
+                None,
+            )
+            .unwrap();
+        let service: ServiceRegistration =
+            serde_json::from_value(json!({"kind":"tool","id":"read","title":"Read",
+            "inputSchema":{"type":"object","properties":{},"additionalProperties":false}}))
+            .unwrap();
+        store
+            .set_services(
+                &installed.manifest.id,
+                installed.revision,
+                &[service.clone()],
+            )
+            .unwrap();
+        let descriptor = crate::extension_tools::ToolDescriptor {
+            plugin_id: installed.manifest.id.clone(),
+            revision: installed.revision,
+            version: installed.manifest.version.clone(),
+            sha256: installed.sha256.clone(),
+            service,
+        };
+        assert!(validate_tool_record(&store, &descriptor).is_ok());
+        for mutation in 0..5 {
+            let mut changed = descriptor.clone();
+            match mutation {
+                0 => changed.revision += 1,
+                1 => changed.sha256 = "0".repeat(64),
+                2 => changed.version = "2.0.0".into(),
+                3 => {
+                    changed.service.input_schema = Some(json!({"type":"object","required":["new"]}))
+                }
+                _ => changed.service.kind = mewu_extension::ServiceKind::Command,
+            }
+            assert!(validate_tool_record(&store, &changed).is_err());
+        }
+        store
+            .set_state(&installed.manifest.id, installed.revision, "disabled")
+            .unwrap();
+        assert!(validate_tool_record(&store, &descriptor).is_err());
+        drop(store);
+        for name in [
+            "extensions.db",
+            "extensions.db-wal",
+            "extensions.db-shm",
+            "extensions.db-journal",
+        ] {
+            let _ = std::fs::remove_file(root.join(name));
+        }
+        std::fs::remove_dir(root).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -2186,15 +2625,22 @@ mod failure_diagnostic_tests {
     #[test]
     fn unavailable_region_stop_key_keeps_its_exact_typed_failure() {
         let mut diagnostic = None;
-        let message = record_region_error(&mut diagnostic, region::RegionError {
-            code: "region_stop_unavailable",
-            message: "无法注册区域停止键，请先结束其他使用 Esc 的操作".into(),
-        });
+        let message = record_region_error(
+            &mut diagnostic,
+            region::RegionError {
+                code: "region_stop_unavailable",
+                message: "无法注册区域停止键，请先结束其他使用 Esc 的操作".into(),
+            },
+        );
         let failure = HostCallFailure::from_error("region.observe", &message, diagnostic);
         assert_eq!(failure.code, "region_stop_unavailable");
-        let public = worker_failure(&ProtocolError {
-            code: "RUNTIME_ERROR".into(), message: "service handler failed".into(),
-        }, Some(failure));
+        let public = worker_failure(
+            &ProtocolError {
+                code: "RUNTIME_ERROR".into(),
+                message: "service handler failed".into(),
+            },
+            Some(failure),
+        );
         assert!(public.contains("region.observe"));
         assert!(public.contains("region_stop_unavailable"));
         assert!(public.contains("无法注册区域停止键"));

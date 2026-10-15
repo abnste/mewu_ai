@@ -58,8 +58,8 @@ const checks = [];
   const assets = await loadAssetImport(context), geometry = await loadGeometryHistory(context);
   const bridge = new SourceTextModule(await source('./bridge.ts'), { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
   await bridge.link(async name => name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? assets : name === './region-geometry-history' ? geometry : name === './mosaic-preview' ? mosaic : name === './connection-policy' ? connection : name.endsWith('/core') ? core : synthetic({ listen: async () => () => {} })); await bridge.evaluate();
-  const grant = annotationGrant([makePlugin()]); await bridge.namespace.sendMessage('scene'); await bridge.namespace.sendMessage('scene', grant);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ command: 'send_message', args: { sceneId: 'scene', visualAnnotations: null } }, { command: 'send_message', args: { sceneId: 'scene', visualAnnotations: grant } }]);
+  const grant = annotationGrant([makePlugin()]); await bridge.namespace.sendMessage('scene'); await bridge.namespace.sendMessage('scene', grant); await bridge.namespace.sendMessage('scene', grant, 'selected-region');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{ command: 'send_message', args: { sceneId: 'scene', visualAnnotations: null, regionId: null } }, { command: 'send_message', args: { sceneId: 'scene', visualAnnotations: grant, regionId: null } }, { command: 'send_message', args: { sceneId: 'scene', visualAnnotations: grant, regionId: 'selected-region' } }]);
   checks.push('Actual native bridge preserves absence or the exact revisioned optional tool capability');
 }
 console.log(JSON.stringify({ passed: checks.length, checks }, null, 2));

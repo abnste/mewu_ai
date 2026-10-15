@@ -8,6 +8,7 @@ pub(crate) async fn start_external_run(
     app: AppHandle,
     scene_id: String,
     provider: crate::extension_host::ExternalAgentProvider,
+    prepared_region: Option<crate::extension_chat_region::PreparedChatRegion>,
 ) -> Result<crate::HostSnapshot, String> {
     let host = app.state::<crate::Host>();
     let scene = {
@@ -26,7 +27,7 @@ pub(crate) async fn start_external_run(
     };
     let attachments = crate::prepare_scene_attachments(scene.clone(), host.assets.clone()).await?;
     let authority = provider.authority.clone();
-    let (context, snapshot, receiver) = {
+    let (context, snapshot, receiver, chat_region) = {
         let mut engine = host.lock()?;
         host.exit.ensure_new_operation()?;
         crate::recording::ensure_idle(&app)?;
@@ -34,6 +35,9 @@ pub(crate) async fn start_external_run(
             || engine.store.scene(&scene_id).map_err(|e| e.to_string())? != &scene
         {
             return Err("会话或 Agent 扩展已更改，请重新发送".into());
+        }
+        if let Some(prepared) = &prepared_region {
+            prepared.check_source(&scene, &engine.store.snapshot().active_scene_id)?;
         }
         let context = engine
             .store
@@ -53,8 +57,10 @@ pub(crate) async fn start_external_run(
             context.run_id.clone(),
             (scene_id.clone(), authority.clone().into()),
         );
+        let chat_region = prepared_region
+            .map(|prepared| prepared.bind(context.run_id.clone(), authority.canceled.clone()));
         let snapshot = engine.store.snapshot();
-        (context, snapshot, receiver)
+        (context, snapshot, receiver, chat_region)
     };
     let started = crate::publish(&app, &snapshot);
     let app2 = app.clone();
@@ -126,12 +132,13 @@ pub(crate) async fn start_external_run(
                 provider,
                 scene_id.clone(),
                 run_id.clone(),
+                chat_region.clone(),
                 json!({"task":query,"request":body}),
             )
             .await?;
             Ok::<_, String>((response_text(&result.output)?, result.reasoning))
         };
-        let result = tokio::select! {biased; _=receiver=>None,result=work=>Some(result)};
+        let result = tokio::select! {biased; _=receiver=>None, _=crate::extension_chat_region::canceled(&app2, chat_region.as_ref())=>None, result=work=>Some(result)};
         let completed = {
             let host = app2.state::<crate::Host>();
             let Ok(mut engine) = host.lock() else { return };

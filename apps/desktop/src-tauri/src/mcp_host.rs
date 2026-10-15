@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! First-party MCP orchestration. A run owns its process; no plugin receives
-//! the Store, model credentials, screenshots, or another Agent's conversation.
+//! Run-owned tool orchestration. MCP transports and executable extension tools
+//! share bounded model definitions and receipts; the host retains credentials.
+//! Only an explicit chat region scope carries screen observation/input grants.
 use crate::{
     agent_tools, ai,
     journal_runtime::{self, CommittedToolOutput},
@@ -13,7 +14,10 @@ use mewu_core::{
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
@@ -212,6 +216,9 @@ pub struct RunTools {
     session: Mutex<Option<(String, McpSession)>>,
     visual: Option<Arc<crate::visual_annotation_host::RunScope>>,
     video: Option<Arc<crate::video_annotation_tool::RunScope>>,
+    extensions: BTreeMap<String, crate::extension_tools::ToolDescriptor>,
+    extension_cancel: Arc<AtomicBool>,
+    chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
 }
 
 impl RunTools {
@@ -231,9 +238,19 @@ impl RunTools {
         visual: Option<Arc<crate::visual_annotation_host::RunScope>>,
         video: Option<Arc<crate::video_annotation_tool::RunScope>>,
     ) -> Result<Self, String> {
+        Self::with_extensions(context, visual, video, vec![], None)
+    }
+
+    pub(crate) fn with_extensions(
+        context: &RunContext,
+        visual: Option<Arc<crate::visual_annotation_host::RunScope>>,
+        video: Option<Arc<crate::video_annotation_tool::RunScope>>,
+        extension_descriptors: Vec<crate::extension_tools::ToolDescriptor>,
+        chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
+    ) -> Result<Self, String> {
         let Catalog {
             bindings,
-            definitions,
+            mut definitions,
         } = build_catalog(
             &context.agent.id,
             &context.mcp_servers,
@@ -241,12 +258,23 @@ impl RunTools {
             visual.as_deref(),
             video.as_deref(),
         )?;
+        let extensions = crate::extension_tools::append_catalog(
+            extension_descriptors,
+            chat_region.is_some(),
+            &mut definitions,
+        )?;
         Ok(Self {
             bindings,
             definitions,
             session: Mutex::new(None),
             visual,
             video,
+            extensions,
+            extension_cancel: chat_region
+                .as_ref()
+                .map(|scope| scope.cancel_token())
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+            chat_region,
         })
     }
 
@@ -255,6 +283,9 @@ impl RunTools {
     }
 
     pub fn journal_binding(&self, alias: &str) -> Option<ToolBinding> {
+        if let Some(descriptor) = self.extensions.get(alias) {
+            return Some(descriptor.binding());
+        }
         if alias == mewu_core::VISUAL_ANNOTATION_TOOL {
             return self.visual.as_ref().map(|scope| scope.binding());
         }
@@ -280,6 +311,19 @@ impl RunTools {
         call: ai::ModelToolCall,
         lease: DispatchLease,
     ) -> Result<CommittedToolOutput, String> {
+        if let Some(descriptor) = self.extensions.get(&call.name) {
+            return crate::extension_tools::execute_recorded(
+                app,
+                scene_id,
+                run_id,
+                descriptor,
+                self.extension_cancel.clone(),
+                self.chat_region.clone(),
+                call,
+                lease,
+            )
+            .await;
+        }
         if call.name == mewu_core::VISUAL_ANNOTATION_TOOL {
             return self
                 .visual
@@ -427,7 +471,7 @@ impl RunTools {
     }
 
     pub fn augment_request(&self, body: &mut Value) -> Result<(), String> {
-        if self.bindings.is_empty() {
+        if self.bindings.is_empty() && self.extensions.is_empty() {
             return Ok(());
         }
         let system = body
@@ -464,15 +508,23 @@ impl RunTools {
     }
 
     pub async fn close(&self) {
+        self.extension_cancel.store(true, Ordering::SeqCst);
         if let Some((_, session)) = self.session.lock().await.take() {
             session.close().await;
         }
     }
 
     pub async fn abort(&self) {
+        self.extension_cancel.store(true, Ordering::SeqCst);
         // McpSession Drop kills its supervised child tree synchronously. No
         // graceful grace period is used for an explicitly canceled operation.
         drop(self.session.lock().await.take());
+    }
+}
+
+impl Drop for RunTools {
+    fn drop(&mut self) {
+        self.extension_cancel.store(true, Ordering::SeqCst);
     }
 }
 
@@ -557,6 +609,48 @@ mod tests {
             refs: vec![],
         }
     }
+    #[tokio::test]
+    async fn normal_agent_catalog_adds_extension_tools_without_replacing_memory_and_cancels_on_dispose(
+    ) {
+        let descriptor = |id: &str, requires_region: bool| crate::extension_tools::ToolDescriptor {
+            plugin_id: "thirdparty.tool-provider".into(),
+            revision: 3,
+            version: "0.1.1".into(),
+            sha256: "a".repeat(64),
+            service: mewu_extension::ServiceRegistration {
+                kind: mewu_extension::ServiceKind::Tool,
+                id: id.into(),
+                title: "独立工具".into(),
+                description: Some("Actual catalog contribution".into()),
+                input_schema: Some(json!({"type":"object","properties":{}})),
+                metadata: Some(json!({"requiresRegion":requires_region})),
+            },
+        };
+        let plain = descriptor("read", false);
+        let region = descriptor("operate", true);
+        let context = context();
+        let builtins = RunTools::new(&context).unwrap().definitions();
+        let tools = RunTools::with_extensions(
+            &context,
+            None,
+            None,
+            vec![plain.clone(), region.clone()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(&tools.definitions()[..builtins.len()], &builtins);
+        assert_eq!(tools.definitions().len(), builtins.len() + 1);
+        assert_eq!(tools.journal_binding(&plain.alias()), Some(plain.binding()));
+        assert!(tools.journal_binding(&region.alias()).is_none());
+        let canceled = tools.extension_cancel.clone();
+        tools.abort().await;
+        assert!(canceled.load(Ordering::SeqCst));
+        let tools = RunTools::with_extensions(&context, None, None, vec![plain], None).unwrap();
+        let canceled = tools.extension_cancel.clone();
+        drop(tools);
+        assert!(canceled.load(Ordering::SeqCst));
+    }
+
     fn server() -> McpServer {
         McpServer {
             id: uuid::Uuid::new_v4().to_string(),

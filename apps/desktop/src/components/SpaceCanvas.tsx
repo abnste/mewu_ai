@@ -75,6 +75,7 @@ interface Props {
   onSelectionActivity?: (active: boolean) => void;
   onExportActivity?: (active: boolean) => void;
   onSelectionComplete?: (region: Region) => void;
+  onActiveRegionChange?: (sceneId: string, regionId: string | undefined) => void;
   onFocusComposer?: () => void;
   onBeforeExport?: () => Promise<void>;
   onCopyClose?: (sceneId: string) => Promise<boolean | void>;
@@ -255,6 +256,12 @@ export default function SpaceCanvas(props: Props) {
     const item=createMemo<SpaceItem>(previous=>props.scene.items.some(value=>value.id===id)?displayedItem(id):previous,untrack(()=>displayedItem(id)));
     return <ArtifactCard aiAvailable={props.aiAvailable} onRegisterWheel={itemProps.board?wheel=>{objectWheels.set(id,wheel);return()=>{if(objectWheels.get(id)===wheel)objectWheels.delete(id);};}:undefined} boardSceneId={itemProps.board?props.scene.id:undefined} onError={props.onError} blackboard={itemProps.board} interactive={itemProps.interactive?.()??true} hovered={hoveredObject()===id} trash={objectTrash()} onRegisterFlush={itemProps.board?flush=>{objectFlushes.set(id,flush);return()=>{if(objectFlushes.get(id)===flush)objectFlushes.delete(id);};}:undefined} onOpenBlackboard={!itemProps.board&&typeof item().state?.blackboardSceneId==='string'&&props.onOpenBlackboard?()=>props.onOpenBlackboard!(id):undefined} busy={props.busy||(itemProps.board&&props.blackboardEnabled===false)} video={props.video?{...props.video,sceneId:props.scene.id,busy:props.busy,annotationBusy:props.scene.closed||props.scene.frozen||props.scene.run?.status==='running',authoringBusy:props.authoringBusy,inputLocked:props.inputLocked,drawingAllowed:!drawingSession(),drawingGrant:videoDrawingGrant(),grant:videoGrant()}:undefined} item={item()} active={activeItemId()===id} onActivate={()=>setActiveItemId(id)} referenced={props.refs.some(ref=>ref.kind==='item'&&ref.id===id)} onReference={()=>props.onReference({kind:'item',id})} onRemove={()=>props.onRemoveItem(id)} onUpdate={updateItem} onCopy={props.onVideoCopy?()=>{void props.onVideoCopy!(id).catch(error=>props.onError(error instanceof Error?error.message:String(error)));}:undefined} onExport={()=>{const item=props.scene.items.find(item=>item.id===id);const saving=item?.asset.kind==='text'?exportTextAsset(item.asset.id):item?.asset.kind==='video'?props.onVideoExport?.(id):undefined;void saving?.catch(error=>props.onError(error instanceof Error?error.message:String(error)));}}/>;}}</For>;
   const activeRegion = createMemo(() => regionById(active()));
+  const activeRegionIdentity = createMemo(() => [props.scene.id, activeRegion()?.id] as const, undefined,
+    { equals: (previous, next) => previous[0] === next[0] && previous[1] === next[1] });
+  createEffect(on(activeRegionIdentity, ([sceneId, regionId]) => {
+    props.onActiveRegionChange?.(sceneId, regionId);
+  }));
+  onCleanup(() => props.onActiveRegionChange?.(props.scene.id, undefined));
   const ocrTarget = (region: Region): OcrTarget => ({ sceneId: props.scene.id, regionId: region.id, backgroundId: props.scene.background!.id, drawingRevision: region.drawingRevision ?? 0, x: region.x, y: region.y, width: region.width, height: region.height });
   const savedOcr = (region: Region) => region.ocr?.backgroundId === props.scene.background?.id && region.ocr?.drawingRevision === (region.drawingRevision ?? 0) && !cropChanged(region) ? region.ocr : undefined;
   const savedTranslation = (region: Region) => region.translation?.backgroundId === props.scene.background?.id && region.translation?.sourceId === (region.imageOverride?.id ?? props.scene.background?.id) && region.translation?.drawingRevision === (region.drawingRevision ?? 0) && !cropChanged(region) ? region.translation : undefined;

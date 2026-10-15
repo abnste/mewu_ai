@@ -30,6 +30,26 @@ pub(crate) fn validate_binding(binding: &ToolBinding) -> Result<()> {
     let name =
         |s: &str| !s.is_empty() && s.chars().count() <= 128 && !s.chars().any(char::is_control);
     match binding {
+        ToolBinding::Extension {
+            plugin_id,
+            plugin_revision,
+            version,
+            sha256,
+            service_id,
+            advertised_alias,
+            name: n,
+        } => {
+            if *plugin_revision == 0
+                || !name(plugin_id)
+                || !name(service_id)
+                || !name(version)
+                || !name(n)
+                || !hash_valid(sha256)
+                || advertised_alias != &extension_tool_alias(plugin_id, service_id)
+            {
+                return Err(bad("扩展工具回执身份无效"));
+            }
+        }
         ToolBinding::VideoAnnotation {
             plugin_id,
             plugin_revision,
@@ -370,9 +390,14 @@ pub(crate) fn sync_step(state: &mut Snapshot, r: &Record, e: &Event) -> Result<(
         .ok_or(CoreError::JournalConflict)?;
     // Event identity, not provider call ID, also represents rejected duplicate IDs.
     let name = match e.binding.as_ref() {
-        Some(ToolBinding::Mcp {
-            advertised_alias, ..
-        }) => advertised_alias.clone(),
+        Some(
+            ToolBinding::Mcp {
+                advertised_alias, ..
+            }
+            | ToolBinding::Extension {
+                advertised_alias, ..
+            },
+        ) => advertised_alias.clone(),
         Some(
             ToolBinding::Local { name }
             | ToolBinding::ExternalMemory { name, .. }
@@ -539,7 +564,9 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
         uuid(&r.agent)?;
         match (&r.connection_id, r.connection_revision, &r.external_runtime) {
             (Some(id), Some(revision), None) if revision > 0 => uuid(id)?,
-            (None, None, Some(origin)) if origin.validate() && r.kind == RecordedRunKind::Chat => (),
+            (None, None, Some(origin)) if origin.validate() && r.kind == RecordedRunKind::Chat => {
+                ()
+            }
             _ => return Err(bad("执行记录运行来源无效")),
         }
         if row.get::<_, String>(0)? != r.id

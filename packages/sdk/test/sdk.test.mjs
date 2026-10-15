@@ -75,12 +75,67 @@ test('independent region agent consumes screenshots after each action; mock host
     throw new Error('Unexpected host method');
   });
   activate(scope.ctx);
-  assert.deepEqual(JSON.parse(scope.finishRegistration()).map(r => r.kind), ['command', 'agent']);
+  const registrations = JSON.parse(scope.finishRegistration());
+  assert.deepEqual(registrations.map(r => r.kind), ['tool', 'agent']);
+  const tool = registrations.find(r => r.kind === 'tool');
+  assert.equal(tool.id, 'example.region-agent.operate');
+  assert.deepEqual(tool.metadata, { requiresRegion: true });
+  assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), ['maxSteps', 'task']);
+  assert.deepEqual(tool.inputSchema.required, ['task']);
+  assert.equal(tool.inputSchema.additionalProperties, false);
+  assert.match(tool.description, /截图/);
   const result = await invoke(scope, 'example.region-agent.operate', { task: '点击需要的项目' }, { regionId: 'authorized-region' });
   assert.equal(result.ok, true);
   assert.equal(result.result.completed, true);
   assert.equal(result.result.steps, 1);
   assert.deepEqual(calls.map(c => c.method), ['region.observe', 'model.invoke', 'region.action', 'region.observe', 'model.invoke']);
+  await scope.deactivate();
+});
+
+test('region tool rejects missing explicit region without any host call; agent still supports ordinary multimodal chat', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  const { scope, calls } = harness(async (method, params) => {
+    assert.equal(method, 'model.invoke');
+    assert.deepEqual(params, { prompt: '解释截图', images: ['host-image-1'], messages: [{ role: 'user', content: '此前问题' }] });
+    return { content: '普通会话回答' };
+  });
+  activate(scope.ctx); scope.finishRegistration();
+  const denied = await invoke(scope, 'example.region-agent.operate', { task: '执行操作' });
+  assert.equal(denied.ok, false);
+  assert.equal(calls.length, 0);
+  const reply = await invoke(scope, 'example.region-agent.agent', {
+    task: '解释截图', images: ['host-image-1'], messages: [{ role: 'user', content: '此前问题' }]
+  });
+  assert.deepEqual(reply, { ok: true, result: { content: '普通会话回答' } });
+  assert.equal(calls.length, 1);
+  await scope.deactivate();
+});
+
+test('region tool obeys maxSteps and retains the screenshot after the final action; mock host only', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  let observations = 0;
+  const { scope, calls } = harness(async (method, params) => {
+    if (method === 'region.observe') return { artifactId: `frame-${++observations}`, width: 640, height: 480, sha256: String(observations).repeat(64) };
+    if (method === 'model.invoke') {
+      assert.deepEqual(params.images, ['frame-1']);
+      return { content: JSON.stringify({ action: { kind: 'click', x: 11, y: 17 } }) };
+    }
+    if (method === 'region.action') {
+      assert.deepEqual(params, { regionId: 'authorized-region', action: { kind: 'click', x: 11, y: 17 } });
+      return { ok: true };
+    }
+    throw new Error('Unexpected host method');
+  });
+  activate(scope.ctx); scope.finishRegistration();
+  const invalid = await invoke(scope, 'example.region-agent.operate', { task: '有限操作', maxSteps: 0 }, { regionId: 'authorized-region' });
+  assert.equal(invalid.ok, false);
+  assert.equal(calls.length, 0);
+  const reply = await invoke(scope, 'example.region-agent.operate', { task: '有限操作', maxSteps: 1 }, { regionId: 'authorized-region' });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.result.completed, false);
+  assert.equal(reply.result.steps, 1);
+  assert.equal(reply.result.artifactId, 'frame-2');
+  assert.deepEqual(calls.map(c => c.method), ['region.observe', 'model.invoke', 'region.action', 'region.observe']);
   await scope.deactivate();
 });
 

@@ -56,12 +56,12 @@ Use the [packaging tools](../tools/extension-market/README.md) to validate and b
 
 ## Extension points
 
-All registrations use the same lifecycle and executable handler. A handler receives `(input, {context, host, storage})`; `context` is assigned by the host, including the current Agent and, when explicitly started from a selection, its region identity.
+All registrations use the same lifecycle and executable handler. A handler receives `(input, {context, host, storage})`; `context` is assigned by the host, including the current Agent and the explicitly referenced screen region selected for the current message.
 
 | Registration | Purpose |
 | --- | --- |
 | `ctx.commands.register` | User actions; `metadata.placement: "selection-toolbar"` adds a selection action, and `"space-toolbar"` adds an action to the lower-left space controls |
-| `ctx.tools.register` | A plugin-defined callable tool |
+| `ctx.tools.register` | A plugin-defined tool automatically offered to the normal conversation Agent with its description and JSON input schema |
 | `ctx.agents.register` | An execution strategy selectable in Agent settings |
 | `ctx.memory.register` | A memory implementation selectable for an Agent |
 | `ctx.models.register`, `ctx.channels.register` | Model and communication services callable through the service bridge |
@@ -70,7 +70,9 @@ All registrations use the same lifecycle and executable handler. A handler recei
 
 Services can declare `inputSchema`. Other plugins use `ctx.services.list` and `ctx.services.call("plugin-id/service-id", input)`. Cross-plugin calls require a declared, compatible dependency; permissions are attenuated across the call chain. Use `metadata.contract` to identify a custom contract and its version. Do not treat module tags as permissions or service protocols.
 
-Space actions receive `metadata.input` when it is a JSON object, otherwise `{}`, and the current scene identity. They receive no implicit region grant; region operations must start from an explicitly authorized selection action.
+Space actions receive `metadata.input` when it is a JSON object, otherwise `{}`, and the current scene identity. They receive no implicit region grant. A conversation message can carry the currently selected, explicitly referenced capture region; multiple references do not implicitly authorize the first one. Tools with `metadata.requiresRegion: true` are offered only when that message has a supported live screen region. Imported images, recordings and blackboards remain usable as normal conversation attachments.
+
+Enabled tool registrations join the current Agent's existing tool loop. Mewu validates their schemas, freezes the plugin version and package hash, and rechecks the live registry before dispatch. Execution records identify these calls as extensions, separately from MCP. During tool initialization, only `storage.get`, `storage.list` and `services.list` are available; handlers receive their declared host capabilities only after dispatch is recorded. Stop and Escape use the normal conversation lifecycle.
 
 Select an Agent or memory provider from an existing Agent's settings. Normal conversation persistence and cancellation remain owned by Mewu. A memory provider receives `operation: "recall"` with a query, or `operation: "retain"` with the completed conversation text. The memory switch still controls whether these calls happen. Provider data is isolated by plugin and Agent. Storage is paginated; it has no fixed total record-count limit. `compareAndSet` supports concurrent updates without overwriting another invocation.
 
@@ -84,7 +86,7 @@ Each invocation receives a bounded recent conversation window, preserving the Ag
 
 ## Region operation example
 
-The independent [region Agent](../extensions/examples/region-agent) registers its own selection command and Agent implementation. It observes the authorized region, passes the new image artifact to the model, interprets the model's decision, performs one action, and obtains another screenshot. The core contains neither that plugin's identity nor its decision algorithm.
+The independent [region Agent](../extensions/examples/region-agent) registers an operation tool and an optional Agent implementation. Select and reference the region, then send the task through the existing conversation bar. The current Agent chooses whether to call the plugin; there is no separate task button or task-entry dialog. The plugin observes the authorized region, passes the new image artifact to the selected model, interprets the model's decision, performs one action, and obtains another screenshot. The core contains neither that plugin's identity nor its decision algorithm.
 
 The host binds a region grant to a real capture, current selection and application window. Image imports, long screenshots and blackboard images do not authorize desktop input. Each operation rechecks the source, display layout, window identity, input obstruction and grant. Coordinates are relative to the observed region. Keyboard input also requires a verified focus target. Every action requires a successful new observation.
 
@@ -92,7 +94,7 @@ On Windows, layered windows with `WS_EX_TRANSPARENT` pass mouse input to the app
 
 This first input adapter supports **Windows**. macOS and Wayland input grants are not implemented by this adapter and report unsupported rather than borrowing an unrelated screenshot permission. Screenshot and drawing features on those platforms remain independent of executable plugins.
 
-Stop the plugin from its selection button or press Escape during region operations. Disabling, removing or updating the plugin revokes its in-flight authority. An operation already completed in another application cannot be undone by revocation.
+Use the conversation's existing stop button or press Escape during region operations. Disabling, removing or updating the plugin revokes its in-flight authority. An operation already completed in another application cannot be undone by revocation.
 
 The separate [journal memory](../extensions/examples/journal-memory) and [interactive ruler](../extensions/examples/interactive-widget) demonstrate that these interfaces are not specific to desktop automation.
 

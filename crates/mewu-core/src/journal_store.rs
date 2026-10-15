@@ -659,9 +659,41 @@ impl Store {
                 {
                     return Err(CoreError::McpPermissionDenied);
                 }
-            } else if matches!(e.binding, Some(ToolBinding::Rejected { .. })) {
+            } else if matches!(
+                e.binding,
+                Some(ToolBinding::Rejected { .. } | ToolBinding::Extension { .. })
+            ) {
                 return Err(CoreError::McpPermissionDenied);
             }
+            e.summary.phase = ReceiptPhase::Dispatched;
+            j::save_event(db, &e, &body)?;
+            j::sync_step(state, &r, &e)?;
+            j::bump(db, &mut r)
+        })
+    }
+    /// Native-only extension dispatch. The caller must hold the live extension
+    /// registry admission lock while checking its real version/revision/SHA and
+    /// calling this method. Stored observations never authorize another run.
+    pub fn mark_extension_tool_dispatched(
+        &mut self,
+        lease: &DispatchLease,
+        expected: &ToolBinding,
+    ) -> Result<ReceiptCommit> {
+        if !matches!(expected, ToolBinding::Extension { .. }) {
+            return Err(CoreError::McpPermissionDenied);
+        }
+        j::validate_binding(expected)?;
+        self.journal_transaction(|db, state| {
+            let (mut r, mut e, body) = j::leased(db, lease)?;
+            live(state, &r)?;
+            if e.summary.kind != ReceiptKind::Tool
+                || e.summary.phase != ReceiptPhase::Prepared
+                || e.binding.as_ref() != Some(expected)
+                || r.kind == RecordedRunKind::Continuation
+            {
+                return Err(CoreError::JournalConflict);
+            }
+            dispatched_budget(db, &r.id)?;
             e.summary.phase = ReceiptPhase::Dispatched;
             j::save_event(db, &e, &body)?;
             j::sync_step(state, &r, &e)?;
@@ -957,7 +989,7 @@ fn tool_label(binding: &ToolBinding) -> String {
                 _ => name,
             }
         }
-        ToolBinding::Mcp { name, .. } => name,
+        ToolBinding::Mcp { name, .. } | ToolBinding::Extension { name, .. } => name,
         ToolBinding::Rejected { advertised_name } => advertised_name,
         ToolBinding::VisualAnnotation { name, .. } | ToolBinding::VideoAnnotation { name, .. } => {
             name
@@ -1050,6 +1082,189 @@ impl ExportView {
         revision: u64,
     ) -> Result<JournalEntryDetail> {
         entry(&self.db, &self.state, scene, run, id, revision)
+    }
+}
+
+#[cfg(test)]
+mod extension_tool_receipt_tests {
+    use super::*;
+
+    fn binding() -> ToolBinding {
+        ToolBinding::Extension {
+            plugin_id: "author.independent-tool".into(),
+            plugin_revision: 7,
+            version: "0.2.1".into(),
+            sha256: "b".repeat(64),
+            service_id: "inspect".into(),
+            advertised_alias: extension_tool_alias("author.independent-tool", "inspect"),
+            name: "读取选区".into(),
+        }
+    }
+    fn prepared(store: &mut Store) -> (String, String, DispatchLease) {
+        let scene = store.snapshot().active_scene_id;
+        store
+            .apply(SceneCommand::SetDraft {
+                scene_id: scene.clone(),
+                draft: "合成工具任务".into(),
+            })
+            .unwrap();
+        let run = store.begin_run(&scene).unwrap();
+        let model = store
+            .begin_model_request(
+                &scene,
+                &run.run_id,
+                ModelDispatchInput {
+                    round: 0,
+                    projected_request_sha256: "a".repeat(64),
+                },
+            )
+            .unwrap();
+        let turn = store
+            .record_model_turn(
+                &model,
+                CompletePublicTurn {
+                    text: String::new(),
+                    calls: vec![ProposedTool {
+                        call_id: "call-extension".into(),
+                        binding: binding(),
+                        arguments_wire_sha256: "c".repeat(64),
+                    }],
+                },
+            )
+            .unwrap();
+        (scene, run.run_id, turn.tools[0].lease.clone())
+    }
+
+    #[test]
+    fn extension_tool_dispatch_requires_exact_persisted_identity_and_a_live_run() {
+        let mut store = Store::open_in_memory().unwrap();
+        let (scene, run, lease) = prepared(&mut store);
+        let original = store.snapshot();
+        assert!(store.mark_tool_dispatched(&lease).is_err());
+        for field in ["revision", "version", "sha", "service"] {
+            let mut changed = binding();
+            if let ToolBinding::Extension {
+                plugin_revision,
+                version,
+                sha256,
+                service_id,
+                advertised_alias,
+                ..
+            } = &mut changed
+            {
+                match field {
+                    "revision" => *plugin_revision += 1,
+                    "version" => *version = "0.2.2".into(),
+                    "sha" => *sha256 = "d".repeat(64),
+                    _ => {
+                        *service_id = "other".into();
+                        *advertised_alias =
+                            extension_tool_alias("author.independent-tool", "other");
+                    }
+                }
+            }
+            assert!(store
+                .mark_extension_tool_dispatched(&lease, &changed)
+                .is_err());
+            assert_eq!(store.snapshot(), original);
+        }
+        store
+            .mark_extension_tool_dispatched(&lease, &binding())
+            .unwrap();
+        assert!(store
+            .mark_extension_tool_dispatched(&lease, &binding())
+            .is_err());
+        store.fail_run(&scene, &run, "合成结束").unwrap();
+        assert!(store
+            .mark_extension_tool_dispatched(&lease, &binding())
+            .is_err());
+    }
+
+    #[test]
+    fn extension_tool_receipt_survives_sqlite_reopen_without_becoming_mcp_authority() {
+        let path = std::env::temp_dir().join(format!(
+            "mewu-extension-receipt-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let mut store = Store::open(&path).unwrap();
+        let (scene, run, lease) = prepared(&mut store);
+        store
+            .mark_extension_tool_dispatched(&lease, &binding())
+            .unwrap();
+        let value = serde_json::json!({"content":"合成完成", "steps":2});
+        let bytes = serde_json::to_vec(&value).unwrap();
+        store
+            .record_tool_response(
+                &lease,
+                ObservedToolResult {
+                    response_kind: ToolResponseKind::Complete,
+                    returned_error: Some(false),
+                    observed_encoding: "mewu-extension-json-v1".into(),
+                    observed_bytes: bytes.len() as u64,
+                    observed_sha256: j::digest(&bytes),
+                    retained_content: JournalContent::Json {
+                        value: value.clone(),
+                    },
+                    references: vec![],
+                    model_visible_json: Some(String::from_utf8(bytes).unwrap()),
+                },
+            )
+            .unwrap();
+        store.finish_run(&scene, &run, "合成答案").unwrap();
+        drop(store);
+        let mut reopened = Store::open(&path).unwrap();
+        let page = reopened
+            .run_journal_page(&scene, &run, None, 20)
+            .unwrap()
+            .unwrap();
+        let event = page
+            .entries
+            .iter()
+            .find(|entry| entry.kind == ReceiptKind::Tool)
+            .unwrap();
+        assert_eq!(event.phase, ReceiptPhase::Responded);
+        assert_eq!(event.label, "读取选区");
+        let detail = reopened
+            .run_journal_entry(&scene, &run, &event.id, page.summary.revision)
+            .unwrap();
+        assert_eq!(detail.binding, Some(binding()));
+        assert_eq!(detail.content, JournalContent::Json { value });
+        let wire = serde_json::to_value(&detail.binding).unwrap();
+        assert_eq!(wire["type"], "extension");
+        assert_eq!(wire["version"], "0.2.1");
+        assert_eq!(wire["sha256"], "b".repeat(64));
+        assert!(reopened
+            .mark_extension_tool_dispatched(&lease, &binding())
+            .is_err());
+        drop(reopened);
+        for suffix in ["", "-wal", "-shm"] {
+            let exact = std::path::PathBuf::from(format!("{}{suffix}", path.display()));
+            if exact.exists() {
+                std::fs::remove_file(exact).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn extension_tool_dispatch_sqlite_failure_keeps_prepared_receipt_unchanged() {
+        let mut store = Store::open_in_memory().unwrap();
+        let (scene, run, lease) = prepared(&mut store);
+        let before = store.run_journal_page(&scene, &run, None, 20).unwrap();
+        store.db.execute_batch("CREATE TEMP TRIGGER extension_dispatch_failure BEFORE UPDATE ON agent_run_events BEGIN SELECT RAISE(ABORT,'synthetic extension dispatch failure'); END;").unwrap();
+        assert!(store
+            .mark_extension_tool_dispatched(&lease, &binding())
+            .is_err());
+        assert_eq!(
+            store.run_journal_page(&scene, &run, None, 20).unwrap(),
+            before
+        );
+        store
+            .db
+            .execute_batch("DROP TRIGGER extension_dispatch_failure")
+            .unwrap();
+        store
+            .mark_extension_tool_dispatched(&lease, &binding())
+            .unwrap();
     }
 }
 

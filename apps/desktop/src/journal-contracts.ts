@@ -20,6 +20,7 @@ export interface JournalPage { summary: RunJournalSummary; entries: JournalEntry
 export type JournalContent = { type: 'text'; text: string } | { type: 'json'; value: unknown } | { type: 'omitted'; reason: ContentUnavailable };
 export type ToolBinding =
   | { type: 'mcp'; serverId: string; revision: number; name: string; advertisedAlias: string }
+  | { type: 'extension'; pluginId: string; pluginRevision: number; version: string; sha256: string; serviceId: string; advertisedAlias: string; name: string }
   | { type: 'local'; name: string }
   | { type: 'external_memory'; bindingId: string; bindingRevision: number; pluginId: string; pluginRevision: number; contributionId: string; name: string }
   | { type: 'rejected'; advertisedName: string };

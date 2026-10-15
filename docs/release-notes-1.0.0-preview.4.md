@@ -7,6 +7,8 @@
 - 修复插件绑定刷新时 Agent 设置折叠、跳页，以及外部记忆与本地记忆设置混杂的问题。
 - 修复区域任务结束时截图层迟到显示、关闭/冻结竞争及 Escape 取消问题，保护独立置顶图片的生命周期。
 - 修复区域插件临时观察桌面时被意外取消的问题。
+- 修复鼠标穿透叠层阻止区域操作的问题，保留操作目标与范围校验。
+- 社区插件工具接入现有 Agent 对话；框选引用区域后直接发指令，无需额外任务按钮或弹窗。
 - 修复 GNOME Wayland 录屏授权窗口落在截图层后方的问题。
 
 区域自动操作示例的原生输入适配目前仅支持 Windows，macOS 与 Linux 会明确报告不支持；这不影响两端原有截图、绘制和录屏。API 1 声明插件继续兼容。SDK 与插件包在社区仓库独立发行，不附加到软件安装包列表中。
@@ -17,8 +19,8 @@ Windows 提供 x64 安装版与便携版，macOS 提供 ARM64 DMG，Linux 提供
 
 Wayland 截图与录屏需要桌面授权；录屏授权完成后，需在新的预览画面中再次框选录制区域。录屏控制条可能进入画面，请将它拖到录制区域外。GNOME 下暂不能保证计时条始终置顶。
 
-This preview adds executable API 2 extensions, a public GitHub community catalog and a development SDK. Independent plugins can provide Agent engines, persistent memory, tools and interactive space objects. Agent and memory providers can be selected separately; host credentials are required only when a plugin invokes the host model. Existing screenshot interactions and API 1 packages remain available.
+This preview adds executable API 2 extensions, a public GitHub community catalog and a development SDK. Independent plugins can provide Agent engines, persistent memory, tools and interactive space objects. Installed tools join the existing Agent conversation; reference the selected capture region and send the task in the conversation bar, without a separate task dialog. Agent and memory providers can be selected separately; host credentials are required only when a plugin invokes the host model. Existing screenshot interactions and API 1 packages remain available.
 
 The region automation input adapter currently supports Windows only. macOS and Linux capture, drawing and recording remain separate from that adapter. This preview also fixes Agent settings resetting during provider refresh and screenshot overlay lifecycle races during region operations. Windows x64, macOS ARM64 and Linux x64 retain the fixed preview update channel.
 
-Region plugins now remain active while observing the desktop. GNOME Wayland recording consent is attached to the screenshot window. After granting recording access, select the recording region again in the approved preview. Move the recording controls outside that region to keep them out of the video; GNOME does not guarantee that the controls remain on top. Updating a portable build runs the installer and switches to the installed application; it does not replace the executable in the ZIP extraction directory.
+Region plugins now remain active while observing the desktop. Windows region operations support mouse-pass-through overlays while retaining target and region checks. GNOME Wayland recording consent is attached to the screenshot window. After granting recording access, select the recording region again in the approved preview. Move the recording controls outside that region to keep them out of the video; GNOME does not guarantee that the controls remain on top. Updating a portable build runs the installer and switches to the installed application; it does not replace the executable in the ZIP extraction directory.

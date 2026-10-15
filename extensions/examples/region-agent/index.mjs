@@ -13,6 +13,12 @@ const inputSchema = {
   }, required: ['task'], additionalProperties: false
 };
 
+const toolInputSchema = {
+  type: 'object',
+  properties: { task: inputSchema.properties.task, maxSteps: inputSchema.properties.maxSteps },
+  required: ['task'], additionalProperties: false
+};
+
 function decision(content) {
   const text = String(content).trim();
   const fenced = /^```(?:json)?\s*\n([\s\S]*)\n```$/.exec(text);
@@ -58,10 +64,14 @@ export default definePlugin(ctx => {
     }
     return { content: '已达到本次操作步数', steps: history.length, artifactId: frame.artifactId, completed: false };
   };
-  ctx.commands.register({
-    id: 'example.region-agent.operate', title: '区域操作', inputSchema,
-    metadata: { placement: 'selection-toolbar', requiresRegion: true, input: { task: '' } }
-  }, run);
+  ctx.tools.register({
+    id: 'example.region-agent.operate', title: '区域操作', inputSchema: toolInputSchema,
+    description: '观察用户明确授权的屏幕区域，根据任务逐步点击、拖动或输入，并在每次操作后截图确认结果。仅在已授权区域内执行，最多30步。',
+    metadata: { requiresRegion: true }
+  }, (input, invocation) => {
+    if (!invocation.context.regionId) throw new Error('An explicitly authorized region is required');
+    return run(input, invocation);
+  });
   ctx.agents.register({
     id: 'example.region-agent.agent', title: '区域操作 Agent', inputSchema,
     description: '观察当前区域并通过截图反馈完成操作。',

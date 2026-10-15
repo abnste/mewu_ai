@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 mod agent_loop;
 mod agent_tools;
 mod ai;
@@ -97,6 +97,8 @@ mod pin_window;
 mod pixel_sampler;
 mod plugin_host;
 mod extension_host;
+mod extension_chat_region;
+mod extension_tools;
 mod extension_market;
 mod extension_region;
 mod extension_store;
@@ -1795,16 +1797,27 @@ async fn export_region(
 #[tauri::command]
 async fn send_message(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     host: tauri::State<'_, Host>,
     scene_id: String,
     visual_annotations: Option<mewu_core::VisualAnnotationGrant>,
+    region_id: Option<String>,
 ) -> Result<HostSnapshot, String> {
     host.exit.ensure_new_operation()?;
     recording::ensure_idle(&app)?;
     speech_host::cancel_owner(&app, "space");
-    if let Some(provider)=extension_host::external_agent_for_scene(&app,&scene_id)?{
-        return extension_agent::start_external_run(app.clone(),scene_id,provider).await;
+    if region_id.is_some() && window.label() != "space" {
+        return Err("请从当前截图对话条发送区域操作".into());
     }
+    let prepared_region = {
+        let engine = host.lock()?;
+        let scene = engine.store.scene(&scene_id).map_err(|e| e.to_string())?;
+        extension_chat_region::PreparedChatRegion::capture(scene, &engine.store.snapshot().active_scene_id, region_id.as_deref())?
+    };
+    if let Some(provider)=extension_host::external_agent_for_scene(&app,&scene_id)?{
+        return extension_agent::start_external_run(app.clone(),scene_id,provider,prepared_region).await;
+    }
+    let extension_catalog = extension_host::tool_catalog(&app)?;
     if let Some(grant) = &visual_annotations {
         host.plugins
             .lock()
@@ -1884,6 +1897,9 @@ async fn send_message(
     {
         return Err("会话或连接已变更，请重新发送".into());
     }
+    if let Some(prepared) = &prepared_region {
+        prepared.check_source(&scene, &engine.store.snapshot().active_scene_id)?;
+    }
     let video = video_prepared
         .as_ref()
         .map(|prepared| {
@@ -1943,14 +1959,10 @@ async fn send_message(
             .begin_run_with_memory(&scene_id, memory_grant)
             .map_err(|e| e.to_string())?
     };
-    start_run_with_annotations(
-        &app,
-        &mut engine,
-        context,
-        preflight,
-        attachments,
-        visual,
-        video,
+    let chat_region = prepared_region.map(|prepared| prepared.bind(context.run_id.clone(), Arc::new(AtomicBool::new(false))));
+    start_run_with_extensions(
+        &app, &mut engine, context, preflight, attachments, visual, video,
+        extension_catalog, chat_region,
     )
 }
 
@@ -2071,6 +2083,19 @@ fn start_run_with_annotations(
     visual: Option<Arc<visual_annotation_host::RunScope>>,
     video: Option<Arc<video_annotation_tool::RunScope>>,
 ) -> Result<HostSnapshot, String> {
+    start_run_with_extensions(app, engine, context, preflight, attachments, visual, video, vec![], None)
+}
+fn start_run_with_extensions(
+    app: &AppHandle,
+    engine: &mut Engine,
+    context: RunContext,
+    preflight: RunPreflight,
+    attachments: Option<ai::PreparedAttachments>,
+    visual: Option<Arc<visual_annotation_host::RunScope>>,
+    video: Option<Arc<video_annotation_tool::RunScope>>,
+    extension_catalog: Vec<extension_tools::ToolDescriptor>,
+    chat_region: Option<Arc<extension_chat_region::ChatRegionScope>>,
+) -> Result<HostSnapshot, String> {
     let scene_id = context.scene_id.clone();
     optional_capabilities::require_agent_current(engine, &preflight.agent_grant)?;
     if !engine.store.run_is_active(&scene_id, &context.run_id) {
@@ -2096,7 +2121,7 @@ fn start_run_with_annotations(
     engine.agent_runs.insert(context.run_id.clone(), (scene_id.clone(), agent_grant.into()));
     let title_transport = transport.clone();
     let run_tools =
-        match mcp_host::RunTools::with_annotations(&context, visual.clone(), video.clone()) {
+        match mcp_host::RunTools::with_extensions(&context, visual.clone(), video.clone(), extension_catalog, chat_region.clone()) {
             Ok(tools) => Arc::new(tools),
             Err(error) => {
                 engine.plugin_runs.remove(&context.run_id);
@@ -2342,7 +2367,7 @@ fn start_run_with_annotations(
                 }
                 Ok::<String, String>(answer)
             };
-            tokio::select! {biased; _=receiver=>None,result=work=>Some(result)}
+            tokio::select! {biased; _=receiver=>None, _=extension_chat_region::canceled(&app2, chat_region.as_ref())=>None, result=work=>Some(result)}
         };
         let Some(result) = result else {
             run_tools.abort().await;
@@ -2352,6 +2377,9 @@ fn start_run_with_annotations(
                 engine.plugin_runs.remove(&run_id);
                 engine.agent_runs.remove(&run_id);
                 engine.visual_runs.remove(&run_id);
+                if engine.store.run_is_active(&scene_id, &run_id) {
+                    if let Ok(snapshot) = engine.store.cancel_run(&scene_id) { publish(&app2, &snapshot); }
+                }
             }
             return;
         };
