@@ -2,7 +2,7 @@ name: Publish verified catalog
 on:
   push:
     branches: [main]
-    paths: ['entries/**', 'host-source.json', '.github/workflows/catalog-publish.yml']
+    paths: ['entries/**', 'projects/**', 'host-source.json', '.github/workflows/catalog-publish.yml']
   workflow_dispatch:
 permissions:
   contents: write
@@ -36,10 +36,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node trusted-host/tools/extension-market/cli.mjs build entries --out mewu-catalog.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
+      - name: Check trusted project tooling and actual native contracts
+        working-directory: trusted-host
+        env:
+          MEWU_PLUGIN_VALIDATOR: ${{ github.workspace }}/trusted-host/target/debug/mewu-plugin-validator.exe
+        run: node --test tools/extension-market/test.mjs tools/extension-market/project-test.mjs tools/extension-market/native-test.mjs tools/extension-market/project-native-test.mjs
+      - name: Verify independent sources and screenshots before generating sidecar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          if (!(Test-Path -LiteralPath projects)) { New-Item -ItemType Directory -Path projects | Out-Null }
+          node trusted-host/tools/extension-market/cli.mjs build-projects projects --catalog mewu-catalog.json --out mewu-projects.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
+          if ($LASTEXITCODE -ne 0) { throw 'Project verification failed; no indexes committed' }
       - name: Commit generated index only
         shell: pwsh
         run: |
-          git add -- mewu-catalog.json
+          git add -- mewu-catalog.json mewu-projects.json
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) { exit 0 }
           if ($LASTEXITCODE -ne 1) { throw 'Cannot inspect generated catalog diff' }

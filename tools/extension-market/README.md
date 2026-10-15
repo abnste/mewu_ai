@@ -12,6 +12,20 @@ node tools/extension-market/cli.mjs --help
 
 API 2 校验器额外返回 `extensionContractVersion: 2` 和 `extensionContractSha256`；指纹按照 `contract.rs`、`package.rs`、`sdk.js`、`extension_market.rs` 的原始字节，以 NUL 分隔计算。源码变化后必须重编译，不能用旧二进制冒充当前格式验收。指纹检测契约失配，不证明一个外来 EXE 的来源。
 
+项目与图库使用独立 `mewu-projects.json`，原 `mewu-catalog.json` 的 schemaVersion 2 和安装来源保持不变。新校验模式为 `extension-project`、`extension-projects`、`extension-project-image`，使用生产 `extension_project.rs`；输出单独的 `projectContractVersion: 1` / `projectContractSha256`，不改变原四源指纹。
+
+作者在独立公开项目里保留 `LICENSE`、与发行 ZIP 完全相同的清单及所有 JS/mjs 模块。提交 `projects/<plugin-id>.json`，字段为 `id/version/packageSha256/sourceRepository/sourceCommit/screenshots`；`sourceRepository` 是 `owner/repo`，`sourceCommit` 是完整不可变提交。每个插件使用自己的项目，安装 ZIP 仍来自原目录条目的发行来源。没有真实效果截图时用 `screenshots: []`。
+
+截图必须是真实静态 PNG/JPEG/WebP，文件后缀与实际编码一致，每张最多 2 MiB、16–4096 像素边长、最多 8 Mi 像素，每个项目最多六张。每项填写 `path/sha256/size/width/height`，可选 `caption`；图片位于固定源码提交内，不允许任意外链、SVG、HTML、动画或符号链接。CI 检查 PNG CRC、实际原生解码、字节与尺寸，并逐字节比较固定提交中的源码模块和真实发行 ZIP，绝不运行作者代码。
+
+```sh
+node tools/extension-market/cli.mjs project projects/example.plugin.json --validator /path/to/mewu-plugin-validator
+node tools/extension-market/cli.mjs verify-project projects/example.plugin.json --catalog mewu-catalog.json --validator /path/to/mewu-plugin-validator
+node tools/extension-market/cli.mjs build-projects projects --catalog mewu-catalog.json --out mewu-projects.json --validator /path/to/mewu-plugin-validator
+```
+
+`build-projects` 在全部来源、模块和截图验证通过后原子替换侧边目录。失败保留旧文件；`--previous` 保留已有插件源码项目归属，`--check` 不写文件。`--offline` 仅用于本地结构检查，公开 CI 不得使用。额外原生测试入口是 `MEWU_PLUGIN_VALIDATOR=... node --test tools/extension-market/project-native-test.mjs`，缺校验器或指纹过期均失败，不跳过。
+
 ## From an independent project to a market PR
 
 以下在一个工作目录执行，插件源码已位于 `my-plugin/`，包含上述清单、入口和许可。先把源码发布到自己的公开 GitHub 仓库 `YOUR_ACCOUNT/my-plugin`；替换账号、插件 ID、版本和分支名，平台与测试结果必须如实填写。开发机器需要 Rust/Cargo、Node.js 22+、Git/GitHub CLI 以及 [Tauri 构建前提](https://v2.tauri.app/start/prerequisites/)。SDK TGZ 只提供 SDK/类型，不包含打包 CLI 或原生校验器。
@@ -36,13 +50,21 @@ gh repo fork abnste/mewu-plugins --clone
 git -C ./mewu-plugins switch -c add-yourname-counter
 gh release create v1.0.0 --repo YOUR_ACCOUNT/my-plugin --title v1.0.0 --notes "Initial plugin release"
 node ./mewu-host/tools/extension-market/cli.mjs publish ./packages/my-plugin-1.0.0.zip --repository YOUR_ACCOUNT/my-plugin --release-tag v1.0.0 --entry-out ./mewu-plugins/entries/yourname.counter.json --platform any --validator ./mewu-host/target/debug/mewu-plugin-validator.exe --json
-git -C ./mewu-plugins add -- entries/yourname.counter.json
+$entry = Get-Content -LiteralPath ./mewu-plugins/entries/yourname.counter.json -Raw | ConvertFrom-Json
+$sourceCommit = (git -C ./my-plugin rev-parse HEAD).Trim()
+$project = [ordered]@{ id = $entry.id; version = $entry.version; packageSha256 = $entry.sha256; sourceRepository = 'YOUR_ACCOUNT/my-plugin'; sourceCommit = $sourceCommit; screenshots = @() }
+New-Item -ItemType Directory -Force ./mewu-plugins/projects | Out-Null
+[IO.File]::WriteAllText((Join-Path (Get-Location) 'mewu-plugins/projects/yourname.counter.json'), (($project | ConvertTo-Json -Depth 6) + "`n"), [Text.UTF8Encoding]::new($false))
+node ./mewu-host/tools/extension-market/cli.mjs project ./mewu-plugins/projects/yourname.counter.json --validator ./mewu-host/target/debug/mewu-plugin-validator.exe --json
+git -C ./mewu-plugins add -- entries/yourname.counter.json projects/yourname.counter.json
 git -C ./mewu-plugins commit -m "收录 yourname.counter 1.0.0"
 git -C ./mewu-plugins push -u origin HEAD
 gh pr create --repo abnste/mewu-plugins --base main --head YOUR_ACCOUNT:add-yourname-counter --web
 ```
 
-在 PR 页面填写用途、权限、支持平台与实际测试结果后提交；PR 只改对应 `entries/<id>.json`，不要编辑 `mewu-catalog.json`。社区 [贡献规则](https://github.com/abnste/mewu-plugins/blob/main/CONTRIBUTING.md) 和 CI 核验通过、维护者合并后，主分支会生成公开索引。后续更新保留 ID/仓库并增加新版本，不替换旧 Release 的资产。
+`sourceCommit` 必须已推送到该公开源码仓库，清单及所有包内模块必须与发行 ZIP 的字节相同。上例没有真实截图，明确保留空数组；需要展示效果时，在该固定提交中加入真实截图，并按前述字段填写数组。
+
+在 PR 页面填写用途、权限、支持平台与实际测试结果后提交；PR 只改对应 `entries/<id>.json` 与 `projects/<id>.json`，不要编辑 `mewu-catalog.json` 或 `mewu-projects.json`。社区 [贡献规则](https://github.com/abnste/mewu-plugins/blob/main/CONTRIBUTING.md) 和 CI 核验通过、维护者合并后，主分支会生成两个公开索引。后续更新保留 ID/发行仓库/源码项目并增加新版本，不替换旧 Release 的资产。
 
 ## 打包与发行
 
@@ -81,13 +103,13 @@ node tools/extension-market/cli.mjs build D:/catalog/entries --out D:/catalog/me
 
 ## 社区仓库与 CI
 
-[community-market](../../community-market/README.md) 可作为独立 `abnste/mewu-plugins` 仓库发布：`entries/<id>.json` 供 PR 收录，`mewu-catalog.json` 是宿主实际读取的生成索引。初始化模板的索引为空，只有真实发布并验证过的资产才可加入。
+[community-market](../../community-market/README.md) 可作为独立 `abnste/mewu-plugins` 仓库发布：`entries/<id>.json` 与 `projects/<id>.json` 供 PR 收录，`mewu-catalog.json` 是安装索引，`mewu-projects.json` 是源码与图库索引。初始化模板的索引为空，只有真实发布并验证过的资产才可加入。
 
-首次发布前，维护者必须把 `host-source.json` 固定为包含 API 2 解析器的可信 Mewu **完整提交 SHA**。`commit:null` 会让 CI 明确失败，不能用 `next`、`main` 或作者 PR 中的代码代替。审核流程只检出社区可信 base，构建固定宿主源码中的原生校验器，随后通过固定 Git tree/blob API 把 PR 条目读取为 JSON 数据；不检出、不加载、不执行作者的脚本、ZIP 源码或工作流。GitHub 令牌只用于读取官方 API，PR 任务无写权限。合并后主分支任务重新核验所有真实资产并只提交索引。
+首次发布前，维护者必须把 `host-source.json` 固定为包含 API 2、项目图库解析器及其工具的可信 Mewu **完整提交 SHA**。`commit:null` 会让 CI 明确失败，不能用 `next`、`main` 或作者 PR 中的代码代替。审核流程只检出社区可信 base，构建固定宿主源码中的原生校验器，随后通过固定 Git tree/blob API 把 PR 的条目和项目元数据读取为 JSON 数据；不检出、不加载、不执行作者的脚本、ZIP 源码或工作流。GitHub 令牌只用于读取官方 API，PR 任务无写权限。合并后主分支任务重新核验真实发行、独立源码和截图，只提交两个生成索引。
 
 ```powershell
-node --test tools/extension-market/test.mjs
-node --test tools/extension-market/native-test.mjs
+node --test tools/extension-market/test.mjs tools/extension-market/project-test.mjs
+node --test tools/extension-market/native-test.mjs tools/extension-market/project-native-test.mjs
 ```
 
 第一套是 ZIP、网络边界、进程包装、原子文件、PR 数据读取测试，使用明确的传输模拟；不声称验证真实宿主。第二套必须显式提供最新版原生校验器，缺少时直接失败，没有 mock 或静默 skip。线上真实发行下载和插件运行另行验收。

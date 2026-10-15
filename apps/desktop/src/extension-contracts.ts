@@ -10,6 +10,11 @@ export interface ExtensionCatalogEntry {
   platforms: Array<'any' | 'windows-x86_64' | 'darwin-aarch64' | 'linux-x86_64'>; manifestPath?: 'mewu-plugin.json';
 }
 export interface ExtensionCatalog { schemaVersion: 2; plugins: ExtensionCatalogEntry[] }
+export interface ExtensionProjectScreenshot { path: string; sha256: string; size: number; width: number; height: number; caption?: string }
+export interface ExtensionProject {
+  id: string; version: string; packageSha256: string; sourceRepository: string; sourceCommit: string;
+  screenshots: ExtensionProjectScreenshot[];
+}
 export type ExtensionSource = { type: 'local'; path: string } | { type: 'github'; entry: ExtensionCatalogEntry };
 export type ExtensionServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'service';
 export interface ExtensionService { kind: ExtensionServiceKind; id: string; title: string; description?: string; inputSchema?: unknown; metadata?: unknown }

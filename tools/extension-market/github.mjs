@@ -7,7 +7,7 @@ const downloadHosts = new Set(['api.github.com', 'release-assets.githubuserconte
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
-function repositoryParts(repository) {
+export function repositoryParts(repository) {
   if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
       || repository.split('/').some(part => part === '.' || part === '..' || part.endsWith('.git'))) {
     throw new Error('必须指定固定 GitHub owner/repository，不能使用任意 URL');

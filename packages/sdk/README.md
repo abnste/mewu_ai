@@ -30,7 +30,7 @@ export default definePlugin(ctx => {
 
 让普通 Agent 按任务调用的能力使用 `ctx.tools.register`，提供明确的 `description` 和 `inputSchema`。需要本次用户授权选区的工具声明 `metadata: { requiresRegion: true }`；只有已明确授权区域的运行才会向模型提供该工具，插件也应拒绝缺少 `context.regionId` 的调用。注册工具不会创建截图工具条命令，也不会自行获得区域授权。
 
-`extensions/examples/region-agent` 的 0.1.1 版将区域操作注册为工具，并保留独立 Agent 服务；Agent 在没有选区时仍可正常聊天。它继续使用 API 2 与 SDK 0.1.0 已有的注册接口，普通 Agent 的自动工具调度需要支持该能力的新版宿主。更新插件时发布新的版本与 ZIP，不覆盖社区已发布的 0.1.0 资产。
+[`region-agent`](https://github.com/abnste/mewu-plugin-region-agent) 的 0.1.2 版将区域操作注册为工具，并保留独立 Agent 服务；Agent 在没有选区时仍可正常聊天。它继续使用 API 2 与 SDK 0.1.0 已有的注册接口，普通 Agent 的自动工具调度需要支持该能力的新版宿主。独立仓库附有 Windows 原生运行截图。更新插件时发布新的版本与 ZIP，不覆盖社区已发布的资产。
 
 宿主按插件和 Agent 隔离持久存储。每条记忆可以独立保存，通过分页键目录检索；不存在固定 64 条的模型记忆槽位。`storage.list` 的 cursor 用于分页，prefix 用于过滤，不能互相替代。并发读改写使用 `storage.compareAndSet(key, expected, value)`：返回是否成功，`expected: null` 明确表示键不存在，不匹配已保存的 JSON null。单值及一次请求有资源限制，长期数据应拆分为独立记录。
 

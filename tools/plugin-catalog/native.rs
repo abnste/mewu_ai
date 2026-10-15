@@ -2,11 +2,17 @@
 //! Console-only validation adapter. Reuses the host parsers without starting
 //! Tauri, opening a registry, fetching a URL, or executing plugin contributions.
 #[allow(dead_code)]
-#[path = "../../apps/desktop/src-tauri/src/system_preferences.rs"]
-mod system_preferences;
+#[path = "../../apps/desktop/src-tauri/src/extension_market.rs"]
+mod extension_market;
+#[allow(dead_code)]
+#[path = "../../apps/desktop/src-tauri/src/extension_project.rs"]
+mod extension_project;
 #[allow(dead_code)]
 #[path = "../../apps/desktop/src-tauri/src/network_policy.rs"]
 mod network_policy;
+#[allow(dead_code)]
+#[path = "../../apps/desktop/src-tauri/src/optional_authorizations.rs"]
+mod optional_authorizations;
 #[allow(dead_code)]
 #[path = "../../apps/desktop/src-tauri/src/plugin_sources.rs"]
 mod plugin_sources;
@@ -14,12 +20,10 @@ mod plugin_sources;
 #[path = "../../apps/desktop/src-tauri/src/plugins.rs"]
 mod plugins;
 #[allow(dead_code)]
-#[path = "../../apps/desktop/src-tauri/src/optional_authorizations.rs"]
-mod optional_authorizations;
-#[allow(dead_code)]
-#[path = "../../apps/desktop/src-tauri/src/extension_market.rs"]
-mod extension_market;
+#[path = "../../apps/desktop/src-tauri/src/system_preferences.rs"]
+mod system_preferences;
 
+use base64::Engine;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
@@ -49,9 +53,45 @@ fn fingerprint() -> String {
 
 fn validate(kind: &str, bytes: &[u8]) -> Result<Value, String> {
     match kind {
-        "extension-manifest" => serde_json::to_value(extension_market::parse_manifest(bytes)?).map_err(|e|e.to_string()),
-        "extension-entry" => serde_json::to_value(extension_market::parse_entry(bytes)?).map_err(|e|e.to_string()),
-        "extension-catalog" => serde_json::to_value(extension_market::parse_catalog(bytes)?).map_err(|e|e.to_string()),
+        "extension-project" => serde_json::to_value(extension_project::parse_project(bytes)?)
+            .map_err(|e| e.to_string()),
+        "extension-projects" => serde_json::to_value(extension_project::parse_projects(bytes)?)
+            .map_err(|e| e.to_string()),
+        "extension-project-image" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct ImageInput {
+                project: extension_project::Project,
+                index: usize,
+                data: String,
+            }
+            let input: ImageInput =
+                serde_json::from_slice(bytes).map_err(|_| "图片校验输入格式无效")?;
+            extension_project::validate_project(&input.project)?;
+            let shot = input
+                .project
+                .screenshots
+                .get(input.index)
+                .ok_or("截图序号无效")?;
+            if input.data.len() > 2 * 1024 * 1024 * 4 / 3 + 4 {
+                return Err("截图编码超过限制".into());
+            }
+            let image = base64::engine::general_purpose::STANDARD
+                .decode(&input.data)
+                .map_err(|_| "截图编码无效")?;
+            extension_project::validate_image(shot, &image)?;
+            Ok(
+                json!({"width":shot.width,"height":shot.height,"size":shot.size,"sha256":shot.sha256}),
+            )
+        }
+        "extension-manifest" => serde_json::to_value(extension_market::parse_manifest(bytes)?)
+            .map_err(|e| e.to_string()),
+        "extension-entry" => {
+            serde_json::to_value(extension_market::parse_entry(bytes)?).map_err(|e| e.to_string())
+        }
+        "extension-catalog" => {
+            serde_json::to_value(extension_market::parse_catalog(bytes)?).map_err(|e| e.to_string())
+        }
         "manifest" | "bundled-manifest" => {
             let manifest = plugins::parse_manifest(bytes)?;
             if kind == "manifest" && manifest.id.starts_with("mewu.") {
@@ -88,6 +128,9 @@ fn run() -> Result<Value, String> {
         );
     }
     let limit = match args[0].as_str() {
+        "extension-project" => 64 * 1024,
+        "extension-projects" => MAX_CATALOG,
+        "extension-project-image" => 3 * 1024 * 1024,
         "extension-manifest" => mewu_extension::MAX_MANIFEST_BYTES,
         "extension-entry" | "extension-catalog" => MAX_CATALOG,
         "manifest" | "bundled-manifest" => plugins::MAX_MANIFEST_BYTES,
@@ -118,11 +161,29 @@ fn main() {
         }
     };
     let mut extension_digest = Sha256::new();
-    for (index,source) in [include_bytes!("../../crates/mewu-extension/src/contract.rs").as_slice(),include_bytes!("../../crates/mewu-extension/src/package.rs").as_slice(),include_bytes!("../../crates/mewu-extension/src/sdk.js").as_slice(),include_bytes!("../../apps/desktop/src-tauri/src/extension_market.rs").as_slice()].iter().enumerate() {
-        if index>0 {extension_digest.update([0]);} extension_digest.update(source);
+    for (index, source) in [
+        include_bytes!("../../crates/mewu-extension/src/contract.rs").as_slice(),
+        include_bytes!("../../crates/mewu-extension/src/package.rs").as_slice(),
+        include_bytes!("../../crates/mewu-extension/src/sdk.js").as_slice(),
+        include_bytes!("../../apps/desktop/src-tauri/src/extension_market.rs").as_slice(),
+    ]
+    .iter()
+    .enumerate()
+    {
+        if index > 0 {
+            extension_digest.update([0]);
+        }
+        extension_digest.update(source);
     }
     output["extensionContractVersion"] = json!(2);
-    output["extensionContractSha256"] = json!(format!("{:x}",extension_digest.finalize()));
+    output["extensionContractSha256"] = json!(format!("{:x}", extension_digest.finalize()));
+    output["projectContractVersion"] = json!(1);
+    output["projectContractSha256"] = json!(format!(
+        "{:x}",
+        Sha256::digest(include_bytes!(
+            "../../apps/desktop/src-tauri/src/extension_project.rs"
+        ))
+    ));
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
     if serde_json::to_writer(&mut stdout, &output).is_err()

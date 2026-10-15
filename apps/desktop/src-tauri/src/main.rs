@@ -100,6 +100,8 @@ mod extension_host;
 mod extension_chat_region;
 mod extension_tools;
 mod extension_market;
+mod extension_project;
+mod extension_project_host;
 mod extension_region;
 mod extension_store;
 mod extension_ui;
@@ -2837,6 +2839,8 @@ fn main() {
                 extension_host::get_extension_bindings,
                 extension_host::set_extension_binding,
                 extension_host::get_extension_catalog,
+                extension_host::get_extension_project,
+                extension_host::get_extension_project_image,
                 extension_host::prepare_extension,
                 extension_host::install_extension,
                 extension_host::control_extension,

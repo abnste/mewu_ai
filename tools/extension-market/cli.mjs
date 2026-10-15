@@ -7,6 +7,7 @@ import { readBounded, writeAtomic } from '../plugin-catalog/cli.mjs';
 import { createValidator } from './validator.mjs';
 import { createZip, MAX_EXPANDED_BYTES, MAX_PACKAGE_BYTES, packagePath, readZip } from './zip.mjs';
 import { bindEntryManifest, downloadReleaseAsset, getRelease, sha256, verifyEntry } from './github.mjs';
+import { buildProjects, bindProjectEntry, verifyProject } from './projects.mjs';
 
 const MAX_CATALOG = 2 * 1024 * 1024;
 const HELP = `Mewu API 2 JavaScript 插件与 GitHub 社区市场（Node.js 22+）
@@ -15,6 +16,10 @@ node tools/extension-market/cli.mjs manifest <mewu-plugin.json>
 node tools/extension-market/cli.mjs entry <entry.json>
 node tools/extension-market/cli.mjs catalog <mewu-catalog.json>
 node tools/extension-market/cli.mjs verify <entry.json>
+node tools/extension-market/cli.mjs project <project.json>
+node tools/extension-market/cli.mjs projects <mewu-projects.json>
+node tools/extension-market/cli.mjs verify-project <project.json> --catalog <mewu-catalog.json>
+node tools/extension-market/cli.mjs build-projects <projects> --catalog <mewu-catalog.json> --out <mewu-projects.json> [--previous <mewu-projects.json>] [--check] [--offline]
 node tools/extension-market/cli.mjs build <entries> --out <catalog.json> [--previous <catalog.json>] [--check] [--offline]
 node tools/extension-market/cli.mjs pack <plugin-directory> --out <package.zip> [--file <relative.js> ...]
 node tools/extension-market/cli.mjs publish <package.zip> --repository <owner/repo> --release-tag <tag> --entry-out <entry.json> [--platform <platform> ...]
@@ -33,9 +38,9 @@ function within(directory, filename) {
 function optionsFor(args) {
   if (args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]))) return { help: true };
   const [kind, input, ...flags] = args;
-  if (!['manifest', 'entry', 'catalog', 'verify', 'build', 'pack', 'publish'].includes(kind) || !input || input.startsWith('--')) throw new Error('指定命令和输入路径；使用 --help 查看用法');
+  if (!['manifest', 'entry', 'catalog', 'verify', 'build', 'pack', 'publish', 'project', 'projects', 'verify-project', 'build-projects'].includes(kind) || !input || input.startsWith('--')) throw new Error('指定命令和输入路径；使用 --help 查看用法');
   const result = { kind, input: path.resolve(input), files: [], platforms: [], json: false, offline: false, check: false }, seen = new Set();
-  const allowed = new Set(['--validator', '--json', ...({ build: ['--out', '--previous', '--check', '--offline'], pack: ['--out', '--file'], publish: ['--repository', '--release-tag', '--entry-out', '--platform'] }[kind] ?? [])]);
+  const allowed = new Set(['--validator', '--json', ...({ build: ['--out', '--previous', '--check', '--offline'], 'build-projects': ['--catalog', '--out', '--previous', '--check', '--offline'], 'verify-project': ['--catalog'], pack: ['--out', '--file'], publish: ['--repository', '--release-tag', '--entry-out', '--platform'] }[kind] ?? [])]);
   for (let at = 0; at < flags.length; at++) {
     const flag = flags[at];
     if (!allowed.has(flag) || (seen.has(flag) && !['--file', '--platform'].includes(flag))) throw new Error(`无效或重复参数：${flag}`);
@@ -49,9 +54,10 @@ function optionsFor(args) {
       else result[flag.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
     }
   }
-  if (['pack', 'build'].includes(kind) && !result.out) throw new Error(`${kind} 必须指定 --out`);
+  if (['pack', 'build', 'build-projects'].includes(kind) && !result.out) throw new Error(`${kind} 必须指定 --out`);
+  if (['build-projects', 'verify-project'].includes(kind) && !result.catalog) throw new Error(`${kind} 必须指定 --catalog`);
   if (kind === 'publish' && (!result.repository || !result.releaseTag || !result.entryOut)) throw new Error('publish 必须指定 --repository、--release-tag、--entry-out');
-  for (const key of ['out', 'previous', 'entryOut', 'validator']) if (result[key]) result[key] = path.resolve(result[key]);
+  for (const key of ['out', 'previous', 'entryOut', 'validator', 'catalog']) if (result[key]) result[key] = path.resolve(result[key]);
   return result;
 }
 
@@ -177,6 +183,16 @@ export async function run(args, io = { stdout: process.stdout, stderr: process.s
     const validate = dependencies.validate ?? await createValidator(options.validator);
     let details;
     if (options.kind === 'build') details = await buildCatalog(options, validate, dependencies.verify);
+    else if (options.kind === 'build-projects') details = await buildProjects(options, validate, dependencies.verifyProject);
+    else if (['project', 'projects', 'verify-project'].includes(options.kind)) {
+      const value = await validate(options.kind === 'projects' ? 'extension-projects' : 'extension-project', await readBounded(options.input, options.kind === 'projects' ? MAX_CATALOG : 64 * 1024));
+      if (options.kind === 'verify-project') {
+        const catalog = await validate('extension-catalog', await readBounded(options.catalog, MAX_CATALOG));
+        const entry = catalog.plugins.find(entry => entry.id === value.id);
+        bindProjectEntry(value, entry);
+        details = { ...await (dependencies.verifyProject ?? verifyProject)(value, entry, validate), verified: true };
+      } else details = options.kind === 'projects' ? { count: value.projects.length } : { id: value.id, version: value.version };
+    }
     else if (options.kind === 'pack') details = await packPlugin(options, validate);
     else if (options.kind === 'publish') details = await publishPlugin(options, validate, dependencies.network);
     else {

@@ -7,6 +7,7 @@ import { mergeExtensionRecords } from '../extension-state';
 import { pluginTagLabels } from '../plugin-categories';
 import type { PluginTag } from '../plugin-contracts';
 import { t } from '../i18n';
+import ExtensionProjectGallery from './ExtensionProjectGallery';
 
 interface Props {
   active: boolean; pane: 'discover' | 'installed'; query: string; filter: string;
@@ -107,6 +108,7 @@ export default function CommunityExtensions(props: Props) {
       <button class="text-button plugin-detail-back" onClick={back}><ArrowLeft size={14}/>{t('返回')}</button>
       <div class="plugin-detail-heading"><span class="plugin-glyph"><Puzzle size={20}/></span><div><h3>{value().manifest.name}</h3><div class="plugin-tags"><span>{value().manifest.version}</span><span>{value().source.type === 'github' ? 'GitHub' : t('本地开发包')}</span><For each={value().manifest.tags}>{tag => <span>{tagText(tag)}</span>}</For></div></div></div>
       <p class="plugin-description">{value().manifest.description}</p>
+      <ExtensionProjectGallery active={props.active} entry={value().source.type === 'github' ? (value().source as Extract<ExtensionSource, { type: 'github' }>).entry : undefined} name={value().manifest.name}/>
       <div class="plugin-detail-actions"><span class="plugin-status"><Show when={busy()} fallback={proposal() ? t('待确认') : status(selectedRecord())}><LoaderCircle size={13} class="spin"/>{t('处理中')}</Show></span>
         <Show when={proposal()} fallback={<Show when={selectedRecord() && selectedRecord()!.state !== 'removed'} fallback={<button class="primary-button" disabled={Boolean(busy())} onClick={() => void prepare(selectedCatalog())}><Download size={13}/>{t('安装')}</button>}>
           <button class="secondary-button" disabled={Boolean(busy())} onClick={() => void control(selectedRecord()!, selectedRecord()!.state === 'enabled' ? 'disable' : 'enable')}>{selectedRecord()?.state === 'enabled' ? t('停用') : t('启用')}</button>
@@ -116,7 +118,7 @@ export default function CommunityExtensions(props: Props) {
         </Show>}><button class="secondary-button" disabled={Boolean(busy())} onClick={back}>{t('取消')}</button><button class="primary-button" disabled={Boolean(busy())} onClick={() => void install()}><Download size={13}/>{proposal()?.expectedRevision ? t('安装更新') : t('安装')}</button></Show>
       </div>
       <Show when={confirmRemoval()}><div class="plugin-confirm"><span>{t('卸载')}{value().manifest.name}？</span><button class="text-button" disabled={Boolean(busy())} onClick={() => setConfirmRemoval(false)}>{t('取消')}</button><button class="secondary-button" disabled={Boolean(busy())} onClick={() => void control(selectedRecord()!, 'remove')}>{t('卸载')}</button></div></Show>
-      <dl class="plugin-metadata"><dt>{t('来源')}</dt><dd>{sourceText(value().source)}</dd><dt>{t('标识')}</dt><dd>{value().manifest.id}</dd>
+      <dl class="plugin-metadata"><Show when={value().source.type === 'local'}><dt>{t('来源')}</dt><dd>{sourceText(value().source)}</dd></Show><dt>{t('标识')}</dt><dd>{value().manifest.id}</dd>
         <Show when={'license' in value().manifest}><dt>{t('许可')}</dt><dd>{(value().manifest as ExtensionManifest).license}</dd></Show>
         <Show when={proposal() || selectedRecord()}><dt>SHA-256</dt><dd>{proposal()?.sha256 ?? selectedRecord()?.sha256}</dd></Show></dl>
       <Show when={proposal()}>{prepared => <section class="plugin-detail-section"><h4>{t('权限')}</h4><ul><For each={prepared().manifest.permissions}>{permission => <li><code>{permission}</code></li>}</For></ul><Show when={!prepared().manifest.permissions.length}><p class="plugin-description">{t('无')}</p></Show></section>}</Show>

@@ -73,6 +73,8 @@
     "allow-open-capture-shortcut-system-settings",
     "allow-get-extensions",
     "allow-get-extension-catalog",
+    "allow-get-extension-project",
+    "allow-get-extension-project-image",
     "allow-prepare-extension",
     "allow-install-extension",
     "allow-control-extension",

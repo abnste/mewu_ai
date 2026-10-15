@@ -38,6 +38,8 @@ fn main() {
             "get_extension_bindings",
             "set_extension_binding",
             "get_extension_catalog",
+            "get_extension_project",
+            "get_extension_project_image",
             "prepare_extension",
             "install_extension",
             "control_extension",

@@ -2,6 +2,7 @@
 
 - 新增 API 2 可执行插件：独立 JavaScript worker、版本化 SDK、权限与生命周期管理，第三方可注册 Agent、长期记忆、工具和交互界面。
 - 插件市场接入 [GitHub 社区目录](https://github.com/abnste/mewu-plugins)，安装真实 Release ZIP，核验来源、版本、大小和 SHA-256。保留原声明插件的管理与停用功能。
+- 插件详情新增真实截图、缩略图、大图查看及独立源码项目链接；投稿核对固定源码提交、发行包模块与截图原始字节，保持旧市场索引兼容。
 - Agent 引擎与记忆提供方可独立选择。独立 Agent 不强制配置宿主模型；调用宿主模型时仍使用当前会话的连接。记忆按插件和 Agent 隔离持久保存。
 - 插件可向现有截图工具条及左下角空间控件注册操作，生成可交互的 HTML/SVG/Canvas 悬浮对象，保留 Mewu 原有截图和绘制交互。
 - 修复插件绑定刷新时 Agent 设置折叠、跳页，以及外部记忆与本地记忆设置混杂的问题。
@@ -20,6 +21,8 @@ Windows 提供 x64 安装版与便携版，macOS 提供 ARM64 DMG，Linux 提供
 Wayland 截图与录屏需要桌面授权；录屏授权完成后，需在新的预览画面中再次框选录制区域。录屏控制条可能进入画面，请将它拖到录制区域外。GNOME 下暂不能保证计时条始终置顶。
 
 This preview adds executable API 2 extensions, a public GitHub community catalog and a development SDK. Independent plugins can provide Agent engines, persistent memory, tools and interactive space objects. Installed tools join the existing Agent conversation; reference the selected capture region and send the task in the conversation bar, without a separate task dialog. Agent and memory providers can be selected separately; host credentials are required only when a plugin invokes the host model. Existing screenshot interactions and API 1 packages remain available.
+
+Plugin details now show real screenshots, thumbnails and full-size viewing, with a link to the independent source project. Publishing verifies the pinned source modules against the release ZIP and validates screenshot bytes and dimensions. Older catalog clients remain compatible.
 
 The region automation input adapter currently supports Windows only. macOS and Linux capture, drawing and recording remain separate from that adapter. This preview also fixes Agent settings resetting during provider refresh and screenshot overlay lifecycle races during region operations. Windows x64, macOS ARM64 and Linux x64 retain the fixed preview update channel.
 

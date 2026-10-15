@@ -210,6 +210,31 @@ pub async fn get_extension_catalog(
     market::get_catalog().await
 }
 #[tauri::command]
+pub async fn get_extension_project(
+    window: tauri::WebviewWindow,
+    entry: market::Entry,
+) -> Result<Option<crate::extension_project::Project>, String> {
+    trusted(&window)?;
+    crate::extension_project_host::get_project(&entry).await
+}
+#[tauri::command]
+pub async fn get_extension_project_image(
+    window: tauri::WebviewWindow,
+    entry: market::Entry,
+    index: usize,
+    expected_source_commit: String,
+    expected_image_sha256: String,
+) -> Result<String, String> {
+    trusted(&window)?;
+    crate::extension_project_host::get_image(
+        &entry,
+        index,
+        &expected_source_commit,
+        &expected_image_sha256,
+    )
+    .await
+}
+#[tauri::command]
 pub async fn prepare_extension(
     app: AppHandle,
     window: tauri::WebviewWindow,

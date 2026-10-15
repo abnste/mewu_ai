@@ -1068,5 +1068,12 @@
   "Mewu 默认": "Mewu default",
   "当前记忆设置": "Current memory settings",
   "不可用": "Unavailable",
-  "UI 增强": "UI enhancements"
+  "UI 增强": "UI enhancements",
+  "项目": "Project",
+  "发行": "Release",
+  "上一张": "Previous image",
+  "下一张": "Next image",
+  "查看大图": "View image",
+  "项目信息加载失败": "Could not load project details",
+  "截图加载失败": "Could not load screenshot"
 }

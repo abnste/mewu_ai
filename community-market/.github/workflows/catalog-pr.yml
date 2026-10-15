@@ -3,7 +3,7 @@ on:
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened]
-    paths: ['entries/**']
+    paths: ['entries/**', 'projects/**']
 permissions:
   contents: read
   pull-requests: read
@@ -34,8 +34,17 @@ jobs:
       - name: Read PR entries as data, never execute author code
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node trusted-host/tools/extension-market/collect-pr.mjs candidate-entries
+        run: node trusted-host/tools/extension-market/collect-pr.mjs candidate-entries candidate-projects
+      - name: Check trusted project tooling and actual native contracts
+        working-directory: trusted-host
+        env:
+          MEWU_PLUGIN_VALIDATOR: ${{ github.workspace }}/trusted-host/target/debug/mewu-plugin-validator.exe
+        run: node --test tools/extension-market/test.mjs tools/extension-market/project-test.mjs tools/extension-market/native-test.mjs tools/extension-market/project-native-test.mjs
       - name: Verify published assets and generate candidate index
         env:
           GH_TOKEN: ${{ github.token }}
         run: node trusted-host/tools/extension-market/cli.mjs build candidate-entries --out candidate-catalog.json --previous trusted-market/mewu-catalog.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
+      - name: Verify immutable project sources, ZIP modules and static screenshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted-host/tools/extension-market/cli.mjs build-projects candidate-projects --catalog candidate-catalog.json --out candidate-projects.json --previous trusted-market/mewu-projects.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
