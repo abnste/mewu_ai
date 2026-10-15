@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
+import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
 import { LoaderCircle, Puzzle, Square, X } from 'lucide-solid';
 import * as api from '../extension-bridge';
 import type { ExtensionRecord } from '../extension-contracts';
@@ -37,16 +37,15 @@ export default function ExtensionSelectionTools(props: Props) {
   });
   function choose(choice: ExtensionServiceChoice) {
     if (props.disabled || running()) return;
-    setMenu(false); setResult('');
     if (props.draft.trim()) void execute(choice, props.draft);
-    else { setTask(''); setTaskChoice(choice); }
+    else batch(() => { setTask(''); setTaskChoice(choice); setMenu(false); setResult(''); });
   }
   async function execute(choice: ExtensionServiceChoice, text: string) {
     if (props.disabled || running() || !text.trim()) return;
     const current = generation, sceneId = props.sceneId, regionId = props.regionId;
     const live = services().find(value => extensionServiceKey(value) === extensionServiceKey(choice));
     if (!live || live.record.revision !== choice.record.revision) { props.onError(t('插件状态已变化')); return; }
-    setTaskChoice(undefined); setRunning(live); setResult('');
+    batch(() => { setRunning(live); setTaskChoice(undefined); setMenu(false); setResult(''); });
     try {
       const value = await api.invokeExtension({ pluginId: live.record.manifest.id, revision: live.record.revision,
         serviceId: live.service.id, input: { task: text }, sceneId, regionId });

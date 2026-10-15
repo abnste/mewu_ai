@@ -114,9 +114,14 @@ impl Drop for PortalSession {
 impl PortalSession {
     pub(crate) fn open(expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
         let address = zbus::Address::session().map_err(|_| error())?;
-        futures_lite::future::block_on(Self::open_at(address, expires, allowed))
+        futures_lite::future::block_on(Self::open_at(address, "", expires, allowed))
     }
-    async fn open_at(address: zbus::Address, expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
+    pub(crate) fn open_parent(parent:&str,expires:Instant,allowed:&mut impl FnMut()->bool)->Result<Self,String>{
+        if !valid_recording_parent(parent){return Err("录屏父窗口标识无效".into())}
+        let address=zbus::Address::session().map_err(|_|error())?;
+        futures_lite::future::block_on(Self::open_at(address,parent,expires,allowed))
+    }
+    async fn open_at(address: zbus::Address,parent:&str, expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
             if !matches!(address.transport(), zbus::address::transport::Transport::Unix(_)) { return Err(error()); }
             let builder = zbus::connection::Builder::address(address).map_err(|_| error())?
                 .max_queued(16).method_timeout(TRANSPORT_TIMEOUT);
@@ -157,7 +162,7 @@ impl PortalSession {
                 let start_token = token();
                 let mut options = Options::new();
                 options.insert("handle_token", Value::from(start_token.as_str()));
-                let mut result = request(&connection, &owner, "Start", &start_token, &(&path, "", options), RequestCleanup::ViaSession, expires, allowed).await?;
+                let mut result = request(&connection, &owner, "Start", &start_token, &(&path, parent, options), RequestCleanup::ViaSession, expires, allowed).await?;
                 let streams: Vec<(u32, HashMap<String, OwnedValue>)> = result.remove("streams")
                     .ok_or_else(error)?.try_into().map_err(|_| error())?;
                 let (node, properties) = single_monitor(streams)?;
@@ -185,8 +190,17 @@ fn single_monitor(mut streams: Vec<(u32, HashMap<String, OwnedValue>)>) -> Resul
     Ok((node, properties))
 }
 
+fn valid_recording_parent(value:&str)->bool{
+    value.strip_prefix("wayland:").is_some_and(|handle|!handle.is_empty()&&handle.len()<=512&&!handle.chars().any(char::is_control))
+}
+
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn recording_parent_is_a_bounded_wayland_handle_not_a_renderer_url(){
+        assert!(valid_recording_parent("wayland:~12l9jdl.-a"));
+        for value in ["","wayland:","x11:1234","https://host/","wayland:bad\nhandle"]{assert!(!valid_recording_parent(value));}
+        assert!(!valid_recording_parent(&format!("wayland:{}","a".repeat(513))));
+    }
     #[test] fn stream_admission_requires_exact_single_monitor() {
         assert!(single_monitor(vec![]).is_err());
         let mut props = HashMap::new(); props.insert("source_type".into(), OwnedValue::from(1u32));

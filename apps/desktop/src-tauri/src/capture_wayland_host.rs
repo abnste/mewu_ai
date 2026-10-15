@@ -159,7 +159,7 @@ mod barrier {
             Ok(Api { _gdk:gdk, _wl:wl, display, marshal, listener, destroy, interface })
         }).as_ref().map_err(Clone::clone)
     }
-    struct Data { slot: Rc<Cell<*mut Data>>, proxy: Proxy, tx: Option<oneshot::Sender<Result<(),String>>>, allowed: capture::CaptureCheck, _work: Arc<Work>, _transition: Arc<SpaceTransition> }
+    struct Data { slot: Rc<Cell<*mut Data>>, proxy: Proxy, tx: Option<oneshot::Sender<Result<(),String>>>, allowed: capture::CaptureCheck, _work: Option<Arc<Work>>, _transition: Arc<SpaceTransition> }
     #[repr(C)] struct Listener { done: unsafe extern "C" fn(*mut c_void,Proxy,u32) }
     static LISTENER: Listener = Listener { done };
     unsafe extern "C" fn done(data: *mut c_void, proxy: Proxy, _: u32) {
@@ -170,7 +170,7 @@ mod barrier {
         let result = (data.allowed)();
         if let Some(tx) = data.tx.take() { let _ = tx.send(result); }
     }
-    pub(super) fn start(display: &gtk::gdk::Display, tx: oneshot::Sender<Result<(),String>>, allowed: capture::CaptureCheck, work: Arc<Work>, transition: Arc<SpaceTransition>) -> Result<(),String> {
+    pub(super) fn start(display: &gtk::gdk::Display, tx: oneshot::Sender<Result<(),String>>, allowed: capture::CaptureCheck, work: Option<Arc<Work>>, transition: Arc<SpaceTransition>) -> Result<(),String> {
         let api = api()?;
         let wl_display = unsafe { (api.display)(display.as_ptr().cast()) };
         if wl_display.is_null() { return Err("Wayland 显示连接不可用".into()); }
@@ -304,7 +304,7 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
         let result = (|| {
             allowed()?;
             let widget=target.gtk_window().map_err(|_| "截图窗口不可用")?;
-            barrier::start(&widget.display(),tx,allowed,work,barrier_transition)
+            barrier::start(&widget.display(),tx,allowed,Some(work),barrier_transition)
         })();
         // A start failure closes its sender; receiver rejects without adopting an image.
         let _ = result;
@@ -548,6 +548,54 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
         }
     }).map_err(|_| "无法准备截图空间")?;
     rx.await.map_err(|_| "截图空间配置中断")?
+}
+
+struct RecordingHideAttempt(Arc<std::sync::atomic::AtomicBool>);
+impl Drop for RecordingHideAttempt{
+    fn drop(&mut self){self.0.store(false,std::sync::atomic::Ordering::Release);}
+}
+/// Consent uses a real mapped parent. Only after the Portal response may this
+/// exact owner be hidden, and the compositor must acknowledge the unmap before
+/// the worker connects its approved stream. No Engine lock crosses GTK I/O.
+pub(crate) async fn hide_recording_parent(window:&WebviewWindow,allowed:capture::CaptureCheck,
+    transition:Arc<SpaceTransition>)->Result<(),String>{
+    if window.label()!="space"{return Err("此窗口不能开始录屏".into())}
+    let live=Arc::new(std::sync::atomic::AtomicBool::new(true));let _attempt=RecordingHideAttempt(live.clone());
+    let upstream=allowed;
+    let allowed:capture::CaptureCheck=Arc::new(move||{
+        if !live.load(std::sync::atomic::Ordering::Acquire){return Err("录屏隐藏已取消".into())}upstream()
+    });
+    let (tx,rx)=oneshot::channel();let target=window.clone();let check=allowed.clone();
+    window.run_on_main_thread(move||{
+        let result=(||{
+            target.app_handle().state::<Host>().exit.ensure_new_operation()?;check()?;
+            let widget=target.gtk_window().map_err(|_|"录屏父窗口不可用")?;
+            if !widget.is_mapped(){return Err("录屏父窗口已隐藏".into())}
+            let previous=witness(&target)?;
+            hide_widget(widget.upcast_ref())?;
+            current(target.app_handle(),std::slice::from_ref(&previous),true)?;
+            let app=target.app_handle().clone();let stable=check.clone();
+            let hidden:capture::CaptureCheck=Arc::new(move||{
+                app.state::<Host>().exit.ensure_new_operation()?;stable()?;
+                current(&app,std::slice::from_ref(&previous),true)
+            });
+            barrier::start(&widget.display(),tx,hidden,None,transition)
+        })();
+        // A pre-barrier failure drops tx. The worker receives no acknowledgement.
+        let _=result;
+    }).map_err(|_|"无法隐藏录屏父窗口")?;
+    tokio::time::timeout(Duration::from_secs(3),rx).await.map_err(|_|"录屏父窗口隐藏确认超时".to_string())?
+        .map_err(|_|"录屏父窗口隐藏确认中断".to_string())?
+}
+pub(crate) async fn recording_surface_mapped(window:&WebviewWindow,allowed:capture::CaptureCheck)->Result<bool,String>{
+    if window.label()!="space"{return Err("此窗口不能开始录屏".into())}
+    let (tx,rx)=oneshot::channel();let target=window.clone();
+    window.run_on_main_thread(move||{
+        let result=(||{allowed()?;let widget=target.gtk_window().map_err(|_|"录屏窗口不可用")?;Ok(widget.is_mapped())})();
+        let _=tx.send(result);
+    }).map_err(|_|"无法检查录屏窗口")?;
+    tokio::time::timeout(Duration::from_secs(3),rx).await.map_err(|_|"录屏窗口检查超时".to_string())?
+        .map_err(|_|"录屏窗口检查中断".to_string())?
 }
 
 // Recording has an already granted, nonce-bound live session. It cannot use

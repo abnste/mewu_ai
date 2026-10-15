@@ -46,9 +46,13 @@ Preview 4 uses the following package names. Check the releases page for publishe
 
 Windows requires Windows 10 2004 or later and WebView2. macOS uses the system WKWebView. Linux uses WebKitGTK; Wayland capture and recording request permission through the desktop portal.
 
+After granting Wayland recording access, select the recording region again in the approved preview. Move the recording controls outside the region to keep them out of the video; GNOME does not guarantee that the controls remain on top.
+
 Linux requires the system `libnghttp2.so.14` provider (`libnghttp2-14` on Ubuntu). Local OCR uses system Tesseract 4.1 or 5 and English language data (`tesseract-ocr-eng` on Ubuntu).
 
 The application checks for updates in the background. Settings → About provides **Check for updates** and **Update and restart**. Every update requires an installer signature bound to its version; the installer starts after the application saves and drains active work. Updates use a fixed release channel, not a branch URL. Moving this code to master or renaming next does not change the installed updater.
+
+Updating a portable build runs the installer and switches to the installed application; it does not replace the executable in the ZIP extraction directory.
 
 Legacy 0.7.4 already recognizes the future stable 1.x installer name. It intentionally ignores prereleases; 0.7.3 should first update to 0.7.4. Supported legacy API connections are imported once from local settings. Legacy data is retained, but legacy conversation history is not converted into the new scene database. See [upgrade details](apps/desktop/README.md).
 

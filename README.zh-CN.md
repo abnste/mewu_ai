@@ -46,9 +46,13 @@ HTML/SVG/Canvas 结果使用透明的交互对象，悬浮显示移动、刷新�
 
 Windows 要求 Windows 10 2004 或以上和 WebView2；macOS 使用系统 WKWebView；Linux 使用 WebKitGTK，Wayland 截图与录屏通过桌面 portal 申请授权。
 
+Wayland 录屏授权完成后，需在新的预览画面中再次框选录制区域。录屏控制条可能进入画面，请将它拖到录制区域外；GNOME 下暂不能保证计时条始终置顶。
+
 Linux 需要系统 `libnghttp2.so.14`（Ubuntu 软件包 `libnghttp2-14`）。本机文字识别使用系统 Tesseract 4.1 或 5 及英语语言数据（Ubuntu 软件包 `tesseract-ocr-eng`）。
 
 启动后后台检查更新，“设置 → 关于”也可检查、下载并重启。安装前验证版本绑定签名，再保存会话、结束录屏并等待后台任务收尾。固定的发行更新入口不依赖 next、master 或其他分支名称。
+
+便携版更新会运行安装程序并切换到标准安装位置，不会原位替换 ZIP 解压目录中的程序。
 
 旧版 0.7.4 已支持识别未来正式版 1.x 安装器；它会忽略预览版。0.7.3 应先升级到 0.7.4。首次启动自动导入支持的旧版 API 连接，保留旧数据目录；旧版对话历史目前不会转换成新的场景数据库。[升级说明](apps/desktop/README.md)记录了兼容范围。
 

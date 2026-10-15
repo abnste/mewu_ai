@@ -10,7 +10,7 @@ use std::{fs::OpenOptions, io::{BufRead, BufReader, Write}, os::unix::fs::OpenOp
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
-pub(crate) struct PrepareConfig { pub nonce: String, pub preview: PathBuf }
+pub(crate) struct PrepareConfig { pub nonce: String, pub preview: PathBuf, pub parent_window:String }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 pub(crate) struct Prepared { pub nonce: String, pub width: u32, pub height: u32 }
@@ -20,10 +20,10 @@ pub(crate) struct Selection { pub nonce: String, pub output: PathBuf, pub x:u32,
     pub width:u32, pub height:u32, pub audio:AudioMode }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag="type", rename_all="snake_case", deny_unknown_fields)]
-pub(crate) enum Control { Start(Selection), Pause{}, Resume{}, Stop{}, Cancel{} }
+pub(crate) enum Control { PreviewReady{nonce:String}, Start(Selection), Pause{}, Resume{}, Stop{}, Cancel{} }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag="type", rename_all="snake_case", deny_unknown_fields)]
-pub(crate) enum Event { Prepared(Prepared), Progress(Progress), Completed(Report),
+pub(crate) enum Event { Consented{nonce:String}, Prepared(Prepared), Progress(Progress), Completed(Report),
     #[cfg(debug_assertions)]
     CaptureDiagnostic{stage:CaptureStage,frames:u64,pcm_frames:u64,paused:bool,video_queue:u64,audio_queue:u64},
     Finalizing{stage:FinalizeStage,frames:u64,pcm_frames:u64},
@@ -38,6 +38,10 @@ fn capture_diagnostic(codec:&Codec,stage:CaptureStage,frames:u64,paused:bool,
     let (video_queue,audio_queue)=codec.input_levels();
     emit(Event::CaptureDiagnostic{stage,frames,pcm_frames:codec.pcm_frames(),paused,video_queue,audio_queue})
 }
+#[path="recording_prepare_gate.rs"]
+mod preparation;
+use preparation::PreparationGate;
+pub(crate) use preparation::{PreparationOutcome,preparation_step};
 const LINE:usize=16*1024;
 fn read(reader:&mut impl BufRead)->Result<Option<String>,String> {
     use std::io::Read;
@@ -100,13 +104,26 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
         || config.preview.extension().is_none_or(|v|v!="png") {return Err("录屏预览凭据无效".into());}
     let consent_deadline=Instant::now()+Duration::from_secs(90);
     let mut canceled=false;
-    let session=PortalSession::open(consent_deadline,&mut ||{
+    let session=PortalSession::open_parent(&config.parent_window,consent_deadline,&mut ||{
         match controls.try_recv(){Ok(Control::Cancel{}|Control::Stop{})|Err(mpsc::TryRecvError::Disconnected)=>canceled=true,
             Ok(_)=>canceled=true, Err(mpsc::TryRecvError::Empty)=>{}}
         !canceled
     });
     if canceled{return Ok(None);}
-    let session=session?;let frames=Frames::connect(&session)?;
+    let session=session?;let mut gate=PreparationGate::new(&config.nonce);
+    gate.consented(&config.nonce)?;emit(Event::Consented{nonce:config.nonce.clone()})?;
+    // The approved stream can initially include the mapped parent. Do not
+    // connect/read it until GTK has hidden that owner and the compositor has
+    // acknowledged the unmap. Keep the original consent/preview deadline.
+    loop{
+        if Instant::now()>=consent_deadline{return Err("等待录屏父窗口隐藏超时".into())}
+        match controls.recv_timeout(Duration::from_millis(20)){
+            Ok(Control::PreviewReady{nonce})=>{gate.hidden(&nonce)?;break;},
+            Ok(Control::Cancel{}|Control::Stop{})|Err(mpsc::RecvTimeoutError::Disconnected)=>{gate.cancel();return Ok(None)},
+            Ok(_)=>return Err("录屏准备控制顺序无效".into()),Err(mpsc::RecvTimeoutError::Timeout)=>{}
+        }
+    }
+    let frames=Frames::connect(&session)?;
     let first=loop {
         if Instant::now()>=consent_deadline{return Err("等待屏幕共享画面超时".into());}
         match controls.try_recv(){Ok(Control::Cancel{}|Control::Stop{})|Err(mpsc::TryRecvError::Disconnected)=>return Ok(None),
@@ -120,7 +137,7 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
         .map_err(|_|"无法保存录屏预览")?;
     preview.sync_all().map_err(|_|"无法完成录屏预览")?;drop(preview);
     let mut latest=first;
-    emit(Event::Prepared(prepared.clone()))?;
+    gate.prepared(&config.nonce)?;emit(Event::Prepared(prepared.clone()))?;
     let select_deadline=Instant::now()+Duration::from_secs(120);
     let selection=loop {
         if Instant::now()>=select_deadline{return Err("录屏选区等待超时".into());}
@@ -143,7 +160,7 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
     loop {
         match controls.try_recv(){Ok(Control::Stop{})=>break,Ok(Control::Cancel{})|Err(mpsc::TryRecvError::Disconnected)=>return Ok(None),
             Ok(Control::Pause{})=>paused=true,Ok(Control::Resume{})=>{paused=false;next=Instant::now();},
-            Ok(Control::Start(_))=>return Err("录屏已经开始".into()),Err(mpsc::TryRecvError::Empty)=>{}}
+            Ok(Control::Start(_)|Control::PreviewReady{..})=>return Err("录屏已经开始".into()),Err(mpsc::TryRecvError::Empty)=>{}}
         if Instant::now()>=expires || count>=9000{break;}
         #[cfg(debug_assertions)] let trace=diagnostic.elapsed()>=Duration::from_secs(1);
         #[cfg(debug_assertions)] if trace{capture_diagnostic(&codec,CaptureStage::PollAudio,count,paused,&mut emit)?;}
@@ -217,7 +234,8 @@ use image::ImageEncoder;
 /// tracked pipe lifetimes as other production Linux workers. No arbitrary CLI.
 pub(crate) fn supervise(config:PrepareConfig,
     mut control:impl FnMut()->Result<Option<Control>,String>,
-    mut prepared:impl FnMut(Prepared)->Result<(),String>,
+    mut consented:impl FnMut()->Result<PreparationOutcome,String>,
+    mut prepared:impl FnMut(Prepared)->Result<PreparationOutcome,String>,
     mut progress:impl FnMut(Progress), mut finalizing:impl FnMut(FinalizeStage,u64,u64),
     mut finalized:impl FnMut()) ->Result<Option<Report>,String> {
     use crate::owned_process::{ManagedProcess,linux_worker::{TrustedCommand,Worker}};
@@ -249,12 +267,14 @@ pub(crate) fn supervise(config:PrepareConfig,
             let ended=matches!(output,Output::Eof|Output::Invalid);if event_tx.send(output).is_err()||ended{break;}}
     }).map_err(|_|"无法读取录屏连接")?);
     let mut sender=Some(tx);let mut selection:Option<Selection>=None;let mut has_preview=false;
+    let mut gate=PreparationGate::new(&config.nonce);
     let mut last=started;let mut stopped:Option<Instant>=None;let mut terminal=None;let mut eof=false;
     let mut canceled=false;let mut elapsed=0u64;
     let result=(||{
         loop {
             if terminal.is_none() && stopped.is_none(){if let Some(value)=control()? {
                 match &value {
+                    Control::PreviewReady{..}=>return Err("录屏父窗口回执只能由宿主产生".into()),
                     Control::Start(value)=>{if !has_preview||selection.is_some()||value.nonce!=config.nonce{return Err("录屏启动凭据无效".into());}
                         selection=Some(value.clone());last=Instant::now();},
                     Control::Cancel{}|Control::Stop{}=>{canceled=matches!(&value,Control::Cancel{});stopped=Some(Instant::now());},
@@ -266,11 +286,36 @@ pub(crate) fn supervise(config:PrepareConfig,
                 Ok(Output::Event(event))=>{
                     if terminal.is_some()||eof{return Err("无效录屏通信顺序".into());}
                     match event {
+                        Event::Consented{nonce}=>{
+                            gate.consented(&nonce)?;
+                            if stopped.is_none(){
+                                match consented()?{
+                                    PreparationOutcome::Ready=>{
+                                        sender.as_ref().ok_or("录屏连接已断开")?.try_send(Control::PreviewReady{nonce:nonce.clone()})
+                                            .map_err(|_|"录屏父窗口回执未能送达")?;
+                                        gate.hidden(&nonce)?;
+                                    },
+                                    PreparationOutcome::Canceled=>{
+                                        sender.as_ref().ok_or("录屏连接已断开")?.try_send(Control::Cancel{})
+                                            .map_err(|_|"录屏取消未能送达")?;
+                                        gate.cancel();canceled=true;stopped=Some(Instant::now());
+                                    }
+                                }
+                            }else{gate.cancel();}
+                        },
                         Event::Prepared(value)=>{
+                            gate.prepared(&value.nonce)?;
                             if has_preview||selection.is_some()||value.nonce!=config.nonce||value.width<2||value.height<2
                                 ||value.width>16384||value.height>16384||u64::from(value.width)*u64::from(value.height)>32_000_000{
                                 return Err("录屏预览凭据无效".into());}
-                            if stopped.is_none(){prepared(value)?;}has_preview=true;last=Instant::now();
+                            if stopped.is_none(){match prepared(value)?{
+                                PreparationOutcome::Ready=>{},
+                                PreparationOutcome::Canceled=>{
+                                    sender.as_ref().ok_or("录屏连接已断开")?.try_send(Control::Cancel{})
+                                        .map_err(|_|"录屏取消未能送达")?;
+                                    gate.cancel();canceled=true;stopped=Some(Instant::now());
+                                }
+                            }}has_preview=true;last=Instant::now();
                         },
                         Event::Progress(value)=>{if selection.is_none()||value.elapsed_ms<elapsed||value.elapsed_ms>600_100{return Err("无效录屏进度".into());}
                             elapsed=value.elapsed_ms;last=Instant::now();if stopped.is_none(){progress(value);}},
@@ -476,6 +521,14 @@ pub(crate) fn supervise(config:PrepareConfig,
         selection.nonce=uuid::Uuid::new_v4().to_string();assert!(!selection_valid(&selection,&prepared));
         selection.nonce=prepared.nonce.clone();selection.x=u32::MAX;assert!(!selection_valid(&selection,&prepared));
         selection.x=5;assert!(!selection_valid(&selection,&prepared));
+    }
+    #[test]fn recording_consent_wire_is_nonce_bound_and_rejects_extra_fields(){
+        let nonce="0d7d0996-02f0-43b6-8bd7-d31c4e66bc82";
+        let ack=serde_json::to_value(Control::PreviewReady{nonce:nonce.into()}).unwrap();
+        assert_eq!(ack,serde_json::json!({"type":"preview_ready","nonce":nonce}));
+        assert!(serde_json::from_value::<Control>(serde_json::json!({"type":"preview_ready","nonce":nonce,"parent":"wayland:arbitrary"})).is_err());
+        assert!(serde_json::from_value::<Event>(serde_json::json!({"type":"consented","nonce":nonce,"extra":true})).is_err());
+        assert!(serde_json::from_value::<PrepareConfig>(serde_json::json!({"nonce":nonce,"preview":"/tmp/test.png"})).is_err());
     }
     #[test]fn recording_wayland_control_wire_rejects_unknown_fields_and_unbounded_input(){
         assert!(serde_json::from_str::<Control>(r#"{"type":"pause","extra":1}"#).is_err());

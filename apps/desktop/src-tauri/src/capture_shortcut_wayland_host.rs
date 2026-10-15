@@ -55,8 +55,13 @@ fn api()->Result<&'static Api,String>{
         Ok(Api{_library:library,export,unexport})
     }).as_ref().map_err(Clone::clone)
 }
-pub(crate) struct ExportedParent { handle:String,window:WebviewWindow,weak:gtk::glib::SendWeakRef<gtk::gdk::Window> }
-impl ExportedParent {pub(crate) fn identifier(&self)->&str{&self.handle}}
+pub(crate) struct ExportedParent { handle:String,window:WebviewWindow,weak:gtk::glib::SendWeakRef<gtk::gdk::Window>,owner:usize,label:&'static str }
+impl ExportedParent {
+    pub(crate) fn identifier(&self)->&str{&self.handle}
+    pub(crate) fn check_mapped(&self)->Result<(),String>{
+        if crate::window_actions_linux::current_for(self.owner,self.label){Ok(())}else{Err("授权父窗口已关闭".into())}
+    }
+}
 impl Drop for ExportedParent {
     fn drop(&mut self){let weak=self.weak.clone();let _=self.window.run_on_main_thread(move||{
         if let Some(window)=weak.upgrade(){if let Ok(api)=api(){unsafe{(api.unexport)(window.as_ptr() as _)}}}
@@ -72,12 +77,13 @@ unsafe extern "C" fn exported(_: *mut c_void,handle:*const c_char,data:*mut c_vo
     }
 }
 unsafe extern "C" fn destroyed(data:*mut c_void){drop(Box::from_raw(data as *mut Callback));}
-async fn parent(window:&WebviewWindow,owner:usize)->Result<ExportedParent,String>{
+async fn parent(window:&WebviewWindow,owner:usize,label:&'static str)->Result<ExportedParent,String>{
+    if !matches!(label,"settings"|"space")||window.label()!=label{return Err("授权父窗口无效".into())}
     let (setup,ready)=oneshot::channel::<Result<ExportedParent,String>>();let (result,handle)=oneshot::channel();let target=window.clone();
     window.run_on_main_thread(move||{
         let output=(||{
             let widget=crate::window_actions_linux::parent(&target,owner)?;
-            if target.label()!="settings"||!crate::window_actions_linux::current_for(owner,"settings"){return Err("设置窗口已关闭".into())}
+            if target.label()!=label||!crate::window_actions_linux::current_for(owner,label){return Err("授权父窗口已关闭".into())}
             let drawable=widget.window().ok_or("设置窗口尚未显示")?;
             if drawable.display().type_().name()!="GdkWaylandDisplay"{return Err("此窗口不属于 Wayland 桌面".into())}
             let api=api()?;
@@ -85,12 +91,18 @@ async fn parent(window:&WebviewWindow,owner:usize)->Result<ExportedParent,String
             if unsafe{(api.export)(drawable.as_ptr() as _,exported,callback as _,destroyed)}==0{
                 unsafe{destroyed(callback as _)};return Err("无法导出设置父窗口".into())
             }
-            Ok(ExportedParent { handle:String::new(), window:target.clone(), weak:gtk::glib::SendWeakRef::from(drawable.downgrade()) })
+            Ok(ExportedParent { handle:String::new(), window:target.clone(), weak:gtk::glib::SendWeakRef::from(drawable.downgrade()),owner,label })
         })();let _=setup.send(output);
     }).map_err(|_|"无法读取设置窗口")?;
     let mut guard=tokio::time::timeout(Duration::from_secs(5),ready).await.map_err(|_|"读取设置窗口超时")?.map_err(|_|"读取设置窗口中止")??;
     guard.handle=tokio::time::timeout(Duration::from_secs(5),handle).await.map_err(|_|"导出设置父窗口超时")?.map_err(|_|"导出设置父窗口中止")??;
-    if !crate::window_actions_linux::current_for(owner,"settings"){return Err("设置窗口已关闭".into())}Ok(guard)
+    guard.check_mapped()?;Ok(guard)
+}
+/// Host-only entry: renderer cannot provide a parent handle or another label.
+pub(crate) async fn recording_parent(window:&WebviewWindow)->Result<ExportedParent,String>{
+    if window.label()!="space"{return Err("此窗口不能开始录屏".into())}
+    let owner=crate::window_actions_linux::window_handle(window)?;
+    parent(window,owner,"space").await
 }
 fn settings(window:&WebviewWindow)->Result<usize,String>{
     if window.label()!="settings"{return Err("请在设置中修改截图快捷键".into())}
@@ -100,7 +112,7 @@ fn settings(window:&WebviewWindow)->Result<usize,String>{
 pub(crate) async fn configure(app:AppHandle,window:WebviewWindow,revision:u64,id:String)->Result<CaptureShortcutState,String>{
     let runtime=app.try_state::<Runtime>().ok_or("此平台不使用系统快捷键授权")?.inner().clone();
     if !uuid::Uuid::parse_str(&id).is_ok_and(|v|v.to_string()==id){return Err("快捷键请求标识无效".into())}
-    let owner=settings(&window)?;let parent=parent(&window,owner).await?;runtime.configure(revision,id,owner,parent).await
+    let owner=settings(&window)?;let parent=parent(&window,owner,"settings").await?;runtime.configure(revision,id,owner,parent).await
 }
 pub(crate) async fn cancel(app:&AppHandle,window:&WebviewWindow,id:&str)->Result<(),String>{
     // Hide/destroy cancellation is intentionally allowed after GTK unmap. The

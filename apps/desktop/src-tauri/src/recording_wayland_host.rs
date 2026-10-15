@@ -45,6 +45,25 @@ fn preparation_current(app:&AppHandle,nonce:&str)->Result<(),String>{
         return Err("录屏会话已经改变".into());
     }Ok(())
 }
+fn pending_preparation_canceled(app:&AppHandle,nonce:&str)->Result<bool,String>{
+    let host=app.state::<Host>();let s=state().lock().map_err(|_|"录屏状态不可用")?;
+    let Some(lease)=s.lease.as_ref().filter(|l|l.nonce==nonce&&l.status.is_none())else{return Ok(false)};
+    // Reservation precedes stop_for_exit. Make its cancellation sticky for this
+    // exact existing lease; a later aborted exit cannot revive its handshake.
+    if !host.exit.accepts_new_operations(){control_locked(lease,true)?;}
+    let canceled=lease.controls.lock().map_err(|_|"录屏控制不可用")?.terminal.is_some();Ok(canceled)
+}
+fn pending_source_current(app:&AppHandle,nonce:&str,source:&mewu_core::Scene)->Result<(),String>{
+    let host=app.state::<Host>();
+    {let s=state().lock().map_err(|_|"录屏状态不可用")?;
+        let lease=s.lease.as_ref().filter(|l|l.nonce==nonce&&l.scene_id==source.id&&l.status.is_none()&&l.background.is_none()).ok_or("录屏准备已结束")?;
+        if !host.exit.accepts_new_operations(){control_locked(lease,true)?;}
+        if lease.controls.lock().map_err(|_|"录屏控制不可用")?.terminal.is_some(){return Err("录屏准备已取消".into())}
+    }
+    let engine=host.lock()?;let current=engine.store.active_scene().map_err(|e|e.to_string())?;
+    if current.id!=source.id||current.updated_at!=source.updated_at||current.background!=source.background
+        ||current.closed||current.frozen{return Err("录屏会话已经改变".into())}Ok(())
+}
 async fn restore_preparation_failure(app:&AppHandle,window:&WebviewWindow,nonce:&str,
     previous_scene:&str,previous_background:Option<Asset>,transition:Arc<crate::SpaceTransition>,fallback:String)->String{
     cancel_pending();
@@ -72,6 +91,12 @@ async fn restore_preparation_failure(app:&AppHandle,window:&WebviewWindow,nonce:
         if scene.closed||scene.frozen||(!unchanged&&!adopted){return Err("录屏会话已变化".into());}
         Ok(())
     });
+    // Failure before consent can leave the original mapped canvas untouched.
+    // Do not send it through the hidden-surface-only presentation path.
+    match crate::capture_wayland_host::recording_surface_mapped(window,allowed.clone()).await{
+        Ok(true)=>{let _=app.emit_to("space","host-error",&error);return error;},
+        Ok(false)=>{},Err(_)=>return error,
+    }
     match crate::capture_wayland_host::present_recording(window,allowed,transition).await{
         Ok(())=>{eprintln!("mewu-recording-restore stage=presented");let _=app.emit_to("space","host-error",&error);},
         Err(_)=>{eprintln!("mewu-recording-restore stage=presentation-rejected");},
@@ -158,10 +183,10 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     let transition=Arc::new(crate::begin_space_transition(&app,&host)?);
     let nonce=uuid::Uuid::new_v4().to_string();let controls=Arc::new(Mutex::new(Controls::default()));
     let preview=host.assets.join(format!("{nonce}.png"));
-    let config=worker::PrepareConfig{nonce:nonce.clone(),preview:preview.clone()};
-    // The approved monitor's first frame must be the desktop, not this old
-    // screenshot canvas. ScreenCast consent is still shown by the compositor.
-    window.hide().map_err(|_|"无法隐藏录屏准备窗口")?;
+    // A mapped parent gives GNOME a real transient relationship. Keep its
+    // export guard in the supervised task through the matching Portal reply.
+    let parent=crate::capture_shortcut_wayland_host::recording_parent(&window).await?;
+    let config=worker::PrepareConfig{nonce:nonce.clone(),preview:preview.clone(),parent_window:parent.identifier().into()};
     {let mut s=state().lock().map_err(|_|"录屏状态不可用")?;host.exit.ensure_new_operation()?;
         if s.lease.is_some(){return Err("请先完成当前录屏准备".into());}
         s.lease=Some(Lease{nonce:nonce.clone(),scene_id:scene_id.clone(),background:None,region:None,
@@ -170,12 +195,37 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     let mut preparing=PreparingGuard{nonce:nonce.clone(),armed:true};
     let (ready_tx,ready_rx)=tokio::sync::oneshot::channel::<Result<HostSnapshot,String>>();
     let owner=app.clone();let worker_nonce=nonce.clone();let source_scene=old.clone();let present_nonce=nonce.clone();
+    let consent_window=window.clone();let consent_transition=transition.clone();
     tauri::async_runtime::spawn(async move{
         let run_app=owner.clone();let output=run_app.state::<Host>().root.join("recording-staging").join(format!("{worker_nonce}.mp4"));
         let run_preview=preview.clone();let run_output=output.clone();let mut ready_tx=Some(ready_tx);
-        let result=tauri::async_runtime::spawn_blocking(move||worker::supervise(config,
-            ||controls.lock().map(|mut c|c.take()).map_err(|_|"录屏控制不可用".into()),
-            |prepared|{
+        let result=tauri::async_runtime::spawn_blocking(move||{
+            use std::sync::atomic::{AtomicBool,Ordering};
+            let consent_received=AtomicBool::new(false);let preview_received=AtomicBool::new(false);
+            worker::supervise(config,
+            ||{
+                let next=controls.lock().map(|mut c|c.take()).map_err(|_|"录屏控制不可用".to_string())?;
+                if matches!(next,Some(worker::Control::Cancel{}|worker::Control::Stop{})){return Ok(next)}
+                if !preview_received.load(Ordering::Acquire){
+                    let result=worker::preparation_step(||pending_preparation_canceled(&run_app,&worker_nonce),||{
+                        pending_source_current(&run_app,&worker_nonce,&source_scene)?;
+                        if !consent_received.load(Ordering::Acquire){parent.check_mapped()?;}Ok(())
+                    })?;
+                    if result==worker::PreparationOutcome::Canceled{
+                        return controls.lock().map(|mut c|c.take()).map_err(|_|"录屏控制不可用".into());
+                    }
+                }
+                Ok(next)
+            },
+            ||worker::preparation_step(||pending_preparation_canceled(&run_app,&worker_nonce),||{
+                pending_source_current(&run_app,&worker_nonce,&source_scene)?;parent.check_mapped()?;
+                // Native unmap intentionally revokes the mapped action token.
+                consent_received.store(true,Ordering::Release);
+                let checked_app=run_app.clone();let checked_nonce=worker_nonce.clone();let checked_source=source_scene.clone();
+                let allowed:crate::capture::CaptureCheck=Arc::new(move||pending_source_current(&checked_app,&checked_nonce,&checked_source));
+                tauri::async_runtime::block_on(crate::capture_wayland_host::hide_recording_parent(&consent_window,allowed,consent_transition.clone()))
+            }),
+            |prepared|worker::preparation_step(||pending_preparation_canceled(&run_app,&worker_nonce),||{
                 use std::os::unix::fs::MetadataExt;
                 let file=std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW).open(&run_preview).map_err(|_|"录屏预览不存在")?;
                 let metadata=file.metadata().map_err(|_|"无法检查录屏预览")?;
@@ -200,14 +250,15 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
                     }else{return Err("录屏准备已取消".into());}
                 }
                 let published=crate::publish(&run_app,&snapshot);
+                preview_received.store(true,Ordering::Release);
                 if let Some(tx)=ready_tx.take(){let _=tx.send(Ok(published));}Ok(())
-            },|progress|{if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().and_then(|l|l.status.as_mut()){
+            }),|progress|{if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().and_then(|l|l.status.as_mut()){
                 status.phase=if progress.paused{"paused"}else{"recording"};status.countdown=0;status.elapsed_ms=progress.elapsed_ms;emit(&run_app,&Some(status.clone()));}}},
             |_stage,_frames,_pcm|{if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().and_then(|l|l.status.as_mut()){
                 status.phase="stopping";status.countdown=0;emit(&run_app,&Some(status.clone()));
             }}},
             ||{if let Ok(mut s)=state().lock(){if let Some(l)=s.lease.as_mut(){l.finalized=true;}}}
-        )).await.map_err(|_|"录屏任务中断".to_string()).and_then(|r|r);
+        )}).await.map_err(|_|"录屏任务中断".to_string()).and_then(|r|r);
         while crate::recording_worker::busy(){tokio::time::sleep(Duration::from_millis(25)).await;}
         let receipt=result.and_then(|report|{
             if let Some(report)=report {
