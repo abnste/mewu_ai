@@ -616,10 +616,24 @@ fn worker_failure(error: &ProtocolError, last_host_failure: Option<HostCallFailu
     message
 }
 
+/// Only WorkerResponse::Error's existing sanitizer can create this value.
+/// It is transient UI diagnostics, never a tool response or persisted payload.
+#[derive(Clone)]
+pub(crate) struct SafeToolDiagnostic(String);
+impl SafeToolDiagnostic {
+    fn from_worker(error: &ProtocolError, last_host_failure: Option<HostCallFailure>) -> Self {
+        Self(worker_failure(error, last_host_failure))
+    }
+    pub(crate) fn message(&self) -> &str {
+        &self.0
+    }
+}
+
 struct Worker {
     child: Child,
     input: ChildStdin,
     output: mpsc::Receiver<Result<WorkerResponse, String>>,
+    safe_failure: Option<SafeToolDiagnostic>,
 }
 impl Worker {
     fn spawn() -> Result<Self, String> {
@@ -666,6 +680,7 @@ impl Worker {
             child,
             input,
             output: receive,
+            safe_failure: None,
         })
     }
     fn send(&mut self, value: &WorkerRequest) -> Result<(), String> {
@@ -726,7 +741,10 @@ impl Worker {
                     return Ok(result)
                 }
                 Ok(Ok(WorkerResponse::Error { id: reply, error })) if reply == id => {
-                    return Err(worker_failure(&error, last_host_failure))
+                    let diagnostic = SafeToolDiagnostic::from_worker(&error, last_host_failure);
+                    let message = diagnostic.message().to_owned();
+                    self.safe_failure = Some(diagnostic);
+                    return Err(message);
                 }
                 Ok(Ok(_)) => return Err("扩展返回意外的协议顺序".into()),
                 Ok(Err(e)) => return Err(e),
@@ -1432,12 +1450,14 @@ pub(crate) async fn invoke_tool_for_run(
         Err(_) => return ToolInvocationOutcome::NotSent(NotSentReason::PreparationFailed),
     };
     let sent = Arc::new(AtomicBool::new(false));
+    let safe_failure = Arc::new(Mutex::new(None));
     let dispatch = ToolDispatch {
         descriptor: descriptor.clone(),
         scene_id,
         run_id,
         lease,
         sent: sent.clone(),
+        safe_failure: safe_failure.clone(),
     };
     let mut cancellation = FutureCancellation {
         signal: canceled.clone(),
@@ -1459,13 +1479,17 @@ pub(crate) async fn invoke_tool_for_run(
     cancellation.armed = false;
     match result {
         Ok(Ok(output)) => ToolInvocationOutcome::Responded(output),
-        _ if sent.load(Ordering::SeqCst) => {
-            ToolInvocationOutcome::Unknown(if canceled.load(Ordering::SeqCst) {
+        _ if sent.load(Ordering::SeqCst) => ToolInvocationOutcome::Unknown {
+            reason: if canceled.load(Ordering::SeqCst) {
                 NoResponseReason::Canceled
             } else {
                 NoResponseReason::IncompleteResponse
-            })
-        }
+            },
+            safe_diagnostic: safe_failure
+                .lock()
+                .ok()
+                .and_then(|diagnostic| diagnostic.clone()),
+        },
         _ => ToolInvocationOutcome::NotSent(if canceled.load(Ordering::SeqCst) {
             NotSentReason::RunEnded
         } else {
@@ -1562,6 +1586,7 @@ struct ToolDispatch {
     run_id: String,
     lease: mewu_core::DispatchLease,
     sent: Arc<AtomicBool>,
+    safe_failure: Arc<Mutex<Option<SafeToolDiagnostic>>>,
 }
 fn execute_with_dispatch(
     app: &AppHandle,
@@ -1616,7 +1641,13 @@ fn execute_with_dispatch(
     let _=app.emit_to("space","extension-run-started",json!({"runId":context.run_id,"pluginId":context.record.manifest.id,"serviceId":service_id,"title":registration.title}));
     let id = uuid::Uuid::new_v4().to_string();
     worker.send(&WorkerRequest::Invoke{id:id.clone(),service_id:service_id.into(),input,context:json!({"runId":context.run_id,"sceneId":context.scene_id,"regionId":context.region_id,"agentId":context.scope,"platform":std::env::consts::OS,"history":context.history})})?;
-    worker.receive(app, context, &id, false)
+    let result = worker.receive(app, context, &id, false);
+    if let Some(dispatch) = dispatch {
+        if let Ok(mut diagnostic) = dispatch.safe_failure.lock() {
+            *diagnostic = worker.safe_failure.take();
+        }
+    }
+    result
 }
 
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -2811,6 +2842,59 @@ mod extension_tool_registry_tests {
 #[cfg(test)]
 mod failure_diagnostic_tests {
     use super::*;
+
+    #[test]
+    fn dispatched_tool_unknown_preserves_the_existing_sanitized_host_failure_without_private_error_text(
+    ) {
+        let private =
+            "HTTP 403 Bearer sk-private-test-token C:\\private\\payload.json arbitrary JS stack";
+        let mut region_diagnostic = None;
+        let message = record_region_error(
+            &mut region_diagnostic,
+            region::RegionError {
+                code: "region_target_obscured",
+                message: "操作区域被其他窗口遮挡".into(),
+            },
+        );
+        for failure in [
+            HostCallFailure::from_error("region.observe", &message, region_diagnostic),
+            HostCallFailure::from_error("model.invoke", private, None),
+        ] {
+            let expected = failure.public_message();
+            let diagnostic = SafeToolDiagnostic::from_worker(
+                &ProtocolError {
+                    code: "RUNTIME_ERROR".into(),
+                    message: private.into(),
+                },
+                Some(failure),
+            );
+            let outcome = crate::extension_tools::ToolInvocationOutcome::Unknown {
+                reason: mewu_core::NoResponseReason::IncompleteResponse,
+                safe_diagnostic: Some(diagnostic),
+            };
+            let public = outcome.diagnostic().unwrap();
+            assert!(public.contains("RUNTIME_ERROR"));
+            assert!(public.contains(&expected));
+            for secret in [
+                "HTTP 403",
+                "Bearer",
+                "sk-private-test-token",
+                "C:\\private",
+                "payload.json",
+                "JS stack",
+            ] {
+                assert!(!public.contains(secret));
+            }
+            assert!(public.len() <= 512);
+            assert!(matches!(
+                outcome,
+                crate::extension_tools::ToolInvocationOutcome::Unknown {
+                    reason: mewu_core::NoResponseReason::IncompleteResponse,
+                    ..
+                }
+            ));
+        }
+    }
 
     #[test]
     fn unavailable_region_stop_key_keeps_its_exact_typed_failure() {

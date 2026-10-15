@@ -24,8 +24,26 @@ pub(crate) struct ToolDescriptor {
 
 pub(crate) enum ToolInvocationOutcome {
     NotSent(NotSentReason),
-    Unknown(NoResponseReason),
+    Unknown {
+        reason: NoResponseReason,
+        safe_diagnostic: Option<crate::extension_host::SafeToolDiagnostic>,
+    },
     Responded(Value),
+}
+impl ToolInvocationOutcome {
+    pub(crate) fn diagnostic(&self) -> Option<String> {
+        match self {
+            Self::Unknown {
+                safe_diagnostic, ..
+            } => Some(
+                safe_diagnostic
+                    .as_ref()
+                    .map(|diagnostic| diagnostic.message().to_owned())
+                    .unwrap_or_else(|| "扩展工具执行未确认 [TOOL_RESULT_UNKNOWN]".into()),
+            ),
+            _ => None,
+        }
+    }
 }
 
 impl ToolDescriptor {
@@ -183,9 +201,10 @@ pub(crate) async fn execute_recorded(
         ToolInvocationOutcome::Responded(value) => {
             let body = serde_json::to_string(&value).map_err(|_| "扩展工具结果无效")?;
             if body.len() > journal_runtime::MAX_TOOL_OUTPUT {
-                Err(ToolInvocationOutcome::Unknown(
-                    NoResponseReason::ProtocolInvalid,
-                ))
+                Err(ToolInvocationOutcome::Unknown {
+                    reason: NoResponseReason::ProtocolInvalid,
+                    safe_diagnostic: None,
+                })
             } else {
                 Ok(mewu_core::ObservedToolResult {
                     response_kind: mewu_core::ToolResponseKind::Complete,
@@ -210,6 +229,12 @@ pub(crate) async fn execute_recorded(
     let mut engine = host.lock()?;
     // Commit exact late observations before checking whether another operation
     // is allowed. Canceling does not erase a completed external side effect.
+    // A public diagnostic is not a confirmed tool reply. Commit the real
+    // Unknown receipt before surfacing it and never feed it back for a retry.
+    let stop_diagnostic = observation
+        .as_ref()
+        .err()
+        .and_then(ToolInvocationOutcome::diagnostic);
     let (commit, content) = match observation {
         Ok(result) => {
             let content = result.model_visible_json.clone();
@@ -228,7 +253,7 @@ pub(crate) async fn execute_recorded(
                 .map_err(journal_runtime::store_error)?,
             None,
         ),
-        Err(ToolInvocationOutcome::Unknown(reason)) => (
+        Err(ToolInvocationOutcome::Unknown { reason, .. }) => (
             engine
                 .store
                 .record_request_unknown(&lease, reason)
@@ -246,12 +271,36 @@ pub(crate) async fn execute_recorded(
     }
     content
         .map(|model_json| journal_runtime::CommittedToolOutput { model_json })
-        .ok_or_else(|| "扩展工具处理已停止".into())
+        .ok_or_else(|| stop_diagnostic.unwrap_or_else(|| "扩展工具处理已停止".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_worker_diagnostic_keeps_an_explicit_unknown_stage_without_a_fake_reply() {
+        let outcome = ToolInvocationOutcome::Unknown {
+            reason: NoResponseReason::IncompleteResponse,
+            safe_diagnostic: None,
+        };
+        assert_eq!(
+            outcome.diagnostic().as_deref(),
+            Some("扩展工具执行未确认 [TOOL_RESULT_UNKNOWN]")
+        );
+        assert!(matches!(
+            outcome,
+            ToolInvocationOutcome::Unknown {
+                reason: NoResponseReason::IncompleteResponse,
+                ..
+            }
+        ));
+        assert!(
+            ToolInvocationOutcome::Responded(json!({"content":"own result"}))
+                .diagnostic()
+                .is_none()
+        );
+    }
 
     fn descriptor(id: &str, requires_region: bool) -> ToolDescriptor {
         ToolDescriptor {
