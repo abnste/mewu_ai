@@ -464,8 +464,18 @@ pub(crate) fn supervise(config:PrepareConfig,
             feed_audio_to(&mut codec,&mut pending,(index+1)*3200,&mut pulse_block,&||Instant::now()<expires).unwrap();
             codec.push_rgba([20,120,220,255].repeat(64*48),&||Instant::now()<expires).unwrap();
         }
-        assert_eq!(codec.pcm_frames(),19*48000);
         let finish_deadline=(Instant::now()+Duration::from_secs(10)).min(expires);
+        codec.begin_finalization(finish_deadline,&||Instant::now()<finish_deadline).unwrap();
+        // Match the production stop protocol: appsrc backpressure can defer
+        // PCM even after the last video push. Close video before feeding its
+        // final PCM budget; do not assert a scheduling-dependent queue state.
+        codec.begin_video_eos(&||Instant::now()<finish_deadline).unwrap();
+        let drain_deadline=(Instant::now()+Duration::from_secs(1)).min(finish_deadline);
+        while codec.pcm_frames()<19*48000 {
+            feed_audio_to(&mut codec,&mut pending,19*48000,&mut pulse_block,&||Instant::now()<drain_deadline).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(codec.pcm_frames(),19*48000);
         assert_eq!(codec.finish(&||Instant::now()<finish_deadline).unwrap(),285);
         std::fs::copy(&output,"/tmp/last-recording-wall-pause-19s.mp4").unwrap();
         std::fs::remove_file(output).unwrap();
