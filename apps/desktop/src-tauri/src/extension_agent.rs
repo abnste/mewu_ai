@@ -27,7 +27,7 @@ pub(crate) async fn start_external_run(
     };
     let attachments = crate::prepare_scene_attachments(scene.clone(), host.assets.clone()).await?;
     let authority = provider.authority.clone();
-    let (context, snapshot, receiver, chat_region) = {
+    let (context, snapshot, receiver, chat_region, model_connection) = {
         let mut engine = host.lock()?;
         host.exit.ensure_new_operation()?;
         crate::recording::ensure_idle(&app)?;
@@ -39,6 +39,18 @@ pub(crate) async fn start_external_run(
         if let Some(prepared) = &prepared_region {
             prepared.check_source(&scene, &engine.store.snapshot().active_scene_id)?;
         }
+        // Optional host-model identity is accepted with this run, without
+        // requiring a configured model or a credential for independent Agents.
+        let model_connection = if scene.connection_id.is_some() {
+            Some(
+                engine
+                    .store
+                    .connection_for_scene(&scene_id)
+                    .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
         let context = engine
             .store
             .begin_external_run(
@@ -60,7 +72,7 @@ pub(crate) async fn start_external_run(
         let chat_region = prepared_region
             .map(|prepared| prepared.bind(context.run_id.clone(), authority.canceled.clone()));
         let snapshot = engine.store.snapshot();
-        (context, snapshot, receiver, chat_region)
+        (context, snapshot, receiver, chat_region, model_connection)
     };
     let started = crate::publish(&app, &snapshot);
     let app2 = app.clone();
@@ -133,6 +145,7 @@ pub(crate) async fn start_external_run(
                 scene_id.clone(),
                 run_id.clone(),
                 chat_region.clone(),
+                model_connection,
                 json!({"task":query,"request":body}),
             )
             .await?;

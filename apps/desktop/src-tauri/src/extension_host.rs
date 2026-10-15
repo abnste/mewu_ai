@@ -765,6 +765,7 @@ struct Context {
     region: Option<Arc<region::RegionSession>>,
     chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
     native_run: Option<(String, String)>,
+    model_connection: Option<mewu_core::ConnectionProfile>,
     tool_preparing: bool,
     #[cfg(windows)]
     escape: crate::extension_escape::RunEscapeLease,
@@ -817,6 +818,12 @@ impl Context {
         }
         if let Some(scene_id) = &self.scene_id {
             let engine = host.lock()?;
+            guard_model_connection(
+                &engine.store,
+                scene_id,
+                self.model_connection.as_ref(),
+                &self.canceled,
+            )?;
             if self
                 .native_run
                 .as_ref()
@@ -891,6 +898,7 @@ fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
         region: None,
         chat_region: None,
         native_run: None,
+        model_connection: None,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
@@ -978,6 +986,7 @@ pub async fn invoke_extension(
         region: None,
         chat_region: None,
         native_run: None,
+        model_connection: None,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return,
@@ -1246,6 +1255,7 @@ pub async fn run_bound_service(
         region: None,
         chat_region: None,
         native_run: None,
+        model_connection: None,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
@@ -1392,6 +1402,7 @@ pub(crate) async fn invoke_tool_for_run(
             region: None,
             chat_region,
             native_run: Some((scene_id.clone(), run_id.clone())),
+            model_connection: None,
             tool_preparing: true,
             #[cfg(windows)]
             escape: crate::extension_escape::RunEscapeLease::default(),
@@ -1469,6 +1480,7 @@ pub(crate) async fn run_external_agent(
     scene_id: String,
     run_id: String,
     chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
+    model_connection: Option<mewu_core::ConnectionProfile>,
     input: Value,
 ) -> Result<ExternalAgentResult, String> {
     let authority = &provider.authority;
@@ -1504,6 +1516,7 @@ pub(crate) async fn run_external_agent(
         region: None,
         chat_region,
         native_run: Some((scene_id, run_id)),
+        model_connection,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
@@ -1775,7 +1788,8 @@ fn bridge_impl(
                 scope: context.scope.clone(),
                 region: None,
                 chat_region: None,
-                native_run: None,
+                native_run: context.native_run.clone(),
+                model_connection: context.model_connection.clone(),
                 tool_preparing: false,
                 #[cfg(windows)]
                 focus_return: None,
@@ -1907,6 +1921,32 @@ fn bridge_impl(
     context.check(app)?;
     result
 }
+// External Agent persistence intentionally has no fabricated model origin. An
+// optional real host-model choice is therefore retained only in this native
+// invocation and revoked through the existing shared cancellation signal.
+fn guard_model_connection(
+    store: &mewu_core::Store,
+    scene_id: &str,
+    expected: Option<&mewu_core::ConnectionProfile>,
+    canceled: &AtomicBool,
+) -> Result<(), String> {
+    if let Some(expected) = expected {
+        if store.connection_for_scene(scene_id).as_ref().ok() != Some(expected) {
+            canceled.store(true, Ordering::SeqCst);
+            return Err("本轮模型连接已更改，请重新发送".into());
+        }
+    }
+    Ok(())
+}
+
+fn model_canonical_body(
+    connection: &mewu_core::ConnectionProfile,
+    messages: Vec<Value>,
+) -> Result<Value, String> {
+    let mut body = json!({"model":connection.model,"messages":messages,"stream":true});
+    crate::connection_host::apply_parameters(&mut body, connection)?;
+    Ok(body)
+}
 fn model_invoke(app: &AppHandle, context: &Context, params: Value) -> Result<Value, String> {
     let scene_id = context
         .scene_id
@@ -1915,10 +1955,20 @@ fn model_invoke(app: &AppHandle, context: &Context, params: Value) -> Result<Val
     let host = app.state::<Host>();
     let connection = {
         let engine = host.lock()?;
-        engine
-            .store
-            .connection_for_scene(scene_id)
-            .map_err(|e| e.to_string())?
+        guard_model_connection(
+            &engine.store,
+            scene_id,
+            context.model_connection.as_ref(),
+            &context.canceled,
+        )?;
+        if let Some(connection) = &context.model_connection {
+            connection.clone()
+        } else {
+            engine
+                .store
+                .connection_for_scene(scene_id)
+                .map_err(|e| e.to_string())?
+        }
     };
     let transport = crate::connection_host::transport_for(&connection)?;
     let key = if connection.advanced.auth_mode == mewu_core::ConnectionAuthMode::None {
@@ -1972,7 +2022,7 @@ fn model_invoke(app: &AppHandle, context: &Context, params: Value) -> Result<Val
         content.push(json!({"type":"image_url","image_url":{"url":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(&frame.png))}}));
     }
     messages.push(json!({"role":"user","content":content}));
-    let canonical = json!({"model":connection.model,"messages":messages,"stream":true});
+    let canonical = model_canonical_body(&connection, messages)?;
     let body = crate::provider_transport::request_body(transport.protocol, canonical)?;
     tauri::async_runtime::block_on(async {
         context.check(app)?;
@@ -2141,10 +2191,13 @@ impl region::RegionOverlayHooks for OverlayHooks {
             .iter()
             .find(|r| r.id == binding.region_id)
             .ok_or("选区已删除")?;
-        if mewu_core::RegionGeometry::from(selection) != binding.selection
-            || selection.drawing_revision != binding.drawing_revision
-            || selection.image_override.is_some()
-        {
+        if !crate::extension_chat_region::selection_matches(
+            selection,
+            &binding.region_id,
+            binding.selection,
+            binding.drawing_revision,
+            self.chat_region.is_some(),
+        ) {
             return Err("选区已变化".into());
         }
         Ok(())
@@ -2519,6 +2572,143 @@ fn begin_region_inner(
 #[cfg(test)]
 mod extension_tool_registry_tests {
     use super::*;
+    fn external_model_run(
+        connection: bool,
+    ) -> (
+        mewu_core::Store,
+        String,
+        String,
+        mewu_core::ConnectionProfile,
+    ) {
+        let mut store = mewu_core::Store::open_in_memory().unwrap();
+        let scene = store.snapshot().active_scene_id;
+        let profile = mewu_core::ConnectionProfile {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "own MiniMax test".into(),
+            provider_id: "minimax".into(),
+            base_url: "https://example.invalid/v1".into(),
+            model: "MiniMax-M3.1-Flash-Preview".into(),
+            has_key: false,
+            credential_id: None,
+            revision: 1,
+            advanced: Default::default(),
+        };
+        store
+            .save_connection_profile(profile.clone(), None)
+            .unwrap();
+        store
+            .apply(mewu_core::SceneCommand::SetSceneConnection {
+                scene_id: scene.clone(),
+                connection_id: connection.then(|| profile.id.clone()),
+            })
+            .unwrap();
+        store
+            .apply(mewu_core::SceneCommand::SetDraft {
+                scene_id: scene.clone(),
+                draft: "own independent task".into(),
+            })
+            .unwrap();
+        let context = store
+            .begin_external_run(
+                &scene,
+                mewu_core::ExternalRunOrigin {
+                    plugin_id: "community.own-agent".into(),
+                    service_id: "agent".into(),
+                    revision: 1,
+                    sha256: "ab".repeat(32),
+                },
+            )
+            .unwrap();
+        (store, scene, context.run_id, profile)
+    }
+    #[test]
+    fn external_agent_rejects_an_actual_selected_profile_revision_change_with_shared_cancellation()
+    {
+        let (mut store, scene, run_id, profile) = external_model_run(true);
+        let canceled = AtomicBool::new(false);
+        assert!(guard_model_connection(&store, &scene, Some(&profile), &canceled).is_ok());
+        let mut revised = profile.clone();
+        revised.revision += 1;
+        revised.model = "another-model".into();
+        store
+            .save_connection_profile(revised, Some(profile.revision))
+            .unwrap();
+        // External provenance deliberately remains independent from host-model
+        // provenance, so core's connection-linked cancellation does not apply.
+        assert!(store.run_is_active(&scene, &run_id));
+        assert!(store
+            .scene(&scene)
+            .unwrap()
+            .run
+            .as_ref()
+            .unwrap()
+            .connection_id
+            .is_none());
+        assert!(guard_model_connection(&store, &scene, Some(&profile), &canceled).is_err());
+        assert!(canceled.load(Ordering::SeqCst));
+        // The external Agent finalizer already settles a revoked shared lease
+        // through this normal Store API, never by forging a model-backed run.
+        store.cancel_run(&scene).unwrap();
+        assert!(!store.run_is_active(&scene, &run_id));
+    }
+    #[test]
+    fn keyless_external_agent_keeps_running_without_inventing_a_host_model_grant() {
+        let (mut store, scene, run_id, profile) = external_model_run(false);
+        let canceled = AtomicBool::new(false);
+        assert!(guard_model_connection(&store, &scene, None, &canceled).is_ok());
+        assert!(matches!(
+            store.connection_for_scene(&scene),
+            Err(mewu_core::CoreError::ConnectionUnselected)
+        ));
+        let mut revised = profile.clone();
+        revised.revision += 1;
+        revised.model = "unrelated-host-model".into();
+        store
+            .save_connection_profile(revised, Some(profile.revision))
+            .unwrap();
+        assert!(guard_model_connection(&store, &scene, None, &canceled).is_ok());
+        assert!(!canceled.load(Ordering::SeqCst));
+        assert!(store.run_is_active(&scene, &run_id));
+        store
+            .finish_run(&scene, &run_id, "own provider answer")
+            .unwrap();
+    }
+    #[test]
+    fn plugin_model_requests_use_the_selected_connections_actual_generation_parameters() {
+        let mut connection = mewu_core::ConnectionProfile {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "test".into(),
+            provider_id: "openai-compatible".into(),
+            base_url: "https://example.invalid/v1".into(),
+            model: "configured-model".into(),
+            has_key: false,
+            credential_id: None,
+            revision: 1,
+            advanced: Default::default(),
+        };
+        connection.advanced.request_parameters = mewu_core::ConnectionParameters {
+            temperature: Some(0.42),
+            top_p: Some(0.85),
+            service_tier: Some(mewu_core::ConnectionServiceTier::Priority),
+        };
+        let messages = vec![json!({"role":"user","content":[{"type":"text","text":"own test"}]})];
+        let canonical = model_canonical_body(&connection, messages.clone()).unwrap();
+        let body = crate::provider_transport::request_body(connection.advanced.protocol, canonical)
+            .unwrap();
+        assert_eq!(body["temperature"], json!(0.42));
+        assert_eq!(body["top_p"], json!(0.85));
+        assert_eq!(body["service_tier"], json!("priority"));
+        assert_eq!(body["model"], json!(connection.model));
+        assert_eq!(body["messages"], json!(messages));
+        assert_eq!(body["stream"], json!(true));
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+        connection.advanced.request_parameters = Default::default();
+        let default = model_canonical_body(&connection, vec![]).unwrap();
+        for parameter in ["temperature", "top_p", "service_tier"] {
+            assert!(default.get(parameter).is_none());
+        }
+    }
     #[test]
     fn tool_activation_cannot_perform_side_effects_before_the_dispatch_receipt() {
         for method in ["storage.get", "storage.list", "services.list"] {

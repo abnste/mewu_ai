@@ -9,6 +9,22 @@ use std::sync::{
 };
 use tauri::{AppHandle, Manager};
 
+/// Ink is an editable Mewu overlay, not a change to the authorized OS capture
+/// or coordinate transform. Legacy standalone commands retain their original
+/// strict revision fence; a chat may append annotations and use a region tool.
+pub(crate) fn selection_matches(
+    actual: &Region,
+    id: &str,
+    geometry: RegionGeometry,
+    revision: u64,
+    chat_run: bool,
+) -> bool {
+    actual.id == id
+        && RegionGeometry::from(actual) == geometry
+        && actual.image_override.is_none()
+        && (chat_run || actual.drawing_revision == revision)
+}
+
 #[derive(Clone)]
 pub(crate) struct PreparedChatRegion {
     scene_id: String,
@@ -96,10 +112,13 @@ impl PreparedChatRegion {
                 .iter()
                 .any(|r| r.kind == ReferenceKind::Region && r.id == self.selection.id)
             || !scene.regions.iter().any(|r| {
-                r.id == self.selection.id
-                    && RegionGeometry::from(r) == RegionGeometry::from(&self.selection)
-                    && r.drawing_revision == self.selection.drawing_revision
-                    && r.image_override.is_none()
+                selection_matches(
+                    r,
+                    &self.selection.id,
+                    RegionGeometry::from(&self.selection),
+                    self.selection.drawing_revision,
+                    true,
+                )
             })
         {
             return Err("本次会话的操作选区或截图来源已变化".into());
@@ -327,7 +346,7 @@ mod tests {
         }
     }
     #[test]
-    fn an_existing_grant_rejects_retarget_close_freeze_source_and_revision_changes() {
+    fn an_existing_grant_rejects_retarget_close_freeze_source_geometry_and_replacement() {
         let original = scene();
         let prepared = PreparedChatRegion::capture_source(&original, &original.id, Some("roi"))
             .unwrap()
@@ -343,7 +362,7 @@ mod tests {
                 3 => scene.background.as_mut().unwrap().id = "new-capture".into(),
                 4 => scene.background.as_mut().unwrap().path = "replacement.png".into(),
                 5 => scene.regions[0].x += 1.,
-                6 => scene.regions[0].drawing_revision += 1,
+                6 => scene.regions[0].image_override = scene.background.clone(),
                 _ => scene.refs.clear(),
             }
             assert!(prepared.check_source(&scene, &scene.id).is_err());
@@ -413,5 +432,193 @@ mod tests {
         engine.store.cancel_run(&id).unwrap();
         assert!(scope.check_engine(&engine).is_err());
         assert!(!scope.cancel_token().load(Ordering::SeqCst));
+    }
+    #[test]
+    fn actual_visual_annotation_commit_keeps_chat_capture_grant_but_not_legacy_ink_revision() {
+        use mewu_core::*;
+        use sha2::Digest as _;
+        let hash = |text: &str| format!("{:x}", sha2::Sha256::digest(text.as_bytes()));
+        let uid = || uuid::Uuid::new_v4().to_string();
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.snapshot().active_scene_id;
+        let mut template = scene();
+        template.background.as_mut().unwrap().id = uid();
+        template.regions[0].id = uid();
+        let region_id = template.regions[0].id.clone();
+        store
+            .set_background(&id, template.background.clone().unwrap())
+            .unwrap();
+        store
+            .apply(SceneCommand::AddRegion {
+                scene_id: id.clone(),
+                region: template.regions[0].clone(),
+            })
+            .unwrap();
+        store
+            .apply(SceneCommand::SetRefs {
+                scene_id: id.clone(),
+                refs: vec![Reference {
+                    kind: ReferenceKind::Region,
+                    id: region_id.clone(),
+                }],
+            })
+            .unwrap();
+        store
+            .apply(SceneCommand::SetDraft {
+                scene_id: id.clone(),
+                draft: "annotate and answer".into(),
+            })
+            .unwrap();
+        let prepared =
+            PreparedChatRegion::capture_source(store.scene(&id).unwrap(), &id, Some(&region_id))
+                .unwrap()
+                .unwrap();
+        let run = store.begin_run(&id).unwrap();
+        let asset = Asset {
+            id: uid(),
+            name: "own-input.png".into(),
+            kind: AssetKind::Image,
+            path: "own-input.png".into(),
+            width: Some(400),
+            height: Some(300),
+            origin_x: None,
+            origin_y: None,
+            scale_factor: None,
+            capture_coordinates: None,
+        };
+        let handle = uid();
+        let input = VerifiedVisualInput::new(VisualInputManifest {
+            version: 1,
+            targets: vec![VisualInputTarget {
+                handle: handle.clone(),
+                attachment_id: asset.id.clone(),
+                attachment_ordinal: 0,
+                attachment_sha256: hash("own fixture"),
+                region_id: region_id.clone(),
+                source: visual_source_fence(run.background.as_ref().unwrap(), &run.regions[0])
+                    .unwrap(),
+                crop: VisualPixelRect {
+                    x: 20,
+                    y: 30,
+                    width: 400,
+                    height: 300,
+                },
+                resized: VisualPixelSize {
+                    width: 400,
+                    height: 300,
+                },
+                tile: VisualPixelRect {
+                    x: 0,
+                    y: 0,
+                    width: 400,
+                    height: 300,
+                },
+                encoded: VisualPixelSize {
+                    width: 400,
+                    height: 300,
+                },
+                profile_id: "encoded-pixels-best-effort-v1".into(),
+            }],
+        })
+        .unwrap();
+        let grant = VisualAnnotationGrant {
+            plugin_id: "mewu.annotations".into(),
+            plugin_revision: 1,
+            contribution_id: "answer".into(),
+        };
+        let authority = VerifiedVisualAuthority::new(grant.clone(), input.sha256().into()).unwrap();
+        store
+            .attach_run_visual_assets(&id, &run.run_id, vec![asset], grant.clone(), input.clone())
+            .unwrap();
+        let request = store
+            .begin_model_request(
+                &id,
+                &run.run_id,
+                ModelDispatchInput {
+                    round: 0,
+                    projected_request_sha256: hash("request"),
+                },
+            )
+            .unwrap();
+        let lease = store
+            .record_model_turn(
+                &request,
+                CompletePublicTurn {
+                    text: String::new(),
+                    calls: vec![ProposedTool {
+                        call_id: uid(),
+                        binding: grant.binding(input.sha256()),
+                        arguments_wire_sha256: hash("arguments"),
+                    }],
+                },
+            )
+            .unwrap()
+            .tools
+            .remove(0)
+            .lease;
+        store
+            .apply_visual_annotations_with_rich_receipt(
+                &lease,
+                &authority,
+                VisualAppendBatch {
+                    groups: vec![VisualAppendGroup {
+                        target_handle: handle,
+                        drawings: vec![Drawing {
+                            id: uid(),
+                            kind: DrawingKind::Line,
+                            color: "#ee4848".into(),
+                            stroke_width: 3.,
+                            points: vec![
+                                DrawingPoint { x: 50., y: 60. },
+                                DrawingPoint { x: 100., y: 100. },
+                            ],
+                            text: None,
+                            font_size: None,
+                            origin: None,
+                            rich: None,
+                        }],
+                    }],
+                },
+                vec![],
+            )
+            .unwrap();
+        let scene = store.scene(&id).unwrap();
+        let current = &scene.regions[0];
+        assert!(current.drawing_revision > prepared.selection.drawing_revision);
+        assert!(store.run_is_active(&id, &run.run_id));
+        assert!(prepared.check_source(scene, &id).is_ok());
+        let geometry = RegionGeometry::from(&prepared.selection);
+        assert!(selection_matches(
+            current,
+            &region_id,
+            geometry,
+            prepared.selection.drawing_revision,
+            true
+        ));
+        assert!(!selection_matches(
+            current,
+            &region_id,
+            geometry,
+            prepared.selection.drawing_revision,
+            false
+        ));
+        let mut moved = current.clone();
+        moved.x += 1.;
+        assert!(!selection_matches(
+            &moved,
+            &region_id,
+            geometry,
+            prepared.selection.drawing_revision,
+            true
+        ));
+        let mut replaced = current.clone();
+        replaced.image_override = scene.background.clone();
+        assert!(!selection_matches(
+            &replaced,
+            &region_id,
+            geometry,
+            prepared.selection.drawing_revision,
+            true
+        ));
     }
 }
