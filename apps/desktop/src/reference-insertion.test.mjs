@@ -14,7 +14,7 @@ const effect=find(parse(component,options),n=>n.type==='CallExpression'&&n.calle
 function fixture(){
  let request,changed=0,focused=0;
  const input={value:'比较前后',selectionStart:2,selectionEnd:2,setRangeText(text,start,end){this.value=this.value.slice(0,start)+text+this.value.slice(end);this.selectionStart=this.selectionEnd=start+text.length;},focus(){focused++;}};
- const context=vm.createContext({input,setReferenceInsertion:update=>{request=update(request);},referenceLabel:ref=>ref.kind==='region'?'图片1':'录屏.mp4',setHidden:()=>{},queueMicrotask:fn=>fn(),on:(dep,fn)=>()=>fn(dep()),createEffect:fn=>fn(),props:{scene:{id:'scene'},get referenceInsertion(){return request;},onDraft:()=>changed++}});
+ const context=vm.createContext({input,lastPointer:{x:0,y:0},focusAnchor:undefined,reveal:focus=>{if(focus)input.focus();},setReferenceInsertion:update=>{request=update(request);},referenceLabel:ref=>ref.kind==='region'?'图片1':'录屏.mp4',setHidden:()=>{},queueMicrotask:fn=>fn(),on:(dep,fn)=>()=>fn(dep()),createEffect:fn=>fn(),props:{scene:{id:'scene'},get referenceInsertion(){return request;},onDraft:()=>changed++}});
  context.props.onReferenceInserted=vm.runInContext(ts(app.slice(ack.start,ack.end)),context);
  const mount=()=>vm.runInContext(ts(component.slice(effect.start,effect.end)),context);
  return {input,mount,context,get changed(){return changed;},get focused(){return focused;},get request(){return request;},set request(value){request=value;}};

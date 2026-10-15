@@ -442,6 +442,22 @@ export async function previewDrawingCommand(command:DrawingCommand):Promise<Snap
     if(!step)return clone();
     if('batch' in step){for(const edit of redo?step.batch:[...step.batch].reverse())apply(edit,redo);}else apply(step,redo);
     destination.push(step);
+  }else if(command.type==='erase_drawing_strokes'){
+    if(!command.erasures.length||command.erasures.length>256)throw Error('擦除批次无效');
+    const seen=new Set<string>(),ids=new Set(drawings.map(d=>d.id)),batch:DrawingEdit[]=[],source=region.imageOverride??scene.background;
+    const operations=command.erasures.map(erase=>{
+      if(seen.has(erase.drawingId)||erase.fragments.length>256)throw Error('擦除笔迹重复或片段过多');seen.add(erase.drawingId);
+      const index=drawings.findIndex(d=>d.id===erase.drawingId),old=drawings[index];
+      if(!old||!['pen','highlighter','line'].includes(old.kind))throw Error('像素橡皮只处理画笔、荧光笔和直线');
+      const values=erase.fragments.map((part,i)=>{
+        if(i===0?part.id!==old.id:ids.has(part.id))throw Error('笔迹片段标识重复');ids.add(part.id);
+        if(!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(part.id)||!part.points.length||part.points.length>4096||old.kind==='line'&&(part.points.length!==2||part.points[0].x===part.points[1].x&&part.points[0].y===part.points[1].y)||part.points.some(p=>![p.x,p.y].every(Number.isFinite)||p.x<0||p.y<0||p.x>(source?.width??0)||p.y>(source?.height??0)))throw Error('笔迹片段无效');
+        return {...structuredClone(old),id:part.id,points:structuredClone(part.points)};
+      });return {index,old,values};
+    }).sort((a,b)=>b.index-a.index);
+    for(const {index,old,values} of operations){if(values.length===1&&JSON.stringify(values[0])===JSON.stringify(old))continue;batch.push({index,before:structuredClone(old),after:null});for(let i=0;i<values.length;i++)batch.push({index:index+i,before:null,after:values[i]});}
+    if(!batch.length)return clone();
+    for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];if(history.undo.length>128)history.undo.shift();
   }else if(command.type==='update_drawings'){
     const batch=command.drawings.map(drawing=>{const index=drawings.findIndex(d=>d.id===drawing.id);if(index<0)throw Error('绘制对象不存在');return {index,before:structuredClone(drawings[index]),after:structuredClone(drawing)};});
     for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];

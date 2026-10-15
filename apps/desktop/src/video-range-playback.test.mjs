@@ -17,7 +17,7 @@ async function load(name) {
 const { VideoPlayback } = await import(await load('video-media'));
 const { VideoAnnotationPlaybackHold } = await import(await load('video-annotation-playback'));
 const annotations = await import(await load('video-annotations'));
-const { TrimCanceled } = await import(await load('video-trim'));
+const { TrimCanceled, VideoTrimGesture, positionFromClient } = await import(await load('video-trim'));
 const T = 10_000_000;
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -61,6 +61,88 @@ function animations() {
   globalThis.cancelAnimationFrame = id => frames.delete(id);
   return { frames, run() { const [id, callback] = frames.entries().next().value; frames.delete(id); callback(0); }, restore() { [globalThis.requestAnimationFrame, globalThis.cancelAnimationFrame] = saved; } };
 }
+
+test('a newer scrub supersedes an unfinished seek immediately without waiting for its old timeout', async () => {
+  const f = fixture();
+  try {
+    f.player.seek(3 * T); await turn(); assert.deepEqual(f.node.assignments, [3]);
+    // The old decoder never emits seeked. The pointer is still moving and the
+    // final intent must replace it, not wait behind an eight-second timeout.
+    f.player.seek(5 * T); f.player.seek(6 * T); await turn();
+    assert.equal(f.node.assignments.at(-1), 6);
+    f.node.finishSeek(); await f.player.seeks.flush();
+    assert.equal(f.positions.at(-1), 6 * T); assert.deepEqual(f.errors, []);
+  } finally { f.player.dispose(); await turn(); }
+});
+
+test('a superseded seek cannot publish an old result, but a current native media failure stays visible', async () => {
+  const f = fixture();
+  try {
+    f.player.seek(3 * T); await turn(); f.player.seek(5 * T); await turn();
+    // A queued old event cannot acknowledge a different requested position.
+    f.node.finishSeek(3); await turn();
+    assert.equal(f.positions.includes(5 * T), false);
+    f.node.error = { code: 3 }; f.node.dispatchEvent(new Event('error'));
+    await assert.rejects(f.player.seeks.flush(), /无法定位视频/);
+    assert.ok(f.errors.some(error => /无法定位视频/.test(error.message)));
+  } finally { f.player.dispose(); await turn(); }
+});
+
+test('a seek clamps only the requested source endpoint to the actual finite media duration', async () => {
+  class DurationMedia extends Media {
+    duration = 7.94;
+    finishSeek(actual = Math.min(this.time, this.duration)) { super.finishSeek(actual); }
+  }
+  const node = new DurationMedia(), errors = [];
+  const player = new VideoPlayback(node, { identity: () => 'source', range: () => ({ startTicks: 0, endTicks: 8 * T }), position() {}, playing() {}, error: error => errors.push(error) });
+  try {
+    player.seek(8 * T); await turn();
+    assert.equal(node.assignments.at(-1), node.duration);
+    node.finishSeek(); await player.seeks.flush(); assert.deepEqual(errors, []);
+  } finally { player.dispose(); await turn(); }
+});
+
+test('100ns source endpoints tolerate browser double rounding without changing trim authority', async () => {
+  const sourceTicks = 1_070_079_792;
+  for (const seconds of [107.0079792, 107.00797919999999, 107.00797924999999]) {
+    class BrowserMedia extends Media {
+      duration = seconds;
+      get currentTime() { return this.time; }
+      set currentTime(value) { super.currentTime = Math.min(value, this.duration); }
+    }
+    const node = new BrowserMedia(), errors = [], range = { startTicks: 0, endTicks: sourceTicks };
+    const player = new VideoPlayback(node, { identity: () => 'source', range: () => range, position() {}, playing() {}, error: error => errors.push(error) });
+    try {
+      player.seek(sourceTicks); await turn(); node.finishSeek(); await player.seeks.flush();
+      assert.ok(Math.abs(node.currentTime - sourceTicks / T) < 1 / T);
+      assert.deepEqual(range, { startTicks: 0, endTicks: sourceTicks }); assert.deepEqual(errors, []);
+    } finally { player.dispose(); await turn(); }
+  }
+});
+
+test('the actual trim pointerup consumes its final coordinate before one range commit and capture release', async () => {
+  const source = await readFile(new URL('./components/VideoTrimBar.tsx', import.meta.url), 'utf8');
+  const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] }); let handler;
+  const visit = node => { if (!node || typeof node !== 'object') return; if (node.type === 'FunctionDeclaration' && node.id?.name === 'pointerDown') handler = node; for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(visit); else if (value && typeof value === 'object') visit(value); };
+  visit(ast); assert.ok(handler);
+  let authority = { identity: 'owned', durationTicks: 100 * T, revision: 0, range: null, editable: true }, view, position = 0, commits = 0;
+  const controller = new VideoTrimGesture({ current: () => authority, position: () => position, playing: () => false, pause() {}, seek: value => { position = value; }, resume() {}, changed: value => { view = value; }, error: error => { throw error; }, commit: async edit => { commits++; authority = { ...authority, revision: authority.revision + 1, range: edit.to }; return { ...authority }; } });
+  class Thumb extends EventTarget {
+    capture = false; focus() {} setPointerCapture() { this.capture = true; }
+    hasPointerCapture() { return this.capture; } releasePointerCapture() { this.capture = false; this.dispatchEvent(Object.assign(new Event('lostpointercapture'), { pointerId: 3 })); }
+  }
+  const thumb = new Thumb(), rail = { getBoundingClientRect: () => ({ left: 10, width: 100 }) };
+  const context = { disabled: () => false, canEdit: () => true, controller, rail, state: () => authority, range: () => view.range, position: () => position, positionFromClient, stopPointer: undefined };
+  vm.createContext(context); vm.runInContext(stripTypeScriptTypes(source.slice(handler.start, handler.end), { mode: 'transform' }), context);
+  context.pointerDown({ button: 0, pointerId: 3, clientX: 110, currentTarget: thumb, preventDefault() {}, stopPropagation() {} }, 'end');
+  const event = (type, clientX) => Object.assign(new Event(type, { cancelable: true }), { pointerId: 3, clientX });
+  thumb.dispatchEvent(event('pointermove', 50)); assert.equal(view.range.endTicks, 40 * T);
+  thumb.dispatchEvent(event('pointerup', 80)); await turn();
+  assert.equal(commits, 1); assert.equal(authority.range.endTicks, 70 * T); assert.equal(position, 70 * T);
+  assert.equal(thumb.capture, false); assert.equal(controller.isInteracting(), false);
+  thumb.dispatchEvent(event('pointerup', 90)); await turn(); assert.equal(commits, 1);
+  controller.dispose();
+});
 
 test('an explicit pause synchronizes observed native pause before queued events, including an already paused trim boundary', async () => {
   for (const phase of ['queued-event', 'already-paused', 'trim-boundary']) {
@@ -462,6 +544,30 @@ async function eosFixture(emptyOrder = 'sync') {
   context.playback = player;
   return { node, player, errors, positions, get range() { return range; }, set range(value) { range = value; }, set source(value) { source = value; }, close() { player.dispose(); node.removeEventListener('loadedmetadata', metadata); } };
 }
+
+test('the actual trim scrub handler keeps one EOS preparation through repeated pointer updates', async () => {
+  const source = await readFile(new URL('./components/VideoArtifact.tsx', import.meta.url), 'utf8');
+  const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
+  let handler;
+  const visit = node => {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'JSXAttribute' && node.name.name === 'onSeek') handler = node.value.expression;
+    for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(visit); else if (value && typeof value === 'object') visit(value);
+  };
+  visit(ast); assert.ok(handler);
+  const f = await eosFixture('queued'); let holds = 0;
+  const seek = vm.runInNewContext(`(${source.slice(handler.start, handler.end)})`, { playback: f.player, pausePlayback: () => f.player.pause(), previewHold: { invalidate() { holds++; } } });
+  try {
+    // VideoTrimGesture pauses once at pointerdown, not once per pointermove.
+    f.player.pause(); seek(19 * T); await turn(); seek(23 * T); await turn();
+    assert.equal(f.node.sourceLoads, 1);
+    f.node.metadata(); await turn(); if (f.node.pendingEmpty) f.node.empty();
+    assert.deepEqual(f.node.assignments, [23]);
+    f.node.finishSeek(); await f.player.seeks.flush();
+    assert.equal(f.node.presentedTime, 23); assert.equal(f.node.playCalls, 0);
+    assert.equal(holds, 2); assert.deepEqual(f.errors, []);
+  } finally { f.close(); await turn(); }
+});
 
 test('real ended media preparation reloads once before seek and the production metadata handler cannot replace a paused 19s target', async () => {
   for (const emptyOrder of ['sync', 'queued']) {

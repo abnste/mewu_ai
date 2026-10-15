@@ -3,6 +3,11 @@
 export const highlightMaskTable = `${'1 '.repeat(255)}0`;
 export const colorPresets = ['#FFFFFF','#242832','#EE4848','#F28B38','#F4C94D','#39A97C','#348BF1','#9467D9'];
 export const colorHistoryKey = 'mewu.drawing-colors.v1';
+export const colorHistoryChanged = 'mewu:drawing-colors';
+/** Keep three usable swatches in the toolbar, including on a fresh profile. */
+export function toolbarRecentColors(recent: readonly string[]): string[] {
+  return [...new Set([...recent, '#EE4848', '#348BF1', '#F4C94D'].map(normalizeColor).filter((value):value is string=>!!value))].slice(0,3);
+}
 export const normalizeColor = (value:string) => /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim().toUpperCase() : undefined;
 export const colorRgb = (value:string) => [1,3,5].map(offset=>parseInt(value.slice(offset,offset+2),16));
 // WCAG relative luminance; choose the stronger of the two opaque text colors.

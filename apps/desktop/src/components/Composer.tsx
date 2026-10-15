@@ -57,6 +57,7 @@ export default function Composer(props: Props) {
   const [historyElement, setHistoryElement] = createSignal<HTMLDivElement>();
   let shell!: HTMLElement, input!: HTMLTextAreaElement, history!: HTMLDivElement, menu!: HTMLDivElement;
   let lastPointer = { x: 0, y: 0 }, focusAnchor: { x: number; y: number } | undefined;
+  let hideTimer: ReturnType<typeof setTimeout> | undefined, composing = false, pointerHeld = false, pointerOutsideWindow = false, focusVersion = 0;
   const running = () => props.scene.run?.status === 'running';
   const agent = () => props.agents.find(a => a.id === props.scene.agentId);
   const connection = () => props.connections.find(value => value.id === props.scene.connectionId);
@@ -67,7 +68,7 @@ export default function Composer(props: Props) {
     const start=input.selectionStart??props.draft.length,end=input.selectionEnd??start;
     input.setRangeText(label,start,end,'end');props.onDraft(input.value);
       props.onReferenceInserted?.(request.serial);
-    setHidden(false);queueMicrotask(()=>input.focus({preventScroll:true}));
+    focusAnchor = { ...lastPointer }; reveal(true);
   }));
   const streaming = () => props.stream && props.scene.run?.id === props.stream.runId && !props.scene.messages.some(message => message.role === 'assistant' && message.runId === props.stream?.runId);
   const conversationMessages = createMemo(() => props.scene.messages.slice(props.scene.conversationStart ?? 0));
@@ -81,28 +82,46 @@ export default function Composer(props: Props) {
   const runPulse = () => `${props.scene.run?.id ?? ''}:${props.scene.run?.status ?? ''}`;
   const hasResponse = () => Boolean(latest() || currentReasoning() || running() || interrupted() || props.scene.run?.steps?.length);
   const historyVisible = createMemo(() => hasResponse() || Boolean(currentPrompt()) || (props.expanded && props.scene.messages.length > 0));
+  const cancelHide = () => { if (hideTimer !== undefined) clearTimeout(hideTimer); hideTimer = undefined; };
+  const hideBlocked = () => Boolean(position() || dragging() || picker() || voiceMenu() || props.voice?.pending || composing || pointerHeld || focusAnchor || props.closing);
+  const pointerInDock = () => {
+    if (!shell || pointerOutsideWindow) return false;
+    const bounds = shell.getBoundingClientRect(), { x, y } = lastPointer;
+    const inBar = !hidden() && x >= bounds.left - 6 && x <= bounds.right + 6 && y >= bounds.top - 6 && y <= bounds.bottom + 6;
+    const atEdge = y >= innerHeight - 24 && y <= innerHeight && Math.abs(x - innerWidth / 2) <= shell.offsetWidth / 2 + 24;
+    return inBar || atEdge;
+  };
+  const scheduleHide = () => {
+    if (hideTimer !== undefined || hidden() || hideBlocked()) return;
+    // A brief grace period lets the pointer cross the gap to a menu or the reply.
+    hideTimer = setTimeout(() => {
+      hideTimer = undefined;
+      if (hideBlocked() || !shell || pointerInDock()) return;
+      focusVersion++;
+      if (shell.contains(document.activeElement)) (document.activeElement as HTMLElement)?.blur();
+      setHidden(true);
+    }, 240);
+  };
   const reveal = (focus = false) => {
-    const wasHidden = hidden(); setHidden(false);
-    if (focus || wasHidden) queueMicrotask(() => input?.focus({ preventScroll: true }));
+    cancelHide(); setHidden(false);
+    const version = ++focusVersion;
+    if (focus) queueMicrotask(() => { if (version === focusVersion && !hidden() && !props.closing && !props.selectionActive) input?.focus({ preventScroll: true }); });
   };
   const outside = (event: PointerEvent) => {
     if (!(event.target instanceof Element) || !event.target.closest('.channel-popover,.channel-trigger')) setPicker(undefined);
   };
   const pointer = (event: PointerEvent) => {
+    if (event.pointerType === 'touch') return;
     lastPointer = { x: event.clientX, y: event.clientY };
+    pointerOutsideWindow = false;
+    pointerHeld = event.buttons !== 0;
     if (focusAnchor && Math.hypot(lastPointer.x - focusAnchor.x, lastPointer.y - focusAnchor.y) > 4) focusAnchor = undefined;
-    if (position() || dragging() || picker() || voiceMenu() || props.voice?.pending || !shell || props.selectionActive) return;
-    const target = event.target as HTMLElement, bounds = shell.getBoundingClientRect();
-    const inBar = !hidden() && event.clientX >= bounds.left - 6 && event.clientX <= bounds.right + 6 && event.clientY >= bounds.top - 6 && event.clientY <= bounds.bottom + 6;
-    const atEdge = event.clientY >= innerHeight - 24 && Math.abs(event.clientX - innerWidth / 2) <= shell.offsetWidth / 2 + 24;
-    if (inBar || atEdge || target.closest('.session-history,.modal-backdrop')) { reveal(atEdge); return; }
-    if (focusAnchor) return;
-    const toolbar = document.querySelector('.capture-toolbar')?.getBoundingClientRect();
-    const nearToolbar = toolbar && event.clientX >= toolbar.left - 24 && event.clientX <= toolbar.right + 24 && event.clientY >= toolbar.top - 24 && event.clientY <= toolbar.bottom + 24;
-    const shouldHide = Boolean(target.closest('.capture-region') || nearToolbar);
-    if (shouldHide && shell.contains(document.activeElement)) input?.blur();
-    setHidden(shouldHide);
+    if (hideBlocked() || !shell || props.selectionActive) { cancelHide(); return; }
+    const target = event.target instanceof Element ? event.target : undefined;
+    if (pointerInDock() || target?.closest('.session-history,.modal-backdrop')) { reveal(); return; }
+    scheduleHide();
   };
+  const pointerExit = (event: PointerEvent) => { if (event.relatedTarget === null && event.pointerType !== 'touch') { pointerOutsideWindow = true; scheduleHide(); } };
   const escapePicker = (event: KeyboardEvent) => {
     if (event.key !== 'Escape' || !picker()) return;
     event.preventDefault(); event.stopImmediatePropagation();
@@ -110,8 +129,9 @@ export default function Composer(props: Props) {
     setPicker(undefined); trigger?.focus({ preventScroll: true });
   };
   document.addEventListener('pointerdown', outside); document.addEventListener('pointermove', pointer);
+  document.addEventListener('pointerup', pointer); document.addEventListener('pointerout', pointerExit);
   document.addEventListener('keydown', escapePicker, true);
-  onCleanup(() => { props.onComposition?.(false); document.removeEventListener('pointerdown', outside); document.removeEventListener('pointermove', pointer); document.removeEventListener('keydown', escapePicker, true); });
+  onCleanup(() => { focusVersion++; cancelHide(); props.onComposition?.(false); document.removeEventListener('pointerdown', outside); document.removeEventListener('pointermove', pointer); document.removeEventListener('pointerup', pointer); document.removeEventListener('pointerout', pointerExit); document.removeEventListener('keydown', escapePicker, true); });
   createEffect(() => {
     props.draft;
     if (input) { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 58)}px`; }
@@ -122,7 +142,7 @@ export default function Composer(props: Props) {
     onCleanup(observeConversationTail(host, atEnd));
   });
   createEffect(on(() => props.focusRequest, () => { focusAnchor = { ...lastPointer }; reveal(true); }));
-  createEffect(() => { if (props.selectionActive && !position()) { setHidden(true); focusAnchor = undefined; input?.blur(); } });
+  createEffect(() => { if (props.selectionActive && !position()) { focusVersion++; cancelHide(); setHidden(true); focusAnchor = undefined; input?.blur(); } });
   createEffect(() => {
     const text = latest(), count = props.scene.messages.length, expanded = props.expanded;
     if (atEnd()) queueMicrotask(() => { if (history && atEnd()) history.scrollTop = history.scrollHeight; });
@@ -230,7 +250,7 @@ export default function Composer(props: Props) {
           </div></Show>
         </div></Show>
         <div class="composer-field"><Show when={props.refs.length > 0}><div class="reference-list"><For each={props.refs}>{reference => <span class="reference-chip"><button class="reference-name" title={referenceLabel(reference)} onClick={() => props.onFocusRef(reference)}>@{referenceLabel(reference)}</button><button class="reference-remove" aria-label={`${t('移除引用')} ${referenceLabel(reference)}`} title={t('移除引用')} onClick={() => props.onRemoveRef(reference)}><X size={13} /></button></span>}</For></div></Show>
-          <div class="composer-text-entry"><textarea ref={input} aria-label={t('输入消息')} placeholder={t(props.refs.length ? '询问选中内容…' : '输入消息…')} rows={1} value={props.draft} onFocus={() => setHidden(false)} onCompositionStart={() => props.onComposition?.(true)} onCompositionEnd={event => { props.onDraft(event.currentTarget.value); props.onComposition?.(false); }} onInput={event => props.onDraft(event.currentTarget.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!running()) send(); } }} />
+          <div class="composer-text-entry"><textarea ref={input} aria-label={t('输入消息')} placeholder={t(props.refs.length ? '询问选中内容…' : '输入消息…')} rows={1} value={props.draft} onFocus={() => reveal()} onCompositionStart={() => { composing = true; cancelHide(); props.onComposition?.(true); }} onCompositionEnd={event => { composing = false; focusAnchor = { ...lastPointer }; cancelHide(); props.onDraft(event.currentTarget.value); props.onComposition?.(false); }} onInput={event => { focusAnchor = { ...lastPointer }; cancelHide(); props.onDraft(event.currentTarget.value); }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!running()) send(); } }} />
             <button class="composer-attach" title={t('添加文件')} aria-label={t('添加文件')} disabled={props.closing} onClick={props.onImport}><FolderOpen size={18} stroke-width={1.7} /></button>
           </div>
         </div>

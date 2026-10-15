@@ -14,7 +14,7 @@ import type { VideoAction, VideoExportState, VideoGrant, VideoMetadata, VideoTar
 import { getVideoInfo, videoNative } from '../video-bridge';
 import { VideoRequestLane, type RegisterVideoFlush } from '../video-requests';
 import { VideoPlayback } from '../video-media';
-import { placeVideoControls } from '../video-placement';
+import { observeVideoComposer, placeVideoToolbars } from '../video-placement';
 import { checkedRange, clampPosition, sameRange, TICKS_PER_SECOND, TrimCanceled, type TrimAuthority, type TrimEdit, type TrimReceipt } from '../video-trim';
 import VideoTrimBar from './VideoTrimBar';
 import type { RegisterVideoPlayer, VideoAnnotationAction, VideoAnnotationTarget, VideoTextContent, VideoTextLayoutRef } from '../video-annotation-contracts';
@@ -129,11 +129,8 @@ export default function VideoArtifact(props: VideoArtifactProps) {
     const controls = props.blackboard ? document.querySelector('.drawing-blackboard .drawing-toolbar')?.getBoundingClientRect() : undefined;
     const composer = document.querySelector('.composer:not(.composer-hidden)')?.getBoundingClientRect();
     const actionBounds = actionPopover?.getBoundingClientRect();
-    if (actionBounds) {
-      const actions = placeVideoControls(box, { width: window.innerWidth, height: window.innerHeight }, actionBounds.height, composer, controls, { side: 'above', width: actionBounds.width });
-      setActionPlacement(previous => previous.left === actions.left && previous.top === actions.top ? previous : { left: actions.left, top: actions.top });
-    }
-    const next = placeVideoControls(box, { width: window.innerWidth, height: window.innerHeight }, popover?.getBoundingClientRect().height ?? 0, composer, controls);
+    const { actions, timeline: next } = placeVideoToolbars(box, { width: window.innerWidth, height: window.innerHeight }, { width: actionBounds?.width ?? 318, height: actionBounds?.height ?? 58 }, popover?.getBoundingClientRect().height ?? 0, composer, controls);
+    setActionPlacement(previous => previous.left === actions.left && previous.top === actions.top ? previous : { left: actions.left, top: actions.top });
     setPlacement(previous => previous.left === next.left && previous.top === next.top && previous.width === next.width ? previous : next);
     const draft = manualView().text, object = props.item.videoAnnotations?.objects.find(value => value.id === draft?.annotationId);
     if (object?.primitive.kind === 'text') {
@@ -182,12 +179,13 @@ export default function VideoArtifact(props: VideoArtifactProps) {
     const unregister = props.onRegisterPause?.(() => { stopAnnotationPointer?.(); manual.interrupt(); pausePlayback(); });
     onCleanup(() => unregister?.());
     const resize = new ResizeObserver(place); resize.observe(video);
-    const mutation = new MutationObserver(place); const card = video.closest('.artifact-card'); if (card) mutation.observe(card, { attributes: true, attributeFilter: ['style'] }); const composer = document.querySelector('.composer'); if (composer) { mutation.observe(composer, { attributes: true, attributeFilter: ['style', 'class'] }); resize.observe(composer); }
+    const mutation = new MutationObserver(place); const card = video.closest('.artifact-card'); if (card) mutation.observe(card, { attributes: true, attributeFilter: ['style'] });
+    const app = video.closest('.app'), stopComposer = app && observeVideoComposer(app, place);
     window.addEventListener('resize', place);
     const blur = () => { stopAnnotationPointer?.(); manual.interrupt(); pausePlayback(); }; window.addEventListener('blur', blur);
     const visible = () => { if (document.hidden) { stopAnnotationPointer?.(); manual.interrupt(); previewHold.invalidate(); playback?.invalidate(); } }; document.addEventListener('visibilitychange', visible);
     const escapeMove = (event: KeyboardEvent) => { if (nativeSelectOwnsEscape(event)) return; if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229 && manualView().move && !(event.target as Element)?.closest('.video-annotation-text-editor')) { event.preventDefault(); event.stopImmediatePropagation(); stopAnnotationPointer?.(); manual.cancelMove(); } }; window.addEventListener('keydown', escapeMove, true);
-    onCleanup(() => { resize.disconnect(); mutation.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('blur', blur); document.removeEventListener('visibilitychange', visible); window.removeEventListener('keydown', escapeMove, true); });
+    onCleanup(() => { resize.disconnect(); mutation.disconnect(); stopComposer?.(); window.removeEventListener('resize', place); window.removeEventListener('blur', blur); document.removeEventListener('visibilitychange', visible); window.removeEventListener('keydown', escapeMove, true); });
   });
   createEffect(on(sourceKey, key => {
     const unregister = props.onRegisterPlayer?.(props.sceneId, props.item.id, { sourceIdentity: key, jump: async (action, active) => {
@@ -308,7 +306,7 @@ export default function VideoArtifact(props: VideoArtifactProps) {
     }}><textarea aria-label={t("视频标注文字")} maxLength={1000} ref={node => queueMicrotask(() => { if (!disposed && node.isConnected) { node.focus(); node.select(); } })} value={manualView().text?.content.text ?? ''} disabled={manualView().pending} onInput={event => { try { manual.input(event.currentTarget.value); } catch (error) { report(error); } }} /><div class="video-annotation-text-actions"><Show when={manualView().text?.error}><span class="inline-error">{manualView().text?.error}</span></Show><Show when={manualView().pending}><LoaderCircle class="spin" size={14} /></Show><button class="icon-button compact" title={t("确认")} aria-label={t("保存视频标注文字")} disabled={manualView().pending} onClick={() => void manual.save().catch(report)}><Check size={15} /></button><button class="icon-button compact" title={t("取消")} aria-label={t("取消编辑视频文字")} onClick={() => void manual.cancelText().catch(report)}><X size={15} /></button></div></div></Portal></Show>
     <Show when={props.active}><Portal><div ref={observePopover} class="video-trim-popover" hidden={drawingOpen()} inert={drawingOpen()} data-video-item={props.item.id} data-video-scene={props.sceneId} style={{ left: `${placement().left}px`, top: `${placement().top}px`, width: `${placement().width}px` }} onPointerDown={event => event.stopPropagation()}>
       <Show when={authority()} fallback={<div class="video-trim-loading"><Show when={reading()} fallback={<><span>{readError() || t('无法读取视频')}</span><button class="icon-button compact" title={t("重试")} aria-label={t("重新读取视频")} onClick={() => setRetry(value => value + 1)}><RefreshCw size={15} /></button></>}><LoaderCircle class="spin" size={16} /></Show></div>}>
-        <VideoTrimBar authority={authority()} positionTicks={position()} playing={playing()} busy={props.busy || drawingOpen() || Boolean(props.exporting) || manualView().pending || Boolean(manualView().text)} onPause={pausePlayback} onSeek={ticks => { pausePlayback(); playback?.seek(ticks); }} onResume={ticks => { previewHold.invalidate(); if (!annotationUnavailable()) void playback?.play(ticks).catch(report); }} onTogglePlayback={toggle} onCommit={commit} onError={report} canUndo={Boolean(props.item.videoEdit?.undo.length)} canRedo={Boolean(props.item.videoEdit?.redo.length)} onReplay={replay} onRegister={flush => { flushTrim = flush; const stop = props.onRegister(async active => { pausePlayback(); await flush(active); }); return () => { if (flushTrim === flush) flushTrim = undefined; stop(); }; }} />
+        <VideoTrimBar authority={authority()} positionTicks={position()} playing={playing()} busy={props.busy || drawingOpen() || Boolean(props.exporting) || manualView().pending || Boolean(manualView().text)} onPause={pausePlayback} onSeek={ticks => { previewHold.invalidate(); playback?.seek(ticks); }} onResume={ticks => { previewHold.invalidate(); if (!annotationUnavailable()) void playback?.play(ticks).catch(report); }} onTogglePlayback={toggle} onCommit={commit} onError={report} canUndo={Boolean(props.item.videoEdit?.undo.length)} canRedo={Boolean(props.item.videoEdit?.redo.length)} onReplay={replay} onRegister={flush => { flushTrim = flush; const stop = props.onRegister(async active => { pausePlayback(); await flush(active); }); return () => { if (flushTrim === flush) flushTrim = undefined; stop(); }; }} />
       </Show>
       <Show when={ownedExport()}>{value => <div class="video-export-state"><LoaderCircle class="spin" size={13} /><span>{value().canceling ? t('取消中') : value().percent === undefined ? (value().kind === 'copy' ? t('复制中') : t('保存中')) : `${Math.round(value().percent!)}%`}</span><button class="icon-button compact" aria-label={value().kind === 'copy' ? t('取消复制视频') : t('取消保存视频')} title={t("取消")} disabled={value().canceling} onClick={props.onCancelExport}><X size={14} /></button></div>}</Show>
     </div>

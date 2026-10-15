@@ -435,6 +435,7 @@ async fn apply_scene_command(
         SceneCommand::AddDrawing { .. }
         | SceneCommand::UpdateDrawing { .. }
         | SceneCommand::UpdateDrawings { .. }
+        | SceneCommand::EraseDrawingStrokes { .. }
         | SceneCommand::RemoveDrawing { .. }
         | SceneCommand::UndoDrawing { .. }
         | SceneCommand::RedoDrawing { .. } => return Err("请从绘制工具操作".into()),

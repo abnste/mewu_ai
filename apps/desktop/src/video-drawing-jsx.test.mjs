@@ -32,6 +32,13 @@ function setup(value=item(),overrides={}){
     onDocument:async(target,action)=>{documents.push({target,action});return{scenes:[{id:id(1),items:[result()]}]};},onApplyDrawing:async()=>{throw Error('Missing synthetic native');},onEditText:async()=>{throw Error('Missing synthetic native');},...overrides};
   const actual=solid.createRoot(cleanup=>{dispose=cleanup;return fixtureM.namespace.fixture(props);});return{...actual,props,reads,documents,snapshots,errors,setItem,setGrant,setActive,dispose};
 }
+test('actual video adapter explicitly rejects unsupported partial erasing without dispatching or advertising pixel mode',async()=>{
+  const f=setup();
+  const action={type:'erase_drawing_strokes',expectedRevision:5,erasures:[{drawingId:id(100),fragments:[]}]};
+  assert.notEqual(f.port.pixelEraser,true);assert.equal(f.port.allows(action),false);
+  await assert.rejects(f.command(action),/视频绘制操作无效/);
+  assert.deepEqual(f.documents,[]);assert.deepEqual(f.snapshots,[]);f.dispose();
+});
 test('actual JSX adapter mounts 4096 compact refs without a getter; visibility/render/Move never infer control points',async()=>{
   const f=setup(item(4096),{visibleAnnotationIds:[id(100)]});await tick();assert.equal(f.reads.length,0);assert.equal(f.port.stored().length,1);assert.equal(f.port.drawings().length,0);
   const object=f.port.stored()[0],to=f.port.storedMove(object.id,object.bounds,{x:-20.5,y:3.5});assert.deepEqual(plain(to),{x:-2,y:31,width:24,height:26});

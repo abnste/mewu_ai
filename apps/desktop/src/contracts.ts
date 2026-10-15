@@ -10,6 +10,7 @@ export interface DrawingPoint { x: number; y: number }
 export interface DrawingOrigin { runId: string; userMessageId: string; toolEventId: string; groupId: string; targetHandle: string; manifestSha256: string }
 export interface VisualAnnotationGrant { pluginId: string; pluginRevision: number; contributionId: string }
 export interface Drawing { id: string; kind: DrawingKind; color: string; strokeWidth: number; points: DrawingPoint[]; text?: string; fontSize?: number; origin?: DrawingOrigin; rich?: RichDrawingRef }
+export interface DrawingStrokeErase { drawingId:string;fragments:{id:string;points:DrawingPoint[]}[] }
 export interface DrawingEdit { index: number; before: Drawing | null; after: Drawing | null }
 export type DrawingStep = DrawingEdit | { batch: DrawingEdit[] };
 export interface DrawingHistory { undo: DrawingStep[]; redo: DrawingStep[] }
@@ -28,6 +29,7 @@ interface DrawingTarget { sceneId: string; regionId: string; backgroundId: strin
 export type DrawingCommand = DrawingTarget & (
   | { type: 'add_drawing' | 'update_drawing'; drawing: Drawing }
   | {type:'update_drawings';drawings:Drawing[]}
+  | {type:'erase_drawing_strokes';erasures:DrawingStrokeErase[]}
   | { type: 'remove_drawing'; drawingId: string }
   | { type: 'undo_drawing' | 'redo_drawing' }
 );

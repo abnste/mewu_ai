@@ -945,6 +945,51 @@ mod tests {
     }
 
     #[test]
+    fn pixel_eraser_persisted_fragments_export_the_same_gap_and_undo_redo_pixels() {
+        use mewu_core::{Asset, AssetKind, DrawingStrokeErase, DrawingStrokeFragment, SceneCommand, Store};
+        for kind in [DrawingKind::Pen, DrawingKind::Line, DrawingKind::Highlighter] {
+            let mut store = Store::open_in_memory().unwrap();
+            let scene_id = store.snapshot().active_scene_id;
+            let background_id = uuid::Uuid::new_v4().to_string();
+            store.set_background(&scene_id, Asset {
+                id: background_id.clone(), name: "eraser-export.png".into(), kind: AssetKind::Image,
+                path: "eraser-export.png".into(), width: Some(200), height: Some(100),
+                origin_x: None, origin_y: None, scale_factor: None, capture_coordinates: None,
+            }).unwrap();
+            let region_id = uuid::Uuid::new_v4().to_string();
+            store.apply(SceneCommand::AddRegion { scene_id: scene_id.clone(), region: Region {
+                id: region_id.clone(), width: 200., height: 100., ..Default::default()
+            }}).unwrap();
+            let ink = drawing(kind, &[(20., 50.), (180., 50.)]);
+            store.apply(SceneCommand::AddDrawing {
+                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(),
+                expected_revision: 0, drawing: ink.clone(),
+            }).unwrap();
+            let current = |store: &Store| store.snapshot().scenes.into_iter().find(|s| s.id == scene_id).unwrap().regions.remove(0);
+            let original = crop_region(&background(), &current(&store)).unwrap().into_rgba8();
+            store.apply(SceneCommand::EraseDrawingStrokes {
+                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(), expected_revision: 1,
+                erasures: vec![DrawingStrokeErase { drawing_id: ink.id.clone(), fragments: vec![
+                    DrawingStrokeFragment { id: ink.id.clone(), points: vec![DrawingPoint { x: 20., y: 50. }, DrawingPoint { x: 90., y: 50. }] },
+                    DrawingStrokeFragment { id: uuid::Uuid::new_v4().to_string(), points: vec![DrawingPoint { x: 110., y: 50. }, DrawingPoint { x: 180., y: 50. }] },
+                ] }],
+            }).unwrap();
+            let erased = crop_region(&background(), &current(&store)).unwrap().into_rgba8();
+            assert_ne!(original.get_pixel(100, 50).0, [255, 255, 255, 255]);
+            assert_eq!(erased.get_pixel(100, 50).0, [255, 255, 255, 255]);
+            for x in [40, 80, 120, 160] { assert_eq!(erased.get_pixel(x, 50), original.get_pixel(x, 50)); }
+            store.apply(SceneCommand::UndoDrawing {
+                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(), expected_revision: 2,
+            }).unwrap();
+            assert_eq!(crop_region(&background(), &current(&store)).unwrap().into_rgba8(), original);
+            store.apply(SceneCommand::RedoDrawing {
+                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(), expected_revision: 3,
+            }).unwrap();
+            assert_eq!(crop_region(&background(), &current(&store)).unwrap().into_rgba8(), erased);
+        }
+    }
+
+    #[test]
     fn rectangle_mark_preserves_frozen_text_and_uses_disjoint_original_fill_border_alpha() {
         let mut pixels = RgbaImage::from_pixel(200, 100, Rgba([255, 255, 255, 255]));
         for y in 35..58 {

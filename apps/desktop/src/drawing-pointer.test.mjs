@@ -255,6 +255,7 @@ const itemJsx=await jsx(`import {linkedRepairPreview} from 'selection';import {c
 export function fixture(props,state){props={...props,port:{...props.port,drawings:state.drawings,stored:state.stored}};const draft=()=>state.draft(),edit=()=>undefined,tool=()=>state.tool(),selected=()=>state.selected(),storedDraft=()=>state.storedDraft(),drawings=state.drawings;
 ${['drawingIndex','storedIndex','activeDraftId'].map(declaration).join('\n')}
 const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()];${declaration('previews')}
+const pixelIndex=()=>state.pixelIndex?.()??new Map();
 ${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer,selection:{linkedRepairPreview:(drawing)=>drawing}});
 const descendants=(node,tag)=>[...(node.tag===tag?[node]:[]),...node.children.flatMap(child=>descendants(child,tag))];
 

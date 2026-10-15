@@ -44,6 +44,7 @@ export default function DrawingEditor(props:Props) {
     return {selectedId:receipt.selectedId??undefined};
   }};
   const port:DrawingEditorPort = {
+    pixelEraser:true,
     frame:()=>({x:props.region.x,y:props.region.y,width:props.region.width,height:props.region.height}),
     sourceSize:()=>({width:props.backgroundWidth,height:props.backgroundHeight}),
     sourceIdentity:()=>props.background ? richSourceIdentity(richContext()!) : props.backgroundId,

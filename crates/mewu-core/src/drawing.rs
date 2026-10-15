@@ -9,6 +9,9 @@ use std::collections::HashSet;
 
 type Result<T> = std::result::Result<T, CoreError>;
 const MAX_OBJECTS: usize = 256;
+// A single atomic replacement may remove every old object and insert every
+// retained fragment. The document still contains at most MAX_OBJECTS objects.
+const MAX_BATCH_EDITS: usize = 2 * MAX_OBJECTS;
 const MAX_POINTS: usize = 4096;
 const MAX_ACTIONS: usize = 128;
 const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
@@ -19,6 +22,7 @@ pub(crate) enum Mutation {
     AppendBatch(Vec<Drawing>),
     Update(Drawing),
     UpdateBatch(Vec<Drawing>),
+    EraseStrokes(Vec<crate::DrawingStrokeErase>),
     Remove(String),
     Undo,
     Redo,
@@ -254,7 +258,7 @@ pub(crate) fn validate(region: &Region, background: Option<&Asset>) -> Result<()
         return Err(invalid("绘制历史超过保留范围"));
     }
     for step in history.undo.iter().chain(&history.redo) {
-        if step.edits().is_empty() || step.edits().len() > MAX_OBJECTS {
+        if step.edits().is_empty() || step.edits().len() > MAX_BATCH_EDITS {
             return Err(invalid("绘制批次无效"));
         }
         for edit in step.edits() {
@@ -291,6 +295,9 @@ fn trim_history(history: &mut DrawingHistory) -> Result<()> {
 }
 
 pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation) -> Result<bool> {
+    if let Mutation::EraseStrokes(erasures) = mutation {
+        return erase_strokes(region, background, erasures);
+    }
     if let Mutation::UpdateBatch(values) = &mutation {
         return update_batch(region, background, values.clone(), true);
     }
@@ -435,7 +442,7 @@ pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation)
             validate(region, Some(background))?;
             return Ok(true);
         }
-        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) => unreachable!("handled above"),
+        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) | Mutation::EraseStrokes(_) => unreachable!("handled above"),
     };
     apply_edit(&mut region.drawings, &edit, true)?;
     region.drawing_history.redo.clear();
@@ -458,6 +465,64 @@ fn commit_batch(region: &mut Region, background: &Asset, batch: Vec<DrawingEdit>
     region.drawing_revision = next_revision(region)?;
     validate(region, Some(background))?;
     Ok(true)
+}
+
+fn erase_strokes(region: &mut Region, background: &Asset, erasures: Vec<crate::DrawingStrokeErase>) -> Result<bool> {
+    if erasures.is_empty() || erasures.len() > MAX_OBJECTS {
+        return Err(invalid("擦除批次无效"));
+    }
+    let mut sources = HashSet::new();
+    let mut ids: HashSet<String> = region.drawings.iter().map(|d| d.id.clone()).collect();
+    let mut edits = Vec::new();
+    let mut operations = Vec::new();
+    for erase in erasures {
+        if !sources.insert(erase.drawing_id.clone()) || erase.fragments.len() > MAX_OBJECTS {
+            return Err(invalid("擦除笔迹重复或片段过多"));
+        }
+        let (index, old) = region.drawings.iter().enumerate().find(|(_,d)|d.id == erase.drawing_id)
+            .ok_or_else(|| invalid("擦除笔迹已不存在"))?;
+        if !matches!(old.kind, DrawingKind::Pen | DrawingKind::Highlighter | DrawingKind::Line) {
+            return Err(invalid("像素橡皮只处理画笔、荧光笔和直线"));
+        }
+        let mut values = Vec::new();
+        for (part, fragment) in erase.fragments.into_iter().enumerate() {
+            if part == 0 {
+                if fragment.id != old.id { return Err(invalid("首个笔迹片段需保留原标识")); }
+            } else if !ids.insert(fragment.id.clone()) { return Err(invalid("笔迹片段标识重复")); }
+            let mut next = old.clone();
+            next.id = fragment.id;
+            next.points = fragment.points;
+            // No caller-controlled kind, color, width, text or origin is accepted.
+            let source = region.image_override.as_ref().unwrap_or(background);
+            validate_object(&next, f64::from(source.width.unwrap_or(0)), f64::from(source.height.unwrap_or(0)))?;
+            values.push(next);
+        }
+        if values.len() == 1 && &values[0] == old { continue; }
+        operations.push((index, old.clone(), values));
+    }
+    // Remove all sources first, then insert their fragments in final layer
+    // order. Interleaving removal/insertion could temporarily create index 256
+    // even though a later removal makes the final document fit the limit.
+    operations.sort_by_key(|(index,_,_)|std::cmp::Reverse(*index));
+    let count = operations.iter().try_fold(region.drawings.len(), |count, (_, _, values)| {
+        count.checked_sub(1).and_then(|n| n.checked_add(values.len()))
+            .ok_or_else(|| invalid("笔迹片段过多"))
+    })?;
+    if count > MAX_OBJECTS { return Err(invalid("笔迹片段过多")); }
+    for (index, old, _) in &operations {
+        edits.push(DrawingEdit { index: *index, before: Some(old.clone()), after: None });
+    }
+    let mut removed_before = 0;
+    let mut inserted_before = 0;
+    for (index, _, values) in operations.into_iter().rev() {
+        let final_index = index - removed_before + inserted_before;
+        removed_before += 1;
+        inserted_before += values.len();
+        for (offset, value) in values.into_iter().enumerate() {
+            edits.push(DrawingEdit { index: final_index + offset, before: None, after: Some(value) });
+        }
+    }
+    commit_batch(region, background, edits)
 }
 fn update_batch(
     region: &mut Region,

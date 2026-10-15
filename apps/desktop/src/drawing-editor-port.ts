@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { JSX } from 'solid-js';
-import type { Drawing, DrawingPoint, DrawingStep, ManualDrawingKind } from './contracts';
+import type { Drawing, DrawingPoint, DrawingStep, DrawingStrokeErase, ManualDrawingKind } from './contracts';
 import type { DrawingPropertyDraft } from "./components/drawing-properties";
 import type { RegisterDrawingFlush } from "./drawing-flush";
 import type { DrawingTableFormat } from "./drawing-layout-preview";
@@ -9,6 +9,7 @@ export interface EditorBox { x:number;y:number;width:number;height:number }
 export type EditorDrawingAction = {expectedRevision:number} & (
   | {type:'add_drawing'|'update_drawing';drawing:Drawing}
   | {type:'update_drawings';drawings:Drawing[]}
+  | {type:'erase_drawing_strokes';erasures:DrawingStrokeErase[]}
   | {type:'remove_drawing';drawingId:string}
   | {type:'undo_drawing'|'redo_drawing'}
   | {type:'move_stored';drawingId:string;from:EditorBox;to:EditorBox}
@@ -35,6 +36,7 @@ export interface DrawingEditorPort {
   move?:(original:Drawing,start:{x:number;y:number},end:{x:number;y:number})=>Drawing;
   persistedId?:(temporaryId:string)=>string;
   rejectPointOverflow?:boolean;
+  pixelEraser?:boolean;
   mosaic?:{blockSize:()=>number;prepare:()=>Promise<unknown>};
   highlight?:{identity?:()=>string;prepare:()=>Promise<unknown>};
   raster?:{apply:(mode:'extract'|'heal',points:DrawingPoint[],width:number)=>Promise<{selectedId?:string}>};

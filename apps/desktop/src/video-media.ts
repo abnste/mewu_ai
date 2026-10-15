@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import { LatestVideoSeek, TICKS_PER_SECOND, TrimCanceled, clampPosition, type VideoRange } from './video-trim';
+import { LatestVideoSeek, TICKS_PER_SECOND, TrimCanceled, clampPosition, type SeekIntent, type VideoRange } from './video-trim';
 export interface VideoMediaObservation { sourcePlaybackTicks?: number; sourceFramePts?: number }
 interface IntervalPlayback { source: string; range: VideoRange; retained: VideoRange; active: () => boolean; ready: () => boolean; seeking: boolean; started: boolean }
 interface EosReset { identity: string; generation: number; deadline: number; promise: Promise<void>; current: () => boolean; cancel: () => void; fail: () => void }
@@ -24,11 +24,10 @@ export class VideoPlayback {
   private abortSeek?: () => void;
   private eosReset?: EosReset;
   private eosLoad?: EosLoad;
-  private seekDeadline = 0;
   readonly seeks: LatestVideoSeek;
   constructor(private video: HTMLVideoElement, private hooks: { identity: () => string; range: () => VideoRange | undefined; position: (ticks: number) => void; playing: (value: boolean) => void; observation?: (value: VideoMediaObservation) => void; error: (error: unknown) => void }) {
     this.mediaIdentity = hooks.identity();
-    this.seeks = new LatestVideoSeek({ currentIdentity: hooks.identity, work: value => this.seekActual(value.identity, value.ticks), presented: value => { this.boundarySeek = false; hooks.position(value); this.sample(); }, error: error => { if (!(error instanceof TrimCanceled)) hooks.error(error); } });
+    this.seeks = new LatestVideoSeek({ currentIdentity: hooks.identity, work: (value, signal) => this.seekActual(value, signal), presented: value => { this.boundarySeek = false; hooks.position(value); this.sample(); }, error: error => { if (!(error instanceof TrimCanceled)) hooks.error(error); } });
     video.addEventListener('timeupdate', this.sample); video.addEventListener('play', this.playing); video.addEventListener('pause', this.paused); video.addEventListener('ended', this.paused);
     video.addEventListener('seeking', this.seeking); video.addEventListener('seeked', this.seeked); video.addEventListener('loadeddata', this.seeked); video.addEventListener('emptied', this.unavailable); video.addEventListener('error', this.unavailable);
     video.addEventListener('loadedmetadata', this.mediaReady);
@@ -143,15 +142,22 @@ export class VideoPlayback {
     });
     this.frame = id;
   }
-  private async seekActual(identity: string, ticks: number): Promise<number> {
-    const reset = this.eosReset, deadline = this.seekDeadline;
-    if (reset) await reset.promise;
-    if (this.disposed || identity !== this.hooks.identity() || (reset && !reset.current())) throw new TrimCanceled();
+  private async seekActual({ identity, ticks, deadline = performance.now() + 8000 }: SeekIntent, signal: AbortSignal): Promise<number> {
+    const reset = this.eosReset;
+    if (reset) await new Promise<void>((resolve, reject) => {
+      const abort = () => { signal.removeEventListener('abort', abort); reject(new TrimCanceled()); };
+      if (signal.aborted) { abort(); return; }
+      signal.addEventListener('abort', abort, { once: true });
+      void reset.promise.then(() => { signal.removeEventListener('abort', abort); resolve(); }, error => { signal.removeEventListener('abort', abort); reject(error); });
+    });
+    if (this.disposed || signal.aborted || identity !== this.hooks.identity() || (reset && !reset.current())) throw new TrimCanceled();
     const generation = this.generation;
+    const boundary = this.boundarySeek;
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout>;
-      const current = () => !this.disposed && generation === this.generation && identity === this.hooks.identity();
-      const cleanup = () => { clearTimeout(timer); this.video.removeEventListener('loadedmetadata', ready); this.video.removeEventListener('seeked', ended); this.video.removeEventListener('error', failed); if (this.abortSeek === abort) this.abortSeek = undefined; };
+      let targetTicks = ticks;
+      const current = () => !this.disposed && !signal.aborted && generation === this.generation && identity === this.hooks.identity();
+      const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); this.video.removeEventListener('loadedmetadata', ready); this.video.removeEventListener('seeked', ended); this.video.removeEventListener('error', failed); if (this.abortSeek === abort) this.abortSeek = undefined; };
       const abort = () => { cleanup(); reject(new TrimCanceled()); };
       const failed = () => { cleanup(); reject(new Error('无法定位视频')); };
       const ended = () => {
@@ -159,17 +165,27 @@ export class VideoPlayback {
         if (performance.now() >= deadline) { failed(); return; }
         if (this.video.seeking) return;
         const actual = Math.round(this.video.currentTime * TICKS_PER_SECOND);
-        if (!Number.isSafeInteger(actual) || Math.abs(actual - ticks) > 200_000) return;
-        if (this.boundarySeek && actual > ticks) { failed(); return; }
+        if (!Number.isSafeInteger(actual) || Math.abs(actual - targetTicks) > 200_000) return;
+        if (boundary && actual > targetTicks) { failed(); return; }
         cleanup(); resolve(actual);
       };
-      const ready = () => { if (!current()) { abort(); return; } if (performance.now() >= deadline) { failed(); return; } try { this.video.currentTime = ticks / TICKS_PER_SECOND; queueMicrotask(ended); } catch { failed(); } };
+      const ready = () => {
+        if (!current()) { abort(); return; }
+        if (performance.now() >= deadline || this.video.error) { failed(); return; }
+        // Native container duration can include an AAC tail beyond the last
+        // playable video sample. HTML seeking clamps to its actual media end;
+        // acknowledge that endpoint without changing the saved trim authority.
+        const duration = Math.round(this.video.duration * TICKS_PER_SECOND);
+        targetTicks = Number.isSafeInteger(duration) && duration >= 0 ? Math.min(ticks, duration) : ticks;
+        try { this.video.currentTime = targetTicks / TICKS_PER_SECOND; queueMicrotask(ended); } catch { failed(); }
+      };
       timer = setTimeout(failed, Math.max(0, deadline - performance.now())); this.abortSeek = abort;
+      signal.addEventListener('abort', abort, { once: true });
       this.video.addEventListener('error', failed); this.video.addEventListener('seeked', ended);
       if (this.video.readyState >= 1) ready(); else this.video.addEventListener('loadedmetadata', ready, { once: true });
     });
   }
-  private requestSeek(ticks: number, deadline?: number) { if (this.disposed) return; const reset = this.prepareEos(); this.boundarySeek = false; this.seekDeadline = deadline ?? reset?.deadline ?? performance.now() + 8000; this.seeks.request({ identity: this.hooks.identity(), ticks }); }
+  private requestSeek(ticks: number, deadline?: number) { if (this.disposed) return; const reset = this.prepareEos(); this.boundarySeek = false; this.seeks.request({ identity: this.hooks.identity(), ticks, deadline: deadline ?? reset?.deadline ?? performance.now() + 8000 }); }
   private seekWithin(ticks: number, deadline?: number) { if (this.disposed) return; this.completedRange = undefined; if (this.interval) this.pause(); const reset = this.prepareEos(); this.requestSeek(ticks, deadline ?? reset?.deadline); }
   seek(ticks: number) { this.seekWithin(ticks); }
   async seekAndWait(ticks: number, active: () => boolean, deadline?: number): Promise<number> {

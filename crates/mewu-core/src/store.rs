@@ -763,6 +763,13 @@ impl Store {
                     return Ok(self.snapshot());
                 }
             }
+            SceneCommand::EraseDrawingStrokes { scene_id, region_id, background_id, expected_revision, erasures } => {
+                if !edit_drawing(&mut next, &scene_id, &region_id, &background_id, expected_revision,
+                    crate::drawing::Mutation::EraseStrokes(erasures))? {
+                    self.ensure_current_revision()?;
+                    return Ok(self.snapshot());
+                }
+            }
             SceneCommand::UndoDrawing {
                 scene_id,
                 region_id,

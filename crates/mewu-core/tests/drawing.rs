@@ -134,6 +134,144 @@ fn history(
     })
 }
 
+fn erase_command(scope: &(String, String, String), revision: u64, erasures: Vec<DrawingStrokeErase>) -> SceneCommand {
+    SceneCommand::EraseDrawingStrokes {
+        scene_id: scope.0.clone(), region_id: scope.2.clone(), background_id: scope.1.clone(),
+        expected_revision: revision, erasures,
+    }
+}
+
+fn split_stroke(drawing: &Drawing) -> DrawingStrokeErase {
+    DrawingStrokeErase { drawing_id: drawing.id.clone(), fragments: vec![
+        DrawingStrokeFragment { id: drawing.id.clone(), points: vec![drawing.points[0], DrawingPoint { x: 130., y: 128.75 }] },
+        DrawingStrokeFragment { id: Uuid::new_v4().to_string(), points: vec![DrawingPoint { x: 150., y: 141.25 }, drawing.points[1]] },
+    ] }
+}
+
+#[test]
+fn pixel_eraser_is_one_persisted_history_step_and_keeps_style_order_and_unrelated_objects() {
+    let db = TestDb::new();
+    let mut store = Store::open(&db.0).unwrap();
+    let scope = prepare(&mut store);
+    let pen = object(DrawingKind::Pen);
+    let shape = object(DrawingKind::Rect);
+    let highlight = object(DrawingKind::Highlighter);
+    let line = object(DrawingKind::Line);
+    for value in [&pen, &shape, &highlight, &line] { add(&mut store, &scope, value.clone()).unwrap(); }
+    let original = region(&store, &scope);
+    let pen_cut = split_stroke(&pen);
+    let highlight_cut = split_stroke(&highlight);
+    store.apply(erase_command(&scope, original.drawing_revision, vec![
+        pen_cut.clone(), highlight_cut.clone(), DrawingStrokeErase { drawing_id: line.id.clone(), fragments: vec![] },
+    ])).unwrap();
+    let erased = region(&store, &scope);
+    assert_eq!(erased.drawing_revision, original.drawing_revision + 1);
+    assert_eq!(erased.drawing_history.undo.len(), original.drawing_history.undo.len() + 1);
+    let expected: Vec<Drawing> = pen_cut.fragments.iter().map(|part| Drawing { id: part.id.clone(), points: part.points.clone(), ..pen.clone() })
+        .chain(std::iter::once(shape.clone()))
+        .chain(highlight_cut.fragments.iter().map(|part| Drawing { id: part.id.clone(), points: part.points.clone(), ..highlight.clone() })).collect();
+    assert_eq!(erased.drawings, expected);
+    drop(store);
+    let mut store = Store::open(&db.0).unwrap();
+    assert_eq!(region(&store, &scope), erased);
+    history(&mut store, &scope, false).unwrap();
+    assert_eq!(region(&store, &scope).drawings, original.drawings);
+    drop(store);
+    let mut store = Store::open(&db.0).unwrap();
+    history(&mut store, &scope, true).unwrap();
+    assert_eq!(region(&store, &scope).drawings, expected);
+    assert!(store.apply(erase_command(&scope, original.drawing_revision, vec![pen_cut])).is_err());
+    assert_eq!(region(&store, &scope).drawings, expected);
+}
+
+#[test]
+fn pixel_eraser_invalid_second_source_fragment_and_stale_revision_leave_database_atomic() {
+    let db = TestDb::new();
+    let mut store = Store::open(&db.0).unwrap();
+    let scope = prepare(&mut store);
+    let pen = object(DrawingKind::Pen);
+    let rect = object(DrawingKind::Rect);
+    add(&mut store, &scope, pen.clone()).unwrap(); add(&mut store, &scope, rect.clone()).unwrap();
+    let before = store.snapshot();
+    let revision = region(&store, &scope).drawing_revision;
+    let valid = split_stroke(&pen);
+    let mut duplicate = valid.clone(); duplicate.fragments[1].id = rect.id.clone();
+    let mut out_of_bounds = valid.clone(); out_of_bounds.fragments[1].points[0].x = 801.;
+    let mut wrong_first_id = valid.clone(); wrong_first_id.fragments[0].id = Uuid::new_v4().to_string();
+    for erasures in [
+        vec![valid.clone(), DrawingStrokeErase { drawing_id: rect.id.clone(), fragments: vec![] }],
+        vec![valid.clone(), valid.clone()], vec![duplicate], vec![out_of_bounds], vec![wrong_first_id],
+    ] {
+        assert!(store.apply(erase_command(&scope, revision, erasures)).is_err());
+        assert_eq!(store.snapshot(), before);
+        assert_eq!(Store::open(&db.0).unwrap().snapshot(), before);
+    }
+    assert!(store.apply(erase_command(&scope, revision - 1, vec![valid])).is_err());
+    assert_eq!(store.snapshot(), before);
+}
+
+#[test]
+fn pixel_eraser_noop_keeps_revision_and_redo_and_does_not_delete_shapes() {
+    let mut store = Store::open_in_memory().unwrap();
+    let scope = prepare(&mut store);
+    let pen = object(DrawingKind::Pen);
+    let rect = object(DrawingKind::Rect);
+    add(&mut store, &scope, pen.clone()).unwrap(); add(&mut store, &scope, rect.clone()).unwrap();
+    history(&mut store, &scope, false).unwrap();
+    let before = store.snapshot();
+    let revision = region(&store, &scope).drawing_revision;
+    store.apply(erase_command(&scope, revision, vec![DrawingStrokeErase { drawing_id: pen.id.clone(), fragments: vec![
+        DrawingStrokeFragment { id: pen.id.clone(), points: pen.points.clone() },
+    ] }])).unwrap();
+    assert_eq!(store.snapshot(), before);
+    history(&mut store, &scope, true).unwrap();
+    assert_eq!(region(&store, &scope).drawings, vec![pen, rect]);
+}
+
+#[test]
+fn pixel_eraser_budget_is_final_document_size_and_invalid_overflow_is_atomic() {
+    let db = TestDb::new();
+    let mut store = Store::open(&db.0).unwrap();
+    let scope = prepare(&mut store);
+    for _ in 0..256 { add(&mut store, &scope, object(DrawingKind::Pen)).unwrap(); }
+    let original = region(&store, &scope);
+    // A high-index split and a low-index deletion must both fit the final
+    // document and every persisted intermediate history index.
+    store.apply(erase_command(&scope, original.drawing_revision, vec![
+        DrawingStrokeErase { drawing_id: original.drawings[0].id.clone(), fragments: vec![] },
+        split_stroke(&original.drawings[255]),
+    ])).unwrap();
+    assert_eq!(region(&store, &scope).drawings.len(), 256);
+    drop(store);
+    let mut store = Store::open(&db.0).unwrap();
+    history(&mut store, &scope, false).unwrap();
+    assert_eq!(region(&store, &scope).drawings, original.drawings);
+    let before = store.snapshot();
+    let current = region(&store, &scope);
+    assert!(store.apply(erase_command(&scope, current.drawing_revision, vec![split_stroke(&current.drawings[255])])).is_err());
+    assert_eq!(store.snapshot(), before);
+    let mut forged = serde_json::to_value(split_stroke(&current.drawings[0])).unwrap();
+    forged["fragments"][0]["kind"] = serde_json::json!("rich");
+    assert!(serde_json::from_value::<DrawingStrokeErase>(forged).is_err());
+    // Every source can be shortened by the same gesture: its remove/insert
+    // history needs 512 edits while both document snapshots remain 256 objects.
+    let shortened: Vec<_> = current.drawings.iter().map(|drawing| {
+        let mut points = drawing.points.clone(); points[1].x -= 5.; points[1].y -= 3.125;
+        DrawingStrokeErase { drawing_id: drawing.id.clone(), fragments: vec![DrawingStrokeFragment { id: drawing.id.clone(), points }] }
+    }).collect();
+    store.apply(erase_command(&scope, current.drawing_revision, shortened)).unwrap();
+    let after = region(&store, &scope);
+    assert_eq!(after.drawings.len(), 256);
+    let edits = after.drawing_history.undo.last().unwrap().edits();
+    assert_eq!(edits.len(), 512); assert!(edits.iter().all(|edit| edit.index < 256));
+    drop(store);
+    let mut store = Store::open(&db.0).unwrap();
+    history(&mut store, &scope, false).unwrap();
+    assert_eq!(region(&store, &scope).drawings, current.drawings);
+    history(&mut store, &scope, true).unwrap();
+    assert_eq!(region(&store, &scope).drawings, after.drawings);
+}
+
 #[test]
 fn rectangular_mark_keeps_revision_fences_and_persisted_edit_history() {
     let db = TestDb::new();

@@ -6,7 +6,7 @@ import { ArrowUpRight, BrushCleaning, Check, Circle, Copy, Eraser, Grid2X2, Hash
 import type { Drawing, DrawingKind, DrawingPoint, ManualDrawingKind } from '../contracts';
 import { constrainedEnd, drawingBounds, drawingMoveDelta, drawingOrder, drawingResizeHandles, resizedDrawingPoints, validNextNumber } from "./drawing-geometry";
 import { finishDrawing, outputDrawing } from "../capture-completion";
-import { clipEraserSweep, eraserCursor, eraserHit, eraserStrokeHits, ObjectEraser } from "./drawing-eraser";
+import { clipEraserSweep, eraserCursor, eraserHit, eraserStrokeHits, ObjectEraser, PixelEraser, type EraserMode } from "./drawing-eraser";
 import { changeProperty, drawingDraftKey, drawingDrafts, drawingPropertyCommand, propertyDraft, settleDrawingEdit, strokeKinds, type DrawingPropertyDraft } from "./drawing-properties";
 import { drawingFrame, drawingPointerSamples, liveDrawing } from './drawing-pointer';
 import type { DrawingFlush, RegisterDrawingFlush } from "../drawing-flush";
@@ -38,6 +38,9 @@ export default function SharedDrawingEditor(props: Props) {
   const [imageZooming, setImageZooming] = createSignal(false);
   let eraseSource: (()=>boolean) | undefined;
   const [erasing,setErasing]=createSignal(false);
+  const [eraserMode,setEraserMode]=createSignal<EraserMode>('pixel');
+  const [pixelDraft,setPixelDraft]=createSignal<Map<string,Drawing[]>|undefined>();
+  const pixelIndex=createMemo(()=>new Map([...(pixelDraft()?.values()??[])].flat().map(d=>[d.id,d])));
   const [wideBrush,setWideBrush]=createSignal(props.tools[0]==='highlighter');
   let eraseFlight: Promise<void> | undefined;
   const numberChanges = new Map<string, { previous: number; next: number; preference: number }>();
@@ -96,7 +99,7 @@ export default function SharedDrawingEditor(props: Props) {
   });
   const addedPreviewMosaic = createMemo(() => previewDrawing()?.kind === 'mosaic');
   const drawingIds = createMemo(() => {
-    const ordered = drawingOrder(drawings()).filter(value => !storedIndex().has(value.id));
+    const ordered = drawingOrder(drawings().flatMap(value=>pixelDraft()?.get(value.id)??[value])).filter(value => !storedIndex().has(value.id));
     const ids = [...storedIndex().keys(), ...ordered.map(value => value.id)];
     const addedId = addedPreviewId();
     if (addedId) {
@@ -180,7 +183,50 @@ export default function SharedDrawingEditor(props: Props) {
     }
   }
   function editNumber(value: string) { if(disabled())return; numberPreference++; setNextNumber(value); }
+  function beginPixelErase(event: PointerEvent, secondary: boolean) {
+    const pointerId=event.pointerId,origin=identity(),revision=props.port.revision(),originalTool=tool();
+    const initial=svg.getBoundingClientRect(),frame=props.port.frame(),diameter=eraseWidth();
+    if(initial.width<=0||initial.height<=0||props.documentOnly)return;
+    const source=JSON.stringify([props.port.sourceIdentity(),props.port.sourceSize(),frame,props.box]);
+    const sourceCurrent=()=>!disposed&&identity()===origin&&originalTool===tool()&&eraserMode()==='pixel'&&source===JSON.stringify([props.port.sourceIdentity(),props.port.sourceSize(),props.port.frame(),props.box]);
+    const current=()=>sourceCurrent()&&props.port.revision()===revision&&!props.busy&&!props.inputLocked&&!finishing();
+    const pointAt=(p:{clientX:number;clientY:number})=>({x:frame.x+(p.clientX-initial.left)*frame.width/initial.width,y:frame.y+(p.clientY-initial.top)*frame.height/initial.height});
+    const eraser=new PixelEraser(drawings(),()=>crypto.randomUUID());
+    let last=pointAt(event),ended=false,released=false;
+    const visual=drawingFrame(()=>{if(!ended)setPixelDraft(eraser.preview());});
+    eraseSource=sourceCurrent;setErasing(true);
+    const detach=()=>{svg.removeEventListener('pointermove',moved);svg.removeEventListener('pointerup',up);svg.removeEventListener('pointercancel',canceled);svg.removeEventListener('lostpointercapture',canceled);if(svg.hasPointerCapture(pointerId))svg.releasePointerCapture(pointerId);};
+    const clear=()=>{setPixelDraft(undefined);if(eraseSource===sourceCurrent)eraseSource=undefined;cancelGesture=undefined;};
+    const finish=(save:boolean)=>{
+      if(ended)return;const valid=current();ended=true;released=save&&valid;visual.cancel();detach();setErasing(false);
+      const erasures=eraser.erasures();
+      if(!released||!erasures.length){clear();return;}
+      setPixelDraft(eraser.preview());
+      // Flush/close must wait for this one real CAS. A released pointer cannot
+      // cancel already accepted persistence when input is subsequently locked.
+      cancelGesture=()=>{};
+      const completion=commit({...target(revision),type:'erase_drawing_strokes',erasures},true,sourceCurrent).then(saved=>{if(!saved)throw Error('擦除尚未保存');}).finally(()=>{clear();if(eraseFlight===completion)eraseFlight=undefined;});
+      eraseFlight=completion;void completion.catch(()=>{});
+    };
+    const sample=(value:PointerEvent)=>{
+      if(ended)return;
+      if(!current()){finish(false);return;}
+      const next=pointAt(value),previous=last;last=next;
+      // Do not cut through a toolbar or an interactive media object's controls.
+      const hit=document.elementFromPoint(value.clientX,value.clientY);
+      if(hit!==svg&&!(hit&&svg.contains(hit)))return;
+      const sweep=clipEraserSweep(previous,next,frame);if(!sweep)return;
+      try{if(eraser.sweep(sweep[0],sweep[1],diameter))visual.request();}catch(error){finish(false);report(error);}
+    };
+    const moved=(value:PointerEvent)=>{if(value.pointerId!==pointerId||ended)return;value.preventDefault();if(!(value.buttons&(secondary?2:1))){finish(true);return;}for(const p of drawingPointerSamples(value))sample(p);};
+    const up=(value:PointerEvent)=>{if(value.pointerId!==pointerId||ended)return;sample(value);finish(true);};
+    const canceled=(value:PointerEvent)=>{if(value.pointerId===pointerId)finish(false);};
+    cancelGesture=()=>finish(false);
+    svg.addEventListener('pointermove',moved);svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',canceled);svg.addEventListener('lostpointercapture',canceled);
+    try{svg.setPointerCapture(pointerId);sample(event);}catch(error){finish(false);report(error);}
+  }
   function beginErase(event: PointerEvent, secondary = false) {
+    if(props.port.pixelEraser&&eraserMode()==='pixel'){beginPixelErase(event,secondary);return;}
     const pointerId = event.pointerId, origin = identity();
     const initialBox=svg.getBoundingClientRect(),frame=props.port.frame(),diameter=eraseWidth();
     if(initialBox.width<=0||initialBox.height<=0)return;
@@ -204,7 +250,8 @@ export default function SharedDrawingEditor(props: Props) {
     const eraser = new ObjectEraser({ x: event.clientX, y: event.clientY }, {
       current: () => !disposed && !stopped && Boolean(eraseSource?.()) && (secondary || tool() === 'eraser') && (releasedPointer || (!props.busy && !props.inputLocked)) && !finishing(),
       hit: (point,previous) => {
-        const allowed=props.blackboard?new Set(drawings().filter(value=>!blackboardImage(value)&&props.port.canSelect(value)).map(value=>value.id)):editableIds();
+        const protectedIds=new Set(drawings().filter(blackboardImage).map(value=>value.id));
+        const allowed=new Set([...editableIds()].filter(id=>!protectedIds.has(id)));
         const hits=new Set<string>();
         // Toolbar/media controls cover the surface; never erase through them.
         const top=document.elementFromPoint(point.x,point.y);
@@ -664,7 +711,7 @@ export default function SharedDrawingEditor(props: Props) {
   onCleanup(() => { unregisterFlush?.(); disposed = true; serial++; cancelGesture?.(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
   function DrawingItem(item: { id: string }) {
     const isDraft = createMemo(() => activeDraftId() === item.id), isEdit = createMemo(() => activeEditId() === item.id);
-    const value = createMemo(() => {const saved=drawingIndex().get(item.id),preview=previews().get(item.id);return preview??(saved?linkedRepairPreview(saved,drawingIndex(),previews()):undefined);});
+    const value = createMemo(() => {const saved=drawingIndex().get(item.id),preview=pixelIndex().get(item.id)??previews().get(item.id);return preview??(saved?linkedRepairPreview(saved,drawingIndex(),previews()):undefined);});
     const drawing = liveDrawing(item.id, () => value()!);
     const isPreview = createMemo(() => isDraft() || isEdit());
     const isSelected = createMemo(() => selectedIds().includes(item.id) && !(props.blackboard && value()?.rich?.kind === 'extracted'&&selectedIds().length===1));
@@ -696,6 +743,10 @@ export default function SharedDrawingEditor(props: Props) {
       {props.extraTools?.()}
       </div>
       <div class="drawing-properties-row">
+      <Show when={tool()==='eraser'&&props.port.pixelEraser}>
+        <button data-caption={t('像素橡皮')} title={t('局部擦除画笔、直线和荧光笔')} aria-label={t('像素橡皮')} aria-pressed={eraserMode()==='pixel'} classList={{selected:eraserMode()==='pixel'}} disabled={disabled()} onClick={()=>{cancelGesture?.();setEraserMode('pixel');}}><Eraser size={20}/></button>
+        <button data-caption={t('对象橡皮')} title={t('整项擦除绘制对象')} aria-label={t('对象橡皮')} aria-pressed={eraserMode()==='object'} classList={{selected:eraserMode()==='object'}} disabled={disabled()} onClick={()=>{cancelGesture?.();setEraserMode('object');}}><Square size={20}/></button>
+      </Show>
       <div class="drawing-property-controls">
       <Show when={!['mosaic', 'eraser', 'select', 'rich','extract','heal'].includes(propertyKind())}><DrawingColorPicker value={propertyColor()} disabled={disabled()} onChange={(color,submit)=>changeStyle({color},submit)}/></Show>
       <Show when={tool()==='heal'}><DrawingWidthSlider label={t('画笔大小')} value={healWidth()} min={1} max={64} disabled={disabled()} onChange={value=>{if(!disabled())setHealWidth(value);}}/></Show>

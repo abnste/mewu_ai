@@ -513,6 +513,7 @@ pub fn apply_plugin_drawing(
             })
         }
         SceneCommand::RemoveDrawing { .. }
+        | SceneCommand::EraseDrawingStrokes { .. }
         | SceneCommand::UndoDrawing { .. }
         | SceneCommand::RedoDrawing { .. } => None,
         _ => return Err("此入口仅接受绘制操作".into()),

@@ -148,31 +148,36 @@ export class VideoTrimGesture {
   dispose() { if (this.disposed) return; this.cancel(false); this.disposed = true; }
 }
 
-export interface SeekIntent { identity: string; ticks: number }
+export interface SeekIntent { identity: string; ticks: number; deadline?: number }
 /** Serialized adapter seam; work resolves only after the actual owned seek completes. */
 export class LatestVideoSeek {
   private latest?: { value: SeekIntent; epoch: number };
   private flight?: Promise<void>;
+  private abort?: AbortController;
   private epoch = 0;
   private cancelEpoch = 0;
   private disposed = false;
   private error?: unknown;
-  constructor(private hooks: { currentIdentity: () => string | undefined; work: (value: SeekIntent) => Promise<number>; presented: (ticks: number) => void; error: (error: unknown) => void }) {}
+  constructor(private hooks: { currentIdentity: () => string | undefined; work: (value: SeekIntent, signal: AbortSignal) => Promise<number>; presented: (ticks: number) => void; error: (error: unknown) => void }) {}
   request(value: SeekIntent) {
     if (this.disposed || value.identity !== this.hooks.currentIdentity() || !Number.isSafeInteger(value.ticks) || value.ticks < 0) return false;
-    this.latest = { value: { ...value }, epoch: ++this.epoch }; this.error = undefined; this.drain(); return true;
+    this.latest = { value: { ...value }, epoch: ++this.epoch }; this.error = undefined;
+    // A media seek is replaceable. Do not make the latest pointer position
+    // wait for an obsolete decoder's seeked event or eight-second timeout.
+    this.abort?.abort(); this.drain(); return true;
   }
   private drain() {
     const request = this.latest; if (this.disposed || this.flight || !request) return;
     this.latest = undefined;
-    const flight = Promise.resolve().then(() => !this.disposed && request.epoch === this.epoch && request.value.identity === this.hooks.currentIdentity() ? this.hooks.work(request.value) : Promise.reject(new TrimCanceled())).then(actual => {
+    const abort = new AbortController(); this.abort = abort;
+    const flight = Promise.resolve().then(() => !this.disposed && request.epoch === this.epoch && request.value.identity === this.hooks.currentIdentity() ? this.hooks.work(request.value, abort.signal) : Promise.reject(new TrimCanceled())).then(actual => {
       if (!this.disposed && request.epoch === this.epoch && request.value.identity === this.hooks.currentIdentity()) this.hooks.presented(actual);
     }).catch(error => {
       if (!this.disposed && request.epoch === this.epoch && request.value.identity === this.hooks.currentIdentity()) { this.error = error; this.hooks.error(error); }
-    }).finally(() => { if (this.flight === flight) { this.flight = undefined; this.drain(); } });
+    }).finally(() => { if (this.flight === flight) { this.flight = undefined; if (this.abort === abort) this.abort = undefined; this.drain(); } });
     this.flight = flight;
   }
-  cancel() { this.cancelEpoch++; this.epoch++; this.latest = undefined; this.error = undefined; }
+  cancel() { this.cancelEpoch++; this.epoch++; this.latest = undefined; this.error = undefined; this.abort?.abort(); }
   async flush(active: () => boolean = () => true) {
     const generation = this.cancelEpoch;
     while (this.flight || this.latest) { if (this.disposed || !active() || this.cancelEpoch !== generation) throw new TrimCanceled(); const flight = this.flight; if (flight) await flight; else this.drain(); }

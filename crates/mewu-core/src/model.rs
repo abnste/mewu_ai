@@ -310,6 +310,21 @@ pub struct Drawing {
     pub rich: Option<crate::RichDrawingRef>,
 }
 
+/// A partial stroke edit carries geometry only; the core retains its style and provenance.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingStrokeFragment {
+    pub id: String,
+    pub points: Vec<DrawingPoint>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingStrokeErase {
+    pub drawing_id: String,
+    pub fragments: Vec<DrawingStrokeFragment>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DrawingEdit {
@@ -890,6 +905,13 @@ pub enum SceneCommand {
         background_id: String,
         expected_revision: u64,
         drawings: Vec<Drawing>,
+    },
+    EraseDrawingStrokes {
+        scene_id: String,
+        region_id: String,
+        background_id: String,
+        expected_revision: u64,
+        erasures: Vec<DrawingStrokeErase>,
     },
     RemoveDrawing {
         scene_id: String,

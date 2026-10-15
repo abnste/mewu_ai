@@ -7,6 +7,15 @@ import test from 'node:test';
 const module = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./drawing-colors.ts',import.meta.url),'utf8'),{mode:'transform'}));
 await module.link(()=>{throw Error('Unexpected import');}); await module.evaluate();
 const {numberForeground} = module.namespace;
+test('three recent toolbar swatches are always visible, deduplicated and shared with the persisted chooser history',()=>{
+  const {toolbarRecentColors,recentColors,rememberColor}=module.namespace;
+  let stored='[]';const storage={getItem:()=>stored,setItem:(_key,value)=>stored=value};
+  assert.deepEqual([...toolbarRecentColors([])],['#EE4848','#348BF1','#F4C94D']);
+  for(const color of ['#123456','#aabbcc','#FFFFFF','#123456'])rememberColor(color,storage);
+  assert.deepEqual([...recentColors(storage)],['#123456','#FFFFFF','#AABBCC']);
+  assert.deepEqual([...toolbarRecentColors(recentColors(storage))],['#123456','#FFFFFF','#AABBCC']);
+  assert.deepEqual([...toolbarRecentColors(['#bad','#348bf1','#348BF1'])],['#348BF1','#EE4848','#F4C94D']);
+});
 test('number labels remain readable on white, dark, saturated and threshold fills',()=>{
   for(const [fill,foreground] of [
     ['#FFFFFF','#000000'],['#000000','#FFFFFF'],['#242832','#FFFFFF'],
