@@ -14,7 +14,7 @@ function fixture(run) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'mewu-staging-')), root = path.join(parent, 'repo');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   try {
-    for (const name of ['release-contract.mjs', 'prepare-release.mjs', 'assemble-release.mjs', 'publish-release.mjs']) fs.copyFileSync(path.join(scripts, name), path.join(root, 'scripts', name));
+    for (const name of ['release-contract.mjs', 'release-api.mjs', 'prepare-release.mjs', 'assemble-release.mjs', 'publish-release.mjs']) fs.copyFileSync(path.join(scripts, name), path.join(root, 'scripts', name));
     fs.mkdirSync(path.join(root, 'apps/desktop/src-tauri'), { recursive: true });
     fs.mkdirSync(path.join(root, 'docs'));
     fs.writeFileSync(path.join(root, '.gitignore'), 'out/\n');

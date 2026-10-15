@@ -12,6 +12,38 @@ node tools/extension-market/cli.mjs --help
 
 API 2 校验器额外返回 `extensionContractVersion: 2` 和 `extensionContractSha256`；指纹按照 `contract.rs`、`package.rs`、`sdk.js`、`extension_market.rs` 的原始字节，以 NUL 分隔计算。源码变化后必须重编译，不能用旧二进制冒充当前格式验收。指纹检测契约失配，不证明一个外来 EXE 的来源。
 
+## From an independent project to a market PR
+
+以下在一个工作目录执行，插件源码已位于 `my-plugin/`，包含上述清单、入口和许可。先把源码发布到自己的公开 GitHub 仓库 `YOUR_ACCOUNT/my-plugin`；替换账号、插件 ID、版本和分支名，平台与测试结果必须如实填写。开发机器需要 Rust/Cargo、Node.js 22+、Git/GitHub CLI 以及 [Tauri 构建前提](https://v2.tauri.app/start/prerequisites/)。SDK TGZ 只提供 SDK/类型，不包含打包 CLI 或原生校验器。
+
+Windows PowerShell，使用默认 Cargo target 目录：
+
+```powershell
+git clone --branch next --single-branch https://github.com/abnste/mewu_ai.git ./mewu-host
+cargo build --manifest-path ./mewu-host/Cargo.toml -p mewu-desktop --bin mewu-plugin-validator --features catalog-validator --locked
+New-Item -ItemType Directory -Force ./packages | Out-Null
+node ./mewu-host/tools/extension-market/cli.mjs manifest ./my-plugin/mewu-plugin.json --validator ./mewu-host/target/debug/mewu-plugin-validator.exe --json
+node ./mewu-host/tools/extension-market/cli.mjs pack ./my-plugin --out ./packages/my-plugin-1.0.0.zip --validator ./mewu-host/target/debug/mewu-plugin-validator.exe --json
+```
+
+先从 Mewu 设置 → 插件 → 添加 → 安装 ZIP 插件进行本机验证。启用后，命令由声明的截图/空间入口运行；Agent 与记忆服务在对应 Agent 设置中选择。打包校验不能代替这些实际交互测试。macOS/Linux 将校验器文件名改为无 `.exe`，并使用系统对应的建目录命令；如设置 `CARGO_TARGET_DIR`，校验器路径也须对应调整。
+
+以下只向作者自己的仓库上传包，向社区仓库提交条目 PR；不向 Mewu 宿主提交实现 PR，也不修改社区索引。`gh release create` 创建已发布版本，不能使用草稿：
+
+```powershell
+gh auth login
+gh repo fork abnste/mewu-plugins --clone
+git -C ./mewu-plugins switch -c add-yourname-counter
+gh release create v1.0.0 --repo YOUR_ACCOUNT/my-plugin --title v1.0.0 --notes "Initial plugin release"
+node ./mewu-host/tools/extension-market/cli.mjs publish ./packages/my-plugin-1.0.0.zip --repository YOUR_ACCOUNT/my-plugin --release-tag v1.0.0 --entry-out ./mewu-plugins/entries/yourname.counter.json --platform any --validator ./mewu-host/target/debug/mewu-plugin-validator.exe --json
+git -C ./mewu-plugins add -- entries/yourname.counter.json
+git -C ./mewu-plugins commit -m "收录 yourname.counter 1.0.0"
+git -C ./mewu-plugins push -u origin HEAD
+gh pr create --repo abnste/mewu-plugins --base main --head YOUR_ACCOUNT:add-yourname-counter --web
+```
+
+在 PR 页面填写用途、权限、支持平台与实际测试结果后提交；PR 只改对应 `entries/<id>.json`，不要编辑 `mewu-catalog.json`。社区 [贡献规则](https://github.com/abnste/mewu-plugins/blob/main/CONTRIBUTING.md) 和 CI 核验通过、维护者合并后，主分支会生成公开索引。后续更新保留 ID/仓库并增加新版本，不替换旧 Release 的资产。
+
 ## 打包与发行
 
 清单格式和 SDK 用法见 [运行时源码](../../crates/mewu-extension/src/contract.rs) 与 [SDK](../../crates/mewu-extension/src/sdk.js)。包根是 `mewu-plugin.json`；`entry` 指向包内 `.js` 或 `.mjs` 模块。默认只打包清单和入口，其他导入模块逐项添加，防止无意收进本机文件。首版仅支持 JavaScript 模块；HTML、SVG 等界面内容由插件返回渲染数据，不把本机程序、npm 依赖树、密钥或原生安装脚本放进包中。

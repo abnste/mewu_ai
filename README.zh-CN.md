@@ -4,7 +4,7 @@
 
 Mewu 1.0 是面向 Windows x64、macOS ARM64 和 Linux x64 的桌面重制版。快捷键唤起截图空间，对话、截图、文件、标注与交互式 HTML/SVG 结果共处同一界面。
 
-[预览版 3](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.3)提供 Windows 安装版与便携版、macOS ARM64 DMG、Linux x64 AppImage。0.7.x 稳定版保留在 [master](https://github.com/abnste/mewu_ai/tree/master)。
+已发布安装包见[发行页面](https://github.com/abnste/mewu_ai/releases)：Windows 安装版与便携版、macOS ARM64 DMG、Linux x64 AppImage。当前分支准备预览版 4，实际可下载版本以发行页面为准。0.7.x 稳定版保留在 [master](https://github.com/abnste/mewu_ai/tree/master)。
 
 ## 当前功能
 
@@ -36,13 +36,13 @@ HTML/SVG/Canvas 结果使用透明的交互对象，悬浮显示移动、刷新�
 
 ## 安装与更新
 
-预览版 3 沿用已有下载命名：
+预览版 4 使用以下文件名，是否已发布以发行页面为准：
 
 | 平台 | 安装包 |
 | --- | --- |
-| Windows x64 | `MewuAI-Remake-Setup-1.0.0-preview.3-win-x64.exe` · `MewuAI-Remake-Portable-1.0.0-preview.3-win-x64.zip` |
-| macOS ARM64 | `MewuAI-Remake-1.0.0-preview.3-mac-arm64.dmg` |
-| Linux x64 | `MewuAI-Remake-1.0.0-preview.3-linux-x64.AppImage` |
+| Windows x64 | `MewuAI-Remake-Setup-1.0.0-preview.4-win-x64.exe` · `MewuAI-Remake-Portable-1.0.0-preview.4-win-x64.zip` |
+| macOS ARM64 | `MewuAI-Remake-1.0.0-preview.4-mac-arm64.dmg` |
+| Linux x64 | `MewuAI-Remake-1.0.0-preview.4-linux-x64.AppImage` |
 
 Windows 要求 Windows 10 2004 或以上和 WebView2；macOS 使用系统 WKWebView；Linux 使用 WebKitGTK，Wayland 截图与录屏通过桌面 portal 申请授权。
 

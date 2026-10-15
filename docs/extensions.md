@@ -6,7 +6,15 @@ The community catalog is maintained separately at [abnste/mewu-plugins](https://
 
 ## A first plugin
 
-Create `mewu-plugin.json` and `index.mjs` in a separate directory:
+Use Node.js 22+ for development. In a separate plugin project, install the published development SDK:
+
+```sh
+npm init -y
+npm pkg set type=module
+npm install --save-dev --ignore-scripts --no-audit --no-fund https://github.com/abnste/mewu-plugins/releases/download/v0.1.0/mewu-sdk-0.1.0.tgz
+```
+
+Create `mewu-plugin.json` and `index.mjs` in that project. The host supplies `@mewu/sdk` at runtime; do not include `node_modules` in the ZIP.
 
 ```json
 {
@@ -30,12 +38,13 @@ import { definePlugin } from '@mewu/sdk';
 export default definePlugin(ctx => {
   ctx.commands.register({
     id: 'counter.increment', title: 'Increment',
+    metadata: { placement: 'space-toolbar', input: {} },
     inputSchema: { type: 'object', additionalProperties: false }
   }, async () => {
     for (;;) {
       const before = await ctx.storage.get('count');
       const after = (before ?? 0) + 1;
-      if (await ctx.storage.compareAndSet('count', before, after)) return after;
+      if (await ctx.storage.compareAndSet('count', before, after)) return { content: `Count: ${after}` };
     }
   });
 });
@@ -43,7 +52,7 @@ export default definePlugin(ctx => {
 
 `@mewu/sdk` is supplied by the worker, not downloaded when the plugin runs. Its [source and TypeScript declarations](../packages/sdk) can also be used as a development package. Modules may import other relative `.js` or `.mjs` files within their own package. Native modules, external module URLs and Node globals are unavailable.
 
-Use the [packaging tools](../tools/extension-market/README.md) to validate and build a ZIP. By default the package includes only the root manifest and entry module; list additional modules explicitly. Publish an immutable versioned GitHub Release asset, generate its catalog entry, and submit that entry to the community repository. Raising the version is required when package contents change.
+Use the [packaging tools](../tools/extension-market/README.md) to validate and build a ZIP. By default the package includes only the root manifest and entry module; list additional modules explicitly. Publish an immutable versioned GitHub Release asset, generate its catalog entry, and submit that entry to the community repository. Raising the version is required when package contents change. Follow the [complete author workflow](../tools/extension-market/README.md#from-an-independent-project-to-a-market-pr) to build the validator, pack the plugin, publish its own Release and submit the catalog PR.
 
 ## Extension points
 

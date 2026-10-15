@@ -60,7 +60,7 @@ jobs:
         run: |
           set -e
           node --experimental-vm-modules --test apps/desktop/src/*.test.mjs
-          node --test scripts/release-contract.test.mjs scripts/release-staging.test.mjs
+          node --test scripts/release-contract.test.mjs scripts/release-staging.test.mjs scripts/release-api.test.mjs
           npm run build
           cargo test --workspace --locked -- --test-threads=1
       - name: Verify native Windows VBR, audio timeline and clip export

@@ -2,12 +2,24 @@
 
 Mewu API 2 插件运行在独立 QuickJS worker 中。宿主提供 SDK 模块，安装插件不需要 Node.js；此 npm 包用于开发时的类型提示与契约测试。
 
+在独立 ESM 项目中安装已发布的开发 SDK：
+
+```sh
+npm init -y
+npm pkg set type=module
+npm install --save-dev --ignore-scripts --no-audit --no-fund https://github.com/abnste/mewu-plugins/releases/download/v0.1.0/mewu-sdk-0.1.0.tgz
+```
+
+运行时 SDK 由 Mewu 提供；不要把 `node_modules` 放入插件包。打包、自己的 GitHub Release 和社区 PR 流程见 [作者指南](https://github.com/abnste/mewu_ai/blob/next/tools/extension-market/README.md#from-an-independent-project-to-a-market-pr)。
+
 ```js
 import { definePlugin } from '@mewu/sdk';
 
 export default definePlugin(ctx => {
-  ctx.commands.register({ id: 'example.hello', title: '你好' }, async input => {
-    return { message: `你好，${input.name || 'Mewu'}` };
+  ctx.commands.register({ id: 'example.hello', title: '你好',
+    metadata: { placement: 'space-toolbar', input: { name: 'Mewu' } }
+  }, async input => {
+    return { content: `你好，${input.name || 'Mewu'}` };
   });
 });
 ```

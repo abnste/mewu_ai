@@ -1,6 +1,6 @@
 {
   "name": "@mewu/desktop",
-  "version": "1.0.0-preview.3",
+  "version": "1.0.0-preview.4",
   "private": true,
   "type": "module",
   "scripts": {

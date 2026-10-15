@@ -75,6 +75,8 @@ mod journal_runtime;
 mod journal_tool_host;
 mod legacy_connections;
 mod lifecycle;
+#[cfg(windows)]
+mod windows_identity;
 mod mcp_host;
 mod mcp_runtime;
 mod memory_export;
@@ -2632,6 +2634,11 @@ fn main() {
     }
     if std::env::args().nth(1).as_deref() == Some("--recording-worker") {
         std::process::exit(recording_worker::worker_main());
+    }
+    #[cfg(windows)]
+    if let Err(error) = windows_identity::initialize() {
+        // A Shell grouping failure must not prevent capture or normal startup.
+        eprintln!("[windows-identity] initialization failed: 0x{:08X}", error.code().0 as u32);
     }
     let quit_only = lifecycle::launch_action(&std::env::args().collect::<Vec<_>>())
         == lifecycle::LaunchAction::Quit;

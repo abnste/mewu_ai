@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { repository as repo, fingerprint, verifyRelease, validateChannelAdvance } from './release-contract.mjs';
+import { findRelease, verifyReleaseTarget } from './release-api.mjs';
 const directory = path.resolve(process.argv[2] || 'out/release'), metadata = path.join(directory, '.metadata');
 const manifest = JSON.parse(fs.readFileSync(path.join(metadata, 'update.json'), 'utf8'));
 const acceptance = JSON.parse(fs.readFileSync(path.join(metadata, 'acceptance.json'), 'utf8'));
@@ -17,10 +18,7 @@ const release = verifyRelease(directory, manifest, acceptance, commit), { tag, a
 const preview = manifest.version.includes('-'), notes = path.resolve(`docs/release-notes-${manifest.version}.md`);
 if (!fs.lstatSync(notes).isFile() || fs.lstatSync(notes).isSymbolicLink()) throw Error('Missing release notes');
 const gh = (...args) => execFileSync('gh', args, { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8' });
-const lookup = name => {
-  try { return JSON.parse(gh('api', `repos/${repo}/releases/tags/${name}`)); }
-  catch (error) { if (!String(error.stderr).includes('404')) throw error; return null; }
-};
+const lookup = name => findRelease(gh, repo, name);
 const expected = new Map(release.files.map(file => [file.name, file]));
 function checkAsset(asset) {
   const file = expected.get(asset.name);
@@ -54,8 +52,8 @@ function checkChannels() {
 checkChannels();
 let existing = lookup(tag), alreadyPublished = false;
 if (existing) {
-  const ref = JSON.parse(gh('api', `repos/${repo}/git/ref/tags/${tag}`));
-  if (ref.object.type !== 'commit' || ref.object.sha !== commit || existing.assets.some(asset => !assets.includes(asset.name))) throw Error('Existing release identity/assets differ');
+  verifyReleaseTarget(gh, repo, existing, tag, commit, preview);
+  if (existing.assets.some(asset => !assets.includes(asset.name))) throw Error('Existing release identity/assets differ');
   for (const asset of existing.assets) checkAsset(asset);
   if (!existing.draft) {
     if (existing.assets.length !== assets.length) throw Error('Published release incomplete; never mutate published packages');
@@ -64,6 +62,7 @@ if (existing) {
 } else {
   gh('release', 'create', tag, '--repo', repo, '--target', commit, '--draft', ...(preview ? ['--prerelease'] : []), '--title', `MewuAI ${manifest.version} · 喵呜AI ${manifest.version}`, '--notes-file', notes);
   existing = lookup(tag);
+  verifyReleaseTarget(gh, repo, existing, tag, commit, preview);
 }
 if (!alreadyPublished) uploadMissing(tag, existing, assets);
 if (!channelRelease) {

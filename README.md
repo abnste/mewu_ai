@@ -4,7 +4,7 @@
 
 Mewu 1.0 is a desktop remake for Windows x64, macOS ARM64 and Linux x64. A shortcut opens the capture space: screenshots, conversation, files, annotations and interactive HTML/SVG results share the same surface.
 
-Preview 3 packages are listed on the [release page](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.3): Windows installer and portable ZIP, macOS ARM64 DMG, and Linux x64 AppImage. Stable 0.7.x remains on [master](https://github.com/abnste/mewu_ai/tree/master).
+Published packages are listed on the [releases page](https://github.com/abnste/mewu_ai/releases): Windows installer and portable ZIP, macOS ARM64 DMG, and Linux x64 AppImage. This branch prepares preview 4; the version becomes available after its release is published. Stable 0.7.x remains on [master](https://github.com/abnste/mewu_ai/tree/master).
 
 ## Included
 
@@ -36,13 +36,13 @@ Automatic window selection enables **Snapshot** on the long-capture button. Supp
 
 ## Installation and updates
 
-Preview 3 package names follow the existing release layout:
+Preview 4 uses the following package names. Check the releases page for published availability:
 
 | Platform | Download |
 | --- | --- |
-| Windows x64 | `MewuAI-Remake-Setup-1.0.0-preview.3-win-x64.exe` · `MewuAI-Remake-Portable-1.0.0-preview.3-win-x64.zip` |
-| macOS ARM64 | `MewuAI-Remake-1.0.0-preview.3-mac-arm64.dmg` |
-| Linux x64 | `MewuAI-Remake-1.0.0-preview.3-linux-x64.AppImage` |
+| Windows x64 | `MewuAI-Remake-Setup-1.0.0-preview.4-win-x64.exe` · `MewuAI-Remake-Portable-1.0.0-preview.4-win-x64.zip` |
+| macOS ARM64 | `MewuAI-Remake-1.0.0-preview.4-mac-arm64.dmg` |
+| Linux x64 | `MewuAI-Remake-1.0.0-preview.4-linux-x64.AppImage` |
 
 Windows requires Windows 10 2004 or later and WebView2. macOS uses the system WKWebView. Linux uses WebKitGTK; Wayland capture and recording request permission through the desktop portal.
 
