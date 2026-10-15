@@ -157,6 +157,129 @@ test('region tool obeys maxSteps and retains the screenshot after the final acti
   await scope.deactivate();
 });
 
+test('region tool corrects an unexecuted decision on the same frame, then observes fresh feedback', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  let observations = 0, models = 0;
+  const { scope, calls } = harness(async (method, params) => {
+    if (method === 'region.observe') return { artifactId: `frame-${++observations}`, width: 640, height: 480, sha256: String(observations).repeat(64) };
+    if (method === 'model.invoke') {
+      models++;
+      assert.deepEqual(params.images, [models <= 2 ? 'frame-1' : 'frame-2']);
+      assert.deepEqual(Object.keys(params).sort(), ['images', 'prompt']);
+      for (const line of params.prompt.split('\n').filter(line => line.startsWith('{'))) assert.doesNotThrow(() => JSON.parse(line));
+      if (models === 1) return { content: '{"kind":"click","x":91,"y":42}', toolCalls: [] };
+      if (models === 2) {
+        assert.match(params.prompt, /response_shape_invalid/);
+        return { content: '{"action":{"kind":"click","x":91,"y":42}}', toolCalls: [] };
+      }
+      assert.match(params.prompt, /feedbackSha256/);
+      return { content: '{"done":true,"message":"完成"}', toolCalls: [] };
+    }
+    if (method === 'region.action') {
+      assert.equal(models, 2);
+      assert.deepEqual(params.action, { kind: 'click', x: 91, y: 42 });
+      return { executed: true };
+    }
+    throw new Error('Unexpected method');
+  });
+  activate(scope.ctx); scope.finishRegistration();
+  const reply = await invoke(scope, 'example.region-agent.operate', { task: '点击目标' }, { regionId: 'authorized-region' });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.result.completed, true);
+  assert.equal(reply.result.steps, 1);
+  assert.deepEqual(calls.map(call => call.method), ['region.observe', 'model.invoke', 'model.invoke', 'region.action', 'region.observe', 'model.invoke']);
+  await scope.deactivate();
+});
+
+test('invalid JSON, shape, coordinates and action schemas stop after three decisions without input', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  const badActions = [
+    { kind: 'click', x: 640, y: 0 }, { kind: 'click', x: 0, y: 480 },
+    { kind: 'click', x: -1, y: 0 }, { kind: 'click', x: 0.5, y: 0 },
+    { kind: 'click', x: 1, y: 1, button: 'right' }, { kind: 'CLICK', x: 1, y: 1 },
+    { kind: 'drag', path: [{ x: 1, y: 1 }] }, { kind: 'drag', path: [{ x: 1, y: 1 }, { x: 640, y: 1 }] },
+    { kind: 'scroll', x: 1, y: 1, deltaY: 0 }, { kind: 'scroll', x: 1, y: 1, deltaY: 1201 },
+    { kind: 'type', text: 'unsafe\ncontrol' }, { kind: 'type', text: '字'.repeat(1366) },
+    { kind: 'key', key: 'ctrl+l' }
+  ];
+  const contents = ['private-key not JSON', '{}', '[]', '{"done":true,"message":"完成","action":{}}',
+    ...badActions.map(action => JSON.stringify({ action }))];
+  for (const content of contents) {
+    const { scope, calls } = harness(async (method, params) => {
+      if (method === 'region.observe') return { artifactId: 'own-frame', width: 640, height: 480, sha256: 'a'.repeat(64) };
+      assert.equal(method, 'model.invoke', 'invalid decisions must never enter region.action');
+      assert.deepEqual(params.images, ['own-frame']);
+      assert.doesNotMatch(params.prompt, /private-key/);
+      return { content, toolCalls: [] };
+    });
+    activate(scope.ctx); scope.finishRegistration();
+    const reply = await invoke(scope, 'example.region-agent.operate', { task: '点击目标' }, { regionId: 'authorized-region' });
+    assert.equal(reply.ok, true);
+    assert.deepEqual(reply.result, { content: '模型连续返回无效操作，已停止', steps: 0,
+      artifactId: 'own-frame', completed: false, stopReason: 'invalid_model_decision' });
+    assert.deepEqual(calls.map(call => call.method), ['region.observe', 'model.invoke', 'model.invoke', 'model.invoke']);
+    await scope.deactivate();
+  }
+});
+
+test('host/model/action or fresh-observation errors propagate without retrying unconfirmed input', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  for (const [failAt, expected] of [
+    ['first-observe', ['region.observe']],
+    ['model', ['region.observe', 'model.invoke']],
+    ['action', ['region.observe', 'model.invoke', 'region.action']],
+    ['fresh-observe', ['region.observe', 'model.invoke', 'region.action', 'region.observe']]
+  ]) {
+    let observations = 0;
+    const { scope, calls } = harness(async method => {
+      if (method === 'region.observe') {
+        observations++;
+        if (failAt === 'first-observe' || (failAt === 'fresh-observe' && observations === 2)) throw new Error('Own observation failure');
+        return { artifactId: `frame-${observations}`, width: 640, height: 480, sha256: 'a'.repeat(64) };
+      }
+      if (method === 'model.invoke') {
+        if (failAt === 'model') throw new Error('Own model failure');
+        return { content: '{"action":{"kind":"click","x":11,"y":17}}', toolCalls: [] };
+      }
+      assert.equal(method, 'region.action');
+      if (failAt === 'action') throw new Error('Own uncertain action failure');
+      return { executed: true };
+    });
+    activate(scope.ctx); scope.finishRegistration();
+    const reply = await invoke(scope, 'example.region-agent.operate', { task: '点击目标' }, { regionId: 'authorized-region' });
+    assert.equal(reply.ok, false);
+    assert.deepEqual(calls.map(call => call.method), expected);
+    assert.ok(calls.filter(call => call.method === 'region.action').length <= 1);
+    await scope.deactivate();
+  }
+});
+
+test('valid supported actions keep their exact JSON and always request fresh feedback', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  for (const action of [
+    { kind: 'click', x: 639, y: 479 }, { kind: 'doubleClick', x: 0, y: 0 },
+    { kind: 'drag', path: [{ x: 0, y: 0 }, { x: 639, y: 479 }] },
+    { kind: 'scroll', x: 1, y: 2, deltaY: -1200 }, { kind: 'type', text: '你好，Mewu 🙂' },
+    { kind: 'key', key: 'home' }
+  ]) {
+    let observations = 0;
+    const { scope, calls } = harness(async (method, params) => {
+      if (method === 'region.observe') return { artifactId: `frame-${++observations}`, width: 640, height: 480, sha256: String(observations).repeat(64) };
+      if (method === 'model.invoke') return { content: JSON.stringify({ action }), toolCalls: [] };
+      assert.equal(method, 'region.action');
+      assert.deepEqual(params.action, action);
+      return { executed: true };
+    });
+    activate(scope.ctx); scope.finishRegistration();
+    const reply = await invoke(scope, 'example.region-agent.operate', { task: '执行明确任务', maxSteps: 1 }, { regionId: 'authorized-region' });
+    assert.equal(reply.ok, true);
+    assert.equal(reply.result.steps, 1);
+    assert.equal(reply.result.artifactId, 'frame-2');
+    assert.deepEqual(calls.map(call => call.method), ['region.observe', 'model.invoke', 'region.action', 'region.observe']);
+    await scope.deactivate();
+  }
+});
+
 test('independent memory retains more than 64 records, pages without omissions and rejects another agent ID', async () => {
   const { default: activate } = await import('../../../extensions/examples/journal-memory/index.mjs');
   const records = new Map();

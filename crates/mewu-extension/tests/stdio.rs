@@ -143,21 +143,18 @@ fn duplicate_initialize_does_not_replace_active_plugin() {
 }
 
 #[test]
-fn real_example_worker_completes_fresh_feedback_and_classifies_invalid_decisions() {
+fn real_example_worker_completes_fresh_feedback_and_stops_after_three_invalid_decisions() {
     let source = include_str!("../../../extensions/examples/region-agent/index.mjs");
-    for (contents, expected_code) in [
+    for (contents, invalid) in [
         (
             vec![
                 r#"{"action":{"kind":"click","x":50,"y":60}}"#,
                 r#"{"done":true,"message":"Own synthetic completion"}"#,
             ],
-            None,
+            false,
         ),
-        (
-            vec!["Own deliberately non-JSON model response"],
-            Some("JS_SYNTAX_ERROR"),
-        ),
-        (vec!["{}"], Some("JS_ERROR")),
+        (vec!["Own deliberately non-JSON model response"; 3], true),
+        (vec!["{}"; 3], true),
     ] {
         let mut worker = Worker::new();
         worker.initialize(source);
@@ -173,17 +170,17 @@ fn real_example_worker_completes_fresh_feedback_and_classifies_invalid_decisions
         loop {
             let response = worker.read();
             if response["type"] != "host.call" {
-                if let Some(code) = expected_code {
-                    assert_eq!(response["type"], "error");
-                    assert_eq!(response["error"]["code"], code);
-                    assert_eq!((observed, models, actions), (1, 1, 0));
+                assert_eq!(response["type"], "result");
+                if invalid {
+                    assert_eq!(response["result"]["completed"], false);
+                    assert_eq!(response["result"]["stopReason"], "invalid_model_decision");
+                    assert_eq!((observed, models, actions), (1, 3, 0));
                 } else {
-                    assert_eq!(response["type"], "result");
                     assert_eq!(response["result"]["completed"], true);
                     assert_eq!((observed, models, actions), (2, 2, 1));
-                    worker.send(json!({"type":"shutdown","id":"own-stop"}));
-                    assert_eq!(worker.read(), json!({"type":"stopped","id":"own-stop"}));
                 }
+                worker.send(json!({"type":"shutdown","id":"own-stop"}));
+                assert_eq!(worker.read(), json!({"type":"stopped","id":"own-stop"}));
                 assert!(worker.child.wait().unwrap().success());
                 break;
             }
@@ -219,6 +216,10 @@ fn real_example_worker_completes_fresh_feedback_and_classifies_invalid_decisions
 #[test]
 fn actual_worker_exception_categories_never_forward_names_bodies_paths_or_keys() {
     for (throwing, code) in [
+        (
+            "JSON.parse('Bearer private-key C:/private/body.json')",
+            "JS_SYNTAX_ERROR",
+        ),
         (
             "throw new TypeError('Bearer private-key C:/private/body.json')",
             "JS_TYPE_ERROR",

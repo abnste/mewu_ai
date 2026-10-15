@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "id": "example.region-agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "name": "区域操作 Agent",
   "description": "根据真实选区截图观察、操作并再次截图反馈。",
   "publisher": "Mewu contributors",
