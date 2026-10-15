@@ -30,6 +30,8 @@ pub struct ExtensionHost {
     store: Mutex<Store>,
     pending: Mutex<HashMap<String, Pending>>,
     runs: Mutex<HashMap<String, ActiveRun>>,
+    #[cfg(windows)]
+    pub(crate) region_focus_owner: Mutex<Option<String>>,
     // SQLite is dropped before this final lease owner releases the root lock.
     _storage_lock: Arc<crate::storage_root::RuntimeLock>,
 }
@@ -132,6 +134,8 @@ impl ExtensionHost {
             store: Mutex::new(Store::open(root)?),
             pending: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
+            #[cfg(windows)]
+            region_focus_owner: Mutex::new(None),
             _storage_lock: storage_lock,
         })
     }
@@ -421,6 +425,7 @@ fn safe_region_reason(message: &str) -> &'static str {
         "显示器标识不唯一",
         "截图与当前显示器坐标不一致，请重新截图",
         "区域运行已停止",
+        "无法注册区域停止键，请先结束其他使用 Esc 的操作",
         "插件授权已撤销",
         "会话已关闭",
         "截图来源已变化",
@@ -479,6 +484,7 @@ fn record_region_error(
         | "region_source_invalid"
         | "region_source_missing"
         | "region_stopped"
+        | "region_stop_unavailable"
         | "region_text_invalid"
         | "region_too_large") => code,
         _ => "region_operation_failed",
@@ -757,6 +763,10 @@ struct Context {
     region_id: Option<String>,
     scope: String,
     region: Option<Arc<region::RegionSession>>,
+    #[cfg(windows)]
+    escape: crate::extension_escape::RunEscapeLease,
+    #[cfg(windows)]
+    focus_return: Option<Arc<crate::extension_focus::FocusTicket>>,
     frames: HashMap<String, region::RegionFrame>,
     default_messages: Vec<Value>,
     history: Option<Value>,
@@ -866,6 +876,10 @@ fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
         region_id: None,
         scope: "default".into(),
         region: None,
+        #[cfg(windows)]
+        focus_return: None,
+        #[cfg(windows)]
+        escape: crate::extension_escape::RunEscapeLease::default(),
         frames: HashMap::new(),
         default_messages: vec![],
         history: None,
@@ -929,14 +943,23 @@ pub async fn invoke_extension(
     } else {
         "default".into()
     };
+    let run_id = uuid::Uuid::new_v4().to_string();
+    #[cfg(windows)]
+    let focus_return = invocation.region_id.as_ref().and_then(|_| {
+        crate::extension_focus::FocusTicket::new(&app, run_id.clone(), invocation.scene_id.as_deref()?)
+    });
     let context = Context {
         record,
-        run_id: uuid::Uuid::new_v4().to_string(),
+        run_id,
         canceled: Arc::new(AtomicBool::new(false)),
         scene_id: invocation.scene_id,
         region_id: invocation.region_id,
         scope,
         region: None,
+        #[cfg(windows)]
+        focus_return,
+        #[cfg(windows)]
+        escape: crate::extension_escape::RunEscapeLease::default(),
         frames: HashMap::new(),
         default_messages: vec![],
         history: None,
@@ -1084,6 +1107,12 @@ impl Drop for Context {
         if let Some(region) = self.region.take() {
             region.revoke();
         }
+        #[cfg(windows)]
+        self.escape.release();
+        #[cfg(windows)]
+        if let Some(ticket) = self.focus_return.take() {
+            ticket.finalize();
+        }
     }
 }
 async fn run_context(
@@ -1187,6 +1216,10 @@ pub async fn run_bound_service(
         region_id: None,
         scope: agent_id,
         region: None,
+        #[cfg(windows)]
+        focus_return: None,
+        #[cfg(windows)]
+        escape: crate::extension_escape::RunEscapeLease::default(),
         frames: prepared.frames,
         default_messages: prepared.messages,
         history: prepared.history,
@@ -1244,6 +1277,10 @@ pub(crate) async fn run_external_agent(
         region_id: None,
         scope: provider.agent_id,
         region: None,
+        #[cfg(windows)]
+        focus_return: None,
+        #[cfg(windows)]
+        escape: crate::extension_escape::RunEscapeLease::default(),
         frames: prepared.frames,
         default_messages: prepared.messages,
         history: prepared.history,
@@ -1454,6 +1491,10 @@ fn bridge_impl(
                 region_id: None,
                 scope: context.scope.clone(),
                 region: None,
+                #[cfg(windows)]
+                focus_return: None,
+                #[cfg(windows)]
+                escape: crate::extension_escape::RunEscapeLease::default(),
                 frames: HashMap::new(),
                 default_messages: vec![],
                 history: context.history.clone(),
@@ -1759,7 +1800,16 @@ struct OverlayHooks {
     plugin: String,
     revision: u64,
     canceled: Arc<AtomicBool>,
-    hidden: Arc<Mutex<Vec<String>>>,
+    source: crate::extension_overlay_policy::RestoreSource,
+    #[cfg(windows)]
+    _escape: Arc<crate::extension_escape::EscapeLease>,
+    #[cfg(windows)]
+    focus_return: Option<Arc<crate::extension_focus::FocusTicket>>,
+    hidden: Arc<Mutex<Vec<HiddenWindow>>>,
+}
+struct HiddenWindow {
+    window: tauri::WebviewWindow,
+    pin: Option<crate::pin_host::PinRestoreToken>,
 }
 impl region::RegionOverlayHooks for OverlayHooks {
     fn validate_source(&self, binding: &region::RegionBinding) -> Result<(), String> {
@@ -1810,33 +1860,46 @@ impl region::RegionOverlayHooks for OverlayHooks {
     }
     fn hide_owned_overlays(&self) -> Result<(), String> {
         let app = self.app.clone();
+        let source = self.source.clone();
+        #[cfg(windows)]
+        let focus_return = self.focus_return.clone();
         let hidden = self.hidden.clone();
         let abandoned = Arc::new(AtomicBool::new(false));
         let ticket = abandoned.clone();
         let (send, receive) = mpsc::sync_channel(1);
         self.app
             .run_on_main_thread(move || {
+                #[cfg(windows)]
+                if let Some(ticket) = &focus_return { ticket.before_hide(); }
                 let result = (|| {
                     for (label, window) in app.webview_windows() {
-                        if label == "space" || label == "frozen" || label.starts_with("pin-") {
+                        if label == "space"
+                            || label == crate::frozen::LABEL
+                            || label.starts_with("pin-")
+                        {
                             let mut hidden = hidden.lock().map_err(|_| "覆盖层状态无效")?;
                             if ticket.load(Ordering::SeqCst) {
                                 return Err("截图覆盖层操作已撤销");
                             }
                             if window.is_visible().unwrap_or(false) {
+                                let pin = if crate::pin_host::is_pin_label(&label) {
+                                    Some(crate::pin_host::PinRestoreToken::capture(&app, &label).ok_or("贴图已改变")?)
+                                } else { None };
                                 window.hide().map_err(|_| "无法隐藏截图覆盖层")?;
-                                hidden.push(label);
+                                hidden.push(HiddenWindow { window, pin });
                             }
                         }
                     }
                     Ok(())
                 })();
+                #[cfg(windows)]
+                if let Some(ticket) = &focus_return { ticket.after_hide(); }
                 if send.send(result).is_err() {
                     let labels = hidden
                         .lock()
                         .map(|mut v| std::mem::take(&mut *v))
                         .unwrap_or_default();
-                    restore_ui_windows(&app, labels);
+                    restore_ui_windows(&app, &source, labels);
                 }
             })
             .map_err(|_| "无法隐藏截图覆盖层")?;
@@ -1865,27 +1928,62 @@ impl region::RegionOverlayHooks for OverlayHooks {
             .map(|mut v| std::mem::take(&mut *v))
             .unwrap_or_default();
         let app = self.app.clone();
+        let source = self.source.clone();
         let _ = self
             .app
-            .run_on_main_thread(move || restore_ui_windows(&app, labels));
+            .run_on_main_thread(move || restore_ui_windows(&app, &source, labels));
     }
 }
-fn restore_ui_windows(app: &AppHandle, labels: Vec<String>) {
-    for label in labels {
-        if let Some(window) = app.get_webview_window(&label) {
-            #[cfg(windows)]
-            {
-                if let Ok(hwnd) = window.hwnd() {
-                    unsafe {
-                        windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
-                            hwnd.0 as _,
-                            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
-                        );
+fn restore_ui_windows(
+    app: &AppHandle,
+    source: &crate::extension_overlay_policy::RestoreSource,
+    mut windows: Vec<HiddenWindow>,
+) {
+    let Some(host) = app.try_state::<Host>() else {
+        return;
+    };
+    // Exit can begin without SpaceTransition. Its existing attempt mutex makes
+    // reservation and this synchronous show mutually exclusive. Never retain
+    // Engine/plugin locks while Windows dispatches native window messages.
+    let status = crate::extension_overlay_policy::restore_groups(
+        source,
+        &host.capturing,
+        &host.exit,
+        || host.lock().ok().map(|engine| engine.store.snapshot()),
+        |scene_current| {
+            for hidden in windows.drain(..) {
+                if let Some(pin) = &hidden.pin {
+                    if !pin.is_current(app) { continue; }
+                } else if !scene_current { continue; }
+                let window = hidden.window;
+                #[cfg(windows)]
+                {
+                    if let Ok(hwnd) = window.hwnd() {
+                        unsafe {
+                            windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                                hwnd.0 as _,
+                                windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
+                            );
+                        }
                     }
                 }
+                #[cfg(not(windows))]
+                let _ = window.show();
             }
-            #[cfg(not(windows))]
-            let _ = window.show();
+        },
+    );
+    if status == crate::extension_overlay_policy::RestoreStatus::Busy {
+        // An explicit capture/close owns visibility now. Keep only independent
+        // live pin compensation, never replay stale space/frozen visibility.
+        windows.retain(|hidden| hidden.pin.as_ref().is_some_and(|pin| pin.is_current(app)));
+        if !windows.is_empty() && host.exit.accepts_new_operations() {
+            let app = app.clone();
+            let source = source.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let dispatcher = app.clone();
+                let _ = dispatcher.run_on_main_thread(move || restore_ui_windows(&app, &source, windows));
+            });
         }
     }
 }
@@ -1943,11 +2041,25 @@ fn begin_region(
         selection,
         asset_sha256: format!("{:x}", hash.finalize()),
     };
+    #[cfg(windows)]
+    let escape = context.escape.acquire(context.canceled.clone())
+        .map_err(|message| record_region_error(diagnostic, region::RegionError {
+            code: "region_stop_unavailable",
+            message: message.into(),
+        }))?;
     let hooks = Arc::new(OverlayHooks {
         app: app.clone(),
         plugin: context.record.manifest.id.clone(),
         revision: context.record.revision,
         canceled: context.canceled.clone(),
+        source: crate::extension_overlay_policy::RestoreSource {
+            scene_id: source.scene_id.clone(),
+            background_id: source.background.id.clone(),
+        },
+        #[cfg(windows)]
+        _escape: escape,
+        #[cfg(windows)]
+        focus_return: context.focus_return.clone(),
         hidden: Arc::new(Mutex::new(vec![])),
     });
     region::RegionSession::begin(source, hooks).map_err(|e| record_region_error(diagnostic, e))
@@ -1956,6 +2068,24 @@ fn begin_region(
 #[cfg(test)]
 mod failure_diagnostic_tests {
     use super::*;
+
+    #[test]
+    fn unavailable_region_stop_key_keeps_its_exact_typed_failure() {
+        let mut diagnostic = None;
+        let message = record_region_error(&mut diagnostic, region::RegionError {
+            code: "region_stop_unavailable",
+            message: "无法注册区域停止键，请先结束其他使用 Esc 的操作".into(),
+        });
+        let failure = HostCallFailure::from_error("region.observe", &message, diagnostic);
+        assert_eq!(failure.code, "region_stop_unavailable");
+        let public = worker_failure(&ProtocolError {
+            code: "RUNTIME_ERROR".into(), message: "service handler failed".into(),
+        }, Some(failure));
+        assert!(public.contains("region.observe"));
+        assert!(public.contains("region_stop_unavailable"));
+        assert!(public.contains("无法注册区域停止键"));
+        assert!(!public.contains("service handler failed"));
+    }
 
     #[test]
     fn region_host_failure_keeps_real_typed_guard_code_and_fixed_reason() {

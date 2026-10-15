@@ -99,6 +99,11 @@ mod extension_market;
 mod extension_region;
 mod extension_store;
 mod extension_ui;
+mod extension_overlay_policy;
+#[cfg(windows)]
+mod extension_escape;
+#[cfg(windows)]
+mod extension_focus;
 mod extension_input;
 mod extension_agent;
 mod extension_agent_authority;
@@ -762,7 +767,7 @@ fn hide_frozen_widget(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnapshot, String> {
     let host = app.state::<Host>();
-    let _transition = begin_space_transition(&app, &host)?;
+    let _transition = begin_explicit_space_transition(&app, &host).await?;
     recording::ensure_idle(&app)?;
     let (was_active, has_frozen) = {
         let mut engine = host.lock()?;
@@ -811,6 +816,27 @@ impl SpaceTransition {
             .ok()
             .map(|_| Self(active.clone()))
     }
+    /// One explicit close/freeze intent may wait out a passive native restore.
+    /// Longer captures still report busy; no Engine or exit mutex crosses await.
+    async fn acquire_explicit(
+        active: &Arc<AtomicBool>,
+        exit: &lifecycle::ExitState,
+        timeout: std::time::Duration,
+    ) -> Result<Self, String> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            exit.ensure_new_operation()?;
+            if let Some(transition) = Self::try_begin(active) {
+                exit.ensure_new_operation()?;
+                return Ok(transition);
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err("请先完成当前采集或空间切换".into());
+            }
+            tokio::time::sleep_until((now + std::time::Duration::from_millis(16)).min(deadline)).await;
+        }
+    }
 }
 impl Drop for SpaceTransition {
     fn drop(&mut self) {
@@ -833,10 +859,90 @@ fn begin_space_transition(app: &AppHandle, host: &Host) -> Result<SpaceTransitio
     Ok(transition)
 }
 
+async fn begin_explicit_space_transition(
+    app: &AppHandle,
+    host: &Host,
+) -> Result<SpaceTransition, String> {
+    host.exit.ensure_new_operation()?;
+    if !host.storage.is_ready() {
+        return Err("正在启动，请稍候".into());
+    }
+    let transition = SpaceTransition::acquire_explicit(
+        &host.capturing,
+        &host.exit,
+        std::time::Duration::from_secs(2),
+    )
+    .await?;
+    speech_host::cancel_owner(app, "space");
+    code_host::cancel_owner(app, "space");
+    video_host::cancel_all(app);
+    raster_edit_host::cancel_all();
+    image_host::cancel_owner(app, "space");
+    Ok(transition)
+}
 #[cfg(test)]
 mod transition_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn one_close_or_freeze_waits_for_the_real_restore_owner_then_persists() {
+        for freeze in [false, true] {
+            let active = Arc::new(AtomicBool::new(false));
+            let exit = lifecycle::ExitState::default();
+            let restore = SpaceTransition::try_begin(&active).unwrap();
+            let acquire =
+                SpaceTransition::acquire_explicit(&active, &exit, std::time::Duration::from_secs(2));
+            tokio::pin!(acquire);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(25), &mut acquire,)
+                    .await
+                    .is_err()
+            );
+            drop(restore);
+            let explicit = tokio::time::timeout(std::time::Duration::from_secs(1), acquire)
+                .await
+                .unwrap()
+                .unwrap();
+            let mut store = mewu_core::Store::open_in_memory().unwrap();
+            let scene_id = store.snapshot().active_scene_id;
+            store
+                .apply(if freeze {
+                    SceneCommand::FreezeScene {
+                        scene_id: scene_id.clone(),
+                    }
+                } else {
+                    SceneCommand::CloseScene {
+                        scene_id: scene_id.clone(),
+                    }
+                })
+                .unwrap();
+            let snapshot = store.snapshot();
+            let scene = snapshot.scenes.iter().find(|s| s.id == scene_id).unwrap();
+            assert!(if freeze {
+                scene.minimized && scene.frozen
+            } else {
+                scene.closed
+            });
+            assert!(SpaceTransition::try_begin(&active).is_none());
+            drop(explicit);
+            assert!(SpaceTransition::try_begin(&active).is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_scene_transition_still_reports_a_long_capture_as_busy() {
+        let active = Arc::new(AtomicBool::new(false));
+        let exit = lifecycle::ExitState::default();
+        let _capture = SpaceTransition::try_begin(&active).unwrap();
+        assert!(SpaceTransition::acquire_explicit(
+            &active,
+            &exit,
+            std::time::Duration::from_millis(25),
+        )
+        .await
+        .is_err_and(|error| error == "请先完成当前采集或空间切换"));
+        assert!(active.load(Ordering::Acquire));
+    }
     #[test]
     fn ignored_capture_cannot_release_another_windows_transition() {
         let active = Arc::new(AtomicBool::new(false));
@@ -893,7 +999,7 @@ mod transition_tests {
 #[tauri::command]
 async fn freeze_space(app: AppHandle, scene_id: String) -> Result<HostSnapshot, String> {
     let host = app.state::<Host>();
-    let _transition = begin_space_transition(&app, &host)?;
+    let _transition = begin_explicit_space_transition(&app, &host).await?;
     pixel_sampler::invalidate(&app);
     pin_host::cancel_pending(&app, "space");
     recording::ensure_idle(&app)?;

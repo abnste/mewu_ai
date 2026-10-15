@@ -91,6 +91,19 @@ impl ExitState {
             Err(EXIT_BUSY.into())
         }
     }
+    /// A synchronous native restore must not overtake an exit reservation.
+    /// The caller owns SpaceTransition and has released Engine before entering;
+    /// this closure may only show existing windows, with no IO, await or IPC.
+    pub(crate) fn with_window_restore(&self, restore: impl FnOnce()) -> bool {
+        let Ok(attempt) = self.attempt.lock() else {
+            return false;
+        };
+        if !self.is_running() || attempt.is_some() {
+            return false;
+        }
+        restore();
+        true
+    }
     pub fn is_ready(&self) -> bool {
         self.phase.load(Ordering::Acquire) == READY
     }
@@ -770,6 +783,70 @@ fn settle_runs(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn explicit_close_or_freeze_does_not_wait_after_exit_reserved() {
+        let state = super::ExitState::default();
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _capture = crate::SpaceTransition::try_begin(&active).unwrap();
+        let (_, _reply) = state.begin().unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            crate::SpaceTransition::acquire_explicit(
+                &active,
+                &state,
+                std::time::Duration::from_secs(2),
+            ),
+        )
+        .await
+        .expect("reserved exit rejects without waiting for the busy transition");
+        assert!(result.is_err_and(|error| error == super::EXIT_BUSY));
+        assert!(active.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn native_restore_never_runs_after_exit_reserved_or_preparation_began() {
+        let state = super::ExitState::default();
+        assert!(state.with_window_restore(|| {}));
+        let (id, _) = state.begin().unwrap();
+        assert!(!state.with_window_restore(|| panic!("exit already owns admission")));
+        state.prepare_with("space", &id, || {}).unwrap();
+        assert!(!state.with_window_restore(|| panic!("preparing exit must not show windows")));
+    }
+
+    #[test]
+    fn exit_reservation_cannot_overtake_an_admitted_synchronous_window_restore() {
+        use std::sync::{mpsc, Arc, Mutex};
+        let state = Arc::new(super::ExitState::default());
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (started, started_rx) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let restoring = state.clone();
+        let restore_events = events.clone();
+        let restore = std::thread::spawn(move || {
+            restoring.with_window_restore(|| {
+                started.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .unwrap();
+                restore_events.lock().unwrap().push("show");
+            })
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let quitting = state.clone();
+        let exit_events = events.clone();
+        let quit = std::thread::spawn(move || {
+            let result = quitting.begin();
+            exit_events.lock().unwrap().push("exit-reserved");
+            result.is_some()
+        });
+        release.send(()).unwrap();
+        assert!(restore.join().unwrap());
+        assert!(quit.join().unwrap());
+        assert_eq!(*events.lock().unwrap(), ["show", "exit-reserved"]);
+        assert!(!state.with_window_restore(|| panic!("late restore after exit")));
+    }
     use super::*;
     #[test]
     fn migration_receipt_waits_for_ready_and_stale_attempt_cannot_complete_or_abort_it() {

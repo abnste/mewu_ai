@@ -135,6 +135,53 @@ pub(crate) struct Entry {
     ready: Option<oneshot::Sender<Result<(), String>>>,
     _window_slot: Arc<OwnedSemaphorePermit>,
 }
+
+/// A temporary observation hide does not revoke a live desktop pin. Capture
+/// only a previously visible window and retain its exact instance permit.
+pub(crate) struct PinRestoreToken {
+    label: String,
+    id: String,
+    window_slot: Arc<OwnedSemaphorePermit>,
+    cancel: Cancel,
+}
+impl PinRestoreToken {
+    fn from_entry(label: &str, entry: &Entry) -> Option<Self> {
+        if !entry.live || !entry.built || entry.cancel.check().is_err() {
+            return None;
+        }
+        Some(Self {
+            label: label.into(),
+            id: entry.id.clone(),
+            window_slot: entry._window_slot.clone(),
+            cancel: entry.cancel.clone(),
+        })
+    }
+    pub(crate) fn capture(app: &AppHandle, label: &str) -> Option<Self> {
+        let registry = app.try_state::<PinRegistry>()?;
+        let state = registry.state.lock().ok()?;
+        Self::from_entry(label, state.entries.get(label)?)
+    }
+    fn matches(&self, entry: &Entry) -> bool {
+        entry.live
+            && entry.built
+            && self.id == entry.id
+            && self.cancel.check().is_ok()
+            && entry.cancel.check().is_ok()
+            && Arc::ptr_eq(&self.window_slot, &entry._window_slot)
+    }
+    pub(crate) fn is_current(&self, app: &AppHandle) -> bool {
+        let Some(registry) = app.try_state::<PinRegistry>() else {
+            return false;
+        };
+        let current = registry.state.lock().is_ok_and(|state| {
+            state
+                .entries
+                .get(&self.label)
+                .is_some_and(|entry| self.matches(entry))
+        });
+        current
+    }
+}
 #[derive(Default)]
 pub(crate) struct RegistryState {
     requests: HashMap<String, Request>,
@@ -1678,6 +1725,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn overlay_restore_token_tracks_live_pin_instance_not_capture_epoch_or_topmost() {
+        let root = TestRoot::new();
+        let registry = PinRegistry::default();
+        let id = uuid::Uuid::new_v4().to_string();
+        let source = stage(
+            &root.0,
+            &RgbaImage::new(2, 2),
+            registry.pixels.clone().try_acquire_many_owned(4).unwrap(),
+        )
+        .unwrap();
+        let mut entry = Entry {
+            id: id.clone(),
+            revision: 1,
+            source,
+            object_assets: HashMap::new(),
+            quarter_turns: 0,
+            topmost: true,
+            opacity: 1.,
+            epoch: 0,
+            original: pin_window::Rect {
+                x: 0,
+                y: 0,
+                width: 26,
+                height: 26,
+            },
+            source_viewport: pin_window::Rect {
+                x: 0,
+                y: 0,
+                width: 26,
+                height: 26,
+            },
+            live: true,
+            built: true,
+            request_id: id.clone(),
+            cancel: Cancel::default(),
+            ready: None,
+            _window_slot: Arc::new(registry.windows.clone().try_acquire_owned().unwrap()),
+        };
+        let token = PinRestoreToken::from_entry(&format!("pin-{id}"), &entry).unwrap();
+        assert!(token.matches(&entry));
+        entry.epoch += 1;
+        entry.revision += 1;
+        entry.topmost = false;
+        assert!(token.matches(&entry));
+        entry.live = false;
+        assert!(!token.matches(&entry));
+        entry.live = true;
+        let slot = entry._window_slot.clone();
+        entry._window_slot = Arc::new(registry.windows.clone().try_acquire_owned().unwrap());
+        assert!(!token.matches(&entry));
+        entry._window_slot = slot;
+        entry.cancel.cancel();
+        assert!(!token.matches(&entry));
+        assert!(PinRestoreToken::from_entry(&format!("pin-{id}"), &entry).is_none());
+    }
     #[cfg(target_os = "linux")]
     mod capture_owner_tests {
         use super::*;

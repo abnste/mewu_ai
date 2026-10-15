@@ -155,6 +155,22 @@ pub(crate) struct RegionFrame {
     pub(crate) sha256: String,
 }
 
+#[cfg(windows)]
+#[derive(Clone)]
+pub(crate) struct ForegroundIdentity(platform::Target);
+
+#[cfg(windows)]
+pub(crate) fn foreground_identity() -> Option<ForegroundIdentity> {
+    let _dpi = platform::dpi_scope().ok()?;
+    platform::foreground_identity().map(ForegroundIdentity)
+}
+
+#[cfg(windows)]
+pub(crate) fn foreground_matches(expected: &ForegroundIdentity) -> bool {
+    let Ok(_dpi) = platform::dpi_scope() else { return false };
+    platform::foreground_matches(&expected.0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Viewport {
     x: i32,

@@ -197,6 +197,14 @@ fn read_target(handle: HWND) -> Result<Target> {
     Ok(target)
 }
 
+pub(super) fn foreground_identity() -> Option<Target> {
+    read_target(root(unsafe { GetForegroundWindow() })).ok()
+}
+
+pub(super) fn foreground_matches(expected: &Target) -> bool {
+    foreground_identity().as_ref() == Some(expected)
+}
+
 fn contains(client: [i32; 4], viewport: Viewport) -> bool {
     viewport.x >= client[0]
         && viewport.y >= client[1]
