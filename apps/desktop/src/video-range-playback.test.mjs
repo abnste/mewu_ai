@@ -120,6 +120,99 @@ test('100ns source endpoints tolerate browser double rounding without changing t
   }
 });
 
+class MicrosecondMedia extends Media {
+  mode = 'floor'; offset = 0;
+  get currentTime() { return this.time; }
+  set currentTime(value) {
+    const micros = value * 1_000_000;
+    super.currentTime = (this.mode === 'nearest' ? Math.round(micros) : Math.floor(micros)) / 1_000_000 + this.offset;
+    queueMicrotask(() => this.finishSeek());
+  }
+}
+function microsecondFixture(range, mode = 'floor') {
+  const node = new MicrosecondMedia(), errors = [];
+  node.mode = mode; node.time = range.endTicks / T;
+  const player = new VideoPlayback(node, { identity: () => 'microsecond-source', range: () => range, position() {}, playing() {}, error: error => errors.push(error) });
+  return { node, player, errors };
+}
+
+test('100ns trim starts play strictly inside the retained range on a microsecond media clock', async () => {
+  // Actual Windows GUI boundary plus every sub-microsecond residue, Mac's
+  // observed boundary, and exact microseconds whose double product is low.
+  const starts = [210_533_632, 267_712_418, 2490, 2510, ...Array.from({ length: 10 }, (_, i) => 100_000_000 + i)];
+  for (const mode of ['floor', 'nearest']) for (const startTicks of starts) {
+    const range = { startTicks, endTicks: startTicks + 10 * T }, before = { ...range };
+    const f = microsecondFixture(range, mode);
+    try {
+      await f.player.play();
+      const actual = Math.round(f.node.currentTime * T);
+      assert.ok(actual >= range.startTicks && actual < range.endTicks, `${mode}: ${startTicks} -> ${actual}`);
+      assert.equal(f.node.paused, false); assert.equal(f.node.playCalls, 1);
+      assert.deepEqual(range, before); assert.deepEqual(f.errors, []);
+    } finally { f.player.dispose(); await turn(); }
+  }
+});
+
+test('100ns annotation interval starts use an inward clock position without changing raster or interval authority', async () => {
+  const retained = { startTicks: 0, endTicks: 100 * T }, interval = { startTicks: 210_533_632, endTicks: 220_533_632 };
+  const f = microsecondFixture(retained);
+  try {
+    const actual = await f.player.playInterval(interval, () => true, () => true);
+    assert.ok(actual >= interval.startTicks && actual < interval.endTicks);
+    assert.equal(f.node.paused, false); assert.equal(f.player.hasIntervalIntent(), true);
+    assert.deepEqual(interval, { startTicks: 210_533_632, endTicks: 220_533_632 });
+  } finally { f.player.dispose(); await turn(); }
+});
+
+test('an explicit exact trim-end scrub replays from the beginning even when the media clock rounds its endpoint down', async () => {
+  const range = { startTicks: 210_533_632, endTicks: 794_284_608 }, f = microsecondFixture(range);
+  try {
+    f.player.seek(range.endTicks); await f.player.seeks.flush();
+    assert.ok(Math.round(f.node.currentTime * T) < range.endTicks);
+    await f.player.play();
+    assert.ok(Math.round(f.node.currentTime * T) >= range.startTicks);
+    assert.ok(f.node.currentTime < 21.054, 'the exact endpoint intent replays, not a near-end clock heuristic');
+    assert.equal(f.node.paused, false); assert.deepEqual(f.errors, []);
+    f.player.pause();
+    f.player.seek(range.endTicks - 10_000); await f.player.seeks.flush();
+    await f.player.play();
+    assert.ok(f.node.currentTime > 79, 'a distinct near-end scrub keeps its own position');
+  } finally { f.player.dispose(); await turn(); }
+});
+
+test('an owned EOS reload preserves exact trim-end intent through either production metadata-listener order', async () => {
+  for (const initialHandlerFirst of [true, false]) {
+    const range = { startTicks: 210_533_632, endTicks: 794_284_608 }, node = new MicrosecondMedia(), errors = [];
+    let player;
+    const initial = () => player?.seekInitial(range.startTicks);
+    if (initialHandlerFirst) node.addEventListener('loadedmetadata', initial);
+    player = new VideoPlayback(node, { identity: () => 'owned-eos', range: () => range, position() {}, playing() {}, error: error => errors.push(error) });
+    if (!initialHandlerFirst) node.addEventListener('loadedmetadata', initial);
+    try {
+      node.ended = true; node.time = 105.2666;
+      player.seek(range.endTicks); await player.seeks.flush();
+      assert.equal(node.sourceLoads, 1);
+      assert.ok(Math.round(node.currentTime * T) < range.endTicks);
+      await player.play();
+      assert.equal(node.currentTime, 21.053364);
+      assert.equal(node.paused, false); assert.equal(node.playCalls, 1); assert.deepEqual(errors, []);
+    } finally { player.dispose(); await turn(); }
+  }
+});
+
+test('clock alignment never admits a real out-of-range seek or a sub-microsecond interval with no playable clock position', async () => {
+  for (const phase of ['undershoot', 'no-clock-position']) {
+    const range = { startTicks: 210_533_632, endTicks: 794_284_608 }, f = microsecondFixture(range);
+    try {
+      if (phase === 'undershoot') {
+        f.node.offset = -0.001;
+        await assert.rejects(f.player.play(), /定位/);
+      } else await assert.rejects(f.player.playInterval({ startTicks: 210_533_632, endTicks: 210_533_637 }, () => true, () => true), /定位/);
+      assert.equal(f.node.paused, true); assert.equal(f.node.playCalls, 0);
+    } finally { f.player.dispose(); await turn(); }
+  }
+});
+
 test('the actual trim pointerup consumes its final coordinate before one range commit and capture release', async () => {
   const source = await readFile(new URL('./components/VideoTrimBar.tsx', import.meta.url), 'utf8');
   const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] }); let handler;
