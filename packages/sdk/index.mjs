@@ -11,6 +11,22 @@ export function createContext(send) {
   let registrationOpen = true;
   let outcome = null;
   let deactivationDone = false;
+  // Exception names are untrusted too. Never serialize message, stack, cause,
+  // a custom name, or an object coerced to a string across the worker boundary.
+  const failureKind = error => {
+    try {
+      switch (error && error.name) {
+        case 'SyntaxError': return 'syntax';
+        case 'TypeError': return 'type';
+        case 'RangeError': return 'range';
+        case 'ReferenceError': return 'reference';
+        case 'URIError': return 'uri';
+        case 'EvalError': return 'eval';
+        case 'Error': return 'error';
+        default: return 'unknown';
+      }
+    } catch { return 'unknown'; }
+  };
   const host = Object.freeze({
     call(method, params = {}) {
       if (closed) return Promise.reject(new Error('Extension scope is closed'));
@@ -83,7 +99,7 @@ export function createContext(send) {
           const serialized = JSON.stringify({ ok: true, result: result === undefined ? null : result });
           if (serialized === undefined) throw new Error('Non JSON result');
           outcome = { serialized };
-        }).catch(() => { outcome = { serialized: JSON.stringify({ ok: false }) }; });
+        }).catch(error => { outcome = { serialized: JSON.stringify({ ok: false, failureKind: failureKind(error) }) }; });
     },
     takeOutcome() {
       if (!outcome || outcome.pending) return null;

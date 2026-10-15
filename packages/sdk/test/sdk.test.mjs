@@ -29,6 +29,24 @@ async function invoke(scope, id, input, context = {}) {
   throw new Error('Isolated extension test did not settle');
 }
 
+test('handler failure exposes only a fixed exception category, including hostile custom names', async () => {
+  const cases = [
+    [() => { JSON.parse('private not-json body'); }, 'syntax'],
+    [() => { throw new TypeError('Bearer private-key C:/private/body.json'); }, 'type'],
+    [() => { throw new Error('Bearer private-key C:/private/body.json'); }, 'error'],
+    [() => { throw { name: 'Bearer private-key C:/private/body.json' }; }, 'unknown'],
+    [() => { throw { get name() { throw new Error('Bearer private-key'); } }; }, 'unknown'],
+    [() => { throw 'Bearer private-key C:/private/body.json'; }, 'unknown']
+  ];
+  for (const [handler, expected] of cases) {
+    const { scope } = harness(async () => null);
+    scope.ctx.tools.register({ id: 'own-safe-failure', title: 'Own safe failure' }, handler);
+    scope.finishRegistration();
+    assert.deepEqual(await invoke(scope, 'own-safe-failure', null), { ok: false, failureKind: expected });
+    await scope.deactivate();
+  }
+});
+
 test('published SDK is the exact embedded runtime, with no repository-relative import', async () => {
   const published = await readFile(new URL('../index.mjs', import.meta.url));
   const embedded = await readFile(new URL('../../../crates/mewu-extension/src/sdk.js', import.meta.url));

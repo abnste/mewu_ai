@@ -131,6 +131,45 @@ pub struct ProtocolError {
     pub message: String,
 }
 
+/// Fixed categories only: no JavaScript message, stack, or custom error name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlerFailureKind {
+    Syntax,
+    Type,
+    Range,
+    Reference,
+    Uri,
+    Eval,
+    Error,
+    Unknown,
+}
+impl HandlerFailureKind {
+    pub(crate) fn from_outcome(value: Option<&str>) -> Self {
+        match value {
+            Some("syntax") => Self::Syntax,
+            Some("type") => Self::Type,
+            Some("range") => Self::Range,
+            Some("reference") => Self::Reference,
+            Some("uri") => Self::Uri,
+            Some("eval") => Self::Eval,
+            Some("error") => Self::Error,
+            _ => Self::Unknown,
+        }
+    }
+    fn code(self) -> &'static str {
+        match self {
+            Self::Syntax => "JS_SYNTAX_ERROR",
+            Self::Type => "JS_TYPE_ERROR",
+            Self::Range => "JS_RANGE_ERROR",
+            Self::Reference => "JS_REFERENCE_ERROR",
+            Self::Uri => "JS_URI_ERROR",
+            Self::Eval => "JS_EVAL_ERROR",
+            Self::Error => "JS_ERROR",
+            Self::Unknown => "JS_UNKNOWN_ERROR",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ExtensionError {
     #[error("Invalid extension package: {0}")]
@@ -139,6 +178,8 @@ pub enum ExtensionError {
     Protocol(&'static str),
     #[error("Extension runtime failed: {0}")]
     Runtime(&'static str),
+    #[error("Extension service handler failed")]
+    Handler(HandlerFailureKind),
     #[error("Extension execution timed out")]
     Timeout,
     #[error("Extension execution was canceled")]
@@ -153,6 +194,7 @@ impl ExtensionError {
             Self::InvalidPackage(_) => "INVALID_PACKAGE",
             Self::Protocol(_) => "INVALID_PROTOCOL",
             Self::Runtime(_) => "RUNTIME_ERROR",
+            Self::Handler(kind) => kind.code(),
             Self::Timeout => "TIMEOUT",
             Self::Canceled => "CANCELED",
             Self::Transport => "TRANSPORT_ERROR",

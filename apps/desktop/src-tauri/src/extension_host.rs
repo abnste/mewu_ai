@@ -602,16 +602,71 @@ impl HostCallFailure {
         }
     }
 }
-fn worker_failure(error: &ProtocolError, last_host_failure: Option<HostCallFailure>) -> String {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct HostCallProgress {
+    last_success: Option<&'static str>,
+    completed: u32,
+    model_shape: Option<(&'static str, usize)>,
+}
+impl HostCallProgress {
+    fn succeeded(&mut self, method: &str, result: &Value) {
+        self.last_success = Some(match method {
+            "region.observe" => "region.observe",
+            "region.action" => "region.action",
+            "model.invoke" => "model.invoke",
+            "network.fetch" => "network.fetch",
+            "storage.get" => "storage.get",
+            "storage.set" => "storage.set",
+            "storage.delete" => "storage.delete",
+            "storage.compareAndSet" => "storage.compareAndSet",
+            "storage.list" => "storage.list",
+            "services.list" => "services.list",
+            "services.call" => "services.call",
+            "ui.render" => "ui.render",
+            "events.emit" => "events.emit",
+            _ => "unsupported",
+        });
+        self.completed = self.completed.saturating_add(1);
+        if method == "model.invoke" {
+            let content = match result.get("content").and_then(Value::as_str) {
+                Some(value) if value.trim().is_empty() => "empty",
+                Some(_) => "text",
+                None => "invalid",
+            };
+            self.model_shape = Some((
+                content,
+                result
+                    .get("toolCalls")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len),
+            ));
+        }
+    }
+}
+fn worker_failure(
+    error: &ProtocolError,
+    last_host_failure: Option<HostCallFailure>,
+    progress: HostCallProgress,
+) -> String {
     let code = match error.code.as_str() {
         code @ ("INVALID_PACKAGE" | "INVALID_PROTOCOL" | "RUNTIME_ERROR" | "TIMEOUT"
-        | "CANCELED" | "TRANSPORT_ERROR") => code,
+        | "CANCELED" | "TRANSPORT_ERROR" | "JS_SYNTAX_ERROR" | "JS_TYPE_ERROR"
+        | "JS_RANGE_ERROR" | "JS_REFERENCE_ERROR" | "JS_URI_ERROR" | "JS_EVAL_ERROR"
+        | "JS_ERROR" | "JS_UNKNOWN_ERROR") => code,
         _ => "RUNTIME_ERROR",
     };
     let mut message = format!("扩展执行失败 [{code}]");
     if let Some(failure) = last_host_failure {
         message.push_str("；最近宿主调用失败：");
         message.push_str(&failure.public_message());
+    }
+    message.push_str(&format!(
+        "；已完成宿主调用：{}；最近成功：{}",
+        progress.completed,
+        progress.last_success.unwrap_or("none")
+    ));
+    if let Some((content, tool_calls)) = progress.model_shape {
+        message.push_str(&format!("；模型正文：{content}；工具调用数：{tool_calls}"));
     }
     message
 }
@@ -621,8 +676,12 @@ fn worker_failure(error: &ProtocolError, last_host_failure: Option<HostCallFailu
 #[derive(Clone)]
 pub(crate) struct SafeToolDiagnostic(String);
 impl SafeToolDiagnostic {
-    fn from_worker(error: &ProtocolError, last_host_failure: Option<HostCallFailure>) -> Self {
-        Self(worker_failure(error, last_host_failure))
+    fn from_worker(
+        error: &ProtocolError,
+        last_host_failure: Option<HostCallFailure>,
+        progress: HostCallProgress,
+    ) -> Self {
+        Self(worker_failure(error, last_host_failure, progress))
     }
     pub(crate) fn message(&self) -> &str {
         &self.0
@@ -704,6 +763,7 @@ impl Worker {
                 Duration::from_secs(600)
             };
         let mut last_host_failure = None;
+        let mut progress = HostCallProgress::default();
         loop {
             context.check(app)?;
             if Instant::now() > deadline {
@@ -713,11 +773,14 @@ impl Worker {
                 Ok(Ok(WorkerResponse::HostCall { id, method, params })) => {
                     let result = bridge(app, context, &method, params);
                     let request = match result {
-                        Ok(result) => WorkerRequest::HostResult {
-                            id,
-                            result: Some(result),
-                            error: None,
-                        },
+                        Ok(result) => {
+                            progress.succeeded(&method, &result);
+                            WorkerRequest::HostResult {
+                                id,
+                                result: Some(result),
+                                error: None,
+                            }
+                        }
                         Err(failure) => {
                             last_host_failure = Some(failure);
                             WorkerRequest::HostResult {
@@ -741,7 +804,8 @@ impl Worker {
                     return Ok(result)
                 }
                 Ok(Ok(WorkerResponse::Error { id: reply, error })) if reply == id => {
-                    let diagnostic = SafeToolDiagnostic::from_worker(&error, last_host_failure);
+                    let diagnostic =
+                        SafeToolDiagnostic::from_worker(&error, last_host_failure, progress);
                     let message = diagnostic.message().to_owned();
                     self.safe_failure = Some(diagnostic);
                     return Err(message);
@@ -2844,6 +2908,90 @@ mod failure_diagnostic_tests {
     use super::*;
 
     #[test]
+    fn successful_host_progress_is_static_and_survives_a_handler_failure_as_unknown() {
+        let mut progress = HostCallProgress::default();
+        progress.succeeded("region.observe", &json!({"artifactId":"private-frame"}));
+        progress.succeeded(
+            "model.invoke",
+            &json!({"content":"private model text", "toolCalls":[]}),
+        );
+        let diagnostic = SafeToolDiagnostic::from_worker(
+            &ProtocolError {
+                code: "JS_SYNTAX_ERROR".into(),
+                message: "Bearer private-key C:/private/body.json raw model response".into(),
+            },
+            None,
+            progress,
+        );
+        let outcome = crate::extension_tools::ToolInvocationOutcome::Unknown {
+            reason: mewu_core::NoResponseReason::IncompleteResponse,
+            safe_diagnostic: Some(diagnostic),
+        };
+        let public = outcome.diagnostic().unwrap();
+        assert!(public.contains("JS_SYNTAX_ERROR"));
+        assert!(public.contains("已完成宿主调用：2"));
+        assert!(public.contains("最近成功：model.invoke"));
+        assert!(public.contains("模型正文：text；工具调用数：0"));
+        assert!(!public.contains("调用失败"));
+        for private in [
+            "Bearer",
+            "private-key",
+            "C:/private",
+            "body.json",
+            "raw model",
+            "private model text",
+        ] {
+            assert!(!public.contains(private));
+        }
+        progress.succeeded("Bearer private-key C:/private/body.json", &Value::Null);
+        let public = worker_failure(
+            &ProtocolError {
+                code: "JS_private-key".into(),
+                message: "private-key".into(),
+            },
+            None,
+            progress,
+        );
+        assert!(public.contains("RUNTIME_ERROR"));
+        assert!(public.contains("已完成宿主调用：3"));
+        assert!(public.contains("最近成功：unsupported"));
+        assert!(!public.contains("private-key"));
+    }
+
+    #[test]
+    fn model_shape_diagnostics_distinguish_empty_text_and_tool_only_without_payloads() {
+        let mut progress = HostCallProgress::default();
+        for (result, shape) in [
+            (
+                json!({"content":" \n", "toolCalls":[]}),
+                "empty；工具调用数：0",
+            ),
+            (
+                json!({"content":"", "toolCalls":[{"name":"private-tool", "arguments":"private-key"}]}),
+                "empty；工具调用数：1",
+            ),
+            (
+                json!({"content":"private-body", "toolCalls":[]}),
+                "text；工具调用数：0",
+            ),
+        ] {
+            progress.succeeded("model.invoke", &result);
+            let public = worker_failure(
+                &ProtocolError {
+                    code: "JS_SYNTAX_ERROR".into(),
+                    message: "private-key".into(),
+                },
+                None,
+                progress,
+            );
+            assert!(public.contains(shape));
+            for private in ["private-key", "private-body", "private-tool", "arguments"] {
+                assert!(!public.contains(private));
+            }
+        }
+    }
+
+    #[test]
     fn dispatched_tool_unknown_preserves_the_existing_sanitized_host_failure_without_private_error_text(
     ) {
         let private =
@@ -2867,6 +3015,7 @@ mod failure_diagnostic_tests {
                     message: private.into(),
                 },
                 Some(failure),
+                HostCallProgress::default(),
             );
             let outcome = crate::extension_tools::ToolInvocationOutcome::Unknown {
                 reason: mewu_core::NoResponseReason::IncompleteResponse,
@@ -2914,6 +3063,7 @@ mod failure_diagnostic_tests {
                 message: "service handler failed".into(),
             },
             Some(failure),
+            HostCallProgress::default(),
         );
         assert!(public.contains("region.observe"));
         assert!(public.contains("region_stop_unavailable"));
@@ -2940,6 +3090,7 @@ mod failure_diagnostic_tests {
                 message: "service handler failed".into(),
             },
             Some(failure),
+            HostCallProgress::default(),
         );
         assert!(public.contains("region.observe"));
         assert!(public.contains("region_target_obscured"));
@@ -2966,6 +3117,7 @@ mod failure_diagnostic_tests {
                     message: sensitive.into(),
                 },
                 Some(failure),
+                HostCallProgress::default(),
             );
             for output in [protocol.message, public] {
                 for secret in [
@@ -3017,6 +3169,7 @@ mod failure_diagnostic_tests {
                 message: "arbitrary JS stack with private-test-token".into(),
             },
             Some(failure),
+            HostCallProgress::default(),
         );
         assert!(!public.contains("private-test-token"));
         assert!(!public.contains("unknown_internal_code"));

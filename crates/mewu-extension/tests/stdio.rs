@@ -141,3 +141,112 @@ fn duplicate_initialize_does_not_replace_active_plugin() {
     worker.send(json!({"type":"invoke","id":"read-1","serviceId":"a","input":null,"context":null}));
     assert_eq!(worker.read()["result"], 42);
 }
+
+#[test]
+fn real_example_worker_completes_fresh_feedback_and_classifies_invalid_decisions() {
+    let source = include_str!("../../../extensions/examples/region-agent/index.mjs");
+    for (contents, expected_code) in [
+        (
+            vec![
+                r#"{"action":{"kind":"click","x":50,"y":60}}"#,
+                r#"{"done":true,"message":"Own synthetic completion"}"#,
+            ],
+            None,
+        ),
+        (
+            vec!["Own deliberately non-JSON model response"],
+            Some("JS_SYNTAX_ERROR"),
+        ),
+        (vec!["{}"], Some("JS_ERROR")),
+    ] {
+        let mut worker = Worker::new();
+        worker.initialize(source);
+        assert_eq!(worker.read()["type"], "initialized");
+        worker.send(
+            json!({"type":"invoke","id":"own-flow","serviceId":"example.region-agent.operate",
+            "input":{"task":"Click the own synthetic button and confirm completion","maxSteps":2},
+            "context":{"regionId":"own-region"}}),
+        );
+        let mut observed = 0;
+        let mut models = 0;
+        let mut actions = 0;
+        loop {
+            let response = worker.read();
+            if response["type"] != "host.call" {
+                if let Some(code) = expected_code {
+                    assert_eq!(response["type"], "error");
+                    assert_eq!(response["error"]["code"], code);
+                    assert_eq!((observed, models, actions), (1, 1, 0));
+                } else {
+                    assert_eq!(response["type"], "result");
+                    assert_eq!(response["result"]["completed"], true);
+                    assert_eq!((observed, models, actions), (2, 2, 1));
+                    worker.send(json!({"type":"shutdown","id":"own-stop"}));
+                    assert_eq!(worker.read(), json!({"type":"stopped","id":"own-stop"}));
+                }
+                assert!(worker.child.wait().unwrap().success());
+                break;
+            }
+            let result = match response["method"].as_str().unwrap() {
+                "region.observe" => {
+                    observed += 1;
+                    assert_eq!(response["params"], json!({"regionId":"own-region"}));
+                    json!({"artifactId":format!("own-frame-{observed}"),"width":400,"height":300,"sha256":observed.to_string().repeat(64)})
+                }
+                "model.invoke" => {
+                    models += 1;
+                    assert_eq!(
+                        response["params"]["images"],
+                        json!([format!("own-frame-{observed}")])
+                    );
+                    json!({"content":contents[models - 1],"toolCalls":[]})
+                }
+                "region.action" => {
+                    actions += 1;
+                    assert_eq!(
+                        response["params"]["action"],
+                        json!({"kind":"click","x":50,"y":60})
+                    );
+                    json!({"executed":true})
+                }
+                _ => panic!("unexpected method"),
+            };
+            worker.send(json!({"type":"host.result","id":response["id"],"result":result}));
+        }
+    }
+}
+
+#[test]
+fn actual_worker_exception_categories_never_forward_names_bodies_paths_or_keys() {
+    for (throwing, code) in [
+        (
+            "throw new TypeError('Bearer private-key C:/private/body.json')",
+            "JS_TYPE_ERROR",
+        ),
+        (
+            "throw new Error('Bearer private-key C:/private/body.json')",
+            "JS_ERROR",
+        ),
+        (
+            "throw {name:'Bearer private-key C:/private/body.json'}",
+            "JS_UNKNOWN_ERROR",
+        ),
+        (
+            "throw {get name(){throw new Error('Bearer private-key')}}",
+            "JS_UNKNOWN_ERROR",
+        ),
+    ] {
+        let mut worker = Worker::new();
+        worker.initialize(&format!("export default ctx=>ctx.tools.register({{id:'own-error',title:'Own error'}},()=>{{{throwing};}});"));
+        assert_eq!(worker.read()["type"], "initialized");
+        worker.send(json!({"type":"invoke","id":"own-error-run","serviceId":"own-error","input":null,"context":null}));
+        let response = worker.read();
+        assert_eq!(response["type"], "error");
+        assert_eq!(response["error"]["code"], code);
+        let public = serde_json::to_string(&response).unwrap();
+        for private in ["Bearer", "private-key", "C:/private", "body.json"] {
+            assert!(!public.contains(private));
+        }
+        assert!(worker.child.wait().unwrap().success());
+    }
+}

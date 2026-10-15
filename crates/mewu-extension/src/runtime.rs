@@ -437,7 +437,9 @@ impl ExtensionRuntime {
         let outcome: Value = serde_json::from_str(&outcome)
             .map_err(|_| ExtensionError::Runtime("service returned invalid JSON"))?;
         if outcome.get("ok") != Some(&Value::Bool(true)) {
-            return Err(ExtensionError::Runtime("service handler failed"));
+            return Err(ExtensionError::Handler(HandlerFailureKind::from_outcome(
+                outcome.get("failureKind").and_then(Value::as_str),
+            )));
         }
         let result = outcome.get("result").cloned().unwrap_or(Value::Null);
         validate_value(&result)?;
