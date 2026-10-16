@@ -42,7 +42,8 @@ function fixture(version = '1.0.0-preview.4') {
     publishLatest: async (id, body) => {
       calls.push({ action: 'publish-latest', id, body: clone(body) }); assert.equal(state.bridge.assets.length, 1);
       assert.ok(calls.some(c => c.action === 'authenticated-draft-read') || !state.bridge.draft);
-      state.bridge.draft = false; state.latest = clone(state.bridge); state.refs[plan.tag] = plan.targetCommit; await state.afterPublish?.();
+      state.bridge.draft = false; state.bridge.assets[0].browser_download_url = plan.aliasUrl;
+      state.latest = clone(state.bridge); state.refs[plan.tag] = plan.targetCommit; await state.afterPublish?.();
     },
   };
   const download = async (url, bound) => {
@@ -136,4 +137,35 @@ test('runtime/source changes before publication cannot be called a docs-only ali
 test('postpublication anonymous byte corruption is detected rather than reported as success', async () => {
   const f = fixture(); f.state.afterPublish = () => { f.downloads.set(f.plan.aliasUrl, Buffer.alloc(f.bytes.length)); };
   await assert.rejects(f.run, /bytes\/SHA256 differ/);
+});
+const transientTag = 'untagged-d54db7dc659e374f041b';
+test('real GitHub transient untagged draft URL first upload uses authenticated bytes before canonical publication', async () => {
+  const f = fixture(); f.state.afterUpload = () => { f.state.bridge.assets[0].browser_download_url = canonicalAssetUrl(transientTag, f.plan.alias); };
+  await f.run(); assert.deepEqual(mutations(f).map(c => c.action), ['draft', 'upload', 'publish-latest']);
+  assert.ok(f.calls.findIndex(c => c.action === 'authenticated-draft-read') < f.calls.findIndex(c => c.action === 'publish-latest'));
+  assert.equal(f.state.bridge.assets[0].browser_download_url, f.plan.aliasUrl);
+  assert.ok(!f.calls.some(c => c.action === 'anonymous-read' && c.url.includes('untagged-')));
+});
+test('interrupted real untagged draft resumes its exact asset without reupload or replacement', async () => {
+  const f = fixture(); f.completeBridge(true); f.state.bridge.assets[0].browser_download_url = canonicalAssetUrl(transientTag, f.plan.alias);
+  const id = f.state.bridge.assets[0].id; await f.run(); assert.equal(f.state.bridge.assets[0].id, id);
+  assert.deepEqual(mutations(f).map(c => c.action), ['publish-latest']);
+});
+test('published untagged URL is rejected even with the exact alias bytes and digest', async () => {
+  const f = fixture(); f.completeBridge(false); f.state.bridge.assets[0].browser_download_url = canonicalAssetUrl(transientTag, f.plan.alias); f.state.latest = clone(f.state.bridge);
+  await assert.rejects(f.run, /identity differs/); assert.deepEqual(mutations(f), []);
+});
+test('draft transient exception admits only HTTPS same repository, exact alias and strict GitHub transient label', async () => {
+  for (const url of [
+    canonicalAssetUrl(transientTag, 'wrong.exe'), canonicalAssetUrl(transientTag, 'placeholder').replace('abnste/mewu_ai', 'someone/else'),
+    canonicalAssetUrl(transientTag, 'placeholder').replace('https:', 'http:'), canonicalAssetUrl('untagged-not-a-github-hex-label', 'placeholder'),
+    canonicalAssetUrl(transientTag, 'placeholder') + '?extra=1', canonicalAssetUrl(transientTag, 'placeholder') + '#fragment',
+  ]) {
+    const f = fixture(); f.completeBridge(true); f.state.bridge.assets[0].browser_download_url = url.replace('placeholder', f.plan.alias);
+    await assert.rejects(f.run, /identity differs/); assert.deepEqual(mutations(f), []);
+  }
+});
+test('a published source preview never receives the transient draft exception', async () => {
+  const f = fixture(); f.state.source.assets.find(a => a.name === f.plan.sourceName).browser_download_url = canonicalAssetUrl(transientTag, f.plan.sourceName);
+  await assert.rejects(f.run, /Noncanonical preview/); assert.deepEqual(mutations(f), []);
 });

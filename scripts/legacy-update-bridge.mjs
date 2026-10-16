@@ -71,9 +71,16 @@ function releaseIdentity(release) {
     draft: release.draft, prerelease: release.prerelease,
     assets: release.assets.map(assetIdentity).sort((a, b) => a.name.localeCompare(b.name)) };
 }
-function expectedAsset(asset, tag, name, bytes, checksum) {
+function transientDraftAssetUrl(value, name) {
+  try {
+    const temporaryTag = new URL(value).pathname.split('/').at(-2);
+    return /^untagged-[a-f0-9]{20}$/.test(temporaryTag) && value === canonicalAssetUrl(temporaryTag, name);
+  } catch { return false; }
+}
+function expectedAsset(asset, tag, name, bytes, checksum, draft = false) {
   const actual = assetIdentity(asset);
-  if (actual.name !== name || actual.size !== bytes || actual.digest !== `sha256:${checksum}` || actual.browser_download_url !== canonicalAssetUrl(tag, name)) fail('Exact bridge/source asset identity differs');
+  const urlMatches = actual.browser_download_url === canonicalAssetUrl(tag, name) || (draft && transientDraftAssetUrl(actual.browser_download_url, name));
+  if (actual.name !== name || actual.size !== bytes || actual.digest !== `sha256:${checksum}` || !urlMatches) fail('Exact bridge/source asset identity differs');
   return actual;
 }
 function verifyBuffer(buffer, plan) {
@@ -108,7 +115,7 @@ async function verifyBridge(github, release, plan, complete = false) {
   const target = await github.tagCommit(plan.tag);
   if (target !== plan.targetCommit && !(target === null && release.draft)) fail('Bridge tag target differs');
   if (release.assets.length > 1 || (complete && release.assets.length !== 1)) fail('Bridge asset set differs; never overwrite a published release');
-  if (release.assets.length) expectedAsset(release.assets[0], plan.tag, plan.alias, plan.bytes, plan.sha256);
+  if (release.assets.length) expectedAsset(release.assets[0], plan.tag, plan.alias, plan.bytes, plan.sha256, release.draft);
   if (!release.draft && release.assets.length !== 1) fail('Published bridge is incomplete');
 }
 async function verifyLatest(github, latest, bridge, plan) {
