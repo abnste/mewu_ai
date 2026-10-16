@@ -6,13 +6,14 @@ import type { Snapshot } from './contracts';
 import { validPinMedia, type PinVideoMedia } from './pin-media';
 export interface PinObject {
   id: string; imageUrl: string; media?: PinVideoMedia; width: number; height: number; quarterTurns: number; opacity: number; topmost: boolean;
-  attachmentAssetId: string | null; x: number; y: number; displayWidth: number; displayHeight: number;
+  attachmentAssetId: string | null; originAssetId?: string | null; x: number; y: number; displayWidth: number; displayHeight: number;
 }
 export function validPinObject(value: PinObject): boolean {
   try {
     const url = new URL(value.imageUrl);
     return typeof value.id === 'string' && /^[0-9a-f-]{36}$/i.test(value.id) && url.protocol === 'http:' && url.hostname === '127.0.0.1' && !!url.port && !url.username && !url.password
       && [value.x, value.y, value.displayWidth, value.displayHeight].every(Number.isFinite) && value.displayWidth > 0 && value.displayHeight > 0
+      && (value.originAssetId == null || typeof value.originAssetId === 'string' && /^[0-9a-f-]{36}$/i.test(value.originAssetId))
       && [value.width, value.height].every(n => Number.isSafeInteger(n) && n > 0) && Number.isInteger(value.quarterTurns) && value.quarterTurns >= 0 && value.quarterTurns < 4 && validPinMedia(value.media, value.imageUrl);
   } catch { return false; }
 }

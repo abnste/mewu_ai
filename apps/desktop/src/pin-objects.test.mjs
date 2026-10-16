@@ -24,6 +24,9 @@ test('disposed object subscriptions reject late responses and unregister',async(
 });
 test('object identity, geometry, and local media are validated',async()=>{
  const{api}=await load();assert.equal(api.validPinObject(object),true);for(const patch of[{imageUrl:'file:///private.png'},{imageUrl:'https://remote/image'},{x:NaN},{displayWidth:0},{width:1.5},{quarterTurns:4}])assert.equal(api.validPinObject({...object,...patch}),false);
+ assert.equal(api.validPinObject({...object,originAssetId:object.id}),true);
+ assert.equal(api.validPinObject({...object,originAssetId:null}),true);
+ for(const originAssetId of ['not-a-host-id','file:///private.png',12,{}])assert.equal(api.validPinObject({...object,originAssetId}),false);
 });
 test('reference and movement carry only host IDs, not renderer file paths',async()=>{
  const value=await load();await value.api.referencePinObject(object.id,'scene');await value.api.referencePinObject(null,null);await value.api.controlPinObject(object.id,{type:'close'});

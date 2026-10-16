@@ -1900,6 +1900,7 @@ async fn send_message(
                 scene.clone(),
                 host.assets.clone(),
                 visual_annotations.is_some(),
+                app.state::<pin_host::PinRegistry>().hidden_image_assets(&scene)?,
             )
             .await?,
         )
@@ -1944,16 +1945,15 @@ async fn send_message(
             .map(Arc::new)
         })
         .transpose()?;
-    let visual = visual_annotations
-        .as_ref()
-        .filter(|_| !video_requested)
-        .map(|grant| {
-            let input = attachments
-                .as_ref()
-                .ok_or("截图批注缺少输入")?
-                .visual_input()
-                .cloned()
-                .ok_or("请引用需要处理的截图选区")?;
+    let visual = visual_annotations.as_ref().filter(|_| !video_requested)
+        .zip(attachments.as_ref().and_then(|prepared| prepared.visual_input()))
+        .map(|(grant, input)| {
+            // Engine -> Registry. A pin published during preparation cannot
+            // leave an invisible writable target in this new run.
+            let registry = app.state::<pin_host::PinRegistry>();
+            let pins = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+            pins.ensure_visual_targets_visible(engine.store.scene(&scene_id).map_err(|e| e.to_string())?, input)?;
+            let input = input.clone();
             visual_annotation_host::RunScope::new(scene_id.clone(), grant.clone(), input)
                 .map(|scope| Arc::new(scope.for_connection(&preflight.connection)))
         })
@@ -2009,13 +2009,14 @@ pub(crate) async fn prepare_scene_attachments(
     scene: mewu_core::Scene,
     root: PathBuf,
 ) -> Result<ai::PreparedAttachments, String> {
-    prepare_scene_attachments_with_visual(scene, root, false).await
+    prepare_scene_attachments_with_visual(scene, root, false, std::collections::HashSet::new()).await
 }
 
 async fn prepare_scene_attachments_with_visual(
     scene: mewu_core::Scene,
     root: PathBuf,
     visual: bool,
+    hidden_image_assets: std::collections::HashSet<String>,
 ) -> Result<ai::PreparedAttachments, String> {
     static REQUESTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
     static WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
@@ -2026,10 +2027,11 @@ async fn prepare_scene_attachments_with_visual(
     tauri::async_runtime::spawn_blocking(move || {
         let (_request, _worker) = (request, worker);
         if visual {
-            ai::prepare_scene_visual_attachments(
+            ai::prepare_scene_visual_attachments_excluding_pins(
                 &scene,
                 &root,
                 visual_annotation_input::VisualCoordinateProfile::ExplicitNormalized1000V2,
+                &hidden_image_assets,
             )
         } else {
             ai::prepare_scene_attachments(&scene, &root)

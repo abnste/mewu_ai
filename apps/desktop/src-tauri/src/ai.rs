@@ -194,6 +194,7 @@ pub fn prepare_scene_attachments(
         &scene.messages,
         root,
         None,
+        &HashSet::new(),
     )
 }
 
@@ -201,6 +202,15 @@ pub fn prepare_scene_visual_attachments(
     scene: &Scene,
     root: &Path,
     profile: VisualCoordinateProfile,
+) -> Result<PreparedAttachments, String> {
+    prepare_scene_visual_attachments_excluding_pins(scene, root, profile, &HashSet::new())
+}
+
+pub(crate) fn prepare_scene_visual_attachments_excluding_pins(
+    scene: &Scene,
+    root: &Path,
+    profile: VisualCoordinateProfile,
+    hidden_image_assets: &HashSet<String>,
 ) -> Result<PreparedAttachments, String> {
     validate_scene_for_send(scene)?;
     let prepared = prepare_from_parts(
@@ -211,8 +221,11 @@ pub fn prepare_scene_visual_attachments(
         &scene.messages,
         root,
         Some(profile),
+        hidden_image_assets,
     )?;
-    if prepared.visual_input.is_none() {
+    let readonly_pin = scene.refs.iter().any(|reference| reference.kind == ReferenceKind::Item
+        && scene.items.iter().any(|item| item.id == reference.id && item.asset.kind == AssetKind::Image && hidden_image_assets.contains(&item.asset.id)));
+    if prepared.visual_input.is_none() && !readonly_pin {
         return Err("请引用需要处理的截图选区".into());
     }
     Ok(prepared)
@@ -343,6 +356,7 @@ pub fn prepare_attachments(context: &RunContext, root: &Path) -> Result<Vec<Asse
         &context.messages,
         root,
         None,
+        &HashSet::new(),
     )?;
     persist_attachments(prepared, root)
 }
@@ -481,6 +495,7 @@ fn prepare_from_parts(
     messages: &[mewu_core::Message],
     root: &Path,
     visual_profile: Option<VisualCoordinateProfile>,
+    hidden_image_assets: &HashSet<String>,
 ) -> Result<PreparedAttachments, String> {
     if has_video_reference(items, refs) {
         return Err(VIDEO_REFERENCE_ERROR.into());
@@ -545,7 +560,7 @@ fn prepare_from_parts(
                     return Err("暂不支持此类引用文件".into());
                 }
                 let (image, crop) = assets::image_item_with_mapping(item, root)?;
-                if visual_profile.is_some() && mewu_core::image_annotation_writable(item) {
+                if visual_profile.is_some() && mewu_core::image_annotation_writable(item) && !hidden_image_assets.contains(&item.asset.id) {
                     visual_source = Some(PreparedVisualSource {
                         region_id: String::new(),
                         image_item_id: Some(item.id.clone()),

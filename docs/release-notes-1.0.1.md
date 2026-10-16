@@ -16,7 +16,7 @@ Windows 0.7.4 仍可从原关于页升级；原 API 配置导入及旧数据的�
 
 ## 当前范围
 
-支持 Windows x64、macOS ARM64 和 Linux x64，协议保持 MPL-2.0。AI 标注取决于模型的识读与工具调用结果，试卷答案仍需人工核对。原生区域自动操作插件目前仅支持 Windows；NVIDIA 即时重放仍缺匹配硬件实测。执行记录用于 AI 任务追踪，不是全程序实时诊断日志。
+支持 Windows x64、macOS ARM64 和 Linux x64，协议保持 MPL-2.0。AI 标注取决于模型的识读与工具调用结果，试卷答案仍需人工核对。独立置顶图片保持快照；引用时保留已有批注，关闭置顶后可在空间中的引用图片上继续原位标注。原生区域自动操作插件目前仅支持 Windows；NVIDIA 即时重放仍缺匹配硬件实测。执行记录用于 AI 任务追踪，不是全程序实时诊断日志。
 
 ## English
 
@@ -29,4 +29,4 @@ Windows 0.7.4 仍可从原关于页升级；原 API 配置导入及旧数据的�
 
 1.0.1 is a new stable release; 1.0.0 remains available. Check for updates in Settings → About. New stable builds read latest.json directly from the latest versioned release, with a versioned macOS updater archive and verified package/version signatures. No uninstall is required. Existing 1.0.0 and preview clients retain their upgrade path. Legacy migration limits remain as described in the [1.0.0 notes](./release-notes-1.0.0.md).
 
-AI annotations and answers need human review. Native region automation remains Windows-only; NVIDIA Instant Replay still needs matching hardware testing. The project remains MPL-2.0.
+AI annotations and answers need human review. Independent pins remain snapshots; references retain existing ink, and their space image can receive further annotations after the pin closes. Native region automation remains Windows-only; NVIDIA Instant Replay still needs matching hardware testing. The project remains MPL-2.0.

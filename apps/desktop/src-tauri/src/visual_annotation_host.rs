@@ -226,6 +226,9 @@ impl RunScope {
         if persisted != self.input {
             return Err("原位作答来源已变更".into());
         }
+        let registry = app.state::<crate::pin_host::PinRegistry>();
+        let pins = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+        pins.ensure_visual_targets_visible(engine.store.scene(scene).map_err(journal_runtime::store_error)?, &self.input)?;
         Ok(())
     }
 
@@ -254,10 +257,17 @@ impl RunScope {
         {
             return Err("原位作答来源已变更".into());
         }
+        let registry = app.state::<crate::pin_host::PinRegistry>();
+        let pins = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+        pins.ensure_visual_targets_visible(engine.store.scene(scene).map_err(journal_runtime::store_error)?, &self.input)?;
         let committed = engine
             .store
             .apply_visual_annotations_with_rich_receipt(lease, &self.authority, batch, layouts)
             .map_err(journal_runtime::store_error)?;
+        // publish reconciles pin state. Never retain this guard across it.
+        // Rotation/restore can change presentation IDs without Engine, so the
+        // guard must nevertheless cover the complete atomic Store commit.
+        drop(pins);
         journal_runtime::emit_changed(app, scene, run, committed.receipt.journal_revision);
         publish(app, &committed.snapshot);
         committed

@@ -12,7 +12,7 @@ use image::{ImageEncoder, RgbaImage};
 use mewu_core::{Asset, AssetKind, OcrTarget, Region, Snapshot};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
@@ -122,6 +122,9 @@ pub(crate) struct Entry {
     pub(crate) id: String,
     pub(crate) revision: u64,
     pub(crate) source: PinAssetLease,
+    // The scene source is only a display identity. A baked reference may have
+    // another asset ID and must never reuse this uncomposited source as cache.
+    origin_asset_id: Option<String>,
     object_assets: HashMap<u8, Asset>,
     pub(crate) quarter_turns: u8,
     pub(crate) topmost: bool,
@@ -135,6 +138,12 @@ pub(crate) struct Entry {
     cancel: Cancel,
     ready: Option<oneshot::Sender<Result<(), String>>>,
     _window_slot: Arc<OwnedSemaphorePermit>,
+}
+impl Entry {
+    fn presentation_asset_ids(&self) -> [Option<&str>; 2] {
+        let origin = (self.quarter_turns == 0).then_some(self.origin_asset_id.as_deref()).flatten();
+        [origin, self.object_assets.get(&self.quarter_turns).map(|asset| asset.id.as_str()).or(origin)]
+    }
 }
 
 /// A temporary observation hide does not revoke a live desktop pin. Capture
@@ -194,6 +203,28 @@ pub(crate) struct RegistryState {
     pub(crate) epoch: u64,
 }
 impl RegistryState {
+    pub(crate) fn hidden_image_assets(&self, scene: &mewu_core::Scene) -> HashSet<String> {
+        // Keep the same blackboard exception as App.canvasScene: media there
+        // remain visible/editable instead of being represented by a live pin.
+        let blackboard = scene.background.as_ref().is_some_and(|asset| {
+            asset.kind == AssetKind::Image && asset.name == "黑板.png"
+                && (asset.path.replace('\\', "/").ends_with(&format!("/{}.board.png", asset.id))
+                    || asset.path.starts_with("data:image/png;"))
+        });
+        if blackboard { return HashSet::new(); }
+        self.entries.values().filter(|entry| entry.live)
+            .flat_map(Entry::presentation_asset_ids).flatten().map(str::to_owned).collect()
+    }
+    pub(crate) fn ensure_visual_targets_visible(&self, scene: &mewu_core::Scene, input: &mewu_core::VerifiedVisualInput) -> Result<(), String> {
+        let hidden = self.hidden_image_assets(scene);
+        for target in &input.manifest().targets {
+            if let Some(id) = &target.image_item_id {
+                let item = scene.items.iter().find(|item| item.id == *id).ok_or("原位图片已不存在")?;
+                if hidden.contains(&item.asset.id) { return Err("图片已由独立贴图呈现，请重新发送以读取该快照".into()); }
+            }
+        }
+        Ok(())
+    }
     fn finish(&mut self, id: &str) -> Vec<String> {
         let live = self.entries.values().any(|e| e.request_id == id && e.live);
         if let Some(r) = self.requests.remove(id) {
@@ -255,6 +286,11 @@ impl Default for PinRegistry {
             arranging: AtomicBool::new(false),
             work: Arc::default(),
         }
+    }
+}
+impl PinRegistry {
+    pub(crate) fn hidden_image_assets(&self, scene: &mewu_core::Scene) -> Result<HashSet<String>, String> {
+        Ok(self.state.lock().map_err(|_| "贴图状态不可用")?.hidden_image_assets(scene))
     }
 }
 #[derive(Default)]
@@ -1011,15 +1047,16 @@ pub(crate) async fn pin_imported_image(
         original,
     )
     .await?;
-    if let OriginSource::Imported(imported) = &origin.source {
-        if let Ok(mut state) = registry.state.lock() {
-            if let Some(entry) = state.entries.get_mut(&format!("pin-{}", created.id)) {
-                entry.object_assets.insert(0, imported.item.asset.clone());
-            }
-        }
-        objects::changed(&app);
-    }
     Ok(created.id)
+}
+
+fn register_imported_attachment(entry: &mut Entry, item: &mewu_core::SpaceItem) {
+    entry.origin_asset_id = Some(item.asset.id.clone());
+    // A source with a document differs from the immutable staged snapshot.
+    // Its first reference must save the staged pixels, including all ink.
+    if item.image_annotations.is_none() {
+        entry.object_assets.insert(0, item.asset.clone());
+    }
 }
 
 async fn show_source(
@@ -1040,12 +1077,11 @@ async fn show_source(
         let mut s = registry.state.lock().map_err(|_| "贴图状态不可用")?;
         cancel.check()?;
         let epoch = s.epoch;
-        s.entries.insert(
-            label.clone(),
-            Entry {
+        let mut entry = Entry {
                 id: id.clone(),
                 revision: 1,
                 source,
+                origin_asset_id: None,
                 object_assets: HashMap::new(),
                 quarter_turns: 0,
                 topmost: true,
@@ -1059,8 +1095,11 @@ async fn show_source(
                 cancel: cancel.clone(),
                 ready: Some(tx),
                 _window_slot: window_slot,
-            },
-        );
+            };
+        if let Some(Request { origin: Origin { source: OriginSource::Imported(imported), .. }, .. }) = s.requests.get(request_id) {
+            register_imported_attachment(&mut entry, &imported.item);
+        }
+        s.entries.insert(label.clone(), entry);
     }
     // build is called from this async command, never while holding application
     // locks or synchronously inside a Win32/WebView event callback.
@@ -1804,6 +1843,7 @@ mod tests {
             id: id.clone(),
             revision: 1,
             source,
+            origin_asset_id: None,
             object_assets: HashMap::new(),
             quarter_turns: 0,
             topmost: true,
@@ -1863,6 +1903,7 @@ mod tests {
                     id: id.clone(),
                     revision: 1,
                     source,
+                    origin_asset_id: None,
                     object_assets: HashMap::new(),
                     quarter_turns: 0,
                     topmost: true,
@@ -2150,6 +2191,7 @@ mod tests {
                 id: id.clone(),
                 revision: 1,
                 source,
+                origin_asset_id: None,
                 object_assets: HashMap::new(),
                 quarter_turns: 0,
                 topmost: true,

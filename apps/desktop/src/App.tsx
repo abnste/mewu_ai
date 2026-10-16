@@ -200,10 +200,19 @@ export default function App() {
     if(pinReferenced(object) && item){toggleReference({kind:'item',id:item.id});return;}
     const sceneId=scene()?.id;if(!sceneId)return;
     setBusy(true);
-    try{await flush();if(scene()?.id!==sceneId)throw Error('会话已切换');const next=await referencePinObject(object.id,sceneId);if(!next)throw Error('无法引用贴图');clearReferenceDraft(sceneId);accept(next);const added=pinItem(object);if(added)setReferenceInsertion({sceneId,reference:{kind:'item',id:added.id},serial:++referenceSerial});await pinObjectsSubscription?.refresh();}
+    try{
+      await flush();if(scene()?.id!==sceneId||exitPreparing())throw Error('会话已切换');
+      const next=await referencePinObject(object.id,sceneId);if(!next)throw Error('无法引用贴图');
+      if(scene()?.id!==sceneId||exitPreparing())return;
+      clearReferenceDraft(sceneId);accept(next);
+      await pinObjectsSubscription?.refresh();
+      if(scene()?.id!==sceneId||exitPreparing())return;
+      const current=pinObjects().find(pin=>pin.id===object.id),added=current&&pinItem(current);
+      if(added)setReferenceInsertion({sceneId,reference:{kind:'item',id:added.id},serial:++referenceSerial});
+    }
     catch(cause){showError(cause);}finally{setBusy(false);}
   }
-  const canvasScene = (current: Scene) => {if(isBlackboard(current))return current;const ids=new Set(pinObjects().map(object=>object.attachmentAssetId));return {...current,items:current.items.filter(item=>!ids.has(item.asset.id))}; };
+  const canvasScene = (current: Scene) => {if(isBlackboard(current))return current;const ids=new Set(pinObjects().flatMap(object=>[object.originAssetId,object.attachmentAssetId]));return {...current,items:current.items.filter(item=>!ids.has(item.asset.id))}; };
   let stopEvents: (() => void) | undefined;
   let stopRecordingEvents: (() => void) | undefined;
   let stopScrollEvents: (() => void) | undefined;
