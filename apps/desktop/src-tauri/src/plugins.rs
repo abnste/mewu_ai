@@ -4239,9 +4239,37 @@ mod tests {
     fn code_authority_checks_exact_package_revision_and_kind() {
         let dir = Directory::new();
         let store = PluginStore::open(&dir.0).unwrap();
+        let native = cfg!(any(windows, target_os = "macos"));
+        let seeded = store
+            .snapshot()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "mewu.codes")
+            .unwrap();
         assert_eq!(
-            store.codes("mewu.codes", 1, "recognize").unwrap(),
-            CodeEngine::Rxing
+            seeded.state,
+            if native {
+                PluginState::Enabled
+            } else {
+                PluginState::Disabled
+            }
+        );
+        assert_eq!(
+            seeded.error.as_deref(),
+            if native {
+                None
+            } else {
+                Some("此插件的本机能力不支持当前系统")
+            }
+        );
+        assert_eq!(
+            store.codes("mewu.codes", 1, "recognize"),
+            if native {
+                Ok(CodeEngine::Rxing)
+            } else {
+                Err("此二维码与条码插件未启用".into())
+            }
         );
         assert!(store.codes("mewu.codes", 0, "recognize").is_err());
         assert!(store.codes("mewu.codes", 1, "dictation").is_err());
@@ -4254,41 +4282,82 @@ mod tests {
         manifest.description = "modified".into();
         fs::write(&file, serde_json::to_vec(&manifest).unwrap()).unwrap();
         assert!(store.codes("mewu.codes", 1, "recognize").is_err());
-        assert!(store
-            .snapshot()
-            .unwrap()
-            .plugins
-            .iter()
-            .find(|p| p.manifest.id == "mewu.codes")
-            .unwrap()
-            .error
-            .is_some());
+        assert_eq!(
+            store
+                .snapshot()
+                .unwrap()
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "mewu.codes")
+                .unwrap()
+                .error
+                .as_deref(),
+            Some("插件文件与批准的安装记录不一致，请重新安装")
+        );
         fs::remove_file(&file).unwrap();
         assert!(store.codes("mewu.codes", 1, "recognize").is_err());
         fs::write(&file, original).unwrap();
-        assert!(store.codes("mewu.codes", 1, "recognize").is_ok());
+        assert_eq!(store.codes("mewu.codes", 1, "recognize").is_ok(), native);
     }
 
     #[test]
     fn code_disabled_and_removed_choices_survive_reopen_until_explicit_reinstall() {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
-        store.set_enabled("mewu.codes", 1, false).unwrap();
+        let native = cfg!(any(windows, target_os = "macos"));
+        let disabled_record = store.set_enabled("mewu.codes", 1, false).unwrap();
+        assert_eq!(disabled_record.revision, if native { 2 } else { 1 });
+        assert_eq!(
+            store
+                .set_enabled("mewu.codes", disabled_record.revision, false)
+                .unwrap()
+                .revision,
+            disabled_record.revision
+        );
         let disabled = store.snapshot().unwrap();
         drop(store);
         let mut store = PluginStore::open(&dir.0).unwrap();
         assert_eq!(store.snapshot().unwrap(), disabled);
-        assert!(store.codes("mewu.codes", 2, "recognize").is_err());
-        store.set_enabled("mewu.codes", 2, true).unwrap();
-        store.uninstall("mewu.codes", 3).unwrap();
+        assert!(store
+            .codes("mewu.codes", disabled_record.revision, "recognize")
+            .is_err());
+        let enabled = store.set_enabled("mewu.codes", disabled_record.revision, true);
+        let current_revision = if native {
+            let record = enabled.unwrap();
+            assert_eq!(record.revision, disabled_record.revision + 1);
+            assert!(store
+                .codes("mewu.codes", disabled_record.revision, "recognize")
+                .is_err());
+            assert!(store
+                .codes("mewu.codes", record.revision, "recognize")
+                .is_ok());
+            record.revision
+        } else {
+            assert_eq!(enabled.unwrap_err(), "此插件的本机能力不支持当前系统");
+            assert_eq!(store.snapshot().unwrap(), disabled);
+            disabled_record.revision
+        };
+        let removed_record = store.uninstall("mewu.codes", current_revision).unwrap();
         let removed = store.snapshot().unwrap();
         drop(store);
         let mut store = PluginStore::open(&dir.0).unwrap();
         assert_eq!(store.snapshot().unwrap(), removed);
         assert!(!path(&dir.0, "mewu.codes", "1.0.0").exists());
-        store.install_official("mewu.codes", Some(4)).unwrap();
-        assert!(store.codes("mewu.codes", 4, "recognize").is_err());
-        assert!(store.codes("mewu.codes", 5, "recognize").is_ok());
+        let reinstalled = store.install_official("mewu.codes", Some(removed_record.revision));
+        assert!(store
+            .codes("mewu.codes", removed_record.revision, "recognize")
+            .is_err());
+        if native {
+            let record = reinstalled.unwrap();
+            assert_eq!(record.revision, removed_record.revision + 1);
+            assert!(store
+                .codes("mewu.codes", record.revision, "recognize")
+                .is_ok());
+        } else {
+            assert_eq!(reinstalled.unwrap_err(), "此插件的本机能力不支持当前系统");
+            assert_eq!(store.snapshot().unwrap(), removed);
+            assert!(!path(&dir.0, "mewu.codes", "1.0.0").exists());
+        }
     }
 
     #[test]
