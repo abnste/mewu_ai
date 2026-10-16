@@ -15,6 +15,10 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use tokio::sync::Semaphore;
+#[path = "visual_argument_diagnostic.rs"]
+mod argument_diagnostic;
+use argument_diagnostic::Rejection;
+use mewu_core::ArgumentDiagnosticReason as DiagnosticReason;
 
 pub(crate) static TABLE_WORKERS: Semaphore = Semaphore::const_new(2);
 /// A dropped async invoke does not release the blocking renderer's permit.
@@ -83,6 +87,9 @@ impl RunScope {
     fn parse_plan(&self, arguments: &str) -> Result<ParsedBatch, String> {
         parse_plan_with_wire(arguments, &self.input, self.minimax_wire)
     }
+    fn parse_plan_diagnosed(&self, arguments: &str) -> Result<ParsedBatch, Rejection> {
+        parse_plan_with_wire_diagnosed(arguments, &self.input, self.minimax_wire)
+    }
     pub fn binding(&self) -> ToolBinding {
         self.origin.grant.binding(&self.origin.manifest_sha256)
     }
@@ -127,22 +134,19 @@ impl RunScope {
                 "本次运行未启用该工具".into(),
             );
         }
-        let plan = match self.parse_plan(&call.arguments) {
+        let plan = match self.parse_plan_diagnosed(&call.arguments) {
             Ok(plan) => plan,
             Err(error) => {
                 self.check_live(app, scene, run)?;
                 let host = app.state::<Host>();
                 let mut engine = host.lock()?;
-                let receipt = engine
-                    .store
-                    .record_tool_not_sent(&lease, mewu_core::NotSentReason::InvalidArguments)
-                    .map_err(journal_runtime::store_error)?;
+                let (receipt, output) = reject_arguments(&mut engine.store, &lease, &error)?;
                 journal_runtime::emit_changed(app, scene, run, receipt.journal_revision);
                 publish(app, &engine.store.snapshot());
                 // No drawing was dispatched. Let the existing bounded tool loop
                 // consume an explicit error and correct its next call; never
                 // turn a malformed call into a successful execution receipt.
-                return Ok(journal_runtime::CommittedToolOutput {model_json:json!({"error":error,"executed":false,"correction":"Use the advertised visual_annotate JSON schema exactly. Keep the supplied target, coordinateSpace and styleUnit. Text: one point, text, fontSize, color and anchor=topLeft. Shapes: points, color and strokeWidth. Tables/formulas: their own fields only, no strokeWidth or text. Correct the parameters or explain the failure; do not claim annotations were drawn."}).to_string()});
+                return Ok(output);
             }
         };
         if let Err(error) = self.check_live(app, scene, run) {
@@ -276,6 +280,35 @@ impl RunScope {
             .map(|model_json| journal_runtime::CommittedToolOutput { model_json })
             .ok_or_else(|| "原位作答缺少提交回执".into())
     }
+}
+
+fn reject_arguments(
+    store: &mut mewu_core::Store,
+    lease: &DispatchLease,
+    error: &Rejection,
+) -> Result<
+    (
+        mewu_core::ReceiptCommit,
+        journal_runtime::CommittedToolOutput,
+    ),
+    String,
+> {
+    let receipt = match &error.diagnostic {
+        Some(diagnostic) => store.record_tool_not_sent_with_diagnostic(lease, diagnostic),
+        None => store.record_tool_not_sent(lease, mewu_core::NotSentReason::InvalidArguments),
+    }
+    .map_err(journal_runtime::store_error)?;
+    let mut feedback = json!({"error":error.message,"executed":false,"correction":"Use the advertised visual_annotate JSON schema exactly. Keep the supplied target, coordinateSpace and styleUnit. Text: one point, text, fontSize, color and anchor=topLeft. Shapes: points, color and strokeWidth. Tables/formulas: their own fields only, no strokeWidth or text. Correct the indicated field or explain the failure; do not claim annotations were drawn."});
+    if let Some(diagnostic) = &error.diagnostic {
+        feedback["argumentDiagnostic"] =
+            serde_json::to_value(diagnostic).map_err(|_| "参数诊断编码失败")?;
+    }
+    Ok((
+        receipt,
+        journal_runtime::CommittedToolOutput {
+            model_json: feedback.to_string(),
+        },
+    ))
 }
 
 fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
@@ -426,7 +459,7 @@ enum ModelObject {
     Formula(FormulaObject),
     Vector(Object),
 }
-fn parse_object(value: Value) -> Result<ModelObject, String> {
+fn parse_object(value: &Value) -> Result<ModelObject, String> {
     let kind = value
         .get("kind")
         .and_then(Value::as_str)
@@ -446,18 +479,18 @@ fn parse_object(value: Value) -> Result<ModelObject, String> {
         }
     }
     match kind {
-        "table" => serde_json::from_value(value)
+        "table" => serde_json::from_value(value.clone())
             .map(ModelObject::Table)
             .map_err(|_| {
                 "table 需要 version、header、rows、align；单元格为文本，不附带文字或线宽字段".into()
             }),
-        "formula" => serde_json::from_value(value)
+        "formula" => serde_json::from_value(value.clone())
             .map(ModelObject::Formula)
             .map_err(|_| {
                 "formula 需要 points、tex、color、fontSize，不附带 text、strokeWidth 或 anchor"
                     .into()
             }),
-        _ => serde_json::from_value(value)
+        _ => serde_json::from_value(value.clone())
             .map(ModelObject::Vector)
             .map_err(|_| "图元字段类型无效或包含不支持的字段，points 使用 [{x,y}] 数组".into()),
     }
@@ -519,14 +552,37 @@ fn mapped_points(
     points: Vec<DrawingPoint>,
     profile: VisualCoordinateProfile,
     target: &mewu_core::VisualInputTarget,
-) -> Result<Vec<DrawingPoint>, String> {
+    root: &str,
+) -> Result<Vec<DrawingPoint>, Rejection> {
     points
         .into_iter()
-        .map(|p| {
-            let encoded = profile.encoded_point(p, target.encoded)?;
-            target
-                .source_point(encoded)
-                .map_err(journal_runtime::store_error)
+        .enumerate()
+        .map(|(index, p)| {
+            let encoded = profile.encoded_point(p, target.encoded).map_err(|error| {
+                let mut field = format!("{root}/points/{index}");
+                // Only the explicitly normalized profile uses 0..1000.
+                // Other profiles retain the point-level diagnostic rather
+                // than guessing an axis from unrelated normalized limits.
+                if profile.normalized() {
+                    if !p.x.is_finite() || !(0. ..=1000.).contains(&p.x) {
+                        field.push_str("/x");
+                    } else if !p.y.is_finite() || !(0. ..=1000.).contains(&p.y) {
+                        field.push_str("/y");
+                    }
+                }
+                Rejection::field(
+                    error,
+                    field,
+                    DiagnosticReason::Data,
+                )
+            })?;
+            target.source_point(encoded).map_err(|error| {
+                Rejection::field(
+                    journal_runtime::store_error(error),
+                    format!("{root}/points/{index}"),
+                    DiagnosticReason::Data,
+                )
+            })
         })
         .collect()
 }
@@ -534,13 +590,26 @@ fn rich_bounds(
     points: Vec<DrawingPoint>,
     profile: VisualCoordinateProfile,
     target: &mewu_core::VisualInputTarget,
-) -> Result<[DrawingPoint; 2], String> {
+    root: &str,
+) -> Result<[DrawingPoint; 2], Rejection> {
     if points.len() != 2 {
-        return Err("表格或公式需要两个角点".into());
+        return Err(Rejection::field(
+            "表格或公式需要两个角点",
+            format!("{root}/points"),
+            if points.len() < 2 {
+                DiagnosticReason::MinItems
+            } else {
+                DiagnosticReason::MaxItems
+            },
+        ));
     }
-    let points = mapped_points(points, profile, target)?;
+    let points = mapped_points(points, profile, target, root)?;
     if points[1].x <= points[0].x || points[1].y <= points[0].y {
-        return Err("表格或公式的可用范围无效".into());
+        return Err(Rejection::field(
+            "表格或公式的可用范围无效",
+            format!("{root}/points"),
+            DiagnosticReason::Data,
+        ));
     }
     Ok([points[0], points[1]])
 }
@@ -576,7 +645,7 @@ fn parse_plan(arguments: &str, input: &VerifiedVisualInput) -> Result<ParsedBatc
 // An actual MiniMax M3 response serialized numeric fields as JSON strings and
 // point arrays as {"item":...}. Decode only those observed representations;
 // the original target, unit, field, size and geometry checks still run below.
-fn minimax_object_wire(value: &mut Value) -> Result<(), String> {
+fn minimax_object_wire(value: &mut Value, root: &str) -> Result<(), Rejection> {
     fn number(value: &mut Value) -> Result<(), String> {
         if let Some(text) = value.as_str() {
             if text.len() > 64 || text.trim() != text {
@@ -593,27 +662,45 @@ fn minimax_object_wire(value: &mut Value) -> Result<(), String> {
     };
     for field in ["fontSize", "strokeWidth"] {
         if let Some(value) = object.get_mut(field) {
-            number(value)?;
+            number(value).map_err(|error| {
+                Rejection::field(error, format!("{root}/{field}"), DiagnosticReason::Data)
+            })?;
         }
     }
     if let Some(points) = object.get_mut("points") {
         if let Some(wrapper) = points.as_object_mut() {
             if wrapper.len() != 1 || !wrapper.contains_key("item") {
-                return Err("批注点数组格式无效".into());
+                return Err(Rejection::field(
+                    "批注点数组格式无效",
+                    format!("{root}/points"),
+                    DiagnosticReason::Data,
+                ));
             }
             let inner = wrapper.remove("item").ok_or("批注点数组格式无效")?;
             *points = match inner {
                 Value::Array(_) => inner,
                 Value::Object(_) => Value::Array(vec![inner]),
-                _ => return Err("批注点数组格式无效".into()),
+                _ => {
+                    return Err(Rejection::field(
+                        "批注点数组格式无效",
+                        format!("{root}/points"),
+                        DiagnosticReason::Data,
+                    ))
+                }
             };
         }
         if let Some(points) = points.as_array_mut() {
-            for point in points {
+            for (index, point) in points.iter_mut().enumerate() {
                 if let Some(point) = point.as_object_mut() {
                     for axis in ["x", "y"] {
                         if let Some(value) = point.get_mut(axis) {
-                            number(value)?;
+                            number(value).map_err(|error| {
+                                Rejection::field(
+                                    error,
+                                    format!("{root}/points/{index}/{axis}"),
+                                    DiagnosticReason::Data,
+                                )
+                            })?;
                         }
                     }
                 }
@@ -628,53 +715,118 @@ fn parse_plan_with_wire(
     input: &VerifiedVisualInput,
     minimax_wire: bool,
 ) -> Result<ParsedBatch, String> {
+    parse_plan_with_wire_diagnosed(arguments, input, minimax_wire).map_err(|error| error.message)
+}
+
+fn parse_plan_with_wire_diagnosed(
+    arguments: &str,
+    input: &VerifiedVisualInput,
+    minimax_wire: bool,
+) -> Result<ParsedBatch, Rejection> {
     if arguments.len() > 32 * 1024 {
         return Err("原位作答内容过长".into());
     }
-    let mut args: Arguments = serde_json::from_str(arguments)
-        .map_err(|_| "批注参数需要包含 groups 数组，每组包含 target、objects 和规定的坐标单位")?;
+    let mut args: Arguments = serde_json::from_str(arguments).map_err(|_| {
+        Rejection::diagnosed(
+            "批注参数需要包含 groups 数组，每组包含 target、objects 和规定的坐标单位",
+            argument_diagnostic::wire_failure(arguments),
+        )
+    })?;
     let count = args
         .groups
         .iter()
         .try_fold(0usize, |n, g| n.checked_add(g.objects.len()))
         .ok_or("原位作答图元过多")?;
     if args.groups.is_empty() || args.groups.len() > 6 || count == 0 || count > MAX_VISUAL_OBJECTS {
-        return Err("一次最多添加 48 个批注图元".into());
+        return Err(Rejection::field(
+            "一次最多添加 48 个批注图元",
+            "$/groups",
+            if args.groups.is_empty() {
+                DiagnosticReason::MinItems
+            } else {
+                DiagnosticReason::Data
+            },
+        ));
     }
     if minimax_wire {
-        for group in &mut args.groups {
-            for object in &mut group.objects {
-                minimax_object_wire(object)?;
+        for (group_index, group) in args.groups.iter_mut().enumerate() {
+            for (object_index, object) in group.objects.iter_mut().enumerate() {
+                minimax_object_wire(
+                    object,
+                    &format!("$/groups/{group_index}/objects/{object_index}"),
+                )?;
             }
         }
     }
     let mut seen = std::collections::HashSet::new();
     let mut groups = Vec::new();
-    for group in args.groups {
+    for (group_index, group) in args.groups.into_iter().enumerate() {
+        let group_root = format!("$/groups/{group_index}");
         if group.objects.is_empty() || !seen.insert(group.target.clone()) {
-            return Err("原位作答目标无效".into());
+            return Err(Rejection::field(
+                "原位作答目标无效",
+                if group.objects.is_empty() {
+                    format!("{group_root}/objects")
+                } else {
+                    format!("{group_root}/target")
+                },
+                DiagnosticReason::Data,
+            ));
         }
         let target = input
             .manifest()
             .targets
             .iter()
             .find(|t| t.handle == group.target)
-            .ok_or("原位作答目标不在本次图片中")?;
+            .ok_or_else(|| {
+                Rejection::field(
+                    "原位作答目标不在本次图片中",
+                    format!("{group_root}/target"),
+                    DiagnosticReason::Const,
+                )
+            })?;
         let profile = VisualCoordinateProfile::from_id(&target.profile_id)?;
         if profile.normalized() {
             if group.coordinate_space != Some(CoordinateSpace::Normalized1000)
                 || group.style_unit != Some(StyleUnit::EncodedPixels)
             {
-                return Err("原位作答缺少明确坐标或样式单位".into());
+                return Err(Rejection::field(
+                    "原位作答缺少明确坐标或样式单位",
+                    format!(
+                        "{group_root}/{}",
+                        if group.coordinate_space != Some(CoordinateSpace::Normalized1000) {
+                            "coordinateSpace"
+                        } else {
+                            "styleUnit"
+                        }
+                    ),
+                    DiagnosticReason::Required,
+                ));
             }
         } else if group.coordinate_space.is_some() || group.style_unit.is_some() {
-            return Err("原位作答坐标与附件配置不匹配".into());
+            return Err(Rejection::field(
+                "原位作答坐标与附件配置不匹配",
+                format!(
+                    "{group_root}/{}",
+                    if group.coordinate_space.is_some() {
+                        "coordinateSpace"
+                    } else {
+                        "styleUnit"
+                    }
+                ),
+                DiagnosticReason::AdditionalProperties,
+            ));
         }
         let scale = style_scale(target);
         let mut drawings = Vec::new();
         for (index, value) in group.objects.into_iter().enumerate() {
-            let object =
-                parse_object(value).map_err(|error| format!("第 {} 个批注：{error}", index + 1))?;
+            let object_root = format!("{group_root}/objects/{index}");
+            let object = parse_object(&value).map_err(|error| {
+                Rejection::diagnosed(
+                    format!("第 {} 个批注：{error}", index + 1),
+                    argument_diagnostic::object_failure(&value, target, &object_root),
+                )
+            })?;
             let object = match object {
                 ModelObject::Table(object) => {
                     let content = RichContent::Table {
@@ -683,9 +835,15 @@ fn parse_plan_with_wire(
                         rows: object.table.rows,
                         align: object.table.align,
                     };
-                    crate::rich_annotation_host::table_document(&content)?;
+                    crate::rich_annotation_host::table_document(&content).map_err(|error| {
+                        Rejection::field(
+                            error,
+                            format!("{object_root}/table"),
+                            DiagnosticReason::Data,
+                        )
+                    })?;
                     drawings.push(ParsedObject::Rich {
-                        bounds: rich_bounds(object.points, profile, target)?,
+                        bounds: rich_bounds(object.points, profile, target, &object_root)?,
                         style_scale: scale,
                         content,
                     });
@@ -697,7 +855,20 @@ fn parse_plan_with_wire(
                         || object.tex.trim().is_empty()
                         || object.tex.contains('\r')
                     {
-                        return Err("公式字号无效".into());
+                        return Err(Rejection::field(
+                            "公式字号无效",
+                            format!(
+                                "{object_root}/{}",
+                                if !object.font_size.is_finite()
+                                    || !(8. ..=72.).contains(&object.font_size)
+                                {
+                                    "fontSize"
+                                } else {
+                                    "tex"
+                                }
+                            ),
+                            DiagnosticReason::Data,
+                        ));
                     }
                     let font_size = object.font_size * scale;
                     crate::formula_layout::FormulaInput {
@@ -707,7 +878,24 @@ fn parse_plan_with_wire(
                         font_size,
                     }
                     .validate()
-                    .map_err(|_| "公式内容或字号无效")?;
+                    .map_err(|_| {
+                        let color = object.color.as_bytes();
+                        let field = if color.len() != 7
+                            || color[0] != b'#'
+                            || !color[1..].iter().all(u8::is_ascii_hexdigit)
+                        {
+                            "color"
+                        } else if !font_size.is_finite() || !(8. ..=128.).contains(&font_size) {
+                            "fontSize"
+                        } else {
+                            "tex"
+                        };
+                        Rejection::field(
+                            "公式内容或字号无效",
+                            format!("{object_root}/{field}"),
+                            DiagnosticReason::Data,
+                        )
+                    })?;
                     let content = RichContent::Formula {
                         version: 1,
                         tex: object.tex,
@@ -715,7 +903,7 @@ fn parse_plan_with_wire(
                         font_size,
                     };
                     drawings.push(ParsedObject::Rich {
-                        bounds: rich_bounds(object.points, profile, target)?,
+                        bounds: rich_bounds(object.points, profile, target, &object_root)?,
                         style_scale: scale,
                         content,
                     });
@@ -723,18 +911,43 @@ fn parse_plan_with_wire(
                 }
                 ModelObject::Vector(object) => object,
             };
-            if target.image_item_id.is_some() && matches!(object.kind,DrawingKind::Highlighter|DrawingKind::Mark|DrawingKind::Mosaic) { return Err("图片标注暂不支持高亮或马赛克".into()); }
+            if target.image_item_id.is_some()
+                && matches!(
+                    object.kind,
+                    DrawingKind::Highlighter | DrawingKind::Mark | DrawingKind::Mosaic
+                )
+            {
+                return Err(Rejection::field(
+                    "图片标注暂不支持高亮或马赛克",
+                    format!("{object_root}/kind"),
+                    DiagnosticReason::Enum,
+                ));
+            }
             if profile.normalized() && object.kind == DrawingKind::Text {
                 if object.anchor != Some(TextAnchor::TopLeft) {
-                    return Err("原位作答文字缺少明确锚点".into());
+                    return Err(Rejection::field(
+                        "原位作答文字缺少明确锚点",
+                        format!("{object_root}/anchor"),
+                        DiagnosticReason::Required,
+                    ));
                 }
             } else if object.anchor.is_some() {
-                return Err("原位作答图元锚点无效".into());
+                return Err(Rejection::field(
+                    "原位作答图元锚点无效",
+                    format!("{object_root}/anchor"),
+                    DiagnosticReason::AdditionalProperties,
+                ));
             }
             let stroke_width = object
                 .stroke_width
                 .or_else(|| (object.kind == DrawingKind::Text).then_some(1.))
-                .ok_or("形状缺少 strokeWidth")?;
+                .ok_or_else(|| {
+                    Rejection::field(
+                        "形状缺少 strokeWidth",
+                        format!("{object_root}/strokeWidth"),
+                        DiagnosticReason::Required,
+                    )
+                })?;
             if matches!(
                 object.kind,
                 DrawingKind::Mosaic | DrawingKind::Number | DrawingKind::Rich
@@ -750,9 +963,31 @@ fn parse_plan_with_wire(
                     .font_size
                     .is_some_and(|s| !s.is_finite() || !(8. ..=72.).contains(&s))
             {
-                return Err("原位作答图元无效".into());
+                let field = if matches!(
+                    object.kind,
+                    DrawingKind::Mosaic | DrawingKind::Number | DrawingKind::Rich
+                ) {
+                    "kind"
+                } else if object.points.is_empty() || object.points.len() > 128 {
+                    "points"
+                } else if !stroke_width.is_finite() || !(0.5..=16.).contains(&stroke_width) {
+                    "strokeWidth"
+                } else if object
+                    .text
+                    .as_ref()
+                    .is_some_and(|text| text.chars().count() > 500)
+                {
+                    "text"
+                } else {
+                    "fontSize"
+                };
+                return Err(Rejection::field(
+                    "原位作答图元无效",
+                    format!("{object_root}/{field}"),
+                    DiagnosticReason::Data,
+                ));
             }
-            let points = mapped_points(object.points, profile, target)?;
+            let points = mapped_points(object.points, profile, target, &object_root)?;
             let drawing = Drawing {
                 id: uuid::Uuid::new_v4().to_string(),
                 kind: object.kind,
@@ -764,7 +999,7 @@ fn parse_plan_with_wire(
                 origin: None,
                 rich: None,
             };
-            validate_vector(&drawing)?;
+            validate_vector(&drawing, &object_root)?;
             drawings.push(ParsedObject::Vector(drawing));
         }
         groups.push(ParsedGroup {
@@ -775,7 +1010,7 @@ fn parse_plan_with_wire(
     Ok(ParsedBatch { groups })
 }
 
-fn validate_vector(drawing: &Drawing) -> Result<(), String> {
+fn validate_vector(drawing: &Drawing, root: &str) -> Result<(), Rejection> {
     let color = drawing.color.as_bytes();
     let count = drawing.points.len();
     let valid_count = match drawing.kind {
@@ -790,7 +1025,21 @@ fn validate_vector(drawing: &Drawing) -> Result<(), String> {
         || !drawing.stroke_width.is_finite()
         || !(0.5..=64.).contains(&drawing.stroke_width)
     {
-        return Err("原位作答图元样式或点数无效".into());
+        let field = if !valid_count {
+            "points"
+        } else if color.len() != 7
+            || color[0] != b'#'
+            || !color[1..].iter().all(u8::is_ascii_hexdigit)
+        {
+            "color"
+        } else {
+            "strokeWidth"
+        };
+        return Err(Rejection::field(
+            "原位作答图元样式或点数无效",
+            format!("{root}/{field}"),
+            DiagnosticReason::Data,
+        ));
     }
     if drawing.kind == DrawingKind::Text {
         if drawing.text.as_ref().is_none_or(|text| {
@@ -799,10 +1048,32 @@ fn validate_vector(drawing: &Drawing) -> Result<(), String> {
             .font_size
             .is_none_or(|size| !size.is_finite() || !(6. ..=256.).contains(&size))
         {
-            return Err("原位作答文字或字号无效".into());
+            let field = if drawing.text.as_ref().is_none_or(|text| {
+                text.trim().is_empty() || text.chars().any(|c| c.is_control() && c != '\n')
+            }) {
+                "text"
+            } else {
+                "fontSize"
+            };
+            return Err(Rejection::field(
+                "原位作答文字或字号无效",
+                format!("{root}/{field}"),
+                DiagnosticReason::Data,
+            ));
         }
     } else if drawing.text.is_some() || drawing.font_size.is_some() {
-        return Err("普通图元不能携带文字或字号".into());
+        return Err(Rejection::field(
+            "普通图元不能携带文字或字号",
+            format!(
+                "{root}/{}",
+                if drawing.text.is_some() {
+                    "text"
+                } else {
+                    "fontSize"
+                }
+            ),
+            DiagnosticReason::AdditionalProperties,
+        ));
     }
     if matches!(drawing.kind, DrawingKind::Line | DrawingKind::Arrow)
         && drawing.points[0] == drawing.points[1]
@@ -812,7 +1083,11 @@ fn validate_vector(drawing: &Drawing) -> Result<(), String> {
         ) && (drawing.points[0].x == drawing.points[1].x
             || drawing.points[0].y == drawing.points[1].y)
     {
-        return Err("原位作答图元范围无效".into());
+        return Err(Rejection::field(
+            "原位作答图元范围无效",
+            format!("{root}/points"),
+            DiagnosticReason::Data,
+        ));
     }
     Ok(())
 }
@@ -998,6 +1273,10 @@ mod rich_tests;
 #[cfg(test)]
 #[path = "visual_minimax_wire_test.rs"]
 mod minimax_wire_tests;
+
+#[cfg(test)]
+#[path = "visual_argument_diagnostic_test.rs"]
+mod argument_diagnostic_tests;
 
 #[cfg(test)]
 mod tests {
