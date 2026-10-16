@@ -4413,9 +4413,37 @@ mod tests {
     fn speech_authority_checks_revision_kind_and_exact_installed_package() {
         let dir = Directory::new();
         let store = PluginStore::open(&dir.0).unwrap();
+        let native = cfg!(windows);
+        let seeded = store
+            .snapshot()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "mewu.voice")
+            .unwrap();
         assert_eq!(
-            store.speech_to_text("mewu.voice", 1, "dictation").unwrap(),
-            SpeechEngine::WindowsSapi
+            seeded.state,
+            if native {
+                PluginState::Enabled
+            } else {
+                PluginState::Disabled
+            }
+        );
+        assert_eq!(
+            seeded.error.as_deref(),
+            if native {
+                None
+            } else {
+                Some("此插件的本机能力不支持当前系统")
+            }
+        );
+        assert_eq!(
+            store.speech_to_text("mewu.voice", 1, "dictation"),
+            if native {
+                Ok(SpeechEngine::WindowsSapi)
+            } else {
+                Err("此语音插件未启用".into())
+            }
         );
         assert!(store.speech_to_text("mewu.voice", 0, "dictation").is_err());
         assert!(store.speech_to_text("mewu.voice", 1, "other").is_err());
@@ -4429,45 +4457,88 @@ mod tests {
         changed.description = "Changed on disk".into();
         fs::write(&package, serde_json::to_vec(&changed).unwrap()).unwrap();
         assert!(store.speech_to_text("mewu.voice", 1, "dictation").is_err());
-        assert!(store
-            .snapshot()
-            .unwrap()
-            .plugins
-            .iter()
-            .find(|p| p.manifest.id == "mewu.voice")
-            .unwrap()
-            .error
-            .is_some());
+        assert_eq!(
+            store
+                .snapshot()
+                .unwrap()
+                .plugins
+                .iter()
+                .find(|p| p.manifest.id == "mewu.voice")
+                .unwrap()
+                .error
+                .as_deref(),
+            Some("插件文件与批准的安装记录不一致，请重新安装")
+        );
         fs::remove_file(&package).unwrap();
         assert!(store.speech_to_text("mewu.voice", 1, "dictation").is_err());
         fs::write(&package, original).unwrap();
-        assert!(store.speech_to_text("mewu.voice", 1, "dictation").is_ok());
+        assert_eq!(
+            store.speech_to_text("mewu.voice", 1, "dictation").is_ok(),
+            native
+        );
     }
 
     #[test]
     fn speech_disable_removal_and_explicit_reinstall_remain_revision_bound() {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
-        store.set_enabled("mewu.voice", 1, false).unwrap();
+        let native = cfg!(windows);
+        let disabled_record = store.set_enabled("mewu.voice", 1, false).unwrap();
+        assert_eq!(disabled_record.revision, if native { 2 } else { 1 });
+        assert_eq!(
+            store
+                .set_enabled("mewu.voice", disabled_record.revision, false)
+                .unwrap()
+                .revision,
+            disabled_record.revision
+        );
         let disabled = store.snapshot().unwrap();
         drop(store);
         let mut store = PluginStore::open(&dir.0).unwrap();
         assert_eq!(store.snapshot().unwrap(), disabled);
-        assert!(store.speech_to_text("mewu.voice", 1, "dictation").is_err());
-        assert!(store.speech_to_text("mewu.voice", 2, "dictation").is_err());
-        store.set_enabled("mewu.voice", 2, true).unwrap();
-        assert!(store.speech_to_text("mewu.voice", 2, "dictation").is_err());
-        assert!(store.speech_to_text("mewu.voice", 3, "dictation").is_ok());
-        store.uninstall("mewu.voice", 3).unwrap();
+        assert!(store
+            .speech_to_text("mewu.voice", disabled_record.revision, "dictation")
+            .is_err());
+        let enabled = store.set_enabled("mewu.voice", disabled_record.revision, true);
+        let current_revision = if native {
+            let record = enabled.unwrap();
+            assert_eq!(record.revision, disabled_record.revision + 1);
+            assert!(store
+                .speech_to_text("mewu.voice", disabled_record.revision, "dictation")
+                .is_err());
+            assert!(store
+                .speech_to_text("mewu.voice", record.revision, "dictation")
+                .is_ok());
+            record.revision
+        } else {
+            assert_eq!(enabled.unwrap_err(), "此插件的本机能力不支持当前系统");
+            assert_eq!(store.snapshot().unwrap(), disabled);
+            disabled_record.revision
+        };
+        let removed_record = store.uninstall("mewu.voice", current_revision).unwrap();
         let removed = store.snapshot().unwrap();
         drop(store);
         let mut store = PluginStore::open(&dir.0).unwrap();
         assert_eq!(store.snapshot().unwrap(), removed);
         assert!(!path(&dir.0, "mewu.voice", "1.0.0").exists());
-        assert!(store.speech_to_text("mewu.voice", 4, "dictation").is_err());
-        store.install_official("mewu.voice", Some(4)).unwrap();
-        assert!(store.speech_to_text("mewu.voice", 4, "dictation").is_err());
-        assert!(store.speech_to_text("mewu.voice", 5, "dictation").is_ok());
+        assert!(store
+            .speech_to_text("mewu.voice", removed_record.revision, "dictation")
+            .is_err());
+        let reinstalled = store.install_official("mewu.voice", Some(removed_record.revision));
+        if native {
+            let record = reinstalled.unwrap();
+            assert_eq!(record.revision, removed_record.revision + 1);
+            assert!(store
+                .speech_to_text("mewu.voice", removed_record.revision, "dictation")
+                .is_err());
+            assert!(store
+                .speech_to_text("mewu.voice", record.revision, "dictation")
+                .is_ok());
+        } else {
+            assert_eq!(reinstalled.unwrap_err(), "此插件的本机能力不支持当前系统");
+            assert_eq!(store.snapshot().unwrap(), removed);
+            assert!(!path(&dir.0, "mewu.voice", "1.0.0").exists());
+        }
     }
 
     #[test]
@@ -4553,8 +4624,8 @@ mod tests {
             assert_eq!(fs::read(file).unwrap(), bytes);
         }
         assert_eq!(
-            store.speech_to_text("mewu.voice", 1, "dictation").unwrap(),
-            SpeechEngine::WindowsSapi
+            store.speech_to_text("mewu.voice", 1, "dictation").is_ok(),
+            cfg!(windows)
         );
         let seeded = store.snapshot().unwrap();
         drop(store);
@@ -4562,9 +4633,30 @@ mod tests {
         assert_eq!(store.snapshot().unwrap(), seeded);
         let mut chosen = parse_manifest(OFFICIAL_VOICE).unwrap();
         chosen.version = "0.9.0".into();
-        store
-            .install_package(chosen, PluginSource::Official, Some(1), true)
-            .unwrap();
+        if cfg!(windows) {
+            store
+                .install_package(chosen, PluginSource::Official, Some(1), true)
+                .unwrap();
+        } else {
+            assert_eq!(
+                store
+                    .install_package(chosen.clone(), PluginSource::Official, Some(1), true)
+                    .unwrap_err(),
+                "此插件的本机能力不支持当前系统"
+            );
+            assert_eq!(store.snapshot().unwrap(), seeded);
+            // Model an existing historical choice restored from another OS;
+            // startup must preserve it without enabling its native capability.
+            store
+                .install_package_with_state(
+                    chosen,
+                    PluginSource::Official,
+                    Some(1),
+                    true,
+                    PluginState::Disabled,
+                )
+                .unwrap();
+        }
         let chosen = store.snapshot().unwrap();
         drop(store);
         assert_eq!(
@@ -4790,7 +4882,11 @@ mod tests {
     fn ocr_engine_is_canonical_and_foreign_packages_do_not_gain_native_authority() {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
-        for (engine, native) in [("windows", cfg!(windows)), ("apple.vision", cfg!(target_os = "macos")), ("linux.tesseract", cfg!(target_os = "linux"))] {
+        for (engine, native) in [
+            ("windows", cfg!(windows)),
+            ("apple.vision", cfg!(target_os = "macos")),
+            ("linux.tesseract", cfg!(target_os = "linux")),
+        ] {
             let mut manifest = parse_manifest(OFFICIAL_OCR).unwrap();
             manifest.id = format!("example.ocr-{}", engine.replace('.', "-"));
             manifest.contributions = vec![PluginContribution::Ocr {
@@ -4800,18 +4896,52 @@ mod tests {
             }];
             let bytes = serde_json::to_vec(&manifest).unwrap();
             assert_eq!(parse_manifest(&bytes).unwrap(), manifest);
-            store.install_bytes(&bytes, source(), None).unwrap();
+            let installed = store.install_bytes(&bytes, source(), None);
+            if native {
+                assert_eq!(installed.unwrap().state, PluginState::Enabled);
+            } else {
+                assert_eq!(installed.unwrap_err(), "此插件的本机能力不支持当前系统");
+                assert!(!store
+                    .snapshot()
+                    .unwrap()
+                    .plugins
+                    .iter()
+                    .any(|p| p.manifest.id == manifest.id));
+                assert!(!path(&dir.0, &manifest.id, &manifest.version).exists());
+            }
             assert_eq!(store.ocr(&manifest.id, 1, "recognize").is_ok(), native);
         }
-        for engine in ["AppleVision", "apple", "vision", "apple.vision ", "remote", "LinuxTesseract", "tesseract", "linux.tesseract "] {
+        for engine in [
+            "AppleVision",
+            "apple",
+            "vision",
+            "apple.vision ",
+            "remote",
+            "LinuxTesseract",
+            "tesseract",
+            "linux.tesseract ",
+        ] {
             assert!(serde_json::from_value::<OcrEngine>(serde_json::json!(engine)).is_err());
         }
         assert!(serde_json::from_slice::<PluginContribution>(br#"{"kind":"selection.ocr","id":"recognize","title":"OCR","engine":"windows","engine":"apple.vision"}"#).is_err());
         drop(store);
         let reopened = PluginStore::open(&dir.0).unwrap();
-        assert_eq!(reopened.ocr("example.ocr-windows", 1, "recognize").is_ok(), cfg!(windows));
-        assert_eq!(reopened.ocr("example.ocr-apple-vision", 1, "recognize").is_ok(), cfg!(target_os = "macos"));
-        assert_eq!(reopened.ocr("example.ocr-linux-tesseract", 1, "recognize").is_ok(), cfg!(target_os = "linux"));
+        assert_eq!(
+            reopened.ocr("example.ocr-windows", 1, "recognize").is_ok(),
+            cfg!(windows)
+        );
+        assert_eq!(
+            reopened
+                .ocr("example.ocr-apple-vision", 1, "recognize")
+                .is_ok(),
+            cfg!(target_os = "macos")
+        );
+        assert_eq!(
+            reopened
+                .ocr("example.ocr-linux-tesseract", 1, "recognize")
+                .is_ok(),
+            cfg!(target_os = "linux")
+        );
     }
 
     #[test]
