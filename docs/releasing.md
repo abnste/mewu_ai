@@ -4,7 +4,9 @@ Windows、macOS、Linux 使用同一提交和版本。源码回归、构建成�
 
 当前打包目标为 Windows x64 的 NSIS 安装包与便携 ZIP、macOS arm64 的 DMG、Linux x64 的 AppImage。平台支持范围和系统最低要求应以实际测试结果及对应版本说明为准，不由这些打包目标推断。
 
-先在 `next` 完成版本号、锁文件和 `docs/release-notes-<version>.md`，提交后冻结完整 SHA；三个平台均从该提交构建，不用旧包重命名。手动触发 `.github/workflows/preview-release.yml`，保留各平台的候选产物和源码测试结果，再对这些最终字节完成原生安装验收。该工作流不会签名或发布安装包；协调者只对验收完成的更新产物生成更新签名。
+默认分支 `master` 用于重制版开发；原 .NET/WPF 代码保留在 `dotnet`。分支改名不改已发布的标签、安装包或固定更新通道。
+
+先在 `master` 完成版本号、锁文件和 `docs/release-notes-<version>.md`，提交后冻结完整 SHA；三个平台均从该提交构建，不用旧包重命名。手动触发 `.github/workflows/preview-release.yml` 时选择该冻结提交所在的 `master`，保留各平台的候选产物和源码测试结果，再对这些最终字节完成原生安装验收。该工作流不会签名或发布安装包；协调者只对验收完成的更新产物生成更新签名。
 
 原生构建后运行：
 
@@ -47,3 +49,5 @@ node scripts/publish-release.mjs out/release
 0.7.4 的已安装更新器只接受数值标签和 GitHub latest 正式入口。为支持用户选择升级到预览版，可建立单独的数值兼容发行；当前 `v1.0.0.4` 实际安装 `1.0.0-preview.4`。详见[旧版升级说明](legacy-updates.md)。
 
 这是既有安装包的协议兼容入口：先校验已发布预览版的固定源提交及安装包实际字节，再以旧更新器要求的附件名上传相同安装包。它不构建新产品，不修改原预览版，不推进固定更新 JSON，也不免除源预览版的三端验收。兼容发行只附一个 Windows 安装包，不上传签名、测试文件或开发资料；正文明确实际版本与来源，避免把数值标签误认为新产品版本。
+
+兼容入口的私有计划使用 `schemaVersion: 2`，明确 `workingBranch: "master"`、`protectedBranch: "dotnet"` 和旧分支的完整 `expectedLegacyCommit`。发布前及上传后均要求本地 `master` 干净、HEAD 与 `origin/master` 等于审阅过的 `targetCommit`，并核对本地跟踪及 GitHub `dotnet` 的固定提交；旧 schema 1 计划拒绝执行，保留为历史证据。当前 `dotnet` 保护基线为 `801511c17760c2595c9418a21acc8f31a9e2dcfe`。已发布的 `v1.0.0.4` 仍绑定原文档与脚本提交，不随分支改名重发或重绑。

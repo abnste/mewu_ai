@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { repository } from './release-contract.mjs';
 import { findRelease } from './release-api.mjs';
-import { bridgePlan, maximumInstallerBytes, publishLegacyBridge, validateBridgeChanges } from './legacy-update-bridge.mjs';
+import { bridgePlan, maximumInstallerBytes, publishLegacyBridge, validateBridgeChanges, validateBridgeCheckout } from './legacy-update-bridge.mjs';
 
 if (process.argv.length !== 4 || process.argv[3] !== 'ROOT-PUBLISH-LEGACY-074-BRIDGE') throw Error('Use a reviewed private plan and explicit Root legacy-bridge dispatch');
 const root = fs.realpathSync(process.cwd());
@@ -79,7 +79,8 @@ const github = {
   publishLatest: (id, body) => patch(`repos/${repository}/releases/${id}`, body),
 };
 async function assertSource(plan) {
-  if (git('branch', '--show-current') !== 'next' || git('rev-parse', 'HEAD') !== plan.targetCommit || git('status', '--porcelain', '-z') || git('rev-parse', 'refs/remotes/origin/master') !== plan.expectedMasterCommit) throw Error('Exact clean next/protected master required');
+  validateBridgeCheckout(plan, { branch: git('branch', '--show-current'), head: git('rev-parse', 'HEAD'), status: git('status', '--porcelain', '-z'),
+    remoteHead: git('rev-parse', `refs/remotes/origin/${plan.workingBranch}`), protectedCommit: git('rev-parse', `refs/remotes/origin/${plan.protectedBranch}`) });
   execFileSync('git', ['merge-base', '--is-ancestor', plan.sourceCommit, plan.targetCommit], { stdio: ['ignore', 'pipe', 'pipe'] });
   const changed = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', plan.sourceCommit, plan.targetCommit], { encoding: 'utf8' }).split('\0').filter(Boolean);
   validateBridgeChanges(changed);

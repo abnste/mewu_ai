@@ -4,6 +4,8 @@ The desktop uses Rust/Tauri 2, Solid/TypeScript and SQLite with the system webvi
 
 ## Build
 
+The default `master` branch contains the remake; `dotnet` retains the legacy .NET/WPF source. Build and release new desktop versions from a frozen full commit on `master`.
+
 From the repository root, run `npm ci`, `npm run build` and `cargo test --workspace --locked`. Run the frontend tests with `node --experimental-vm-modules --test apps/desktop/src/*.test.mjs`.
 
 Build native installers on their matching platform: Windows NSIS and portable ZIP, macOS application/DMG, and Linux AppImage with the audited media runtime and package permission normalization. Linux development for this release uses the complete Docker build. Agent and blackboard are optional official plugins; without a ready model connection, capture controls are shown by default.
@@ -16,7 +18,7 @@ The installed endpoint is:
 
 https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json
 
-The update-channel release remains a prerelease and is excluded from GitHub's latest stable release. Each manifest names a versioned installer under its immutable version tag. A stable 1.x release advances both preview.json and latest.json, so preview clients can move to stable without reinstalling. Source branch names are not used by the installed updater or release script; changing next to master does not change the endpoint, signing key or application identity.
+The update-channel release remains a prerelease and is excluded from GitHub's latest stable release. Each manifest names a versioned installer under its immutable version tag. A stable 1.x release advances both preview.json and latest.json, so preview clients can move to stable without reinstalling. The installed updater and normal release flow use versioned releases and the fixed channel, so branch renames do not change the endpoint, signing key or application identity. The separate legacy compatibility publisher checks `master` as its working branch and protects the pinned `dotnet` commit.
 
 Versioned releases attach the Windows installer and portable ZIP, macOS DMG and Linux AppImage. Windows updates use the exact EXE installer, Linux updates use the exact AppImage, and macOS updates use a versioned `.app.tar.gz` stored only in the fixed `update-channel` release. The manifest must contain all three targets and version-bound inline signatures. License texts and source attribution stay inside the packages. No standalone signature, checksum or private metadata files are attached to a versioned release. GitHub provides asset SHA-256 digests. Publish notes come from `docs/release-notes-<version>.md`.
 

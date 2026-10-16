@@ -26,7 +26,7 @@ export function compareLegacyVersions(a, b) {
   return 0;
 }
 export function bridgePlan(request) {
-  if (!request || request.schemaVersion !== 1 || !commitPattern.test(request.source?.commit) || !commitPattern.test(request.targetCommit) || !commitPattern.test(request.expectedMasterCommit)) fail('Pinned bridge source/target/master required');
+  if (!request || request.schemaVersion !== 2 || request.workingBranch !== 'master' || request.protectedBranch !== 'dotnet' || Object.hasOwn(request, 'expectedMasterCommit') || !commitPattern.test(request.source?.commit) || !commitPattern.test(request.targetCommit) || !commitPattern.test(request.expectedLegacyCommit)) fail('Schema 2 pinned bridge source/target and master/dotnet branches required');
   const match = /^1\.(0|[1-9]\d*)\.(0|[1-9]\d*)-preview\.(0|[1-9]\d*)$/.exec(request.source.version);
   if (!match) fail('Published 1.x preview source required');
   const version = `1.${match[1]}.${match[2]}.${match[3]}`, tag = `v${version}`;
@@ -40,8 +40,8 @@ export function bridgePlan(request) {
   if (request.notes !== undefined && (typeof request.notes !== 'string' || Buffer.byteLength(request.notes) > 16384 || request.notes.includes('\0'))) fail('Invalid additional bridge notes');
   const sourceTag = `v${request.source.version}`, sourceName = releasePlan(request.source.version)['windows-x86_64'].updater;
   const alias = `MewuAI-Remake-Setup-${version}-win-x64.exe`;
-  return { repository, version, tag, alias, sourceTag, sourceName, sourceVersion: request.source.version,
-    sourceCommit: request.source.commit, targetCommit: request.targetCommit, expectedMasterCommit: request.expectedMasterCommit,
+  return { schemaVersion: 2, repository, version, tag, alias, sourceTag, sourceName, sourceVersion: request.source.version,
+    sourceCommit: request.source.commit, targetCommit: request.targetCommit, workingBranch: 'master', protectedBranch: 'dotnet', expectedLegacyCommit: request.expectedLegacyCommit,
     expectedLatest: { ...latest }, bytes: installer.bytes, sha256: installer.sha256,
     sourceUrl: canonicalAssetUrl(sourceTag, sourceName), aliasUrl: canonicalAssetUrl(tag, alias),
     // Existing major>=1 updater selects NSIS, never the old Inno argument list.
@@ -52,6 +52,12 @@ export function bridgePlan(request) {
       `安装包 SHA-256：\`${installer.sha256}\`。安装后继续使用原预览更新通道。旧客户端会在下载和安装前分别请求确认；安装后如未自动启动，请从原快捷方式启动。\n\n` +
       `Compatibility entry for the 0.7.4 updater. The numeric tag ${tag} is a discovery alias; the actual installed version is ${request.source.version}, using the unchanged published installer bytes and product source ${request.source.commit}.\n` +
       (request.notes ? `\n${request.notes}\n` : '') };
+}
+
+// Kept separate so branch-renaming admission is tested without touching refs.
+export function validateBridgeCheckout(plan, checkout) {
+  if (plan.workingBranch !== 'master' || plan.protectedBranch !== 'dotnet' || checkout.branch !== plan.workingBranch || checkout.head !== plan.targetCommit || checkout.status !== '' || checkout.remoteHead !== plan.targetCommit || checkout.protectedCommit !== plan.expectedLegacyCommit) fail('Exact clean master/remote target and protected dotnet required');
+  return true;
 }
 
 // Complete Git diff admission, not an assertion that a new product was built.
@@ -107,7 +113,8 @@ async function previewAndFeeds(github, download, plan) {
     if (asset.name === 'preview.json' && validateManifest(JSON.parse(Buffer.from(bytes).toString('utf8'))) !== plan.sourceVersion) fail('Preview feed/source version differs');
     feedHashes.push({ name: asset.name, sha256: sha(bytes) });
   }
-  if (await github.branchCommit('master') !== plan.expectedMasterCommit) fail('Protected master changed');
+  if (await github.branchCommit(plan.workingBranch) !== plan.targetCommit) fail('Release master target changed');
+  if (await github.branchCommit(plan.protectedBranch) !== plan.expectedLegacyCommit) fail('Protected dotnet changed');
   return { source: releaseIdentity(source), channel: releaseIdentity(channel), feedHashes };
 }
 async function verifyBridge(github, release, plan, complete = false) {
@@ -156,7 +163,7 @@ export async function publishLegacyBridge({ request, github, download, assertSou
   verifyBuffer(publishedBytes, plan);
   if (!Buffer.from(publishedBytes).equals(Buffer.from(original))) fail('Bridge alias is not byte-for-byte source installer');
   await assertSource(plan);
-  if (!isDeepStrictEqual(await previewAndFeeds(github, download, plan), protectedBefore)) fail('Protected preview assets/feed/master changed');
+  if (!isDeepStrictEqual(await previewAndFeeds(github, download, plan), protectedBefore)) fail('Protected preview assets/feed/dotnet changed');
   const latestState = await verifyLatest(github, await github.latest(), bridge, plan);
   if (bridge.draft || latestState !== 'bridge') {
     // This is the only operation that exposes the numeric entry to old clients.
@@ -170,7 +177,7 @@ export async function publishLegacyBridge({ request, github, download, assertSou
     verifyBuffer(publicBytes, plan);
     if (!Buffer.from(publicBytes).equals(Buffer.from(original))) fail('Public bridge alias changed installer bytes');
   }
-  if (!isDeepStrictEqual(await previewAndFeeds(github, download, plan), protectedBefore)) fail('Protected preview assets/feed/master changed after publication');
+  if (!isDeepStrictEqual(await previewAndFeeds(github, download, plan), protectedBefore)) fail('Protected preview assets/feed/dotnet changed after publication');
   return { tag: plan.tag, actualProductVersion: plan.sourceVersion, productSourceCommit: plan.sourceCommit, bridgeSourceCommit: plan.targetCommit,
     artifact: { name: plan.alias, bytes: plan.bytes, sha256: plan.sha256 }, originalBytesUnchanged: true, previewAndFeedsUnchanged: true,
     bridgeReleaseId: bridge.id, url: `https://github.com/${repository}/releases/tag/${plan.tag}` };

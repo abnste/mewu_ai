@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/abnste/mewu_ai/security/advisories/new
     about: 请使用私密安全报告，不要公开漏洞细节 / Use private reporting for vulnerabilities.
   - name: Questions / 使用问题
-    url: https://github.com/abnste/mewu_ai/blob/master/SUPPORT.md
+    url: https://github.com/abnste/mewu_ai/blob/master/README.md
     about: 查看反馈与使用帮助入口 / Find support and feedback options.

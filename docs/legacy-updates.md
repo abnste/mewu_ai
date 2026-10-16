@@ -10,6 +10,7 @@ Windows 0.7.4 用户可以在「设置 → 关于」检查更新，确认下载�
 
 ## 维护规则
 
+- 重制版在默认分支 `master` 开发，旧 .NET/WPF 代码保留在 `dotnet`。私有发行计划使用 schema 2，明确 `workingBranch: "master"`、`protectedBranch: "dotnet"`、完整 `expectedLegacyCommit` 与 `targetCommit`；旧 schema 1 计划只作历史记录，不能再执行。发布器同时核对干净工作树、HEAD、`origin/master` 以及本地跟踪和 GitHub 上的旧分支提交。
 - 兼容入口只复用已发布、三端验收完成的预览版 Windows 安装包；必须校验源标签、原始附件大小和 SHA-256，再上传相同字节的兼容附件。
 - 原预览版的标签、附件、预览属性和固定更新 JSON 保持原样。兼容入口不能替代常规 SemVer 发行流程，也不能当作新编译的软件版本。
 - 兼容发行正文必须说明实际安装版本及对应源码。已公开的兼容附件不可覆盖；中断时只恢复同来源、同字节的草稿。

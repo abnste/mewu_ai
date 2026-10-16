@@ -4,13 +4,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { releasePlan, updateUrl } from './release-contract.mjs';
-import { bridgePlan, canonicalAssetUrl, compareLegacyVersions, legacyVersion, publishLegacyBridge, validateBridgeChanges } from './legacy-update-bridge.mjs';
+import { bridgePlan, canonicalAssetUrl, compareLegacyVersions, legacyVersion, publishLegacyBridge, validateBridgeChanges, validateBridgeCheckout } from './legacy-update-bridge.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const clone = value => structuredClone(value);
 function fixture(version = '1.0.0-preview.4') {
   const bytes = Buffer.from('owned fake installer bytes; never executable');
-  const request = { schemaVersion: 1, source: { version, commit: 'a'.repeat(40), installer: { bytes: bytes.length, sha256: hash(bytes) } },
-    targetCommit: 'b'.repeat(40), expectedMasterCommit: 'c'.repeat(40), expectedLatest: { id: 7, tag: 'v0.7.4', commit: 'd'.repeat(40) } };
+  const request = { schemaVersion: 2, workingBranch: 'master', protectedBranch: 'dotnet', source: { version, commit: 'a'.repeat(40), installer: { bytes: bytes.length, sha256: hash(bytes) } },
+    targetCommit: 'b'.repeat(40), expectedLegacyCommit: 'c'.repeat(40), expectedLatest: { id: 7, tag: 'v0.7.4', commit: 'd'.repeat(40) } };
   const plan = bridgePlan(request), calls = [], downloads = new Map(); let assetId = 10;
   const asset = (tag, name, content) => { downloads.set(canonicalAssetUrl(tag, name), Buffer.from(content)); return { id: assetId++, name, size: content.length, digest: 'sha256:' + hash(content), browser_download_url: canonicalAssetUrl(tag, name) }; };
   const signature = Buffer.from(`untrusted comment: fixture\nfixture\ntrusted comment: version:${version}\nfixture\n`).toString('base64');
@@ -21,7 +21,8 @@ function fixture(version = '1.0.0-preview.4') {
     channel: { id: 9, tag_name: 'update-channel', target_commitish: 'e'.repeat(40), draft: false, prerelease: true,
       assets: [asset('update-channel', 'preview.json', Buffer.from(JSON.stringify(manifest))), asset('update-channel', releasePlan(version)['darwin-aarch64'].updater, Buffer.from('fake updater tar'))] },
     latest: { id: 7, tag_name: 'v0.7.4', target_commitish: 'master', draft: false, prerelease: false, assets: [] },
-    bridge: null, master: request.expectedMasterCommit, refs: { [plan.sourceTag]: plan.sourceCommit, 'v0.7.4': request.expectedLatest.commit },
+    bridge: null, working: plan.targetCommit, legacy: request.expectedLegacyCommit, refs: { [plan.sourceTag]: plan.sourceCommit, 'v0.7.4': request.expectedLatest.commit },
+    checkout: { branch: 'master', head: plan.targetCommit, status: '', remoteHead: plan.targetCommit, protectedCommit: request.expectedLegacyCommit },
   };
   function completeBridge(draft) {
     state.bridge = { id: 100, tag_name: plan.tag, target_commitish: plan.targetCommit, name: plan.title, body: plan.body, draft, prerelease: false,
@@ -31,7 +32,7 @@ function fixture(version = '1.0.0-preview.4') {
   const github = {
     release: async tag => clone(tag === plan.sourceTag ? state.source : tag === 'update-channel' ? state.channel : state.bridge),
     latest: async () => clone(state.latest),
-    branchCommit: async () => state.master,
+    branchCommit: async branch => { calls.push({ action: 'branch-read', branch }); if (branch === 'master') return state.working; if (branch === 'dotnet') return state.legacy; throw Error('Unexpected branch lookup'); },
     tagCommit: async tag => state.refs[tag] ?? null,
     createDraft: async body => { calls.push({ action: 'draft', body: clone(body) }); state.bridge = { id: 100, ...clone(body), assets: [] }; return clone(state.bridge); },
     upload: async (id, tag, name, content) => {
@@ -52,10 +53,48 @@ function fixture(version = '1.0.0-preview.4') {
     if (url === plan.aliasUrl && state.bridge?.draft) throw Error('HTTP404: anonymous draft asset is unavailable');
     const value = downloads.get(url); assert.ok(value, `Unexpected URL ${url}`); assert.equal(value.length, bound); return Buffer.from(value);
   };
-  const run = () => publishLegacyBridge({ request, github, download, assertSource: async p => { assert.equal(p.sourceCommit, request.source.commit); state.assertSourceCalls = (state.assertSourceCalls ?? 0) + 1; if (state.invalidSource) throw Error('Runtime changed'); } });
+  const run = () => publishLegacyBridge({ request, github, download, assertSource: async p => { validateBridgeCheckout(p, state.checkout); assert.equal(p.sourceCommit, request.source.commit); state.assertSourceCalls = (state.assertSourceCalls ?? 0) + 1; if (state.invalidSource) throw Error('Runtime changed'); } });
   return { request, plan, bytes, calls, state, github, downloads, asset, completeBridge, run };
 }
 const mutations = f => f.calls.filter(c => ['draft', 'upload', 'publish-latest'].includes(c.action));
+
+test('schema 2 explicitly separates remake master from protected legacy dotnet', () => {
+  const f = fixture();
+  assert.equal(f.plan.schemaVersion, 2); assert.equal(f.plan.workingBranch, 'master'); assert.equal(f.plan.protectedBranch, 'dotnet');
+  assert.equal(f.plan.expectedLegacyCommit, f.request.expectedLegacyCommit); assert.ok(!Object.hasOwn(f.plan, 'expectedMasterCommit'));
+  for (const change of [
+    r => { r.schemaVersion = 1; r.expectedMasterCommit = r.expectedLegacyCommit; delete r.expectedLegacyCommit; },
+    r => { r.workingBranch = 'next'; }, r => { r.protectedBranch = 'master'; },
+    r => { r.protectedBranch = '.net'; }, r => { delete r.protectedBranch; },
+    r => { r.expectedMasterCommit = r.expectedLegacyCommit; }, r => { r.expectedLegacyCommit = '801511c'; },
+  ]) { const request = clone(f.request); change(request); assert.throws(() => bridgePlan(request), /Schema 2/); }
+});
+
+test('checkout admission requires clean master and full exact local, remote and legacy commits', async () => {
+  const good = fixture(); assert.equal(validateBridgeCheckout(good.plan, good.state.checkout), true);
+  for (const change of [
+    c => { c.branch = 'next'; }, c => { c.branch = ''; }, c => { c.head = 'f'.repeat(40); },
+    c => { c.status = ' M README.md\0'; }, c => { c.remoteHead = 'c'.repeat(40); },
+    c => { c.protectedCommit = 'f'.repeat(40); }, c => { delete c.protectedCommit; },
+  ]) {
+    const f = fixture(); change(f.state.checkout); await assert.rejects(f.run, /Exact clean master/); assert.deepEqual(mutations(f), []);
+  }
+});
+
+test('remote master target and protected dotnet are checked by exact name before mutation', async () => {
+  for (const field of ['working', 'legacy']) {
+    const f = fixture(); f.state[field] = 'f'.repeat(40); await assert.rejects(f.run, /master target|dotnet/); assert.deepEqual(mutations(f), []);
+  }
+  const f = fixture(); await f.run();
+  assert.deepEqual([...new Set(f.calls.filter(c => c.action === 'branch-read').map(c => c.branch))].sort(), ['dotnet', 'master']);
+});
+
+test('master or checkout changes during upload preserve the draft rather than expose an alias', async () => {
+  for (const change of [f => { f.state.working = 'f'.repeat(40); }, f => { f.state.checkout.status = '?? unreviewed.txt\0'; }]) {
+    const f = fixture(); f.state.afterUpload = () => change(f); await assert.rejects(f.run);
+    assert.equal(f.state.bridge.draft, true); assert.ok(!mutations(f).some(c => c.action === 'publish-latest'));
+  }
+});
 
 test('0.7.4 numeric four-field bridge selects exact NSIS alias, canonical URL and /S', () => {
   const { plan } = fixture(); assert.equal(plan.tag, 'v1.0.0.4'); assert.equal(plan.alias, 'MewuAI-Remake-Setup-1.0.0.4-win-x64.exe');
@@ -72,13 +111,13 @@ test('only exact public release/docs files admit a new target; runtime, agent fi
   for (const p of ['docs/agent.md', 'docs/AGENTS.md', 'agent.md', '.env', 'docs/secrets.md', 'scripts/publish-release.mjs', 'apps/desktop/src/App.tsx', 'Cargo.lock', '.github/workflows/release.yml']) assert.throws(() => validateBridgeChanges([p]), /unapproved/);
 });
 test('first publication authenticates the draft, verifies uploaded bytes, then exposes latest; public source/feed stay exact', async () => {
-  const f = fixture(), before = clone({ source: f.state.source, channel: f.state.channel, master: f.state.master });
+  const f = fixture(), before = clone({ source: f.state.source, channel: f.state.channel, working: f.state.working, legacy: f.state.legacy });
   const result = await f.run(); assert.equal(result.originalBytesUnchanged, true); assert.equal(result.actualProductVersion, '1.0.0-preview.4');
   assert.deepEqual(mutations(f).map(c => c.action), ['draft', 'upload', 'publish-latest']);
   assert.equal(mutations(f)[0].body.make_latest, 'false'); assert.deepEqual(mutations(f).at(-1).body, { tag_name: f.plan.tag, target_commitish: f.plan.targetCommit, draft: false, prerelease: false, make_latest: 'true' });
   const auth = f.calls.findIndex(c => c.action === 'authenticated-draft-read'), publish = f.calls.findIndex(c => c.action === 'publish-latest');
   assert.ok(auth < publish); assert.ok(f.calls.slice(publish + 1).some(c => c.action === 'anonymous-read' && c.url === f.plan.aliasUrl));
-  assert.deepEqual({ source: f.state.source, channel: f.state.channel, master: f.state.master }, before);
+  assert.deepEqual({ source: f.state.source, channel: f.state.channel, working: f.state.working, legacy: f.state.legacy }, before);
 });
 test('interrupted draft with verified asset resumes without a second upload', async () => {
   const f = fixture(); f.completeBridge(true); await f.run(); assert.deepEqual(mutations(f).map(c => c.action), ['publish-latest']);
@@ -127,8 +166,8 @@ test('bad authenticated draft bytes or upload digest stay private and never publ
   const b = fixture(); b.state.afterUpload = () => { b.state.bridge.assets[0].digest = 'sha256:' + '0'.repeat(64); }; await assert.rejects(b.run, /identity differs/); assert.equal(b.state.bridge.draft, true);
   for (const f of [a, b]) assert.ok(!mutations(f).some(c => c.action === 'publish-latest'));
 });
-test('feed, other preview asset or master mutation during upload blocks exposure', async () => {
-  for (const change of [f => { f.state.source.assets[1].digest = 'sha256:' + '0'.repeat(64); }, f => { f.state.channel.assets[0].id++; }, f => { f.state.master = 'f'.repeat(40); }]) {
+test('feed, other preview asset or dotnet mutation during upload blocks exposure', async () => {
+  for (const change of [f => { f.state.source.assets[1].digest = 'sha256:' + '0'.repeat(64); }, f => { f.state.channel.assets[0].id++; }, f => { f.state.legacy = 'f'.repeat(40); }]) {
     const f = fixture(); f.state.afterUpload = () => change(f); await assert.rejects(f.run); assert.equal(f.state.bridge.draft, true); assert.ok(!mutations(f).some(c => c.action === 'publish-latest'));
   }
 });
