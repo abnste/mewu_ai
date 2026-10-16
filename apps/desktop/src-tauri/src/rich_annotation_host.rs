@@ -339,7 +339,7 @@ pub fn apply_drawing_document(
     let host = app.state::<crate::Host>();
     let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
     let mut engine = host.lock()?;
-    crate::ensure_scene_command_admission(&app, &host, window.label(), &command)?;
+    crate::ensure_scene_command_admission(&app, &host, window.label(), &command, Some(&engine.store))?;
     crate::optional_capabilities::authoring_command(&engine, &command)?;
     let snapshot = engine.store.snapshot();
     match &command {

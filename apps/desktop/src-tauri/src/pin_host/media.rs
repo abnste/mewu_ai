@@ -30,7 +30,7 @@ pub async fn pin_scene_item(
     scene_id: String,
     item_id: String,
     expected_asset_id: String,
-) -> Result<PinCreated, String> {
+) -> Result<Option<PinCreated>, String> {
     space_owner(&window)?;
     if !valid_uuid(&scene_id) || !valid_uuid(&item_id) || !valid_uuid(&expected_asset_id) {
         return Err("素材身份无效".into());
@@ -47,9 +47,15 @@ pub async fn pin_scene_item(
         )
         .ok_or("素材或会话已更改")?
     };
-    Ok(PinCreated {
-        id: pin_imported_image(app, origin).await?,
-    })
+    scene_item_result(pin_imported_image(app, origin).await)
+}
+
+fn scene_item_result(result: Result<String, String>) -> Result<Option<PinCreated>, String> {
+    match result {
+        Ok(id) => Ok(Some(PinCreated { id })),
+        Err(error) if error == CANCELED => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn dimensions(asset: &Asset) -> Result<(u32, u32), String> {
@@ -276,6 +282,24 @@ pub(super) fn stage_video(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_media_pin_cancellation_is_nullable_but_other_failures_stay_errors() {
+        assert!(scene_item_result(Err(CANCELED.into())).unwrap().is_none());
+        assert_eq!(
+            scene_item_result(Ok("synthetic-pin".into()))
+                .unwrap()
+                .unwrap()
+                .id,
+            "synthetic-pin"
+        );
+        for message in ["无法创建置顶视频", "应用正在退出", "已取消贴图：磁盘错误"]
+        {
+            assert_eq!(
+                scene_item_result(Err(message.into())).err().as_deref(),
+                Some(message)
+            );
+        }
+    }
     use mewu_core::{
         TimedVideoAnnotation, VideoAnnotationDocument, VideoAnnotationPrimitive, VideoEdit,
         VideoRectStyle, VideoSourceClock,

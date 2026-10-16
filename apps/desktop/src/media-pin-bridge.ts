@@ -7,7 +7,7 @@ export interface SceneItemPinTarget {
   expectedAssetId: string;
 }
 
-export async function pinSceneItem(target: SceneItemPinTarget): Promise<{ id: string }> {
+export async function pinSceneItem(target: SceneItemPinTarget): Promise<{ id: string } | null> {
   if (!isTauri()) throw new Error('请在桌面版使用贴图');
   return invoke('pin_scene_item', { sceneId: target.sceneId, itemId: target.itemId, expectedAssetId: target.expectedAssetId });
 }

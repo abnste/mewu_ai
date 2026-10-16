@@ -100,8 +100,21 @@ export default function ArtifactCard(props: Props) {
     const assetId=zoomAsset;zoomAsset=undefined;
     if(disposed||props.item.asset.id!==assetId){setMoving(false);return;}
     const request=Promise.resolve().then(()=>props.onUpdate({...props.item,...position()}));gestureFlight=request;
-    try {await request;} catch(error){props.onError?.(error instanceof Error?error.message:String(error));throw error;}
-    finally{if(gestureFlight===request)gestureFlight=undefined;if(!disposed){setPosition(savedPosition());setMoving(false);}}
+    let saved = false;
+    try { await request; saved = true; }
+    catch (error) {
+      // Keep the visible edit for a later flush instead of discarding it when
+      // an exit preparation or storage write fails.
+      if (!disposed && props.item.asset.id === assetId) zoomAsset = assetId;
+      props.onError?.(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    finally {
+      if (gestureFlight === request) gestureFlight = undefined;
+      if (!disposed && (saved || props.item.asset.id !== assetId)) {
+        setPosition(savedPosition()); setMoving(false);
+      }
+    }
   }
   function wheel(event:WheelEvent) {
     if(!isRasterMedia()||props.busy||pinning()||gestureFlight||disposeGesture||disposed)return;

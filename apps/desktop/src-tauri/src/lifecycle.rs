@@ -131,6 +131,25 @@ impl ExitState {
             Err(EXIT_BUSY.into())
         }
     }
+    /// Existing card placement may still be pending when exit reserves input.
+    /// The caller holds Engine through this proof and the subsequent Store write.
+    /// Keep generic UpdateItem outside the exit-flush command whitelist.
+    pub(crate) fn ensure_scene_command_with_store(
+        &self,
+        owner: &str,
+        command: &SceneCommand,
+        store: &mewu_core::Store,
+    ) -> Result<(), String> {
+        if self.ensure_scene_command(command).is_ok() {
+            return Ok(());
+        }
+        if self.phase.load(Ordering::Acquire) > PREPARING
+            || !is_existing_item_geometry_flush(owner, command, store)
+        {
+            return Err(EXIT_BUSY.into());
+        }
+        self.ensure_background()
+    }
     pub fn allows_command(&self, command: &str) -> bool {
         self.accepts_new_operations()
             || (self.is_running()
@@ -358,6 +377,51 @@ pub fn is_exit_flush_command(command: &SceneCommand) -> bool {
             command,
             SceneCommand::AddDrawing { .. } | SceneCommand::UpdateDrawing { .. } | SceneCommand::UpdateDrawings { .. } | SceneCommand::EraseDrawingStrokes { .. }
         )
+}
+
+fn is_existing_item_geometry_flush(
+    owner: &str,
+    command: &SceneCommand,
+    store: &mewu_core::Store,
+) -> bool {
+    let SceneCommand::UpdateItem { scene_id, item } = command else {
+        return false;
+    };
+    if owner != "space" {
+        return false;
+    }
+    let Ok(scene) = store.active_scene() else {
+        return false;
+    };
+    if scene.id != *scene_id || scene.frozen || scene.closed {
+        return false;
+    }
+    // No `..`: a future field must be reviewed before exit can admit it.
+    let mewu_core::SpaceItem {
+        id,
+        asset,
+        x,
+        y,
+        width,
+        height,
+        state,
+        video_edit,
+        video_annotations,
+    } = item;
+    let Some(current) = scene.items.iter().find(|current| current.id == *id) else {
+        return false;
+    };
+    [*x, *y, *width, *height].iter().all(|v| v.is_finite())
+        && x.abs() <= 16.
+        && y.abs() <= 16.
+        && *width > 0.
+        && *height > 0.
+        && *width <= 8.
+        && *height <= 8.
+        && current.asset == *asset
+        && current.state == *state
+        && current.video_edit == *video_edit
+        && current.video_annotations == *video_annotations
 }
 
 #[derive(Clone, Serialize)]
@@ -848,6 +912,310 @@ mod tests {
         assert!(!state.with_window_restore(|| panic!("late restore after exit")));
     }
     use super::*;
+
+    fn item_geometry_store() -> (mewu_core::Store, String) {
+        use mewu_core::*;
+        let mut store = Store::open_in_memory().unwrap();
+        let scene_id = store.active_scene().unwrap().id.clone();
+        let asset = |kind: AssetKind, name: &str| Asset {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.into(),
+            kind,
+            path: format!("synthetic/{name}"),
+            width: Some(160),
+            height: Some(90),
+            origin_x: None,
+            origin_y: None,
+            scale_factor: None,
+            capture_coordinates: None,
+        };
+        let video = asset(AssetKind::Video, "video.mp4");
+        store
+            .import_assets(
+                &scene_id,
+                vec![asset(AssetKind::Image, "image.png"), video.clone()],
+            )
+            .unwrap();
+        let item_id = store.active_scene().unwrap().items[1].id.clone();
+        let verified = VerifiedVideoSource {
+            asset: video.clone(),
+            duration_ticks: 50_000_000,
+            width: 160,
+            height: 90,
+        };
+        store
+            .set_video_range(
+                &VideoTarget {
+                    scene_id: scene_id.clone(),
+                    item_id: item_id.clone(),
+                    source_id: video.id.clone(),
+                    expected_revision: 0,
+                },
+                &verified,
+                None,
+                Some(VideoRange {
+                    start_ticks: 10_000_000,
+                    end_ticks: 40_000_000,
+                }),
+            )
+            .unwrap();
+        store
+            .append_video_annotations(
+                &VideoAnnotationTarget {
+                    scene_id: scene_id.clone(),
+                    item_id,
+                    source_id: video.id,
+                    expected_range_revision: 1,
+                    expected_annotation_revision: 0,
+                },
+                &VerifiedVideoAnnotationSource::new(verified, "ab".repeat(32)).unwrap(),
+                vec![VideoAnnotationDraft {
+                    interval: VideoRange {
+                        start_ticks: 20_000_000,
+                        end_ticks: 30_000_000,
+                    },
+                    primitive: VideoAnnotationPrimitive::Rect {
+                        bounds: VideoPixelRect {
+                            x: 10.,
+                            y: 20.,
+                            width: 40.,
+                            height: 30.,
+                        },
+                        style: VideoRectStyle {
+                            color: "#FF0000".into(),
+                            stroke_width: 2.,
+                            opacity: 1.,
+                        },
+                    },
+                }],
+                vec![],
+            )
+            .unwrap();
+        let mut board = asset(AssetKind::Image, "黑板.png");
+        board.path = format!("synthetic/{}.board.png", board.id);
+        store.create_blackboard_document(&scene_id, board).unwrap();
+        let expected = store.active_scene().unwrap().clone();
+        let mut preview = asset(AssetKind::Image, "黑板.png");
+        preview.path = format!("synthetic/{}.board.png", preview.id);
+        store
+            .finish_blackboard_document(&expected, preview)
+            .unwrap();
+        (store, scene_id)
+    }
+
+    fn item_geometry_command(scene_id: &str, mut item: mewu_core::SpaceItem) -> SceneCommand {
+        item.x = -0.5;
+        item.y = 0.1;
+        item.width = 1.75;
+        item.height = 1.25;
+        SceneCommand::UpdateItem {
+            scene_id: scene_id.into(),
+            item,
+        }
+    }
+
+    #[test]
+    fn item_geometry_exit_flush_persists_media_without_rewriting_content() {
+        let (mut store, scene_id) = item_geometry_store();
+        let items = store.active_scene().unwrap().items.clone();
+        assert_eq!(items.len(), 3); // imported image, trimmed/annotated video, returned board
+        assert!(items[1].video_edit.is_some() && items[1].video_annotations.is_some());
+        assert!(items[2]
+            .state
+            .as_ref()
+            .unwrap()
+            .contains_key("blackboardSceneId"));
+        let state = ExitState::default();
+        let (id, _) = state.begin().unwrap();
+        for (index, original) in items.into_iter().enumerate() {
+            if index == 1 {
+                state.prepare_with("space", &id, || {}).unwrap();
+            }
+            let command = item_geometry_command(&scene_id, original.clone());
+            assert!(!is_exit_flush_command(&command));
+            assert!(state.ensure_scene_command(&command).is_err());
+            state
+                .ensure_scene_command_with_store("space", &command, &store)
+                .unwrap();
+            store.apply(command).unwrap();
+            let saved = store
+                .active_scene()
+                .unwrap()
+                .items
+                .iter()
+                .find(|item| item.id == original.id)
+                .unwrap();
+            assert_eq!(
+                (saved.x, saved.y, saved.width, saved.height),
+                (-0.5, 0.1, 1.75, 1.25)
+            );
+            let mut expected = original;
+            expected.x = saved.x;
+            expected.y = saved.y;
+            expected.width = saved.width;
+            expected.height = saved.height;
+            assert_eq!(*saved, expected);
+        }
+        assert!(state.advance(&id, DRAINING));
+    }
+
+    #[test]
+    fn item_geometry_exit_flush_rejects_content_source_and_scene_changes() {
+        let (mut store, scene_id) = item_geometry_store();
+        let state = ExitState::default();
+        let (id, _) = state.begin().unwrap();
+        state.prepare_with("space", &id, || {}).unwrap();
+        let before = store.snapshot();
+        let video = store.active_scene().unwrap().items[1].clone();
+        let board = store.active_scene().unwrap().items[2].clone();
+        let mut changed = vec![];
+        let mut item = video.clone();
+        item.id = uuid::Uuid::new_v4().to_string();
+        changed.push(item);
+        let mut item = video.clone();
+        item.asset.id = uuid::Uuid::new_v4().to_string();
+        changed.push(item);
+        let mut item = video.clone();
+        item.asset.path.push_str(".replaced");
+        changed.push(item);
+        let mut item = video.clone();
+        item.asset.width = Some(320);
+        changed.push(item);
+        let mut item = video.clone();
+        item.state = Some(std::collections::BTreeMap::from([(
+            "nested".into(),
+            serde_json::json!({"value":1}),
+        )]));
+        changed.push(item);
+        let mut item = video.clone();
+        item.video_edit.as_mut().unwrap().range = None;
+        changed.push(item);
+        let mut item = video.clone();
+        item.video_edit.as_mut().unwrap().undo.clear();
+        changed.push(item);
+        let mut item = video.clone();
+        item.video_annotations.as_mut().unwrap().objects[0]
+            .interval
+            .start_ticks += 1;
+        changed.push(item);
+        let mut item = video.clone();
+        item.video_annotations.as_mut().unwrap().undo.clear();
+        changed.push(item);
+        let mut item = video.clone();
+        item.video_annotations = None;
+        changed.push(item);
+        let mut item = board.clone();
+        item.state.as_mut().unwrap().insert(
+            "blackboardSceneId".into(),
+            serde_json::json!(uuid::Uuid::new_v4().to_string()),
+        );
+        changed.push(item);
+        for item in changed {
+            let command = item_geometry_command(&scene_id, item);
+            assert!(state
+                .ensure_scene_command_with_store("space", &command, &store)
+                .is_err());
+            assert_eq!(store.snapshot(), before);
+        }
+        let command = item_geometry_command(&scene_id, video.clone());
+        for owner in ["settings", "pin-object", ""] {
+            assert!(state
+                .ensure_scene_command_with_store(owner, &command, &store)
+                .is_err());
+        }
+        let wrong_scene = item_geometry_command(&uuid::Uuid::new_v4().to_string(), video.clone());
+        assert!(state
+            .ensure_scene_command_with_store("space", &wrong_scene, &store)
+            .is_err());
+        store
+            .apply(SceneCommand::RemoveItem {
+                scene_id: scene_id.clone(),
+                item_id: video.id,
+            })
+            .unwrap();
+        assert!(state
+            .ensure_scene_command_with_store("space", &command, &store)
+            .is_err());
+        let stale_board = item_geometry_command(&scene_id, board);
+        store.apply(SceneCommand::NewScene).unwrap();
+        assert!(store.scene(&scene_id).unwrap().frozen);
+        assert!(state
+            .ensure_scene_command_with_store("space", &stale_board, &store)
+            .is_err());
+        assert!(state
+            .ensure_scene_command_with_store("space", &SceneCommand::NewScene, &store)
+            .is_err());
+    }
+
+    #[test]
+    fn item_geometry_exit_flush_rechecks_lifecycle_and_geometry_bounds() {
+        let (store, scene_id) = item_geometry_store();
+        let original = store.active_scene().unwrap().items[0].clone();
+        let state = ExitState::default();
+        let (id, _) = state.begin().unwrap();
+        let command = item_geometry_command(&scene_id, original.clone());
+        state
+            .ensure_scene_command_with_store("space", &command, &store)
+            .unwrap();
+        for (field, value) in [
+            (0, f64::NAN),
+            (1, f64::INFINITY),
+            (2, f64::NEG_INFINITY),
+            (3, f64::NAN),
+            (0, 16.001),
+            (1, -16.001),
+            (2, 0.),
+            (3, -0.1),
+            (2, 8.001),
+            (3, 8.001),
+        ] {
+            let mut item = original.clone();
+            match field {
+                0 => item.x = value,
+                1 => item.y = value,
+                2 => item.width = value,
+                _ => item.height = value,
+            }
+            assert!(state
+                .ensure_scene_command_with_store(
+                    "space",
+                    &SceneCommand::UpdateItem {
+                        scene_id: scene_id.clone(),
+                        item
+                    },
+                    &store
+                )
+                .is_err());
+        }
+        let mut boundary = original;
+        boundary.x = -16.;
+        boundary.y = 16.;
+        boundary.width = 8.;
+        boundary.height = 8.;
+        state
+            .ensure_scene_command_with_store(
+                "space",
+                &SceneCommand::UpdateItem {
+                    scene_id,
+                    item: boundary,
+                },
+                &store,
+            )
+            .unwrap();
+        state.prepare_with("space", &id, || {}).unwrap();
+        state
+            .ensure_scene_command_with_store("space", &command, &store)
+            .unwrap();
+        assert!(state.advance(&id, DRAINING));
+        assert!(state
+            .ensure_scene_command_with_store("space", &command, &store)
+            .is_err());
+        assert!(state.advance(&id, READY));
+        assert!(state
+            .ensure_scene_command_with_store("space", &command, &store)
+            .is_err());
+    }
+
     #[test]
     fn migration_receipt_waits_for_ready_and_stale_attempt_cannot_complete_or_abort_it() {
         let state = ExitState::default();

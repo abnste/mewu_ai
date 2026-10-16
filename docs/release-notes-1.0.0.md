@@ -8,6 +8,7 @@
 - 视频定位与裁切、上下工具条避让、对话条自动收纳、最近三色和像素/对象橡皮。
 - 导入图片先成为空间对象；图片、视频和黑板预览可手动置顶。画面支持滚轮等比缩放，视频操作工具条左对齐，裁切条独立在下方，不再显示尺寸按钮。置顶视频保留真实播放、裁切范围和时段批注。
 - 修复流式回复重复；视频批注参数错误会反馈给 AI 在原有轮次限制内修正，执行记录显示实际未执行原因。
+- 修复对象缩放尚未保存时退出受阻的问题；退出时取消置顶操作，保存失败时保留待保存的几何。
 
 ## 升级与数据
 
@@ -31,6 +32,8 @@ Windows 0.7.4 可在原关于页发现正式版，确认下载并安装；如未
 MewuAI's first stable remake release supports Windows x64, macOS ARM64 and Linux x64. It includes the capture workflow, executable API 2 plugins, video seek/trim controls, toolbar placement, conversation-bar hiding, three recent colors and pixel/object erasers. Agent and memory providers are independently extensible through the [GitHub community market](https://github.com/abnste/mewu-plugins).
 
 Imported images first become space objects. Images, videos and board previews can be explicitly pinned, with proportional wheel zoom and no size button. Video actions align to the left of the picture and trimming remains below it. Pinned videos retain playback, the selected range and timed annotations. This revision also fixes repeated streamed replies and returns invalid annotation arguments to the AI for correction within the existing tool budget.
+
+Pending media placement can finish saving during exit preparation. Canceling pin operations no longer blocks exit, and failed geometry saves remain available for retry.
 
 The revised 1.0.0 reads latest.json from the latest stable GitHub release, and its macOS updater archive belongs to that versioned release. New builds and normal publishing do not depend on update-channel. Earlier previews can upgrade through their existing endpoint. Earlier 1.0.0 installations need one manual reinstall because this repair keeps the same version number. Windows 0.7.4 can discover 1.0.0 in its original About page; earlier versions should first install 0.7.4. Portable updates run the installer and move to the installed application.
 

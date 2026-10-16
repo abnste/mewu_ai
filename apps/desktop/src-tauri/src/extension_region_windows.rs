@@ -649,9 +649,11 @@ mod tests {
 
     #[test]
     fn only_native_layered_and_transparent_combination_passes_mouse_input() {
-        // Real own HWNDs, all below an always-hidden parent: no desktop window,
-        // activation or physical input. Exercise the production native reader,
-        // including a successful GWL_EXSTYLE=0 and styles that do not imply pass-through.
+        // Real owned, hidden top-level HWNDs, like the production overlays. Never
+        // set WS_VISIBLE or send input. Layered child windows require a Windows
+        // 8-aware manifest, which Rust test executables do not necessarily have:
+        // https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features
+        // Exercise the production reader, including a successful EXSTYLE=0.
         let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
         let parent = OwnedWindow(unsafe {
             CreateWindowExW(
@@ -693,7 +695,7 @@ mod tests {
                     style,
                     class.as_ptr(),
                     std::ptr::null(),
-                    WS_CHILD | WS_VISIBLE,
+                    WS_POPUP,
                     0,
                     0,
                     1,
@@ -706,8 +708,10 @@ mod tests {
             });
             assert!(
                 !child.0.is_null(),
-                "native fixture rejected style {style:x}"
+                "native fixture rejected style {style:x}: {}",
+                unsafe { GetLastError() }
             );
+            assert_eq!(unsafe { GetWindow(child.0, GW_OWNER) }, parent.0);
             assert_eq!(unsafe { IsWindowVisible(parent.0) }, 0);
             assert_eq!(unsafe { IsWindowVisible(child.0) }, 0);
             assert_eq!(

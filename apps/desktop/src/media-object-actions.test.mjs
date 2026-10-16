@@ -15,7 +15,7 @@ async function sourceFunctions(file, names) {
   return stripTypeScriptTypes(names.map(name => { const node = nodes.find(n => n.type === 'FunctionDeclaration' && n.id.name === name); assert.ok(node, name); return source.slice(node.start, node.end); }).join('\n') + `\n({${names.join(',')}})`, { mode: 'transform' });
 }
 const objectCode = await sourceFunctions('./components/ArtifactCard.tsx', ['wheel', 'flushZoom', 'pinObject']);
-const appCode = await sourceFunctions('./App.tsx', ['pinMediaItem']);
+const appCode = await sourceFunctions('./App.tsx', ['pinMediaItem', 'cancelPendingPin']);
 const { projectBackgroundItem, persistBackgroundItem } = await load('./media-item-geometry.ts');
 function objectFixture(kind = 'video') {
   let position = { x: .2, y: .2, width: .4, height: .25 }, moving = false, pinning = false, timer = 0;
@@ -45,9 +45,16 @@ test('pin waits for pending wheel persistence; a failed save does not issue a na
   const f = objectFixture(); f.api.wheel(f.event()); await f.api.pinObject();
   assert.equal(f.commits.length, 1); assert.equal(f.pins.length, 1); assert.equal(f.pins[0].width, f.commits[0].width);
   const rejected = objectFixture(); rejected.props.onUpdate = async () => { throw Error('synthetic geometry conflict'); };
-  rejected.api.wheel(rejected.event()); await rejected.api.pinObject();
+  rejected.api.wheel(rejected.event()); const pending = structuredClone(rejected.position()); await rejected.api.pinObject();
   assert.equal(rejected.pins.length, 0); assert.ok(rejected.errors.some(message => message.includes('synthetic geometry conflict')));
-  assert.equal(rejected.position().width, .4);
+  assert.deepEqual(rejected.position(), pending); assert.equal(rejected.moving(), true);
+  assert.equal(rejected.context.zoomAsset, 'asset');
+  rejected.props.onUpdate = async item => { rejected.commits.push(item); Object.assign(rejected.props.item, item); };
+  await rejected.api.flushZoom();
+  assert.equal(rejected.commits.length, 1); assert.equal(rejected.props.item.width, pending.width);
+  assert.equal(rejected.context.zoomAsset, undefined); assert.equal(rejected.moving(), false);
+  const changed = objectFixture(); changed.api.wheel(changed.event()); changed.props.item.asset.id = 'replacement';
+  await changed.api.flushZoom(); assert.equal(changed.commits.length, 0); assert.equal(changed.context.zoomAsset, undefined);
 });
 test('nonmedia/busy/disposed gestures cannot consume wheel or save geometry', async () => {
   for (const change of [f => f.props.busy = true, f => f.context.disposed = true]) { const f=objectFixture(); change(f); const event=f.event(); f.api.wheel(event); assert.equal(event.defaultPrevented,false); await f.api.flushZoom(); assert.equal(f.commits.length,0); }
@@ -66,6 +73,29 @@ test('a scene/source change during pin flush cannot dispatch the previous object
   for(const changed of ['scene','asset','source']){let busy=false,finished=0,calls=0,current={id:'scene',items:[{id:'item',asset:{id:'asset',kind:'video'}}]};
     const context=vm.createContext({scene:()=>current,busy:()=>busy,sending:()=>false,recording:()=>false,scroll:()=>false,exitPreparing:()=>false,disposed:false,spaceOperations:{begin:()=>()=>finished++},setBusy:value=>busy=value,flush:async()=>{if(changed==='scene')current={...current,id:'other'};else if(changed==='asset')current.items[0].asset.id='other';else current.items[0].asset.path='changed source';},pinSceneItem:async()=>calls++,pinObjectsSubscription:{refresh:async()=>assert.fail('unexpected refresh')},showError:()=>assert.fail('unexpected error')});
     assert.equal(await vm.runInContext(appCode,context).pinMediaItem('item'),false);assert.equal(calls,0);assert.equal(finished,1);assert.equal(busy,false);
+  }
+});
+
+test('canceled media pin intentions drain without blocking exit; genuine failures still surface', async () => {
+  for (const kind of ['native-cancel', 'exit-cancel', 'failure']) {
+    let busy = false, finished = 0, refreshed = 0, resolve, reject;
+    const errors = [], scene = { id: 'scene', items: [{ id: 'item', asset: { id: 'asset', kind: 'video' } }] };
+    const nativeRequest = new Promise((yes, no) => { resolve = yes; reject = no; });
+    const context = vm.createContext({ scene: () => scene, busy: () => busy, sending: () => false, recording: () => false, scroll: () => false, exitPreparing: () => false, disposed: false,
+      pendingPin: undefined, pendingMediaPin: undefined, spaceOperations: { begin: () => () => finished++ }, setBusy: value => { busy = value; }, flush: async () => {},
+      pinSceneItem: () => nativeRequest, pinObjectsSubscription: { refresh: async () => refreshed++ }, showError: error => errors.push(error),
+    });
+    const api = vm.runInContext(appCode, context), pending = api.pinMediaItem('item');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(context.pendingMediaPin); assert.equal(busy, true);
+    if (kind === 'native-cancel') resolve(null);
+    else {
+      if (kind === 'exit-cancel') api.cancelPendingPin();
+      reject(Error(kind === 'exit-cancel' ? 'canceled pending work' : 'real copy failure'));
+    }
+    assert.equal(await pending, false);
+    assert.equal(refreshed, 0); assert.equal(finished, 1); assert.equal(busy, false); assert.equal(context.pendingMediaPin, undefined);
+    assert.equal(errors.length, kind === 'failure' ? 1 : 0);
   }
 });
 test('recordings keep off-frame positions and large uniform zoom after background-unit persistence', () => {

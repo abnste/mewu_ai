@@ -212,6 +212,7 @@ export default function App() {
   let stopTranslationEvents: (() => void) | undefined;
   let stopPinEscape: (() => void) | undefined;
   let pendingPin: { requestId: string; canceled: boolean } | undefined;
+  let pendingMediaPin: { canceled: boolean } | undefined;
   let disposed = false;
   function codeMatches(source: CodeSource) {
     return !disposed && !exitPreparing() && !busy() && !recording() && !scroll() && document.visibilityState !== 'hidden' && codeSource(scene(), source.request.target.regionId, pluginSnapshot().plugins)?.key === source.key;
@@ -906,7 +907,11 @@ export default function App() {
       void drawingCommand(coreDrawingGrant.pluginId,coreDrawingGrant.revision,coreDrawingGrant.contributionId,{type:redo?'redo_drawing':'undo_drawing',sceneId:current.id,backgroundId:current.background.id,regionId:region.id,expectedRevision:region.drawingRevision??0}).catch(showError);
     }else void replayGeometry(redo?'redo':'undo');
   }
-  function cancelPendingPin() { const value = pendingPin; if (value && !value.canceled) { value.canceled = true; void pinBridge.cancelPin(value.requestId).catch(() => {}); } }
+  function cancelPendingPin() {
+    if (pendingMediaPin) pendingMediaPin.canceled = true;
+    const value = pendingPin;
+    if (value && !value.canceled) { value.canceled = true; void pinBridge.cancelPin(value.requestId).catch(() => {}); }
+  }
   async function createPin(pluginId: string, revision: number, contributionId: string, regionId: string): Promise<boolean> {
     const current = scene();
     if (!current || busy() || recording() || scroll() || exitPreparing()) return false;
@@ -928,17 +933,19 @@ export default function App() {
     if (!current || !item || !['image', 'video'].includes(item.asset.kind) || busy() || sending() || recording() || scroll() || exitPreparing() || current.closed || current.frozen || current.run?.status === 'running') return false;
     const expectedAssetId = item.asset.id;
     const expectedSource = JSON.stringify(item.asset);
+    const request = { canceled: false }; pendingMediaPin = request;
     const finishOperation = spaceOperations.begin(); setBusy(true);
     try {
       await flush();
       const saved = scene();
       const savedItem = saved?.items.find(value => value.id === itemId);
-      if (disposed || exitPreparing() || saved?.id !== current.id || saved.closed || saved.frozen || savedItem?.asset.id !== expectedAssetId || JSON.stringify(savedItem.asset) !== expectedSource) return false;
-      await pinSceneItem({ sceneId: saved.id, itemId, expectedAssetId });
+      if (request.canceled || disposed || exitPreparing() || saved?.id !== current.id || saved.closed || saved.frozen || savedItem?.asset.id !== expectedAssetId || JSON.stringify(savedItem.asset) !== expectedSource) return false;
+      const created = await pinSceneItem({ sceneId: saved.id, itemId, expectedAssetId });
+      if (!created || request.canceled || disposed) return false;
       await pinObjectsSubscription?.refresh();
       return true;
-    } catch (error) { if (!disposed) showError(error); return false; }
-    finally { if (!disposed) setBusy(false); finishOperation(); }
+    } catch (error) { if (!request.canceled && !disposed) showError(error); return false; }
+    finally { if (pendingMediaPin === request) pendingMediaPin = undefined; if (!disposed) setBusy(false); finishOperation(); }
   }
   async function importFiles() {
     const current = scene();
@@ -1151,7 +1158,7 @@ export default function App() {
         const ownedDraft=()=>drafts()[currentId]??ownedScene().draft;
         return <Show when={!ownedScene().closed}>
         <SpaceCanvas onRegisterObjectFlush={objectFlush.register} onPinItem={pinMediaItem} onActiveRegionChange={activeCaptureRegionChanged} blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing()} busy={busy() || sending() || exitPreparing()} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={() => setFocusRequest(v => v + 1)} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
-        <Show when={blackboardEditing()!==currentId}><PinObjectLayer aiAvailable={agentAvailable()} objects={pinObjects()} busy={busy()||sending()||exitPreparing()} referenced={pinReferenced} onReference={object=>void referencePin(object)} onError={showError}/></Show>
+        <Show when={blackboardEditing()!==currentId}><PinObjectLayer exiting={exitPreparing()} aiAvailable={agentAvailable()} objects={pinObjects()} busy={busy()||sending()||exitPreparing()} referenced={pinReferenced} onReference={object=>void referencePin(object)} onError={showError}/></Show>
         <Show when={blackboardEditing()!==currentId}><nav class="space-utilities" aria-label={t('空间操作')}>
           <button class="icon-button" aria-label={t('退出')} title={t('退出')} disabled={busy()||exitPreparing()} onClick={()=>void closeScene(currentId)}><X size={17}/></button>
           <Show when={blackboardAvailable()}><button class="icon-button" classList={{selected:isBlackboard(ownedScene())&&blackboardEditing()===currentId}} aria-label={t('电子黑板')} title={t('电子黑板')} aria-pressed={isBlackboard(ownedScene())&&blackboardEditing()===currentId} disabled={busy()||sending()||exitPreparing()||ownedScene().run?.status==='running'} onClick={()=>void openBlackboard()}><Pencil size={17}/></button></Show>

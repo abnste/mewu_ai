@@ -428,7 +428,25 @@ async fn apply_scene_command(
     host: tauri::State<'_, Host>,
     command: SceneCommand,
 ) -> Result<HostSnapshot, String> {
-    ensure_scene_command_admission(&app, &host, window.label(), &command)?;
+    // Normal commands need no extra Store read. A reserved exit may admit only
+    // proven placement of an existing item; release this short borrow before
+    // taking plugins, then repeat the proof under plugins -> Engine below.
+    {
+        let initial_engine = if host.exit.ensure_scene_command(&command).is_err()
+            && matches!(&command, SceneCommand::UpdateItem { .. })
+        {
+            Some(host.lock()?)
+        } else {
+            None
+        };
+        ensure_scene_command_admission(
+            &app,
+            &host,
+            window.label(),
+            &command,
+            initial_engine.as_ref().map(|engine| &engine.store),
+        )?;
+    }
     let command = match command {
         SceneCommand::FreezeScene { scene_id } => return freeze_space(app, scene_id).await,
         SceneCommand::CloseScene { scene_id } => return close_scene_window(app, scene_id).await,
@@ -443,7 +461,7 @@ async fn apply_scene_command(
     };
     let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
     let mut engine = host.lock()?;
-    ensure_scene_command_admission(&app, &host, window.label(), &command)?;
+    ensure_scene_command_admission(&app, &host, window.label(), &command, Some(&engine.store))?;
     optional_capabilities::authoring_command(&engine, &command)?;
     let finishing_geometry = lifecycle::is_geometry_finish_command(&command);
     let disabled_memory = match &command {
@@ -509,9 +527,14 @@ fn ensure_scene_command_admission(
     host: &Host,
     owner: &str,
     command: &SceneCommand,
+    store: Option<&mewu_core::Store>,
 ) -> Result<(), String> {
     ensure_scene_command_source(owner, command)?;
-    host.exit.ensure_scene_command(command)?;
+    if let Some(store) = store {
+        host.exit.ensure_scene_command_with_store(owner, command, store)?;
+    } else {
+        host.exit.ensure_scene_command(command)?;
+    }
     // A matching finish only clears a transient edit token, so late cleanup may
     // run during capture. It is not a draft write and grants no replay exception.
     // This helper also runs under Engine: never call window getters here.
