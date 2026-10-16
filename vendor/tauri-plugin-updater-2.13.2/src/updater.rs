@@ -678,7 +678,10 @@ impl Updater {
     }
 
     fn prepare_release(&self, release: RemoteRelease, raw_json: serde_json::Value) -> Result<Option<Update>> {
-        let target = self.target.as_deref().or_else(updater_os).ok_or(Error::UnsupportedOs)?;
+        let target = match self.target.as_deref() {
+            Some(target) => target,
+            None => updater_os().ok_or(Error::UnsupportedOs)?,
+        };
         let should_update = match self.version_comparator.as_ref() {
             Some(comparator) => comparator(self.current_version.clone(), release.clone()),
             None => release.version > self.current_version,

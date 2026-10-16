@@ -4,11 +4,11 @@ Windows、macOS、Linux 使用同一提交和版本。源码回归、构建成�
 
 当前打包目标为 Windows x64 的 NSIS 安装包与便携 ZIP、macOS arm64 的 DMG、Linux x64 的 AppImage。平台支持范围和系统最低要求应以实际测试结果及对应版本说明为准，不由这些打包目标推断。
 
-默认分支 `master` 用于重制版开发；原 .NET/WPF 代码保留在 `dotnet`。分支改名不改已发布的标签、安装包或固定更新通道。
+默认分支 `master` 用于 MewuAI 开发；原 .NET/WPF 代码保留在 `dotnet`。分支改名不改已发布的标签、安装包或已有数据。
 
-正式构建直接使用 `https://github.com/abnste/mewu_ai/releases/latest/download/latest.json`。更新索引及 Mac 更新归档属于对应版本发行；常规正式发布不查询、创建或推进 `update-channel`。原生更新端点与安装包路径均不依赖分支名。
+从 1.0.1 起，正式构建直接查询 `https://api.github.com/repos/abnste/mewu_ai/releases/latest`，从正式发行选择当前系统的安装包。版本、下载地址、大小与可用的摘要来自 GitHub Release；更新签名放在发行正文唯一的 `mewu-update-signatures:v1` 隐藏注释中，继续验证原公钥及签名版本。没有额外更新清单文件，不查询、创建或推进 `update-channel`；端点和包路径均不依赖分支名。
 
-本次按维护者明确要求修订已发布的 `1.0.0` 安装包，仍使用 `v1.0.0`。同版本替换只通过单独审阅的修复流程执行：保存原标签、完整发行元数据、原始安装包和签名索引，核对固定旧字节，重新构建三端并签名后替换，标签与包内来源指向真实新提交。普通发布器仍拒绝覆盖已发布版本。已安装的旧 1.0.0 因版本号相同不会收到更高版本提示，需要重新安装一次，不能放宽版本比较器或伪造版本。
+1.0.1 使用新版本和新标签，保留已发布的 1.0.0。旧版客户端可能写死旧包名或更新入口，需要手动安装一次，之后由新版自动更新；不能放宽版本比较器或伪造旧客户端升级结果。
 
 先在 `master` 完成版本号、锁文件和 `docs/release-notes-<version>.md`，提交后冻结完整 SHA；三个平台均从该提交构建，不用旧包重命名。手动触发 `.github/workflows/preview-release.yml` 时选择该冻结提交所在的 `master`，保留各平台的候选产物和源码测试结果，再对这些最终字节完成原生安装验收。该工作流不会签名或发布安装包；协调者只对验收完成的更新产物生成更新签名。
 
@@ -33,26 +33,26 @@ node scripts/assemble-release.mjs assembly-plan.json
 node scripts/publish-release.mjs out/release
 ```
 
-发布前再次核验三端回执、提交、版本与成品字节。已发布的版本、同版本安装包和更新归档不替换；仅固定 JSON 更新入口可以推进。许可保持 MPL-2.0，安装包内保留第三方许可。
+发布前再次核验三端回执、提交、版本与成品字节。已发布的版本、同版本安装包和更新归档不替换。许可保持 MPL-2.0，安装包内保留第三方许可。
 
 用户安装软件使用这四项（`<version>` 为完整产品版本）：
 
-- `MewuAI-Remake-Setup-<version>-win-x64.exe`
-- `MewuAI-Remake-Portable-<version>-win-x64.zip`
-- `MewuAI-Remake-<version>-mac-arm64.dmg`
-- `MewuAI-Remake-<version>-linux-x64.AppImage`
+- `MewuAI-Setup-<version>-win-x64.exe`
+- `MewuAI-Portable-<version>-win-x64.zip`
+- `MewuAI-<version>-mac-arm64.dmg`
+- `MewuAI-<version>-linux-x64.AppImage`
 
-同一正式发行还包含两个自动更新资源：`latest.json` 和 `MewuAI-Remake-Update-<version>-mac-arm64.app.tar.gz`。它们无需用户手动打开。更新签名嵌入 JSON，不提供独立 `.sig` 文件。
+同一正式发行另有 `MewuAI-Update-<version>-mac-arm64.app.tar.gz`，供 macOS 自动更新使用，无需手动打开。公开附件共五个，不提供 `latest.json` 或独立 `.sig`。内部 `.metadata/update.json` 仅作构建验收，发布器将其中三端签名写入发行正文，不上传该文件。
 
-发布脚本先建立或恢复同版本草稿、校验固定源提交并上传所有成品及索引，再公开版本并确认 GitHub Latest。草稿上传中断后用原提交与原始字节重跑；源提交或已上传内容不同则拒绝，不删除旧资产来强行重试。不要额外上传测试回执、校验日志、SDK、插件包或开发目录；社区插件有自己的发行仓库。
+发布脚本先建立或恢复同版本草稿、校验固定源提交并上传所有成品，再公开版本并确认 GitHub Latest。草稿上传中断后用原提交与原始字节重跑；源提交或已上传内容不同则拒绝，不删除旧资产来强行重试。不要额外上传测试回执、校验日志、SDK、插件包或开发目录；社区插件有自己的发行仓库。
 
 Windows 与 Linux 更新使用版本发行的安装包；Mac 使用同一版本发行的 `.app.tar.gz`，用户安装仍选 DMG。原生端严格校验仓库、版本标签、平台文件名、更新签名及签名中的版本。macOS 更新包签名不等同于 Developer ID 签名或公证，必须分别验收。
 
-正式发行须设置 `prerelease: false` 并显式成为 GitHub latest。发布后匿名核对真实版本标签、四个软件包、Mac 更新归档和公开 `latest.json`；通过 Latest 地址取得的索引必须等于该版本索引，包的字节及签名必须与三端验收一致。正常发布在旧更新通道不存在时也必须成功，不能把兼容迁移作为正式发行的前置条件。
+正式发行须设置 `prerelease: false` 并显式成为 GitHub latest。发布后匿名核对 Latest API 的真实标签、正文签名块、四个软件包与 Mac 更新归档；五个附件的实际字节及三端签名必须与验收一致。正常发布在旧更新通道不存在时也必须成功。
 
-旧预览版及早期 1.0.0 的地址已编译进程序。它们的兼容迁移与正式发布分开：旧 Mac 只接受 `update-channel` 下的 TAR，兼容索引必须保留这一旧地址并镜像同一已签归档。新旧索引的 Mac URL 因此不同，不能要求 JSON 全字节相同。旧同版本索引的字节替换同样需要本次明确修复授权及原始字节核验，不普遍放宽降级或同版本保护。
+旧预览版及 1.0.0 的更新地址已编译进程序，0.7.4 也会匹配旧包名。1.0.1 不为这些旧协议额外挂重复附件或更新清单，用户需手动安装一次，保留原配置和文件；不能因此宣称旧程序会自动找到新名称。
 
-历史预览和临时兼容发行清理时保留源码标签。旧 `update-channel` 仅服务尚未迁移的客户端，修订后的正式版及未来常规正式发布不再使用它；删除旧入口会影响仍使用旧二进制的用户，不能冒充已经完成客户端迁移。
+历史预览和临时兼容发行清理时保留源码标签。旧 `update-channel` 属于历史客户端协议，1.0.1 及后续正式发布不使用或推进它；保留历史说明不代表已经完成客户端迁移。
 
 数据库升级前正常退出程序、保存完整冷备；数据库版本提高后，旧程序不能直接打开新库。回滚须使用匹配的旧程序及旧数据备份，不能降版本号或覆盖升级后新增内容。
 

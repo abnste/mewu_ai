@@ -122,7 +122,7 @@
     {
       "path": "src/updater.rs",
       "upstreamSHA256": "ab3815c6a8f6de84b48720d1abe4f9b605911288998addb7b45248f0a0a6974d",
-      "localSHA256": "644063347f6f3e5519512efac2d62b27fd8add33d97c12ff280ca210c3d35833",
+      "localSHA256": "322942ba8a0f36f85991fec02f373083fc5478b441e15c7c9bfb6ccd2f38c957",
       "unchanged": false
     }
   ]
