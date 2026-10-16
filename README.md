@@ -47,6 +47,7 @@ The remake is maintained on **[master](https://github.com/abnste/mewu_ai/tree/ma
 - **Drawing and media objects:** Pens, adaptive arrows, shapes, text, numbered markers and highlights share two compact toolbars. Screenshot/blackboard erasers offer pixel and object modes, with Undo/Redo and three recent colors outside the palette. Imported images and videos remain movable objects; HTML/SVG/Canvas content stays interactive.
 - **Text and tables:** Official capability plugins provide OCR, translation and table extraction. OCR is local; translation and AI table results need an appropriate connected model. Actionable recognition for links, email addresses, phone numbers and QR/barcodes is currently supported on Windows and macOS; it does not automatically send messages or make calls.
 - **Recording and trimming:** Built-in region recording uses computer audio by default, with pause/resume, video annotations and MP4/MP3/GIF export. Actions sit above the video and the seek/trim bar below it. Trims preserve the original source; encoded output follows the video frame grid rather than promising sub-frame cuts.
+- **Model connections:** Model discovery can try common API roots when only a service origin is entered. A working address appears in the settings draft and takes effect only when saved; explicit custom paths stay unchanged.
 - **Conversation in the capture space:** Reference screenshots, videos or files with @ mentions, then follow up in the ordinary conversation bar. Multiple conversations, minimized sessions, history, Markdown, formulas and collapsible public reasoning are supported. The bar hides when the pointer leaves and preserves the draft when recalled.
 - **Optional Agent and blackboard:** These are official plugins that can be disabled or removed; drawing and recording stay built in. With no ready model or explicitly bound independent Agent, Mewu shows capture controls. An independent provider may operate without a host API key when explicitly configured.
 - **Executable plugins and a real market:** API 2 ES Modules run in separate QuickJS processes. Plugins can register tools, Agent engines, memory providers, models, channels, renderers and UI services through permission-checked host APIs. The [GitHub market](https://github.com/abnste/mewu-plugins) installs real Release ZIPs and shows screenshots, project repositories, versions and package hashes. API 1 declaration packages remain compatible.
@@ -79,6 +80,7 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 
 - Broader Agent, memory, model and communication-channel plugins.
 - Native region-input adaptation beyond Windows and more cross-platform parity.
+- NVIDIA Instant Replay hardware compatibility checks and an application-wide live diagnostic log view.
 - Dedicated image/video generation and richer multimodal/audio workflows.
 - AIGC canvas editing and additional interactive renderers.
 - More languages, lower resource use and better response efficiency.

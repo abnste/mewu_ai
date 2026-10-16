@@ -45,6 +45,8 @@ pub struct Status {
     preview: Option<String>,
 }
 struct Active {
+    #[cfg(windows)]
+    capture_session: Option<crate::shared_capture_windows::Session>,
     status: Status,
     action: Arc<AtomicU8>,
     cancel: Arc<AtomicBool>,
@@ -61,6 +63,13 @@ pub enum Action {
     Cancel,
 }
 pub fn busy(app: &AppHandle) -> bool {
+    #[cfg(windows)]
+    if crate::shared_capture_windows::pending() { return true; }
+    workers_busy(app)
+}
+/// Persistent PNG/registration completion and the application snapshot reaper
+/// still gate shutdown; only presentation recovery is deliberately excluded.
+pub(crate) fn workers_busy(app: &AppHandle) -> bool {
     crate::application_snapshot_worker::busy()
         || app
             .try_state::<ScrollState>()
@@ -352,6 +361,8 @@ pub async fn start_scroll_capture(
     if window.label() != "space" {
         return Err("请在截图选区启动长截图".into());
     }
+    #[cfg(windows)]
+    crate::shared_capture_windows::recover(&app).await?;
     crate::recording_storage::supported()?;
     ensure_idle(&app)?;
     let host = app.state::<Host>();
@@ -445,16 +456,14 @@ pub async fn start_scroll_capture(
         };
         emit(&app, &Some(status.clone()));
         *slot = Some(Active {
+            #[cfg(windows)]
+            capture_session: None,
             status,
             action: action.clone(),
             cancel: cancel.clone(),
             plugin_id: plugin_id.clone(),
             revision,
         });
-    }
-    if let Err(error) = prepare_windows(&app, &geometry, snapshot_window.is_some()).await {
-        finish(&app, &id, Err(error.clone())).await;
-        return Err(error);
     }
     let f8 = app
         .global_shortcut()
@@ -481,6 +490,12 @@ pub async fn start_scroll_capture(
         }
         .into();
     });
+    if let Err(error) = prepare_windows(&app, &id, &geometry, snapshot_window.is_some(), f8).await {
+        if f8 { let _ = app.global_shortcut().unregister("F8"); }
+        if esc { let _ = app.global_shortcut().unregister("Escape"); }
+        finish(&app, &id, Err(error.clone())).await;
+        return Err(error);
+    }
     let worker_app = app.clone();
     tauri::async_runtime::spawn(async move {
         let work_app = worker_app.clone();
@@ -490,6 +505,8 @@ pub async fn start_scroll_capture(
                 return Ok(None);
             }
             authorized(&work_app, &target, &plugin_id, revision, &contribution_id)?;
+            #[cfg(windows)]
+            verify_capture(&work_app, &work_id)?;
             if let Some(window) = snapshot_window {
                 let selection = crate::application_snapshot::Viewport {
                     x: geometry.x,
@@ -506,6 +523,8 @@ pub async fn start_scroll_capture(
                 let result =
                     crate::application_snapshot::capture(&mut session, &cancel, |stitch, state| {
                         authorized(&work_app, &target, &plugin_id, revision, &contribution_id)?;
+                        #[cfg(windows)]
+                        verify_capture(&work_app, &work_id)?;
                         progress(&work_app, &work_id, state);
                         publish_preview(&work_app, &work_id, stitch, &cancel)
                     });
@@ -574,6 +593,8 @@ pub async fn start_scroll_capture(
                     }
                     NextFrame::Capture { finish_after } => finish_after,
                 };
+                #[cfg(windows)]
+                verify_capture(&work_app, &work_id)?;
                 let frame = match source.capture() {
                     Ok(frame) => frame,
                     Err(error) => {
@@ -639,6 +660,44 @@ fn progress(app: &AppHandle, id: &str, state: StitchState) {
         s.height = state.height;
         s.status = state.status;
     });
+}
+#[cfg(windows)]
+fn edit_capture_session(state: &ScrollState, id: &str,
+    edit: impl FnOnce(&mut crate::shared_capture_windows::Session) -> Result<(), String>) -> Result<(), String> {
+    let mut session = {
+        let mut slot = state.0.lock().map_err(|_| "长截图状态不可用")?;
+        slot.as_mut().filter(|active| active.status.id == id)
+            .and_then(|active| active.capture_session.take()).ok_or("长截图已结束")?
+    };
+    // Native mutations can synchronously reenter window callbacks. Active's
+    // mutex must be free until the exact same operation receives its lease back.
+    let result = edit(&mut session);
+    let mut remaining = Some(session);
+    let stored = match state.0.lock() {
+        Ok(mut slot) => match slot.as_mut().filter(|active| active.status.id == id) {
+            Some(active) if active.capture_session.is_none() => {
+                active.capture_session = remaining.take(); true
+            }
+            _ => false,
+        },
+        Err(_) => false,
+    };
+    if !stored {
+        if let Some(session) = remaining { crate::shared_capture_windows::defer(session)?; }
+        return Err("长截图已改变，窗口恢复待完成".into());
+    }
+    result
+}
+#[cfg(windows)]
+fn verify_capture(app: &AppHandle, id: &str) -> Result<(), String> {
+    let target = app.clone();
+    let id = id.to_owned();
+    crate::shared_capture_windows::check(app, move || {
+        let state = target.state::<ScrollState>();
+        let active = state.0.lock().map_err(|_| "长截图状态不可用")?;
+        active.as_ref().filter(|active| active.status.id == id)
+            .and_then(|active| active.capture_session.as_ref()).ok_or("长截图已结束")?.verify()
+    })
 }
 fn publish_preview(
     app: &AppHandle,
@@ -794,7 +853,74 @@ fn settle_file(path: &std::path::Path, registration: Result<bool, String>) -> Re
         Err(_) => Err("长截图未能登记，图片已保留在素材目录".into()),
     }
 }
-async fn prepare_windows(app: &AppHandle, g: &Geometry, automatic: bool) -> Result<(), String> {
+#[cfg(windows)]
+async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: bool, f8: bool) -> Result<(), String> {
+    let target = app.clone();
+    let geometry = g.clone();
+    let owner = id.to_owned();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = (|| -> Result<bool, String> {
+            target.state::<Host>().exit.ensure_running()?;
+            let main = target.get_webview_window("space").ok_or("截图窗口不存在")?;
+            let shared = target.state::<Host>().system_preferences.snapshot_for_operation()
+                .map_err(|error| error.to_string())?.allow_screen_share;
+            let roi = crate::shared_capture_windows::Rect::new(geometry.x, geometry.y, geometry.width, geometry.height)?;
+            let session = crate::shared_capture_windows::Session::capture(&main, shared)?;
+            {
+                let state = target.state::<ScrollState>();
+                let mut slot = state.0.lock().map_err(|_| "长截图状态不可用")?;
+                let active = slot.as_mut().filter(|active| active.status.id == owner).ok_or("长截图已结束")?;
+                if active.capture_session.is_some() { return Err("长截图窗口已准备".into()); }
+                active.capture_session = Some(session);
+            }
+            edit_capture_session(&target.state::<ScrollState>(), &owner, |session| session.main.prepare(roi, automatic))?;
+            Ok(shared)
+        })();
+        let _ = send.send(result);
+    }).map_err(|_| "无法准备长截图窗口")?;
+    let shared = receive.await.map_err(|_| "长截图窗口准备中断")??;
+    // Keep WebView2 creation outside a synchronous message-thread callback.
+    let toolbar = tauri::WebviewWindowBuilder::new(app, LABEL,
+        tauri::WebviewUrl::App("index.html?surface=scroll".into()))
+        .title("Mewu · 长截图").inner_size(preview_size(g).0, preview_size(g).1)
+        .decorations(false).transparent(true).background_color(tauri::window::Color(0, 0, 0, 0))
+        .shadow(false).resizable(false).maximizable(false).minimizable(false)
+        .always_on_top(true).skip_taskbar(true).focused(false).visible(false)
+        .disable_drag_drop_handler().on_navigation(|url| {
+            (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+                || (matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"))
+                || (cfg!(debug_assertions) && url.scheme() == "http" && url.host_str() == Some("127.0.0.1") && url.port() == Some(1420))
+        }).build().map_err(|_| "无法打开长截图控制条")?;
+    let target = app.clone();
+    let g = g.clone();
+    let id = id.to_owned();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = (|| -> Result<(), String> {
+            edit_capture_session(&target.state::<ScrollState>(), &id, |session| session.attach_hud(&toolbar))?;
+            target.state::<Host>().exit.ensure_running()?;
+            if !shared { crate::recording::exclude(&toolbar, true)?; }
+            let (x, y) = preview_placement(&g);
+            toolbar.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|_| "无法放置长截图控制条")?;
+            let show_hud = if shared {
+                let display = crate::shared_capture_windows::Rect::new(g.origin_x, g.origin_y, g.monitor_width, g.monitor_height)?;
+                let roi = crate::shared_capture_windows::Rect::new(g.x, g.y, g.width, g.height)?;
+                let work = crate::shared_capture_windows::work_area(&toolbar, display)?;
+                crate::shared_capture_windows::place_hud(&toolbar, roi, work, f8)?
+            } else { true };
+            if show_hud { toolbar.show().map_err(|_| "无法显示长截图控制条")?; }
+            if automatic && !shared {
+                target.get_webview_window("space").ok_or("截图窗口不存在")?.hide().map_err(|_| "无法释放应用窗口画面")?;
+            }
+            Ok(())
+        })();
+        let _ = send.send(result);
+    }).map_err(|_| "无法准备长截图控制条")?;
+    receive.await.map_err(|_| "长截图控制条准备中断")?
+}
+#[cfg(not(windows))]
+async fn prepare_windows(app: &AppHandle, _id: &str, g: &Geometry, automatic: bool, _f8: bool) -> Result<(), String> {
     // WebView2 creation must stay on this async worker, outside synchronous
     // main-thread callbacks. Tauri dispatches ordinary window mutations itself.
     let target = app.clone();
@@ -887,22 +1013,49 @@ async fn finish(
 ) {
     let (send, receive) = tokio::sync::oneshot::channel();
     let target = app.clone();
-    if app
-        .run_on_main_thread(move || {
-            if let Some(toolbar) = target.get_webview_window(LABEL) {
-                let _ = toolbar.destroy();
-            }
+    #[cfg(windows)]
+    let restore_id = id.to_owned();
+    let dispatched = app.run_on_main_thread(move || {
+        #[cfg(windows)]
+        let restored = (|| {
+            let session = {
+                let state = target.state::<ScrollState>();
+                let mut slot = state.0.lock().map_err(|_| "长截图状态不可用")?;
+                slot.as_mut().filter(|active| active.status.id == restore_id)
+                    .and_then(|active| active.capture_session.take())
+            };
+            session.map_or(Ok(()), crate::shared_capture_windows::finish)
+        })();
+        #[cfg(not(windows))]
+        let restored: Result<(), String> = (|| {
+            if let Some(toolbar) = target.get_webview_window(LABEL) { let _ = toolbar.destroy(); }
             if let Some(main) = target.get_webview_window("space") {
                 let _ = main.set_ignore_cursor_events(false);
                 let _ = main.set_focusable(true);
-                let _ = crate::capture_visibility::apply(&main);
+                crate::capture_visibility::apply(&main)?;
             }
-            let _ = send.send(());
-        })
-        .is_ok()
-    {
-        let _ = receive.await;
-    }
+            Ok(())
+        })();
+        let _ = send.send(restored);
+    });
+    let restored = match dispatched {
+        Ok(()) => receive.await.unwrap_or_else(|_| Err("长截图窗口恢复中断".into())),
+        Err(_) => Err("无法恢复长截图窗口".into()),
+    };
+    #[cfg(windows)]
+    let restored = {
+        // A rejected/discarded dispatch can leave the lease inside Active.
+        // Take that exact operation's remainder before clearing Active, and
+        // only transfer it to debt here; restoration belongs to the HWND thread.
+        let residual = (|| -> Result<_, String> {
+            let state = app.state::<ScrollState>();
+            let mut slot = state.0.lock().map_err(|_| "长截图状态不可用")?;
+            Ok(slot.as_mut().filter(|active| active.status.id == id)
+                .and_then(|active| active.capture_session.take()))
+        })();
+        let deferred = residual.and_then(|session| session.map_or(Ok(()), crate::shared_capture_windows::defer));
+        restored.and(deferred)
+    };
     let mut released = false;
     if let Ok(mut state) = app.state::<ScrollState>().0.lock() {
         if state.as_ref().is_some_and(|a| a.status.id == id) {
@@ -910,6 +1063,10 @@ async fn finish(
             emit(app, &None);
             released = true;
         }
+    }
+    if let Err(error) = restored {
+        let _ = app.emit_to("space", "host-error", error);
+        return;
     }
     if !released || !app.state::<Host>().exit.is_running() {
         return;
@@ -932,7 +1089,7 @@ async fn finish(
 pub async fn cancel_for_shutdown(app: &AppHandle) -> Result<(), String> {
     cancel(app);
     let started = Instant::now();
-    while busy(app) {
+    while workers_busy(app) {
         if started.elapsed() > Duration::from_secs(20) {
             return Err("停止长截图超时，已取消退出".into());
         }

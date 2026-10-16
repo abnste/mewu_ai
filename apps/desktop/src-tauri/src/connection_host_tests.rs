@@ -410,6 +410,9 @@ struct HttpFixture {
 }
 impl HttpFixture {
     fn new(responses: Vec<Vec<u8>>) -> Self {
+        Self::signaling(responses, None)
+    }
+    fn signaling(responses: Vec<Vec<u8>>, mut notify: Option<oneshot::Sender<()>>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -449,6 +452,9 @@ impl HttpFixture {
                 log.lock()
                     .unwrap()
                     .push(String::from_utf8(request).unwrap());
+                if let Some(send) = notify.take() {
+                    let _ = send.send(());
+                }
                 let response = responses.next().unwrap_or_else(|| b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec());
                 let _ = stream.write_all(&response);
             }
@@ -492,7 +498,7 @@ async fn local_catalog_pages_use_only_original_origin_and_encode_cursor_as_data(
     assert_eq!(
         discover_models(&profile, "fixture-local-key")
             .await
-            .unwrap(),
+            .unwrap().models,
         vec!["a", "z"]
     );
     let requests = server.requests.lock().unwrap();
@@ -606,7 +612,7 @@ async fn auth_none_catalog_never_sends_a_saved_key_and_plain_remote_http_is_reje
     assert_eq!(
         discover_models(&profile, "fixture-key-must-not-be-sent")
             .await
-            .unwrap(),
+            .unwrap().models,
         vec!["fixture"]
     );
     let request = server.requests.lock().unwrap()[0].to_ascii_lowercase();
@@ -641,4 +647,240 @@ fn advanced_parameters_cannot_override_host_message_and_tool_fields() {
     assert_eq!(body["temperature"], 0.5);
     assert_eq!(body["top_p"], 0.9);
     assert_eq!(body["service_tier"], "standard");
+}
+
+fn catalog_response(status: u16, mime: &str, body: &[u8]) -> Vec<u8> {
+    let mut response = format!("HTTP/1.1 {status} Fixture\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+    response.extend(body);
+    response
+}
+fn catalog_paths(server: &HttpFixture) -> Vec<String> {
+    server
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            r.lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .to_string()
+        })
+        .collect()
+}
+fn bare_profile(server: &HttpFixture) -> ConnectionProfile {
+    let mut p = server.profile();
+    p.base_url = server.base.clone();
+    p
+}
+
+#[tokio::test]
+async fn catalog_valid_json_takes_precedence_over_an_incorrect_html_content_type() {
+    let body = serde_json::to_vec(&json!({"data":[{"id":"actual-model"}]})).unwrap();
+    let server = HttpFixture::new(vec![catalog_response(200, "text/html; charset=utf-8", &body)]);
+    let result = discover_models(&bare_profile(&server), "fixture-key")
+        .await
+        .unwrap();
+    assert_eq!(result.models, vec!["actual-model"]);
+    assert_eq!(result.resolved_base_url, server.base);
+    assert_eq!(catalog_paths(&server), vec!["/models"]);
+    let invalid_schema = HttpFixture::new(vec![catalog_response(
+        200,
+        "text/html",
+        br#"{"data":{}}"#,
+    )]);
+    assert!(discover_models(&bare_profile(&invalid_schema), "fixture-key")
+        .await
+        .is_err());
+    assert_eq!(catalog_paths(&invalid_schema), vec!["/models"]);
+}
+
+#[tokio::test]
+async fn bare_catalog_preserves_working_origin_and_resolves_only_html_or_not_found() {
+    let body = json!({"data":[{"id":"kept-model"}]});
+    for (first, expected) in [
+        (vec![], vec!["/models"]),
+        (
+            vec![catalog_response(
+                200,
+                "text/html; charset=utf-8",
+                b"<!doctype html><html>site</html>",
+            )],
+            vec!["/models", "/v1/models"],
+        ),
+        (
+            vec![catalog_response(
+                200,
+                "text/plain",
+                b"\xef\xbb\xbf  <HTML lang='en'>site</HTML>",
+            )],
+            vec!["/models", "/v1/models"],
+        ),
+        (
+            vec![
+                catalog_response(404, "text/html", b"not found"),
+                catalog_response(404, "text/html", b"not found"),
+            ],
+            vec!["/models", "/v1/models", "/api/v1/models"],
+        ),
+    ] {
+        let mut responses = first;
+        responses.push(HttpFixture::json(body.clone()));
+        let server = HttpFixture::new(responses);
+        let profile = bare_profile(&server);
+        let result = discover_models(&profile, "synthetic-catalog-key")
+            .await
+            .unwrap();
+        assert_eq!(result.models, vec!["kept-model"]);
+        assert_eq!(catalog_paths(&server), expected);
+        let suffix = if expected.len() == 1 {
+            ""
+        } else if expected.len() == 2 {
+            "/v1"
+        } else {
+            "/api/v1"
+        };
+        assert_eq!(result.resolved_base_url, format!("{}{suffix}", server.base));
+        assert_eq!(profile.base_url, server.base); // discovery never saves the draft
+        let wire = serde_json::to_value(&result).unwrap();
+        assert_eq!(wire["resolvedBaseUrl"], result.resolved_base_url);
+        assert!(wire.get("resolved_base_url").is_none());
+        for request in server.requests.lock().unwrap().iter() {
+            assert!(
+                request.contains("authorization: Bearer synthetic-catalog-key")
+                    || request.contains("Authorization: Bearer synthetic-catalog-key")
+            );
+            assert!(request.to_ascii_lowercase().contains(&format!(
+                "host: {}",
+                server.base.trim_start_matches("http://")
+            )));
+        }
+    }
+}
+
+#[tokio::test]
+async fn catalog_explicit_version_prefix_full_endpoint_and_request_path_never_fall_back() {
+    for (base, request_path, expected) in [
+        ("/v1", None, "/v1/models"),
+        ("/tenant/v2", None, "/tenant/v2/models"),
+        ("/tenant/v2/chat/completions/", None, "/tenant/v2/models"),
+        ("/anthropic", None, "/anthropic/models"),
+        ("", Some("/tenant/v2/messages"), "/models"),
+    ] {
+        for status in [200, 404] {
+            let server = HttpFixture::new(vec![catalog_response(
+                status,
+                "text/html",
+                b"<html>not an API</html>",
+            )]);
+            let mut profile = server.profile();
+            profile.base_url = format!("{}{base}", server.base);
+            profile.advanced.request_path = request_path.map(str::to_string);
+            assert!(discover_models(&profile, "fixture-key").await.is_err());
+            assert_eq!(catalog_paths(&server), vec![expected]);
+        }
+    }
+}
+
+#[tokio::test]
+async fn bare_catalog_auth_rate_server_redirect_and_invalid_json_are_terminal() {
+    let trap = HttpFixture::new(vec![HttpFixture::json(json!({"data":[{"id":"never"}]}))]);
+    let redirect = format!("HTTP/1.1 302 Found\r\nLocation: {}/models\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", trap.base).into_bytes();
+    let mut responses = vec![redirect];
+    for status in [401, 403, 429, 500, 503] {
+        responses.push(catalog_response(
+            status,
+            "text/html",
+            b"sensitive-debug-synthetic-key",
+        ));
+    }
+    responses.push(catalog_response(
+        200,
+        "application/json",
+        b"{malformed-sensitive-body",
+    ));
+    responses.push(HttpFixture::json(json!({"data":{}})));
+    responses.push(catalog_response(
+        200,
+        "application/json",
+        br#""<html>just JSON text</html>""#,
+    ));
+    for response in responses {
+        let server = HttpFixture::new(vec![response]);
+        let error = discover_models(&bare_profile(&server), "synthetic-key")
+            .await
+            .unwrap_err();
+        assert_eq!(catalog_paths(&server), vec!["/models"]);
+        assert!(!error.contains("sensitive") && !error.contains("synthetic-key"));
+    }
+    assert!(trap.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn catalog_later_page_mismatch_never_discards_partial_results_to_try_another_base() {
+    for response in [
+        catalog_response(404, "text/html", b"missing page"),
+        catalog_response(200, "text/html", b"<html>site</html>"),
+    ] {
+        let server = HttpFixture::new(vec![
+            HttpFixture::json(json!({"data":[{"id":"first"}],"has_more":true,"last_id":"next"})),
+            response,
+        ]);
+        assert!(discover_models(&bare_profile(&server), "fixture-key")
+            .await
+            .is_err());
+        let paths = catalog_paths(&server);
+        assert_eq!(paths.len(), 2);
+        assert_eq!(paths[0], "/models");
+        assert!(paths[1].starts_with("/models?"));
+    }
+}
+
+#[tokio::test]
+async fn catalog_candidate_fallback_shares_the_original_byte_and_request_budgets() {
+    let html = [
+        b"<html>".as_slice(),
+        &vec![b'x'; MAX_CATALOG_BYTES / 2 + 64],
+    ]
+    .concat();
+    let server = HttpFixture::new(vec![
+        catalog_response(200, "text/html", &html),
+        catalog_response(200, "text/html", &html),
+    ]);
+    assert!(discover_models(&bare_profile(&server), "fixture-key")
+        .await
+        .unwrap_err()
+        .contains("过大"));
+    assert_eq!(catalog_paths(&server), vec!["/models", "/v1/models"]);
+    let mut pages = vec![catalog_response(404, "text/plain", b"")];
+    for n in 1..MAX_CATALOG_REQUESTS {
+        pages.push(HttpFixture::json(json!({"data":[{"id":format!("model-{n}")}],"has_more":true,"last_id":format!("cursor-{n}")})));
+    }
+    let server = HttpFixture::new(pages);
+    assert!(discover_models(&bare_profile(&server), "fixture-key")
+        .await
+        .unwrap_err()
+        .contains("分页过多"));
+    let paths = catalog_paths(&server);
+    assert_eq!(paths.len(), MAX_CATALOG_REQUESTS);
+    assert_eq!(paths[0], "/models");
+    assert!(paths[1..].iter().all(|p| p.starts_with("/v1/models")));
+}
+
+#[tokio::test]
+async fn catalog_cancellation_before_landing_response_prevents_the_next_candidate() {
+    let (send, mut canceled) = oneshot::channel();
+    let server = HttpFixture::signaling(
+        vec![catalog_response(200, "text/html", b"<html>landing</html>")],
+        Some(send),
+    );
+    let profile = bare_profile(&server);
+    let error = run_catalog_probe(&mut canceled, discover_models(&profile, "fixture-key"))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "请求已取消");
+    assert_eq!(catalog_paths(&server), vec!["/models"]);
 }

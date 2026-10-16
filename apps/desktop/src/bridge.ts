@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { Asset, ConnectionProbe, ConnectionProfile, ConnectionTestResult, DiscoverMcpServer, DrawingCommand, DrawingEdit, MemoryEntry, MemoryPage, ProviderPreset, RunEvent, Scene, SceneCommand, Snapshot, VisualAnnotationGrant } from './contracts';
+import type { Asset, ConnectionProbe, ConnectionProfile, ConnectionTestResult, DiscoverMcpServer, DrawingCommand, DrawingEdit, MemoryEntry, MemoryPage, ModelCatalog, ProviderPreset, RunEvent, Scene, SceneCommand, Snapshot, VisualAnnotationGrant } from './contracts';
 import { normalizeConnectionPath, validateConnectionProfile } from './connection-policy';
 import type { ExitPreparationCanceled, ExitPreparationRequest, ExitPreparationResult } from './exit-preparation';
 import { browserMosaicPreview, MosaicPreviewCache, type MosaicPreview } from './mosaic-preview';
@@ -577,7 +577,7 @@ export async function saveBlackboardText(sceneId:string,itemId:string,expectedAs
 export async function getProviderPresets(): Promise<ProviderPreset[]> {
   return native ? invoke('get_provider_presets') : bundledProviderPresets(Object.values(providerPackages));
 }
-export async function discoverConnectionModels(value: ConnectionProbe): Promise<{ models: string[] }> {
+export async function discoverConnectionModels(value: ConnectionProbe): Promise<ModelCatalog> {
   if (!native) throw new Error('请在桌面版获取模型，可手动输入模型 ID');
   return invoke('discover_connection_models', { ...value, expectedRevision: value.expectedRevision ?? null, apiKey: value.apiKey ?? null });
 }

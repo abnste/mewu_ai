@@ -72,6 +72,7 @@ export interface ConnectionAdvanced { protocol: 'chat_completions' | 'anthropic_
 export interface ConnectionProfile extends Connection { id: string; name: string; providerId: string; revision: number; credentialId?: string | null; advanced: ConnectionAdvanced }
 export interface ProviderPreset { id: string; name: string; group: 'china' | 'global' | 'custom'; baseUrl: string; model: string; advanced: ConnectionAdvanced; searchTerms?: string; pluginId: string; pluginRevision: number; contributionId: string }
 export interface ConnectionProbe { requestId: string; profile: ConnectionProfile; expectedRevision?: number; apiKey?: string }
+export interface ModelCatalog { models: string[]; resolvedBaseUrl: string }
 export interface ConnectionTestResult { latencyMs: number; model: string }
 export interface McpCommand { executable: string; args: string[]; cwd?: string | null }
 export interface McpTool { name: string; description: string; inputSchema: Record<string, unknown> }

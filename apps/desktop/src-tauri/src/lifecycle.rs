@@ -759,6 +759,11 @@ fn start_shutdown(
             return;
         }
         if app.state::<Host>().exit.advance(&id, READY) {
+            // Workers and durable writes have drained. Presentation recovery
+            // must not strand an irreversible exit; the OS destroys these HWNDs.
+            #[cfg(windows)]
+            let _ =
+                crate::shared_capture_windows::abandon_for_process_exit(&app.state::<Host>().exit);
             crate::pin_host::shutdown(&app);
             if let Some(update) = update {
                 // Windows installer launch exits the process. Do this only once

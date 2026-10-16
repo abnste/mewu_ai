@@ -25,6 +25,8 @@ pub fn validate(allow_screen_share: bool) -> Result<(), String> {
 }
 pub fn apply(window: &tauri::WebviewWindow) -> Result<(), String> {
     #[cfg(windows)]
+    crate::shared_capture_windows::recover_current(window.app_handle())?;
+    #[cfg(windows)]
     let hwnd = window.hwnd().map_err(|_| "无法设置屏幕共享可见性")?.0 as usize;
     let _guard = AFFINITY.lock().map_err(|_| "屏幕共享设置不可用")?;
     let value = window

@@ -201,6 +201,41 @@ mod native {
     static ACTIVE_WORKERS: AtomicUsize = AtomicUsize::new(0);
     const QUARANTINE_ERROR: &str = "本机文字识别未能停止，请重启应用后重试";
 
+    #[cfg(test)]
+    static BITMAPS_CREATED: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(test)]
+    static BITMAPS_CLOSED: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(test)]
+    static OPERATIONS_CREATED: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(test)]
+    static OPERATIONS_CLOSED: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(test)]
+    static RETAINED_SETS: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(test)]
+    #[derive(Clone, Copy, Debug, serde::Serialize)]
+    pub(super) struct ResourceCounts {
+        pub(super) bitmaps_created: usize,
+        pub(super) bitmaps_closed: usize,
+        pub(super) operations_created: usize,
+        pub(super) operations_closed: usize,
+        pub(super) retained_sets: usize,
+        pub(super) active_workers: usize,
+        pub(super) quarantined: bool,
+    }
+    #[cfg(test)]
+    pub(super) fn resource_counts() -> ResourceCounts {
+        ResourceCounts {
+            bitmaps_created: BITMAPS_CREATED.load(Ordering::SeqCst),
+            bitmaps_closed: BITMAPS_CLOSED.load(Ordering::SeqCst),
+            operations_created: OPERATIONS_CREATED.load(Ordering::SeqCst),
+            operations_closed: OPERATIONS_CLOSED.load(Ordering::SeqCst),
+            retained_sets: RETAINED_SETS.load(Ordering::SeqCst),
+            active_workers: ACTIVE_WORKERS.load(Ordering::SeqCst),
+            quarantined: QUARANTINED.load(Ordering::SeqCst),
+        }
+    }
+
     // Independently bound exceptional resource retention, even if a future
     // caller forgets the host's worker limit. Quarantine precedes permit release.
     struct WorkerPermit;
@@ -251,7 +286,11 @@ mod native {
     impl Drop for NativeBitmap {
         fn drop(&mut self) {
             if self.1.get() {
-                let _ = self.0.Close();
+                let _closed = self.0.Close();
+                #[cfg(test)]
+                if _closed.is_ok() {
+                    BITMAPS_CLOSED.fetch_add(1, Ordering::SeqCst);
+                }
             }
         }
     }
@@ -489,6 +528,8 @@ mod native {
             .map_err(|e| native_error("准备识别图片", e))?,
             Cell::new(true),
         );
+        #[cfg(test)]
+        BITMAPS_CREATED.fetch_add(1, Ordering::SeqCst);
         bitmap
             .0
             .CopyFromBuffer(&buffer)
@@ -499,6 +540,8 @@ mod native {
         let operation = engine
             .RecognizeAsync(&bitmap.0)
             .map_err(|e| native_error("启动文字识别", e))?;
+        #[cfg(test)]
+        OPERATIONS_CREATED.fetch_add(1, Ordering::SeqCst);
         let cancel_sent = Cell::new(false);
         let _operation_cleanup = Cleanup(|| {
             cleanup_operation(
@@ -509,7 +552,11 @@ mod native {
                     }
                 },
                 || {
-                    let _ = operation.Close();
+                    let _closed = operation.Close();
+                    #[cfg(test)]
+                    if _closed.is_ok() {
+                        OPERATIONS_CLOSED.fetch_add(1, Ordering::SeqCst);
+                    }
                 },
                 || {
                     // A live/unknown operation may still read its bitmap. Do
@@ -519,6 +566,8 @@ mod native {
                     // and quarantine permanently rejects replacement workers.
                     QUARANTINED.store(true, Ordering::Release);
                     bitmap.1.set(false);
+                    #[cfg(test)]
+                    RETAINED_SETS.fetch_add(1, Ordering::SeqCst);
                     std::mem::forget((operation.clone(), bitmap.0.clone(), engine.clone()));
                 },
             );
@@ -843,5 +892,124 @@ mod tests {
             stop.store(true, Ordering::Release)
         });
         assert_eq!(result.unwrap_err(), CANCEL_ERROR);
+    }
+
+    #[cfg(windows)]
+    fn process_memory_bytes() -> (u64, u64) {
+        // Official PROCESS_MEMORY_COUNTERS_EX layout; no dependency or runtime policy change.
+        // https://learn.microsoft.com/windows/win32/api/psapi/ns-psapi-process_memory_counters_ex
+        #[repr(C)]
+        #[derive(Default)]
+        struct Counters {
+            cb: u32,
+            page_fault_count: u32,
+            peak_working_set_size: usize,
+            working_set_size: usize,
+            quota_peak_paged_pool_usage: usize,
+            quota_paged_pool_usage: usize,
+            quota_peak_non_paged_pool_usage: usize,
+            quota_non_paged_pool_usage: usize,
+            pagefile_usage: usize,
+            peak_pagefile_usage: usize,
+            private_usage: usize,
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn K32GetProcessMemoryInfo(
+                process: *mut std::ffi::c_void,
+                counters: *mut Counters,
+                size: u32,
+            ) -> i32;
+        }
+        let mut counters = Counters {
+            cb: std::mem::size_of::<Counters>() as u32,
+            ..Default::default()
+        };
+        let current = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
+        let size = counters.cb;
+        assert_ne!(
+            unsafe { K32GetProcessMemoryInfo(current, &mut counters, size) },
+            0,
+            "could not sample actual OCR test-process memory"
+        );
+        assert!(counters.private_usage > 0 && counters.working_set_size > 0);
+        (
+            counters.private_usage as u64,
+            counters.working_set_size as u64,
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "explicit Windows production OCR memory stress; synthetic text only; run exact with --test-threads=1"]
+    fn real_windows_ocr_repeated_recognition_releases_resources_and_bounds_private_growth() {
+        let image = synthetic_text();
+        let initial = native::resource_counts();
+        assert_eq!(initial.active_workers, 0);
+        assert_eq!(initial.retained_sets, 0);
+        assert!(!initial.quarantined);
+        let mut samples = Vec::new();
+        for iteration in 0..10 {
+            let before = native::resource_counts();
+            let result = recognize(image.clone(), Arc::new(AtomicBool::new(false)))
+                .expect("production OCR failed for the fixed synthetic stress image");
+            assert_eq!(result.engine, "windows.media.ocr");
+            assert_eq!((result.width, result.height), (1400, 300));
+            let text: String = result
+                .lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let known_text_recognized = text.contains("MewulocalOCRtest12345");
+            drop(text);
+            drop(result);
+            // No working-set trim, forced collection, screenshot or user-data access.
+            std::thread::sleep(Duration::from_millis(250));
+            let after = native::resource_counts();
+            let (private_bytes, working_set_bytes) = process_memory_bytes();
+            let sample = serde_json::json!({
+                "iteration":iteration + 1,"warmup":iteration < 2,
+                "privateCommitBytes":private_bytes,"workingSetBytes":working_set_bytes,
+                "knownSyntheticTextRecognized":known_text_recognized,"resources":after
+            });
+            println!("MEWU_OCR_STRESS_SAMPLE {sample}");
+            samples.push(sample);
+            assert!(
+                known_text_recognized,
+                "fixed synthetic English text missing"
+            );
+            assert_eq!(after.bitmaps_created, before.bitmaps_created + 1);
+            assert_eq!(after.bitmaps_closed, before.bitmaps_closed + 1);
+            assert_eq!(after.operations_created, before.operations_created + 1);
+            assert_eq!(after.operations_closed, before.operations_closed + 1);
+            assert_eq!(after.bitmaps_created, after.bitmaps_closed);
+            assert_eq!(after.operations_created, after.operations_closed);
+            assert_eq!(after.active_workers, 0);
+            assert_eq!(after.retained_sets, 0);
+            assert!(!after.quarantined);
+        }
+        let baseline = samples[1]["privateCommitBytes"].as_u64().unwrap();
+        let final_bytes = samples.last().unwrap()["privateCommitBytes"]
+            .as_u64()
+            .unwrap();
+        let growth = final_bytes.saturating_sub(baseline);
+        let report = serde_json::json!({
+            "kind":"actual-windows-production-ocr-core-memory-stress",
+            "sourceCommit":option_env!("MEWU_BUILD_COMMIT"),"warmupIterations":2,
+            "measuredIterations":8,"samples":samples,"postWarmupPrivateGrowthBytes":growth,
+            "grossRegressionLimitBytes":128 * 1024 * 1024,
+            "workingSetTrimmed":false,"fullWebviewScreenshotLoopTested":false,
+            "userDataRead":false,"screenCaptured":false,"networkUsed":false
+        });
+        println!("MEWU_OCR_STRESS_REPORT {report}");
+        // Catch the reported ~200MB-per-call regression class, not a universal idle budget.
+        assert!(
+            growth < 128 * 1024 * 1024,
+            "post-warmup OCR private memory grew by {growth} bytes"
+        );
     }
 }

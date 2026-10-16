@@ -92,6 +92,42 @@ pub fn models_endpoint(profile: &ConnectionProfile) -> Result<url::Url, String> 
     url.set_path(&format!("{}/models", api_prefix(url.path())));
     Ok(url)
 }
+
+pub(crate) struct ModelCatalogEndpoint {
+    pub base_url: String,
+    pub url: url::Url,
+}
+
+/// DeepSeek accepts its bare origin, while other compatible services use /v1.
+/// Try the supplied address first; never reinterpret an explicit API path.
+/// https://api-docs.deepseek.com/zh-cn/
+/// https://platform.claude.com/docs/en/api/models/list
+pub(crate) fn model_catalog_endpoints(
+    profile: &ConnectionProfile,
+) -> Result<Vec<ModelCatalogEndpoint>, String> {
+    let base = base_url(profile)?;
+    let mut endpoints = vec![ModelCatalogEndpoint {
+        base_url: profile.base_url.trim().trim_end_matches('/').into(),
+        url: models_endpoint(profile)?,
+    }];
+    if base.path() == "/"
+        && profile
+            .advanced
+            .request_path
+            .as_deref()
+            .is_none_or(|p| p.trim().is_empty())
+    {
+        for path in ["/v1", "/api/v1"] {
+            let mut url = base.clone();
+            url.set_path(path);
+            let base_url = url.as_str().trim_end_matches('/').to_string();
+            url.set_path(&format!("{path}/models"));
+            endpoints.push(ModelCatalogEndpoint { base_url, url });
+        }
+    }
+    Ok(endpoints)
+}
+
 pub fn authenticate(
     mut request: reqwest::RequestBuilder,
     transport: &Transport,
@@ -1069,6 +1105,48 @@ pub(crate) mod tests {
         p.base_url = "http://127.0.0.1:1234/v1".into();
         assert!(endpoint(&p).is_ok());
     }
+    #[test]
+    fn model_catalog_candidates_are_same_origin_and_never_reinterpret_explicit_paths() {
+        let mut p = profile();
+        p.base_url = "https://api.deepseek.com/".into();
+        let candidates = model_catalog_endpoints(&p).unwrap();
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|v| v.url.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "https://api.deepseek.com/models",
+                "https://api.deepseek.com/v1/models",
+                "https://api.deepseek.com/api/v1/models"
+            ]
+        );
+        assert_eq!(candidates[0].base_url, "https://api.deepseek.com");
+        for candidate in &candidates {
+            assert_eq!(
+                candidate.url.origin(),
+                url::Url::parse(&p.base_url).unwrap().origin()
+            );
+        }
+        for path in [
+            "/v1",
+            "/api/v1",
+            "/tenant/v2",
+            "/anthropic",
+            "/v3/responses",
+        ] {
+            p.base_url = format!("https://example.com{path}");
+            assert_eq!(model_catalog_endpoints(&p).unwrap().len(), 1);
+        }
+        p.base_url = "http://127.0.0.1:1234".into();
+        p.advanced.request_path = Some("/custom/chat".into());
+        assert_eq!(model_catalog_endpoints(&p).unwrap().len(), 1);
+        p.advanced.request_path = None;
+        assert_eq!(model_catalog_endpoints(&p).unwrap().len(), 3);
+        p.base_url = "http://192.0.2.1".into();
+        assert!(model_catalog_endpoints(&p).is_err());
+    }
+
     #[test]
     fn native_bodies_preserve_message_attachments_and_reject_unsupported_priority() {
         let canonical = json!({"model":"fixture","temperature":0.3,"top_p":0.9,"service_tier":"standard","messages":[{"role":"system","content":"system"},{"role":"user","content":[{"type":"text","text":"old image"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]},{"role":"assistant","content":"old answer"},{"role":"user","content":"now"}],"tools":[{"type":"function","function":{"name":"remember","parameters":{"type":"object"}}}]});

@@ -9,6 +9,8 @@
 - 导入图片先成为空间对象；图片、视频和黑板预览可手动置顶。画面支持滚轮等比缩放，视频操作工具条左对齐，裁切条独立在下方，不再显示尺寸按钮。置顶视频保留真实播放、裁切范围和时段批注。
 - 修复流式回复重复；视频批注参数错误会反馈给 AI 在原有轮次限制内修正，执行记录显示实际未执行原因。
 - 修复对象缩放尚未保存时退出受阻的问题；退出时取消置顶操作，保存失败时保留待保存的几何。
+- 仅填写服务域名时，模型列表可尝试常用 API 根路径；成功地址回填可见设置草稿，仍需手动保存，显式自定义路径保持原样。
+- 改善 Windows 允许屏幕共享时的录屏与长截图兼容性，采集结束恢复窗口与输入状态。
 
 ## 升级与数据
 
@@ -26,6 +28,7 @@ Windows 0.7.4 可在原关于页发现正式版，确认下载并安装；如未
 - Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配、专用图片/视频生成接口和跨设备同步尚未包含。
 - Linux Wayland 需要桌面截图与录屏授权。录屏授权后需重新框选区域；请将控制条拖到录制范围外，GNOME 暂不保证它始终置顶。
 - 下载提供 Windows 安装版和便携 ZIP、macOS ARM64 DMG、Linux x64 AppImage。协议保持 MPL-2.0，安装包保留第三方许可。
+- NVIDIA 即时重放仍缺匹配硬件实测。现有执行记录用于 AI 任务追踪，尚不提供全程序实时诊断日志界面。
 
 ## English
 
@@ -35,8 +38,12 @@ Imported images first become space objects. Images, videos and board previews ca
 
 Pending media placement can finish saving during exit preparation. Canceling pin operations no longer blocks exit, and failed geometry saves remain available for retry.
 
+Model discovery supports common API roots when only a service origin is entered. A working address appears in the visible draft and still requires an explicit save; custom paths stay unchanged. Windows recording and scrolling capture improve compatibility when screen sharing is allowed and restore window and input state afterwards.
+
 The revised 1.0.0 reads latest.json from the latest stable GitHub release, and its macOS updater archive belongs to that versioned release. New builds and normal publishing do not depend on update-channel. Earlier previews can upgrade through their existing endpoint. Earlier 1.0.0 installations need one manual reinstall because this repair keeps the same version number. Windows 0.7.4 can discover 1.0.0 in its original About page; earlier versions should first install 0.7.4. Portable updates run the installer and move to the installed application.
 
 Supported Chat Completions, Responses and Messages API profiles, including their encrypted local credentials, are imported once. Custom headers, non-system proxy settings and some routing configurations need manual setup. **Legacy files remain, but old conversations are not converted into the new history UI; preferences and integrations are not fully migrated.** Back up important data before upgrading.
+
+NVIDIA Instant Replay still needs matching-hardware testing. Execution records trace AI tasks; an application-wide live diagnostic log view is not included.
 
 Native region automation remains Windows-only. Proprietary desktop-client adapters, dedicated image/video-generation APIs and cross-device sync are not included. Wayland capture/recording requires portal consent and a fresh region selection after recording approval. Move controls outside the recorded region; GNOME may not keep them on top. The project remains MPL-2.0 and includes third-party license notices.

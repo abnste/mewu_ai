@@ -1810,6 +1810,107 @@ pub(crate) mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn deepseek_long_reasoning_http_keeps_final_markdown_answer_complete() {
+        let mut data = String::new();
+        let mut expected_reasoning = String::new();
+        for index in 0..256 {
+            let fragment = format!("{index:04}:{}", "推理🙂".repeat(400));
+            expected_reasoning.push_str(&fragment);
+            data.push_str(&format!(
+                "data: {}\r\n\r\n",
+                json!({"choices":[{"index":0,"delta":{"reasoning_content":fragment,"content":null},"finish_reason":null}]})
+            ));
+            if index % 32 == 0 {
+                data.push_str(": heartbeat\r\n\r\ndata: {\"choices\":[],\"usage\":{}}\r\n\r\n");
+            }
+        }
+        assert!(expected_reasoning.len() > 1024 * 1024 / 2);
+        assert!(expected_reasoning.len() < MAX_ANSWER_BYTES);
+        let answer_parts = [
+            "结果：\n```html\n",
+            "<svg><text>完成🙂</text></svg>\n",
+            "```\n最终回答🙂",
+        ];
+        for (index, part) in answer_parts.iter().enumerate() {
+            data.push_str(&event(
+                part,
+                (index == answer_parts.len() - 1).then_some("stop"),
+            ));
+        }
+        data.push_str("data: [DONE]\n\n");
+        // Real HTTP chunking is deliberately unrelated to SSE and UTF8 boundaries.
+        let fixture = HttpFixture::start(
+            data.as_bytes().chunks(509).map(<[u8]>::to_vec).collect(),
+            None,
+        );
+        let transport = crate::provider_transport::Transport::chat(fixture.url.clone());
+        let mut visible = String::new();
+        let mut reasoning = String::new();
+        let dispatched = std::sync::atomic::AtomicUsize::new(0);
+        let turn = tokio::time::timeout(
+            Duration::from_secs(10),
+            crate::provider_transport::stream_turn_with_reasoning_before_send(
+                &transport,
+                "",
+                json!({"model":"synthetic-deepseek","messages":[],"stream":true}),
+                |text| visible.push_str(text),
+                |text| reasoning.push_str(text),
+                || {
+                    dispatched.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                },
+            ),
+        )
+        .await
+        .expect("synthetic long HTTP stream timed out")
+        .unwrap();
+        let expected_answer = answer_parts.concat();
+        assert_eq!(visible, expected_answer);
+        assert_eq!(turn.content, expected_answer);
+        assert_eq!(reasoning, expected_reasoning);
+        assert_eq!(turn.reasoning_content.as_deref(), Some(reasoning.as_str()));
+        assert!(turn.tool_calls.is_empty());
+        assert!(!visible.contains("推理"));
+        assert_eq!(dispatched.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn deepseek_reasoning_only_http_never_counts_as_a_completed_answer() {
+        for (finish, expected_error) in [
+            ("stop", "服务没有返回正文"),
+            ("length", "回复达到模型长度限制"),
+        ] {
+            let data = format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                json!({"choices":[{"index":0,"delta":{"reasoning_content":"合成思考🙂","content":null},"finish_reason":finish}]})
+            );
+            let fixture = HttpFixture::start(
+                data.as_bytes().chunks(7).map(<[u8]>::to_vec).collect(),
+                None,
+            );
+            let transport = crate::provider_transport::Transport::chat(fixture.url.clone());
+            let mut visible = String::new();
+            let mut reasoning = String::new();
+            let result = tokio::time::timeout(
+                Duration::from_secs(5),
+                crate::provider_transport::stream_turn_with_reasoning_before_send(
+                    &transport,
+                    "",
+                    json!({"model":"synthetic-deepseek","messages":[],"stream":true}),
+                    |text| visible.push_str(text),
+                    |text| reasoning.push_str(text),
+                    || Ok(()),
+                ),
+            )
+            .await
+            .expect("synthetic reasoning-only HTTP stream timed out");
+            assert_eq!(result.unwrap_err(), expected_error);
+            assert!(visible.is_empty());
+            assert_eq!(reasoning, "合成思考🙂");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn eof_without_any_terminal_marker_is_failure() {
         let fixture = HttpFixture::text(event("只有半段", None));
         let (answer, deltas) = collect_fixture(&fixture).await;

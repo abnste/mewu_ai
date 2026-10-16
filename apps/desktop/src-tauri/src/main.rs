@@ -21,6 +21,8 @@ mod capture_delay_work;
 mod capture_presentation;
 mod capture_preferences;
 mod capture_visibility;
+#[cfg(windows)]
+mod shared_capture_windows;
 mod capture_shortcut;
 mod capture_shortcut_host;
 #[cfg(target_os = "linux")]

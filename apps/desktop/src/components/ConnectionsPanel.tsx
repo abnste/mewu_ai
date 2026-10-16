@@ -8,7 +8,7 @@ import { cancelConnectionProbe, discoverConnectionModels, getProviderPresets, te
 import { normalizeConnectionPath, parseConnectionParameters, validateConnectionProfile } from '../connection-policy';
 import { subscribePlugins } from '../plugin-bridge';
 import { profileFromProviderPreset } from '../provider-presets';
-import { connectionDraft as fromProfile, settleConnectionSave, type ConnectionDraft as Draft } from './connection-draft';
+import { applyModelCatalogToDraft, connectionDraft as fromProfile, settleConnectionSave, type ConnectionDraft as Draft } from './connection-draft';
 import { SettingsAddButton } from './SettingControls';
 import '../connections.css';
 
@@ -119,9 +119,9 @@ export default function ConnectionsPanel(props: Props) {
     try { profile = prepared(value, kind === 'test'); } catch (error) { setErrors(old => ({ ...old, [id]: message(error) })); return; }
     const operation: Probe = { id, draft: value, kind, requestId: crypto.randomUUID() }; setProbe(operation);
     const args = { requestId: operation.requestId, profile, expectedRevision: value.expectedRevision, apiKey: keyArgument(value) };
-    const current = () => !disposed && probe() === operation && selected() === id && form(id) === value && props.active;
+    const current = () => !disposed && probe() === operation && selected() === id && form(id) === value && props.active && !stale(id);
     try {
-      if (kind === 'models') { const result = await discoverConnectionModels(args); if (current()) { setModels(old => ({ ...old, [id]: result.models })); setModelStatus(old => ({ ...old, [id]: result.models.length ? t("{0} 个模型").replaceAll("{0}", () => String(result.models.length)) : '未返回模型，可手动输入' })); } }
+      if (kind === 'models') { const result = await discoverConnectionModels(args); if (current()) { const next = applyModelCatalogToDraft(value, form(id)!, result.resolvedBaseUrl); setDrafts(old => old[id] === value ? { ...old, [id]: next } : old); setModels(old => ({ ...old, [id]: result.models })); setModelStatus(old => ({ ...old, [id]: result.models.length ? t("{0} 个模型").replaceAll("{0}", () => String(result.models.length)) : '未返回模型，可手动输入' })); } }
       else { const result = await testConnection(args); if (current()) setTestResults(old => ({ ...old, [id]: result })); }
     } catch (error) { if (current()) setErrors(old => ({ ...old, [id]: message(error) })); }
     finally { if (!disposed && probe() === operation) setProbe(undefined); }

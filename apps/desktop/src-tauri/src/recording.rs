@@ -61,6 +61,8 @@ pub struct Status {
     pub(crate) audio: backend::AudioMode,
 }
 struct Active {
+    #[cfg(windows)]
+    capture_session: Option<crate::shared_capture_windows::Session>,
     status: Status,
     commands: Arc<crate::recording_worker::ControlBus>,
     grant: crate::plugins::RecordingGrant,
@@ -114,6 +116,8 @@ impl RecordingState {
     }
 }
 pub fn busy(app: &AppHandle) -> bool {
+    #[cfg(windows)]
+    if crate::shared_capture_windows::pending() { return true; }
     (crate::recording_worker::busy() && {
         #[cfg(target_os="linux")] { !crate::recording_wayland_host::selecting() }
         #[cfg(not(target_os="linux"))] { true }
@@ -121,6 +125,12 @@ pub fn busy(app: &AppHandle) -> bool {
         || app
             .try_state::<RecordingState>()
             .is_some_and(|s| s.0.lock().map(|v| v.is_some()).unwrap_or(true))
+}
+/// Unlike admission's busy(), this excludes pure presentation cleanup debt.
+/// It includes the actual child/reaper permit even without an Active target.
+pub(crate) fn workers_busy(app: &AppHandle) -> bool {
+    crate::recording_worker::busy() || app.try_state::<RecordingState>()
+        .is_some_and(|state| state.0.lock().map_or(true, |slot| slot.is_some()))
 }
 pub fn ensure_idle(app: &AppHandle) -> Result<(), String> {
     crate::scroll_host::ensure_idle(app)?;
@@ -218,6 +228,12 @@ pub fn begin_shutdown<T>(
 }
 pub async fn stop_for_shutdown(app: &AppHandle, target: Option<String>) -> Result<(), String> {
     let Some(id) = target else {
+        let deadline = Instant::now() + Duration::from_secs(45);
+        while workers_busy(app) {
+            request_stop(app);
+            if Instant::now() >= deadline { return Err("录屏进程尚未结束，已取消退出".into()); }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         return Ok(());
     };
     #[cfg(target_os="linux")]
@@ -233,7 +249,15 @@ pub async fn stop_for_shutdown(app: &AppHandle, target: Option<String>) -> Resul
     loop {
         let completed = app.state::<RecordingState>().completed(&id)?;
         if let Some(result) = completed {
-            return result.map_err(|_| "录屏未能保存，已取消退出".into());
+            // A saved/completed marker cannot overtake an owned reaper or an
+            // active operation. Keep all original recording/DB errors fatal.
+            result.map_err(|_| "录屏未能保存，已取消退出".to_string())?;
+            if workers_busy(app) {
+                if Instant::now() >= deadline { return Err("录屏进程尚未结束，已取消退出".into()); }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            return Ok(());
         }
         if Instant::now() >= deadline {
             return Err("录屏尚未结束，已取消退出".into());
@@ -303,6 +327,8 @@ pub async fn start_recording(
         return Err("此窗口不能开始录屏".into());
     }
     app.state::<Host>().exit.ensure_new_operation()?;
+    #[cfg(windows)]
+    crate::shared_capture_windows::recover(&app).await?;
     #[cfg(target_os="linux")]
     if crate::recording_wayland_host::start(app.clone(),window.clone(),scene_id.clone(),region_id.clone(),audio.clone(),grant.clone()).await?{return Ok(());}
     #[cfg(windows)]
@@ -443,6 +469,8 @@ pub async fn start_recording(
         engine.ocr_jobs.cancel_owner("space");
         engine.translation_jobs.cancel_scene("space", &scene_id);
         *active = Some(Active {
+            #[cfg(windows)]
+            capture_session: None,
             status: status.clone(),
             commands: controls.clone(),
             grant,
@@ -457,20 +485,6 @@ pub async fn start_recording(
         crate::recording_worker::MacOutcome::Ok,
     );
     emit(&app, &Some(status));
-    if let Err(error) = prepare_windows(&app, &config, monitor.scale_factor).await {
-        #[cfg(all(target_os = "macos", debug_assertions))]
-        crate::recording_worker::mac_diagnostic(
-            crate::recording_worker::MacStage::OverlayPrepared,
-            crate::recording_worker::MacOutcome::Failed,
-        );
-        finish(&app, &id, Err(error.clone())).await;
-        return Err(error);
-    }
-    #[cfg(all(target_os = "macos", debug_assertions))]
-    crate::recording_worker::mac_diagnostic(
-        crate::recording_worker::MacStage::OverlayPrepared,
-        crate::recording_worker::MacOutcome::Ok,
-    );
     let f8 = app
         .global_shortcut()
         .on_shortcut("F8", |app, _, event| {
@@ -504,6 +518,23 @@ pub async fn start_recording(
             .into();
         }
     });
+    if let Err(error) = prepare_windows(&app, &id, &config, monitor.scale_factor, f8).await {
+        #[cfg(all(target_os = "macos", debug_assertions))]
+        crate::recording_worker::mac_diagnostic(
+            crate::recording_worker::MacStage::OverlayPrepared,
+            crate::recording_worker::MacOutcome::Failed,
+        );
+        if f8 { let _ = app.global_shortcut().unregister("F8"); }
+        #[cfg(target_os = "macos")]
+        if esc { let _ = app.global_shortcut().unregister("Escape"); }
+        finish(&app, &id, Err(error.clone())).await;
+        return Err(error);
+    }
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    crate::recording_worker::mac_diagnostic(
+        crate::recording_worker::MacStage::OverlayPrepared,
+        crate::recording_worker::MacOutcome::Ok,
+    );
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
         let run_app = app2.clone();
@@ -635,9 +666,15 @@ pub(crate) fn retain_completed_output<T>(
 
 async fn prepare_windows(
     app: &AppHandle,
+    id: &str,
     config: &backend::Config,
     scale: f64,
+    f8: bool,
 ) -> Result<(), String> {
+    #[cfg(not(windows))]
+    let _ = (id, f8);
+    #[cfg(windows)]
+    let id = id.to_owned();
     let (send, receive) = tokio::sync::oneshot::channel();
     let target = app.clone();
     let config = config.clone();
@@ -645,11 +682,34 @@ async fn prepare_windows(
         let result = (|| -> Result<(), String> {
             target.state::<Host>().exit.ensure_new_operation()?;
             let main = target.get_webview_window("space").ok_or("窗口不存在")?;
-            // WGC exclusion must succeed before the worker is allowed to capture.
-            exclude(&main, true)?;
-            main.set_ignore_cursor_events(true)
-                .map_err(|_| "无法穿透录屏覆盖层")?;
-            main.set_focusable(false).map_err(|_| "无法释放桌面输入")?;
+            #[cfg(windows)]
+            let shared = target.state::<Host>().system_preferences.snapshot_for_operation()
+                .map_err(|error| error.to_string())?.allow_screen_share;
+            #[cfg(windows)]
+            let roi = crate::shared_capture_windows::Rect::offset(config.origin_x, config.origin_y,
+                config.x, config.y, config.width, config.height)?;
+            #[cfg(windows)]
+            {
+                let session = crate::shared_capture_windows::Session::capture(&main, shared)?;
+                {
+                    let state = target.state::<RecordingState>();
+                    let mut slot = state.0.lock().map_err(|_| "录屏状态不可用")?;
+                    let active = slot.as_mut().filter(|active| active.status.id == id).ok_or("录屏已结束")?;
+                    if active.capture_session.is_some() { return Err("录屏窗口已准备".into()); }
+                    active.capture_session = Some(session);
+                }
+                edit_capture_session(&target.state::<RecordingState>(), &id, |session| session.main.prepare(roi, false))?;
+            }
+            #[cfg(not(windows))]
+            {
+                exclude(&main, true)?;
+                main.set_ignore_cursor_events(true).map_err(|_| "无法穿透录屏覆盖层")?;
+                main.set_focusable(false).map_err(|_| "无法释放桌面输入")?;
+            }
+            #[cfg(windows)]
+            let shadow = !shared;
+            #[cfg(not(windows))]
+            let shadow = true;
             let toolbar = tauri::WebviewWindowBuilder::new(
                 &target,
                 LABEL,
@@ -658,9 +718,11 @@ async fn prepare_windows(
             .title("Mewu · 录屏")
             .inner_size(CONTROLS_WIDTH, CONTROLS_HEIGHT)
             .decorations(false)
-            .transparent(false)
+            // GetWindowDisplayAffinity requires a layered window on Windows.
+            // CSS/background paint remain opaque; other platforms keep their HUD.
+            .transparent(cfg!(windows))
             .background_color(tauri::window::Color(252, 253, 255, 255))
-            .shadow(true)
+            .shadow(shadow)
             .resizable(false)
             .maximizable(false)
             .minimizable(false)
@@ -680,6 +742,12 @@ async fn prepare_windows(
             })
             .build()
             .map_err(|_| "无法打开录屏控制条")?;
+            #[cfg(windows)]
+            {
+                edit_capture_session(&target.state::<RecordingState>(), &id, |session| session.attach_hud(&toolbar))?;
+                if !shared { exclude(&toolbar, true)?; }
+            }
+            #[cfg(not(windows))]
             exclude(&toolbar, true)?;
             #[cfg(target_os = "macos")]
             {
@@ -731,7 +799,16 @@ async fn prepare_windows(
                     .set_position(tauri::PhysicalPosition::new(x as i32, y as i32))
                     .map_err(|_| "无法放置录屏控制条")?;
             }
-            toolbar.show().map_err(|_| "无法显示录屏控制条")?;
+            #[cfg(windows)]
+            let show_hud = if shared {
+                let display = crate::shared_capture_windows::Rect::new(config.origin_x, config.origin_y,
+                    config.monitor_width, config.monitor_height)?;
+                let work = crate::shared_capture_windows::work_area(&toolbar, display)?;
+                crate::shared_capture_windows::place_hud(&toolbar, roi, work, f8)?
+            } else { true };
+            #[cfg(not(windows))]
+            let show_hud = true;
+            if show_hud { toolbar.show().map_err(|_| "无法显示录屏控制条")?; }
             Ok(())
         })();
         let _ = send.send(result);
@@ -751,18 +828,49 @@ async fn finish(app: &AppHandle, id: &str, result: Result<(), String>) {
     );
     let (send, receive) = tokio::sync::oneshot::channel();
     let target = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(toolbar) = target.get_webview_window(LABEL) {
-            let _ = toolbar.destroy();
-        }
-        if let Some(main) = target.get_webview_window("space") {
-            let _ = main.set_ignore_cursor_events(false);
-            let _ = main.set_focusable(true);
-            let _ = crate::capture_visibility::apply(&main);
-        }
-        let _ = send.send(());
+    #[cfg(windows)]
+    let restore_id = id.to_owned();
+    let dispatched = app.run_on_main_thread(move || {
+        #[cfg(windows)]
+        let restored = (|| {
+            let session = {
+                let state = target.state::<RecordingState>();
+                let mut slot = state.0.lock().map_err(|_| "录屏状态不可用")?;
+                slot.as_mut().filter(|active| active.status.id == restore_id)
+                    .and_then(|active| active.capture_session.take())
+            };
+            session.map_or(Ok(()), crate::shared_capture_windows::finish)
+        })();
+        #[cfg(not(windows))]
+        let restored: Result<(), String> = (|| {
+            if let Some(toolbar) = target.get_webview_window(LABEL) { let _ = toolbar.destroy(); }
+            if let Some(main) = target.get_webview_window("space") {
+                let _ = main.set_ignore_cursor_events(false);
+                let _ = main.set_focusable(true);
+                crate::capture_visibility::apply(&main)?;
+            }
+            Ok(())
+        })();
+        let _ = send.send(restored);
     });
-    let _ = receive.await;
+    let restored = match dispatched {
+        Ok(()) => receive.await.unwrap_or_else(|_| Err("录屏窗口恢复中断".into())),
+        Err(_) => Err("无法恢复录屏窗口".into()),
+    };
+    #[cfg(windows)]
+    let restored = {
+        // A rejected/discarded dispatch can leave the lease inside Active.
+        // Take that exact operation's remainder before clearing Active, and
+        // only transfer it to debt here; restoration belongs to the HWND thread.
+        let residual = (|| -> Result<_, String> {
+            let state = app.state::<RecordingState>();
+            let mut slot = state.0.lock().map_err(|_| "录屏状态不可用")?;
+            Ok(slot.as_mut().filter(|active| active.status.id == id)
+                .and_then(|active| active.capture_session.take()))
+        })();
+        let deferred = residual.and_then(|session| session.map_or(Ok(()), crate::shared_capture_windows::defer));
+        restored.and(deferred)
+    };
     let mut reveal = false;
     if let Ok(mut state) = app.state::<RecordingState>().0.lock() {
         if state.as_ref().is_some_and(|a| a.status.id == id) {
@@ -774,10 +882,12 @@ async fn finish(app: &AppHandle, id: &str, result: Result<(), String>) {
             emit(app, &None);
         }
     }
-    if reveal {
+    if reveal && restored.is_ok() {
         crate::show(app);
     }
-    if let Err(error) = result {
+    // The original worker result remains available for shutdown. Recovery debt
+    // blocks new work; after READY normal OS exit may discard display leases.
+    if let Err(error) = restored.and(result) {
         let _ = app.emit_to("space", "host-error", error);
     }
 }
@@ -817,6 +927,44 @@ fn escape_down() -> bool {
         false
     }
 }
+#[cfg(windows)]
+fn edit_capture_session(state: &RecordingState, id: &str,
+    edit: impl FnOnce(&mut crate::shared_capture_windows::Session) -> Result<(), String>) -> Result<(), String> {
+    let mut session = {
+        let mut slot = state.0.lock().map_err(|_| "录屏状态不可用")?;
+        slot.as_mut().filter(|active| active.status.id == id)
+            .and_then(|active| active.capture_session.take()).ok_or("录屏已结束")?
+    };
+    // Native mutations can synchronously reenter window callbacks. Active's
+    // mutex must be free until the exact same operation receives its lease back.
+    let result = edit(&mut session);
+    let mut remaining = Some(session);
+    let stored = match state.0.lock() {
+        Ok(mut slot) => match slot.as_mut().filter(|active| active.status.id == id) {
+            Some(active) if active.capture_session.is_none() => {
+                active.capture_session = remaining.take(); true
+            }
+            _ => false,
+        },
+        Err(_) => false,
+    };
+    if !stored {
+        if let Some(session) = remaining { crate::shared_capture_windows::defer(session)?; }
+        return Err("录屏已改变，窗口恢复待完成".into());
+    }
+    result
+}
+#[cfg(windows)]
+fn verify_capture(app: &AppHandle, id: &str) -> Result<(), String> {
+    let target = app.clone();
+    let id = id.to_owned();
+    crate::shared_capture_windows::check(app, move || {
+        let state = target.state::<RecordingState>();
+        let active = state.0.lock().map_err(|_| "录屏状态不可用")?;
+        active.as_ref().filter(|active| active.status.id == id)
+            .and_then(|active| active.capture_session.as_ref()).ok_or("录屏已结束")?.verify()
+    })
+}
 fn supervise(
     app: &AppHandle,
     id: &str,
@@ -852,9 +1000,18 @@ fn supervise(
         crate::recording_worker::MacStage::CountdownComplete,
         crate::recording_worker::MacOutcome::Ok,
     );
+    #[cfg(windows)]
+    verify_capture(app, id)?;
+    #[cfg(windows)]
+    let mut last_verified = Instant::now();
     crate::recording_worker::run(
         config,
         || {
+            #[cfg(windows)]
+            if last_verified.elapsed() >= Duration::from_millis(100) {
+                verify_capture(app, id)?;
+                last_verified = Instant::now();
+            }
             let down = escape_down();
             let esc = down && !escape;
             escape = down;
@@ -996,6 +1153,8 @@ mod tests {
     fn disabling_recording_stops_an_active_silent_capture() {
         let commands = Arc::new(crate::recording_worker::ControlBus::default());
         let mut active = Active {
+            #[cfg(windows)]
+            capture_session: None,
             status: Status {
                 id: "synthetic".into(),
                 scene_id: "scene".into(),
@@ -1038,6 +1197,8 @@ mod tests {
         let state = RecordingState::default();
         let send = Arc::new(crate::recording_worker::ControlBus::default());
         *state.0.lock().unwrap() = Some(Active {
+            #[cfg(windows)]
+            capture_session: None,
             status: Status {
                 id: "current".into(),
                 scene_id: "scene".into(),

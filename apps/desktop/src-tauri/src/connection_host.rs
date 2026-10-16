@@ -24,6 +24,7 @@ const MAX_PROBES: usize = 4;
 const MAX_REQUEST_IDS: usize = 512;
 const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 const MAX_MODELS: usize = 5000;
+const MAX_CATALOG_REQUESTS: usize = 20;
 
 #[tauri::command]
 pub fn get_provider_presets(app: AppHandle) -> Result<Vec<crate::plugins::ModelConnectionPreset>, String> {
@@ -370,9 +371,11 @@ fn recheck_probe(app: &AppHandle, id: &str, expected: Option<u64>) -> Result<(),
     current_profile(&app.state::<Host>().lock()?.store, id, expected).map(|_| ())
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelCatalog {
     models: Vec<String>,
+    resolved_base_url: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -398,11 +401,18 @@ pub async fn discover_connection_models(
         api_key.map(Zeroizing::new),
     )?;
     let work = async {
-        let models = discover_models(&profile, &key).await?;
+        let catalog = discover_models(&profile, &key).await?;
         recheck_probe(&app, &profile.id, expected_revision)?;
-        Ok(ModelCatalog { models })
+        Ok(catalog)
     };
-    tokio::select! { biased; _ = &mut canceled => Err("请求已取消".into()), result = tokio::time::timeout(PROBE_TIMEOUT, work) => result.map_err(|_| "获取模型列表超时".to_string())? }
+    run_catalog_probe(&mut canceled, work).await
+}
+
+async fn run_catalog_probe(
+    canceled: &mut oneshot::Receiver<()>,
+    work: impl std::future::Future<Output = Result<ModelCatalog, String>>,
+) -> Result<ModelCatalog, String> {
+    tokio::select! { biased; _ = canceled => Err("请求已取消".into()), result = tokio::time::timeout(PROBE_TIMEOUT, work) => result.map_err(|_| "获取模型列表超时".to_string())? }
 }
 
 #[tauri::command]
@@ -484,59 +494,144 @@ fn client(url: &url::Url) -> Result<reqwest::Client, String> {
     builder.build().map_err(|_| "无法创建连接".into())
 }
 
-async fn discover_models(profile: &ConnectionProfile, key: &str) -> Result<Vec<String>, String> {
-    let mut url = provider_transport::models_endpoint(profile)?;
-    let client = client(&url)?;
-    let transport = transport_for(profile)?;
-    if profile.advanced.protocol == ConnectionProtocol::AnthropicMessages {
-        url.query_pairs_mut().append_pair("limit", "1000");
-    }
-    let mut models = BTreeSet::new();
-    let mut cursors = BTreeSet::new();
-    let mut bytes_read = 0usize;
-    for _ in 0..20 {
-        let response = provider_transport::authenticate(client.get(url.clone()), &transport, key)
-            .send()
-            .await
-            .map_err(|_| "获取模型列表失败，请检查地址与网络")?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "获取模型列表失败（HTTP {}）",
-                response.status().as_u16()
-            ));
+#[derive(Default)]
+struct CatalogBudget {
+    requests: usize,
+    bytes: usize,
+}
+impl CatalogBudget {
+    fn request(&mut self) -> Result<(), String> {
+        if self.requests >= MAX_CATALOG_REQUESTS {
+            return Err("模型列表分页过多，请手动填写模型名称".into());
         }
-        if response
-            .content_length()
-            .is_some_and(|n| n > (MAX_CATALOG_BYTES - bytes_read) as u64)
-        {
+        self.requests += 1;
+        Ok(())
+    }
+}
+enum CatalogPage {
+    Models(Value),
+    NotFound,
+    Html,
+}
+fn html_landing_page(bytes: &[u8]) -> bool {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let head = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let head = &bytes[head..bytes.len().min(head + 32)];
+    [b"<!doctype html".as_slice(), b"<html".as_slice()]
+        .iter()
+        .any(|prefix| {
+            head.get(..prefix.len())
+                .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+                && head
+                    .get(prefix.len())
+                    .is_some_and(|b| b.is_ascii_whitespace() || *b == b'>')
+        })
+}
+async fn catalog_page(
+    response: reqwest::Response,
+    budget: &mut CatalogBudget,
+) -> Result<CatalogPage, String> {
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        // A wrong endpoint's error body is never read or disclosed.
+        return Ok(CatalogPage::NotFound);
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "获取模型列表失败（HTTP {}）",
+            response.status().as_u16()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|n| n > (MAX_CATALOG_BYTES - budget.bytes) as u64)
+    {
+        return Err("模型列表过大，请手动填写模型名称".into());
+    }
+    let declared_html = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|mime| {
+            mime.trim().eq_ignore_ascii_case("text/html")
+                || mime.trim().eq_ignore_ascii_case("application/xhtml+xml")
+        });
+    let mut chunks = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk.map_err(|_| "读取模型列表失败")?;
+        budget.bytes = budget.bytes.saturating_add(chunk.len());
+        if budget.bytes > MAX_CATALOG_BYTES {
             return Err("模型列表过大，请手动填写模型名称".into());
         }
-        let mut chunks = response.bytes_stream();
-        let mut bytes = Vec::new();
-        while let Some(chunk) = chunks.next().await {
-            let chunk = chunk.map_err(|_| "读取模型列表失败")?;
-            bytes_read = bytes_read.saturating_add(chunk.len());
-            if bytes_read > MAX_CATALOG_BYTES {
-                return Err("模型列表过大，请手动填写模型名称".into());
-            }
-            bytes.extend_from_slice(&chunk);
+        bytes.extend_from_slice(&chunk);
+    }
+    // Some compatible gateways mislabel valid JSON as text/html. JSON syntax
+    // wins; its schema is still validated without retrying another endpoint.
+    match serde_json::from_slice(&bytes) {
+        Ok(page) => Ok(CatalogPage::Models(page)),
+        Err(_) if declared_html || html_landing_page(&bytes) => Ok(CatalogPage::Html),
+        Err(_) => Err("服务返回的模型列表格式无效".into()),
+    }
+}
+
+async fn discover_models(profile: &ConnectionProfile, key: &str) -> Result<ModelCatalog, String> {
+    let endpoints = provider_transport::model_catalog_endpoints(profile)?;
+    let client = client(&endpoints[0].url)?;
+    let transport = transport_for(profile)?;
+    let mut budget = CatalogBudget::default();
+    'candidate: for (index, endpoint) in endpoints.iter().enumerate() {
+        let mut url = endpoint.url.clone();
+        if profile.advanced.protocol == ConnectionProtocol::AnthropicMessages {
+            url.query_pairs_mut().append_pair("limit", "1000");
         }
-        let page: Value =
-            serde_json::from_slice(&bytes).map_err(|_| "服务返回的模型列表格式无效")?;
-        let cursor = parse_models_page(&page, &mut models)?;
-        match cursor {
-            None => return Ok(models.into_iter().collect()),
-            Some(cursor) if cursors.insert(cursor.clone()) => {
-                // Cursor is data, never a URL supplied by a remote server.
-                url.set_query(None);
-                url.query_pairs_mut()
-                    .append_pair("limit", "1000")
-                    .append_pair("after_id", &cursor);
+        let mut models = BTreeSet::new();
+        let mut cursors = BTreeSet::new();
+        let mut first_page = true;
+        loop {
+            budget.request()?;
+            let response =
+                provider_transport::authenticate(client.get(url.clone()), &transport, key)
+                    .send()
+                    .await
+                    .map_err(|_| "获取模型列表失败，请检查地址与网络")?;
+            let page = match catalog_page(response, &mut budget).await? {
+                CatalogPage::Models(page) => page,
+                mismatch => {
+                    if first_page && index + 1 < endpoints.len() {
+                        continue 'candidate;
+                    }
+                    return Err(match mismatch {
+                        CatalogPage::NotFound => "获取模型列表失败（HTTP 404）",
+                        _ => "服务返回的模型列表格式无效",
+                    }
+                    .into());
+                }
+            };
+            let cursor = parse_models_page(&page, &mut models)?;
+            match cursor {
+                None => {
+                    return Ok(ModelCatalog {
+                        models: models.into_iter().collect(),
+                        resolved_base_url: endpoint.base_url.clone(),
+                    })
+                }
+                Some(cursor) if cursors.insert(cursor.clone()) => {
+                    // Cursor is data, never a URL supplied by a remote server.
+                    url.set_query(None);
+                    url.query_pairs_mut()
+                        .append_pair("limit", "1000")
+                        .append_pair("after_id", &cursor);
+                    first_page = false;
+                }
+                Some(_) => return Err("模型列表分页重复，请手动填写模型名称".into()),
             }
-            Some(_) => return Err("模型列表分页重复，请手动填写模型名称".into()),
         }
     }
-    Err("模型列表分页过多，请手动填写模型名称".into())
+    Err("服务返回的模型列表格式无效".into())
 }
 
 fn parse_models_page(

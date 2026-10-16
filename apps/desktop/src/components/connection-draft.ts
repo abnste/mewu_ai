@@ -1,7 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { ConnectionProfile } from '../contracts';
+import { validateConnectionProfile } from '../connection-policy';
 export interface ConnectionDraft { profile: ConnectionProfile; parametersText: string; key: string; clearKey: boolean; expectedRevision?: number; isNew: boolean; dirty: boolean }
 export const connectionDraft = (profile: ConnectionProfile): ConnectionDraft => ({ profile: structuredClone(profile), parametersText: JSON.stringify(profile.advanced.requestParameters, null, 2), key: '', clearKey: false, expectedRevision: profile.revision, isNew: false, dirty: false });
+
+/** Discovery changes only this exact visible draft; saving remains explicit. */
+export function applyModelCatalogToDraft(submitted: ConnectionDraft, current: ConnectionDraft, resolvedBaseUrl: string): ConnectionDraft {
+  if (submitted !== current) return current;
+  const previous = submitted.profile.baseUrl.trim().replace(/\/+$/, '');
+  if (resolvedBaseUrl === previous) return current;
+  const profile = { ...submitted.profile, baseUrl: resolvedBaseUrl };
+  validateConnectionProfile(profile, false);
+  const from = new URL(submitted.profile.baseUrl), to = new URL(resolvedBaseUrl);
+  if (from.pathname !== '/' || submitted.profile.advanced.requestPath?.trim() || from.origin !== to.origin || !['/v1', '/api/v1'].includes(to.pathname)) throw Error('模型目录返回的 API 地址无效');
+  return { ...submitted, profile, dirty: true };
+}
 
 export function settleConnectionSave(submitted: ConnectionDraft, current: ConnectionDraft, latest?: ConnectionProfile): ConnectionDraft {
   const ownRevision = (submitted.expectedRevision ?? 0) + 1;
