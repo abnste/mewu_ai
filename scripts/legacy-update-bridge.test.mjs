@@ -41,6 +41,7 @@ function fixture(version = '1.0.0-preview.4') {
     readBridgeAsset: async (release, name) => { calls.push({ action: 'authenticated-draft-read', id: release.id, name }); return Buffer.from(downloads.get(plan.aliasUrl)); },
     publishLatest: async (id, body) => {
       calls.push({ action: 'publish-latest', id, body: clone(body) }); assert.equal(state.bridge.assets.length, 1);
+      assert.equal(body.tag_name, plan.tag); assert.equal(body.target_commitish, plan.targetCommit);
       assert.ok(calls.some(c => c.action === 'authenticated-draft-read') || !state.bridge.draft);
       state.bridge.draft = false; state.bridge.assets[0].browser_download_url = plan.aliasUrl;
       state.latest = clone(state.bridge); state.refs[plan.tag] = plan.targetCommit; await state.afterPublish?.();
@@ -74,7 +75,7 @@ test('first publication authenticates the draft, verifies uploaded bytes, then e
   const f = fixture(), before = clone({ source: f.state.source, channel: f.state.channel, master: f.state.master });
   const result = await f.run(); assert.equal(result.originalBytesUnchanged, true); assert.equal(result.actualProductVersion, '1.0.0-preview.4');
   assert.deepEqual(mutations(f).map(c => c.action), ['draft', 'upload', 'publish-latest']);
-  assert.equal(mutations(f)[0].body.make_latest, 'false'); assert.deepEqual(mutations(f).at(-1).body, { draft: false, prerelease: false, make_latest: 'true' });
+  assert.equal(mutations(f)[0].body.make_latest, 'false'); assert.deepEqual(mutations(f).at(-1).body, { tag_name: f.plan.tag, target_commitish: f.plan.targetCommit, draft: false, prerelease: false, make_latest: 'true' });
   const auth = f.calls.findIndex(c => c.action === 'authenticated-draft-read'), publish = f.calls.findIndex(c => c.action === 'publish-latest');
   assert.ok(auth < publish); assert.ok(f.calls.slice(publish + 1).some(c => c.action === 'anonymous-read' && c.url === f.plan.aliasUrl));
   assert.deepEqual({ source: f.state.source, channel: f.state.channel, master: f.state.master }, before);

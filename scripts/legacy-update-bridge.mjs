@@ -160,7 +160,7 @@ export async function publishLegacyBridge({ request, github, download, assertSou
   const latestState = await verifyLatest(github, await github.latest(), bridge, plan);
   if (bridge.draft || latestState !== 'bridge') {
     // This is the only operation that exposes the numeric entry to old clients.
-    await github.publishLatest(bridge.id, { draft: false, prerelease: false, make_latest: 'true' });
+    await github.publishLatest(bridge.id, { tag_name: plan.tag, target_commitish: plan.targetCommit, draft: false, prerelease: false, make_latest: 'true' });
   }
   bridge = await github.release(plan.tag);
   await verifyBridge(github, bridge, plan, true);
