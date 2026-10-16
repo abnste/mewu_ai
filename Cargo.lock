@@ -3217,7 +3217,7 @@ dependencies = [
 
 [[package]]
 name = "mewu-core"
-version = "1.0.0-preview.4"
+version = "1.0.0"
 dependencies = [
  "rusqlite",
  "serde",
@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "mewu-desktop"
-version = "1.0.0-preview.4"
+version = "1.0.0"
 dependencies = [
  "arboard",
  "async-io",
@@ -3320,7 +3320,7 @@ dependencies = [
 
 [[package]]
 name = "mewu-extension"
-version = "1.0.0-preview.4"
+version = "1.0.0"
 dependencies = [
  "rquickjs",
  "semver",

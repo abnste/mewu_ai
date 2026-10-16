@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { platforms, requiredChecks, releasePlan, updateUrl, fingerprint, verifyRelease, verifySignatureVersion, releaseVersion, compareReleaseVersions, validateChannelAdvance } from './release-contract.mjs';
+import { platforms, requiredChecks, releasePlan, updateUrl, fingerprint, verifyRelease, verifySignatureVersion, releaseVersion, compareReleaseVersions, validateChannelAdvance, publicationPolicy, validateUpdateConfiguration } from './release-contract.mjs';
+import { compareLegacyVersions } from './legacy-update-bridge.mjs';
 const version = '1.0.0-preview.3', commit = 'a'.repeat(40);
 const signature = Buffer.from(`untrusted comment: fixture\nfixture\ntrusted comment: timestamp:1\tversion:${version}\nfixture\n`).toString('base64');
-function fixture(callback) {
+function fixture(callback, candidateVersion = version) {
+  const version = candidateVersion;
+  const signature = Buffer.from(`untrusted comment: fixture\nfixture\ntrusted comment: timestamp:1\tversion:${version}\nfixture\n`).toString('base64');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mewu-release-gate-'));
   try {
     const plan = releasePlan(version), manifest = { version, platforms: {} }, acceptance = { sourceCommit: commit, version, platforms: {} };
@@ -91,3 +94,44 @@ test('update channel cannot downgrade or change same-version bytes', () => fixtu
   assert.throws(() => validateChannelAdvance(manifest, changed));
   validateChannelAdvance({ version: '1.0.0-preview.2', platforms: {} }, manifest);
 }));
+
+test('stable 1.0.0 needs matching stable packages, native receipts and signature version', () => fixture(({ directory, manifest, acceptance }) => {
+  const release = verifyRelease(directory, manifest, acceptance, commit);
+  assert.equal(release.tag, 'v1.0.0'); assert.equal(release.assets.length, 4);
+  assert.ok(release.assets.every(name => name.includes('1.0.0-') && !name.includes('preview') && !name.endsWith('.sig')));
+  const oldSignature = Buffer.from('untrusted comment: fixture\nfixture\ntrusted comment: version:1.0.0-preview.4\nfixture\n').toString('base64');
+  manifest.platforms['windows-x86_64'].signature = oldSignature;
+  assert.throws(() => verifyRelease(directory, manifest, acceptance, commit), /Signature does not bind/);
+}, '1.0.0'));
+
+test('stable publication explicitly selects GitHub latest and advances both fixed feeds', () => {
+  const stable = publicationPolicy('1.0.0');
+  assert.equal(stable.prerelease, false); assert.deepEqual(stable.latestArguments, ['--latest']);
+  assert.deepEqual(stable.feeds, ['preview.json', 'latest.json']);
+  assert.equal(stable.clientEndpoint, 'https://github.com/abnste/mewu_ai/releases/download/update-channel/latest.json');
+  assert.deepEqual(publicationPolicy('1.0.1').feeds, stable.feeds);
+  const preview = publicationPolicy('1.1.0-preview.1');
+  assert.equal(preview.prerelease, true); assert.deepEqual(preview.latestArguments, ['--latest=false']);
+  assert.deepEqual(preview.feeds, ['preview.json']); assert.ok(preview.clientEndpoint.endsWith('/preview.json'));
+});
+
+test('source version must select its own fixed signed channel before staging or publication', () => {
+  for (const version of ['1.0.0-preview.4', '1.0.0', '1.0.1']) {
+    const config = { version, plugins: { updater: { endpoints: [publicationPolicy(version).clientEndpoint], requireSignedVersion: true } } };
+    assert.deepEqual(validateUpdateConfiguration(config), publicationPolicy(version));
+    for (const mutate of [c => c.plugins.updater.requireSignedVersion = false, c => c.plugins.updater.endpoints.reverse().push('https://example.com/feed'), c => c.plugins.updater.endpoints[0] = publicationPolicy(version.includes('-') ? '1.0.0' : '1.1.0-preview.1').clientEndpoint]) {
+      const wrong = structuredClone(config); mutate(wrong);
+      assert.throws(() => validateUpdateConfiguration(wrong), /fixed signed release channel/);
+    }
+  }
+});
+
+test('legacy numeric bridge is not a product SemVer or the installed legacy current version', () => {
+  // Original dotnet ApplicationUpdateService.cs compares only latestVersion to
+  // currentVersion (the installed assembly), never to a previously seen tag.
+  assert.equal(compareLegacyVersions('v1.0.0.4', 'v1.0.0'), 1);
+  assert.equal(compareLegacyVersions('v1.0.0', 'v0.7.4.0'), 1);
+  assert.equal(compareReleaseVersions('1.0.0', '1.0.0-preview.4'), 1);
+  assert.throws(() => releaseVersion('1.0.0.4'), /Invalid release version/);
+  assert.deepEqual(publicationPolicy('1.0.0').latestArguments, ['--latest']);
+});

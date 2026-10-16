@@ -1,6 +1,6 @@
 {
   "name": "mewu-workspace",
-  "version": "1.0.0-preview.4",
+  "version": "1.0.0",
   "private": true,
   "workspaces": [
     "apps/desktop"

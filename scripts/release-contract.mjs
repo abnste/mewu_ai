@@ -10,6 +10,23 @@ export function releaseVersion(version) {
   if (typeof version !== 'string' || version.length > 64 || !/^1\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:preview|alpha|beta|rc)\.(?:0|[1-9]\d*))?$/.test(version)) throw Error('Invalid release version');
   return version;
 }
+// Installed previews keep their original fixed feed when moving to stable.
+// Stable clients use latest.json; every stable publication advances both feeds.
+export function publicationPolicy(version) {
+  releaseVersion(version);
+  const prerelease = version.includes('-');
+  return {
+    prerelease,
+    latestArguments: prerelease ? ['--latest=false'] : ['--latest'],
+    feeds: prerelease ? ['preview.json'] : ['preview.json', 'latest.json'],
+    clientEndpoint: `https://github.com/${repository}/releases/download/update-channel/${prerelease ? 'preview.json' : 'latest.json'}`,
+  };
+}
+export function validateUpdateConfiguration(config) {
+  const policy = publicationPolicy(config?.version), updater = config?.plugins?.updater;
+  if (updater?.requireSignedVersion !== true || !Array.isArray(updater.endpoints) || updater.endpoints.length !== 1 || updater.endpoints[0] !== policy.clientEndpoint) throw Error('Source updater must use the fixed signed release channel for its actual product version');
+  return policy;
+}
 // SemVer precedence for the intentionally restricted public release grammar.
 export function compareReleaseVersions(left, right) {
   const parse = value => { releaseVersion(value); return /^1\.(\d+)\.(\d+)(?:-(preview|alpha|beta|rc)\.(\d+))?$/.exec(value); };

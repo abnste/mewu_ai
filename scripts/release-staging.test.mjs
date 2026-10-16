@@ -8,9 +8,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { platforms, requiredChecks, fingerprint, releasePlan, updateUrl, verifyRelease } from './release-contract.mjs';
-const version = '1.0.0-preview.3', scripts = path.dirname(fileURLToPath(import.meta.url));
-function fixture(run) {
+import { platforms, requiredChecks, fingerprint, releasePlan, updateUrl, verifyRelease, publicationPolicy } from './release-contract.mjs';
+const baselineVersion = '1.0.0-preview.3', scripts = path.dirname(fileURLToPath(import.meta.url));
+function fixture(run, version = baselineVersion) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'mewu-staging-')), root = path.join(parent, 'repo');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   try {
@@ -18,7 +18,7 @@ function fixture(run) {
     fs.mkdirSync(path.join(root, 'apps/desktop/src-tauri'), { recursive: true });
     fs.mkdirSync(path.join(root, 'docs'));
     fs.writeFileSync(path.join(root, '.gitignore'), 'out/\n');
-    fs.writeFileSync(path.join(root, 'apps/desktop/src-tauri/tauri.conf.json'), JSON.stringify({ version }));
+    fs.writeFileSync(path.join(root, 'apps/desktop/src-tauri/tauri.conf.json'), JSON.stringify({ version, plugins: { updater: { endpoints: [publicationPolicy(version).clientEndpoint], requireSignedVersion: true } } }));
     fs.writeFileSync(path.join(root, 'LICENSE'), 'fixture license');
     fs.writeFileSync(path.join(root, 'apps/desktop/THIRD-PARTY-NOTICES'), 'fixture notices');
     fs.writeFileSync(path.join(root, `docs/release-notes-${version}.md`), '# Test fixture, never publish\n');
@@ -34,7 +34,7 @@ function fixture(run) {
     fs.rmSync(resolved, { recursive: true });
   }
 }
-test('Mac and Linux staging never copy adjacent private files; assembly binds both with Windows receipt', () => fixture(({ parent, root, commit, node }) => {
+for (const version of [baselineVersion, '1.0.0']) test(`${version}: staging excludes private files and assembles three exact native receipts`, () => fixture(({ parent, root, commit, node }) => {
   const plan = releasePlan(version), request = { inputs: {}, receipts: {}, output: 'out/combined' };
   for (const platform of platforms) {
     const bundle = path.join(parent, platform); fs.mkdirSync(bundle);
@@ -73,4 +73,14 @@ test('Mac and Linux staging never copy adjacent private files; assembly binds bo
   delete acceptance.platforms['linux-x86_64']; fs.writeFileSync(path.join(meta, 'acceptance.json'), JSON.stringify(acceptance));
   const rejected = node('publish-release.mjs', [directory]); assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr, /Missing three-platform acceptance/);
-}));
+}, version));
+
+test('stable staging with a preview endpoint fails before reading installers or invoking GitHub', () => fixture(({ root, node }) => {
+  const configFile = path.join(root, 'apps/desktop/src-tauri/tauri.conf.json');
+  const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  config.plugins.updater.endpoints = [publicationPolicy(baselineVersion).clientEndpoint];
+  fs.writeFileSync(configFile, JSON.stringify(config));
+  const rejected = node('prepare-release.mjs', ['out/refused', 'linux-x86_64']);
+  assert.notEqual(rejected.status, 0); assert.match(rejected.stderr, /fixed signed release channel/);
+  assert.equal(fs.existsSync(path.join(root, 'out')), false);
+}, '1.0.0'));

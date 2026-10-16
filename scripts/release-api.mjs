@@ -28,3 +28,18 @@ export function verifyReleaseTarget(gh, repository, release, tag, commit, previe
   }
   if (ref.object?.type !== 'commit' || ref.object.sha !== commit) throw Error('Existing release tag source differs');
 }
+
+// The original 0.7.4 updater reads /latest rather than the Tauri JSON feed.
+// Confirm explicit stable selection, even if an archived numeric bridge tag
+// sorts above the real product version under System.Version.
+export async function verifyStableLatest(gh, repository, expected, { pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
+  if (!expected || !Number.isSafeInteger(expected.id) || expected.id < 1 || expected.draft !== false || expected.prerelease !== false) throw Error('Published stable release required for latest verification');
+  // Publishing can become visible before the /latest read replica catches up.
+  // Re-read only: four checks, 500 ms apart, with no second publish or upload.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const latest = read(gh, `repos/${repository}/releases/latest`);
+    if (latest?.id === expected.id && latest.tag_name === expected.tag_name && latest.draft === false && latest.prerelease === false) return latest;
+    if (attempt < 3) await pause(500);
+  }
+  throw Error('GitHub latest does not identify the published stable release');
+}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MewuAI",
-  "version": "1.0.0-preview.4",
+  "version": "1.0.0",
   "identifier": "dev.mewu.remake",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -78,7 +78,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDAyQkRGNDMyOUNEMDYwOTEKUldTUllOQ2NNdlM5QWl0a2NpMER5cURVNkk0Y2NIS3h1WkZ4WXZnT0NBYyszaDdQa05ZRVI2dlQK",
       "endpoints": [
-        "https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json"
+        "https://github.com/abnste/mewu_ai/releases/download/update-channel/latest.json"
       ],
       "windows": {
         "installMode": "passive"

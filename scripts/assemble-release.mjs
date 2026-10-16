@@ -3,11 +3,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { platforms, releaseVersion, releasePlan, updateUrl, fingerprint, verifySignatureVersion, validateAcceptance, verifyRelease } from './release-contract.mjs';
+import { platforms, releaseVersion, releasePlan, updateUrl, fingerprint, verifySignatureVersion, validateAcceptance, verifyRelease, validateUpdateConfiguration } from './release-contract.mjs';
 const root = fs.realpathSync(process.cwd());
 if (!process.argv[2]) throw Error('A private three-platform assembly plan is required');
 const request = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const version = releaseVersion(JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8')).version), plan = releasePlan(version);
+const config = JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
+validateUpdateConfiguration(config);
+const version = releaseVersion(config.version), plan = releasePlan(version);
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 if (!/^[a-f0-9]{40}$/.test(commit) || execFileSync('git', ['status', '--porcelain', '-z']).length) throw Error('Source must be clean and committed');
 for (const field of ['inputs', 'receipts']) if (Object.keys(request[field] || {}).sort().join() !== [...platforms].sort().join()) throw Error('Three platform inputs and receipts required');

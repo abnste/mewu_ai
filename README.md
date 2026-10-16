@@ -3,19 +3,19 @@
   <h1>MewuAI — Capture and AI Space</h1>
   <p>An open-source desktop space for screenshots, conversations, annotations and interactive AI results.</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.4"><img src="https://img.shields.io/badge/Preview-1.0.0--preview.4-7C6CF0?style=flat-square" alt="1.0.0-preview.4" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/Stable-1.0.0-7C6CF0?style=flat-square" alt="1.0.0" /></a>
     <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows x64" />
     <img src="https://img.shields.io/badge/macOS-ARM64-555555?style=flat-square" alt="macOS ARM64" />
     <img src="https://img.shields.io/badge/Linux-x64-E95420?style=flat-square" alt="Linux x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.4/MewuAI-Remake-Setup-1.0.0-preview.4-win-x64.exe"><strong>Windows installer</strong></a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.4/MewuAI-Remake-Portable-1.0.0-preview.4-win-x64.zip">Windows portable ZIP</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.4/MewuAI-Remake-1.0.0-preview.4-mac-arm64.dmg">macOS ARM64</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.4/MewuAI-Remake-1.0.0-preview.4-linux-x64.AppImage">Linux x64</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-Setup-1.0.0-win-x64.exe"><strong>Windows installer</strong></a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-Portable-1.0.0-win-x64.zip">Windows portable ZIP</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-1.0.0-mac-arm64.dmg">macOS ARM64</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-1.0.0-linux-x64.AppImage">Linux x64</a>
   </p>
-  <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./docs/release-notes-1.0.0-preview.4.md">Release notes</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
+  <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./docs/release-notes-1.0.0.md">Release notes</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
 
 **MewuAI (喵呜AI)** is an open-source **capture and AI space for Windows, macOS and Linux**. A shortcut opens the capture overlay itself: select regions, draw, pin images, add files and ask questions in the conversation bar. Interactive HTML/SVG/Canvas results can live alongside screenshots and videos on the same surface.
@@ -28,16 +28,16 @@
 | Core workflow | Capture → annotate/copy/save, or reference content → ask AI → interact with results |
 | Without an AI key | Capture and built-in drawing/recording remain available; the conversation bar appears after configuring a model or explicitly binding an independent Agent provider |
 | AI and plugins | Your model connections, permission-checked executable plugins, independent Agent and memory providers |
-| Source and downloads | [Preview 4](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.4) · [Community plugin market](https://github.com/abnste/mewu-plugins) |
+| Source and downloads | [1.0.0](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0) · [Community plugin market](https://github.com/abnste/mewu-plugins) |
 | License | [MPL-2.0](./LICENSE); [full third-party notices](./apps/desktop/THIRD-PARTY-NOTICES) |
 
-**Preview 4 is published.** It adds executable API 2 plugins and the GitHub community market while retaining Mewu's capture workflow. It also includes pixel/object erasers, three directly accessible recent colors, conversation-bar hiding and video seek/trim fixes. See the [release notes](./docs/release-notes-1.0.0-preview.4.md).
+**MewuAI 1.0.0** is the remake's first stable release. It retains the capture workflow, executable API 2 plugins and GitHub community market developed through preview 4, including pixel/object erasers, three recent colors, conversation-bar hiding and video seek/trim fixes. See the [release notes](./docs/release-notes-1.0.0.md).
 
 The remake is maintained on **[master](https://github.com/abnste/mewu_ai/tree/master)**. The original Windows **.NET/WPF 0.7.x** code and documentation remain on **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**. The remake uses **Rust + Tauri 2 + Solid/TypeScript + SQLite** and the system webview; it does not use Electron.
 
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-en.png"><img src="./docs/images/mewuai-cover-web-en.png" width="100%" alt="MewuAI concept cover: capture, ask and annotate on a Windows desktop" /></a>
-  <br /><sub>AI-generated concept cover from the .NET version. The gallery below contains historical .NET demonstrations, not preview 4 screenshots.</sub>
+  <br /><sub>AI-generated concept cover from the .NET version. The gallery below contains historical .NET demonstrations, not current 1.0 screenshots.</sub>
 </p>
 
 
@@ -50,7 +50,7 @@ The remake is maintained on **[master](https://github.com/abnste/mewu_ai/tree/ma
 - **Conversation in the capture space:** Reference screenshots, videos or files with @ mentions, then follow up in the ordinary conversation bar. Multiple conversations, minimized sessions, history, Markdown, formulas and collapsible public reasoning are supported. The bar hides when the pointer leaves and preserves the draft when recalled.
 - **Optional Agent and blackboard:** These are official plugins that can be disabled or removed; drawing and recording stay built in. With no ready model or explicitly bound independent Agent, Mewu shows capture controls. An independent provider may operate without a host API key when explicitly configured.
 - **Executable plugins and a real market:** API 2 ES Modules run in separate QuickJS processes. Plugins can register tools, Agent engines, memory providers, models, channels, renderers and UI services through permission-checked host APIs. The [GitHub market](https://github.com/abnste/mewu-plugins) installs real Release ZIPs and shows screenshots, project repositories, versions and package hashes. API 1 declaration packages remain compatible.
-- **Long-term memory as an extension:** Choose Agent and memory providers independently. The official Agent supports persistent local SQLite/FTS5 memory and a Hindsight connection; community providers can supply their own stores. This preview is not a complete replacement for Hermes plus Hindsight or a guarantee of recall quality.
+- **Long-term memory as an extension:** Choose Agent and memory providers independently. The official Agent supports persistent local SQLite/FTS5 memory and a Hindsight connection; community providers can supply their own stores. This release does not promise a complete replacement for Hermes plus Hindsight or guaranteed recall quality.
 
 Build extensions with the [SDK](./packages/sdk/README.md), [extension guide](./docs/extensions.md) and [packaging tools](./tools/extension-market/README.md). Independent examples include the [region Agent](https://github.com/abnste/mewu-plugin-region-agent), [journal memory](https://github.com/abnste/mewu-plugin-journal-memory) and [interactive ruler](https://github.com/abnste/mewu-plugin-interactive-widget). Reference a region and send an instruction in the existing conversation bar; no separate region-task window is needed. The native region-input example currently supports **Windows only**.
 
@@ -86,7 +86,7 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 
 ## Preview
 
-**Historical gallery — original .NET version.** All eight demonstrations below are retained from the original README. They show the project's established feature direction and old interface, not current preview 4 screenshots or a guarantee of remake feature parity.
+**Historical gallery — original .NET version.** All eight demonstrations below are retained from the original README. They show the project's established feature direction and old interface, not current 1.0 screenshots or a guarantee of remake feature parity.
 
 <table>
 <tr>
@@ -149,7 +149,7 @@ The example shows explanations and in-place annotations for a geometry question.
 
 ## Get started
 
-> **Related project:** Our partner [**kangarooking/Ta**](https://github.com/kangarooking/Ta) is also an AI screenshot tool for macOS, with OCR, translation, scrolling capture and annotations. Mewu now has its own macOS ARM64 preview package.
+> **Related project:** Our partner [**kangarooking/Ta**](https://github.com/kangarooking/Ta) is also an AI screenshot tool for macOS, with OCR, translation, scrolling capture and annotations. Mewu also provides a macOS ARM64 package.
 
 1. **Install and open.** Use one of the four downloads above. Windows requires Windows 10 2004 or later and WebView2; macOS uses WKWebView and Linux uses WebKitGTK. No separate .NET installation is required for the remake.
 2. **Capture a region.** Click the tray icon or use the capture shortcut; the Windows default is <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd>. Select an area, then copy, save, annotate or record. Change the shortcut in Settings; Wayland may require desktop permission and shortcut setup.
@@ -167,7 +167,7 @@ New data defaults to `~/.mewu`. Existing remake installations keep their configu
 | Independent Agent | API 2 Agent-provider plugins can use their own runtime, with memory chosen separately. Host-model access uses the current connection and granted permissions. |
 | MCP | Configure local MCP services under **Agent and connections → MCP**; installed plugin tools also join the existing Agent conversation. |
 
-Hermes, ChatGPT Work / Codex, WorkBuddy and MiniMax Code desktop-client adapters are **not included in preview 4**. They remain extension work; general model templates do not mean their proprietary Agent protocols are implemented. Dedicated image/video-generation APIs and device synchronization are also not included. Actual AI annotations depend on model output and need review.
+Hermes, ChatGPT Work / Codex, WorkBuddy and MiniMax Code desktop-client adapters are **not included in 1.0.0**. They remain extension work; general model templates do not mean their proprietary Agent protocols are implemented. Dedicated image/video-generation APIs and device synchronization are also not included. Actual AI annotations depend on model output and need review.
 
 <details>
 <summary>Original .NET desktop-client connection guide</summary>
@@ -214,18 +214,18 @@ Capture and manual drawing are local. Using AI sends the referenced content and 
 <details>
 <summary>How do I update? What if an older version cannot update?</summary>
 
-The remake checks a fixed, version-signed [preview update channel](https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json). **Settings → About** can check and install updates. This endpoint does not depend on branch names: moving the remake from next to master does not change it. Windows portable updates run the installer and switch to the installed application.
+Use **Settings → About** to check and install updates. Stable builds use the fixed, version-signed [stable update channel](https://github.com/abnste/mewu_ai/releases/download/update-channel/latest.json). Existing preview clients retain their [preview endpoint](https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json), which also offers stable 1.0.0; they can upgrade without reinstalling. These endpoints do not depend on branch names. Windows portable updates run the installer and switch to the installed application.
 
-Windows **0.7.4** can use its own About page to discover the [v1.0.0.4 compatibility entry](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0.4). That numeric label only satisfies the old updater: the installer bytes and actual installed version remain **1.0.0-preview.4**. Download and installation each require confirmation; launch from the shortcut afterwards if needed. **0.7.3 and earlier should first install [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4).**
+Windows **0.7.4** can discover stable 1.0.0 in its own About page. Download and installation each require confirmation; launch from the shortcut afterwards if needed. **0.7.3 and earlier should first install [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4).** The earlier [v1.0.0.4 compatibility entry](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0.4) remains available for historical preview 4 downloads; it installs **1.0.0-preview.4**, not a product version named 1.0.0.4.
 
-Supported legacy API connections are imported once; legacy files remain, but old conversation history is not converted and preferences are not fully migrated. See [migration limits](./docs/legacy-updates.md). Release assets expose SHA-256 digests; no separate checksum file is required. The [old changelog](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md) remains available.
+Supported legacy API connections are imported once; legacy files remain, but old conversation history is not converted into the new history UI and preferences are not fully migrated. See the [1.0 upgrade notes](./docs/release-notes-1.0.0.md) and [earlier compatibility-entry details](./docs/legacy-updates.md). Release assets expose SHA-256 digests; no separate checksum file is required. The [old changelog](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md) remains available.
 
 </details>
 
 <details>
 <summary>Having trouble installing or recording?</summary>
 
-Windows packages have no Authenticode certificate yet; updater signature verification is separate. Download from the versioned [preview release](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.4). Windows N/KN may require the Media Feature Pack. On Linux, check portal permissions and the runtime requirements above. Report the platform, version and reproduction steps in [Issues](https://github.com/abnste/mewu_ai/issues).
+Windows packages have no Authenticode certificate yet; updater signature verification is separate. Download from the versioned [1.0.0 release](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0). Windows N/KN may require the Media Feature Pack. On Linux, check portal permissions and the runtime requirements above. Report the platform, version and reproduction steps in [Issues](https://github.com/abnste/mewu_ai/issues).
 
 </details>
 

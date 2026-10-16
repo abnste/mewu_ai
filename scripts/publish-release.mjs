@@ -4,8 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { repository as repo, fingerprint, verifyRelease, validateChannelAdvance } from './release-contract.mjs';
-import { findRelease, verifyReleaseTarget } from './release-api.mjs';
+import { repository as repo, fingerprint, verifyRelease, validateChannelAdvance, validateUpdateConfiguration } from './release-contract.mjs';
+import { findRelease, verifyReleaseTarget, verifyStableLatest } from './release-api.mjs';
 const directory = path.resolve(process.argv[2] || 'out/release'), metadata = path.join(directory, '.metadata');
 const manifest = JSON.parse(fs.readFileSync(path.join(metadata, 'update.json'), 'utf8'));
 const acceptance = JSON.parse(fs.readFileSync(path.join(metadata, 'acceptance.json'), 'utf8'));
@@ -13,9 +13,10 @@ const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).
 if (execFileSync('git', ['status', '--porcelain', '-z']).length) throw Error('Release source must be clean');
 const config = JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
 if (config.version !== manifest.version) throw Error('Package/source version mismatch');
+const policy = validateUpdateConfiguration(config);
 // No GitHub command may occur before this gate, including draft creation.
 const release = verifyRelease(directory, manifest, acceptance, commit), { tag, assets, channelAssets } = release;
-const preview = manifest.version.includes('-'), notes = path.resolve(`docs/release-notes-${manifest.version}.md`);
+const preview = policy.prerelease, notes = path.resolve(`docs/release-notes-${manifest.version}.md`);
 if (!fs.lstatSync(notes).isFile() || fs.lstatSync(notes).isSymbolicLink()) throw Error('Missing release notes');
 const gh = (...args) => execFileSync('gh', args, { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8' });
 const lookup = name => findRelease(gh, repo, name);
@@ -35,7 +36,7 @@ function uploadMissing(name, current, names) {
   for (const file of names) { const asset = uploaded.assets.find(asset => asset.name === file); if (!asset) throw Error('Missing uploaded package'); checkAsset(asset); }
   return uploaded;
 }
-const channels = preview ? ['preview.json'] : ['preview.json', 'latest.json'];
+const channels = policy.feeds;
 let channelRelease = lookup('update-channel');
 function checkChannels() {
   if (!channelRelease) return;
@@ -73,7 +74,12 @@ if (channelRelease.draft || !channelRelease.prerelease) throw Error('Invalid upd
 uploadMissing('update-channel', channelRelease, channelAssets);
 // Recheck local acceptance and every byte immediately before making a release visible.
 verifyRelease(directory, manifest, acceptance, commit);
-if (!alreadyPublished) gh('release', 'edit', tag, '--repo', repo, '--draft=false', ...(preview ? ['--latest=false'] : ['--latest']));
+if (!alreadyPublished) gh('release', 'edit', tag, '--repo', repo, '--draft=false', ...policy.latestArguments);
+if (!preview) {
+  const published = lookup(tag);
+  verifyReleaseTarget(gh, repo, published, tag, commit, false);
+  await verifyStableLatest(gh, repo, published);
+}
 // Only the small fixed JSON feeds are replaceable. Versioned packages never are.
 // Re-read just before advancing feeds to detect a concurrently published version.
 channelRelease = lookup('update-channel'); checkChannels();

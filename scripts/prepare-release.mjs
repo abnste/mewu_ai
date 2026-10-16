@@ -3,9 +3,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { releaseVersion, releasePlan, updateUrl, fingerprint, regularFile, verifySignatureVersion } from './release-contract.mjs';
+import { releaseVersion, releasePlan, updateUrl, fingerprint, regularFile, verifySignatureVersion, validateUpdateConfiguration } from './release-contract.mjs';
 const root = fs.realpathSync(process.cwd());
-const version = releaseVersion(JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8')).version), tag = `v${version}`;
+const config = JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
+validateUpdateConfiguration(config);
+const version = releaseVersion(config.version), tag = `v${version}`;
 const platform = process.argv[3] || `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' ? 'x86_64' : process.arch}`;
 const plan = releasePlan(version)[platform];
 if (!plan) throw Error('Unsupported native release platform');
