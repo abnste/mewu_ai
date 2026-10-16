@@ -21,6 +21,7 @@ use argument_diagnostic::Rejection;
 use mewu_core::ArgumentDiagnosticReason as DiagnosticReason;
 
 pub(crate) static TABLE_WORKERS: Semaphore = Semaphore::const_new(2);
+const INVOCATION_GUIDANCE: &str = "The current image label calls its handle targetHandle; copy that exact value into groups[i].target, never a targetHandle field in the call. The argument root is an object containing only groups, not an array. fontSize, strokeWidth, x and y are JSON numbers, never quoted strings. The example illustrates one current target, not instructions to draw its literal A or coordinates; choose the intended current target from the supplied schema and image labels, and replace the synthetic content only when the task calls for annotations.";
 /// A dropped async invoke does not release the blocking renderer's permit.
 /// Exit must wait for this observation as well as the formula child registry.
 pub fn table_workers_are_idle() -> bool {
@@ -71,8 +72,11 @@ impl RunScope {
         })
     }
     pub fn for_connection(mut self, profile: &mewu_core::ConnectionProfile) -> Self {
-        self.minimax_wire = profile.model == "MiniMax-M3"
-            && profile.advanced.protocol == mewu_core::ConnectionProtocol::ChatCompletions
+        self.minimax_wire = matches!(
+            profile.model.as_str(),
+            "MiniMax-M3" | "MiniMax-M3.1-Flash-Preview"
+        ) && profile.advanced.protocol
+            == mewu_core::ConnectionProtocol::ChatCompletions
             && crate::provider_transport::endpoint(profile).is_ok_and(|url| {
                 url.scheme() == "https"
                     && url.port().is_none()
@@ -101,13 +105,24 @@ impl RunScope {
             .iter()
             .map(group_definition)
             .collect();
-        json!({"type":"function","function":{
+        let mut definition = json!({"type":"function","function":{
             "name":VISUAL_ANNOTATION_TOOL,
             "description":"Optional screenshot presentation: write editable, undoable answers, annotations or drawings on the attached screenshot. Decide from the user's intent and task whether conversational text, formulas, tables or spatial presentation best helps; do not ask the user to select a send mode. Do not call merely because this tool is available, and never add annotations when the user requests a text-only reply. Use only the supplied target handles and exact coordinate contract. For normalized1000, (0,0) is top left and (1000,1000) bottom right independently on each axis; strokeWidth and fontSize always use encoded-image pixels. Text needs one point, text and fontSize; topLeft is its layout anchor, first baseline is anchor.y+mappedFontSize and line advance 1.25*mappedFontSize. Plain text never interprets math or tables. Use kind=table with versioned literal cells for a real table, or kind=formula with tex, color and fontSize for rendered math. Table/formula need two ordered top-left/bottom-right points defining available bounds; complete content fits proportionally or the whole call fails if unreadable. They must omit strokeWidth/text/anchor and cannot carry images, SVG, paths or layout references. Arrow/line need different endpoints; rect/ellipse need opposite corners. If using this tool, call once with all intended objects when possible.",
             "parameters":{"type":"object","additionalProperties":false,"required":["groups"],"properties":{
                 "groups":{"type":"array","minItems":1,"maxItems":6,"items":{"oneOf":groups}}
             }}
-        }})
+        }});
+        let example = invocation_example(&self.input)
+            .map(|example| format!(" Complete example arguments: {example}"))
+            .unwrap_or_default();
+        let description = definition["function"]["description"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        definition["function"]["description"] = json!(format!(
+            "{description} {INVOCATION_GUIDANCE}{example}"
+        ));
+        definition
     }
 
     pub fn live(&self, engine: &crate::Engine, scene: &str, run: &str) -> bool {
@@ -140,7 +155,8 @@ impl RunScope {
                 self.check_live(app, scene, run)?;
                 let host = app.state::<Host>();
                 let mut engine = host.lock()?;
-                let (receipt, output) = reject_arguments(&mut engine.store, &lease, &error)?;
+                let (receipt, output) =
+                    reject_arguments(&mut engine.store, &lease, &error, &self.input)?;
                 journal_runtime::emit_changed(app, scene, run, receipt.journal_revision);
                 publish(app, &engine.store.snapshot());
                 // No drawing was dispatched. Let the existing bounded tool loop
@@ -286,6 +302,7 @@ fn reject_arguments(
     store: &mut mewu_core::Store,
     lease: &DispatchLease,
     error: &Rejection,
+    input: &VerifiedVisualInput,
 ) -> Result<
     (
         mewu_core::ReceiptCommit,
@@ -303,12 +320,62 @@ fn reject_arguments(
         feedback["argumentDiagnostic"] =
             serde_json::to_value(diagnostic).map_err(|_| "参数诊断编码失败")?;
     }
+    // Build guidance only after the durable rejection succeeds. It uses the
+    // immutable, already-advertised manifest, never the rejected model input.
+    feedback["invocationGuidance"] = json!(INVOCATION_GUIDANCE);
+    if let Some(example) = invocation_example(input) {
+        feedback["exampleArguments"] = example;
+    }
     Ok((
         receipt,
         journal_runtime::CommittedToolOutput {
             model_json: feedback.to_string(),
         },
     ))
+}
+
+fn invocation_example(input: &VerifiedVisualInput) -> Option<Value> {
+    input
+        .manifest()
+        .targets
+        .iter()
+        .take(6)
+        .find_map(|target| {
+            let profile = VisualCoordinateProfile::from_id(&target.profile_id).ok()?;
+            let scale = style_scale(target);
+            if !scale.is_finite() || scale <= 0. {
+                return None;
+            }
+            let max_font = (256. / scale.max(1.)).min(72.);
+            if max_font < 8. {
+                return None;
+            }
+            let font_size = (16. / scale).max(8.).min(max_font);
+            let (x, y) = if profile.normalized() {
+                (100., 100.)
+            } else {
+                (
+                    f64::from(target.encoded.width) / 10.,
+                    f64::from(target.encoded.height) / 10.,
+                )
+            };
+            let mut object = json!({"kind":"text","color":"#ff0000","points":[{"x":x,"y":y}],
+                "text":"A","fontSize":font_size,"strokeWidth":(1. / scale).clamp(0.5,16.)});
+            let mut group = json!({"target":target.handle,"objects":[]});
+            if profile.normalized() {
+                group["coordinateSpace"] = json!("normalized1000");
+                group["styleUnit"] = json!("encodedPixels");
+                object["anchor"] = json!("topLeft");
+            }
+            group["objects"] = json!([object]);
+            let example = json!({"groups":[group]});
+            // This is parsing only: no renderer, dispatch, Store or mutation.
+            // An extreme geometry that cannot express this tiny text example
+            // gets no example, rather than an invalid or auto-repaired call.
+            parse_plan_with_wire(&example.to_string(), input, false)
+                .is_ok()
+                .then_some(example)
+        })
 }
 
 fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
@@ -1277,6 +1344,9 @@ mod minimax_wire_tests;
 #[cfg(test)]
 #[path = "visual_argument_diagnostic_test.rs"]
 mod argument_diagnostic_tests;
+#[cfg(test)]
+#[path = "visual_invocation_hint_test.rs"]
+mod invocation_hint_tests;
 
 #[cfg(test)]
 mod tests {

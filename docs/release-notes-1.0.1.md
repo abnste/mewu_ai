@@ -2,6 +2,7 @@
 
 - 导入图片可在原对话条中直接请求标注、试卷原位作答、公式和表格，也可继续手工绘制。标注独立保存，保留原图，并用于复制、保存、后续引用和置顶。
 - 截图、图片和视频标注参数校验失败时，执行记录显示可定位的字段和原因，并将同一诊断反馈给 AI，在原有工具调用限制内修正。旧记录未保存的诊断不会事后补造。
+- 改善 MiniMax M3.1 Flash Preview 的绘制参数兼容，并向模型提供完整调用示例，减少目标和字号字段错误。
 - 已配置模型时，切换会话不再为了显示对话条读取密钥或弹出钥匙串。真正发送请求时仍会读取和校验凭据；未配置 AI 的截图操作保持原样。
 - 修复流式答复重复、绘制完成后的笔迹被置顶对象遮挡，以及待保存的对象位置阻塞退出的问题。
 - 图片导入先成为空间对象；图片、视频与黑板预览均可手动置顶，支持滚轮等比缩放。视频操作工具条左对齐，裁切条独立位于下方。
@@ -24,6 +25,7 @@ Windows 0.7.4 仍可从原关于页升级；原 API 配置导入及旧数据的�
 
 - Imported images support in-place AI annotations, answers, formulas and tables through the ordinary conversation bar, alongside manual drawing. Annotations are stored separately from the original and used by image export, references and pinning.
 - Invalid screenshot, image and video annotation arguments expose available bounded field diagnostics in execution details and return the same diagnostics to the AI within the existing tool limits. Existing records without diagnostics are not retrospectively changed.
+- Improves drawing argument compatibility for MiniMax M3.1 Flash Preview and supplies complete invocation examples to reduce target and font-size errors.
 - Conversation visibility uses model configuration metadata. Switching scenes no longer reads credentials or prompts the keychain; actual requests still read and validate credentials.
 - Fixes repeated streamed replies, saved ink being covered by pinned objects, and exit being blocked by pending object geometry.
 - Images are imported as space objects. Images, videos and board previews support explicit pinning and proportional wheel zoom. Video actions align left above the picture; trimming stays below it.

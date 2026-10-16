@@ -341,7 +341,8 @@ fn visual_diagnostic_feedback_matches_the_durable_not_sent_receipt_and_survives_
     let mut args = tests::normalized_args(&scope.input);
     object(&mut args)["fontSize"] = json!({"private-secret":"wrong type"});
     let error = rejection(&scope, &args);
-    let (_, output) = reject_arguments(&mut fixture.store, &fixture.lease, &error).unwrap();
+    let (_, output) =
+        reject_arguments(&mut fixture.store, &fixture.lease, &error, &scope.input).unwrap();
     let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
     assert_eq!(feedback["executed"], false);
     assert_eq!(
@@ -349,6 +350,21 @@ fn visual_diagnostic_feedback_matches_the_durable_not_sent_receipt_and_survives_
         serde_json::to_value(&error.diagnostic).unwrap()
     );
     assert!(!output.model_json.contains("private-secret"));
+    assert_eq!(
+        feedback["exampleArguments"],
+        invocation_example(&scope.input).unwrap()
+    );
+    assert!(feedback["invocationGuidance"]
+        .as_str()
+        .unwrap()
+        .contains("groups[i].target"));
+    let example = &feedback["exampleArguments"];
+    assert!(example.is_object());
+    assert!(scope.parse_plan(&example.to_string()).is_ok());
+    let schema = scope.definition();
+    assert!(jsonschema::validator_for(&schema["function"]["parameters"])
+        .unwrap()
+        .is_valid(example));
     let detail = fixture.detail();
     assert_eq!(detail.entry.phase, ReceiptPhase::NotSent);
     assert_eq!(
@@ -389,7 +405,8 @@ fn visual_failed_diagnostic_receipt_never_returns_model_correction() {
         "$/groups/0/objects/0/points",
         DiagnosticReason::Type,
     );
-    assert!(reject_arguments(&mut fixture.store, &fixture.lease, &error).is_err());
+    let scope = tests::scope(tests::normalized_input());
+    assert!(reject_arguments(&mut fixture.store, &fixture.lease, &error, &scope.input).is_err());
     let detail = fixture.detail();
     assert_eq!(detail.entry.phase, ReceiptPhase::Prepared);
     assert_eq!(detail.argument_diagnostic, None);
