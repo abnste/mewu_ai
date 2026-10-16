@@ -12,9 +12,9 @@ Windows 0.7.4 用户可在「设置 → 关于」检查更新，确认下载后�
 
 ## 预览版 4 的历史兼容入口
 
-旧更新器只读取 GitHub 的 latest Release，拒绝预览标记以及含 `-preview` 的标签。因此，当时使用数值兼容标签 [`v1.0.0.4`](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0.4)，附件名为 `MewuAI-Remake-Setup-1.0.0.4-win-x64.exe`。它与[预览版 4](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0-preview.4) 的 Windows 安装包逐字节相同；`1.0.0.4` 是旧更新协议的兼容标识，实际产品版本为 `1.0.0-preview.4`。
+旧更新器只读取 GitHub 的 latest Release，拒绝预览标记以及含 `-preview` 的标签。因此，当时使用数值兼容标签 [`v1.0.0.4`](https://github.com/abnste/mewu_ai/tree/v1.0.0.4)，附件名为 `MewuAI-Remake-Setup-1.0.0.4-win-x64.exe`。它与[预览版 4](https://github.com/abnste/mewu_ai/tree/v1.0.0-preview.4) 的 Windows 安装包逐字节相同；`1.0.0.4` 是旧更新协议的兼容标识，实际产品版本为 `1.0.0-preview.4`。
 
-这一历史标签、附件和来源继续保留，不重命名、覆盖或重新绑定。正式版使用自己的 `v1.0.0` 标签与安装包，不能拿旧预览包改名当正式版。
+1.0.0 正式版接管更新后，预览版和临时兼容发行及安装包已清理；对应源码标签保留。正式版使用自己的 `v1.0.0` 标签与安装包，不能拿旧预览包改名当正式版。
 
 ## 维护规则
 
@@ -22,7 +22,7 @@ Windows 0.7.4 用户可在「设置 → 关于」检查更新，确认下载后�
 - 兼容入口只复用已发布、三端验收完成的预览版 Windows 安装包；必须校验源标签、原始附件大小和 SHA-256，再上传相同字节的兼容附件。
 - 历史兼容入口不修改源预览版标签、附件、预览属性或更新 JSON。后续正式 SemVer 发行可按正常流程推进固定 JSON；兼容入口本身不能替代常规发行流程或当作新编译的软件版本。
 - 兼容发行正文必须说明实际安装版本及对应源码。已公开的兼容附件不可覆盖；中断时只恢复同来源、同字节的草稿。
-- 正式 1.0.0 发布前，GitHub latest 仍可由历史兼容入口服务。正式发布时必须显式切换 latest 到 `v1.0.0`，同时推进 `preview.json` 和 `latest.json`；不要依赖 GitHub 对 `v1.0.0.4` 与 `v1.0.0` 的自动排序。
+- 正式 1.0.0 发布前，GitHub latest 曾由历史兼容入口提供。正式版已接管 latest，并同时推进 `preview.json` 和 `latest.json`；固定 `update-channel` 继续保留，不能与预览发行一起删除。
 
 ## English
 
@@ -30,4 +30,4 @@ Once stable 1.0.0 is published as GitHub latest, Windows 0.7.4 can discover it t
 
 Supported API connections and credentials are imported once. Legacy files remain, but old conversations are not converted into the new history UI; preferences and integrations are not fully migrated. Custom headers, non-system proxy settings and some routing configurations need manual setup. Keep a backup of important data.
 
-The historical `v1.0.0.4` compatibility release retains its unchanged preview 4 installer, whose installed product version is `1.0.0-preview.4`. Its original tag and payload are not replaced by the stable release.
+The historical `v1.0.0.4` compatibility release supplied the unchanged preview 4 installer, whose product version was `1.0.0-preview.4`. Preview and temporary compatibility releases and their packages were removed after stable 1.0.0 took over. Source tags and the fixed update channel remain.

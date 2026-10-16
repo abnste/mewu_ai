@@ -214,7 +214,7 @@ Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 *
 
 在 **设置 → 关于** 检查并安装更新。正式版使用固定、带版本签名的[正式更新通道](https://github.com/abnste/mewu_ai/releases/download/update-channel/latest.json)；已有预览版保留原[预览入口](https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json)，同样可以收到 1.0.0 正式版，无需卸载重装。这些入口不依赖分支名称。Windows 便携版更新会运行安装器并切换到安装版位置。
 
-Windows **0.7.4** 可在自己的关于页发现 1.0.0 正式版。下载和安装分别确认，完成后如未启动，可从快捷方式打开。**0.7.3 及更早版本应先安装 [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4)。** 原 [v1.0.0.4 兼容入口](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0.4)仍保留预览版 4 下载；它实际安装 **1.0.0-preview.4**，其中的数字是旧协议标识。
+Windows **0.7.4** 可在自己的关于页发现 1.0.0 正式版。下载和安装分别确认，完成后如未启动，可从快捷方式打开。**0.7.3 及更早版本应先安装 [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4)。**
 
 支持的旧 API 连接一次导入，旧文件保留；旧版历史对话尚未转换到新版历史界面，偏好设置也并非全部迁移。详见 [1.0 升级说明](./docs/release-notes-1.0.0.md)和[早期兼容入口说明](./docs/legacy-updates.md)。发行附件详情提供 SHA-256，不另附校验文件；[原版更新日志](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md)继续保留。
 

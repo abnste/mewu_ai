@@ -32,7 +32,7 @@ Update checks run after startup and every six hours, using the user's proxy sett
 
 The 0.7.4 updater reads GitHub's latest non-prerelease entry and accepts only numeric three- or four-component version tags. It recognizes `MewuAI-Remake-Setup-{version}-win-x64.exe` for 1.x releases and invokes NSIS with `/S`. Publishing stable `v1.0.0` as GitHub latest lets 0.7.4 discover the regular 1.0.0 installer directly. No new compatibility alias is required.
 
-The historical `v1.0.0.4` compatibility entry supplied the exact preview 4 installer under the old updater's required filename. Its installed application identifies itself as `1.0.0-preview.4`; that numeric alias did not advance `latest.json` or change the product version. Its original tag and payload remain unchanged. See [legacy compatibility history](../../docs/legacy-updates.md).
+The historical `v1.0.0.4` compatibility entry supplied the exact preview 4 installer under the old updater's required filename. Its installed application identifies itself as `1.0.0-preview.4`; that numeric alias did not advance `latest.json` or change the product version. The preview and compatibility releases and their packages were removed after stable 1.0.0 took over; their source tags remain. See [legacy compatibility history](../../docs/legacy-updates.md).
 
 Earlier 0.7.x versions should first install 0.7.4 from its versioned release page. Their updater does not recognize the remake installer.
 

@@ -22,7 +22,7 @@ Legacy API connections can be imported once; legacy conversation history is not 
 
 ## 下载 / Downloads
 
-[安装版 EXE / Installer EXE](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.1/MewuAI-Remake-Setup-1.0.0-preview.1-win-x64.exe) · [便携版 ZIP / Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.1/MewuAI-Remake-Portable-1.0.0-preview.1-win-x64.zip)
+此预览发行与安装包已清理，源码标签保留。请下载 [1.0.0 正式版 / Stable 1.0.0](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0)。 / This preview release and its packages have been removed; its source tag remains.
 
 安装包和便携包使用 GitHub 资产自带的 SHA-256 校验值，不额外附带校验文件。 / Packages use GitHub's built-in SHA-256 asset digests; no separate checksum file is attached.
 

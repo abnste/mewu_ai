@@ -28,6 +28,6 @@ Preview 1 users can check for updates in Settings → About. Legacy API connecti
 
 ## 下载 / Downloads
 
-[安装版 EXE / Installer EXE](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Setup-1.0.0-preview.2-win-x64.exe) · [便携版 ZIP / Portable ZIP](https://github.com/abnste/mewu_ai/releases/download/v1.0.0-preview.2/MewuAI-Remake-Portable-1.0.0-preview.2-win-x64.zip)
+此预览发行与安装包已清理，源码标签保留。请下载 [1.0.0 正式版 / Stable 1.0.0](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0)。 / This preview release and its packages have been removed; its source tag remains.
 
 [对应版本源码 / Version source](https://github.com/abnste/mewu_ai/tree/v1.0.0-preview.2) · [MPL-2.0](https://github.com/abnste/mewu_ai/blob/v1.0.0-preview.2/LICENSE)。第三方许可保留在包内。 / Third-party notices are included in the packages.
