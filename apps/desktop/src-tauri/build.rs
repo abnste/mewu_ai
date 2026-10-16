@@ -137,6 +137,7 @@ fn main() {
             "close_scene_window",
             "hide_frozen_widget",
             "export_region",
+            "export_image_item",
             "export_snapshot",
             "runtime_info",
             "freeze_space",

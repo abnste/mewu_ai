@@ -63,6 +63,7 @@ struct RegionOrigin {
     drawing_revision: u64,
     drawings: Vec<Drawing>,
     translation: Option<TranslationPixels>,
+    image_item: Option<mewu_core::SpaceItem>,
 }
 impl RegionOrigin {
     fn new(scene_id: &str, background: &Asset, region: &Region) -> Self {
@@ -75,6 +76,7 @@ impl RegionOrigin {
             drawing_revision: region.drawing_revision,
             drawings: region.drawings.clone(),
             translation: region.translation.as_ref().map(TranslationPixels::new),
+            image_item: None,
         }
     }
     fn matches_parts(&self, background: &Asset, region: &Region) -> bool {
@@ -87,6 +89,10 @@ impl RegionOrigin {
             && self.translation == region.translation.as_ref().map(TranslationPixels::new)
     }
     fn matches_snapshot(&self, snapshot: &Snapshot) -> bool {
+        if let Some(item) = &self.image_item {
+            return snapshot.active_scene_id == self.scene_id && snapshot.scenes.iter().any(|scene|
+                scene.id == self.scene_id && !scene.closed && !scene.frozen && scene.items.iter().find(|current| current.id == item.id) == Some(item));
+        }
         snapshot.active_scene_id == self.scene_id
             && snapshot.scenes.iter().any(|scene| {
                 scene.id == self.scene_id
@@ -100,6 +106,14 @@ impl RegionOrigin {
                             .is_some_and(|region| self.matches_parts(background, region))
                     })
             })
+    }
+    fn matches_store(&self, store: &mewu_core::Store) -> Result<bool, String> {
+        if let Some(item) = &self.image_item {
+            let scene = store.active_scene().map_err(|e| e.to_string())?;
+            return Ok(scene.id == self.scene_id && !scene.closed && !scene.frozen && scene.items.iter().find(|current| current.id == item.id) == Some(item));
+        }
+        let (background, region) = store.region_for_pin(&self.target()).map_err(|e| e.to_string())?;
+        Ok(self.matches_parts(&background, &region))
     }
     fn target(&self) -> OcrTarget {
         OcrTarget {
@@ -511,11 +525,7 @@ fn atomic_region_gate(host: &Host, handle: usize) -> Result<(), String> {
 }
 fn region_current(host: &Host, origin: &RegionOrigin) -> Result<(), String> {
     let engine = host.lock()?;
-    let (background, region) = engine
-        .store
-        .region_for_pin(&origin.target())
-        .map_err(|e| e.to_string())?;
-    if !origin.matches_parts(&background, &region) {
+    if !origin.matches_store(&engine.store)? {
         return Err("图片来源已更改，请重新保存".into());
     }
     Ok(())
@@ -532,11 +542,7 @@ fn region_allowed(
     // Tauri HWND/title getters in this scope; native visibility checks do not
     // dispatch to the UI thread on Windows or Mac.
     let engine = host.lock()?;
-    let (background, region) = engine
-        .store
-        .region_for_pin(&origin.target())
-        .map_err(|e| e.to_string())?;
-    if !origin.matches_parts(&background, &region) {
+    if !origin.matches_store(&engine.store)? {
         return Err("图片来源已更改，请重新保存".into());
     }
     registry.check(id, || atomic_region_gate(&host, handle))
@@ -549,11 +555,7 @@ fn accept_region(
 ) -> Result<(), String> {
     let host = app.state::<Host>();
     let engine = host.lock()?;
-    let (background, region) = engine
-        .store
-        .region_for_pin(&origin.target())
-        .map_err(|e| e.to_string())?;
-    if !origin.matches_parts(&background, &region) {
+    if !origin.matches_store(&engine.store)? {
         return Err("图片来源已更改，请重新保存".into());
     }
     work.accept_publication(|| atomic_region_gate(&host, handle))
@@ -579,6 +581,14 @@ pub async fn export_region(
     region_id: String,
     clipboard: bool,
 ) -> Result<bool, String> {
+    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard).await
+}
+enum ExportSource { Region(String), ImageItem { item_id: String, source_asset_id: String } }
+#[tauri::command]
+pub async fn export_image_item(app: AppHandle, window: WebviewWindow, scene_id: String, item_id: String, source_asset_id: String, clipboard: bool) -> Result<bool, String> {
+    export_document(app, window, scene_id, ExportSource::ImageItem { item_id, source_asset_id }, clipboard).await
+}
+async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String, source: ExportSource, clipboard: bool) -> Result<bool, String> {
     if window.label() != "space" {
         return Err("此窗口不能导出截图".into());
     }
@@ -598,14 +608,15 @@ pub async fn export_region(
         if snapshot.active_scene_id != scene_id || scene.closed || scene.frozen {
             return Err("空间已切换".into());
         }
-        let background = scene.background.as_ref().ok_or("尚未截图")?.clone();
-        let mut region = scene
-            .regions
-            .iter()
-            .find(|r| r.id == region_id)
-            .ok_or("选区不存在")?
-            .clone();
-        let origin = RegionOrigin::new(&scene_id, &background, &region);
+        let (background, mut region, image_item) = match source {
+            ExportSource::Region(region_id) => (scene.background.as_ref().ok_or("尚未截图")?.clone(), scene.regions.iter().find(|r| r.id == region_id).ok_or("选区不存在")?.clone(), None),
+            ExportSource::ImageItem { item_id, source_asset_id } => {
+                let item = scene.items.iter().find(|item| item.id == item_id && item.asset.id == source_asset_id).ok_or("图片来源已变化")?;
+                (item.asset.clone(), mewu_core::image_annotation_region(item).map_err(|e| e.to_string())?, Some(item.clone()))
+            }
+        };
+        let mut origin = RegionOrigin::new(&scene_id, &background, &region);
+        origin.image_item = image_item;
         region.drawing_history = Default::default();
         region.ocr = None;
         let (work, cancel) =
@@ -715,8 +726,12 @@ pub async fn export_region(
                 sources.push(SourceLease::open(&saved.overlay, &assets_root)?);
             }
             work.check_cancel()?;
-            let image =
-                assets::crop_from_parts(&background, &output_region, &assets_root)?.into_rgba8();
+            let image = if origin.image_item.is_some() {
+                let source=sources[0].decode_rgba(&background)?;
+                crate::drawing_render::crop_region_with_layouts(&image::DynamicImage::ImageRgba8(source),&output_region,None,|reference|crate::rich_annotation_host::load_raster(&assets_root,reference))?.into_rgba8()
+            } else {
+                assets::crop_from_parts(&background, &output_region, &assets_root)?.into_rgba8()
+            };
             for source in &sources {
                 source.verify()?;
             }
@@ -1099,6 +1114,20 @@ mod tests {
         let mut changed = asset.clone();
         changed.path = "different.png".into();
         assert!(!origin.matches_parts(&changed, &region));
+    }
+
+    #[test]
+    fn image_item_export_origin_checks_active_scene_complete_document_and_geometry() {
+        let mut store=mewu_core::Store::open_in_memory().unwrap();let scene_id=store.snapshot().active_scene_id;
+        let asset=Asset { id:uuid::Uuid::new_v4().to_string(),name:"synthetic.png".into(),kind:AssetKind::Image,path:"owned/synthetic.png".into(),width:Some(800),height:Some(600),origin_x:None,origin_y:None,scale_factor:None,capture_coordinates:None };
+        store.add_asset(&scene_id,asset.clone()).unwrap();let item=store.active_scene().unwrap().items[0].clone();
+        let region=mewu_core::image_annotation_region(&item).unwrap();let mut origin=RegionOrigin::new(&scene_id,&asset,&region);origin.image_item=Some(item.clone());
+        assert!(origin.matches_store(&store).unwrap());assert!(origin.matches_snapshot(&store.snapshot()));
+        let mut changed=item.clone();changed.x+=0.1;store.apply(mewu_core::SceneCommand::UpdateItem { scene_id:scene_id.clone(),item:changed }).unwrap();assert!(!origin.matches_store(&store).unwrap());
+        store.apply(mewu_core::SceneCommand::UpdateItem { scene_id:scene_id.clone(),item:item.clone() }).unwrap();assert!(origin.matches_store(&store).unwrap());
+        let before=store.snapshot();let mut snapshot=before.clone();snapshot.active_scene_id=uuid::Uuid::new_v4().to_string();assert!(!origin.matches_snapshot(&snapshot));
+        store.apply(mewu_core::SceneCommand::NewScene).unwrap();assert!(!origin.matches_store(&store).unwrap());assert!(!origin.matches_snapshot(&store.snapshot()));
+        let old=store.scene(&scene_id).unwrap();assert_eq!(old.items[0],item);
     }
     #[test]
     fn destination_protection_rejects_private_tree_and_external_hardlink_to_source() {

@@ -50,7 +50,7 @@ export default function ToolbarOwner(props) {
   ${['toolbarVisible', 'pluginMenu', 'extensionButtonCount', 'extensionInteracting', 'extensionRunning', 'blocked'].map(actualVariable).join('\n')}
   let hideTimer, cancelDeferredPointer, cancelGesture;
   const activeRegion = () => props.scene.regions[0], activity = () => false, forceNew = () => false;
-  const drawingSession = () => props.drawing, exporting = () => false, settling = () => false;
+  const drawingSession = () => props.drawing, imageDrawing = () => props.imageDrawing, exporting = () => false, settling = () => false;
   const setCodeFocused = () => {}, clearSnapPreview = () => {}, endNudge = () => {};
   ${['clearHideTimer', 'hideToolbar', 'scheduleHide'].map(actualFunction).join('\n')}
   ${actualVariable('blur')}
@@ -97,15 +97,16 @@ async function fixture({ draft = 'Click the test control', multiple = false } = 
   await owner.link(name => name === 'solid-js' ? core : name === 'test-renderer' ? rendererModule : child); await owner.evaluate();
   const [scene, setScene] = solid.createSignal({ id: 'scene', draft, regions: [{ id: 'region' }] });
   const [drawing, setDrawing] = solid.createSignal(undefined);
+  const [imageDrawing, setImageDrawing] = solid.createSignal(undefined);
   const root = renderer.createElement('root');
-  const dispose = renderer.render(() => owner.namespace.default({ get scene() { return scene(); }, get drawing() { return drawing(); }, busy: false, control, onError: error => errors.push(error) }), root);
+  const dispose = renderer.render(() => owner.namespace.default({ get scene() { return scene(); }, get drawing() { return drawing(); }, get imageDrawing() { return imageDrawing(); }, busy: false, control, onError: error => errors.push(error) }), root);
   const all = () => { const values = []; const visit = node => { values.push(node); node.children.forEach(visit); }; visit(root); return values; };
   const find = predicate => all().find(predicate);
   const button = label => find(node => node.type === 'button' && node.props['aria-label'] === label);
   const text = node => 'text' in node ? node.text : node.children.map(text).join('');
   const toolbarNode = () => find(node => node.props?.class === 'capture-toolbar');
   control.reveal(); await tick();
-  return { control, all, find, text, button, toolbarNode, request, calls, stops, errors, setScene, setDrawing, dispose,
+  return { control, all, find, text, button, toolbarNode, request, calls, stops, errors, setScene, setDrawing, setImageDrawing, dispose,
     get subscriptions() { return subscriptions; }, get released() { return released; }, get listenerCount() { return listeners.size; },
     typeTask: value => { const input = find(node => node.type === 'textarea'); assert.ok(input, 'task editor remains mounted'); input.props.onInput({ currentTarget: { value } }); },
     submit: () => { const form = find(node => node.type === 'form'); assert.ok(form, 'task form remains mounted'); form.props.onSubmit({ preventDefault() {} }); },
@@ -231,4 +232,26 @@ test('scene/region changes, region removal and real owner disposal still stop an
       assert.equal(f.all().some(node => 'text' in node && node.text === 'Must never appear'), false);
     } finally { f.dispose(); }
   }
+});
+
+test('image drawing rejects a late screenshot-toolbar reveal and does not resume its disposed task editor', async () => {
+  const f = await fixture({ draft: '' });
+  try {
+    f.button('选区插件').props.onClick();
+    assert.ok(f.find(node => node.type === 'form'));
+    assert.equal(f.subscriptions, 1);
+    f.control.hideToolbar();
+    f.setImageDrawing({ sceneId: 'scene', itemId: 'image' });
+    f.control.reveal();
+    assert.equal(f.toolbarNode(), undefined);
+    assert.equal(f.released, 1);
+    assert.equal(f.listenerCount, 0);
+    assert.equal(f.calls.length, 0);
+    f.control.hideToolbar(); f.setImageDrawing(undefined); await tick();
+    assert.equal(f.toolbarNode(), undefined, 'closing image drawing does not undo the explicit hide');
+    f.control.reveal(); await tick();
+    assert.ok(f.toolbarNode());
+    assert.equal(f.subscriptions, 2);
+    assert.equal(f.find(node => node.type === 'form'), undefined, 'a closed editor is not silently resumed');
+  } finally { f.dispose(); }
 });

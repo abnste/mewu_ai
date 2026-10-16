@@ -2,18 +2,18 @@
 // Native owns the immutable descriptor and PNG validation.
 import type { Asset, Drawing, Region, RichDrawingRef } from './contracts';
 
-export interface DrawingLayoutTarget { sceneId: string; regionId: string; drawingId: string; expectedRevision: number; reference: RichDrawingRef }
+export interface DrawingLayoutTarget { sceneId: string; regionId: string; drawingId: string; expectedRevision: number; reference: RichDrawingRef; imageItemId?: string; sourceAssetId?: string }
 export interface DrawingLayoutPreview extends DrawingLayoutTarget { dataUrl: string }
 export type DrawingTableFormat = 'table' | 'markdown' | 'csv' | 'tsv' | 'png';
-export interface RichDrawingContext { sceneId: string; background: Asset; region: Region }
+export interface RichDrawingContext { sceneId: string; background: Asset; region: Region; imageItemId?: string }
 const assetIdentity = (asset: Asset) => [asset.id, asset.name, asset.kind, asset.path, asset.width, asset.height, asset.originX, asset.originY, asset.scaleFactor];
 export function richSourceIdentity(context: RichDrawingContext): string {
   const region = context.region;
-  return JSON.stringify([context.sceneId, region.id, assetIdentity(context.background), assetIdentity(region.imageOverride ?? context.background), region.x, region.y, region.width, region.height]);
+  return JSON.stringify([context.sceneId, region.id, assetIdentity(context.background), assetIdentity(region.imageOverride ?? context.background), region.x, region.y, region.width, region.height, ...(context.imageItemId ? ['image-item', context.imageItemId] : [])]);
 }
 export function richPreviewTarget(context: RichDrawingContext, drawing: Drawing): DrawingLayoutTarget | undefined {
   if (drawing.kind !== 'rich' || !drawing.rich) return;
-  return { sceneId: context.sceneId, regionId: context.region.id, drawingId: drawing.id, expectedRevision: context.region.drawingRevision ?? 0, reference: { ...drawing.rich } };
+  return { sceneId: context.sceneId, regionId: context.region.id, drawingId: drawing.id, expectedRevision: context.region.drawingRevision ?? 0, reference: { ...drawing.rich }, ...(context.imageItemId ? {imageItemId: context.imageItemId, sourceAssetId: context.background.id} : {}) };
 }
 const maxPngBytes = 8 * 1024 * 1024, prefix = 'data:image/png;base64,';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, hash = /^[0-9a-f]{64}$/;
@@ -28,14 +28,15 @@ export function validRichReference(value: unknown): value is RichDrawingRef {
     && Number(value.width) <= 6000 && Number(value.height) <= 6000 && Number(value.width) * Number(value.height) <= 32 * 1024 * 1024;
 }
 export function validLayoutTarget(value: unknown): value is DrawingLayoutTarget {
-  return record(value) && exactKeys(value, ['sceneId', 'regionId', 'drawingId', 'expectedRevision', 'reference'])
+  return record(value) && exactKeys(value, ['sceneId', 'regionId', 'drawingId', 'expectedRevision', 'reference', ...(Object.hasOwn(value,'imageItemId')?['imageItemId','sourceAssetId']:[])])
     && [value.sceneId, value.regionId, value.drawingId].every(id => typeof id === 'string' && uuid.test(id))
+    && (!Object.hasOwn(value,'imageItemId') || value.imageItemId === value.regionId && typeof value.sourceAssetId === 'string' && uuid.test(value.sourceAssetId))
     && Number.isSafeInteger(value.expectedRevision) && Number(value.expectedRevision) >= 0 && validRichReference(value.reference);
 }
 const referenceKey = (value: RichDrawingRef) => [value.layoutId, value.layoutSha256, value.rasterSha256, value.kind, value.width, value.height,value.parentId??null];
 export const sameRichReference = (left: RichDrawingRef, right: RichDrawingRef) => JSON.stringify(referenceKey(left)) === JSON.stringify(referenceKey(right));
 export function layoutRequestKey(target: DrawingLayoutTarget, sourceIdentity: string): string {
-  return JSON.stringify([sourceIdentity, target.sceneId, target.regionId, target.drawingId, target.expectedRevision, referenceKey(target.reference)]);
+  return JSON.stringify([sourceIdentity, target.sceneId, target.regionId, target.drawingId, target.expectedRevision, referenceKey(target.reference), ...(target.imageItemId ? [target.imageItemId,target.sourceAssetId] : [])]);
 }
 export const cloneLayoutTarget = (value: DrawingLayoutTarget): DrawingLayoutTarget => ({ ...value, reference: { ...value.reference } });
 
@@ -52,7 +53,7 @@ function pngMatchesReference(dataUrl: unknown, ref: RichDrawingRef): dataUrl is 
   } catch { return false; }
 }
 export function validateLayoutPreview(value: unknown, expected: DrawingLayoutTarget): DrawingLayoutPreview {
-  if (!record(value) || !exactKeys(value, ['sceneId', 'regionId', 'drawingId', 'expectedRevision', 'reference', 'dataUrl'])) throw Error('图中对象预览无效');
+  if (!record(value) || !exactKeys(value, ['sceneId', 'regionId', 'drawingId', 'expectedRevision', 'reference', 'dataUrl', ...(Object.hasOwn(value,'imageItemId')?['imageItemId','sourceAssetId']:[])])) throw Error('图中对象预览无效');
   const { dataUrl, ...target } = value;
   if (!validLayoutTarget(target) || layoutRequestKey(target, '') !== layoutRequestKey(expected, '') || !pngMatchesReference(dataUrl, expected.reference)) throw Error('图中对象预览无效');
   return { ...cloneLayoutTarget(expected), dataUrl };

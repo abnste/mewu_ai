@@ -5,9 +5,8 @@ pub(crate) use crate::optional_authorizations::{Authorizations, Grant};
 use crate::{Engine, Host};
 use mewu_core::{ConnectionAuthMode, ConnectionProfile, SceneCommand};
 use serde::Serialize;
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 use tauri::{AppHandle, Manager};
-use zeroize::Zeroizing;
 
 pub(crate) fn require_agent_current(engine: &Engine, grant: &Grant) -> Result<(), String> {
     if engine.optional.agent.as_ref() != Some(grant) {
@@ -54,7 +53,8 @@ pub(crate) fn scene_authoring_current(
 pub(crate) fn authoring_command(engine: &Engine, command: &SceneCommand) -> Result<(), String> {
     use SceneCommand::*;
     let scene = match command {
-        AddRegion { scene_id, .. }
+        EditImageAnnotations { scene_id, .. }
+        | AddRegion { scene_id, .. }
         | UpdateRegion { scene_id, .. }
         | SetRegionGeometry { scene_id, .. }
         | UndoRegionGeometry { scene_id, .. }
@@ -87,13 +87,10 @@ pub(crate) fn authoring_command(engine: &Engine, command: &SceneCommand) -> Resu
     Ok(())
 }
 
-pub(crate) fn connection_ready(root: &Path, profile: &ConnectionProfile) -> bool {
-    connection_ready_with(profile, || crate::credentials::read_profile(root, profile))
-}
-fn connection_ready_with(
-    profile: &ConnectionProfile,
-    key: impl FnOnce() -> Result<Zeroizing<String>, String>,
-) -> bool {
+/// UI eligibility is a configuration projection, not proof that a credential can
+/// currently be unlocked. Merely selecting a scene must not read a secret or
+/// prompt the desktop keyring. Actual model calls still read and validate it.
+pub(crate) fn connection_configured(profile: &ConnectionProfile) -> bool {
     if profile.base_url.trim().is_empty()
         || profile.model.trim().is_empty()
         || mewu_core::validate_connection_profile(profile).is_err()
@@ -105,12 +102,7 @@ fn connection_ready_with(
     if profile.advanced.auth_mode == ConnectionAuthMode::None {
         return true;
     }
-    if !profile.has_key || profile.credential_id.is_none() {
-        return false;
-    }
-    key().is_ok_and(|value| {
-        !value.trim().is_empty() && crate::credentials::validate_key(&value).is_ok()
-    })
+    profile.has_key && profile.credential_id.is_some()
 }
 
 #[derive(Serialize)]
@@ -120,7 +112,8 @@ pub(crate) struct Capabilities {
     pub blackboard: Option<Grant>,
     pub plugin_revision: u64,
     pub connection_revisions: BTreeMap<String, u64>,
-    pub ready_connection_ids: Vec<String>,
+    /// Internal desktop UI metadata; execution still performs credential IO.
+    pub configured_connection_ids: Vec<String>,
     pub ready_agent_ids: Vec<String>,
     pub bound_agent_ids: Vec<String>,
 }
@@ -157,11 +150,11 @@ pub(crate) async fn get_optional_capabilities(app: AppHandle) -> Result<Capabili
                 agent_ids,
             )
         };
-        // Secret Service can wait on the desktop keyring. Never hold the scene
-        // store while checking credentials for settings or optional UI.
-        let ready_connection_ids: Vec<String> = connections
+        // Pure metadata only. A failed/deferred keychain unlock must neither
+        // hide Composer nor be triggered by every active-scene change.
+        let configured_connection_ids: Vec<String> = connections
             .iter()
-            .filter(|profile| connection_ready(&host.root, profile))
+            .filter(|profile| connection_configured(profile))
             .map(|profile| profile.id.clone())
             .collect();
         let (ready_agent_ids, bound_agent_ids) = {
@@ -198,7 +191,7 @@ pub(crate) async fn get_optional_capabilities(app: AppHandle) -> Result<Capabili
                 .iter()
                 .map(|profile| (profile.id.clone(), profile.revision))
                 .collect(),
-            ready_connection_ids,
+            configured_connection_ids,
             ready_agent_ids,
             bound_agent_ids,
         })
@@ -241,10 +234,7 @@ mod tests {
         };
         // No configured key: direct host model use remains unavailable, while an
         // independent handler may choose its network/service/local fallback.
-        assert!(!connection_ready_with(
-            &profile(ConnectionAuthMode::Bearer),
-            || panic!("missing credential reference must not be read")
-        ));
+        assert!(!connection_configured(&profile(ConnectionAuthMode::Bearer)));
         assert!(external_agent_ready(&record, "agent", true));
         assert!(!external_agent_ready(&record, "agent", false));
         assert!(!external_agent_ready(&record, "not-registered", true));
@@ -338,39 +328,58 @@ mod tests {
     #[test]
     fn initial_empty_connection_has_no_ai_and_explicit_no_auth_needs_no_secret() {
         let mut value = profile(ConnectionAuthMode::None);
-        assert!(connection_ready_with(&value, || panic!(
-            "no-auth must not read credentials"
-        )));
+        assert!(connection_configured(&value));
         value.model.clear();
-        assert!(!connection_ready_with(&value, || panic!()));
+        assert!(!connection_configured(&value));
         value.model = "test".into();
         value.base_url.clear();
-        assert!(!connection_ready_with(&value, || panic!()));
+        assert!(!connection_configured(&value));
     }
     #[test]
-    fn authenticated_connections_require_real_nonempty_valid_credentials() {
+    fn authenticated_ui_configuration_requires_valid_claims_not_an_unlocked_secret() {
         for mode in [ConnectionAuthMode::Bearer, ConnectionAuthMode::ApiKey] {
             let mut value = profile(mode);
-            assert!(!connection_ready_with(&value, || panic!(
-                "a missing reference must not read secrets"
-            )));
+            assert!(!connection_configured(&value));
             value.has_key = true;
+            assert!(!connection_configured(&value));
             value.credential_id = Some("922cff56-b629-4dcb-91eb-3059de4be4b6".into());
-            assert!(!connection_ready_with(&value, || Err(
-                "synthetic missing or decrypt failure".into()
-            )));
-            for key in ["", " ", "bad\nheader"] {
-                assert!(!connection_ready_with(&value, || Ok(Zeroizing::new(
-                    key.into()
-                ))));
-            }
-            assert!(connection_ready_with(&value, || Ok(Zeroizing::new(
-                "synthetic-only-key".into()
-            ))));
-            assert!(!connection_ready_with(&value, || Ok(Zeroizing::new(
-                "x".repeat(16 * 1024 + 1)
-            ))));
+            assert!(connection_configured(&value));
+            value.credential_id = Some("invalid-reference".into());
+            assert!(!connection_configured(&value));
+            value.credential_id = Some("922cff56-b629-4dcb-91eb-3059de4be4b6".into());
+            value.has_key = false;
+            assert!(!connection_configured(&value));
         }
+    }
+    #[test]
+    fn configured_ui_rejects_invalid_transport_and_request_options_without_io() {
+        let mut value = profile(ConnectionAuthMode::None);
+        value.advanced.request_path = Some("../outside".into());
+        assert!(!connection_configured(&value));
+        value.advanced.request_path = None;
+        value.base_url = "https://user:password@example.com".into();
+        assert!(!connection_configured(&value));
+        value.base_url = "https://example.com/v1".into();
+        value.model = "invalid model".into();
+        assert!(!connection_configured(&value));
+    }
+    #[cfg(windows)]
+    #[test]
+    fn configured_ui_without_a_blob_stays_visible_but_actual_credential_read_fails() {
+        let root =
+            std::env::temp_dir().join(format!("mewu-optional-capability-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut value = profile(ConnectionAuthMode::Bearer);
+        value.has_key = true;
+        value.credential_id = Some("922cff56-b629-4dcb-91eb-3059de4be4b6".into());
+        // No root or reader is passed to the UI projection. It cannot open a
+        // scoped blob or prompt a platform keyring, even when none is usable.
+        assert!(connection_configured(&value));
+        // This is the same production reader called by main::preflight_run and
+        // actual model requests, not an injected success or a network request.
+        assert!(crate::credentials::read_profile(&root, &value).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        std::fs::remove_dir(root).unwrap();
     }
     #[test]
     fn exact_optional_grants_change_with_disable_revision_and_integrity_failure() {

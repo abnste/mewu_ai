@@ -130,6 +130,20 @@ const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,l
   checks.push('Actual Solid detail renders all eight durable not-sent reasons with translations; old absent fields stay compatible and unknown results never assert non-execution');
 }
 {
+  const value=entry('diagnostic',{label:'视频批注',phase:'not_sent',selectable:false,contentBytes:0});
+  const detail={runId:'run-a',journalRevision:7,entry:value,literal:'',unavailable:'not_received',notSentReason:'invalid_arguments',argumentDiagnostic:{fieldPath:'$/objects/0/primitive/style/opacity',reason:'type',expectedType:'number'}};
+  const render=extra=>web.renderToString(()=>journalComponent(props({state:{identity,open:true,loading:false,legacy:false,page:page({entries:[extra.entry??value]}),detail:{...detail,...extra}}})));
+  const html=render({});
+  assert.ok(html.includes('参数无效，未执行'));assert.ok(html.includes('$/objects/0/primitive/style/opacity · 应为 数字'));
+  assert.equal(html.includes('内容不可用'),false);assert.equal(html.includes('role="dialog"'),false);
+  assert.equal(render({entry:{...value,phase:'unknown'}}).includes('应为 数字'),false);
+  assert.equal(render({notSentReason:'authority_changed'}).includes('应为 数字'),false);
+  assert.equal(render({argumentDiagnostic:undefined}).includes('$/objects'),false);
+  const locale=JSON.parse(await raw('locales/en-US.json'));
+  for(const key of ['缺少字段','应为 {0}','类型不符','存在不支持的字段','JSON 格式无效','不符合参数约束'])assert.ok(locale[key]);
+  checks.push('Actual existing Solid details render only scoped safe diagnostic path and fixed reason; old records and unknown or authority failures gain no invented field cause');
+}
+{
   const html=web.renderToString(()=>journalComponent(props({state:{identity,open:true,loading:false,legacy:false,page:page(),detail:{runId:'run-a',journalRevision:7,entry:entry(),literal:'<script>secret()</script>\n[x](https://example.test)',unavailable:null}}})));
   assert.equal(html.includes('<script>'),false);assert.ok(html.includes('&lt;script>'));assert.equal(html.includes('href='),false);assert.ok(html.includes('继续回答'));assert.equal(html.includes('type="checkbox"'),false);
   const unknown=entry('unknown',{sequence:2,phase:'unknown',selectable:false,contentBytes:0});const html2=web.renderToString(()=>journalComponent(props({decision:decision({selectionRequired:true,ready:false}),state:{identity,open:true,loading:false,legacy:false,page:page({entries:[entry(),unknown]})}})));
@@ -223,6 +237,24 @@ const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,l
   }
   checks.push('Actual bridge uses direct typed RPC args, literal content normalization, two concurrent reads, one shared space listener and honest browser refusal');
   checks.push('Actual bridge carries only not-sent phase reasons, accepts old responses without the field and discards contradictory reasons on unknown observations');
+  const diagnostic={fieldPath:'$/objects/0/primitive/style/opacity',reason:'type',expectedType:'number'};
+  const binding={type:'video_annotation',pluginId:'mewu.annotations',pluginRevision:1,contributionId:'answer',name:'video_annotate',targetManifestSha256:'f'.repeat(64)};
+  const readDiagnostic=async overrides=>{
+    const pending=bridge.getRunJournalEvent({...identity,eventId:'diagnostic',expectedJournalRevision:7});
+    waits.at(-1).resolve({runId:'run-a',journalRevision:7,entry:entry('diagnostic',{phase:'not_sent'}),content:{type:'omitted',reason:'not_received'},references:[],argumentsWireSha256:null,binding,notSentReason:'invalid_arguments',argumentDiagnostic:diagnostic,...overrides});
+    return (await pending).argumentDiagnostic;
+  };
+  assert.deepEqual(await readDiagnostic({}),diagnostic);
+  assert.deepEqual(await readDiagnostic({binding:{...binding,type:'visual_annotation'}}),diagnostic);
+  for(const overrides of [
+    {argumentDiagnostic:undefined}, {entry:entry('diagnostic',{phase:'unknown'})}, {notSentReason:'authority_changed'}, {binding:{type:'local',name:'tool'}},
+    {argumentDiagnostic:{...diagnostic,fieldPath:'$/objects/0/PRIVATE_UNKNOWN_KEY'}}, {argumentDiagnostic:{...diagnostic,fieldPath:'$/objects/48/primitive/style/opacity'}},
+    {argumentDiagnostic:{...diagnostic,fieldPath:'$/objects/00'}}, {argumentDiagnostic:{...diagnostic,fieldPath:'$/rows/0/0/0'}},
+    {argumentDiagnostic:{...diagnostic,rawArguments:'PRIVATE_RAW_MUST_NOT_BE_DISPLAYED'}}, {argumentDiagnostic:{...diagnostic,expectedType:'PRIVATE_RAW_MUST_NOT_BE_DISPLAYED'}},
+    {argumentDiagnostic:{...diagnostic,reason:'PRIVATE_RAW_MUST_NOT_BE_DISPLAYED'}}, {argumentDiagnostic:{...diagnostic,reason:'required'}},
+  ])assert.equal(await readDiagnostic(overrides),null);
+  assert.deepEqual(await readDiagnostic({argumentDiagnostic:{fieldPath:'$/groups/5/objects/47/table/rows/198/31',reason:'type',expectedType:'string'}}),{fieldPath:'$/groups/5/objects/47/table/rows/198/31',reason:'type',expectedType:'string'});
+  checks.push('Actual native adapter accepts safe image/video diagnostics and rejects raw extra fields, arbitrary names/types, unbounded indices, wrong phases and wrong bindings');
 }
 {
   const source=await raw('App.tsx'), ast=parse(source,{sourceType:'module',plugins:['typescript','jsx']});
@@ -238,7 +270,7 @@ const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,l
     const flush=deferred(),request=deferred(),calls=[],accepted=[],errors={};
     const scene={id:'scene-a',agentId:'agent-a',connectionId:'connection-a',run:{id:'run-a',status:'failed'},draft:'A',refs:[{kind:'region',id:'r'}],closed:false,frozen:false};
     const snapshot={scenes:[scene],connections:[{id:'connection-a',revision:2}]};
-    const state={capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection-a'],readyAgentIds:[],boundAgentIds:[]}};
+    const state={capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},configuredConnectionIds:['connection-a'],readyAgentIds:[],boundAgentIds:[]}};
     const queue=deferred(),operations=new exitApi.SpaceOperations();let busy=false,sending=false,exiting=false,flushCalls=0;
     const context={Promise,Error,ContinuationController,sameOptionalGrant,optionalAgentAvailable,optionalAgentReady,capabilities:()=>state.capabilities,disposed:false,scene:()=>scene,snapshot:()=>snapshot,busy:()=>busy,sending:()=>sending,recording:()=>null,scroll:()=>null,exitPreparing:()=>exiting,spaceOperations:operations,flush:()=>{flushCalls++;return flush.promise;},commands:queued?queue.promise:Promise.resolve(),exitFailure:undefined,
       bridge:{continueRunFromJournal:input=>{calls.push(input);return request.promise;}},accept:value=>accepted.push(value),setSending:value=>sending=value,setBusy:value=>busy=value,setSendErrors:fn=>Object.assign(errors,fn(errors))};
@@ -252,8 +284,8 @@ const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,l
   checks.push('Actual App continuation method holds real SpaceOperations through native acknowledgement, preserves drafts/refs and denies post-exit admission or failed flush');
   const revoke={
     disabled:f=>{f.state.capabilities.agent=null;},
-    'no-ready-connection':f=>{f.state.capabilities.readyConnectionIds=[];},
-    'other-ready-connection':f=>{f.state.capabilities.readyConnectionIds=['other-connection'];},
+    'no-ready-connection':f=>{f.state.capabilities.configuredConnectionIds=[];},
+    'other-ready-connection':f=>{f.state.capabilities.configuredConnectionIds=['other-connection'];},
     'unavailable-capabilities':f=>{f.state.capabilities=undefined;},
   };
   for(const [reason,change] of Object.entries(revoke)){

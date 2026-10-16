@@ -3,6 +3,11 @@ export type RecordedRunStatus = 'running' | 'completed' | 'failed' | 'canceled' 
 export type ContinueBlockedReason = 'running' | 'scene_closed' | 'scene_frozen' | 'scene_inactive' | 'no_confirmed_content' | 'legacy_not_recorded' | 'connection_unselected' | 'mandatory_context_too_large' | 'selection_too_large' | 'context_unavailable' | 'conversation_changed';
 export type ContentUnavailable = 'oversized' | 'unsupported_content' | 'memory_policy' | 'history_policy' | 'not_received' | 'invalid_response' | 'legacy_not_recorded';
 export type NotSentReason = 'preparation_failed' | 'invalid_arguments' | 'not_advertised' | 'authority_changed' | 'catalog_changed' | 'run_ended' | 'budget_exhausted' | 'duplicate_call_id';
+export type ArgumentDiagnosticReason = 'required' | 'type' | 'additional_properties' | 'const' | 'enum' | 'minimum' | 'maximum' | 'exclusive_minimum' | 'exclusive_maximum' | 'min_length' | 'max_length' | 'min_items' | 'max_items' | 'one_of' | 'pattern' | 'syntax' | 'eof' | 'data';
+export interface ArgumentDiagnostic {
+  fieldPath: string; reason: ArgumentDiagnosticReason;
+  expectedType?: 'null' | 'boolean' | 'number' | 'integer' | 'string' | 'array' | 'object' | null;
+}
 export interface RunJournalSummary {
   runId: string; sceneId: string; agentId: string; userMessageId: string;
   kind: 'chat' | 'workflow' | 'continuation'; status: RecordedRunStatus;
@@ -22,6 +27,7 @@ export type JournalContent = { type: 'text'; text: string } | { type: 'json'; va
 export type ToolBinding =
   | { type: 'mcp'; serverId: string; revision: number; name: string; advertisedAlias: string }
   | { type: 'extension'; pluginId: string; pluginRevision: number; version: string; sha256: string; serviceId: string; advertisedAlias: string; name: string }
+  | { type: 'video_annotation' | 'visual_annotation'; pluginId: string; pluginRevision: number; contributionId: string; name: string; targetManifestSha256: string }
   | { type: 'local'; name: string }
   | { type: 'external_memory'; bindingId: string; bindingRevision: number; pluginId: string; pluginRevision: number; contributionId: string; name: string }
   | { type: 'rejected'; advertisedName: string };
@@ -33,12 +39,14 @@ export interface JournalEntryDetail {
   runId: string; journalRevision: number; entry: JournalEntrySummary; binding: ToolBinding | null;
   argumentsWireSha256: string | null; content: JournalContent; references: EvidenceReference[];
   notSentReason?: NotSentReason | null;
+  argumentDiagnostic?: ArgumentDiagnostic | null;
 }
 // Rendering adapter; native content is converted to literal text, never markup.
 export interface JournalEntryView {
   runId: string; journalRevision: number; entry: JournalEntrySummary;
   literal: string; unavailable: ContentUnavailable | null;
   notSentReason?: NotSentReason | null;
+  argumentDiagnostic?: ArgumentDiagnostic | null;
 }
 export interface ContinueFromRecord {
   sceneId: string; sourceRunId: string; expectedJournalRevision: number; expectedCheckpointSeq: number;

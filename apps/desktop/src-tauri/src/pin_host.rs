@@ -979,6 +979,8 @@ pub(crate) async fn pin_imported_image(
         }
         let mut lease = crate::image_host::SourceLease::open(&imported.item.asset, &assets_root)?;
         let image = lease.decode_rgba(&imported.item.asset)?;
+        let image = assets::compose_image_item(&imported.item, image, &assets_root)?;
+        lease.verify()?;
         work_cancel.check()?;
         let source = stage(&root, &image, pixel_slot)?;
         work_cancel.check()?;

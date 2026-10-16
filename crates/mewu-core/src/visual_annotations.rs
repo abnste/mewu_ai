@@ -146,6 +146,10 @@ pub struct VisualInputTarget {
     pub attachment_id: String,
     pub attachment_ordinal: u32,
     pub attachment_sha256: String,
+    /// Present only for an image-item document. It never aliases a scene region.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub region_id: String,
     pub source: VisualSourceFence,
     pub crop: VisualPixelRect,
@@ -155,6 +159,24 @@ pub struct VisualInputTarget {
     pub profile_id: String,
 }
 impl VisualInputTarget {
+    pub(crate) fn owner_key(&self) -> Result<String> {
+        if let Some(item) = &self.image_item_id {
+            j::uuid(item)?;
+            if !self.region_id.is_empty() { return Err(j::bad("批注目标类型冲突")); }
+            Ok(format!("item:{item}"))
+        } else { j::uuid(&self.region_id)?; Ok(self.region_id.clone()) }
+    }
+    pub(crate) fn current_source(&self, scene: &crate::Scene) -> Result<VisualSourceFence> {
+        self.owner_key()?;
+        if let Some(id) = &self.image_item_id {
+            let item = scene.items.iter().find(|item| item.id == *id).ok_or(CoreError::DrawingConflict)?;
+            crate::image_annotation_source_fence(item)
+        } else {
+            let background = scene.background.as_ref().ok_or(CoreError::DrawingConflict)?;
+            let region = scene.regions.iter().find(|region| region.id == self.region_id).ok_or(CoreError::DrawingConflict)?;
+            visual_source_fence(background, region)
+        }
+    }
     /// Encoded content pixels only. Provider transforms, if any, must have been
     /// normalized by its explicit adapter; screen/DPI coordinates never enter.
     pub fn source_point(&self, point: DrawingPoint) -> Result<DrawingPoint> {
@@ -250,12 +272,12 @@ pub(crate) fn validate_manifest(manifest: &VisualInputManifest) -> Result<()> {
         for id in [
             &target.handle,
             &target.attachment_id,
-            &target.region_id,
             &target.source.background_id,
             &target.source.effective_source_id,
         ] {
             j::uuid(id)?;
         }
+        let owner_key = target.owner_key()?;
         if !handles.insert(&target.handle)
             || !assets.insert(&target.attachment_id)
             || !ordinals.insert(target.attachment_ordinal)
@@ -273,7 +295,7 @@ pub(crate) fn validate_manifest(manifest: &VisualInputManifest) -> Result<()> {
         {
             return Err(j::bad("批注输入映射无效"));
         }
-        if let Some(previous) = sources.insert(&target.region_id, &target.source) {
+        if let Some(previous) = sources.insert(owner_key, &target.source) {
             if previous != &target.source {
                 return Err(j::bad("同一选区批注来源不一致"));
             }
@@ -345,6 +367,7 @@ pub(crate) fn validate_rich_usage(
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| j::bad("批注提交回执无效"))?
             .iter()
+            .chain(value.get("items").and_then(serde_json::Value::as_array).into_iter().flatten())
             .flat_map(|region| {
                 region
                     .get("drawings")
@@ -438,11 +461,11 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
             .manifest
             .targets
             .iter()
-            .map(|t| t.region_id.as_str())
-            .collect();
+            .map(VisualInputTarget::owner_key)
+            .collect::<Result<_>>()?;
         if expected.len() != input.cursors.len()
             || input.cursors.iter().any(|(region, cursor)| {
-                !expected.contains(region.as_str()) || !j::hash_valid(&cursor.visual_sha256)
+                !expected.contains(region) || !j::hash_valid(&cursor.visual_sha256)
             })
         {
             return Err(j::bad("批注绘制游标损坏"));
@@ -452,7 +475,7 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
                 .manifest
                 .targets
                 .iter()
-                .find(|t| t.region_id == *region_id)
+                .find(|t| t.owner_key().is_ok_and(|key| key == *region_id))
                 .expect("checked key")
                 .source;
             if cursor.background_id != source.background_id
@@ -466,13 +489,12 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
     }
     // Origin is document provenance, including removed objects retained by undo.
     for scene in &state.scenes {
-        for region in &scene.regions {
-            let objects = region.drawings.iter().chain(
-                region
-                    .drawing_history
+        for (document_id, image_item, drawings, history) in crate::image_annotations::documents(scene) {
+            let objects = drawings.iter().chain(
+                history
                     .undo
                     .iter()
-                    .chain(&region.drawing_history.redo)
+                    .chain(&history.redo)
                     .flat_map(|s| s.edits())
                     .flat_map(|e| e.before.iter().chain(&e.after)),
             );
@@ -495,7 +517,7 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
                             .manifest
                             .targets
                             .iter()
-                            .any(|t| t.handle == origin.target_handle && t.region_id == region.id)
+                            .any(|t| t.handle == origin.target_handle && if image_item { t.image_item_id.as_deref() == Some(document_id) } else { t.image_item_id.is_none() && t.region_id == document_id })
                     {
                         return Err(j::bad("批注图元来源不匹配"));
                     }
@@ -509,12 +531,12 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
                             .and_then(serde_json::Value::as_str)
                             != Some(hash.as_str())
                         || !value
-                            .get("regions")
+                            .get(if image_item { "items" } else { "regions" })
                             .and_then(serde_json::Value::as_array)
                             .is_some_and(|regions| {
                                 regions.iter().any(|r| {
-                                    r.get("regionId").and_then(serde_json::Value::as_str)
-                                        == Some(region.id.as_str())
+                                    r.get(if image_item { "itemId" } else { "regionId" }).and_then(serde_json::Value::as_str)
+                                        == Some(document_id)
                                         && r.get("drawings")
                                             .and_then(serde_json::Value::as_array)
                                             .is_some_and(|drawings| {

@@ -21,6 +21,118 @@ impl Drop for Db {
 fn uid() -> String {
     uuid::Uuid::new_v4().to_string()
 }
+fn image_fixture(store: &mut Store, mixed: bool) -> Fixture {
+    let scene = store.snapshot().active_scene_id;
+    let asset = Asset { id: uid(), name: "imported.png".into(), kind: AssetKind::Image, path: "owned/imported.png".into(), width: Some(800), height: Some(600), origin_x: None, origin_y: None, scale_factor: None, capture_coordinates: None };
+    store.add_asset(&scene, asset.clone()).unwrap();
+    let item = store.scene(&scene).unwrap().items[0].clone();
+    let mut refs = vec![Reference { kind: ReferenceKind::Item, id: item.id.clone() }];
+    if mixed {
+        store.set_background(&scene, Asset { id: uid(), name: "capture.png".into(), ..asset.clone() }).unwrap();
+        let region = Region { id: uid(), x: 0., y: 0., width: 800., height: 600., ..Default::default() };
+        refs.push(Reference { kind: ReferenceKind::Region, id: region.id.clone() });
+        store.apply(SceneCommand::AddRegion { scene_id: scene.clone(), region }).unwrap();
+    }
+    store.apply(SceneCommand::SetRefs { scene_id: scene.clone(), refs }).unwrap();
+    store.apply(SceneCommand::SetDraft { scene_id: scene.clone(), draft: "在原图作答".into() }).unwrap();
+    let run = store.begin_run(&scene).unwrap();
+    let sent = Asset { id: uid(), name: "input.jpg".into(), path: "owned/input.jpg".into(), ..asset.clone() };
+    let target = VisualInputTarget { handle: uid(), attachment_id: sent.id.clone(), attachment_ordinal: 0, attachment_sha256: hash("image input"), region_id: String::new(), image_item_id: Some(item.id.clone()), source: image_annotation_source_fence(&item).unwrap(), crop: VisualPixelRect { x: 0, y: 0, width: 800, height: 600 }, resized: VisualPixelSize { width: 800, height: 600 }, tile: VisualPixelRect { x: 0, y: 0, width: 800, height: 600 }, encoded: VisualPixelSize { width: 800, height: 600 }, profile_id: "explicit-normalized1000-v2".into() };
+    let mut targets = vec![target]; let mut assets = vec![sent];
+    if mixed {
+        let current = store.scene(&scene).unwrap();
+        let sent = Asset { id: uid(), ..assets[0].clone() };
+        let mut target = targets[0].clone(); target.handle = uid(); target.attachment_id = sent.id.clone(); target.attachment_ordinal = 1; target.image_item_id = None; target.region_id = current.regions[0].id.clone(); target.source = visual_source_fence(current.background.as_ref().unwrap(), &current.regions[0]).unwrap();
+        targets.push(target); assets.push(sent);
+    }
+    let input = VerifiedVisualInput::new(VisualInputManifest { version: 1, targets }).unwrap();
+    let grant = VisualAnnotationGrant { plugin_id: "mewu.annotations".into(), plugin_revision: 1, contribution_id: "answer".into() };
+    let authority = VerifiedVisualAuthority::new(grant.clone(), input.sha256().into()).unwrap();
+    store.attach_run_visual_assets(&scene, &run.run_id, assets, grant.clone(), input.clone()).unwrap();
+    Fixture { run, region: item.id, background: asset.id, input, grant, authority }
+}
+fn annotated_item(store: &Store, f: &Fixture) -> SpaceItem { store.scene(&f.run.scene_id).unwrap().items.iter().find(|item| item.id == f.region).unwrap().clone() }
+
+#[test]
+fn image_item_annotations_commit_own_document_without_background_or_source_mutation_and_reopen() {
+    let file=Db::new(); let mut store=Store::open(&file.0).unwrap(); let f=image_fixture(&mut store,false);
+    let before=annotated_item(&store,&f); let calls=leases(&mut store,&f,2);
+    let first=store.apply_visual_annotations_with_receipt(&calls[0],&f.authority,batch(&f,2)).unwrap();
+    assert_eq!(first.result.model_visible_json.as_deref().map(|text|serde_json::from_str::<serde_json::Value>(text).unwrap()).unwrap()["items"][0]["itemId"],f.region);
+    assert!(store.scene(&f.run.scene_id).unwrap().background.is_none()); assert!(store.scene(&f.run.scene_id).unwrap().regions.is_empty());
+    let item=annotated_item(&store,&f);assert_eq!(item.asset,before.asset);assert_eq!((item.x,item.y,item.width,item.height),(before.x,before.y,before.width,before.height));
+    assert_eq!(item.image_annotations.as_ref().unwrap().drawings.len(),2);assert_eq!(item.image_annotations.as_ref().unwrap().history.undo.len(),1);
+    assert!(store.apply_visual_annotations_with_receipt(&calls[0],&f.authority,batch(&f,1)).is_err());
+    store.apply_visual_annotations_with_receipt(&calls[1],&f.authority,batch(&f,1)).unwrap();assert_eq!(annotated_item(&store,&f).image_annotations.as_ref().unwrap().drawings.len(),3);
+    store.finish_run(&f.run.scene_id,&f.run.run_id,"已提交").unwrap();drop(store);
+    let store=Store::open(&file.0).unwrap();assert_eq!(annotated_item(&store,&f).image_annotations.unwrap().drawings.len(),3);
+}
+
+#[test]
+fn image_item_manual_history_replays_and_generic_position_cannot_forge_or_clear_document() {
+    let mut store=Store::open_in_memory().unwrap();let f=image_fixture(&mut store,false);let call=leases(&mut store,&f,1).remove(0);
+    store.apply_visual_annotations_with_receipt(&call,&f.authority,batch(&f,2)).unwrap();store.finish_run(&f.run.scene_id,&f.run.run_id,"完成").unwrap();
+    let item=annotated_item(&store,&f);let document=item.image_annotations.clone();let mut forged=item.clone();forged.image_annotations=None;forged.x+=0.1;
+    store.apply(SceneCommand::UpdateItem { scene_id:f.run.scene_id.clone(),item:forged }).unwrap();assert_eq!(annotated_item(&store,&f).image_annotations,document);
+    for action in [ImageAnnotationEdit::UndoDrawing,ImageAnnotationEdit::RedoDrawing] {
+        let item=annotated_item(&store,&f);store.apply(SceneCommand::EditImageAnnotations { scene_id:f.run.scene_id.clone(),item_id:item.id,source_asset_id:item.asset.id,expected_revision:item.image_annotations.as_ref().unwrap().revision,action }).unwrap();
+    }
+    assert_eq!(annotated_item(&store,&f).image_annotations.unwrap().drawings.len(),2);
+    let item=annotated_item(&store,&f);let before=store.snapshot();assert!(store.apply(SceneCommand::EditImageAnnotations { scene_id:f.run.scene_id.clone(),item_id:item.id,source_asset_id:uid(),expected_revision:item.image_annotations.unwrap().revision,action:ImageAnnotationEdit::UndoDrawing }).is_err());assert_eq!(store.snapshot(),before);
+}
+
+#[test]
+fn image_item_movement_removal_or_target_type_alias_reject_late_annotations() {
+    for remove in [false,true] {
+        let mut store=Store::open_in_memory().unwrap();let f=image_fixture(&mut store,false);let call=leases(&mut store,&f,1).remove(0);
+        let mut item=annotated_item(&store,&f);
+        if remove { store.apply(SceneCommand::RemoveItem { scene_id:f.run.scene_id.clone(),item_id:item.id }).unwrap(); }
+        else {item.x+=0.05;store.apply(SceneCommand::UpdateItem { scene_id:f.run.scene_id.clone(),item }).unwrap();}
+        let before=store.snapshot();assert!(store.apply_visual_annotations_with_receipt(&call,&f.authority,batch(&f,1)).is_err());assert_eq!(store.snapshot(),before);
+    }
+    let mut store=Store::open_in_memory().unwrap();let f=image_fixture(&mut store,false);let mut manifest=f.input.manifest().clone();manifest.targets[0].region_id=f.region.clone();assert!(VerifiedVisualInput::new(manifest).is_err());
+}
+
+#[test]
+fn mixed_region_and_image_item_batches_are_atomic_and_item_sql_failure_keeps_cursor_and_receipt() {
+    let file=Db::new();let mut store=Store::open(&file.0).unwrap();let f=image_fixture(&mut store,true);let call=leases(&mut store,&f,1).remove(0);
+    let mut batch=batch(&f,1);batch.groups.push(VisualAppendGroup { target_handle:f.input.manifest().targets[1].handle.clone(),drawings:vec![shape()] });
+    let before=store.snapshot();let db=Connection::open(&file.0).unwrap();let input:String=db.query_row("SELECT data FROM visual_run_inputs",[],|row|row.get(0)).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_image_receipt BEFORE UPDATE ON agent_run_events BEGIN SELECT RAISE(ABORT,'synthetic'); END;").unwrap();
+    assert!(store.apply_visual_annotations_with_receipt(&call,&f.authority,batch.clone()).is_err());assert_eq!(store.snapshot(),before);
+    assert_eq!(db.query_row("SELECT data FROM visual_run_inputs",[],|row|row.get::<_,String>(0)).unwrap(),input);
+    assert_eq!(serde_json::from_str::<Snapshot>(&db.query_row("SELECT payload FROM app_state",[],|row|row.get::<_,String>(0)).unwrap()).unwrap(),before);
+    db.execute_batch("DROP TRIGGER reject_image_receipt").unwrap();store.apply_visual_annotations_with_receipt(&call,&f.authority,batch).unwrap();
+    assert_eq!(annotated_item(&store,&f).image_annotations.unwrap().drawings.len(),1);assert_eq!(store.scene(&f.run.scene_id).unwrap().regions[0].drawings.len(),1);
+}
+
+#[test]
+fn image_item_rich_formula_layout_is_registered_in_receipt_budget_and_verified_after_reopen() {
+    let file=Db::new();let mut store=Store::open(&file.0).unwrap();let f=image_fixture(&mut store,false);let call=leases(&mut store,&f,1).remove(0);
+    let png=vec![137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,4,0,0,0,181,28,12,2,0,0,0,11,73,68,65,84,120,218,99,252,255,31,0,3,3,2,0,239,154,55,219,0,0,0,0,73,69,78,68,174,66,96,130];
+    let layout=VerifiedRichLayout::new(uid(),RichContent::Formula { version:1,tex:"x=3".into(),color:"#ff0000".into(),font_size:24. },RichRendererIdentity { id:"synthetic-native-layout".into(),version:"1".into(),font_sha256:"a".repeat(64),style_version:1 },1,1,png).unwrap();
+    let reference=layout.reference().clone();let drawing=Drawing { id:uid(),kind:DrawingKind::Rich,color:RICH_DRAWING_COLOR.into(),stroke_width:RICH_DRAWING_STROKE_WIDTH,points:vec![DrawingPoint{x:100.,y:100.},DrawingPoint{x:124.,y:124.}],text:None,font_size:None,origin:None,rich:Some(reference.clone()) };
+    store.apply_visual_annotations_with_rich_receipt(&call,&f.authority,VisualAppendBatch { groups:vec![VisualAppendGroup { target_handle:f.input.manifest().targets[0].handle.clone(),drawings:vec![drawing] }] },vec![layout]).unwrap();
+    store.finish_run(&f.run.scene_id,&f.run.run_id,"完成").unwrap();drop(store);
+    let store=Store::open(&file.0).unwrap();let item=annotated_item(&store,&f);assert_eq!(item.image_annotations.unwrap().drawings[0].rich.as_ref(),Some(&reference));assert_eq!(store.rich_layout(&reference).unwrap().content(),&RichContent::Formula { version:1,tex:"x=3".into(),color:"#ff0000".into(),font_size:24. });
+}
+
+#[test]
+fn image_item_context_rejects_unimplemented_highlights_and_stale_revisions_without_saving() {
+    let mut store=Store::open_in_memory().unwrap();let f=image_fixture(&mut store,false);store.cancel_run(&f.run.scene_id).unwrap();let item=annotated_item(&store,&f);
+    for kind in [DrawingKind::Highlighter,DrawingKind::Mark,DrawingKind::Mosaic] {
+        let mut drawing=shape();drawing.kind=kind;drawing.text=None;drawing.font_size=None;drawing.points=vec![DrawingPoint{x:10.,y:10.},DrawingPoint{x:20.,y:20.}];
+        let before=store.snapshot();assert!(store.apply(SceneCommand::EditImageAnnotations { scene_id:f.run.scene_id.clone(),item_id:item.id.clone(),source_asset_id:item.asset.id.clone(),expected_revision:0,action:ImageAnnotationEdit::AddDrawing{drawing} }).is_err());assert_eq!(store.snapshot(),before);
+    }
+    let before=store.snapshot();assert!(store.apply(SceneCommand::EditImageAnnotations { scene_id:f.run.scene_id.clone(),item_id:item.id,source_asset_id:item.asset.id,expected_revision:999,action:ImageAnnotationEdit::AddDrawing{drawing:shape()} }).is_err());assert_eq!(store.snapshot(),before);
+}
+#[test]
+fn returned_blackboard_preview_is_readable_but_cannot_receive_a_detached_image_document() {
+    let mut store=Store::open_in_memory().unwrap();let f=image_fixture(&mut store,false);store.cancel_run(&f.run.scene_id).unwrap();let mut item=annotated_item(&store,&f);
+    // Test the typed boundary without writing a fabricated blackboard link to Store.
+    item.state=Some(std::collections::BTreeMap::from([("blackboardSceneId".into(),json!(uid()))]));
+    assert!(image_annotation_region(&item).is_ok());assert!(!image_annotation_writable(&item));assert!(image_annotation_source_fence(&item).is_err());
+}
 fn hash(s: &str) -> String {
     format!("{:x}", Sha256::digest(s.as_bytes()))
 }
@@ -123,6 +235,7 @@ fn prepare(store: &mut Store) -> Fixture {
         attachment_ordinal: 0,
         attachment_sha256: hash("fixture bytes"),
         region_id: region.clone(),
+        image_item_id: None,
         source: visual_source_fence(run.background.as_ref().unwrap(), &run.regions[0]).unwrap(),
         crop: VisualPixelRect {
             x: 20,

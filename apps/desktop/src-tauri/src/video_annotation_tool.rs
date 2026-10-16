@@ -6,8 +6,9 @@ use crate::{
     Host,
 };
 use mewu_core::{
-    DispatchLease, ModelVideoAppend, ModelVideoPrimitive, NotSentReason, ReceiptCommit, Store,
-    ToolBinding, ValidatedVideoAppendBatch, VerifiedVideoAnnotationAuthority, VerifiedVideoInput,
+    ArgumentDiagnostic, ArgumentDiagnosticReason, ArgumentExpectedType, DispatchLease,
+    ModelVideoAppend, ModelVideoPrimitive, NotSentReason, ReceiptCommit, Store, ToolBinding,
+    ValidatedVideoAppendBatch, VerifiedVideoAnnotationAuthority, VerifiedVideoInput,
     VerifiedVideoTextLayout, VideoAnnotationDraft, VideoAnnotationPrimitive, VideoAppendGroup,
     VideoTextContent, VisualAnnotationGrant, VIDEO_ANNOTATION_TOOL,
 };
@@ -129,7 +130,7 @@ impl RunScope {
                 "本次运行未启用视频批注".into(),
             );
         }
-        let parsed = match parse_model(&call.arguments, &self.input) {
+        let parsed = match parse_model_diagnosed(&call.arguments, &self.input) {
             Ok(v) => v,
             Err(e) => {
                 if let Err(authority_error) = self.check_live(app, scene, run) {
@@ -146,7 +147,8 @@ impl RunScope {
                 // is durable may the bounded model loop receive a correction.
                 let host = app.state::<Host>();
                 let mut engine = host.lock()?;
-                let (receipt, output) = reject_arguments(&mut engine.store, &lease, &e)?;
+                let (receipt, output) =
+                    reject_arguments(&mut engine.store, &lease, &e.message, e.diagnostic.as_ref())?;
                 journal_runtime::emit_changed(app, scene, run, receipt.journal_revision);
                 crate::publish(app, &engine.store.snapshot());
                 return Ok(output);
@@ -234,24 +236,31 @@ fn reject_arguments(
     store: &mut Store,
     lease: &DispatchLease,
     error: &str,
+    diagnostic: Option<&ArgumentDiagnostic>,
 ) -> Result<(ReceiptCommit, journal_runtime::CommittedToolOutput), String> {
-    let receipt = store
-        .record_tool_not_sent(lease, NotSentReason::InvalidArguments)
-        .map_err(|e| {
-            format!(
-                "{error}；执行记录未能更新：{}",
-                journal_runtime::store_error(e)
-            )
-        })?;
+    let receipt = match diagnostic {
+        Some(diagnostic) => store.record_tool_not_sent_with_diagnostic(lease, diagnostic),
+        None => store.record_tool_not_sent(lease, NotSentReason::InvalidArguments),
+    }
+    .map_err(|e| {
+        format!(
+            "{error}；执行记录未能更新：{}",
+            journal_runtime::store_error(e)
+        )
+    })?;
+    let mut feedback = json!({
+        "error": error,
+        "executed": false,
+        "correction": "Correct the indicated field using the advertised video_annotate schema and the sent target/frame handles. The rejected batch added no annotations."
+    });
+    if let Some(diagnostic) = diagnostic {
+        feedback["argumentDiagnostic"] =
+            serde_json::to_value(diagnostic).map_err(|_| "参数诊断编码失败")?;
+    }
     Ok((
         receipt,
         journal_runtime::CommittedToolOutput {
-            model_json: json!({
-                "error": error,
-                "executed": false,
-                "correction": "Correct the indicated field using the advertised video_annotate schema and the sent target/frame handles. The rejected batch added no annotations."
-            })
-            .to_string(),
+            model_json: feedback.to_string(),
         },
     ))
 }
@@ -295,7 +304,7 @@ fn known_argument_field(field: &str) -> bool {
     )
 }
 
-fn schema_diagnostic(error: &jsonschema::ValidationError<'_>) -> String {
+fn safe_schema_diagnostic(error: &jsonschema::ValidationError<'_>) -> Option<ArgumentDiagnostic> {
     use jsonschema::{error::ValidationErrorKind, paths::LocationSegment};
     // Prefer the matching tagged union branch, so a malformed text primitive
     // is diagnosed against text fields even if it has several errors.
@@ -313,7 +322,7 @@ fn schema_diagnostic(error: &jsonschema::ValidationError<'_>) -> String {
                 .filter(|v| !v.is_empty())
                 .min_by_key(|v| v.len())
         }) {
-            return schema_diagnostic(&errors[0]);
+            return safe_schema_diagnostic(&errors[0]);
         }
     }
     let mut path = String::from("$");
@@ -327,7 +336,10 @@ fn schema_diagnostic(error: &jsonschema::ValidationError<'_>) -> String {
                 path.push('/');
                 path.push_str(&index.to_string());
             }
-            _ => return "视频批注参数无效：$（schema）".into(),
+            _ => {
+                path = "$".into();
+                break;
+            }
         }
     }
     if let ValidationErrorKind::Required { property } = error.kind() {
@@ -336,7 +348,100 @@ fn schema_diagnostic(error: &jsonschema::ValidationError<'_>) -> String {
             path.push_str(field);
         }
     }
-    format!("视频批注参数无效：{path}（{}）", error.kind().keyword())
+    use ArgumentDiagnosticReason as R;
+    let reason = match error.kind().keyword() {
+        "required" => R::Required,
+        "type" => R::Type,
+        "additionalProperties" => R::AdditionalProperties,
+        "const" => R::Const,
+        "enum" => R::Enum,
+        "minimum" => R::Minimum,
+        "maximum" => R::Maximum,
+        "exclusiveMinimum" => R::ExclusiveMinimum,
+        "exclusiveMaximum" => R::ExclusiveMaximum,
+        "minLength" => R::MinLength,
+        "maxLength" => R::MaxLength,
+        "minItems" => R::MinItems,
+        "maxItems" => R::MaxItems,
+        "oneOf" => R::OneOf,
+        "pattern" => R::Pattern,
+        _ => return None,
+    };
+    let expected_type = match error.kind() {
+        ValidationErrorKind::Type {
+            kind: jsonschema::error::TypeKind::Single(kind),
+        } => {
+            use jsonschema::types::JsonType;
+            Some(match kind {
+                JsonType::Null => ArgumentExpectedType::Null,
+                JsonType::Boolean => ArgumentExpectedType::Boolean,
+                JsonType::Number => ArgumentExpectedType::Number,
+                JsonType::Integer => ArgumentExpectedType::Integer,
+                JsonType::String => ArgumentExpectedType::String,
+                JsonType::Array => ArgumentExpectedType::Array,
+                JsonType::Object => ArgumentExpectedType::Object,
+            })
+        }
+        _ => None,
+    };
+    ArgumentDiagnostic::new(path.clone(), reason.clone(), expected_type.clone())
+        .or_else(|| ArgumentDiagnostic::new("$".into(), reason, expected_type))
+}
+
+fn schema_diagnostic(error: &jsonschema::ValidationError<'_>) -> String {
+    match safe_schema_diagnostic(error) {
+        Some(diagnostic) => {
+            use ArgumentDiagnosticReason as R;
+            let keyword = match diagnostic.reason {
+                R::Required => "required",
+                R::Type => "type",
+                R::AdditionalProperties => "additionalProperties",
+                R::Const => "const",
+                R::Enum => "enum",
+                R::Minimum => "minimum",
+                R::Maximum => "maximum",
+                R::ExclusiveMinimum => "exclusiveMinimum",
+                R::ExclusiveMaximum => "exclusiveMaximum",
+                R::MinLength => "minLength",
+                R::MaxLength => "maxLength",
+                R::MinItems => "minItems",
+                R::MaxItems => "maxItems",
+                R::OneOf => "oneOf",
+                R::Pattern => "pattern",
+                R::Syntax => "syntax",
+                R::Eof => "eof",
+                R::Data => "data",
+            };
+            format!("视频批注参数无效：{}（{keyword}）", diagnostic.field_path)
+        }
+        None => "视频批注参数无效：$（schema）".into(),
+    }
+}
+
+fn rejected_arguments_diagnostic(
+    arguments: &str,
+    input: &VerifiedVideoInput,
+) -> Option<ArgumentDiagnostic> {
+    if arguments.len() > 64 * 1024 {
+        return None;
+    }
+    let value = match serde_json::from_str::<Value>(arguments) {
+        Ok(value) => value,
+        Err(error) => {
+            let reason = match error.classify() {
+                serde_json::error::Category::Syntax => ArgumentDiagnosticReason::Syntax,
+                serde_json::error::Category::Eof => ArgumentDiagnosticReason::Eof,
+                _ => return None,
+            };
+            return ArgumentDiagnostic::new("$".into(), reason, None);
+        }
+    };
+    let definition = model_definition(input);
+    let validator = jsonschema::validator_for(&definition["function"]["parameters"]).ok()?;
+    // A duplicate-field/data/semantic failure with a schema-valid Value has no
+    // inferred field diagnostic. Never invent details from the error string.
+    let failure = validator.iter_errors(&value).next();
+    failure.as_ref().and_then(safe_schema_diagnostic)
 }
 
 fn deserialization_diagnostic(
@@ -368,29 +473,88 @@ fn deserialization_diagnostic(
     )
 }
 
+#[derive(Debug)]
+struct ModelRejection {
+    message: String,
+    diagnostic: Option<ArgumentDiagnostic>,
+}
+impl ModelRejection {
+    fn field(message: impl Into<String>, path: String, reason: ArgumentDiagnosticReason) -> Self {
+        Self {
+            message: message.into(),
+            diagnostic: ArgumentDiagnostic::new(path, reason, None),
+        }
+    }
+}
+
+#[cfg(test)]
 fn parse_model(arguments: &str, input: &VerifiedVideoInput) -> Result<PreparedModel, String> {
+    parse_model_diagnosed(arguments, input).map_err(|error| error.message)
+}
+
+fn parse_model_diagnosed(
+    arguments: &str,
+    input: &VerifiedVideoInput,
+) -> Result<PreparedModel, ModelRejection> {
     if arguments.len() > 64 * 1024 {
-        return Err("视频批注参数过大".into());
+        return Err(ModelRejection {
+            message: "视频批注参数过大".into(),
+            diagnostic: None,
+        });
     }
-    let parsed: ModelVideoAppend = serde_json::from_str(arguments)
-        .map_err(|error| deserialization_diagnostic(arguments, input, &error))?;
-    if parsed.coordinate_space != "normalized1000"
-        || parsed.style_unit != "sourcePixels"
-        || parsed.time_space != "sentFrameHandles"
-        || parsed.objects.is_empty()
-        || parsed.objects.len() > 48
-    {
-        return Err("视频批注单位或数量无效".into());
+    let parsed: ModelVideoAppend =
+        serde_json::from_str(arguments).map_err(|error| ModelRejection {
+            message: deserialization_diagnostic(arguments, input, &error),
+            diagnostic: rejected_arguments_diagnostic(arguments, input),
+        })?;
+    for (valid, field) in [
+        (
+            parsed.coordinate_space == "normalized1000",
+            "coordinateSpace",
+        ),
+        (parsed.style_unit == "sourcePixels", "styleUnit"),
+        (parsed.time_space == "sentFrameHandles", "timeSpace"),
+    ] {
+        if !valid {
+            return Err(ModelRejection::field(
+                "视频批注单位或数量无效",
+                format!("$/{field}"),
+                ArgumentDiagnosticReason::Const,
+            ));
+        }
     }
-    for object in &parsed.objects {
+    if parsed.objects.is_empty() || parsed.objects.len() > 48 {
+        return Err(ModelRejection::field(
+            "视频批注单位或数量无效",
+            "$/objects".into(),
+            if parsed.objects.is_empty() {
+                ArgumentDiagnosticReason::MinItems
+            } else {
+                ArgumentDiagnosticReason::MaxItems
+            },
+        ));
+    }
+    for (index, object) in parsed.objects.iter().enumerate() {
+        let root = format!("$/objects/{index}");
         let target = input
             .manifest()
             .targets
             .iter()
             .find(|t| t.handle == object.target_handle)
-            .ok_or("视频目标句柄无效")?;
-        mewu_core::resolve_video_model_interval(target, &object.interval)
-            .map_err(|e| e.to_string())?;
+            .ok_or_else(|| {
+                ModelRejection::field(
+                    "视频目标句柄无效",
+                    format!("{root}/targetHandle"),
+                    ArgumentDiagnosticReason::Enum,
+                )
+            })?;
+        mewu_core::resolve_video_model_interval(target, &object.interval).map_err(|e| {
+            ModelRejection::field(
+                e.to_string(),
+                format!("{root}/interval"),
+                ArgumentDiagnosticReason::Data,
+            )
+        })?;
         match &object.primitive {
             ModelVideoPrimitive::Rect { bounds, style } => {
                 let source = mewu_core::video_annotation_source_rect(
@@ -398,17 +562,33 @@ fn parse_model(arguments: &str, input: &VerifiedVideoInput) -> Result<PreparedMo
                     target.source.source_width,
                     target.source.source_height,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    ModelRejection::field(
+                        e.to_string(),
+                        format!("{root}/primitive/bounds"),
+                        ArgumentDiagnosticReason::Data,
+                    )
+                })?;
                 // Width is in original source pixels; normalized bounds must
                 // be mapped before checking the inward stroke fits the shape.
-                if !valid_color(&style.color)
-                    || !style.stroke_width.is_finite()
+                let bad_field = if !valid_color(&style.color) {
+                    Some("color")
+                } else if !style.stroke_width.is_finite()
                     || !(0.25..=64.).contains(&style.stroke_width)
                     || style.stroke_width > source.width.min(source.height)
-                    || !style.opacity.is_finite()
-                    || !(0.05..=1.).contains(&style.opacity)
                 {
-                    return Err("视频矩形坐标或样式无效".into());
+                    Some("strokeWidth")
+                } else if !style.opacity.is_finite() || !(0.05..=1.).contains(&style.opacity) {
+                    Some("opacity")
+                } else {
+                    None
+                };
+                if let Some(field) = bad_field {
+                    return Err(ModelRejection::field(
+                        "视频矩形坐标或样式无效",
+                        format!("{root}/primitive/style/{field}"),
+                        ArgumentDiagnosticReason::Data,
+                    ));
                 }
             }
             ModelVideoPrimitive::Text {
@@ -423,22 +603,40 @@ fn parse_model(arguments: &str, input: &VerifiedVideoInput) -> Result<PreparedMo
                     target.source.source_width,
                     target.source.source_height,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    ModelRejection::field(
+                        e.to_string(),
+                        format!("{root}/primitive/topLeft"),
+                        ArgumentDiagnosticReason::Data,
+                    )
+                })?;
                 // Same literal-text contract as native render_text and the
                 // durable layout validator; actual glyph fit remains a render check.
-                if !valid_color(color)
-                    || text.trim().is_empty()
+                let bad_field = if !valid_color(color) {
+                    Some("color")
+                } else if text.trim().is_empty()
                     || text.len() > 4096
                     || text.chars().count() > 500
                     || text
                         .chars()
                         .any(|c| c.is_control() && c != '\n' && c != '\t')
-                    || !font_size.is_finite()
-                    || !(8. ..=128.).contains(font_size)
-                    || point.x >= f64::from(target.source.source_width)
+                {
+                    Some("text")
+                } else if !font_size.is_finite() || !(8. ..=128.).contains(font_size) {
+                    Some("fontSize")
+                } else if point.x >= f64::from(target.source.source_width)
                     || point.y >= f64::from(target.source.source_height)
                 {
-                    return Err("视频批注文字无效".into());
+                    Some("topLeft")
+                } else {
+                    None
+                };
+                if let Some(field) = bad_field {
+                    return Err(ModelRejection::field(
+                        "视频批注文字无效",
+                        format!("{root}/primitive/{field}"),
+                        ArgumentDiagnosticReason::Data,
+                    ));
                 }
             }
         }
@@ -850,6 +1048,148 @@ mod tests {
     }
 
     #[test]
+    fn durable_diagnostic_uses_actual_schema_error_not_raw_keys_or_semantic_guesses() {
+        let db = Db::new();
+        let mut f = Fixture::new(&db);
+        let secret = "PRIVATE_RAW_VALUE_AND_UNKNOWN_KEY";
+        let mut wrong_type = args(&f.input, vec![rect()]);
+        wrong_type["objects"][0]["primitive"]["style"]["opacity"] = json!(secret);
+        let diagnostic = rejected_arguments_diagnostic(&wrong_type.to_string(), &f.input).unwrap();
+        assert_eq!(diagnostic.field_path, "$/objects/0/primitive/style/opacity");
+        assert_eq!(diagnostic.reason, ArgumentDiagnosticReason::Type);
+        assert_eq!(diagnostic.expected_type, Some(ArgumentExpectedType::Number));
+        assert!(!serde_json::to_string(&diagnostic).unwrap().contains(secret));
+        let raw = wrong_type.to_string();
+        let lease = f.lease(&raw);
+        let error = parse_model(&raw, &f.input).err().unwrap();
+        let (_, feedback) =
+            reject_arguments(&mut f.store, &lease, &error, Some(&diagnostic)).unwrap();
+        let model_feedback: Value = serde_json::from_str(&feedback.model_json).unwrap();
+        assert_eq!(
+            model_feedback["argumentDiagnostic"],
+            serde_json::to_value(&diagnostic).unwrap()
+        );
+        assert!(!feedback.model_json.contains(secret));
+        assert!(!feedback.model_json.contains("答案 42"));
+
+        let mut unknown = args(&f.input, vec![rect()]);
+        unknown[secret] = json!(secret);
+        let diagnostic = rejected_arguments_diagnostic(&unknown.to_string(), &f.input).unwrap();
+        assert_eq!(diagnostic.field_path, "$");
+        assert_eq!(
+            diagnostic.reason,
+            ArgumentDiagnosticReason::AdditionalProperties
+        );
+        assert!(!serde_json::to_string(&diagnostic).unwrap().contains(secret));
+        assert_eq!(
+            rejected_arguments_diagnostic("{", &f.input).unwrap().reason,
+            ArgumentDiagnosticReason::Eof
+        );
+        assert_eq!(
+            rejected_arguments_diagnostic("{not_json}", &f.input)
+                .unwrap()
+                .reason,
+            ArgumentDiagnosticReason::Syntax
+        );
+        assert!(rejected_arguments_diagnostic(&" ".repeat(64 * 1024 + 1), &f.input).is_none());
+
+        let valid = args(&f.input, vec![rect()]);
+        assert!(parse_model(&valid.to_string(), &f.input).is_ok());
+        assert!(rejected_arguments_diagnostic(&valid.to_string(), &f.input).is_none());
+        let mut semantic = valid;
+        semantic["objects"][0]["primitive"]["bounds"]["x"] = json!(950);
+        semantic["objects"][0]["primitive"]["bounds"]["width"] = json!(100);
+        assert!(parse_model(&semantic.to_string(), &f.input).is_err());
+        assert!(
+            rejected_arguments_diagnostic(&semantic.to_string(), &f.input).is_none(),
+            "schema-valid geometry failure must not be attributed to a guessed field"
+        );
+        let actual = parse_model_diagnosed(&semantic.to_string(), &f.input)
+            .err()
+            .unwrap()
+            .diagnostic
+            .unwrap();
+        assert_eq!(actual.field_path, "$/objects/0/primitive/bounds");
+        assert_eq!(actual.reason, ArgumentDiagnosticReason::Data);
+    }
+
+    #[test]
+    fn semantic_rejections_identify_the_actual_fixed_branch_without_changing_admission() {
+        let db = Db::new();
+        let f = Fixture::new(&db);
+        let base = args(&f.input, vec![rect()]);
+        let mut unit = base.clone();
+        unit["styleUnit"] = json!("invalid");
+        let mut target = base.clone();
+        target["objects"][0]["targetHandle"] = json!("unknown");
+        let mut interval = base.clone();
+        interval["objects"][0]["interval"]["endHandle"] =
+            interval["objects"][0]["interval"]["startFrameHandle"].clone();
+        let mut stroke = base.clone();
+        stroke["objects"][0]["primitive"]["bounds"]["width"] = json!(1);
+        let mut opacity = base.clone();
+        opacity["objects"][0]["primitive"]["style"]["opacity"] = json!(2);
+        let mut content = args(&f.input, vec![text()]);
+        content["objects"][0]["primitive"]["text"] = json!(" \t");
+        let mut font = args(&f.input, vec![text()]);
+        font["objects"][0]["primitive"]["fontSize"] = json!(1);
+        let mut anchor = args(&f.input, vec![text()]);
+        anchor["objects"][0]["primitive"]["topLeft"]["x"] = json!(1000);
+        for (value, path, reason) in [
+            (unit, "$/styleUnit", ArgumentDiagnosticReason::Const),
+            (
+                target,
+                "$/objects/0/targetHandle",
+                ArgumentDiagnosticReason::Enum,
+            ),
+            (
+                interval,
+                "$/objects/0/interval",
+                ArgumentDiagnosticReason::Data,
+            ),
+            (
+                stroke,
+                "$/objects/0/primitive/style/strokeWidth",
+                ArgumentDiagnosticReason::Data,
+            ),
+            (
+                opacity,
+                "$/objects/0/primitive/style/opacity",
+                ArgumentDiagnosticReason::Data,
+            ),
+            (
+                content,
+                "$/objects/0/primitive/text",
+                ArgumentDiagnosticReason::Data,
+            ),
+            (
+                font,
+                "$/objects/0/primitive/fontSize",
+                ArgumentDiagnosticReason::Data,
+            ),
+            (
+                anchor,
+                "$/objects/0/primitive/topLeft",
+                ArgumentDiagnosticReason::Data,
+            ),
+        ] {
+            let error = parse_model_diagnosed(&value.to_string(), &f.input)
+                .err()
+                .unwrap();
+            let diagnostic = error.diagnostic.unwrap();
+            assert_eq!(diagnostic.field_path, path);
+            assert_eq!(diagnostic.reason, reason);
+            assert_eq!(diagnostic.expected_type, None);
+        }
+        assert!(f
+            .store
+            .video_source(&f.scene, &f.item)
+            .unwrap()
+            .annotations
+            .is_none());
+    }
+
+    #[test]
     fn rejected_dto_is_not_sent_then_corrected_batch_commits_once() {
         let db = Db::new();
         let mut f = Fixture::new(&db);
@@ -863,13 +1203,37 @@ mod tests {
         let before = proof(&db.conn());
         let error = parse_model(&raw, &f.input).err().unwrap();
         assert_eq!(proof(&db.conn()), before, "parse rejection wrote data");
-        let (receipt, output) = reject_arguments(&mut f.store, &rejected_lease, &error).unwrap();
+        let diagnostic = rejected_arguments_diagnostic(&raw, &f.input).unwrap();
+        assert_eq!(diagnostic.field_path, "$/objects/0/primitive/fontSize");
+        assert_eq!(diagnostic.reason, ArgumentDiagnosticReason::Required);
+        let (receipt, output) =
+            reject_arguments(&mut f.store, &rejected_lease, &error, Some(&diagnostic)).unwrap();
         assert!(receipt.journal_revision > 0);
         let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
         assert_eq!(feedback["executed"], false);
         assert_eq!(feedback["error"], error);
+        assert_eq!(
+            feedback["argumentDiagnostic"],
+            serde_json::to_value(&diagnostic).unwrap()
+        );
+        assert!(!output.model_json.contains("答案 42"));
         assert!(feedback.get("applied").is_none());
         assert_eq!(f.phase(), ReceiptPhase::NotSent);
+        let page = f
+            .store
+            .run_journal_page(&f.scene, &f.run, None, 25)
+            .unwrap()
+            .unwrap();
+        let rejected = page
+            .entries
+            .iter()
+            .find(|entry| entry.phase == ReceiptPhase::NotSent)
+            .unwrap();
+        let detail = f
+            .store
+            .run_journal_entry(&f.scene, &f.run, &rejected.id, page.summary.revision)
+            .unwrap();
+        assert_eq!(detail.argument_diagnostic, Some(diagnostic));
         assert!(f
             .store
             .video_source(&f.scene, &f.item)
@@ -955,7 +1319,7 @@ mod tests {
             })
             .err()
             .unwrap();
-        let (_, output) = reject_arguments(&mut f.store, &lease, &error).unwrap();
+        let (_, output) = reject_arguments(&mut f.store, &lease, &error, None).unwrap();
         assert_eq!(entered.get(), 0);
         assert_eq!(
             serde_json::from_str::<Value>(&output.model_json).unwrap()["executed"],
@@ -989,6 +1353,7 @@ mod tests {
             &mut f.store,
             &lease,
             "视频批注参数无效：$/objects/0/primitive/fontSize（required）",
+            None,
         );
         assert!(
             result.is_err(),

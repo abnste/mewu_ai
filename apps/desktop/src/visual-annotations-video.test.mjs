@@ -38,7 +38,7 @@ const fixture = () => ({ id: 'scene', agentId: 'agent', connectionId: 'connectio
 const turn = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve; const promise = new Promise(yes => resolve = yes); return { resolve, promise }; }
 function actualApp() {
-  const f = { scene: fixture(), plugin: plugin(), capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},readyConnectionIds:['connection'],readyAgentIds:[],boundAgentIds:[]}, pending: false, exiting: false, calls: [], errors: {}, drafts: {}, operations: 0, afterSave: undefined, flushVideo: undefined };
+  const f = { scene: fixture(), plugin: plugin(), capabilities:{agent:{pluginId:'mewu.agent',contributionId:'agent',revision:1},configuredConnectionIds:['connection'],readyAgentIds:[],boundAgentIds:[]}, pending: false, exiting: false, calls: [], errors: {}, drafts: {}, operations: 0, afterSave: undefined, flushVideo: undefined };
   const snapshot = () => ({ scenes: [f.scene] });
   const scope = { ...helpers, ...submission, ...optional, ...chatHelpers, activeCaptureRegions: () => f.activeRegions ?? {}, t: value => value, disposed: false, commands: Promise.resolve(), exitFailure: undefined, autosaveVersion: 0, debounce: undefined, clearTimeout,
     scene: () => f.scene, capabilities:()=>f.capabilities, snapshot, busy: () => false, recording: () => false, scroll: () => false, sending: () => f.pending, exitPreparing: () => f.exiting,
@@ -73,7 +73,7 @@ test('a queued send refuses a changed region selection instead of operating the 
 
 test('actual App sends a bound keyless independent Agent without a host connection, and refuses invalid binding fallback',async()=>{
   const {f,scope}=actualApp();f.scene.connectionId=null;
-  f.capabilities={agent:null,readyConnectionIds:[],readyAgentIds:['agent'],boundAgentIds:['agent']};
+  f.capabilities={agent:null,configuredConnectionIds:[],readyAgentIds:['agent'],boundAgentIds:['agent']};
   const question=f.scene.draft;await scope.send();
   assert.equal(f.calls.filter(call=>call?.type==='send').length,1);assert.equal(f.scene.connectionId,null);
   assert.equal(f.calls.find(call=>call?.type==='set_draft').draft,question);
@@ -85,8 +85,8 @@ test('actual send refuses disabled Agent and unavailable selected connections be
   for(const mode of ['disabled','no-ready','other-ready','unavailable']){
     const {f,scope}=actualApp(),draft=f.scene.draft,refs=JSON.stringify(f.scene.refs);
     if(mode==='disabled')f.capabilities.agent=null;
-    if(mode==='no-ready')f.capabilities.readyConnectionIds=[];
-    if(mode==='other-ready')f.capabilities.readyConnectionIds=['another-connection'];
+    if(mode==='no-ready')f.capabilities.configuredConnectionIds=[];
+    if(mode==='other-ready')f.capabilities.configuredConnectionIds=['another-connection'];
     if(mode==='unavailable')f.capabilities=undefined;
     await scope.send();
     assert.equal(f.calls.length,0,mode);assert.equal(f.pending,false);assert.equal(f.operations,0);assert.equal(f.scene.draft,draft);assert.equal(JSON.stringify(f.scene.refs),refs);
@@ -98,8 +98,8 @@ test('Agent or connection readiness revoked during real send flush yields no bri
     f.flushVideo=()=>wait.promise;const sending=scope.send();await turn();
     assert.equal(f.pending,true);assert.equal(f.operations,1);
     if(mode==='disabled')f.capabilities.agent=null;
-    if(mode==='no-ready')f.capabilities.readyConnectionIds=[];
-    if(mode==='other-ready')f.capabilities.readyConnectionIds=['another-connection'];
+    if(mode==='no-ready')f.capabilities.configuredConnectionIds=[];
+    if(mode==='other-ready')f.capabilities.configuredConnectionIds=['another-connection'];
     if(mode==='unavailable')f.capabilities=undefined;
     wait.resolve();await sending;
     assert.equal(f.calls.some(call=>call?.type==='send'),false,mode);assert.equal(f.calls.some(call=>call?.type==='set_draft'||call?.type==='set_refs'),false,mode);
@@ -107,12 +107,13 @@ test('Agent or connection readiness revoked during real send flush yields no bri
   }
 });
 
-test('only one referenced real video exposes visual tools; no background required and selection never rewrites refs', () => {
+test('one real video or an image item exposes visual tools without a background and never rewrites refs', () => {
   const scene = fixture(), before = JSON.stringify(scene.refs);
   assert.equal(helpers.hasAnnotationTarget(scene, scene.refs), true);
   delete scene.background; assert.equal(helpers.hasAnnotationTarget(scene, scene.refs), true);
   assert.equal(helpers.hasAnnotationTarget(scene, []), false);
-  assert.equal(helpers.hasAnnotationTarget(scene, [{ kind: 'item', id: 'image' }]), false);
+  assert.equal(helpers.hasAnnotationTarget(scene, [{ kind: 'item', id: 'image' }]), true);
+  const board=structuredClone(scene);board.items[1].state={blackboardSceneId:'saved-board'};assert.equal(helpers.hasAnnotationTarget(board,[{kind:'item',id:'image'}]),false);
   scene.items.push({ id: 'video2', asset: { id: 'v2', kind: 'video' } });
   assert.equal(helpers.hasAnnotationTarget(scene, [...scene.refs, { kind: 'item', id: 'video2' }]), false);
   assert.equal(JSON.stringify(scene.refs), before);
@@ -166,11 +167,21 @@ test('the single send exposes video tools without changing the user question or 
   assert.equal(JSON.stringify(f.scene.items), JSON.stringify(original.items));
 });
 
-test('plain text and non-writable image attachments use the same send without a visual capability', async () => {
-  for (const refs of [[], [{ kind: 'item', id: 'image' }], [{ kind: 'item', id: 'text' }]]) {
+test('plain text and text documents use the same send without a visual capability', async () => {
+  for (const refs of [[], [{ kind: 'item', id: 'text' }]]) {
     const { f, scope } = actualApp(); f.scene.refs = refs;
     await scope.send(); const sent = f.calls.filter(c => c?.type === 'send');
     assert.equal(sent.length, 1); assert.equal(sent[0].annotation, undefined); assert.equal(f.errors.scene, '');
+  }
+});
+test('the ordinary image-only send offers the existing core tool after flush and fences full item content and geometry', async () => {
+  const { f, scope } = actualApp(); delete f.scene.background; f.scene.refs=[{kind:'item',id:'image'}];
+  const original=JSON.stringify(f.scene.items);await scope.send();const sent=f.calls.filter(value=>value?.type==='send');
+  assert.equal(sent.length,1);assert.deepEqual(sent[0].annotation,grant);assert.equal(f.errors.scene,'');assert.equal(JSON.stringify(f.scene.items),original);
+  for(const change of [item=>item.x=.42,item=>item.width=.6,item=>item.asset.id='other',item=>item.imageAnnotations={version:1,sourceAssetId:'image-source',revision:0,drawings:[{id:'same-revision-change'}],history:{undo:[],redo:[]}}]) {
+    const test=actualApp();delete test.f.scene.background;test.f.scene.refs=[{kind:'item',id:'image'}];const wait=deferred();test.scope.commands=wait.promise;
+    const sending=test.scope.send();await turn();change(test.f.scene.items[1]);wait.resolve();await sending;
+    assert.equal(test.f.calls.some(value=>value?.type==='send'),false);assert.match(test.f.errors.scene,/引用内容已变化/);assert.equal(test.f.operations,0);
   }
 });
 

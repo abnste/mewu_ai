@@ -44,21 +44,12 @@ impl Store {
                 return Err(CoreError::JournalConflict);
             }
             let target = scene_mut(state, scene_id)?;
-            let background = target
-                .background
-                .as_ref()
-                .ok_or(CoreError::DrawingConflict)?;
             let mut cursors = BTreeMap::new();
             for entry in &input.manifest().targets {
-                let region = target
-                    .regions
-                    .iter()
-                    .find(|r| r.id == entry.region_id)
-                    .ok_or(CoreError::DrawingConflict)?;
-                if visual_source_fence(background, region)? != entry.source {
+                if entry.current_source(target)? != entry.source {
                     return Err(CoreError::DrawingConflict);
                 }
-                cursors.insert(entry.region_id.clone(), entry.source.clone());
+                cursors.insert(entry.owner_key()?, entry.source.clone());
             }
             let message = target
                 .messages
@@ -108,17 +99,8 @@ impl Store {
             return Err(CoreError::JournalConflict);
         }
         let target = scene(&self.state, scene_id)?;
-        let background = target
-            .background
-            .as_ref()
-            .ok_or(CoreError::DrawingConflict)?;
-        for (region_id, cursor) in &input.cursors {
-            let region = target
-                .regions
-                .iter()
-                .find(|r| r.id == *region_id)
-                .ok_or(CoreError::DrawingConflict)?;
-            if visual_source_fence(background, region)? != *cursor {
+        for entry in &input.manifest.targets {
+            if input.cursors.get(&entry.owner_key()?) != Some(&entry.current_source(target)?) {
                 return Err(CoreError::DrawingConflict);
             }
         }
@@ -210,43 +192,52 @@ impl Store {
             if referenced.len() != registered.len() { return Err(j::bad("不能登记未使用的富标注布局")); }
             for layout in &layouts { crate::rich_annotations::insert(db,layout)?; }
             let target = scene_mut(state,&record.scene)?;
-            let background = target.background.as_ref().ok_or(CoreError::DrawingConflict)?;
             let mut groups: BTreeMap<String,Vec<Drawing>> = BTreeMap::new();
             let mut seen_handles = HashSet::new(); let mut seen_ids = HashSet::new();
             let group_id = id();
             for group in batch.groups {
                 if !seen_handles.insert(group.target_handle.clone()) { return Err(j::bad("同一批注目标重复")); }
                 let entry = input.manifest.targets.iter().find(|t|t.handle == group.target_handle).ok_or(CoreError::DrawingConflict)?;
-                let region = target.regions.iter().find(|r|r.id == entry.region_id).ok_or(CoreError::DrawingConflict)?;
-                if input.cursors.get(&entry.region_id) != Some(&visual_source_fence(background,region)?) { return Err(CoreError::DrawingConflict); }
+                if input.cursors.get(&entry.owner_key()?) != Some(&entry.current_source(target)?) { return Err(CoreError::DrawingConflict); }
                 let first = entry.source_point(DrawingPoint{x:0.,y:0.})?;
                 let last = entry.source_point(DrawingPoint{x:entry.encoded.width as f64,y:entry.encoded.height as f64})?;
                 for mut drawing in group.drawings {
                     if drawing.origin.is_some() || drawing.kind == DrawingKind::Mosaic || !seen_ids.insert(drawing.id.clone()) || drawing.points.len() > 128 || drawing.text.as_ref().is_some_and(|t|t.chars().count() > 500)
                         || drawing.points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite() || p.x < first.x || p.y < first.y || p.x > last.x || p.y > last.y) { return Err(j::bad("批注图元超出已发送的附件内容")); }
                     drawing.origin = Some(VisualDrawingOrigin { run_id:record.id.clone(),user_message_id:record.user.clone(),tool_event_id:event.summary.id.clone(),group_id:group_id.clone(),target_handle:entry.handle.clone(),manifest_sha256:hash.clone() });
-                    groups.entry(entry.region_id.clone()).or_default().push(drawing);
+                    groups.entry(entry.owner_key()?).or_default().push(drawing);
                 }
             }
             let mut applied = Vec::new();
-            for (region_id,drawings) in groups {
-                let region = target.regions.iter_mut().find(|r|r.id == region_id).ok_or(CoreError::DrawingConflict)?;
+            let mut applied_items = Vec::new();
+            for (owner_key,drawings) in groups {
+                let entry = input.manifest.targets.iter().find(|entry| entry.owner_key().is_ok_and(|key| key == owner_key)).ok_or(CoreError::DrawingConflict)?;
                 let drawing_ids: Vec<_> = drawings.iter().map(|d|d.id.clone()).collect();
                 let identities: Vec<_> = drawings.iter().map(|d|{
                     let mut value=serde_json::json!({"id":d.id,"targetHandle":d.origin.as_ref().expect("core origin").target_handle});
                     if let Some(reference)=&d.rich { value["rich"]=serde_json::to_value(reference).expect("rich reference serializes"); }
                     value
                 }).collect();
-                crate::drawing::apply(region,background,crate::drawing::Mutation::AppendBatch(drawings))?;
-                region.ocr=None;
-                if let Some(translation)=&mut region.translation { translation.drawing_revision=region.drawing_revision; }
-                input.cursors.insert(region_id.clone(),visual_source_fence(background,region)?);
-                applied.push(serde_json::json!({"regionId":region_id,"drawingIds":drawing_ids,"drawings":identities,"drawingRevision":region.drawing_revision}));
+                if let Some(item_id) = &entry.image_item_id {
+                    let item = target.items.iter_mut().find(|item| item.id == *item_id).ok_or(CoreError::DrawingConflict)?;
+                    crate::image_annotations::apply(item,crate::drawing::Mutation::AppendBatch(drawings))?;
+                    let revision = item.image_annotations.as_ref().ok_or(CoreError::DrawingConflict)?.revision;
+                    input.cursors.insert(owner_key,crate::image_annotation_source_fence(item)?);
+                    applied_items.push(serde_json::json!({"itemId":item_id,"sourceAssetId":item.asset.id,"drawingIds":drawing_ids,"drawings":identities,"drawingRevision":revision}));
+                } else {
+                    let background = target.background.as_ref().ok_or(CoreError::DrawingConflict)?;
+                    let region = target.regions.iter_mut().find(|r|r.id == entry.region_id).ok_or(CoreError::DrawingConflict)?;
+                    crate::drawing::apply(region,background,crate::drawing::Mutation::AppendBatch(drawings))?;
+                    region.ocr=None;
+                    if let Some(translation)=&mut region.translation { translation.drawing_revision=region.drawing_revision; }
+                    input.cursors.insert(owner_key,visual_source_fence(background,region)?);
+                    applied.push(serde_json::json!({"regionId":entry.region_id,"drawingIds":drawing_ids,"drawings":identities,"drawingRevision":region.drawing_revision}));
+                }
             }
             input.created_count += count as u32;
             db.execute("UPDATE visual_run_inputs SET data=?1 WHERE run_id=?2",params![serde_json::to_string(&input)?,record.id])?;
             touch(target);
-            let result=local_result(serde_json::json!({"applied":true,"groupId":group_id,"manifestSha256":hash,"objects":count,"regions":applied}))?;
+            let result=local_result(serde_json::json!({"applied":true,"groupId":group_id,"manifestSha256":hash,"objects":count,"regions":applied,"items":applied_items}))?;
             let receipt=respond_local(db,state,lease,result.clone())?;
             Ok((result,receipt))
         })?;

@@ -7,11 +7,18 @@ const code=stripTypeScriptTypes(await readFile(new URL('./optional-capabilities.
 const {currentOptionalCapabilities,optionalCapabilityKey,optionalAgentAvailable,optionalAgentReady}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 const installed={revision:4,plugins:[{manifest:{id:'mewu.agent',contributions:[{id:'agent',kind:'agent.runtime'}]},revision:2,state:'enabled'}]};
 const connections=[{id:'local',revision:3,hasKey:false},{id:'cloud',revision:9,hasKey:true}];
-const receipt={pluginRevision:4,connectionRevisions:{local:3,cloud:9},agent:{pluginId:'mewu.agent',revision:2,contributionId:'agent'},blackboard:null,readyConnectionIds:['local'],readyAgentIds:[],boundAgentIds:[]};
+const receipt={pluginRevision:4,connectionRevisions:{local:3,cloud:9},agent:{pluginId:'mewu.agent',revision:2,contributionId:'agent'},blackboard:null,configuredConnectionIds:['local'],readyAgentIds:[],boundAgentIds:[]};
 test('host readiness accepts an explicitly configured keyless provider; UI never infers readiness from hasKey',()=>{
  assert.equal(currentOptionalCapabilities(receipt,installed,connections),true);
- assert.deepEqual(receipt.readyConnectionIds,['local']);
- assert.equal(currentOptionalCapabilities({...receipt,readyConnectionIds:[]},installed,connections),true);
+ assert.deepEqual(receipt.configuredConnectionIds,['local']);
+ assert.equal(currentOptionalCapabilities({...receipt,configuredConnectionIds:[]},installed,connections),true);
+});
+test('configured metadata keeps Composer eligible without claiming a live credential unlock',()=>{
+ assert.equal(optionalAgentAvailable(receipt),true);
+ assert.equal(optionalAgentReady(receipt,{agentId:'local-agent',connectionId:'local'}),true);
+ const legacyShape={...receipt,readyConnectionIds:['local']};delete legacyShape.configuredConnectionIds;
+ assert.equal(currentOptionalCapabilities(legacyShape,installed,connections),false,'execution-ready and configuration fields cannot be silently confused');
+ assert.equal(optionalAgentAvailable({...receipt,configuredConnectionIds:[]}),false);
 });
 test('late credential/configuration and plugin responses cannot revive revoked UI',()=>{
  assert.equal(currentOptionalCapabilities(receipt,installed,[{...connections[0],revision:4},connections[1]]),false);
@@ -19,13 +26,13 @@ test('late credential/configuration and plugin responses cannot revive revoked U
  for(const state of ['disabled','removed']) assert.equal(currentOptionalCapabilities(receipt,{...installed,plugins:[{...installed.plugins[0],state}]},connections),false);
  assert.equal(currentOptionalCapabilities(receipt,{...installed,plugins:[{...installed.plugins[0],error:'unavailable'}]},connections),false);
  assert.equal(currentOptionalCapabilities(receipt,{...installed,plugins:[{...installed.plugins[0],revision:3}]},connections),false);
- assert.equal(currentOptionalCapabilities({...receipt,readyConnectionIds:['deleted']},installed,connections),false);
+ assert.equal(currentOptionalCapabilities({...receipt,configuredConnectionIds:['deleted']},installed,connections),false);
 });
 test('grants must name the correct installed capability; missing profiles fail closed',()=>{
- for(const malformed of [null,undefined,{}, {...receipt,readyConnectionIds:null}, {...receipt,agent:undefined}]) assert.equal(currentOptionalCapabilities(malformed,installed,connections),false);
+ for(const malformed of [null,undefined,{}, {...receipt,configuredConnectionIds:null}, {...receipt,agent:undefined}]) assert.equal(currentOptionalCapabilities(malformed,installed,connections),false);
  assert.equal(currentOptionalCapabilities({...receipt,blackboard:receipt.agent},installed,connections),false);
  assert.equal(currentOptionalCapabilities(receipt,installed,[connections[0]]),false);
- assert.equal(currentOptionalCapabilities({...receipt,agent:null,blackboard:null,readyConnectionIds:[]},installed,connections),true);
+ assert.equal(currentOptionalCapabilities({...receipt,agent:null,blackboard:null,configuredConnectionIds:[]},installed,connections),true);
 });
 test('capability refresh identity ignores drawing snapshots and profile ordering but changes with credential revisions',()=>{
  const key=optionalCapabilityKey(installed,connections);
@@ -36,7 +43,7 @@ test('capability refresh identity ignores drawing snapshots and profile ordering
 
 test('independent Agent can be ready without host model or old Agent plugin, but invalid bindings never fall back',()=>{
  const configured={activeSceneId:'scene',activeScene:{id:'scene',agentId:'external',connectionId:null},agents:[{id:'external',defaultConnectionId:null}],defaultConnectionId:null};
- const external={...receipt,agent:null,readyConnectionIds:[],boundAgentIds:['external'],readyAgentIds:['external']};
+ const external={...receipt,agent:null,configuredConnectionIds:[],boundAgentIds:['external'],readyAgentIds:['external']};
  assert.equal(currentOptionalCapabilities(external,installed,connections,configured),true);
  assert.equal(optionalAgentAvailable(external),true);assert.equal(optionalAgentReady(external,configured.activeScene),true);
  const invalid={...receipt,boundAgentIds:['external'],readyAgentIds:[]};

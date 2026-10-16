@@ -85,6 +85,7 @@ impl VisualCoordinateProfile {
 }
 pub(crate) struct PreparedVisualSource {
     pub region_id: String,
+    pub image_item_id: Option<String>,
     pub source: VisualSourceFence,
     pub crop: VisualPixelRect,
 }
@@ -104,6 +105,7 @@ pub(crate) fn target(
         attachment_ordinal: attachment_ordinal as u32,
         attachment_sha256: format!("{:x}", Sha256::digest(bytes)),
         region_id: source.region_id.clone(),
+        image_item_id: source.image_item_id.clone(),
         source: source.source.clone(),
         crop: source.crop,
         resized,

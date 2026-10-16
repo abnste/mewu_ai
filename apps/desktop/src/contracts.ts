@@ -37,7 +37,8 @@ export type DrawingCommand = DrawingTarget & (
 export interface VideoRange { startTicks: number; endTicks: number }
 export interface VideoRangeOperation { id: string; from: VideoRange | null; to: VideoRange | null }
 export interface VideoEdit { sourceId: string; sourceDurationTicks: number; revision: number; range: VideoRange | null; undo: VideoRangeOperation[]; redo: VideoRangeOperation[] }
-export interface SpaceItem { id: string; asset: Asset; x: number; y: number; width: number; height: number; state?: Record<string, unknown>; videoEdit?: VideoEdit; videoAnnotations?: VideoAnnotationDocument }
+export interface ImageAnnotationDocument { version: 1; sourceAssetId: string; revision: number; drawings: Drawing[]; history: DrawingHistory }
+export interface SpaceItem { id: string; asset: Asset; x: number; y: number; width: number; height: number; state?: Record<string, unknown>; videoEdit?: VideoEdit; videoAnnotations?: VideoAnnotationDocument; imageAnnotations?: ImageAnnotationDocument }
 export interface Reference { kind: 'region' | 'item'; id: string }
 export interface Message { id: string; role: 'user' | 'assistant'; text: string; reasoning?: string; conversationStart?: number; createdAt: number; runId?: string; refs?: Reference[]; attachments?: Asset[]; toolSteps?: ToolStep[] }
 export interface ToolStep { id: string; name: string; label: string; status: 'running' | 'completed' | 'failed' | 'unknown'; startedAt: number; finishedAt?: number; summary?: string }
@@ -81,6 +82,7 @@ export interface McpServer { id: string; label: string; revision: number; comman
 export interface DiscoverMcpServer { id?: string; expectedRevision?: number; label: string; command: McpCommand }
 export interface Snapshot { schemaVersion: 1; revision?: number; activeSceneId: string; scenes: Scene[]; agents: AgentProfile[]; memories: MemoryEntry[]; memoryStats: MemoryStats[]; mcpServers: McpServer[]; connection: Connection; connections: ConnectionProfile[]; defaultConnectionId: string | null }
 export type SceneCommand =
+  | { type: 'edit_image_annotations'; sceneId: string; itemId: string; sourceAssetId: string; expectedRevision: number; action: ImageAnnotationEdit }
   | RegionGeometryCommand
   | FinishRegionGeometryEdit
   | ReplayRegionGeometry
@@ -106,4 +108,10 @@ export type SceneCommand =
   | { type: 'set_mcp_enabled'; serverId: string; expectedRevision: number; enabled: boolean }
   | { type: 'remove_mcp_server'; serverId: string; expectedRevision: number }
   | { type: 'set_agent'; sceneId: string; agentId: string };
+export type ImageAnnotationEdit =
+  | { type: 'add_drawing' | 'update_drawing'; drawing: Drawing }
+  | { type: 'update_drawings'; drawings: Drawing[] }
+  | { type: 'erase_drawing_strokes'; erasures: DrawingStrokeErase[] }
+  | { type: 'remove_drawing'; drawingId: string }
+  | { type: 'undo_drawing' | 'redo_drawing' };
 export interface RunEvent { sceneId: string; runId: string; text?: string; reasoning?: string; status: 'running' | 'completed' | 'failed' | 'canceled'; error?: string }

@@ -347,6 +347,7 @@ fn entry(
         content,
         references: e.references,
         not_sent_reason: e.not_sent,
+        argument_diagnostic: e.argument_diagnostic,
     })
 }
 fn runs_page(
@@ -706,9 +707,49 @@ impl Store {
         lease: &DispatchLease,
         reason: NotSentReason,
     ) -> Result<ReceiptCommit> {
+        self.record_tool_not_sent_inner(lease, reason, None)
+    }
+
+    pub fn record_tool_not_sent_with_diagnostic(
+        &mut self,
+        lease: &DispatchLease,
+        diagnostic: &ArgumentDiagnostic,
+    ) -> Result<ReceiptCommit> {
+        if !diagnostic.is_valid() {
+            return Err(CoreError::JournalConflict);
+        }
+        self.record_tool_not_sent_inner(
+            lease,
+            NotSentReason::InvalidArguments,
+            Some(diagnostic.clone()),
+        )
+    }
+
+    fn record_tool_not_sent_inner(
+        &mut self,
+        lease: &DispatchLease,
+        reason: NotSentReason,
+        diagnostic: Option<ArgumentDiagnostic>,
+    ) -> Result<ReceiptCommit> {
         self.journal_transaction(|db, state| {
             let (mut r, mut e, body) = j::leased(db, lease)?;
+            if diagnostic.is_some()
+                && !matches!(
+                    e.binding.as_ref(),
+                    Some(
+                        ToolBinding::VideoAnnotation { .. } | ToolBinding::VisualAnnotation { .. }
+                    )
+                )
+            {
+                return Err(CoreError::JournalConflict);
+            }
             if e.summary.kind == ReceiptKind::Tool && e.summary.phase == ReceiptPhase::NotSent {
+                // A late retry may not invent diagnostics for a historical rejection.
+                if diagnostic.is_some()
+                    && (e.not_sent != Some(reason) || e.argument_diagnostic != diagnostic)
+                {
+                    return Err(CoreError::JournalConflict);
+                }
                 return Ok(ReceiptCommit {
                     journal_revision: r.revision,
                     checkpoint_seq: r.checkpoint,
@@ -719,6 +760,7 @@ impl Store {
             }
             e.summary.phase = ReceiptPhase::NotSent;
             e.not_sent = Some(reason);
+            e.argument_diagnostic = diagnostic;
             e.summary.finished_at = Some(j::stamp().max(e.summary.started_at));
             j::save_event(db, &e, &body)?;
             j::sync_step(state, &r, &e)?;

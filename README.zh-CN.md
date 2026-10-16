@@ -3,19 +3,19 @@
   <h1>喵呜AI（MewuAI）— 截图与 AI 空间</h1>
   <p>开源桌面应用，让截图、对话、标注与可交互的 AI 结果共处同一空间。</p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/正式版-1.0.0-7C6CF0?style=flat-square" alt="1.0.0 正式版" /></a>
+    <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.1"><img src="https://img.shields.io/badge/正式版-1.0.1-7C6CF0?style=flat-square" alt="1.0.1 正式版" /></a>
     <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows x64" />
     <img src="https://img.shields.io/badge/macOS-ARM64-555555?style=flat-square" alt="macOS ARM64" />
     <img src="https://img.shields.io/badge/Linux-x64-E95420?style=flat-square" alt="Linux x64" />
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-Setup-1.0.0-win-x64.exe"><strong>Windows 安装版</strong></a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-Portable-1.0.0-win-x64.zip">Windows 便携版</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-1.0.0-mac-arm64.dmg">macOS ARM64</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-1.0.0-linux-x64.AppImage">Linux x64</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Setup-1.0.1-win-x64.exe"><strong>Windows 安装版</strong></a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Portable-1.0.1-win-x64.zip">Windows 便携版</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-1.0.1-mac-arm64.dmg">macOS ARM64</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-1.0.1-linux-x64.AppImage">Linux x64</a>
   </p>
-  <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./docs/release-notes-1.0.0.md">更新说明</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
+  <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./docs/release-notes-1.0.1.md">更新说明</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
 
 **喵呜AI（MewuAI）是一款跨 Windows、macOS 和 Linux 的开源截图与 AI 空间应用**。快捷键唤起的截图界面本身就是空间：框选、绘制、贴图、添加文件，再通过对话条提问。截图、视频与生成的 HTML/SVG/Canvas 交互结果可以作为对象放在同一界面中使用。
@@ -26,10 +26,10 @@
 | 核心操作 | 截图 → 标注、复制、保存；或引用内容 → 向 AI 提问 → 使用生成结果 |
 | 未配置 AI | 仍可截图、使用内置绘制和录屏；配置模型或显式绑定独立 Agent 提供方后才出现对话条 |
 | AI 与插件 | 自有模型连接、经权限控制的可执行插件、可独立选择的 Agent 和记忆提供方 |
-| 官方来源 | [1.0.0 正式版](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0) · [GitHub 社区插件市场](https://github.com/abnste/mewu-plugins) |
+| 官方来源 | [1.0.1 正式版](https://github.com/abnste/mewu_ai/releases/tag/v1.0.1) · [GitHub 社区插件市场](https://github.com/abnste/mewu-plugins) |
 | 开源协议 | [MPL-2.0](./LICENSE)；[第三方许可全文](./apps/desktop/THIRD-PARTY-NOTICES) |
 
-**MewuAI 1.0.0** 延续首个正式版的截图操作、API 2 可执行插件与 GitHub 社区市场。正式更新改为直接读取最新版本发行，不再依赖旧更新通道。详见[更新说明](./docs/release-notes-1.0.0.md)。
+**MewuAI 1.0.1** 补齐导入图片的原位标注，改善工具失败诊断和对话条可用性，保留既有截图操作、可执行插件与 GitHub 社区市场。正式更新改为直接读取最新版本发行，不再依赖旧更新通道。详见[更新说明](./docs/release-notes-1.0.1.md)。
 
 重制版维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；原 Windows **.NET/WPF 0.7.x** 源码与文档保留在 **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**。新版使用 **Rust + Tauri 2 + Solid/TypeScript + SQLite** 及系统 WebView，不使用 Electron。
 
@@ -167,7 +167,7 @@ Linux Wayland 通过桌面 portal 授权截图和录屏。录屏授权后需在�
 | 独立 Agent | API 2 Agent 提供方插件可使用自己的运行时，记忆独立选择；调用宿主模型时使用当前连接及已授权能力。 |
 | MCP | 在 **Agent 与连接 → MCP** 配置本地服务；已安装的插件工具也进入现有 Agent 对话。 |
 
-Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 **尚未包含在 1.0.0 中**，后续通过扩展接入；普通模型模板不代表已实现它们的专有 Agent 协议。专用图片/视频生成接口及跨设备同步也尚未交付。AI 原位和视频标注的内容仍取决于模型，需要人工核对。
+Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 **尚未包含在 1.0.1 中**，后续通过扩展接入；普通模型模板不代表已实现它们的专有 Agent 协议。专用图片/视频生成接口及跨设备同步也尚未交付。AI 原位和视频标注的内容仍取决于模型，需要人工核对。
 
 <details>
 <summary>.NET 原版的第三方客户端接入说明</summary>
@@ -214,18 +214,18 @@ Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 *
 <details>
 <summary>如何更新？旧版自动更新失败怎么办？</summary>
 
-在 **设置 → 关于** 检查并安装更新。修订后的 1.0.0 直接读取[最新正式发行的版本签名索引](https://github.com/abnste/mewu_ai/releases/latest/download/latest.json)，不再依赖 update-channel。旧的 1.0.0 安装因版本号相同，需要重新安装修订包一次；早期预览版仍可从原入口升级。新更新地址不依赖分支名称。Windows 便携版更新会运行安装器并切换到安装版位置。
+在 **设置 → 关于** 检查并安装更新。修订后的 1.0.1 直接读取[最新正式发行的版本签名索引](https://github.com/abnste/mewu_ai/releases/latest/download/latest.json)，不再依赖 update-channel。旧的 1.0.1 安装因版本号相同，需要重新安装修订包一次；早期预览版仍可从原入口升级。新更新地址不依赖分支名称。Windows 便携版更新会运行安装器并切换到安装版位置。
 
-Windows **0.7.4** 可在自己的关于页发现 1.0.0 正式版。下载和安装分别确认，完成后如未启动，可从快捷方式打开。**0.7.3 及更早版本应先安装 [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4)。**
+Windows **0.7.4** 可在自己的关于页发现 1.0.1 正式版。下载和安装分别确认，完成后如未启动，可从快捷方式打开。**0.7.3 及更早版本应先安装 [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4)。**
 
-支持的旧 API 连接一次导入，旧文件保留；旧版历史对话尚未转换到新版历史界面，偏好设置也并非全部迁移。详见 [1.0 升级说明](./docs/release-notes-1.0.0.md)和[早期兼容入口说明](./docs/legacy-updates.md)。发行附件详情提供 SHA-256，不另附校验文件；[原版更新日志](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md)继续保留。
+支持的旧 API 连接一次导入，旧文件保留；旧版历史对话尚未转换到新版历史界面，偏好设置也并非全部迁移。详见 [1.0 升级说明](./docs/release-notes-1.0.1.md)和[早期兼容入口说明](./docs/legacy-updates.md)。发行附件详情提供 SHA-256，不另附校验文件；[原版更新日志](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md)继续保留。
 
 </details>
 
 <details>
 <summary>安装或录屏遇到问题怎么办？</summary>
 
-Windows 安装包尚无 Authenticode 证书，自动更新签名验证与它分别处理。请从 [1.0.0 发行页](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0)下载。Windows N/KN 录屏可能需要 Media Feature Pack；Linux 请检查桌面授权及上述运行依赖。反馈 [Issues](https://github.com/abnste/mewu_ai/issues) 时请附系统、版本和复现步骤。
+Windows 安装包尚无 Authenticode 证书，自动更新签名验证与它分别处理。请从 [1.0.1 发行页](https://github.com/abnste/mewu_ai/releases/tag/v1.0.1)下载。Windows N/KN 录屏可能需要 Media Feature Pack；Linux 请检查桌面授权及上述运行依赖。反馈 [Issues](https://github.com/abnste/mewu_ai/issues) 时请附系统、版本和复现步骤。
 
 </details>
 

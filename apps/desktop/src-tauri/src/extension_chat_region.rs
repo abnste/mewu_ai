@@ -495,6 +495,7 @@ mod tests {
                 attachment_ordinal: 0,
                 attachment_sha256: hash("own fixture"),
                 region_id: region_id.clone(),
+                image_item_id: None,
                 source: visual_source_fence(run.background.as_ref().unwrap(), &run.regions[0])
                     .unwrap(),
                 crop: VisualPixelRect {

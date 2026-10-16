@@ -23,6 +23,7 @@
     "allow-cancel-run",
     "allow-hide-space",
     "allow-export-region",
+    "allow-export-image-item",
     "allow-runtime-info",
     "allow-export-snapshot",
     "allow-freeze-space",

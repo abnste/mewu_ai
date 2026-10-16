@@ -137,6 +137,150 @@ pub struct JournalEntryDetail {
     pub references: Vec<EvidenceReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_sent_reason: Option<NotSentReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument_diagnostic: Option<ArgumentDiagnostic>,
+}
+
+/// Host-produced argument metadata, never raw JSON, values or unknown keys.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum ArgumentDiagnosticReason {
+    Required,
+    Type,
+    AdditionalProperties,
+    Const,
+    Enum,
+    Minimum,
+    Maximum,
+    ExclusiveMinimum,
+    ExclusiveMaximum,
+    MinLength,
+    MaxLength,
+    MinItems,
+    MaxItems,
+    OneOf,
+    Pattern,
+    Syntax,
+    Eof,
+    Data,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub enum ArgumentExpectedType {
+    Null,
+    Boolean,
+    Number,
+    Integer,
+    String,
+    Array,
+    Object,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArgumentDiagnostic {
+    pub field_path: String,
+    pub reason: ArgumentDiagnosticReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_type: Option<ArgumentExpectedType>,
+}
+
+impl ArgumentDiagnostic {
+    pub fn new(
+        field_path: String,
+        reason: ArgumentDiagnosticReason,
+        expected_type: Option<ArgumentExpectedType>,
+    ) -> Option<Self> {
+        let value = Self {
+            field_path,
+            reason,
+            expected_type,
+        };
+        value.is_valid().then_some(value)
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        if self.field_path.len() > 256
+            || (self.expected_type.is_some() && self.reason != ArgumentDiagnosticReason::Type)
+        {
+            return false;
+        }
+        let mut parts = self.field_path.split('/');
+        if parts.next() != Some("$") {
+            return false;
+        }
+        let mut previous = "";
+        let mut array = "";
+        let mut numeric_depth = 0;
+        let mut count = 0;
+        for part in parts {
+            count += 1;
+            if count > 16 {
+                return false;
+            }
+            if part.bytes().all(|b| b.is_ascii_digit()) && !part.is_empty() {
+                let limit = match previous {
+                    "groups" => 6,
+                    "objects" => 48,
+                    "points" => 128,
+                    "header" | "align" => 32,
+                    "rows" => 199,
+                    _ if array == "rows" && numeric_depth == 1 => 32,
+                    _ => return false,
+                };
+                if part.len() > 3
+                    || (part.len() > 1 && part.starts_with('0'))
+                    || part.parse::<usize>().map_or(true, |index| index >= limit)
+                {
+                    return false;
+                }
+                numeric_depth += 1;
+            } else {
+                if !matches!(
+                    part,
+                    "coordinateSpace"
+                        | "styleUnit"
+                        | "timeSpace"
+                        | "objects"
+                        | "targetHandle"
+                        | "interval"
+                        | "startFrameHandle"
+                        | "endHandle"
+                        | "primitive"
+                        | "kind"
+                        | "bounds"
+                        | "x"
+                        | "y"
+                        | "width"
+                        | "height"
+                        | "style"
+                        | "color"
+                        | "strokeWidth"
+                        | "opacity"
+                        | "topLeft"
+                        | "anchor"
+                        | "text"
+                        | "fontSize"
+                        | "groups"
+                        | "target"
+                        | "points"
+                        | "table"
+                        | "version"
+                        | "header"
+                        | "rows"
+                        | "align"
+                        | "tex"
+                ) {
+                    return false;
+                }
+                array = part;
+                numeric_depth = 0;
+            }
+            previous = part;
+        }
+        true
+    }
 }
 
 // Values are constructed ONLY by the host. These metadata fields may be exposed

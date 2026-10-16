@@ -375,7 +375,8 @@ pub fn is_exit_flush_command(command: &SceneCommand) -> bool {
         || matches!(command, SceneCommand::SetRegionGeometry { .. })
         || matches!(
             command,
-            SceneCommand::AddDrawing { .. } | SceneCommand::UpdateDrawing { .. } | SceneCommand::UpdateDrawings { .. } | SceneCommand::EraseDrawingStrokes { .. }
+            SceneCommand::EditImageAnnotations { action: mewu_core::ImageAnnotationEdit::AddDrawing { .. } | mewu_core::ImageAnnotationEdit::UpdateDrawing { .. } | mewu_core::ImageAnnotationEdit::UpdateDrawings { .. } | mewu_core::ImageAnnotationEdit::EraseDrawingStrokes { .. }, .. }
+            | SceneCommand::AddDrawing { .. } | SceneCommand::UpdateDrawing { .. } | SceneCommand::UpdateDrawings { .. } | SceneCommand::EraseDrawingStrokes { .. }
         )
 }
 
@@ -407,6 +408,7 @@ fn is_existing_item_geometry_flush(
         state,
         video_edit,
         video_annotations,
+        image_annotations,
     } = item;
     let Some(current) = scene.items.iter().find(|current| current.id == *id) else {
         return false;
@@ -422,6 +424,7 @@ fn is_existing_item_geometry_flush(
         && current.state == *state
         && current.video_edit == *video_edit
         && current.video_annotations == *video_annotations
+        && current.image_annotations == *image_annotations
 }
 
 #[derive(Clone, Serialize)]
@@ -1510,6 +1513,24 @@ mod tests {
         }
         assert!(state.advance(&id, READY));
         assert!(state.ensure_scene_command(&update).is_err());
+    }
+
+    #[test]
+    fn image_drawing_exit_flush_is_action_bounded_and_geometry_cannot_change_its_document() {
+        use mewu_core::{Drawing,DrawingKind,DrawingPoint,ImageAnnotationEdit};
+        let (mut store,scene_id)=item_geometry_store();
+        let image=store.active_scene().unwrap().items[0].clone();
+        let drawing=Drawing { id:uuid::Uuid::new_v4().to_string(),kind:DrawingKind::Line,color:"#ff0000".into(),stroke_width:2.,points:vec![DrawingPoint{x:10.,y:10.},DrawingPoint{x:30.,y:30.}],text:None,font_size:None,origin:None,rich:None };
+        let command=|action,revision|SceneCommand::EditImageAnnotations { scene_id:scene_id.clone(),item_id:image.id.clone(),source_asset_id:image.asset.id.clone(),expected_revision:revision,action };
+        let state=ExitState::default();let(id,_)=state.begin().unwrap();state.prepare_with("space",&id,||{}).unwrap();
+        for action in [ImageAnnotationEdit::UndoDrawing,ImageAnnotationEdit::RedoDrawing,ImageAnnotationEdit::RemoveDrawing{drawing_id:drawing.id.clone()}] { let replay=command(action,0);assert!(!is_exit_flush_command(&replay));assert!(state.ensure_scene_command_with_store("space",&replay,&store).is_err()); }
+        let add=command(ImageAnnotationEdit::AddDrawing{drawing:drawing.clone()},0);assert!(is_exit_flush_command(&add));state.ensure_scene_command_with_store("space",&add,&store).unwrap();store.apply(add).unwrap();
+        let saved=store.active_scene().unwrap().items[0].clone();let before=store.snapshot();
+        assert!(store.apply(command(ImageAnnotationEdit::AddDrawing{drawing},0)).is_err());assert_eq!(store.snapshot(),before);
+        let mut wrong=command(ImageAnnotationEdit::UndoDrawing,1);if let SceneCommand::EditImageAnnotations{source_asset_id,..}=&mut wrong{*source_asset_id=uuid::Uuid::new_v4().to_string();}assert!(store.apply(wrong).is_err());assert_eq!(store.snapshot(),before);
+        let geometry=item_geometry_command(&scene_id,saved.clone());state.ensure_scene_command_with_store("space",&geometry,&store).unwrap();
+        for modify in [0,1,2] {let mut forged=saved.clone();let doc=forged.image_annotations.as_mut().unwrap();match modify {0=>doc.revision+=1,1=>doc.drawings.clear(),_=>doc.source_asset_id=uuid::Uuid::new_v4().to_string()};assert!(state.ensure_scene_command_with_store("space",&item_geometry_command(&scene_id,forged),&store).is_err());}
+        assert!(state.advance(&id,DRAINING));assert!(state.ensure_scene_command_with_store("space",&geometry,&store).is_err());
     }
 
     #[test]

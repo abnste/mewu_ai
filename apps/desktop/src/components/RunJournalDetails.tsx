@@ -24,6 +24,17 @@ const notSentText = (detail?: JournalEntryView) => {
     default: return undefined;
   }
 };
+const diagnosticText = (detail?: JournalEntryView) => {
+  const diagnostic = detail?.argumentDiagnostic;
+  if (detail?.entry.phase !== 'not_sent' || detail.notSentReason !== 'invalid_arguments' || !diagnostic) return undefined;
+  const types = { null: t('空值'), boolean: t('布尔值'), number: t('数字'), integer: t('整数'), string: t('文本'), array: t('数组'), object: t('对象') };
+  const reason = diagnostic.reason === 'required' ? t('缺少字段')
+    : diagnostic.reason === 'type' ? diagnostic.expectedType ? t('应为 {0}').replaceAll('{0}', types[diagnostic.expectedType]) : t('类型不符')
+    : diagnostic.reason === 'additional_properties' ? t('存在不支持的字段')
+    : diagnostic.reason === 'syntax' || diagnostic.reason === 'eof' ? t('JSON 格式无效')
+    : t('不符合参数约束');
+  return `${diagnostic.fieldPath} · ${reason}`;
+};
 
 export interface RunJournalProps {
   summary?: RunJournalSummary;
@@ -73,6 +84,7 @@ export default function RunJournalDetails(props: RunJournalProps) {
     <Show when={props.state.detail?.entry.id === value.id}><div class="journal-detail">
       <Show when={notSentText(props.state.detail)} fallback={<Show when={!props.state.detail?.unavailable} fallback={<span>{props.state.detail?.entry.phase === 'unknown' ? t('结果未确认') : props.state.detail?.unavailable === 'memory_policy' || props.state.detail?.unavailable === 'history_policy' ? t('未保留原文') : t('内容不可用')}</span>}><pre>{props.state.detail?.literal}</pre></Show>}>
         <span>{notSentText(props.state.detail)}</span>
+        <Show when={diagnosticText(props.state.detail)}><div>{diagnosticText(props.state.detail)}</div></Show>
       </Show>
     </div></Show>
   </div>;

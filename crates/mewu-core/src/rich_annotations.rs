@@ -412,13 +412,12 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
     )?;
     let mut checked: HashMap<String, RichDrawingRef> = HashMap::new();
     for scene in &state.scenes {
-        for region in &scene.regions {
-            let objects = region.drawings.iter().chain(
-                region
-                    .drawing_history
+        for (_, _, drawings, history) in crate::image_annotations::documents(scene) {
+            let objects = drawings.iter().chain(
+                history
                     .undo
                     .iter()
-                    .chain(&region.drawing_history.redo)
+                    .chain(&history.redo)
                     .flat_map(|step| step.edits())
                     .flat_map(|edit| edit.before.iter().chain(&edit.after)),
             );

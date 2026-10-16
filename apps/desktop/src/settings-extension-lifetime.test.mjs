@@ -16,7 +16,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const grant = { pluginId: 'mewu.agent', revision: 1, contributionId: 'agent' };
 const plugins = { revision: 1, plugins: [{ manifest: { id: 'mewu.agent', contributions: [{ id: 'agent', kind: 'agent.runtime' }] }, revision: 1, state: 'enabled' }] };
-const capability = patch => ({ pluginRevision: 1, connectionRevisions: {}, agent: grant, blackboard: null, readyConnectionIds: [], readyAgentIds: [], boundAgentIds: [], ...patch });
+const capability = patch => ({ pluginRevision: 1, connectionRevisions: {}, agent: grant, blackboard: null, configuredConnectionIds: [], readyAgentIds: [], boundAgentIds: [], ...patch });
 const extension = patch => ({ manifest: { id: 'author.external', name: 'External' }, revision: 1, state: 'enabled', services: [{ id: 'engine', kind: 'agent', title: 'External Agent' }, { id: 'memory', kind: 'memory', title: 'Journal' }], ...patch });
 const memoryBinding = patch => ({ agentId: 'agent', kind: 'memory', pluginId: 'author.external', serviceId: 'memory', revision: 1, ...patch });
 

@@ -135,6 +135,12 @@ export async function exportRegion(sceneId: string, regionId: string, clipboard:
   if (typeof result !== 'boolean') throw new Error('图片导出结果无效');
   return result;
 }
+export async function exportImageItem(sceneId: string, itemId: string, sourceAssetId: string, clipboard: boolean): Promise<boolean> {
+  if (!native) throw Error('此操作需要桌面应用');
+  const result = await invoke<boolean>('export_image_item', { sceneId, itemId, sourceAssetId, clipboard });
+  if (typeof result !== 'boolean') throw Error('图片导出结果无效');
+  return result;
+}
 const mosaicPreviews = new MosaicPreviewCache();
 const highlightPreviews = new MosaicPreviewCache<HighlightPreview>(4, 1, 24 * 1024 * 1024);
 export interface MosaicSource { regionId: string; source: Asset; drawingRevision: number }
@@ -354,9 +360,10 @@ export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
         if (index < 0) throw new Error('对象不存在');
         const old = scene.items[index];
         if (JSON.stringify(old.asset) !== JSON.stringify(command.item.asset)) throw new Error('对象来源已变化');
-        scene.items[index] = { ...structuredClone(command.item), videoEdit: old.videoEdit };
+        scene.items[index] = { ...structuredClone(command.item), videoEdit: old.videoEdit, videoAnnotations: old.videoAnnotations, imageAnnotations: old.imageAnnotations };
         break;
       }
+      case 'edit_image_annotations': throw Error('请在桌面版编辑图片标注');
       case 'remove_item': {
         const item = scene.items.find(i => i.id === command.itemId);
         scene.items = scene.items.filter(i => i.id !== command.itemId);

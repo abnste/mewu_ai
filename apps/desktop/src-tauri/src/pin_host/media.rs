@@ -341,6 +341,7 @@ mod tests {
                 width: 0.4,
                 height: 0.3,
                 state: None,
+                image_annotations: None,
                 video_edit: Some(VideoEdit {
                     source_id: id.clone(),
                     source_duration_ticks: 50_000_000,

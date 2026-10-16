@@ -6,7 +6,7 @@ import { getOptionalCapabilities, getPlugins, subscribePlugins } from './plugin-
 import { subscribeExtensionBindings, subscribeExtensions } from './extension-bridge';
 import { currentOptionalCapabilities, optionalCapabilityKey, type OptionalAgentConfiguration, type OptionalCapabilities } from './optional-capabilities';
 
-/** Only configuration revisions trigger credential checks, never drawing updates. */
+/** Only configuration revisions trigger host metadata queries, never drawing updates or secret reads. */
 export function createOptionalFeatureState(connections: () => ConnectionProfile[], suppliedPlugins?: () => PluginSnapshot, configuration?: () => OptionalAgentConfiguration) {
   const [installed, setInstalled] = createSignal<PluginSnapshot>({ revision: -1, plugins: [] });
   const plugins = suppliedPlugins ?? installed;

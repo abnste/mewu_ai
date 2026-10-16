@@ -176,6 +176,10 @@ pub struct LayoutTarget {
     pub drawing_id: String,
     pub expected_revision: u64,
     pub reference: RichDrawingRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_asset_id: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -198,11 +202,16 @@ fn read_target(app: &AppHandle, owner: &str, target: &LayoutTarget) -> Result<Ri
         .iter()
         .find(|s| s.id == target.scene_id && !s.closed)
         .ok_or("会话已关闭")?;
-    let region = scene
-        .regions
-        .iter()
-        .find(|r| r.id == target.region_id)
-        .ok_or("选区不存在")?;
+    let image_region;
+    let region = if let Some(id) = &target.image_item_id {
+        if *id != target.region_id { return Err("图片标注归属不匹配".into()); }
+        let item = scene.items.iter().find(|item| item.id == *id && Some(&item.asset.id) == target.source_asset_id.as_ref()).ok_or("图片来源已变更")?;
+        image_region = mewu_core::image_annotation_region(item).map_err(|e| e.to_string())?;
+        &image_region
+    } else {
+        if target.source_asset_id.is_some() { return Err("图层归属无效".into()); }
+        scene.regions.iter().find(|r| r.id == target.region_id).ok_or("选区不存在")?
+    };
     if region.drawing_revision != target.expected_revision {
         return Err("图层已变更，请重试".into());
     }
@@ -229,6 +238,8 @@ pub async fn get_drawing_layout_preview(
     drawing_id: String,
     expected_revision: u64,
     reference: RichDrawingRef,
+    image_item_id: Option<String>,
+    source_asset_id: Option<String>,
 ) -> Result<Preview, String> {
     let request = REQUESTS.try_acquire().map_err(|_| "图层正在处理")?;
     let worker = WORKERS.acquire().await.map_err(|_| "图层处理不可用")?;
@@ -238,6 +249,8 @@ pub async fn get_drawing_layout_preview(
         drawing_id,
         expected_revision,
         reference,
+        image_item_id,
+        source_asset_id,
     };
     let owner = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {
@@ -263,6 +276,8 @@ pub async fn copy_drawing_table(
     drawing_id: String,
     expected_revision: u64,
     reference: RichDrawingRef,
+    image_item_id: Option<String>,
+    source_asset_id: Option<String>,
     format: crate::table_host::ExportFormat,
 ) -> Result<(), String> {
     let request = REQUESTS.try_acquire().map_err(|_| "表格正在处理")?;
@@ -273,6 +288,8 @@ pub async fn copy_drawing_table(
         drawing_id,
         expected_revision,
         reference,
+        image_item_id,
+        source_asset_id,
     };
     let owner = window.label().to_string();
     tauri::async_runtime::spawn_blocking(move || {

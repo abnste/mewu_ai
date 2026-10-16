@@ -164,6 +164,7 @@ fn prepare(store: &mut Store) -> Fixture {
             attachment_ordinal: 0,
             attachment_sha256: "b".repeat(64),
             region_id: region.clone(),
+            image_item_id: None,
             source: visual_source_fence(context.background.as_ref().unwrap(), &context.regions[0])
                 .unwrap(),
             crop: VisualPixelRect {

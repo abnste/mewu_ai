@@ -50,7 +50,7 @@ fn board_item(id: String, board_id: &str, asset: Asset, offset: usize) -> SpaceI
             serde_json::Value::String(board_id.into()),
         )])),
         video_edit: None,
-        video_annotations: None,
+        video_annotations: None, image_annotations: None,
     }
 }
 

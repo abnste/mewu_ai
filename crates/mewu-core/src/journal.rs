@@ -202,6 +202,8 @@ pub(crate) struct Event {
     pub nonce: String,
     pub request_sha256: Option<String>,
     pub not_sent: Option<NotSentReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argument_diagnostic: Option<ArgumentDiagnostic>,
     pub unknown: Option<NoResponseReason>,
 }
 
@@ -234,11 +236,26 @@ pub(crate) fn event(db: &Connection, id: &str) -> Result<(String, Event, Journal
         )
         .optional()?
         .ok_or(CoreError::JournalConflict)?;
-    Ok((
-        run,
-        serde_json::from_str(&meta)?,
-        serde_json::from_str(&body)?,
-    ))
+    let event: Event = serde_json::from_str(&meta)?;
+    validate_argument_diagnostic(&event)?;
+    Ok((run, event, serde_json::from_str(&body)?))
+}
+
+fn validate_argument_diagnostic(event: &Event) -> Result<()> {
+    if let Some(diagnostic) = &event.argument_diagnostic {
+        if !diagnostic.is_valid()
+            || event.summary.kind != ReceiptKind::Tool
+            || event.summary.phase != ReceiptPhase::NotSent
+            || event.not_sent != Some(NotSentReason::InvalidArguments)
+            || !matches!(
+                event.binding.as_ref(),
+                Some(ToolBinding::VideoAnnotation { .. } | ToolBinding::VisualAnnotation { .. })
+            )
+        {
+            return Err(bad("参数诊断记录无效"));
+        }
+    }
+    Ok(())
 }
 pub(crate) fn events(db: &Connection, run: &str) -> Result<Vec<Event>> {
     let mut stmt =
@@ -335,6 +352,7 @@ pub(crate) fn create_event(
         nonce: nonce.clone(),
         request_sha256: request,
         not_sent: None,
+        argument_diagnostic: None,
         unknown: None,
     };
     db.execute(
@@ -681,6 +699,7 @@ pub(crate) fn validate(db: &Connection, state: &Snapshot) -> Result<()> {
             validate_binding(binding)?;
         }
         validate_references(&e.references)?;
+        validate_argument_diagnostic(&e)?;
         uuid(&e.summary.id)?;
         uuid(&e.nonce)?;
         if row.get::<_, String>(0)? != e.summary.id

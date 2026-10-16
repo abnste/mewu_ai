@@ -14,7 +14,7 @@ export async function getPlugins(): Promise<PluginSnapshot> {
   return pluginNative ? invoke('get_plugins') : { revision: 0, plugins: [] };
 }
 export async function getOptionalCapabilities(): Promise<OptionalCapabilities> {
-  if (!pluginNative) return { pluginRevision: 0, connectionRevisions: {}, agent: null, blackboard: null, readyConnectionIds: [], readyAgentIds: [], boundAgentIds: [] };
+  if (!pluginNative) return { pluginRevision: 0, connectionRevisions: {}, agent: null, blackboard: null, configuredConnectionIds: [], readyAgentIds: [], boundAgentIds: [] };
   return invoke('get_optional_capabilities');
 }
 export async function getPluginCatalog(sourceUrl?: string): Promise<PluginCatalog> {

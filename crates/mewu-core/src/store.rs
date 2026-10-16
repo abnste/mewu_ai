@@ -447,6 +447,14 @@ impl Store {
         );
         let mut next = self.state.clone();
         match command {
+            SceneCommand::EditImageAnnotations { scene_id, item_id, source_asset_id, expected_revision, action } => {
+                if next.active_scene_id != scene_id { return Err(CoreError::DrawingConflict); }
+                let target = scene_mut(&mut next, &scene_id)?;
+                if target.closed || target.frozen || is_running(target) { return Err(CoreError::DrawingConflict); }
+                let item = target.items.iter_mut().find(|item| item.id == item_id).ok_or(CoreError::DrawingConflict)?;
+                if item.asset.id != source_asset_id || item.image_annotations.as_ref().map_or(0, |document| document.revision) != expected_revision { return Err(CoreError::DrawingConflict); }
+                if crate::image_annotations::apply(item, action.mutation())? { touch(target); }
+            }
             SceneCommand::NewScene => create_scene(&mut next)?,
             SceneCommand::NewConversation { scene_id } => {
                 if next.active_scene_id != scene_id {
@@ -819,9 +827,11 @@ impl Store {
                 // cannot erase a newer trim, nor can generic IPC forge one.
                 let video_edit = old.video_edit.clone();
                 let video_annotations = old.video_annotations.clone();
+                let image_annotations = old.image_annotations.clone();
                 *old = item;
                 old.video_edit = video_edit;
                 old.video_annotations = video_annotations;
+                old.image_annotations = image_annotations;
                 touch(target);
             }
             SceneCommand::RemoveItem { scene_id, item_id } => {
@@ -1420,7 +1430,7 @@ impl Store {
             height: 0.5,
             state: None,
             video_edit: None,
-            video_annotations: None,
+            video_annotations: None, image_annotations: None,
         });
         touch(target);
         self.persist(next)
@@ -1465,7 +1475,7 @@ impl Store {
             height,
             state: None,
             video_edit: None,
-            video_annotations: None,
+            video_annotations: None, image_annotations: None,
         });
         touch(target);
         self.persist(next)
@@ -1584,7 +1594,7 @@ impl Store {
                 height,
                 state: None,
                 video_edit: None,
-                video_annotations: None,
+                video_annotations: None, image_annotations: None,
             });
         }
         touch(target);
@@ -1761,7 +1771,7 @@ impl Store {
                 ("backgroundId".into(), serde_json::json!(background_id)),
             ])),
             video_edit: None,
-            video_annotations: None,
+            video_annotations: None, image_annotations: None,
         });
         target.regions.retain(|r| r.id != region.id);
         target
@@ -2092,7 +2102,7 @@ impl Store {
                 height: 0.5,
                 state: None,
                 video_edit: None,
-                video_annotations: None,
+                video_annotations: None, image_annotations: None,
             });
         }
         let run = target.run.as_mut().expect("checked running run");
@@ -3361,6 +3371,7 @@ fn validate_snapshot(state: &Snapshot) -> Result<()> {
             }
             crate::video_edit::validate(item)?;
             crate::video_annotations::validate_item(item)?;
+            crate::image_annotations::validate(item)?;
         }
         let mut references = HashSet::new();
         for reference in &target.refs {

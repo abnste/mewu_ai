@@ -311,7 +311,8 @@ fn group_definition(target: &mewu_core::VisualInputTarget) -> Value {
         "tex":{"type":"string","minLength":1,"maxLength":2048},"color":{"type":"string","pattern":"^#[0-9a-fA-F]{6}$"},
         "fontSize":{"type":"number","minimum":8,"maximum":(128./scale).min(72.),"description":"Encoded-image pixels, not normalized coordinates. Complete rendered formula fits proportionally within bounds."}
     }});
-    let object = json!({"oneOf":[shape(json!(["pen","highlighter"]),1,128),shape(json!(["line","arrow","rect","ellipse","mark"]),2,2),text,table,formula]});
+    let imported_image = target.image_item_id.is_some();
+    let object = json!({"oneOf":[shape(if imported_image {json!(["pen"])} else {json!(["pen","highlighter"])},1,128),shape(if imported_image {json!(["line","arrow","rect","ellipse"])} else {json!(["line","arrow","rect","ellipse","mark"])},2,2),text,table,formula]});
     let mut group = json!({"type":"object","additionalProperties":false,"required":["target","objects"],"properties":{
         "target":{"const":target.handle},
         "objects":{"type":"array","minItems":1,"maxItems":MAX_VISUAL_OBJECTS,"items":object}
@@ -712,6 +713,7 @@ fn parse_plan_with_wire(
                 }
                 ModelObject::Vector(object) => object,
             };
+            if target.image_item_id.is_some() && matches!(object.kind,DrawingKind::Highlighter|DrawingKind::Mark|DrawingKind::Mosaic) { return Err("图片标注暂不支持高亮或马赛克".into()); }
             if profile.normalized() && object.kind == DrawingKind::Text {
                 if object.anchor != Some(TextAnchor::TopLeft) {
                     return Err("原位作答文字缺少明确锚点".into());
@@ -1039,6 +1041,7 @@ mod tests {
                 attachment_ordinal: 0,
                 attachment_sha256: "a".repeat(64),
                 region_id: id(),
+                image_item_id: None,
                 source: VisualSourceFence {
                     background_id: id(),
                     effective_source_id: id(),
@@ -1076,6 +1079,14 @@ mod tests {
     }
     pub(super) fn args(input: &VerifiedVisualInput) -> Value {
         json!({"groups":[{"target":input.manifest().targets[0].handle,"objects":[{"kind":"text","color":"#ff0000","strokeWidth":1,"points":[{"x":10,"y":20}],"text":"4","fontSize":16}]}]})
+    }
+    #[test]
+    fn image_item_schema_and_parser_keep_the_existing_normalized_contract_and_forbid_unimplemented_highlights() {
+        let mut manifest=input().manifest().clone();manifest.targets[0].image_item_id=Some(uuid::Uuid::new_v4().to_string());manifest.targets[0].region_id.clear();manifest.targets[0].profile_id=VisualCoordinateProfile::ExplicitNormalized1000V2.id().into();
+        let input=VerifiedVisualInput::new(manifest).unwrap();let mut value=args(&input);value["groups"][0]["coordinateSpace"]=json!("normalized1000");value["groups"][0]["styleUnit"]=json!("encodedPixels");value["groups"][0]["objects"][0]["anchor"]=json!("topLeft");
+        let scope=RunScope::new(uuid::Uuid::new_v4().to_string(),VisualAnnotationGrant{plugin_id:"mewu.core.annotations".into(),plugin_revision:1,contribution_id:"annotate".into()},input.clone()).unwrap();let schema=scope.definition();let validator=jsonschema::validator_for(&schema["function"]["parameters"]).unwrap();assert!(validator.is_valid(&value));assert!(parse_plan(&value.to_string(),&input).is_ok());
+        for kind in ["highlighter","mark","mosaic"] {let mut bad=value.clone();bad["groups"][0]["objects"][0]=json!({"kind":kind,"color":"#ff0000","strokeWidth":1,"points":[{"x":10,"y":20},{"x":100,"y":100}]});assert!(!validator.is_valid(&bad));assert!(parse_plan(&bad.to_string(),&input).is_err());}
+        value["groups"][0]["objects"][0]=json!({"kind":"formula","color":"#ff0000","fontSize":20,"tex":"x=3","points":[{"x":100,"y":100},{"x":600,"y":400}]});assert!(validator.is_valid(&value));assert!(parse_plan(&value.to_string(),&input).is_ok());
     }
     #[test]
     fn model_mark_maps_only_two_corners_and_cannot_supply_runtime_or_source_identity() {

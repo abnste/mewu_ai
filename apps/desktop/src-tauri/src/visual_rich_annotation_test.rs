@@ -220,6 +220,7 @@ impl Fixture {
                 attachment_ordinal: 0,
                 attachment_sha256: "a".repeat(64),
                 region_id: region.clone(),
+                image_item_id: None,
                 source: visual_source_fence(
                     context.background.as_ref().unwrap(),
                     &context.regions[0],

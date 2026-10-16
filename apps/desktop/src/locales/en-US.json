@@ -1091,5 +1091,18 @@
   "工具已更改，未执行": "Tool changed; not run",
   "任务已结束，未执行": "Task ended; not run",
   "已达执行上限，未执行": "Execution limit reached; not run",
-  "重复调用，未执行": "Duplicate call; not run"
+  "重复调用，未执行": "Duplicate call; not run",
+  "缺少字段": "Missing field",
+  "应为 {0}": "Expected {0}",
+  "类型不符": "Incorrect type",
+  "存在不支持的字段": "Unsupported field",
+  "JSON 格式无效": "Invalid JSON",
+  "不符合参数约束": "Invalid parameter constraint",
+  "空值": "null",
+  "布尔值": "boolean",
+  "数字": "number",
+  "整数": "integer",
+  "文本": "text",
+  "数组": "array",
+  "对象": "object"
 }

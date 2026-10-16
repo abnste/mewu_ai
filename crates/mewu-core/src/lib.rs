@@ -21,6 +21,8 @@ mod video_edit;
 mod video_registered_layouts;
 mod video_vector_layouts;
 mod visual_annotations;
+mod image_annotations;
+pub use image_annotations::{image_annotation_region, image_annotation_source_fence, image_annotation_writable, ImageAnnotationDocument, ImageAnnotationEdit};
 pub use connections::validate_connection_profile;
 pub use external_memory_types::*;
 pub use journal_types::*;

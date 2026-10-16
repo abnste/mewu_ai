@@ -61,7 +61,7 @@ function capabilities(snapshot, connections, patch = {}) {
     pluginRevision: snapshot.revision,
     connectionRevisions: Object.fromEntries(connections.map(value => [value.id, value.revision])),
     agent: record?.state === 'enabled' && !record.error ? agentGrant(record.revision) : null,
-    blackboard: null, readyConnectionIds: [connectionId], readyAgentIds: [], boundAgentIds: [], ...patch,
+    blackboard: null, configuredConnectionIds: [connectionId], readyAgentIds: [], boundAgentIds: [], ...patch,
   };
 }
 async function fixture({ initialPlugins = plugins(), supplied = true, delayedSubscription = false, initialConnections = [connection()], initialAgentConfig } = {}) {
@@ -117,19 +117,19 @@ async function fixture({ initialPlugins = plugins(), supplied = true, delayedSub
     releaseSubscription: () => subscription.resolve(),
     listenerCount: () => listeners.size, pluginReads: () => pluginReads,
     subscribes: () => subscribes, stops: () => stops,
-    aiAvailable: () => Boolean(state()?.agent && state()?.readyConnectionIds.includes(connectionId)),
+    aiAvailable: () => Boolean(state()?.agent && state()?.configuredConnectionIds.includes(connectionId)),
   };
 }
 
-test('actual hook never unlocks AI for unconfigured connections with empty native ready IDs', async t => {
+test('actual hook never unlocks AI for unconfigured connections with empty native configured IDs', async t => {
   const f = await fixture({ initialConnections: [connection(connectionId, 1, false)] });
   t.after(f.dispose);
   assert.equal(f.reads.length, 1);
   assert.equal(f.state(), undefined);
-  f.reads[0].resolve(capabilities(f.plugins(), f.snapshot().connections, { readyConnectionIds: [] }));
+  f.reads[0].resolve(capabilities(f.plugins(), f.snapshot().connections, { configuredConnectionIds: [] }));
   await tick();
   assert.equal(f.state()?.agent?.pluginId, 'mewu.agent');
-  assert.deepEqual(Array.from(f.state().readyConnectionIds), []);
+  assert.deepEqual(Array.from(f.state().configuredConnectionIds), []);
   assert.equal(f.aiAvailable(), false);
   assert.equal(f.subscribes(), 0);
 });
@@ -185,7 +185,7 @@ test('disabled, removed, malformed and mismatched native authorizations fail clo
     { pluginRevision: 4 },
     { connectionRevisions: { [connectionId]: 0 } },
     { connectionRevisions: [] },
-    { readyConnectionIds: ['unknown-connection'] },
+    { configuredConnectionIds: ['unknown-connection'] },
     { agent: undefined },
   ]) {
     const f = await fixture(); t.after(f.dispose);
@@ -213,7 +213,7 @@ test('read errors close the current gate while a late error cannot erase a newer
   assert.equal(f.aiAvailable(), true);
 });
 
-test('drawing and snapshot updates with unchanged configuration revisions never repeat credential reads', async t => {
+test('drawing and snapshot updates with unchanged configuration revisions never repeat capability queries', async t => {
   const f = await fixture({ initialConnections: [connection(), connection(otherConnectionId)] });
   t.after(f.dispose);
   const ready = capabilities(f.plugins(), f.snapshot().connections);
@@ -229,7 +229,7 @@ test('drawing and snapshot updates with unchanged configuration revisions never 
   }
   f.setSnapshot({ revision: 102, connections: [connection(connectionId, 2), connection(otherConnectionId)], scenes: [] });
   await tick();
-  assert.equal(f.reads.length, 2, 'an actual profile revision must request a new host credential check');
+  assert.equal(f.reads.length, 2, 'an actual profile revision must request a new host metadata projection');
   assert.equal(f.state(), undefined);
 });
 
@@ -264,7 +264,7 @@ test('scope disposal ignores pending results and events and cleans both active a
 
 test('extension lifecycle and binding events revoke readiness immediately and fence late responses', async t => {
   const f=await fixture();t.after(f.dispose);
-  const ready=capabilities(f.plugins(),f.snapshot().connections,{agent:null,readyConnectionIds:[],boundAgentIds:['independent'],readyAgentIds:['independent']});
+  const ready=capabilities(f.plugins(),f.snapshot().connections,{agent:null,configuredConnectionIds:[],boundAgentIds:['independent'],readyAgentIds:['independent']});
   f.reads[0].resolve(ready);await tick();assert.deepEqual(Array.from(f.state().readyAgentIds),['independent']);
   assert.equal(f.extensionListenerCount(),2);f.emitExtension();assert.equal(f.state(),undefined);await tick();assert.equal(f.reads.length,2);
   f.emitBindings();await tick();assert.equal(f.reads.length,3);
@@ -272,7 +272,7 @@ test('extension lifecycle and binding events revoke readiness immediately and fe
   assert.equal(f.state(),revoked);f.dispose();assert.equal(f.extensionListenerCount(),0);assert.equal(f.extensionStops(),2);
 });
 
-test('active scene model/Agent and defaults refresh credentials while ordinary screenshot changes do not', async t => {
+test('active scene model/Agent and defaults refresh configuration metadata while ordinary screenshot changes do not', async t => {
   const configuration={activeSceneId:'scene',activeScene:{id:'scene',agentId:'independent',connectionId:connectionId},agents:[{id:'independent',defaultConnectionId:null}],defaultConnectionId:connectionId};
   const f=await fixture({initialAgentConfig:configuration});t.after(f.dispose);
   f.reads[0].resolve(capabilities(f.plugins(),f.snapshot().connections));await tick();

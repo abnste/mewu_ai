@@ -16,6 +16,8 @@ import './video.css';
 import TextArtifact from './TextArtifact';
 import './image-object.css';
 import VideoArtifact, { type VideoArtifactProps } from './VideoArtifact';
+import DrawingLayer from './DrawingLayer';
+import { imageAnnotationRegion, imageContentBox } from '../image-annotations';
 
 interface Props {
   aiAvailable?: boolean;
@@ -32,6 +34,7 @@ interface Props {
   video?: Omit<VideoArtifactProps, 'item' | 'active'>;
   busy?: boolean;
   onOpenBlackboard?: () => void;
+  sceneId?: string; onEditImage?: () => void; imageEditing?: boolean;
   blackboard?:boolean;interactive?:boolean;hovered?:boolean;trash?:ObjectTrashPort;onRegisterFlush?:RegisterDrawingFlush;
   boardSceneId?:string;onError?:(message:string)=>void;
   onRegisterWheel?:(wheel:(event:WheelEvent)=>void)=>()=>void;
@@ -89,6 +92,7 @@ export default function ArtifactCard(props: Props) {
     const width = Math.min(p.width * vp.width, p.height * vp.height * ratio);
     return { width, height: width / ratio };
   });
+  const imageInkBox=createMemo(()=>imageContentBox({x:0,y:0,...imageBox()},{width:props.item.asset.width??1,height:props.item.asset.height??1}));
   const movePosition=()=>{const p=position(),vp=viewport();return objectMoveGripPosition({x:p.x*vp.width,y:p.y*vp.height,width:isRasterMedia()?imageBox().width:p.width*vp.width},vp);};
   const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-56,left+width-56))-left}px`,top:`${Math.max(4,Math.min(vp.height-28,top+(width<176?28:4)))-top}px`};};
   const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
@@ -115,6 +119,11 @@ export default function ArtifactCard(props: Props) {
         setPosition(savedPosition()); setMoving(false);
       }
     }
+  }
+  async function editImage() {
+    const id=props.item.id, assetId=props.item.asset.id;
+    try { await flushZoom(); if(!disposed&&props.item.id===id&&props.item.asset.id===assetId)props.onEditImage?.(); }
+    catch(error){props.onError?.(error instanceof Error?error.message:String(error));}
   }
   function wheel(event:WheelEvent) {
     if(!isRasterMedia()||props.busy||pinning()||gestureFlight||disposeGesture||disposed)return;
@@ -222,10 +231,11 @@ export default function ArtifactCard(props: Props) {
       <button class="icon-button compact" title={t("移除")} aria-label={t("移除 {0}").replaceAll("{0}", () => String(props.item.asset.name))} disabled={props.busy} onClick={props.onRemove}><X size={14} /></button>
     </header>
     </Show>
-    <Show when={isImage()&&(!props.blackboard||props.onPin)}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
+    <Show when={isImage()&&(!props.blackboard||props.onPin)&&!props.imageEditing}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
       <Show when={!props.blackboard}>
       <Show when={props.aiAvailable !== false}><button class="icon-button compact" classList={{ selected: props.referenced }} title={props.referenced ? t('取消引用') : t('引用')} aria-label={props.referenced ? t('取消引用') : t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={15} /></button></Show>
       <Show when={props.onOpenBlackboard}><button class="icon-button compact" title={t('编辑黑板')} aria-label={t('编辑黑板')} disabled={props.busy} onClick={() => props.onOpenBlackboard?.()}><Pencil size={15} /></button></Show>
+      <Show when={props.onEditImage&&!props.onOpenBlackboard}><button class="icon-button compact" title={t('绘制')} aria-label={t('绘制')} disabled={props.busy} onClick={()=>void editImage()}><Pencil size={15} /></button></Show>
       </Show>
       <Show when={props.onPin}><button class="icon-button compact" title={t('置顶')} aria-label={t('置顶')} disabled={props.busy||pinning()} onClick={() => void pinObject()}><Pin size={15} /></button></Show>
       <Show when={!props.blackboard}><button class="icon-button compact" title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}', () => props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={15} /></button></Show>
@@ -238,6 +248,7 @@ export default function ArtifactCard(props: Props) {
       <Show when={props.item.asset.kind === 'image'}>
         <Show when={!failed()} fallback={<span class="inline-error">{t("无法打开图片")}</span>}>
           <img src={assetUrl(props.item.asset)} alt={props.item.asset.name} draggable={false} onError={() => setFailed(true)} />
+          <Show when={props.item.imageAnnotations&&props.sceneId&&!props.imageEditing}><div class="image-annotations-layer" style={{left:`${imageInkBox().x}px`,top:`${imageInkBox().y}px`,width:`${imageInkBox().width}px`,height:`${imageInkBox().height}px`}}><DrawingLayer region={imageAnnotationRegion(props.item)} sceneId={props.sceneId} background={props.item.asset} imageItemId={props.item.id} /></div></Show>
         </Show>
       </Show>
       <Show when={props.item.asset.kind === 'video'}>

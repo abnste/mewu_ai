@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-image-item"
+description = "Enables the export_image_item command without any pre-configured scope."
+commands.allow = ["export_image_item"]
+
+[[permission]]
+identifier = "deny-export-image-item"
+description = "Denies the export_image_item command without any pre-configured scope."
+commands.deny = ["export_image_item"]

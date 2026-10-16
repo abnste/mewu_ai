@@ -508,6 +508,7 @@ fn prepare_from_parts(
                         assets::crop_from_parts_with_mapping(background, region, root)?;
                     visual_source = Some(PreparedVisualSource {
                         region_id: region.id.clone(),
+                        image_item_id: None,
                         source: mewu_core::visual_source_fence(background, region)
                             .map_err(|e| e.to_string())?,
                         crop,
@@ -543,7 +544,16 @@ fn prepare_from_parts(
                 if item.asset.kind != AssetKind::Image {
                     return Err("暂不支持此类引用文件".into());
                 }
-                assets::image(&item.asset, root)?
+                let (image, crop) = assets::image_item_with_mapping(item, root)?;
+                if visual_profile.is_some() && mewu_core::image_annotation_writable(item) {
+                    visual_source = Some(PreparedVisualSource {
+                        region_id: String::new(),
+                        image_item_id: Some(item.id.clone()),
+                        source: mewu_core::image_annotation_source_fence(item).map_err(|e| e.to_string())?,
+                        crop,
+                    });
+                }
+                image
             }
         };
         let plan = image_tile_plan(

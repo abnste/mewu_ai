@@ -8,6 +8,9 @@ pub const MAX_VIDEO_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_FILE: u64 = 32 * 1024 * 1024;
 pub const MAX_IMPORT_FILES: usize = 12;
 const MAX_IMPORT_BYTES: usize = 128 * 1024 * 1024;
+#[cfg(test)]
+#[path = "image_item_annotation_test.rs"]
+mod image_item_annotation_tests;
 
 pub fn resolve(snapshot: &Snapshot, id: &str) -> Option<Asset> {
     snapshot.asset(id).cloned()
@@ -118,6 +121,23 @@ pub fn crop(scene: &Scene, region_id: &str, root: &Path) -> Result<DynamicImage,
         .ok_or("选区不存在")?;
     let background = scene.background.as_ref().ok_or("尚未截图")?;
     crop_from_parts(background, region, root)
+}
+
+/// A scene image keeps its original bytes; the same non-destructive compositor
+/// feeds references, export and explicit pins, including immutable rich layers.
+pub fn image_item_with_mapping(item: &mewu_core::SpaceItem, root: &Path) -> Result<(DynamicImage, mewu_core::VisualPixelRect), String> {
+    let source=image(&item.asset,root)?.into_rgba8();let (width,height)=source.dimensions();
+    let pixels=compose_image_item(item,source,root)?;
+    Ok((DynamicImage::ImageRgba8(pixels),mewu_core::VisualPixelRect{x:0,y:0,width,height}))
+}
+pub fn image_item(item: &mewu_core::SpaceItem, root: &Path) -> Result<DynamicImage, String> {
+    image_item_with_mapping(item, root).map(|(image, _)| image)
+}
+pub fn compose_image_item(item: &mewu_core::SpaceItem, image: image::RgbaImage, root: &Path) -> Result<image::RgbaImage, String> {
+    if item.asset.width != Some(image.width()) || item.asset.height != Some(image.height()) { return Err("图片来源尺寸已变更".into()); }
+    let region = mewu_core::image_annotation_region(item).map_err(|e| e.to_string())?;
+    crate::drawing_render::crop_region_with_layouts(&DynamicImage::ImageRgba8(image), &region, None,
+        |reference| crate::rich_annotation_host::load_raster(root, reference)).map(DynamicImage::into_rgba8)
 }
 
 /// Region geometry places an override on the scene; its drawing coordinates

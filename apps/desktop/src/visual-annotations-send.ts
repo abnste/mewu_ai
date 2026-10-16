@@ -10,13 +10,13 @@ export function hasAnnotationTarget(scene: Scene | undefined, references: Refere
   if (!scene) return false;
   const videos = references.filter(reference => reference.kind === 'item' && scene.items.some(item => item.id === reference.id && item.asset.kind === 'video'));
   if (videos.length) return videos.length === 1;
-  return Boolean(scene.background && references.some(reference => reference.kind === 'region' && scene.regions.some(region => region.id === reference.id)));
+  return Boolean(references.some(reference => reference.kind === 'item' && scene.items.some(item => item.id === reference.id && item.asset.kind === 'image' && !Object.hasOwn(item.state??{},'blackboardSceneId'))) || scene.background && references.some(reference => reference.kind === 'region' && scene.regions.some(region => region.id === reference.id)));
 }
 export function annotationSendIdentity(scene: Scene, references?: Reference[]): string {
   const sources = references?.map(reference => {
     if (reference.kind === 'region') return [reference.kind, reference.id, scene.regions.find(region => region.id === reference.id) ?? null];
     const item = scene.items.find(item => item.id === reference.id);
-    return [reference.kind, reference.id, item?.asset ?? null, item?.videoEdit ?? null, item?.videoAnnotations ?? null];
+    return [reference.kind, reference.id, item?.asset ?? null, item?.videoEdit ?? null, item?.videoAnnotations ?? null, item?.imageAnnotations ?? null, item ? [item.x,item.y,item.width,item.height] : null];
   });
   return JSON.stringify([scene.id, scene.agentId, scene.background, scene.connectionId, scene.run?.id ?? null, ...(sources ? [sources] : [])]);
 }

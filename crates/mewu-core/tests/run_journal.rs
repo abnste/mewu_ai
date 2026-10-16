@@ -200,6 +200,285 @@ fn not_sent_reason_is_read_only_detail_metadata_and_survives_restart() {
     assert_eq!(snapshot(), before);
 }
 
+fn annotation_call(video: bool, id: &str) -> ProposedTool {
+    let binding = if video {
+        ToolBinding::VideoAnnotation {
+            plugin_id: "mewu.annotations".into(),
+            plugin_revision: 1,
+            contribution_id: "answer".into(),
+            name: VIDEO_ANNOTATION_TOOL.into(),
+            target_manifest_sha256: hash("synthetic targets"),
+        }
+    } else {
+        ToolBinding::VisualAnnotation {
+            plugin_id: "mewu.annotations".into(),
+            plugin_revision: 1,
+            contribution_id: "answer".into(),
+            name: VISUAL_ANNOTATION_TOOL.into(),
+            target_manifest_sha256: hash("synthetic targets"),
+        }
+    };
+    ProposedTool {
+        call_id: id.into(),
+        binding,
+        arguments_wire_sha256: hash("PRIVATE_RAW_MUST_NOT_BE_STORED"),
+    }
+}
+
+#[test]
+fn safe_argument_diagnostics_persist_without_raw_values_or_historical_backfill() {
+    let file = Db::new();
+    let mut store = Store::open(&file.0).unwrap();
+    let context = start(&mut store, "合成诊断");
+    let committed = turn(
+        &mut store,
+        &context,
+        "",
+        vec![
+            annotation_call(true, "video"),
+            annotation_call(false, "image"),
+            annotation_call(true, "legacy"),
+        ],
+    );
+    let diagnostics = [
+        ArgumentDiagnostic::new(
+            "$/objects/0/primitive/style/opacity".into(),
+            ArgumentDiagnosticReason::Type,
+            Some(ArgumentExpectedType::Number),
+        )
+        .unwrap(),
+        ArgumentDiagnostic::new(
+            "$/groups/0/objects/0/fontSize".into(),
+            ArgumentDiagnosticReason::Required,
+            None,
+        )
+        .unwrap(),
+    ];
+    let db = Connection::open(&file.0).unwrap();
+    for (tool, diagnostic) in committed.tools.iter().zip(&diagnostics) {
+        let first = store
+            .record_tool_not_sent_with_diagnostic(&tool.lease, diagnostic)
+            .unwrap();
+        let before = revision(&db);
+        let again = store
+            .record_tool_not_sent_with_diagnostic(&tool.lease, diagnostic)
+            .unwrap();
+        assert_eq!(first, again);
+        assert_eq!(revision(&db), before);
+        let changed =
+            ArgumentDiagnostic::new("$".into(), ArgumentDiagnosticReason::Required, None).unwrap();
+        assert!(store
+            .record_tool_not_sent_with_diagnostic(&tool.lease, &changed)
+            .is_err());
+        assert_eq!(revision(&db), before);
+    }
+    store
+        .record_tool_not_sent(&committed.tools[2].lease, NotSentReason::InvalidArguments)
+        .unwrap();
+    let before = revision(&db);
+    assert!(
+        store
+            .record_tool_not_sent_with_diagnostic(&committed.tools[2].lease, &diagnostics[0])
+            .is_err(),
+        "may not invent a missing historical cause"
+    );
+    assert_eq!(revision(&db), before);
+    store
+        .fail_run(&context.scene_id, &context.run_id, "合成结束")
+        .unwrap();
+    drop(store);
+    let store = Store::open(&file.0).unwrap();
+    let rows = || {
+        db.prepare("SELECT metadata,content FROM agent_run_events ORDER BY sequence")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    let before = (revision(&db), rows());
+    let p = page(&store, &context);
+    for (index, wanted) in diagnostics
+        .iter()
+        .map(Some)
+        .chain(std::iter::once(None))
+        .enumerate()
+    {
+        let summary = &p.entries[index + 1];
+        let detail = store
+            .run_journal_entry(
+                &context.scene_id,
+                &context.run_id,
+                &summary.id,
+                p.summary.revision,
+            )
+            .unwrap();
+        assert_eq!(detail.argument_diagnostic.as_ref(), wanted);
+        assert_eq!(
+            detail.not_sent_reason,
+            Some(NotSentReason::InvalidArguments)
+        );
+        assert!(matches!(
+            detail.content,
+            JournalContent::Omitted {
+                reason: ContentUnavailable::NotReceived
+            }
+        ));
+        assert!(serde_json::to_value(summary)
+            .unwrap()
+            .get("argumentDiagnostic")
+            .is_none());
+        let mut wire = serde_json::to_value(detail).unwrap();
+        wire.as_object_mut().unwrap().remove("argumentDiagnostic");
+        assert_eq!(
+            serde_json::from_value::<JournalEntryDetail>(wire)
+                .unwrap()
+                .argument_diagnostic,
+            None
+        );
+    }
+    assert_eq!(
+        (revision(&db), rows()),
+        before,
+        "detail reads changed storage"
+    );
+    assert!(!serde_json::to_string(&before.1)
+        .unwrap()
+        .contains("PRIVATE_RAW_MUST_NOT_BE_STORED"));
+}
+
+#[test]
+fn argument_diagnostics_reject_unknown_fields_unbounded_indices_and_wrong_bindings() {
+    for path in [
+        "",
+        "/objects/0",
+        "$/PRIVATE_UNKNOWN_KEY",
+        "$/objects/48",
+        "$/groups/6",
+        "$/objects/00",
+        "$/objects/-1",
+        "$/objects/0/secret",
+        "$/text/0",
+        "$/rows/199",
+        "$/rows/0/32",
+        "$/rows/0/0/0",
+    ] {
+        assert!(
+            ArgumentDiagnostic::new(
+                path.into(),
+                ArgumentDiagnosticReason::Type,
+                Some(ArgumentExpectedType::Number)
+            )
+            .is_none(),
+            "accepted {path}"
+        );
+    }
+    assert!(ArgumentDiagnostic::new(
+        "$/objects/47/primitive/bounds/x".into(),
+        ArgumentDiagnosticReason::Minimum,
+        None
+    )
+    .is_some());
+    assert!(ArgumentDiagnostic::new(
+        "$/groups/5/objects/47/table/rows/198/31".into(),
+        ArgumentDiagnosticReason::Type,
+        Some(ArgumentExpectedType::String)
+    )
+    .is_some());
+    assert!(ArgumentDiagnostic::new(
+        "$".into(),
+        ArgumentDiagnosticReason::Required,
+        Some(ArgumentExpectedType::Number)
+    )
+    .is_none());
+    let mut store = Store::open_in_memory().unwrap();
+    let context = start(&mut store, "错误绑定");
+    let committed = turn(&mut store, &context, "", vec![call("local")]);
+    let diagnostic =
+        ArgumentDiagnostic::new("$".into(), ArgumentDiagnosticReason::Syntax, None).unwrap();
+    let before = store.snapshot();
+    assert!(store
+        .record_tool_not_sent_with_diagnostic(&committed.tools[0].lease, &diagnostic)
+        .is_err());
+    assert_eq!(store.snapshot(), before);
+    assert_eq!(
+        page(&store, &context).entries[1].phase,
+        ReceiptPhase::Prepared
+    );
+}
+
+#[test]
+fn diagnostic_receipt_failure_and_corrupt_metadata_never_expose_or_commit_values() {
+    let file = Db::new();
+    let mut store = Store::open(&file.0).unwrap();
+    let context = start(&mut store, "原子诊断");
+    let committed = turn(
+        &mut store,
+        &context,
+        "",
+        vec![annotation_call(true, "video")],
+    );
+    let diagnostic = ArgumentDiagnostic::new(
+        "$/objects/0/primitive/fontSize".into(),
+        ArgumentDiagnosticReason::Required,
+        None,
+    )
+    .unwrap();
+    let db = Connection::open(&file.0).unwrap();
+    let before = (store.snapshot(), revision(&db));
+    db.execute_batch("CREATE TRIGGER reject_safe_diagnostic BEFORE UPDATE ON agent_run_events BEGIN SELECT RAISE(ABORT,'synthetic failure');END").unwrap();
+    assert!(store
+        .record_tool_not_sent_with_diagnostic(&committed.tools[0].lease, &diagnostic)
+        .is_err());
+    assert_eq!((store.snapshot(), revision(&db)), before);
+    assert_eq!(
+        page(&store, &context).entries[1].phase,
+        ReceiptPhase::Prepared
+    );
+    db.execute_batch("DROP TRIGGER reject_safe_diagnostic")
+        .unwrap();
+    store
+        .record_tool_not_sent_with_diagnostic(&committed.tools[0].lease, &diagnostic)
+        .unwrap();
+    store
+        .fail_run(&context.scene_id, &context.run_id, "合成结束")
+        .unwrap();
+    let p = page(&store, &context);
+    let id = &p.entries[1].id;
+    let original: String = db
+        .query_row(
+            "SELECT metadata FROM agent_run_events WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut invalid: serde_json::Value = serde_json::from_str(&original).unwrap();
+    invalid["argumentDiagnostic"]["fieldPath"] = json!("$/PRIVATE_CORRUPT_VALUE");
+    let corrupted = invalid.to_string();
+    db.execute(
+        "UPDATE agent_run_events SET metadata=?1 WHERE id=?2",
+        [&corrupted, id],
+    )
+    .unwrap();
+    assert!(store
+        .run_journal_entry(&context.scene_id, &context.run_id, id, p.summary.revision)
+        .is_err());
+    drop(store);
+    assert!(Store::open(&file.0).is_err());
+    assert_eq!(
+        db.query_row::<String, _, _>(
+            "SELECT metadata FROM agent_run_events WHERE id=?1",
+            [id],
+            |row| row.get(0)
+        )
+        .unwrap(),
+        corrupted,
+        "corruption was overwritten"
+    );
+}
+
 #[test]
 fn conversation_boundary_preserves_old_journal_projection_but_blocks_its_continuation() {
     let file = Db::new();

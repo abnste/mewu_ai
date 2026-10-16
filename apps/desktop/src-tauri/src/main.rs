@@ -494,7 +494,8 @@ async fn apply_scene_command(
 fn ensure_scene_command_source(owner: &str, command: &SceneCommand) -> Result<(), String> {
     match command {
         SceneCommand::UpdateRegion { .. } => Err("选区更新方式已失效".into()),
-        SceneCommand::SetRegionGeometry { .. }
+        SceneCommand::EditImageAnnotations { .. }
+        | SceneCommand::SetRegionGeometry { .. }
         | SceneCommand::FinishRegionGeometryEdit { .. }
         | SceneCommand::UndoRegionGeometry { .. }
         | SceneCommand::RedoRegionGeometry { .. }
@@ -513,6 +514,7 @@ fn ensure_geometry_transition(command: &SceneCommand, capturing: bool) -> Result
             SceneCommand::NewScene
                 | SceneCommand::NewConversation { .. }
                 | SceneCommand::ActivateScene { .. }
+                | SceneCommand::EditImageAnnotations { .. }
                 | SceneCommand::SetRegionGeometry { .. }
                 | SceneCommand::UndoRegionGeometry { .. }
                 | SceneCommand::RedoRegionGeometry { .. }
@@ -2852,6 +2854,7 @@ fn main() {
                 web_link_host::open_web_link,
                 ui_language::set_ui_language,
                 asset_host::export_text_asset,
+                image_host::export_image_item,
                 read_artifact,
                 connection_host::get_provider_presets,
                 connection_host::save_connection_profile,

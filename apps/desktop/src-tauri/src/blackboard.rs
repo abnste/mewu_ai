@@ -358,6 +358,7 @@ fn preview_with_images(
         }
         let mut lease = crate::image_host::SourceLease::open(&item.asset, root)?;
         let raster = lease.decode_rgba(&item.asset)?;
+        let raster = assets::compose_image_item(item, raster, root)?;
         work.check()?;
         crate::raster_compositor::paint_raster(&mut base, &raster, x, y, w, h)?;
         lease.verify()?;
@@ -479,7 +480,7 @@ mod tests {
             height,
             state: None,
             video_edit: None,
-            video_annotations: None,
+            video_annotations: None, image_annotations: None,
         }
     }
 

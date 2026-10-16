@@ -389,6 +389,9 @@ pub struct SpaceItem {
     pub video_edit: Option<VideoEdit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video_annotations: Option<crate::VideoAnnotationDocument>,
+    /// Host-owned non-destructive ink in the original image's pixel coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_annotations: Option<crate::ImageAnnotationDocument>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -806,6 +809,13 @@ pub struct Snapshot {
     deny_unknown_fields
 )]
 pub enum SceneCommand {
+    EditImageAnnotations {
+        scene_id: String,
+        item_id: String,
+        source_asset_id: String,
+        expected_revision: u64,
+        action: crate::ImageAnnotationEdit,
+    },
     NewScene,
     NewConversation {
         scene_id: String,
