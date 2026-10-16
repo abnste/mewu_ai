@@ -12,6 +12,8 @@
 .capture-region.capture-image-override{background:#41464f}
 .capture-region-content{position:absolute;pointer-events:none}
 .capture-region-content>.drawing-layer{inset:0;width:100%;height:100%}
+/* Saved ink remains above independent pins after the editor closes, without taking input. */
+.capture-saved-drawings{position:absolute;inset:0;z-index:21;pointer-events:none}
 .capture-region-content>.ocr-text-layer{inset:0;pointer-events:auto}
 .capture-override-image{display:block;width:100%;height:100%;object-fit:contain;background:#41464f;pointer-events:none;-webkit-user-drag:none}
 .capture-region.capture-active{--capture-border:#348bf1}

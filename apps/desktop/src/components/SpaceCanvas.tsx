@@ -743,7 +743,6 @@ export default function SpaceCanvas(props: Props) {
         <div class="capture-region-content" style={{ left: `${image().box.x - box().x}px`, top: `${image().box.y - box().y}px`, width: `${image().box.width}px`, height: `${image().box.height}px` }}>
           <Show when={region().imageOverride?.id} keyed>{assetId => <img data-asset={assetId} class="capture-override-image" src={assetUrl(region().imageOverride!)} alt={t("长截图")} draggable={false} onError={() => props.onError('无法读取长截图')} />}</Show>
           <Show when={savedTranslation(region())}>{value => <TranslationLayer value={value()} active={active() === id && !drawingSession()} disabled={blocked()} onRemove={props.onTranslationRemove ? () => settledRegion(region(), saved => props.onTranslationRemove!(ocrTarget(saved))) : undefined} onError={props.onError} />}</Show>
-          <DrawingLayer hidden={drawingSession()?.regionId === id} region={image().region} sourceRegion={props.scene.regions.find(value => value.id === id)} sceneId={props.scene.id} background={props.scene.background} />
           <Show when={translationVisible(region())}><OcrTextLayer document={savedTranslation(region())!.selection} label={t("译文")} repeatLabel={t("重新翻译")} active={active() === id} onClose={() => setTextMode(old => ({ ...old, [id]: 'none' }))} onRepeat={translationEntries().length ? () => translate(region(), true) : undefined} onError={props.onError} onSelecting={setSelectionActivity} /></Show>
           <Show when={ocrVisible(region())}><OcrTextLayer document={savedOcr(region())!.document} active={active() === id} onClose={() => { ocrRequests.cancel(); setHiddenOcr(old => ({ ...old, [id]: true })); }} onRepeat={ocrEntries().length ? () => runOcr(ocrEntries()[0], region()) : undefined} onError={props.onError} onSelecting={setSelectionActivity} /></Show>
         </div>
@@ -756,6 +755,15 @@ export default function SpaceCanvas(props: Props) {
         </Show>
       </section>;
     }}</For>
+    <div class="capture-saved-drawings" aria-hidden="true">
+      <For each={props.scene.regions.map(region => region.id)}>{id => {
+        const region = () => regionById(id)!;
+        const image = () => imageProjection(region());
+        return <div class="capture-region-content" style={{ left: `${image().box.x}px`, top: `${image().box.y}px`, width: `${image().box.width}px`, height: `${image().box.height}px` }}>
+          <DrawingLayer hidden={drawingSession()?.regionId === id} region={image().region} sourceRegion={props.scene.regions.find(value => value.id === id)} sceneId={props.scene.id} background={props.scene.background} />
+        </div>;
+      }}</For>
+    </div>
     <Show when={selection()}>{box => <div class="capture-selection" style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} />}</Show>
     {/* Native region observation temporarily hides this window and causes blur; keep the invocation owner mounted. */}
     <Show when={(toolbarVisible() || extensionInteracting()) && !drawingSession() && !activity() && !forceNew() && activeRegion()}>{region => <div ref={bindToolbar} class="capture-toolbar" role="toolbar" aria-label={t("截图工具")} style={{ left: `${toolbarBox().x}px`, top: `${toolbarBox().y}px` }} onPointerDown={event => { event.stopPropagation(); if (window.getSelection()?.anchorNode?.parentElement?.closest('.ocr-text-layer')) event.preventDefault(); }} onPointerEnter={clearHideTimer}>
