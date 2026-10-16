@@ -1618,7 +1618,7 @@ impl Store {
         let target = scene_mut(&mut next, scene_id)?;
         let item_id = if let Some(item) = target.items.iter().find(|item| item.asset == asset) { item.id.clone() } else {
             let item_id = id();
-            target.items.push(SpaceItem { id: item_id.clone(), asset, x: 0.32, y: 0.2, width: 0.36, height: 0.5, state: None, video_edit: None, video_annotations: None });
+            target.items.push(SpaceItem { id: item_id.clone(), asset, x: 0.32, y: 0.2, width: 0.36, height: 0.5, state: None, video_edit: None, video_annotations: None, image_annotations: None });
             item_id
         };
         let reference = Reference { kind: ReferenceKind::Item, id: item_id };

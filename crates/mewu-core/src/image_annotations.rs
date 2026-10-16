@@ -12,7 +12,7 @@ pub struct ImageAnnotationDocument {
     pub drawings: Vec<Drawing>,
     pub history: DrawingHistory,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase", deny_unknown_fields)]
 pub enum ImageAnnotationEdit {
     AddDrawing { drawing: Drawing },
