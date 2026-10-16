@@ -115,7 +115,6 @@ export function AboutSettings(props: { data: SettingsInformation; active: boolea
   onCleanup(() => { disposed = true; generation++; });
   return <><header class="settings-page-heading"><h2>{t("关于")}</h2></header><InformationState data={props.data} /><Show when={props.data.info()}>{info => <>
     <Row title={info().application}><span class="settings-value">{info().version}</span></Row>
-    <Show when={info().commit}><Row title={t("构建")}><code class="settings-build">{info().commit}</code></Row></Show>
     <AppUpdateSettings active={props.active} />
     <Row title={t("开源许可")}><button class="quiet-button" disabled={pending()} onClick={() => void read('license')}>{info().license}</button></Row>
     <Show when={info().noticesAvailable}><Row title={t("第三方许可")}><button class="quiet-button" disabled={pending()} onClick={() => void read('notices')}>{t("查看")}</button></Row></Show>

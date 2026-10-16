@@ -24,6 +24,7 @@ export default function ExtensionProjectGallery(props: Props) {
   async function openLink(event: MouseEvent, url: string) {
     if (!nativeReplyLinks()) return;
     event.preventDefault();
+    setLinkError(false);
     try { await openReplyLink(url); } catch { setLinkError(true); }
   }
   function observeThumbnail(element: HTMLButtonElement, index: number) {

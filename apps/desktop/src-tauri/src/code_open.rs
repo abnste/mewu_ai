@@ -119,7 +119,18 @@ fn dispatch(
     {
         crate::code_open_macos::dispatch(address, allowed)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        // Use the current user's registered desktop handler. No shell command,
+        // browser override or URI-supplied arguments are constructed here.
+        allowed()?;
+        gtk::gio::AppInfo::launch_default_for_uri(
+            &address,
+            None::<&gtk::gio::AppLaunchContext>,
+        )
+        .map_err(|_| "无法打开应用，可复制内容后重试".into())
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = (address, allowed);
         Err("此平台尚未接入打开应用".into())
@@ -175,5 +186,13 @@ mod tests {
             assert!(http_url(text).is_none(), "{text}");
         }
         assert!(http_url(&format!("https://example.com/{}", "a".repeat(8192))).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_default_handler_is_not_dispatched_after_final_authority_revocation() {
+        let address = http_url("https://example.invalid/owned-test").unwrap();
+        let result = open(address, || Err("owned-test-authority-revoked".into()));
+        assert_eq!(result.unwrap_err(), "owned-test-authority-revoked");
     }
 }

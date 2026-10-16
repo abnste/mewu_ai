@@ -53,6 +53,7 @@
     "allow-set-capture-preferences",
     "allow-settings-info",
     "allow-open-data-directory",
+    "allow-open-web-link",
     "allow-read-license-document",
     "allow-get-recording-audio",
     "allow-set-recording-audio",

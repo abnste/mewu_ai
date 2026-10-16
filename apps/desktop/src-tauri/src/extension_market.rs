@@ -74,11 +74,7 @@ pub fn validate_entry(entry: &Entry) -> Result<(), String> {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         || entry.size == 0
         || entry.size > MAX_ARCHIVE as u64
-        || entry.platforms.is_empty()
-        || entry.platforms.iter().any(|p| {
-            !["any", "windows-x86_64", "darwin-aarch64", "linux-x86_64"].contains(&p.as_str())
-        })
-        || entry.platforms.iter().collect::<BTreeSet<_>>().len() != entry.platforms.len()
+        || !mewu_extension::valid_plugin_platforms(&entry.platforms)
         || entry.tags.len() > 64
         || entry.tags.iter().any(|s| !segment(s))
         || entry.tags.iter().collect::<BTreeSet<_>>().len() != entry.tags.len()
@@ -207,6 +203,11 @@ pub fn verify_package(entry: &Entry, bytes: &[u8]) -> Result<ExtensionPackage, S
     {
         return Err("插件清单与社区条目身份不一致".into());
     }
+    if mewu_extension::PLUGIN_PLATFORMS.into_iter().any(|platform|
+        mewu_extension::plugin_platform_supported(Some(&entry.platforms), platform)
+            && !mewu_extension::plugin_platform_supported(package.manifest.platforms.as_deref(), platform)) {
+        return Err("社区条目的平台范围超出插件声明".into());
+    }
     Ok(package)
 }
 fn client() -> Result<reqwest::Client, String> {
@@ -275,14 +276,7 @@ pub async fn get_package(entry: &Entry) -> Result<(ExtensionPackage, Vec<u8>), S
     Ok((package, bytes))
 }
 pub fn supports_platform(entry: &Entry) -> bool {
-    let platform = if cfg!(windows) {
-        "windows-x86_64"
-    } else if cfg!(target_os = "macos") {
-        "darwin-aarch64"
-    } else {
-        "linux-x86_64"
-    };
-    entry.platforms.iter().any(|p| p == "any" || p == platform)
+    mewu_extension::plugin_platform_supported(Some(&entry.platforms), mewu_extension::current_plugin_platform())
 }
 
 #[cfg(test)]

@@ -126,6 +126,8 @@ fn external_agent_ready(
     // invocation use it. The selected handler decides whether it needs a model;
     // model.invoke enforces actual connection/key authority at the call boundary.
     record.state == "enabled"
+        && record.platform_error.is_none()
+        && !record.unsupported_services.contains_key(service_id)
         && dependencies_valid
         && record.services.iter().any(|service| {
             service.id == service_id && service.kind == mewu_extension::ServiceKind::Agent
@@ -231,6 +233,8 @@ mod tests {
                 metadata: None,
             }],
             has_rollback: false,
+            platform_error: None,
+            unsupported_services: Default::default(),
         };
         // No configured key: direct host model use remains unavailable, while an
         // independent handler may choose its network/service/local fallback.

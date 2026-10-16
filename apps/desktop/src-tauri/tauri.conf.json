@@ -78,7 +78,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDAyQkRGNDMyOUNEMDYwOTEKUldTUllOQ2NNdlM5QWl0a2NpMER5cURVNkk0Y2NIS3h1WkZ4WXZnT0NBYyszaDdQa05ZRVI2dlQK",
       "endpoints": [
-        "https://github.com/abnste/mewu_ai/releases/latest/download/latest.json"
+        "https://api.github.com/repos/abnste/mewu_ai/releases/latest"
       ],
       "windows": {
         "installMode": "passive"

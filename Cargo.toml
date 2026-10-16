@@ -6,6 +6,8 @@ resolver = "2"
 # PR 1343 (RUSTSEC-2024-0429); provenance is in docs/glib-backport.json.
 [patch.crates-io]
 glib = { path = "vendor/glib-0.18.5" }
+# Exact upstream installer/signature implementation; only adds in-memory release data.
+tauri-plugin-updater = { path = "vendor/tauri-plugin-updater-2.13.2" }
 
 [profile.release]
 codegen-units = 1

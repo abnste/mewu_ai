@@ -120,6 +120,8 @@ pub struct PluginManifest {
     pub publisher: Option<String>,
     pub license: String,
     pub host_api: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<PluginTag>,
     pub contributions: Vec<PluginContribution>,
@@ -781,6 +783,25 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<PluginManifest, String> {
     Ok(manifest)
 }
 
+/// A host implementation may be native even when its declaration is portable.
+pub(crate) fn manifest_platform_error(manifest: &PluginManifest, platform: &str) -> Option<&'static str> {
+    if !mewu_extension::plugin_platform_supported(manifest.platforms.as_deref(), platform) { return Some("此插件不支持当前系统"); }
+    for contribution in &manifest.contributions {
+        let supported = match contribution {
+            PluginContribution::Ocr { engine, .. } => match engine {
+                OcrEngine::Windows => platform == "windows-x86_64",
+                OcrEngine::AppleVision => platform == "darwin-aarch64",
+                OcrEngine::LinuxTesseract => platform == "linux-x86_64",
+            },
+            PluginContribution::InputSpeechToText { .. } => platform == "windows-x86_64",
+            PluginContribution::Codes { .. } => platform != "linux-x86_64",
+            _ => true,
+        };
+        if !supported { return Some("此插件的本机能力不支持当前系统"); }
+    }
+    None
+}
+
 fn text(value: &str, max: usize, multiline: bool) -> bool {
     !value.trim().is_empty()
         && value.chars().count() <= max
@@ -807,6 +828,9 @@ fn identifier(value: &str) -> bool {
 }
 
 fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
+    if manifest.platforms.as_ref().is_some_and(|values| !mewu_extension::valid_plugin_platforms(values)) {
+        return Err("插件平台声明无效".into());
+    }
     if manifest.schema_version != 1 || manifest.host_api != 1 {
         return Err("此插件需要不受支持的格式或宿主 API".into());
     }
@@ -1055,7 +1079,8 @@ impl PluginStore {
         for seed in BUNDLED {
             let manifest = parse_manifest(seed)?;
             if store.read(&manifest.id)?.is_none() {
-                let state = if manifest.id == "mewu.blackboard" && !existing_blackboard {
+                let state = if (manifest.id == "mewu.blackboard" && !existing_blackboard)
+                    || manifest_platform_error(&manifest, mewu_extension::current_plugin_platform()).is_some() {
                     PluginState::Disabled
                 } else { PluginState::Enabled };
                 store.install_package_with_state(manifest, PluginSource::Official, None, true, state)?;
@@ -1348,6 +1373,7 @@ impl PluginStore {
         expected: Option<u64>,
         official: bool,
     ) -> Result<PluginRecord, String> {
+        if let Some(reason) = manifest_platform_error(&manifest, mewu_extension::current_plugin_platform()) { return Err(reason.into()); }
         self.install_package_with_state(manifest, source, expected, official, PluginState::Enabled)
     }
 
@@ -1458,6 +1484,7 @@ impl PluginStore {
             return Err("已卸载插件不能回退".into());
         }
         let package = before.previous.clone().ok_or("此插件没有可回退版本")?;
+        if let Some(reason) = manifest_platform_error(&package.manifest, mewu_extension::current_plugin_platform()) { return Err(reason.into()); }
         let after = StoredRecord {
             package,
             revision: next_revision(before.revision)?,
@@ -2015,6 +2042,7 @@ impl PluginStore {
         if found != package.manifest {
             return Err("插件文件与批准的安装记录不一致，请重新安装".into());
         }
+        if let Some(reason) = manifest_platform_error(&package.manifest, mewu_extension::current_plugin_platform()) { return Err(reason.into()); }
         Ok(())
     }
 
@@ -2510,6 +2538,28 @@ mod tests {
         manifest.version = version.into();
         manifest.publisher = Some("Example".into());
         manifest
+    }
+    #[test]
+    fn native_plugin_platform_gate_covers_manifest_install_enable_and_execution() {
+        let directory = Directory::new();
+        let mut store = PluginStore::open(&directory.0).unwrap();
+        let mut manifest = package("1.0.0");
+        let current = mewu_extension::current_plugin_platform();
+        let other = mewu_extension::PLUGIN_PLATFORMS.into_iter().find(|p| *p != current).unwrap();
+        manifest.platforms = Some(vec![other.into()]);
+        assert!(store.install_package(manifest.clone(), PluginSource::Official, None, true).is_err());
+        // Seed a historical valid package from another OS using the startup
+        // restoration path, then prove UI-independent enable/run rechecks.
+        let old = store.install_package_with_state(manifest, PluginSource::Official, None, true, PluginState::Enabled).unwrap();
+        assert_eq!(store.set_enabled(&old.manifest.id, old.revision, true).unwrap_err(), "此插件不支持当前系统");
+        assert_eq!(store.workflow(&old.manifest.id, old.revision, "recognize-table").unwrap_err(), "此插件不支持当前系统");
+        assert_eq!(store.list().unwrap().iter().find(|r|r.manifest.id==old.manifest.id).unwrap().revision, old.revision);
+        assert!(store.uninstall(&old.manifest.id, old.revision).is_ok());
+        let ocr = |engine| PluginManifest { platforms:None, contributions:vec![PluginContribution::Ocr{id:"ocr".into(),title:"OCR".into(),engine}], ..package("1.0.0") };
+        for (engine, platform) in [(OcrEngine::Windows,"windows-x86_64"),(OcrEngine::AppleVision,"darwin-aarch64"),(OcrEngine::LinuxTesseract,"linux-x86_64")] {
+            for target in mewu_extension::PLUGIN_PLATFORMS { assert_eq!(manifest_platform_error(&ocr(engine),target).is_none(), target==platform); }
+        }
+        for target in mewu_extension::PLUGIN_PLATFORMS { assert!(manifest_platform_error(&package("1.0.0"),target).is_none()); }
     }
     #[test]
     fn model_connections_validate_typed_protocols_addresses_and_secret_free_options() {
@@ -3133,7 +3183,7 @@ mod tests {
                 .unwrap();
             assert_eq!(record.revision, 1);
             let snapshot = store.snapshot().unwrap();
-            assert!(snapshot.plugins.iter().all(|p| p.error.is_none()));
+            assert!(snapshot.plugins.iter().all(|p| p.error.as_deref() == manifest_platform_error(&p.manifest, mewu_extension::current_plugin_platform())));
             drop(store);
             assert_eq!(
                 PluginStore::open(&dir.0).unwrap().snapshot().unwrap(),

@@ -200,6 +200,7 @@ mod tests {
                     publisher: None,
                     license: "MPL-2.0".into(),
                     host_api: 1,
+                    platforms: None,
                     tags: vec![],
                     contributions: vec![PluginContribution::Pin {
                         id: "pin".into(),

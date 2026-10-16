@@ -10,10 +10,10 @@
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Setup-1.0.1-win-x64.exe"><strong>Windows installer</strong></a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Portable-1.0.1-win-x64.zip">Windows portable ZIP</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-1.0.1-mac-arm64.dmg">macOS ARM64</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-1.0.1-linux-x64.AppImage">Linux x64</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Setup-1.0.1-win-x64.exe"><strong>Windows installer</strong></a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Portable-1.0.1-win-x64.zip">Windows portable ZIP</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-1.0.1-mac-arm64.dmg">macOS ARM64</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-1.0.1-linux-x64.AppImage">Linux x64</a>
   </p>
   <p><a href="./README.zh-CN.md">简体中文</a> · <strong>English</strong> · <a href="./docs/release-notes-1.0.1.md">Release notes</a> · <a href="https://github.com/abnste/mewu_ai/issues">Report an issue</a></p>
 </div>
@@ -33,7 +33,7 @@
 
 **MewuAI 1.0.1** adds in-place annotations for imported images, clearer tool diagnostics and reliable conversation-bar availability, while retaining the capture workflow and executable plugins. Stable updates now come directly from the latest versioned release, independently of the old update channel. See the [release notes](./docs/release-notes-1.0.1.md).
 
-The remake is maintained on **[master](https://github.com/abnste/mewu_ai/tree/master)**. The original Windows **.NET/WPF 0.7.x** code and documentation remain on **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**. The remake uses **Rust + Tauri 2 + Solid/TypeScript + SQLite** and the system webview; it does not use Electron.
+MewuAI is maintained on **[master](https://github.com/abnste/mewu_ai/tree/master)**. The original Windows **.NET/WPF 0.7.x** code and documentation remain on **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**. MewuAI uses **Rust + Tauri 2 + Solid/TypeScript + SQLite** and the system webview; it does not use Electron.
 
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-en.png"><img src="./docs/images/mewuai-cover-web-en.png" width="100%" alt="MewuAI concept cover: capture, ask and annotate on a Windows desktop" /></a>
@@ -58,7 +58,7 @@ Build extensions with the [SDK](./packages/sdk/README.md), [extension guide](./d
 <details>
 <summary>Original .NET 0.7.x feature reference</summary>
 
-The following descriptions belong to the original Windows version on [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet). They are retained as project history, not a claim that every integration and interaction has been migrated into the remake.
+The following descriptions belong to the original Windows version on [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet). They are retained as project history, not a claim that every integration and interaction has been migrated into the current version.
 
 - **Papers and assignments:** Reference exam screenshots in the ordinary conversation bar for explanations and annotations. Reference multiple screenshots to discuss shared problems and generate practice questions; readings and grading still need human review.
 
@@ -88,7 +88,7 @@ Screenshots, manual annotations, pinned images, text recognition, and recording 
 
 ## Preview
 
-**Historical gallery — original .NET version.** All eight demonstrations below are retained from the original README. They show the project's established feature direction and old interface, not current 1.0 screenshots or a guarantee of remake feature parity.
+**Historical gallery — original .NET version.** All eight demonstrations below are retained from the original README. They show the project's established feature direction and old interface, not current 1.0 screenshots or a guarantee of current feature parity.
 
 <table>
 <tr>
@@ -153,17 +153,17 @@ The example shows explanations and in-place annotations for a geometry question.
 
 > **Related project:** Our partner [**kangarooking/Ta**](https://github.com/kangarooking/Ta) is also an AI screenshot tool for macOS, with OCR, translation, scrolling capture and annotations. Mewu also provides a macOS ARM64 package.
 
-1. **Install and open.** Use one of the four downloads above. Windows requires Windows 10 2004 or later and WebView2; macOS uses WKWebView and Linux uses WebKitGTK. No separate .NET installation is required for the remake.
+1. **Install and open.** Use one of the four downloads above. Windows requires Windows 10 2004 or later and WebView2; macOS uses WKWebView and Linux uses WebKitGTK. No separate .NET installation is required for MewuAI.
 2. **Capture a region.** Click the tray icon or use the capture shortcut; the Windows default is <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd>. Select an area, then copy, save, annotate or record. Change the shortcut in Settings; Wayland may require desktop permission and shortcut setup.
 3. **Connect AI when needed.** Configure a model under **Settings → Agent and connections**, or install and bind an independent Agent plugin. Agent and model selection are separate controls. Add a region reference or a file in the input to ask about it.
 
 Linux Wayland capture/recording uses the desktop portal. After recording permission is granted, select the region again in the refreshed preview. Move recording controls outside the region; GNOME may not keep them on top. Linux needs system `libnghttp2.so.14`; local OCR needs Tesseract 4.1/5 and English language data (`libnghttp2-14` and `tesseract-ocr-eng` on Ubuntu).
 
-New data defaults to `~/.mewu`. Existing remake installations keep their configured location; **Settings → Data** supports moving it and separate cleanup/space statistics for files, images and conversations. Back up important data before switching between the original and remake versions.
+New data defaults to `~/.mewu`. Existing installations keep their configured location; **Settings → Data** supports moving it and separate cleanup/space statistics for files, images and conversations. Back up important data before switching between the original and current versions.
 
 ## AI connections
 
-| Connection | Current remake support |
+| Connection | Current support |
 | --- | --- |
 | API | Chat Completions, OpenAI Responses and Anthropic Messages, with multiple saved connections and model templates. The selected service determines image/video support, cost and limits. |
 | Independent Agent | API 2 Agent-provider plugins can use their own runtime, with memory chosen separately. Host-model access uses the current connection and granted permissions. |
@@ -174,7 +174,7 @@ Hermes, ChatGPT Work / Codex, WorkBuddy and MiniMax Code desktop-client adapters
 <details>
 <summary>Original .NET desktop-client connection guide</summary>
 
-These instructions apply to [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet), not the remake's current connection controls.
+These instructions apply to [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet), not the current connection controls.
 
 | Connection | What you need |
 | --- | --- |
@@ -202,7 +202,7 @@ Capture, built-in drawing and recording need no AI account. Official optional ca
 <details>
 <summary>Why are my selections and annotations missing from a screen share?</summary>
 
-The remake has **Settings → General → Allow screen sharing to see selections and annotations**. Visibility still depends on the operating system and sharing application. The original .NET teaching-mode behavior and F8 instructions are documented on [dotnet](https://github.com/abnste/mewu_ai/blob/dotnet/README.md); they should not be assumed identical on every new platform.
+MewuAI has **Settings → General → Allow screen sharing to see selections and annotations**. Visibility still depends on the operating system and sharing application. The original .NET teaching-mode behavior and F8 instructions are documented on [dotnet](https://github.com/abnste/mewu_ai/blob/dotnet/README.md); they should not be assumed identical on every new platform.
 
 </details>
 
@@ -216,9 +216,9 @@ Capture and manual drawing are local. Using AI sends the referenced content and 
 <details>
 <summary>How do I update? What if an older version cannot update?</summary>
 
-Use **Settings → About** to check and install updates. The revised 1.0.1 builds read the version-signed [manifest from the latest stable release](https://github.com/abnste/mewu_ai/releases/latest/download/latest.json), independently of update-channel. Earlier 1.0.1 installations must reinstall the revised package once because the version is unchanged. Earlier previews can upgrade through their existing endpoint. Branch renames do not change the new endpoint. Windows portable updates run the installer and switch to the installed application.
+Use **Settings → About** to check and install updates. MewuAI reads the [latest stable GitHub Release](https://github.com/abnste/mewu_ai/releases/latest) directly and selects the installer for your system. No separate update-feed or signature file is required. Downloaded packages retain version, size and cryptographic verification. Windows portable updates run the installer and switch to the installed application.
 
-Windows **0.7.4** can discover stable 1.0.1 in its own About page. Download and installation each require confirmation; launch from the shortcut afterwards if needed. **0.7.3 and earlier should first install [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4).**
+Earlier **0.7.4, 1.0.0 and preview installations** may still request an old feed or installer name. Install this version once from the official release without uninstalling first; subsequent updates use GitHub Releases directly. Installing a newly built 1.0.1 over an earlier local 1.0.1 is also a manual same-version update.
 
 Supported legacy API connections are imported once; legacy files remain, but old conversation history is not converted into the new history UI and preferences are not fully migrated. See the [1.0 upgrade notes](./docs/release-notes-1.0.1.md) and [earlier compatibility-entry details](./docs/legacy-updates.md). Release assets expose SHA-256 digests; no separate checksum file is required. The [old changelog](https://github.com/abnste/mewu_ai/blob/dotnet/CHANGELOG.md) remains available.
 

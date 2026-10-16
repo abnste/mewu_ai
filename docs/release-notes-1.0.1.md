@@ -8,14 +8,16 @@
 - 图片导入先成为空间对象；图片、视频与黑板预览均可手动置顶，支持滚轮等比缩放。视频操作工具条左对齐，裁切条独立位于下方。
 - 仅填写服务域名时，模型列表可尝试常用 API 根路径，并将可用地址回填设置草稿；显式自定义路径保持原样。
 - 改善 Windows 允许屏幕共享时的录屏与长截图兼容性，采集结束恢复窗口与输入状态。
+- 更新直接读取 GitHub 正式发行并选择当前系统的安装包，不再依赖额外更新清单文件。关于页仅保留版本和更新操作，移除“构建”行。
+- 插件按系统和本机能力禁用不支持的操作，通用 JavaScript 插件仍使用同一个包。修复设置中插件项目、发行链接无法打开的问题。
 
 ## 更新
 
-1.0.1 为新的正式版本，原 1.0.0 发行保留。已有 1.0.0 与预览版可通过「设置 → 关于」检查更新。新版直接读取 GitHub 最新正式发行中的 latest.json，Mac 自动更新归档也属于各自版本发行；后续正式更新不依赖旧 update-channel。安装包与版本签名校验保留，不需要先卸载。
+1.0.1 为新的正式版本，原 1.0.0 发行保留。新版通过「设置 → 关于」直接检查 GitHub 最新正式发行并下载对应系统的安装包，保留安装包与版本签名校验，不依赖独立更新清单或旧渠道发行。
 
 macOS 更新后，系统可能要求重新确认屏幕录制权限。
 
-Windows 0.7.4 仍可从原关于页升级；原 API 配置导入及旧数据的范围见 [1.0.0 说明](./release-notes-1.0.0.md)。旧历史对话尚未转换为新版历史界面。
+旧 0.7.4、1.0.0 和预览版可能仍写死旧更新地址或安装包名，请从本发行安装一次，无需先卸载；之后使用新版自动更新。原 API 配置导入及旧数据范围见 [1.0.0 说明](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0)。旧历史对话尚未转换为新版历史界面。
 
 ## 当前范围
 
@@ -30,8 +32,10 @@ Windows 0.7.4 仍可从原关于页升级；原 API 配置导入及旧数据的�
 - Fixes repeated streamed replies, saved ink being covered by pinned objects, and exit being blocked by pending object geometry.
 - Images are imported as space objects. Images, videos and board previews support explicit pinning and proportional wheel zoom. Video actions align left above the picture; trimming stays below it.
 - Model discovery can try common API roots for a bare service origin, while preserving explicit custom paths. Windows shared recording and scrolling capture restore window and input state after capture.
+- Updates read the latest stable GitHub Release directly and select the package for the current system. About shows the version and update controls without the build row.
+- Unsupported plugin operations are disabled per system and native capability; portable JavaScript extensions still use one package. Plugin project and release links now open from Settings.
 
-1.0.1 is a new stable release; 1.0.0 remains available. Check for updates in Settings → About. New stable builds read latest.json directly from the latest versioned release, with a versioned macOS updater archive and verified package/version signatures. No uninstall is required. Existing 1.0.0 and preview clients retain their upgrade path. Legacy migration limits remain as described in the [1.0.0 notes](./release-notes-1.0.0.md).
+1.0.1 is a new stable release; 1.0.0 remains available. Settings → About reads GitHub Releases directly, with package and version verification and no separate feed file. Earlier 0.7.4, 1.0.0 and preview installations may request old endpoints or package names: install this release once without uninstalling, then use the new automatic updates. Legacy data migration limits remain as described in the [1.0.0 notes](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0).
 
 macOS may ask you to confirm screen recording permission again after an update.
 

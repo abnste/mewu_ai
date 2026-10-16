@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { platforms, requiredChecks, releasePlan, updateUrl, fingerprint, verifyRelease, verifySignatureVersion, releaseVersion, compareReleaseVersions, validateChannelAdvance, publicationPolicy, validateUpdateConfiguration, selfContainedRelease, validateManifest, validateLegacyManifest, legacyUpdateUrl } from './release-contract.mjs';
+import { platforms, requiredChecks, releasePlan, updateUrl, fingerprint, verifyRelease, verifySignatureVersion, releaseVersion, compareReleaseVersions, validateChannelAdvance, publicationPolicy, validateUpdateConfiguration, selfContainedRelease, validateManifest, validateLegacyManifest, legacyUpdateUrl, githubReleaseUpdates, composeReleaseNotes, validateReleaseNotes, releaseSignatureMarker } from './release-contract.mjs';
 import { compareLegacyVersions } from './legacy-update-bridge.mjs';
 const version = '1.0.0-preview.3', commit = 'a'.repeat(40);
 const signature = Buffer.from(`untrusted comment: fixture\nfixture\ntrusted comment: timestamp:1\tversion:${version}\nfixture\n`).toString('base64');
@@ -23,7 +23,7 @@ function fixture(callback, candidateVersion = version) {
     }
     fs.writeFileSync(path.join(directory, '.metadata', 'update.json'), JSON.stringify(manifest));
     fs.writeFileSync(path.join(directory, '.metadata', 'acceptance.json'), JSON.stringify(acceptance));
-    if (selfContainedRelease(version)) fs.copyFileSync(path.join(directory, '.metadata', 'update.json'), path.join(directory, 'latest.json'));
+    if (selfContainedRelease(version) && !githubReleaseUpdates(version)) fs.copyFileSync(path.join(directory, '.metadata', 'update.json'), path.join(directory, 'latest.json'));
     callback({ directory, manifest, acceptance, plan });
   } finally { fs.rmSync(directory, { recursive: true }); }
 }
@@ -112,9 +112,10 @@ test('stable publication selects GitHub Latest and owns its signed feed and upda
   assert.deepEqual(stable.feeds, []);
   assert.equal(stable.clientEndpoint, 'https://github.com/abnste/mewu_ai/releases/latest/download/latest.json');
   assert.deepEqual(publicationPolicy('1.0.1').feeds, stable.feeds);
+  assert.equal(publicationPolicy('1.0.1').clientEndpoint, 'https://api.github.com/repos/abnste/mewu_ai/releases/latest');
   const preview = publicationPolicy('1.1.0-preview.1');
   assert.equal(preview.prerelease, true); assert.deepEqual(preview.latestArguments, ['--latest=false']);
-  assert.deepEqual(preview.feeds, []); assert.equal(preview.clientEndpoint, stable.clientEndpoint);
+  assert.deepEqual(preview.feeds, []); assert.equal(preview.clientEndpoint, publicationPolicy('1.0.1').clientEndpoint);
   const historical = publicationPolicy('1.0.0-preview.4');
   assert.deepEqual(historical.feeds, ['preview.json']); assert.ok(historical.clientEndpoint.endsWith('/update-channel/preview.json'));
 });
@@ -158,3 +159,24 @@ test('legacy numeric bridge is not a product SemVer or the installed legacy curr
   assert.throws(() => releaseVersion('1.0.0.4'), /Invalid release version/);
   assert.deepEqual(publicationPolicy('1.0.0').latestArguments, ['--latest']);
 });
+test('new releases use product names and only five payloads; feed/signature files refuse', () => fixture(({directory,manifest,acceptance})=>{
+  const release=verifyRelease(directory,manifest,acceptance,commit);
+  assert.equal(release.assets.length,5);
+  assert.ok(release.assets.every(name=>!name.includes('Remake')&&!name.endsWith('.json')&&!name.endsWith('.sig')));
+  assert.ok(release.assets.includes('MewuAI-Setup-1.0.1-win-x64.exe'));
+  assert.deepEqual(release.channelAssets,[]);
+  fs.writeFileSync(path.join(directory,'latest.json'),'{}');
+  assert.throws(()=>verifyRelease(directory,manifest,acceptance,commit),/Unexpected release artifact/);
+},'1.0.1'));
+test('GitHub release body signatures bind exact version, unique target names and accepted signatures',()=>fixture(({manifest})=>{
+  const notes=composeReleaseNotes('# MewuAI 1.0.1\n\nChanges.',manifest);
+  const value=validateReleaseNotes(notes,'1.0.1',manifest);
+  assert.equal(value.assets.length,3);
+  assert.ok(notes.startsWith('# MewuAI 1.0.1\n\nChanges.\n\n<!--'));
+  assert.throws(()=>composeReleaseNotes(notes,manifest),/Invalid original/);
+  for(const mutate of [v=>v.version='1.0.2',v=>v.extra=true,v=>v.assets.pop(),v=>v.assets[1]={...v.assets[0]},v=>v.assets[0].name='other.exe',v=>v.assets[0].url='https://example.com',v=>v.assets[0].signature='invalid']){
+    const bad=structuredClone(value);mutate(bad);
+    assert.throws(()=>validateReleaseNotes(`${releaseSignatureMarker}${JSON.stringify(bad)}\n-->`,'1.0.1',manifest));
+  }
+  for(const bad of ['',notes+notes,notes.replace('v1\n','v2\n'),notes.replace('\n-->',''),notes.replace('"schemaVersion":1','"schemaVersion":')]) assert.throws(()=>validateReleaseNotes(bad,'1.0.1',manifest));
+},'1.0.1'));

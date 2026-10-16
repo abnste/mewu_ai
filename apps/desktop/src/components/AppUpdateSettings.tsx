@@ -18,6 +18,8 @@ interface UpdateStatus {
 const errors: Record<string, string> = {
   update_proxy: '网络代理设置不可用', update_invalid: '更新信息无效',
   update_check_failed: '检查更新失败', update_download_failed: '下载或签名验证失败',
+  update_feed_unavailable: '暂时无法获取发行版本', update_network: '无法连接 GitHub',
+  update_timeout: '检查更新超时', update_rate_limited: 'GitHub 请求过于频繁，请稍后重试',
   update_install_failed: '更新未完成，请重试', update_save_failed: '保存未完成，已取消更新',
   update_not_available: '请先检查更新', update_busy: '正在更新，请稍候', update_too_large: '更新文件过大',
   update_unsupported: '此平台尚未配置在线更新',

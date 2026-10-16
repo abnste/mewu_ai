@@ -4,6 +4,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 export type JsonObject = { [key: string]: JsonValue };
 export type Dispose = () => void;
 export type ServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'service';
+export type PluginPlatform = 'any' | 'windows-x86_64' | 'darwin-aarch64' | 'linux-x86_64';
 export interface ExtensionManifest {
   schemaVersion: 2;
   id: string;
@@ -15,6 +16,8 @@ export interface ExtensionManifest {
   hostApi: 2;
   runtime: 'javascript';
   entry: string;
+  /** Omit for one portable JavaScript package shared by all three platforms. */
+  platforms?: PluginPlatform[];
   permissions: string[];
   tags: string[];
   dependencies?: Record<string, string>;
@@ -24,7 +27,8 @@ export interface ServiceDescriptor {
   title: string;
   description?: string;
   inputSchema?: JsonObject;
-  metadata?: JsonObject;
+  /** platforms narrows this feature only; requiresRegion requests a native region grant. */
+  metadata?: JsonObject & { platforms?: PluginPlatform[]; requiresRegion?: boolean };
 }
 export interface ServiceRegistration extends ServiceDescriptor { kind: ServiceKind }
 /** The host sets context; extension input cannot grant region or agent access. */

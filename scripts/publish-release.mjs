@@ -3,8 +3,9 @@
 // retain the old path; all publication requires exact native acceptance.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { repository as repo, fingerprint, verifyRelease, validateChannelAdvance, validateUpdateConfiguration } from './release-contract.mjs';
+import { repository as repo, fingerprint, verifyRelease, validateChannelAdvance, validateUpdateConfiguration, githubReleaseUpdates, composeReleaseNotes } from './release-contract.mjs';
 import { findRelease, verifyReleaseTarget, verifyStableLatest, publishVersionRelease } from './release-api.mjs';
 const directory = path.resolve(process.argv[2] || 'out/release'), metadata = path.join(directory, '.metadata');
 const manifest = JSON.parse(fs.readFileSync(path.join(metadata, 'update.json'), 'utf8'));
@@ -20,9 +21,25 @@ const preview = policy.prerelease, notes = path.resolve(`docs/release-notes-${ma
 if (!fs.lstatSync(notes).isFile() || fs.lstatSync(notes).isSymbolicLink()) throw Error('Missing release notes');
 const gh = (...args) => execFileSync('gh', args, { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8' });
 if (policy.selfContained) {
-  await publishVersionRelease(gh, repo, { version: manifest.version, commit, notes,
-    artifacts: release.files.map(file => ({ ...file, path: path.join(directory, file.name) })),
-    verifyLocal: () => verifyRelease(directory, manifest, acceptance, commit) });
+  let temporaryNotes;
+  try {
+    let publishNotes = notes, expectedBody;
+    if (githubReleaseUpdates(manifest.version)) {
+      expectedBody = composeReleaseNotes(fs.readFileSync(notes, 'utf8'), manifest);
+      temporaryNotes = fs.mkdtempSync(path.join(os.tmpdir(), 'mewu-release-notes-'));
+      publishNotes = path.join(temporaryNotes, 'notes.md');
+      fs.writeFileSync(publishNotes, expectedBody, { flag: 'wx' });
+    }
+    await publishVersionRelease(gh, repo, { version: manifest.version, commit, notes: publishNotes, expectedBody,
+      artifacts: release.files.map(file => ({ ...file, path: path.join(directory, file.name) })),
+      verifyLocal: () => verifyRelease(directory, manifest, acceptance, commit) });
+  } finally {
+    if (temporaryNotes) {
+      const temporaryFile = path.join(temporaryNotes, 'notes.md');
+      if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+      fs.rmdirSync(temporaryNotes);
+    }
+  }
 } else {
 const lookup = name => findRelease(gh, repo, name);
 const expected = new Map(release.files.map(file => [file.name, file]));

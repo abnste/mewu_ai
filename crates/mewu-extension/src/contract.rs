@@ -26,12 +26,45 @@ pub struct ExtensionManifest {
     pub host_api: u32,
     pub runtime: String,
     pub entry: String,
+    /// Omitted for portable JavaScript packages. This restricts the package,
+    /// not which native capabilities the host grants it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Vec<String>>,
     #[serde(default)]
     pub permissions: Vec<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub dependencies: BTreeMap<String, String>,
+}
+
+pub const PLUGIN_PLATFORMS: [&str; 3] = ["windows-x86_64", "darwin-aarch64", "linux-x86_64"];
+pub fn current_plugin_platform() -> &'static str {
+    if cfg!(all(target_os = "windows", target_arch = "x86_64")) { "windows-x86_64" }
+    else if cfg!(all(target_os = "macos", target_arch = "aarch64")) { "darwin-aarch64" }
+    else if cfg!(all(target_os = "linux", target_arch = "x86_64")) { "linux-x86_64" }
+    else { "unsupported" }
+}
+pub fn valid_plugin_platforms(platforms: &[String]) -> bool {
+    !platforms.is_empty() && platforms.len() <= PLUGIN_PLATFORMS.len()
+        && platforms.iter().all(|p| p == "any" || PLUGIN_PLATFORMS.contains(&p.as_str()))
+        && platforms.iter().collect::<std::collections::BTreeSet<_>>().len() == platforms.len()
+        && (!platforms.iter().any(|p| p == "any") || platforms.len() == 1)
+}
+pub fn plugin_platform_supported(platforms: Option<&[String]>, platform: &str) -> bool {
+    PLUGIN_PLATFORMS.contains(&platform) && platforms.is_none_or(|values|
+        valid_plugin_platforms(values) && values.iter().any(|p| p == "any" || p == platform))
+}
+/// Existing service metadata can narrow one native feature in a portable package.
+pub fn service_platforms(service: &ServiceRegistration) -> Result<Option<Vec<String>>, ExtensionError> {
+    if service.metadata.as_ref().and_then(|m| m.get("requiresRegion")).is_some_and(|v| !v.is_boolean()) {
+        return Err(ExtensionError::InvalidPackage("invalid service region requirement"));
+    }
+    let Some(value) = service.metadata.as_ref().and_then(|m| m.get("platforms")) else { return Ok(None) };
+    let platforms: Vec<String> = serde_json::from_value(value.clone())
+        .map_err(|_| ExtensionError::InvalidPackage("invalid service platforms"))?;
+    if !valid_plugin_platforms(&platforms) { return Err(ExtensionError::InvalidPackage("invalid service platforms")); }
+    Ok(Some(platforms))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

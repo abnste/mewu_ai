@@ -350,6 +350,7 @@ impl ExtensionRuntime {
         }
         let mut ids = BTreeSet::new();
         for registration in &registrations {
+            crate::service_platforms(registration)?;
             if !identifier(&registration.id)
                 || !ids.insert(&registration.id)
                 || !bounded_text(&registration.title, 128, false)

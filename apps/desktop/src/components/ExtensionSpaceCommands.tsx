@@ -61,7 +61,7 @@ export default function ExtensionSpaceCommands(props: Props) {
   async function execute(choice: ExtensionServiceChoice) {
     if (disposed || props.disabled || active) return;
     const live = services().find(value => extensionServiceKey(value) === extensionServiceKey(choice));
-    if (!live || live.record.revision !== choice.record.revision) { props.onError(t('插件状态已变化')); return; }
+    if (!live || live.unavailableReason || live.record.revision !== choice.record.revision) { props.onError(t(live?.unavailableReason || '插件状态已变化')); return; }
     const invocation: Invocation = { choice: live, sceneId: props.sceneId, canceled: false, finished: false };
     active = invocation; setMenu(false); setResult(''); setRunning(live);
     try {
@@ -92,13 +92,13 @@ export default function ExtensionSpaceCommands(props: Props) {
   }
   return <Show when={services().length || running() || result()}><span ref={element} class="extension-space-commands" onKeyDown={keyboard} onPointerDown={event => event.stopPropagation()}>
     <button class="icon-button" type="button" aria-label={running() ? t('停止插件执行') : t('插件')}
-      title={running() ? t('停止') : services().length === 1 ? services()[0].service.title : t('插件')}
+      title={running() ? t('停止') : services().length === 1 ? t(services()[0].unavailableReason || services()[0].service.title) : t('插件')}
       aria-haspopup={!running() && services().length > 1 ? 'menu' : undefined} aria-expanded={services().length > 1 ? menu() : undefined}
-      disabled={running() ? stopping() : props.disabled} onClick={trigger}>
+      disabled={running() ? stopping() : props.disabled || (services().length === 1 && Boolean(services()[0].unavailableReason))} onClick={trigger}>
       <Show when={running()} fallback={<Puzzle size={17}/>}><Show when={stopping()} fallback={<Square size={15}/>}><LoaderCircle size={17} class="spin"/></Show></Show>
     </button>
     <Show when={menu()}><div class="capture-plugin-menu extension-command-menu extension-space-menu above" role="menu" aria-label={t('插件')}><For each={services()}>{choice =>
-      <button type="button" role="menuitem" disabled={props.disabled} onClick={() => void execute(choice)}>{choice.service.title}</button>
+      <button type="button" role="menuitem" title={choice.unavailableReason && t(choice.unavailableReason)} disabled={props.disabled || Boolean(choice.unavailableReason)} onClick={() => void execute(choice)}>{choice.service.title}</button>
     }</For></div></Show>
     <Show when={result()}><div class="extension-task-popover extension-task-result extension-space-result" role="status"><p>{result()}</p><button type="button" class="icon-button compact" aria-label={t('关闭')} onClick={() => setResult('')}><X size={14}/></button></div></Show>
   </span></Show>;

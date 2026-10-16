@@ -18,9 +18,9 @@ impl ReleaseTarget {
 
     pub fn payload_path(self, version: &str) -> String {
         match self {
-            Self::WindowsX64 => format!("/abnste/mewu_ai/releases/download/v{version}/MewuAI-Remake-Setup-{version}-win-x64.exe"),
-            Self::MacArm64 => format!("/abnste/mewu_ai/releases/download/v{version}/MewuAI-Remake-Update-{version}-mac-arm64.app.tar.gz"),
-            Self::LinuxX64 => format!("/abnste/mewu_ai/releases/download/v{version}/MewuAI-Remake-{version}-linux-x64.AppImage"),
+            Self::WindowsX64 => format!("/abnste/mewu_ai/releases/download/v{version}/MewuAI-Setup-{version}-win-x64.exe"),
+            Self::MacArm64 => format!("/abnste/mewu_ai/releases/download/v{version}/MewuAI-Update-{version}-mac-arm64.app.tar.gz"),
+            Self::LinuxX64 => format!("/abnste/mewu_ai/releases/download/v{version}/MewuAI-{version}-linux-x64.AppImage"),
         }
     }
 
@@ -74,7 +74,7 @@ mod tests {
         assert_eq!(
             updater["endpoints"],
             serde_json::json!([
-                "https://github.com/abnste/mewu_ai/releases/latest/download/latest.json"
+                "https://api.github.com/repos/abnste/mewu_ai/releases/latest"
             ])
         );
         assert_eq!(updater["requireSignedVersion"], true);
@@ -140,14 +140,14 @@ mod tests {
 
     #[test]
     fn stable_mac_update_requires_its_versioned_tar_not_a_dmg_or_legacy_channel() {
-        let valid = url::Url::parse("https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Update-1.0.1-mac-arm64.app.tar.gz").unwrap();
+        let valid = url::Url::parse("https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Update-1.0.1-mac-arm64.app.tar.gz").unwrap();
         assert!(validate_release_for(ReleaseTarget::MacArm64, "1.0.0", "1.0.1", &valid).is_ok());
         for bad in [
-            "https://github.com/abnste/mewu_ai/releases/download/update-channel/MewuAI-Remake-Update-1.0.1-mac-arm64.app.tar.gz",
-            "https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-1.0.1-mac-arm64.dmg",
-            "https://github.com/abnste/mewu_ai/releases/latest/download/MewuAI-Remake-Update-1.0.1-mac-arm64.app.tar.gz",
-            "https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Remake-Update-1.0.1-mac-arm64.app.tar.gz",
-            "https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Update-1.0.2-mac-arm64.app.tar.gz",
+            "https://github.com/abnste/mewu_ai/releases/download/update-channel/MewuAI-Update-1.0.1-mac-arm64.app.tar.gz",
+            "https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-1.0.1-mac-arm64.dmg",
+            "https://github.com/abnste/mewu_ai/releases/latest/download/MewuAI-Update-1.0.1-mac-arm64.app.tar.gz",
+            "https://github.com/abnste/mewu_ai/releases/download/v1.0.0/MewuAI-Update-1.0.1-mac-arm64.app.tar.gz",
+            "https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Update-1.0.2-mac-arm64.app.tar.gz",
         ] {
             assert!(
                 validate_release_for(

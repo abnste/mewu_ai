@@ -9,7 +9,7 @@ export type PluginContribution =
   | { id: string; title: string; kind: 'selection.workflow'; prompt: string; accepts: ['image'] }
   | { id: string; title: string; kind: 'selection.drawing-tools'; tools: import('./contracts').ManualDrawingKind[] }
   | { id: string; title: string; kind: 'artifact.video-drawing-tools'; tools: import('./video-drawing-contracts').VideoDrawingTool[] }
-  | { id: string; title: string; kind: 'selection.ocr'; engine: 'windows' | 'apple.vision' }
+  | { id: string; title: string; kind: 'selection.ocr'; engine: 'windows' | 'apple.vision' | 'linux.tesseract' }
   | { id: string; title: string; kind: 'selection.scroll' }
   | { id: string; title: string; kind: 'selection.translation' }
   | { id: string; title: string; kind: 'selection.pin' }
@@ -22,7 +22,7 @@ export type PluginContribution =
   | { id: string; title: string; kind: 'recording.audio'; engine: 'windows.wasapi' }
   | { id: string; title: string; kind: 'memory.provider'; adapter: 'hindsight' };
 export type PluginTag = 'agi' | 'ui-enhancement' | 'billing' | 'themes' | 'model-providers' | 'messaging' | 'memory' | 'tools' | 'system' | 'vision' | 'audio' | 'documents' | 'skills' | 'automation' | 'privacy' | 'entertainment';
-export interface PluginManifest { schemaVersion: 1; id: string; version: string; name: string; description: string; publisher?: string; license: string; hostApi: 1; tags?: PluginTag[]; contributions: PluginContribution[] }
+export interface PluginManifest { schemaVersion: 1; id: string; version: string; name: string; description: string; publisher?: string; license: string; hostApi: 1; tags?: PluginTag[]; platforms?: import('./extension-contracts').PluginPlatform[]; contributions: PluginContribution[] }
 export interface PluginRecord { manifest: PluginManifest; source: PluginSource; revision: number; state: 'enabled' | 'disabled' | 'removed'; hasRollback: boolean; error?: string }
 export interface PluginSnapshot { revision: number; plugins: PluginRecord[] }
 export interface CatalogEntry { manifest: PluginManifest; source: PluginSource; installed?: PluginRecord }

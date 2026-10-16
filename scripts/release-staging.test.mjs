@@ -8,7 +8,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { platforms, requiredChecks, fingerprint, releasePlan, updateUrl, verifyRelease, publicationPolicy, selfContainedRelease } from './release-contract.mjs';
+import { platforms, requiredChecks, fingerprint, releasePlan, updateUrl, verifyRelease, publicationPolicy, selfContainedRelease, githubReleaseUpdates } from './release-contract.mjs';
 const baselineVersion = '1.0.0-preview.3', scripts = path.dirname(fileURLToPath(import.meta.url));
 function fixture(run, version = baselineVersion) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'mewu-staging-')), root = path.join(parent, 'repo');
@@ -68,7 +68,7 @@ for (const version of [baselineVersion, '1.0.0', '1.0.1-preview.1']) test(`${ver
   const directory = path.join(root, request.output), meta = path.join(directory, '.metadata');
   const manifest = JSON.parse(fs.readFileSync(path.join(meta, 'update.json'))), acceptance = JSON.parse(fs.readFileSync(path.join(meta, 'acceptance.json')));
   const release = verifyRelease(directory, manifest, acceptance, commit);
-  assert.equal(release.assets.length, selfContainedRelease(version) ? 6 : 4);
+  assert.equal(release.assets.length, githubReleaseUpdates(version) ? 5 : selfContainedRelease(version) ? 6 : 4);
   assert.equal(release.channelAssets.length, selfContainedRelease(version) ? 0 : 1);
   // Only negative publishing: removing Linux acceptance must fail locally,
   // before looking up GitHub or creating a draft/tag.

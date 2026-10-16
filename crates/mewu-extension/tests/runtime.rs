@@ -74,6 +74,21 @@ fn all_nine_service_kinds_execute_third_party_handlers() {
 }
 
 #[test]
+fn portable_runtime_preserves_feature_platforms_and_rejects_malformed_restrictions() {
+    let source = "export default ctx=>{ctx.ui.register({id:'ruler',title:'Ruler'},()=>42);ctx.tools.register({id:'native',title:'Native',metadata:{platforms:['windows-x86_64'],requiresRegion:true}},()=>43);}";
+    let (mut instance, _, _) = runtime(source, &[], RuntimeLimits::default());
+    let services = initialize(&mut instance).unwrap();
+    assert_eq!(services.len(), 2);
+    assert!(service_platforms(&services[0]).unwrap().is_none());
+    assert_eq!(service_platforms(&services[1]).unwrap().unwrap(), vec!["windows-x86_64"]);
+    for metadata in [json!({"platforms":[]}), json!({"platforms":["any","linux-x86_64"]}), json!({"platforms":"windows-x86_64"}), json!({"requiresRegion":"true"})] {
+        let source = format!("export default ctx=>ctx.tools.register({{id:'native',title:'Native',metadata:{metadata}}},()=>42);");
+        let (mut instance, _, _) = runtime(&source, &[], RuntimeLimits::default());
+        assert!(initialize(&mut instance).is_err());
+    }
+}
+
+#[test]
 fn genuine_async_host_roundtrip_retains_multimodal_json_and_context() {
     let (mut runtime, rx, _) = runtime("export default ctx => ctx.tools.register({id:'observe',title:'Observe'},async (input,run) => { const observation=await ctx.region.observe(run.context.regionId); const answer=await ctx.model.invoke({observation,prompt:input.prompt}); return {answer,observation}; });", &[], RuntimeLimits::default());
     initialize(&mut runtime).unwrap();

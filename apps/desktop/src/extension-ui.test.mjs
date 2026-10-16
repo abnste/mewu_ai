@@ -16,11 +16,14 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 const stateModule = new SourceTextModule(plain(await raw('./extension-state.ts'))); await stateModule.link(() => { throw new Error('Unexpected value import'); }); await stateModule.evaluate();
 const state = stateModule.namespace;
+const platformModule = new SourceTextModule(plain(await raw('./plugin-platform.ts'))); await platformModule.link(() => { throw new Error('Unexpected value import'); }); await platformModule.evaluate();
+const platformPolicy = platformModule.namespace;
 const manifest = { schemaVersion: 2, hostApi: 2, runtime: 'javascript', id: 'independent.tool', version: '1.0.0', name: 'Independent', description: 'Synthetic', license: 'MPL-2.0', entry: 'index.js', permissions: [], tags: ['tools'], dependencies: {} };
 const command = { kind: 'command', id: 'operate', title: '区域操作', metadata: { placement: 'selection-toolbar' } };
 const record = (patch = {}) => ({ manifest, revision: 1, state: 'enabled', source: { type: 'local', path: 'synthetic.zip' }, sha256: 'a'.repeat(64), hasRollback: false, services: [command], ...patch });
 const entry = { ...manifest, repository: 'independent/tool', releaseTag: 'v1.0.0', assetName: 'tool.zip', size: 100, sha256: 'a'.repeat(64), platforms: ['any'] };
 async function controller(filename, api, expose, props) {
+  if (filename.endsWith('CommunityExtensions.tsx')) props = { platform: 'windows', ...props };
   const source = await raw(filename), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
   const component = ast.program.body.find(node => node.type === 'ExportDefaultDeclaration').declaration;
   const returning = component.body.body.find(node => node.type === 'ReturnStatement');
@@ -32,6 +35,7 @@ async function controller(filename, api, expose, props) {
   await module.link(name => name === 'solid-js' ? synthetic(reactive)
     : name.endsWith('/extension-bridge') ? synthetic(api)
       : name.endsWith('/extension-state') ? synthetic(state)
+        : name.endsWith('/plugin-platform') ? synthetic(platformPolicy)
         : name.endsWith('/i18n') ? synthetic({ t: text => text })
           : name.endsWith('/plugin-categories') ? synthetic({ pluginTagLabels: { tools: '工具与能力' } }) : synthetic(Object.fromEntries(importedNames(name).map(key => [key, () => {}]))));
   await module.evaluate();
@@ -189,6 +193,50 @@ test('binding tombstones survive older get acknowledgments and explicitly repres
   const latest = { agentId: 'agent', kind: 'memory', pluginId: null, serviceId: null, revision: 5 };
   const values = state.mergeExtensionBindings([latest], [{ ...latest, revision: 4, pluginId: 'old', serviceId: 'memory' }]);
   assert.deepEqual(normalize(values), [latest]);
+});
+
+test('one portable SDK manifest works on all three OSes, native API1 engines remain platform-specific', () => {
+  for (const platform of ['windows', 'macos', 'linux']) {
+    assert.equal(platformPolicy.extensionPlatformError(manifest, undefined, platform), undefined);
+    assert.equal(platformPolicy.extensionPlatformError({ ...entry, platforms: ['any'] }, undefined, platform), undefined);
+    for (const kind of ['agent.runtime', 'space.blackboard', 'memory.provider', 'model.connection']) {
+      assert.equal(platformPolicy.declarativePluginError({ contributions: [{ kind }] }, platform), undefined);
+    }
+  }
+  for (const [engine, allowed] of [['windows', 'windows'], ['apple.vision', 'macos'], ['linux.tesseract', 'linux']]) {
+    for (const platform of ['windows', 'macos', 'linux']) assert.equal(Boolean(platformPolicy.declarativePluginError({ contributions: [{ kind:'selection.ocr', engine }] }, platform)), platform !== allowed);
+  }
+  assert.ok(platformPolicy.pluginPlatformError(['any', 'windows-x86_64'], 'macos'));
+  assert.ok(platformPolicy.pluginPlatformError([], 'windows'));
+  assert.ok(platformPolicy.pluginPlatformError(undefined, undefined));
+});
+
+test('Mac market blocks Windows install and local restricted proposal without calling native install', async () => {
+  const calls = [], windows = { ...entry, platforms: ['windows-x86_64'] };
+  const proposed = { id:'own-proposal', manifest:{ ...manifest, platforms:['windows-x86_64'] }, source:record().source, sha256:'a'.repeat(64) };
+  const api = { extensionNative:true, subscribeExtensions:async()=>()=>{}, getExtensions:async()=>[], getExtensionCatalog:async()=>({schemaVersion:2,plugins:[windows]}),
+    prepareExtension:async value=>{calls.push(['prepare',value]);return proposed;}, installExtension:async()=>{calls.push(['install']);return[];} };
+  const { value, dispose } = await controller('./components/CommunityExtensions.tsx',api,['prepare','proposal','install','unsupported'],{active:true,pane:'discover',query:'',filter:'',addRequest:0,refreshRequest:0,onDetail(){},platform:'macos'});
+  await tick(); await value.prepare(windows); assert.equal(calls.length,0);
+  await value.prepare(); assert.equal(value.proposal().id,'own-proposal');
+  await value.install(); assert.deepEqual(calls,[['prepare',undefined]]); assert.ok(value.unsupported(proposed.manifest,proposed.source)); dispose();
+});
+
+test('unsupported installed plugins remain removable and disableable while enable is blocked', async () => {
+  const calls=[], foreign=record({platformError:'此插件不支持当前系统'});
+  const api={extensionNative:true,subscribeExtensions:async()=>()=>{},getExtensions:async()=>[foreign],getExtensionCatalog:async()=>({schemaVersion:2,plugins:[]}),controlExtension:async(_,action)=>{calls.push(action);return[];}};
+  const {value,dispose}=await controller('./components/CommunityExtensions.tsx',api,['control'],{active:true,pane:'installed',query:'',filter:'',addRequest:0,refreshRequest:0,onDetail(){},platform:'linux'});
+  await tick(); await value.control(foreign,'enable'); await value.control(foreign,'disable'); await value.control(foreign,'remove');
+  assert.deepEqual(calls,['disable','remove']);dispose();
+});
+
+test('one unsupported region service cannot remove portable memory/UI services from the same package', () => {
+  const region={...command,metadata:{placement:'selection-toolbar',requiresRegion:true}};
+  const values=[record({services:[region,{kind:'memory',id:'recall',title:'Recall'},{...spaceCommand,id:'ruler'}],unsupportedServices:{[region.id]:'区域操作仅支持 Windows'}})];
+  assert.equal(state.extensionServices(values,'memory').length,1);
+  assert.equal(state.spaceExtensionServices(values).length,1);
+  assert.equal(state.extensionServices(values,'command').length,1);
+  const blocked=state.selectionExtensionServices(values); assert.equal(blocked.length,1);assert.equal(blocked[0].unavailableReason,'区域操作仅支持 Windows');
 });
 
 test('ordinary browser bridge refuses native actions instead of inventing a catalog or install success', async () => {

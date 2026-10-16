@@ -26,6 +26,10 @@ export default definePlugin(ctx => {
 
 插件目录只包含 `mewu-plugin.json` 与 `.js` / `.mjs` 模块。清单需声明 `schemaVersion: 2`、`hostApi: 2`、`runtime: "javascript"` 和入口文件。完整示例在仓库 `extensions/examples`。
 
+普通 JavaScript 插件省略清单 `platforms`、市场条目填写 `platforms: ["any"]`，同一个 ZIP 即可在 Windows、macOS、Linux 使用同一套 SDK。仅整包确实依赖本机能力时，才填写 `platforms: ["windows-x86_64"]` 等允许清单；另两个目标为 `darwin-aarch64`、`linux-x86_64`。市场不得声明比包更广的平台，`any` 不能与具体平台混用。本地安装、启用、回退、依赖和运行也受宿主校验，无法仅绕过按钮安装。
+
+同包只有个别功能受限时，用服务 `metadata.platforms` 限制该功能，其他 UI、记忆等继续跨平台。`metadata.requiresRegion: true` 的原生区域操作目前仅 Windows 可用，其他系统显示禁用原因；不能仅凭插件是 JavaScript 就宣称所有本机能力都已实现。处理函数内可按宿主提供的 `context.platform`（`windows` / `macos` / `linux`）适配可选行为。
+
 可注册命令、工具、Agent、记忆、模型、通讯渠道、渲染器和 UI 服务。注册发生在激活阶段；返回的函数可注销服务，`ctx.onDispose` 可登记卸载清理。服务的设置、菜单位置等通过 descriptor 的 `metadata` 声明。API 类型以 `index.d.ts` 为准。
 
 让普通 Agent 按任务调用的能力使用 `ctx.tools.register`，提供明确的 `description` 和 `inputSchema`。需要本次用户授权选区的工具声明 `metadata: { requiresRegion: true }`；只有已明确授权区域的运行才会向模型提供该工具，插件也应拒绝缺少 `context.regionId` 的调用。注册工具不会创建截图工具条命令，也不会自行获得区域授权。

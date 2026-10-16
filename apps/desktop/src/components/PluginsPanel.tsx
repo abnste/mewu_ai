@@ -5,6 +5,8 @@ import { isCoreReplacementPlugin } from '../plugin-core';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
 import { ArrowLeft, Check, ChevronRight, Download, FolderOpen, LoaderCircle, Pencil, Puzzle, RefreshCw, Search, Trash2, Undo2, X } from 'lucide-solid';
 import * as bridge from '../plugin-bridge';
+import { runtimeInfo } from '../bridge';
+import { declarativePluginError, type HostPlatform } from '../plugin-platform';
 import type { CatalogEntry, PluginContribution, PluginManifest, PluginProposal, PluginRecord, PluginSnapshot, PluginSource, PluginTag } from '../plugin-contracts';
 import { pluginModuleTags, pluginTagLabels, pluginTags } from '../plugin-categories';
 import { SettingsAddButton } from './SettingControls';
@@ -27,6 +29,8 @@ function ErrorNote(props: { value?: string; onClose?: () => void }) {
 }
 
 export default function PluginsPanel(props: Props) {
+  const [platform, setPlatform] = createSignal<HostPlatform>();
+  const unsupported = (manifest: PluginManifest) => declarativePluginError(manifest, platform());
   const [snapshot, setSnapshot] = createSignal<PluginSnapshot>({ revision: -1, plugins: [] });
   const [catalog, setCatalog] = createSignal<CatalogEntry[]>([]);
   const [catalogSource, setCatalogSource] = createSignal('');
@@ -74,6 +78,7 @@ export default function PluginsPanel(props: Props) {
   async function refreshCatalog(sourceUrl?: string) {
     const serial = ++catalogSerial; setCatalogLoading(true); clearError('catalog');
     try {
+      const info = await runtimeInfo(); if (!disposed) setPlatform(info.platform);
       const value = await bridge.getPluginCatalog(sourceUrl);
       if (disposed || serial !== catalogSerial) return;
       setCatalog(value.entries); setCatalogSource(value.source ?? '');
@@ -116,12 +121,14 @@ export default function PluginsPanel(props: Props) {
   }
   async function commit() {
     const value = proposal(); if (!value) return;
+    if (unsupported(value.manifest)) return;
     await operation(value.manifest.id, '安装中', async () => {
       accept(await bridge.installPlugin(value.id));
       if (!disposed && proposal()?.id === value.id) { setProposal(undefined); setSelected(value.manifest.id); }
     });
   }
   async function change(value: PluginRecord, action: 'enable' | 'disable' | 'remove' | 'rollback' | 'reinstall') {
+    if (action !== 'disable' && action !== 'remove' && unsupported(value.manifest)) return;
     const id = value.manifest.id;
     const labels = { enable: '启用中', disable: '停用中', remove: '卸载中', rollback: '恢复中', reinstall: '安装中' };
     await operation(id, labels[action], async () => {
@@ -140,6 +147,7 @@ export default function PluginsPanel(props: Props) {
     });
   }
   async function installEntry(value: CatalogEntry) {
+    if (unsupported(value.manifest)) return;
     open(value.manifest.id);
     const installed = record(value.manifest.id);
     if (value.source.type === 'official') {
@@ -165,7 +173,7 @@ export default function PluginsPanel(props: Props) {
     <Show when={!detail() && !extensionDetail()}><div class="segmented"><button aria-pressed={pane() === 'discover'} classList={{ selected: pane() === 'discover' }} onClick={() => { setPane('discover'); setAdding(false); setAddChoice(false); }}>{t("插件市场")}</button><button aria-pressed={pane() === 'installed'} classList={{ selected: pane() === 'installed' }} onClick={() => { setPane('installed'); setAddChoice(false); }}>{t("已安装")}</button></div></Show>
     <Show when={addChoice() && !detail() && !extensionDetail()}><div class="extension-add-choices"><button class="secondary-button" onClick={() => { setAdding(false); setAddChoice(false); setExtensionAdd(value => value + 1); }}><FolderOpen size={14}/>{t('安装 ZIP 插件')}</button><button class="secondary-button" onClick={() => { setPane('installed'); setAdding(true); setSourceEditor(false); setAddChoice(false); }}>{t('添加声明包')}</button></div></Show>
     <Show when={!detail() && !extensionDetail() && !adding()}><div class="plugins-toolbar"><label class="plugins-search"><Search size={14} /><input type="search" aria-label={t("搜索插件")} placeholder={t("搜索插件")} value={query()} onInput={event => setQuery(event.currentTarget.value)} /></label><select aria-label={t("插件类型")} value={filter()} onChange={event => setFilter(event.currentTarget.value as PluginTag | '')}><option value="">{t("全部类型")}</option><For each={pluginTags}>{tag => <option value={tag}>{t(pluginTagLabels[tag])}</option>}</For></select><button class="icon-button" title={t("刷新插件")} aria-label={t("刷新插件")} disabled={loading() || catalogLoading() || busy()} onClick={() => { setExtensionRefresh(value => value + 1); void initialize(); }}><RefreshCw size={15} classList={{ spin: catalogLoading() || loading() }} /></button></div></Show>
-    <div hidden={Boolean(detail()) || adding()}><CommunityExtensions active={props.active && !detail() && !adding()} pane={pane()} query={query()} filter={filter()} addRequest={extensionAdd()} refreshRequest={extensionRefresh()} onDetail={setExtensionDetail}/></div>
+    <div hidden={Boolean(detail()) || adding()}><CommunityExtensions active={props.active && !detail() && !adding()} platform={platform()} pane={pane()} query={query()} filter={filter()} addRequest={extensionAdd()} refreshRequest={extensionRefresh()} onDetail={setExtensionDetail}/></div>
     <Show when={pane() === 'installed' && !extensionDetail()}>
     <Show when={!detail() && !adding() && entries().length}><div class="extension-legacy-divider"/></Show>
     <ErrorNote value={errors().load} onClose={() => clearError('load')} />
@@ -175,14 +183,14 @@ export default function PluginsPanel(props: Props) {
       <div class="plugin-detail-heading"><span class="plugin-glyph"><Show when={kinds(value().manifest).includes('selection.drawing-tools')} fallback={<Puzzle size={20} />}><Pencil size={20} /></Show></span><div><h3>{value().manifest.name}</h3><div class="plugin-tags"><span>{value().manifest.version}</span><span>{sourceLabel(value().source)}</span><For each={pluginModuleTags(value().manifest)}>{tag => <span>{t(pluginTagLabels[tag])}</span>}</For></div></div></div>
       <p class="plugin-description">{value().manifest.description}</p>
       <div class="plugin-detail-actions">
-        <span class="plugin-status" classList={{ error: Boolean(installedDetail()?.error) }}><Show when={pending()?.key === value().manifest.id} fallback={proposal() ? t('待确认') : status(installedDetail())}><LoaderCircle size={13} class="spin" />{t(pending()!.label)}</Show></span>
-        <Show when={proposal()} fallback={<Show when={installedDetail() && installedDetail()!.state !== 'removed'} fallback={<button class="primary-button" disabled={disabled()} onClick={() => void installEntry(value())}><Download size={13} />{t("安装")}</button>}>
-          <button class="secondary-button" disabled={disabled()} onClick={() => void change(installedDetail()!, installedDetail()!.state === 'enabled' ? 'disable' : 'enable')}>{installedDetail()?.state === 'enabled' ? t('停用') : t('启用')}</button>
+        <span class="plugin-status" classList={{ error: Boolean(installedDetail()?.error) }}><Show when={pending()?.key === value().manifest.id} fallback={unsupported(value().manifest) ? t(unsupported(value().manifest)!) : proposal() ? t('待确认') : status(installedDetail())}><LoaderCircle size={13} class="spin" />{t(pending()!.label)}</Show></span>
+        <Show when={proposal()} fallback={<Show when={installedDetail() && installedDetail()!.state !== 'removed'} fallback={<button class="primary-button" title={unsupported(value().manifest) && t(unsupported(value().manifest)!)} disabled={disabled() || Boolean(unsupported(value().manifest))} onClick={() => void installEntry(value())}><Download size={13} />{t("安装")}</button>}>
+          <button class="secondary-button" title={unsupported(value().manifest) && t(unsupported(value().manifest)!)} disabled={disabled() || (installedDetail()?.state !== 'enabled' && Boolean(unsupported(value().manifest)))} onClick={() => void change(installedDetail()!, installedDetail()!.state === 'enabled' ? 'disable' : 'enable')}>{installedDetail()?.state === 'enabled' ? t('停用') : t('启用')}</button>
           <Show when={installedDetail()?.source.type !== 'official'}><button class="secondary-button" disabled={disabled()} onClick={() => void update(installedDetail()!)}><RefreshCw size={13} />{t("检查更新")}</button></Show>
-          <Show when={installedDetail()?.source.type === 'official' && officialVersion() && officialVersion() !== installedDetail()?.manifest.version}><button class="secondary-button" disabled={disabled()} onClick={() => void change(installedDetail()!, 'reinstall')}><RefreshCw size={13} />{t("安装")}{officialVersion()}</button></Show>
-          <Show when={installedDetail()?.hasRollback}><button class="secondary-button" disabled={disabled()} onClick={() => void change(installedDetail()!, 'rollback')}><Undo2 size={13} />{t("恢复上一版")}</button></Show>
+          <Show when={installedDetail()?.source.type === 'official' && officialVersion() && officialVersion() !== installedDetail()?.manifest.version}><button class="secondary-button" disabled={disabled() || Boolean(unsupported(value().manifest))} onClick={() => void change(installedDetail()!, 'reinstall')}><RefreshCw size={13} />{t("安装")}{officialVersion()}</button></Show>
+          <Show when={installedDetail()?.hasRollback}><button class="secondary-button" disabled={disabled() || Boolean(unsupported(value().manifest))} onClick={() => void change(installedDetail()!, 'rollback')}><Undo2 size={13} />{t("恢复上一版")}</button></Show>
           <button class="icon-button" title={t("卸载插件")} aria-label={t("卸载插件")} disabled={disabled()} onClick={() => setConfirmRemoval(value().manifest.id)}><Trash2 size={15} /></button>
-        </Show>}><button class="secondary-button" disabled={busy()} onClick={() => setProposal(undefined)}>{t("取消")}</button><button class="primary-button" disabled={disabled()} onClick={() => void commit()}><Download size={13} />{installedDetail() && installedDetail()!.state !== 'removed' ? t('安装更新') : t('安装')}</button></Show>
+        </Show>}><button class="secondary-button" disabled={busy()} onClick={() => setProposal(undefined)}>{t("取消")}</button><button class="primary-button" disabled={disabled() || Boolean(unsupported(value().manifest))} onClick={() => void commit()}><Download size={13} />{installedDetail() && installedDetail()!.state !== 'removed' ? t('安装更新') : t('安装')}</button></Show>
       </div>
       <Show when={confirmRemoval() === value().manifest.id}><div class="plugin-confirm"><span>{t("卸载")}{value().manifest.name}？</span><button class="text-button" disabled={busy()} onClick={() => setConfirmRemoval('')}>{t("取消")}</button><button class="secondary-button" disabled={disabled()} onClick={() => void change(installedDetail()!, 'remove')}>{t("卸载")}</button></div></Show>
       <ErrorNote value={errors()[value().manifest.id] ?? installedDetail()?.error} onClose={errors()[value().manifest.id] ? () => clearError(value().manifest.id) : undefined} />
@@ -194,7 +202,7 @@ export default function PluginsPanel(props: Props) {
       <Show when={adding()}><div class="plugin-add"><header><h3>{t("添加插件")}</h3><button class="icon-button compact" title={t("关闭")} aria-label={t("关闭添加插件")} onClick={() => { navigationSerial++; setAdding(false); }}><X size={14} /></button></header><label class="field-label">{t("GitHub 插件地址")}<input type="url" aria-label={t("GitHub 插件地址")} placeholder="https://github.com/…/mewu-plugin.json" value={url()} spellcheck={false} disabled={busy()} onInput={event => setUrl(event.currentTarget.value)} /></label><ErrorNote value={errors().add} onClose={() => clearError('add')} /><div class="plugin-add-actions"><button class="secondary-button" disabled={disabled()} onClick={() => void prepare()}><FolderOpen size={14} />{t("选择本地包")}</button><button class="primary-button" disabled={disabled() || !url().trim()} onClick={() => void prepare(url().trim())}><Show when={pending()?.key === 'add'} fallback={<Download size={13} />}><LoaderCircle size={13} class="spin" /></Show>{t("读取")}</button></div></div></Show>
       <Show when={pane() === 'discover'}><button class="text-button" disabled={!bridge.pluginNative || busy()} onClick={() => { setSourceEditor(!sourceEditor()); setCatalogDraft(catalogSource()); setAdding(false); }}>{t("目录来源")}</button><Show when={sourceEditor()}><div class="plugin-add"><label class="field-label">{t("GitHub 目录地址")}<input aria-label={t("插件目录地址")} type="url" placeholder="https://github.com/…/catalog.json" value={catalogDraft()} spellcheck={false} disabled={catalogLoading()} onInput={event => setCatalogDraft(event.currentTarget.value)} /></label><div class="plugin-add-actions"><button class="text-button" disabled={catalogLoading()} onClick={() => setSourceEditor(false)}>{t("取消")}</button><button class="primary-button" disabled={catalogLoading() || busy()} onClick={() => void refreshCatalog(catalogDraft().trim())}>{t("读取")}</button></div></div></Show><ErrorNote value={errors().catalog} onClose={() => clearError('catalog')} /></Show>
       <Show when={loading() && snapshot().revision < 0}><div class="plugin-loading"><LoaderCircle size={14} class="spin" />{t("加载中")}</div></Show>
-      <div class="plugin-list"><For each={entries().map(value => value.manifest.id)}>{id => <Show when={entry(id)}>{value => <article class="plugin-row"><span class="plugin-glyph"><Show when={kinds(value().manifest).includes('selection.drawing-tools')} fallback={<Puzzle size={18} />}><Pencil size={18} /></Show></span><div class="plugin-summary"><button class="plugin-name" onClick={() => open(id)}><span>{value().manifest.name}</span><ChevronRight size={13} /></button><p class="plugin-description">{value().manifest.description}</p><div class="plugin-tags"><span>{value().manifest.version}</span><span>{sourceLabel(value().source)}</span><For each={pluginModuleTags(value().manifest)}>{tag => <span>{t(pluginTagLabels[tag])}</span>}</For></div><ErrorNote value={errors()[id]} onClose={() => clearError(id)} /></div><div class="plugin-row-actions"><Show when={record(id) && record(id)!.state !== 'removed'} fallback={<button class="secondary-button" disabled={disabled()} onClick={() => void installEntry(value())}><Download size={12} />{t("安装")}</button>}><button class="secondary-button" title={record(id)?.state === 'enabled' ? t('停用插件') : t('启用插件')} aria-pressed={record(id)?.state === 'enabled'} disabled={disabled()} onClick={() => void change(record(id)!, record(id)!.state === 'enabled' ? 'disable' : 'enable')}><Show when={record(id)?.state === 'enabled'}><Check size={12} /></Show>{record(id)?.state === 'enabled' ? t('已启用') : t('启用')}</button></Show><span class="plugin-status" classList={{ error: Boolean(record(id)?.error) }}><Show when={pending()?.key === id} fallback={status(record(id))}><LoaderCircle size={12} class="spin" />{t(pending()!.label)}</Show></span></div></article>}</Show>}</For></div>
+      <div class="plugin-list"><For each={entries().map(value => value.manifest.id)}>{id => <Show when={entry(id)}>{value => <article class="plugin-row"><span class="plugin-glyph"><Show when={kinds(value().manifest).includes('selection.drawing-tools')} fallback={<Puzzle size={18} />}><Pencil size={18} /></Show></span><div class="plugin-summary"><button class="plugin-name" onClick={() => open(id)}><span>{value().manifest.name}</span><ChevronRight size={13} /></button><p class="plugin-description">{value().manifest.description}</p><div class="plugin-tags"><span>{value().manifest.version}</span><span>{sourceLabel(value().source)}</span><For each={pluginModuleTags(value().manifest)}>{tag => <span>{t(pluginTagLabels[tag])}</span>}</For></div><ErrorNote value={errors()[id]} onClose={() => clearError(id)} /></div><div class="plugin-row-actions"><Show when={record(id) && record(id)!.state !== 'removed'} fallback={<button class="secondary-button" title={unsupported(value().manifest) && t(unsupported(value().manifest)!)} disabled={disabled() || Boolean(unsupported(value().manifest))} onClick={() => void installEntry(value())}><Download size={12} />{t("安装")}</button>}><button class="secondary-button" title={unsupported(value().manifest) ? t(unsupported(value().manifest)!) : record(id)?.state === 'enabled' ? t('停用插件') : t('启用插件')} aria-pressed={record(id)?.state === 'enabled'} disabled={disabled() || (record(id)?.state !== 'enabled' && Boolean(unsupported(value().manifest)))} onClick={() => void change(record(id)!, record(id)!.state === 'enabled' ? 'disable' : 'enable')}><Show when={record(id)?.state === 'enabled'}><Check size={12} /></Show>{record(id)?.state === 'enabled' ? t('已启用') : t('启用')}</button></Show><span class="plugin-status" classList={{ error: Boolean(record(id)?.error) }}><Show when={pending()?.key === id} fallback={unsupported(value().manifest) ? t(unsupported(value().manifest)!) : status(record(id))}><LoaderCircle size={12} class="spin" />{t(pending()!.label)}</Show></span></div></article>}</Show>}</For></div>
     </Show>
     </Show>
   </section>;

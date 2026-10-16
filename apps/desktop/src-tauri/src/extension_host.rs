@@ -3,7 +3,7 @@
 //! Tauri handle, an API key, a filesystem path, or an ambient OS API.
 use crate::{
     extension_market as market, extension_region as region,
-    extension_store::{Binding, Record, Source, Store},
+    extension_store::{service_platform_error, Binding, Record, Source, Store},
     Host,
 };
 use base64::Engine as _;
@@ -96,6 +96,7 @@ pub(crate) fn external_agent_for_scene(
         return Ok(None);
     };
     let record = store.get(plugin)?;
+    record.ensure_supported()?;
     if record.state != "enabled"
         || !record
             .services
@@ -272,6 +273,9 @@ pub async fn prepare_extension(
         (package, bytes, Source::Local { path: text })
     };
     let state = app.state::<ExtensionHost>();
+    if !mewu_extension::plugin_platform_supported(package.manifest.platforms.as_deref(), mewu_extension::current_plugin_platform()) {
+        return Err("此插件不支持当前系统".into());
+    }
     let expected = state
         .store()?
         .get_optional(&package.manifest.id)?
@@ -900,12 +904,14 @@ impl Context {
             let extensions = app.state::<ExtensionHost>();
             let store = extensions.store()?;
             let record = store.get(&self.record.manifest.id)?;
+            record.ensure_supported()?;
             if record.state != "enabled" || record.revision != self.record.revision {
                 return Err("扩展已停用或版本已变化".into());
             }
             store.validate_dependencies(&record.manifest)?;
             for (id, revision) in &self.authority_chain {
                 let ancestor = store.get(id)?;
+                ancestor.ensure_supported()?;
                 if ancestor.state != "enabled" || ancestor.revision != *revision {
                     return Err("调用方扩展授权已撤销".into());
                 }
@@ -1189,6 +1195,9 @@ pub fn set_extension_binding(
         {
             return Err("扩展未启用或没有对应服务".into());
         }
+        record.ensure_supported()?;
+        let selected_service = record.services.iter().find(|s| &s.id == service).ok_or("扩展没有对应服务")?;
+        if let Some(reason) = service_platform_error(selected_service, mewu_extension::current_plugin_platform()) { return Err(reason.into()); }
         store.validate_dependencies(&record.manifest)?;
     }
     store.set_binding(
@@ -1393,6 +1402,8 @@ fn validate_tool_record(
     descriptor: &crate::extension_tools::ToolDescriptor,
 ) -> Result<Record, String> {
     let record = store.get(&descriptor.plugin_id)?;
+    record.ensure_supported()?;
+    if let Some(reason) = service_platform_error(&descriptor.service, mewu_extension::current_plugin_platform()) { return Err(reason.into()); }
     if record.state != "enabled"
         || record.revision != descriptor.revision
         || record.manifest.version != descriptor.version
@@ -1413,7 +1424,7 @@ pub(crate) fn tool_catalog(
     let store = extensions.store()?;
     let mut tools = vec![];
     for record in store.list()? {
-        if record.state != "enabled" {
+        if record.state != "enabled" || record.ensure_supported().is_err() {
             continue;
         }
         // An installed but unsatisfied dependency cannot advertise executable
@@ -1422,7 +1433,7 @@ pub(crate) fn tool_catalog(
             continue;
         }
         for service in &record.services {
-            if service.kind == mewu_extension::ServiceKind::Tool {
+            if service.kind == mewu_extension::ServiceKind::Tool && service_platform_error(service, mewu_extension::current_plugin_platform()).is_none() {
                 tools.push(crate::extension_tools::ToolDescriptor {
                     plugin_id: record.manifest.id.clone(),
                     revision: record.revision,
@@ -1684,11 +1695,17 @@ fn execute_with_dispatch(
     input: Value,
     dispatch: Option<&ToolDispatch>,
 ) -> Result<Value, String> {
+    if let Some(service) = context.record.services.iter().find(|s| s.id == service_id) {
+        if let Some(reason) = service_platform_error(service, mewu_extension::current_plugin_platform()) { return Err(reason.into()); }
+    }
     let (mut worker, registrations) = start_worker(app, context)?;
     let registration = registrations
         .iter()
         .find(|s| s.id == service_id)
         .ok_or("插件没有注册此服务")?;
+    if let Some(reason) = service_platform_error(registration, mewu_extension::current_plugin_platform()) {
+        return Err(reason.into());
+    }
     if let Some(schema) = &registration.input_schema {
         let validator = jsonschema::validator_for(schema).map_err(|_| "插件服务参数规范无效")?;
         if !validator.is_valid(&input) {
@@ -1813,6 +1830,9 @@ fn bridge_impl(
         _ => return Err("宿主不支持此扩展接口".into()),
     };
     context.permission(permission)?;
+    if matches!(permission, "region.observe" | "region.input") && !cfg!(windows) {
+        return Err("区域操作仅支持 Windows".into());
+    }
     let result = match method {
         "storage.get" => live_store(app, context, |store| {
             store.value(
@@ -1861,7 +1881,7 @@ fn bridge_impl(
         }),
         "services.list" => {
             let records = app.state::<ExtensionHost>().store()?.list()?;
-            Ok(Value::Array(records.iter().filter(|r|r.state=="enabled").flat_map(|r|r.services.iter().filter(|s|params.get("kind").is_none_or(|k|serde_json::to_value(s.kind).ok().as_ref()==Some(k))).map(|s|json!({"pluginId":r.manifest.id,"revision":r.revision,"serviceId":s.id,"kind":s.kind,"title":s.title}))).collect()))
+            Ok(Value::Array(records.iter().filter(|r|r.state=="enabled" && r.ensure_supported().is_ok()).flat_map(|r|r.services.iter().filter(|s|service_platform_error(s, mewu_extension::current_plugin_platform()).is_none() && params.get("kind").is_none_or(|k|serde_json::to_value(s.kind).ok().as_ref()==Some(k))).map(|s|json!({"pluginId":r.manifest.id,"revision":r.revision,"serviceId":s.id,"kind":s.kind,"title":s.title}))).collect()))
         }
         "services.call" => {
             if context.depth >= 3 {

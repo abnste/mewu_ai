@@ -65,6 +65,9 @@ pub fn validate_package(
     modules: &BTreeMap<String, String>,
 ) -> Result<(), ExtensionError> {
     let invalid = ExtensionError::InvalidPackage;
+    if manifest.platforms.as_ref().is_some_and(|p| !valid_plugin_platforms(p)) {
+        return Err(invalid("invalid extension platforms"));
+    }
     if manifest.schema_version != 2
         || manifest.host_api != HOST_API
         || manifest.runtime != "javascript"

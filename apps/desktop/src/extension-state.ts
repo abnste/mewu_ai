@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { ExtensionBinding, ExtensionRecord, ExtensionService, ExtensionServiceKind } from './extension-contracts';
 
-export interface ExtensionServiceChoice { record: ExtensionRecord; service: ExtensionService }
+export interface ExtensionServiceChoice { record: ExtensionRecord; service: ExtensionService; unavailableReason?: string }
 export function mergeExtensionRecords(previous: ExtensionRecord[], incoming: ExtensionRecord[]): ExtensionRecord[] {
   const records = new Map(previous.map(record => [record.manifest.id, record]));
   for (const record of incoming) {
@@ -10,8 +10,10 @@ export function mergeExtensionRecords(previous: ExtensionRecord[], incoming: Ext
   }
   return [...records.values()].sort((a, b) => a.manifest.id < b.manifest.id ? -1 : a.manifest.id > b.manifest.id ? 1 : 0);
 }
-export function extensionServices(records: ExtensionRecord[], kind: ExtensionServiceKind): ExtensionServiceChoice[] {
-  return records.filter(record => record.state === 'enabled').flatMap(record => record.services.filter(service => service.kind === kind).map(service => ({ record, service })));
+export function extensionServices(records: ExtensionRecord[], kind: ExtensionServiceKind, includeUnsupported = false): ExtensionServiceChoice[] {
+  return records.filter(record => record.state === 'enabled').flatMap(record => record.services.filter(service => service.kind === kind)
+    .map(service => ({ record, service, ...(record.platformError || record.unsupportedServices?.[service.id] ? { unavailableReason: record.platformError || record.unsupportedServices?.[service.id] } : {}) }))
+    .filter(choice => includeUnsupported || !choice.unavailableReason));
 }
 export function mergeExtensionBindings(previous: ExtensionBinding[], incoming: ExtensionBinding[]): ExtensionBinding[] {
   const key = (value: ExtensionBinding) => JSON.stringify([value.agentId, value.kind]);
@@ -29,7 +31,7 @@ export function spaceExtensionServices(records: ExtensionRecord[]): ExtensionSer
   return placedExtensionServices(records, 'space-toolbar');
 }
 function placedExtensionServices(records: ExtensionRecord[], placement: string): ExtensionServiceChoice[] {
-  return extensionServices(records, 'command').filter(({ service }) => service.metadata !== null && typeof service.metadata === 'object'
+  return extensionServices(records, 'command', true).filter(({ service }) => service.metadata !== null && typeof service.metadata === 'object'
     && !Array.isArray(service.metadata) && (service.metadata as Record<string, unknown>).placement === placement);
 }
 export function extensionCommandInput(service: ExtensionService): Record<string, unknown> {

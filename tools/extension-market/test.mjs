@@ -158,6 +158,15 @@ test('GitHub verification binds exact release asset, bytes, hash and original ma
   assert.throws(() => bindEntryManifest({ ...entry, tags: ['fake'] }, manifest), /标签/);
 });
 
+test('catalog platform scope may narrow a package but cannot widen its explicit targets', () => {
+  assert.doesNotThrow(() => bindEntryManifest({ ...entry, platforms: ['windows-x86_64'] }, manifest));
+  assert.doesNotThrow(() => bindEntryManifest(entry, { ...manifest, platforms: ['any'] }));
+  const restricted = { ...manifest, platforms: ['darwin-aarch64', 'linux-x86_64'] };
+  assert.doesNotThrow(() => bindEntryManifest({ ...entry, platforms: ['darwin-aarch64'] }, restricted));
+  assert.throws(() => bindEntryManifest(entry, restricted), /平台范围/);
+  assert.throws(() => bindEntryManifest({ ...entry, platforms: ['windows-x86_64'] }, restricted), /平台范围/);
+});
+
 test('GitHub rejects drafts, asset substitution, duplicate asset names and truncated downloads', async () => {
   await assert.rejects(getRelease(entry.repository, entry.releaseTag, { fetchImpl: async () => response({ ...releaseFor(), draft: true }) }), /发行版本/);
   const release = releaseFor(); release.assets[0].url = 'https://api.github.com/repos/attacker/other/releases/assets/30';

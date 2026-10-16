@@ -91,6 +91,12 @@ export function bindEntryManifest(entry, manifest) {
     if (entry[key] !== manifest[key]) throw new Error(`目录 ${key} 与实际插件清单不符`);
   }
   if (JSON.stringify([...entry.tags].sort()) !== JSON.stringify([...manifest.tags].sort())) throw new Error('目录标签与实际插件清单不符');
+  // Both values have already passed the production Rust parser. The catalog
+  // may narrow a portable package, but cannot advertise additional targets.
+  if (manifest.platforms && !manifest.platforms.includes('any')) {
+    const advertised = entry.platforms.includes('any') ? ['windows-x86_64', 'darwin-aarch64', 'linux-x86_64'] : entry.platforms;
+    if (advertised.some(platform => !manifest.platforms.includes(platform))) throw new Error('社区条目的平台范围超出插件声明');
+  }
 }
 
 export async function verifyEntry(entry, validate, options = {}) {

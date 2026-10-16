@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
@@ -41,6 +41,33 @@ pub struct Record {
     pub sha256: String,
     pub services: Vec<ServiceRegistration>,
     pub has_rollback: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform_error: Option<String>,
+    pub unsupported_services: BTreeMap<String, String>,
+}
+pub(crate) fn service_platform_error(service: &ServiceRegistration, platform: &str) -> Option<&'static str> {
+    let Ok(platforms) = mewu_extension::service_platforms(service) else { return Some("插件平台声明无效") };
+    if !mewu_extension::plugin_platform_supported(platforms.as_deref(), platform) {
+        return Some("此功能不支持当前系统");
+    }
+    if service.metadata.as_ref().and_then(|m| m.get("requiresRegion")).and_then(Value::as_bool) == Some(true)
+        && platform != "windows-x86_64" {
+        return Some("区域操作仅支持 Windows");
+    }
+    None
+}
+impl Record {
+    pub(crate) fn ensure_supported(&self) -> Result<(), String> {
+        ensure_platform(&self.manifest, &self.source, mewu_extension::current_plugin_platform())
+    }
+}
+fn ensure_platform(manifest: &ExtensionManifest, source: &Source, platform: &str) -> Result<(), String> {
+    let catalog = match source { Source::Github { entry } => Some(entry.platforms.as_slice()), _ => None };
+    if !mewu_extension::plugin_platform_supported(manifest.platforms.as_deref(), platform)
+        || !mewu_extension::plugin_platform_supported(catalog, platform) {
+        return Err("此插件不支持当前系统".into());
+    }
+    Ok(())
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,7 +126,7 @@ impl Store {
         if revision <= 0 || !["enabled", "disabled", "removed"].contains(&state.as_str()) {
             return Err(rusqlite::Error::InvalidQuery);
         }
-        Ok(Record {
+        let mut record = Record {
             manifest: parse(row.get(0)?)?,
             revision: revision as u64,
             state,
@@ -107,7 +134,16 @@ impl Store {
             sha256: row.get(4)?,
             services: parse(row.get(5)?)?,
             has_rollback: row.get(6)?,
-        })
+            platform_error: None,
+            unsupported_services: BTreeMap::new(),
+        };
+        record.platform_error = record.ensure_supported().err();
+        for service in &record.services {
+            if let Some(reason) = service_platform_error(service, mewu_extension::current_plugin_platform()) {
+                record.unsupported_services.insert(service.id.clone(), reason.into());
+            }
+        }
+        Ok(record)
     }
     pub fn list(&self) -> Result<Vec<Record>, String> {
         let mut query = self.db.prepare("SELECT manifest,revision,state,source,sha256,services,previous_archive IS NOT NULL AND previous_source IS NOT NULL AND previous_sha256 IS NOT NULL FROM extensions ORDER BY id").map_err(|_| "无法读取扩展")?;
@@ -126,6 +162,7 @@ impl Store {
     }
     pub fn package(&self, id: &str, revision: u64) -> Result<ExtensionPackage, String> {
         let record = self.get(id)?;
+        record.ensure_supported()?;
         if record.revision != revision || record.state != "enabled" {
             return Err("扩展已停用或版本已变化".into());
         }
@@ -145,8 +182,12 @@ impl Store {
         Ok(package)
     }
     pub fn validate_dependencies(&self, manifest: &ExtensionManifest) -> Result<(), String> {
+        if !mewu_extension::plugin_platform_supported(manifest.platforms.as_deref(), mewu_extension::current_plugin_platform()) {
+            return Err("此插件不支持当前系统".into());
+        }
         for (id, requirement) in &manifest.dependencies {
             let dependency = self.get(id)?;
+            dependency.ensure_supported()?;
             let requirement =
                 semver::VersionReq::parse(requirement).map_err(|_| "依赖版本规范无效")?;
             let version = semver::Version::parse(&dependency.manifest.version)
@@ -177,6 +218,7 @@ impl Store {
         if source.verify(bytes)? != *package {
             return Err("预览内容与安装包不一致".into());
         }
+        ensure_platform(&package.manifest, source, mewu_extension::current_plugin_platform())?;
         let old = self.get_optional(&package.manifest.id)?;
         if old.as_ref().map(|r| r.revision) != expected {
             return Err("扩展安装状态已变化，请重新预览".into());
@@ -219,6 +261,7 @@ impl Store {
             return Err("扩展状态无效".into());
         }
         let old = self.get(id)?;
+        if state == "enabled" { old.ensure_supported()?; }
         if old.revision != revision {
             return Err("扩展版本已变化".into());
         }
@@ -538,6 +581,62 @@ mod tests {
                 first
             );
         });
+    }
+
+    #[test]
+    fn platform_guards_cover_catalog_local_install_enable_run_and_dependency_without_destroying_data() {
+        with_store(|store, _| {
+            let current = mewu_extension::current_plugin_platform();
+            let other = mewu_extension::PLUGIN_PLATFORMS.into_iter().find(|p| *p != current).unwrap();
+            let (portable, bytes, source) = package("1.0.0", "example/repo");
+            let mut foreign_catalog = source.clone();
+            if let Source::Github { entry } = &mut foreign_catalog { entry.platforms = vec![other.into()]; }
+            assert!(store.install(&portable, &bytes, &foreign_catalog, None).is_err());
+            assert!(store.list().unwrap().is_empty());
+            let mut restricted = portable.clone(); restricted.manifest.platforms = Some(vec![other.into()]);
+            assert!(ensure_platform(&restricted.manifest, &Source::Local { path:"plugin.zip".into() }, current).is_err());
+            let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            archive.start_file("mewu-plugin.json", zip::write::SimpleFileOptions::default()).unwrap();
+            archive.write_all(&serde_json::to_vec(&restricted.manifest).unwrap()).unwrap();
+            for (name, body) in &restricted.modules { archive.start_file(name, zip::write::SimpleFileOptions::default()).unwrap(); archive.write_all(body.as_bytes()).unwrap(); }
+            let local_bytes = archive.finish().unwrap().into_inner();
+            assert!(store.install(&restricted, &local_bytes, &Source::Local { path:"plugin.zip".into() }, None).is_err());
+            assert!(store.list().unwrap().is_empty());
+            let installed = store.install(&portable, &bytes, &source, None).unwrap();
+            store.set_value(&installed.manifest.id, "agent", "remember", &serde_json::json!(42)).unwrap();
+            // Model a valid existing installation moved from another OS: same
+            // untouched archive and manifest, but its verified catalog restricts it.
+            store.db.execute("UPDATE extensions SET source=?2,state='disabled' WHERE id=?1", params![installed.manifest.id, serde_json::to_string(&foreign_catalog).unwrap()]).unwrap();
+            let foreign = store.get(&installed.manifest.id).unwrap();
+            assert!(foreign.platform_error.is_some());
+            assert!(store.set_state(&foreign.manifest.id, foreign.revision, "enabled").is_err());
+            assert!(store.package(&foreign.manifest.id, foreign.revision).is_err());
+            let mut consumer = portable.manifest.clone(); consumer.id="independent.consumer".into();
+            consumer.dependencies.insert(foreign.manifest.id.clone(), "^1".into());
+            assert!(store.validate_dependencies(&consumer).is_err());
+            assert_eq!(store.get(&foreign.manifest.id).unwrap().revision, foreign.revision);
+            assert_eq!(store.value(&foreign.manifest.id, "agent", "remember").unwrap(), 42);
+            let (updated, updated_bytes, updated_source) = package("2.0.0", "example/repo");
+            let next = store.install(&updated, &updated_bytes, &updated_source, Some(foreign.revision)).unwrap();
+            assert!(store.rollback(&next.manifest.id, next.revision).is_err());
+            assert_eq!(store.get(&next.manifest.id).unwrap().revision, next.revision);
+            store.set_state(&next.manifest.id, next.revision, "removed").unwrap();
+            assert_eq!(store.value(&foreign.manifest.id, "agent", "remember").unwrap(), 42);
+        });
+    }
+    #[test]
+    fn unsupported_native_region_service_does_not_disable_portable_ui_agent_or_memory() {
+        for kind in ["command", "tool", "agent", "memory", "ui", "renderer"] {
+            let mut service: ServiceRegistration = serde_json::from_value(serde_json::json!({"kind":kind,"id":"independent","title":"Independent"})).unwrap();
+            for platform in mewu_extension::PLUGIN_PLATFORMS { assert!(service_platform_error(&service, platform).is_none()); }
+            service.metadata = Some(serde_json::json!({"requiresRegion":true}));
+            assert!(service_platform_error(&service, "windows-x86_64").is_none());
+            assert_eq!(service_platform_error(&service, "darwin-aarch64"), Some("区域操作仅支持 Windows"));
+            assert_eq!(service_platform_error(&service, "linux-x86_64"), Some("区域操作仅支持 Windows"));
+            service.metadata = Some(serde_json::json!({"platforms":["darwin-aarch64"]}));
+            assert!(service_platform_error(&service, "darwin-aarch64").is_none());
+            assert!(service_platform_error(&service, "windows-x86_64").is_some());
+        }
     }
     #[test]
     fn removed_identity_cannot_be_taken_over_and_disabled_updates_stay_disabled() {

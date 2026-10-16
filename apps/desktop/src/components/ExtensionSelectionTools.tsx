@@ -38,7 +38,7 @@ export default function ExtensionSelectionTools(props: Props) {
     const value = running(); if (value) void api.stopExtension(value.record.manifest.id).catch(() => {});
   });
   function choose(choice: ExtensionServiceChoice) {
-    if (props.disabled || running()) return;
+    if (props.disabled || running() || choice.unavailableReason) return;
     if (props.draft.trim()) void execute(choice, props.draft);
     else batch(() => { setTask(''); setTaskChoice(choice); setMenu(false); setResult(''); });
   }
@@ -46,7 +46,7 @@ export default function ExtensionSelectionTools(props: Props) {
     if (props.disabled || running() || !text.trim()) return;
     const current = generation, sceneId = props.sceneId, regionId = props.regionId;
     const live = services().find(value => extensionServiceKey(value) === extensionServiceKey(choice));
-    if (!live || live.record.revision !== choice.record.revision) { props.onError(t('插件状态已变化')); return; }
+    if (!live || live.unavailableReason || live.record.revision !== choice.record.revision) { props.onError(t(live?.unavailableReason || '插件状态已变化')); return; }
     batch(() => { setRunning(live); setTaskChoice(undefined); setMenu(false); setResult(''); });
     try {
       const value = await api.invokeExtension({ pluginId: live.record.manifest.id, revision: live.record.revision,
@@ -66,11 +66,11 @@ export default function ExtensionSelectionTools(props: Props) {
   }
   return <>
     <Show when={services().length || running()}><button class="capture-plugin" data-caption={running() ? t('停止') : services().length === 1 ? services()[0].service.title : t('插件')}
-      title={running() ? t('停止') : services().length === 1 ? services()[0].service.title : t('插件')} aria-label={running() ? t('停止插件执行') : t('选区插件')}
-      disabled={running() ? stopping() : props.disabled} onClick={() => running() ? void stop() : services().length === 1 ? choose(services()[0]) : setMenu(!menu())}>
+      title={running() ? t('停止') : services().length === 1 ? t(services()[0].unavailableReason || services()[0].service.title) : t('插件')} aria-label={running() ? t('停止插件执行') : t('选区插件')}
+      disabled={running() ? stopping() : props.disabled || (services().length === 1 && Boolean(services()[0].unavailableReason))} onClick={() => running() ? void stop() : services().length === 1 ? choose(services()[0]) : setMenu(!menu())}>
       <Show when={running()} fallback={<Puzzle size={18}/>}><Show when={stopping()} fallback={<Square size={16}/>}><LoaderCircle size={18} class="spin"/></Show></Show>
     </button></Show>
-    <Show when={menu()}><div class="capture-plugin-menu extension-command-menu" role="menu" onKeyDown={keyboard}><For each={services()}>{choice => <button role="menuitem" disabled={props.disabled} onClick={() => choose(choice)}>{choice.service.title}</button>}</For></div></Show>
+    <Show when={menu()}><div class="capture-plugin-menu extension-command-menu" role="menu" onKeyDown={keyboard}><For each={services()}>{choice => <button role="menuitem" title={choice.unavailableReason && t(choice.unavailableReason)} disabled={props.disabled || Boolean(choice.unavailableReason)} onClick={() => choose(choice)}>{choice.service.title}</button>}</For></div></Show>
     <Show when={taskChoice()}>{choice => <form class="extension-task-popover" role="dialog" aria-label={choice().service.title} onKeyDown={keyboard} onSubmit={event => { event.preventDefault(); void execute(choice(), task()); }}>
       <label class="field-label">{choice().service.title}<textarea autofocus rows={3} aria-label={t('任务')} placeholder={t('输入任务')} value={task()} onInput={event => setTask(event.currentTarget.value)} /></label>
       <div class="extension-task-actions"><button type="button" class="secondary-button" onClick={() => setTaskChoice(undefined)}>{t('取消')}</button><button type="submit" class="primary-button" disabled={props.disabled || !task().trim()}>{t('执行')}</button></div>

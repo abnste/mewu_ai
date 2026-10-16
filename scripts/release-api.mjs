@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // GitHub's tag endpoint does not expose draft releases. Authenticated release
 // listings do; keep that fallback so interrupted uploads can resume one draft.
-import { compareReleaseVersions, publicationPolicy, releasePlan, releaseVersion } from './release-contract.mjs';
+import { compareReleaseVersions, publicationPolicy, releasePlan, releaseVersion, githubReleaseUpdates, validateReleaseNotes } from './release-contract.mjs';
 function read(gh, endpoint, ...flags) {
   try { return JSON.parse(gh('api', endpoint, ...flags)); }
   catch (error) { if (/\(HTTP 404\)/.test(String(error.stderr))) return null; throw error; }
@@ -47,11 +47,13 @@ export async function verifyStableLatest(gh, repository, expected, { pause = mil
 
 // The modern publisher has no channel lookup or feed write. A transport can be
 // injected for regression tests; production passes the same ordinary gh CLI.
-export async function publishVersionRelease(gh, repository, { version, commit, artifacts, notes, verifyLocal, pause }) {
+export async function publishVersionRelease(gh, repository, { version, commit, artifacts, notes, expectedBody, verifyLocal, pause }) {
   const policy = publicationPolicy(version), tag = `v${version}`, plan = releasePlan(version);
   if (!policy.selfContained || !/^[a-f0-9]{40}$/.test(commit) || typeof verifyLocal !== 'function') throw Error('Modern source-bound release required');
-  const names = [...Object.values(plan).flatMap(p => p.files), plan['darwin-aarch64'].updater, 'latest.json'];
-  if (!Array.isArray(artifacts) || artifacts.length !== 6 || new Set(artifacts.map(a => a.name)).size !== 6 || names.some(n => !artifacts.some(a => a.name === n))) throw Error('Exactly six modern release assets required');
+  const direct = githubReleaseUpdates(version);
+  const names = [...Object.values(plan).flatMap(p => p.files), plan['darwin-aarch64'].updater, ...(direct ? [] : ['latest.json'])];
+  if (!Array.isArray(artifacts) || artifacts.length !== names.length || new Set(artifacts.map(a => a.name)).size !== names.length || names.some(n => !artifacts.some(a => a.name === n))) throw Error(`Exactly ${names.length} modern release assets required`);
+  if (direct) validateReleaseNotes(expectedBody, version);
   const expected = new Map(artifacts.map(a => [a.name, a]));
   const lookup = () => findRelease(gh, repository, tag);
   const checkAsset = asset => {
@@ -61,6 +63,7 @@ export async function publishVersionRelease(gh, repository, { version, commit, a
   const checkAssets = (release, complete = false) => {
     if (!Array.isArray(release?.assets) || new Set(release.assets.map(a => a.name)).size !== release.assets.length || (complete && release.assets.length !== names.length)) throw Error('Incomplete or duplicate remote release assets');
     for (const asset of release.assets) checkAsset(asset);
+    if (direct && (typeof release.body !== 'string' || release.body.replace(/\r\n/g, '\n').trimEnd() !== expectedBody.replace(/\r\n/g, '\n').trimEnd())) throw Error('Remote release notes/signatures differ; never replace published metadata');
   };
   function checkAdvance() {
     if (policy.prerelease) return;
@@ -82,6 +85,7 @@ export async function publishVersionRelease(gh, repository, { version, commit, a
   } else {
     gh('release', 'create', tag, '--repo', repository, '--target', commit, '--draft', ...(policy.prerelease ? ['--prerelease'] : []), '--title', `MewuAI ${version} · 喵呜AI ${version}`, '--notes-file', notes);
     current = lookup(); verifyReleaseTarget(gh, repository, current, tag, commit, policy.prerelease);
+    checkAssets(current);
   }
   if (!alreadyPublished) {
     for (const artifact of artifacts) if (!current.assets.some(a => a.name === artifact.name)) {

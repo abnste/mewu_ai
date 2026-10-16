@@ -10,10 +10,10 @@
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-blue?style=flat-square" alt="MPL-2.0" /></a>
   </p>
   <p>
-    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Setup-1.0.1-win-x64.exe"><strong>Windows 安装版</strong></a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-Portable-1.0.1-win-x64.zip">Windows 便携版</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-1.0.1-mac-arm64.dmg">macOS ARM64</a>
-    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Remake-1.0.1-linux-x64.AppImage">Linux x64</a>
+    <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Setup-1.0.1-win-x64.exe"><strong>Windows 安装版</strong></a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-Portable-1.0.1-win-x64.zip">Windows 便携版</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-1.0.1-mac-arm64.dmg">macOS ARM64</a>
+    &nbsp;·&nbsp; <a href="https://github.com/abnste/mewu_ai/releases/download/v1.0.1/MewuAI-1.0.1-linux-x64.AppImage">Linux x64</a>
   </p>
   <p><strong>简体中文</strong> · <a href="./README.md">English</a> · <a href="./docs/release-notes-1.0.1.md">更新说明</a> · <a href="https://github.com/abnste/mewu_ai/issues">问题反馈</a></p>
 </div>
@@ -31,7 +31,7 @@
 
 **MewuAI 1.0.1** 补齐导入图片的原位标注，改善工具失败诊断和对话条可用性，保留既有截图操作、可执行插件与 GitHub 社区市场。正式更新改为直接读取最新版本发行，不再依赖旧更新通道。详见[更新说明](./docs/release-notes-1.0.1.md)。
 
-重制版维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；原 Windows **.NET/WPF 0.7.x** 源码与文档保留在 **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**。新版使用 **Rust + Tauri 2 + Solid/TypeScript + SQLite** 及系统 WebView，不使用 Electron。
+MewuAI 维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；原 Windows **.NET/WPF 0.7.x** 源码与文档保留在 **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**。新版使用 **Rust + Tauri 2 + Solid/TypeScript + SQLite** 及系统 WebView，不使用 Electron。
 
 <p align="center">
   <a href="./docs/images/mewuai-cover-web-zh.png"><img src="./docs/images/mewuai-cover-web-zh.png" width="100%" alt="喵呜AI 概念封面：在 Windows 桌面上截图、提问和原位标注" /></a>
@@ -56,7 +56,7 @@
 <details>
 <summary>.NET 0.7.x 原版功能资料</summary>
 
-以下为原 Windows 版本的功能介绍，保留在 [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet) 分支。它们是项目历史与旧版使用资料，不代表所有接入方式和交互都已迁移到当前重制版。
+以下为原 Windows 版本的功能介绍，保留在 [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet) 分支。它们是项目历史与旧版使用资料，不代表所有接入方式和交互都已迁移到当前版本。
 
 - **试卷与作业**：像普通截图一样引用试卷，直接让 AI 讲解、批注；引用多张截图分析共同问题并生成练习，识读与判分仍需人工核对。
 
@@ -151,17 +151,17 @@
 
 > **合作项目：** [**kangarooking/Ta**](https://github.com/kangarooking/Ta)（拓）同样是一款 macOS AI 截图工具，提供文字识别、翻译、长截图和标注。喵呜AI 也提供 macOS ARM64 安装包。
 
-1. **安装并打开。** 选择上方对应安装包。Windows 要求 Windows 10 2004 及以上和 WebView2；macOS 使用 WKWebView，Linux 使用 WebKitGTK。重制版无需另装 .NET。
+1. **安装并打开。** 选择上方对应安装包。Windows 要求 Windows 10 2004 及以上和 WebView2；macOS 使用 WKWebView，Linux 使用 WebKitGTK。MewuAI 无需另装 .NET。
 2. **截取画面。** 左键托盘图标或使用截图快捷键；Windows 默认为 <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>S</kbd>。框选后复制、保存、标注或录屏，快捷键可在设置修改；Wayland 可能需要桌面授权和快捷键设置。
 3. **按需连接 AI。** 在 **设置 → Agent 与连接** 配置模型，或安装并绑定独立 Agent 插件。Agent 与模型分别选择，在输入框添加区域引用或文件后即可提问。
 
 Linux Wayland 通过桌面 portal 授权截图和录屏。录屏授权后需在刷新的预览中再次框选区域；请把控制条移出录制区域，GNOME 不保证它始终置顶。Linux 需要系统 `libnghttp2.so.14`；本机 OCR 需要 Tesseract 4.1/5 和英语语言数据，Ubuntu 对应 `libnghttp2-14`、`tesseract-ocr-eng`。
 
-新安装的数据默认位于用户目录 `~/.mewu`，已安装重制版保留原位置。**设置 → 数据** 支持迁移目录、查看文件/图片/会话占用并分别清理。切换旧版和重制版前，请备份重要数据。
+新安装的数据默认位于用户目录 `~/.mewu`，已有安装保留原位置。**设置 → 数据** 支持迁移目录、查看文件/图片/会话占用并分别清理。从旧版升级前，请备份重要数据。
 
 ## 支持的 AI
 
-| 接入方式 | 重制版当前支持 |
+| 接入方式 | 当前支持 |
 | --- | --- |
 | API | Chat Completions、OpenAI Responses、Anthropic Messages，支持多个独立连接和模型模板；图片/视频能力、费用及限额由对应服务决定。 |
 | 独立 Agent | API 2 Agent 提供方插件可使用自己的运行时，记忆独立选择；调用宿主模型时使用当前连接及已授权能力。 |
@@ -172,7 +172,7 @@ Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 *
 <details>
 <summary>.NET 原版的第三方客户端接入说明</summary>
 
-以下说明适用于 [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)，不是重制版当前的连接控件。
+以下说明适用于 [dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)，不是当前版本的连接控件。
 
 | 接入方式 | 如何使用 |
 | --- | --- |
@@ -200,7 +200,7 @@ Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 *
 <details>
 <summary>为什么会议共享里看不到截图和标注？</summary>
 
-重制版可在 **设置 → 通用 → 允许屏幕共享看到框选和标注** 调整。实际可见性也取决于系统和共享软件。原 .NET 版教学演示模式及 F8 的说明保留在 [dotnet](https://github.com/abnste/mewu_ai/blob/dotnet/README.zh-CN.md)，不能直接当作所有新平台的相同行为保证。
+MewuAI 可在 **设置 → 通用 → 允许屏幕共享看到框选和标注** 调整。实际可见性也取决于系统和共享软件。原 .NET 版教学演示模式及 F8 的说明保留在 [dotnet](https://github.com/abnste/mewu_ai/blob/dotnet/README.zh-CN.md)，不能直接当作所有新平台的相同行为保证。
 
 </details>
 

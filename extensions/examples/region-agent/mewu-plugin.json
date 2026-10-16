@@ -9,6 +9,7 @@
   "hostApi": 2,
   "runtime": "javascript",
   "entry": "index.mjs",
+  "platforms": ["windows-x86_64"],
   "permissions": ["model.invoke", "region.observe", "region.input"],
   "tags": ["agi", "tools", "vision"],
   "dependencies": {}

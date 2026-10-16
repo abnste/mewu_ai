@@ -4,6 +4,16 @@ Mewu keeps its Rust/Tauri screenshot interface. API 2 extensions contain executa
 
 The community catalog is maintained separately at [abnste/mewu-plugins](https://github.com/abnste/mewu-plugins). Authors keep their code and versioned ZIP releases in their own GitHub repository and submit an entry to the catalog. Catalog entries are discovery metadata; installation downloads the actual ZIP and checks its size, SHA-256 and manifest identity.
 
+## Platforms
+
+One JavaScript ZIP normally runs on Windows, macOS and Linux. Omit manifest `platforms` and use catalog `platforms: ["any"]`; the host supplies the same SDK and isolated worker on each platform. No per-OS rewrite or three packages is required for Agent logic, memory, model/channel protocols or HTML/SVG UI.
+
+If the entire plugin really depends on one OS, use manifest `"platforms": ["windows-x86_64"]` (other targets: `darwin-aarch64`, `linux-x86_64`). The catalog may narrow that allowlist but cannot advertise additional platforms. Empty, duplicate, unknown and mixed `any` lists are rejected. Local ZIPs use the same check as GitHub packages; install, enable, rollback, dependency resolution and each run recheck support. Existing incompatible installations remain removable and retain their data.
+
+A portable plugin can instead narrow just one registration with `metadata: { platforms: ["windows-x86_64"] }`, while keeping its other services portable. `metadata: { requiresRegion: true }` requires the native region adapter, which currently supports Windows only; those controls are disabled on macOS/Linux. Declaring a region permission does not disable unrelated UI/memory services and never grants missing native capability. The invocation's host-provided `context.platform` is `windows`, `macos` or `linux` for optional behavior inside a handler.
+
+This follows the universal-package/default and explicit native-platform pattern described by [VS Code](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#platform-specific-extensions) and [npm OS allowlists](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#os).
+
 ## A first plugin
 
 Use Node.js 22+ for development. In a separate plugin project, install the published development SDK:

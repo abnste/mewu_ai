@@ -18,6 +18,13 @@ export function selfContainedRelease(version) {
   const [, minor, patch] = /^1\.(\d+)\.(\d+)/.exec(version);
   return !version.includes('-') || BigInt(minor) > 0n || BigInt(patch) >= 1n;
 }
+// New clients discover the actual GitHub release. The old layouts remain
+// readable for historical verification; no new release uploads a feed file.
+export function githubReleaseUpdates(version) {
+  releaseVersion(version);
+  const [, minor, patch] = /^1\.(\d+)\.(\d+)/.exec(version);
+  return BigInt(minor) > 0n || BigInt(patch) >= 1n;
+}
 export function publicationPolicy(version) {
   releaseVersion(version);
   const prerelease = version.includes('-'), selfContained = selfContainedRelease(version);
@@ -28,7 +35,7 @@ export function publicationPolicy(version) {
     feeds: selfContained ? [] : prerelease ? ['preview.json'] : ['preview.json', 'latest.json'],
     // Modern previews also track the next stable release; publishing one does
     // not promote GitHub Latest or overwrite the old clients' migration feed.
-    clientEndpoint: selfContained ? `https://github.com/${repository}/releases/latest/download/latest.json` : `https://github.com/${repository}/releases/download/update-channel/${prerelease ? 'preview.json' : 'latest.json'}`,
+    clientEndpoint: githubReleaseUpdates(version) ? `https://api.github.com/repos/${repository}/releases/latest` : selfContained ? `https://github.com/${repository}/releases/latest/download/latest.json` : `https://github.com/${repository}/releases/download/update-channel/${prerelease ? 'preview.json' : 'latest.json'}`,
   };
 }
 export function validateUpdateConfiguration(config) {
@@ -51,10 +58,11 @@ export function validateChannelAdvance(current, candidate) {
 }
 export function releasePlan(version) {
   releaseVersion(version);
+  const product = githubReleaseUpdates(version) ? 'MewuAI' : 'MewuAI-Remake';
   return {
-    'windows-x86_64': { files: [`MewuAI-Remake-Setup-${version}-win-x64.exe`, `MewuAI-Remake-Portable-${version}-win-x64.zip`], updater: `MewuAI-Remake-Setup-${version}-win-x64.exe`, channel: false, separateUpdater: false },
-    'darwin-aarch64': { files: [`MewuAI-Remake-${version}-mac-arm64.dmg`], updater: `MewuAI-Remake-Update-${version}-mac-arm64.app.tar.gz`, channel: !selfContainedRelease(version), separateUpdater: true },
-    'linux-x86_64': { files: [`MewuAI-Remake-${version}-linux-x64.AppImage`], updater: `MewuAI-Remake-${version}-linux-x64.AppImage`, channel: false, separateUpdater: false },
+    'windows-x86_64': { files: [`${product}-Setup-${version}-win-x64.exe`, `${product}-Portable-${version}-win-x64.zip`], updater: `${product}-Setup-${version}-win-x64.exe`, channel: false, separateUpdater: false },
+    'darwin-aarch64': { files: [`${product}-${version}-mac-arm64.dmg`], updater: `${product}-Update-${version}-mac-arm64.app.tar.gz`, channel: !selfContainedRelease(version), separateUpdater: true },
+    'linux-x86_64': { files: [`${product}-${version}-linux-x64.AppImage`], updater: `${product}-${version}-linux-x64.AppImage`, channel: false, separateUpdater: false },
   };
 }
 export function updateUrl(version, platform) {
@@ -108,6 +116,31 @@ function validateManifestUrls(manifest, urlFor) {
 }
 export function validateManifest(manifest) { return validateManifestUrls(manifest, updateUrl); }
 export function validateLegacyManifest(manifest) { return validateManifestUrls(manifest, legacyUpdateUrl); }
+export const releaseSignatureMarker = '<!-- mewu-update-signatures:v1\n';
+export function releaseSignatures(manifest) {
+  const version = validateManifest(manifest), plan = releasePlan(version);
+  return { schemaVersion: 1, version, assets: platforms.map(platform => ({ name: plan[platform].updater, signature: manifest.platforms[platform].signature })) };
+}
+export function composeReleaseNotes(notes, manifest) {
+  if (typeof notes !== 'string' || Buffer.byteLength(notes) > 192 * 1024 || notes.includes('<!-- mewu-update-signatures:')) throw Error('Invalid original release notes');
+  return `${notes.trimEnd()}\n\n${releaseSignatureMarker}${JSON.stringify(releaseSignatures(manifest))}\n-->\n`;
+}
+export function validateReleaseNotes(notes, version, manifest) {
+  if (typeof notes !== 'string' || Buffer.byteLength(notes) > 256 * 1024 || notes.split('<!-- mewu-update-signatures:').length !== 2) throw Error('One release signature block required');
+  const start = notes.indexOf(releaseSignatureMarker), end = start < 0 ? -1 : notes.indexOf('\n-->', start + releaseSignatureMarker.length);
+  if (start < 0 || end < 0) throw Error('Invalid release signature block');
+  let value;
+  try { value = JSON.parse(notes.slice(start + releaseSignatureMarker.length, end)); } catch { throw Error('Invalid release signature JSON'); }
+  const plan = releasePlan(version), names = platforms.map(platform => plan[platform].updater);
+  if (!value || Object.keys(value).sort().join() !== 'assets,schemaVersion,version' || value.schemaVersion !== 1 || value.version !== version || !Array.isArray(value.assets) || value.assets.length !== names.length) throw Error('Release signature identity differs');
+  const seen = new Set();
+  for (const asset of value.assets) {
+    if (!asset || Object.keys(asset).sort().join() !== 'name,signature' || !names.includes(asset.name) || seen.has(asset.name)) throw Error('Release signature assets differ');
+    seen.add(asset.name); verifySignatureVersion(asset.signature, version);
+  }
+  if (manifest && !isDeepStrictEqual(value, releaseSignatures(manifest))) throw Error('Release signatures differ from accepted payloads');
+  return value;
+}
 export function validateAcceptance(receipt, platform, version, commit, assets) {
   if (!receipt || receipt.schemaVersion !== 1 || receipt.platform !== platform || receipt.version !== version || receipt.sourceCommit !== commit || !/^[a-f0-9]{40}$/.test(commit)) throw Error('Acceptance source/version/platform mismatch');
   if (receipt.result !== 'passed' || receipt.nativeGuiVerified !== true || receipt.installerVerified !== true) throw Error('Native installation acceptance required');
@@ -128,14 +161,14 @@ export function verifyRelease(directory, manifest, acceptance, commit) {
   const version = validateManifest(manifest), plan = releasePlan(version), modern = selfContainedRelease(version);
   const softwareAssets = platforms.flatMap(platform => plan[platform].files);
   const payloadNames = [...softwareAssets, plan['darwin-aarch64'].updater];
-  const names = [...payloadNames, ...(modern ? ['latest.json'] : [])];
+  const names = [...payloadNames, ...(modern && !githubReleaseUpdates(version) ? ['latest.json'] : [])];
   const entries = fs.readdirSync(directory, { withFileTypes: true });
   if (entries.length !== names.length + 1 || entries.some(entry => entry.name === '.metadata' ? !entry.isDirectory() || entry.isSymbolicLink() : !names.includes(entry.name) || !entry.isFile() || entry.isSymbolicLink())) throw Error('Unexpected release artifact');
   const metadata = path.join(directory, '.metadata');
   const metaEntries = fs.readdirSync(metadata, { withFileTypes: true });
   if (metaEntries.length !== 2 || metaEntries.some(entry => !['update.json', 'acceptance.json'].includes(entry.name) || !entry.isFile() || entry.isSymbolicLink())) throw Error('Unexpected release metadata');
   if (!acceptance || acceptance.sourceCommit !== commit || acceptance.version !== version || Object.keys(acceptance.platforms || {}).sort().join() !== [...platforms].sort().join()) throw Error('Missing three-platform acceptance');
-  if (modern) {
+  if (modern && !githubReleaseUpdates(version)) {
     const raw = fs.readFileSync(path.join(directory, 'latest.json'));
     if (raw.length > 64 * 1024 || !isDeepStrictEqual(JSON.parse(raw.toString('utf8')), manifest) || !raw.equals(fs.readFileSync(path.join(metadata, 'update.json')))) throw Error('Public latest.json differs from the accepted signed manifest');
   }

@@ -117,7 +117,7 @@ test('native project bridge uses entry/index envelopes; ordinary browser never i
 });
 
 test('actual Solid gallery lazily observes thumbnails, opens real returned URLs and owns Escape/disposal', async () => {
-  const observers = [], calls = [], links = []; let document, metadata = project();
+  const observers = [], calls = [], links = []; let document, metadata = project(), rejectLinks = false;
   class Element {
     constructor(type) { this.type = type; this.children = []; this.props = {}; this.parent = null; this.isConnected = true; }
     focus() { document.activeElement = this; }
@@ -142,7 +142,7 @@ test('actual Solid gallery lazily observes thumbnails, opens real returned URLs 
     : name === 'solid-js/web' ? synthetic({ Portal: props => props.children })
       : name === '../extension-project-state' ? controller
         : name === '../extension-bridge' ? synthetic({ extensionNative: true, getExtensionProject: async () => metadata, getExtensionProjectImage: async (_entry, index) => { calls.push(index); return png; } })
-          : name === '../reply-content-bridge' ? synthetic({ nativeReplyLinks: () => true, openReplyLink: async url => links.push(url) })
+          : name === '../reply-content-bridge' ? synthetic({ nativeReplyLinks: () => true, openReplyLink: async url => { if (rejectLinks) throw Error('Native browser unavailable'); links.push(url); } })
             : name === '../i18n' ? synthetic({ t: value => value })
               : synthetic(Object.fromEntries(['ArrowLeft', 'ArrowRight', 'ExternalLink', 'Image', 'LoaderCircle', 'X'].map(key => [key, () => renderer.createElement('svg')]))));
   await component.evaluate(); const root = renderer.createElement('root');
@@ -165,6 +165,14 @@ test('actual Solid gallery lazily observes thumbnails, opens real returned URLs 
   const afterClose = key('ArrowLeft'); assert.equal(afterClose.defaultPrevented, false);
   const sourceUrl = `https://github.com/own/source/tree/${'b'.repeat(40)}`;
   const source = all().find(node => node.type === 'a' && node.props.href === sourceUrl); assert.ok(source); source.props.onClick({ preventDefault() {} }); await tick(); assert.deepEqual(links, [sourceUrl]);
+  rejectLinks = true; source.props.onClick({ preventDefault() {} }); await tick();
+  assert.ok(all().some(node => node.props?.class === 'plugin-error' && node.props.role === 'alert'));
+  rejectLinks = false;
+  const releaseUrl = 'https://github.com/own/package/releases/tag/v1.0.0';
+  const release = all().find(node => node.type === 'a' && node.props.href === releaseUrl);
+  release.props.onClick({ preventDefault() {} }); await tick();
+  assert.deepEqual(links, [sourceUrl, releaseUrl]);
+  assert.equal(all().some(node => node.props?.class === 'plugin-error' && node.props.role === 'alert'), false);
   dispose(); assert.ok(observers.every(observer => observer.disconnected));
   metadata = null;
   const oldRoot = renderer.createElement('root');

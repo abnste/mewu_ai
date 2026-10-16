@@ -14,7 +14,7 @@ export default function ExtensionProviders(props: Props) {
   const agentId = createMemo(() => props.agentId);
   let disposed = false, epoch = 0, initialized = false, eventSerial = 0, unsubscribe: (() => void) | undefined, unsubscribeBindings: (() => void) | undefined, listening: Promise<void> | undefined;
   const accept = (value: ExtensionRecord[]) => { if (!disposed) setRecords(old => mergeExtensionRecords(old, value)); };
-  const agents = createMemo(() => extensionServices(records(), 'agent')), memories = createMemo(() => extensionServices(records(), 'memory'));
+  const agents = createMemo(() => extensionServices(records(), 'agent', true)), memories = createMemo(() => extensionServices(records(), 'memory', true));
   const choices = (kind: 'agent' | 'memory') => kind === 'agent' ? agents() : memories();
   const binding = (kind: 'agent' | 'memory') => bindings().find(binding => binding.agentId === props.agentId && binding.kind === kind);
   // Native acknowledgements/events contain the complete binding set. Retain a
@@ -48,7 +48,7 @@ export default function ExtensionProviders(props: Props) {
   async function select(kind: 'agent' | 'memory', key: string) {
     if (pending() || !props.saved) return;
     const choice = choices(kind).find(choice => extensionServiceKey(choice) === key);
-    if (key && !choice) return;
+    if (key && (!choice || choice.unavailableReason)) return;
     const agentId = props.agentId, current = epoch; setPending(kind); setError('');
     try {
       const value = await api.setExtensionBinding(agentId, kind, binding(kind)?.revision, choice ? { pluginId: choice.record.manifest.id, serviceId: choice.service.id } : undefined);
@@ -60,7 +60,7 @@ export default function ExtensionProviders(props: Props) {
     <For each={['agent', 'memory'] as const}>{kind => <Row title={t(kind === 'agent' ? 'Agent 引擎' : '记忆提供方')}><select aria-label={t(kind === 'agent' ? 'Agent 引擎' : '记忆提供方')} value={selected(kind)} disabled={Boolean(pending())} onChange={event => void select(kind, event.currentTarget.value)}>
       <option value="">{t(kind === 'agent' ? 'Mewu 默认' : '当前记忆设置')}</option>
       <Show when={unavailable(kind)}><option value={selected(kind)} disabled>{binding(kind)?.pluginId} · {t('不可用')}</option></Show>
-      <For each={choices(kind)}>{choice => <option value={extensionServiceKey(choice)}>{choice.service.title} · {choice.record.manifest.name}</option>}</For>
+      <For each={choices(kind)}>{choice => <option disabled={Boolean(choice.unavailableReason)} value={extensionServiceKey(choice)}>{choice.service.title} · {choice.unavailableReason ? t(choice.unavailableReason) : choice.record.manifest.name}</option>}</For>
     </select></Row>}</For>
     <Show when={error()}><p class="settings-error" role="alert">{error()}</p></Show>
   </Show>;
