@@ -5,6 +5,7 @@ import { createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import * as pin from './pin-bridge';
 import { PinDragGesture, pinImageLayout } from './pin-interaction';
 import './pin.css';
+import PinVideo from './components/PinVideo';
 
 export default function PinView() {
   document.documentElement.dataset.surface = 'pin';
@@ -29,7 +30,7 @@ export default function PinView() {
   });
   async function close() { if (closing || disposed) return; closing = true; zoomSteps = 0; gesture.end(); try { await pin.controlPin({ type: 'close' }); } catch (cause) { closing = false; report(cause); } }
   async function exportImage(copy: boolean) { if (exporting || closing || disposed || !state()) return; exporting = true; try { await pin.exportPin(copy); } catch (cause) { report(cause); } finally { exporting = false; } }
-  function down(event: PointerEvent) { if (event.button !== 0 || closing || !state() || (event.target as Element).closest('button')) return; event.preventDefault(); gesture.begin(event.clientX, event.clientY, event.pointerId); }
+  function down(event: PointerEvent, grip = false) { if (event.button !== 0 || closing || !state() || !grip && (event.target as Element).closest('button,.pin-video-content')) return; event.preventDefault(); gesture.begin(event.clientX, event.clientY, event.pointerId); }
   function move(event: PointerEvent) {
     const value = state(); if (!value || closing || dragging) return;
     if (gesture.move(event.clientX, event.clientY, event.pointerId, event.buttons, value.dragThresholdX, value.dragThresholdY)) { dragging = true; void pin.startPinDrag().catch(report).finally(() => { dragging = false; }); }
@@ -46,14 +47,16 @@ export default function PinView() {
     if (nativeSelectOwnsEscape(event)) return;
     if (event.isComposing || event.repeat || closing) return;
     if (event.key === 'Escape') { event.preventDefault(); gesture.end(); void pin.controlPin({ type: 'escape' }).catch(report); }
-    else if ((event.ctrlKey || event.metaKey) && !event.altKey && ['c', 's'].includes(event.key.toLowerCase())) { event.preventDefault(); void exportImage(event.key.toLowerCase() === 'c'); }
+    else if (!state()?.media && (event.ctrlKey || event.metaKey) && !event.altKey && ['c', 's'].includes(event.key.toLowerCase())) { event.preventDefault(); void exportImage(event.key.toLowerCase() === 'c'); }
   }
   const resize = () => { gesture.end(); setViewport({ width: innerWidth, height: innerHeight }); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end); window.addEventListener('blur', end); window.addEventListener('resize', resize); document.addEventListener('keydown', keyboard);
   document.addEventListener('wheel', wheel, { passive: false });
   onCleanup(() => { disposed = true; gesture.end(); zoomSteps = 0; stop?.(); clearTimeout(errorTimer); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); window.removeEventListener('blur', end); window.removeEventListener('resize', resize); document.removeEventListener('keydown', keyboard); document.removeEventListener('wheel', wheel); });
   return <main class="pin-surface" tabindex={0} style={{ '--pin-padding': `${padding()}px`, '--pin-outline': `${1 / scale()}px`, '--pin-shadow-y': `${2 / scale()}px`, '--pin-shadow-blur': `${6 / scale()}px`, '--pin-radius': `${10 / scale()}px`, opacity: state()?.opacity ?? 1 }} onPointerDown={down} onDblClick={event => { if (event.button === 0 && !(event.target as Element).closest('button')) { event.preventDefault(); void close(); } }} onContextMenu={event => { event.preventDefault(); gesture.end(); if (!closing) void pin.showPinMenu().catch(report); }}>
-    <Show when={state()}>{value => <div class="pin-frame"><img class="pin-image" src={value().imageUrl} alt={t("贴图")} draggable={false} style={{ width: `${layout()?.width ?? 0}px`, height: `${layout()?.height ?? 0}px`, transform: `translate(-50%,-50%) rotate(${layout()?.angle ?? 0}deg)` }} onLoad={event => void loaded(event.currentTarget)} onError={failed} /></div>}</Show>
+    <Show when={state()}>{value => <div class="pin-frame"><Show when={value().media} fallback={<img class="pin-image" src={value().imageUrl} alt={t("贴图")} draggable={false} style={{ width: `${layout()?.width ?? 0}px`, height: `${layout()?.height ?? 0}px`, transform: `translate(-50%,-50%) rotate(${layout()?.angle ?? 0}deg)` }} onLoad={event => void loaded(event.currentTarget)} onError={failed} />}>
+      <div class="pin-image pin-video-box" style={{ width: `${layout()?.width ?? 0}px`, height: `${layout()?.height ?? 0}px`, transform: `translate(-50%,-50%) rotate(${layout()?.angle ?? 0}deg)` }}><PinVideo source={value().imageUrl} media={value().media!} width={value().width} height={value().height} onReady={() => { if (!disposed && !acknowledged) { acknowledged = true; void pin.pinReady(true).catch(report); } }} onFailed={failed} onError={report} onDrag={event => down(event, true)} /></div>
+    </Show></div>}</Show>
     <Show when={error()}><div class="pin-error" role="alert"><span>{error()}</span><button title={t("关闭贴图")} aria-label={t("关闭贴图")} onClick={() => void close()}>×</button></div></Show>
   </main>;
 }

@@ -54,7 +54,7 @@ export default function RecordingSurface() {
   const canceling = () => status()?.phase === 'countdown' || status()?.phase === 'starting';
   onMount(async () => {
     try {
-      stop = await subscribeRecording(next => { if (!disposed) { setStatus(next); setError(''); } });
+      stop = await subscribeRecording(next => { if (!disposed) { setStatus(next); setError(''); } }, 'recording-controls');
       if (disposed) stop();
     } catch (cause) { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)); }
   });

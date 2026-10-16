@@ -68,6 +68,7 @@
     "allow-start-scroll-capture",
     "allow-control-scroll-capture",
     "allow-run-plugin-pin",
+    "allow-pin-scene-item",
     "allow-cancel-plugin-pin",
     "allow-get-window-snap-map",
     "allow-export-text-asset",

@@ -14,6 +14,7 @@ import type { PluginContribution, PluginRecord } from '../plugin-contracts';
 import { assetUrl, captureBackgroundReady, exportRegion as exportNativeRegion, exportTextAsset, native } from '../bridge';
 import { prepareCaptureBackground } from '../capture-presentation';
 import { captureDisplayGeometry } from '../capture-display';
+import { persistBackgroundItem, projectBackgroundItem } from '../media-item-geometry';
 import ArtifactCard from './ArtifactCard';
 import {isBlackboardObject} from '../blackboard-objects';
 import { videoCopyKey } from '../video-copy';
@@ -61,6 +62,7 @@ interface Props {
   onCodeSource?: (source: CodeSource | undefined, paused: boolean) => void;
   onCodeAction?: (sourceToken: string, codeId: string, action: CodeAction) => Promise<boolean>;
   onRegisterDrawingFlush?: RegisterDrawingFlush;
+  onRegisterObjectFlush?: RegisterDrawingFlush;
   scene: Scene;
   refs: Reference[];
   onAddRegion: (region: Region) => void | Promise<void>;
@@ -81,6 +83,7 @@ interface Props {
   onCopyClose?: (sceneId: string) => Promise<boolean | void>;
   onRecordRegion: (regionId: string) => void;
   onPin?: (pluginId: string, revision: number, contributionId: string, regionId: string) => Promise<boolean>;
+  onPinItem?: (itemId: string) => Promise<boolean | void>;
   onScrollCapture?: (pluginId: string, revision: number, contributionId: string, target: OcrTarget, snapshotNodeId?: number) => Promise<void>;
   plugins: PluginRecord[];
   onPluginWorkflow: (pluginId: string, revision: number, contributionId: string, regionId: string) => Promise<void>;
@@ -108,24 +111,6 @@ const TOOLBAR_WIDTH = 405, TOOLBAR_HEIGHT = 60, EDGE = 6, GAP = 8, TOLERANCE = 2
 const contains = (box: Box, x: number, y: number, padding = 0) => x >= box.x - padding && x <= box.x + box.width + padding && y >= box.y - padding && y <= box.y + box.height + padding;
 const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(Math.max(low, high), value));
-
-function projectBackgroundItem(item: SpaceItem, background: Box, viewport: { width: number; height: number }): SpaceItem {
-  return { ...item,
-    x: (background.x + item.x * background.width) / viewport.width,
-    y: (background.y + item.y * background.height) / viewport.height,
-    width: item.width * background.width / viewport.width,
-    height: item.height * background.height / viewport.height,
-  };
-}
-function persistBackgroundItem(item: SpaceItem, background: Box, viewport: { width: number; height: number }): SpaceItem {
-  const width = clamp(item.width * viewport.width / background.width, .000001, 1);
-  const height = clamp(item.height * viewport.height / background.height, .000001, 1);
-  return { ...item,
-    x: clamp((item.x * viewport.width - background.x) / background.width, 0, 1 - width),
-    y: clamp((item.y * viewport.height - background.y) / background.height, 0, 1 - height),
-    width, height,
-  };
-}
 
 export default function SpaceCanvas(props: Props) {
   function backgroundLoaded(image: HTMLImageElement, backgroundId: string) {
@@ -244,9 +229,13 @@ export default function SpaceCanvas(props: Props) {
   const [objectTrash,setObjectTrash]=createSignal<ObjectTrashPort>(),[hoveredObject,setHoveredObject]=createSignal('');
   const objectFlushes=new Map<string,DrawingFlush>();
   const objectWheels=new Map<string,(event:WheelEvent)=>void>();
-  const wheelObject=(event:WheelEvent)=>{if((event.target as Element).closest('button,input,textarea,.drawing-toolbar'))return false;const vp=viewport();const item=[...props.scene.items].reverse().find(item=>{const p=displayedItem(item.id);return item.asset.kind==='image'&&event.clientX>=p.x*vp.width&&event.clientY>=p.y*vp.height&&event.clientX<(p.x+p.width)*vp.width&&event.clientY<(p.y+p.height)*vp.height;});if(!item)return false;objectWheels.get(item.id)?.(event);return event.defaultPrevented;};
+  const wheelObject=(event:WheelEvent)=>{if((event.target as Element).closest('button,input,textarea,.drawing-toolbar'))return false;const vp=viewport();const item=[...props.scene.items].reverse().find(item=>{const p=displayedItem(item.id);return (item.asset.kind==='image'||item.asset.kind==='video')&&event.clientX>=p.x*vp.width&&event.clientY>=p.y*vp.height&&event.clientX<(p.x+p.width)*vp.width&&event.clientY<(p.y+p.height)*vp.height;});if(!item)return false;objectWheels.get(item.id)?.(event);return event.defaultPrevented;};
   const registerObjectTrash=(port:ObjectTrashPort)=>{setObjectTrash(port);return()=>{if(objectTrash()===port)setObjectTrash(undefined);};};
   const flushObjects=async(active:()=>boolean)=>{for(const flush of [...objectFlushes.values()]){if(!active())throw Error('素材编辑已切换');await flush(active);}};
+  // Board editors already compose their object flushes into DrawingFlushRegistry.
+  // Plain capture objects need their own owner without displacing that editor.
+  const unregisterObjects = props.onRegisterObjectFlush?.(async active => { if (!props.blackboard) await flushObjects(active); });
+  onCleanup(() => unregisterObjects?.());
   const hoverObject=(event:PointerEvent)=>{if(event.buttons)return;const vp=viewport();setHoveredObject([...props.scene.items].reverse().find(item=>{const p=displayedItem(item.id);return event.clientX>=p.x*vp.width&&event.clientY>=p.y*vp.height&&event.clientX<(p.x+p.width)*vp.width&&event.clientY<(p.y+p.height)*vp.height;})?.id??'');};
   // A Solid component owns the list once; a reactive helper invocation
   // would remount every video/image when a scene receipt updates its props.
@@ -254,7 +243,17 @@ export default function SpaceCanvas(props: Props) {
     // Disposal invokes media observers before this For owner is fully gone.
     // Keep its last owned item available while removal cleans those observers.
     const item=createMemo<SpaceItem>(previous=>props.scene.items.some(value=>value.id===id)?displayedItem(id):previous,untrack(()=>displayedItem(id)));
-    return <ArtifactCard aiAvailable={props.aiAvailable} onRegisterWheel={itemProps.board?wheel=>{objectWheels.set(id,wheel);return()=>{if(objectWheels.get(id)===wheel)objectWheels.delete(id);};}:undefined} boardSceneId={itemProps.board?props.scene.id:undefined} onError={props.onError} blackboard={itemProps.board} interactive={itemProps.interactive?.()??true} hovered={hoveredObject()===id} trash={objectTrash()} onRegisterFlush={itemProps.board?flush=>{objectFlushes.set(id,flush);return()=>{if(objectFlushes.get(id)===flush)objectFlushes.delete(id);};}:undefined} onOpenBlackboard={!itemProps.board&&typeof item().state?.blackboardSceneId==='string'&&props.onOpenBlackboard?()=>props.onOpenBlackboard!(id):undefined} busy={props.busy||(itemProps.board&&props.blackboardEnabled===false)} video={props.video?{...props.video,sceneId:props.scene.id,busy:props.busy,annotationBusy:props.scene.closed||props.scene.frozen||props.scene.run?.status==='running',authoringBusy:props.authoringBusy,inputLocked:props.inputLocked,drawingAllowed:!drawingSession(),drawingGrant:videoDrawingGrant(),grant:videoGrant()}:undefined} item={item()} active={activeItemId()===id} onActivate={()=>setActiveItemId(id)} referenced={props.refs.some(ref=>ref.kind==='item'&&ref.id===id)} onReference={()=>props.onReference({kind:'item',id})} onRemove={()=>props.onRemoveItem(id)} onUpdate={updateItem} onCopy={props.onVideoCopy?()=>{void props.onVideoCopy!(id).catch(error=>props.onError(error instanceof Error?error.message:String(error)));}:undefined} onExport={()=>{const item=props.scene.items.find(item=>item.id===id);const saving=item?.asset.kind==='text'?exportTextAsset(item.asset.id):item?.asset.kind==='video'?props.onVideoExport?.(id):undefined;void saving?.catch(error=>props.onError(error instanceof Error?error.message:String(error)));}}/>;}}</For>;
+    return <ArtifactCard aiAvailable={props.aiAvailable}
+      onRegisterWheel={itemProps.board?wheel=>{objectWheels.set(id,wheel);return()=>{if(objectWheels.get(id)===wheel)objectWheels.delete(id);};}:undefined}
+      boardSceneId={itemProps.board?props.scene.id:undefined} onError={props.onError} blackboard={itemProps.board} interactive={itemProps.interactive?.()??true} hovered={hoveredObject()===id} trash={objectTrash()}
+      onRegisterFlush={flush=>{objectFlushes.set(id,flush);return()=>{if(objectFlushes.get(id)===flush)objectFlushes.delete(id);};}}
+      onOpenBlackboard={!itemProps.board&&typeof item().state?.blackboardSceneId==='string'&&props.onOpenBlackboard?()=>props.onOpenBlackboard!(id):undefined}
+      onPin={props.onPinItem&&(item().asset.kind==='image'||item().asset.kind==='video')?()=>props.onPinItem!(id):undefined}
+      busy={props.busy||(itemProps.board&&props.blackboardEnabled===false)}
+      video={props.video?{...props.video,sceneId:props.scene.id,busy:props.busy,annotationBusy:props.scene.closed||props.scene.frozen||props.scene.run?.status==='running',authoringBusy:props.authoringBusy,inputLocked:props.inputLocked,drawingAllowed:!drawingSession(),drawingGrant:videoDrawingGrant(),grant:videoGrant()}:undefined}
+      item={item()} active={activeItemId()===id} onActivate={()=>setActiveItemId(id)} referenced={props.refs.some(ref=>ref.kind==='item'&&ref.id===id)} onReference={()=>props.onReference({kind:'item',id})} onRemove={()=>props.onRemoveItem(id)} onUpdate={updateItem}
+      onCopy={props.onVideoCopy?()=>{void props.onVideoCopy!(id).catch(error=>props.onError(error instanceof Error?error.message:String(error)));}:undefined}
+      onExport={()=>{const item=props.scene.items.find(item=>item.id===id);const saving=item?.asset.kind==='text'?exportTextAsset(item.asset.id):item?.asset.kind==='video'?props.onVideoExport?.(id):undefined;void saving?.catch(error=>props.onError(error instanceof Error?error.message:String(error)));}}/>;}}</For>;
   const activeRegion = createMemo(() => regionById(active()));
   const activeRegionIdentity = createMemo(() => [props.scene.id, activeRegion()?.id] as const, undefined,
     { equals: (previous, next) => previous[0] === next[0] && previous[1] === next[1] });

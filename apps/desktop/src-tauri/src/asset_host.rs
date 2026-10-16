@@ -118,7 +118,10 @@ pub async fn import_assets(
     let (target, authoring_grant) = {
         let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let engine = host.lock()?;
-        (ImportTarget::capture(&engine.store, &scene_id)?, crate::optional_capabilities::scene_authoring(&engine, &scene_id)?)
+        (
+            ImportTarget::capture(&engine.store, &scene_id)?,
+            crate::optional_capabilities::scene_authoring(&engine, &scene_id)?,
+        )
     };
     let root = host.assets.clone();
     let import_window = window.clone();
@@ -181,9 +184,14 @@ pub async fn import_assets(
     // for that lock while servicing a window request. Use the current viewport
     // after the dialog, as the window may have moved between displays.
     let logical_size = import_window
-        .inner_size().map_err(|_| "无法读取空间尺寸")?
-        .to_logical::<u32>(import_window.scale_factor().map_err(|_| "无法读取空间缩放")?);
-    let (published, imported_images) = {
+        .inner_size()
+        .map_err(|_| "无法读取空间尺寸")?
+        .to_logical::<u32>(
+            import_window
+                .scale_factor()
+                .map_err(|_| "无法读取空间缩放")?,
+        );
+    let published = {
         let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
         let mut engine = host.lock()?;
         host.exit.ensure_running()?;
@@ -192,42 +200,32 @@ pub async fn import_assets(
             return Err("截图尚未完成，请重新添加文件".into());
         }
         target.validate(&engine.store)?;
-        crate::optional_capabilities::scene_authoring_current(&engine, &scene_id, &authoring_grant)?;
+        crate::optional_capabilities::scene_authoring_current(
+            &engine,
+            &scene_id,
+            &authoring_grant,
+        )?;
         if let Some(mut batch) = prepared {
-            let imported_images = batch
-                .assets
-                .iter()
-                .filter(|asset| asset.kind == AssetKind::Image)
-                .map(|asset| asset.id.clone())
-                .collect::<Vec<_>>();
             let snapshot = engine
                 .store
-                .import_assets_in_viewport(&scene_id, batch.assets.clone(), logical_size.width, logical_size.height)
+                .import_assets_in_viewport(
+                    &scene_id,
+                    batch.assets.clone(),
+                    logical_size.width,
+                    logical_size.height,
+                )
                 .map_err(|error| error.to_string())?;
             batch.commit();
-            (crate::publish(&app, &snapshot), imported_images)
+            crate::publish(&app, &snapshot)
         } else {
-            (
-                HostSnapshot {
-                    snapshot: engine.store.snapshot(),
-                    revision: host.revision.load(Ordering::Acquire),
-                },
-                Vec::new(),
-            )
+            HostSnapshot {
+                snapshot: engine.store.snapshot(),
+                revision: host.revision.load(Ordering::Acquire),
+            }
         }
     };
-    // File transaction is complete. PinRegistry owns any later image work and
-    // native windows; never hold Engine or the import-drain permit across it.
+    // Import only commits scene objects. Pinning is a separate explicit action.
     drop(permit);
-    if !imported_images.is_empty() {
-        crate::import_pin_host::pin_imported_images(
-            &app,
-            &scene_id,
-            &published.snapshot,
-            &imported_images,
-        )
-        .await;
-    }
     Ok(published)
 }
 
@@ -377,38 +375,63 @@ mod tests {
         assert!(target.validate(&store).is_ok());
         assert!(ImportTarget::capture(&store, "other").is_err());
         // A real draft transaction is unrelated to the captured import source.
-        store.apply(SceneCommand::SetDraft {
-            scene_id: scene_id.clone(), draft: "仍在编辑的草稿".into(),
-        }).unwrap();
+        store
+            .apply(SceneCommand::SetDraft {
+                scene_id: scene_id.clone(),
+                draft: "仍在编辑的草稿".into(),
+            })
+            .unwrap();
         assert!(target.validate(&store).is_ok());
         let mut agent = store.snapshot().agents[0].clone();
         agent.id = uuid::Uuid::new_v4().to_string();
         let agent_id = agent.id.clone();
         store.apply(SceneCommand::SaveAgent { agent }).unwrap();
-        store.apply(SceneCommand::SetAgent { scene_id: scene_id.clone(), agent_id }).unwrap();
+        store
+            .apply(SceneCommand::SetAgent {
+                scene_id: scene_id.clone(),
+                agent_id,
+            })
+            .unwrap();
         assert!(target.validate(&store).is_err());
-        store.apply(SceneCommand::SetAgent {
-            scene_id: scene_id.clone(), agent_id: target.agent_id.clone(),
-        }).unwrap();
+        store
+            .apply(SceneCommand::SetAgent {
+                scene_id: scene_id.clone(),
+                agent_id: target.agent_id.clone(),
+            })
+            .unwrap();
         assert!(target.validate(&store).is_ok());
-        store.set_background(&scene_id, Asset {
-            capture_coordinates: None,
-            id: uuid::Uuid::new_v4().to_string(),
-            name: "synthetic".into(),
-            path: "unused".into(),
-            kind: AssetKind::Image,
-            width: Some(10),
-            height: Some(10),
-            origin_x: None,
-            origin_y: None,
-            scale_factor: None,
-        }).unwrap();
+        store
+            .set_background(
+                &scene_id,
+                Asset {
+                    capture_coordinates: None,
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: "synthetic".into(),
+                    path: "unused".into(),
+                    kind: AssetKind::Image,
+                    width: Some(10),
+                    height: Some(10),
+                    origin_x: None,
+                    origin_y: None,
+                    scale_factor: None,
+                },
+            )
+            .unwrap();
         assert!(target.validate(&store).is_err());
         let target = ImportTarget::capture(&store, &scene_id).unwrap();
-        for command in [SceneCommand::NewScene, SceneCommand::FreezeScene { scene_id: scene_id.clone() }] {
+        for command in [
+            SceneCommand::NewScene,
+            SceneCommand::FreezeScene {
+                scene_id: scene_id.clone(),
+            },
+        ] {
             store.apply(command).unwrap();
             assert!(target.validate(&store).is_err());
-            store.apply(SceneCommand::ActivateScene { scene_id: scene_id.clone() }).unwrap();
+            store
+                .apply(SceneCommand::ActivateScene {
+                    scene_id: scene_id.clone(),
+                })
+                .unwrap();
             assert!(target.validate(&store).is_ok());
         }
         store.apply(SceneCommand::CloseScene { scene_id }).unwrap();

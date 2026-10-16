@@ -5,6 +5,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule } from 'node:vm';
 const load = async (path, imports = {}) => { const module = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL(path, import.meta.url), 'utf8'), { mode: 'transform' })); await module.link(name => { if (!imports[name]) throw new Error(`Unexpected ${name}`); return imports[name]; }); await module.evaluate(); return module; };
 const interaction = await load('./pin-interaction.ts'), { PinDragGesture, PinRevisionGate, pinImageLayout, preparePin, cancelPinOnEscape } = interaction.namespace;
+const media = await load('./pin-media.ts');
 const { outputDrawing } = (await load('./capture-completion.ts')).namespace;
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const plain = value => JSON.parse(JSON.stringify(value)), checks = [];
@@ -54,12 +55,13 @@ const plain = value => JSON.parse(JSON.stringify(value)), checks = [];
   flush.resolve(); assert.equal(await operation, false); assert.deepEqual(events, ['cancel', 'prevent', 'stop']);
   checks.push('Pending-pin Escape is consumed before editor/busy handlers, cancels preparation, and does not close the scene or editor');
 }
-const good = { id: 'pin', revision: 0, imageUrl: 'http://127.0.0.1:49320/pin/image.png', width: 480, height: 320, quarterTurns: 0, topmost: true, opacity: 1, scaleFactor: 1, shadowPadding: 12, dragThresholdX: 4, dragThresholdY: 4 };
+const good = { id: '12345678-1234-4234-9234-123456789abc', revision: 0, imageUrl: 'http://127.0.0.1:49320/pin/image.png', width: 480, height: 320, quarterTurns: 0, topmost: true, opacity: 1, scaleFactor: 1, shadowPadding: 12, dragThresholdX: 4, dragThresholdY: 4 };
 async function bridge(native = true, options = {}) {
   const calls = [], handlers = new Map(), stops = [];
   const core = new SyntheticModule(['invoke', 'isTauri'], function () { this.setExport('isTauri', () => native); this.setExport('invoke', async (command, args) => { calls.push({ command, args }); if (command === 'get_pin_state') return options.initial ?? good; return { id: 'pin' }; }); });
   const event = new SyntheticModule(['listen'], function () { this.setExport('listen', async (name, callback, target) => { calls.push({ event: name, target }); if (name === options.failListen) throw new Error('listen failed'); handlers.set(name, callback); return () => stops.push(name); }); });
-  const module = await load('./pin-bridge.ts', { '@tauri-apps/api/core': core, '@tauri-apps/api/event': event, './pin-interaction': interaction });
+  const window = new SyntheticModule(['getCurrentWebviewWindow'], function () { this.setExport('getCurrentWebviewWindow', () => ({label:`pin-${good.id}`})); });
+  const module = await load('./pin-bridge.ts', { '@tauri-apps/api/core': core, '@tauri-apps/api/event': event, '@tauri-apps/api/webviewWindow': window, './pin-interaction': interaction, './pin-media': media });
   return { api: module.namespace, calls, handlers, stops };
 }
 {
@@ -67,6 +69,7 @@ async function bridge(native = true, options = {}) {
   const subscription = value.api.subscribePin(state => seen.push(state.revision), error => errors.push(error));
   await new Promise(resolve => setImmediate(resolve)); value.handlers.get('pin-state')({ payload: { ...good, revision: 3 } }); initial.resolve(good); const stop = await subscription;
   assert.deepEqual(seen, [3]); value.handlers.get('pin-error')({ payload: { message: 'save failure' } }); assert.deepEqual(errors, ['save failure']); stop(); value.handlers.get('pin-state')({ payload: { ...good, revision: 4 } }); assert.deepEqual(seen, [3]); assert.deepEqual(value.stops.sort(), ['pin-error', 'pin-state']);
+  assert.ok(value.calls.filter(call => call.event).every(call => call.target.target === `pin-${good.id}`));
   const failed = await bridge(true, { failListen: 'pin-error' }); await assert.rejects(failed.api.subscribePin(() => {}, () => {}), /listen failed/); assert.deepEqual(failed.stops, ['pin-state']);
   checks.push('Both owner-scoped events register before query; race and partial-subscription failure clean up without late UI updates');
 }

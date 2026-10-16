@@ -44,9 +44,9 @@ export default function FrozenWidget() {
     if (!isTauri()) return;
     try {
       for (const subscribe of [
-        () => listen<FrozenSnapshot>('frozen-scenes', event => accept(event.payload)),
-        () => listen<boolean>('frozen-widget-layout', event => setExpanded(event.payload)),
-        () => listen<RunEvent>('run-event', ({payload}) => setLive(old=>mergeLivePreview(old,payload))),
+        () => listen<FrozenSnapshot>('frozen-scenes', event => accept(event.payload), { target: 'frozen-widget' }),
+        () => listen<boolean>('frozen-widget-layout', event => setExpanded(event.payload), { target: 'frozen-widget' }),
+        () => listen<RunEvent>('run-event', ({payload}) => setLive(old=>mergeLivePreview(old,payload)), { target: 'frozen-widget' }),
       ]) {
         const stop = await subscribe();
         if (disposed) stop(); else stops.push(stop);

@@ -42,11 +42,11 @@ export class ScrollStatusGate {
   }
   dispose() { this.disposed = true; }
 }
-export async function subscribeScroll(onStatus: (status: ScrollStatus | null) => void): Promise<() => void> {
+export async function subscribeScroll(onStatus: (status: ScrollStatus | null) => void, surface: 'space' | 'scroll-controls' = 'space'): Promise<() => void> {
   if (!native) { onStatus(null); return () => undefined; }
   const gate = new ScrollStatusGate(); let serial = 0;
   const accept = (value: ScrollStatus | null) => { if (gate.accept(value)) onStatus(value); };
-  const stop = await listen<ScrollStatus | null>('scroll-status', event => { serial++; accept(event.payload); });
+  const stop = await listen<ScrollStatus | null>('scroll-status', event => { serial++; accept(event.payload); }, { target: surface });
   try {
     const stamp = serial, initial = await invoke<ScrollStatus | null>('get_scroll_status');
     if (stamp === serial) accept(initial);

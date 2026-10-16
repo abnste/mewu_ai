@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { platforms, releaseVersion, releasePlan, updateUrl, fingerprint, verifySignatureVersion, validateAcceptance, verifyRelease, validateUpdateConfiguration } from './release-contract.mjs';
+import { platforms, releaseVersion, releasePlan, updateUrl, fingerprint, verifySignatureVersion, validateAcceptance, verifyRelease, validateUpdateConfiguration, selfContainedRelease } from './release-contract.mjs';
 const root = fs.realpathSync(process.cwd());
 if (!process.argv[2]) throw Error('A private three-platform assembly plan is required');
 const request = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -43,5 +43,6 @@ for (const { source, asset } of transfers) {
   if ([copied, current].some(value => value.sha256 !== asset.sha256 || value.bytes !== asset.bytes)) throw Error('Asset changed during assembly');
 }
 for (const [name, value] of [['update.json', manifest], ['acceptance.json', acceptance]]) fs.writeFileSync(path.join(output, '.metadata', name), JSON.stringify(value, null, 2) + '\n', { flag: 'wx' });
+if (selfContainedRelease(version)) fs.copyFileSync(path.join(output, '.metadata/update.json'), path.join(output, 'latest.json'), fs.constants.COPYFILE_EXCL);
 const result = verifyRelease(output, manifest, acceptance, commit);
 console.log(JSON.stringify({ version, sourceCommit: commit, assets: result.assets, channelAssets: result.channelAssets, published: false }));

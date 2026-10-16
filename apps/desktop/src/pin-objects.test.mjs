@@ -9,7 +9,8 @@ const object={id:'12345678-1234-4234-9234-123456789abc',imageUrl:'http://127.0.0
 async function load(native=true){
  const calls=[],queries=[],events=new Map();let removed=0;
  const synthetic=values=>new SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value);});
- const imports={'@tauri-apps/api/core':synthetic({invoke:async(name,args)=>{calls.push({name,args});if(name==='get_pin_objects'){const d=defer();queries.push(d);return d.promise;}return null;}}),'@tauri-apps/api/event':synthetic({listen:async(name,callback)=>{events.set(name,callback);return()=>{removed++;events.delete(name);};}}),'./bridge':synthetic({native})};
+ const media=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./pin-media.ts',import.meta.url),'utf8'),{mode:'transform'}));await media.link(()=>assert.fail('unexpected dependency'));await media.evaluate();
+ const imports={'@tauri-apps/api/core':synthetic({invoke:async(name,args)=>{calls.push({name,args});if(name==='get_pin_objects'){const d=defer();queries.push(d);return d.promise;}return null;}}),'@tauri-apps/api/event':synthetic({listen:async(name,callback,options)=>{assert.equal(options?.target,'space');events.set(name,callback);return()=>{removed++;events.delete(name);};}}),'./bridge':synthetic({native}),'./pin-media':media};
  const module=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./pin-objects.ts',import.meta.url),'utf8'),{mode:'transform'}));await module.link(name=>imports[name]);await module.evaluate();return{api:module.namespace,calls,queries,events,removed:()=>removed};
 }
 test('a newer close notification wins over a late initial object query',async()=>{

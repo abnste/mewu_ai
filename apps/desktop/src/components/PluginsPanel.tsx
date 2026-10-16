@@ -87,7 +87,7 @@ export default function PluginsPanel(props: Props) {
     if (loading() || disposed) return;
     setLoading(true); clearError('load');
     try {
-      if (!stopEvents) stopEvents = await bridge.subscribePlugins(accept);
+      if (!stopEvents) stopEvents = await bridge.subscribePlugins(accept, 'settings');
       if (disposed) { stopEvents(); return; }
       accept(await bridge.getPlugins());
       await refreshCatalog();

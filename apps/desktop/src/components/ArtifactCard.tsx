@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
-import { Code2, Copy, Download, File, Image, Link2, Maximize2, Pencil, RotateCcw, Video, X } from 'lucide-solid';
+import { Code2, Copy, Download, File, Image, Link2, Maximize2, Pencil, Pin, RotateCcw, Video, X } from 'lucide-solid';
 import ObjectMoveGrip from './ObjectMoveGrip';
 import {objectMoveGripPosition} from '../object-move-grip';
 import type {ObjectTrashPort} from '../object-trash';
@@ -28,6 +28,7 @@ interface Props {
   onUpdate: (item: SpaceItem) => void | Promise<void>;
   onExport?: () => void;
   onCopy?: () => void;
+  onPin?: () => Promise<boolean | void>;
   video?: Omit<VideoArtifactProps, 'item' | 'active'>;
   busy?: boolean;
   onOpenBlackboard?: () => void;
@@ -42,6 +43,7 @@ export default function ArtifactCard(props: Props) {
   createEffect(() => { props.item.asset.id; setFailed(false); });
   const [reload, setReload] = createSignal(0);
   const [moving, setMoving] = createSignal(false);
+  const [pinning, setPinning] = createSignal(false);
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
   const resized = () => setViewport({ width: innerWidth, height: innerHeight });
   window.addEventListener('resize', resized);
@@ -102,13 +104,21 @@ export default function ArtifactCard(props: Props) {
     finally{if(gestureFlight===request)gestureFlight=undefined;if(!disposed){setPosition(savedPosition());setMoving(false);}}
   }
   function wheel(event:WheelEvent) {
-    if(!isImage()||props.busy||gestureFlight||disposeGesture||disposed)return;
+    if(!isRasterMedia()||props.busy||pinning()||gestureFlight||disposeGesture||disposed)return;
+    if((event.target as Element | undefined)?.closest?.('button,input,textarea,[role="toolbar"]'))return;
     const p={...position(),width:imageBox().width/innerWidth,height:imageBox().height/innerHeight};
     const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?innerHeight:1);
     const next=zoomImageObject(p,{x:event.clientX/innerWidth,y:event.clientY/innerHeight},delta,innerWidth,innerHeight);
     if(!next)return;event.preventDefault();event.stopPropagation();
     zoomAsset=props.item.asset.id;setMoving(true);setPosition(next);clearTimeout(zoomTimer);
     zoomTimer=setTimeout(()=>void flushZoom().catch(()=>{}),140);
+  }
+  async function pinObject() {
+    if (!props.onPin || props.busy || pinning() || disposed) return;
+    setPinning(true);
+    try { await flushZoom(); if (!disposed) await props.onPin(); }
+    catch (error) { if (!disposed) props.onError?.(error instanceof Error ? error.message : String(error)); }
+    finally { if (!disposed) setPinning(false); }
   }
 
   const gesture = (event: PointerEvent, resize = false, control = false, corner?:ResizeCorner) => {
@@ -199,11 +209,13 @@ export default function ArtifactCard(props: Props) {
       <button class="icon-button compact" title={t("移除")} aria-label={t("移除 {0}").replaceAll("{0}", () => String(props.item.asset.name))} disabled={props.busy} onClick={props.onRemove}><X size={14} /></button>
     </header>
     </Show>
-    <Show when={isImage()&&!props.blackboard}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
+    <Show when={isImage()&&(!props.blackboard||props.onPin)}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
+      <Show when={!props.blackboard}>
       <Show when={props.aiAvailable !== false}><button class="icon-button compact" classList={{ selected: props.referenced }} title={props.referenced ? t('取消引用') : t('引用')} aria-label={props.referenced ? t('取消引用') : t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={15} /></button></Show>
       <Show when={props.onOpenBlackboard}><button class="icon-button compact" title={t('编辑黑板')} aria-label={t('编辑黑板')} disabled={props.busy} onClick={() => props.onOpenBlackboard?.()}><Pencil size={15} /></button></Show>
-      <button class="icon-button compact" title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event => gesture(event, true)}><Maximize2 size={15} /></button>
-      <button class="icon-button compact" title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}', () => props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={15} /></button>
+      </Show>
+      <Show when={props.onPin}><button class="icon-button compact" title={t('置顶')} aria-label={t('置顶')} disabled={props.busy||pinning()} onClick={() => void pinObject()}><Pin size={15} /></button></Show>
+      <Show when={!props.blackboard}><button class="icon-button compact" title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}', () => props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={15} /></button></Show>
     </div></Show>
     <Show when={isDocument()}><div class="document-object-tools" role="toolbar" aria-label={t('对象工具')} style={controlPosition()}>
       <button title={t('重新载入')} aria-label={t('重新载入内容')} disabled={props.busy} onClick={()=>setReload(value=>value+1)}><RotateCcw size={18}/></button>
@@ -216,13 +228,15 @@ export default function ArtifactCard(props: Props) {
         </Show>
       </Show>
       <Show when={props.item.asset.kind === 'video'}>
-        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} objectActions={<Show when={!props.blackboard}>
+        <Show when={props.video}>{value => <VideoArtifact {...value()} item={props.item} blackboard={props.blackboard} active={Boolean(props.active && (!props.blackboard || props.interactive && !moving()))} onActivate={props.onActivate} objectActions={<>
+          <Show when={!props.blackboard}>
           <Show when={props.aiAvailable !== false}><button data-caption={t('引用')} class="capture-reference" classList={{ 'capture-referenced': props.referenced }} title={props.referenced?t('取消引用'):t('引用')} aria-label={props.referenced?t('取消引用'):t('引用')} disabled={props.busy} onClick={props.onReference}>@</button></Show>
           <button data-caption={t('复制')} title={t('复制')} aria-label={t('复制视频文件')} disabled={props.busy} onClick={props.onCopy}><Copy size={20}/></button>
           <button data-caption={t('保存')} title={t('保存')} aria-label={t('保存视频')} disabled={props.busy} onClick={props.onExport}><Download size={20}/></button>
-          <button data-caption={t('调整尺寸')} title={t('调整尺寸')} aria-label={t('调整对象尺寸')} disabled={props.busy} onPointerDown={event=>gesture(event,true)}><Maximize2 size={20}/></button>
-          <button data-caption={t('移除')} title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={20}/></button>
-        </Show>} />}</Show>
+          </Show>
+          <Show when={props.onPin}><button data-caption={t('置顶')} title={t('置顶')} aria-label={t('置顶')} disabled={props.busy||pinning()} onClick={() => void pinObject()}><Pin size={20}/></button></Show>
+          <Show when={!props.blackboard}><button data-caption={t('移除')} title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}',()=>props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={20}/></button></Show>
+        </>} />}</Show>
       </Show>
       <Show when={isDocument()}>
         <Show when={reload()+1} keyed>{_revision => <>

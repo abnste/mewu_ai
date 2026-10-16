@@ -80,7 +80,7 @@ export function placeVideoControls(box: VideoPlacementBox, viewport: { width: nu
   const margin = 8, gap = 6;
   const width = Math.min(preference?.width ?? Math.max(box.width, 300), 760, Math.max(120, viewport.width - margin * 2));
   const height = Number.isFinite(measuredHeight) && measuredHeight > 0 ? measuredHeight : width < 520 ? 108 : 64;
-  const left = clamp(box.left + (box.width - width) / 2, margin, viewport.width - width - margin);
+  const left = clamp(preference?.side === 'above' ? box.left : box.left + (box.width - width) / 2, margin, viewport.width - width - margin);
   const overlapsX = (other: VideoPlacementBox) => left < right(other) && left + width > other.left;
   const obstacles = [controls, composer].filter((value): value is VideoPlacementBox => Boolean(value && overlapsX(value)));
   const overlap = (top: number, other: VideoPlacementBox) => Math.max(0, Math.min(top + height + gap, bottom(other)) - Math.max(top - gap, other.top));

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0
-import { subscribeImportPins } from './import-pin-events';
 import PinObjectLayer from './components/PinObjectLayer';
 import { referencePinObject, subscribePinObjects, type PinObject } from './pin-objects';
 import { syncNativeLanguage } from './language-bridge';
@@ -34,6 +33,7 @@ import { ScrollBackdrop } from './ScrollSurface';
 import * as scrollBridge from './scroll-bridge';
 import * as translationBridge from './translation-bridge';
 import * as pinBridge from './pin-bridge';
+import { pinSceneItem } from './media-pin-bridge';
 import * as voiceBridge from './voice-bridge';
 import * as codeBridge from './code-bridge';
 import * as videoBridge from './video-bridge';
@@ -82,6 +82,7 @@ export default function App() {
   const drawingFlush = new DrawingFlushRegistry();
   const videoFlush = new VideoFlushRegistry();
   const videoDrawingFlush = new VideoFlushRegistry();
+  const objectFlush = new VideoFlushRegistry();
   const videoPlayers = new VideoPauseRegistry();
   const videoNavigation = new VideoPlayerRegistry();
   const videoLane = new VideoRequestLane(videoBridge.cancelVideoRequest);
@@ -188,7 +189,6 @@ export default function App() {
       if (!disposed) { setVoiceCapabilities({ supported: false, languages: [], unavailableReason: error instanceof Error ? error.message : String(error) }); setVoiceCapabilitiesRetry(true); }
     } finally { if (!disposed) setVoiceCapabilitiesReading(false); }
   }
-  let stopImportPins: (() => void) | undefined;
   const [pinObjects, setPinObjects] = createSignal<PinObject[]>([]);
   let pinObjectsSubscription: Awaited<ReturnType<typeof subscribePinObjects>> | undefined;
   createEffect(() => { scene()?.id; scene()?.background?.id; void pinObjectsSubscription?.refresh(); });
@@ -387,7 +387,6 @@ export default function App() {
   onMount(async () => {
     try { pinObjectsSubscription = await subscribePinObjects(setPinObjects, showError); if(disposed){pinObjectsSubscription.stop();return;} } catch(cause){showError(cause);}
     await syncNativeLanguage(preferences().uiLanguage).catch(showError);
-    try { stopImportPins = await subscribeImportPins(showError); if (disposed) { stopImportPins(); return; } } catch (error) { showError(error); }
     try {
       stopExitEvents = await bridge.subscribeExitPreparation(request => { void exitPreparation.prepare(request); }, request => exitPreparation.cancel(request));
       if (disposed) { stopExitEvents(); return; }
@@ -429,7 +428,7 @@ export default function App() {
   onCleanup(() => { stopVideoEvents?.(); void videoLane.dispose().catch(() => {}); });
   onMount(() => { if (codeBridge.codeNative) void codeBridge.subscribeCodeInvalidated(id => codes.invalidate(id)).then(stop => { if (disposed) stop(); else { stopCodeEvents = stop; setCodesReady(true); } }).catch(() => {}); });
   onCleanup(() => { codes.dispose(); stopCodeEvents?.(); });
-  onCleanup(() => { disposed = true; streamBuffer.dispose(); pinObjectsSubscription?.stop(); stopImportPins?.(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
+  onCleanup(() => { disposed = true; streamBuffer.dispose(); pinObjectsSubscription?.stop(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
   createEffect(() => { voiceScope(); voice.reconcile(); });
   createEffect(on(() => scene()?.id, () => { voiceComposing = false; }));
   const voiceVisibility = () => { if (document.visibilityState === 'hidden') void voice.cancel().catch(showError); };
@@ -721,6 +720,7 @@ export default function App() {
   async function flush() {
     await voice.cancel();
     const sceneId = scene()?.id; if (!sceneId) return;
+    await objectFlush.flush(() => !disposed && scene()?.id === sceneId);
     await flushVideoDrawing(() => !disposed && scene()?.id === sceneId, sceneId);
     await flushVideo(() => !disposed && scene()?.id === sceneId);
     await flushDrawing(() => !disposed && scene()?.id === sceneId, sceneId);
@@ -752,6 +752,7 @@ export default function App() {
   async function flushForExit(active: () => boolean) {
     await codes.cancel();
     await voice.cancel();
+    await objectFlush.flush(active);
     await videoLane.cancelAll();
     await flushVideo(active);
     assertVideoTextDraftsSaved();
@@ -921,6 +922,23 @@ export default function App() {
       return created && !request.canceled && !disposed;
     } catch (error) { if (!request.canceled && !disposed) { if (exitPreparing()) exitFailure ??= error; throw error; } return false; }
     finally { if (pendingPin === request) pendingPin = undefined; if (!disposed) setBusy(false); finishOperation(); }
+  }
+  async function pinMediaItem(itemId: string): Promise<boolean> {
+    const current = scene(), item = current?.items.find(value => value.id === itemId);
+    if (!current || !item || !['image', 'video'].includes(item.asset.kind) || busy() || sending() || recording() || scroll() || exitPreparing() || current.closed || current.frozen || current.run?.status === 'running') return false;
+    const expectedAssetId = item.asset.id;
+    const expectedSource = JSON.stringify(item.asset);
+    const finishOperation = spaceOperations.begin(); setBusy(true);
+    try {
+      await flush();
+      const saved = scene();
+      const savedItem = saved?.items.find(value => value.id === itemId);
+      if (disposed || exitPreparing() || saved?.id !== current.id || saved.closed || saved.frozen || savedItem?.asset.id !== expectedAssetId || JSON.stringify(savedItem.asset) !== expectedSource) return false;
+      await pinSceneItem({ sceneId: saved.id, itemId, expectedAssetId });
+      await pinObjectsSubscription?.refresh();
+      return true;
+    } catch (error) { if (!disposed) showError(error); return false; }
+    finally { if (!disposed) setBusy(false); finishOperation(); }
   }
   async function importFiles() {
     const current = scene();
@@ -1132,7 +1150,7 @@ export default function App() {
         const ownedRefs=()=>referenceDrafts()[currentId]??ownedScene().refs;
         const ownedDraft=()=>drafts()[currentId]??ownedScene().draft;
         return <Show when={!ownedScene().closed}>
-        <SpaceCanvas onActiveRegionChange={activeCaptureRegionChanged} blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing()} busy={busy() || sending() || exitPreparing()} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={() => setFocusRequest(v => v + 1)} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
+        <SpaceCanvas onRegisterObjectFlush={objectFlush.register} onPinItem={pinMediaItem} onActiveRegionChange={activeCaptureRegionChanged} blackboardEnabled={blackboardAvailable()} aiAvailable={agentReady()} onBlackboardReplay={replaySpace} blackboard={isBlackboard(ownedScene())} blackboardDrawing={blackboardEditing()===currentId} onBlackboardClose={finishBlackboard} onOpenBlackboard={blackboardAvailable()?id=>void reopenBlackboard(id):undefined} onRegisterDrawingHistory={registerDrawingHistory} onRasterSnapshot={accept} showButtonLabels={preferences().showButtonLabels} translationLanguage={preferences().translationLanguage} video={{ previewResolution: preferences().videoPreviewResolution, lane: videoLane, onRegisterPause: videoPlayers.register, onRegisterPlayer: videoNavigation.register, onPauseAll: videoPlayers.pauseAll.bind(videoPlayers), onAnnotationEdit: applyVideoAnnotation, onAnnotationTextEdit: applyVideoAnnotationText, drawing: { onApplyDrawing: applyVideoDrawing, onDocument: applyVideoDrawingDocument, onEditText: applyVideoDrawingText, onSnapshot: accept, onReadVector: videoDrawingBridge.getVideoAnnotationVector, onReadText: videoAnnotationBridge.getVideoAnnotationText, onRegisterDrawingAuthoringFlush: videoDrawingFlush.register }, onRegister: videoFlush.register, onEdit: applyVideoEdit, exporting: videoExport(), onCancelExport: cancelVideoExport, onError: showError }} onVideoExport={exportVideoItem} onVideoCopy={copyVideoItem} onCodeSource={acceptCodeSource} codeView={codeView()} codeActionBusy={codeActionBusy()} onCodeAction={codeAction} onRegisterDrawingFlush={drawingFlush.register} onExportActivity={setExportActive} onGeometryReplay={replayGeometry} onPin={createPin} onTranslationRemove={removeTranslation} translationPending={translations().find(value => value.request.target.sceneId === currentId)} translationNotice={translationNotices()[currentId]} onTranslationRequest={startTranslation} onTranslationCancel={() => translationRequests.cancelScene(currentId)} onClearTranslationNotice={() => setTranslationNotices(old => withoutScene(old, currentId))} onScrollCapture={startScroll} plugins={pluginSnapshot().plugins} onPluginWorkflow={runWorkflow} onDrawingCommand={drawingCommand} onDrawingDocumentCommand={drawingDocumentCommand} onCopyDrawingTable={copyDrawingTable} onOcrRequest={request => plugins.runPluginOcr(request.requestId, request.pluginId, request.revision, request.contributionId, request.target)} onOcrCancel={plugins.cancelPluginOcr} onOcrResult={accept} scene={canvasScene(ownedScene())} refs={ownedRefs()} maskOpacity={preferences().maskOpacity} authoringBusy={busy() || sending()} inputLocked={exitPreparing()} busy={busy() || sending() || exitPreparing()} geometryController={regionGeometry} geometryView={geometryView()} onBeforeExport={flush} onCopyClose={closeScene} onRecordRegion={id => void startRecording(id)} onAddRegion={region => addRegion(currentId, region)} onSelectionActivity={setSelectionActive} onFocusComposer={() => setFocusRequest(v => v + 1)} onSelectionComplete={() => setFocusRequest(v => v + 1)} onRemoveRegion={id => removeReferenceObject('region', id)} onReference={toggleReference} onUpdateItem={item => command({ type: 'update_item', sceneId: currentId, item })} onRemoveItem={id => removeReferenceObject('item', id)} onError={showError} />
         <Show when={blackboardEditing()!==currentId}><PinObjectLayer aiAvailable={agentAvailable()} objects={pinObjects()} busy={busy()||sending()||exitPreparing()} referenced={pinReferenced} onReference={object=>void referencePin(object)} onError={showError}/></Show>
         <Show when={blackboardEditing()!==currentId}><nav class="space-utilities" aria-label={t('空间操作')}>
           <button class="icon-button" aria-label={t('退出')} title={t('退出')} disabled={busy()||exitPreparing()} onClick={()=>void closeScene(currentId)}><X size={17}/></button>

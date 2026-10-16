@@ -14,12 +14,12 @@ use std::sync::{
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 pub const PADDING: u32 = 12;
-#[cfg(target_os = "macos")]
-#[path = "pin_window_macos.rs"]
-mod macos;
 #[cfg(target_os = "linux")]
 #[path = "pin_window_linux.rs"]
 mod linux;
+#[cfg(target_os = "macos")]
+#[path = "pin_window_macos.rs"]
+mod macos;
 const MAX_SIDE: f64 = 8192.;
 const MAX_SURFACE_PIXELS: f64 = 16. * 1024. * 1024.;
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -215,7 +215,7 @@ pub(crate) async fn build(app: &AppHandle, label: &str, original: Rect) -> Resul
                 let _ = queue.run_on_main_thread(move || {
                     if let Some(w) = app.get_webview_window(&label) {
                         if let Err(message) = constrain_after_dpi(&app, &w) {
-                            let _ = w.emit("pin-error", PinError { message });
+                            let _ = app.emit_to(w.label(), "pin-error", PinError { message });
                         }
                         pin_host::emit_state(&app, &w);
                     }
@@ -246,7 +246,7 @@ pub(crate) async fn build(app: &AppHandle, label: &str, original: Rect) -> Resul
                 },
             };
             if let Err(message) = result {
-                let _ = w.emit("pin-error", PinError { message });
+                let _ = handle.emit_to(w.label(), "pin-error", PinError { message });
             }
         });
     });
@@ -368,14 +368,14 @@ pub(crate) fn current_rect(window: &WebviewWindow) -> Result<Rect, String> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-    let position = window.outer_position().map_err(|_| "无法读取贴图位置")?;
-    let size = window.outer_size().map_err(|_| "无法读取贴图尺寸")?;
-    Ok(Rect {
-        x: position.x,
-        y: position.y,
-        width: size.width,
-        height: size.height,
-    })
+        let position = window.outer_position().map_err(|_| "无法读取贴图位置")?;
+        let size = window.outer_size().map_err(|_| "无法读取贴图尺寸")?;
+        Ok(Rect {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        })
     }
 }
 pub(crate) fn apply_rect(window: &WebviewWindow, rect: Rect) -> Result<(), String> {
@@ -500,7 +500,10 @@ pub(crate) async fn control(
     window: &WebviewWindow,
     action: PinAction,
 ) -> Result<(), String> {
-    pin_host::view_state(app, window)?;
+    let state = pin_host::view_state(app, window)?;
+    if state.media.is_some() && matches!(&action, PinAction::Rotate { .. }) {
+        return Err("视频置顶不支持旋转".into());
+    }
     // Closing remains possible while shutdown is preparing; other mutations
     // stay behind the same exit gate as first-party windows.
     if matches!(action, PinAction::Close {}) {
@@ -671,12 +674,16 @@ pub(crate) fn menu(app: &AppHandle, window: &WebviewWindow) -> Result<(), String
     )
     .map_err(|_| "无法创建贴图菜单")?;
     let separator = PredefinedMenuItem::separator(app).map_err(|_| "无法创建贴图菜单")?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &copy, &save, &separator, &left, &right, &restore, &topmost, &opacity, &close,
-        ],
-    )
+    let menu = if state.media.is_some() {
+        Menu::with_items(app, &[&restore, &topmost, &opacity, &close])
+    } else {
+        Menu::with_items(
+            app,
+            &[
+                &copy, &save, &separator, &left, &right, &restore, &topmost, &opacity, &close,
+            ],
+        )
+    }
     .map_err(|_| "无法创建贴图菜单")?;
     window
         .popup_menu(&menu)

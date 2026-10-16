@@ -2862,6 +2862,7 @@ fn main() {
                 pixel_sampler::get_pointer_sample,
                 get_window_snap_map,
                 pin_host::run_plugin_pin,
+                pin_host::media::pin_scene_item,
                 pin_host::cancel_plugin_pin,
                 pin_host::get_pin_state,
                 pin_host::objects::get_pin_objects,

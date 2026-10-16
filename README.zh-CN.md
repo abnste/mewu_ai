@@ -29,7 +29,7 @@
 | 官方来源 | [1.0.0 正式版](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0) · [GitHub 社区插件市场](https://github.com/abnste/mewu-plugins) |
 | 开源协议 | [MPL-2.0](./LICENSE)；[第三方许可全文](./apps/desktop/THIRD-PARTY-NOTICES) |
 
-**MewuAI 1.0.0** 是重制版的首个正式发行，延续预览版 4 的截图操作、API 2 可执行插件与 GitHub 社区市场，包含视频定位与裁切修复、对话条收纳、像素/对象橡皮和直接显示的最近三色。详见[更新说明](./docs/release-notes-1.0.0.md)。
+**MewuAI 1.0.0** 延续首个正式版的截图操作、API 2 可执行插件与 GitHub 社区市场。正式更新改为直接读取最新版本发行，不再依赖旧更新通道。详见[更新说明](./docs/release-notes-1.0.0.md)。
 
 重制版维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；原 Windows **.NET/WPF 0.7.x** 源码与文档保留在 **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**。新版使用 **Rust + Tauri 2 + Solid/TypeScript + SQLite** 及系统 WebView，不使用 Electron。
 
@@ -212,7 +212,7 @@ Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 *
 <details>
 <summary>如何更新？旧版自动更新失败怎么办？</summary>
 
-在 **设置 → 关于** 检查并安装更新。正式版使用固定、带版本签名的[正式更新通道](https://github.com/abnste/mewu_ai/releases/download/update-channel/latest.json)；已有预览版保留原[预览入口](https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json)，同样可以收到 1.0.0 正式版，无需卸载重装。这些入口不依赖分支名称。Windows 便携版更新会运行安装器并切换到安装版位置。
+在 **设置 → 关于** 检查并安装更新。修订后的 1.0.0 直接读取[最新正式发行的版本签名索引](https://github.com/abnste/mewu_ai/releases/latest/download/latest.json)，不再依赖 update-channel。旧的 1.0.0 安装因版本号相同，需要重新安装修订包一次；早期预览版仍可从原入口升级。新更新地址不依赖分支名称。Windows 便携版更新会运行安装器并切换到安装版位置。
 
 Windows **0.7.4** 可在自己的关于页发现 1.0.0 正式版。下载和安装分别确认，完成后如未启动，可从快捷方式打开。**0.7.3 及更早版本应先安装 [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4)。**
 

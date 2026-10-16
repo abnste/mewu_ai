@@ -22,9 +22,9 @@ export async function getPluginCatalog(sourceUrl?: string): Promise<PluginCatalo
   if (sourceUrl) throw new Error('请在桌面版读取插件目录');
   return { entries: Object.values(bundled).map(manifest => ({ manifest, source: { type: 'official' as const } })) };
 }
-export async function subscribePlugins(accept: (value: PluginSnapshot) => void): Promise<() => void> {
+export async function subscribePlugins(accept: (value: PluginSnapshot) => void, surface: 'space' | 'settings' = 'space'): Promise<() => void> {
   if (!pluginNative) return () => undefined;
-  return listen<PluginSnapshot>('plugin-state', event => accept(event.payload));
+  return listen<PluginSnapshot>('plugin-state', event => accept(event.payload), { target: surface });
 }
 export async function preparePlugin(url?: string): Promise<PluginProposal | null> {
   desktop(); return invoke('prepare_plugin', { url: url ?? null });

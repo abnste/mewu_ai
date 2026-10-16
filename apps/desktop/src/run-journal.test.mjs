@@ -113,6 +113,23 @@ const journalComponent=(await component(new URL('components/RunJournalDetails.ts
 const noop=()=>{};
 const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,legacy:false,page:page()},decision:decision(),pending:false,onOpen:noop,onClose:noop,onRetry:noop,onMore:noop,onDetail:noop,onContinue:noop,onSelection:noop,...extra});
 {
+  const reasons={'preparation_failed':'准备失败，未执行','invalid_arguments':'参数无效，未执行','not_advertised':'工具不可用，未执行','authority_changed':'权限已更改，未执行','catalog_changed':'工具已更改，未执行','run_ended':'任务已结束，未执行','budget_exhausted':'已达执行上限，未执行','duplicate_call_id':'重复调用，未执行'};
+  const locale=JSON.parse(await raw('locales/en-US.json'));
+  const render=(phase,reason)=>{
+    const value=entry('failed-call',{label:'绘制批注',phase,selectable:false,contentBytes:0});
+    return web.renderToString(()=>journalComponent(props({state:{identity,open:true,loading:false,legacy:false,page:page({entries:[value]}),detail:{runId:'run-a',journalRevision:7,entry:value,literal:'',unavailable:'not_received',notSentReason:reason}}})));
+  };
+  for(const [reason,text]of Object.entries(reasons)){
+    const html=render('not_sent',reason);assert.ok(html.includes('绘制批注'));assert.ok(html.includes(text));assert.equal(html.includes('内容不可用'),false);assert.ok(locale[text]);
+  }
+  for(const reason of ['invalid_arguments',undefined,'future_reason']){
+    const html=render('unknown',reason);assert.ok(html.includes('结果未确认'));assert.equal(html.includes('未执行'),false);
+  }
+  assert.ok(render('not_sent',undefined).includes('内容不可用'));
+  assert.ok(render('not_sent','future_reason').includes('内容不可用'));
+  checks.push('Actual Solid detail renders all eight durable not-sent reasons with translations; old absent fields stay compatible and unknown results never assert non-execution');
+}
+{
   const html=web.renderToString(()=>journalComponent(props({state:{identity,open:true,loading:false,legacy:false,page:page(),detail:{runId:'run-a',journalRevision:7,entry:entry(),literal:'<script>secret()</script>\n[x](https://example.test)',unavailable:null}}})));
   assert.equal(html.includes('<script>'),false);assert.ok(html.includes('&lt;script>'));assert.equal(html.includes('href='),false);assert.ok(html.includes('继续回答'));assert.equal(html.includes('type="checkbox"'),false);
   const unknown=entry('unknown',{sequence:2,phase:'unknown',selectable:false,contentBytes:0});const html2=web.renderToString(()=>journalComponent(props({decision:decision({selectionRequired:true,ready:false}),state:{identity,open:true,loading:false,legacy:false,page:page({entries:[entry(),unknown]})}})));
@@ -198,7 +215,14 @@ const props=extra=>({summary:summary(),state:{identity,open:true,loading:false,l
   assert.deepEqual(calls.map(value=>value.command),['get_run_journal','get_run_journal_event','preview_run_continuation']);assert.deepEqual(calls[0].args,{sceneId:'scene-a',runId:'run-a',cursor:null,limit:25});assert.equal(Object.hasOwn(calls[2].args,'input'),false);
   let delivered=0;const stop1=await bridge.subscribeRunJournal(()=>delivered++),stop2=await bridge.subscribeRunJournal(()=>delivered++);assert.equal(listeners.length,1);assert.deepEqual(listeners[0].options,{target:'space'});listeners[0].callback({payload:{...identity,revision:8}});assert.equal(delivered,2);stop1();assert.equal(listeners[0].stopped,false);stop2();assert.equal(listeners[0].stopped,true);
   native=false;assert.equal(await bridge.getRunJournal({...identity,limit:25}),null);await assert.rejects(bridge.previewRunContinuation({}),/桌面版/);assert.equal(calls.length,3);
+  native=true;
+  for(const [phase,reason,wanted]of [['not_sent','invalid_arguments','invalid_arguments'],['not_sent',undefined,null],['unknown','invalid_arguments',null]]){
+    const pending=bridge.getRunJournalEvent({...identity,eventId:'failure',expectedJournalRevision:7});
+    waits.at(-1).resolve({runId:'run-a',journalRevision:7,entry:entry('failure',{phase}),content:{type:'omitted',reason:'not_received'},references:[],binding:null,argumentsWireSha256:null,...(reason?{notSentReason:reason}:{})});
+    const actual=await pending;assert.equal(actual.notSentReason,wanted);assert.equal(actual.unavailable,'not_received');
+  }
   checks.push('Actual bridge uses direct typed RPC args, literal content normalization, two concurrent reads, one shared space listener and honest browser refusal');
+  checks.push('Actual bridge carries only not-sent phase reasons, accepts old responses without the field and discards contradictory reasons on unknown observations');
 }
 {
   const source=await raw('App.tsx'), ast=parse(source,{sourceType:'module',plugins:['typescript','jsx']});

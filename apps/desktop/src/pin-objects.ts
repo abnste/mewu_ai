@@ -3,8 +3,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { native } from './bridge';
 import type { Snapshot } from './contracts';
+import { validPinMedia, type PinVideoMedia } from './pin-media';
 export interface PinObject {
-  id: string; imageUrl: string; width: number; height: number; quarterTurns: number; opacity: number; topmost: boolean;
+  id: string; imageUrl: string; media?: PinVideoMedia; width: number; height: number; quarterTurns: number; opacity: number; topmost: boolean;
   attachmentAssetId: string | null; x: number; y: number; displayWidth: number; displayHeight: number;
 }
 export function validPinObject(value: PinObject): boolean {
@@ -12,7 +13,7 @@ export function validPinObject(value: PinObject): boolean {
     const url = new URL(value.imageUrl);
     return typeof value.id === 'string' && /^[0-9a-f-]{36}$/i.test(value.id) && url.protocol === 'http:' && url.hostname === '127.0.0.1' && !!url.port && !url.username && !url.password
       && [value.x, value.y, value.displayWidth, value.displayHeight].every(Number.isFinite) && value.displayWidth > 0 && value.displayHeight > 0
-      && [value.width, value.height].every(n => Number.isSafeInteger(n) && n > 0) && Number.isInteger(value.quarterTurns) && value.quarterTurns >= 0 && value.quarterTurns < 4;
+      && [value.width, value.height].every(n => Number.isSafeInteger(n) && n > 0) && Number.isInteger(value.quarterTurns) && value.quarterTurns >= 0 && value.quarterTurns < 4 && validPinMedia(value.media, value.imageUrl);
   } catch { return false; }
 }
 export async function controlPinObject(id: string, action: { type: 'close' } | { type: 'move'; x: number; y: number } | {type:'zoom';direction:1|-1}): Promise<void> {
@@ -37,7 +38,7 @@ export async function subscribePinObjects(accept: (objects: PinObject[]) => void
       }
     } catch (cause) { if (!disposed && token === serial) error(cause); }
   };
-  const unlisten = await listen('pin-objects-changed', () => { void refresh(); });
+  const unlisten = await listen('pin-objects-changed', () => { void refresh(); }, { target: 'space' });
   const resize = () => { void refresh(); };
   if(typeof window !== 'undefined') window.addEventListener('resize',resize);
   await refresh();

@@ -8,13 +8,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { platforms, requiredChecks, fingerprint, releasePlan, updateUrl, verifyRelease, publicationPolicy } from './release-contract.mjs';
+import { platforms, requiredChecks, fingerprint, releasePlan, updateUrl, verifyRelease, publicationPolicy, selfContainedRelease } from './release-contract.mjs';
 const baselineVersion = '1.0.0-preview.3', scripts = path.dirname(fileURLToPath(import.meta.url));
 function fixture(run, version = baselineVersion) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'mewu-staging-')), root = path.join(parent, 'repo');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   try {
-    for (const name of ['release-contract.mjs', 'release-api.mjs', 'prepare-release.mjs', 'assemble-release.mjs', 'publish-release.mjs', 'legacy-update-bridge.mjs', 'publish-legacy-update-bridge.mjs']) fs.copyFileSync(path.join(scripts, name), path.join(root, 'scripts', name));
+    for (const name of ['release-contract.mjs', 'release-api.mjs', 'prepare-release.mjs', 'assemble-release.mjs', 'publish-release.mjs', 'legacy-update-bridge.mjs', 'publish-legacy-update-bridge.mjs', 'legacy-feed-migration.mjs', 'publish-legacy-feed-migration.mjs']) fs.copyFileSync(path.join(scripts, name), path.join(root, 'scripts', name));
     fs.mkdirSync(path.join(root, 'apps/desktop/src-tauri'), { recursive: true });
     fs.mkdirSync(path.join(root, 'docs'));
     fs.writeFileSync(path.join(root, '.gitignore'), 'out/\n');
@@ -34,7 +34,7 @@ function fixture(run, version = baselineVersion) {
     fs.rmSync(resolved, { recursive: true });
   }
 }
-for (const version of [baselineVersion, '1.0.0']) test(`${version}: staging excludes private files and assembles three exact native receipts`, () => fixture(({ parent, root, commit, node }) => {
+for (const version of [baselineVersion, '1.0.0', '1.0.1-preview.1']) test(`${version}: staging excludes private files and assembles three exact native receipts`, () => fixture(({ parent, root, commit, node }) => {
   const plan = releasePlan(version), request = { inputs: {}, receipts: {}, output: 'out/combined' };
   for (const platform of platforms) {
     const bundle = path.join(parent, platform); fs.mkdirSync(bundle);
@@ -67,7 +67,9 @@ for (const version of [baselineVersion, '1.0.0']) test(`${version}: staging excl
   const assembled = node('assemble-release.mjs', [file]); assert.equal(assembled.status, 0, assembled.stderr);
   const directory = path.join(root, request.output), meta = path.join(directory, '.metadata');
   const manifest = JSON.parse(fs.readFileSync(path.join(meta, 'update.json'))), acceptance = JSON.parse(fs.readFileSync(path.join(meta, 'acceptance.json')));
-  assert.equal(verifyRelease(directory, manifest, acceptance, commit).assets.length, 4);
+  const release = verifyRelease(directory, manifest, acceptance, commit);
+  assert.equal(release.assets.length, selfContainedRelease(version) ? 6 : 4);
+  assert.equal(release.channelAssets.length, selfContainedRelease(version) ? 0 : 1);
   // Only negative publishing: removing Linux acceptance must fail locally,
   // before looking up GitHub or creating a draft/tag.
   delete acceptance.platforms['linux-x86_64']; fs.writeFileSync(path.join(meta, 'acceptance.json'), JSON.stringify(acceptance));

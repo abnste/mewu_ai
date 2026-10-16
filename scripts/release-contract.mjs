@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 export const repository = 'abnste/mewu_ai';
 export const platforms = ['windows-x86_64', 'darwin-aarch64', 'linux-x86_64'];
 export const requiredChecks = ['packageIntegrity', 'install', 'launch', 'restart', 'capture', 'drawing', 'objects', 'conversation', 'settings', 'recording', 'ocr', 'copySave', 'update'];
@@ -10,16 +11,24 @@ export function releaseVersion(version) {
   if (typeof version !== 'string' || version.length > 64 || !/^1\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:preview|alpha|beta|rc)\.(?:0|[1-9]\d*))?$/.test(version)) throw Error('Invalid release version');
   return version;
 }
-// Installed previews keep their original fixed feed when moving to stable.
-// Stable clients use latest.json; every stable publication advances both feeds.
+// Stable releases are self-contained. Historical 1.0.0 prereleases retain their
+// original layout; ordinary publication never replaces published packages.
+export function selfContainedRelease(version) {
+  releaseVersion(version);
+  const [, minor, patch] = /^1\.(\d+)\.(\d+)/.exec(version);
+  return !version.includes('-') || BigInt(minor) > 0n || BigInt(patch) >= 1n;
+}
 export function publicationPolicy(version) {
   releaseVersion(version);
-  const prerelease = version.includes('-');
+  const prerelease = version.includes('-'), selfContained = selfContainedRelease(version);
   return {
     prerelease,
+    selfContained,
     latestArguments: prerelease ? ['--latest=false'] : ['--latest'],
-    feeds: prerelease ? ['preview.json'] : ['preview.json', 'latest.json'],
-    clientEndpoint: `https://github.com/${repository}/releases/download/update-channel/${prerelease ? 'preview.json' : 'latest.json'}`,
+    feeds: selfContained ? [] : prerelease ? ['preview.json'] : ['preview.json', 'latest.json'],
+    // Modern previews also track the next stable release; publishing one does
+    // not promote GitHub Latest or overwrite the old clients' migration feed.
+    clientEndpoint: selfContained ? `https://github.com/${repository}/releases/latest/download/latest.json` : `https://github.com/${repository}/releases/download/update-channel/${prerelease ? 'preview.json' : 'latest.json'}`,
   };
 }
 export function validateUpdateConfiguration(config) {
@@ -43,15 +52,22 @@ export function validateChannelAdvance(current, candidate) {
 export function releasePlan(version) {
   releaseVersion(version);
   return {
-    'windows-x86_64': { files: [`MewuAI-Remake-Setup-${version}-win-x64.exe`, `MewuAI-Remake-Portable-${version}-win-x64.zip`], updater: `MewuAI-Remake-Setup-${version}-win-x64.exe`, channel: false },
-    'darwin-aarch64': { files: [`MewuAI-Remake-${version}-mac-arm64.dmg`], updater: `MewuAI-Remake-Update-${version}-mac-arm64.app.tar.gz`, channel: true },
-    'linux-x86_64': { files: [`MewuAI-Remake-${version}-linux-x64.AppImage`], updater: `MewuAI-Remake-${version}-linux-x64.AppImage`, channel: false },
+    'windows-x86_64': { files: [`MewuAI-Remake-Setup-${version}-win-x64.exe`, `MewuAI-Remake-Portable-${version}-win-x64.zip`], updater: `MewuAI-Remake-Setup-${version}-win-x64.exe`, channel: false, separateUpdater: false },
+    'darwin-aarch64': { files: [`MewuAI-Remake-${version}-mac-arm64.dmg`], updater: `MewuAI-Remake-Update-${version}-mac-arm64.app.tar.gz`, channel: !selfContainedRelease(version), separateUpdater: true },
+    'linux-x86_64': { files: [`MewuAI-Remake-${version}-linux-x64.AppImage`], updater: `MewuAI-Remake-${version}-linux-x64.AppImage`, channel: false, separateUpdater: false },
   };
 }
 export function updateUrl(version, platform) {
   const entry = releasePlan(version)[platform];
   if (!entry) throw Error('Unsupported release platform');
   return `https://github.com/${repository}/releases/download/${entry.channel ? 'update-channel' : `v${version}`}/${entry.updater}`;
+}
+// Explicit old-client contract, independent of the new release's own layout.
+// Old native Mac validators require this path even for the 1.0.0 repair bridge.
+export function legacyUpdateUrl(version, platform) {
+  const entry = releasePlan(version)[platform];
+  if (!entry) throw Error('Unsupported release platform');
+  return `https://github.com/${repository}/releases/download/${platform === 'darwin-aarch64' ? 'update-channel' : `v${version}`}/${entry.updater}`;
 }
 export function regularFile(file) {
   const stat = fs.lstatSync(file);
@@ -80,16 +96,18 @@ export function verifySignatureVersion(signature, version) {
   if (versions.length !== 1 || versions[0] !== version) throw Error('Signature does not bind release version');
   // Cryptographic byte verification is a separate packageIntegrity acceptance check.
 }
-export function validateManifest(manifest) {
+function validateManifestUrls(manifest, urlFor) {
   const version = releaseVersion(manifest.version);
   if (!manifest.platforms || Object.keys(manifest.platforms).sort().join() !== [...platforms].sort().join()) throw Error('Three update platforms required');
   for (const platform of platforms) {
     const value = manifest.platforms[platform];
-    if (!value || value.url !== updateUrl(version, platform)) throw Error('Invalid platform update URL');
+    if (!value || value.url !== urlFor(version, platform)) throw Error('Invalid platform update URL');
     verifySignatureVersion(value.signature, version);
   }
   return version;
 }
+export function validateManifest(manifest) { return validateManifestUrls(manifest, updateUrl); }
+export function validateLegacyManifest(manifest) { return validateManifestUrls(manifest, legacyUpdateUrl); }
 export function validateAcceptance(receipt, platform, version, commit, assets) {
   if (!receipt || receipt.schemaVersion !== 1 || receipt.platform !== platform || receipt.version !== version || receipt.sourceCommit !== commit || !/^[a-f0-9]{40}$/.test(commit)) throw Error('Acceptance source/version/platform mismatch');
   if (receipt.result !== 'passed' || receipt.nativeGuiVerified !== true || receipt.installerVerified !== true) throw Error('Native installation acceptance required');
@@ -107,18 +125,24 @@ export function validateAcceptance(receipt, platform, version, commit, assets) {
   }
 }
 export function verifyRelease(directory, manifest, acceptance, commit) {
-  const version = validateManifest(manifest), plan = releasePlan(version);
-  const names = [...platforms.flatMap(platform => plan[platform].files), plan['darwin-aarch64'].updater];
+  const version = validateManifest(manifest), plan = releasePlan(version), modern = selfContainedRelease(version);
+  const softwareAssets = platforms.flatMap(platform => plan[platform].files);
+  const payloadNames = [...softwareAssets, plan['darwin-aarch64'].updater];
+  const names = [...payloadNames, ...(modern ? ['latest.json'] : [])];
   const entries = fs.readdirSync(directory, { withFileTypes: true });
   if (entries.length !== names.length + 1 || entries.some(entry => entry.name === '.metadata' ? !entry.isDirectory() || entry.isSymbolicLink() : !names.includes(entry.name) || !entry.isFile() || entry.isSymbolicLink())) throw Error('Unexpected release artifact');
   const metadata = path.join(directory, '.metadata');
   const metaEntries = fs.readdirSync(metadata, { withFileTypes: true });
   if (metaEntries.length !== 2 || metaEntries.some(entry => !['update.json', 'acceptance.json'].includes(entry.name) || !entry.isFile() || entry.isSymbolicLink())) throw Error('Unexpected release metadata');
   if (!acceptance || acceptance.sourceCommit !== commit || acceptance.version !== version || Object.keys(acceptance.platforms || {}).sort().join() !== [...platforms].sort().join()) throw Error('Missing three-platform acceptance');
+  if (modern) {
+    const raw = fs.readFileSync(path.join(directory, 'latest.json'));
+    if (raw.length > 64 * 1024 || !isDeepStrictEqual(JSON.parse(raw.toString('utf8')), manifest) || !raw.equals(fs.readFileSync(path.join(metadata, 'update.json')))) throw Error('Public latest.json differs from the accepted signed manifest');
+  }
   const files = new Map(names.map(name => [name, fingerprint(path.join(directory, name))]));
   for (const platform of platforms) {
     const assets = [...new Set([...plan[platform].files, plan[platform].updater])].map(name => files.get(name));
     validateAcceptance(acceptance.platforms[platform], platform, version, commit, assets);
   }
-  return { version, tag: `v${version}`, assets: platforms.flatMap(platform => plan[platform].files), channelAssets: [plan['darwin-aarch64'].updater], files: [...files.values()] };
+  return { version, tag: `v${version}`, softwareAssets, assets: modern ? names : softwareAssets, channelAssets: modern ? [] : [plan['darwin-aarch64'].updater], files: [...files.values()] };
 }

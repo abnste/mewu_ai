@@ -8,6 +8,8 @@ use super::*;
 pub struct PinObject {
     id: String,
     image_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    media: Option<media::PinVideo>,
     width: u32,
     height: u32,
     quarter_turns: u8,
@@ -50,6 +52,7 @@ pub async fn get_pin_objects(
                             app.state::<Host>().content_origin,
                             e.source.asset().id
                         ),
+                        media: e.source.0.media.clone(),
                         width: e.source.asset().width.unwrap(),
                         height: e.source.asset().height.unwrap(),
                         quarter_turns: e.quarter_turns,
@@ -229,6 +232,9 @@ pub async fn reference_pin_object(
             entry.object_assets.get(&entry.quarter_turns).cloned(),
         )
     };
+    if source.0.media.is_some() {
+        return Err("视频置顶暂不支持引用".into());
+    }
     let host = app.state::<Host>();
     let (scene_id, expected) = {
         let engine = host.lock()?;

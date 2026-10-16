@@ -12,11 +12,11 @@ export async function setRecordingAudio(expectedRevision: number, mode: Recordin
   if (!recordingAudioNative) throw new Error('仅桌面版可录屏');
   return checked(await invoke('set_recording_audio', { expectedRevision, mode, grant }));
 }
-export async function subscribeRecordingAudio(accept: (state: RecordingAudioState) => void): Promise<() => void> {
+export async function subscribeRecordingAudio(accept: (state: RecordingAudioState) => void, surface: 'space' | 'settings' = 'space'): Promise<() => void> {
   if (!recordingAudioNative) { accept(await getRecordingAudio()); return () => {}; }
   let sequence = -1, stopped = false;
   const receive = (state: RecordingAudioState) => { if (!stopped && state.sequence >= sequence) { sequence = state.sequence; accept(state); } };
-  const stop = await listen<unknown>('recording-audio-state', event => { if (validRecordingAudioState(event.payload)) receive(event.payload); });
+  const stop = await listen<unknown>('recording-audio-state', event => { if (validRecordingAudioState(event.payload)) receive(event.payload); }, { target: surface });
   try { receive(await getRecordingAudio()); }
   catch (error) { stopped = true; stop(); throw error; }
   return () => { stopped = true; stop(); };

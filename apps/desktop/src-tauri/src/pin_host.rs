@@ -24,6 +24,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tokio::sync::{oneshot, Notify, OwnedSemaphorePermit, Semaphore};
+pub(crate) mod media;
 pub(crate) mod objects;
 
 const MAX_PIXELS: u32 = 32 * 1024 * 1024;
@@ -328,6 +329,9 @@ pub async fn drain_pending(app: &AppHandle, timeout: Duration) -> Result<(), Str
 
 struct Source {
     asset: Asset,
+    media: Option<media::PinVideo>,
+    extra_assets: Vec<Asset>,
+    _extra_pixels: Vec<OwnedSemaphorePermit>,
     root: PathBuf,
     // Hold directory handles as well as the pixel reservation through the last
     // HTTP/export reader. Files are removed before these handles are released.
@@ -338,13 +342,17 @@ struct Source {
 impl Drop for Source {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.asset.path);
+        for asset in &self.extra_assets {
+            let _ = std::fs::remove_file(&asset.path);
+        }
     }
 }
 #[derive(Clone)]
-pub struct PinAssetLease(Arc<Source>);
+pub struct PinAssetLease(Arc<Source>, Option<usize>);
 impl PinAssetLease {
     pub fn asset(&self) -> &Asset {
-        &self.0.asset
+        self.1
+            .map_or(&self.0.asset, |index| &self.0.extra_assets[index])
     }
     pub fn root(&self) -> &Path {
         &self.0.root
@@ -357,15 +365,33 @@ pub fn resolve_asset(app: &AppHandle, id: &str) -> Option<PinAssetLease> {
     state
         .entries
         .values()
-        .find(|e| e.source.asset().id == id && e.cancel.check().is_ok())
-        .map(|e| e.source.clone())
+        .filter(|e| e.cancel.check().is_ok())
+        .find_map(|e| {
+            if e.source.asset().id == id {
+                Some(e.source.clone())
+            } else {
+                e.source
+                    .0
+                    .extra_assets
+                    .iter()
+                    .position(|asset| asset.id == id)
+                    .map(|index| PinAssetLease(e.source.0.clone(), Some(index)))
+            }
+        })
 }
 pub(crate) fn storage_assets(app: &AppHandle) -> Result<Vec<Asset>, String> {
-    let Some(registry) = app.try_state::<PinRegistry>() else { return Ok(Vec::new()); };
+    let Some(registry) = app.try_state::<PinRegistry>() else {
+        return Ok(Vec::new());
+    };
     let state = registry.state.lock().map_err(|_| "贴图状态不可用")?;
     // Source pixels live in their own pin-staging directory and hold leases.
     // Only durable orientation copies participate in the assets inventory.
-    Ok(state.entries.values().flat_map(|entry| entry.object_assets.values()).cloned().collect())
+    Ok(state
+        .entries
+        .values()
+        .flat_map(|entry| entry.object_assets.values())
+        .cloned()
+        .collect())
 }
 pub fn is_pin_label(label: &str) -> bool {
     label.strip_prefix("pin-").is_some_and(valid_uuid)
@@ -560,6 +586,8 @@ pub struct PinViewState {
     pub id: String,
     pub revision: u64,
     pub image_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<media::PinVideo>,
     pub width: u32,
     pub height: u32,
     pub quarter_turns: u8,
@@ -882,6 +910,7 @@ pub(crate) async fn pin_imported_image(
     app: AppHandle,
     imported: ImportedImageOrigin,
 ) -> Result<String, String> {
+    let display_origin = imported.clone();
     gate(&app)?;
     let space_handle = space_handle(&app)?;
     let registry = app.state::<PinRegistry>();
@@ -904,9 +933,9 @@ pub(crate) async fn pin_imported_image(
         let engine = host.lock()?;
         locked_gate(&app, space_handle)?;
         if !imported.matches(&engine.store.snapshot()) {
-            return Err("导入图片或会话已更改".into());
+            return Err("素材或会话已更改".into());
         }
-        let (width, height) = image_dimensions(&imported.item.asset)?;
+        let (width, height) = media::dimensions(&imported.item.asset)?;
         let pixel_slot = registry
             .pixels
             .clone()
@@ -931,10 +960,23 @@ pub(crate) async fn pin_imported_image(
     cancel.check()?;
     let work = registry.work.begin(&app)?;
     let work_cancel = cancel.clone();
+    let registry_pixels = registry.pixels.clone();
+    let content_origin = app.state::<Host>().content_origin.clone();
     let worker = tauri::async_runtime::spawn_blocking(move || {
         let _decode = decode;
         let _work = work;
         work_cancel.check()?;
+        if imported.item.asset.kind == AssetKind::Video {
+            return media::stage_video(
+                &root,
+                &assets_root,
+                &imported.item,
+                pixel_slot,
+                &work_cancel,
+                registry_pixels,
+                &content_origin,
+            );
+        }
         let mut lease = crate::image_host::SourceLease::open(&imported.item.asset, &assets_root)?;
         let image = lease.decode_rgba(&imported.item.asset)?;
         work_cancel.check()?;
@@ -950,7 +992,12 @@ pub(crate) async fn pin_imported_image(
     check_origin(&app, &origin, &cancel)?;
     let source_viewport = pin_window::current_space_rect(&app).await?;
     cancel.check()?;
-    let original = crate::import_pin_host::original_rect(source.asset(), source_viewport)?;
+    let scale = app
+        .get_webview_window("space")
+        .ok_or("空间窗口不可用")?
+        .scale_factor()
+        .map_err(|_| "无法读取空间缩放")?;
+    let original = display_origin.rect(source_viewport, scale)?;
     let created = show_source(
         &app,
         &request_id,
@@ -1109,6 +1156,7 @@ pub(crate) fn view_state(app: &AppHandle, window: &WebviewWindow) -> Result<PinV
             app.state::<Host>().content_origin,
             e.source.asset().id
         ),
+        media: e.source.0.media.clone(),
         width: e.source.asset().width.unwrap(),
         height: e.source.asset().height.unwrap(),
         quarter_turns: e.quarter_turns,
@@ -1123,7 +1171,7 @@ pub(crate) fn view_state(app: &AppHandle, window: &WebviewWindow) -> Result<PinV
 pub(crate) fn emit_state(app: &AppHandle, window: &WebviewWindow) {
     objects::changed(app);
     if let Ok(state) = view_state(app, window) {
-        let _ = window.emit("pin-state", state);
+        let _ = app.emit_to(window.label(), "pin-state", state);
     }
 }
 #[tauri::command]
@@ -1242,6 +1290,9 @@ pub(crate) async fn export(
     window: &WebviewWindow,
     clipboard: bool,
 ) -> Result<(), String> {
+    if view_state(app, window)?.media.is_some() {
+        return Err("视频置顶暂不支持导出".into());
+    }
     #[cfg(any(windows, target_os = "linux"))]
     return export_supervised(app, window, clipboard).await;
     #[cfg(not(any(windows, target_os = "linux")))]
@@ -1405,9 +1456,14 @@ async fn export_supervised(
                 .map_err(|error| error.to_string())?;
                 #[cfg(target_os = "linux")]
                 let selected = crate::image_save_dialog::pick_image_destination_linux_with_default(
-                    export_window.clone(), handle, ImageSaveName::PinnedImage,
-                    default_format, export_cancel.clone(), allowed,
-                ).map_err(|error| error.to_string())?;
+                    export_window.clone(),
+                    handle,
+                    ImageSaveName::PinnedImage,
+                    default_format,
+                    export_cancel.clone(),
+                    allowed,
+                )
+                .map_err(|error| error.to_string())?;
                 match selected {
                     SaveDialogOutcome::Selected { path, format } => Some(
                         crate::image_export::ImageDestination::prepare(&path, format)?,
@@ -1460,7 +1516,10 @@ async fn export_supervised(
                     // GTK. Final admission and native publication occur in the
                     // same short UI callback, with actual leases still owned.
                     crate::window_actions_linux::with_display(
-                        export_window.clone(), handle, export_cancel.clone(), move |display| {
+                        export_window.clone(),
+                        handle,
+                        export_cancel.clone(),
+                        move |display| {
                             ui_work.commit(&ui_app, &ui_cancel, || {
                                 ui_image_work.accept_publication(|| {
                                     ui_app.state::<Host>().exit.ensure_running()?;
@@ -1654,12 +1713,15 @@ fn stage(
             scale_factor: None,
         },
         root: staging,
+        media: None,
+        extra_assets: Vec::new(),
+        _extra_pixels: Vec::new(),
         _directory: staging_lock,
         _root_directory: root_lock,
         _pixels: pixels,
     };
     temp.0 = None;
-    Ok(PinAssetLease(Arc::new(source)))
+    Ok(PinAssetLease(Arc::new(source), None))
 }
 #[cfg(any(test, not(windows)))]
 fn save_png(
@@ -1791,15 +1853,39 @@ mod tests {
                 &root.0,
                 &RgbaImage::new(2, 2),
                 registry.pixels.clone().try_acquire_many_owned(4).unwrap(),
-            ).unwrap();
-            (format!("pin-{id}"), Entry {
-                id: id.clone(), revision: 1, source, object_assets: HashMap::new(),
-                quarter_turns: 0, topmost: true, opacity: 1., epoch: 0,
-                original: pin_window::Rect { x: 0, y: 0, width: 26, height: 26 },
-                source_viewport: pin_window::Rect { x: 0, y: 0, width: 26, height: 26 },
-                live: true, built: true, request_id: id, cancel: Cancel::default(), ready: None,
-                _window_slot: Arc::new(registry.windows.clone().try_acquire_owned().unwrap()),
-            })
+            )
+            .unwrap();
+            (
+                format!("pin-{id}"),
+                Entry {
+                    id: id.clone(),
+                    revision: 1,
+                    source,
+                    object_assets: HashMap::new(),
+                    quarter_turns: 0,
+                    topmost: true,
+                    opacity: 1.,
+                    epoch: 0,
+                    original: pin_window::Rect {
+                        x: 0,
+                        y: 0,
+                        width: 26,
+                        height: 26,
+                    },
+                    source_viewport: pin_window::Rect {
+                        x: 0,
+                        y: 0,
+                        width: 26,
+                        height: 26,
+                    },
+                    live: true,
+                    built: true,
+                    request_id: id,
+                    cancel: Cancel::default(),
+                    ready: None,
+                    _window_slot: Arc::new(registry.windows.clone().try_acquire_owned().unwrap()),
+                },
+            )
         }
 
         #[test]
@@ -1831,7 +1917,8 @@ mod tests {
                 &root.0,
                 &RgbaImage::new(2, 2),
                 registry.pixels.clone().try_acquire_many_owned(4).unwrap(),
-            ).unwrap();
+            )
+            .unwrap();
             // Even a copied public asset ID cannot replace the held source.
             Arc::get_mut(&mut replacement.0).unwrap().asset.id = old_source.asset().id.clone();
             entry.source = replacement;

@@ -1083,5 +1083,13 @@
   "下一张": "Next image",
   "查看大图": "View image",
   "项目信息加载失败": "Could not load project details",
-  "截图加载失败": "Could not load screenshot"
+  "截图加载失败": "Could not load screenshot",
+  "准备失败，未执行": "Preparation failed; not run",
+  "参数无效，未执行": "Invalid arguments; not run",
+  "工具不可用，未执行": "Tool unavailable; not run",
+  "权限已更改，未执行": "Permissions changed; not run",
+  "工具已更改，未执行": "Tool changed; not run",
+  "任务已结束，未执行": "Task ended; not run",
+  "已达执行上限，未执行": "Execution limit reached; not run",
+  "重复调用，未执行": "Duplicate call; not run"
 }

@@ -183,7 +183,7 @@ export async function controlRecording(id: string, action: RecordingAction): Pro
   if (!native) throw new Error('仅桌面版可录屏');
   return invoke('control_recording', { id, action });
 }
-export async function subscribeRecording(onStatus: (status: RecordingStatus | null) => void): Promise<() => void> {
+export async function subscribeRecording(onStatus: (status: RecordingStatus | null) => void, surface: 'space' | 'recording-controls' = 'space'): Promise<() => void> {
   if (!native) { onStatus(null); return () => undefined; }
   let serial = 0, current: RecordingStatus | null = null, stopped = false;
   const finishedIds = new Set<string>();
@@ -199,7 +199,7 @@ export async function subscribeRecording(onStatus: (status: RecordingStatus | nu
     if (current && current.id !== next?.id) finishedIds.add(current.id);
     current = next; onStatus(next);
   };
-  const unlisten = await listen<RecordingStatus | null>('recording-status', event => { serial++; accept(event.payload); });
+  const unlisten = await listen<RecordingStatus | null>('recording-status', event => { serial++; accept(event.payload); }, { target: surface });
   try {
     const querySerial = serial;
     const initial = await invoke<RecordingStatus | null>('get_recording_status');
@@ -666,15 +666,17 @@ export async function exportSnapshot(): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function subscribe(onSnapshot: (snapshot: Snapshot) => void, onRun: (event: RunEvent) => void, onError: (message: string) => void): Promise<() => void> {
+export async function subscribe(onSnapshot: (snapshot: Snapshot) => void, onRun: (event: RunEvent) => void, onError: (message: string) => void, surface: 'space' | 'settings' = 'space'): Promise<() => void> {
   if (!native) { snapshotListeners.add(onSnapshot); return () => snapshotListeners.delete(onSnapshot); }
   // Events can arrive before getSnapshot resolves; prepare document URLs first.
   await runtimeInfo();
-  const stopSnapshot = await listen<Snapshot>('snapshot', event => onSnapshot(normalizeSnapshot(event.payload)));
+  // Tauri's default Any target also receives events sent to other windows.
+  // Run fragments are emitted separately to space and the minimized-scene widget.
+  const stopSnapshot = await listen<Snapshot>('snapshot', event => onSnapshot(normalizeSnapshot(event.payload)), { target: surface });
   try {
-    const stopRun = await listen<RunEvent>('run-event', event => onRun(event.payload));
+    const stopRun = await listen<RunEvent>('run-event', event => onRun(event.payload), { target: surface });
     try {
-      const stopError = await listen<string>('host-error', event => onError(event.payload));
+      const stopError = await listen<string>('host-error', event => onError(event.payload), { target: surface });
       return () => { stopSnapshot(); stopRun(); stopError(); };
     } catch (error) { stopRun(); throw error; }
   } catch (error) { stopSnapshot(); throw error; }

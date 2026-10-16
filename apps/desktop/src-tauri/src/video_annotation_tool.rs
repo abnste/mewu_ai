@@ -6,8 +6,8 @@ use crate::{
     Host,
 };
 use mewu_core::{
-    DispatchLease, ModelVideoAppend, ModelVideoPrimitive, NotSentReason, ToolBinding,
-    ValidatedVideoAppendBatch, VerifiedVideoAnnotationAuthority, VerifiedVideoInput,
+    DispatchLease, ModelVideoAppend, ModelVideoPrimitive, NotSentReason, ReceiptCommit, Store,
+    ToolBinding, ValidatedVideoAppendBatch, VerifiedVideoAnnotationAuthority, VerifiedVideoInput,
     VerifiedVideoTextLayout, VideoAnnotationDraft, VideoAnnotationPrimitive, VideoAppendGroup,
     VideoTextContent, VisualAnnotationGrant, VIDEO_ANNOTATION_TOOL,
 };
@@ -67,21 +67,7 @@ impl RunScope {
         Ok(())
     }
     pub fn definition(&self) -> Value {
-        let target = &self.input.manifest().targets[0];
-        let starts: Vec<_> = target.frames.iter().map(|f| f.handle.clone()).collect();
-        let mut ends = starts.clone();
-        ends.push(target.range_end_handle.clone());
-        let point = json!({"type":"object","additionalProperties":false,"required":["x","y"],"properties":{"x":{"type":"number","minimum":0,"maximum":1000},"y":{"type":"number","minimum":0,"maximum":1000}}});
-        let bounds = json!({"type":"object","additionalProperties":false,"required":["x","y","width","height"],"properties":{"x":{"type":"number","minimum":0,"maximum":1000},"y":{"type":"number","minimum":0,"maximum":1000},"width":{"type":"number","exclusiveMinimum":0,"maximum":1000},"height":{"type":"number","exclusiveMinimum":0,"maximum":1000}}});
-        let color = json!({"type":"string","pattern":"^#[0-9a-fA-F]{6}$"});
-        let rect = json!({"type":"object","additionalProperties":false,"required":["kind","bounds","style"],"properties":{"kind":{"const":"rect"},"bounds":bounds,"style":{"type":"object","additionalProperties":false,"required":["color","strokeWidth","opacity"],"properties":{"color":color,"strokeWidth":{"type":"number","minimum":0.25,"maximum":64},"opacity":{"type":"number","minimum":0.05,"maximum":1}}}}});
-        let text = json!({"type":"object","additionalProperties":false,"required":["kind","topLeft","anchor","text","color","fontSize"],"properties":{"kind":{"const":"text"},"topLeft":point,"anchor":{"const":"topLeft"},"text":{"type":"string","minLength":1,"maxLength":500},"color":color,"fontSize":{"type":"number","minimum":8,"maximum":128}}});
-        json!({"type":"function","function":{"name":VIDEO_ANNOTATION_TOOL,
-            "description":"Optional video presentation: add editable interval rectangle or literal text annotations to this current video. Decide from the user's intent and task whether to answer in the conversation or annotate the video; do not ask the user to select a send mode. Do not call merely because this tool is available, and never add annotations when the user requests a text-only reply. Position uses normalized1000 independently per axis. Stroke width/font size are ORIGINAL source pixels. Text topLeft anchors a native measured layout with 4px padding and first baseline at 4+fontSize; never center it by assumption or provide HTML/SVG/PNG. Interval must use a sent startFrameHandle and later frame/end boundary handle and last at least 100ms. These are sparse sampled frames, not evidence of motion between frames. No raw seconds/PTS, scene/item/source IDs, tracking or unsent frames. If using this tool, submit the entire intended batch once; invalid content rejects the whole batch.",
-            "parameters":{"type":"object","additionalProperties":false,"required":["coordinateSpace","styleUnit","timeSpace","objects"],"properties":{
-                "coordinateSpace":{"const":"normalized1000"},"styleUnit":{"const":"sourcePixels"},"timeSpace":{"const":"sentFrameHandles"},
-                "objects":{"type":"array","minItems":1,"maxItems":48,"items":{"type":"object","additionalProperties":false,"required":["targetHandle","interval","primitive"],"properties":{
-                    "targetHandle":{"const":target.handle},"interval":{"type":"object","additionalProperties":false,"required":["startFrameHandle","endHandle"],"properties":{"startFrameHandle":{"type":"string","enum":starts},"endHandle":{"type":"string","enum":ends}}},"primitive":{"oneOf":[rect,text]}}}}}}}})
+        model_definition(&self.input)
     }
     fn check_live(&self, app: &AppHandle, scene: &str, run: &str) -> Result<(), String> {
         let host = app.state::<Host>();
@@ -146,7 +132,24 @@ impl RunScope {
         let parsed = match parse_model(&call.arguments, &self.input) {
             Ok(v) => v,
             Err(e) => {
-                return self.not_sent(app, scene, run, &lease, NotSentReason::InvalidArguments, e)
+                if let Err(authority_error) = self.check_live(app, scene, run) {
+                    return self.not_sent(
+                        app,
+                        scene,
+                        run,
+                        &lease,
+                        NotSentReason::AuthorityChanged,
+                        authority_error,
+                    );
+                }
+                // A rejected plan has no effects. Only after its NotSent receipt
+                // is durable may the bounded model loop receive a correction.
+                let host = app.state::<Host>();
+                let mut engine = host.lock()?;
+                let (receipt, output) = reject_arguments(&mut engine.store, &lease, &e)?;
+                journal_runtime::emit_changed(app, scene, run, receipt.journal_revision);
+                crate::publish(app, &engine.store.snapshot());
+                return Ok(output);
             }
         };
         if let Err(e) = self.check_live(app, scene, run) {
@@ -208,6 +211,50 @@ impl RunScope {
         }
     }
 }
+
+fn model_definition(input: &VerifiedVideoInput) -> Value {
+    let target = &input.manifest().targets[0];
+    let starts: Vec<_> = target.frames.iter().map(|f| f.handle.clone()).collect();
+    let mut ends = starts.clone();
+    ends.push(target.range_end_handle.clone());
+    let point = json!({"type":"object","additionalProperties":false,"required":["x","y"],"properties":{"x":{"type":"number","minimum":0,"maximum":1000},"y":{"type":"number","minimum":0,"maximum":1000}}});
+    let bounds = json!({"type":"object","additionalProperties":false,"required":["x","y","width","height"],"properties":{"x":{"type":"number","minimum":0,"maximum":1000},"y":{"type":"number","minimum":0,"maximum":1000},"width":{"type":"number","exclusiveMinimum":0,"maximum":1000},"height":{"type":"number","exclusiveMinimum":0,"maximum":1000}}});
+    let color = json!({"type":"string","pattern":"^#[0-9a-fA-F]{6}$"});
+    let rect = json!({"type":"object","additionalProperties":false,"required":["kind","bounds","style"],"properties":{"kind":{"const":"rect"},"bounds":bounds,"style":{"type":"object","additionalProperties":false,"required":["color","strokeWidth","opacity"],"properties":{"color":color,"strokeWidth":{"type":"number","minimum":0.25,"maximum":64},"opacity":{"type":"number","minimum":0.05,"maximum":1}}}}});
+    let text = json!({"type":"object","additionalProperties":false,"required":["kind","topLeft","anchor","text","color","fontSize"],"properties":{"kind":{"const":"text"},"topLeft":point,"anchor":{"const":"topLeft"},"text":{"type":"string","minLength":1,"maxLength":500},"color":color,"fontSize":{"type":"number","minimum":8,"maximum":128}}});
+    json!({"type":"function","function":{"name":VIDEO_ANNOTATION_TOOL,
+        "description":"Optional video presentation: add editable interval rectangle or literal text annotations to this current video. Decide from the user's intent and task whether to answer in the conversation or annotate the video; do not ask the user to select a send mode. Do not call merely because this tool is available, and never add annotations when the user requests a text-only reply. Position uses normalized1000 independently per axis. Stroke width/font size are ORIGINAL source pixels. Text topLeft anchors a native measured layout with 4px padding and first baseline at 4+fontSize; never center it by assumption or provide HTML/SVG/PNG. Interval must use a sent startFrameHandle and later frame/end boundary handle and last at least 100ms. These are sparse sampled frames, not evidence of motion between frames. No raw seconds/PTS, scene/item/source IDs, tracking or unsent frames. If using this tool, submit the entire intended batch once; invalid content rejects the whole batch.",
+        "parameters":{"type":"object","additionalProperties":false,"required":["coordinateSpace","styleUnit","timeSpace","objects"],"properties":{
+            "coordinateSpace":{"const":"normalized1000"},"styleUnit":{"const":"sourcePixels"},"timeSpace":{"const":"sentFrameHandles"},
+            "objects":{"type":"array","minItems":1,"maxItems":48,"items":{"type":"object","additionalProperties":false,"required":["targetHandle","interval","primitive"],"properties":{
+                "targetHandle":{"const":target.handle},"interval":{"type":"object","additionalProperties":false,"required":["startFrameHandle","endHandle"],"properties":{"startFrameHandle":{"type":"string","enum":starts},"endHandle":{"type":"string","enum":ends}}},"primitive":{"oneOf":[rect,text]}}}}}}}})
+}
+
+fn reject_arguments(
+    store: &mut Store,
+    lease: &DispatchLease,
+    error: &str,
+) -> Result<(ReceiptCommit, journal_runtime::CommittedToolOutput), String> {
+    let receipt = store
+        .record_tool_not_sent(lease, NotSentReason::InvalidArguments)
+        .map_err(|e| {
+            format!(
+                "{error}；执行记录未能更新：{}",
+                journal_runtime::store_error(e)
+            )
+        })?;
+    Ok((
+        receipt,
+        journal_runtime::CommittedToolOutput {
+            model_json: json!({
+                "error": error,
+                "executed": false,
+                "correction": "Correct the indicated field using the advertised video_annotate schema and the sent target/frame handles. The rejected batch added no annotations."
+            })
+            .to_string(),
+        },
+    ))
+}
 /// Only this module can construct a plan accepted by the renderer. Validate
 /// every object's cheap fields before the first font lookup or raster allocation.
 struct PreparedModel(ModelVideoAppend);
@@ -217,12 +264,116 @@ fn valid_color(value: &str) -> bool {
     bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
+// Only fixed schema field names and array indices may enter model feedback.
+// Never format serde/jsonschema errors: they can include user text or values.
+fn known_argument_field(field: &str) -> bool {
+    matches!(
+        field,
+        "coordinateSpace"
+            | "styleUnit"
+            | "timeSpace"
+            | "objects"
+            | "targetHandle"
+            | "interval"
+            | "startFrameHandle"
+            | "endHandle"
+            | "primitive"
+            | "kind"
+            | "bounds"
+            | "x"
+            | "y"
+            | "width"
+            | "height"
+            | "style"
+            | "color"
+            | "strokeWidth"
+            | "opacity"
+            | "topLeft"
+            | "anchor"
+            | "text"
+            | "fontSize"
+    )
+}
+
+fn schema_diagnostic(error: &jsonschema::ValidationError<'_>) -> String {
+    use jsonschema::{error::ValidationErrorKind, paths::LocationSegment};
+    // Prefer the matching tagged union branch, so a malformed text primitive
+    // is diagnosed against text fields even if it has several errors.
+    if let ValidationErrorKind::OneOfNotValid { context } = error.kind() {
+        let matching = context.iter().find(|errors| {
+            !errors.is_empty()
+                && !errors.iter().any(|error| {
+                    matches!(error.kind(), ValidationErrorKind::Constant { .. })
+                        && matches!(error.instance_path().segments().last(), Some(LocationSegment::Property(field)) if field == "kind")
+                })
+        });
+        if let Some(errors) = matching.or_else(|| {
+            context
+                .iter()
+                .filter(|v| !v.is_empty())
+                .min_by_key(|v| v.len())
+        }) {
+            return schema_diagnostic(&errors[0]);
+        }
+    }
+    let mut path = String::from("$");
+    for segment in error.instance_path().segments() {
+        match segment {
+            LocationSegment::Property(field) if known_argument_field(&field) => {
+                path.push('/');
+                path.push_str(&field);
+            }
+            LocationSegment::Index(index) if index < 48 => {
+                path.push('/');
+                path.push_str(&index.to_string());
+            }
+            _ => return "视频批注参数无效：$（schema）".into(),
+        }
+    }
+    if let ValidationErrorKind::Required { property } = error.kind() {
+        if let Some(field) = property.as_str().filter(|v| known_argument_field(v)) {
+            path.push('/');
+            path.push_str(field);
+        }
+    }
+    format!("视频批注参数无效：{path}（{}）", error.kind().keyword())
+}
+
+fn deserialization_diagnostic(
+    arguments: &str,
+    input: &VerifiedVideoInput,
+    error: &serde_json::Error,
+) -> String {
+    // Value is only a diagnostic projection. The original typed wire parser
+    // remains authoritative, including duplicate fields that Value collapses.
+    if let Ok(value) = serde_json::from_str::<Value>(arguments) {
+        let definition = model_definition(input);
+        if let Ok(validator) = jsonschema::validator_for(&definition["function"]["parameters"]) {
+            let failure = validator.iter_errors(&value).next();
+            if let Some(error) = failure {
+                return schema_diagnostic(&error);
+            }
+        }
+    }
+    let category = match error.classify() {
+        serde_json::error::Category::Io => "io",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "eof",
+    };
+    format!(
+        "视频批注参数无效：$（{category}，行 {} 列 {}）",
+        error.line(),
+        error.column()
+    )
+}
+
 fn parse_model(arguments: &str, input: &VerifiedVideoInput) -> Result<PreparedModel, String> {
     if arguments.len() > 64 * 1024 {
         return Err("视频批注参数过大".into());
     }
-    let parsed: ModelVideoAppend =
-        serde_json::from_str(arguments).map_err(|_| "视频批注参数无效")?;
+    let parsed: ModelVideoAppend = serde_json::from_str(arguments)
+        .map_err(|error| deserialization_diagnostic(arguments, input, &error))?;
     if parsed.coordinate_space != "normalized1000"
         || parsed.style_unit != "sourcePixels"
         || parsed.time_space != "sentFrameHandles"
@@ -570,13 +721,16 @@ mod tests {
             }
         }
         fn lease(&mut self, arguments: &str) -> DispatchLease {
+            self.lease_at_round(arguments, 0)
+        }
+        fn lease_at_round(&mut self, arguments: &str, round: u32) -> DispatchLease {
             let model = self
                 .store
                 .begin_model_request(
                     &self.scene,
                     &self.run,
                     ModelDispatchInput {
-                        round: 0,
+                        round,
                         projected_request_sha256: hash(b"synthetic request, no network"),
                     },
                 )
@@ -631,6 +785,225 @@ mod tests {
             "objects":primitives.into_iter().map(|primitive|json!({"targetHandle":t.handle,
                 "interval":{"startFrameHandle":t.frames[0].handle,"endHandle":t.range_end_handle},"primitive":primitive})).collect::<Vec<_>>()})
     }
+
+    #[test]
+    fn advertised_primitive_schemas_match_typed_wire_fields() {
+        let db = Db::new();
+        let f = Fixture::new(&db);
+        let definition = model_definition(&f.input);
+        let schema = &definition["function"]["parameters"];
+        let primitives =
+            &schema["properties"]["objects"]["items"]["properties"]["primitive"]["oneOf"];
+        assert_eq!(primitives.as_array().unwrap().len(), 2);
+        assert_eq!(primitives[0]["properties"]["kind"]["const"], "rect");
+        assert_eq!(primitives[1]["properties"]["kind"]["const"], "text");
+        let validator = jsonschema::validator_for(schema).unwrap();
+        for batch in [vec![rect()], vec![text()], vec![rect(), text()]] {
+            let value = args(&f.input, batch);
+            assert!(validator.is_valid(&value));
+            let raw = value.to_string();
+            let typed: ModelVideoAppend = serde_json::from_str(&raw).unwrap();
+            assert_eq!(
+                typed.objects.len(),
+                value["objects"].as_array().unwrap().len()
+            );
+            assert!(parse_model(&raw, &f.input).is_ok());
+        }
+    }
+
+    #[test]
+    fn dto_diagnostics_name_fields_without_echoing_values_or_unknown_names() {
+        let db = Db::new();
+        let f = Fixture::new(&db);
+        let mut missing = args(&f.input, vec![text()]);
+        missing["objects"][0]["primitive"]
+            .as_object_mut()
+            .unwrap()
+            .remove("fontSize");
+        let error = parse_model(&missing.to_string(), &f.input).err().unwrap();
+        assert!(error.contains("$/objects/0/primitive/fontSize"), "{error}");
+        assert!(error.contains("required"), "{error}");
+
+        let secret = "PRIVATE_INPUT_MUST_NOT_ENTER_FEEDBACK";
+        let mut wrong_type = args(&f.input, vec![rect()]);
+        wrong_type["objects"][0]["primitive"]["style"]["opacity"] = json!(secret);
+        let error = parse_model(&wrong_type.to_string(), &f.input)
+            .err()
+            .unwrap();
+        assert!(
+            error.contains("$/objects/0/primitive/style/opacity"),
+            "{error}"
+        );
+        assert!(error.contains("type"), "{error}");
+        assert!(!error.contains(secret));
+
+        let mut unknown = args(&f.input, vec![text()]);
+        unknown[secret] = json!(secret);
+        let error = parse_model(&unknown.to_string(), &f.input).err().unwrap();
+        assert!(error.contains("additionalProperties"), "{error}");
+        assert!(!error.contains(secret));
+        let error = parse_model(&format!("{{\"objects\":{secret}}}"), &f.input)
+            .err()
+            .unwrap();
+        assert!(error.contains("syntax"), "{error}");
+        assert!(!error.contains(secret));
+    }
+
+    #[test]
+    fn rejected_dto_is_not_sent_then_corrected_batch_commits_once() {
+        let db = Db::new();
+        let mut f = Fixture::new(&db);
+        let mut bad = args(&f.input, vec![text()]);
+        bad["objects"][0]["primitive"]
+            .as_object_mut()
+            .unwrap()
+            .remove("fontSize");
+        let raw = bad.to_string();
+        let rejected_lease = f.lease(&raw);
+        let before = proof(&db.conn());
+        let error = parse_model(&raw, &f.input).err().unwrap();
+        assert_eq!(proof(&db.conn()), before, "parse rejection wrote data");
+        let (receipt, output) = reject_arguments(&mut f.store, &rejected_lease, &error).unwrap();
+        assert!(receipt.journal_revision > 0);
+        let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
+        assert_eq!(feedback["executed"], false);
+        assert_eq!(feedback["error"], error);
+        assert!(feedback.get("applied").is_none());
+        assert_eq!(f.phase(), ReceiptPhase::NotSent);
+        assert!(f
+            .store
+            .video_source(&f.scene, &f.item)
+            .unwrap()
+            .annotations
+            .is_none());
+        assert_eq!(
+            db.conn()
+                .query_row("SELECT count(*) FROM video_text_layouts", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+
+        // This simulates a subsequent model turn; no provider request is made.
+        // agent_loop's HTTP fixture separately checks delivery of this shape.
+        let corrected = args(&f.input, vec![rect(), text()]).to_string();
+        let corrected_lease = f.lease_at_round(&corrected, 1);
+        let (batch, layouts) =
+            render_model(parse_model(&corrected, &f.input).unwrap(), &f.input, || {
+                Ok(())
+            })
+            .unwrap();
+        let before = proof(&db.conn());
+        assert!(f
+            .store
+            .apply_video_annotations_with_receipt(
+                &rejected_lease,
+                &f.authority,
+                batch.clone(),
+                layouts.clone()
+            )
+            .is_err());
+        assert_eq!(proof(&db.conn()), before, "NotSent lease committed effects");
+        let committed = f
+            .store
+            .apply_video_annotations_with_receipt(
+                &corrected_lease,
+                &f.authority,
+                batch.clone(),
+                layouts.clone(),
+            )
+            .unwrap();
+        let result: Value =
+            serde_json::from_str(committed.result.model_visible_json.as_ref().unwrap()).unwrap();
+        assert_eq!(result["applied"], true);
+        assert_eq!(result["objects"], 2);
+        assert_eq!(f.document().objects.len(), 2);
+        let phases: Vec<_> = f
+            .store
+            .run_journal_page(&f.scene, &f.run, None, 25)
+            .unwrap()
+            .unwrap()
+            .entries
+            .into_iter()
+            .filter(|v| v.kind == ReceiptKind::Tool)
+            .map(|v| v.phase)
+            .collect();
+        assert_eq!(phases, vec![ReceiptPhase::NotSent, ReceiptPhase::Responded]);
+        let before = proof(&db.conn());
+        assert!(f
+            .store
+            .apply_video_annotations_with_receipt(&corrected_lease, &f.authority, batch, layouts)
+            .is_err());
+        assert_eq!(proof(&db.conn()), before);
+    }
+
+    #[test]
+    fn invalid_target_remains_rejected_without_render_or_commit() {
+        let db = Db::new();
+        let mut f = Fixture::new(&db);
+        let mut value = args(&f.input, vec![rect()]);
+        value["objects"][0]["targetHandle"] = json!(f.item);
+        let raw = value.to_string();
+        let lease = f.lease(&raw);
+        let entered = Cell::new(0);
+        let error = parse_model(&raw, &f.input)
+            .and_then(|plan| {
+                render_model(plan, &f.input, || {
+                    entered.set(entered.get() + 1);
+                    Ok(())
+                })
+            })
+            .err()
+            .unwrap();
+        let (_, output) = reject_arguments(&mut f.store, &lease, &error).unwrap();
+        assert_eq!(entered.get(), 0);
+        assert_eq!(
+            serde_json::from_str::<Value>(&output.model_json).unwrap()["executed"],
+            false
+        );
+        assert_eq!(f.phase(), ReceiptPhase::NotSent);
+        assert!(f
+            .store
+            .video_source(&f.scene, &f.item)
+            .unwrap()
+            .annotations
+            .is_none());
+        assert_eq!(
+            f.store
+                .video_input_for_run(&f.scene, &f.run, &f.authority)
+                .unwrap(),
+            f.input
+        );
+    }
+
+    #[test]
+    fn failed_rejection_receipt_does_not_return_correction_feedback() {
+        let db = Db::new();
+        let mut f = Fixture::new(&db);
+        let raw = args(&f.input, vec![text()]).to_string();
+        let lease = f.lease(&raw);
+        let sql = db.conn();
+        sql.execute_batch("CREATE TRIGGER fail_video_rejection BEFORE UPDATE ON agent_run_events BEGIN SELECT RAISE(ABORT,'synthetic rejection receipt failure'); END").unwrap();
+        let before = proof(&sql);
+        let result = reject_arguments(
+            &mut f.store,
+            &lease,
+            "视频批注参数无效：$/objects/0/primitive/fontSize（required）",
+        );
+        assert!(
+            result.is_err(),
+            "non-durable rejection returned model feedback"
+        );
+        assert_eq!(proof(&sql), before);
+        assert_eq!(f.phase(), ReceiptPhase::Prepared);
+        assert!(f
+            .store
+            .video_source(&f.scene, &f.item)
+            .unwrap()
+            .annotations
+            .is_none());
+    }
+
     fn proof(db: &Connection) -> Vec<Vec<Vec<SqlValue>>> {
         [
             "app_state",

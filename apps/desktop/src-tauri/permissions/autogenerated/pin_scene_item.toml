@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pin-scene-item"
+description = "Enables the pin_scene_item command without any pre-configured scope."
+commands.allow = ["pin_scene_item"]
+
+[[permission]]
+identifier = "deny-pin-scene-item"
+description = "Denies the pin_scene_item command without any pre-configured scope."
+commands.deny = ["pin_scene_item"]

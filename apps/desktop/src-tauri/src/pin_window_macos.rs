@@ -47,7 +47,10 @@ fn apply_native_rect(pin: &NSWindow, rect: Rect) -> Result<(), String> {
     // Pin windows are borderless: content and outer frame have the same size.
     // One synchronous native call preserves the requested top edge when size
     // changes. It neither orders nor activates the hidden window.
-    pin.setFrame_display(NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)), false);
+    pin.setFrame_display(
+        NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)),
+        false,
+    );
     Ok(())
 }
 

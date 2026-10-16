@@ -71,6 +71,7 @@ fn main() {
             "get_pointer_sample",
             "get_window_snap_map",
             "run_plugin_pin",
+            "pin_scene_item",
             "cancel_plugin_pin",
             "get_pin_state",
             "get_pin_objects",

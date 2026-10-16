@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.pin-video-content{position:relative;width:100%;height:100%;overflow:hidden;background:transparent;cursor:default}
+.pin-video-element{display:block;width:100%;height:100%;object-fit:fill;outline:none}
+.pin-video-ink{position:absolute;inset:0;pointer-events:none;overflow:hidden}.pin-video-ink img{position:absolute;display:block;max-width:none;max-height:none;pointer-events:none}
+.pin-video-controls{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);opacity:0;pointer-events:none;transition:opacity .12s}.pin-video-content:hover .pin-video-controls,.pin-video-content:focus-within .pin-video-controls{opacity:1;pointer-events:auto}
+.pin-video-controls button{display:grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:#20242ccc;color:#fff;box-shadow:none;cursor:pointer}

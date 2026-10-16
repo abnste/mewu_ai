@@ -25,7 +25,7 @@ export async function getRunJournalEvent(input: JournalIdentity & { eventId: str
   if (!content || !['text', 'json', 'omitted'].includes(content.type)) throw new Error('记录内容无效');
   const literal = content.type === 'text' ? content.text : content.type === 'json' ? JSON.stringify(content.value, null, 2) : '';
   if (typeof literal !== 'string') throw new Error('记录内容无效');
-  return { runId: detail.runId, journalRevision: detail.journalRevision, entry: detail.entry, literal, unavailable: content.type === 'omitted' ? content.reason : null };
+  return { runId: detail.runId, journalRevision: detail.journalRevision, entry: detail.entry, literal, unavailable: content.type === 'omitted' ? content.reason : null, notSentReason: detail.entry.phase === 'not_sent' ? detail.notSentReason ?? null : null };
 }
 export async function previewRunContinuation(input: PreviewRunContinuation): Promise<ContinuationDecision> {
   if (!isTauri()) throw new Error('请在桌面版继续回答');

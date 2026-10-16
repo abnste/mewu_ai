@@ -26,7 +26,7 @@ export default function ScrollSurface() {
   const [status, setStatus] = createSignal<ScrollStatus | null>(null), [pending, setPending] = createSignal(false), [error, setError] = createSignal('');
   let disposed = false, stop: (() => void) | undefined;
   onMount(async () => {
-    try { stop = await subscribeScroll(value => { if (!disposed) { setStatus(value); setError(''); } }); if (disposed) stop(); }
+    try { stop = await subscribeScroll(value => { if (!disposed) { setStatus(value); setError(''); } }, 'scroll-controls'); if (disposed) stop(); }
     catch (cause) { if (!disposed) setError(String(cause)); }
   });
   async function act(action: ScrollAction) {

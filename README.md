@@ -31,7 +31,7 @@
 | Source and downloads | [1.0.0](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0) · [Community plugin market](https://github.com/abnste/mewu-plugins) |
 | License | [MPL-2.0](./LICENSE); [full third-party notices](./apps/desktop/THIRD-PARTY-NOTICES) |
 
-**MewuAI 1.0.0** is the remake's first stable release. It retains the capture workflow, executable API 2 plugins and GitHub community market developed through preview 4, including pixel/object erasers, three recent colors, conversation-bar hiding and video seek/trim fixes. See the [release notes](./docs/release-notes-1.0.0.md).
+**MewuAI 1.0.0** retains the capture workflow, executable API 2 plugins and GitHub community market from the first stable release. Stable updates now come directly from the latest versioned release, independently of the old update channel. See the [release notes](./docs/release-notes-1.0.0.md).
 
 The remake is maintained on **[master](https://github.com/abnste/mewu_ai/tree/master)**. The original Windows **.NET/WPF 0.7.x** code and documentation remain on **[dotnet](https://github.com/abnste/mewu_ai/tree/dotnet)**. The remake uses **Rust + Tauri 2 + Solid/TypeScript + SQLite** and the system webview; it does not use Electron.
 
@@ -214,7 +214,7 @@ Capture and manual drawing are local. Using AI sends the referenced content and 
 <details>
 <summary>How do I update? What if an older version cannot update?</summary>
 
-Use **Settings → About** to check and install updates. Stable builds use the fixed, version-signed [stable update channel](https://github.com/abnste/mewu_ai/releases/download/update-channel/latest.json). Existing preview clients retain their [preview endpoint](https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json), which also offers stable 1.0.0; they can upgrade without reinstalling. These endpoints do not depend on branch names. Windows portable updates run the installer and switch to the installed application.
+Use **Settings → About** to check and install updates. The revised 1.0.0 builds read the version-signed [manifest from the latest stable release](https://github.com/abnste/mewu_ai/releases/latest/download/latest.json), independently of update-channel. Earlier 1.0.0 installations must reinstall the revised package once because the version is unchanged. Earlier previews can upgrade through their existing endpoint. Branch renames do not change the new endpoint. Windows portable updates run the installer and switch to the installed application.
 
 Windows **0.7.4** can discover stable 1.0.0 in its own About page. Download and installation each require confirmation; launch from the shortcut afterwards if needed. **0.7.3 and earlier should first install [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4).**
 

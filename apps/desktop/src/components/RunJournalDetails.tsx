@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
 import { For, Show, createMemo, createSignal } from 'solid-js';
-import type { ContinuationDecision, JournalEntrySummary, RunJournalSummary } from '../journal-contracts';
+import type { ContinuationDecision, JournalEntrySummary, JournalEntryView, RunJournalSummary } from '../journal-contracts';
 import type { JournalState } from '../run-journal';
 import '../journal.css';
 
@@ -10,6 +10,20 @@ const phaseText = (entry: JournalEntrySummary) => entry.phase === 'unknown' ? t(
   : entry.phase === 'dispatched' ? t('等待结果') : entry.returnedError || entry.responseKind === 'rpc_error' ? t('返回错误')
   : entry.responseKind === 'input_required' ? t('需要输入') : entry.responseKind === 'task' ? t('远端处理中') : t('已返回');
 const terminalText = (summary: RunJournalSummary) => summary.status === 'interrupted' ? t('已中断') : summary.status === 'canceled' ? t('已停止') : t('未完成');
+const notSentText = (detail?: JournalEntryView) => {
+  if (detail?.entry.phase !== 'not_sent') return undefined;
+  switch (detail.notSentReason) {
+    case 'preparation_failed': return t('准备失败，未执行');
+    case 'invalid_arguments': return t('参数无效，未执行');
+    case 'not_advertised': return t('工具不可用，未执行');
+    case 'authority_changed': return t('权限已更改，未执行');
+    case 'catalog_changed': return t('工具已更改，未执行');
+    case 'run_ended': return t('任务已结束，未执行');
+    case 'budget_exhausted': return t('已达执行上限，未执行');
+    case 'duplicate_call_id': return t('重复调用，未执行');
+    default: return undefined;
+  }
+};
 
 export interface RunJournalProps {
   summary?: RunJournalSummary;
@@ -57,7 +71,9 @@ export default function RunJournalDetails(props: RunJournalProps) {
     </Show>
     <button class="journal-entry-open" onClick={() => props.onDetail(value.id)} disabled={Boolean(props.state.detailLoading)}><span>{value.label}</span><small>{phaseText(value)}</small></button>
     <Show when={props.state.detail?.entry.id === value.id}><div class="journal-detail">
-      <Show when={!props.state.detail?.unavailable} fallback={<span>{props.state.detail?.unavailable === 'memory_policy' || props.state.detail?.unavailable === 'history_policy' ? t('未保留原文') : t('内容不可用')}</span>}><pre>{props.state.detail?.literal}</pre></Show>
+      <Show when={notSentText(props.state.detail)} fallback={<Show when={!props.state.detail?.unavailable} fallback={<span>{props.state.detail?.entry.phase === 'unknown' ? t('结果未确认') : props.state.detail?.unavailable === 'memory_policy' || props.state.detail?.unavailable === 'history_policy' ? t('未保留原文') : t('内容不可用')}</span>}><pre>{props.state.detail?.literal}</pre></Show>}>
+        <span>{notSentText(props.state.detail)}</span>
+      </Show>
     </div></Show>
   </div>;
   return <div class="run-journal tool-progress" data-run-journal on:keydown={keyboard} onPointerDown={event => event.stopPropagation()}>

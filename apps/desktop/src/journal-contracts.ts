@@ -2,6 +2,7 @@
 export type RecordedRunStatus = 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
 export type ContinueBlockedReason = 'running' | 'scene_closed' | 'scene_frozen' | 'scene_inactive' | 'no_confirmed_content' | 'legacy_not_recorded' | 'connection_unselected' | 'mandatory_context_too_large' | 'selection_too_large' | 'context_unavailable' | 'conversation_changed';
 export type ContentUnavailable = 'oversized' | 'unsupported_content' | 'memory_policy' | 'history_policy' | 'not_received' | 'invalid_response' | 'legacy_not_recorded';
+export type NotSentReason = 'preparation_failed' | 'invalid_arguments' | 'not_advertised' | 'authority_changed' | 'catalog_changed' | 'run_ended' | 'budget_exhausted' | 'duplicate_call_id';
 export interface RunJournalSummary {
   runId: string; sceneId: string; agentId: string; userMessageId: string;
   kind: 'chat' | 'workflow' | 'continuation'; status: RecordedRunStatus;
@@ -31,11 +32,13 @@ export type EvidenceReference =
 export interface JournalEntryDetail {
   runId: string; journalRevision: number; entry: JournalEntrySummary; binding: ToolBinding | null;
   argumentsWireSha256: string | null; content: JournalContent; references: EvidenceReference[];
+  notSentReason?: NotSentReason | null;
 }
 // Rendering adapter; native content is converted to literal text, never markup.
 export interface JournalEntryView {
   runId: string; journalRevision: number; entry: JournalEntrySummary;
   literal: string; unavailable: ContentUnavailable | null;
+  notSentReason?: NotSentReason | null;
 }
 export interface ContinueFromRecord {
   sceneId: string; sourceRunId: string; expectedJournalRevision: number; expectedCheckpointSeq: number;

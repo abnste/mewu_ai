@@ -89,7 +89,7 @@ impl ContentServer {
                     let lease = super::pin_host::resolve_asset(&app, id)?;
                     let asset = lease.asset().clone();
                     let root = lease.root().to_owned();
-                    image_response(&asset, &root, Some(lease))
+                    leased_asset_response(&asset, &root, range, Some(lease))
                 }
             })();
             let response = result.unwrap_or_else(|| {
@@ -145,8 +145,16 @@ fn image_response(
 }
 
 fn asset_response(asset: &Asset, root: &Path, range: Option<&str>) -> Option<ResponseBox> {
+    leased_asset_response(asset, root, range, None)
+}
+fn leased_asset_response(
+    asset: &Asset,
+    root: &Path,
+    range: Option<&str>,
+    lease: Option<super::pin_host::PinAssetLease>,
+) -> Option<ResponseBox> {
     match asset.kind {
-        AssetKind::Image => image_response(asset, root, None),
+        AssetKind::Image => image_response(asset, root, lease),
         AssetKind::Video => {
             let (mut file, length) = super::assets::open_video(asset, root).ok()?;
             let (status, start, count, content_range) = match byte_range(range, length) {
@@ -168,7 +176,10 @@ fn asset_response(asset: &Asset, root: &Path, range: Option<&str>) -> Option<Res
                 Response::new(
                     StatusCode(status),
                     Vec::new(),
-                    file.take(count),
+                    LeasedImageReader {
+                        reader: file.take(count),
+                        _lease: lease,
+                    },
                     Some(count.try_into().ok()?),
                     None,
                 )

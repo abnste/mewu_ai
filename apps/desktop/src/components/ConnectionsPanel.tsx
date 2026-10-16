@@ -75,7 +75,7 @@ export default function ConnectionsPanel(props: Props) {
   void subscribePlugins(() => {
     if (disposed) return; presetEpoch++; presetsDirty = true; setPresets([]);
     if (props.active) void loadPresets();
-  }).then(stop => { if (disposed) stop(); else { stopPlugins = stop; presetEpoch++; presetsDirty = true; if (props.active) void loadPresets(); } })
+  }, 'settings').then(stop => { if (disposed) stop(); else { stopPlugins = stop; presetEpoch++; presetsDirty = true; if (props.active) void loadPresets(); } })
     .catch(error => { if (!disposed) setPresetError(message(error)); });
   createEffect(on(active, value => { if (!value) { cancelProbe(); setMenu(''); } else if (!initialized || presetsDirty) void loadPresets(); }));
   const revisions = createMemo(() => props.connections.map(value => `${value.id}:${value.revision}`).join('|'));

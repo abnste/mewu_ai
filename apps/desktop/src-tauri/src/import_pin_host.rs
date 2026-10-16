@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Only a successfully committed import batch can create these image pins.
-//! This is a host operation, not a renderer command or plugin contribution.
-use crate::{pin_host, pin_window};
+//! Explicit scene-item pin origins and physical geometry. Import never pins.
+use crate::pin_window;
 use mewu_core::{Asset, AssetKind, Snapshot, SpaceItem};
-use serde::Serialize;
-use tauri::{AppHandle, Emitter};
 
 #[derive(Clone)]
 pub(crate) struct ImportedImageOrigin {
@@ -14,6 +11,31 @@ pub(crate) struct ImportedImageOrigin {
     pub(crate) item: SpaceItem,
 }
 impl ImportedImageOrigin {
+    pub(crate) fn capture_item(
+        snapshot: &Snapshot,
+        scene_id: &str,
+        item_id: &str,
+        expected_asset_id: &str,
+    ) -> Option<Self> {
+        let scene = snapshot.scenes.iter().find(|scene| {
+            snapshot.active_scene_id == scene_id
+                && scene.id == scene_id
+                && !scene.closed
+                && !scene.frozen
+        })?;
+        let item = scene.items.iter().find(|item| {
+            item.id == item_id
+                && item.asset.id == expected_asset_id
+                && matches!(item.asset.kind, AssetKind::Image | AssetKind::Video)
+        })?;
+        Some(Self {
+            scene_id: scene_id.into(),
+            agent_id: scene.agent_id.clone(),
+            background: scene.background.clone(),
+            item: item.clone(),
+        })
+    }
+    #[cfg(test)]
     pub(crate) fn capture(snapshot: &Snapshot, scene_id: &str, asset_id: &str) -> Option<Self> {
         let scene = snapshot.scenes.iter().find(|scene| {
             snapshot.active_scene_id == scene_id
@@ -43,52 +65,103 @@ impl ImportedImageOrigin {
                     && scene.items.iter().find(|item| item.id == self.item.id) == Some(&self.item)
             })
     }
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ImportPinOutcome {
-    pub(crate) asset_id: String,
-    pub(crate) item_id: String,
-    pub(crate) pin_id: Option<String>,
-    pub(crate) error: Option<String>,
-}
-
-pub(crate) async fn pin_imported_images(
-    app: &AppHandle,
-    scene_id: &str,
-    committed: &Snapshot,
-    imported_asset_ids: &[String],
-) -> Vec<ImportPinOutcome> {
-    // Resolve only against the exact committed batch snapshot. Never look up a
-    // replacement item in the active scene after asynchronous work completes.
-    let origins: Vec<_> = imported_asset_ids
-        .iter()
-        .filter_map(|id| ImportedImageOrigin::capture(committed, scene_id, id))
-        .collect();
-    let mut outcomes = Vec::with_capacity(origins.len());
-    for origin in origins {
-        let asset_id = origin.item.asset.id.clone();
-        let item_id = origin.item.id.clone();
-        let result = pin_host::pin_imported_image(app.clone(), origin).await;
-        let (pin_id, error) = match result {
-            Ok(id) => (Some(id), None),
-            Err(error) => (None, Some(format!("图片已导入，置顶失败：{error}"))),
-        };
-        let outcome = ImportPinOutcome {
-            asset_id,
-            item_id,
-            pin_id,
-            error,
-        };
-        // Completion is separate from the import transaction: neither a failed
-        // pin nor an unavailable UI can undo successfully registered assets.
-        let _ = app.emit_to("space", "import-pin-result", &outcome);
-        outcomes.push(outcome);
+    pub(crate) fn rect(
+        &self,
+        viewport: pin_window::Rect,
+        device_scale: f64,
+    ) -> Result<pin_window::Rect, String> {
+        item_rect(&self.item, self.background.as_ref(), viewport, device_scale)
     }
-    outcomes
 }
 
+pub(crate) fn item_rect(
+    item: &SpaceItem,
+    background: Option<&Asset>,
+    viewport: pin_window::Rect,
+    device_scale: f64,
+) -> Result<pin_window::Rect, String> {
+    if viewport.width == 0
+        || viewport.height == 0
+        || ![item.x, item.y, item.width, item.height]
+            .iter()
+            .all(|value| value.is_finite())
+        || item.width <= 0.
+        || item.height <= 0.
+    {
+        return Err("素材位置无效".into());
+    }
+    let (vw, vh) = (f64::from(viewport.width), f64::from(viewport.height));
+    let (mut left, mut top, mut box_width, mut box_height) =
+        (item.x * vw, item.y * vh, item.width * vw, item.height * vh);
+    if item.asset.kind == AssetKind::Video
+        && item.state.as_ref().is_some_and(|state| {
+            state
+                .get("coordinateSpace")
+                .and_then(|value| value.as_str())
+                == Some("background")
+                && state.get("backgroundId").and_then(|value| value.as_str())
+                    == background.map(|asset| asset.id.as_str())
+        })
+    {
+        let background = background.ok_or("视频截图来源不存在")?;
+        let (bw, bh) = (
+            f64::from(background.width.filter(|v| *v > 0).ok_or("截图宽度无效")?),
+            f64::from(background.height.filter(|v| *v > 0).ok_or("截图高度无效")?),
+        );
+        let native = background
+            .capture_coordinates
+            .as_ref()
+            .is_some_and(|coordinates| {
+                coordinates.space == mewu_core::CaptureCoordinateSpace::PhysicalPixels
+                    && coordinates.width == bw
+                    && coordinates.height == bh
+                    && device_scale.is_finite()
+                    && device_scale > 0.
+                    && (vw - bw).abs() <= device_scale * 0.5
+                    && (vh - bh).abs() <= device_scale * 0.5
+            });
+        let scale = if native { 1. } else { (vw / bw).min(vh / bh) };
+        let (bx, by) = if native {
+            (0., 0.)
+        } else {
+            ((vw - bw * scale) / 2., (vh - bh * scale) / 2.)
+        };
+        (left, top, box_width, box_height) = (
+            bx + item.x * bw * scale,
+            by + item.y * bh * scale,
+            item.width * bw * scale,
+            item.height * bh * scale,
+        );
+    }
+    // Match ArtifactCard's intrinsic aspect fit, not its wider saved bounds.
+    let ratio = f64::from(item.asset.width.filter(|v| *v > 0).ok_or("素材宽度无效")?)
+        / f64::from(item.asset.height.filter(|v| *v > 0).ok_or("素材高度无效")?);
+    let width = box_width.min(box_height * ratio).round().max(1.);
+    let height = (box_width.min(box_height * ratio) / ratio).round().max(1.);
+    if width + 24. > 8192.
+        || height + 24. > 8192.
+        || (width + 24.) * (height + 24.) > 16. * 1024. * 1024.
+    {
+        return Err("置顶尺寸超过窗口限制".into());
+    }
+    let x = f64::from(viewport.x) + left - f64::from(pin_window::PADDING);
+    let y = f64::from(viewport.y) + top - f64::from(pin_window::PADDING);
+    if x < f64::from(i32::MIN)
+        || x > f64::from(i32::MAX)
+        || y < f64::from(i32::MIN)
+        || y > f64::from(i32::MAX)
+    {
+        return Err("置顶位置无效".into());
+    }
+    Ok(pin_window::Rect {
+        x: x.round() as i32,
+        y: y.round() as i32,
+        width: width as u32 + pin_window::PADDING * 2,
+        height: height as u32 + pin_window::PADDING * 2,
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn original_rect(
     asset: &Asset,
     viewport: pin_window::Rect,
@@ -139,6 +212,139 @@ mod tests {
             origin_y: None,
             scale_factor: Some(1.5),
         }
+    }
+    #[test]
+    fn explicit_scene_item_pin_fences_video_edit_and_keeps_original_screen_geometry() {
+        let mut store = mewu_core::Store::open_in_memory().unwrap();
+        let scene_id = store.snapshot().active_scene_id;
+        let image = asset(AssetKind::Image, 160, 90);
+        let snapshot = store.import_assets(&scene_id, vec![image.clone()]).unwrap();
+        let item = &snapshot.scenes[0].items[0];
+        let origin =
+            ImportedImageOrigin::capture_item(&snapshot, &scene_id, &item.id, &image.id).unwrap();
+        assert!(
+            ImportedImageOrigin::capture_item(&snapshot, &scene_id, "other-item", &image.id)
+                .is_none()
+        );
+        assert!(
+            ImportedImageOrigin::capture_item(&snapshot, &scene_id, &item.id, "other-asset")
+                .is_none()
+        );
+        let mut changed = snapshot.clone();
+        changed.scenes[0].items[0].state = Some(std::collections::BTreeMap::from([(
+            "blackboardSceneId".into(),
+            serde_json::json!("other-board"),
+        )]));
+        assert!(!origin.matches(&changed));
+        let mut video_snapshot = snapshot.clone();
+        let video = &mut video_snapshot.scenes[0].items[0];
+        video.asset.kind = AssetKind::Video;
+        video.asset.scale_factor = None;
+        video.video_edit = Some(mewu_core::VideoEdit {
+            source_id: image.id.clone(),
+            source_duration_ticks: 50_000_000,
+            revision: 1,
+            range: Some(mewu_core::VideoRange {
+                start_ticks: 10_000_000,
+                end_ticks: 40_000_000,
+            }),
+            undo: vec![],
+            redo: vec![],
+        });
+        let video_origin =
+            ImportedImageOrigin::capture_item(&video_snapshot, &scene_id, &item.id, &image.id)
+                .unwrap();
+        video_snapshot.scenes[0].items[0]
+            .video_edit
+            .as_mut()
+            .unwrap()
+            .range
+            .as_mut()
+            .unwrap()
+            .start_ticks += 1;
+        assert!(!video_origin.matches(&video_snapshot));
+        let mut placed = item.clone();
+        placed.x = -0.2;
+        placed.y = -0.1;
+        placed.width = 0.4;
+        placed.height = 0.3;
+        let rect = item_rect(
+            &placed,
+            None,
+            pin_window::Rect {
+                x: -1920,
+                y: -100,
+                width: 1920,
+                height: 1080,
+            },
+            1.,
+        )
+        .unwrap();
+        assert_eq!(
+            rect,
+            pin_window::Rect {
+                x: -2316,
+                y: -220,
+                width: 600,
+                height: 348
+            }
+        );
+        placed.width = f64::NAN;
+        assert!(item_rect(
+            &placed,
+            None,
+            pin_window::Rect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080
+            },
+            1.,
+        )
+        .is_err());
+    }
+    #[test]
+    fn background_video_pin_projects_letterboxing_and_fits_actual_media() {
+        let mut store = mewu_core::Store::open_in_memory().unwrap();
+        let scene_id = store.snapshot().active_scene_id;
+        let snapshot = store
+            .import_assets(&scene_id, vec![asset(AssetKind::Image, 160, 90)])
+            .unwrap();
+        let mut item = snapshot.scenes[0].items[0].clone();
+        let background = asset(AssetKind::Image, 1000, 1000);
+        item.asset.kind = AssetKind::Video;
+        item.x = 0.1;
+        item.y = 0.2;
+        item.width = 0.5;
+        item.height = 0.5;
+        item.state = Some(std::collections::BTreeMap::from([
+            ("coordinateSpace".into(), serde_json::json!("background")),
+            ("backgroundId".into(), serde_json::json!(background.id)),
+        ]));
+        let viewport = pin_window::Rect {
+            x: -1920,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let rect = item_rect(&item, Some(&background), viewport, 1.25).unwrap();
+        assert_eq!(
+            rect,
+            pin_window::Rect {
+                x: -1404,
+                y: 204,
+                width: 564,
+                height: 328
+            }
+        );
+        item.state
+            .as_mut()
+            .unwrap()
+            .insert("backgroundId".into(), serde_json::json!("unrelated"));
+        assert_ne!(
+            item_rect(&item, Some(&background), viewport, 1.25).unwrap(),
+            rect
+        );
     }
     #[test]
     fn imported_pin_captures_only_this_batch_image_and_fences_the_full_item() {

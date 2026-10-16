@@ -26,8 +26,8 @@ const defaults = {
 }[platform];
 const installer = path.resolve(request.installer || defaults.installer), updater = path.resolve(request.updater || defaults.updater || installer);
 regularFile(installer); regularFile(updater);
-if (!plan.channel && updater !== installer) throw Error('Platform must update from its exact installer');
-const sources = [[installer, plan.files[0]], ...(plan.channel ? [[updater, plan.updater]] : [])], before = sources.map(([source]) => fingerprint(source));
+if (!plan.separateUpdater && updater !== installer) throw Error('Platform must update from its exact installer');
+const sources = [[installer, plan.files[0]], ...(plan.separateUpdater ? [[updater, plan.updater]] : [])], before = sources.map(([source]) => fingerprint(source));
 fs.mkdirSync(output, { recursive: true });
 for (const [source, name] of sources) fs.copyFileSync(source, path.join(output, name));
 if (platform === 'windows-x86_64') {

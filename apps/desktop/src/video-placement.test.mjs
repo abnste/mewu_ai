@@ -22,6 +22,16 @@ test('normal video keeps object actions above and timeline below as separate bub
   const box = { left: 200, top: 200, width: 640, height: 360 }, screen = { width: 1280, height: 900 };
   const placed = check(box, screen, { width: 318, height: 58 }, 64, { left: 320, top: 800, width: 640, height: 100 });
   assert.equal(placed.actions.top, 136); assert.equal(placed.timeline.top, 566);
+  assert.equal(placed.actions.left, box.left, 'object actions align with the video left edge');
+});
+
+test('left aligned object actions stay reachable when a zoomed video crosses either screen edge', () => {
+  for (const left of [-300, 900]) {
+    const placed = placeVideoToolbars({ left, top: 220, width: 1000, height: 500 }, { width: 1280, height: 900 }, { width: 318, height: 58 }, 64);
+    assert.equal(placed.actions.left, left < 0 ? 8 : 900);
+    assert.ok(placed.actions.left + placed.actions.width <= 1272);
+    assert.ok(placed.actions.top + 64 <= placed.timeline.top);
+  }
 });
 test('a bottom-edge video cannot make both independent fallbacks occupy the same slot', () => {
   const box = { left: 180, top: 415, width: 450, height: 150 }, screen = { width: 900, height: 620 };

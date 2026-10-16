@@ -200,8 +200,8 @@ fn request_logical_size(window: &WebviewWindow, rect: Rect) -> Result<(), String
     if scale <= 0 {
         return Err("贴图原位尺寸不可用".into());
     }
-    let logical = tauri::PhysicalSize::new(rect.width, rect.height)
-        .to_logical::<i32>(f64::from(scale));
+    let logical =
+        tauri::PhysicalSize::new(rect.width, rect.height).to_logical::<i32>(f64::from(scale));
     if logical.width <= 0 || logical.height <= 0 {
         return Err("贴图原位尺寸不可用".into());
     }
@@ -212,15 +212,26 @@ fn request_logical_size(window: &WebviewWindow, rect: Rect) -> Result<(), String
     widget.set_geometry_hints(
         None::<&gtk::Window>,
         Some(&gtk::gdk::Geometry::new(
-            logical.width, logical.height, logical.width, logical.height,
-            0, 0, 0, 0, 0., 0., gtk::gdk::Gravity::Center,
+            logical.width,
+            logical.height,
+            logical.width,
+            logical.height,
+            0,
+            0,
+            0,
+            0,
+            0.,
+            0.,
+            gtk::gdk::Gravity::Center,
         )),
         gtk::gdk::WindowHints::MIN_SIZE | gtk::gdk::WindowHints::MAX_SIZE,
     );
     // Update the real child requisition before every resize and restore.
     window
         .with_webview(move |platform| {
-            platform.inner().set_size_request(logical.width, logical.height);
+            platform
+                .inner()
+                .set_size_request(logical.width, logical.height);
         })
         .map_err(|_| "无法调整贴图内容".into())
 }
@@ -451,33 +462,43 @@ async fn show_with_state(
 }
 
 pub(super) fn hide_for_capture(window: &WebviewWindow) -> Result<(), String> {
-    let native=drawable(window)?;
-    let widget=window.gtk_window().map_err(|_|"贴图窗口不可用")?;
+    let native = drawable(window)?;
+    let widget = window.gtk_window().map_err(|_| "贴图窗口不可用")?;
     // current_rect prefers HIDDEN_FOR_SPACE's saved object rectangle, including
     // a pin already withdrawn while Space renders it. Never overwrite it with
     // the window manager's unmapped/reparented position.
-    let rect=current_rect(window)?;
+    let rect = current_rect(window)?;
     RESTORING.with(|pending| {
-        if let Some(restore)=pending.borrow().get(window.label()) {
-            restore.cancel.store(true,Ordering::Release);
+        if let Some(restore) = pending.borrow().get(window.label()) {
+            restore.cancel.store(true, Ordering::Release);
         }
     });
     // Preserve the last true object position before GTK withdraws it. The
     // normal Space-unmap path, not an unchecked raw show, restores this target.
-    HIDDEN_FOR_SPACE.with(|hidden| {hidden.borrow_mut().insert(window.label().into(),rect);});
-    CAPTURE_HIDDEN.with(|hidden| {hidden.borrow_mut().insert(window.label().into());});
+    HIDDEN_FOR_SPACE.with(|hidden| {
+        hidden.borrow_mut().insert(window.label().into(), rect);
+    });
+    CAPTURE_HIDDEN.with(|hidden| {
+        hidden.borrow_mut().insert(window.label().into());
+    });
     widget.hide();
     // This flush alone is not evidence. The subscribed bounded X11 guard reads
     // actual UNMAPPED and all StructureNotify events before portal admission.
     // https://docs.gtk.org/gdk3/method.Display.flush.html
     native.display().flush();
-    if widget.is_mapped(){Err("贴图窗口尚未取消映射".into())}else{Ok(())}
+    if widget.is_mapped() {
+        Err("贴图窗口尚未取消映射".into())
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) fn finish_capture_hides(labels: &[String]) {
     CAPTURE_HIDDEN.with(|hidden| {
-        let mut hidden=hidden.borrow_mut();
-        for label in labels {hidden.remove(label);}
+        let mut hidden = hidden.borrow_mut();
+        for label in labels {
+            hidden.remove(label);
+        }
     });
 }
 
@@ -505,7 +526,11 @@ pub(super) fn restack(app: &AppHandle) {
     HIDDEN_FOR_SPACE.with(|hidden| {
         let mut hidden = hidden.borrow_mut();
         hidden.retain(|label, _| labels.iter().any(|(live, _)| live == label));
-        CAPTURE_HIDDEN.with(|capture|capture.borrow_mut().retain(|label|labels.iter().any(|(live,_)|live==label)));
+        CAPTURE_HIDDEN.with(|capture| {
+            capture
+                .borrow_mut()
+                .retain(|label| labels.iter().any(|(live, _)| live == label))
+        });
         RESTORING.with(|pending| {
             pending.borrow_mut().retain(|label, restore| {
                 let live = labels.iter().any(|(live, _)| live == label);
@@ -519,7 +544,9 @@ pub(super) fn restack(app: &AppHandle) {
             // Hiding the Wayland Space emits unmap before permission is shown.
             // That ordinary callback must not remap a pin while this capture's
             // subscribed native guard owns its hidden lifetime.
-            if CAPTURE_HIDDEN.with(|hidden|hidden.borrow().contains(&label)){continue;}
+            if CAPTURE_HIDDEN.with(|hidden| hidden.borrow().contains(&label)) {
+                continue;
+            }
             let Some(pin) = app.get_webview_window(&label) else {
                 continue;
             };

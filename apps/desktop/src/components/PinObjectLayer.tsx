@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import { controlPinObject, type PinObject } from '../pin-objects';
 import './pin-objects.css';
 import {moveImageObject} from '../image-object-geometry';
+import PinVideo from './PinVideo';
 interface Props { aiAvailable?: boolean; objects: PinObject[]; busy: boolean; referenced: (object: PinObject) => boolean; onReference: (object: PinObject) => void; onError: (error: unknown) => void }
 function ImageObject(props: Props & { object: PinObject }) {
   const [position, setPosition] = createSignal({ x: props.object.x, y: props.object.y });
@@ -19,8 +20,8 @@ function ImageObject(props: Props & { object: PinObject }) {
     try {while(zoomSteps&&!disposed){const direction=zoomSteps>0?1:-1;zoomSteps-=direction;await controlPinObject(props.object.id,{type:'zoom',direction});}}
     catch(cause){zoomSteps=0;if(!disposed)props.onError(cause);}finally{zooming=false;}
   }
-  function down(event: PointerEvent) {
-    if (props.busy || event.button !== 0 || (event.target as Element).closest('button')) return;
+  function down(event: PointerEvent, grip = false) {
+    if (props.busy || event.button !== 0 || !grip && (event.target as Element).closest('button,.pin-video-content')) return;
     event.preventDefault();event.stopPropagation();cleanup?.();
     const target=event.currentTarget as HTMLElement,start=position(),x=event.clientX,y=event.clientY,vw=innerWidth,vh=innerHeight;
     let changed=false;moving=true;target.setPointerCapture(event.pointerId);
@@ -30,9 +31,9 @@ function ImageObject(props: Props & { object: PinObject }) {
     cleanup=stop;target.addEventListener('pointermove',move);target.addEventListener('pointerup',end);target.addEventListener('pointercancel',end);
   }
   return <section class="space-pin-object" tabindex={0} aria-label={t('贴图')} onPointerDown={down} onWheel={wheel} style={{left:`${position().x*100}%`,top:`${position().y*100}%`,width:`${props.object.displayWidth*100}%`,height:`${props.object.displayHeight*100}%`,opacity:props.object.opacity}}>
-    <img src={props.object.imageUrl} alt={t('贴图')} draggable={false} style={{width:props.object.quarterTurns%2?`${props.object.displayHeight/props.object.displayWidth*innerHeight/innerWidth*100}%`:'100%',height:props.object.quarterTurns%2?`${props.object.displayWidth/props.object.displayHeight*innerWidth/innerHeight*100}%`:'100%',transform:`translate(-50%,-50%) rotate(${props.object.quarterTurns*90}deg)`}}/>
+    <Show when={props.object.media} fallback={<img src={props.object.imageUrl} alt={t('贴图')} draggable={false} style={{width:props.object.quarterTurns%2?`${props.object.displayHeight/props.object.displayWidth*innerHeight/innerWidth*100}%`:'100%',height:props.object.quarterTurns%2?`${props.object.displayWidth/props.object.displayHeight*innerWidth/innerHeight*100}%`:'100%',transform:`translate(-50%,-50%) rotate(${props.object.quarterTurns*90}deg)`}}/>}><PinVideo source={props.object.imageUrl} media={props.object.media!} width={props.object.width} height={props.object.height} onError={props.onError} onDrag={event => down(event, true)} /></Show>
     <div class="image-object-tools" role="toolbar" aria-label={t('图片工具')} onPointerDown={e=>e.stopPropagation()}>
-      <Show when={props.aiAvailable !== false}><button class="icon-button compact" classList={{selected:props.referenced(props.object)}} title={props.referenced(props.object)?t('取消引用'):t('引用')} aria-label={props.referenced(props.object)?t('取消引用'):t('引用')} disabled={props.busy} onClick={()=>props.onReference(props.object)}><Link2 size={15}/></button></Show>
+      <Show when={props.aiAvailable !== false && !props.object.media}><button class="icon-button compact" classList={{selected:props.referenced(props.object)}} title={props.referenced(props.object)?t('取消引用'):t('引用')} aria-label={props.referenced(props.object)?t('取消引用'):t('引用')} disabled={props.busy} onClick={()=>props.onReference(props.object)}><Link2 size={15}/></button></Show>
       <button class="icon-button compact" title={t('关闭贴图')} aria-label={t('关闭贴图')} disabled={props.busy} onClick={()=>void controlPinObject(props.object.id,{type:'close'}).catch(props.onError)}><X size={15}/></button>
     </div>
   </section>;

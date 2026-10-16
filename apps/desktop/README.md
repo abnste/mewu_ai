@@ -12,17 +12,17 @@ Build native installers on their matching platform: Windows NSIS and portable ZI
 
 The release workflow creates unsigned candidates. A coordinator keeps the updater private key outside source and artifacts, signs the exact update payloads, stages each platform with `scripts/prepare-release.mjs`, combines matching native acceptance records with `scripts/assemble-release.mjs`, then publishes with `scripts/publish-release.mjs`. Signing can use `TAURI_SIGNING_PRIVATE_KEY` and its optional password. Existing clients trust the repository's public key, so retain the same protected signing key.
 
-## Fixed updater channel
+## Updates from stable releases
 
 Stable 1.0 builds use this endpoint:
 
-https://github.com/abnste/mewu_ai/releases/download/update-channel/latest.json
+https://github.com/abnste/mewu_ai/releases/latest/download/latest.json
 
-Existing preview builds retain `https://github.com/abnste/mewu_ai/releases/download/update-channel/preview.json`. A stable 1.x release advances both `preview.json` and `latest.json`, so preview clients can move to stable without reinstalling. Later preview releases advance only `preview.json`; stable clients stay on `latest.json`.
+In the revised 1.0.0 build, the manifest and macOS updater TAR belong to the same immutable versioned release as the installers. The normal publisher neither reads nor creates the retired update-channel release. The stable endpoint follows GitHub Latest and does not depend on the default branch name.
 
-The update-channel release remains a prerelease and is excluded from GitHub's latest stable release. Each manifest names a versioned installer under its immutable version tag. The installed updater and normal release flow use versioned releases and the fixed channel, so branch renames do not change the endpoint, signing key or application identity. The separate legacy compatibility publisher checks `master` as its working branch and protects the pinned `dotnet` commit.
+Earlier 1.0.0 and preview builds have their original endpoint compiled in. Old previews can receive the revised 1.0.0 through that endpoint; the old Mac validator still requires its original channel TAR URL, so the compatibility feed mirrors the exact signed revised TAR bytes. It must not be replaced by the new manifest. An existing 1.0.0 installation does not see a same-version update and must reinstall once. Revised builds use only the new stable endpoint.
 
-Versioned releases attach the Windows installer and portable ZIP, macOS DMG and Linux AppImage. Windows updates use the exact EXE installer, Linux updates use the exact AppImage, and macOS updates use a versioned `.app.tar.gz` stored only in the fixed `update-channel` release. The manifest must contain all three targets and version-bound inline signatures. License texts and source attribution stay inside the packages. No standalone signature, checksum or private metadata files are attached to a versioned release. GitHub provides asset SHA-256 digests. Publish notes come from `docs/release-notes-<version>.md`.
+Versioned releases attach four software downloads (Windows installer and portable ZIP, macOS DMG and Linux AppImage), plus latest.json and the macOS .app.tar.gz for automatic updates. Windows and Linux update from their exact installers. The manifest contains all three targets and version-bound inline signatures. License texts and source attribution remain inside packages; standalone signatures, private metadata and test files are not attached. GitHub provides asset SHA-256 digests. Notes come from docs/release-notes-<version>.md.
 
 Use monotonically increasing SemVer versions. Signature verification binds the installer bytes and version, rejects unsigned updates, rejects downgrade offers, and restricts installer URLs to this repository. Only the first-party settings window has updater permissions. Generated HTML/SVG cannot invoke the updater.
 

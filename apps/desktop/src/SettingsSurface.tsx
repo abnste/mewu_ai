@@ -37,7 +37,7 @@ export default function SettingsSurface() {
     if (loading() || disposed) return;
     setLoading(true); setError('');
     try {
-      if (!stopEvents) stopEvents = await bridge.subscribe(accept, () => undefined, showError);
+      if (!stopEvents) stopEvents = await bridge.subscribe(accept, () => undefined, showError, 'settings');
       if (disposed) { stopEvents(); return; }
       accept(await bridge.getSnapshot());
       const info = await bridge.runtimeInfo();

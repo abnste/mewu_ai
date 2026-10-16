@@ -99,6 +99,108 @@ fn revision(db: &Connection) -> i64 {
 }
 
 #[test]
+fn not_sent_reason_is_read_only_detail_metadata_and_survives_restart() {
+    let file = Db::new();
+    let reasons = [
+        NotSentReason::PreparationFailed,
+        NotSentReason::InvalidArguments,
+        NotSentReason::NotAdvertised,
+        NotSentReason::AuthorityChanged,
+        NotSentReason::CatalogChanged,
+        NotSentReason::RunEnded,
+        NotSentReason::BudgetExhausted,
+        NotSentReason::DuplicateCallId,
+    ];
+    let mut store = Store::open(&file.0).unwrap();
+    let context = start(&mut store, "查看未执行原因");
+    let calls = (0..reasons.len())
+        .map(|index| call(&format!("reason-{index}")))
+        .collect();
+    let committed = turn(&mut store, &context, "准备工具", calls);
+    for (tool, reason) in committed.tools.iter().zip(&reasons) {
+        store
+            .record_tool_not_sent(&tool.lease, reason.clone())
+            .unwrap();
+    }
+    // A model turn may advertise at most eight calls. Use a second real turn
+    // for the unknown-result control rather than weakening the store's budget.
+    let next_model = model(&mut store, &context, 1);
+    let unknown_call = store
+        .record_model_turn(
+            &next_model,
+            CompletePublicTurn {
+                text: "核对未知结果".into(),
+                calls: vec![call("unknown-control")],
+            },
+        )
+        .unwrap();
+    store
+        .mark_tool_dispatched(&unknown_call.tools[0].lease)
+        .unwrap();
+    store
+        .fail_run(&context.scene_id, &context.run_id, "合成中断")
+        .unwrap();
+    drop(store);
+    let store = Store::open(&file.0).unwrap();
+    let db = Connection::open(&file.0).unwrap();
+    let snapshot = || -> (i64, Vec<(String, String)>, i64) {
+        let rows = db
+            .prepare("SELECT metadata,content FROM agent_run_events ORDER BY sequence")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        (
+            revision(&db),
+            rows,
+            db.query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap(),
+        )
+    };
+    let before = snapshot();
+    let page = page(&store, &context);
+    for (index, reason) in reasons.iter().enumerate() {
+        let summary = &page.entries[index + 1];
+        let detail = store
+            .run_journal_entry(
+                &context.scene_id,
+                &context.run_id,
+                &summary.id,
+                page.summary.revision,
+            )
+            .unwrap();
+        assert_eq!(detail.not_sent_reason.as_ref(), Some(reason));
+        let wire = serde_json::to_value(&detail).unwrap();
+        assert_eq!(wire["notSentReason"], serde_json::to_value(reason).unwrap());
+        assert!(serde_json::to_value(summary)
+            .unwrap()
+            .get("notSentReason")
+            .is_none());
+        let mut older_wire = wire;
+        older_wire.as_object_mut().unwrap().remove("notSentReason");
+        let older: JournalEntryDetail = serde_json::from_value(older_wire).unwrap();
+        assert_eq!(older.not_sent_reason, None);
+    }
+    let unknown = page.entries.last().unwrap();
+    assert_eq!(unknown.phase, ReceiptPhase::Unknown);
+    let detail = store
+        .run_journal_entry(
+            &context.scene_id,
+            &context.run_id,
+            &unknown.id,
+            page.summary.revision,
+        )
+        .unwrap();
+    assert_eq!(detail.not_sent_reason, None);
+    assert!(serde_json::to_value(detail)
+        .unwrap()
+        .get("notSentReason")
+        .is_none());
+    assert_eq!(snapshot(), before);
+}
+
+#[test]
 fn conversation_boundary_preserves_old_journal_projection_but_blocks_its_continuation() {
     let file = Db::new();
     let mut s = Store::open(&file.0).unwrap();

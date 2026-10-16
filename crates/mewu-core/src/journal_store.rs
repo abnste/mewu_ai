@@ -346,6 +346,7 @@ fn entry(
         arguments_wire_sha256: e.arguments_sha256,
         content,
         references: e.references,
+        not_sent_reason: e.not_sent,
     })
 }
 fn runs_page(

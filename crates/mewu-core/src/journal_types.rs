@@ -135,6 +135,8 @@ pub struct JournalEntryDetail {
     pub arguments_wire_sha256: Option<String>,
     pub content: JournalContent,
     pub references: Vec<EvidenceReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_sent_reason: Option<NotSentReason>,
 }
 
 // Values are constructed ONLY by the host. These metadata fields may be exposed

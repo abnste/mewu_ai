@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-// The version release and fixed update channel are advanced only after all
-// native platform receipts match the exact packages and committed source.
+// Modern version releases own their updater and feed. Historical prereleases
+// retain the old path; all publication requires exact native acceptance.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { repository as repo, fingerprint, verifyRelease, validateChannelAdvance, validateUpdateConfiguration } from './release-contract.mjs';
-import { findRelease, verifyReleaseTarget, verifyStableLatest } from './release-api.mjs';
+import { findRelease, verifyReleaseTarget, verifyStableLatest, publishVersionRelease } from './release-api.mjs';
 const directory = path.resolve(process.argv[2] || 'out/release'), metadata = path.join(directory, '.metadata');
 const manifest = JSON.parse(fs.readFileSync(path.join(metadata, 'update.json'), 'utf8'));
 const acceptance = JSON.parse(fs.readFileSync(path.join(metadata, 'acceptance.json'), 'utf8'));
@@ -19,6 +19,11 @@ const release = verifyRelease(directory, manifest, acceptance, commit), { tag, a
 const preview = policy.prerelease, notes = path.resolve(`docs/release-notes-${manifest.version}.md`);
 if (!fs.lstatSync(notes).isFile() || fs.lstatSync(notes).isSymbolicLink()) throw Error('Missing release notes');
 const gh = (...args) => execFileSync('gh', args, { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8' });
+if (policy.selfContained) {
+  await publishVersionRelease(gh, repo, { version: manifest.version, commit, notes,
+    artifacts: release.files.map(file => ({ ...file, path: path.join(directory, file.name) })),
+    verifyLocal: () => verifyRelease(directory, manifest, acceptance, commit) });
+} else {
 const lookup = name => findRelease(gh, repo, name);
 const expected = new Map(release.files.map(file => [file.name, file]));
 function checkAsset(asset) {
@@ -88,5 +93,6 @@ for (const channel of channels) {
   fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
   try { gh('release', 'upload', 'update-channel', '--repo', repo, '--clobber', file); }
   finally { fs.unlinkSync(file); }
+}
 }
 console.log(`Published https://github.com/${repo}/releases/tag/${tag}`);

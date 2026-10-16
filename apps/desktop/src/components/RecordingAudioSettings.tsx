@@ -19,7 +19,7 @@ export default function RecordingAudioSettings(props: { active: boolean }) {
     const acquired: (() => void)[] = [];
     try {
       if (!stops.length) {
-        acquired.push(await subscribeRecordingAudio(state => controller.readSucceeded(state)));
+        acquired.push(await subscribeRecordingAudio(state => controller.readSucceeded(state), 'settings'));
         if (!disposed) stops = acquired.splice(0);
       } else {
         if (!disposed) controller.readSucceeded(await getRecordingAudio());

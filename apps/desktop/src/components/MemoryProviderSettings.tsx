@@ -83,7 +83,7 @@ export default function MemoryProviderSettings(props: Props) {
       stopPlugins = await subscribePlugins(next => {
         if (disposed || next.revision < plugins().revision) return;
         setPlugins(next); cancelForeground(); if (visible()) refreshState();
-      });
+      }, 'settings');
       if (disposed) { stopPlugins(); return; }
       const next = await getPlugins();
       if (!disposed && next.revision >= plugins().revision) setPlugins(next);
