@@ -1,6 +1,6 @@
 # Desktop development and upgrade compatibility
 
-The desktop uses Rust/Tauri 2, Solid/TypeScript and SQLite with the system webview: WebView2 on Windows, WKWebView on macOS and WebKitGTK on Linux. Preview 3 targets Windows x64, macOS ARM64 and Linux x64.
+The desktop uses Rust/Tauri 2, Solid/TypeScript and SQLite with the system webview: WebView2 on Windows, WKWebView on macOS and WebKitGTK on Linux. Preview 4 targets Windows x64, macOS ARM64 and Linux x64.
 
 ## Build
 
@@ -26,7 +26,9 @@ Update checks run after startup and every six hours, using the user's proxy sett
 
 ## Legacy migration
 
-The 0.7.4 updater recognizes `MewuAI-Remake-Setup-{version}-win-x64.exe` for stable 1.x releases and invokes NSIS with `/S`. Earlier 0.7.x versions should update to 0.7.4 first. Previews are intentionally not offered to legacy stable clients.
+The 0.7.4 updater reads GitHub's latest non-prerelease entry and accepts only numeric three- or four-component version tags. It recognizes `MewuAI-Remake-Setup-{version}-win-x64.exe` for 1.x releases and invokes NSIS with `/S`. The `v1.0.0.4` legacy compatibility entry therefore offers the exact, already-tested preview 4 installer under the old updater's required filename. The installed application still identifies itself as `1.0.0-preview.4` and uses the preview channel. The original preview release remains a prerelease. This compatibility entry does not advance `latest.json` or change the application version. See [legacy updates](../../docs/legacy-updates.md).
+
+Earlier 0.7.x versions should first install 0.7.4 from its versioned release page. Their updater does not recognize the remake installer.
 
 On the first installed transition, the NSIS hook reuses the legacy current-user installation directory when it contains MewuAI.exe. The main executable keeps that filename. Successful installation replaces the obsolete Inno uninstall registration to prevent it deleting the new executable; it never deletes legacy local application data. Subsequent remake updates use the registered remake directory.
 

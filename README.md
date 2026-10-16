@@ -57,7 +57,7 @@ The application checks for updates in the background. Settings → About provide
 
 Updating a portable build runs the installer and switches to the installed application; it does not replace the executable in the ZIP extraction directory.
 
-Legacy 0.7.4 already recognizes the future stable 1.x installer name. It intentionally ignores prereleases; 0.7.3 should first update to 0.7.4. Supported legacy API connections are imported once from local settings. Legacy data is retained, but legacy conversation history is not converted into the new scene database. See [upgrade details](apps/desktop/README.md).
+Legacy 0.7.4 can move to preview 4 through the [legacy update entry](https://github.com/abnste/mewu_ai/releases/tag/v1.0.0.4). Its numeric compatibility tag is required by the old updater; the installer is the unchanged `1.0.0-preview.4` installer. After installation, updates use the preview channel. Versions 0.7.3 and earlier should first install [0.7.4](https://github.com/abnste/mewu_ai/releases/tag/v0.7.4). Supported legacy API connections are imported once from local settings. Legacy data is retained, but legacy conversation history is not converted into the new scene database. See [upgrade details](docs/legacy-updates.md).
 
 New installations store data in `~/.mewu`. Existing remake installations retain their configured directory; Settings → Data can move it. Signing updates is separate from Windows Authenticode signing; this preview installer has no Windows signing certificate.
 
