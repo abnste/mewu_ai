@@ -21,7 +21,7 @@ export function codeSource(scene: Scene | undefined, regionId: string, plugins: 
   const textGrant = codes && text ? { pluginId: text.plugin.manifest.id, revision: text.plugin.revision, contributionId: text.contribution.id } : undefined;
   const request = { pluginId: entry.plugin.manifest.id, revision: entry.plugin.revision, contributionId: entry.contribution.id, target, translationId: translation?.overlay.id ?? null, ...(textGrant ? { textGrant } : {}) };
   const key = JSON.stringify([request.pluginId, request.revision, request.contributionId, textGrant ?? null, scene.id, regionId, assetKey(background), assetKey(region.imageOverride), region.x, region.y, region.width, region.height, target.drawingRevision,
-    (region.drawings ?? []).map(value => [value.id, value.kind, value.color, value.strokeWidth, value.points.map(point => [point.x, point.y]), value.text ?? null, value.fontSize ?? null]),
+    (region.drawings ?? []).map(value => [value.id, value.kind, value.color, value.strokeWidth, value.points.map(point => [point.x, point.y]), value.text ?? null, value.fontSize ?? null, value.textStyle ?? null]),
     translation ? [translation.backgroundId, translation.sourceId, translation.drawingRevision, translation.document.width, translation.document.height, assetKey(translation.overlay)] : null]);
   return { key, request };
 }

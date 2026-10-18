@@ -16,7 +16,7 @@ fn imported_image_ink_reference_pin_compositor_share_pixels_and_preserve_origina
     let asset_id=uid();let source=assets.join(format!("{asset_id}.png"));let original=image::RgbaImage::from_pixel(640,400,image::Rgba([255,255,255,255]));original.save(&source).unwrap();let original_hash=Sha256::digest(std::fs::read(&source).unwrap());
     let asset=Asset { id:asset_id.clone(),name:"synthetic-exam.png".into(),kind:AssetKind::Image,path:source.to_string_lossy().into_owned(),width:Some(640),height:Some(400),origin_x:None,origin_y:None,scale_factor:None,capture_coordinates:None };
     store.add_asset(&scene_id,asset.clone()).unwrap();let item=store.scene(&scene_id).unwrap().items[0].clone();
-    let line=Drawing { id:uid(),kind:DrawingKind::Line,color:"#ff0000".into(),stroke_width:8.,points:vec![DrawingPoint{x:80.,y:200.},DrawingPoint{x:560.,y:200.}],text:None,font_size:None,origin:None,rich:None };
+    let line=Drawing { id:uid(),kind:DrawingKind::Line,color:"#ff0000".into(),stroke_width:8.,points:vec![DrawingPoint{x:80.,y:200.},DrawingPoint{x:560.,y:200.}],text:None,font_size:None, text_style: None,origin:None,rich:None };
     store.apply(SceneCommand::EditImageAnnotations { scene_id:scene_id.clone(),item_id:item.id.clone(),source_asset_id:asset_id,expected_revision:0,action:ImageAnnotationEdit::AddDrawing { drawing:line } }).unwrap();
     store.apply(SceneCommand::SetRefs { scene_id:scene_id.clone(),refs:vec![Reference { kind:ReferenceKind::Item,id:item.id.clone() }] }).unwrap();
     store.apply(SceneCommand::SetDraft { scene_id:scene_id.clone(),draft:"在图片空白中作答".into() }).unwrap();

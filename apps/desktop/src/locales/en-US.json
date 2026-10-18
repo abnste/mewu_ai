@@ -1117,5 +1117,9 @@
   "插件平台声明无效": "Invalid plugin platform declaration",
   "使用 Win+Shift+S 截图": "Use Win+Shift+S for screenshots",
   "无法接管系统截图快捷键": "Cannot take over the system screenshot shortcut",
-  "颜色 {0}：{1}": "Color {0}: {1}"
+  "颜色 {0}：{1}": "Color {0}: {1}",
+  "加粗": "Bold",
+  "斜体": "Italic",
+  "下划线": "Underline",
+  "删除线": "Strikethrough"
 }

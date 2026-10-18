@@ -89,7 +89,7 @@ fn shape(kind: DrawingKind, color: &str, points: &[(f64, f64)]) -> Drawing {
         stroke_width: 5.,
         points: points.iter().map(|&(x, y)| DrawingPoint { x, y }).collect(),
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         origin: None,
         rich: None,
     }

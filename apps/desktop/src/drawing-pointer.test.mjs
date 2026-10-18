@@ -17,27 +17,30 @@ const pointer = await pure('./components/drawing-pointer.ts'), geometry = await 
 const source = await raw('./components/SharedDrawingEditor.tsx'), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const body = ast.program.body.find(value => value.type === 'ExportDefaultDeclaration').declaration.body.body;
 const declaration = name => { const node = body.find(value => value.type === 'FunctionDeclaration' ? value.id.name === name : value.type === 'VariableDeclaration' && value.declarations.some(declaration => declaration.id.name === name)); assert.ok(node, name); return source.slice(node.start, node.end); };
-const actual = ['cacheKey', 'gestureIdentity', 'point', 'target', 'editableIds', 'commit', 'begin', 'blur', 'resize'].map(declaration).join('\n');
+const actual = ['cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'choose', 'closeEditor', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
-import { drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage } from 'deps';
+import { DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,batch } from 'deps';
 export class Element { closest() { return {getAttribute:()=>this.id}; } }
 export function fixture(props,svg,window) {
- let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false;
+ let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false,strokeQueue,editCacheKey,editValue,finishingValue=false;
+ let queued=[],recovered=[];const queuedDrawings=()=>queued,setQueuedDrawings=value=>queued=value,setRecoveredDrawings=value=>recovered=value,strokeVersion=()=>0,setStrokeVersion=()=>{};
  let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
  const publications=[],tool=()=>toolValue,setTool=value=>toolValue=value,selected=()=>selectedId,setSelected=value=>selectedId=value;
  const draft=()=>draftValue,setDraft=value=>{draftValue=value;if(value)publications.push(JSON.parse(JSON.stringify(value)));},pending=()=>pendingValue,setPending=value=>pendingValue=value;
- const edit=()=>undefined,textEditor=()=>undefined,finishing=()=>false,disabled=()=>pending()||props.busy||props.inputLocked;
+ const edit=()=>editValue,setEdit=value=>editValue=value,textEditor=()=>undefined,finishing=()=>finishingValue,setFinishing=value=>finishingValue=value,disabled=()=>pending()||finishing()||props.busy||props.inputLocked;
  const drawings=()=>props.port.drawings(),identity=()=>cacheKey(),gestureSource=()=>gestureIdentity();
- const color=()=>'#ee4848',width=()=>4,highlightWidth=()=>18,mosaicReady=()=>true,blockSize=()=>8,fontSize=()=>20;
+ const color=()=>'#ee4848',width=()=>4,highlightWidth=()=>18,mosaicReady=()=>true,blockSize=()=>8,fontSize=()=>20,textStyle=()=>props.textStyleValue??{};
  const report=error=>props.onError(error.message),clamp=(v,low,high)=>Math.max(low,Math.min(high,v));
- const saveText=async()=>true,openText=()=>{},ensureSelection=async()=>{},beginStored=()=>{},beginErase=()=>{};
+ let openedText;const openText=value=>openedText=value,ensureSelection=async()=>{},beginStored=()=>{},beginErase=()=>{};
  const nextNumber=()=>'1',numberDiameter=()=>28,numberChanges=new Map(),numberPreference=0,setNextNumber=()=>{};
+ const setWideBrush=()=>{},mosaicFailed=()=>false,setMosaicRetry=()=>{},highlightFailed=()=>false,setHighlightRetry=()=>{};
  const setViewport=()=>{},innerWidth=1200,innerHeight=800;
  ${actual}
- return {begin,draft,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,
-   dispose:()=>{disposed=true;cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value)};
+ strokeQueue=continuousStrokes()?newStrokeQueue():undefined;
+ return {begin,draft,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,choose,closeEditor,finishing,confirmText,loadLatest,saveText,
+   dispose:()=>{disposed=true;strokeQueue?.stop();cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value),queued:()=>queued,edit,queue:()=>strokeQueue,opened:()=>openedText};
 }`));
-await module.link(() => synthetic({ ...pointer, ...geometry, ...properties, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
+await module.link(() => synthetic({ ...pointer, ...geometry, ...properties,batch:solid.batch, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
 class Events {
   listeners = new Map();
   addEventListener(type, callback) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(callback); }
@@ -54,6 +57,7 @@ function frames() {
 }
 const event = (type, x, y, extra = {}) => ({ type, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 7, clientX: 10 + x * 2, clientY: 20 + y * .5, pressure: .5, shiftKey: false, preventDefault() {}, stopPropagation() {}, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
+let fixtureSerial=0;
 function setup(values = []) {
   const window = new Events(), svg = new Events(), commands = [], errors = [];
   let layoutReads = 0;
@@ -62,10 +66,18 @@ function setup(values = []) {
   svg.setPointerCapture = id => { svg.captured = id; }; svg.hasPointerCapture = id => svg.captured === id;
   svg.releasePointerCapture = id => { svg.captured = undefined; svg.emit(event('lostpointercapture', 0, 0, { pointerId: id })); };
   const props = { box: { x: 10, y: 20, width: 2000, height: 500 }, tools: ['pen','highlighter','mark','line','arrow','rect','ellipse','mosaic'],busy:false,inputLocked:false,revision:5,source:'source',
-    port: { frame:()=>({x:0,y:0,width:1000,height:1000}),sourceSize:()=>({width:1000,height:1000}),sourceIdentity:()=>props.source,draftKey:()=>props.source,revision:()=>props.revision,drawings:()=>values,canSelect:()=>true,allows:()=>props.allowed!==false },
-    onCommand:async command=>{commands.push(plain(command));},onError:error=>errors.push(error) };
+    port: { frame:()=>({x:0,y:0,width:1000,height:1000}),sourceSize:()=>({width:1000,height:1000}),sourceIdentity:()=>props.source,draftKey:()=>JSON.stringify(['pointer-scene-'+fixtureSerial,'region',props.source]),revision:()=>props.revision,drawings:()=>values,canSelect:()=>true,allows:()=>props.allowed!==false,propertyCommand:draft=>({type:draft.base?'update_drawing':'add_drawing',drawing:plain(draft.drawing),expectedRevision:draft.expectedRevision}) },
+    onCommand:async command=>{commands.push(plain(command));if(command.type==='add_drawing'){values.push(plain(command.drawing));props.revision++;}},onClose:()=>{},onError:error=>errors.push(error) };
+  const fixtureId=++fixtureSerial;props.port.draftKey=()=>JSON.stringify(['pointer-scene-'+fixtureId,'region',props.source]);
   return { ...module.namespace.fixture(props,svg,window), props, svg, window, commands, errors, reads:()=>layoutReads };
 }
+
+test('new inline text copies the selected text effects without adding styles to a plain legacy text',()=>{
+  const styled=setup();styled.tool('text');styled.props.textStyleValue={bold:true,italic:true,underline:true};
+  styled.begin(event('pointerdown',10,20));assert.deepEqual(plain(styled.opened().textStyle),{bold:true,italic:true,underline:true});
+  styled.props.textStyleValue.bold=false;assert.equal(styled.opened().textStyle.bold,true);
+  const legacy=setup();legacy.tool('text');legacy.begin(event('pointerdown',10,20));assert.equal(legacy.opened().textStyle,undefined);
+});
 
 test('real pen handler batches visual publication and layout reads while retaining ordered underlying pen samples and exact release point', async () => {
   const clock = frames(); try {
@@ -212,6 +224,138 @@ test('zero-size final shape cancels a prior valid preview; native point bound re
   }finally{clock.restore();}
 });
 
+const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+test('real pen accepts the next strokes before slow persistence, preserves pending previews and rebases only exact own acknowledgements',async()=>{
+  const clock=frames();try{
+    const f=setup(),baseSave=f.props.onCommand,gates=[deferred(),deferred(),deferred()],sent=[];
+    f.props.onCommand=async command=>{const index=sent.length;sent.push(plain(command));await gates[index].promise;await baseSave(command);};
+    f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+    assert.equal(sent.length,1);assert.equal(f.queued().length,1);assert.equal(f.draft(),undefined);
+    f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));
+    assert.equal(f.queued().length,2);assert.equal(sent.length,1,'one native persistence flight');
+    f.begin(event('pointerdown',70,80));f.window.emit(event('pointermove',90,100));
+    gates[0].resolve();await tick();
+    assert.equal(f.hasGesture(),true,'first own ack does not cancel third live gesture');
+    clock.paint();assert.ok(f.draft());f.window.emit(event('pointerup',110,120));
+    assert.equal(f.queued().length,2);assert.equal(sent.length,2);assert.equal(sent[1].expectedRevision,6);
+    let drained=false;const drain=f.queue().drain().then(()=>{drained=true;});await tick();assert.equal(drained,false);
+    gates[1].resolve();await tick();assert.equal(sent.length,3);assert.equal(sent[2].expectedRevision,7);assert.equal(f.queued().length,1);
+    gates[2].resolve();await drain;assert.equal(drained,true);assert.equal(f.queued().length,0);assert.equal(f.props.revision,8);
+    assert.deepEqual(f.props.port.drawings().map(value=>value.id),sent.map(value=>value.drawing.id));assert.deepEqual(f.errors,[]);
+  }finally{clock.restore();}
+});
+
+test('a publish before its delayed reply permits the next live stroke but still drains the actual IPC and serializes later writes',async()=>{
+  const clock=frames();try{
+    const f=setup(),baseSave=f.props.onCommand,reply=deferred(),sent=[];
+    f.props.onCommand=async command=>{sent.push(plain(command));await baseSave(command);if(sent.length===1)await reply.promise;};
+    f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+    f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));assert.equal(f.queued().length,2);assert.equal(sent.length,1);
+    let drained=false;const drain=f.queue().drain().then(()=>{drained=true;});await tick();assert.equal(drained,false);
+    reply.resolve();await drain;assert.equal(sent.length,2);assert.deepEqual(sent.map(value=>value.expectedRevision),[5,6]);assert.equal(f.queued().length,0);
+  }finally{clock.restore();}
+});
+
+test('an external revision or changed saved drawing stops the queue and retains every unacknowledged geometry draft',async()=>{
+  const clock=frames();try{
+    for(const reason of ['revision','content','source','permission']){
+      const f=setup(),first=deferred(),baseSave=f.props.onCommand,sent=[];
+      f.props.onCommand=async command=>{sent.push(plain(command));if(sent.length===1){await first.promise;await baseSave(command);if(reason==='revision')f.props.revision++;if(reason==='content')f.props.port.drawings()[0].color='#123456';}else await baseSave(command);};
+      f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+      f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));
+      if(reason==='source')f.props.source='successor';if(reason==='permission')f.props.allowed=false;
+      first.resolve();await assert.rejects(()=>f.queue().drain());assert.equal(sent.length,1,reason);
+      if(reason!=='source')assert.ok(f.edit(),reason);
+      const drafts=properties.drawingDrafts.list().filter(entry=>JSON.parse(entry.key)[2]===f.props.port.draftKey());
+      if(reason!=='source')assert.ok(drafts.length>=1,reason);
+      for(const entry of drafts)assert.equal(properties.draftChanged(entry.draft),true,'new nontext geometry remains a saveable draft');
+    }
+  }finally{clock.restore();}
+});
+
+test('first persistence failure retains separate immutable strokes, stops the lane and prevents a false successful handoff',async()=>{
+  const clock=frames();try{
+    const f=setup(),first=deferred(),sent=[];
+    f.props.onCommand=async command=>{sent.push(plain(command));await first.promise;throw Error('disk unavailable');};
+    f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+    f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));
+    first.resolve();await assert.rejects(()=>f.queue().drain(),/disk unavailable/);
+    assert.equal(sent.length,1);assert.equal(f.queued().length,2);assert.ok(f.edit()?.error);
+    const drafts=properties.drawingDrafts.list().filter(entry=>JSON.parse(entry.key)[2]===f.props.port.draftKey());
+    assert.equal(drafts.length,2);assert.notEqual(drafts[0].key,drafts[1].key);assert.notEqual(drafts[0].draft.drawing.id,drafts[1].draft.drawing.id);
+    for(const entry of drafts)assert.equal(properties.drawingPropertyCommand(entry.draft,{sceneId:'scene',regionId:'region',backgroundId:'source'}).type,'add_drawing');
+    assert.equal(f.queue().capacity(),false);
+  }finally{clock.restore();}
+});
+
+test('stopping an old source drains its actual first flight and never dispatches the following stroke into another editor',async()=>{
+  const clock=frames();try{
+    const f=setup(),first=deferred(),baseSave=f.props.onCommand,sent=[];
+    f.props.onCommand=async command=>{sent.push(plain(command));await first.promise;await baseSave(command);};
+    f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+    f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));f.dispose();
+    let finished=false;const drain=f.queue().drain().finally(()=>{finished=true;});await tick();assert.equal(finished,false);
+    first.resolve();await assert.rejects(()=>drain);assert.equal(sent.length,1);
+  }finally{clock.restore();}
+});
+
+test('pending new ink never admits a right-button eraser as another queueable pen gesture',async()=>{
+  const clock=frames();try{
+    const f=setup(),first=deferred(),baseSave=f.props.onCommand;
+    f.props.onCommand=async command=>{await first.promise;await baseSave(command);};
+    f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+    f.begin(event('pointerdown',40,50,{button:2,buttons:2}));
+    assert.equal(f.hasGesture(),false);assert.equal(f.queued().length,1);assert.equal(f.draft(),undefined);
+    first.resolve();await f.queue().drain();assert.equal(f.commands.length,1);assert.equal(f.commands[0].type,'add_drawing');
+  }finally{clock.restore();}
+});
+
+test('close and tool handoffs lock new gestures only while draining, and a failed save restores usable controls without closing',async()=>{
+  const clock=frames();try{
+    for(const action of ['close','choose','failed-close']){
+      const f=setup(),first=deferred(),baseSave=f.props.onCommand;let closes=0;
+      f.props.onClose=()=>{closes++;};f.props.onCommand=async command=>{await first.promise;if(action==='failed-close')throw Error('disk unavailable');await baseSave(command);};
+      f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+      const handoff=action==='choose'?f.choose('line'):f.closeEditor();assert.equal(f.finishing(),true);
+      f.begin(event('pointerdown',40,50));assert.equal(f.hasGesture(),false);assert.equal(f.draft(),undefined);
+      first.resolve();await handoff;assert.equal(f.finishing(),false);assert.equal(closes,action==='close'?1:0);
+      if(action==='choose')assert.equal(f.errors.length,0);
+      if(action==='failed-close'){assert.ok(f.edit()?.error);assert.ok(f.queued().length);}
+    }
+  }finally{clock.restore();}
+});
+
+test('failed multi-stroke drafts recover individually through real retry controls and require explicit latest consent after a revision change',async()=>{
+  const clock=frames();try{
+    const f=setup(),first=deferred(),baseSave=f.props.onCommand;
+    f.props.onCommand=async()=>{await first.promise;throw Error('disk unavailable');};
+    f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();
+    f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));first.resolve();
+    await assert.rejects(()=>f.queue().drain());const ids=f.queued().map(value=>value.id);
+    f.props.onCommand=async command=>{if(command.expectedRevision!==f.props.revision)throw Error('revision conflict');await baseSave(command);};
+    f.confirmText();await tick();assert.equal(f.props.revision,6);assert.equal(f.edit()?.drawing.id,ids[1]);
+    f.confirmText();await tick();assert.equal(f.props.revision,6);assert.ok(f.edit()?.error,'stale second retry remains unsaved');
+    f.loadLatest();assert.equal(f.edit()?.expectedRevision,6);f.confirmText();await tick();
+    assert.equal(f.props.revision,7);assert.equal(f.edit(),undefined);assert.deepEqual(f.props.port.drawings().map(value=>value.id),ids);
+    assert.equal(properties.drawingDrafts.list().filter(entry=>JSON.parse(entry.key)[2]===f.props.port.draftKey()).length,0);
+  }finally{clock.restore();}
+});
+
+test('a full global draft cache rejects new ink before its first sample and canceled gestures release their reserved slot and bytes',async()=>{
+  const clock=frames(),inserted=[];try{
+    const cache=properties.drawingDrafts,drawing={id:'quota',kind:'pen',color:'#ee4848',strokeWidth:4,points:[{x:10,y:20}]};
+    while(cache.list().length<32){const key=JSON.stringify(['quota-scene',inserted.length]);cache.set(key,properties.propertyDraft(drawing,0,'style',false));inserted.push(key);}
+    const full=setup();full.begin(event('pointerdown',10,20));assert.equal(full.draft(),undefined);assert.equal(full.hasGesture(),false);assert.equal(full.queued().length,0);assert.ok(full.errors.length);
+    for(const key of inserted)cache.delete(key);inserted.length=0;
+    const canceled=setup();for(let i=0;i<16;i++){canceled.begin(event('pointerdown',10,20));assert.equal(canceled.hasGesture(),true);canceled.cancel();assert.equal(canceled.hasGesture(),false);}
+    canceled.begin(event('pointerdown',10,20));canceled.window.emit(event('pointerup',30,40));await canceled.queue().drain();assert.equal(canceled.commands.length,1);
+    const bounded=new properties.DrawingDraftCache(3,1500),release=bounded.reserve('reserved',1200);
+    assert.throws(()=>bounded.reserve('second',500),/过多/);assert.throws(()=>bounded.set('large',properties.propertyDraft({...drawing,points:Array.from({length:100},(_,i)=>({x:i,y:i}))},0,'style',false)),/过多/);
+    bounded.set('reserved',properties.propertyDraft(drawing,0,'style',false));release();
+    const second=bounded.reserve('second',500);second();assert.equal(bounded.list().length,1);
+  }finally{for(const key of inserted)properties.drawingDrafts.delete(key);clock.restore();}
+});
+
 test('long-stroke segments keep every original edge, bound the active SVG path and preserve completed path identity',()=>{
   const segment=pointer.penSegments(8),points=[];let previous=[];
   for(let i=0;i<100;i++){
@@ -258,10 +402,28 @@ const shapeJsx=await jsx(await raw('./components/DrawingLayer.tsx'),{
 const itemJsx=await jsx(`import {linkedRepairPreview} from 'selection';import {createMemo,Show} from 'solid-js';import {liveDrawing} from 'pointer';
 export function fixture(props,state){props={...props,port:{...props.port,drawings:state.drawings,stored:state.stored}};const draft=()=>state.draft(),edit=()=>undefined,tool=()=>state.tool(),selected=()=>state.selected(),storedDraft=()=>state.storedDraft(),drawings=state.drawings;
 ${['drawingIndex','storedIndex','activeDraftId'].map(declaration).join('\n')}
-const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()];${declaration('previews')}
+const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()],queuedDrawings=()=>state.queued?.()??[],recoveredDrawings=()=>state.recovered?.()??[];${declaration('previews')}
 const pixelIndex=()=>state.pixelIndex?.()??new Map();
 ${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer,selection:{linkedRepairPreview:(drawing)=>drawing}});
 const descendants=(node,tag)=>[...(node.tag===tag?[node]:[]),...node.children.flatMap(child=>descendants(child,tag))];
+
+test('real text effect controls combine independent styles, preserve typing focus and ignore disabled input',async()=>{
+  const Icon=()=>renderer.createElement('svg');
+  const controls=await jsx(await raw('./components/DrawingTextStylePicker.tsx'),{'../i18n':{t:value=>value},'lucide-solid':{Bold:Icon,Italic:Icon,Underline:Icon,Strikethrough:Icon}});
+  const [value,setValue]=solid.createSignal({}),[disabled,setDisabled]=solid.createSignal(false),root=renderer.createElement('root'),changes=[];
+  const dispose=renderer.render(()=>renderer.createComponent(controls.default,{get value(){return value();},get disabled(){return disabled();},preserveFocus:true,onChange:next=>{changes.push(next);setValue(next);}}),root);
+  try{
+    const buttons=descendants(root,'button');assert.deepEqual(buttons.map(button=>button.props['aria-label']),['加粗','斜体','下划线','删除线']);
+    let prevented=false;buttons[0].props.onPointerDown({button:0,preventDefault(){prevented=true;}});assert.equal(prevented,true);
+    for(const button of buttons)button.props.onClick();
+    assert.deepEqual(plain(value()),{bold:true,italic:true,underline:true,strikethrough:true});
+    assert.ok(buttons.every(button=>button.props['aria-pressed']===true));
+    buttons[1].props.onClick();assert.deepEqual(plain(value()),{bold:true,underline:true,strikethrough:true});
+    assert.deepEqual(plain(changes[0]),{bold:true},'later toggles never mutate an earlier property command');
+    setDisabled(true);buttons[0].props.onClick();assert.equal(changes.length,5);assert.ok(buttons.every(button=>button.props.disabled));
+    assert.deepEqual(descendants(root,'button'),buttons);
+  }finally{dispose();}
+});
 
 test('real color picker switches fixed slots first, opens on the second click and persists only the edited slot in order',async()=>{
   const names=['document','window','localStorage','innerWidth','innerHeight'];const before=names.map(name=>Object.getOwnPropertyDescriptor(globalThis,name));
@@ -446,7 +608,8 @@ test('editing a stored video text paints the live draft rather than its old nati
   const render=videoPreviewJsx.fixture({renderStored:()=>{rasterCalls++;return renderer.createElement('image');}},()=>({primitive:{kind:'text'}}));
   const dispose=renderer.render(()=>render(draw,true,false,true),root);
   assert.equal(rasterCalls,0);assert.equal(descendants(root,'image').length,0);assert.equal(descendants(root,'text').length,1);
-  setText('实时文字');assert.equal(descendants(root,'text')[0].children[0].children[0].text,'实时文字');
+  const textContent=node=>node.text??node.children.map(textContent).join('');
+  setText('实时文字');assert.equal(textContent(descendants(root,'text')[0]),'实时文字');
   dispose();render(draw,true,false,false);assert.equal(rasterCalls,1);
 });
 

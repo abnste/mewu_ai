@@ -29,6 +29,8 @@ const FONT_FAMILY: &str =
 #[cfg(target_os = "macos")]
 const FONT_FAMILY: &str = "Helvetica, PingFang SC, Arial Unicode MS, sans-serif";
 static FONTS: OnceLock<Result<Arc<usvg::fontdb::Database>, String>> = OnceLock::new();
+static BOLD_FONTS: OnceLock<Result<Arc<usvg::fontdb::Database>, String>> = OnceLock::new();
+static BOLD_FONT_IDENTITY: OnceLock<Result<String, String>> = OnceLock::new();
 
 #[cfg(test)]
 #[path = "drawing_rich_pixels_test.rs"]
@@ -320,7 +322,9 @@ fn vector_overlay(
         .iter()
         .any(|drawing| matches!(drawing.kind, DrawingKind::Text | DrawingKind::Number))
     {
-        options.fontdb = fonts()?;
+        options.fontdb = text_fonts(drawings.iter().any(|drawing| {
+            drawing.kind == DrawingKind::Text && drawing.text_style.is_some_and(|style| style.bold)
+        }))?;
         #[cfg(not(target_os = "macos"))]
         {
             options.font_family = "Segoe UI".into();
@@ -381,6 +385,9 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
         return Err("绘制内容超过处理上限".into());
     }
     for drawing in drawings {
+        if drawing.kind != DrawingKind::Text && drawing.text_style.is_some() {
+            return Err("只有文字对象可以设置文字样式".into());
+        }
         if drawing.kind != DrawingKind::Rich && drawing.rich.is_some() {
             return Err("普通图元不能引用富图层".into());
         }
@@ -578,6 +585,22 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
             }
             DrawingKind::Text => {
                 let size = drawing.font_size.unwrap();
+                if let Some(style) = drawing
+                    .text_style
+                    .filter(|style| *style != Default::default())
+                {
+                    for (line, text) in drawing.text.as_deref().unwrap().split('\n').enumerate() {
+                        svg.push_str(&styled_text_line_svg(
+                            text,
+                            color,
+                            size,
+                            first.x,
+                            first.y + size + line as f64 * size * 1.25,
+                            style,
+                        ));
+                    }
+                    continue;
+                }
                 let _ = write!(svg, "<text fill=\"{color}\" font-family=\"{FONT_FAMILY}\" font-size=\"{size}\" xml:space=\"preserve\">");
                 for (line, text) in drawing.text.as_deref().unwrap().split('\n').enumerate() {
                     let _ = write!(
@@ -689,6 +712,31 @@ fn escape_text(text: &str) -> String {
     escaped
 }
 
+/// Match drawing-geometry.ts. Each baseline is the transform origin so multiple
+/// lines keep their x alignment; normal faces avoid double-italic Latin glyphs.
+const DRAWING_TEXT_SKEW_DEGREES: i32 = -12;
+pub(crate) fn styled_text_line_svg(
+    text: &str,
+    color: &str,
+    size: f64,
+    x: f64,
+    baseline: f64,
+    style: mewu_core::DrawingTextStyle,
+) -> String {
+    let decoration = match (style.underline, style.strikethrough) {
+        (true, true) => "underline line-through",
+        (true, false) => "underline",
+        (false, true) => "line-through",
+        (false, false) => "none",
+    };
+    let transform = if style.italic {
+        format!(" transform=\"translate(0 {baseline}) skewX({DRAWING_TEXT_SKEW_DEGREES}) translate(0 {})\"", -baseline)
+    } else {
+        String::new()
+    };
+    format!("<text x=\"{x}\" y=\"{baseline}\" fill=\"{color}\" font-family=\"{FONT_FAMILY}\" font-size=\"{size}\" font-weight=\"{}\" font-style=\"normal\" text-decoration=\"{decoration}\"{transform} xml:space=\"preserve\">{}</text>", if style.bold { 700 } else { 400 }, escape_text(text))
+}
+
 pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
     FONTS
         .get_or_init(|| {
@@ -741,6 +789,95 @@ pub(crate) fn fonts() -> Result<Arc<usvg::fontdb::Database>, String> {
                 database.set_sans_serif_family(macos_default_family(&database)?);
             }
             Ok(Arc::new(database))
+        })
+        .clone()
+}
+
+/// Ordinary capture/export keeps the original three-font cache. Only a bold
+/// text request clones metadata (font bytes stay Arc-shared) and loads faces.
+pub(crate) fn text_fonts(bold: bool) -> Result<Arc<usvg::fontdb::Database>, String> {
+    if !bold {
+        return fonts();
+    }
+    BOLD_FONTS
+        .get_or_init(|| {
+            let base = fonts()?;
+            let mut unique = std::collections::HashSet::new();
+            let mut used = 0usize;
+            for face in base.faces() {
+                base.with_face_data(face.id, |bytes, _| {
+                    if unique.insert((bytes.as_ptr() as usize, bytes.len())) {
+                        used += bytes.len();
+                    }
+                });
+            }
+            let mut bytes_left = MAX_FONT_BYTES.saturating_sub(used);
+            let mut database = (*base).clone();
+            #[cfg(target_os = "macos")]
+            let paths = crate::font_macos::bold_font_paths();
+            #[cfg(not(target_os = "macos"))]
+            let paths = bold_font_paths();
+            let mut seen = std::collections::HashSet::new();
+            for path in paths.into_iter().take(3) {
+                let Ok(path) = path.canonicalize() else {
+                    continue;
+                };
+                if !seen.insert(path.clone()) {
+                    continue;
+                }
+                let Ok(file) = fs::File::open(path) else {
+                    continue;
+                };
+                let Ok(metadata) = file.metadata() else {
+                    continue;
+                };
+                let limit = bytes_left.min(32 * 1024 * 1024);
+                if !metadata.is_file() || metadata.len() > limit as u64 {
+                    continue;
+                }
+                let mut bytes = Vec::new();
+                if file.take(limit as u64 + 1).read_to_end(&mut bytes).is_err()
+                    || bytes.len() > limit
+                {
+                    continue;
+                }
+                bytes_left -= bytes.len();
+                database.load_font_data(bytes);
+            }
+            Ok(Arc::new(database))
+        })
+        .clone()
+}
+
+pub(crate) fn text_font_identity(bold: bool) -> Result<String, String> {
+    if !bold {
+        return crate::rich_annotation_host::table_font_identity();
+    }
+    BOLD_FONT_IDENTITY
+        .get_or_init(|| {
+            use sha2::{Digest, Sha256};
+            let fonts = text_fonts(true)?;
+            let mut faces = Vec::new();
+            for face in fonts.faces() {
+                faces.push(
+                    fonts
+                        .with_face_data(face.id, |bytes, index| {
+                            let mut hash = Sha256::new();
+                            hash.update(index.to_be_bytes());
+                            hash.update(bytes);
+                            format!("{:x}", hash.finalize())
+                        })
+                        .ok_or("无法核对绘制字体")?,
+                );
+            }
+            faces.sort();
+            faces.dedup();
+            let mut hash = Sha256::new();
+            hash.update(b"mewu.drawing-bold-fonts.v1\0");
+            for face in faces {
+                hash.update(face.as_bytes());
+            }
+            Ok(format!("{:x}", hash.finalize()))
         })
         .clone()
 }
@@ -813,6 +950,31 @@ fn font_paths() -> Vec<PathBuf> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+fn bold_font_paths() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        let windows = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        return ["segoeuib.ttf", "msyhbd.ttc", "arialbd.ttf"]
+            .iter()
+            .map(|name| windows.join("Fonts").join(name))
+            .collect();
+    }
+    #[cfg(not(windows))]
+    {
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -823,8 +985,13 @@ mod tests {
     fn linux_loaded_font_families_shape_complete_chinese_latin_and_digits() {
         let database = fonts().unwrap();
         let family = linux_default_family(&database).unwrap();
-        assert_eq!(database.family_name(&usvg::fontdb::Family::SansSerif), family);
-        assert!(database.faces().any(|face| face.families.iter().any(|(name, _)| name == &family)));
+        assert_eq!(
+            database.family_name(&usvg::fontdb::Family::SansSerif),
+            family
+        );
+        assert!(database
+            .faces()
+            .any(|face| face.families.iter().any(|(name, _)| name == &family)));
         let mut item = drawing(DrawingKind::Text, &[(24., 20.)]);
         let expected = "中文测试 Hello 0123456789";
         item.text = Some(expected.into());
@@ -833,16 +1000,34 @@ mod tests {
         options.font_family = family;
         options.fontdb = database;
         let tree = usvg::Tree::from_str(&drawing_svg(&[item], 1000, 160), &options).unwrap();
-        let glyphs: Vec<_> = tree.root().children().iter()
-            .filter_map(|node| match node { usvg::Node::Text(text) => Some(text), _ => None })
+        let glyphs: Vec<_> = tree
+            .root()
+            .children()
+            .iter()
+            .filter_map(|node| match node {
+                usvg::Node::Text(text) => Some(text),
+                _ => None,
+            })
             .flat_map(|text| text.layouted())
             .flat_map(|span| &span.positioned_glyphs)
-            .filter(|glyph| glyph.text.chars().any(|c| !c.is_whitespace())).collect();
+            .filter(|glyph| glyph.text.chars().any(|c| !c.is_whitespace()))
+            .collect();
         assert!(!glyphs.is_empty());
-        assert!(glyphs.iter().all(|glyph| glyph.id.0 != 0), "missing glyphs are not Chinese coverage");
+        assert!(
+            glyphs.iter().all(|glyph| glyph.id.0 != 0),
+            "missing glyphs are not Chinese coverage"
+        );
         let actual: String = glyphs.iter().map(|glyph| glyph.text.as_str()).collect();
-        assert_eq!(actual.chars().filter(|c| !c.is_whitespace()).collect::<String>(),
-            expected.chars().filter(|c| !c.is_whitespace()).collect::<String>());
+        assert_eq!(
+            actual
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>(),
+            expected
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -927,7 +1112,146 @@ mod tests {
             points: points.iter().map(|&(x, y)| DrawingPoint { x, y }).collect(),
             text: None,
             font_size: None,
+            text_style: None,
         }
+    }
+
+    #[test]
+    fn text_styles_svg_keeps_legacy_bytes_and_each_italic_line_baseline_aligned() {
+        let mut item = drawing(DrawingKind::Text, &[(40., 20.)]);
+        item.text = Some("中文 <&>\nAbc".into());
+        item.font_size = Some(40.);
+        let legacy = drawing_svg(&[item.clone()], 800, 240);
+        assert!(legacy.contains("<tspan x=\"40\" y=\"60\">中文 &lt;&amp;&gt;</tspan>"));
+        item.text_style = Some(Default::default());
+        assert_eq!(drawing_svg(&[item.clone()], 800, 240), legacy);
+        item.text_style = Some(mewu_core::DrawingTextStyle {
+            bold: true,
+            italic: true,
+            underline: true,
+            strikethrough: true,
+        });
+        let styled = drawing_svg(&[item], 800, 240);
+        assert_eq!(styled.matches("font-weight=\"700\"").count(), 2);
+        assert_eq!(styled.matches("font-style=\"normal\"").count(), 2);
+        assert_eq!(
+            styled
+                .matches("text-decoration=\"underline line-through\"")
+                .count(),
+            2
+        );
+        assert!(styled.contains("translate(0 60) skewX(-12) translate(0 -60)"));
+        assert!(styled.contains("translate(0 110) skewX(-12) translate(0 -110)"));
+        assert!(!styled.contains("<tspan"));
+        assert!(styled.contains("中文 &lt;&amp;&gt;"));
+    }
+
+    #[test]
+    fn text_styles_native_cjk_and_latin_pngs_show_every_effect_and_combination() {
+        use mewu_core::DrawingTextStyle as S;
+        let base =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(800, 240, Rgba([255, 255, 255, 255])));
+        let mut item = drawing(DrawingKind::Text, &[(80., 30.)]);
+        item.text = Some("中文测试\nAbc Mm".into());
+        item.font_size = Some(48.);
+        let render = |value: Drawing| {
+            let output = crop_region(
+                &base,
+                &Region {
+                    id: "synthetic-text".into(),
+                    x: 0.,
+                    y: 0.,
+                    width: 800.,
+                    height: 240.,
+                    drawings: vec![value],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let mut png = std::io::Cursor::new(Vec::new());
+            output.write_to(&mut png, image::ImageFormat::Png).unwrap();
+            image::load_from_memory(png.get_ref()).unwrap().into_rgba8()
+        };
+        let regular = render(item.clone());
+        let mut outputs = vec![regular.clone()];
+        for style in [
+            S {
+                bold: true,
+                ..Default::default()
+            },
+            S {
+                italic: true,
+                ..Default::default()
+            },
+            S {
+                underline: true,
+                ..Default::default()
+            },
+            S {
+                strikethrough: true,
+                ..Default::default()
+            },
+            S {
+                bold: true,
+                italic: true,
+                underline: true,
+                strikethrough: true,
+            },
+        ] {
+            item.text_style = Some(style);
+            let output = render(item.clone());
+            for previous in &outputs {
+                assert_ne!(
+                    output, *previous,
+                    "native PNG effect must actually change pixels: {style:?}"
+                );
+            }
+            if style.italic && !style.bold {
+                assert!(
+                    output
+                        .enumerate_pixels()
+                        .any(|(x, y, p)| y < 90 && *p != *regular.get_pixel(x, y)),
+                    "CJK oblique must change pixels, not only Latin fallback"
+                );
+            }
+            if style.bold {
+                let ink = |image: &RgbaImage| {
+                    image
+                        .enumerate_pixels()
+                        .filter(|(_, y, p)| *y < 90 && p[1] < 128)
+                        .count()
+                };
+                assert!(
+                    ink(&output) > ink(&regular),
+                    "CJK bold requires a real loaded bold face"
+                );
+            }
+            outputs.push(output);
+        }
+        assert_eq!(outputs.len(), 6);
+    }
+
+    #[test]
+    fn text_styles_do_not_turn_nontext_objects_into_text() {
+        let mut line = drawing(DrawingKind::Line, &[(20., 20.), (80., 80.)]);
+        line.text_style = Some(mewu_core::DrawingTextStyle {
+            bold: true,
+            ..Default::default()
+        });
+        assert!(validate_drawings(&[line], 100, 100).is_err());
+        let regular = fonts().unwrap();
+        assert!(
+            Arc::ptr_eq(&regular, &text_fonts(false).unwrap()),
+            "normal text must keep the original cache"
+        );
+        let bold = text_fonts(true).unwrap();
+        assert!(Arc::ptr_eq(&bold, &text_fonts(true).unwrap()));
+        let shared = regular.faces().next().unwrap().id;
+        assert_eq!(
+            regular.with_face_data(shared, |bytes, _| bytes.as_ptr() as usize),
+            bold.with_face_data(shared, |bytes, _| bytes.as_ptr() as usize),
+            "cloned metadata must share regular font byte buffers"
+        );
     }
     fn background() -> DynamicImage {
         DynamicImage::ImageRgba8(RgbaImage::from_pixel(200, 100, Rgba([255, 255, 255, 255])))
@@ -946,46 +1270,132 @@ mod tests {
 
     #[test]
     fn pixel_eraser_persisted_fragments_export_the_same_gap_and_undo_redo_pixels() {
-        use mewu_core::{Asset, AssetKind, DrawingStrokeErase, DrawingStrokeFragment, SceneCommand, Store};
-        for kind in [DrawingKind::Pen, DrawingKind::Line, DrawingKind::Highlighter] {
+        use mewu_core::{
+            Asset, AssetKind, DrawingStrokeErase, DrawingStrokeFragment, SceneCommand, Store,
+        };
+        for kind in [
+            DrawingKind::Pen,
+            DrawingKind::Line,
+            DrawingKind::Highlighter,
+        ] {
             let mut store = Store::open_in_memory().unwrap();
             let scene_id = store.snapshot().active_scene_id;
             let background_id = uuid::Uuid::new_v4().to_string();
-            store.set_background(&scene_id, Asset {
-                id: background_id.clone(), name: "eraser-export.png".into(), kind: AssetKind::Image,
-                path: "eraser-export.png".into(), width: Some(200), height: Some(100),
-                origin_x: None, origin_y: None, scale_factor: None, capture_coordinates: None,
-            }).unwrap();
+            store
+                .set_background(
+                    &scene_id,
+                    Asset {
+                        id: background_id.clone(),
+                        name: "eraser-export.png".into(),
+                        kind: AssetKind::Image,
+                        path: "eraser-export.png".into(),
+                        width: Some(200),
+                        height: Some(100),
+                        origin_x: None,
+                        origin_y: None,
+                        scale_factor: None,
+                        capture_coordinates: None,
+                    },
+                )
+                .unwrap();
             let region_id = uuid::Uuid::new_v4().to_string();
-            store.apply(SceneCommand::AddRegion { scene_id: scene_id.clone(), region: Region {
-                id: region_id.clone(), width: 200., height: 100., ..Default::default()
-            }}).unwrap();
+            store
+                .apply(SceneCommand::AddRegion {
+                    scene_id: scene_id.clone(),
+                    region: Region {
+                        id: region_id.clone(),
+                        width: 200.,
+                        height: 100.,
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
             let ink = drawing(kind, &[(20., 50.), (180., 50.)]);
-            store.apply(SceneCommand::AddDrawing {
-                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(),
-                expected_revision: 0, drawing: ink.clone(),
-            }).unwrap();
-            let current = |store: &Store| store.snapshot().scenes.into_iter().find(|s| s.id == scene_id).unwrap().regions.remove(0);
-            let original = crop_region(&background(), &current(&store)).unwrap().into_rgba8();
-            store.apply(SceneCommand::EraseDrawingStrokes {
-                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(), expected_revision: 1,
-                erasures: vec![DrawingStrokeErase { drawing_id: ink.id.clone(), fragments: vec![
-                    DrawingStrokeFragment { id: ink.id.clone(), points: vec![DrawingPoint { x: 20., y: 50. }, DrawingPoint { x: 90., y: 50. }] },
-                    DrawingStrokeFragment { id: uuid::Uuid::new_v4().to_string(), points: vec![DrawingPoint { x: 110., y: 50. }, DrawingPoint { x: 180., y: 50. }] },
-                ] }],
-            }).unwrap();
-            let erased = crop_region(&background(), &current(&store)).unwrap().into_rgba8();
+            store
+                .apply(SceneCommand::AddDrawing {
+                    scene_id: scene_id.clone(),
+                    region_id: region_id.clone(),
+                    background_id: background_id.clone(),
+                    expected_revision: 0,
+                    drawing: ink.clone(),
+                })
+                .unwrap();
+            let current = |store: &Store| {
+                store
+                    .snapshot()
+                    .scenes
+                    .into_iter()
+                    .find(|s| s.id == scene_id)
+                    .unwrap()
+                    .regions
+                    .remove(0)
+            };
+            let original = crop_region(&background(), &current(&store))
+                .unwrap()
+                .into_rgba8();
+            store
+                .apply(SceneCommand::EraseDrawingStrokes {
+                    scene_id: scene_id.clone(),
+                    region_id: region_id.clone(),
+                    background_id: background_id.clone(),
+                    expected_revision: 1,
+                    erasures: vec![DrawingStrokeErase {
+                        drawing_id: ink.id.clone(),
+                        fragments: vec![
+                            DrawingStrokeFragment {
+                                id: ink.id.clone(),
+                                points: vec![
+                                    DrawingPoint { x: 20., y: 50. },
+                                    DrawingPoint { x: 90., y: 50. },
+                                ],
+                            },
+                            DrawingStrokeFragment {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                points: vec![
+                                    DrawingPoint { x: 110., y: 50. },
+                                    DrawingPoint { x: 180., y: 50. },
+                                ],
+                            },
+                        ],
+                    }],
+                })
+                .unwrap();
+            let erased = crop_region(&background(), &current(&store))
+                .unwrap()
+                .into_rgba8();
             assert_ne!(original.get_pixel(100, 50).0, [255, 255, 255, 255]);
             assert_eq!(erased.get_pixel(100, 50).0, [255, 255, 255, 255]);
-            for x in [40, 80, 120, 160] { assert_eq!(erased.get_pixel(x, 50), original.get_pixel(x, 50)); }
-            store.apply(SceneCommand::UndoDrawing {
-                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(), expected_revision: 2,
-            }).unwrap();
-            assert_eq!(crop_region(&background(), &current(&store)).unwrap().into_rgba8(), original);
-            store.apply(SceneCommand::RedoDrawing {
-                scene_id: scene_id.clone(), region_id: region_id.clone(), background_id: background_id.clone(), expected_revision: 3,
-            }).unwrap();
-            assert_eq!(crop_region(&background(), &current(&store)).unwrap().into_rgba8(), erased);
+            for x in [40, 80, 120, 160] {
+                assert_eq!(erased.get_pixel(x, 50), original.get_pixel(x, 50));
+            }
+            store
+                .apply(SceneCommand::UndoDrawing {
+                    scene_id: scene_id.clone(),
+                    region_id: region_id.clone(),
+                    background_id: background_id.clone(),
+                    expected_revision: 2,
+                })
+                .unwrap();
+            assert_eq!(
+                crop_region(&background(), &current(&store))
+                    .unwrap()
+                    .into_rgba8(),
+                original
+            );
+            store
+                .apply(SceneCommand::RedoDrawing {
+                    scene_id: scene_id.clone(),
+                    region_id: region_id.clone(),
+                    background_id: background_id.clone(),
+                    expected_revision: 3,
+                })
+                .unwrap();
+            assert_eq!(
+                crop_region(&background(), &current(&store))
+                    .unwrap()
+                    .into_rgba8(),
+                erased
+            );
         }
     }
 

@@ -757,7 +757,7 @@ mod manual_edit_tests {
     }
     fn content(text: &str) -> VideoTextContent {
         VideoTextContent {
-            version: 1,
+            text_style: None, version: 1,
             text: text.into(),
             color: "#1357b9".into(),
             font_size: 24.,
@@ -1332,7 +1332,7 @@ mod manual_edit_media_gate {
     const TEXT_Y: u32 = 40;
     fn content(s: &str) -> VideoTextContent {
         VideoTextContent {
-            version: 1,
+            text_style: None, version: 1,
             text: s.into(),
             color: "#ffffff".into(),
             font_size: 80.,

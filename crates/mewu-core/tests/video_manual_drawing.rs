@@ -198,7 +198,7 @@ fn text_layout() -> VerifiedVideoTextLayout {
     VerifiedVideoTextLayout::new(
         uid(),
         VideoTextContent {
-            version: 1,
+            text_style: None, version: 1,
             text: "答案：42".into(),
             color: "#F0F2F6".into(),
             font_size: 24.,
@@ -1086,7 +1086,7 @@ fn vector_cannot_borrow_an_old_layout_from_another_document_or_family() {
     let duplicate = VerifiedVideoTextLayout::new(
         r.layout_id,
         VideoTextContent {
-            version: 1,
+            text_style: None, version: 1,
             text: "literal".into(),
             color: "#112233".into(),
             font_size: 16.,
@@ -1206,7 +1206,7 @@ fn text_and_vector_current_and_history_use_one_png_byte_budget() {
             let l = VerifiedVideoTextLayout::new(
                 uid(),
                 VideoTextContent {
-                    version: 1,
+                    text_style: None, version: 1,
                     text: format!("literal{n}"),
                     color: "#112233".into(),
                     font_size: 16.,

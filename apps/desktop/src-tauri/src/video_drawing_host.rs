@@ -676,7 +676,7 @@ mod tests {
             kind: TextKind::Text,
             top_left: p(150., 80.),
             content: VideoTextContent {
-                version: 1,
+                text_style: None, version: 1,
                 text: "中文<&>\n literal".into(),
                 color: "#123456".into(),
                 font_size: 24.,

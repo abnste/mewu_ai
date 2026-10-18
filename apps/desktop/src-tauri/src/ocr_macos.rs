@@ -731,7 +731,7 @@ mod tests {
                 stroke_width: 1.,
                 points: vec![DrawingPoint { x, y }],
                 text: Some(text.into()),
-                font_size: Some(font_size),
+                font_size: Some(font_size), text_style: None,
                 origin: None,
                 rich: None,
             })

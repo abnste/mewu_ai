@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { webcrypto } from 'node:crypto';
+import { parse } from '@babel/parser';
 import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadHighlightSource } from './geometry-test-module.mjs';
 
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
@@ -56,6 +57,66 @@ let active = true;
 await persistSceneDrafts({ active: () => active, snapshot: initial, drafts: () => ({ a: 'first', b: 'second' }), references: () => ({}), failure: () => undefined, save: async () => { writeCount++; active = false; } });
 assert.equal(writeCount, 1);
 checks.push('Host cancellation stops remaining queued exit writes');
+
+// Exercise the production flush handoff, not a copy of its comparison logic.
+const appSource = await readFile(new URL('./App.tsx', import.meta.url), 'utf8');
+const appAst = parse(appSource, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
+const appBody = appAst.program.body.find(node => node.type === 'ExportDefaultDeclaration').declaration.body.body;
+const flushNode = appBody.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'flush');
+const flushSource = stripTypeScriptTypes(appSource.slice(flushNode.start, flushNode.end), { mode: 'transform' });
+function flushFixture({ queue = Promise.resolve(), state = initial(), text = 'old A', references = [{ kind: 'region', id: 'r1' }], failDrawing = false, save } = {}) {
+  const order = [], writes = [], local = { state, text, references, disposed: false, sceneId: 'a' };
+  const context = createContext({
+    pendingSceneDrafts,
+    voice: { cancel: async () => { order.push('voice'); } },
+    objectFlush: { flush: async () => { order.push('objects'); } },
+    flushVideoDrawing: async () => { order.push('video-drawings'); },
+    flushVideo: async () => { order.push('video'); },
+    flushDrawing: async () => { order.push('drawings'); if (failDrawing) throw new Error('标注尚未保存'); },
+    regionGeometry: { flush: async () => { order.push('geometry'); } },
+    scene: () => local.state.scenes.find(scene => scene.id === local.sceneId),
+    draft: () => local.text, refs: () => local.references, snapshot: () => local.state,
+    clearTimeout: () => { order.push('captured'); },
+    get disposed() { return local.disposed; },
+    command: async value => { writes.push(plain(value)); if (save) await save(value, local); },
+    queue,
+  });
+  const fixture = new SourceTextModule(`let commands=queue,autosaveVersion=0,debounce;${flushSource};export {flush};export function replaceQueue(value){commands=value;}`, { context });
+  return { local, order, writes, async run() { await fixture.link(() => { throw new Error('Unexpected flush dependency'); }); await fixture.evaluate(); return fixture.namespace; } };
+}
+const idleFlush = flushFixture(), idleApi = await idleFlush.run();
+await idleApi.flush();
+assert.deepEqual(idleFlush.order, ['voice', 'objects', 'video-drawings', 'video', 'drawings', 'geometry', 'captured']);
+assert.deepEqual(idleFlush.writes, []);
+const earlierWrite = deferred(), followOnWrite = deferred();
+const pendingFlush = flushFixture({ queue: earlierWrite.promise, state: initial(), text: 'queued saved text', references: [] });
+const pendingApi = await pendingFlush.run(); let pendingDone = false;
+const pendingHandoff = pendingApi.flush().then(() => { pendingDone = true; });
+await tick(); assert.equal(pendingDone, false); assert.deepEqual(pendingFlush.writes, []);
+pendingFlush.local.state.scenes[0].draft = 'queued saved text'; pendingFlush.local.state.scenes[0].refs = [];
+pendingApi.replaceQueue(followOnWrite.promise); earlierWrite.resolve(); await tick(); assert.equal(pendingDone, false);
+followOnWrite.resolve(); await pendingHandoff; assert.deepEqual(pendingFlush.writes, []);
+checks.push('Actual App flush retains all media/drawing barriers, drains current and follow-on command writes, and skips acknowledged unchanged draft/ref transactions');
+
+const intentWait = deferred(), intentFlush = flushFixture({ queue: intentWait.promise, text: '', references: [] });
+const intentApi = await intentFlush.run(), intentHandoff = intentApi.flush(); await tick();
+intentFlush.local.text = 'later input'; intentFlush.local.references.push({ kind: 'item', id: 'late-item' });
+intentWait.resolve(); await intentHandoff;
+assert.deepEqual(intentFlush.writes, [{ type: 'set_draft', sceneId: 'a', draft: '' }, { type: 'set_refs', sceneId: 'a', refs: [] }]);
+assert.equal(intentFlush.local.state.scenes[1].draft, 'old B');
+checks.push('Actual App flush preserves captured empty-text/reference-clear intent while awaiting IPC, clones refs and touches only its owning scene');
+
+const failedDrawingFlush = flushFixture({ failDrawing: true }), failedDrawingApi = await failedDrawingFlush.run();
+await assert.rejects(() => failedDrawingApi.flush(), /标注尚未保存/); assert.deepEqual(failedDrawingFlush.writes, []);
+const changedSceneWait = deferred(), changedSceneFlush = flushFixture({ queue: changedSceneWait.promise, text: 'retain A draft' });
+const changedSceneApi = await changedSceneFlush.run(), changedSceneHandoff = changedSceneApi.flush(); await tick();
+changedSceneFlush.local.sceneId = 'b'; changedSceneWait.resolve();
+await assert.rejects(() => changedSceneHandoff, /会话已变化/); assert.deepEqual(changedSceneFlush.writes, []);
+const saveFailureFlush = flushFixture({ text: 'unsaved edit', save: async () => { throw new Error('database unavailable'); } });
+const saveFailureApi = await saveFailureFlush.run();
+await assert.rejects(() => saveFailureApi.flush(), /database unavailable/);
+assert.equal(saveFailureFlush.writes.length, 1); assert.equal(saveFailureFlush.local.text, 'unsaved edit');
+checks.push('Actual App flush never bypasses unsaved drawing failure, rejects a changed scene after queue drain and preserves local drafts on persistence failure');
 
 const operations = new SpaceOperations(); const finishA = operations.begin(); let drained = false;
 const drain = operations.drain(() => true).then(() => { drained = true; }); await tick(); assert.equal(drained, false);

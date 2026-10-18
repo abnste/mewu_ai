@@ -202,7 +202,7 @@ mod tests {
             stroke_width: 2.,
             points: vec![mewu_core::DrawingPoint { x: 30., y: 25. }],
             text: None,
-            font_size: None,
+            font_size: None, text_style: None,
             rich: None,
             origin: None,
         });

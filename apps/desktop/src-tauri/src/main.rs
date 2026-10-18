@@ -805,7 +805,7 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
     let host = app.state::<Host>();
     let _transition = begin_explicit_space_transition(&app, &host).await?;
     recording::ensure_idle(&app)?;
-    let (was_active, has_frozen) = {
+    let (was_active, has_frozen, published) = {
         let mut engine = host.lock()?;
         host.exit.ensure_new_operation()?;
         let was_active = engine.store.snapshot().active_scene_id == scene_id;
@@ -817,8 +817,8 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
         let has_frozen = snapshot.scenes.iter().any(|scene| {
             scene.frozen && scene.minimized && !scene.closed && frozen::has_content(scene)
         });
-        publish(&app, &snapshot);
-        (was_active, has_frozen)
+        let published = publish(&app, &snapshot);
+        (was_active, has_frozen, published)
     };
     if was_active {
         if has_frozen && !host.frozen_dismissed.load(Ordering::Acquire) {
@@ -831,8 +831,7 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
         frozen::hide(&app)?;
     }
     // Closing is persisted even if a subsequent native window operation fails.
-    let engine = host.lock()?;
-    Ok(publish(&app, &engine.store.snapshot()))
+    Ok(published)
 }
 
 #[tauri::command]

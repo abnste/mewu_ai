@@ -50,7 +50,7 @@ fn rich(layout: &VerifiedRichLayout, points: [(f64, f64); 2]) -> Drawing {
             .map(|(x, y)| DrawingPoint { x, y })
             .collect(),
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         rich: Some(layout.reference().clone()),
         // Geometric compositor fixture only. Source/receipt validation is
         // independently exercised in native mixed SQLite batch tests.
@@ -72,7 +72,7 @@ fn line(color: &str, y: f64) -> Drawing {
         stroke_width: 2.,
         points: vec![DrawingPoint { x: 4., y }, DrawingPoint { x: 30., y }],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         origin: None,
         rich: None,
     }
@@ -323,7 +323,7 @@ fn protected_highlights_use_repaired_and_lifted_pixels_instead_of_original_text_
                 DrawingPoint { x: 125., y: 75. },
             ],
             text: None,
-            font_size: None,
+            font_size: None, text_style: None,
             origin: None,
             rich: None,
         };

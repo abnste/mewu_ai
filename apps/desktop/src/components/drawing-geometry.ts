@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { Drawing, DrawingKind, DrawingPoint, Region } from '../contracts';
 
+/** Match native drawing_render: synthesize oblique for every script, including CJK. */
+export const DRAWING_TEXT_SKEW_DEGREES = -12;
+export function drawingTextLineTransform(italic: boolean | undefined, baseline: number): string | undefined {
+  return italic ? `translate(0 ${baseline}) skewX(${DRAWING_TEXT_SKEW_DEGREES}) translate(0 ${-baseline})` : undefined;
+}
+
 export function drawingBounds(drawing: Drawing) {
   const points = drawing.kind === 'arrow' ? [...drawing.points, ...(arrowWings(drawing.points) ?? [])] : drawing.points;
   const xs = points.map(point => point.x), ys = points.map(point => point.y);
@@ -9,6 +15,9 @@ export function drawingBounds(drawing: Drawing) {
     const lines = (drawing.text ?? '').split('\n'), size = drawing.fontSize ?? 20;
     width = Math.max(...lines.map(line => [...line].reduce((sum, char) => sum + (char.charCodeAt(0) > 255 ? 1 : .6), 0))) * size;
     height = Math.max(1, lines.length) * size * 1.25;
+    // Oblique glyphs extend right above the baseline and slightly left below it.
+    if (drawing.textStyle?.bold) width *= 1.12;
+    if (drawing.textStyle?.italic) { const overhang = Math.tan(-DRAWING_TEXT_SKEW_DEGREES * Math.PI / 180) * size; x -= overhang * .25; width += overhang * 1.25; }
   }
   if (drawing.kind === 'number') width = height = drawing.fontSize ?? 28;
   const margin = ['number', 'mosaic', 'rich', 'mark'].includes(drawing.kind) ? 0 : drawing.strokeWidth / 2;

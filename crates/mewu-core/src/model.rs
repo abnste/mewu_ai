@@ -288,6 +288,20 @@ pub struct DrawingPoint {
     pub y: f64,
 }
 
+/// Optional, closed text effects; omitted flags keep legacy normal text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DrawingTextStyle {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub strikethrough: bool,
+}
+
 /// Editable manual markup in original background pixels, never executable SVG.
 /// Two shape points are endpoints/opposite corners; text/number use a top-left
 /// anchor. Number font_size is its circle diameter; mosaic stroke_width is its
@@ -304,6 +318,8 @@ pub struct Drawing {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<DrawingTextStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<crate::VisualDrawingOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -480,10 +496,18 @@ pub struct ExternalRunOrigin {
 
 impl ExternalRunOrigin {
     pub(crate) fn validate(&self) -> bool {
-        let valid_id = |id: &str| !id.is_empty() && id.len() <= 128
-            && id.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b));
-        valid_id(&self.plugin_id) && valid_id(&self.service_id) && self.revision > 0
-            && self.sha256.len() == 64 && self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        let valid_id = |id: &str| {
+            !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        };
+        valid_id(&self.plugin_id)
+            && valid_id(&self.service_id)
+            && self.revision > 0
+            && self.sha256.len() == 64
+            && self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
     }
 }
 

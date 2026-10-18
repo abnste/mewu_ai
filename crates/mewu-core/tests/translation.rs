@@ -246,7 +246,7 @@ fn drawing(kind: DrawingKind) -> Drawing {
             DrawingPoint { x: 80., y: 90. },
         ],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
     }
 }
 fn add(store: &mut Store, target: &OcrTarget, object: Drawing) {

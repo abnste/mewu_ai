@@ -680,7 +680,7 @@ fn render_model(
                 )
                 .map_err(|e| e.to_string())?;
                 let layout = crate::video_annotation_raster::render_text(VideoTextContent {
-                    version: 1,
+                    text_style: None, version: 1,
                     text,
                     color,
                     font_size,

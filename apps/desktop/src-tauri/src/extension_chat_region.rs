@@ -574,7 +574,7 @@ mod tests {
                                 DrawingPoint { x: 100., y: 100. },
                             ],
                             text: None,
-                            font_size: None,
+                            font_size: None, text_style: None,
                             origin: None,
                             rich: None,
                         }],

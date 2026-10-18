@@ -49,6 +49,9 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
     if object.kind != DrawingKind::Rich && object.rich.is_some() {
         return Err(invalid("普通绘制不能携带富标注布局"));
     }
+    if object.kind != DrawingKind::Text && object.text_style.is_some() {
+        return Err(invalid("只有文字对象可以设置文字样式"));
+    }
     let color = object.color.as_bytes();
     if color.len() != 7 || color[0] != b'#' || !color[1..].iter().all(u8::is_ascii_hexdigit) {
         return Err(invalid("绘制颜色必须为 #RRGGBB"));
@@ -442,7 +445,9 @@ pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation)
             validate(region, Some(background))?;
             return Ok(true);
         }
-        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) | Mutation::EraseStrokes(_) => unreachable!("handled above"),
+        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) | Mutation::EraseStrokes(_) => {
+            unreachable!("handled above")
+        }
     };
     apply_edit(&mut region.drawings, &edit, true)?;
     region.drawing_history.redo.clear();
@@ -467,7 +472,11 @@ fn commit_batch(region: &mut Region, background: &Asset, batch: Vec<DrawingEdit>
     Ok(true)
 }
 
-fn erase_strokes(region: &mut Region, background: &Asset, erasures: Vec<crate::DrawingStrokeErase>) -> Result<bool> {
+fn erase_strokes(
+    region: &mut Region,
+    background: &Asset,
+    erasures: Vec<crate::DrawingStrokeErase>,
+) -> Result<bool> {
     if erasures.is_empty() || erasures.len() > MAX_OBJECTS {
         return Err(invalid("擦除批次无效"));
     }
@@ -479,38 +488,65 @@ fn erase_strokes(region: &mut Region, background: &Asset, erasures: Vec<crate::D
         if !sources.insert(erase.drawing_id.clone()) || erase.fragments.len() > MAX_OBJECTS {
             return Err(invalid("擦除笔迹重复或片段过多"));
         }
-        let (index, old) = region.drawings.iter().enumerate().find(|(_,d)|d.id == erase.drawing_id)
+        let (index, old) = region
+            .drawings
+            .iter()
+            .enumerate()
+            .find(|(_, d)| d.id == erase.drawing_id)
             .ok_or_else(|| invalid("擦除笔迹已不存在"))?;
-        if !matches!(old.kind, DrawingKind::Pen | DrawingKind::Highlighter | DrawingKind::Line) {
+        if !matches!(
+            old.kind,
+            DrawingKind::Pen | DrawingKind::Highlighter | DrawingKind::Line
+        ) {
             return Err(invalid("像素橡皮只处理画笔、荧光笔和直线"));
         }
         let mut values = Vec::new();
         for (part, fragment) in erase.fragments.into_iter().enumerate() {
             if part == 0 {
-                if fragment.id != old.id { return Err(invalid("首个笔迹片段需保留原标识")); }
-            } else if !ids.insert(fragment.id.clone()) { return Err(invalid("笔迹片段标识重复")); }
+                if fragment.id != old.id {
+                    return Err(invalid("首个笔迹片段需保留原标识"));
+                }
+            } else if !ids.insert(fragment.id.clone()) {
+                return Err(invalid("笔迹片段标识重复"));
+            }
             let mut next = old.clone();
             next.id = fragment.id;
             next.points = fragment.points;
             // No caller-controlled kind, color, width, text or origin is accepted.
             let source = region.image_override.as_ref().unwrap_or(background);
-            validate_object(&next, f64::from(source.width.unwrap_or(0)), f64::from(source.height.unwrap_or(0)))?;
+            validate_object(
+                &next,
+                f64::from(source.width.unwrap_or(0)),
+                f64::from(source.height.unwrap_or(0)),
+            )?;
             values.push(next);
         }
-        if values.len() == 1 && &values[0] == old { continue; }
+        if values.len() == 1 && &values[0] == old {
+            continue;
+        }
         operations.push((index, old.clone(), values));
     }
     // Remove all sources first, then insert their fragments in final layer
     // order. Interleaving removal/insertion could temporarily create index 256
     // even though a later removal makes the final document fit the limit.
-    operations.sort_by_key(|(index,_,_)|std::cmp::Reverse(*index));
-    let count = operations.iter().try_fold(region.drawings.len(), |count, (_, _, values)| {
-        count.checked_sub(1).and_then(|n| n.checked_add(values.len()))
-            .ok_or_else(|| invalid("笔迹片段过多"))
-    })?;
-    if count > MAX_OBJECTS { return Err(invalid("笔迹片段过多")); }
+    operations.sort_by_key(|(index, _, _)| std::cmp::Reverse(*index));
+    let count = operations
+        .iter()
+        .try_fold(region.drawings.len(), |count, (_, _, values)| {
+            count
+                .checked_sub(1)
+                .and_then(|n| n.checked_add(values.len()))
+                .ok_or_else(|| invalid("笔迹片段过多"))
+        })?;
+    if count > MAX_OBJECTS {
+        return Err(invalid("笔迹片段过多"));
+    }
     for (index, old, _) in &operations {
-        edits.push(DrawingEdit { index: *index, before: Some(old.clone()), after: None });
+        edits.push(DrawingEdit {
+            index: *index,
+            before: Some(old.clone()),
+            after: None,
+        });
     }
     let mut removed_before = 0;
     let mut inserted_before = 0;
@@ -519,7 +555,11 @@ fn erase_strokes(region: &mut Region, background: &Asset, erasures: Vec<crate::D
         removed_before += 1;
         inserted_before += values.len();
         for (offset, value) in values.into_iter().enumerate() {
-            edits.push(DrawingEdit { index: final_index + offset, before: None, after: Some(value) });
+            edits.push(DrawingEdit {
+                index: final_index + offset,
+                before: None,
+                after: Some(value),
+            });
         }
     }
     commit_batch(region, background, edits)

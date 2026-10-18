@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from '../i18n';
 import { nativeSelectOwnsEscape } from '../native-select-escape';
-import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
+import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { ArrowUpRight, BrushCleaning, Check, Circle, Copy, Eraser, Grid2X2, Hash, Highlighter, LoaderCircle, Minus, MousePointer2, Pencil, Pin, Redo2, RotateCcw, Scissors, Square, Trash2, Type, Undo2, X } from 'lucide-solid';
-import type { Drawing, DrawingKind, DrawingPoint, ManualDrawingKind } from '../contracts';
+import type { Drawing, DrawingKind, DrawingPoint, DrawingTextStyle, ManualDrawingKind } from '../contracts';
 import { constrainedEnd, drawingBounds, drawingMoveDelta, drawingOrder, drawingResizeHandles, resizedDrawingPoints, validNextNumber } from "./drawing-geometry";
 import { finishDrawing, outputDrawing } from "../capture-completion";
 import { clipEraserSweep, eraserCursor, eraserHit, eraserStrokeHits, ObjectEraser, PixelEraser, type EraserMode } from "./drawing-eraser";
 import { changeProperty, drawingDraftKey, drawingDrafts, drawingPropertyCommand, propertyDraft, settleDrawingEdit, strokeKinds, type DrawingPropertyDraft } from "./drawing-properties";
-import { drawingFrame, drawingPointerSamples, liveDrawing } from './drawing-pointer';
+import { DrawingAddQueue, drawingFrame, drawingPointerSamples, liveDrawing } from './drawing-pointer';
 import type { DrawingFlush, RegisterDrawingFlush } from "../drawing-flush";
 import type { DrawingTableFormat } from "../drawing-layout-preview";
 import "./drawing.css";
@@ -18,6 +18,7 @@ import {blackboardImage} from '../blackboard-image';
 import {objectTrash} from '../object-trash';
 import DrawingWidthSlider from './DrawingWidthSlider';
 import InlineDrawingText from './InlineDrawingText';
+import DrawingTextStylePicker from './DrawingTextStylePicker';
 import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview} from './drawing-selection';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
@@ -50,6 +51,7 @@ export default function SharedDrawingEditor(props: Props) {
   const [healWidth, setHealWidth] = createSignal(32);
   const [tableFormat, setTableFormat] = createSignal<DrawingTableFormat>('table');
   const [color, setColor] = createSignal(props.blackboard ? '#E8ECF4' : '#ee4848'), [width, setWidth] = createSignal(4), [fontSize, setFontSize] = createSignal(20);
+  const [textStyle, setTextStyle] = createSignal<DrawingTextStyle>({});
   const firstNumber = Math.min(9999, Math.max(0, ...(props.port.drawings()).filter(value => value.kind === 'number').map(value => validNextNumber(value.text ?? '') ?? 0)) + 1);
   const [highlightWidth, setHighlightWidth] = createSignal(18), [nextNumber, setNextNumber] = createSignal(String(firstNumber)), [numberDiameter, setNumberDiameter] = createSignal(28);
   const [mosaicReady, setMosaicReady] = createSignal(false), [mosaicFailed, setMosaicFailed] = createSignal(false), [mosaicRetry, setMosaicRetry] = createSignal(0), [finishing, setFinishing] = createSignal(false);
@@ -60,6 +62,10 @@ export default function SharedDrawingEditor(props: Props) {
   const [storedDraft,setStoredDraft]=createSignal<{id:string;bounds:{x:number;y:number;width:number;height:number}}>();
   let selectionSerial=0; const [selectionReading,setSelectionReading]=createSignal(false);
   const [pending, setPending] = createSignal(false), [edit, setEdit] = createSignal<DrawingPropertyDraft>();
+  const [queuedDrawings, setQueuedDrawings] = createSignal<Drawing[]>([]);
+  const [recoveredDrawings, setRecoveredDrawings] = createSignal<Drawing[]>([]);
+  const [strokeVersion, setStrokeVersion] = createSignal(0);
+  let strokeQueue: DrawingAddQueue | undefined, editCacheKey: string | undefined;
   const activeDraftId = createMemo(() => draft()?.id), activeEditId = createMemo(() => edit()?.drawing.id), storedPreviewId = createMemo(() => storedDraft()?.id);
   const textEditor = () => edit()?.mode === 'text' ? edit() : undefined;
   const cacheKey = () => props.port.draftKey();
@@ -81,6 +87,7 @@ export default function SharedDrawingEditor(props: Props) {
   const eraseWidth = () => wideBrush() ? highlightWidth() : width();
   const eraseCursor = () => eraserCursor(eraseWidth()*surfaceSize().width/props.port.frame().width,eraseWidth()*surfaceSize().height/props.port.frame().height);
   const propertySize = () => propertyTarget()?.fontSize ?? (tool() === 'number' ? numberDiameter() : fontSize());
+  const propertyTextStyle = () => { const drawing = propertyTarget(); return drawing ? drawing.textStyle ?? {} : textStyle(); };
   const options = (defaults: number[], current: number) => [...new Set([...defaults, current])].sort((a, b) => a - b);
   const controlsLocked = () => props.busy || props.inputLocked || finishing() || imageZooming();
   const disabled = () => pending() || controlsLocked();
@@ -92,7 +99,7 @@ export default function SharedDrawingEditor(props: Props) {
   const editableIds = () => new Set([...drawings().filter(value => props.port.canSelect(value)).map(value => value.id),...(props.port.stored?.().map(value=>value.id)??[])]);
   const historyAvailable = (redo: boolean) => props.port.historyAvailable(redo);
   const previewDrawing = () => draft() ?? edit()?.drawing;
-  const previews=createMemo(()=>new Map([...groupDraft(),...(previewDrawing()?[previewDrawing()!]:[])].map(d=>[d.id,d])));
+  const previews=createMemo(()=>new Map([...recoveredDrawings(),...queuedDrawings(),...groupDraft(),...(previewDrawing()?[previewDrawing()!]:[])].map(d=>[d.id,d])));
   const addedPreviewId = createMemo(() => {
     const preview = previewDrawing();
     return preview && !drawingIndex().has(preview.id) && !storedIndex().has(preview.id) && (preview.kind !== 'text' || preview.text?.trim()) ? preview.id : undefined;
@@ -102,6 +109,7 @@ export default function SharedDrawingEditor(props: Props) {
     const ordered = drawingOrder(drawings().flatMap(value=>pixelDraft()?.get(value.id)??[value])).filter(value => !storedIndex().has(value.id));
     const ids = [...storedIndex().keys(), ...ordered.map(value => value.id)];
     const addedId = addedPreviewId();
+    for (const value of [...recoveredDrawings(), ...queuedDrawings()]) if (!ids.includes(value.id)) ids.push(value.id);
     if (addedId) {
       if (addedPreviewMosaic()) ids.splice(storedIndex().size + ordered.filter(value => value.kind === 'mosaic').length, 0, addedId); else ids.push(addedId);
     }
@@ -115,7 +123,9 @@ export default function SharedDrawingEditor(props: Props) {
   };
   const resizeHandles = () => { const drawing = resizeDrawing(), size = surfaceSize(); return drawing && size.width > 0 && size.height > 0 ? drawingResizeHandles(drawing) : []; };
   const handleSize = () => ({ x: 10 * props.port.frame().width / surfaceSize().width, y: 10 * props.port.frame().height / surfaceSize().height });
-  const gestureIdentity = () => JSON.stringify([cacheKey(), props.port.sourceIdentity(), props.port.sourceSize(), props.port.revision(), props.box]);
+  const strokeSource = () => JSON.stringify([cacheKey(), props.port.sourceIdentity(), props.port.sourceSize(), props.port.frame(), props.box]);
+  const continuousStrokes = () => !props.documentOnly && !props.port.stored;
+  const gestureIdentity = () => { strokeVersion(); return JSON.stringify([cacheKey(), props.port.sourceIdentity(), props.port.sourceSize(), strokeQueue?.revisionIdentity() ?? props.port.revision(), props.box]); };
   const target = (expectedRevision = props.port.revision()) => ({ expectedRevision });
   const position = createMemo(() => {
     const size = toolbarSize(), box = props.box, vp = viewport();
@@ -129,15 +139,68 @@ export default function SharedDrawingEditor(props: Props) {
     return clip ? { x: clamp(value.x, frame.x, frame.x + frame.width), y: clamp(value.y, frame.y, frame.y + frame.height) } : value;
   };
   const report = (error: unknown) => props.onError(error instanceof Error ? error.message : String(error));
+  function cachedStrokes() {
+    const base = cacheKey(), source = strokeSource();
+    return drawingDrafts.list().filter(entry => {
+      try {
+        const key = JSON.parse(entry.key);
+        if (!(key.length === 5 && key[1] === 'queued-stroke' && key[2] === base && key[3] === source)) return false;
+        const saved = drawings().find(value => value.id === entry.draft.drawing.id);
+        if (saved && JSON.stringify(saved) === JSON.stringify(entry.draft.drawing)) { drawingDrafts.delete(entry.key, entry.draft); return false; }
+        return true;
+      } catch { return false; }
+    });
+  }
+  function restoreStrokeDraft() {
+    const entries = cachedStrokes();
+    setRecoveredDrawings(entries.map(entry => entry.draft.drawing));
+    const first = entries[0]; editCacheKey = first?.key; setEdit(first?.draft);
+    if (first) { setSelected(first.draft.drawing.id); setTool('select'); }
+  }
+  function newStrokeQueue() {
+    const base = cacheKey(), source = strokeSource();
+    const key = (id: string) => strokeCacheKey(id, base, source);
+    const queue = new DrawingAddQueue({
+      read: () => ({ source: strokeSource(), revision: props.port.revision(), drawings: drawings() }),
+      active: () => !disposed && source === strokeSource(),
+      save: (drawing, expectedRevision) => {
+        const command = { type: 'add_drawing' as const, drawing, expectedRevision };
+        if (!props.tools.includes(drawing.kind as ManualDrawingKind) || !props.port.allows(command)) throw Error('绘制工具已变化');
+        return props.onCommand(command);
+      },
+      remember: (drawing, revision) => drawingDrafts.set(key(drawing.id), propertyDraft(drawing, revision, 'style', false)),
+      forget: drawing => { const stored = drawingDrafts.get(key(drawing.id)); if (stored?.drawing.id === drawing.id) drawingDrafts.delete(key(drawing.id), stored); },
+      changed: values => { if (!disposed && strokeQueue === queue) batch(() => { setQueuedDrawings(values); setStrokeVersion(value => value + 1); }); },
+      failed: error => {
+        if (!disposed && strokeQueue === queue && source === strokeSource()) {
+          cancelGesture?.();
+          for (const entry of cachedStrokes()) {
+            try { drawingDrafts.set(entry.key, { ...entry.draft, error: error instanceof Error ? error.message : String(error) }); }
+            catch { /* Keep the already-reserved user geometry even if diagnostic text exceeds the cache budget. */ }
+          }
+          restoreStrokeDraft(); report(error);
+        }
+      },
+    });
+    return queue;
+  }
+  function strokeCacheKey(id: string, base = cacheKey(), source = strokeSource()) {
+    const parts = JSON.parse(base), sceneId = parts[0] === 'image-item' ? parts[1] : parts[0];
+    return JSON.stringify([sceneId, 'queued-stroke', base, source, id]);
+  }
+  function releaseFailedStrokes() {
+    if (!strokeQueue?.failed()) return;
+    strokeQueue.stop(); strokeQueue = newStrokeQueue(); setQueuedDrawings([]); setStrokeVersion(value => value + 1);
+  }
   function storeEdit(value: DrawingPropertyDraft): boolean {
-    try { drawingDrafts.remember(cacheKey(), value); setEdit(value); return true; }
+    try { drawingDrafts.remember(editCacheKey ?? cacheKey(), value); setEdit(value); return true; }
     catch (error) { report(error); return false; }
   }
-  function cancelEdit() { const value = edit(); if (value) drawingDrafts.delete(cacheKey(), value); setEdit(undefined); setDraft(undefined); }
-  function cancelUserEdit(){if(!disabled())cancelEdit();}
+  function cancelEdit() { const value = edit(); if (value) drawingDrafts.delete(editCacheKey ?? cacheKey(), value); editCacheKey = undefined; setEdit(undefined); setDraft(undefined); }
+  function cancelUserEdit(){if(!disabled()){releaseFailedStrokes();cancelEdit();restoreStrokeDraft();}}
   const setText = (value: string) => { if(disabled())return; const current = textEditor(); if (current) storeEdit(changeProperty(current, { text: value })); };
   function commit(command: EditorDrawingAction, controlled = false, active: () => boolean = () => true, persisted: () => void = () => {}): Promise<boolean> {
-    if (pending() || (!controlled && (props.busy || props.inputLocked)) || !active()) return Promise.resolve(false);
+    if (strokeQueue?.pending() || pending() || (!controlled && (props.busy || props.inputLocked)) || !active()) return Promise.resolve(false);
     if (!props.port.allows(command)) return Promise.resolve(false);
     setPending(true); const token = ++serial, origin = identity();
     const request = settleDrawingEdit(() => props.onCommand(command), () => !disposed && token === serial && origin === identity() && active(), persisted)
@@ -150,11 +213,16 @@ export default function SharedDrawingEditor(props: Props) {
   }
   async function choose(next: Tool) {
     if (disabled()) return; const origin = identity(); cancelGesture?.();
-    if (!(await saveText()) || disposed || origin !== identity()) return;
-    setDraft(undefined); if (next !== 'select') setSelected('');
-    if(strokeKinds.includes(next as DrawingKind))setWideBrush(next==='highlighter');
-    if (next === 'mosaic' && mosaicFailed()) setMosaicRetry(value => value + 1); setTool(next);
-    if (['highlighter', 'mark'].includes(next) && highlightFailed()) setHighlightRetry(value => value + 1);
+    setFinishing(true);
+    try {
+      await strokeQueue?.drain();
+      if (!(await saveText()) || disposed || origin !== identity()) return;
+      setDraft(undefined); if (next !== 'select') setSelected('');
+      if(strokeKinds.includes(next as DrawingKind))setWideBrush(next==='highlighter');
+      if (next === 'mosaic' && mosaicFailed()) setMosaicRetry(value => value + 1); setTool(next);
+      if (['highlighter', 'mark'].includes(next) && highlightFailed()) setHighlightRetry(value => value + 1);
+    } catch (error) { report(error); }
+    finally { if (!disposed) setFinishing(false); }
   }
   function openText(value: Drawing, existing: boolean) {
     if (disabled() || edit()) return;
@@ -164,15 +232,19 @@ export default function SharedDrawingEditor(props: Props) {
   }
   function loadLatest() {
     const value = edit(); if (!value || disabled()) return;
+    if (editCacheKey && !value.base) {
+      releaseFailedStrokes(); storeEdit({ ...value, expectedRevision: props.port.revision(), error: undefined }); return;
+    }
     const latest = drawings().find(drawing => drawing.id === value.drawing.id);
     if (!latest) { props.onError('标注已删除'); return; }
     cancelEdit();
     if (value.mode === 'text') openText(latest, true); else setSelected(latest.id);
   }
-  function changeStyle(patch: { color?: string; strokeWidth?: number; fontSize?: number }, submit: boolean) {
+  function changeStyle(patch: { color?: string; strokeWidth?: number; fontSize?: number; textStyle?: DrawingTextStyle }, submit: boolean) {
     if (disabled() || cancelGesture) return;
     const selectedObject = propertyTarget();
     if (selectedObject && !props.port.canStyle(selectedObject)) return;
+    if (patch.textStyle !== undefined) setTextStyle({ ...patch.textStyle });
     if (selectedObject) {
       const value = edit() ?? propertyDraft(selectedObject, props.port.revision());
       if (storeEdit(changeProperty(value, patch)) && submit && value.mode !== 'text') void saveText();
@@ -417,6 +489,9 @@ export default function SharedDrawingEditor(props: Props) {
   }
   function begin(event: PointerEvent, forcedImage?: Drawing) {
     event.stopPropagation();
+    const queueable = event.button === 0 && !forcedImage && continuousStrokes() && strokeKinds.includes(tool() as DrawingKind);
+    if (strokeQueue?.pending() && !queueable) return;
+    if (queueable && strokeQueue && !strokeQueue.capacity()) { props.onError('请先保存未完成的笔迹'); return; }
     if (!forcedImage && event.button === 2) {
       event.preventDefault();
       if (!disabled() && !textEditor() && !edit() && !cancelGesture) { svg.focus({preventScroll:true}); beginErase(event,true); }
@@ -433,6 +508,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (initialBox.width <= 0 || initialBox.height <= 0) return;
     const initialFrame = props.port.frame();
     const start = point(event, true, initialBox, initialFrame), originalTool = tool(), kind = forcedImage ? 'select' : originalTool, revision = props.port.revision(), origin = gestureSource();
+    const strokeRevision = strokeQueue?.revisionIdentity() ?? revision;
     const hitId = event.target instanceof Element ? event.target.closest('[data-drawing-id]')?.getAttribute('data-drawing-id') : undefined;
     const hit = forcedImage ?? (hitId && editableIds().has(hitId) ? drawings().find(value => value.id === hitId) : undefined);
     if (kind === 'mosaic' && !mosaicReady()) return;
@@ -442,7 +518,7 @@ export default function SharedDrawingEditor(props: Props) {
     if(kind==='text'&&stored?.kind==='text'){setSelected(stored.id);void ensureSelection(stored.id).then(value=>{if(value)openText(value,true);});return;}
     if (kind === 'text') {
       if (hit?.kind === 'text') openText(hit, true);
-      else openText({ id: crypto.randomUUID(), kind, color: color(), strokeWidth: width(), points: [start], fontSize: fontSize(), text: '' }, false);
+      else openText({ id: crypto.randomUUID(), kind, color: color(), strokeWidth: width(), points: [start], fontSize: fontSize(), ...(Object.keys(textStyle()).length ? { textStyle: { ...textStyle() } } : {}), text: '' }, false);
       return;
     }
     if (kind === 'number') {
@@ -466,6 +542,16 @@ export default function SharedDrawingEditor(props: Props) {
     else setSelected('');
     if(objectMove)trash.begin();
     let value: Drawing = original ? { ...original, points: original.points.map(value => ({ ...value })) } : { id: crypto.randomUUID(), kind: kind as DrawingKind, color: color(), strokeWidth: kind === 'mosaic' ? blockSize() : kind === 'highlighter' ? highlightWidth() : kind === 'mark' ? 1 : width(), points: kind === 'pen' || kind === 'highlighter' ? [start] : [start, start] };
+    let releaseStrokeReservation: (() => void) | undefined;
+    const strokeKey = queueable && strokeQueue ? strokeCacheKey(value.id) : undefined;
+    if (strokeKey) {
+      try {
+        // A JSON number uses at most 25 characters; 4096 two-coordinate points
+        // fit comfortably within 512 KiB, including all vector style fields.
+        const bytes = new TextEncoder().encode(JSON.stringify(strokeKey)).length + 512 * 1024;
+        releaseStrokeReservation = drawingDrafts.reserve(strokeKey, bytes);
+      } catch (error) { report(error); return; }
+    }
     // Keep sampled ink separate from the straight preview so releasing Shift restores it.
     const strokePoints = !original && (kind === 'pen' || kind === 'highlighter') ? value.points : undefined;
     let changed = false, ended = false, dragStarted = !original;
@@ -541,6 +627,7 @@ export default function SharedDrawingEditor(props: Props) {
     const finish = (save: boolean) => {
       if (ended) return;
       const valid = current() && surfaceCurrent(); ended = true; cleanup();
+      try {
       const removeObject=objectMove&&save&&valid&&dragStarted&&trashOver();if(objectMove)trash.cancel();
       if(removeObject){setDraft(undefined);void commit({...target(revision),type:'remove_drawing',drawingId:original!.id}).finally(()=>{if(!disposed)setSelected('');});return;}
       if (!save || !valid || (original && !changed)) { setDraft(undefined); return; }
@@ -548,7 +635,13 @@ export default function SharedDrawingEditor(props: Props) {
       if (!original && (((kind === 'arrow' || kind === 'line') && Math.hypot(b.x - a.x, b.y - a.y) < 1) || (['rect', 'ellipse', 'mosaic', 'mark'].includes(kind) && (Math.abs(b.x - a.x) < 1 || Math.abs(b.y - a.y) < 1)))) { setDraft(undefined); return; }
       // A receipt owns an immutable snapshot; late input cannot mutate its point array.
       value = { ...value, points: value.points.map(point => ({ ...point })) };
+      if (!original && queueable && strokeQueue) {
+        if (strokeQueue.enqueue(value, strokeRevision)) setDraft(undefined);
+        else { const saved = { ...propertyDraft(value, props.port.revision(), 'style', false), error: '笔迹尚未保存' }; drawingDrafts.set(strokeKey!, saved); editCacheKey = strokeKey; setEdit(saved); }
+        return;
+      }
       void commit({ ...target(revision), type: original ? 'update_drawing' : 'add_drawing', drawing: value }).finally(()=>{if(forcedImage&&!disposed)setSelected('');});
+      } finally { releaseStrokeReservation?.(); }
     };
     const released = (next: PointerEvent) => { if (next.pointerId === pointerId) { moved(next); finish(true); } };
     const canceled = (next: PointerEvent) => { if (next.pointerId === pointerId) finish(false); };
@@ -568,12 +661,14 @@ export default function SharedDrawingEditor(props: Props) {
     void saveText();
   }
   function confirmText() {
-    void saveText().then(saved => { if (saved && !disposed && !textEditor()) svg.focus({preventScroll:true}); });
+    releaseFailedStrokes();
+    void saveText().then(saved => { if (saved && !disposed && !textEditor()) { restoreStrokeDraft(); svg.focus({preventScroll:true}); } });
   }
   async function saveText(controlled = false, active: () => boolean = () => true): Promise<boolean> {
     const value = edit(); if (!value) return true;
     if (pending() || (!controlled && props.busy) || !active()) return false;
-    const key = cacheKey(), origin = identity();
+    if (strokeQueue?.pending() || strokeQueue?.failed()) return false;
+    const key = editCacheKey ?? cacheKey(), origin = identity();
     try {
       const command: EditorDrawingAction | undefined = value.mode === 'text' && !value.drawing.text?.trim()
         ? value.base ? {...target(value.expectedRevision),type:'remove_drawing',drawingId:value.base.id} : undefined
@@ -581,7 +676,7 @@ export default function SharedDrawingEditor(props: Props) {
       if (!command) { cancelEdit(); return true; }
       let persisted = false;
       const saved = await commit(command, controlled, active, () => { persisted = true; drawingDrafts.delete(key, value); });
-      if (persisted && !disposed && origin === identity() && edit() === value) { setEdit(undefined); setSelected(value.mode === 'text' ? '' : props.port.persistedId?.(value.drawing.id) ?? value.drawing.id); }
+      if (persisted && !disposed && origin === identity() && edit() === value) { editCacheKey = undefined; setEdit(undefined); setRecoveredDrawings(cachedStrokes().map(entry => entry.draft.drawing)); setSelected(value.mode === 'text' ? '' : props.port.persistedId?.(value.drawing.id) ?? value.drawing.id); }
       if (saved) {
         return true;
       }
@@ -613,6 +708,7 @@ export default function SharedDrawingEditor(props: Props) {
     if ((disabled() && !closingDisabledBoard) || cancelGesture) return;
     const currentIdentity = identity(); setFinishing(true);
     try {
+      await strokeQueue?.drain();
       if (props.blackboard && exitDrawing && props.onFinishBlackboard) {
         if (closingDisabledBoard) { await props.onFinishBlackboard(); return; }
         if (await saveText() && !disposed && currentIdentity === identity()) await props.onFinishBlackboard();
@@ -627,12 +723,23 @@ export default function SharedDrawingEditor(props: Props) {
   async function pin() {
     if (disabled() || cancelGesture || !props.onPin) return;
     const currentIdentity = identity(); setFinishing(true);
-    try { await outputDrawing({ saveText, current: () => !disposed && currentIdentity === identity(), output: () => props.onPin?.() ?? Promise.resolve(false) }); }
+    try { await strokeQueue?.drain(); await outputDrawing({ saveText, current: () => !disposed && currentIdentity === identity(), output: () => props.onPin?.() ?? Promise.resolve(false) }); }
     catch (error) { if (!disposed) report(error); }
     finally { if (!disposed) setFinishing(false); }
   }
-  function history(redo: boolean) {
+  async function closeEditor() {
+    if (disabled() || cancelGesture) return;
+    const source = strokeSource(); setFinishing(true);
+    try { await strokeQueue?.drain(); if (!disposed && source === strokeSource()) props.onClose(); }
+    catch (error) { if (!disposed) report(error); }
+    finally { if (!disposed) setFinishing(false); }
+  }
+  async function history(redo: boolean) {
     if (disabled() || edit() || cancelGesture) return;
+    const source = strokeSource(); setFinishing(true);
+    try { await strokeQueue?.drain(); } catch (error) { report(error); return; }
+    finally { if (!disposed) setFinishing(false); }
+    if (disposed || source !== strokeSource() || disabled() || edit() || cancelGesture) return;
     if (!historyAvailable(redo)) return;
     const entry = props.port.historyStep?.(redo);
     const number = entry && !('batch' in entry) && !entry.before && entry.after?.kind === 'number' ? numberChanges.get(entry.after.id) : undefined;
@@ -654,7 +761,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (nativeSelectOwnsEscape(event)) return;
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
-      if (cancelGesture) cancelGesture(); else if (!disabled() && textEditor()) confirmText(); else if (!disabled() && edit()) cancelEdit(); else if (!disabled()) { if (props.blackboard) void done(); else props.onClose(); }
+      if (cancelGesture) cancelGesture(); else if (!disabled() && textEditor()) confirmText(); else if (!disabled() && edit()) cancelUserEdit(); else if (!disabled()) { if (props.blackboard) void done(); else void closeEditor(); }
       return;
     }
     if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
@@ -668,11 +775,15 @@ export default function SharedDrawingEditor(props: Props) {
   const resize = () => { cancelGesture?.(); setViewport({ width: innerWidth, height: innerHeight }); };
   const blur = () => cancelGesture?.();
   const identity = createMemo(cacheKey);
+  const queueSource = createMemo(strokeSource);
+  createEffect(on(queueSource, () => {
+    strokeQueue?.stop(); strokeQueue = continuousStrokes() ? newStrokeQueue() : undefined; setQueuedDrawings([]); setRecoveredDrawings([]); editCacheKey = undefined;
+  }));
   createEffect(on(identity, () => {
     cancelGesture?.(); setDraft(undefined);
     const saved = props.documentOnly ? undefined : drawingDrafts.get(cacheKey()); setEdit(saved);
     if (saved) { setSelected(saved.drawing.id); setTool(saved.mode === 'text' ? 'text' : 'select'); }
-    else setSelected('');
+    else { setSelected(''); restoreStrokeDraft(); }
   }));
   createEffect(() => { if (props.busy || props.inputLocked) cancelGesture?.(); });
   const gestureSource = createMemo(gestureIdentity);
@@ -694,6 +805,7 @@ export default function SharedDrawingEditor(props: Props) {
   document.addEventListener('keydown', keyboard, true); document.addEventListener('keyup', keyboard, true); window.addEventListener('resize', resize); window.addEventListener('blur', blur);
   const unregisterFlush = props.onRegisterFlush?.(async active => {
     const origin = identity(); cancelGesture?.();
+    await strokeQueue?.drain(active);
     if(eraseFlight)await eraseFlight;
     if (tableCopy) await tableCopy;
     if (flight && !(await flight)) throw new Error('标注尚未保存');
@@ -708,12 +820,12 @@ export default function SharedDrawingEditor(props: Props) {
     canRedo:()=>!disabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(true),
   });
   onCleanup(()=>unregisterHistory?.());
-  onCleanup(() => { unregisterFlush?.(); disposed = true; serial++; cancelGesture?.(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
+  onCleanup(() => { unregisterFlush?.(); disposed = true; strokeQueue?.stop(); serial++; cancelGesture?.(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
   function DrawingItem(item: { id: string }) {
     const isDraft = createMemo(() => activeDraftId() === item.id), isEdit = createMemo(() => activeEditId() === item.id);
     const value = createMemo(() => {const saved=drawingIndex().get(item.id),preview=pixelIndex().get(item.id)??previews().get(item.id);return preview??(saved?linkedRepairPreview(saved,drawingIndex(),previews()):undefined);});
     const drawing = liveDrawing(item.id, () => value()!);
-    const isPreview = createMemo(() => isDraft() || isEdit());
+    const isPreview = createMemo(() => isDraft() || isEdit() || queuedDrawings().some(value => value.id === item.id) || recoveredDrawings().some(value => value.id === item.id));
     const isSelected = createMemo(() => selectedIds().includes(item.id) && !(props.blackboard && value()?.rich?.kind === 'extracted'&&selectedIds().length===1));
     const interactive = createMemo(() => (props.blackboard || ['select', 'eraser', 'text'].includes(tool())) && Boolean(value() && props.port.canSelect(drawing)));
     const render = () => <>{props.port.render(drawing, interactive(), isSelected(), isPreview())}</>;
@@ -756,7 +868,8 @@ export default function SharedDrawingEditor(props: Props) {
       <Show when={tool() === 'number'}><input class="drawing-number" type="number" aria-label={t("下个序号")} title={t("下个序号")} min="1" max="9999" step="1" value={nextNumber()} disabled={disabled()} onInput={event => editNumber(event.currentTarget.value)} /></Show>
       <Show when={propertyKind() === 'number'}><select aria-label={t("序号大小")} title={t("序号大小")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([22, 28, 36, 48, 64], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>
       <Show when={propertyKind() === 'text'}><select aria-label={t("字号")} title={t("字号")} value={propertySize()} disabled={disabled()} onChange={event => changeStyle({ fontSize: Number(event.currentTarget.value) }, true)}><For each={options([16, 20, 28, 36, 48], propertySize())}>{value => <option value={value} selected={value === propertySize()}>{value}</option>}</For></select></Show>
-      <Show when={edit()?.error}><button title={t("重试保存")} aria-label={t("重试保存标注")} disabled={disabled()} onClick={confirmText}><Check size={16} /></button><button title={t("载入最新")} aria-label={t("载入最新标注")} disabled={disabled()} onClick={loadLatest}><RotateCcw size={16} /></button><button title={t("取消修改")} aria-label={t("取消属性修改")} disabled={disabled()} onClick={cancelUserEdit}><X size={16} /></button></Show>
+      <Show when={propertyKind() === 'text'}><DrawingTextStylePicker value={propertyTextStyle()} disabled={disabled()} preserveFocus={!!textEditor()} onChange={value => changeStyle({ textStyle: value }, true)} /></Show>
+      <Show when={edit()?.error || (strokeVersion(), strokeQueue?.failed())}><button title={t("重试保存")} aria-label={t("重试保存标注")} disabled={disabled()} onClick={confirmText}><Check size={16} /></button><button title={t("载入最新")} aria-label={t("载入最新标注")} disabled={disabled()} onClick={loadLatest}><RotateCcw size={16} /></button><button title={t("取消修改")} aria-label={t("取消属性修改")} disabled={disabled()} onClick={cancelUserEdit}><X size={16} /></button></Show>
       <span class="drawing-divider" />
       <Show when={selectedDrawing()?.rich?.kind === 'table' && props.port.copyTable}><button title={t("复制表格")} aria-label={t("复制表格")} disabled={disabled() || !!edit()} onClick={copySelectedTable}><Copy size={16} /></button><select aria-label={t("表格复制格式")} value={tableFormat()} disabled={disabled() || !!edit()} onChange={event => setTableFormat(event.currentTarget.value as DrawingTableFormat)}><For each={['table', 'markdown', 'csv', 'tsv', 'png'] as DrawingTableFormat[]}>{format => <option value={format} selected={tableFormat() === format}>{format === 'table' ? 'Excel' : format === 'markdown' ? 'Markdown' : format.toUpperCase()}</option>}</For></select></Show>
       </div>

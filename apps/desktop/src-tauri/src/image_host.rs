@@ -920,7 +920,7 @@ mod tests {
                 mewu_core::DrawingPoint { x: 6., y: 9. },
             ],
             text: None,
-            font_size: None,
+            font_size: None, text_style: None,
             origin: None,
             rich: None,
         });

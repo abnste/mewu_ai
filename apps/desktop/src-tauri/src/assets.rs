@@ -728,7 +728,7 @@ mod tests {
                         DrawingPoint { x: 26., y: 50. },
                     ],
                     text: None,
-                    font_size: None,
+                    font_size: None, text_style: None,
                 },
             })
             .unwrap();
@@ -870,7 +870,7 @@ mod tests {
             stroke_width: 4.,
             points,
             text: None,
-            font_size: None,
+            font_size: None, text_style: None,
         };
         region.drawings = vec![
             object(
@@ -925,7 +925,7 @@ mod tests {
                     mewu_core::DrawingPoint { x: 22., y: 120. },
                 ],
                 text: None,
-                font_size: None,
+                font_size: None, text_style: None,
             }],
             ..Default::default()
         };

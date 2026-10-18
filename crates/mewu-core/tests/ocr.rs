@@ -130,7 +130,7 @@ fn drawing() -> Drawing {
         stroke_width: 2.,
         points: vec![DrawingPoint { x: 100., y: 100. }],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
     }
 }
 

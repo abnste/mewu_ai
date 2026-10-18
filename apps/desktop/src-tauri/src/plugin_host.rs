@@ -481,14 +481,30 @@ pub async fn reinstall_official_plugin(
 }
 
 #[tauri::command]
-pub fn apply_plugin_drawing(
+pub async fn apply_plugin_drawing(
     app: AppHandle,
-    host: tauri::State<'_, Host>,
     plugin_id: String,
     plugin_revision: u64,
     contribution_id: String,
     command: SceneCommand,
 ) -> Result<HostSnapshot, String> {
+    // Drawing validation, durable storage and snapshot serialization must not
+    // block the native window thread or an async runtime worker.
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_plugin_drawing_blocking(app, plugin_id, plugin_revision, contribution_id, command)
+    })
+    .await
+    .map_err(|_| "绘制更新中断")?
+}
+
+fn apply_plugin_drawing_blocking(
+    app: AppHandle,
+    plugin_id: String,
+    plugin_revision: u64,
+    contribution_id: String,
+    command: SceneCommand,
+) -> Result<HostSnapshot, String> {
+    let host = app.state::<Host>();
     crate::recording::ensure_idle(&app)?;
     let runtime = lock(&host)?;
     let tools = runtime

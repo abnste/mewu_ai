@@ -345,7 +345,19 @@ pub async fn copy_drawing_table(
 }
 
 #[tauri::command]
-pub fn apply_drawing_document(
+pub async fn apply_drawing_document(
+    app: AppHandle,
+    window: WebviewWindow,
+    command: SceneCommand,
+) -> Result<crate::HostSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_drawing_document_blocking(app, window, command)
+    })
+    .await
+    .map_err(|_| "图层更新中断")?
+}
+
+fn apply_drawing_document_blocking(
     app: AppHandle,
     window: WebviewWindow,
     command: SceneCommand,

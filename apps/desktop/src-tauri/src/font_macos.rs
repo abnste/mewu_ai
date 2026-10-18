@@ -132,3 +132,11 @@ pub fn font_paths() -> Result<Vec<PathBuf>, String> {
         Ok(paths)
     }
 }
+
+/// Resolved only for bold drawings; do not grow the ordinary screenshot cache.
+pub fn bold_font_paths() -> Vec<PathBuf> {
+    ["Helvetica-Bold", "PingFangSC-Semibold", "Arial-BoldMT"]
+        .iter()
+        .filter_map(|name| installed_font_path(name))
+        .collect()
+}

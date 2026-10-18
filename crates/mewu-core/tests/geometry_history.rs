@@ -216,7 +216,7 @@ fn add_drawing(store: &mut Store, scene_id: &str, id: &str) {
                     DrawingPoint { x: 90., y: 100. },
                 ],
                 text: None,
-                font_size: None,
+                font_size: None, text_style: None,
             },
         })
         .unwrap();

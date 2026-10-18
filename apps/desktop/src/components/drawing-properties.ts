@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import type { Drawing, DrawingCommand, DrawingKind } from '../contracts';
+import type { Drawing, DrawingCommand, DrawingKind, DrawingTextStyle } from '../contracts';
 
 export interface DrawingPropertyDraft {
   mode: 'style' | 'text';
@@ -10,7 +10,7 @@ export interface DrawingPropertyDraft {
 }
 export interface PendingDrawingDraft { key: string; draft: DrawingPropertyDraft }
 export const strokeKinds: DrawingKind[] = ['pen', 'line', 'arrow', 'rect', 'ellipse', 'highlighter'];
-export function copyDrawing(value: Drawing): Drawing { return { ...value, ...(value.origin ? { origin: { ...value.origin } } : {}), ...(value.rich ? { rich: { ...value.rich } } : {}), points: value.points.map(point => ({ ...point })) }; }
+export function copyDrawing(value: Drawing): Drawing { return { ...value, ...(value.origin ? { origin: { ...value.origin } } : {}), ...(value.rich ? { rich: { ...value.rich } } : {}), ...(value.textStyle ? { textStyle: { ...value.textStyle } } : {}), points: value.points.map(point => ({ ...point })) }; }
 export function drawingPreview(drawings: Drawing[], preview?: Drawing): Drawing[] {
   if (!preview) return drawings;
   const index = drawings.findIndex(value => value.id === preview.id);
@@ -21,17 +21,18 @@ export function propertyDraft(value: Drawing, revision: number, mode: 'style' | 
   if (value.kind === 'rich') throw new Error('此对象不支持修改样式');
   return { mode, base: existing ? copyDrawing(value) : undefined, drawing: copyDrawing(value), expectedRevision: revision };
 }
-export function changeProperty(value: DrawingPropertyDraft, patch: { color?: string; strokeWidth?: number; fontSize?: number; text?: string }): DrawingPropertyDraft {
+export function changeProperty(value: DrawingPropertyDraft, patch: { color?: string; strokeWidth?: number; fontSize?: number; text?: string; textStyle?: DrawingTextStyle }): DrawingPropertyDraft {
   if (value.drawing.kind === 'rich') throw new Error('此对象不支持修改样式');
   const drawing = copyDrawing(value.drawing);
   if (patch.color !== undefined && drawing.kind !== 'mosaic') drawing.color = patch.color;
   if (patch.strokeWidth !== undefined && strokeKinds.includes(drawing.kind)) drawing.strokeWidth = patch.strokeWidth;
   if (patch.fontSize !== undefined && ['text', 'number'].includes(drawing.kind)) drawing.fontSize = patch.fontSize;
+  if (patch.textStyle !== undefined && drawing.kind === 'text') drawing.textStyle = { ...patch.textStyle };
   if (patch.text !== undefined && value.mode === 'text' && drawing.kind === 'text') drawing.text = patch.text;
   return { ...value, drawing, error: undefined };
 }
 export function draftChanged(value: DrawingPropertyDraft): boolean {
-  if (!value.base) return Boolean(value.drawing.text?.trim());
+  if (!value.base) return value.drawing.kind === 'text' ? Boolean(value.drawing.text?.trim()) : true;
   return JSON.stringify(value.base) !== JSON.stringify(value.drawing);
 }
 export function drawingPropertyCommand(value: DrawingPropertyDraft, target: { sceneId: string; backgroundId: string; regionId: string }): DrawingCommand | undefined {
@@ -49,6 +50,7 @@ export function drawingPropertyCommand(value: DrawingPropertyDraft, target: { sc
 // Unsaved drafts live only in this renderer runtime. Never silently evict user input.
 export class DrawingDraftCache {
   private entries = new Map<string, DrawingPropertyDraft>();
+  private reservations = new Map<string, { bytes: number }>();
   constructor(private limit = 32, private maxBytes = 4 * 1024 * 1024) {}
   get(key: string): DrawingPropertyDraft | undefined { return this.entries.get(key); }
   hasPending(sceneId?: string): boolean {
@@ -63,11 +65,21 @@ export class DrawingDraftCache {
   remember(key: string, value: DrawingPropertyDraft): void {
     if (draftChanged(value)) this.set(key, value); else this.entries.delete(key);
   }
+  /** Reserve before accepting ink, so a full cache can reject the gesture before
+   * its first visible sample rather than losing a completed unsaved stroke. */
+  reserve(key: string, bytes: number): () => void {
+    if (this.entries.has(key) || this.reservations.has(key) || !Number.isSafeInteger(bytes) || bytes <= 0) throw new Error('无法预留笔迹存储');
+    const used = new TextEncoder().encode(JSON.stringify([...this.entries])).length;
+    if (this.entries.size + this.reservations.size >= this.limit || used + [...this.reservations.values()].reduce((sum, value) => sum + value.bytes, 0) + bytes > this.maxBytes) throw new Error('未保存标注过多，请先保存或取消');
+    const reservation = { bytes }; this.reservations.set(key, reservation);
+    return () => { if (this.reservations.get(key) === reservation) this.reservations.delete(key); };
+  }
   set(key: string, value: DrawingPropertyDraft): void {
-    if (!this.entries.has(key) && this.entries.size >= this.limit) throw new Error('未保存标注过多，请先保存或取消');
     const candidates = [...this.entries].filter(([id]) => id !== key); candidates.push([key, value]);
-    if (new TextEncoder().encode(JSON.stringify(candidates)).length > this.maxBytes) throw new Error('未保存标注过多，请先保存或取消');
+    const remaining = [...this.reservations].filter(([id]) => id !== key);
+    if (candidates.length + remaining.length > this.limit || new TextEncoder().encode(JSON.stringify(candidates)).length + remaining.reduce((sum, [, value]) => sum + value.bytes, 0) > this.maxBytes) throw new Error('未保存标注过多，请先保存或取消');
     this.entries.set(key, value);
+    this.reservations.delete(key);
   }
   delete(key: string, expected?: DrawingPropertyDraft): boolean {
     if (!expected || this.entries.get(key) === expected) return this.entries.delete(key);

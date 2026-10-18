@@ -194,7 +194,7 @@ fn text_layout() -> VerifiedVideoTextLayout {
     VerifiedVideoTextLayout::new(
         uid(),
         VideoTextContent {
-            version: 1,
+            text_style: None, version: 1,
             text: "答案：42".into(),
             color: "#F0F2F6".into(),
             font_size: 24.,
@@ -1039,7 +1039,7 @@ fn snapshot_strict_video_types_cannot_be_injected_as_image_rich_or_forged_origin
     v["objects"][0]["primitive"]["tracking"] = json!(true);
     assert!(serde_json::from_value::<VideoAnnotationDocument>(v).is_err());
     let mut raw = serde_json::to_value(VideoTextContent {
-        version: 1,
+        text_style: None, version: 1,
         text: "x".into(),
         color: "#112233".into(),
         font_size: 24.,
@@ -1510,7 +1510,7 @@ fn manual_edit_layout(body: &str) -> VerifiedVideoTextLayout {
     VerifiedVideoTextLayout::new(
         uid(),
         VideoTextContent {
-            version: 1,
+            text_style: None, version: 1,
             text: body.into(),
             color: "#f0F2f6".into(),
             font_size: 23.5,

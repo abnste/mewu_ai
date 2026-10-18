@@ -365,7 +365,7 @@ mod tests {
             action: ImageAnnotationEdit::AddDrawing { drawing: Drawing {
                 id: uuid::Uuid::new_v4().to_string(), kind: DrawingKind::Line, color: "#ff0000".into(), stroke_width: 12.,
                 points: vec![DrawingPoint { x: 80., y: 200. }, DrawingPoint { x: 560., y: 200. }],
-                text: None, font_size: None, rich: None, origin: None,
+                text: None, font_size: None, text_style: None, rich: None, origin: None,
             } },
         }).unwrap();
         let imported = store.scene(&scene_id).unwrap().items[0].clone();

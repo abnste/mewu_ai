@@ -82,7 +82,7 @@ fn object(kind: DrawingKind) -> Drawing {
             DrawingKind::Number => Some("1234".into()),
             _ => None,
         },
-        font_size: matches!(kind, DrawingKind::Text | DrawingKind::Number).then_some(24.),
+        font_size: matches!(kind, DrawingKind::Text | DrawingKind::Number).then_some(24.), text_style: None,
     }
 }
 fn region(store: &Store, scope: &(String, String, String)) -> Region {

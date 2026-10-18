@@ -102,7 +102,7 @@ fn drawing(point: DrawingPoint) -> Drawing {
         stroke_width: 4.,
         points: vec![point],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
     }
 }
 fn add_drawing(

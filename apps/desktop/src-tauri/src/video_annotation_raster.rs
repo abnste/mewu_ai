@@ -179,6 +179,25 @@ pub fn decode(png: &[u8], width: u32, height: u32) -> Result<image::RgbaImage, S
 }
 
 fn literal_text_svg(content: &VideoTextContent) -> Result<(String, f64), String> {
+    if let Some(style) = content
+        .text_style
+        .filter(|style| *style != Default::default())
+    {
+        let mut text = String::new();
+        let mut last_baseline = 0.;
+        for (index, line) in content.text.split('\n').enumerate() {
+            last_baseline = 4. + content.font_size * (1. + index as f64 * 1.25);
+            text.push_str(&crate::drawing_render::styled_text_line_svg(
+                &line.replace('\t', "    "),
+                &content.color,
+                content.font_size,
+                4.,
+                last_baseline,
+                style,
+            ));
+        }
+        return Ok((text, last_baseline));
+    }
     let mut text = format!("<text fill=\"{}\" font-family=\"Segoe UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, DejaVu Sans, sans-serif\" font-size=\"{}\" xml:space=\"preserve\">", content.color, content.font_size);
     let mut last_baseline = 0.;
     for (index, line) in content.text.split('\n').enumerate() {
@@ -213,6 +232,10 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
     // used by the final raster. No character-count width guess clips CJK/math.
     let (text, last_baseline) = literal_text_svg(&content)?;
     let mut opts = options(true)?;
+    let bold = content.text_style.is_some_and(|style| style.bold);
+    if bold {
+        opts.fontdb = crate::drawing_render::text_fonts(true)?;
+    }
     let missing = Arc::new(AtomicBool::new(false));
     let flag = missing.clone();
     let fallback = usvg::FontResolver::default_fallback_selector();
@@ -264,14 +287,24 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
         return Err("视频批注含当前字体无法绘制的字符".into());
     }
     let png = rasterize(&tree, width, height)?;
+    let style_version = if content
+        .text_style
+        .is_some_and(|style| style != Default::default())
+    {
+        3
+    } else if translated {
+        2
+    } else {
+        1
+    };
     VerifiedVideoTextLayout::new(
         uuid::Uuid::new_v4().to_string(),
         content,
         RichRendererIdentity {
             id: "mewu.video-text.resvg".into(),
             version: "resvg-0.48.1".into(),
-            font_sha256: crate::rich_annotation_host::table_font_identity()?,
-            style_version: if translated { 2 } else { 1 },
+            font_sha256: crate::drawing_render::text_font_identity(bold)?,
+            style_version,
         },
         width,
         height,
@@ -366,11 +399,79 @@ mod tests {
 
     fn text_content(text: &str, font_size: f64) -> VideoTextContent {
         VideoTextContent {
+            text_style: None,
             version: 1,
             text: text.into(),
             color: "#1357b9".into(),
             font_size,
         }
+    }
+
+    #[test]
+    fn text_styles_video_raster_preserves_effects_and_measured_overhang_without_edge_clipping() {
+        use mewu_core::DrawingTextStyle as S;
+        let original = text_content("中文测试 Abc\n第二行 Mm", 64.);
+        let regular = render_text(original.clone()).unwrap();
+        for style in [
+            S {
+                bold: true,
+                ..Default::default()
+            },
+            S {
+                italic: true,
+                ..Default::default()
+            },
+            S {
+                underline: true,
+                ..Default::default()
+            },
+            S {
+                strikethrough: true,
+                ..Default::default()
+            },
+            S {
+                bold: true,
+                italic: true,
+                underline: true,
+                strikethrough: true,
+            },
+        ] {
+            let mut content = original.clone();
+            content.text_style = Some(style);
+            let layout = render_text(content.clone()).unwrap();
+            assert_eq!(layout.content(), &content);
+            assert_eq!(layout.renderer().style_version, 3);
+            assert_ne!(
+                layout.reference().raster_sha256,
+                regular.reference().raster_sha256
+            );
+            if style.bold {
+                assert_ne!(
+                    layout.renderer().font_sha256,
+                    regular.renderer().font_sha256
+                );
+            }
+            let pixels = decode(layout.png(), layout.width(), layout.height()).unwrap();
+            assert!(pixels.pixels().any(|pixel| pixel[3] != 0));
+            assert!(
+                pixels.enumerate_pixels().all(|(x, y, p)| (x != 0
+                    && y != 0
+                    && x + 1 != pixels.width()
+                    && y + 1 != pixels.height())
+                    || p[3] == 0),
+                "measured bold/oblique/decoration bounds must retain transparent outer edges"
+            );
+        }
+        let (svg, _) = literal_text_svg(&VideoTextContent {
+            text_style: Some(S {
+                italic: true,
+                ..Default::default()
+            }),
+            ..original
+        })
+        .unwrap();
+        assert!(svg.contains("translate(0 68) skewX(-12) translate(0 -68)"));
+        assert!(svg.contains("translate(0 148) skewX(-12) translate(0 -148)"));
     }
 
     #[test]
@@ -555,6 +656,7 @@ mod tests {
     #[test]
     fn chinese_multiline_text_is_measured_and_markup_stays_literal() {
         let layout = render_text(VideoTextContent {
+            text_style: None,
             version: 1,
             text: "中文标注\n<svg>&公式 x²".into(),
             color: "#1357b9".into(),
@@ -572,6 +674,7 @@ mod tests {
     #[test]
     fn mixed_missing_glyph_is_rejected_instead_of_persisting_a_placeholder() {
         assert!(render_text(VideoTextContent {
+            text_style: None,
             version: 1,
             text: "中文\u{10ffff}".into(),
             color: "#123456".into(),

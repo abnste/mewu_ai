@@ -12,7 +12,7 @@ export default function InlineDrawingText(props: {
   const context = document.createElement('canvas').getContext('2d')!;
   const layout = createMemo(() => {
     const size = props.drawing.fontSize ?? 20, lines = (props.drawing.text ?? '').split('\n');
-    context.font = `${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+    context.font = `normal ${props.drawing.textStyle?.bold ? '700' : '400'} ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
     const metrics = context.measureText('Mg中'), lineHeight = size * 1.25;
     const ascent = metrics.fontBoundingBoxAscent ?? size * .8;
     const descent = metrics.fontBoundingBoxDescent ?? size * .2;
@@ -26,7 +26,7 @@ export default function InlineDrawingText(props: {
   return <foreignObject class="drawing-text-editor" x={layout().x} y={layout().y} width={layout().width} height={layout().height}>
     <textarea ref={props.ref} aria-label={t('绘制文字')} wrap="off" spellcheck={false}
       value={props.drawing.text ?? ''} disabled={props.disabled}
-      style={{ 'font-size': `${layout().size}px`, 'line-height': `${layout().lineHeight}px`, 'caret-color': props.drawing.color }}
+      style={{ 'font-size': `${layout().size}px`, 'font-weight': props.drawing.textStyle?.bold ? '700' : '400', 'font-style': 'normal', 'line-height': `${layout().lineHeight}px`, 'caret-color': props.drawing.color }}
       onPointerDown={event => event.stopPropagation()} onContextMenu={event => event.preventDefault()}
       onInput={event => props.onInput(event.currentTarget.value)} onBlur={props.onBlur}
       onKeyDown={event => {

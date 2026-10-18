@@ -740,8 +740,20 @@ export default function App() {
     const current = scene(); if (!current || current.id !== sceneId) throw new Error('会话已变化');
     const text = draft(), references = refs().map(reference => ({ ...reference }));
     autosaveVersion++; clearTimeout(debounce);
-    await command({ type: 'set_draft', sceneId: current.id, draft: text });
-    await command({ type: 'set_refs', sceneId: current.id, refs: references });
+    // Keep this handoff's captured intent, but compare with the acknowledged
+    // host after earlier writes settle. Unchanged drafts/refs need no new full
+    // snapshot transaction when closing or switching an otherwise idle scene.
+    while (true) {
+      const pending = commands; await pending;
+      if (disposed || scene()?.id !== sceneId) throw new Error('会话已变化');
+      if (pending === commands) break;
+    }
+    const saved = snapshot(); if (!saved) throw new Error('会话尚未就绪');
+    const pending = pendingSceneDrafts(saved, { [sceneId]: text }, { [sceneId]: references });
+    for (const value of pending) {
+      if (disposed || scene()?.id !== sceneId) throw new Error('会话已变化');
+      await command(value);
+    }
   }
   async function flushDrawing(active: () => boolean, sceneId?: string) {
     drawingFlushDepth++;

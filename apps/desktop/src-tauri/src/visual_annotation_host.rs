@@ -1062,7 +1062,7 @@ fn parse_plan_with_wire_diagnosed(
                 stroke_width: stroke_width * scale,
                 points,
                 text: object.text,
-                font_size: object.font_size.map(|s| s * scale),
+                font_size: object.font_size.map(|s| s * scale), text_style: None,
                 origin: None,
                 rich: None,
             };
@@ -1302,7 +1302,7 @@ async fn render_plan(
                         stroke_width: mewu_core::RICH_DRAWING_STROKE_WIDTH,
                         points,
                         text: None,
-                        font_size: None,
+                        font_size: None, text_style: None,
                         origin: None,
                         rich: Some(layout.reference().clone()),
                     });

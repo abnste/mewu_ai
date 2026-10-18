@@ -100,7 +100,7 @@ fn blackboard_pixels_drawings_history_and_reference_survive_reopen() {
             DrawingPoint { x: 300., y: 200. },
         ],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         origin: None,
         rich: None,
     };

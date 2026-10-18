@@ -133,7 +133,7 @@ fn object(kind: DrawingKind) -> Drawing {
             ]
         },
         text: (kind == DrawingKind::Text).then(|| "原文🙂\n第二行".into()),
-        font_size: (kind == DrawingKind::Text).then_some(24.),
+        font_size: (kind == DrawingKind::Text).then_some(24.), text_style: None,
     }
 }
 fn add(store: &mut Store, target: &OcrTarget, drawing: Drawing) {

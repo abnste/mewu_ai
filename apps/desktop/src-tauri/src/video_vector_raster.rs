@@ -345,7 +345,7 @@ impl VideoSourceVector {
                 })
                 .collect(),
             text,
-            font_size: size,
+            font_size: size, text_style: None,
             origin: None,
             rich: None,
         })

@@ -382,7 +382,7 @@ fn marquee_batch_is_one_atomic_geometry_step_and_rejects_forgery() {
         stroke_width: 4.,
         points: vec![DrawingPoint { x: 5., y: 5. }],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         origin: None,
         rich: None,
     };

@@ -151,7 +151,7 @@ fn add_drawing(store: &mut Store, target: &OcrTarget) {
                     DrawingPoint { x: 90., y: 100. },
                 ],
                 text: None,
-                font_size: None,
+                font_size: None, text_style: None,
             },
         })
         .unwrap();

@@ -64,7 +64,7 @@ fn drawing(layout: &VerifiedRichLayout) -> Drawing {
             DrawingPoint { x: 140., y: 140. },
         ],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         origin: None,
         rich: Some(layout.reference().clone()),
     }
@@ -80,7 +80,7 @@ fn vector() -> Drawing {
             DrawingPoint { x: 60., y: 60. },
         ],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         origin: None,
         rich: None,
     }

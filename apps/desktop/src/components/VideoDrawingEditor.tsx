@@ -46,7 +46,7 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
   const projected=(id:string):Drawing|undefined=>{
     cacheVersion();const p=object(id)?.primitive;
     if(p?.kind==='vector'){const reply=descriptor(id);return reply&&localVectorDrawing(reply,p.topLeft);}
-    if(p?.kind==='text'){const reply=texts.get(id);if(reply&&sameVideoDrawingValue(reply.reference,p.layout))return{id,kind:'text',points:[{...p.topLeft}],color:reply.content.color,strokeWidth:1,fontSize:reply.content.fontSize,text:reply.content.text};}
+    if(p?.kind==='text'){const reply=texts.get(id);if(reply&&sameVideoDrawingValue(reply.reference,p.layout))return{id,kind:'text',points:[{...p.topLeft}],color:reply.content.color,strokeWidth:1,fontSize:reply.content.fontSize,text:reply.content.text,...(reply.content.textStyle===undefined?{}:{textStyle:structuredClone(reply.content.textStyle)})};}
   };
   const values=()=>{cacheVersion();return (doc()?.objects??[]).flatMap(entry=>{const value=projected(entry.id);return value?[value]:[];});};
   const trimCache=()=>{let bytes=[...vectors.values()].reduce((sum,v)=>sum+new TextEncoder().encode(JSON.stringify(v.content)).length,0);while(vectors.size>8||bytes>2*1024*1024){const [id,value]=vectors.entries().next().value!;vectors.delete(id);bytes-=new TextEncoder().encode(JSON.stringify(value.content)).length;}while(texts.size>8)texts.delete(texts.keys().next().value!);};
@@ -72,7 +72,7 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
     flights.set(key,work);return work;
   }
   const authorizes=(drawing:Drawing)=>Boolean(props.grant?.tools.includes(drawing.kind as never));
-  const isTranslation=(before:Drawing,after:Drawing)=>before.kind===after.kind&&before.color===after.color&&before.strokeWidth===after.strokeWidth&&before.fontSize===after.fontSize&&before.text===after.text&&before.points.length===after.points.length&&after.points.every((p,i)=>p.x-before.points[i].x===after.points[0].x-before.points[0].x&&p.y-before.points[i].y===after.points[0].y-before.points[0].y);
+  const isTranslation=(before:Drawing,after:Drawing)=>before.kind===after.kind&&before.color===after.color&&before.strokeWidth===after.strokeWidth&&before.fontSize===after.fontSize&&before.text===after.text&&sameVideoDrawingValue(before.textStyle??{},after.textStyle??{})&&before.points.length===after.points.length&&after.points.every((p,i)=>p.x-before.points[i].x===after.points[0].x-before.points[0].x&&p.y-before.points[i].y===after.points[0].y-before.points[0].y);
   async function command(action:EditorDrawingAction):Promise<void>{
     if(!ready()||action.expectedRevision!==(doc()?.revision??0))throw Error('视频绘制对象已变化');
     props.onPause();const before=structuredClone(props.item),requestTarget=target(),grant=props.grant&&structuredClone(props.grant),sceneId=props.sceneId,source=sourceKey(),info=structuredClone(props.info);

@@ -27,6 +27,8 @@ pub struct VideoTextContent {
     pub text: String,
     pub color: String,
     pub font_size: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<crate::DrawingTextStyle>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

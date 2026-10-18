@@ -2913,7 +2913,7 @@ pub(crate) mod tests {
                     mewu_core::DrawingPoint { x: 96., y: 40. },
                 ],
                 text: None,
-                font_size: None,
+                font_size: None, text_style: None,
             }],
             ..Default::default()
         }];

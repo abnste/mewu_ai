@@ -148,7 +148,7 @@ pub(crate) fn drawing(layout: &VerifiedRichLayout, x: f64, y: f64) -> Drawing {
             },
         ],
         text: None,
-        font_size: None,
+        font_size: None, text_style: None,
         origin: None,
         rich: Some(layout.reference().clone()),
     }
