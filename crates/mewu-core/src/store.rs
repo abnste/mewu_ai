@@ -32,6 +32,10 @@ pub(crate) mod history_storage;
 #[path = "session_title_store.rs"]
 pub(crate) mod session_title_store;
 
+#[cfg(test)]
+#[path = "store_persistence_timing_tests.rs"]
+mod persistence_observer_tests;
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("存储错误：{0}")]
@@ -103,6 +107,7 @@ pub struct Store {
     state: Snapshot,
     revision: i64,
     geometry_group: Option<crate::geometry_history::ActiveEdit>,
+    persistence_observer: Option<crate::PersistenceObserver>,
 }
 
 #[cfg(test)]
@@ -374,12 +379,19 @@ impl Store {
             state,
             revision,
             geometry_group: None,
+            persistence_observer: None,
         };
         Ok(store)
     }
 
     pub fn snapshot(&self) -> Snapshot {
         self.state.clone()
+    }
+
+    /// Host opt-in only. Observations contain fixed phases and elapsed times,
+    /// never scene contents, identifiers, paths or persistence configuration.
+    pub fn set_persistence_observer(&mut self, observer: Option<crate::PersistenceObserver>) {
+        self.persistence_observer = observer;
     }
 
     /// Host metadata queries can borrow rows without cloning chat history.
@@ -2530,12 +2542,16 @@ impl Store {
         mutation: Option<(String, MemoryMutation, Option<MemorySource>)>,
         initial_video: Option<(String, VerifiedVideoRunInput)>,
     ) -> Result<Snapshot> {
+        use crate::{persistence_timing::Observation, PersistencePhase};
+        let mut observation=Observation::start(self.persistence_observer);
         let source_set_changed = self
             .geometry_group
             .as_ref()
             .is_some_and(|group| group.source_set_changed(&self.state, &next));
         crate::geometry_history::cleanup(&self.state, &mut next)?;
+        observation.mark(PersistencePhase::GeometryCleanup);
         validate_snapshot(&next)?;
+        observation.mark(PersistencePhase::ValidateCandidate);
         let transaction = self
             .db
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -2557,13 +2573,17 @@ impl Store {
         if let Some((run_id, input)) = initial_video {
             crate::video_annotations::register_input(&transaction, &mut next, &run_id, input)?;
         }
+        observation.mark(PersistencePhase::TransactionAndLedger);
         validate_snapshot(&next)?;
+        observation.mark(PersistencePhase::ValidateReconciled);
         next.memories.clear();
         crate::rich_annotations::validate(&transaction, &next)?;
         crate::video_registered_layouts::validate(&transaction, &next)?;
         crate::video_annotations::validate_ledger(&transaction, &next)?;
         next.memory_stats = crate::memory::stats(&transaction, &next)?;
+        observation.mark(PersistencePhase::ValidateLedgers);
         let payload = serde_json::to_string(&next)?;
+        observation.mark(PersistencePhase::Serialize);
         let changed = transaction.execute(
             "UPDATE app_state SET payload = ?1, revision = revision + 1 WHERE id = 1 AND revision = ?2 AND schema_version = 1",
             params![payload, self.revision],
@@ -2571,7 +2591,9 @@ impl Store {
         if changed != 1 {
             return Err(CoreError::ConcurrentModification);
         }
+        observation.mark(PersistencePhase::SqlUpdate);
         transaction.commit()?;
+        observation.mark(PersistencePhase::DurableCommit);
         self.revision += 1;
         self.state = next;
         if source_set_changed
@@ -2582,7 +2604,11 @@ impl Store {
         {
             self.geometry_group = None;
         }
-        Ok(self.state.clone())
+        observation.mark(PersistencePhase::AdoptState);
+        let snapshot=self.state.clone();
+        observation.mark(PersistencePhase::CloneResult);
+        observation.finish();
+        Ok(snapshot)
     }
 }
 

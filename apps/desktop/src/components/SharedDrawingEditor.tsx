@@ -21,6 +21,7 @@ import DrawingWidthSlider from './DrawingWidthSlider';
 import InlineDrawingText from './InlineDrawingText';
 import DrawingTextStylePicker from './DrawingTextStylePicker';
 import ImageExportButton from './ImageExportButton';
+import { initialDrawingColor } from '../drawing-colors';
 import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview} from './drawing-selection';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
@@ -53,7 +54,7 @@ export default function SharedDrawingEditor(props: Props) {
   const [rasterPreview, setRasterPreview] = createSignal<{mode:'extract'|'heal';points:DrawingPoint[];width:number}>();
   const [healWidth, setHealWidth] = createSignal(32);
   const [tableFormat, setTableFormat] = createSignal<DrawingTableFormat>('table');
-  const [color, setColor] = createSignal(props.blackboard ? '#E8ECF4' : '#ee4848'), [width, setWidth] = createSignal(4), [fontSize, setFontSize] = createSignal(20);
+  const [color, setColor] = createSignal(initialDrawingColor()), [width, setWidth] = createSignal(4), [fontSize, setFontSize] = createSignal(20);
   const [textStyle, setTextStyle] = createSignal<DrawingTextStyle>({});
   const firstNumber = Math.min(9999, Math.max(0, ...(props.port.drawings()).filter(value => value.kind === 'number').map(value => validNextNumber(value.text ?? '') ?? 0)) + 1);
   const [highlightWidth, setHighlightWidth] = createSignal(18), [nextNumber, setNextNumber] = createSignal(String(firstNumber)), [numberDiameter, setNumberDiameter] = createSignal(28);

@@ -1537,7 +1537,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     let window = app.get_webview_window("space").ok_or("窗口不存在")?;
     #[cfg(target_os = "linux")]
     if capture_wayland_host::is_wayland(&window, work.clone(), transition.clone()).await? {
-        return capture_wayland_host::capture(app.clone(), window, work, transition, preferences).await;
+        return capture_wayland_host::capture(app.clone(), window, work, transition, preferences, timing).await;
     }
     #[cfg(target_os = "linux")]
     let capture_witnesses = linux_capture_witnesses(&window, &work).await?;
@@ -1765,6 +1765,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
                 Ok(())
             })
             .await?;
+        #[cfg(windows)]
         timing.mark(interaction_performance::Stage::Decoded);
         Ok(published)
     }
@@ -1776,9 +1777,11 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         let restore = true;
         #[cfg(windows)]
         let restore = !presentation_required || result.is_ok();
-        if restore { show(&app); }
+        if restore {
+            show(&app);
+            timing.mark(interaction_performance::Stage::Shown);
+        }
     }
-    timing.mark(interaction_performance::Stage::Shown);
     timing.finish(result.is_ok());
     result
 }
@@ -2695,7 +2698,8 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("--extension-worker") {
         std::process::exit(if mewu_extension::run_stdio_worker().is_ok() { 0 } else { 1 });
     }
-    interaction_performance::initialize(std::env::args().nth(1).as_deref() == Some("--measure-interactions"));
+    let measurement_enabled = std::env::args().nth(1).as_deref() == Some("--measure-interactions");
+    interaction_performance::initialize(measurement_enabled);
     // Production admits only the fixed native recording worker. Other sealed
     // worker domains and the Code parent retain their explicit test admission.
     #[cfg(target_os = "linux")]
@@ -3186,6 +3190,9 @@ fn main() {
             recording_storage::prepare_video(&root)?;
             clipboard_video_storage::prepare(&root)?;
             let mut store = Store::open(root.join("spaces.db"))?;
+            if measurement_enabled {
+                store.set_persistence_observer(Some(interaction_performance::record_persistence));
+            }
             #[cfg(windows)]
             let legacy_import_warning = match legacy_connections::import_into(
                 &mut store,

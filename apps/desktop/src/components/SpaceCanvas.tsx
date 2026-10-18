@@ -121,6 +121,9 @@ export default function SpaceCanvas(props: Props) {
   function backgroundLoaded(image: HTMLImageElement, backgroundId: string) {
     setNatural({ width: image.naturalWidth, height: image.naturalHeight });
     setBackgroundError(false);
+    backgroundReady(image, backgroundId);
+  }
+  function backgroundReady(image: HTMLImageElement, backgroundId: string) {
     if (!native) return;
     const sceneId = props.scene.id, background = props.scene.background;
     if (background?.id !== backgroundId || !background.width || !background.height) return;
@@ -134,13 +137,14 @@ export default function SpaceCanvas(props: Props) {
       // wake it, show a window, or add another notification to a later scene.
     });
   }
-  function backgroundFailed(backgroundId: string) {
+  function backgroundAttached(image: HTMLImageElement, backgroundId: string) {
+    // Solid sets the remaining attributes and connects this actual element in
+    // the current turn. Start decode then, without waiting for the load event.
+    queueMicrotask(() => backgroundReady(image, backgroundId));
+  }
+  function backgroundFailed(image: HTMLImageElement, backgroundId: string) {
     setBackgroundError(true); props.onError('无法读取屏幕截图');
-    const background = props.scene.background;
-    if (native && background?.id === backgroundId && background.width && background.height) {
-      void captureBackgroundReady({ sceneId: props.scene.id, backgroundId,
-        width: background.width, height: background.height, success: false }).catch(() => {});
-    }
+    backgroundReady(image, backgroundId);
   }
   const videoGrant = createMemo(() => {
     if (props.scene.run?.status === 'running') return;
@@ -817,7 +821,7 @@ export default function SpaceCanvas(props: Props) {
   return <main ref={canvas} tabIndex={-1} class="space-canvas capture-surface" classList={{ 'capture-blackboard':props.blackboard, 'can-select': !props.blackboard&&Boolean(props.scene.background), 'capture-dragging': activity(), 'capture-add-mode': forceNew() }} onPointerDown={begin} aria-label={t("AI 空间")}>
     <Show when={visibleCodes()}>{view => <SelectionCodeCard result={view().result} region={display(props.scene.regions.find(region => region.id === view().result.regionId)!)} toolbar={toolbarVisible() ? toolbarBox() : undefined} hidden={codesPaused()} disabled={Boolean(props.codeActionBusy)} onAction={(token, id, action) => props.onCodeAction?.(token, id, action) ?? Promise.resolve(false)} />}</Show>
     <Show when={!props.blackboard && pointerNative && props.scene.background}>{background => <PointerInspector sceneId={props.scene.id} background={background()} imageBox={geometry()} dimensions={pointerSelectionDimensions(selection(), geometry(), activeRegion())} disabled={props.busy || exporting() || props.scene.frozen || props.scene.closed || backgroundError() || Boolean(drawingSession() || imageDrawing() || pluginMenu() || ocrPending() || props.translationPending) || props.scene.regions.some(region => ocrVisible(region) || translationVisible(region))} blockedAt={(x, y) => toolbarVisible() && contains(toolbarBox(), x, y, TOLERANCE)} onReady={value => { pointerInspector = value; }} onError={props.onError} />}</Show>
-    <Show when={props.scene.background?.id} keyed>{id => <img class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} style={geometry().nativePixels ? { left: '0px', top: '0px', width: `${geometry().width}px`, height: `${geometry().height}px` } : undefined} alt={t("屏幕截图")} draggable={false} decoding="sync" onLoad={event => backgroundLoaded(event.currentTarget, id)} onError={() => backgroundFailed(id)} />}</Show>
+    <Show when={props.scene.background?.id} keyed>{id => <img ref={image => backgroundAttached(image, id)} class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} style={geometry().nativePixels ? { left: '0px', top: '0px', width: `${geometry().width}px`, height: `${geometry().height}px` } : undefined} alt={t("屏幕截图")} draggable={false} decoding="sync" onLoad={event => backgroundLoaded(event.currentTarget, id)} onError={event => backgroundFailed(event.currentTarget, id)} />}</Show>
     <svg class="capture-mask" width="100%" height="100%" aria-hidden="true">
       <defs><mask id="region-cutouts" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white" />
         <For each={regionIds()}>{id => {

@@ -70,6 +70,19 @@ pub(crate) fn capture(
     options: CaptureOptions,
     allowed: CaptureCheck,
 ) -> Result<PendingPortalCapture, String> {
+    let mut timing=crate::interaction_performance::Trace::start(crate::interaction_performance::Kind::WaylandFrame);
+    let result=capture_inner(asset_dir,options,allowed,&mut timing);
+    timing.finish(result.is_ok());
+    result
+}
+
+fn capture_inner(
+    asset_dir: &Path,
+    options: CaptureOptions,
+    allowed: CaptureCheck,
+    timing: &mut crate::interaction_performance::Trace,
+) -> Result<PendingPortalCapture, String> {
+    use crate::interaction_performance::Stage;
     if options.include_cursor {
         return Err("当前平台尚不支持截图包含光标".into());
     }
@@ -87,19 +100,25 @@ pub(crate) fn capture(
         &mut permission_check,
     ).map_err(|error| allowed().err().unwrap_or(error))?;
     allowed()?;
+    timing.mark(Stage::Authorized);
     let frames = crate::recording_pipewire_linux::Frames::connect(&session)?;
+    timing.mark(Stage::StreamReady);
     let expires = Instant::now() + Duration::from_secs(10);
     let frame = loop {
         allowed()?;
         if Instant::now() >= expires { return Err("桌面截图超时".into()); }
         if let Some(frame) = frames.next(Duration::from_millis(20))? { break frame; }
     };
+    timing.mark(Stage::Captured);
     // Release both the streaming pipeline and the portal lease before PNG
     // encoding or store adoption; an accepted screenshot never streams on.
     drop(frames);
     drop(session);
+    timing.mark(Stage::Released);
     allowed()?;
-    save_rgba_frame(frame.width, frame.height, &frame.rgba, asset_dir, &allowed)
+    let pending=save_rgba_frame(frame.width, frame.height, &frame.rgba, asset_dir, &allowed)?;
+    timing.mark(Stage::Encoded);
+    Ok(pending)
 }
 
 fn save_rgba_frame(

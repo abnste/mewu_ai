@@ -641,12 +641,21 @@ pub(crate) async fn present_recording(window: &WebviewWindow, allowed: capture::
     rx.await.map_err(|_|"截图空间配置中断")?
 }
 
-pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>, preferences: crate::capture_preferences::CapturePreferences) -> Result<HostSnapshot,String> {
+pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>, preferences: crate::capture_preferences::CapturePreferences, mut timing: crate::interaction_performance::Trace) -> Result<HostSnapshot,String> {
+    let result = capture_inner(app, window, work, transition, preferences, &mut timing).await;
+    timing.finish(result.is_ok());
+    result
+}
+
+async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>, preferences: crate::capture_preferences::CapturePreferences, timing: &mut crate::interaction_performance::Trace) -> Result<HostSnapshot,String> {
+    use crate::interaction_performance::Stage;
+    timing.mark(Stage::Admitted);
     crate::pin_window::capture_begin(&app);
     {
         let host=app.state::<Host>(); let engine=host.lock()?;
         engine.ocr_jobs.cancel_owner("space");
-        engine.translation_jobs.cancel_scene("space",&engine.store.snapshot().active_scene_id);
+        let scene_id=engine.store.active_scene().map_err(|error|error.to_string())?.id.clone();
+        engine.translation_jobs.cancel_scene("space",&scene_id);
     }
     let (owned,hidden,pins)=hide(&app,&window,work.clone(),transition.clone()).await?;
     let check_app=app.clone(); let check_work=work.clone(); let check_owned=owned.clone();
@@ -665,6 +674,7 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
     });
     let result=async {
         hidden?;
+        timing.mark(Stage::Hidden);
         work.wait_delay(preferences.capture_delay_seconds.seconds(),||allowed()).await?;
         let capture_root=app.state::<Host>().assets.clone(); let native_check=allowed.clone();
         let worker_work=work.clone(); let worker_transition=transition.clone();
@@ -672,8 +682,10 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
             let _work=worker_work; let _transition=worker_transition;
             capture_wayland_portal::capture(&capture_root,capture::CaptureOptions {include_cursor:preferences.include_cursor},native_check)
         }).await.map_err(|_|"截图任务中断")??;
+        timing.mark(Stage::Captured);
         allowed()?;
         let configured=present(&window,owned.clone(),PresentationPermit::Screenshot(work.clone()),transition.clone()).await?;
+        timing.mark(Stage::Expanded);
         let asset=Asset {id:pending.asset_id.clone(),name:"截图.png".into(),kind:AssetKind::Image,path:pending.path.to_string_lossy().into_owned(),width:Some(pending.width),height:Some(pending.height),capture_coordinates:None,origin_x:None,origin_y:None,scale_factor:None};
         commit_check()?;
         if let Some(pins)=&commit_pins {pins.check(&commit_check)?;}
@@ -681,13 +693,16 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
         base_check(&app,&work)?; owned_set_current(&app,&owned)?; current(&app,std::slice::from_ref(&configured),true)?;
         for w in owned.iter().filter(|w|w.label!="space") {current(&app,std::slice::from_ref(w),true)?;}
         let snapshot=engine.store.adopt_capture_background(asset).map_err(|e|e.to_string())?;
+        timing.mark(Stage::Adopted);
         pending.retain();
-        Ok(crate::publish(&app,&snapshot))
+        let published=crate::publish_owned(&app,snapshot);
+        timing.mark(Stage::Published);
+        Ok(published)
     }.await;
     // Restoration is deferred on the GTK queue and keeps the same operation
     // ownership. Exit/cancel or replacement cannot resurrect an old window.
     let restore_app=app.clone(); let restore_work=work.clone(); let restore_transition=transition.clone(); let success=result.is_ok();
-    let (restore_tx,restore_rx)=oneshot::channel::<()>();
+    let (restore_tx,restore_rx)=oneshot::channel::<bool>();
     let _=window.run_on_main_thread(move || {
         let _transition=restore_transition;
         let _done=restore_tx;
@@ -731,9 +746,12 @@ pub(crate) async fn capture(app: AppHandle, window: WebviewWindow, work: Arc<Wor
         // source lease. Space renders them while visible; its normal unmap
         // resumes the existing eight-second native geometry/topmost handshake.
         if restore_app.state::<Host>().exit.ensure_new_operation().is_ok(){crate::pin_window::arrange_for_space(&restore_app);}
+        let shown=allowed&&restore_app.get_webview_window("space").filter(|_|previous_space.is_some_and(same_native_owner))
+            .and_then(|space|space.gtk_window().ok()).is_some_and(|widget|widget.is_visible()&&widget.is_mapped()&&widget.opacity()>0.0);
+        let _=_done.send(shown);
     });
     // The queued operation must finish before the invoke's CancelOnDrop fires.
-    let _=restore_rx.await;
+    if matches!(restore_rx.await,Ok(true)){timing.mark(Stage::Shown);}
     result
 }
 

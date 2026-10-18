@@ -6,10 +6,11 @@ export const colorHistoryKey = 'mewu.drawing-colors.v1';
 export const colorHistoryChanged = 'mewu:drawing-colors';
 export const colorPaletteKey = 'mewu.drawing-palette.v1';
 export const colorPaletteChanged = 'mewu:drawing-palette';
+export const defaultDrawingPalette = ['#EE4848', '#F4C94D', '#348BF1'] as const;
 /** Fixed current-color slot followed by two distinct previous colors. */
 export function toolbarRecentColors(recent: readonly string[], current: string): string[] {
   const selected = normalizeColor(current) ?? '#EE4848';
-  const previous = [...new Set([...recent, '#EE4848', '#348BF1', '#F4C94D'].map(normalizeColor).filter((value):value is string=>!!value && value!==selected))].slice(0,2);
+  const previous = [...new Set([...recent, ...defaultDrawingPalette].map(normalizeColor).filter((value):value is string=>!!value && value!==selected))].slice(0,2);
   return [selected, ...previous];
 }
 export const normalizeColor = (value:string) => /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim().toUpperCase() : undefined;
@@ -23,6 +24,10 @@ export function normalizeColorPalette(value: unknown): string[] | undefined {
 }
 export function storedColorPalette(storage:Pick<Storage,'getItem'>=localStorage): string[] | undefined {
   try{return normalizeColorPalette(JSON.parse(storage.getItem(colorPaletteKey)||'null'));}catch{return;}
+}
+/** Screenshot and blackboard share the same defaults and saved palette. */
+export function initialDrawingColor(storage:Pick<Storage,'getItem'>=localStorage): string {
+  return storedColorPalette(storage)?.[0] ?? recentColors(storage)[0] ?? defaultDrawingPalette[0];
 }
 export function initialColorPalette(current:string,storage:Pick<Storage,'getItem'>=localStorage): string[] {
   const colors=storedColorPalette(storage)??toolbarRecentColors(recentColors(storage),current),selected=normalizeColor(current)??'#EE4848';

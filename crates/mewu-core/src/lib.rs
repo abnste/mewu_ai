@@ -9,6 +9,7 @@ mod journal;
 mod journal_types;
 mod memory;
 mod model;
+mod persistence_timing;
 mod ocr;
 mod rich_annotations;
 mod store;
@@ -27,6 +28,7 @@ pub use connections::validate_connection_profile;
 pub use external_memory_types::*;
 pub use journal_types::*;
 pub use model::*;
+pub use persistence_timing::{PersistenceMark, PersistenceObserver, PersistencePhase, PersistenceTiming};
 pub use ocr::validate_ocr_document;
 pub use rich_annotations::{
     RasterRole, RichAlignment, RichContent, RichDrawingRef, RichKind, RichLayout, RichRendererIdentity,

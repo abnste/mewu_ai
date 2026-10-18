@@ -22,6 +22,8 @@ pub(crate) enum Kind {
     Capture,
     AddRegion,
     Publish,
+    WaylandFrame,
+    StorePersist,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -41,12 +43,58 @@ pub(crate) enum Stage {
     Locked,
     SnapshotReady,
     Emitted,
+    Authorized,
+    StreamReady,
+    Released,
+    Encoded,
+    CoreGeometryCleanup,
+    CoreValidateCandidate,
+    CoreTransactionAndLedger,
+    CoreValidateReconciled,
+    CoreValidateLedgers,
+    CoreSerialize,
+    CoreSqlUpdate,
+    CoreDurableCommit,
+    CoreAdoptState,
+    CoreCloneResult,
 }
 
 /// Call once, before admitting interactions. Failure disables measurement only.
 /// The default path does not open a file or create a directory.
 pub(crate) fn initialize(enabled: bool) {
     RECORDER.get_or_init(|| create_recorder(enabled, &std::env::temp_dir()));
+}
+
+pub(crate) fn record_persistence(timing: mewu_core::PersistenceTiming) {
+    persistence_to_recorder(RECORDER.get().and_then(Option::as_ref).cloned(), timing);
+}
+
+fn persistence_to_recorder(recorder: Option<Arc<Recorder>>, timing: mewu_core::PersistenceTiming) {
+    use mewu_core::PersistencePhase as Phase;
+    let Some(recorder) = recorder.filter(|recorder| recorder.reserve()) else { return };
+    let mut marks = [Mark { stage: Stage::CoreGeometryCleanup, elapsed_micros: 0 }; MAX_STAGES];
+    let mut count = 0;
+    let mut previous = 0;
+    for mark in timing.completed.into_iter().flatten() {
+        if mark.elapsed_micros < previous || mark.elapsed_micros > timing.total_micros { return; }
+        let stage = match mark.phase {
+            Phase::GeometryCleanup => Stage::CoreGeometryCleanup,
+            Phase::ValidateCandidate => Stage::CoreValidateCandidate,
+            Phase::TransactionAndLedger => Stage::CoreTransactionAndLedger,
+            Phase::ValidateReconciled => Stage::CoreValidateReconciled,
+            Phase::ValidateLedgers => Stage::CoreValidateLedgers,
+            Phase::Serialize => Stage::CoreSerialize,
+            Phase::SqlUpdate => Stage::CoreSqlUpdate,
+            Phase::DurableCommit => Stage::CoreDurableCommit,
+            Phase::AdoptState => Stage::CoreAdoptState,
+            Phase::CloneResult => Stage::CoreCloneResult,
+        };
+        marks[count] = Mark { stage, elapsed_micros: mark.elapsed_micros };
+        previous = mark.elapsed_micros;
+        count += 1;
+    }
+    recorder.write(&Record { version: 1, kind: Kind::StorePersist, success: timing.success,
+        total_micros: timing.total_micros, stages: &marks[..count] });
 }
 
 fn create_recorder(enabled: bool, directory: &Path) -> Option<Arc<Recorder>> {
@@ -313,5 +361,59 @@ mod tests {
             .0
             .is_none());
         assert_eq!(recorder.admitted.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn persistence_preserves_the_core_clock_and_maps_only_fixed_stages() {
+        use mewu_core::{PersistenceMark, PersistencePhase as Phase, PersistenceTiming};
+        let phases = [Phase::GeometryCleanup, Phase::ValidateCandidate, Phase::TransactionAndLedger,
+            Phase::ValidateReconciled, Phase::ValidateLedgers, Phase::Serialize, Phase::SqlUpdate,
+            Phase::DurableCommit, Phase::AdoptState, Phase::CloneResult];
+        let completed = std::array::from_fn(|index| Some(PersistenceMark {
+            phase: phases[index], elapsed_micros: (index as u64 + 1) * 19,
+        }));
+        let fixture = Fixture::new();
+        let recorder = create_recorder(true, &fixture.0).unwrap();
+        persistence_to_recorder(Some(recorder.clone()), PersistenceTiming {
+            success: true, total_micros: 211, completed,
+        });
+        persistence_to_recorder(Some(recorder.clone()), PersistenceTiming {
+            success: false, total_micros: 31,
+            completed: std::array::from_fn(|index| if index == 0 { completed[0] } else { None }),
+        });
+        drop(recorder);
+        let records = fixture.records();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["kind"], "storePersist");
+        assert_eq!(records[0]["totalMicros"], 211);
+        assert_eq!(records[0]["success"], true);
+        let expected = ["coreGeometryCleanup", "coreValidateCandidate", "coreTransactionAndLedger",
+            "coreValidateReconciled", "coreValidateLedgers", "coreSerialize", "coreSqlUpdate",
+            "coreDurableCommit", "coreAdoptState", "coreCloneResult"];
+        for (index, mark) in records[0]["stages"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(mark["stage"], expected[index]);
+            assert_eq!(mark["elapsedMicros"], (index as u64 + 1) * 19);
+        }
+        assert_eq!(records[1]["success"], false);
+        assert_eq!(records[1]["totalMicros"], 31);
+        assert_eq!(records[1]["stages"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn persistence_observation_shares_the_global_bound_and_rejects_invalid_durations() {
+        use mewu_core::{PersistenceMark, PersistencePhase, PersistenceTiming};
+        let fixture = Fixture::new();
+        let recorder = create_recorder(true, &fixture.0).unwrap();
+        let mut timing = PersistenceTiming { success: true, total_micros: 1, completed: [None; 10] };
+        timing.completed[0] = Some(PersistenceMark { phase: PersistencePhase::Serialize, elapsed_micros: 2 });
+        persistence_to_recorder(Some(recorder.clone()), timing);
+        timing.completed = [None; 10];
+        for _ in 0..MAX_RECORDS + 2 { persistence_to_recorder(Some(recorder.clone()), timing); }
+        drop(recorder);
+        // The invalid observation consumes its one slot but writes no record.
+        let records = fixture.records();
+        assert_eq!(records.len(), MAX_RECORDS - 1);
+        assert!(records.iter().all(|record| record["stages"].as_array().unwrap().is_empty()));
+        persistence_to_recorder(None, timing);
     }
 }

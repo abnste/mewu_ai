@@ -688,7 +688,7 @@ test('real color picker keeps fallback out of the panel, saves only final custom
     assert.equal(panelRecent(),undefined);
     stored.set(colors.colorHistoryKey,JSON.stringify(['#123456']));
     window.emit({type:colors.colorHistoryChanged,detail:['#123456','bad',42,'#123456']});
-    assert.deepEqual(swatches(),['#E8ECF4','#EE4848','#348BF1']);assert.equal(writes.length,0);
+    assert.deepEqual(swatches(),['#E8ECF4','#EE4848','#F4C94D']);assert.equal(writes.length,0);
     assert.equal(descendants(panelRecent(),'button').length,1,'fallback swatches never become used colors');
     const hue=descendants(root,'input').find(node=>node.props.class==='drawing-color-hue');
     hue.props.onInput({currentTarget:{value:'120'}});hue.props.onInput({currentTarget:{value:'240'}});
@@ -696,10 +696,10 @@ test('real color picker keeps fallback out of the panel, saves only final custom
     const final=value();hue.props.onChange();
     assert.deepEqual(JSON.parse(stored.get(colors.colorHistoryKey)),[final,'#E8ECF4','#123456']);
     assert.equal(writes.filter(write=>write.key===colors.colorHistoryKey).length,1);assert.equal(changes.at(-1).submit,true);
-    assert.deepEqual(swatches(),[final,'#EE4848','#348BF1']);
+    assert.deepEqual(swatches(),[final,'#EE4848','#F4C94D']);
     stored.set(colors.colorHistoryKey,JSON.stringify(['#ABCDEF']));window.emit({type:'storage',key:colors.colorHistoryKey});
-    assert.deepEqual(swatches(),[final,'#EE4848','#348BF1']);
-    stored.delete(colors.colorHistoryKey);window.emit({type:'storage',key:null});assert.deepEqual(swatches(),[final,'#EE4848','#348BF1']);
+    assert.deepEqual(swatches(),[final,'#EE4848','#F4C94D']);
+    stored.delete(colors.colorHistoryKey);window.emit({type:'storage',key:null});assert.deepEqual(swatches(),[final,'#EE4848','#F4C94D']);
     assert.equal(panelRecent(),undefined);
     hue.props.onInput({currentTarget:{value:'90'}});assert.equal(writes.filter(write=>write.key===colors.colorHistoryKey).length,1);
     let prevented=false,stopped=false;document.emit({type:'keydown',key:'Escape',preventDefault(){prevented=true;},stopImmediatePropagation(){stopped=true;}});
