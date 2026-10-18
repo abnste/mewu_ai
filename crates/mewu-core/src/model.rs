@@ -289,7 +289,7 @@ pub struct DrawingPoint {
 }
 
 /// Optional, closed text effects; omitted flags keep legacy normal text.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DrawingTextStyle {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -300,6 +300,51 @@ pub struct DrawingTextStyle {
     pub underline: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strikethrough: bool,
+}
+
+impl<'de> Deserialize<'de> for DrawingTextStyle {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct Fields {
+            #[serde(default)]
+            bold: bool,
+            #[serde(default)]
+            italic: bool,
+            #[serde(default)]
+            underline: bool,
+            #[serde(default)]
+            strikethrough: bool,
+        }
+        struct MapVisitor;
+        impl<'input> serde::de::Visitor<'input> for MapVisitor {
+            type Value = DrawingTextStyle;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a text style object")
+            }
+
+            fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+            where
+                M: serde::de::MapAccess<'input>,
+            {
+                let fields =
+                    Fields::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(DrawingTextStyle {
+                    bold: fields.bold,
+                    italic: fields.italic,
+                    underline: fields.underline,
+                    strikethrough: fields.strikethrough,
+                })
+            }
+        }
+        // Struct derive also accepts positional sequences. The public wire is
+        // an object, so only expose visit_map and preserve derive's field checks.
+        deserializer.deserialize_map(MapVisitor)
+    }
 }
 
 /// Editable manual markup in original background pixels, never executable SVG.

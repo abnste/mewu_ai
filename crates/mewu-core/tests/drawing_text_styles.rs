@@ -150,6 +150,7 @@ fn drawing_text_styles_legacy_wire_stays_identical_and_rejects_untyped_style() {
         serde_json::json!({"fontFamily":"file:///secret"}),
         serde_json::json!({"bold":1}),
         serde_json::json!([]),
+        serde_json::json!([true, false, false, false]),
     ] {
         let mut value = legacy.clone();
         value["textStyle"] = style.clone();
@@ -163,6 +164,25 @@ fn drawing_text_styles_legacy_wire_stays_identical_and_rejects_untyped_style() {
     assert_eq!(
         serde_json::from_value::<Drawing>(serde_json::to_value(&styled).unwrap()).unwrap(),
         styled
+    );
+    for invalid in [
+        r#"{"bold":true,"bold":false}"#,
+        r#"{"italic":false,"italic":true}"#,
+        r#"{"underline":true,"underline":true}"#,
+        r#"{"strikethrough":false,"strikethrough":true}"#,
+    ] {
+        assert!(serde_json::from_str::<DrawingTextStyle>(invalid).is_err());
+    }
+    assert_eq!(
+        serde_json::from_str::<DrawingTextStyle>("{}").unwrap(),
+        DrawingTextStyle::default()
+    );
+    assert_eq!(
+        serde_json::from_str::<DrawingTextStyle>(
+            r#"{"bold":true,"italic":true,"underline":true,"strikethrough":true}"#
+        )
+        .unwrap(),
+        all_styles()
     );
 }
 
