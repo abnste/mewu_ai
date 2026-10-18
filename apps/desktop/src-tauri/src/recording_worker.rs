@@ -44,6 +44,13 @@ struct ControlState {
     terminal_delivered: bool,
 }
 impl ControlBus {
+    /// Preparation can span WebView creation. Observe Stop/Cancel without
+    /// consuming the terminal command that the supervisor must still receive.
+    #[cfg(any(windows, test))]
+    pub(crate) fn terminal_pending(&self) -> Result<bool, String> {
+        Ok(self.0.lock().map_err(|_| "录屏控制不可用")?.terminal.is_some())
+    }
+
     pub fn send(&self, control: backend::Control) -> Result<(), String> {
         let mut state = self.0.lock().map_err(|_| "录屏控制不可用")?;
         if state.terminal.is_some() {
@@ -631,6 +638,23 @@ fn validate_report(config: &backend::Config, report: &backend::Report) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recording_preparation_terminal_probe_does_not_consume_stop_or_cancel() {
+        for terminal in [backend::Control::Stop, backend::Control::Cancel] {
+            let bus = ControlBus::default();
+            assert!(!bus.terminal_pending().unwrap());
+            bus.send(backend::Control::Pause).unwrap();
+            assert!(!bus.terminal_pending().unwrap());
+            bus.send(terminal).unwrap();
+            for _ in 0..3 { assert!(bus.terminal_pending().unwrap()); }
+            assert_eq!(std::mem::discriminant(&bus.take().unwrap().unwrap()),
+                std::mem::discriminant(&terminal));
+            // Delivered terminal commands remain terminal until this bus dies.
+            assert!(bus.terminal_pending().unwrap());
+            assert!(bus.take().unwrap().is_none());
+        }
+    }
+
     #[test]
     fn controls_coalesce_and_terminal_cannot_be_overwritten() {
         let bus = ControlBus::default();

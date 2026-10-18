@@ -17,6 +17,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 const LABEL: &str = "recording-controls";
 const CONTROLS_WIDTH: f64 = 176.;
 const CONTROLS_HEIGHT: f64 = 44.;
+#[cfg(windows)]
+#[path = "recording_controls_windows.rs"]
+mod controls_windows;
 #[cfg(target_os = "macos")]
 fn mac_hud_position(
     display: &mewu_core::CaptureCoordinates,
@@ -518,7 +521,8 @@ pub async fn start_recording(
             .into();
         }
     });
-    if let Err(error) = prepare_windows(&app, &id, &config, monitor.scale_factor, f8).await {
+    let prepared = prepare_windows(&app, &id, &config, monitor.scale_factor, f8).await;
+    if !matches!(prepared, Ok(true)) {
         #[cfg(all(target_os = "macos", debug_assertions))]
         crate::recording_worker::mac_diagnostic(
             crate::recording_worker::MacStage::OverlayPrepared,
@@ -527,8 +531,12 @@ pub async fn start_recording(
         if f8 { let _ = app.global_shortcut().unregister("F8"); }
         #[cfg(target_os = "macos")]
         if esc { let _ = app.global_shortcut().unregister("Escape"); }
-        finish(&app, &id, Err(error.clone())).await;
-        return Err(error);
+        // A confirmed Stop/Cancel during window preparation has no unfinished
+        // media. Keep it successful for normal exit, and never start the worker.
+        // Actual construction/native errors stay failures, even if Stop follows.
+        let result = prepared.map(|_| ());
+        finish(&app, &id, result.clone()).await;
+        return result;
     }
     #[cfg(all(target_os = "macos", debug_assertions))]
     crate::recording_worker::mac_diagnostic(
@@ -664,13 +672,34 @@ pub(crate) fn retain_completed_output<T>(
     register()
 }
 
+#[cfg(windows)]
+fn preparation_result(result: Result<(), controls_windows::PrepareFailure>) -> Result<bool, String> {
+    match result {
+        Ok(()) => Ok(true),
+        Err(controls_windows::PrepareFailure::Canceled) => Ok(false),
+        Err(controls_windows::PrepareFailure::Failed(error)) => Err(error),
+    }
+}
+
+#[cfg(windows)]
 async fn prepare_windows(
     app: &AppHandle,
     id: &str,
     config: &backend::Config,
     scale: f64,
     f8: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    preparation_result(controls_windows::prepare(app, id, config, scale, f8).await)
+}
+
+#[cfg(not(windows))]
+async fn prepare_windows(
+    app: &AppHandle,
+    id: &str,
+    config: &backend::Config,
+    scale: f64,
+    f8: bool,
+) -> Result<bool, String> {
     #[cfg(not(windows))]
     let _ = (id, f8);
     #[cfg(windows)]
@@ -814,7 +843,7 @@ async fn prepare_windows(
         let _ = send.send(result);
     })
     .map_err(|_| "无法准备录屏窗口")?;
-    receive.await.map_err(|_| "录屏窗口准备中断")?
+    receive.await.map_err(|_| "录屏窗口准备中断")?.map(|_| true)
 }
 async fn finish(app: &AppHandle, id: &str, result: Result<(), String>) {
     #[cfg(all(target_os = "macos", debug_assertions))]
