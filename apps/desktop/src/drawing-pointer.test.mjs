@@ -18,19 +18,21 @@ const source = await raw('./components/SharedDrawingEditor.tsx'), ast = parse(so
 const body = ast.program.body.find(value => value.type === 'ExportDefaultDeclaration').declaration.body.body;
 const declaration = name => { const node = body.find(value => value.type === 'FunctionDeclaration' ? value.id.name === name : value.type === 'VariableDeclaration' && value.declarations.some(declaration => declaration.id.name === name)); assert.ok(node, name); return source.slice(node.start, node.end); };
 const queueSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='queueSource').expression.arguments[0].arguments[1];
+const gestureSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='gestureSource');
+assert.ok(gestureSourceEffect,'actual production gestureSource effect');
 const actual = ['cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
-import { DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,batch } from 'deps';
+import { DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,batch,createSignal,createMemo,createEffect,on } from 'deps';
 export class Element { closest() { return {getAttribute:()=>this.id}; } }
 export function fixture(props,svg,window) {
  let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false,strokeQueue,editCacheKey,editValue,finishingValue=false;
  let historyLane,historyPreparation,historyIntents=[],preparingHistory,historyView,historyBusy=false;const historyPreview=()=>historyView,setHistoryPreview=value=>{historyView=value;props.onHistoryPreview?.(value);},historyPending=()=>historyBusy,setHistoryPending=value=>historyBusy=value;
- let queued=[],recovered=[];const queuedDrawings=()=>queued,setQueuedDrawings=value=>queued=value,setRecoveredDrawings=value=>recovered=value,strokeVersion=()=>0,setStrokeVersion=()=>{};
+ let queued=[],recovered=[];const queuedDrawings=()=>queued,setQueuedDrawings=value=>queued=value,setRecoveredDrawings=value=>recovered=value,[strokeVersion,setStrokeVersion]=props.reactive?createSignal(0):[()=>0,()=>{}]; let eraseSource;
  let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
  const publications=[],tool=()=>toolValue,setTool=value=>toolValue=value,selected=()=>selectedId,setSelected=value=>selectedId=value;
  const draft=()=>draftValue,setDraft=value=>{draftValue=value;if(value)publications.push(JSON.parse(JSON.stringify(value)));},pending=()=>pendingValue,setPending=value=>pendingValue=value;
  const edit=()=>editValue,setEdit=value=>editValue=value,textEditor=()=>undefined,finishing=()=>finishingValue,setFinishing=value=>finishingValue=value,historyDisabled=()=>pending()||finishing()||props.busy||props.inputLocked,disabled=()=>historyDisabled()||historyPending();
- const drawings=()=>props.port.drawings(),identity=()=>cacheKey(),gestureSource=()=>gestureIdentity();
+ const drawings=()=>props.port.drawings(),identity=()=>cacheKey();
  const color=()=>'#ee4848',width=()=>4,highlightWidth=()=>18,mosaicReady=()=>true,blockSize=()=>8,fontSize=()=>20,textStyle=()=>props.textStyleValue??{};
  const report=error=>props.onError(error.message),clamp=(v,low,high)=>Math.max(low,Math.min(high,v));
  let openedText;const openText=value=>openedText=value,ensureSelection=async()=>{},beginStored=()=>{},beginErase=()=>{};
@@ -40,10 +42,12 @@ export function fixture(props,svg,window) {
  ${actual}
  historyLane=props.port.history&&!props.port.stored?createHistoryLane():undefined;
  strokeQueue=continuousStrokes()&&!historyLane?newStrokeQueue():undefined;
+ const gestureSource=props.reactive?createMemo(gestureIdentity):()=>gestureIdentity();
+ if(props.reactive){ ${source.slice(gestureSourceEffect.start,gestureSourceEffect.end)} }
  return {begin,draft,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,choose,closeEditor,finishing,confirmText,loadLatest,saveText,history,historyPreview,drainHistory,historyPending,sourceChanged:${source.slice(queueSourceEffect.start,queueSourceEffect.end)},
    dispose:()=>{disposed=true;strokeQueue?.stop();historyLane?.stop();cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value),queued:()=>queued,edit,queue:()=>strokeQueue,lane:()=>historyLane,opened:()=>openedText};
 }`));
-await module.link(() => synthetic({ ...pointer,...historyModule, ...geometry, ...properties,batch:solid.batch, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
+await module.link(() => synthetic({ ...pointer,...historyModule, ...geometry, ...properties,batch:solid.batch,createSignal:solid.createSignal,createMemo:solid.createMemo,createEffect:solid.createEffect,on:solid.on, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
 class Events {
   listeners = new Map();
   addEventListener(type, callback) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(callback); }
@@ -61,19 +65,20 @@ function frames() {
 const event = (type, x, y, extra = {}) => ({ type, button: 0, buttons: type === 'pointerup' ? 0 : 1, pointerId: 7, clientX: 10 + x * 2, clientY: 20 + y * .5, pressure: .5, shiftKey: false, preventDefault() {}, stopPropagation() {}, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 let fixtureSerial=0;
-function setup(values = [], history) {
+function setup(values = [], history, reactive = false) {
   const window = new Events(), svg = new Events(), commands = [], errors = [];
   let layoutReads = 0;
   svg.box = { left: 10, top: 20, width: 2000, height: 500 };
   svg.getBoundingClientRect = () => { layoutReads++; return { ...svg.box }; }; svg.focus = () => {};
   svg.setPointerCapture = id => { svg.captured = id; }; svg.hasPointerCapture = id => svg.captured === id;
   svg.releasePointerCapture = id => { svg.captured = undefined; svg.emit(event('lostpointercapture', 0, 0, { pointerId: id })); };
-  const props = { box: { x: 10, y: 20, width: 2000, height: 500 }, tools: ['pen','highlighter','mark','line','arrow','rect','ellipse','mosaic'],busy:false,inputLocked:false,revision:5,source:'source',
+  const props = { reactive, box: { x: 10, y: 20, width: 2000, height: 500 }, tools: ['pen','highlighter','mark','line','arrow','rect','ellipse','mosaic'],busy:false,inputLocked:false,revision:5,source:'source',
     port: { frame:()=>({x:0,y:0,width:1000,height:1000}),sourceSize:()=>({width:1000,height:1000}),sourceIdentity:()=>props.source,draftKey:()=>JSON.stringify(['pointer-scene-'+fixtureSerial,'region',props.source]),revision:()=>props.revision,drawings:()=>values,canSelect:()=>true,allows:()=>props.allowed!==false,propertyCommand:draft=>({type:draft.base?'update_drawing':'add_drawing',drawing:plain(draft.drawing),expectedRevision:draft.expectedRevision}) },
     onCommand:async command=>{commands.push(plain(command));if(command.type==='add_drawing'){const drawing=plain(command.drawing);if(history){history.undo.push({index:values.length,before:null,after:drawing});history.redo=[];}values.push(drawing);props.revision++;}else if(history&&['undo_drawing','redo_drawing'].includes(command.type)){const next=historyModule.projectDrawingHistory({source:props.source,revision:props.revision,drawings:values,...history},command.type==='redo_drawing');values.splice(0,values.length,...plain(next.drawings));history.undo=plain(next.undo);history.redo=plain(next.redo);props.revision++;}},onClose:()=>{},onError:error=>errors.push(error) };
   if(history){props.port.history=()=>history;props.port.historyAvailable=redo=>(redo?history.redo:history.undo).length>0;props.port.historyStep=redo=>(redo?history.redo:history.undo).at(-1);}
   const fixtureId=++fixtureSerial;props.port.draftKey=()=>JSON.stringify(['pointer-scene-'+fixtureId,'region',props.source]);
-  return { ...module.namespace.fixture(props,svg,window), props, svg, window, commands, errors, reads:()=>layoutReads };
+  if(!reactive) return { ...module.namespace.fixture(props,svg,window), props, svg, window, commands, errors, reads:()=>layoutReads };
+  let result;solid.createRoot(dispose=>{const [revision,setRevision]=solid.createSignal(props.revision);Object.defineProperty(props,'revision',{get:revision,set:setRevision});result={...module.namespace.fixture(props,svg,window),disposeReactive:dispose,props,svg,window,commands,errors,reads:()=>layoutReads};});return result;
 }
 
 test('new inline text copies the selected text effects without adding styles to a plain legacy text',()=>{
@@ -1023,4 +1028,90 @@ test('actual DrawingShape JSX preserves all native-cloned SVG path nodes and rep
     setDrawing({...drawing(),color:'#0000ff'});assert.equal(descendants(root,'path')[0],shortened[0]);
     assert.equal(descendants(root,'g').find(node=>node.props['data-drawing-id']==='native-pen').props.stroke,'#0000ff');
   }finally{dispose();}
+});
+
+const mouse=(type,x,y,extra={})=>event(type,x,y,{pointerType:'mouse',...extra});
+
+test('release fallback preserves only pressed pen samples when zero-button move precedes lost capture and up',async()=>{
+ const clock=frames();try{
+  const f=setup();f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',50,60));
+  f.window.emit(mouse('pointermove',900,950,{buttons:0,getCoalescedEvents(){throw Error('hover coordinates must not be sampled');}}));await tick();
+  assert.equal(f.commands.length,1);assert.deepEqual(f.commands[0].drawing.points,[{x:10,y:20},{x:30,y:40},{x:50,y:60}]);
+  assert.equal(f.hasGesture(),false);assert.equal(clock.queued.size,0);assert.equal(f.window.count(),0);
+  f.svg.emit(mouse('lostpointercapture',900,950,{buttons:0}));f.window.emit(mouse('pointerup',950,999));clock.paint();await tick();
+  assert.equal(f.commands.length,1,'late lost/up must not double-save');assert.deepEqual(f.errors,[]);
+ }finally{clock.restore();}
+});
+
+test('release fallback flushes the latest pressed vector preview without appending the hover endpoint',async()=>{
+ const clock=frames();try{
+  for(const kind of ['highlighter','line','arrow','rect','ellipse']){
+   const f=setup();f.tool(kind);f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',50,80));
+   assert.equal(clock.queued.size,1,kind);f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();
+   assert.equal(f.commands.length,1,kind);assert.deepEqual(f.commands[0].drawing.points,[{x:10,y:20},{x:50,y:80}],kind);assert.equal(clock.queued.size,0,kind);
+   f.svg.emit(mouse('lostpointercapture',900,950,{buttons:0}));f.window.emit(mouse('pointerup',900,950));await tick();assert.equal(f.commands.length,1,kind);
+  }
+ }finally{clock.restore();}
+});
+
+test('release fallback permits an immediate next stroke while its previous save is pending and Undo immediately followed by drawing',async()=>{
+ const clock=frames(),values=[],f=setup(values,{undo:[],redo:[]});try{
+  const save=f.props.onCommand,gate=deferred();let first=true;
+  f.props.onCommand=async command=>{if(first){first=false;await gate.promise;}await save(command);};
+  f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();
+  f.begin(mouse('pointerdown',40,50));assert.equal(f.hasGesture(),true);f.window.emit(mouse('pointermove',60,70));f.window.emit(mouse('pointermove',900,950,{buttons:0}));
+  gate.resolve();await f.drainHistory();assert.equal(values.length,2);assert.equal(f.commands.length,2);
+  void f.history(false);f.begin(mouse('pointerdown',70,80));assert.equal(f.hasGesture(),true,'new pen admitted immediately after toolbar history entry');
+  f.window.emit(mouse('pointermove',90,100));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await f.drainHistory();
+  assert.deepEqual(f.commands.map(v=>v.type),['add_drawing','add_drawing','undo_drawing','add_drawing']);assert.equal(values.length,2);assert.deepEqual(values[1].points,[{x:70,y:80},{x:90,y:100}]);assert.deepEqual(f.errors,[]);
+ }finally{f.dispose();clock.restore();}
+});
+
+test('release fallback still cancels invalid source geometry tool permission blur cancel and explicit lost capture',async()=>{
+ const clock=frames();try{
+  for(const reason of ['source','revision','box','surface','tool','plugin','allow','lock','blur','resize','pointercancel','lost','dispose']){
+   const f=setup();f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',30,40));
+   if(reason==='source')f.props.source='successor';if(reason==='revision')f.props.revision++;
+   if(reason==='box')f.props.box.x++;if(reason==='surface')f.svg.box.left++;if(reason==='tool')f.tool('line');if(reason==='plugin')f.props.tools=[];if(reason==='allow')f.props.allowed=false;
+   if(reason==='lock')f.props.inputLocked=true;if(reason==='blur')f.blur();if(reason==='resize')f.resize();if(reason==='pointercancel')f.window.emit(mouse('pointercancel',30,40));if(reason==='lost')f.svg.emit(mouse('lostpointercapture',30,40));if(reason==='dispose')f.dispose();
+   f.window.emit(mouse('pointermove',900,950,{buttons:0}));clock.paint();f.window.emit(mouse('pointerup',900,950));await tick();
+   assert.equal(f.commands.length,0,reason);assert.equal(f.draft(),undefined,reason);assert.equal(f.hasGesture(),false,reason);assert.equal(clock.queued.size,0,reason);
+  }
+ }finally{clock.restore();}
+});
+
+test('release fallback excludes pen touch unknown devices mismatched types other buttons and chorded initial down',async()=>{
+ const clock=frames();try{
+  for(const [downType,moveType,downButtons,moveButtons]of [['pen','pen',1,0],['touch','touch',1,0],[undefined,undefined,1,0],['mouse','pen',1,0],['pen','mouse',1,0],['mouse','mouse',1,2],['mouse','mouse',1,4],['mouse','mouse',3,0]]){
+   const f=setup();f.begin(event('pointerdown',10,20,{pointerType:downType,buttons:downButtons}));f.window.emit(event('pointermove',30,40,{pointerType:moveType}));
+   f.window.emit(event('pointermove',900,950,{pointerType:moveType,buttons:moveButtons}));clock.paint();await tick();assert.equal(f.commands.length,0,JSON.stringify([downType,moveType,downButtons,moveButtons]));assert.equal(f.hasGesture(),false);
+  }
+ }finally{clock.restore();}
+});
+
+test('release fallback keeps selection movement conservative and ignores another pointer zero-button move',async()=>{
+ const clock=frames();try{
+  const old={id:'old',kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},values=[structuredClone(old)],f=setup(values);f.tool('select');const target=new module.namespace.Element();target.id='old';
+  f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.commands.length,0);assert.deepEqual(values,[old]);
+  const g=setup();g.begin(mouse('pointerdown',10,20));g.window.emit(mouse('pointermove',30,40));g.window.emit(mouse('pointermove',900,950,{pointerId:8,buttons:0}));assert.equal(g.hasGesture(),true);assert.equal(g.commands.length,0);
+  g.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(g.commands.length,1);assert.deepEqual(g.commands[0].drawing.points,[{x:10,y:20},{x:30,y:40}]);
+ }finally{clock.restore();}
+});
+
+const publication=await pure('./published-revision.ts');
+test('release fallback reactive real gestureSource survives own publication during the next pen and immediate Undo then pen',async()=>{
+ const clock=frames(),values=[],f=setup(values,{undo:[],redo:[]},true);
+ const baseSave=f.props.onCommand,reply=deferred(),publish=deferred();let calls=0;
+ const witness=new publication.PublishedRevision(()=>f.props.revision,async()=>{throw Error('unexpected refresh');},1000);
+ const mouse=(type,x,y,extra={})=>event(type,x,y,{pointerType:'mouse',...extra});
+ try{
+  f.props.onCommand=async command=>{calls++;const first=calls===1;if(first)await publish.promise;await baseSave(command);witness.changed();const receipt=f.props.revision;if(first)await reply.promise;await witness.wait(receipt);};
+  f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();
+  f.begin(mouse('pointerdown',40,50));f.window.emit(mouse('pointermove',60,70));assert.equal(f.hasGesture(),true);
+  publish.resolve();await tick();assert.equal(f.hasGesture(),true,'own publication preserves live next pen');reply.resolve();await tick();assert.equal(f.hasGesture(),true,'numeric receipt preserves live next pen');
+  f.window.emit(mouse('pointermove',900,950,{buttons:0}));f.begin(mouse('pointerdown',70,80));f.window.emit(mouse('pointermove',90,100));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await f.drainHistory();
+  assert.equal(values.length,3);assert.equal(f.commands.length,3);
+  void f.history(false);f.begin(mouse('pointerdown',100,110));assert.equal(f.hasGesture(),true);f.window.emit(mouse('pointermove',120,130));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await f.drainHistory();
+  assert.equal(values.length,3);assert.deepEqual(f.commands.map(v=>v.type),['add_drawing','add_drawing','add_drawing','undo_drawing','add_drawing']);assert.deepEqual(values.at(-1).points,[{x:100,y:110},{x:120,y:130}]);assert.deepEqual(f.errors,[]);
+ }finally{witness.dispose();f.dispose();f.disposeReactive();clock.restore();}
 });

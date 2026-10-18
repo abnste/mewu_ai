@@ -195,7 +195,7 @@ export default function SpaceCanvas(props: Props) {
   const [imageDrawing, setImageDrawing] = createSignal<{sceneId:string;itemId:string;assetId:string}>();
   const imageDrawingItem = createMemo(() => { const target=imageDrawing(); return target?.sceneId===props.scene.id ? props.scene.items.find(item=>item.id===target.itemId&&item.asset.id===target.assetId&&item.asset.kind==='image') : undefined; });
   const closeImageDrawing = () => { setImageDrawing(undefined); setSelectionActivity(false); props.onFocusComposer?.(); };
-  const beginImageDrawing = (id:string) => { const item=props.scene.items.find(item=>item.id===id); if(!item||blocked()||drawingSession()||props.scene.run?.status==='running'||!props.onImageDrawingCommand)return; hideToolbar();setActiveItemId(id);setImageDrawing({sceneId:props.scene.id,itemId:id,assetId:item.asset.id});setSelectionActivity(true); };
+  const beginImageDrawing = (id:string) => { const item=props.scene.items.find(item=>item.id===id); if(!item||blocked()||drawingSession()||props.scene.run?.status==='running'||!props.onImageDrawingCommand)return; activateItem(id);setImageDrawing({sceneId:props.scene.id,itemId:id,assetId:item.asset.id});setSelectionActivity(true); };
   const [pluginMenu, setPluginMenu] = createSignal<'workflow' | 'ocr' | 'scroll' | 'translation' | 'pin'>();
   const [extensionButtonCount, setExtensionButtonCount] = createSignal(0);
   const [extensionInteracting, setExtensionInteracting] = createSignal(false), [extensionRunning, setExtensionRunning] = createSignal(false);
@@ -275,7 +275,7 @@ export default function SpaceCanvas(props: Props) {
       onPin={props.onPinItem&&(item().asset.kind==='image'||item().asset.kind==='video')?()=>props.onPinItem!(id):undefined}
       busy={props.busy||(itemProps.board&&props.blackboardEnabled===false)}
       video={props.video?{...props.video,sceneId:props.scene.id,busy:props.busy,annotationBusy:props.scene.closed||props.scene.frozen||props.scene.run?.status==='running',authoringBusy:props.authoringBusy,inputLocked:props.inputLocked,drawingAllowed:!drawingSession(),drawingGrant:videoDrawingGrant(),grant:videoGrant()}:undefined}
-      item={item()} active={activeItemId()===id} onActivate={()=>setActiveItemId(id)} referenced={props.refs.some(ref=>ref.kind==='item'&&ref.id===id)} onReference={()=>props.onReference({kind:'item',id})} onRemove={()=>props.onRemoveItem(id)} onUpdate={updateItem}
+      item={item()} active={activeItemId()===id} onActivate={()=>activateItem(id)} referenced={props.refs.some(ref=>ref.kind==='item'&&ref.id===id)} onReference={()=>props.onReference({kind:'item',id})} onRemove={()=>props.onRemoveItem(id)} onUpdate={updateItem}
       onCopy={props.onVideoCopy?()=>{void props.onVideoCopy!(id).catch(error=>props.onError(error instanceof Error?error.message:String(error)));}:undefined}
       onExportImage={variant=>{const current=props.scene.items.find(value=>value.id===id);if(current?.asset.kind==='image')void exportImage(current,false,false,variant);}}
       onExport={()=>{const item=props.scene.items.find(item=>item.id===id);const saving=item?.asset.kind==='text'?exportTextAsset(item.asset.id):item?.asset.kind==='video'?props.onVideoExport?.(id):undefined;void saving?.catch(error=>props.onError(error instanceof Error?error.message:String(error)));}}/>;}}</For>;
@@ -360,6 +360,9 @@ export default function SpaceCanvas(props: Props) {
     }).catch(() => cancel());
     return true;
   }
+  function activateItem(id: string) {
+    batch(() => { clearPendingSelection(); hideToolbar(); setActive(''); setActiveItemId(id); });
+  }
   function clearHideTimer() { if (hideTimer !== undefined) clearTimeout(hideTimer); hideTimer = undefined; }
   function hideToolbar() { clearHideTimer(); if(imageExportOpen())return; setToolbarVisible(false); setPluginMenu(undefined); }
   function scheduleHide() {
@@ -395,13 +398,14 @@ export default function SpaceCanvas(props: Props) {
   function revealToolbar(region: Region) {
     if (activity() || forceNew()) return;
     if (pendingSelection() && pendingSelection()!.region.id !== region.id) clearPendingSelection();
-    clearHideTimer(); setActive(region.id); placeToolbar(region); setToolbarVisible(true);
+    batch(() => { clearHideTimer(); setActiveItemId(''); setActive(region.id); placeToolbar(region); setToolbarVisible(true); });
   }
   function hover(event: PointerEvent) {
     if (extensionInteracting()) { clearHideTimer(); return; }
     if (event.target instanceof Element && event.target.closest('.selection-code-card')) { clearSnapPreview(); clearHideTimer(); return; }
     updateSnapPreview({ x: event.clientX, y: event.clientY, shiftKey: event.shiftKey });
     if (activity() || forceNew() || exporting() || props.geometryView.held || props.geometryView.pending) return;
+    if (activeItemId()) { scheduleHide(); return; }
     const target = event.target instanceof Element ? event.target : undefined;
     if ((pluginMenu()) && target?.closest('.capture-toolbar')) { clearHideTimer(); return; }
     const composer = composerBox();
@@ -667,7 +671,7 @@ export default function SpaceCanvas(props: Props) {
   const focusReference = (event: Event) => {
     const reference = (event as CustomEvent<Reference>).detail;
     if (reference?.kind === 'item') {
-      if (props.scene.items.some(item => item.id === reference.id)) setActiveItemId(reference.id);
+      if (props.scene.items.some(item => item.id === reference.id)) activateItem(reference.id);
       return;
     }
     if (reference?.kind !== 'region' || activity()) return;

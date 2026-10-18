@@ -617,7 +617,14 @@ export default function SharedDrawingEditor(props: Props) {
     const previewFrame = drawingFrame(publish);
     const moved = (next: PointerEvent) => {
       if (next.pointerId !== pointerId) return;
-      if (!current() || (next.type === 'pointermove' && !(next.buttons & 1))) { finish(false); return; }
+      if (!current()) { finish(false); return; }
+      if (next.type === 'pointermove' && !(next.buttons & 1)) {
+        // A remote mouse may report released buttons before pointerup. Keep
+        // only already-pressed samples; this hover position is not a new point.
+        if (!original && queueable && event.pointerType === 'mouse' && event.buttons === 1 && next.pointerType === 'mouse' && next.buttons === 0) { publish(); finish(true); }
+        else finish(false);
+        return;
+      }
       if(objectMove)trash.move({x:next.clientX,y:next.clientY});
       if (!dragStarted) {
         if (Math.abs(next.clientX - event.clientX) <= 4 && Math.abs(next.clientY - event.clientY) <= 4) return;
