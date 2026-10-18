@@ -1116,5 +1116,11 @@
   "区域操作仅支持 Windows": "Region operation is available on Windows only",
   "插件平台声明无效": "Invalid plugin platform declaration",
   "使用 Win+Shift+S 截图": "Use Win+Shift+S for screenshots",
-  "无法接管系统截图快捷键": "Cannot take over the system screenshot shortcut"
+  "无法接管系统截图快捷键": "Cannot take over the system screenshot shortcut",
+  "当前色": "Current",
+  "当前颜色 {0}": "Current color {0}",
+  "调色": "Palette",
+  "历史1": "Previous 1",
+  "历史2": "Previous 2",
+  "历史颜色 {0}：{1}": "Previous color {0}: {1}"
 }

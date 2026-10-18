@@ -7,14 +7,16 @@ import test from 'node:test';
 const module = new SourceTextModule(stripTypeScriptTypes(await readFile(new URL('./drawing-colors.ts',import.meta.url),'utf8'),{mode:'transform'}));
 await module.link(()=>{throw Error('Unexpected import');}); await module.evaluate();
 const {numberForeground} = module.namespace;
-test('three recent toolbar swatches are always visible, deduplicated and shared with the persisted chooser history',()=>{
+test('toolbar keeps the current slot fixed and two distinct history slots without changing stored history',()=>{
   const {toolbarRecentColors,recentColors,rememberColor}=module.namespace;
   let stored='[]';const storage={getItem:()=>stored,setItem:(_key,value)=>stored=value};
-  assert.deepEqual([...toolbarRecentColors([])],['#EE4848','#348BF1','#F4C94D']);
+  assert.deepEqual([...toolbarRecentColors([],'#EE4848')],['#EE4848','#348BF1','#F4C94D']);
   for(const color of ['#123456','#aabbcc','#FFFFFF','#123456'])rememberColor(color,storage);
   assert.deepEqual([...recentColors(storage)],['#123456','#FFFFFF','#AABBCC']);
-  assert.deepEqual([...toolbarRecentColors(recentColors(storage))],['#123456','#FFFFFF','#AABBCC']);
-  assert.deepEqual([...toolbarRecentColors(['#bad','#348bf1','#348BF1'])],['#348BF1','#EE4848','#F4C94D']);
+  assert.deepEqual([...toolbarRecentColors(recentColors(storage),'#123456')],['#123456','#FFFFFF','#AABBCC']);
+  assert.deepEqual([...toolbarRecentColors(['#bad','#348bf1','#348BF1'],'#F4C94D')],['#F4C94D','#348BF1','#EE4848']);
+  assert.deepEqual([...toolbarRecentColors(recentColors(storage),'#E8ECF4')],['#E8ECF4','#123456','#FFFFFF']);
+  assert.deepEqual([...recentColors(storage)],['#123456','#FFFFFF','#AABBCC']);
 });
 test('number labels remain readable on white, dark, saturated and threshold fills',()=>{
   for(const [fill,foreground] of [

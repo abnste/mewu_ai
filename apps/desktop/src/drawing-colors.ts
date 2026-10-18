@@ -4,11 +4,16 @@ export const highlightMaskTable = `${'1 '.repeat(255)}0`;
 export const colorPresets = ['#FFFFFF','#242832','#EE4848','#F28B38','#F4C94D','#39A97C','#348BF1','#9467D9'];
 export const colorHistoryKey = 'mewu.drawing-colors.v1';
 export const colorHistoryChanged = 'mewu:drawing-colors';
-/** Keep three usable swatches in the toolbar, including on a fresh profile. */
-export function toolbarRecentColors(recent: readonly string[]): string[] {
-  return [...new Set([...recent, '#EE4848', '#348BF1', '#F4C94D'].map(normalizeColor).filter((value):value is string=>!!value))].slice(0,3);
+/** Fixed current-color slot followed by two distinct previous colors. */
+export function toolbarRecentColors(recent: readonly string[], current: string): string[] {
+  const selected = normalizeColor(current) ?? '#EE4848';
+  const previous = [...new Set([...recent, '#EE4848', '#348BF1', '#F4C94D'].map(normalizeColor).filter((value):value is string=>!!value && value!==selected))].slice(0,2);
+  return [selected, ...previous];
 }
 export const normalizeColor = (value:string) => /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim().toUpperCase() : undefined;
+export function normalizeColorHistory(value: unknown): string[] {
+  return Array.isArray(value)?[...new Set(value.filter((entry):entry is string=>typeof entry==='string').map(normalizeColor).filter((entry):entry is string=>!!entry))].slice(0,3):[];
+}
 export const colorRgb = (value:string) => [1,3,5].map(offset=>parseInt(value.slice(offset,offset+2),16));
 // WCAG relative luminance; choose the stronger of the two opaque text colors.
 export function numberForeground(value:string): '#000000' | '#FFFFFF' {
@@ -30,11 +35,12 @@ export function hsvColor(h:number,s:number,v:number) {
   return rgbColor(rgb.map(value=>(value+m)*255));
 }
 export function recentColors(storage:Pick<Storage,'getItem'>=localStorage):string[] {
-  try { const values:unknown=JSON.parse(storage.getItem(colorHistoryKey)||'[]'); return Array.isArray(values)?[...new Set(values.filter((value):value is string=>typeof value==='string').map(normalizeColor).filter((value):value is string=>!!value))].slice(0,3):[]; } catch { return []; }
+  try { return normalizeColorHistory(JSON.parse(storage.getItem(colorHistoryKey)||'[]')); } catch { return []; }
 }
-export function rememberColor(value:string,storage:Pick<Storage,'getItem'|'setItem'>=localStorage):string[] {
+export function rememberColor(value:string,storage:Pick<Storage,'getItem'|'setItem'>=localStorage,previous?:string):string[] {
   const normalized=normalizeColor(value),before=recentColors(storage);if(!normalized)return before;
-  const next=[normalized,...before.filter(value=>value!==normalized)].slice(0,3);
+  const prior=previous?normalizeColor(previous):undefined;
+  const next=[...new Set([normalized,...(prior?[prior]:[]),...before])].slice(0,3);
   try{storage.setItem(colorHistoryKey,JSON.stringify(next));}catch{/* Drawing remains usable when local storage is unavailable. */}
   return next;
 }

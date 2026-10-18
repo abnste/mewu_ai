@@ -246,6 +246,10 @@ async function jsx(source,dependencies){
   const result=new SourceTextModule(transform(compiled));await result.link(name=>synthetic(name==='test-renderer'?renderer:name==='solid-js'?solid:dependencies[name]??{}));await result.evaluate();return result.namespace;
 }
 const colors=await pure('./drawing-colors.ts');
+const colorPickerJsx=await jsx(await raw('./components/DrawingColorPicker.tsx'),{
+  '../drawing-colors':colors,'../i18n':{t:value=>value},'solid-js/web':{Portal:props=>props.children},
+  'lucide-solid':{Check:()=>renderer.createElement('svg'),Palette:()=>renderer.createElement('svg'),X:()=>renderer.createElement('svg')},
+});
 let highlightLoader=()=>{throw Error('No native IO');};
 const shapeJsx=await jsx(await raw('./components/DrawingLayer.tsx'),{
   '../drawing-colors':colors,
@@ -258,6 +262,76 @@ const previewDrawing=()=>draft(),groupDraft=()=>[],selectedIds=()=>[selected()];
 const pixelIndex=()=>state.pixelIndex?.()??new Map();
 ${declaration('DrawingItem')};return <DrawingItem id={props.id}/>;}`,{pointer,selection:{linkedRepairPreview:(drawing)=>drawing}});
 const descendants=(node,tag)=>[...(node.tag===tag?[node]:[]),...node.children.flatMap(child=>descendants(child,tag))];
+
+test('real color picker keeps four fixed button nodes, current selection does not resubmit and history does not duplicate it',()=>{
+  const names=['document','window','localStorage'];const before=names.map(name=>Object.getOwnPropertyDescriptor(globalThis,name));
+  const document=new Events(),window=new Events();window.dispatchEvent=event=>{window.emit(event);return true;};
+  let stored=JSON.stringify(['#123456','#ABCDEF','#789ABC']);const writes=[],changes=[];
+  const storage={getItem:()=>stored,setItem:(key,value)=>{writes.push({key,value});stored=value;}};
+  for(const [name,value]of Object.entries({document,window,localStorage:storage}))Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
+  const [value,setValue]=solid.createSignal('#123456'),[disabled,setDisabled]=solid.createSignal(false),root=renderer.createElement('root');
+  let dispose;
+  try{
+    dispose=renderer.render(()=>renderer.createComponent(colorPickerJsx.default,{get value(){return value();},get disabled(){return disabled();},onChange:(color,submit)=>{changes.push({color,submit});setValue(color);}}),root);
+    const buttons=descendants(root,'button'),swatches=()=>buttons.slice(1).map(button=>button.children[0].props.style.background);
+    assert.equal(buttons.length,4);assert.equal(buttons[0].children[0].tag,'svg');
+    assert.deepEqual(swatches(),['#123456','#ABCDEF','#789ABC']);
+    buttons[1].props.onClick();assert.equal(changes.length,0);assert.equal(writes.length,0);
+    buttons[3].props.onClick();assert.deepEqual(changes,[{color:'#789ABC',submit:true}]);
+    assert.deepEqual(swatches(),['#789ABC','#123456','#ABCDEF']);
+    assert.deepEqual(descendants(root,'button'),buttons,'slot nodes do not move with MRU values');
+    buttons[2].props.onClick();assert.deepEqual(swatches(),['#123456','#789ABC','#ABCDEF']);
+    assert.deepEqual(descendants(root,'button'),buttons);
+    setValue('#E8ECF4');assert.deepEqual(swatches(),['#E8ECF4','#123456','#789ABC']);
+    buttons[3].props.onClick();assert.deepEqual(swatches(),['#789ABC','#E8ECF4','#123456']);
+    assert.deepEqual(JSON.parse(stored),['#789ABC','#E8ECF4','#123456'],'a default or selected-object current color can be selected again');
+    assert.deepEqual(buttons.slice(1).map(button=>button.props['data-caption']),['当前色','历史1','历史2']);
+    assert.equal(buttons[3].props['aria-label'],'历史颜色 2：#123456');
+    setDisabled(true);assert.ok(buttons.every(button=>button.props.disabled));buttons[2].props.onClick();assert.equal(changes.length,3);
+    dispose();dispose=undefined;assert.equal(document.count(),0);assert.equal(window.count(),0);
+  }finally{dispose?.();for(let i=0;i<names.length;i++){if(before[i])Object.defineProperty(globalThis,names[i],before[i]);else delete globalThis[names[i]];}}
+});
+
+test('real color picker keeps fallback out of the panel, saves only final custom color and preserves its pre-preview current color',async()=>{
+  const names=['document','window','localStorage','innerWidth','innerHeight'];const before=names.map(name=>Object.getOwnPropertyDescriptor(globalThis,name));
+  const document=new Events(),window=new Events();window.dispatchEvent=event=>{window.emit(event);return true;};
+  let stored='[]';const writes=[];
+  const storage={getItem:()=>stored,setItem:(key,value)=>{writes.push(value);stored=value;}};
+  for(const [name,value]of Object.entries({document,window,localStorage:storage,innerWidth:1200,innerHeight:800}))Object.defineProperty(globalThis,name,{configurable:true,writable:true,value});
+  const [value,setValue]=solid.createSignal('#E8ECF4'),changes=[],root=renderer.createElement('root');let dispose;
+  try{
+    dispose=renderer.render(()=>renderer.createComponent(colorPickerJsx.default,{get value(){return value();},onChange:(color,submit)=>{changes.push({color,submit});setValue(color);}}),root);
+    const buttons=descendants(root,'button'),swatches=()=>buttons.slice(1).map(button=>button.children[0].props.style.background);
+    buttons[0].getBoundingClientRect=()=>({left:100,top:400,bottom:448});let focused=false;buttons[0].focus=()=>{focused=true;};
+    buttons[0].props.onClick();
+    const panel=descendants(root,'div').find(node=>node.props.class==='drawing-color-panel');assert.ok(panel);
+    panel.querySelector=()=>({focus(){}});await tick();
+    const panelRecent=()=>descendants(root,'div').find(node=>node.props.class==='drawing-color-recent');
+    assert.equal(panelRecent(),undefined);
+    stored=JSON.stringify(['#123456']);
+    window.emit({type:colors.colorHistoryChanged,detail:['#123456','bad',42,'#123456']});
+    assert.deepEqual(swatches(),['#E8ECF4','#123456','#EE4848']);assert.equal(writes.length,0);
+    assert.equal(descendants(panelRecent(),'button').length,1,'fallback swatches never become used colors');
+    const hue=descendants(root,'input').find(node=>node.props.class==='drawing-color-hue');
+    hue.props.onInput({currentTarget:{value:'120'}});hue.props.onInput({currentTarget:{value:'240'}});
+    assert.equal(writes.length,0);assert.ok(changes.every(change=>change.submit===false));
+    const final=value();hue.props.onChange();
+    assert.deepEqual(JSON.parse(stored),[final,'#E8ECF4','#123456']);
+    assert.equal(writes.length,1);assert.equal(changes.at(-1).submit,true);
+    assert.deepEqual(swatches(),[final,'#E8ECF4','#123456']);
+    stored=JSON.stringify(['#ABCDEF']);window.emit({type:'storage',key:colors.colorHistoryKey});
+    assert.deepEqual(swatches(),[final,'#ABCDEF','#EE4848']);
+    stored='[]';window.emit({type:'storage',key:null});assert.deepEqual(swatches(),[final,'#EE4848','#348BF1']);
+    assert.equal(panelRecent(),undefined);assert.equal(writes.length,1);
+    hue.props.onInput({currentTarget:{value:'90'}});assert.equal(writes.length,1);
+    let prevented=false,stopped=false;document.emit({type:'keydown',key:'Escape',preventDefault(){prevented=true;},stopImmediatePropagation(){stopped=true;}});
+    assert.equal(prevented,true);assert.equal(stopped,true);assert.equal(focused,true);
+    assert.equal(descendants(root,'div').find(node=>node.props.class==='drawing-color-panel'),undefined);
+    setValue('#765432');buttons[2].props.onClick();
+    assert.deepEqual(JSON.parse(stored),['#EE4848','#765432'],'closing a preview clears its old base before another object color is selected');
+    dispose();dispose=undefined;
+  }finally{dispose?.();for(let i=0;i<names.length;i++){if(before[i])Object.defineProperty(globalThis,names[i],before[i]);else delete globalThis[names[i]];}}
+});
 
 // Exercise the actual screenshot callsite and actual DrawingLayer together.
 // Native/WebKit paint acceptance is separate; this gate proves node lifetime.
