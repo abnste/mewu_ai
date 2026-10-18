@@ -103,42 +103,6 @@ fn current_policy(
     Ok(())
 }
 
-fn webview_error(error: &wry::Error) -> (&'static str, Option<u32>) {
-    match error {
-        wry::Error::WebView2Error(webview2_com::Error::WindowsError(error)) => {
-            ("WebView2", Some(error.code().0 as u32))
-        }
-        wry::Error::WebView2Error(_) => ("WebView2", None),
-        _ => ("WebView", None),
-    }
-}
-
-/// These wrappers do not expose their boxed causes through Error::source().
-/// Match actual locked types instead of parsing Display strings or sampling
-/// GetLastError after the fact. No paths, labels, callbacks or OS text escape.
-fn creation_error(error: &tauri::Error) -> String {
-    let (stage, code) = match error {
-        tauri::Error::WindowLabelAlreadyExists(_) | tauri::Error::WebviewLabelAlreadyExists(_) => {
-            ("窗口已存在", None)
-        }
-        tauri::Error::Runtime(tauri_runtime::Error::CreateWebview(error)) => error
-            .downcast_ref::<wry::Error>()
-            .map(webview_error)
-            .unwrap_or(("WebView", None)),
-        tauri::Error::Runtime(tauri_runtime::Error::CreateWindow) => ("创建窗口", None),
-        tauri::Error::Runtime(tauri_runtime::Error::WebviewRuntimeNotInstalled) => {
-            ("缺少 WebView2", None)
-        }
-        tauri::Error::Runtime(tauri_runtime::Error::EventLoopClosed) => ("窗口循环已结束", None),
-        tauri::Error::Runtime(_) => ("窗口运行时", None),
-        _ => ("创建窗口", None),
-    };
-    match code {
-        Some(code) => format!("无法打开录屏控制条（{stage}，0x{code:08X}）"),
-        None => format!("无法打开录屏控制条（{stage}）"),
-    }
-}
-
 pub(super) async fn prepare(
     app: &AppHandle,
     id: &str,
@@ -230,7 +194,12 @@ pub(super) async fn prepare(
                     && url.port() == Some(1420))
         })
         .build()
-        .map_err(|error| creation_error(&error))?;
+        .map_err(|error| {
+            crate::window_creation_error::describe(
+                crate::window_creation_error::Surface::RecordingControls,
+                &error,
+            )
+        })?;
         Ok::<_, PrepareFailure>(PendingControls::new(window, destroy_unattached))
     })
     .await
@@ -385,46 +354,6 @@ mod tests {
             current_policy(&active, "original", false, true),
             Err(PrepareFailure::Failed(_))
         ));
-    }
-
-    #[test]
-    fn recording_controls_creation_diagnostics_keep_typed_hresult_not_private_text() {
-        for code in [0x80070005u32, 0x8007139F, 0x80004002] {
-            let error = tauri::Error::Runtime(tauri_runtime::Error::CreateWebview(Box::new(
-                wry::Error::WebView2Error(webview2_com::Error::WindowsError(
-                    windows::core::Error::new(
-                        windows::core::HRESULT(code as i32),
-                        "private-path-or-provider-response",
-                    ),
-                )),
-            )));
-            assert_eq!(
-                creation_error(&error),
-                format!("无法打开录屏控制条（WebView2，0x{code:08X}）")
-            );
-        }
-        let callback = tauri::Error::Runtime(tauri_runtime::Error::CreateWebview(Box::new(
-            wry::Error::WebView2Error(webview2_com::Error::CallbackError(
-                "private-label-or-token-0xDEADBEEF".into(),
-            )),
-        )));
-        assert_eq!(creation_error(&callback), "无法打开录屏控制条（WebView2）");
-        for error in [
-            tauri::Error::WindowLabelAlreadyExists("private-label".into()),
-            tauri::Error::WebviewLabelAlreadyExists("private-label".into()),
-        ] {
-            assert_eq!(creation_error(&error), "无法打开录屏控制条（窗口已存在）");
-        }
-        assert_eq!(
-            creation_error(&tauri::Error::Runtime(tauri_runtime::Error::CreateWindow)),
-            "无法打开录屏控制条（创建窗口）"
-        );
-        assert_eq!(
-            creation_error(&tauri::Error::Runtime(
-                tauri_runtime::Error::WebviewRuntimeNotInstalled
-            )),
-            "无法打开录屏控制条（缺少 WebView2）"
-        );
     }
 
     #[test]

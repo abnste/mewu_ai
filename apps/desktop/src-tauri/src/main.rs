@@ -209,6 +209,7 @@ mod video_vector_raster;
 mod visual_annotation_host;
 mod visual_annotation_input;
 mod web_link_host;
+mod window_creation_error;
 mod window_snap;
 
 use mewu_core::{
