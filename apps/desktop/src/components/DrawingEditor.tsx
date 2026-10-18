@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { JSX } from 'solid-js';
-import type { Asset, Drawing, DrawingCommand, ManualDrawingKind, Region, Snapshot } from '../contracts';
+import type { Asset, Drawing, DrawingCommand, ImageExportVariant, ManualDrawingKind, Region, Snapshot } from '../contracts';
 import { applyRasterEdit } from '../raster-edit-bridge';
 import { getMosaicPreview, getHighlightPreview } from "../bridge";
 import { highlightSourceIdentity } from '../highlight-source';
@@ -17,7 +17,7 @@ interface Props {
   sceneId:string;backgroundId:string;region:Region;box:EditorBox;scale:number;backgroundWidth:number;backgroundHeight:number;
   background?:Asset;sourceRegion?:Region;documentOnly?:boolean;tools:ManualDrawingKind[];busy:boolean;inputLocked?:boolean;
   onCommand:(command:DrawingCommand)=>Promise<void>;onError:(message:string)=>void;onClose:()=>void;
-  onExport:(copy:boolean,closeSpace:boolean)=>Promise<boolean>;onPin?:()=>Promise<boolean>;
+  onExport:(copy:boolean,closeSpace:boolean,variant?:ImageExportVariant)=>Promise<boolean>;onPin?:()=>Promise<boolean>;
   onRegisterFlush?:RegisterDrawingFlush;onCopyTable?:(target:DrawingLayoutTarget,format:DrawingTableFormat)=>Promise<void>;
   onRasterSnapshot?:(snapshot:Snapshot)=>void;
   blackboard?:boolean;onRegisterHistory?:RegisterDrawingHistory;
@@ -55,6 +55,7 @@ export default function DrawingEditor(props:Props) {
     propertyCommand:draft=>drawingPropertyCommand(draft,target()),
     historyAvailable:redo=>{const step=(redo?props.region.drawingHistory?.redo:props.region.drawingHistory?.undo)?.at(-1);return Boolean(step&&(!props.documentOnly||richDocumentHistoryStep(step)));},
     historyStep:redo=>(redo?props.region.drawingHistory?.redo:props.region.drawingHistory?.undo)?.at(-1),
+    history:()=>props.region.drawingHistory??{undo:[],redo:[]},
     render:(drawing,interactive,selected)=><DrawingShape drawing={drawing} interactive={interactive} selected={selected} richContext={richContext()} mosaicContext={mosaicContext()} onError={props.onError}/>,
     get mosaic(){return props.background?{blockSize:()=>mosaicBlockSize(props.background?.scaleFactor),prepare:()=>getMosaicPreview(props.sceneId,props.background!,mosaicBlockSize(props.background?.scaleFactor),mosaicSource())}:undefined;},
     get highlight(){return props.background?{identity:()=>highlightSourceIdentity(props.sceneId,props.background!,props.sourceRegion??props.region),prepare:()=>getHighlightPreview(props.sceneId,props.background!,props.sourceRegion??props.region)}:undefined;},

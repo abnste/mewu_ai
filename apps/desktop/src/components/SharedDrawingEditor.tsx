@@ -3,12 +3,13 @@ import { t } from '../i18n';
 import { nativeSelectOwnsEscape } from '../native-select-escape';
 import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
 import { ArrowUpRight, BrushCleaning, Check, Circle, Copy, Eraser, Grid2X2, Hash, Highlighter, LoaderCircle, Minus, MousePointer2, Pencil, Pin, Redo2, RotateCcw, Scissors, Square, Trash2, Type, Undo2, X } from 'lucide-solid';
-import type { Drawing, DrawingKind, DrawingPoint, DrawingTextStyle, ManualDrawingKind } from '../contracts';
+import type { Drawing, DrawingKind, DrawingPoint, DrawingTextStyle, ImageExportVariant, ManualDrawingKind } from '../contracts';
 import { constrainedEnd, drawingBounds, drawingMoveDelta, drawingOrder, drawingResizeHandles, resizedDrawingPoints, validNextNumber } from "./drawing-geometry";
 import { finishDrawing, outputDrawing } from "../capture-completion";
 import { clipEraserSweep, eraserCursor, eraserHit, eraserStrokeHits, ObjectEraser, PixelEraser, type EraserMode } from "./drawing-eraser";
 import { changeProperty, drawingDraftKey, drawingDrafts, drawingPropertyCommand, propertyDraft, settleDrawingEdit, strokeKinds, type DrawingPropertyDraft } from "./drawing-properties";
 import { DrawingAddQueue, drawingFrame, drawingPointerSamples, liveDrawing } from './drawing-pointer';
+import { DrawingHistoryLane, projectDrawingHistory, type DrawingHistoryState } from './drawing-history';
 import type { DrawingFlush, RegisterDrawingFlush } from "../drawing-flush";
 import type { DrawingTableFormat } from "../drawing-layout-preview";
 import "./drawing.css";
@@ -19,6 +20,7 @@ import {objectTrash} from '../object-trash';
 import DrawingWidthSlider from './DrawingWidthSlider';
 import InlineDrawingText from './InlineDrawingText';
 import DrawingTextStylePicker from './DrawingTextStylePicker';
+import ImageExportButton from './ImageExportButton';
 import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview} from './drawing-selection';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
@@ -27,6 +29,7 @@ const MarkIcon = (props: { size: number }) => <svg width={props.size} height={pr
 const icons = { pen: Pencil, line: Minus, arrow: ArrowUpRight, rect: Square, ellipse: Circle, text: Type, highlighter: Highlighter, mark: MarkIcon, number: Hash, mosaic: Grid2X2 };
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 export default function SharedDrawingEditor(props: Props) {
+  let openImageExport: (() => void) | undefined;
   let editorShell!:HTMLDivElement;
   const objectWheel=(event:WheelEvent)=>{if(props.onObjectWheel?.(event)){event.preventDefault();event.stopImmediatePropagation();}};
   onMount(()=>{editorShell.addEventListener('wheel',objectWheel,{capture:true,passive:false});});
@@ -66,6 +69,10 @@ export default function SharedDrawingEditor(props: Props) {
   const [recoveredDrawings, setRecoveredDrawings] = createSignal<Drawing[]>([]);
   const [strokeVersion, setStrokeVersion] = createSignal(0);
   let strokeQueue: DrawingAddQueue | undefined, editCacheKey: string | undefined;
+  const [historyPreview, setHistoryPreview] = createSignal<Drawing[]>();
+  const [historyPending, setHistoryPending] = createSignal(false);
+  let historyLane: DrawingHistoryLane | undefined, historyPreparation: Promise<void> | undefined;
+  let historyIntents: boolean[] = [], preparingHistory: DrawingHistoryState | undefined;
   const activeDraftId = createMemo(() => draft()?.id), activeEditId = createMemo(() => edit()?.drawing.id), storedPreviewId = createMemo(() => storedDraft()?.id);
   const textEditor = () => edit()?.mode === 'text' ? edit() : undefined;
   const cacheKey = () => props.port.draftKey();
@@ -76,7 +83,8 @@ export default function SharedDrawingEditor(props: Props) {
   const rightDocked = () => !props.blackboard && props.box.x + toolsWidth() + 6 > viewport().width;
   const [surfaceSize, setSurfaceSize] = createSignal({ width: props.box.width, height: props.box.height });
   const drawings = () => props.port.drawings();
-  const drawingIndex = createMemo(() => new Map(drawings().map(value => [value.id, value])));
+  const visibleDrawings = () => historyPreview() ?? drawings();
+  const drawingIndex = createMemo(() => new Map(visibleDrawings().map(value => [value.id, value])));
   const storedIndex = createMemo(() => new Map((props.port.stored?.() ?? []).map(value => [value.id, value])));
   const selectedDrawing = () => drawingIndex().get(selected());
   const propertyTarget = () => selectedIds().length>1?undefined:edit()?.drawing ?? (tool() === 'select' && selectedDrawing() && props.port.canStyle(selectedDrawing()!) ? selectedDrawing() : undefined);
@@ -90,14 +98,18 @@ export default function SharedDrawingEditor(props: Props) {
   const propertyTextStyle = () => { const drawing = propertyTarget(); return drawing ? drawing.textStyle ?? {} : textStyle(); };
   const options = (defaults: number[], current: number) => [...new Set([...defaults, current])].sort((a, b) => a - b);
   const controlsLocked = () => props.busy || props.inputLocked || finishing() || imageZooming();
-  const disabled = () => pending() || controlsLocked();
+  const disabled = () => pending() || controlsLocked() || historyPending();
+  const historyDisabled = () => pending() || controlsLocked();
   const [objectDragging,setObjectDragging]=createSignal(false),[trashOver,setTrashOver]=createSignal(false);
   const trash=objectTrash(()=>trashButton,()=>Boolean(disabled()||edit()),(dragging,over)=>{setObjectDragging(dragging);setTrashOver(over);});
   const unregisterTrash=props.blackboard?props.onRegisterObjectTrash?.(trash):undefined;
   onCleanup(()=>{unregisterTrash?.();trash.cancel();});
   const blockSize = () => props.port.mosaic?.blockSize() ?? 8;
   const editableIds = () => new Set([...drawings().filter(value => props.port.canSelect(value)).map(value => value.id),...(props.port.stored?.().map(value=>value.id)??[])]);
-  const historyAvailable = (redo: boolean) => props.port.historyAvailable(redo);
+  const historyAvailable = (redo: boolean) => {
+    historyPreview();
+    return preparingHistory ? (redo ? preparingHistory.redo : preparingHistory.undo).length > 0 : historyLane?.pending() ? historyLane.available(redo) : props.port.historyAvailable(redo);
+  };
   const previewDrawing = () => draft() ?? edit()?.drawing;
   const previews=createMemo(()=>new Map([...recoveredDrawings(),...queuedDrawings(),...groupDraft(),...(previewDrawing()?[previewDrawing()!]:[])].map(d=>[d.id,d])));
   const addedPreviewId = createMemo(() => {
@@ -106,10 +118,10 @@ export default function SharedDrawingEditor(props: Props) {
   });
   const addedPreviewMosaic = createMemo(() => previewDrawing()?.kind === 'mosaic');
   const drawingIds = createMemo(() => {
-    const ordered = drawingOrder(drawings().flatMap(value=>pixelDraft()?.get(value.id)??[value])).filter(value => !storedIndex().has(value.id));
+    const ordered = drawingOrder(visibleDrawings().flatMap(value=>pixelDraft()?.get(value.id)??[value])).filter(value => !storedIndex().has(value.id));
     const ids = [...storedIndex().keys(), ...ordered.map(value => value.id)];
     const addedId = addedPreviewId();
-    for (const value of [...recoveredDrawings(), ...queuedDrawings()]) if (!ids.includes(value.id)) ids.push(value.id);
+    for (const value of [...recoveredDrawings(), ...(historyPreview() === undefined ? queuedDrawings() : [])]) if (!ids.includes(value.id)) ids.push(value.id);
     if (addedId) {
       if (addedPreviewMosaic()) ids.splice(storedIndex().size + ordered.filter(value => value.kind === 'mosaic').length, 0, addedId); else ids.push(addedId);
     }
@@ -216,6 +228,7 @@ export default function SharedDrawingEditor(props: Props) {
     setFinishing(true);
     try {
       await strokeQueue?.drain();
+      await drainHistory();
       if (!(await saveText()) || disposed || origin !== identity()) return;
       setDraft(undefined); if (next !== 'select') setSelected('');
       if(strokeKinds.includes(next as DrawingKind))setWideBrush(next==='highlighter');
@@ -703,18 +716,19 @@ export default function SharedDrawingEditor(props: Props) {
     tableCopy = request;
     void request.catch(error => { if (!disposed && origin === identity()) report(error); }).finally(() => { if (tableCopy === request) tableCopy = undefined; if (!disposed && origin === identity()) setFinishing(false); });
   }
-  async function done(closeSpace = false, copy = true, exitDrawing = true) {
+  async function done(closeSpace = false, copy = true, exitDrawing = true, variant?: ImageExportVariant) {
     const closingDisabledBoard = Boolean(props.blackboard && props.inputLocked && !props.busy && !pending() && !finishing());
-    if ((disabled() && !closingDisabledBoard) || cancelGesture) return;
+    if ((historyDisabled() && !closingDisabledBoard) || cancelGesture) return;
     const currentIdentity = identity(); setFinishing(true);
     try {
       await strokeQueue?.drain();
+      await drainHistory();
       if (props.blackboard && exitDrawing && props.onFinishBlackboard) {
         if (closingDisabledBoard) { await props.onFinishBlackboard(); return; }
         if (await saveText() && !disposed && currentIdentity === identity()) await props.onFinishBlackboard();
         return;
       }
-      await finishDrawing({ saveText, current: () => !disposed && currentIdentity === identity(), copy: () => exitDrawing && props.retainOnDone ? Promise.resolve(true) : props.onExport(copy, closeSpace), close: () => { if (exitDrawing) props.onClose(); } });
+      await finishDrawing({ saveText, current: () => !disposed && currentIdentity === identity(), copy: () => exitDrawing && props.retainOnDone ? Promise.resolve(true) : props.onExport(copy, closeSpace, variant), close: () => { if (exitDrawing) props.onClose(); } });
     }
     catch (error) { if (!disposed) report(error); }
     finally { if (!disposed) setFinishing(false); }
@@ -723,19 +737,86 @@ export default function SharedDrawingEditor(props: Props) {
   async function pin() {
     if (disabled() || cancelGesture || !props.onPin) return;
     const currentIdentity = identity(); setFinishing(true);
-    try { await strokeQueue?.drain(); await outputDrawing({ saveText, current: () => !disposed && currentIdentity === identity(), output: () => props.onPin?.() ?? Promise.resolve(false) }); }
+    try { await strokeQueue?.drain(); await drainHistory(); await outputDrawing({ saveText, current: () => !disposed && currentIdentity === identity(), output: () => props.onPin?.() ?? Promise.resolve(false) }); }
     catch (error) { if (!disposed) report(error); }
     finally { if (!disposed) setFinishing(false); }
   }
   async function closeEditor() {
-    if (disabled() || cancelGesture) return;
+    if (historyDisabled() || cancelGesture) return;
     const source = strokeSource(); setFinishing(true);
-    try { await strokeQueue?.drain(); if (!disposed && source === strokeSource()) props.onClose(); }
+    try { await strokeQueue?.drain(); await drainHistory(); if (!disposed && source === strokeSource()) props.onClose(); }
     catch (error) { if (!disposed) report(error); }
     finally { if (!disposed) setFinishing(false); }
   }
+  function readHistory(): DrawingHistoryState {
+    const value = props.port.history!();
+    return { source: strokeSource(), revision: props.port.revision(), drawings: drawings(), undo: value.undo, redo: value.redo };
+  }
+  function historyAcknowledged(redo: boolean, entry: import('../contracts').DrawingStep) {
+    const number = !('batch' in entry) && !entry.before && entry.after?.kind === 'number' ? numberChanges.get(entry.after.id) : undefined;
+    if (number && number.preference === numberPreference && validNextNumber(nextNumber()) === (redo ? number.previous : number.next)) setNextNumber(String(redo ? number.next : number.previous));
+  }
+  function createHistoryLane() {
+    const source = strokeSource();
+    const lane = new DrawingHistoryLane({
+      read: readHistory, active: () => !disposed && source === strokeSource(),
+      save: (redo, expectedRevision) => {
+        const action = { type: redo ? 'redo_drawing' as const : 'undo_drawing' as const, expectedRevision };
+        if (!props.port.historyAvailable(redo) || !props.port.allows(action)) throw Error('绘制历史或工具已变化');
+        return props.onCommand(action);
+      },
+      changed: preview => { if (!disposed && historyLane === lane && source === strokeSource()) batch(() => { setHistoryPreview(preview); setHistoryPending(preview !== undefined); }); },
+      completed: historyAcknowledged,
+      failed: error => { if (!disposed && historyLane === lane && source === strokeSource()) report(error); },
+    });
+    return lane;
+  }
+  async function drainHistory(active: () => boolean = () => true) {
+    if (historyPreparation) await historyPreparation;
+    await historyLane?.drain(active);
+    if (!active()) throw Error('绘制编辑已切换');
+  }
+  function beginHistoryAfterStrokes() {
+    const source = strokeSource(), queue = strokeQueue;
+    const preparation = (async () => {
+      await queue?.drain();
+      if (disposed || source !== strokeSource()) throw Error('绘制编辑已切换');
+      // The provisional view never creates native history. Re-read the real
+      // history after every accepted add is durable before issuing any CAS.
+      let proof = readHistory();
+      for (const redo of historyIntents) { const after = projectDrawingHistory(proof, redo); if (!after) throw Error('绘制历史已变化'); proof = after; }
+      historyLane = createHistoryLane();
+      for (const redo of historyIntents) if (!historyLane.enqueue(redo)) throw Error('绘制历史已变化');
+      historyIntents = []; preparingHistory = undefined;
+      await historyLane.drain();
+    })().catch(error => {
+      if (!disposed && source === strokeSource()) { batch(() => { setHistoryPreview(undefined); setHistoryPending(false); }); report(error); }
+      throw error;
+    }).finally(() => { if (historyPreparation === preparation) { historyPreparation = undefined; historyIntents = []; preparingHistory = undefined; } });
+    historyPreparation = preparation; void preparation.catch(() => {});
+  }
   async function history(redo: boolean) {
-    if (disabled() || edit() || cancelGesture) return;
+    if (historyDisabled() || edit() || cancelGesture) return;
+    if (props.port.history && !props.port.stored) {
+      try {
+        if (preparingHistory || strokeQueue?.pending()) {
+          if (historyIntents.length >= 16) return;
+          if (!preparingHistory) {
+            preparingHistory = readHistory();
+            for (const drawing of queuedDrawings()) if (!preparingHistory.drawings.some(value => value.id === drawing.id)) {
+              const step: import('../contracts').DrawingStep = { index: preparingHistory.drawings.length, before: null, after: drawing };
+              preparingHistory = { ...preparingHistory, drawings: [...preparingHistory.drawings, drawing], undo: [...preparingHistory.undo, step], redo: [] };
+            }
+          }
+          const next = projectDrawingHistory(preparingHistory, redo); if (!next) return;
+          preparingHistory = next; historyIntents.push(redo);
+          batch(() => { setHistoryPending(true); setHistoryPreview(next.drawings); });
+          if (!historyPreparation) beginHistoryAfterStrokes();
+        } else { historyLane ??= createHistoryLane(); historyLane.enqueue(redo); }
+      } catch (error) { report(error); }
+      return;
+    }
+    if (disabled()) return;
     const source = strokeSource(); setFinishing(true);
     try { await strokeQueue?.drain(); } catch (error) { report(error); return; }
     finally { if (!disposed) setFinishing(false); }
@@ -761,22 +842,23 @@ export default function SharedDrawingEditor(props: Props) {
     if (nativeSelectOwnsEscape(event)) return;
     if (event.key === 'Escape') {
       event.preventDefault(); event.stopImmediatePropagation();
-      if (cancelGesture) cancelGesture(); else if (!disabled() && textEditor()) confirmText(); else if (!disabled() && edit()) cancelUserEdit(); else if (!disabled()) { if (props.blackboard) void done(); else void closeEditor(); }
+      if (cancelGesture) cancelGesture(); else if (!disabled() && textEditor()) confirmText(); else if (!disabled() && edit()) cancelUserEdit(); else if (!historyDisabled()) { if (props.blackboard) void done(); else void closeEditor(); }
       return;
     }
     if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable="true"]')) return;
+    if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); event.stopImmediatePropagation(); void history(event.shiftKey || event.key.toLowerCase() === 'y'); return; }
     if (event.repeat) return;
     if (event.key.toLowerCase() === 'p' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && props.onPin) { event.preventDefault(); event.stopImmediatePropagation(); void pin(); return; }
     if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !(event.target instanceof Element && event.target.closest('button'))) { event.preventDefault(); event.stopImmediatePropagation(); void done(true); return; }
-    if (['c', 's'].includes(event.key.toLowerCase()) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { event.preventDefault(); event.stopImmediatePropagation(); void done(false, event.key.toLowerCase() === 'c', false); return; }
-    if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); event.stopImmediatePropagation(); history(event.shiftKey || event.key.toLowerCase() === 'y'); }
-    else if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); remove(); }
+    if (['c', 's'].includes(event.key.toLowerCase()) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { event.preventDefault(); event.stopImmediatePropagation(); if (event.key.toLowerCase() === 's' && props.imageExport !== false) { if (!disabled() && !cancelGesture) openImageExport?.(); } else void done(false, event.key.toLowerCase() === 'c', false); return; }
+    if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); remove(); }
   }
   const resize = () => { cancelGesture?.(); setViewport({ width: innerWidth, height: innerHeight }); };
   const blur = () => cancelGesture?.();
   const identity = createMemo(cacheKey);
   const queueSource = createMemo(strokeSource);
   createEffect(on(queueSource, () => {
+    historyLane?.stop(); historyLane = undefined; historyPreparation = undefined; preparingHistory = undefined; historyIntents = []; setHistoryPreview(undefined); setHistoryPending(false);
     strokeQueue?.stop(); strokeQueue = continuousStrokes() ? newStrokeQueue() : undefined; setQueuedDrawings([]); setRecoveredDrawings([]); editCacheKey = undefined;
   }));
   createEffect(on(identity, () => {
@@ -806,6 +888,7 @@ export default function SharedDrawingEditor(props: Props) {
   const unregisterFlush = props.onRegisterFlush?.(async active => {
     const origin = identity(); cancelGesture?.();
     await strokeQueue?.drain(active);
+    await drainHistory(active);
     if(eraseFlight)await eraseFlight;
     if (tableCopy) await tableCopy;
     if (flight && !(await flight)) throw new Error('标注尚未保存');
@@ -816,11 +899,11 @@ export default function SharedDrawingEditor(props: Props) {
   });
   const unregisterHistory = props.onRegisterHistory?.({
     undo:()=>history(false),redo:()=>history(true),
-    canUndo:()=>!disabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(false),
-    canRedo:()=>!disabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(true),
+    canUndo:()=>!historyDisabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(false),
+    canRedo:()=>!historyDisabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(true),
   });
   onCleanup(()=>unregisterHistory?.());
-  onCleanup(() => { unregisterFlush?.(); disposed = true; strokeQueue?.stop(); serial++; cancelGesture?.(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
+  onCleanup(() => { unregisterFlush?.(); disposed = true; strokeQueue?.stop(); historyLane?.stop(); serial++; cancelGesture?.(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
   function DrawingItem(item: { id: string }) {
     const isDraft = createMemo(() => activeDraftId() === item.id), isEdit = createMemo(() => activeEditId() === item.id);
     const value = createMemo(() => {const saved=drawingIndex().get(item.id),preview=pixelIndex().get(item.id)??previews().get(item.id);return preview??(saved?linkedRepairPreview(saved,drawingIndex(),previews()):undefined);});
@@ -874,9 +957,10 @@ export default function SharedDrawingEditor(props: Props) {
       <Show when={selectedDrawing()?.rich?.kind === 'table' && props.port.copyTable}><button title={t("复制表格")} aria-label={t("复制表格")} disabled={disabled() || !!edit()} onClick={copySelectedTable}><Copy size={16} /></button><select aria-label={t("表格复制格式")} value={tableFormat()} disabled={disabled() || !!edit()} onChange={event => setTableFormat(event.currentTarget.value as DrawingTableFormat)}><For each={['table', 'markdown', 'csv', 'tsv', 'png'] as DrawingTableFormat[]}>{format => <option value={format} selected={tableFormat() === format}>{format === 'table' ? 'Excel' : format === 'markdown' ? 'Markdown' : format.toUpperCase()}</option>}</For></select></Show>
       </div>
       <div class="drawing-history-actions">
-      <button data-caption={t("撤销")} title={t("撤销 · Ctrl + Z")} aria-label={t("撤销绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(false)} disabled={disabled() || !!edit() || !historyAvailable(false)} onClick={() => history(false)}><Undo2 size={17} /></button>
-      <button data-caption={t("重做")} title={t("重做 · Ctrl + Shift + Z")} aria-label={t("重做绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(true)} disabled={disabled() || !!edit() || !historyAvailable(true)} onClick={() => history(true)}><Redo2 size={17} /></button>
+      <button data-caption={t("撤销")} title={t("撤销 · Ctrl + Z")} aria-label={t("撤销绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(false)} disabled={historyDisabled() || !!edit() || !historyAvailable(false)} onClick={() => history(false)}><Undo2 size={17} /></button>
+      <button data-caption={t("重做")} title={t("重做 · Ctrl + Shift + Z")} aria-label={t("重做绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(true)} disabled={historyDisabled() || !!edit() || !historyAvailable(true)} onClick={() => history(true)}><Redo2 size={17} /></button>
       <button ref={trashButton} class="drawing-trash" classList={{'object-dragging':objectDragging(),'object-trash-over':trashOver()}} data-unavailable={!!edit() || (!objectDragging()&&(!(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))||Boolean(props.blackboard&&selectedDrawing()&&blackboardImage(selectedDrawing()!))))} data-caption={t("删除")} title={props.blackboard?t('拖入删除'):t("删除对象 · Delete")} aria-label={props.blackboard?t('删除对象'):t("删除绘制对象")} disabled={disabled() || !!edit() || (!objectDragging()&&(!(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))||Boolean(props.blackboard&&selectedDrawing()&&blackboardImage(selectedDrawing()!))))} onClick={remove}><Trash2 size={16} /></button>
+      <Show when={props.imageExport !== false}><ImageExportButton scope={strokeSource()} disabled={disabled()} onRegister={open => { openImageExport = open; return () => { if (openImageExport === open) openImageExport = undefined; }; }} onSelect={variant => void done(false, false, false, variant)} /></Show>
       <Show when={props.onPin}><button data-caption={t("贴图")} title={t("贴图 · P")} aria-label={t("贴图")} disabled={disabled()} onClick={() => void pin()}><Pin size={17} /></button></Show>
       <button data-caption={t("完成")} class="drawing-done" title={props.retainOnDone ? t("完成") : t("完成并复制")} aria-label={props.retainOnDone ? t("完成") : t("完成并复制")} disabled={props.blackboard && props.inputLocked ? props.busy || pending() || finishing() : disabled()} onClick={() => void done()}><Check size={18} /></button>
       </div>

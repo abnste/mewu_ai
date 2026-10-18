@@ -544,7 +544,7 @@ fn apply_plugin_drawing_blocking(
     let snapshot = engine.store.apply(command).map_err(|e| e.to_string())?;
     engine.ocr_jobs.reconcile(&snapshot);
     engine.translation_jobs.reconcile(&snapshot);
-    Ok(crate::publish(&app, &snapshot))
+    Ok(crate::publish_owned(&app, snapshot))
 }
 
 #[tauri::command]

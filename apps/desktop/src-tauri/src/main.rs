@@ -326,6 +326,10 @@ fn emit_run_event(app: &AppHandle, value: serde_json::Value) -> tauri::Result<()
     app.emit_to(frozen::LABEL, "run-event", &value)
 }
 fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
+    publish_owned(app, snapshot.clone())
+}
+fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
+    let snapshot = &owned;
     #[cfg(target_os="linux")]
     recording_wayland_host::reconcile(snapshot);
     app.state::<Host>().session_titles.reconcile(snapshot);
@@ -337,11 +341,13 @@ fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
     pin_host::reconcile(app, snapshot);
     let revision = app.state::<Host>().revision.fetch_add(1, Ordering::AcqRel) + 1;
     let snapshot = HostSnapshot {
-        snapshot: snapshot.clone(),
+        snapshot: owned,
         revision,
     };
     let _ = app.emit_to("space", "snapshot", &snapshot);
-    let _ = app.emit_to("settings", "snapshot", &snapshot);
+    if app.get_webview_window("settings").is_some() {
+        let _ = app.emit_to("settings", "snapshot", &snapshot);
+    }
     // A completed background run updates the small widget without showing or focusing it.
     let _ = app.emit_to(
         frozen::LABEL,
@@ -1779,10 +1785,11 @@ async fn export_region(
     scene_id: String,
     region_id: String,
     clipboard: bool,
+    variant: Option<image_host::ImageExportVariant>,
 ) -> Result<bool, String> {
-    #[cfg(any(windows, target_os = "macos"))]
-    return image_host::export_region(app, window, scene_id, region_id, clipboard).await;
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+    return image_host::export_region(app, window, scene_id, region_id, clipboard, variant).await;
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let host = app.state::<Host>();
         let root = host.assets.clone();

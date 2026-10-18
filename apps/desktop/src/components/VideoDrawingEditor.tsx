@@ -129,5 +129,5 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
   };
   const register:RegisterDrawingFlush=flush=>props.onRegisterDrawingAuthoringFlush?.(async active=>{if(!active()||!ready())throw Error('视频绘制对象已变化');await flush(active);})??(()=>{});
   onCleanup(()=>{disposed=true;});
-  return <SharedDrawingEditor port={port} box={props.box} tools={props.grant?[...props.grant.tools]:[]} busy={props.busy||!ready()} inputLocked={props.inputLocked||!props.active} retainOnDone onCommand={command} onError={props.onError} onClose={props.onClose} onRegisterFlush={register} onExport={(copy,close)=>props.onOutput?.(copy,close)??Promise.resolve(false)} keyboardIgnore=".video-trim-popover,[data-run-journal]"/>;
+  return <SharedDrawingEditor imageExport={false} port={port} box={props.box} tools={props.grant?[...props.grant.tools]:[]} busy={props.busy||!ready()} inputLocked={props.inputLocked||!props.active} retainOnDone onCommand={command} onError={props.onError} onClose={props.onClose} onRegisterFlush={register} onExport={(copy,close)=>props.onOutput?.(copy,close)??Promise.resolve(false)} keyboardIgnore=".video-trim-popover,[data-run-journal]"/>;
 }

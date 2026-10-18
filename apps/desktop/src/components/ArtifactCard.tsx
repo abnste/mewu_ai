@@ -10,7 +10,7 @@ import {isBlackboardText} from '../blackboard-objects';
 import {resizeBoardObject,type ResizeCorner} from '../blackboard-text';
 import {moveImageObject,zoomImageObject} from '../image-object-geometry';
 import BlackboardText from './BlackboardText';
-import type { SpaceItem } from '../contracts';
+import type { ImageExportVariant, SpaceItem } from '../contracts';
 import { assetUrl, documentUrl, isolatedDocument, native, readArtifact } from '../bridge';
 import './video.css';
 import TextArtifact from './TextArtifact';
@@ -18,6 +18,7 @@ import './image-object.css';
 import VideoArtifact, { type VideoArtifactProps } from './VideoArtifact';
 import DrawingLayer from './DrawingLayer';
 import { imageAnnotationRegion, imageContentBox } from '../image-annotations';
+import ImageExportButton from './ImageExportButton';
 
 interface Props {
   aiAvailable?: boolean;
@@ -29,6 +30,7 @@ interface Props {
   onRemove: () => void | Promise<void>;
   onUpdate: (item: SpaceItem) => void | Promise<void>;
   onExport?: () => void;
+  onExportImage?: (variant: ImageExportVariant) => void;
   onCopy?: () => void;
   onPin?: () => Promise<boolean | void>;
   video?: Omit<VideoArtifactProps, 'item' | 'active'>;
@@ -47,6 +49,7 @@ export default function ArtifactCard(props: Props) {
   const [reload, setReload] = createSignal(0);
   const [moving, setMoving] = createSignal(false);
   const [pinning, setPinning] = createSignal(false);
+  const [imageExportOpen, setImageExportOpen] = createSignal(false);
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight });
   const resized = () => setViewport({ width: innerWidth, height: innerHeight });
   window.addEventListener('resize', resized);
@@ -231,12 +234,13 @@ export default function ArtifactCard(props: Props) {
       <button class="icon-button compact" title={t("移除")} aria-label={t("移除 {0}").replaceAll("{0}", () => String(props.item.asset.name))} disabled={props.busy} onClick={props.onRemove}><X size={14} /></button>
     </header>
     </Show>
-    <Show when={isImage()&&(!props.blackboard||props.onPin)&&!props.imageEditing}><div class="image-object-tools" role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
+    <Show when={isImage()&&(!props.blackboard||props.onPin||props.onExportImage)&&!props.imageEditing}><div class="image-object-tools" classList={{'image-export-open':imageExportOpen()}} role="toolbar" aria-label={t("图片工具")} onPointerDown={event => event.stopPropagation()}>
       <Show when={!props.blackboard}>
       <Show when={props.aiAvailable !== false}><button class="icon-button compact" classList={{ selected: props.referenced }} title={props.referenced ? t('取消引用') : t('引用')} aria-label={props.referenced ? t('取消引用') : t('引用')} disabled={props.busy} onClick={props.onReference}><Link2 size={15} /></button></Show>
       <Show when={props.onOpenBlackboard}><button class="icon-button compact" title={t('编辑黑板')} aria-label={t('编辑黑板')} disabled={props.busy} onClick={() => props.onOpenBlackboard?.()}><Pencil size={15} /></button></Show>
       <Show when={props.onEditImage&&!props.onOpenBlackboard}><button class="icon-button compact" title={t('绘制')} aria-label={t('绘制')} disabled={props.busy} onClick={()=>void editImage()}><Pencil size={15} /></button></Show>
       </Show>
+      <Show when={props.onExportImage}><ImageExportButton compact title={t('保存')} scope={JSON.stringify([props.sceneId,props.item.id,props.item.asset])} disabled={props.busy} onOpenChange={setImageExportOpen} onSelect={variant=>props.onExportImage?.(variant)} /></Show>
       <Show when={props.onPin}><button class="icon-button compact" title={t('置顶')} aria-label={t('置顶')} disabled={props.busy||pinning()} onClick={() => void pinObject()}><Pin size={15} /></button></Show>
       <Show when={!props.blackboard}><button class="icon-button compact" title={t('移除')} aria-label={t('移除 {0}').replaceAll('{0}', () => props.item.asset.name)} disabled={props.busy} onClick={props.onRemove}><X size={15} /></button></Show>
     </div></Show>

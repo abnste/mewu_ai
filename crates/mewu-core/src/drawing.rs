@@ -232,6 +232,42 @@ fn apply_step(objects: &mut Vec<Drawing>, step: &DrawingStep, forward: bool) -> 
     Ok(())
 }
 
+/// Validate the same persisted edits without cloning the points/text of every
+/// historical object. References remain owned by the immutable region being
+/// checked; mutation still uses the owned apply_step path above.
+fn replay_step<'a>(objects: &mut Vec<&'a Drawing>, step: &'a DrawingStep, forward: bool) -> Result<()> {
+    let apply = |objects: &mut Vec<&'a Drawing>, edit: &'a DrawingEdit| -> Result<()> {
+        let (before, after) = if forward {
+            (&edit.before, &edit.after)
+        } else {
+            (&edit.after, &edit.before)
+        };
+        match (before, after) {
+            (None, Some(value))
+                if edit.index <= objects.len() && !objects.iter().any(|o| o.id == value.id) =>
+            {
+                objects.insert(edit.index, value);
+            }
+            (Some(expected), None) if objects.get(edit.index).copied() == Some(expected) => {
+                objects.remove(edit.index);
+            }
+            (Some(expected), Some(value))
+                if expected.id == value.id && objects.get(edit.index).copied() == Some(expected) =>
+            {
+                objects[edit.index] = value;
+            }
+            _ => return Err(invalid("绘制历史与当前对象不一致")),
+        }
+        Ok(())
+    };
+    if forward {
+        for edit in step.edits() { apply(objects, edit)?; }
+    } else {
+        for edit in step.edits().iter().rev() { apply(objects, edit)?; }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate(region: &Region, background: Option<&Asset>) -> Result<()> {
     if region.drawings.is_empty() && region.drawing_history.is_empty() {
         return Ok(());
@@ -276,9 +312,9 @@ pub(crate) fn validate(region: &Region, background: Option<&Asset>) -> Result<()
     // Persisted histories are data too: reject forged/misaligned operations at
     // open, rather than silently losing edits when the user later presses Undo.
     for (steps, forward) in [(&history.undo, false), (&history.redo, true)] {
-        let mut replay = region.drawings.clone();
+        let mut replay: Vec<_> = region.drawings.iter().collect();
         for edit in steps.iter().rev() {
-            apply_step(&mut replay, edit, forward)?;
+            replay_step(&mut replay, edit, forward)?;
             if replay.len() > MAX_OBJECTS {
                 return Err(invalid("绘制历史对象过多"));
             }
@@ -644,4 +680,62 @@ fn update_batch(
     }
     batch.sort_by_key(|e| e.index);
     commit_batch(region, background, batch)
+}
+
+#[cfg(test)]
+mod history_replay_tests {
+    use super::*;
+
+    fn pen() -> Drawing {
+        Drawing {
+            id: uuid::Uuid::new_v4().to_string(), kind: DrawingKind::Pen,
+            color: "#112233".into(), stroke_width: 2.,
+            points: vec![crate::DrawingPoint { x: 1., y: 2. }; MAX_POINTS],
+            text: None, font_size: None, text_style: None, origin: None, rich: None,
+        }
+    }
+
+    #[test]
+    fn replay_borrows_large_strokes_and_round_trips_batch_layer_order() {
+        let first = pen();
+        let second = pen();
+        let replacement = pen();
+        let mut moved = second.clone();
+        moved.points[0].x = 3.;
+        let step = DrawingStep::Batch(DrawingBatchEdit { batch: vec![
+            DrawingEdit { index: 0, before: Some(first.clone()), after: None },
+            DrawingEdit { index: 0, before: None, after: Some(replacement) },
+            DrawingEdit { index: 1, before: Some(second.clone()), after: Some(moved) },
+        ] });
+        let mut replay = vec![&first, &second];
+        replay_step(&mut replay, &step, true).unwrap();
+        assert!(std::ptr::eq(replay[0], step.edits()[1].after.as_ref().unwrap()));
+        assert!(std::ptr::eq(replay[1], step.edits()[2].after.as_ref().unwrap()));
+        assert_eq!(replay[0].points.as_ptr(), step.edits()[1].after.as_ref().unwrap().points.as_ptr());
+        replay_step(&mut replay, &step, false).unwrap();
+        assert_eq!(replay, vec![&first, &second]);
+        assert!(std::ptr::eq(replay[0], step.edits()[0].before.as_ref().unwrap()));
+        assert!(std::ptr::eq(replay[1], step.edits()[2].before.as_ref().unwrap()));
+    }
+
+    #[test]
+    fn replay_rejects_forged_before_duplicate_ids_and_wrong_layer_indexes() {
+        let value = pen();
+        let mut forged = value.clone();
+        forged.points[0].x = 7.;
+        let invalid = [
+            DrawingEdit { index: 0, before: Some(forged), after: None },
+            DrawingEdit { index: 0, before: None, after: Some(value.clone()) },
+            DrawingEdit { index: 1, before: Some(value.clone()), after: None },
+            DrawingEdit { index: 2, before: None, after: Some(pen()) },
+            DrawingEdit { index: 0, before: Some(value.clone()), after: Some(pen()) },
+            DrawingEdit { index: 0, before: None, after: None },
+        ];
+        for edit in invalid {
+            let step = DrawingStep::Single(edit);
+            let mut replay = vec![&value];
+            assert!(replay_step(&mut replay, &step, true).is_err());
+            assert_eq!(replay, vec![&value]);
+        }
+    }
 }

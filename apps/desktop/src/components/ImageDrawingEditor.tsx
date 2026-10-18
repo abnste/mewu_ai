@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import type { SceneCommand, SpaceItem } from '../contracts';
+import type { ImageExportVariant, SceneCommand, SpaceItem } from '../contracts';
 import type { DrawingEditorPort, EditorBox, EditorDrawingAction, RegisterDrawingHistory } from '../drawing-editor-port';
 import type { RegisterDrawingFlush } from '../drawing-flush';
 import { imageAnnotationRegion } from '../image-annotations';
@@ -11,7 +11,7 @@ import { DrawingShape } from './DrawingLayer';
 interface Props {
   sceneId: string; item: SpaceItem; box: EditorBox; busy: boolean; inputLocked?: boolean;
   onCommand: (command: SceneCommand) => Promise<void>; onClose: () => void; onError: (message: string) => void;
-  onExport: (copy: boolean, closeSpace: boolean) => Promise<boolean>; onPin?: () => Promise<boolean>;
+  onExport: (copy: boolean, closeSpace: boolean, variant?: ImageExportVariant) => Promise<boolean>; onPin?: () => Promise<boolean>;
   onRegisterFlush?: RegisterDrawingFlush; onRegisterHistory?: RegisterDrawingHistory;
   onCopyTable: (target: DrawingLayoutTarget, format: DrawingTableFormat) => Promise<void>;
 }
@@ -35,6 +35,7 @@ export default function ImageDrawingEditor(props: Props) {
     },
     historyAvailable: redo => Boolean((redo ? region().drawingHistory?.redo : region().drawingHistory?.undo)?.length),
     historyStep: redo => (redo ? region().drawingHistory?.redo : region().drawingHistory?.undo)?.at(-1),
+    history: () => region().drawingHistory ?? { undo: [], redo: [] },
     render: (drawing, interactive, selected) => <DrawingShape drawing={drawing} interactive={interactive} selected={selected} richContext={context()} onError={props.onError} />,
     copyTable: (drawing, format) => {
       const target = richPreviewTarget(context(), drawing); if (!target) throw Error('表格已更新');

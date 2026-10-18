@@ -125,7 +125,7 @@ const checks = [];
   const gates = ['editableIds', 'historyAvailable'].map(name => editor.body.body.find(node => node.type === 'VariableDeclaration' && node.declarations.some(value => value.id.name === name)));
   const mod = new SourceTextModule(transform(`import { hasDrawingDocument, richDocumentHistoryStep,makeImagePort } from 'domain';
     let session, denied=false; const props={scene:{id:'scene',background:{id:'background'}},region:undefined,documentOnly:true};props.port=makeImagePort(props);
-    const blocked=()=>denied, settledRegion=(value,callback)=>callback(value), drawings=()=>props.region.drawings??[];
+    const blocked=()=>denied, settledRegion=(value,callback)=>callback(value), drawings=()=>props.region.drawings??[],historyPreview=()=>undefined;let historyLane,preparingHistory;
     const ocrRequests={cancel(){}}, cancelGesture=undefined, hideToolbar=()=>{}, setForceNew=()=>{}, setActiveItemId=()=>{}, setActive=()=>{}, setSelectionActivity=()=>{};
     const setDrawingSession=value=>{session=value};
     export ${canvasCode.slice(begin.start, begin.end)}
@@ -193,7 +193,7 @@ const checks = [];
     let context=${JSON.stringify(context)}, currentDrawing=${JSON.stringify(drawing)}, disposed=false, finishing=false, tableCopy, flight, flushImages, eraseFlight, strokeQueue;
     const identity=()=>context.sceneId; const selectedDrawing=()=>currentDrawing, selected=()=>currentDrawing.id, richContext=()=>context;
     const disabled=()=>finishing, edit=()=>undefined, cancelGesture=undefined, tableFormat=()=>'png';
-    const setFinishing=value=>{finishing=value}; const saveText=async()=>true;
+    const setFinishing=value=>{finishing=value}; const saveText=async()=>true,drainHistory=async()=>{};
     export ${code.slice(copy.start,copy.end)}
     export const flush=${code.slice(callback.start,callback.end)};
     export const changeSource=()=>{context={...context,sceneId:'other'}};

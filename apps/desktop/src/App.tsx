@@ -512,14 +512,14 @@ export default function App() {
     finally { setBusy(false); finishOperation(); }
   }
   function drawingCommand(pluginId: string, pluginRevision: number, contributionId: string, value: DrawingCommand): Promise<void> {
-    if (exitPreparing() && (!drawingFlushDepth || !['add_drawing', 'update_drawing'].includes(value.type))) return Promise.reject(new Error('正在退出'));
+    if (exitPreparing() && (!drawingFlushDepth || !['add_drawing', 'update_drawing', 'undo_drawing', 'redo_drawing'].includes(value.type))) return Promise.reject(new Error('正在退出'));
     if (scroll()) return Promise.reject(new Error('长截图进行中'));
     const next = commands.then(async () => { accept(await plugins.applyPluginDrawing(pluginId, pluginRevision, contributionId, value)); });
     commands = next.catch(error => { if (exitPreparing()) exitFailure ??= error; });
     return next;
   }
   function drawingDocumentCommand(value: DrawingCommand): Promise<void> {
-    if (exitPreparing() && (!drawingFlushDepth || value.type !== 'update_drawing')) return Promise.reject(new Error('正在退出'));
+    if (exitPreparing() && (!drawingFlushDepth || !['update_drawing', 'undo_drawing', 'redo_drawing'].includes(value.type))) return Promise.reject(new Error('正在退出'));
     if (recording() || scroll()) return Promise.reject(new Error('当前无法编辑标注'));
     const next = commands.then(async () => {
       const current = scene(), region = current?.regions.find(region => region.id === value.regionId);

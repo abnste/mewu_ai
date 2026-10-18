@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import type { JSX } from 'solid-js';
-import type { Drawing, DrawingPoint, DrawingStep, DrawingStrokeErase, ManualDrawingKind } from './contracts';
+import type { Drawing, DrawingPoint, DrawingStep, DrawingStrokeErase, ImageExportVariant, ManualDrawingKind } from './contracts';
 import type { DrawingPropertyDraft } from "./components/drawing-properties";
 import type { RegisterDrawingFlush } from "./drawing-flush";
 import type { DrawingTableFormat } from "./drawing-layout-preview";
@@ -32,6 +32,7 @@ export interface DrawingEditorPort {
   propertyCommand:(draft:DrawingPropertyDraft)=>EditorDrawingAction|undefined;
   historyAvailable:(redo:boolean)=>boolean;
   historyStep?:(redo:boolean)=>DrawingStep|undefined;
+  history?:()=>{undo:DrawingStep[];redo:DrawingStep[]};
   render:(drawing:Drawing,interactive:boolean,selected:boolean,preview:boolean)=>JSX.Element;
   move?:(original:Drawing,start:{x:number;y:number},end:{x:number;y:number})=>Drawing;
   persistedId?:(temporaryId:string)=>string;
@@ -47,7 +48,8 @@ export interface SharedDrawingEditorProps {
   documentOnly?:boolean;busy:boolean;inputLocked?:boolean;retainOnDone?:boolean;keyboardIgnore?:string;
   onCommand:(action:EditorDrawingAction)=>Promise<void>;
   onError:(message:string)=>void;onClose:()=>void;
-  onExport:(copy:boolean,closeSpace:boolean)=>Promise<boolean>;
+  onExport:(copy:boolean,closeSpace:boolean,variant?:ImageExportVariant)=>Promise<boolean>;
+  imageExport?:boolean;
   onPin?:()=>Promise<boolean>;onRegisterFlush?:RegisterDrawingFlush;
   blackboard?:boolean;
   onFinishBlackboard?:()=>Promise<boolean>;

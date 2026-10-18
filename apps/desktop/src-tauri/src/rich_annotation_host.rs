@@ -370,7 +370,6 @@ fn apply_drawing_document_blocking(
     let mut engine = host.lock()?;
     crate::ensure_scene_command_admission(&app, &host, window.label(), &command, Some(&engine.store))?;
     crate::optional_capabilities::authoring_command(&engine, &command)?;
-    let snapshot = engine.store.snapshot();
     match &command {
         SceneCommand::UpdateDrawings { .. } => { /* Core validates the entire geometry-only batch and immutable references. */
         }
@@ -380,11 +379,7 @@ fn apply_drawing_document_blocking(
             drawing,
             ..
         } => {
-            let scene = snapshot
-                .scenes
-                .iter()
-                .find(|s| &s.id == scene_id)
-                .ok_or("会话不存在")?;
+            let scene = engine.store.scene(scene_id).map_err(|e| e.to_string())?;
             let region = scene
                 .regions
                 .iter()
@@ -408,11 +403,7 @@ fn apply_drawing_document_blocking(
             drawing_id,
             ..
         } => {
-            let scene = snapshot
-                .scenes
-                .iter()
-                .find(|s| &s.id == scene_id)
-                .ok_or("会话不存在")?;
+            let scene = engine.store.scene(scene_id).map_err(|e| e.to_string())?;
             let region = scene
                 .regions
                 .iter()
@@ -432,5 +423,5 @@ fn apply_drawing_document_blocking(
     let next = engine.store.apply(command).map_err(|e| e.to_string())?;
     engine.ocr_jobs.reconcile(&next);
     engine.translation_jobs.reconcile(&next);
-    Ok(crate::publish(&app, &next))
+    Ok(crate::publish_owned(&app, next))
 }

@@ -2,12 +2,12 @@
 import { t } from "../i18n";
 import { nativeSelectOwnsEscape } from '../native-select-escape';
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from 'solid-js';
-import { Check, ChevronDown, Circle, Copy, Download, Languages, LoaderCircle, Pencil, Pin, Plus, Table2, TextSelect, Trash2, X } from 'lucide-solid';
+import { Check, ChevronDown, Circle, Copy, Languages, LoaderCircle, Pencil, Pin, Plus, Table2, TextSelect, Trash2, X } from 'lucide-solid';
 import ScrollCaptureIcon from './ScrollCaptureIcon';
 import ApplicationSnapshotIcon from './ApplicationSnapshotIcon';
 import ExtensionSelectionTools from './ExtensionSelectionTools';
 import { recordingGrant, recordingTrimGrant } from '../recording-audio';
-import type { DrawingCommand, OcrTarget, Reference, Region, RegionGeometry, Scene, SceneCommand, Snapshot, SpaceItem } from '../contracts';
+import type { DrawingCommand, ImageExportVariant, OcrTarget, Reference, Region, RegionGeometry, Scene, SceneCommand, Snapshot, SpaceItem } from '../contracts';
 import { geometryTarget, overlayRegion, sameGeometry, type RegionGeometryCoordinator, type GeometryView } from '../region-geometry';
 import { geometryHistoryKey, type GeometryDirection } from '../region-geometry-history';
 import type { PluginContribution, PluginRecord } from '../plugin-contracts';
@@ -24,6 +24,7 @@ import { isCoreReplacementPlugin } from '../plugin-core';
 import DrawingLayer from './DrawingLayer';
 import DrawingEditor from './DrawingEditor';
 import ImageDrawingEditor from './ImageDrawingEditor';
+import ImageExportButton from './ImageExportButton';
 import { imageObjectBox } from '../image-annotations';
 import { usesDrawingDocument, type DrawingSession } from '../drawing-document';
 import type { DrawingLayoutTarget, DrawingTableFormat } from '../drawing-layout-preview';
@@ -176,6 +177,8 @@ export default function SpaceCanvas(props: Props) {
   const [activity, setActivity] = createSignal(false);
   const [forceNew, setForceNew] = createSignal(false);
   const [toolbarVisible, setToolbarVisible] = createSignal(false);
+  const [imageExportOpen, setImageExportOpen] = createSignal(false);
+  let openRegionImageExport: (() => void) | undefined;
   const [toolbarBox, setToolbarBox] = createSignal<Box>({ x: 0, y: 0, width: TOOLBAR_WIDTH, height: TOOLBAR_HEIGHT });
   const [backgroundError, setBackgroundError] = createSignal(false);
   const [flashedRegion, setFlashedRegion] = createSignal('');
@@ -261,6 +264,7 @@ export default function SpaceCanvas(props: Props) {
       video={props.video?{...props.video,sceneId:props.scene.id,busy:props.busy,annotationBusy:props.scene.closed||props.scene.frozen||props.scene.run?.status==='running',authoringBusy:props.authoringBusy,inputLocked:props.inputLocked,drawingAllowed:!drawingSession(),drawingGrant:videoDrawingGrant(),grant:videoGrant()}:undefined}
       item={item()} active={activeItemId()===id} onActivate={()=>setActiveItemId(id)} referenced={props.refs.some(ref=>ref.kind==='item'&&ref.id===id)} onReference={()=>props.onReference({kind:'item',id})} onRemove={()=>props.onRemoveItem(id)} onUpdate={updateItem}
       onCopy={props.onVideoCopy?()=>{void props.onVideoCopy!(id).catch(error=>props.onError(error instanceof Error?error.message:String(error)));}:undefined}
+      onExportImage={variant=>{const current=props.scene.items.find(value=>value.id===id);if(current?.asset.kind==='image')void exportImage(current,false,false,variant);}}
       onExport={()=>{const item=props.scene.items.find(item=>item.id===id);const saving=item?.asset.kind==='text'?exportTextAsset(item.asset.id):item?.asset.kind==='video'?props.onVideoExport?.(id):undefined;void saving?.catch(error=>props.onError(error instanceof Error?error.message:String(error)));}}/>;}}</For>;
   const activeRegion = createMemo(() => regionById(active()));
   const activeRegionIdentity = createMemo(() => [props.scene.id, activeRegion()?.id] as const, undefined,
@@ -334,11 +338,11 @@ export default function SpaceCanvas(props: Props) {
     return true;
   }
   function clearHideTimer() { if (hideTimer !== undefined) clearTimeout(hideTimer); hideTimer = undefined; }
-  function hideToolbar() { clearHideTimer(); setToolbarVisible(false); setPluginMenu(undefined); }
+  function hideToolbar() { clearHideTimer(); if(imageExportOpen())return; setToolbarVisible(false); setPluginMenu(undefined); }
   function scheduleHide() {
-    if (!toolbarVisible() || extensionInteracting() || hideTimer !== undefined) return;
+    if (!toolbarVisible() || extensionInteracting() || imageExportOpen() || hideTimer !== undefined) return;
     // One timer per departure. Continuous movement outside must not reset it.
-    hideTimer = setTimeout(() => { hideTimer = undefined; if (!extensionInteracting()) setToolbarVisible(false); }, 300);
+    hideTimer = setTimeout(() => { hideTimer = undefined; if (!extensionInteracting() && !imageExportOpen()) setToolbarVisible(false); }, 300);
   }
   function composerBox(): Box | undefined {
     const element = document.querySelector<HTMLElement>('.composer');
@@ -590,7 +594,7 @@ export default function SpaceCanvas(props: Props) {
     else if (event.key.toLowerCase() === 'o') { const entry = ocrEntries()[0]; if (entry) { event.preventDefault(); runOcr(entry, region); } }
     else if (event.key.toLowerCase() === 't') { if (translationEntries().length || savedTranslation(region)) { event.preventDefault(); event.stopImmediatePropagation(); translate(region); } }
     else if (event.key.toLowerCase() === 'p') { const entry = pinEntries()[0]; if (entry) { event.preventDefault(); event.stopImmediatePropagation(); void runPin(entry, region); } }
-    else if (['c', 's', 'enter'].includes(event.key.toLowerCase())) { event.preventDefault(); event.stopImmediatePropagation(); void exportRegion(region, event.key.toLowerCase() !== 's', event.key === 'Enter'); }
+    else if (['c', 's', 'enter'].includes(event.key.toLowerCase())) { event.preventDefault(); event.stopImmediatePropagation(); if(event.key.toLowerCase()==='s'){const sceneId=props.scene.id,regionId=region.id;revealToolbar(region);queueMicrotask(()=>{if(!disposed&&props.scene.id===sceneId&&activeRegion()?.id===regionId&&!blocked()&&!exporting())openRegionImageExport?.();});}else void exportRegion(region, true, event.key === 'Enter'); }
     else if (!region.imageOverride && captureGrant()) { event.preventDefault(); props.onRecordRegion(region.id); }
   };
   const releaseKey = (event: KeyboardEvent) => { if (event.key === 'Shift' && snapPointer) updateSnapPreview({ ...snapPointer, shiftKey: false }); if (heldArrows.delete(event.key) && !heldArrows.size) props.geometryController.endKeys(); };
@@ -697,9 +701,9 @@ export default function SpaceCanvas(props: Props) {
     // Restoring a frozen scene begins with no hovered region; that is not cancellation.
     if (request && !props.scene.frozen && ((region && request.target.regionId !== region.id) || forceNew())) untrack(() => props.onTranslationCancel?.());
   });
-  async function crop(region: Region): Promise<Blob> {
+  async function crop(region: Region, variant: ImageExportVariant = 'annotated'): Promise<Blob> {
     if (!props.scene.background) throw new Error('没有截图');
-    if (region.drawings?.length || region.translation) throw new Error('请在桌面版导出带标注的图片');
+    if (variant === 'annotated' && (region.drawings?.length || region.translation)) throw new Error('请在桌面版导出带标注的图片');
     const source = region.imageOverride;
     const img = new window.Image(); img.crossOrigin = 'anonymous'; img.src = assetUrl(source ?? props.scene.background);
     await img.decode();
@@ -712,17 +716,17 @@ export default function SpaceCanvas(props: Props) {
   function imageEditorBox(item:SpaceItem):Box {
     return imageObjectBox(item,viewport());
   }
-  async function exportImage(item:SpaceItem,copy:boolean,closeSpace=false):Promise<boolean> {
+  async function exportImage(item:SpaceItem,copy:boolean,closeSpace=false,variant:ImageExportVariant='annotated'):Promise<boolean> {
     if(exporting()||props.busy)return false;
     const sceneId=props.scene.id,itemId=item.id,assetId=item.asset.id;let fence:string|undefined;
     const saved=()=>props.scene.items.find(value=>value.id===itemId&&value.asset.id===assetId);
     const current=()=>!disposed&&props.scene.id===sceneId&&!props.scene.closed&&!props.scene.frozen&&Boolean(saved())&&(fence===undefined||JSON.stringify(saved())===fence);
     setExporting(true);props.onExportActivity?.(true);
-    try{return await finishCapture({prepare:async()=>{await props.onBeforeExport?.();fence=JSON.stringify(saved());},current,export:()=>exportImageItem(sceneId,itemId,assetId,copy),close:copy&&closeSpace?()=>props.onCopyClose?.(sceneId)??Promise.resolve(false):undefined});}
+    try{return await finishCapture({prepare:async()=>{await props.onBeforeExport?.();fence=JSON.stringify(saved());},current,export:()=>exportImageItem(sceneId,itemId,assetId,copy,copy?'annotated':variant),close:copy&&closeSpace?()=>props.onCopyClose?.(sceneId)??Promise.resolve(false):undefined});}
     catch(error){if(!disposed)props.onError(error instanceof Error?error.message:String(error));return false;}
     finally{if(!disposed){setExporting(false);props.onExportActivity?.(false);}}
   }
-  async function exportRegion(region: Region, copy: boolean, closeSpace = false): Promise<boolean> {
+  async function exportRegion(region: Region, copy: boolean, closeSpace = false, variant: ImageExportVariant = 'annotated'): Promise<boolean> {
     if (exporting() || props.busy) return false;
     const sceneId = props.scene.id, backgroundId = props.scene.background?.id;
     let fence: string | undefined;
@@ -735,9 +739,9 @@ export default function SpaceCanvas(props: Props) {
     try {
       return await finishCapture({ prepare: async () => { await props.onBeforeExport?.(); const saved = props.scene.regions.find(value => value.id === region.id); if (saved) fence = stamp(saved); }, current, export: async () => {
         const savedRegion = props.scene.regions.find(value => value.id === region.id)!;
-        if (native) return exportNativeRegion(sceneId, region.id, copy);
+        if (native) return exportNativeRegion(sceneId, region.id, copy, copy ? 'annotated' : variant);
         else {
-          const blob = await crop(savedRegion);
+          const blob = await crop(savedRegion, copy ? 'annotated' : variant);
           if (!current()) return false;
           if (copy) await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
           else { const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `截图_${new Date().toISOString().replace(/[:.]/g, '-')}.png`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
@@ -805,12 +809,12 @@ export default function SpaceCanvas(props: Props) {
       <button data-caption={t("录屏")} class="capture-record" title={t("区域录屏 · R")} aria-label={t("录制当前区域")} disabled={blocked() || Boolean(region().imageOverride)} onClick={() => props.onRecordRegion(region().id)}><Circle size={18} fill="currentColor" /></button>
       <span class="capture-separator" />
       <button data-caption={t("复制")} title={t("复制 · C")} aria-label={t("复制区域")} disabled={props.busy || exporting()} onClick={() => void exportRegion(region(), true)}><Copy size={18} /></button>
-      <button data-caption={t("保存")} title={t("保存 · S")} aria-label={t("保存区域")} disabled={props.busy || exporting()} onClick={() => void exportRegion(region(), false)}><Download size={18} /></button>
+      <ImageExportButton scope={JSON.stringify([props.scene.id,props.scene.background?.id,region().id,region().x,region().y,region().width,region().height,region().imageOverride?.id])} label={t('保存区域')} disabled={props.busy || exporting()} onRegister={open=>{openRegionImageExport=open;return()=>{if(openRegionImageExport===open)openRegionImageExport=undefined;};}} onOpenChange={value=>{setImageExportOpen(value);if(value){setPluginMenu(undefined);clearHideTimer();}else scheduleHide();}} onSelect={variant=>void exportRegion(region(),false,false,variant)} />
       <Show when={pinEntries().length}><button data-caption={t("贴图")} title={t("贴图 · P")} aria-label={t("贴图")} disabled={blocked()} onClick={() => pinEntries().length === 1 ? void runPin(pinEntries()[0], region()) : setPluginMenu(pluginMenu() === 'pin' ? undefined : 'pin')}><Pin size={18} /></button></Show>
       <Show when={pluginMenu()}><div class="capture-plugin-menu" classList={{ above: toolbarBox().y + toolbarBox().height + 228 > viewport().height }} role="menu"><For each={pluginMenu() === 'ocr' ? ocrEntries() : pluginMenu() === 'scroll' ? scrollEntries() : pluginMenu() === 'translation' ? translationEntries() : pluginMenu() === 'pin' ? pinEntries() : workflowEntries()}>{entry => <button role="menuitem" disabled={blocked()} onClick={event => entry.contribution.kind === 'selection.ocr' ? runOcr(entry, region()) : entry.contribution.kind === 'selection.scroll' ? runScroll(entry, region(), scrollMenuManual() || event.shiftKey) : entry.contribution.kind === 'selection.translation' ? runTranslation(entry, region()) : entry.contribution.kind === 'selection.pin' ? void runPin(entry, region()) : runWorkflow(entry, region())}>{entry.contribution.title}</button>}</For></div></Show>
     </div>}</Show>
-    <Show when={drawingSession() && regionById(drawingSession()!.regionId)}>{region => <DrawingEditor inputLocked={props.blackboard&&props.blackboardEnabled===false} onObjectWheel={props.blackboard?wheelObject:undefined} onObjectPointerMove={hoverObject} onObjectPointerLeave={()=>setHoveredObject('')} objects={props.blackboard?interactive=><div class="blackboard-artifact-layer"><ArtifactItems board interactive={interactive}/></div>:undefined} objectsFlush={props.blackboard?flushObjects:undefined} onRegisterObjectTrash={props.blackboard?registerObjectTrash:undefined} extraTools={props.blackboard ? () => <For each={workflowEntries()}>{entry => <button data-caption={entry.contribution.title} title={entry.contribution.title} aria-label={entry.contribution.title} disabled={blocked()} onClick={() => runWorkflow(entry,region())}><Table2 size={18}/></button>}</For> : undefined} onFinishBlackboard={props.onBlackboardClose} blackboard={props.blackboard} onRegisterHistory={props.onRegisterDrawingHistory} onRasterSnapshot={props.onRasterSnapshot} onRegisterFlush={props.onRegisterDrawingFlush} sceneId={drawingSession()!.sceneId} backgroundId={drawingSession()!.backgroundId} background={props.scene.background} region={imageProjection(region()).region} sourceRegion={props.scene.regions.find(value => value.id === region().id)} documentOnly={drawingSession()!.kind === 'document'} box={imageProjection(region()).box} scale={imageProjection(region()).scale} backgroundWidth={imageProjection(region()).width} backgroundHeight={imageProjection(region()).height} tools={drawingTools()} busy={props.busy} onPin={pinEntries().length ? () => runPin(pinEntries()[0], region()) : undefined} onCommand={command => { const session = drawingSession(); if (!session) return Promise.reject(Error('标注编辑已切换')); if (session.kind === 'document' || usesDrawingDocument(region(), command)) return props.onDrawingDocumentCommand(command); return props.onDrawingCommand(coreDrawingGrant.pluginId, coreDrawingGrant.revision, coreDrawingGrant.contributionId, command); }} onCopyTable={props.onCopyDrawingTable} onError={props.onError} onExport={(copy, closeSpace) => exportRegion(region(), copy, closeSpace)} onClose={closeDrawing} />}</Show>
-    <Show when={imageDrawingItem()}>{item => <ImageDrawingEditor sceneId={props.scene.id} item={item()} box={imageEditorBox(item())} busy={props.busy} inputLocked={props.inputLocked} onRegisterFlush={props.onRegisterDrawingFlush} onRegisterHistory={props.onRegisterDrawingHistory} onCopyTable={props.onCopyDrawingTable} onCommand={value=>props.onImageDrawingCommand?.(value)??Promise.reject(Error('图片编辑不可用'))} onClose={closeImageDrawing} onError={props.onError} onExport={(copy,closeSpace)=>exportImage(item(),copy,closeSpace)} onPin={props.onPinItem?async()=>await props.onPinItem!(item().id)!==false:undefined} />}</Show>
+    <Show when={drawingSession() && regionById(drawingSession()!.regionId)}>{region => <DrawingEditor inputLocked={props.blackboard&&props.blackboardEnabled===false} onObjectWheel={props.blackboard?wheelObject:undefined} onObjectPointerMove={hoverObject} onObjectPointerLeave={()=>setHoveredObject('')} objects={props.blackboard?interactive=><div class="blackboard-artifact-layer"><ArtifactItems board interactive={interactive}/></div>:undefined} objectsFlush={props.blackboard?flushObjects:undefined} onRegisterObjectTrash={props.blackboard?registerObjectTrash:undefined} extraTools={props.blackboard ? () => <For each={workflowEntries()}>{entry => <button data-caption={entry.contribution.title} title={entry.contribution.title} aria-label={entry.contribution.title} disabled={blocked()} onClick={() => runWorkflow(entry,region())}><Table2 size={18}/></button>}</For> : undefined} onFinishBlackboard={props.onBlackboardClose} blackboard={props.blackboard} onRegisterHistory={props.onRegisterDrawingHistory} onRasterSnapshot={props.onRasterSnapshot} onRegisterFlush={props.onRegisterDrawingFlush} sceneId={drawingSession()!.sceneId} backgroundId={drawingSession()!.backgroundId} background={props.scene.background} region={imageProjection(region()).region} sourceRegion={props.scene.regions.find(value => value.id === region().id)} documentOnly={drawingSession()!.kind === 'document'} box={imageProjection(region()).box} scale={imageProjection(region()).scale} backgroundWidth={imageProjection(region()).width} backgroundHeight={imageProjection(region()).height} tools={drawingTools()} busy={props.busy} onPin={pinEntries().length ? () => runPin(pinEntries()[0], region()) : undefined} onCommand={command => { const session = drawingSession(); if (!session) return Promise.reject(Error('标注编辑已切换')); if (session.kind === 'document' || usesDrawingDocument(region(), command)) return props.onDrawingDocumentCommand(command); return props.onDrawingCommand(coreDrawingGrant.pluginId, coreDrawingGrant.revision, coreDrawingGrant.contributionId, command); }} onCopyTable={props.onCopyDrawingTable} onError={props.onError} onExport={(copy, closeSpace, variant) => exportRegion(region(), copy, closeSpace, variant)} onClose={closeDrawing} />}</Show>
+    <Show when={imageDrawingItem()}>{item => <ImageDrawingEditor sceneId={props.scene.id} item={item()} box={imageEditorBox(item())} busy={props.busy} inputLocked={props.inputLocked} onRegisterFlush={props.onRegisterDrawingFlush} onRegisterHistory={props.onRegisterDrawingHistory} onCopyTable={props.onCopyDrawingTable} onCommand={value=>props.onImageDrawingCommand?.(value)??Promise.reject(Error('图片编辑不可用'))} onClose={closeImageDrawing} onError={props.onError} onExport={(copy,closeSpace,variant)=>exportImage(item(),copy,closeSpace,variant)} onPin={props.onPinItem?async()=>await props.onPinItem!(item().id)!==false:undefined} />}</Show>
     <Show when={!props.blackboard||!drawingSession()}><div class="artifact-layer"><ArtifactItems board={Boolean(props.blackboard)}/></div></Show>
   </main>;
 }

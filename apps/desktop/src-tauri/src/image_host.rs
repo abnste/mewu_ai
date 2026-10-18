@@ -3,7 +3,7 @@
 //! The Windows host uses typed PNG/JPEG selection; other platforms retain PNG.
 use crate::{
     assets,
-    export_variant_dialog::{self, ExportVariant, Media, Outcome as VariantOutcome},
+    export_variant_dialog::ExportVariant,
     image_export::{self, ImageDestination},
     image_save_dialog::{self, ImageSaveName, SaveDialogOutcome},
     Host,
@@ -561,6 +561,7 @@ fn accept_region(
     work.accept_publication(|| atomic_region_gate(&host, handle))
 }
 
+#[cfg(test)]
 fn has_annotations(region: &Region) -> bool {
     !region.drawings.is_empty() || region.translation.is_some()
 }
@@ -574,21 +575,39 @@ fn region_for_export(region: &Region, variant: ExportVariant) -> Region {
     output
 }
 
+/// The first-party toolbar chooses the presentation before starting export.
+/// Clipboard callers always use annotations, regardless of a supplied variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageExportVariant {
+    Annotated,
+    Original,
+}
+
+fn image_variant(clipboard: bool, variant: Option<ImageExportVariant>) -> ExportVariant {
+    if !clipboard && variant == Some(ImageExportVariant::Original) {
+        ExportVariant::Clean
+    } else {
+        ExportVariant::Annotated
+    }
+}
+
 pub async fn export_region(
     app: AppHandle,
     window: WebviewWindow,
     scene_id: String,
     region_id: String,
     clipboard: bool,
+    variant: Option<ImageExportVariant>,
 ) -> Result<bool, String> {
-    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard).await
+    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard, variant).await
 }
 enum ExportSource { Region(String), ImageItem { item_id: String, source_asset_id: String } }
 #[tauri::command]
-pub async fn export_image_item(app: AppHandle, window: WebviewWindow, scene_id: String, item_id: String, source_asset_id: String, clipboard: bool) -> Result<bool, String> {
-    export_document(app, window, scene_id, ExportSource::ImageItem { item_id, source_asset_id }, clipboard).await
+pub async fn export_image_item(app: AppHandle, window: WebviewWindow, scene_id: String, item_id: String, source_asset_id: String, clipboard: bool, variant: Option<ImageExportVariant>) -> Result<bool, String> {
+    export_document(app, window, scene_id, ExportSource::ImageItem { item_id, source_asset_id }, clipboard, variant).await
 }
-async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String, source: ExportSource, clipboard: bool) -> Result<bool, String> {
+async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String, source: ExportSource, clipboard: bool, variant: Option<ImageExportVariant>) -> Result<bool, String> {
     if window.label() != "space" {
         return Err("此窗口不能导出截图".into());
     }
@@ -647,79 +666,7 @@ async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String
                 &assets_root,
             )?];
             region_current(&app.state::<Host>(), &origin)?;
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            let variant = if clipboard {
-                ExportVariant::Annotated
-            } else {
-                let picker_app = app.clone();
-                let picker_registry = work.registry.clone();
-                let picker_id = work.id.clone();
-                let picker_origin = origin.clone();
-                match export_variant_dialog::pick_variant(
-                    handle as isize,
-                    Media::Image,
-                    has_annotations(&region),
-                    cancel.clone(),
-                    move || {
-                        region_allowed(
-                            &picker_app,
-                            &picker_registry,
-                            &picker_id,
-                            &picker_origin,
-                            handle,
-                        )
-                    },
-                )? {
-                    VariantOutcome::Selected(variant) => variant,
-                    VariantOutcome::UserCanceled | VariantOutcome::RequestCanceled => return Ok(()),
-                }
-            };
-            #[cfg(target_os = "macos")]
-            let variant = if clipboard {
-                ExportVariant::Annotated
-            } else {
-                let picker_app = app.clone();
-                let picker_registry = work.registry.clone();
-                let picker_id = work.id.clone();
-                let picker_origin = origin.clone();
-                match export_variant_dialog::pick_variant_macos(
-                    picker_window.clone(),
-                    handle,
-                    Media::Image,
-                    has_annotations(&region),
-                    cancel.clone(),
-                    move || {
-                        region_allowed(
-                            &picker_app,
-                            &picker_registry,
-                            &picker_id,
-                            &picker_origin,
-                            handle,
-                        )
-                    },
-                )? {
-                    VariantOutcome::Selected(variant) => variant,
-                    VariantOutcome::UserCanceled | VariantOutcome::RequestCanceled => return Ok(()),
-                }
-            };
-            #[cfg(target_os = "linux")]
-            let variant = if clipboard {
-                ExportVariant::Annotated
-            } else {
-                let picker_app = app.clone();
-                let picker_registry = work.registry.clone();
-                let picker_id = work.id.clone();
-                let picker_origin = origin.clone();
-                match export_variant_dialog::pick_variant_linux(
-                    picker_window.clone(), handle, Media::Image,
-                    has_annotations(&region), cancel.clone(), move || {
-                        region_allowed(&picker_app, &picker_registry, &picker_id, &picker_origin, handle)
-                    },
-                )? {
-                    VariantOutcome::Selected(variant) => variant,
-                    VariantOutcome::UserCanceled | VariantOutcome::RequestCanceled => return Ok(()),
-                }
-            };
+            let variant = image_variant(clipboard, variant);
             region_allowed(&app, &work.registry, &work.id, &origin, handle)?;
             let output_region = region_for_export(&region, variant);
             if let Some(saved) = &output_region.translation {
@@ -858,6 +805,21 @@ pub async fn drain(app: &AppHandle, timeout: Duration) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toolbar_variants_are_typed_and_clipboard_keeps_annotations() {
+        for clipboard in [false, true] {
+            assert_eq!(image_variant(clipboard, None), ExportVariant::Annotated);
+            assert_eq!(image_variant(clipboard, Some(ImageExportVariant::Annotated)), ExportVariant::Annotated);
+        }
+        assert_eq!(image_variant(false, Some(ImageExportVariant::Original)), ExportVariant::Clean);
+        assert_eq!(image_variant(true, Some(ImageExportVariant::Original)), ExportVariant::Annotated);
+        assert_eq!(serde_json::from_str::<ImageExportVariant>("\"annotated\"").unwrap(), ImageExportVariant::Annotated);
+        assert_eq!(serde_json::from_str::<ImageExportVariant>("\"original\"").unwrap(), ImageExportVariant::Original);
+        for invalid in ["\"clean\"", "\"Original\"", "{}", "[]", "true"] {
+            assert!(serde_json::from_str::<ImageExportVariant>(invalid).is_err());
+        }
+    }
     #[test]
     fn clean_export_strips_only_output_layers_and_keeps_original_pixel_source_and_fence() {
         struct Fixture {

@@ -1121,5 +1121,7 @@
   "加粗": "Bold",
   "斜体": "Italic",
   "下划线": "Underline",
-  "删除线": "Strikethrough"
+  "删除线": "Strikethrough",
+  "带标注图": "Annotated image",
+  "原图": "Original image"
 }

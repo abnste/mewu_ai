@@ -6,7 +6,7 @@ import { normalizeConnectionPath, validateConnectionProfile } from './connection
 import type { ExitPreparationCanceled, ExitPreparationRequest, ExitPreparationResult } from './exit-preparation';
 import { browserMosaicPreview, MosaicPreviewCache, type MosaicPreview } from './mosaic-preview';
 import type { HighlightPreview } from './highlight-preview';
-import type { Region } from './contracts';
+import type { ImageExportVariant, Region } from './contracts';
 import { highlightCrop, highlightSourceIdentity, highlightTarget } from './highlight-source';
 import { emptyGeometryHistory, PreviewGeometryHistory } from './region-geometry-history';
 import { IMPORT_ACCEPT, prepareImportFiles } from './asset-import';
@@ -129,15 +129,17 @@ export function documentUrl(asset: Asset): string {
   if (!runtime?.contentOrigin) throw new Error('内容服务尚未就绪');
   return `${runtime.contentOrigin}/${encodeURIComponent(asset.id)}`;
 }
-export async function exportRegion(sceneId: string, regionId: string, clipboard: boolean): Promise<boolean> {
+export async function exportRegion(sceneId: string, regionId: string, clipboard: boolean, variant?: ImageExportVariant): Promise<boolean> {
   if (!native) throw new Error('此操作需要桌面应用');
-  const result = await invoke<boolean>('export_region', { sceneId, regionId, clipboard });
+  if (variant !== undefined && variant !== 'annotated' && variant !== 'original') throw Error('图片导出版本无效');
+  const result = await invoke<boolean>('export_region', { sceneId, regionId, clipboard, variant: clipboard ? 'annotated' : variant ?? 'annotated' });
   if (typeof result !== 'boolean') throw new Error('图片导出结果无效');
   return result;
 }
-export async function exportImageItem(sceneId: string, itemId: string, sourceAssetId: string, clipboard: boolean): Promise<boolean> {
+export async function exportImageItem(sceneId: string, itemId: string, sourceAssetId: string, clipboard: boolean, variant?: ImageExportVariant): Promise<boolean> {
   if (!native) throw Error('此操作需要桌面应用');
-  const result = await invoke<boolean>('export_image_item', { sceneId, itemId, sourceAssetId, clipboard });
+  if (variant !== undefined && variant !== 'annotated' && variant !== 'original') throw Error('图片导出版本无效');
+  const result = await invoke<boolean>('export_image_item', { sceneId, itemId, sourceAssetId, clipboard, variant: clipboard ? 'annotated' : variant ?? 'annotated' });
   if (typeof result !== 'boolean') throw Error('图片导出结果无效');
   return result;
 }

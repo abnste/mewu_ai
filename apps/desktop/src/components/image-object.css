@@ -6,7 +6,7 @@
 .image-annotations-layer{position:absolute;pointer-events:none;overflow:hidden}
 .image-annotations-layer>.drawing-layer{inset:0;width:100%;height:100%;pointer-events:none}
 .image-object-tools{position:absolute;top:8px;right:8px;z-index:4;display:flex;align-items:center;gap:2px;padding:4px;border:0;border-radius:10px;background:var(--surface,#fafcff);box-shadow:0 3px 14px #15233735;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s}
-.image-object:hover .image-object-tools,.image-object:focus-within .image-object-tools,.image-object.blackboard-object-hovered .image-object-tools{opacity:1;visibility:visible;pointer-events:auto}
+.image-object:hover .image-object-tools,.image-object:focus-within .image-object-tools,.image-object.blackboard-object-hovered .image-object-tools,.image-object-tools.image-export-open{opacity:1;visibility:visible;pointer-events:auto}
 .image-object-tools .selected{color:var(--accent,#348bf1);background:var(--accent-soft,#eaf1fa)}
 
 .artifact-card.document-object{min-width:0;min-height:0;border:0;border-radius:0;background:transparent;box-shadow:none!important;overflow:visible;outline:none}
