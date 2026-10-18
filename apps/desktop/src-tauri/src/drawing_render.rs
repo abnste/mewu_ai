@@ -322,9 +322,13 @@ fn vector_overlay(
         .iter()
         .any(|drawing| matches!(drawing.kind, DrawingKind::Text | DrawingKind::Number))
     {
-        options.fontdb = text_fonts(drawings.iter().any(|drawing| {
+        let bold = drawings.iter().any(|drawing| {
             drawing.kind == DrawingKind::Text && drawing.text_style.is_some_and(|style| style.bold)
-        }))?;
+        });
+        options.fontdb = text_fonts(bold)?;
+        if bold {
+            prefer_matching_text_fallback(&mut options);
+        }
         #[cfg(not(target_os = "macos"))]
         {
             options.font_family = "Segoe UI".into();
@@ -847,6 +851,29 @@ pub(crate) fn text_fonts(bold: bool) -> Result<Arc<usvg::fontdb::Database>, Stri
             Ok(Arc::new(database))
         })
         .clone()
+}
+
+/// usvg 0.48's default accepts the first covering face when any style trait
+/// matches. With Latin-first families that can choose regular CJK before its
+/// loaded bold face. Prefer all requested traits before retaining that fallback.
+pub(crate) fn prefer_matching_text_fallback(options: &mut usvg::Options<'_>) {
+    let fallback = usvg::FontResolver::default_fallback_selector();
+    options.font_resolver.select_fallback = Box::new(move |character, excluded, database| {
+        let base = database.face(*excluded.first()?)?;
+        let (style, weight, stretch) = (base.style, base.weight, base.stretch);
+        let mut preferred_excluded = excluded.to_vec();
+        for face in database.faces() {
+            if (face.style != style || face.weight != weight || face.stretch != stretch)
+                && !preferred_excluded.contains(&face.id)
+            {
+                preferred_excluded.push(face.id);
+            }
+        }
+        // Keep the real base ID first. The existing resolver owns actual glyph
+        // coverage detection; no private parser API or font data rewrite.
+        fallback(character, &preferred_excluded, database)
+            .or_else(|| fallback(character, excluded, database))
+    });
 }
 
 pub(crate) fn text_font_identity(bold: bool) -> Result<String, String> {

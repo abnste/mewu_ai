@@ -235,10 +235,14 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
     let bold = content.text_style.is_some_and(|style| style.bold);
     if bold {
         opts.fontdb = crate::drawing_render::text_fonts(true)?;
+        crate::drawing_render::prefer_matching_text_fallback(&mut opts);
     }
     let missing = Arc::new(AtomicBool::new(false));
     let flag = missing.clone();
-    let fallback = usvg::FontResolver::default_fallback_selector();
+    let fallback = std::mem::replace(
+        &mut opts.font_resolver.select_fallback,
+        usvg::FontResolver::default_fallback_selector(),
+    );
     opts.font_resolver.select_fallback = Box::new(move |character, used, database| {
         let result = fallback(character, used, database);
         if result.is_none() {
