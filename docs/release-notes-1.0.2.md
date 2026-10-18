@@ -2,6 +2,7 @@
 
 - 减少截图唤起、连续框选和会话切换中的重复保存与完整状态拷贝。截图背景提前解码，仍在原始尺寸的图片就绪后显示。
 - 数据库日志整理移到独立后台连接，保留每次提交的持久保存、失败回滚与历史导出的一致快照。
+- 减少大量历史会话时的数据库页面重写；窗口改用轻量修订通知合并读取状态，避免重复传送整份历史。绘制保存后保留几何未变的 SVG 节点。
 - 连续绘制按顺序保存，撤销、重做与退出等待已接受的笔迹；多个选区更新时保留已有对象和工具条。
 - 截图与黑板使用三个固定颜色槽，默认红、黄、蓝。单击切换，选中后再次单击换色；已有自定义颜色保持。
 - 文字支持加粗、斜体、下划线和删除线，改善中文样式渲染。保存图片可选择「带标注图」或「原图」。
@@ -21,6 +22,7 @@ Windows 安装版、便携版，macOS ARM64 安装包和 Linux x64 AppImage 均�
 
 - Reduces repeated state writes and whole-state copies during capture, region selection and session switching. Background decoding starts earlier; presentation still waits for the original-sized image.
 - Moves WAL checkpoint maintenance to a separate connection while retaining durable commits, rollback and consistent history exports.
+- Reduces database page rewrites with large histories, coalesces full-state reads behind small revision notices, and preserves unchanged SVG path nodes after drawing saves.
 - Saves continuous drawing in order and preserves existing objects and toolbars across selection updates.
 - Screenshot and blackboard share three fixed color slots, initially red, yellow and blue. Click to select; click the selected slot again to edit. Existing custom palettes are retained.
 - Adds bold, italic, underline and strikethrough text, improves styled Chinese rendering, and separates annotated and original image export.

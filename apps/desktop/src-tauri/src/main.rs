@@ -337,6 +337,11 @@ pub(crate) struct HostSnapshot {
     snapshot: Snapshot,
     revision: u64,
 }
+// Internal invalidation only. Full Snapshot/get_snapshot contracts stay unchanged.
+#[derive(Clone, Serialize)]
+struct SnapshotNotice {
+    revision: u64,
+}
 fn emit_run_event(app: &AppHandle, value: serde_json::Value) -> tauri::Result<()> {
     app.emit_to("space", "run-event", &value)?;
     app.emit_to(frozen::LABEL, "run-event", &value)
@@ -362,9 +367,10 @@ fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
         snapshot: owned,
         revision,
     };
-    let _ = app.emit_to("space", "snapshot", &snapshot);
+    let notice = SnapshotNotice { revision };
+    let _ = app.emit_to("space", "snapshot-revision", &notice);
     if app.get_webview_window("settings").is_some() {
-        let _ = app.emit_to("settings", "snapshot", &snapshot);
+        let _ = app.emit_to("settings", "snapshot-revision", &notice);
     }
     // A completed background run updates the small widget without showing or focusing it.
     let _ = app.emit_to(
@@ -876,7 +882,12 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
     let (was_active, has_frozen, published) = {
         let mut engine = host.lock()?;
         host.exit.ensure_new_operation()?;
-        let was_active = engine.store.snapshot().active_scene_id == scene_id;
+        let was_active = engine
+            .store
+            .active_scene()
+            .map_err(|error| error.to_string())?
+            .id
+            == scene_id;
         let snapshot = engine
             .store
             .apply(SceneCommand::CloseScene { scene_id })
@@ -885,7 +896,7 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
         let has_frozen = snapshot.scenes.iter().any(|scene| {
             scene.frozen && scene.minimized && !scene.closed && frozen::has_content(scene)
         });
-        let published = publish(&app, &snapshot);
+        let published = publish_owned(&app, snapshot);
         (was_active, has_frozen, published)
     };
     if was_active {
@@ -1167,25 +1178,22 @@ async fn restore_frozen_scene(app: AppHandle, scene_id: String) -> Result<HostSn
     pixel_sampler::invalidate(&app);
     pin_host::cancel_pending(&app, "space");
     recording::ensure_idle(&app)?;
-    let scene = host
-        .lock()?
-        .store
-        .snapshot()
-        .scenes
-        .into_iter()
-        .find(|scene| scene.id == scene_id)
-        .ok_or("会话不存在")?;
-    if !scene.frozen {
-        return Err("该会话已在空间中打开".into());
-    }
-    frozen::prepare_restore(&app, scene.background.as_ref()).await?;
+    let background = {
+        let engine = host.lock()?;
+        let scene = engine.store.scene(&scene_id).map_err(|_| "会话不存在")?;
+        if !scene.frozen {
+            return Err("该会话已在空间中打开".into());
+        }
+        scene.background.clone()
+    };
+    frozen::prepare_restore(&app, background.as_ref()).await?;
     let mut engine = host.lock()?;
     host.exit.ensure_new_operation()?;
     let snapshot = engine
         .store
         .apply(SceneCommand::ActivateScene { scene_id })
         .map_err(|error| error.to_string())?;
-    let snapshot = publish(&app, &snapshot);
+    let snapshot = publish_owned(&app, snapshot);
     show(&app);
     Ok(snapshot)
 }
@@ -1855,15 +1863,20 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
 }
 
 #[tauri::command]
-fn read_artifact(host: tauri::State<'_, Host>, asset_id: String) -> Result<String, String> {
-    let asset = host.lock()?.store.asset(&asset_id).cloned().ok_or("素材不存在")?;
-    if !matches!(
-        asset.kind,
-        AssetKind::Html | AssetKind::Svg | AssetKind::Text
-    ) {
-        return Err("此素材不是文档".into());
-    }
-    assets::read_text(&asset, &host.assets)
+async fn read_artifact(app: AppHandle, asset_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = app.state::<Host>();
+        let asset = host.lock()?.store.asset(&asset_id).cloned().ok_or("素材不存在")?;
+        if !matches!(
+            asset.kind,
+            AssetKind::Html | AssetKind::Svg | AssetKind::Text
+        ) {
+            return Err("此素材不是文档".into());
+        }
+        assets::read_text(&asset, &host.assets)
+    })
+    .await
+    .map_err(|_| "文档读取中断".to_string())?
 }
 #[tauri::command]
 async fn export_snapshot(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {

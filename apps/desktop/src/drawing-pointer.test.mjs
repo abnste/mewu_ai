@@ -951,3 +951,76 @@ test('actual rich-image JSX retains one loaded SVG image across drawing revision
   for(let i=1;i<=8;i++){setRevision(i);await tick();assert.equal(descendants(root,'image')[0],node);jobs[i].resolve({...jobs[i].target,dataUrl:'synthetic-pixels'});await tick();assert.equal(descendants(root,'image')[0],node);}
   setRevision(9);await tick();jobs[9].reject(Error('native rejected current object'));await tick();assert.equal(descendants(root,'image').length,0);dispose();
 });
+
+
+test('native-cloned pen points retain exactly equal segment objects including the tail',()=>{
+  const segment=pointer.penSegments(8),points=Array.from({length:33},(_,i)=>({x:i,y:i%5}));
+  const original=segment(points),copy=segment(structuredClone(points));
+  assert.equal(original.length,5);assert.equal(copy.length,original.length);
+  for(let i=0;i<copy.length;i++)assert.equal(copy[i],original[i]);
+  assert.deepEqual(plain(copy),plain(original));
+});
+
+test('native-cloned pen edits regenerate real paths and invalidate only the changed segments',()=>{
+  const segment=pointer.penSegments(8),points=Array.from({length:33},(_,i)=>({x:i,y:i%5}));
+  const original=segment(points),copy=structuredClone(points);copy[10].y=100;
+  const changed=segment(copy);
+  for(let i=0;i<changed.length;i++)assert.equal(changed[i]===original[i],i!==1,`segment ${i}`);
+  assert.ok(changed[1].path.includes('L10,100'));
+  const reordered=structuredClone(copy);[reordered[10],reordered[17]]=[reordered[17],reordered[10]];
+  const next=segment(reordered);assert.notEqual(next[1],changed[1]);assert.notEqual(next[2],changed[2]);
+  assert.equal(next[0],changed[0]);assert.equal(next.at(-1),changed.at(-1));
+});
+
+test('native-cloned pen shortening and growth preserve only the unchanged prefix geometry',()=>{
+  const segment=pointer.penSegments(8),points=Array.from({length:33},(_,i)=>({x:i,y:i%5}));
+  const original=segment(points),short=segment(structuredClone(points.slice(0,20)));
+  assert.equal(short.length,3);assert.equal(short[0],original[0]);assert.equal(short[1],original[1]);
+  assert.notEqual(short[2],original[2]);assert.ok(short[2].path.endsWith('L19,4'));
+  const grown=segment(structuredClone(points.slice(0,25)));
+  assert.equal(grown.length,4);assert.equal(grown[0],short[0]);assert.equal(grown[1],short[1]);
+  assert.notEqual(grown[2],short[2]);assert.ok(grown.at(-1).path.endsWith('L24,4'));
+  assert.deepEqual(plain(segment([])),[]);assert.deepEqual(plain(segment([{x:1,y:2}])),[]);
+});
+
+test('mutating the old pen array before a native clone cannot reuse a stale rendered path',()=>{
+  const segment=pointer.penSegments(8),points=Array.from({length:33},(_,i)=>({x:i,y:i%5}));
+  const original=segment(points),oldPath=original[1].path;
+  points[10].y=777;
+  const result=segment(structuredClone(points));
+  assert.notEqual(result[1],original[1]);assert.equal(original[1].path,oldPath);
+  assert.ok(result[1].path.includes('L10,777'));
+  for(const index of [0,2,3,4])assert.equal(result[index],original[index]);
+});
+
+test('same-array append after native adoption reads only the bounded tail coordinates',()=>{
+  let protectPrefix=false,reads=0;
+  const point=i=>({get x(){if(protectPrefix&&i<28)throw Error('completed prefix read');reads++;return i;},get y(){if(protectPrefix&&i<28)throw Error('completed prefix read');reads++;return i%5;}});
+  const segment=pointer.penSegments(8),points=Array.from({length:33},(_,i)=>point(i));
+  const original=segment(points);protectPrefix=true;reads=0;
+  points.push(point(33));const appended=segment(points);
+  for(let i=0;i<original.length-1;i++)assert.equal(appended[i],original[i]);
+  assert.notEqual(appended.at(-1),original.at(-1));assert.ok(appended.at(-1).path.endsWith('L33,3'));
+  assert.ok(reads<=16,`tail coordinate reads ${reads}`);
+});
+
+test('actual DrawingShape JSX preserves all native-cloned SVG path nodes and replaces changed geometry precisely',()=>{
+  const points=Array.from({length:401},(_,i)=>({x:i,y:i%5}));
+  const [drawing,setDrawing]=solid.createSignal({id:'native-pen',kind:'pen',color:'#ee4848',strokeWidth:4,points});
+  const root=renderer.createElement('root'),dispose=renderer.render(()=>renderer.createComponent(shapeJsx.DrawingShape,{get drawing(){return drawing();}}),root);
+  try{
+    const original=descendants(root,'path');assert.equal(original.length,4);
+    setDrawing(structuredClone(drawing()));const copy=descendants(root,'path');
+    for(let i=0;i<original.length;i++)assert.equal(copy[i],original[i]);
+    const changed=structuredClone(drawing());changed.points[150].y=777;setDrawing(changed);
+    const edited=descendants(root,'path');
+    for(let i=0;i<original.length;i++)assert.equal(edited[i]===original[i],i!==1,`rendered segment ${i}`);
+    assert.ok(edited[1].props.d.includes('L150,777'));
+    const short=structuredClone(drawing());short.points=short.points.slice(0,300);setDrawing(short);
+    const shortened=descendants(root,'path');assert.equal(shortened.length,3);
+    assert.equal(shortened[0],edited[0]);assert.equal(shortened[1],edited[1]);assert.notEqual(shortened[2],edited[2]);
+    assert.ok(shortened[2].props.d.endsWith('L299,4'));
+    setDrawing({...drawing(),color:'#0000ff'});assert.equal(descendants(root,'path')[0],shortened[0]);
+    assert.equal(descendants(root,'g').find(node=>node.props['data-drawing-id']==='native-pen').props.stroke,'#0000ff');
+  }finally{dispose();}
+});

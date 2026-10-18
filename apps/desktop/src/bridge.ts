@@ -98,6 +98,94 @@ function normalizeSnapshot(snapshot: Snapshot): Snapshot {
 async function invokeSnapshot(command: string, args?: Record<string, unknown>): Promise<Snapshot> {
   return normalizeSnapshot(await invoke<Snapshot>(command, args));
 }
+
+// A full query uses Tauri's existing optimized invoke response. Keep only its
+// live promise; explicit reads after completion must still recover equal-revision
+// state. No cache of scene history, no polling and no render/ACK shortcut.
+let nativeSnapshotRequest: { epoch: object; promise: Promise<Snapshot> } | undefined;
+let nativeSnapshotNoticeEpoch: object = {};
+let nativeSnapshotKnownRevision = 0;
+let snapshotMeasurementConsumers = 0;
+function queryNativeSnapshot(): { epoch: object; promise: Promise<Snapshot> } {
+  if (nativeSnapshotRequest) return nativeSnapshotRequest;
+  const epoch = nativeSnapshotNoticeEpoch;
+  const request = Promise.resolve().then(() => invoke<Snapshot>('get_snapshot')).then(raw => {
+    let measurement: object | undefined;
+    try { if (snapshotMeasurementConsumers > 0) measurement = capturePerformance.captureSnapshotReceived?.(raw); } catch { /* Advisory only. */ }
+    const next = normalizeSnapshot(raw);
+    try { capturePerformance.captureSnapshotNormalized?.(measurement); } catch { /* Advisory only. */ }
+    return next;
+  });
+  const flight = { epoch, promise: request.finally(() => { if (nativeSnapshotRequest === flight) nativeSnapshotRequest = undefined; }) };
+  nativeSnapshotRequest = flight;
+  return flight;
+}
+async function readNativeSnapshot(): Promise<Snapshot> {
+  const requiredEpoch = nativeSnapshotNoticeEpoch;
+  const flight = queryNativeSnapshot();
+  const next = await flight.promise;
+  // A call made after a notice must not inherit a query begun before that
+  // notice. Join one fresh query after it settles; no revision-based cache or
+  // rejection of explicit equal-revision restoration is introduced.
+  return flight.epoch === requiredEpoch ? next : queryNativeSnapshot().promise;
+}
+
+/** Each targeted subscription stores only its newest required revision. The
+ * authoritative full query and App's existing accept/domain witness own state. */
+class SnapshotNoticePump {
+  private wanted = 0;
+  private delivered = 0;
+  private reading = false;
+  private stopped = false;
+  private retry = 0;
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  constructor(private readonly read: () => Promise<Snapshot>,
+    private readonly accept: (value: Snapshot) => void, private readonly error: (message: string) => void) {}
+  notice(value: unknown): void {
+    if (this.stopped || !value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).length !== 1 || !('revision' in value)
+      || !Number.isSafeInteger(value.revision) || (value.revision as number) < 1) return;
+    const revision = value.revision as number;
+    if (revision <= this.delivered) return; // Only this subscription's already delivered invalidation.
+    if (revision > nativeSnapshotKnownRevision) {
+      nativeSnapshotKnownRevision = revision; nativeSnapshotNoticeEpoch = {};
+    }
+    if (revision > this.wanted) { this.wanted = revision; this.retry = 0; }
+    if (!this.reading && this.timer === undefined) void this.drain();
+  }
+  dispose(): void {
+    if (this.stopped) return;
+    this.stopped = true; clearTimeout(this.timer); this.timer = undefined;
+  }
+  private async drain(): Promise<void> {
+    if (this.stopped || this.reading) return;
+    this.reading = true;
+    let stale = 0;
+    try {
+      while (!this.stopped && this.wanted > this.delivered) {
+        const next = await this.read();
+        if (this.stopped) return;
+        if (!Number.isSafeInteger(next.revision) || next.revision! < 0) throw Error('空间状态回执无效');
+        // Keep making progress while writers publish faster than reads.
+        // App's existing fence and domain witness decide whether this complete
+        // authoritative state satisfies a command; wanted remains queued.
+        if (next.revision! > this.delivered) {
+          this.accept(next);
+          this.delivered = next.revision!;
+          stale = 0; this.retry = 0;
+        } else if (++stale > 1) throw Error('未收到空间状态，请重试');
+      }
+    } catch (error) {
+      if (this.stopped) return;
+      try { this.error(error instanceof Error ? error.message : String(error)); } catch { /* A UI error handler cannot leak this task. */ }
+      // One bounded recovery attempt. A later notice or ordinary getSnapshot can
+      // always recover; repeated failure never creates an unbounded retry loop.
+      if (this.retry++ < 1) this.timer = setTimeout(() => {
+        this.timer = undefined; if (!this.stopped) void this.drain();
+      }, 50);
+    } finally { this.reading = false; }
+  }
+}
 export async function continueRunFromJournal(input: import('./journal-contracts').ContinueFromRecord): Promise<Snapshot> {
   if (!native) throw new Error('请在桌面版继续回答');
   return invokeSnapshot('continue_run_from_journal', { ...input });
@@ -220,7 +308,7 @@ export async function subscribeRecording(onStatus: (status: RecordingStatus | nu
 export async function getSnapshot(): Promise<Snapshot> {
   if (!native) return clone();
   await runtimeInfo();
-  return invokeSnapshot('get_snapshot');
+  return readNativeSnapshot();
 }
 
 export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
@@ -702,13 +790,19 @@ export async function subscribe(onSnapshot: (snapshot: Snapshot) => void, onRun:
   await runtimeInfo();
   // Tauri's default Any target also receives events sent to other windows.
   // Run fragments are emitted separately to space and the minimized-scene widget.
-  const stopSnapshot = await listen<Snapshot>('snapshot', event => {
-    let measurement: object | undefined;
-    try { if (surface === 'space') measurement = capturePerformance.captureSnapshotReceived?.(event.payload); } catch { /* Advisory only. */ }
-    const next = normalizeSnapshot(event.payload);
-    try { capturePerformance.captureSnapshotNormalized?.(measurement); } catch { /* Advisory only. */ }
-    onSnapshot(next);
-  }, { target: surface });
+  const publication = new SnapshotNoticePump(getSnapshot, onSnapshot, onError);
+  let snapshotStopped = false;
+  if (surface === 'space') snapshotMeasurementConsumers++;
+  let unlistenSnapshot: (() => void) | undefined;
+  const stopSnapshot = () => {
+    if (snapshotStopped) return;
+    snapshotStopped = true; publication.dispose();
+    if (surface === 'space') snapshotMeasurementConsumers--;
+    unlistenSnapshot?.();
+  };
+  try {
+    unlistenSnapshot = await listen<unknown>('snapshot-revision', event => publication.notice(event.payload), { target: surface });
+  } catch (error) { stopSnapshot(); throw error; }
   try {
     const stopRun = await listen<RunEvent>('run-event', event => onRun(event.payload), { target: surface });
     try {

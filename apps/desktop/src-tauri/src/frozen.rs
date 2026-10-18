@@ -375,8 +375,7 @@ pub async fn layout(app: &AppHandle, expanded: bool, reveal: bool) -> Result<(),
         .state::<crate::Host>()
         .lock()?
         .store
-        .snapshot()
-        .scenes
+        .scenes()
         .iter()
         .any(is_minimized)
     {

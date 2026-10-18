@@ -47,9 +47,9 @@ export async function reinstallOfficialPlugin(id: string, expectedRevision: numb
 export async function preparePluginUpdate(id: string, expectedRevision: number): Promise<PluginProposal> {
   desktop(); return invoke('prepare_plugin_update', { id, expectedRevision });
 }
-export async function applyPluginDrawing(pluginId: string, pluginRevision: number, contributionId: string, command: DrawingCommand): Promise<Snapshot> {
+export async function applyPluginDrawing(pluginId: string, pluginRevision: number, contributionId: string, command: DrawingCommand): Promise<number | Snapshot> {
   if(!pluginNative&&pluginId==='mewu.core.drawing'&&pluginRevision===1&&contributionId==='drawing-tools')return previewDrawingCommand(command);
-  desktop(); return invoke('apply_plugin_drawing', { pluginId, pluginRevision, contributionId, command });
+  desktop(); return invoke<number>('apply_plugin_drawing', { pluginId, pluginRevision, contributionId, command });
 }
 export async function runPluginWorkflow(pluginId: string, pluginRevision: number, contributionId: string, sceneId: string, regionId: string): Promise<Snapshot> {
   desktop(); return invoke('run_plugin_workflow', { pluginId, pluginRevision, contributionId, sceneId, regionId });

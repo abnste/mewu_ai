@@ -855,25 +855,59 @@ pub(crate) fn text_fonts(bold: bool) -> Result<Arc<usvg::fontdb::Database>, Stri
 
 /// usvg 0.48's default accepts the first covering face when any style trait
 /// matches. With Latin-first families that can choose regular CJK before its
-/// loaded bold face. Prefer all requested traits before retaining that fallback.
+/// loaded bold face. Match style/stretch and search bold weights in CSS order
+/// before retaining that fallback. A system semibold600 is valid when700 is
+/// absent; regular400 must not win merely because it was loaded first.
 pub(crate) fn prefer_matching_text_fallback(options: &mut usvg::Options<'_>) {
     let fallback = usvg::FontResolver::default_fallback_selector();
     options.font_resolver.select_fallback = Box::new(move |character, excluded, database| {
         let base = database.face(*excluded.first()?)?;
         let (style, weight, stretch) = (base.style, base.weight, base.stretch);
-        let mut preferred_excluded = excluded.to_vec();
-        for face in database.faces() {
-            if (face.style != style || face.weight != weight || face.stretch != stretch)
-                && !preferred_excluded.contains(&face.id)
-            {
-                preferred_excluded.push(face.id);
+        let weights = bold_fallback_weights(
+            weight.0,
+            database
+                .faces()
+                .filter(|face| face.style == style && face.stretch == stretch)
+                .map(|face| face.weight.0),
+        );
+        for candidate in weights {
+            let mut preferred_excluded = excluded.to_vec();
+            for face in database.faces() {
+                if (face.style != style || face.weight.0 != candidate || face.stretch != stretch)
+                    && !preferred_excluded.contains(&face.id)
+                {
+                    preferred_excluded.push(face.id);
+                }
+            }
+            // Keep the actual base ID first. usvg still verifies the real
+            // character coverage of each candidate; no private parser/rewrite.
+            if let Some(id) = fallback(character, &preferred_excluded, database) {
+                return Some(id);
             }
         }
-        // Keep the real base ID first. The existing resolver owns actual glyph
-        // coverage detection; no private parser API or font data rewrite.
-        fallback(character, &preferred_excluded, database)
-            .or_else(|| fallback(character, excluded, database))
+        fallback(character, excluded, database)
     });
+}
+
+fn bold_fallback_weights(requested: u16, available: impl Iterator<Item = u16>) -> Vec<u16> {
+    let mut weights = vec![requested];
+    if requested > 500 {
+        weights.extend(available);
+        // CSS Fonts3 weight>500: exact or heavier ascending, then lighter
+        // descending. This matches fontdb's own CSS family query policy.
+        weights.sort_unstable_by_key(|weight| {
+            (
+                *weight < requested,
+                if *weight >= requested {
+                    *weight
+                } else {
+                    u16::MAX - *weight
+                },
+            )
+        });
+        weights.dedup();
+    }
+    weights
 }
 
 pub(crate) fn text_font_identity(bold: bool) -> Result<String, String> {
@@ -1171,6 +1205,74 @@ mod tests {
         assert!(styled.contains("translate(0 110) skewX(-12) translate(0 -110)"));
         assert!(!styled.contains("<tspan"));
         assert!(styled.contains("中文 &lt;&amp;&gt;"));
+    }
+
+    #[test]
+    fn bold_fallback_uses_css_heavier_then_lighter_weight_order() {
+        assert_eq!(
+            bold_fallback_weights(700, [400, 600, 700, 800, 600, 900].into_iter()),
+            vec![700, 800, 900, 600, 400]
+        );
+        assert_eq!(
+            bold_fallback_weights(700, [300, 600, 400].into_iter()),
+            vec![700, 600, 400, 300]
+        );
+        assert_eq!(
+            bold_fallback_weights(600, [400, 700, 900].into_iter()),
+            vec![600, 700, 900, 400]
+        );
+        // Ordinary spans in mixed documents keep the original exact+fallback.
+        assert_eq!(
+            bold_fallback_weights(400, [300, 600, 700].into_iter()),
+            vec![400]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_bold_cjk_uses_real_coverage_and_keeps_the_font_budget() {
+        use usvg::fontdb::{Family, Query, Weight};
+        let regular = fonts().unwrap();
+        let mut database = text_fonts(true).unwrap();
+        let latin = database
+            .query(&Query {
+                families: &[Family::Name("Helvetica"), Family::Name("Arial")],
+                weight: Weight::BOLD,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(database.face(latin).unwrap().weight.0 >= 600);
+        let mut options = usvg::Options::default();
+        prefer_matching_text_fallback(&mut options);
+        for character in "中文测试".chars() {
+            let selected =
+                (options.font_resolver.select_fallback)(character, &[latin], &mut database)
+                    .expect("a loaded real CJK semibold/bold face must cover the character");
+            assert!(
+                database.face(selected).unwrap().weight.0 >= 600,
+                "ordinary CJK coverage cannot silently replace the requested bold face"
+            );
+        }
+        let mut sources = std::collections::HashSet::new();
+        let mut total = 0usize;
+        for face in database.faces() {
+            database
+                .with_face_data(face.id, |bytes, _| {
+                    if sources.insert((bytes.as_ptr() as usize, bytes.len())) {
+                        total += bytes.len();
+                    }
+                })
+                .unwrap();
+        }
+        assert!(
+            total <= MAX_FONT_BYTES,
+            "bold must retain the existing48MiB budget"
+        );
+        let shared = regular.faces().next().unwrap().id;
+        assert_eq!(
+            regular.with_face_data(shared, |bytes, _| bytes.as_ptr() as usize),
+            database.with_face_data(shared, |bytes, _| bytes.as_ptr() as usize)
+        );
     }
 
     #[test]

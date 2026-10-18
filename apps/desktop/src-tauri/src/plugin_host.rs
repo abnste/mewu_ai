@@ -487,7 +487,7 @@ pub async fn apply_plugin_drawing(
     plugin_revision: u64,
     contribution_id: String,
     command: SceneCommand,
-) -> Result<HostSnapshot, String> {
+) -> Result<u64, String> {
     // Drawing validation, durable storage and snapshot serialization must not
     // block the native window thread or an async runtime worker.
     tauri::async_runtime::spawn_blocking(move || {
@@ -503,7 +503,7 @@ fn apply_plugin_drawing_blocking(
     plugin_revision: u64,
     contribution_id: String,
     command: SceneCommand,
-) -> Result<HostSnapshot, String> {
+) -> Result<u64, String> {
     let host = app.state::<Host>();
     crate::recording::ensure_idle(&app)?;
     let runtime = lock(&host)?;
@@ -544,7 +544,7 @@ fn apply_plugin_drawing_blocking(
     let snapshot = engine.store.apply(command).map_err(|e| e.to_string())?;
     engine.ocr_jobs.reconcile(&snapshot);
     engine.translation_jobs.reconcile(&snapshot);
-    Ok(crate::publish_owned(&app, snapshot))
+    Ok(crate::publish_owned(&app, snapshot).revision)
 }
 
 #[tauri::command]

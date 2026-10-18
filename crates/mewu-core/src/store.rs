@@ -12,6 +12,36 @@ use uuid::Uuid;
 const APPLICATION_ID: i64 = 0x4d455755;
 pub(crate) const DB_SCHEMA_VERSION: u32 = 10;
 
+const SNAPSHOT_PADDING_MIN_BYTES: usize = 1024 * 1024;
+const SNAPSHOT_PADDING_BUCKET_BYTES: usize = 64 * 1024;
+
+fn snapshot_padding_bytes(length: usize) -> usize {
+    if length < SNAPSHOT_PADDING_MIN_BYTES {
+        return 0;
+    }
+    let padding = (SNAPSHOT_PADDING_BUCKET_BYTES - length % SNAPSHOT_PADDING_BUCKET_BYTES)
+        % SNAPSHOT_PADDING_BUCKET_BYTES;
+    match length.checked_add(padding) {
+        Some(total) if total <= isize::MAX as usize => padding,
+        _ => 0,
+    }
+}
+
+/// Keep large JSON TEXT records equal-sized within a small bucket. SQLite can
+/// then retain unchanged overflow pages instead of rebuilding the whole cell
+/// for every byte of growth. Only RFC8259 trailing ASCII whitespace is added;
+/// the typed state, SQL UPDATE/CAS, transaction and FULL commit stay unchanged.
+/// First adoption, bucket crossings and edits shifting an earlier suffix can
+/// still rewrite the large record. This is not incremental BLOB I/O.
+fn pad_snapshot_payload(payload: &mut String) {
+    let padding = snapshot_padding_bytes(payload.len());
+    // Optional formatting must not introduce a new business failure if its
+    // bounded extra allocation cannot be reserved. The original JSON is valid.
+    if padding != 0 && payload.try_reserve_exact(padding).is_ok() {
+        payload.extend(std::iter::repeat(' ').take(padding));
+    }
+}
+
 #[path = "agent_cleanup_store.rs"]
 mod agent_cleanup_store;
 #[path = "journal_store.rs"]
@@ -2663,7 +2693,8 @@ impl Store {
         crate::video_annotations::validate_ledger(&transaction, &next)?;
         next.memory_stats = crate::memory::stats(&transaction, &next)?;
         observation.mark(PersistencePhase::ValidateLedgers);
-        let payload = serde_json::to_string(&next)?;
+        let mut payload = serde_json::to_string(&next)?;
+        pad_snapshot_payload(&mut payload);
         observation.mark(PersistencePhase::Serialize);
         let changed = transaction.execute(
             "UPDATE app_state SET payload = ?1, revision = revision + 1 WHERE id = 1 AND revision = ?2 AND schema_version = 1",
@@ -2697,6 +2728,10 @@ impl Store {
 #[cfg(test)]
 #[path = "checkpoint_store_tests.rs"]
 mod checkpoint_store_tests;
+
+#[cfg(test)]
+#[path = "store_payload_tests.rs"]
+mod payload_tests;
 
 fn initial_snapshot() -> Snapshot {
     let agent = AgentProfile {

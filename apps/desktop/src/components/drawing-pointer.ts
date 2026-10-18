@@ -123,14 +123,20 @@ export function penSegments(segmentLength = 128) {
   let tail: PenSegment | undefined, tailLength = 0, endpoint: DrawingPoint | undefined;
   return (points: DrawingPoint[]): PenSegment[] => {
     const start = completed.length * (segmentLength - 1);
+    let reusable: PenSegment[] | undefined;
     if (source !== points || points.length < start + tailLength || (endpoint && points[start + tailLength - 1] !== endpoint)) {
+      // A native JSON reply owns a new points array. Rebuild its real paths,
+      // then retain objects only when their immutable SVG d is exactly equal.
+      // Do not compare old points: callers may have mutated that array already.
+      reusable = tail ? [...completed, tail] : completed;
       source = points; completed = []; tail = undefined; tailLength = 0; endpoint = undefined;
     }
     let offset = completed.length * (segmentLength - 1);
     const path = (from: number, until: number) => {
       let value = `M${points[from].x},${points[from].y}`;
       for (let i = from + 1; i < until; i++) value += ` L${points[i].x},${points[i].y}`;
-      return { path: value };
+      const previous = reusable?.[completed.length];
+      return previous?.path === value ? previous : { path: value };
     };
     while (points.length - offset > segmentLength) {
       completed.push(tail && tailLength === segmentLength ? tail : path(offset, offset + segmentLength));

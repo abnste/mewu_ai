@@ -14,8 +14,10 @@ const ts = source => stripTypeScriptTypes(source, { mode: 'transform' });
 const plain = value => JSON.parse(JSON.stringify(value));
 function bus(failEvent) {
   const subscriptions = new Set();
+  let snapshotRevision = 0;
   return {
     subscriptions,
+    get snapshotRevision() { return snapshotRevision; },
     async listen(name, callback, options) {
       if (name === failEvent) throw Error('listen failed');
       const entry = { name, callback, target: options?.target };
@@ -24,6 +26,7 @@ function bus(failEvent) {
     },
     // Tauri Any listeners match each targeted emit, including another window.
     emit(target, name, payload) {
+      if (name === 'snapshot-revision') snapshotRevision = Math.max(snapshotRevision, payload.revision);
       for (const entry of subscriptions) {
         if (entry.name === name && (entry.target === undefined || entry.target === target)) entry.callback({ payload });
       }
@@ -35,6 +38,7 @@ async function bridgeFixture(events, native = true) {
   const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); }, { context });
   const core = synthetic({ isTauri: () => native, invoke: async command => {
     if (command === 'get_recording_status') return null;
+    if (command === 'get_snapshot') return snapshot(events.snapshotRevision);
     assert.equal(command, 'runtime_info');
     return { platform: 'windows', hotkey: 'Alt+A', captureBackend: 'test', contentOrigin: 'http://127.0.0.1:49000' };
   } });
@@ -64,8 +68,9 @@ test('actual bridge routes each streamed fragment once while preserving intentio
     events.emit('frozen-widget', 'run-event', payload);
   }
   for (const target of ['space', 'frozen-widget']) events.emit(target, 'run-event', { sceneId: 'scene', runId: 'run', reasoning: '思考' });
-  events.emit('space', 'snapshot', snapshot(1)); events.emit('settings', 'snapshot', snapshot(1));
+  events.emit('space', 'snapshot-revision', { revision: 1 }); events.emit('settings', 'snapshot-revision', { revision: 1 });
   events.emit('space', 'host-error', '真实错误'); events.emit('settings', 'host-error', '其他窗口');
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(text.join(''), '牛出现在第 4、5 个采样帧哈哈哈哈');
   assert.equal(reasoning.join(''), '思考');
   assert.equal(snapshots.length, 1); assert.deepEqual(errors, ['真实错误']);
@@ -122,9 +127,10 @@ test('scroll controls, plugin settings and audio settings ignore the other windo
 test('settings receives its own snapshot without consuming space streams', async () => {
   const events = bus(), bridge = await bridgeFixture(events), snapshots = [], runs = [], errors = [];
   const stop = await bridge.subscribe(value => snapshots.push(value), value => runs.push(value), value => errors.push(value), 'settings');
-  events.emit('space', 'snapshot', snapshot(1)); events.emit('settings', 'snapshot', snapshot(2));
+  events.emit('space', 'snapshot-revision', { revision: 1 }); events.emit('settings', 'snapshot-revision', { revision: 2 });
   events.emit('space', 'run-event', { text: 'reply' }); events.emit('frozen-widget', 'run-event', { text: 'reply' });
   events.emit('space', 'host-error', 'capture error');
+  await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(snapshots.map(value => value.revision), [2]); assert.equal(runs.length, 0); assert.equal(errors.length, 0);
   const source = await raw('SettingsSurface.tsx');
   const ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });

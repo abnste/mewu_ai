@@ -519,7 +519,18 @@ export default function App() {
   function drawingCommand(pluginId: string, pluginRevision: number, contributionId: string, value: DrawingCommand): Promise<void> {
     if (exitPreparing() && (!drawingFlushDepth || !['add_drawing', 'update_drawing', 'undo_drawing', 'redo_drawing'].includes(value.type))) return Promise.reject(new Error('正在退出'));
     if (scroll()) return Promise.reject(new Error('长截图进行中'));
-    const next = commands.then(async () => { accept(await plugins.applyPluginDrawing(pluginId, pluginRevision, contributionId, value)); });
+    const next = commands.then(async () => {
+      const receipt = await plugins.applyPluginDrawing(pluginId, pluginRevision, contributionId, value);
+      if (typeof receipt === 'number') await publishedRevision.wait(receipt, () => {
+        const current = snapshot()?.scenes.find(scene => scene.id === value.sceneId);
+        const region = current?.regions.find(region => region.id === value.regionId);
+        // The host may publish a legal no-op with the same drawing revision.
+        // Exact drawing/history acknowledgment remains owned by the editor lane.
+        return current?.background?.id === value.backgroundId && Boolean(region)
+          && (region!.drawingRevision ?? 0) >= value.expectedRevision;
+      });
+      else accept(receipt);
+    });
     commands = next.catch(error => { if (exitPreparing()) exitFailure ??= error; });
     return next;
   }

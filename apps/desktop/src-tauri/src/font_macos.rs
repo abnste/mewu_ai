@@ -135,8 +135,16 @@ pub fn font_paths() -> Result<Vec<PathBuf>, String> {
 
 /// Resolved only for bold drawings; do not grow the ordinary screenshot cache.
 pub fn bold_font_paths() -> Vec<PathBuf> {
-    ["Helvetica-Bold", "PingFangSC-Semibold", "Arial-BoldMT"]
-        .iter()
-        .filter_map(|name| installed_font_path(name))
-        .collect()
+    // Recent macOS ships PingFang as a >32MiB variable collection. Keep the
+    // caller's budgets: try the installed static CJK semibold collection first
+    // instead of growing the ordinary font cache or activating/downloading it.
+    [
+        "HiraginoSansGB-W6",
+        "Helvetica-Bold",
+        "PingFangSC-Semibold",
+        "Arial-BoldMT",
+    ]
+    .iter()
+    .filter_map(|name| installed_font_path(name))
+    .collect()
 }
