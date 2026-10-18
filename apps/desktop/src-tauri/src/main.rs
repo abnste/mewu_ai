@@ -1527,9 +1527,10 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     {
         let engine = host.lock()?;
         engine.ocr_jobs.cancel_owner("space");
+        let scene_id = &engine.store.active_scene().map_err(|error| error.to_string())?.id;
         engine
             .translation_jobs
-            .cancel_scene("space", &engine.store.snapshot().active_scene_id);
+            .cancel_scene("space", scene_id);
     }
     if let Err(error) = hide_for_capture(
         &window,
@@ -1680,27 +1681,11 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             for witness in &adoption_witnesses {
                 window_witness_linux::current(witness)?;
             }
-            let current = engine.store.snapshot();
-            let active = current
-                .scenes
-                .iter()
-                .find(|s| s.id == current.active_scene_id)
-                .ok_or("场景不存在")?;
-            if active.background.is_some()
-                || !active.messages.is_empty()
-                || !active.items.is_empty()
-                || !active.draft.is_empty()
-            {
-                engine
-                    .store
-                    .apply(SceneCommand::NewScene)
-                    .map_err(|e| e.to_string())?;
-            }
-            let id = engine.store.snapshot().active_scene_id;
             let snapshot = engine
                 .store
-                .set_background(&id, asset.clone())
+                .adopt_capture_background(asset.clone())
                 .map_err(|e| e.to_string())?;
+            let id = snapshot.active_scene_id.clone();
             #[cfg(target_os = "linux")]
             pending.retain();
             if let Some(map) = window_map {
@@ -1721,7 +1706,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             width: captured.width,
             height: captured.height,
         })?;
-        let published = publish(&app, &snapshot);
+        let published = publish_owned(&app, snapshot);
         #[cfg(windows)]
         presentation
             .wait(|| {

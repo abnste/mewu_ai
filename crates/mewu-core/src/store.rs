@@ -132,6 +132,40 @@ mod capture_adoption_tests {
         assert!(next.scenes.iter().all(|scene|scene.background.is_some()));
         assert!(next.scenes.iter().all(|scene|scene.background.as_ref().unwrap().capture_coordinates.is_none()));
     }
+    #[test]
+    fn screenshot_adoption_preserves_background_run_and_its_original_input() {
+        let mut store = Store::open_in_memory().unwrap();
+        let original = image();
+        let scene_id = store.adopt_capture_background(original.clone()).unwrap().active_scene_id;
+        let region = Region { id: Uuid::new_v4().to_string(), x: 10., y: 12., width: 80., height: 60., ..Region::default() };
+        store.apply(SceneCommand::AddRegion { scene_id: scene_id.clone(), region: region.clone() }).unwrap();
+        store.apply(SceneCommand::SetRefs { scene_id: scene_id.clone(), refs: vec![Reference { kind: ReferenceKind::Region, id: region.id.clone() }] }).unwrap();
+        store.apply(SceneCommand::SetDraft { scene_id: scene_id.clone(), draft: "继续分析原截图".into() }).unwrap();
+        let context = store.begin_run(&scene_id).unwrap();
+        let mut prior = store.scene(&scene_id).unwrap().clone();
+        prior.frozen = true;
+        let revision = store.revision;
+        let incoming = image();
+        let adopted = store.adopt_capture_background(incoming.clone()).unwrap();
+        assert_eq!(store.revision, revision + 1);
+        assert_eq!(adopted.scenes.len(), 2);
+        assert_ne!(adopted.active_scene_id, scene_id);
+        assert_eq!(store.scene(&scene_id).unwrap(), &prior);
+        assert_eq!(store.active_scene().unwrap().background.as_ref(), Some(&incoming));
+        assert!(store.run_is_active(&scene_id, &context.run_id));
+        assert_eq!(context.background.as_ref(), Some(&original));
+        assert_eq!(context.regions, vec![region]);
+        assert_eq!(context.refs, prior.refs);
+        assert_eq!(context.messages, prior.messages);
+        let active = adopted.active_scene_id;
+        store.finish_run(&scene_id, &context.run_id, "原截图分析完成").unwrap();
+        assert_eq!(store.active_scene().unwrap().id, active);
+        let finished = store.scene(&scene_id).unwrap();
+        assert!(finished.frozen);
+        assert_eq!(finished.run.as_ref().unwrap().status, RunStatus::Completed);
+        assert_eq!(finished.messages.last().unwrap().text, "原截图分析完成");
+        assert_eq!(store.active_scene().unwrap().background.as_ref(), Some(&incoming));
+    }
 }
 
 /// An independent read snapshot for explicit exports. Opening it never migrates
@@ -1028,8 +1062,9 @@ impl Store {
     pub fn adopt_capture_background(&mut self, asset: Asset) -> Result<Snapshot> {
         validate_background(&asset)?;
         let active = scene(&self.state, &self.state.active_scene_id)?;
-        if is_running(active) { return Err(CoreError::RunInProgress); }
-        let needs_scene = active.closed || active.frozen || active.background.is_some()
+        // Match NewScene: a background run keeps its original scene and input.
+        // Capturing starts a separate scene rather than retargeting that run.
+        let needs_scene = is_running(active) || active.closed || active.frozen || active.background.is_some()
             || !active.messages.is_empty() || !active.items.is_empty() || !active.draft.is_empty();
         let mut next = self.state.clone();
         if needs_scene { create_scene(&mut next)?; }

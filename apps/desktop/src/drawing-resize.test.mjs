@@ -27,7 +27,7 @@ const actual = ['cacheKey', 'gestureIdentity', 'point', 'target', 'handleSize', 
 const module = new SourceTextModule(transform(`
 import { drawingResizeHandles, resizedDrawingPoints, drawingDraftKey, settleDrawingEdit, richSourceIdentity, imagePort } from 'dependencies';
 export function fixture(props, svg, window) { props.port=imagePort(props);
-  let strokeQueue; const strokeVersion=()=>0;
+  let strokeQueue, historyLane; const strokeVersion=()=>0;
   let cancelGesture, refreshConstraint, disposed = false, serial = 0, flight, pendingValue = false, draft, finishing = false;
   let selectedId = props.region.drawings[0].id, activeTool = 'select', editValue;
   const errors = [], tool = () => activeTool, selected = () => selectedId, edit = () => editValue;
@@ -182,7 +182,7 @@ test('real Solid source fence cancels on revision/source change but survives unr
   const effect = body.find(node => node.type === 'ExpressionStatement' && node.expression.type === 'CallExpression' && node.expression.callee.name === 'createEffect' && node.expression.arguments[0]?.type === 'CallExpression' && node.expression.arguments[0].arguments[0]?.name === 'gestureSource');
   assert.ok(effect);
   const product = new SourceTextModule(transform(`import { drawingDraftKey, richSourceIdentity } from 'dependencies';
-    export function fence(props, createMemo, createEffect, on, cancel) { let cancelGesture = cancel, eraseSource, strokeQueue; const strokeVersion=()=>0;
+    export function fence(props, createMemo, createEffect, on, cancel) { let cancelGesture = cancel, eraseSource, strokeQueue, historyLane; const strokeVersion=()=>0;
       ${declaration('cacheKey')} ${declaration('gestureIdentity')} ${declaration('gestureSource')} ${code.slice(effect.start, effect.end)}
     }`));
   await product.link(() => synthetic({ drawingDraftKey: properties.drawingDraftKey, richSourceIdentity: preview.richSourceIdentity })); await product.evaluate();

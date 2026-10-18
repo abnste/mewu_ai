@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
 import { nativeSelectOwnsEscape } from '../native-select-escape';
-import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from 'solid-js';
+import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from 'solid-js';
 import { Check, ChevronDown, Circle, Copy, Languages, LoaderCircle, Pencil, Pin, Plus, Table2, TextSelect, Trash2, X } from 'lucide-solid';
 import ScrollCaptureIcon from './ScrollCaptureIcon';
 import ApplicationSnapshotIcon from './ApplicationSnapshotIcon';
@@ -44,7 +44,7 @@ import { sameOcrTarget } from '../ocr-selection';
 import { finishCapture } from '../capture-completion';
 import { regionImageProjection } from '../region-image';
 import { getWindowSnapMap } from '../window-snap-bridge';
-import { SnapMapLoader, SnapSelectionGesture, SnapshotSelections, snapImagePoint, snapResize, snapTarget, type FrameSnapMap } from '../window-snap';
+import { SnapMapLoader, SnapSelectionGesture, SnapshotSelections, snapImagePoint, snapResize, snapTarget, type FrameSnapMap, type SnapNode } from '../window-snap';
 import './capture.css';
 import type { RegisterDrawingHistory } from '../drawing-editor-port';
 
@@ -107,6 +107,7 @@ interface Props {
   maskOpacity: number;
 }
 interface Box { x: number; y: number; width: number; height: number }
+interface PendingSelection { sceneId: string; backgroundId: string; region: Region; version: number; automatic?: SnapNode; complete: boolean; acknowledged?: boolean }
 interface PluginEntry { plugin: PluginRecord; contribution: PluginContribution }
 type Handle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se';
 const CORNERS: Handle[] = ['nw', 'ne', 'sw', 'se'];
@@ -153,6 +154,7 @@ export default function SpaceCanvas(props: Props) {
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
   let flashTimer: ReturnType<typeof setTimeout> | undefined;
   let cancelGesture: (() => void) | undefined;
+  let newSelectionSource: (() => boolean) | undefined;
   let lastSceneId: string | undefined;
   let pointerInspector: PointerInspectorHandle | undefined;
   let interactionVersion = 0;
@@ -166,6 +168,7 @@ export default function SpaceCanvas(props: Props) {
   const [viewport, setViewport] = createSignal({ width: innerWidth, height: innerHeight, deviceScale: devicePixelRatio });
   const [natural, setNatural] = createSignal({ width: 0, height: 0 });
   const [selection, setSelection] = createSignal<Box>();
+  const [pendingSelection, setPendingSelection] = createSignal<PendingSelection>();
   const [snapMap, setSnapMap] = createSignal<FrameSnapMap>();
   const snapshotSelections = new SnapshotSelections();
   const [snapshotVersion, setSnapshotVersion] = createSignal(0);
@@ -282,17 +285,24 @@ export default function SpaceCanvas(props: Props) {
   const display = (region: Box): Box => ({ x: geometry().x + region.x * geometry().scale, y: geometry().y + region.y * geometry().scale, width: region.width * geometry().scale, height: region.height * geometry().scale });
   const imageProjection = (region: Region) => regionImageProjection(region, display(region), props.scene.background!, geometry().scale);
   const regions = () => props.scene.regions.map(region => ({ region, box: display(regionById(region.id)!) }));
+  // Presentation only: pending geometry never enters the saved region/tool lists.
+  const selectionPreview = createMemo(() => {
+    if (selection()) return selection();
+    const pending = pendingSelection();
+    if (!pending || !currentPendingSelection(pending) || props.scene.regions.some(region => region.id === pending.region.id)) return;
+    return display(pending.region);
+  });
   const point = (event: PointerEvent) => ({ x: clamp(event.clientX, geometry().x, geometry().x + geometry().width), y: clamp(event.clientY, geometry().y, geometry().y + geometry().height) });
   const referenced = (id: string) => props.refs.some(ref => ref.kind === 'region' && ref.id === id);
   const blocked = () => props.busy || exporting() || settling() || extensionRunning() || props.scene.run?.status === 'running';
   const scanSource = createMemo(() => {
-    if (!props.onCodeSource || !codeFocused() || props.busy || drawingSession() || selection() || forceNew() || backgroundError() || props.geometryView.pending || props.geometryView.held) return;
+    if (!props.onCodeSource || !codeFocused() || props.busy || drawingSession() || selection() || pendingSelection() || forceNew() || backgroundError() || props.geometryView.pending || props.geometryView.held) return;
     return codeSource(props.scene, active(), props.plugins);
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const codesPaused = () => Boolean(activity() || exporting() || settling() || pluginMenu() || ocrPending() || props.translationPending || codeModal());
   const visibleCodes = createMemo(() => { const view = props.codeView; return view?.key === scanSource()?.key && view?.result.codes.length ? view : undefined; });
   createEffect(on(() => [scanSource(), codesPaused()] as const, ([source, paused]) => props.onCodeSource?.(source, paused)));
-  const snapUnavailable = () => blocked() || activity() || forceNew() || drawingSession() || pluginMenu() || ocrPending() || props.translationPending || props.geometryView.pending || props.geometryView.held || props.scene.frozen || props.scene.closed || backgroundError();
+  const snapUnavailable = () => blocked() || activity() || pendingSelection() || forceNew() || drawingSession() || pluginMenu() || ocrPending() || props.translationPending || props.geometryView.pending || props.geometryView.held || props.scene.frozen || props.scene.closed || backgroundError();
   function clearSnapPreview() { snapPointer = undefined; setSnapPreview(undefined); }
   function candidateAt(x: number, y: number) {
     const map = snapMap(), bg = props.scene.background, box = geometry();
@@ -301,8 +311,9 @@ export default function SpaceCanvas(props: Props) {
     return pixel && snapTarget(map, pixel.x, pixel.y);
   }
   function previewCandidateAt(pointer: { x: number; y: number; shiftKey: boolean }) {
+    if (snapUnavailable() || pointer.shiftKey || !document.hasFocus()) return;
     const target = document.elementFromPoint(pointer.x, pointer.y), composer = composerBox();
-    if (snapUnavailable() || pointer.shiftKey || !document.hasFocus() || !target?.closest('.capture-surface') || target.closest('button,a,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.artifact-card,.capture-region,.capture-toolbar,.selection-code-card,.ocr-text-layer,.drawing-editor') || document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu,[role="menu"]') || (toolbarVisible() && contains(toolbarBox(), pointer.x, pointer.y, TOLERANCE)) || (composer && contains(composer, pointer.x, pointer.y)) || regions().some(entry => contains(entry.box, pointer.x, pointer.y, 5))) return;
+    if (!target?.closest('.capture-surface') || target.closest('button,a,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.artifact-card,.capture-region,.capture-toolbar,.selection-code-card,.ocr-text-layer,.drawing-editor') || document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu,[role="menu"]') || (toolbarVisible() && contains(toolbarBox(), pointer.x, pointer.y, TOLERANCE)) || (composer && contains(composer, pointer.x, pointer.y)) || regions().some(entry => contains(entry.box, pointer.x, pointer.y, 5))) return;
     return candidateAt(pointer.x, pointer.y);
   }
   function updateSnapPreview(pointer: { x: number; y: number; shiftKey: boolean }) {
@@ -371,6 +382,7 @@ export default function SpaceCanvas(props: Props) {
   }
   function revealToolbar(region: Region) {
     if (activity() || forceNew()) return;
+    if (pendingSelection() && pendingSelection()!.region.id !== region.id) clearPendingSelection();
     clearHideTimer(); setActive(region.id); placeToolbar(region); setToolbarVisible(true);
   }
   function hover(event: PointerEvent) {
@@ -442,21 +454,24 @@ export default function SpaceCanvas(props: Props) {
     if (translationEntries().length === 1) runTranslation(translationEntries()[0], region);
     else if (translationEntries().length) { setPluginMenu('translation'); }
   }
-  function trackPointer(event: PointerEvent, move: (event: PointerEvent) => void, finish: (committed: boolean) => void) {
+  function trackPointer(event: PointerEvent, move: (event: PointerEvent) => void, finish: (committed: boolean) => void, sourceCurrent?: () => boolean) {
     ocrRequests.cancel(); props.onTranslationCancel?.(); cancelGesture?.(); event.preventDefault(); event.stopPropagation();
     interactionVersion++;
+    clearPendingSelection();
     clearSnapPreview();
     window.getSelection()?.removeAllRanges(); hideToolbar(); setSelectionActivity(true);
     const pointerId = event.pointerId;
+    newSelectionSource = sourceCurrent;
     let ended = false;
     const cleanup = () => {
       canvas.removeEventListener('pointermove', moved); canvas.removeEventListener('pointerup', released);
       canvas.removeEventListener('pointercancel', canceled); canvas.removeEventListener('lostpointercapture', canceled);
       cancelGesture = undefined;
+      newSelectionSource = undefined;
       if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
     };
-    const end = (committed: boolean) => { if (ended) return; ended = true; cleanup(); setSelectionActivity(false); finish(committed); };
-    const moved = (next: PointerEvent) => { if (next.pointerId === pointerId) { next.preventDefault(); move(next); } };
+    const end = (committed: boolean) => { if (ended) return; ended = true; cleanup(); batch(() => { setSelectionActivity(false); finish(committed); }); };
+    const moved = (next: PointerEvent) => { if (next.pointerId === pointerId) { if (sourceCurrent && !sourceCurrent()) { end(false); return; } next.preventDefault(); move(next); } };
     const released = (next: PointerEvent) => { if (next.pointerId === pointerId) { moved(next); end(true); } };
     const canceled = (next: PointerEvent) => { if (next.pointerId === pointerId) end(false); };
     cancelGesture = () => end(false);
@@ -471,9 +486,11 @@ export default function SpaceCanvas(props: Props) {
     if (target.closest('button,.artifact-card,.capture-toolbar,.selection-code-card')) return;
     if (target.closest('.capture-region') && !event.shiftKey && !forceNew()) return;
     if (deferGeometryPointer(event, () => begin(event))) return;
+    clearPendingSelection();
     setActiveItemId('');
     endNudge();
     const start = point(event), scale = geometry().scale, offset = { x: geometry().x, y: geometry().y };
+    const sourceGeometry = { ...geometry() }, sourceViewport = { ...viewport() };
     const sceneId = props.scene.id, backgroundId = props.scene.background.id;
     const automatic = previewCandidateAt({ x: event.clientX, y: event.clientY, shiftKey: event.shiftKey });
     const gesture = new SnapSelectionGesture(start, automatic && display(automatic.bounds));
@@ -491,14 +508,45 @@ export default function SpaceCanvas(props: Props) {
       const right = Math.round((selected.x + selected.width - offset.x) / scale), bottom = Math.round((selected.y + selected.height - offset.y) / scale);
       const region: Region = { id: crypto.randomUUID(), x: left, y: top, width: right - left, height: bottom - top };
       const version = interactionVersion;
+      const pending: PendingSelection = { sceneId, backgroundId, region, version, automatic: gesture.isAutomatic ? automatic : undefined, complete: false };
+      setPendingSelection(pending);
       setActive(region.id);
-      void Promise.resolve().then(() => props.onAddRegion(region)).then(() => {
-        if (props.scene.id !== sceneId || interactionVersion !== version) return;
-        if (gesture.isAutomatic) { snapshotSelections.bind(region, automatic); setSnapshotVersion(value => value + 1); }
-        revealToolbar(region); props.onSelectionComplete?.(region);
-      }).catch(error => props.onError(error instanceof Error ? error.message : '无法添加区域'));
+      void Promise.resolve().then(() => {
+        if (currentPendingSelection(pending)) return props.onAddRegion(region);
+      }).then(() => {
+        if (currentPendingSelection(pending)) setPendingSelection(current => current && { ...current, complete: true });
+      }).catch(error => {
+        if (!currentPendingSelection(pending)) return;
+        clearPendingSelection(); props.onError(error instanceof Error ? error.message : '无法添加区域');
+      });
+    }, () => !disposed && !document.hidden && !props.inputLocked && !props.blackboard && !props.scene.closed && !props.scene.frozen && !blocked()
+      && props.scene.id === sceneId && props.scene.background?.id === backgroundId && sameGeometry(geometry(), sourceGeometry) && geometry().scale === scale
+      && viewport().width === sourceViewport.width && viewport().height === sourceViewport.height && viewport().deviceScale === sourceViewport.deviceScale);
+  }
+  function currentPendingSelection(pending: PendingSelection) {
+    return !disposed && !document.hidden && !props.inputLocked && !props.blackboard && !props.scene.closed && !props.scene.frozen
+      && props.scene.run?.status !== 'running' && props.scene.id === pending.sceneId && props.scene.background?.id === pending.backgroundId
+      && interactionVersion === pending.version && pendingSelection()?.region.id === pending.region.id;
+  }
+  function clearPendingSelection() {
+    const pending = pendingSelection();
+    if (pending && active() === pending.region.id) setActive('');
+    setPendingSelection(undefined);
+  }
+  function reconcilePendingSelection() {
+    const pending = pendingSelection();
+    if (!pending) return;
+    const current = currentPendingSelection(pending), saved = props.scene.regions.find(region => region.id === pending.region.id);
+    untrack(() => {
+      if (!current || saved && (!sameGeometry(saved, pending.region) || saved.imageOverride)) { clearPendingSelection(); return; }
+      if (!saved) { if (pending.acknowledged) clearPendingSelection(); return; }
+      if (!pending.complete) { if (!pending.acknowledged) setPendingSelection({ ...pending, acknowledged: true }); return; }
+      setPendingSelection(undefined);
+      if (pending.automatic) { snapshotSelections.bind(saved, pending.automatic); setSnapshotVersion(value => value + 1); }
+      revealToolbar(saved); props.onSelectionComplete?.(saved);
     });
   }
+  createEffect(reconcilePendingSelection);
   function editRegion(event: PointerEvent, region: Region, handle?: Handle) {
     if (event.shiftKey || forceNew()) { begin(event); return; }
     if (event.button !== 0 || activity() || blocked()) return;
@@ -511,6 +559,7 @@ export default function SpaceCanvas(props: Props) {
     const original = target.geometry, scale = geometry().scale;
     const width = target.width, height = target.height, minimum = Math.max(1, Math.round(8 / scale));
     const startX = event.clientX, startY = event.clientY, sceneId = props.scene.id;
+    clearPendingSelection();
     setActive(region.id);
     trackPointer(event, next => {
       const dx = Math.round((next.clientX - startX) / scale), dy = Math.round((next.clientY - startY) / scale);
@@ -532,12 +581,12 @@ export default function SpaceCanvas(props: Props) {
       }).catch(() => {});
     });
   }
-  const resize = () => { clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); setViewport({ width: innerWidth, height: innerHeight, deviceScale: devicePixelRatio }); const region = activeRegion(); if (region && toolbarVisible()) placeToolbar(region); };
+  const resize = () => { clearPendingSelection(); clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); setViewport({ width: innerWidth, height: innerHeight, deviceScale: devicePixelRatio }); const region = activeRegion(); if (region && toolbarVisible()) placeToolbar(region); };
   const leave = () => { clearSnapPreview(); scheduleHide(); };
-  const blur = () => { setCodeFocused(false); clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); hideToolbar(); };
+  const blur = () => { clearPendingSelection(); setCodeFocused(false); clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); hideToolbar(); };
   const codeFocus = () => setCodeFocused(!document.hidden);
   const snapFocus = (event: FocusEvent) => { if (event.target instanceof Element && event.target.closest('button,a,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.composer,.video-trim-popover,.artifact-card,.selection-code-card,.ocr-text-layer')) clearSnapPreview(); };
-  const snapVisibility = () => { setCodeFocused(!document.hidden && document.hasFocus()); if (document.hidden) clearSnapPreview(); };
+  const snapVisibility = () => { setCodeFocused(!document.hidden && document.hasFocus()); if (document.hidden) { clearPendingSelection(); clearSnapPreview(); cancelDeferredPointer?.(); cancelGesture?.(); } };
   const snapMutations = new MutationObserver(() => { const modal = Boolean(document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu,[role="menu"]')); setCodeModal(modal); if (snapPreview() && modal) clearSnapPreview(); });
   snapMutations.observe(document.body, { childList: true, subtree: true });
   const recordKey = (event: KeyboardEvent) => {
@@ -620,6 +669,7 @@ export default function SpaceCanvas(props: Props) {
   document.addEventListener('focusin', snapFocus); document.addEventListener('visibilitychange', snapVisibility);
   onCleanup(() => {
     disposed = true;
+    clearPendingSelection();
     toolbarObserver?.disconnect();
     props.onCodeSource?.(undefined, false); window.removeEventListener('focus', codeFocus);
     snapLoader.dispose();
@@ -670,7 +720,9 @@ export default function SpaceCanvas(props: Props) {
     const source = `${props.scene.id}:${props.scene.background?.id ?? ''}:${props.scene.regions.map(value => `${value.id}:${value.imageOverride?.id ?? ''}`).join('|')}`;
     if (source === lastSource) return;
     lastSource = source;
-    untrack(() => { cancelDeferredPointer?.(); cancelGesture?.(); endNudge(); });
+    // A previous region's save does not change a new selection's pixel source.
+    // Existing-region move/resize gestures retain the strict list/source fence.
+    untrack(() => { cancelDeferredPointer?.(); if (!newSelectionSource?.()) cancelGesture?.(); endNudge(); });
   });
   createEffect(() => {
     const session = drawingSession();
@@ -758,7 +810,7 @@ export default function SpaceCanvas(props: Props) {
     <svg class="capture-mask" width="100%" height="100%" aria-hidden="true">
       <defs><mask id="region-cutouts" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white" />
         <For each={regions()}>{entry => <rect x={entry.box.x} y={entry.box.y} width={entry.box.width} height={entry.box.height} fill="black" />}</For>
-        <Show when={selection()}>{box => <rect x={box().x} y={box().y} width={box().width} height={box().height} fill="black" />}</Show>
+        <Show when={selectionPreview()}>{box => <rect x={box().x} y={box().y} width={box().width} height={box().height} fill="black" />}</Show>
       </mask></defs>
       <rect width="100%" height="100%" fill="#000" fill-opacity={!props.blackboard&&props.scene.background ? props.maskOpacity : '0'} mask="url(#region-cutouts)" />
     </svg>
@@ -792,7 +844,7 @@ export default function SpaceCanvas(props: Props) {
         </div>;
       }}</For>
     </div>
-    <Show when={selection()}>{box => <div class="capture-selection" style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} />}</Show>
+    <Show when={selectionPreview()}>{box => <div class="capture-selection" style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} />}</Show>
     {/* Native region observation temporarily hides this window and causes blur; keep the invocation owner mounted. */}
     <Show when={(toolbarVisible() || extensionInteracting()) && !drawingSession() && !imageDrawing() && !activity() && !forceNew() && activeRegion()}>{region => <div ref={bindToolbar} class="capture-toolbar" role="toolbar" aria-label={t("截图工具")} style={{ left: `${toolbarBox().x}px`, top: `${toolbarBox().y}px` }} onPointerDown={event => { event.stopPropagation(); if (window.getSelection()?.anchorNode?.parentElement?.closest('.ocr-text-layer')) event.preventDefault(); }} onPointerEnter={clearHideTimer}>
       <Show when={props.aiAvailable !== false}><button data-caption={t("引用")} class="capture-reference" classList={{ 'capture-referenced': referenced(region().id) }} title={referenced(region().id) ? t("已引用") : t("引用当前区域")} aria-label={t("引用当前区域")} disabled={blocked()} onClick={() => { if (!referenced(region().id)) props.onReference({ kind: 'region', id: region().id }); props.onFocusComposer?.(); }}>@</button></Show>

@@ -18,7 +18,7 @@ const source = await raw('./components/SharedDrawingEditor.tsx'), ast = parse(so
 const body = ast.program.body.find(value => value.type === 'ExportDefaultDeclaration').declaration.body.body;
 const declaration = name => { const node = body.find(value => value.type === 'FunctionDeclaration' ? value.id.name === name : value.type === 'VariableDeclaration' && value.declarations.some(declaration => declaration.id.name === name)); assert.ok(node, name); return source.slice(node.start, node.end); };
 const queueSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='queueSource').expression.arguments[0].arguments[1];
-const actual = ['cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'beginHistoryAfterStrokes', 'history', 'historyAvailable', 'choose', 'closeEditor', 'blur', 'resize'].map(declaration).join('\n');
+const actual = ['cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
 import { DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,batch } from 'deps';
 export class Element { closest() { return {getAttribute:()=>this.id}; } }
@@ -38,9 +38,10 @@ export function fixture(props,svg,window) {
  const setWideBrush=()=>{},mosaicFailed=()=>false,setMosaicRetry=()=>{},highlightFailed=()=>false,setHighlightRetry=()=>{};
  const setViewport=()=>{},innerWidth=1200,innerHeight=800;
  ${actual}
- strokeQueue=continuousStrokes()?newStrokeQueue():undefined;
+ historyLane=props.port.history&&!props.port.stored?createHistoryLane():undefined;
+ strokeQueue=continuousStrokes()&&!historyLane?newStrokeQueue():undefined;
  return {begin,draft,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,choose,closeEditor,finishing,confirmText,loadLatest,saveText,history,historyPreview,drainHistory,historyPending,sourceChanged:${source.slice(queueSourceEffect.start,queueSourceEffect.end)},
-   dispose:()=>{disposed=true;strokeQueue?.stop();historyLane?.stop();cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value),queued:()=>queued,edit,queue:()=>strokeQueue,opened:()=>openedText};
+   dispose:()=>{disposed=true;strokeQueue?.stop();historyLane?.stop();cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value),queued:()=>queued,edit,queue:()=>strokeQueue,lane:()=>historyLane,opened:()=>openedText};
 }`));
 await module.link(() => synthetic({ ...pointer,...historyModule, ...geometry, ...properties,batch:solid.batch, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
 class Events {
@@ -349,6 +350,7 @@ test('a full global draft cache rejects new ink before its first sample and canc
     const cache=properties.drawingDrafts,drawing={id:'quota',kind:'pen',color:'#ee4848',strokeWidth:4,points:[{x:10,y:20}]};
     while(cache.list().length<32){const key=JSON.stringify(['quota-scene',inserted.length]);cache.set(key,properties.propertyDraft(drawing,0,'style',false));inserted.push(key);}
     const full=setup();full.begin(event('pointerdown',10,20));assert.equal(full.draft(),undefined);assert.equal(full.hasGesture(),false);assert.equal(full.queued().length,0);assert.ok(full.errors.length);
+    const historyFull=setup([],addedHistory([]));historyFull.begin(event('pointerdown',10,20));assert.equal(historyFull.draft(),undefined);assert.equal(historyFull.hasGesture(),false);assert.ok(historyFull.errors.length);
     for(const key of inserted)cache.delete(key);inserted.length=0;
     const canceled=setup();for(let i=0;i<16;i++){canceled.begin(event('pointerdown',10,20));assert.equal(canceled.hasGesture(),true);canceled.cancel();assert.equal(canceled.hasGesture(),false);}
     canceled.begin(event('pointerdown',10,20));canceled.window.emit(event('pointerup',30,40));await canceled.queue().drain();assert.equal(canceled.commands.length,1);
@@ -393,6 +395,76 @@ test('Undo immediately hides the final not-yet-saved stroke, keeps its real save
   }finally{clock.restore();}
 });
 
+test('Undo immediately accepts new pen gestures and serializes add, undo, redo and another add in their original order',async()=>{
+  const clock=frames();try{
+    const values=['first','second'].map(historyDrawing),f=setup(values,addedHistory(values)),baseSave=f.props.onCommand,gates=Array.from({length:5},deferred),sent=[];
+    f.props.onCommand=async command=>{sent.push(plain(command));await gates[sent.length-1].promise;assert.equal(command.expectedRevision,f.props.revision);await baseSave(command);};
+    void f.history(false);await tick();assert.equal(sent.length,1);assert.deepEqual(f.historyPreview().map(value=>value.id),['first']);
+    f.begin(event('pointerdown',10,20));assert.equal(f.hasGesture(),true);f.window.emit(event('pointerup',30,40));const third=f.queued()[0].id;
+    assert.deepEqual(f.historyPreview().map(value=>value.id),['first',third]);assert.equal(values.length,2);assert.equal(sent.length,1);
+    void f.history(false);assert.deepEqual(f.historyPreview().map(value=>value.id),['first']);
+    void f.history(true);assert.deepEqual(f.historyPreview().map(value=>value.id),['first',third]);
+    f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));const fourth=f.queued()[1].id;
+    assert.deepEqual(f.historyPreview().map(value=>value.id),['first',third,fourth]);
+    let closed=false;f.props.onClose=()=>closed=true;const close=f.closeEditor();assert.equal(f.finishing(),true);assert.equal(closed,false);
+    for(let index=0;index<gates.length;index++){assert.equal(sent.length,index+1);gates[index].resolve();await tick();}
+    await close;assert.equal(closed,true);assert.equal(f.historyPreview(),undefined);assert.deepEqual(f.errors,[]);
+    assert.deepEqual(sent.map(value=>value.type),['undo_drawing','add_drawing','undo_drawing','redo_drawing','add_drawing']);assert.deepEqual(sent.map(value=>value.expectedRevision),[5,6,7,8,9]);
+    assert.deepEqual(values.map(value=>value.id),['first',third,fourth]);assert.equal(properties.drawingDrafts.list().some(entry=>[third,fourth].includes(entry.draft.drawing.id)),false);
+  }finally{clock.restore();}
+});
+
+test('a pending own Undo acknowledgement never cancels the next live stroke, including a publish before its IPC reply',async()=>{
+  const clock=frames();try{
+    const values=['first'].map(historyDrawing),f=setup(values,addedHistory(values)),baseSave=f.props.onCommand,reply=deferred(),sent=[];
+    f.props.onCommand=async command=>{sent.push(plain(command));await baseSave(command);if(sent.length===1)await reply.promise;};
+    void f.history(false);f.begin(event('pointerdown',10,20));assert.equal(f.hasGesture(),true);await tick();assert.equal(f.props.revision,6);
+    f.window.emit(event('pointermove',20,30));clock.paint();assert.equal(f.hasGesture(),true);f.window.emit(event('pointerup',30,40));
+    const id=f.queued()[0].id;assert.equal(sent.length,1);assert.deepEqual(f.historyPreview().map(value=>value.id),[id]);
+    reply.resolve();await f.drainHistory();assert.deepEqual(sent.map(value=>value.expectedRevision),[5,6]);assert.deepEqual(values.map(value=>value.id),[id]);assert.deepEqual(f.errors,[]);
+  }finally{clock.restore();}
+});
+
+test('failed or invalidated Undo preserves each newly accepted stroke and never sends a late add',async()=>{
+  const clock=frames();try{
+    for(const reason of ['failure','source','revision','permission']){
+      const values=['original'].map(historyDrawing),f=setup(values,addedHistory(values)),baseSave=f.props.onCommand,first=deferred(),sent=[];
+      f.props.onCommand=async command=>{sent.push(plain(command));await first.promise;if(reason==='failure')throw Error('undo failed');await baseSave(command);if(reason==='revision')f.props.revision++;};
+      void f.history(false);await tick();
+      for(let index=0;index<2;index++){f.begin(event('pointerdown',10+index*30,20));f.window.emit(event('pointerup',30+index*30,40));}
+      const ids=f.queued().map(value=>value.id);assert.equal(ids.length,2);const drain=f.drainHistory();
+      if(reason==='source'){f.props.source='new-source';f.sourceChanged();}if(reason==='permission')f.props.allowed=false;
+      first.resolve();await assert.rejects(drain);assert.equal(sent.length,1,reason);
+      const retained=properties.drawingDrafts.list().filter(entry=>ids.includes(entry.draft.drawing.id));assert.equal(retained.length,2,reason);
+      for(const entry of retained)properties.drawingDrafts.delete(entry.key,entry.draft);
+    }
+  }finally{clock.restore();}
+});
+
+test('new-add acknowledgements allow only a retained undo suffix and replay later intents from real bounded host history',async()=>{
+  const clock=frames();try{
+    for(const limit of [128,1]){
+      const values=Array.from({length:limit===128?128:3},(_,index)=>historyDrawing('old-'+index)),history=addedHistory(values),f=setup(values,history),baseSave=f.props.onCommand;
+      f.props.onCommand=async command=>{assert.equal(command.expectedRevision,f.props.revision);await baseSave(command);if(command.type==='add_drawing')history.undo=history.undo.slice(-limit);};
+      f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));const first=f.queued()[0].id;void f.history(false);
+      f.begin(event('pointerdown',40,50));f.window.emit(event('pointerup',60,70));const second=f.queued()[1].id;
+      await f.drainHistory();assert.deepEqual(f.errors,[]);assert.equal(history.redo.length,0);assert.equal(history.undo.length,limit);
+      assert.equal(values.some(value=>value.id===first),false);assert.equal(values.at(-1).id,second);
+      assert.deepEqual(f.commands.map(value=>value.type),['add_drawing','undo_drawing','add_drawing']);assert.deepEqual(f.commands.map(value=>value.expectedRevision),[5,6,7]);
+    }
+  }finally{clock.restore();}
+});
+
+test('a failed unified lane retains its explicit recovery state after drains even when diagnostic text cannot fit the draft budget',async()=>{
+  const clock=frames();try{
+    const values=['original'].map(historyDrawing),f=setup(values,addedHistory(values)),baseSave=f.props.onCommand,first=deferred();
+    f.props.onCommand=async()=>{await first.promise;throw Error('x'.repeat(4*1024*1024));};
+    void f.history(false);f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));const id=f.queued()[0].id;
+    first.resolve();await assert.rejects(f.drainHistory());assert.equal(f.edit().drawing.id,id);assert.equal(f.edit().error,undefined);assert.equal(f.lane().failed(),true);
+    f.props.onCommand=baseSave;f.confirmText();await tick();assert.equal(f.lane().failed(),false);assert.equal(f.edit(),undefined);assert.equal(values.at(-1).id,id);
+  }finally{clock.restore();}
+});
+
 test('history failures restore host pixels, drop later undo intents and keep unsaved add drafts rather than faking persistence',async()=>{
   for(const reason of ['failure','source','revision','permission']){
     const values=['first','second'].map(historyDrawing),f=setup(values,addedHistory(values)),first=deferred(),baseSave=f.props.onCommand,sent=[];
@@ -406,7 +478,7 @@ test('history failures restore host pixels, drop later undo intents and keep uns
   const clock=frames();try{
     const values=[],f=setup(values,addedHistory(values)),first=deferred();f.props.onCommand=async()=>{await first.promise;throw Error('add failed');};
     f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));await tick();void f.history(false);assert.deepEqual(plain(f.historyPreview()),[]);
-    first.resolve();await assert.rejects(()=>f.drainHistory());assert.equal(f.historyPreview(),undefined);assert.equal(f.queued().length,1);assert.ok(properties.drawingDrafts.list().some(entry=>entry.draft.drawing.id===f.queued()[0].id));
+    const unsaved=f.queued()[0].id;first.resolve();await assert.rejects(()=>f.drainHistory());assert.equal(f.historyPreview(),undefined);assert.equal(f.queued().length,0);assert.ok(properties.drawingDrafts.list().some(entry=>entry.draft.drawing.id===unsaved));assert.equal(f.edit().drawing.id,unsaved);
   }finally{clock.restore();}
 });
 
@@ -511,6 +583,21 @@ test('real DrawingItem SVG removes optimistic undo paths synchronously, preserve
     await tick();first.resolve();await assert.rejects(()=>f.drainHistory());
     assert.equal(descendants(root,'path').length,3);assert.equal(descendants(root,'path')[0],original[0]);assert.equal(values.length,3);
   }finally{dispose();}
+});
+
+test('real DrawingItem SVG renders a new stroke before the preceding Undo is acknowledged and keeps unrelated nodes stable',async()=>{
+  const clock=frames(),values=['svg-keep','svg-undo'].map(historyDrawing),f=setup(values,addedHistory(values)),first=deferred(),baseSave=f.props.onCommand;
+  const [visible,setVisible]=solid.createSignal(values);f.props.onHistoryPreview=value=>setVisible(value??[...values]);
+  f.props.onCommand=async command=>{if(command.type==='undo_drawing')await first.promise;await baseSave(command);};
+  const root=renderer.createElement('root'),state={drawings:visible,stored:()=>[],draft:()=>undefined,tool:()=> 'pen',selected:()=>'',storedDraft:()=>undefined};
+  const port={canSelect:()=>true,render:(drawing,interactive,selected)=>renderer.createComponent(shapeJsx.DrawingShape,{drawing,interactive,selected})};
+  const dispose=renderer.render(()=>renderer.createComponent(solid.For,{get each(){return visible().map(value=>value.id);},children:id=>itemJsx.fixture({id,port},state)}),root);
+  try{
+    const keep=descendants(root,'path')[0],keepObject=descendants(root,'g').find(node=>node.props['data-drawing-id']==='svg-keep');void f.history(false);assert.equal(descendants(root,'path').length,1);assert.equal(descendants(root,'path')[0],keep);
+    f.begin(event('pointerdown',10,20));f.window.emit(event('pointerup',30,40));assert.equal(descendants(root,'path').length,2);assert.equal(descendants(root,'path')[0],keep);assert.equal(values.length,2);
+    assert.equal(descendants(root,'path')[1].props.d,'M10,20 L30,40');await tick();assert.equal(f.commands.length,0,'native Undo still awaits its real save');
+    first.resolve();await f.drainHistory();assert.equal(descendants(root,'path').length,2);assert.equal(descendants(root,'g').find(node=>node.props['data-drawing-id']==='svg-keep'),keepObject);assert.deepEqual(f.errors,[]);
+  }finally{dispose();clock.restore();}
 });
 
 test('real text effect controls combine independent styles, preserve typing focus and ignore disabled input',async()=>{
