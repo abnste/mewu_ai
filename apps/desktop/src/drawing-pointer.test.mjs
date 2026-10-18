@@ -416,6 +416,17 @@ test('history batch replay is reversible without changing IDs, provenance, text 
   assert.equal(undone.drawings[0],a);assert.deepEqual(plain(undone.drawings[1]),before);assert.deepEqual(plain(redone.drawings),state.drawings);assert.equal(state.drawings[1],after);
 });
 
+test('every concurrent history drain rejects the same failed flight and a later explicit undo can retry',async()=>{
+  const values=['first','second'].map(historyDrawing),f=setup(values,addedHistory(values)),first=deferred(),baseSave=f.props.onCommand,failure=Error('history disk failure');let attempts=0;
+  f.props.onCommand=async command=>{attempts++;if(attempts===1){await first.promise;throw failure;}await baseSave(command);};
+  void f.history(false);void f.history(false);await tick();
+  const waits=Promise.allSettled([f.drainHistory(),f.drainHistory()]);first.resolve();
+  const results=await waits;assert.equal(results.length,2);
+  for(const result of results){assert.equal(result.status,'rejected');assert.equal(result.reason,failure);}
+  assert.equal(attempts,1);assert.deepEqual(values.map(value=>value.id),['first','second']);assert.equal(f.historyPreview(),undefined);
+  void f.history(false);await f.drainHistory();assert.equal(attempts,2);assert.deepEqual(values.map(value=>value.id),['first']);
+});
+
 test('history comparisons retain shared-node fast paths while checking separate host history replies exactly',async()=>{
   const protectedDrawing=new Proxy(historyDrawing('shared'),{ownKeys(){throw Error('Shared drawing must not be traversed');},get(){throw Error('Shared drawing must not be read');}});
   let shared={source:'source',revision:5,drawings:[protectedDrawing],undo:[{index:0,before:null,after:protectedDrawing}],redo:[]};

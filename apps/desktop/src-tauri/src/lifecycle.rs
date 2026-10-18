@@ -123,7 +123,7 @@ impl ExitState {
     }
     pub fn ensure_scene_command(&self, command: &SceneCommand) -> Result<(), String> {
         let phase = self.phase.load(Ordering::Acquire);
-        if (phase == RUNNING && !self.has_attempt())
+        if (phase == RUNNING && (!self.has_attempt() || is_manual_drawing_history(command)))
             || (phase <= PREPARING && is_exit_flush_command(command))
         {
             Ok(())
@@ -367,6 +367,19 @@ pub fn is_draft_command(command: &SceneCommand) -> bool {
 
 pub fn is_geometry_finish_command(command: &SceneCommand) -> bool {
     matches!(command, SceneCommand::FinishRegionGeometryEdit { .. })
+}
+
+// Accepted Undo/Redo intents may still be waiting behind a durable drawing
+// write when exit reserves input. The renderer drains these while RUNNING,
+// before begin_exit_preparation; they are never PREPARING flush commands.
+fn is_manual_drawing_history(command: &SceneCommand) -> bool {
+    matches!(command,
+        SceneCommand::UndoDrawing { .. } | SceneCommand::RedoDrawing { .. }
+        | SceneCommand::EditImageAnnotations {
+            action: mewu_core::ImageAnnotationEdit::UndoDrawing | mewu_core::ImageAnnotationEdit::RedoDrawing,
+            ..
+        }
+    )
 }
 
 pub fn is_exit_flush_command(command: &SceneCommand) -> bool {
@@ -1537,6 +1550,32 @@ mod tests {
         let geometry=item_geometry_command(&scene_id,saved.clone());state.ensure_scene_command_with_store("space",&geometry,&store).unwrap();
         for modify in [0,1,2] {let mut forged=saved.clone();let doc=forged.image_annotations.as_mut().unwrap();match modify {0=>doc.revision+=1,1=>doc.drawings.clear(),_=>doc.source_asset_id=uuid::Uuid::new_v4().to_string()};assert!(state.ensure_scene_command_with_store("space",&item_geometry_command(&scene_id,forged),&store).is_err());}
         assert!(state.advance(&id,DRAINING));assert!(state.ensure_scene_command_with_store("space",&geometry,&store).is_err());
+    }
+
+    #[test]
+    fn reserved_manual_history_finishes_before_preparation_and_never_afterwards() {
+        let state = ExitState::default();
+        let (id, _) = state.begin().unwrap();
+        assert!(state.is_running() && state.has_attempt());
+        assert!(!state.accepts_new_operations());
+        let commands = [
+            SceneCommand::UndoDrawing { scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(), expected_revision: 2 },
+            SceneCommand::RedoDrawing { scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(), expected_revision: 3 },
+            SceneCommand::EditImageAnnotations { scene_id: "s".into(), item_id: "i".into(), source_asset_id: "b".into(), expected_revision: 2, action: mewu_core::ImageAnnotationEdit::UndoDrawing },
+            SceneCommand::EditImageAnnotations { scene_id: "s".into(), item_id: "i".into(), source_asset_id: "b".into(), expected_revision: 3, action: mewu_core::ImageAnnotationEdit::RedoDrawing },
+        ];
+        for command in &commands {
+            assert!(!is_exit_flush_command(command));
+            state.ensure_scene_command(command).unwrap();
+        }
+        assert!(state.ensure_scene_command(&SceneCommand::NewScene).is_err());
+        assert!(state.ensure_scene_command(&SceneCommand::RemoveDrawing { scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(), expected_revision: 2, drawing_id: "d".into() }).is_err());
+        state.prepare_with("space", &id, || {}).unwrap();
+        for command in &commands { assert!(state.ensure_scene_command(command).is_err()); }
+        assert!(state.advance(&id, DRAINING));
+        for command in &commands { assert!(state.ensure_scene_command(command).is_err()); }
+        assert!(state.advance(&id, READY));
+        for command in &commands { assert!(state.ensure_scene_command(command).is_err()); }
     }
 
     #[test]

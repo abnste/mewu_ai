@@ -5,6 +5,7 @@ export interface DrawingHistoryState {
   source: string; revision: number; drawings: Drawing[];
   undo: DrawingStep[]; redo: DrawingStep[];
 }
+type HistoryOutcome = { ok: true } | { ok: false; error: unknown };
 // History is a JSON contract. Shared nodes are common in local projections; compare
 // separate host replies structurally without allocating whole-document JSON strings.
 function sameValue(left: unknown, right: unknown): boolean {
@@ -49,8 +50,8 @@ export function projectDrawingHistory(state: DrawingHistoryState, redo: boolean)
 
 export class DrawingHistoryLane {
   private entries: { redo: boolean; before: DrawingHistoryState; after: DrawingHistoryState }[] = [];
-  private flight?: Promise<void>;
-  private failure: unknown;
+  private flight?: Promise<HistoryOutcome>;
+  private failure?: Extract<HistoryOutcome, { ok: false }>;
   private stopped = false;
   constructor(private hooks: {
     read: () => DrawingHistoryState; active: () => boolean;
@@ -86,14 +87,23 @@ export class DrawingHistoryLane {
         this.entries.shift(); this.hooks.completed(entry.redo, step);
         this.hooks.changed(this.entries.at(-1)?.after.drawings);
       }
+      return { ok: true } as const;
     }).catch(error => {
-      this.failure = error; this.entries = []; this.hooks.changed(undefined); this.hooks.failed(error);
+      const outcome = { ok: false, error } as const;
+      this.failure = outcome; this.entries = []; this.hooks.changed(undefined); this.hooks.failed(error);
+      return outcome;
     }).finally(() => { if (this.flight === flight) this.flight = undefined; });
     this.flight = flight;
   }
   async drain(active: () => boolean = () => true) {
-    while (this.flight) { const flight = this.flight; await flight; if (!active()) throw Error('绘制编辑已切换'); }
-    if (this.failure !== undefined) { const failure = this.failure; this.failure = undefined; throw failure; }
+    while (this.flight) {
+      const flight = this.flight, outcome = await flight;
+      if (!active()) throw Error('绘制编辑已切换');
+      // Every waiter owns this settled result even if another waiter already
+      // consumed the retained failure or a later user action starts a new flight.
+      if (!outcome.ok) { if (this.failure === outcome) this.failure = undefined; throw outcome.error; }
+    }
+    if (this.failure !== undefined) { const failure = this.failure; this.failure = undefined; throw failure.error; }
   }
   stop() { this.stopped = true; }
 }
