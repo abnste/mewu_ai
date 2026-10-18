@@ -646,10 +646,11 @@ export async function sendMessage(sceneId: string, visualAnnotations?: VisualAnn
   if (native) return invokeSnapshot('send_message', { sceneId, visualAnnotations: visualAnnotations ?? null, regionId: regionId ?? null });
   throw new Error('浏览器预览不连接模型，请在桌面应用发送');
 }
-export async function cancelRun(sceneId: string): Promise<Snapshot> {
-  if (native) return invokeSnapshot('cancel_run', { sceneId });
+export async function cancelRun(sceneId: string, expectedRunId: string): Promise<Snapshot> {
+  if (native) return invokeSnapshot('cancel_run', { sceneId, expectedRunId });
   const scene = findScene(sceneId);
-  if (scene.run?.status === 'running') scene.run.status = 'canceled';
+  if (scene.run?.id !== expectedRunId || scene.run.status !== 'running') throw new Error('运行已取消、结束或被替换，拒绝迟到结果');
+  scene.run.status = 'canceled';
   return publish();
 }
 export async function hideSpace(): Promise<void> {

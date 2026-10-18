@@ -5,6 +5,7 @@ mod agent_tools;
 mod ai;
 mod inline_reasoning;
 mod interaction_performance;
+mod run_cancellation;
 mod asset_host;
 mod asset_locations;
 mod assets;
@@ -290,9 +291,23 @@ pub(crate) struct Host {
 /// window enumeration occurs here. A capture publishes its new background while
 /// still hidden, so visibility/capture guards would lose that first map load.
 #[tauri::command]
-fn get_window_snap_map(
+async fn get_window_snap_map(
+    app: AppHandle,
     window: tauri::WebviewWindow,
-    host: tauri::State<'_, Host>,
+    scene_id: String,
+    background_id: String,
+) -> Result<Option<window_snap::FrameSnapMap>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = app.state::<Host>();
+        get_window_snap_map_blocking(window, &host, scene_id, background_id)
+    })
+    .await
+    .map_err(|_| "截图选区读取中断".to_string())?
+}
+
+fn get_window_snap_map_blocking(
+    window: tauri::WebviewWindow,
+    host: &Host,
     scene_id: String,
     background_id: String,
 ) -> Result<Option<window_snap::FrameSnapMap>, String> {
@@ -383,7 +398,16 @@ fn show(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn get_snapshot(app: AppHandle, host: tauri::State<'_, Host>) -> Result<HostSnapshot, String> {
+async fn get_snapshot(app: AppHandle) -> Result<HostSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = app.state::<Host>();
+        get_snapshot_blocking(app.clone(), &host)
+    })
+    .await
+    .map_err(|_| "空间状态读取中断".to_string())?
+}
+
+fn get_snapshot_blocking(app: AppHandle, host: &Host) -> Result<HostSnapshot, String> {
     if host.legacy_import_warning.swap(false, Ordering::AcqRel) {
         let _ = app.emit_to("space", "host-error", "部分旧版连接未导入，请检查连接设置");
     }
@@ -879,10 +903,19 @@ async fn close_scene_window(app: AppHandle, scene_id: String) -> Result<HostSnap
 }
 
 #[tauri::command]
-fn get_frozen_scenes(host: tauri::State<'_, Host>) -> Result<frozen::FrozenSnapshot, String> {
+async fn get_frozen_scenes(app: AppHandle) -> Result<frozen::FrozenSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = app.state::<Host>();
+        get_frozen_scenes_blocking(&host)
+    })
+    .await
+    .map_err(|_| "会话列表读取中断".to_string())?
+}
+
+fn get_frozen_scenes_blocking(host: &Host) -> Result<frozen::FrozenSnapshot, String> {
     let engine = host.lock()?;
-    Ok(frozen::snapshot(
-        &engine.store.snapshot(),
+    Ok(frozen::snapshot_scenes(
+        engine.store.scenes(),
         host.revision.load(Ordering::Acquire),
     ))
 }
@@ -1444,7 +1477,23 @@ async fn expand_capture_space(
 /// Only the first-party Space can acknowledge its current, newly captured image.
 /// This command cannot initiate capture, switch scenes, or show a window.
 #[tauri::command]
-fn capture_background_ready(
+async fn capture_background_ready(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    scene_id: String,
+    background_id: String,
+    width: u32,
+    height: u32,
+    success: bool,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        capture_background_ready_blocking(app, window, scene_id, background_id, width, height, success)
+    })
+    .await
+    .map_err(|_| "截图呈现确认中断".to_string())?
+}
+
+fn capture_background_ready_blocking(
     app: AppHandle,
     window: tauri::WebviewWindow,
     scene_id: String,
@@ -1498,7 +1547,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         // Match the original BeginCaptureAsync: ignore another request while
         // capture or a window transition owns the surface. This is not an error
         // or a progress notification, and must not release the current owner.
-        return get_snapshot(app.clone(), host);
+        return get_snapshot_blocking(app.clone(), &host);
     };
     #[cfg(target_os = "linux")]
     let transition = Arc::new(transition);
@@ -1510,7 +1559,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         .snapshot_for_capture()
         .map_err(|e| e.to_string())?;
     let Some(work) = host.capture_jobs.begin()? else {
-        return get_snapshot(app.clone(), host);
+        return get_snapshot_blocking(app.clone(), &host);
     };
     let _invoke = work.cancel_on_drop();
     #[cfg(target_os = "linux")]
@@ -2610,32 +2659,37 @@ mod run_authorization_tests {
 }
 
 #[tauri::command]
-fn cancel_run(
+async fn cancel_run(
     app: AppHandle,
-    host: tauri::State<'_, Host>,
     scene_id: String,
+    expected_run_id: String,
+) -> Result<HostSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let host = app.state::<Host>();
+        cancel_run_blocking(app.clone(), &host, scene_id, expected_run_id)
+    })
+    .await
+    .map_err(|_| "取消对话中断".to_string())?
+}
+
+fn cancel_run_blocking(
+    app: AppHandle,
+    host: &Host,
+    scene_id: String,
+    expected_run_id: String,
 ) -> Result<HostSnapshot, String> {
     let mut engine = host.lock()?;
-    video_host::cancel_scene(&app, &scene_id);
-    let run_id = engine
-        .store
-        .snapshot()
-        .scenes
-        .iter()
-        .find(|s| s.id == scene_id)
-        .and_then(|s| s.run.as_ref())
-        .map(|r| r.id.clone());
-    let snapshot = engine
-        .store
-        .cancel_run(&scene_id)
-        .map_err(|e| e.to_string())?;
-    if let Some(id) = run_id {
-        engine.plugin_runs.remove(&id);
-        engine.agent_runs.remove(&id);
-        engine.visual_runs.remove(&id);
-        if let Some(sender) = engine.runs.remove(&id) {
-            let _ = sender.send(());
-        }
+    let snapshot = run_cancellation::cancel_current(
+        &mut engine.store,
+        &scene_id,
+        &expected_run_id,
+        || video_host::cancel_scene(&app, &scene_id),
+    ).map_err(|error| error.to_string())?;
+    engine.plugin_runs.remove(&expected_run_id);
+    engine.agent_runs.remove(&expected_run_id);
+    engine.visual_runs.remove(&expected_run_id);
+    if let Some(sender) = engine.runs.remove(&expected_run_id) {
+        let _ = sender.send(());
     }
     Ok(publish(&app, &snapshot))
 }

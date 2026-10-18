@@ -687,7 +687,20 @@ pub async fn get_video_annotation_preview(
     .map_err(|_| "视频批注读取中断")?
 }
 #[tauri::command]
-pub fn apply_video_annotation_document(
+pub async fn apply_video_annotation_document(
+    app: AppHandle,
+    window: WebviewWindow,
+    target: VideoAnnotationTarget,
+    action: DocumentAction,
+) -> Result<HostSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_video_annotation_document_blocking(app, window, target, action)
+    })
+    .await
+    .map_err(|_| "视频批注保存中断".to_string())?
+}
+
+fn apply_video_annotation_document_blocking(
     app: AppHandle,
     window: WebviewWindow,
     target: VideoAnnotationTarget,
@@ -729,9 +742,9 @@ pub fn apply_video_annotation_document(
         .store
         .edit_video_annotation_with_layouts(&target, mutation, vec![])
         .map_err(|e| e.to_string())?;
-    drop(engine);
-    crate::video_host::reconcile(&app, &snapshot);
-    Ok(crate::publish(&app, &snapshot))
+    // Keep the committed snapshot and its Host revision in the same Engine
+    // critical section; a later writer must not publish ahead of this one.
+    Ok(crate::publish_owned(&app, snapshot))
 }
 
 #[cfg(test)]

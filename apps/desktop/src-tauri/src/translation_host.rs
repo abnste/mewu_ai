@@ -494,7 +494,19 @@ pub fn cancel_plugin_translation(
 /// Removing one's saved document remains available after its generating plugin
 /// is disabled/uninstalled. This grants no new OCR or network capability.
 #[tauri::command]
-pub fn clear_region_translation(
+pub async fn clear_region_translation(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    target: OcrTarget,
+) -> Result<HostSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        clear_region_translation_blocking(app, window, target)
+    })
+    .await
+    .map_err(|_| "译文移除中断".to_string())?
+}
+
+fn clear_region_translation_blocking(
     app: AppHandle,
     window: tauri::WebviewWindow,
     target: OcrTarget,

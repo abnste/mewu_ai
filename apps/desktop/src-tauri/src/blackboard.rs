@@ -442,7 +442,20 @@ pub(crate) async fn finish_blackboard(
 }
 
 #[tauri::command]
-pub(crate) fn open_blackboard(
+pub(crate) async fn open_blackboard(
+    app: AppHandle,
+    window: WebviewWindow,
+    scene_id: String,
+    item_id: String,
+) -> Result<HostSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        open_blackboard_blocking(app, window, scene_id, item_id)
+    })
+    .await
+    .map_err(|_| "黑板打开中断".to_string())?
+}
+
+fn open_blackboard_blocking(
     app: AppHandle,
     window: WebviewWindow,
     scene_id: String,

@@ -1089,8 +1089,10 @@ export default function App() {
     finally { setBusy(false); finishOperation(); }
   }
   async function cancel() {
-    if (!scene()) return;
-    try { accept(await bridge.cancelRun(scene()!.id)); }
+    const current = scene();
+    if (!current || current.run?.status !== 'running') return;
+    const runId = current.run.id;
+    try { accept(await bridge.cancelRun(current.id, runId)); }
     catch (error) { showError(error); }
   }
   async function continueJournal(summary: RunJournalSummary, decision: ContinuationDecision, selected?: string[]): Promise<boolean> {

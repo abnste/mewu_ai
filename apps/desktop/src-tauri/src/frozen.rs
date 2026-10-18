@@ -74,7 +74,7 @@ pub fn reconcile(app: &AppHandle, snapshot: &Snapshot) {
             };
             let empty = host
                 .lock()
-                .is_ok_and(|engine| !engine.store.snapshot().scenes.iter().any(is_minimized));
+                .is_ok_and(|engine| !engine.store.scenes().iter().any(is_minimized));
             if !empty || !host.exit.accepts_new_operations() {
                 return;
             }
@@ -152,8 +152,11 @@ fn display_title(scene: &Scene) -> String {
 }
 
 pub fn snapshot(state: &Snapshot, revision: u64) -> FrozenSnapshot {
-    let mut scenes: Vec<_> = state
-        .scenes
+    snapshot_scenes(&state.scenes, revision)
+}
+
+pub(crate) fn snapshot_scenes(source: &[Scene], revision: u64) -> FrozenSnapshot {
+    let mut scenes: Vec<_> = source
         .iter()
         .filter(|scene| is_minimized(scene))
         .map(|scene| {
@@ -609,6 +612,34 @@ mod tests {
             })
             .unwrap();
         assert!(snapshot(&store.snapshot(), 3).scenes.is_empty());
+    }
+
+    #[test]
+    fn borrowed_scene_summaries_preserve_full_snapshot_output_and_scene_selection() {
+        let mut store = Store::open_in_memory().unwrap();
+        let id = store.snapshot().active_scene_id;
+        store.apply(SceneCommand::SetDraft {
+            scene_id: id.clone(), draft: "借用摘要".into(),
+        }).unwrap();
+        let run = store.begin_run(&id).unwrap();
+        store.finish_run(&id, &run.run_id, &format!("开头{}", "🙂".repeat(100))).unwrap();
+        store.apply(SceneCommand::FreezeScene { scene_id: id.clone() }).unwrap();
+        let state = store.snapshot();
+        let active = state.active_scene_id.clone();
+        let original = serde_json::to_value(&state).unwrap();
+        let borrowed = snapshot_scenes(store.scenes(), 17);
+        assert_eq!(serde_json::to_value(&borrowed).unwrap(), serde_json::to_value(snapshot(&state, 17)).unwrap());
+        assert_eq!(borrowed.revision, 17);
+        assert_eq!(borrowed.scenes.len(), 1);
+        assert_eq!(borrowed.scenes[0].id, id);
+        assert_eq!(borrowed.scenes[0].status, "completed");
+        assert_eq!(borrowed.scenes[0].preview, format!("开头{}...", "🙂".repeat(88)));
+        assert_eq!(store.snapshot().active_scene_id, active);
+        assert_eq!(serde_json::to_value(store.snapshot()).unwrap(), original);
+        store.apply(SceneCommand::CloseScene { scene_id: id }).unwrap();
+        assert!(snapshot_scenes(store.scenes(), 18).scenes.is_empty());
+        assert_eq!(serde_json::to_value(snapshot_scenes(store.scenes(), 18)).unwrap(),
+            serde_json::to_value(snapshot(&store.snapshot(), 18)).unwrap());
     }
 
     #[test]
