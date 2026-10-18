@@ -4,6 +4,7 @@ mod agent_loop;
 mod agent_tools;
 mod ai;
 mod inline_reasoning;
+mod interaction_performance;
 mod asset_host;
 mod asset_locations;
 mod assets;
@@ -329,6 +330,7 @@ fn publish(app: &AppHandle, snapshot: &Snapshot) -> HostSnapshot {
     publish_owned(app, snapshot.clone())
 }
 fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
+    let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::Publish);
     let snapshot = &owned;
     #[cfg(target_os="linux")]
     recording_wayland_host::reconcile(snapshot);
@@ -339,6 +341,7 @@ fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
     image_host::reconcile(app, snapshot);
     pixel_sampler::reconcile(app, snapshot);
     pin_host::reconcile(app, snapshot);
+    timing.mark(interaction_performance::Stage::Validated);
     let revision = app.state::<Host>().revision.fetch_add(1, Ordering::AcqRel) + 1;
     let snapshot = HostSnapshot {
         snapshot: owned,
@@ -355,6 +358,8 @@ fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
         frozen::snapshot(&snapshot.snapshot, revision),
     );
     frozen::reconcile(app, &snapshot.snapshot);
+    timing.mark(interaction_performance::Stage::Emitted);
+    timing.finish(true);
     snapshot
 }
 fn show(app: &AppHandle) {
@@ -496,7 +501,40 @@ async fn apply_scene_command(
         });
     }
     cancel_ended_runs(&mut engine, &snapshot);
-    Ok(publish(&app, &snapshot))
+    Ok(publish_owned(&app, snapshot))
+}
+
+/// One durable capture operation, one full snapshot publication. The invoke
+/// reply only identifies that publication instead of sending all history twice.
+#[tauri::command]
+async fn add_capture_region(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    scene_id: String,
+    background_id: String,
+    region: mewu_core::Region,
+    refs: Vec<mewu_core::Reference>,
+) -> Result<u64, String> {
+    if window.label() != "space" {
+        return Err("此窗口不能添加截图选区".into());
+    }
+    let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::AddRegion);
+    let host = app.state::<Host>();
+    let command = SceneCommand::AddRegion { scene_id: scene_id.clone(), region: region.clone() };
+    ensure_scene_command_admission(&app, &host, window.label(), &command, None)?;
+    let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+    let mut engine = host.lock()?;
+    ensure_scene_command_admission(&app, &host, window.label(), &command, Some(&engine.store))?;
+    optional_capabilities::authoring_command(&engine, &command)?;
+    engine.store.active_background_for_preview(&scene_id, &background_id).map_err(|error| error.to_string())?;
+    timing.mark(interaction_performance::Stage::Validated);
+    let snapshot = engine.store.add_region_with_refs(&scene_id, region, refs).map_err(|error| error.to_string())?;
+    timing.mark(interaction_performance::Stage::Applied);
+    cancel_ended_runs(&mut engine, &snapshot);
+    let published = publish_owned(&app, snapshot);
+    timing.mark(interaction_performance::Stage::Published);
+    timing.finish(true);
+    Ok(published.revision)
 }
 
 fn ensure_scene_command_source(owner: &str, command: &SceneCommand) -> Result<(), String> {
@@ -1452,6 +1490,7 @@ fn capture_background_ready(
 
 #[tauri::command]
 async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
+    let mut timing = interaction_performance::Trace::start(interaction_performance::Kind::Capture);
     recording::ensure_idle(&app)?;
     let host = app.state::<Host>();
     host.exit.ensure_new_operation()?;
@@ -1524,6 +1563,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         witnesses
     };
     pin_window::capture_begin(&app);
+    timing.mark(interaction_performance::Stage::Admitted);
     {
         let engine = host.lock()?;
         engine.ocr_jobs.cancel_owner("space");
@@ -1543,6 +1583,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         if capture_check().is_ok() { show(&app); }
         return Err(error);
     }
+    timing.mark(interaction_performance::Stage::Hidden);
     if let Err(error) = work
         .wait_delay(preferences.capture_delay_seconds.seconds(), || {
             host.exit.ensure_new_operation()?;
@@ -1624,6 +1665,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
     })
     .await
     .map_err(|_| "截图任务中断".to_string())?;
+    timing.mark(interaction_performance::Stage::Captured);
     #[cfg(windows)]
     let mut presentation_required = false;
     let result = async {
@@ -1642,6 +1684,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             #[cfg(target_os = "linux")]
             capture_check.clone(),
         ).await?;
+        timing.mark(interaction_performance::Stage::Expanded);
         #[cfg(target_os = "linux")]
         {
             let native_check = pending.native_check.clone().ok_or("截图缺少窗口状态见证")?;
@@ -1695,6 +1738,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             }
             (id, snapshot)
         };
+        timing.mark(interaction_performance::Stage::Adopted);
         #[cfg(windows)]
         {
             presentation_required = true;
@@ -1707,6 +1751,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
             height: captured.height,
         })?;
         let published = publish_owned(&app, snapshot);
+        timing.mark(interaction_performance::Stage::Published);
         #[cfg(windows)]
         presentation
             .wait(|| {
@@ -1720,6 +1765,7 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
                 Ok(())
             })
             .await?;
+        timing.mark(interaction_performance::Stage::Decoded);
         Ok(published)
     }
     .await;
@@ -1732,6 +1778,8 @@ async fn capture_screen(app: AppHandle) -> Result<HostSnapshot, String> {
         let restore = !presentation_required || result.is_ok();
         if restore { show(&app); }
     }
+    timing.mark(interaction_performance::Stage::Shown);
+    timing.finish(result.is_ok());
     result
 }
 
@@ -2647,6 +2695,7 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("--extension-worker") {
         std::process::exit(if mewu_extension::run_stdio_worker().is_ok() { 0 } else { 1 });
     }
+    interaction_performance::initialize(std::env::args().nth(1).as_deref() == Some("--measure-interactions"));
     // Production admits only the fixed native recording worker. Other sealed
     // worker domains and the Code parent retain their explicit test admission.
     #[cfg(target_os = "linux")]
@@ -2854,6 +2903,7 @@ fn main() {
                 memory_host::queue_external_memory,
                 memory_host::forget_external_memory,
                 apply_scene_command,
+                add_capture_region,
                 capture_screen,
                 capture_background_ready,
                 blackboard::create_blackboard,

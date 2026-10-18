@@ -116,6 +116,7 @@ fn main() {
             "queue_external_memory",
             "forget_external_memory",
             "apply_scene_command",
+            "add_capture_region",
             "capture_screen",
             "capture_background_ready",
             "import_assets",

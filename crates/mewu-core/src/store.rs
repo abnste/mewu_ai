@@ -601,25 +601,7 @@ impl Store {
             }
             SceneCommand::AddRegion { scene_id, region } => {
                 let target = scene_mut(&mut next, &scene_id)?;
-                if region.image_override.is_some() {
-                    return Err(invalid("新选区不能携带替换图片"));
-                }
-                if region.ocr.is_some() {
-                    return Err(invalid("新选区不能携带文字识别结果"));
-                }
-                if region.translation.is_some() {
-                    return Err(invalid("新选区不能携带翻译图层"));
-                }
-                if !region.drawings.is_empty()
-                    || !region.drawing_history.is_empty()
-                    || region.drawing_revision != 0
-                {
-                    return Err(invalid("新选区不能携带绘制历史，请使用绘制命令"));
-                }
-                if target.regions.iter().any(|r| r.id == region.id) {
-                    return Err(invalid("区域 ID 重复"));
-                }
-                target.regions.push(region);
+                add_new_region(target, region)?;
                 touch(target);
             }
             SceneCommand::RemoveRegion {
@@ -1044,6 +1026,32 @@ impl Store {
             self.geometry_group = None;
         }
         Ok(snapshot)
+    }
+
+    /// Save one new capture region together with the caller's current reference
+    /// draft. Both become visible in the same durable commit; invalid references
+    /// or a failed write must not leave a partially added region behind.
+    pub fn add_region_with_refs(
+        &mut self,
+        scene_id: &str,
+        region: Region,
+        refs: Vec<Reference>,
+    ) -> Result<Snapshot> {
+        let original = scene(&self.state, scene_id)?;
+        if self.state.active_scene_id != scene_id || original.closed || original.frozen {
+            return Err(invalid("会话已变化"));
+        }
+        if refs.iter().filter(|reference| {
+            reference.kind == ReferenceKind::Region && reference.id == region.id
+        }).count() != 1 {
+            return Err(invalid("新选区必须有唯一引用"));
+        }
+        let mut next = self.state.clone();
+        let target = scene_mut(&mut next, scene_id)?;
+        add_new_region(target, region)?;
+        target.refs = refs;
+        touch(target);
+        self.persist(next)
     }
 
     pub fn set_background(&mut self, scene_id: &str, asset: Asset) -> Result<Snapshot> {
@@ -3100,6 +3108,29 @@ pub(crate) fn now() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+fn add_new_region(target: &mut Scene, region: Region) -> Result<()> {
+    if region.image_override.is_some() {
+        return Err(invalid("新选区不能携带替换图片"));
+    }
+    if region.ocr.is_some() {
+        return Err(invalid("新选区不能携带文字识别结果"));
+    }
+    if region.translation.is_some() {
+        return Err(invalid("新选区不能携带翻译图层"));
+    }
+    if !region.drawings.is_empty()
+        || !region.drawing_history.is_empty()
+        || region.drawing_revision != 0
+    {
+        return Err(invalid("新选区不能携带绘制历史，请使用绘制命令"));
+    }
+    if target.regions.iter().any(|r| r.id == region.id) {
+        return Err(invalid("区域 ID 重复"));
+    }
+    target.regions.push(region);
+    Ok(())
+}
+
 fn touch(scene: &mut Scene) {
     scene.updated_at = now().max(scene.updated_at);
 }

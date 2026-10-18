@@ -6,7 +6,7 @@ import { normalizeConnectionPath, validateConnectionProfile } from './connection
 import type { ExitPreparationCanceled, ExitPreparationRequest, ExitPreparationResult } from './exit-preparation';
 import { browserMosaicPreview, MosaicPreviewCache, type MosaicPreview } from './mosaic-preview';
 import type { HighlightPreview } from './highlight-preview';
-import type { ImageExportVariant, Region } from './contracts';
+import type { ImageExportVariant, Reference, Region } from './contracts';
 import { highlightCrop, highlightSourceIdentity, highlightTarget } from './highlight-source';
 import { emptyGeometryHistory, PreviewGeometryHistory } from './region-geometry-history';
 import { IMPORT_ACCEPT, prepareImportFiles } from './asset-import';
@@ -392,6 +392,24 @@ export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
 export async function captureScreen(): Promise<Snapshot> {
   if (native) return invokeSnapshot('capture_screen');
   throw new Error('浏览器预览不支持截屏');
+}
+/** The native command publishes one authoritative snapshot and returns only its
+ * revision; callers await that publication instead of copying all history twice. */
+export async function addCaptureRegion(sceneId: string, backgroundId: string, region: Region, refs: Reference[]): Promise<number | undefined> {
+  if (native) return invoke<number>('add_capture_region', { sceneId, backgroundId, region, refs });
+  const scene = findScene(sceneId);
+  if (preview.activeSceneId !== sceneId || scene.closed || scene.frozen || scene.background?.id !== backgroundId
+    || scene.regions.some(value => value.id === region.id)
+    || refs.filter(ref => ref.kind === 'region' && ref.id === region.id).length !== 1) throw Error('截图已变化');
+  const next = structuredClone(region);
+  if (next.imageOverride || next.ocr || next.translation || next.drawings?.length
+    || next.drawingRevision || next.drawingHistory?.undo.length || next.drawingHistory?.redo.length) throw Error('选区无效');
+  if (refs.some(ref => ref.kind === 'region' ? ref.id !== next.id && !scene.regions.some(value => value.id === ref.id)
+    : !scene.items.some(value => value.id === ref.id))) throw Error('引用无效');
+  previewGeometry.invalidate(scene);
+  scene.regions.push(next); scene.refs = structuredClone(refs);
+  publish();
+  return undefined;
 }
 export async function createBlackboard(sceneId:string):Promise<Snapshot> {
   if(native)return invokeSnapshot('create_blackboard',{sceneId});

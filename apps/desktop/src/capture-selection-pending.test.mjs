@@ -44,7 +44,7 @@ const sourceEffect = nodes.find(node => node.type === 'CallExpression' && node.c
 assert.ok(mask && selectionShow && toolbarWhen && cleanup && sourceEffect);
 const harness = `import { batch, createSignal, createMemo, createEffect, Show, For, untrack, onCleanup } from 'solid-js';
 import { SnapSelectionGesture, snapResize } from './window-snap';
-import { geometryTarget } from './region-geometry';
+import { geometryTarget, overlayRegion } from './region-geometry';
 export default function PendingOwner(props) {
   let disposed = false, interactionVersion = 0, forceManualSelection, cancelGesture, cancelDeferredPointer, snapPointer, newSelectionSource, lastSource;
   const canvas = props.canvas;
@@ -52,7 +52,7 @@ export default function PendingOwner(props) {
   const backgroundError = () => false, drawingSession = () => undefined, imageDrawing = () => undefined;
   const exporting = () => false, settling = () => false, extensionRunning = () => false, extensionInteracting = () => false, ocrPending = () => undefined;
   const geometry = () => props.geometry, viewport = () => props.viewport, regionById = id => props.scene.regions.find(region => region.id === id);
-  ${['activeRegion', 'display', 'regions', 'point', 'selectionPreview', 'blocked', 'snapUnavailable'].map(variable).join('\n')}
+  ${['regionIds', 'activeRegion', 'display', 'regions', 'point', 'selectionPreview', 'blocked', 'snapUnavailable'].map(variable).join('\n')}
   const clamp = (value, low, high) => Math.max(low, Math.min(Math.max(low, high), value));
   const contains = (box, x, y, padding = 0) => x >= box.x - padding && x <= box.x + box.width + padding && y >= box.y - padding && y <= box.y + box.height + padding;
   const sameGeometry = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;

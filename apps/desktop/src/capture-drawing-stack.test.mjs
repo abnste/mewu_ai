@@ -53,7 +53,10 @@ async function load(url) {
 }
 const drawing = await load(new URL('./components/DrawingLayer.tsx', import.meta.url));
 const projection = (await load(new URL('./region-image.ts', import.meta.url))).namespace.regionImageProjection;
-const isolated = `import { For } from 'solid-js'; import DrawingLayer from './DrawingLayer'; export default function saved(props,regionById,imageProjection,drawingSession){return ${source.slice(passive.node.start, passive.node.end)};}`;
+const isolated = `import { For, createMemo } from 'solid-js'; import DrawingLayer from './DrawingLayer'; export default function saved(props,regionById,imageProjection,drawingSession){
+  const regionIds = createMemo(() => props.scene.regions.map(region => region.id));
+  const savedRegions = createMemo(() => new Map(props.scene.regions.map(region => [region.id, region])));
+  return ${source.slice(passive.node.start, passive.node.end)};}`;
 const compiled = transformSync(isolated, { filename: 'actual-passive-subtree.tsx', parserOpts: { plugins: ['typescript', 'jsx'] }, presets: [[solidPreset, { generate: 'ssr', hydratable: false }]], configFile: false, babelrc: false }).code;
 const renderModule = new SourceTextModule(plain(compiled));
 await renderModule.link(name => name === 'solid-js' ? synthetic(solid) : name === 'solid-js/web' ? synthetic(web) : drawing);

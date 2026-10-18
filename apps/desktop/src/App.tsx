@@ -4,6 +4,7 @@ import { referencePinObject, subscribePinObjects, type PinObject } from './pin-o
 import { syncNativeLanguage } from './language-bridge';
 import { t } from "./i18n";
 import { RunStreamBuffer } from './run-stream-buffer';
+import { PublishedRevision } from './published-revision';
 import { preferenceKey, readPreferences } from './interface-preferences';
 import { updateLanguage } from './i18n';
 import { createEffect, createMemo, createSignal, lazy, on, onCleanup, onMount, Show, untrack } from 'solid-js';
@@ -333,7 +334,11 @@ export default function App() {
     setSnapshot(next);
     voice.reconcile();
     regionGeometry.reconcile();
+    publishedRevision.changed();
   };
+  const publishedRevision = new PublishedRevision(() => snapshot()?.revision,
+    async () => accept(await bridge.getSnapshot()));
+  onCleanup(() => publishedRevision.dispose());
   const acceptPlugins = (next: PluginSnapshot) => {
     if (!disposed && next.revision >= pluginSnapshot().revision) {
       if (next.revision !== pluginSnapshot().revision) videoPlayers.pauseAll();
@@ -864,14 +869,30 @@ export default function App() {
   }
   async function addRegion(sceneId: string, region: Region) {
     if (exitPreparing()) throw new Error('正在退出');
+    const backgroundId = snapshot()?.scenes.find(value => value.id === sceneId)?.background?.id;
+    if (!backgroundId) throw new Error('截图已变化');
     const finishOperation = spaceOperations.begin();
     try {
       await regionGeometry.flush();
-      await command({ type: 'add_region', sceneId, region });
-      const current = snapshot()!.scenes.find(s => s.id === sceneId)!;
-      const next = [...(referenceDrafts()[sceneId] ?? current.refs), { kind: 'region' as const, id: region.id }];
-      setReferenceDrafts(old => ({ ...old, [sceneId]: next }));
-      await command({ type: 'set_refs', sceneId, refs: next });
+      const save = commands.then(async () => {
+        const current = snapshot()?.scenes.find(value => value.id === sceneId);
+        if (disposed || exitPreparing() || scroll() || snapshot()?.activeSceneId !== sceneId
+          || !current || current.closed || current.frozen || current.background?.id !== backgroundId) throw new Error('截图已变化');
+        // Read after earlier queued additions, including unsaved reference edits.
+        const previousDraft = referenceDrafts()[sceneId];
+        const next = [...(previousDraft ?? current.refs), { kind: 'region' as const, id: region.id }];
+        const revision = await bridge.addCaptureRegion(sceneId, backgroundId, region, next);
+        if (revision !== undefined) await publishedRevision.wait(revision, () => {
+          const observed = snapshot()?.scenes.find(value => value.id === sceneId);
+          return observed?.background?.id === backgroundId && observed.regions.some(value => value.id === region.id);
+        });
+        // An explicit reference edit made while saving keeps its ownership.
+        if (!disposed && snapshot()?.scenes.find(value => value.id === sceneId)?.background?.id === backgroundId) {
+          setReferenceDrafts(old => old[sceneId] === previousDraft ? { ...old, [sceneId]: next } : old);
+        }
+      });
+      commands = save.catch(error => { if (exitPreparing()) exitFailure ??= error; });
+      await save;
     } finally { finishOperation(); }
   }
   function focusReference(reference: Reference) {

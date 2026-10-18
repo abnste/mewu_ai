@@ -13,6 +13,7 @@
     "allow-begin-exit-preparation",
     "allow-finish-exit-preparation",
     "allow-apply-scene-command",
+    "allow-add-capture-region",
     "allow-capture-screen",
     "allow-capture-background-ready",
     "allow-create-blackboard",

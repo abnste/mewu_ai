@@ -225,11 +225,15 @@ export default function SpaceCanvas(props: Props) {
     const height = props.scene.background?.height || natural().height;
     return captureDisplayGeometry(props.scene.background, width, height, viewport(), viewport().deviceScale);
   });
+  // One index per saved snapshot. Pointer/geometry previews must not run a
+  // linear search for every property of every region on each move.
+  const savedRegions = createMemo(() => new Map(props.scene.regions.map(region => [region.id, region])));
+  const regionIds = createMemo(() => props.scene.regions.map(region => region.id));
   const regionById = (id: string) => {
-    const saved = props.scene.regions.find(region => region.id === id);
+    const saved = savedRegions().get(id);
     return saved && overlayRegion(props.scene, saved, props.geometryView.overlay);
   };
-  const cropChanged = (region: Region) => !region.imageOverride && props.geometryView.overlay?.regionId === region.id && !sameGeometry(region, props.scene.regions.find(value => value.id === region.id)!);
+  const cropChanged = (region: Region) => !region.imageOverride && props.geometryView.overlay?.regionId === region.id && !sameGeometry(region, savedRegions().get(region.id)!);
   const backgroundAnchored = (item: SpaceItem) => item.asset.kind === 'video' && item.state?.coordinateSpace === 'background' && item.state.backgroundId === props.scene.background?.id && geometry().width > 0 && geometry().height > 0;
   const displayedItem = (id: string) => {
     const item = props.scene.items.find(item => item.id === id)!;
@@ -284,7 +288,9 @@ export default function SpaceCanvas(props: Props) {
   const translationVisible = (region: Region) => active() === region.id && selectedTextMode(region) === 'translation' && !drawingSession() && !forceNew() && Boolean(savedTranslation(region)?.selection.lines.length);
   const display = (region: Box): Box => ({ x: geometry().x + region.x * geometry().scale, y: geometry().y + region.y * geometry().scale, width: region.width * geometry().scale, height: region.height * geometry().scale });
   const imageProjection = (region: Region) => regionImageProjection(region, display(region), props.scene.background!, geometry().scale);
-  const regions = () => props.scene.regions.map(region => ({ region, box: display(regionById(region.id)!) }));
+  // Hit testing is paused during a pointer gesture; do not project all saved
+  // boxes just to maintain an unused hover cache on every captured move.
+  const regions = createMemo(() => activity() ? [] : props.scene.regions.map(region => ({ region, box: display(overlayRegion(props.scene, region, props.geometryView.overlay)) })));
   // Presentation only: pending geometry never enters the saved region/tool lists.
   const selectionPreview = createMemo(() => {
     if (selection()) return selection();
@@ -396,8 +402,13 @@ export default function SpaceCanvas(props: Props) {
     if (!target?.closest('.capture-surface') || target.closest('.artifact-card') || (composer && contains(composer, event.clientX, event.clientY))) { scheduleHide(); return; }
     if (toolbarVisible() && contains(toolbarBox(), event.clientX, event.clientY, TOLERANCE)) { clearHideTimer(); return; }
     // Last drawn wins for overlapping regions, matching the capture surface.
-    const hovered = [...props.scene.regions].reverse().find(region => contains(display(regionById(region.id)!), event.clientX, event.clientY, 5));
-    if (hovered) revealToolbar(regionById(hovered.id)!); else scheduleHide();
+    const candidates = regions();
+    for (let index = candidates.length - 1; index >= 0; index--) {
+      if (contains(candidates[index].box, event.clientX, event.clientY, 5)) {
+        revealToolbar(regionById(candidates[index].region.id)!); return;
+      }
+    }
+    scheduleHide();
   }
   function setSelectionActivity(value: boolean) {
     if (activity() === value) return;
@@ -809,16 +820,20 @@ export default function SpaceCanvas(props: Props) {
     <Show when={props.scene.background?.id} keyed>{id => <img class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} style={geometry().nativePixels ? { left: '0px', top: '0px', width: `${geometry().width}px`, height: `${geometry().height}px` } : undefined} alt={t("屏幕截图")} draggable={false} decoding="sync" onLoad={event => backgroundLoaded(event.currentTarget, id)} onError={() => backgroundFailed(id)} />}</Show>
     <svg class="capture-mask" width="100%" height="100%" aria-hidden="true">
       <defs><mask id="region-cutouts" maskUnits="userSpaceOnUse"><rect width="100%" height="100%" fill="white" />
-        <For each={regions()}>{entry => <rect x={entry.box.x} y={entry.box.y} width={entry.box.width} height={entry.box.height} fill="black" />}</For>
+        <For each={regionIds()}>{id => {
+          const region = createMemo(() => regionById(id)!);
+          const box = createMemo(() => display(region()), undefined, { equals: sameGeometry });
+          return <rect x={box().x} y={box().y} width={box().width} height={box().height} fill="black" />;
+        }}</For>
         <Show when={selectionPreview()}>{box => <rect x={box().x} y={box().y} width={box().width} height={box().height} fill="black" />}</Show>
       </mask></defs>
       <rect width="100%" height="100%" fill="#000" fill-opacity={!props.blackboard&&props.scene.background ? props.maskOpacity : '0'} mask="url(#region-cutouts)" />
     </svg>
     <Show when={snapPreview()}>{box => <div class="capture-snap-preview" aria-hidden="true" style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} />}</Show>
-    <For each={props.scene.regions.map(region => region.id)}>{(id, index) => {
-      const region = () => regionById(id)!;
-      const box = () => display(region());
-      const image = () => imageProjection(region());
+    <For each={regionIds()}>{(id, index) => {
+      const region = createMemo(() => regionById(id)!);
+      const box = createMemo(() => display(region()), undefined, { equals: sameGeometry });
+      const image = createMemo(() => imageProjection(region()));
       return <section class="capture-region" classList={{ 'capture-active': active() === id, 'capture-located': flashedRegion() === id, 'capture-image-override': Boolean(region().imageOverride) }} style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} onPointerDown={event => editRegion(event, region())} aria-label={`区域 ${index() + 1}`}>
         <div class="capture-region-content" style={{ left: `${image().box.x - box().x}px`, top: `${image().box.y - box().y}px`, width: `${image().box.width}px`, height: `${image().box.height}px` }}>
           <Show when={region().imageOverride?.id} keyed>{assetId => <img data-asset={assetId} class="capture-override-image" src={assetUrl(region().imageOverride!)} alt={t("长截图")} draggable={false} onError={() => props.onError('无法读取长截图')} />}</Show>
@@ -836,11 +851,11 @@ export default function SpaceCanvas(props: Props) {
       </section>;
     }}</For>
     <div class="capture-saved-drawings" aria-hidden="true">
-      <For each={props.scene.regions.map(region => region.id)}>{id => {
-        const region = () => regionById(id)!;
-        const image = () => imageProjection(region());
+      <For each={regionIds()}>{id => {
+        const region = createMemo(() => regionById(id)!);
+        const image = createMemo(() => imageProjection(region()));
         return <div class="capture-region-content" style={{ left: `${image().box.x}px`, top: `${image().box.y}px`, width: `${image().box.width}px`, height: `${image().box.height}px` }}>
-          <DrawingLayer hidden={drawingSession()?.regionId === id} region={image().region} sourceRegion={props.scene.regions.find(value => value.id === id)} sceneId={props.scene.id} background={props.scene.background} />
+          <DrawingLayer hidden={drawingSession()?.regionId === id} region={image().region} sourceRegion={savedRegions().get(id)} sceneId={props.scene.id} background={props.scene.background} />
         </div>;
       }}</For>
     </div>
