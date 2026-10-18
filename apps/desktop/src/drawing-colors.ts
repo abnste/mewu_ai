@@ -4,6 +4,8 @@ export const highlightMaskTable = `${'1 '.repeat(255)}0`;
 export const colorPresets = ['#FFFFFF','#242832','#EE4848','#F28B38','#F4C94D','#39A97C','#348BF1','#9467D9'];
 export const colorHistoryKey = 'mewu.drawing-colors.v1';
 export const colorHistoryChanged = 'mewu:drawing-colors';
+export const colorPaletteKey = 'mewu.drawing-palette.v1';
+export const colorPaletteChanged = 'mewu:drawing-palette';
 /** Fixed current-color slot followed by two distinct previous colors. */
 export function toolbarRecentColors(recent: readonly string[], current: string): string[] {
   const selected = normalizeColor(current) ?? '#EE4848';
@@ -13,6 +15,23 @@ export function toolbarRecentColors(recent: readonly string[], current: string):
 export const normalizeColor = (value:string) => /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim().toUpperCase() : undefined;
 export function normalizeColorHistory(value: unknown): string[] {
   return Array.isArray(value)?[...new Set(value.filter((entry):entry is string=>typeof entry==='string').map(normalizeColor).filter((entry):entry is string=>!!entry))].slice(0,3):[];
+}
+export function normalizeColorPalette(value: unknown): string[] | undefined {
+  if(!Array.isArray(value)||value.length!==3)return;
+  const colors=normalizeColorHistory(value);
+  return colors.length===3?colors:undefined;
+}
+export function storedColorPalette(storage:Pick<Storage,'getItem'>=localStorage): string[] | undefined {
+  try{return normalizeColorPalette(JSON.parse(storage.getItem(colorPaletteKey)||'null'));}catch{return;}
+}
+export function initialColorPalette(current:string,storage:Pick<Storage,'getItem'>=localStorage): string[] {
+  const colors=storedColorPalette(storage)??toolbarRecentColors(recentColors(storage),current),selected=normalizeColor(current)??'#EE4848';
+  return colors.includes(selected)?colors:[selected,...colors.slice(1)];
+}
+export function rememberColorPalette(value:readonly string[],storage:Pick<Storage,'setItem'>=localStorage):string[]|undefined {
+  const colors=normalizeColorPalette(value);if(!colors)return;
+  try{storage.setItem(colorPaletteKey,JSON.stringify(colors));}catch{/* Color selection must remain usable without storage. */}
+  return colors;
 }
 export const colorRgb = (value:string) => [1,3,5].map(offset=>parseInt(value.slice(offset,offset+2),16));
 // WCAG relative luminance; choose the stronger of the two opaque text colors.
