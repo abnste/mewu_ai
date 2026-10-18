@@ -1202,6 +1202,7 @@ struct RuntimeInfo {
     hotkey: String,
     capture_backend: &'static str,
     content_origin: String,
+    measure_interactions: bool,
 }
 #[tauri::command]
 fn runtime_info(app: AppHandle, host: tauri::State<'_, Host>) -> Result<RuntimeInfo, String> {
@@ -1210,6 +1211,7 @@ fn runtime_info(app: AppHandle, host: tauri::State<'_, Host>) -> Result<RuntimeI
         hotkey: capture_shortcut_host::active_display(&app),
         capture_backend: capture::backend_name(),
         content_origin: host.content_origin.clone(),
+        measure_interactions: interaction_performance::enabled(),
     })
 }
 
@@ -1485,9 +1487,11 @@ async fn capture_background_ready(
     width: u32,
     height: u32,
     success: bool,
+    diagnostics: Option<serde_json::Value>,
 ) -> Result<bool, String> {
+    let timing = interaction_performance::Trace::start(interaction_performance::Kind::CaptureAck);
     tauri::async_runtime::spawn_blocking(move || {
-        capture_background_ready_blocking(app, window, scene_id, background_id, width, height, success)
+        capture_background_ready_blocking(app, window, scene_id, background_id, width, height, success, diagnostics, timing)
     })
     .await
     .map_err(|_| "截图呈现确认中断".to_string())?
@@ -1501,7 +1505,11 @@ fn capture_background_ready_blocking(
     width: u32,
     height: u32,
     success: bool,
+    diagnostics: Option<serde_json::Value>,
+    mut timing: interaction_performance::Trace,
 ) -> Result<bool, String> {
+    timing.mark(interaction_performance::Stage::AckWorkerStarted);
+    let result = (|| -> Result<bool, String> {
     if window.label() != "space" {
         return Err("此窗口不能确认截图呈现".into());
     }
@@ -1512,7 +1520,9 @@ fn capture_background_ready_blocking(
         if window.is_visible().map_err(|_| "无法检查截图窗口")? {
             return Ok(false);
         }
+        timing.mark(interaction_performance::Stage::AckVisibilityChecked);
         let engine = host.lock()?;
+        timing.mark(interaction_performance::Stage::AckLocked);
         let asset = engine
             .store
             .active_background_for_preview(&scene_id, &background_id)
@@ -1520,6 +1530,7 @@ fn capture_background_ready_blocking(
         if asset.width != Some(width) || asset.height != Some(height) {
             return Ok(false);
         }
+        timing.mark(interaction_performance::Stage::AckIdentityChecked);
         host.capture_presentation.acknowledge(
             &capture_presentation::Identity {
                 scene: scene_id,
@@ -1535,6 +1546,14 @@ fn capture_background_ready_blocking(
         let _ = (scene_id, background_id, width, height, success);
         Ok(false)
     }
+
+    })();
+    if matches!(result, Ok(true)) {
+        timing.mark(interaction_performance::Stage::AckAccepted);
+        if success { interaction_performance::record_frontend(diagnostics); }
+        timing.finish(success);
+    } else { timing.finish(false); }
+    result
 }
 
 #[tauri::command]

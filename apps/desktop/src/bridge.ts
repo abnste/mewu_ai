@@ -14,6 +14,7 @@ import type { RecordingAudioMode, RecordingAudioSelection, RecordingGrant } from
 import type { PluginManifest } from './plugin-contracts';
 import { bundledProviderPresets } from './provider-presets';
 import type { CaptureBackgroundReady } from './capture-presentation';
+import * as capturePerformance from './capture-performance';
 
 export const native = isTauri();
 export async function captureBackgroundReady(ready: CaptureBackgroundReady): Promise<boolean> {
@@ -50,7 +51,7 @@ export interface RecordingStatus {
   audio: RecordingAudioMode;
 }
 export type RecordingAction = 'pause' | 'resume' | 'stop' | 'cancel';
-interface RuntimeInfo { platform: 'windows' | 'macos' | 'linux' | 'other'; hotkey: string; captureBackend: string; contentOrigin: string }
+interface RuntimeInfo { platform: 'windows' | 'macos' | 'linux' | 'other'; hotkey: string; captureBackend: string; contentOrigin: string; measureInteractions?: boolean }
 let runtime: RuntimeInfo | undefined;
 let runtimeRequest: Promise<RuntimeInfo> | undefined;
 const uid = () => crypto.randomUUID();
@@ -677,6 +678,7 @@ export async function runtimeInfo(): Promise<RuntimeInfo> {
       const origin = new URL(info.contentOrigin);
       if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('内容服务地址无效');
       runtime = { ...info, platform, contentOrigin: origin.origin };
+      try { capturePerformance.configureCapturePerformance?.(info.measureInteractions === true); } catch { /* Advisory only. */ }
       return runtime;
     }).catch(error => {
       runtimeRequest = undefined;
@@ -700,7 +702,13 @@ export async function subscribe(onSnapshot: (snapshot: Snapshot) => void, onRun:
   await runtimeInfo();
   // Tauri's default Any target also receives events sent to other windows.
   // Run fragments are emitted separately to space and the minimized-scene widget.
-  const stopSnapshot = await listen<Snapshot>('snapshot', event => onSnapshot(normalizeSnapshot(event.payload)), { target: surface });
+  const stopSnapshot = await listen<Snapshot>('snapshot', event => {
+    let measurement: object | undefined;
+    try { if (surface === 'space') measurement = capturePerformance.captureSnapshotReceived?.(event.payload); } catch { /* Advisory only. */ }
+    const next = normalizeSnapshot(event.payload);
+    try { capturePerformance.captureSnapshotNormalized?.(measurement); } catch { /* Advisory only. */ }
+    onSnapshot(next);
+  }, { target: surface });
   try {
     const stopRun = await listen<RunEvent>('run-event', event => onRun(event.payload), { target: surface });
     try {

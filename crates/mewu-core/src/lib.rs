@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 mod connections;
+mod checkpoint_worker;
 mod asset_lookup;
 mod drawing;
 mod external_memory;
@@ -36,7 +37,7 @@ pub use rich_annotations::{
     MAX_RICH_RUN_CONTENT_BYTES, MAX_RICH_RUN_PNG_BYTES, RICH_DRAWING_COLOR,
     RICH_DRAWING_STROKE_WIDTH,
 };
-pub use store::{CoreError, ExportView, Store};
+pub use store::{CheckpointDrain, CoreError, ExportView, Store};
 pub use store::session_title_store::{title_request_is_current, SessionTitleRequest};
 pub use store::history_storage::HistoryCleanupPlan;
 pub use translation::validate_translation_document;

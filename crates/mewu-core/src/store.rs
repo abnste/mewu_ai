@@ -108,6 +108,25 @@ pub struct Store {
     revision: i64,
     geometry_group: Option<crate::geometry_history::ActiveEdit>,
     persistence_observer: Option<crate::PersistenceObserver>,
+    checkpoint_maintenance: Option<crate::checkpoint_worker::CheckpointWorker>,
+}
+
+/// An owned maintenance drain. The host can request it under its Store lock,
+/// release that lock, and then wait before releasing the storage-root lifetime.
+pub struct CheckpointDrain(Option<crate::checkpoint_worker::CheckpointWorker>);
+impl CheckpointDrain {
+    pub fn wait(mut self) -> bool {
+        self.0.as_mut().is_none_or(|worker| worker.shutdown())
+    }
+}
+impl Drop for Store {
+    fn drop(&mut self) {
+        // Close the extra connection first. The original writer then retains
+        // SQLite's existing last-connection checkpoint/close behavior.
+        if let Some(mut worker) = self.checkpoint_maintenance.take() {
+            worker.shutdown();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -243,7 +262,7 @@ impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         // Validate/migrate before changing journal mode, so an unknown or
         // malformed database is never converted just by attempting to open it.
-        let store = Self::from_connection(SqlConnection::open(path)?)?;
+        let mut store = Self::from_connection(SqlConnection::open(path)?)?;
         let mode: String = store
             .db
             .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
@@ -251,6 +270,7 @@ impl Store {
             return Err(invalid("无法启用本机 WAL 存储"));
         }
         store.db.pragma_update(None, "synchronous", "FULL")?;
+        store.resume_checkpoint_maintenance();
         Ok(store)
     }
 
@@ -380,6 +400,7 @@ impl Store {
             revision,
             geometry_group: None,
             persistence_observer: None,
+            checkpoint_maintenance: None,
         };
         Ok(store)
     }
@@ -392,6 +413,66 @@ impl Store {
     /// never scene contents, identifiers, paths or persistence configuration.
     pub fn set_persistence_observer(&mut self, observer: Option<crate::PersistenceObserver>) {
         self.persistence_observer = observer;
+    }
+
+    /// Stop notifications immediately; waiting on the returned owner may be
+    /// performed outside the host Engine lock. An aborted exit can resume.
+    pub fn pause_checkpoint_maintenance(&mut self) -> CheckpointDrain {
+        if self.checkpoint_maintenance.is_some() {
+            // This is connection policy only. Committed WAL remains FULL.
+            let _ = self.db.pragma_update(None, "wal_autocheckpoint", 1000i64);
+        }
+        let worker = self.checkpoint_maintenance.take();
+        if let Some(worker) = &worker { worker.request_stop(); }
+        CheckpointDrain(worker)
+    }
+
+    /// Opportunistic optimization only. Failure leaves SQLite's original
+    /// default checkpoint policy and does not create a new user-facing error.
+    pub fn resume_checkpoint_maintenance(&mut self) -> bool {
+        if let Some(worker) = &self.checkpoint_maintenance { return worker.is_healthy(); }
+        let start = || -> Option<crate::checkpoint_worker::CheckpointWorker> {
+            let path = std::path::PathBuf::from(self.db.path()?);
+            if path.as_os_str().is_empty() { return None; }
+            let maintenance = Self::open_checkpoint_connection(&path).ok()?;
+            let transaction = rusqlite::Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate).ok()?;
+            // Both connections are already bound before startup. This does not
+            // migrate, recover runs, create a database or periodically reopen.
+            let version: u32 = maintenance.pragma_query_value(None, "user_version", |r| r.get(0)).ok()?;
+            let application: i64 = maintenance.pragma_query_value(None, "application_id", |r| r.get(0)).ok()?;
+            let mode: String = maintenance.pragma_query_value(None, "journal_mode", |r| r.get(0)).ok()?;
+            let identity: (u32, i64) = maintenance.query_row(
+                "SELECT schema_version,revision FROM app_state WHERE id=1", [], |r| Ok((r.get(0)?,r.get(1)?))).ok()?;
+            if version != DB_SCHEMA_VERSION || application != APPLICATION_ID || !mode.eq_ignore_ascii_case("wal")
+                || identity != (SCHEMA_VERSION, self.revision)
+                || !crate::checkpoint_worker::same_file_identity(&self.db, &maintenance, &path).ok()? { return None; }
+            transaction.commit().ok()?;
+            crate::checkpoint_worker::CheckpointWorker::start(maintenance).ok()
+        };
+        let Some(mut worker) = start() else { return false; };
+        if self.db.pragma_update(None, "wal_autocheckpoint", 8192i64).is_err() {
+            worker.shutdown();
+            return false;
+        }
+        worker.notify();
+        self.checkpoint_maintenance = Some(worker);
+        true
+    }
+
+    fn open_checkpoint_connection(path: &Path) -> rusqlite::Result<SqlConnection> {
+        let connection = SqlConnection::open_with_flags(path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+        connection.busy_timeout(Duration::ZERO)?;
+        connection.pragma_update(None, "synchronous", "FULL")?;
+        Ok(connection)
+    }
+
+    fn notify_checkpoint_maintenance(&mut self) {
+        if self.checkpoint_maintenance.as_ref().is_some_and(|worker| !worker.notify()) {
+            // Never join on the commit path (the host may hold its Engine).
+            // Retain the failed worker owner for explicit drain/Store Drop.
+            let _ = self.db.pragma_update(None, "wal_autocheckpoint", 1000i64);
+        }
     }
 
     /// Host metadata queries can borrow rows without cloning chat history.
@@ -2594,6 +2675,7 @@ impl Store {
         observation.mark(PersistencePhase::SqlUpdate);
         transaction.commit()?;
         observation.mark(PersistencePhase::DurableCommit);
+        self.notify_checkpoint_maintenance();
         self.revision += 1;
         self.state = next;
         if source_set_changed
@@ -2611,6 +2693,10 @@ impl Store {
         Ok(snapshot)
     }
 }
+
+#[cfg(test)]
+#[path = "checkpoint_store_tests.rs"]
+mod checkpoint_store_tests;
 
 fn initial_snapshot() -> Snapshot {
     let agent = AgentProfile {

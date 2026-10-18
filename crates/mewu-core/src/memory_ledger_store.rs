@@ -95,6 +95,7 @@ impl Store {
         if let Some(next) = next {
             self.state = next;
         }
+        self.notify_checkpoint_maintenance();
         Ok(result)
     }
 

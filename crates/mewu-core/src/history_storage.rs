@@ -164,9 +164,11 @@ impl Store {
     /// Explicit maintenance only, after a successful history transaction. FTS
     /// virtual tables and immutable shared layouts are left intact by VACUUM.
     pub fn compact_history_storage(&mut self) -> Result<()> {
-        self.db
-            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
-        Ok(())
+        let resume = self.checkpoint_maintenance.is_some();
+        self.pause_checkpoint_maintenance().wait();
+        let result = self.db.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
+        if resume { self.resume_checkpoint_maintenance(); }
+        result.map_err(Into::into)
     }
 }
 

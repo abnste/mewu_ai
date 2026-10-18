@@ -24,6 +24,8 @@ pub(crate) enum Kind {
     Publish,
     WaylandFrame,
     StorePersist,
+    CaptureFrontend,
+    CaptureAck,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -57,6 +59,19 @@ pub(crate) enum Stage {
     CoreDurableCommit,
     CoreAdoptState,
     CoreCloneResult,
+    SnapshotReceivedHidden,
+    SnapshotReceivedVisible,
+    SnapshotNormalized,
+    ElementAttached,
+    DecodeStarted,
+    ImageDecoded,
+    LayoutReady,
+    InvokeStarted,
+    AckWorkerStarted,
+    AckVisibilityChecked,
+    AckLocked,
+    AckIdentityChecked,
+    AckAccepted,
 }
 
 /// Call once, before admitting interactions. Failure disables measurement only.
@@ -95,6 +110,55 @@ fn persistence_to_recorder(recorder: Option<Arc<Recorder>>, timing: mewu_core::P
     }
     recorder.write(&Record { version: 1, kind: Kind::StorePersist, success: timing.success,
         total_micros: timing.total_micros, stages: &marks[..count] });
+}
+
+/// Fixed, bounded frontend durations, relative to the snapshot event callback.
+/// This is advisory only: it cannot authorize presentation or alter its result.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FrontendCaptureTiming {
+    document_hidden: bool,
+    received_micros: u64,
+    normalized_micros: u64,
+    attached_micros: u64,
+    decode_started_micros: u64,
+    image_decoded_micros: u64,
+    layout_ready_micros: u64,
+    invoke_started_micros: u64,
+}
+
+pub(crate) fn enabled() -> bool {
+    RECORDER.get().and_then(Option::as_ref).is_some()
+}
+
+pub(crate) fn record_frontend(value: Option<serde_json::Value>) {
+    let recorder = RECORDER.get().and_then(Option::as_ref).cloned();
+    let Some(recorder) = recorder else { return };
+    // The advisory field deliberately accepts any valid JSON at the command
+    // boundary. Malformed diagnostics must never reject a valid screenshot ACK.
+    // Unknown/oversized shapes are dropped without serialization or logging.
+    let Some(value) = value.filter(|value| value.as_object().is_some_and(|map| map.len() == 8)) else { return };
+    let Ok(timing) = serde_json::from_value::<FrontendCaptureTiming>(value) else { return };
+    frontend_to_recorder(Some(recorder), timing);
+}
+
+fn frontend_to_recorder(recorder: Option<Arc<Recorder>>, timing: FrontendCaptureTiming) {
+    let Some(recorder) = recorder else { return };
+    let stages = [
+        (if timing.document_hidden { Stage::SnapshotReceivedHidden } else { Stage::SnapshotReceivedVisible }, timing.received_micros),
+        (Stage::SnapshotNormalized, timing.normalized_micros),
+        (Stage::ElementAttached, timing.attached_micros),
+        (Stage::DecodeStarted, timing.decode_started_micros),
+        (Stage::ImageDecoded, timing.image_decoded_micros),
+        (Stage::LayoutReady, timing.layout_ready_micros),
+        (Stage::InvokeStarted, timing.invoke_started_micros),
+    ];
+    if timing.received_micros != 0 || timing.invoke_started_micros > 8_000_000
+        || stages.windows(2).any(|pair| pair[0].1 > pair[1].1)
+        || !recorder.reserve() { return; }
+    let stages = stages.map(|(stage, elapsed_micros)| Mark { stage, elapsed_micros });
+    recorder.write(&Record { version: 1, kind: Kind::CaptureFrontend, success: true,
+        total_micros: timing.invoke_started_micros, stages: &stages });
 }
 
 fn create_recorder(enabled: bool, directory: &Path) -> Option<Arc<Recorder>> {
@@ -278,6 +342,66 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn frontend(hidden: bool) -> FrontendCaptureTiming {
+        FrontendCaptureTiming { document_hidden: hidden, received_micros: 0,
+            normalized_micros: 10, attached_micros: 20, decode_started_micros: 30,
+            image_decoded_micros: 40, layout_ready_micros: 50, invoke_started_micros: 60 }
+    }
+    #[test]
+    fn frontend_readiness_preserves_seven_fixed_phases_and_hidden_or_visible_state() {
+        let fixture = Fixture::new();
+        let recorder = create_recorder(true, &fixture.0).unwrap();
+        frontend_to_recorder(Some(recorder.clone()), frontend(true));
+        frontend_to_recorder(Some(recorder.clone()), frontend(false));
+        let records = fixture.records();
+        assert_eq!(records.len(), 2);
+        for (record, first) in records.iter().zip(["snapshotReceivedHidden", "snapshotReceivedVisible"]) {
+            assert_eq!(record.as_object().unwrap().len(), 5);
+            assert_eq!(record["kind"], "captureFrontend");
+            assert_eq!(record["success"], true);
+            assert_eq!(record["totalMicros"], 60);
+            let stages = record["stages"].as_array().unwrap();
+            assert_eq!(stages.len(), 7);
+            for (index, (stage, name)) in stages.iter().zip([first, "snapshotNormalized", "elementAttached", "decodeStarted", "imageDecoded", "layoutReady", "invokeStarted"]).enumerate() {
+                assert_eq!(stage.as_object().unwrap().len(), 2);
+                assert_eq!(stage["stage"], name);
+                assert_eq!(stage["elapsedMicros"], (index * 10) as u64);
+            }
+        }
+    }
+    #[test]
+    fn frontend_invalid_or_disabled_durations_do_not_reserve_or_write() {
+        frontend_to_recorder(None, frontend(true));
+        let fixture = Fixture::new();
+        let recorder = create_recorder(true, &fixture.0).unwrap();
+        for field in 0..3 {
+            let mut timing = frontend(true);
+            match field { 0 => timing.received_micros = 1, 1 => timing.image_decoded_micros = 29, _ => timing.invoke_started_micros = 8_000_001 }
+            frontend_to_recorder(Some(recorder.clone()), timing);
+        }
+        assert_eq!(recorder.admitted.load(Ordering::Relaxed), 0);
+        assert!(fixture.records().is_empty());
+    }
+    #[test]
+    fn frontend_json_rejects_unbounded_payload_shapes_and_noninteger_durations() {
+        let source = serde_json::json!({"documentHidden": true, "receivedMicros": 0, "normalizedMicros": 10, "attachedMicros": 20, "decodeStartedMicros": 30, "imageDecodedMicros": 40, "layoutReadyMicros": 50, "invokeStartedMicros": 60});
+        assert!(serde_json::from_value::<FrontendCaptureTiming>(source.clone()).is_ok());
+        for value in [serde_json::json!(-1), serde_json::json!(1.5), serde_json::json!("30"), serde_json::json!(null)] {
+            let mut bad = source.clone(); bad["decodeStartedMicros"] = value;
+            assert!(serde_json::from_value::<FrontendCaptureTiming>(bad).is_err());
+        }
+        let mut bad = source; bad["path"] = serde_json::json!("never accepted");
+        assert!(serde_json::from_value::<FrontendCaptureTiming>(bad).is_err());
+    }
+    #[test]
+    fn frontend_and_native_traces_share_the_existing_128_record_limit() {
+        let fixture = Fixture::new();
+        let recorder = create_recorder(true, &fixture.0).unwrap();
+        for _ in 0..MAX_RECORDS + 8 { frontend_to_recorder(Some(recorder.clone()), frontend(true)); }
+        Trace::from_recorder(Some(recorder.clone()), Kind::CaptureAck).finish(false);
+        assert_eq!(fixture.records().len(), MAX_RECORDS);
     }
 
     #[test]

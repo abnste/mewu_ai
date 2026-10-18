@@ -775,6 +775,17 @@ fn start_shutdown(
             return;
         }
         if app.state::<Host>().exit.advance(&id, READY) {
+            // Stop only after reversible exit checks have succeeded. Request
+            // under Engine, then wait outside its lock and off the UI thread.
+            // FULL commits are already durable in WAL; stalled maintenance must
+            // not strand an irreversible exit. Process exit releases any final
+            // in-flight I/O before the next owner obtains the storage lock.
+            let maintenance = app.state::<Host>().lock().ok()
+                .map(|mut engine| engine.store.pause_checkpoint_maintenance());
+            if let Some(maintenance) = maintenance {
+                let _ = tokio::time::timeout(Duration::from_secs(5),
+                    tauri::async_runtime::spawn_blocking(move || maintenance.wait())).await;
+            }
             // No reversible exit work remains. Release the screenshot key
             // before installer/restart handoff; process exit is the final OS
             // fallback if native hook teardown itself reports a failure.

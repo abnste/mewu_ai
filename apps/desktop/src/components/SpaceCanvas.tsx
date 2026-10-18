@@ -12,6 +12,7 @@ import { geometryTarget, overlayRegion, sameGeometry, type RegionGeometryCoordin
 import { geometryHistoryKey, type GeometryDirection } from '../region-geometry-history';
 import type { PluginContribution, PluginRecord } from '../plugin-contracts';
 import { assetUrl, captureBackgroundReady, exportRegion as exportNativeRegion, exportImageItem, exportTextAsset, native } from '../bridge';
+import { capturePreparationPerformance } from '../capture-performance';
 import { prepareCaptureBackground } from '../capture-presentation';
 import { captureDisplayGeometry } from '../capture-display';
 import { persistBackgroundItem, projectBackgroundItem } from '../media-item-geometry';
@@ -132,7 +133,8 @@ export default function SpaceCanvas(props: Props) {
       sceneId, backgroundId, width: background.width, height: background.height,
     }, () => !disposed && !props.scene.closed && !props.scene.frozen
       && props.scene.id === sceneId && props.scene.background?.id === backgroundId
-      && image.getAttribute('src') === source, captureBackgroundReady).catch(() => {
+      && image.getAttribute('src') === source, captureBackgroundReady,
+      () => capturePreparationPerformance({ sceneId, backgroundId, width: background.width!, height: background.height! })).catch(() => {
       // The capture owner reports a failed/canceled IPC. A stale callback cannot
       // wake it, show a window, or add another notification to a later scene.
     });

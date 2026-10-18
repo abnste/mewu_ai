@@ -514,6 +514,7 @@ impl Store {
         tx.commit()?;
         self.state = next;
         self.revision += 1;
+        self.notify_checkpoint_maintenance();
         Ok(result)
     }
     pub fn begin_model_request(
