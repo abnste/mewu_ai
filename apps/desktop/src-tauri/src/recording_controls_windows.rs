@@ -103,12 +103,12 @@ fn current_policy(
     Ok(())
 }
 
-fn webview_error(error: &tauri::wry::Error) -> (&'static str, Option<u32>) {
+fn webview_error(error: &wry::Error) -> (&'static str, Option<u32>) {
     match error {
-        tauri::wry::Error::WebView2Error(webview2_com::Error::WindowsError(error)) => {
+        wry::Error::WebView2Error(webview2_com::Error::WindowsError(error)) => {
             ("WebView2", Some(error.code().0 as u32))
         }
-        tauri::wry::Error::WebView2Error(_) => ("WebView2", None),
+        wry::Error::WebView2Error(_) => ("WebView2", None),
         _ => ("WebView", None),
     }
 }
@@ -122,7 +122,7 @@ fn creation_error(error: &tauri::Error) -> String {
             ("窗口已存在", None)
         }
         tauri::Error::Runtime(tauri_runtime::Error::CreateWebview(error)) => error
-            .downcast_ref::<tauri::wry::Error>()
+            .downcast_ref::<wry::Error>()
             .map(webview_error)
             .unwrap_or(("WebView", None)),
         tauri::Error::Runtime(tauri_runtime::Error::CreateWindow) => ("创建窗口", None),
@@ -389,20 +389,22 @@ mod tests {
 
     #[test]
     fn recording_controls_creation_diagnostics_keep_typed_hresult_not_private_text() {
-        let error = tauri::Error::Runtime(tauri_runtime::Error::CreateWebview(Box::new(
-            tauri::wry::Error::WebView2Error(webview2_com::Error::WindowsError(
-                windows::core::Error::new(
-                    windows::core::HRESULT(0x80070005u32 as i32),
-                    "private-path-or-provider-response",
-                ),
-            )),
-        )));
-        assert_eq!(
-            creation_error(&error),
-            "无法打开录屏控制条（WebView2，0x80070005）"
-        );
+        for code in [0x80070005u32, 0x8007139F, 0x80004002] {
+            let error = tauri::Error::Runtime(tauri_runtime::Error::CreateWebview(Box::new(
+                wry::Error::WebView2Error(webview2_com::Error::WindowsError(
+                    windows::core::Error::new(
+                        windows::core::HRESULT(code as i32),
+                        "private-path-or-provider-response",
+                    ),
+                )),
+            )));
+            assert_eq!(
+                creation_error(&error),
+                format!("无法打开录屏控制条（WebView2，0x{code:08X}）")
+            );
+        }
         let callback = tauri::Error::Runtime(tauri_runtime::Error::CreateWebview(Box::new(
-            tauri::wry::Error::WebView2Error(webview2_com::Error::CallbackError(
+            wry::Error::WebView2Error(webview2_com::Error::CallbackError(
                 "private-label-or-token-0xDEADBEEF".into(),
             )),
         )));

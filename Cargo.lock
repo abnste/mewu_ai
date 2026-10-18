@@ -3313,6 +3313,7 @@ dependencies = [
  "windows-capture",
  "windows-future",
  "windows-sys 0.61.2",
+ "wry",
  "x11rb",
  "xcap",
  "zbus",
