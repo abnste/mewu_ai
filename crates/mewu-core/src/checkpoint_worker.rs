@@ -24,6 +24,7 @@ pub(crate) struct CheckpointWorker {
 
 enum Attempt {
     CompleteOrPartial,
+    Deferred,
     Failed,
 }
 
@@ -45,10 +46,11 @@ impl CheckpointWorker {
                 "checkpoint transaction active",
             ));
         }
-        Self::spawn(move || passive(&connection))
+        let mut changed_notifications = 0u32;
+        Self::spawn(move |force| scheduled(&connection, &mut changed_notifications, force))
     }
 
-    fn spawn(mut attempt: impl FnMut() -> Attempt + Send + 'static) -> io::Result<Self> {
+    fn spawn(mut attempt: impl FnMut(bool) -> Attempt + Send + 'static) -> io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(1);
         let (ready, ready_receiver) = mpsc::sync_channel(1);
         let stopping = Arc::new(AtomicBool::new(false));
@@ -62,14 +64,30 @@ impl CheckpointWorker {
                 if ready.send(()).is_err() {
                     return;
                 }
-                while receiver.recv().is_ok() {
-                    if stop.load(Ordering::Acquire) {
-                        break;
-                    }
-                    if matches!(attempt(), Attempt::Failed) {
-                        break;
+                let mut deferred = false;
+                loop {
+                    let message = if deferred {
+                        receiver.recv_timeout(std::time::Duration::from_secs(1))
+                    } else {
+                        receiver
+                            .recv()
+                            .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+                    };
+                    let force = match message {
+                        Ok(()) if !stop.load(Ordering::Acquire) => false,
+                        Err(mpsc::RecvTimeoutError::Timeout) => true,
+                        _ => break,
+                    };
+                    match attempt(force) {
+                        Attempt::Deferred => deferred = true,
+                        Attempt::CompleteOrPartial => deferred = false,
+                        Attempt::Failed => return,
                     }
                 }
+                // A successful COMMIT is already FULL-durable. One final
+                // PASSIVE drains deferred maintenance without waiting for old
+                // readers or adding an exclusive/FULL/TRUNCATE checkpoint.
+                let _ = attempt(true);
                 // attempt owns the connection; it is closed before join returns.
             })?;
         if ready_receiver.recv().is_err() {
@@ -112,7 +130,7 @@ impl CheckpointWorker {
         self.stopping.store(true, Ordering::Release);
     }
 
-    /// Finish an in-flight PASSIVE, discard queued maintenance, close its
+    /// Finish an in-flight PASSIVE, coalesce queued work into one final PASSIVE, close its
     /// connection and join. No final FULL/TRUNCATE or unbounded retry loop.
     /// The owning Store must retain its writer until this returns. Call outside
     /// the Engine/UI lock for explicit application shutdown.
@@ -129,6 +147,60 @@ impl CheckpointWorker {
 impl Drop for CheckpointWorker {
     fn drop(&mut self) {
         let _ = self.shutdown();
+    }
+}
+
+// NOOP only observes the current WAL; it does not backfill or issue a sync.
+// Amortize WAL restart/header sync over a burst, with the existing 8192-frame
+// writer fallback unchanged. An old ExportView may still delay reclamation,
+// exactly as under SQLite's original policy; business writes are not rejected.
+fn scheduled(connection: &Connection, changed: &mut u32, force: bool) -> Attempt {
+    let status = connection.query_row("PRAGMA main.wal_checkpoint(NOOP)", [], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+        ))
+    });
+    match status {
+        Ok((busy, logged, copied))
+            if (busy == 0 || busy == 1) && logged >= 0 && copied >= 0 && copied <= logged =>
+        {
+            if copied == logged {
+                *changed = 0;
+                return Attempt::CompleteOrPartial;
+            }
+            *changed = changed.saturating_add(1);
+            if !force && logged - copied < 512 && *changed < 16 {
+                return Attempt::Deferred;
+            }
+            let outcome = passive(connection);
+            if matches!(outcome, Attempt::CompleteOrPartial) {
+                *changed = 0;
+            }
+            outcome
+        }
+        Ok((0, -1, -1)) => {
+            // An existing WAL database can have no initialized log yet. A
+            // non-WAL connection remains a permanent maintenance failure.
+            let mode: rusqlite::Result<String> =
+                connection.pragma_query_value(None, "journal_mode", |row| row.get(0));
+            if mode.is_ok_and(|value| value.eq_ignore_ascii_case("wal")) {
+                *changed = 0;
+                Attempt::CompleteOrPartial
+            } else {
+                Attempt::Failed
+            }
+        }
+        Err(rusqlite::Error::SqliteFailure(error, _))
+            if matches!(
+                error.code,
+                ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+            ) =>
+        {
+            Attempt::CompleteOrPartial
+        }
+        _ => Attempt::Failed,
     }
 }
 
@@ -460,7 +532,13 @@ mod tests {
     fn coalesces_queued_work_and_joins_inflight_before_closing() {
         let (entered, seen) = mpsc::channel();
         let (release, wait) = mpsc::channel();
-        let mut worker = CheckpointWorker::spawn(move || {
+        let drains = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let drained = Arc::clone(&drains);
+        let mut worker = CheckpointWorker::spawn(move |_force| {
+            if _force {
+                drained.fetch_add(1, Ordering::Relaxed);
+                return Attempt::CompleteOrPartial;
+            }
             if entered.send(()).is_err() || wait.recv_timeout(Duration::from_secs(3)).is_err() {
                 return Attempt::Failed;
             }
@@ -481,13 +559,14 @@ mod tests {
         assert!(!worker.is_healthy());
         assert!(!worker.notify());
         assert!(seen.recv_timeout(Duration::from_millis(10)).is_err());
+        assert_eq!(drains.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn failed_or_panicked_worker_rejects_notifications_and_joins() {
         for panic in [false, true] {
             let (entered, seen) = mpsc::channel();
-            let mut worker = CheckpointWorker::spawn(move || {
+            let mut worker = CheckpointWorker::spawn(move |_force| {
                 entered.send(()).unwrap();
                 assert!(!panic, "synthetic maintenance panic");
                 Attempt::Failed
@@ -513,5 +592,224 @@ mod tests {
                 .unwrap(),
             "unchanged"
         );
+    }
+    fn status(connection: &Connection) -> (i64, i64, i64) {
+        connection
+            .query_row("PRAGMA wal_checkpoint(NOOP)", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap()
+    }
+    #[test]
+    fn scheduled_small_commits_append_without_reset_and_force_drains_same_full_connection() {
+        let fixture = Fixture::new();
+        let writer = fixture.writer();
+        let maintenance = fixture.maintenance();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let mut changed = 0;
+        let mut prior_frames = 0;
+        for index in 0..6 {
+            writer
+                .execute(
+                    "UPDATE sample SET value=?1 WHERE id=1",
+                    [format!("small {index}")],
+                )
+                .unwrap();
+            assert!(matches!(
+                scheduled(&maintenance, &mut changed, false),
+                Attempt::Deferred
+            ));
+            let (_, frames, copied) = status(&maintenance);
+            assert!(frames > prior_frames);
+            assert_eq!(copied, 0);
+            prior_frames = frames;
+        }
+        assert!(matches!(
+            scheduled(&maintenance, &mut changed, true),
+            Attempt::CompleteOrPartial
+        ));
+        let (_, frames, copied) = status(&maintenance);
+        assert_eq!(frames, copied);
+        assert!(frames > 0);
+        assert_eq!(
+            writer
+                .pragma_query_value::<i64, _>(None, "synchronous", |r| r.get(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            maintenance
+                .pragma_query_value::<i64, _>(None, "synchronous", |r| r.get(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            writer
+                .query_row::<String, _, _>("SELECT value FROM sample WHERE id=1", [], |r| r.get(0))
+                .unwrap(),
+            "small 5"
+        );
+    }
+    #[test]
+    fn scheduled_real_frame_pressure_backfills_without_waiting_for_notification_count() {
+        let fixture = Fixture::new();
+        let writer = fixture.writer();
+        let maintenance = fixture.maintenance();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        writer
+            .execute(
+                "UPDATE sample SET value=zeroblob(3*1024*1024) WHERE id=1",
+                [],
+            )
+            .unwrap();
+        assert!(status(&maintenance).1 > 512);
+        let mut changed = 0;
+        assert!(matches!(
+            scheduled(&maintenance, &mut changed, false),
+            Attempt::CompleteOrPartial
+        ));
+        let (_, frames, copied) = status(&maintenance);
+        assert_eq!(frames, copied);
+        assert!(frames > 512);
+        assert_eq!(
+            writer
+                .query_row::<i64, _, _>("SELECT length(value) FROM sample WHERE id=1", [], |r| r
+                    .get(0))
+                .unwrap(),
+            3 * 1024 * 1024
+        );
+    }
+    #[test]
+    fn scheduled_many_tiny_commits_eventually_backfill_before_fallback_without_per_commit_reset() {
+        let fixture = Fixture::new();
+        let writer = fixture.writer();
+        let maintenance = fixture.maintenance();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let mut changed = 0;
+        let mut first_backfill = None;
+        for index in 1..=32 {
+            writer
+                .execute(
+                    "UPDATE sample SET value=?1 WHERE id=1",
+                    [format!("count {index}")],
+                )
+                .unwrap();
+            assert!(!matches!(
+                scheduled(&maintenance, &mut changed, false),
+                Attempt::Failed
+            ));
+            let (_, frames, copied) = status(&maintenance);
+            assert!(frames < 512);
+            if copied > 0 {
+                first_backfill = Some(index);
+                break;
+            }
+        }
+        let ordinal =
+            first_backfill.expect("bounded notification policy must reclaim tiny WAL writes");
+        assert!(ordinal > 1 && ordinal <= 32);
+    }
+    #[test]
+    fn real_worker_idle_flushes_a_deferred_small_commit_and_shutdown_releases_its_handle() {
+        let fixture = Fixture::new();
+        let writer = fixture.writer();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let mut worker = CheckpointWorker::start(fixture.maintenance()).unwrap();
+        writer
+            .execute("UPDATE sample SET value='idle committed' WHERE id=1", [])
+            .unwrap();
+        assert!(worker.notify());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let (_, frames, copied) = status(&writer);
+            if frames > 0 && frames == copied {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(worker.is_healthy());
+        assert!(worker.shutdown());
+        drop(worker);
+        drop(writer);
+        let reopened = Connection::open(fixture.database()).unwrap();
+        assert_eq!(
+            reopened
+                .query_row::<String, _, _>("SELECT value FROM sample WHERE id=1", [], |r| r.get(0))
+                .unwrap(),
+            "idle committed"
+        );
+    }
+    #[test]
+    fn real_worker_shutdown_forces_deferred_work_without_waiting_for_old_export_reader() {
+        let fixture = Fixture::new();
+        let writer = fixture.writer();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let reader = Connection::open(fixture.database()).unwrap();
+        reader.execute_batch("BEGIN DEFERRED").unwrap();
+        assert_eq!(
+            reader
+                .query_row::<String, _, _>("SELECT value FROM sample WHERE id=1", [], |r| r.get(0))
+                .unwrap(),
+            "unchanged"
+        );
+        let mut worker = CheckpointWorker::start(fixture.maintenance()).unwrap();
+        writer
+            .execute("UPDATE sample SET value='deferred durable' WHERE id=1", [])
+            .unwrap();
+        assert!(worker.notify());
+        assert!(worker.shutdown());
+        assert_eq!(
+            reader
+                .query_row::<String, _, _>("SELECT value FROM sample WHERE id=1", [], |r| r.get(0))
+                .unwrap(),
+            "unchanged"
+        );
+        let (_, frames, copied) = status(&writer);
+        assert!(copied < frames);
+        writer
+            .execute("UPDATE sample SET value='after drain' WHERE id=1", [])
+            .unwrap();
+        reader.execute_batch("ROLLBACK").unwrap();
+        drop(reader);
+        let mut final_worker = CheckpointWorker::start(fixture.maintenance()).unwrap();
+        assert!(final_worker.shutdown());
+        let (_, frames, copied) = status(&writer);
+        assert_eq!(frames, copied);
+        assert_eq!(
+            writer
+                .query_row::<String, _, _>("SELECT value FROM sample WHERE id=1", [], |r| r.get(0))
+                .unwrap(),
+            "after drain"
+        );
+    }
+    #[test]
+    fn scheduled_empty_wal_stays_healthy_but_nonwal_remains_a_failure() {
+        let fixture = Fixture::new();
+        let writer = fixture.writer();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let maintenance = fixture.maintenance();
+        let mut changed = 0;
+        assert!(matches!(
+            scheduled(&maintenance, &mut changed, false),
+            Attempt::CompleteOrPartial
+        ));
+        let memory = Connection::open_in_memory().unwrap();
+        assert!(matches!(
+            scheduled(&memory, &mut changed, false),
+            Attempt::Failed
+        ));
     }
 }

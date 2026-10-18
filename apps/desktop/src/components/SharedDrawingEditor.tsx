@@ -427,7 +427,7 @@ export default function SharedDrawingEditor(props: Props) {
     const current=()=>!disposed&&origin===gestureIdentity()&&!disabled()&&!edit()&&tool()==='select'&&selected()===id&&(()=>{const box=svg.getBoundingClientRect();return box.left===initial.left&&box.top===initial.top&&box.width===initial.width&&box.height===initial.height;})();
     const cleanup=()=>{window.removeEventListener('pointermove',moved);window.removeEventListener('pointerup',released);window.removeEventListener('pointercancel',canceled);svg.removeEventListener('lostpointercapture',canceled);cancelGesture=undefined;if(svg.hasPointerCapture(pointerId))svg.releasePointerCapture(pointerId);};
     const finish=(save:boolean)=>{if(ended)return;const valid=current();ended=true;cleanup();setStoredDraft(undefined);if(save&&valid&&changed)void commit({type:'move_stored',expectedRevision:revision,drawingId:id,from:original.bounds,to:value});};
-    const moved=(next:PointerEvent)=>{if(next.pointerId!==pointerId)return;if(!current()||next.type==='pointermove'&&!(next.buttons&1)){finish(false);return;}if(!started&&Math.hypot(next.clientX-event.clientX,next.clientY-event.clientY)<=4)return;started=true;next.preventDefault();const end=point(next,false);try{value=props.port.storedMove!(id,original.bounds,{x:end.x-start.x,y:end.y-start.y});changed=value.x!==original.bounds.x||value.y!==original.bounds.y;setStoredDraft(changed?{id,bounds:value}:undefined);}catch(error){finish(false);report(error);}};
+    const moved=(next:PointerEvent)=>{if(next.pointerId!==pointerId)return;if(!current()){finish(false);return;}if(next.type==='pointermove'&&!(next.buttons&1)){finish(event.pointerType==='mouse'&&event.buttons===1&&next.pointerType==='mouse'&&next.buttons===0);return;}if(!started&&Math.hypot(next.clientX-event.clientX,next.clientY-event.clientY)<=4)return;started=true;next.preventDefault();const end=point(next,false);try{value=props.port.storedMove!(id,original.bounds,{x:end.x-start.x,y:end.y-start.y});changed=value.x!==original.bounds.x||value.y!==original.bounds.y;setStoredDraft(changed?{id,bounds:value}:undefined);}catch(error){finish(false);report(error);}};
     const released=(next:PointerEvent)=>{if(next.pointerId===pointerId){moved(next);finish(true);}},canceled=(next:PointerEvent)=>{if(next.pointerId===pointerId)finish(false);};
     cancelGesture=()=>finish(false);window.addEventListener('pointermove',moved);window.addEventListener('pointerup',released);window.addEventListener('pointercancel',canceled);svg.addEventListener('lostpointercapture',canceled);
     try{svg.setPointerCapture(pointerId);}catch{finish(false);}
@@ -443,7 +443,7 @@ export default function SharedDrawingEditor(props: Props) {
     const valid=()=>!disposed&&origin===gestureIdentity()&&!disabled()&&tool()==='select'&&!edit();
     const cleanup=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',cancel);svg.removeEventListener('lostpointercapture',cancel);cancelGesture=undefined;if(svg.hasPointerCapture(pointerId))svg.releasePointerCapture(pointerId);};
     const stop=(save:boolean)=>{if(ended)return;const current=valid();ended=true;cleanup();finish(save&&current);};
-    const move=(e:PointerEvent)=>{if(e.pointerId!==pointerId)return;if(!valid()||!(e.buttons&1)){stop(false);return;}e.preventDefault();update(point(e,false));};
+    const move=(e:PointerEvent)=>{if(e.pointerId!==pointerId)return;if(!valid()){stop(false);return;}if(!(e.buttons&1)){stop(event.pointerType==='mouse'&&event.buttons===1&&e.pointerType==='mouse'&&e.buttons===0);return;}e.preventDefault();update(point(e,false));};
     const up=(e:PointerEvent)=>{if(e.pointerId!==pointerId)return;if(valid())update(point(e,false));stop(true);};
     const cancel=(e:PointerEvent)=>{if(e.pointerId===pointerId)stop(false);};
     cancelGesture=()=>stop(false);window.addEventListener('pointermove',move);window.addEventListener('pointerup',up);window.addEventListener('pointercancel',cancel);svg.addEventListener('lostpointercapture',cancel);
@@ -621,7 +621,7 @@ export default function SharedDrawingEditor(props: Props) {
       if (next.type === 'pointermove' && !(next.buttons & 1)) {
         // A remote mouse may report released buttons before pointerup. Keep
         // only already-pressed samples; this hover position is not a new point.
-        if (!original && queueable && event.pointerType === 'mouse' && event.buttons === 1 && next.pointerType === 'mouse' && next.buttons === 0) { publish(); finish(true); }
+        if ((!original && strokeKinds.includes(kind as DrawingKind) || original && !objectMove) && event.pointerType === 'mouse' && event.buttons === 1 && next.pointerType === 'mouse' && next.buttons === 0) { publish(); finish(true); }
         else finish(false);
         return;
       }

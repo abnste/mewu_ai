@@ -14,28 +14,30 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
 async function pure(path) { const module = new SourceTextModule(transform(await raw(path))); await module.link(() => { throw Error('Unexpected runtime import'); }); await module.evaluate(); return module.namespace; }
 const pointer = await pure('./components/drawing-pointer.ts'), historyModule = await pure('./components/drawing-history.ts'), geometry = await pure('./components/drawing-geometry.ts'), properties = await pure('./components/drawing-properties.ts'), highlightSource = await pure('./highlight-source.ts');
+const selectionM=new SourceTextModule(transform(await raw('./components/drawing-selection.ts')));await selectionM.link(()=>synthetic(geometry));await selectionM.evaluate();const selection=selectionM.namespace;
 const source = await raw('./components/SharedDrawingEditor.tsx'), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const body = ast.program.body.find(value => value.type === 'ExportDefaultDeclaration').declaration.body.body;
 const declaration = name => { const node = body.find(value => value.type === 'FunctionDeclaration' ? value.id.name === name : value.type === 'VariableDeclaration' && value.declarations.some(declaration => declaration.id.name === name)); assert.ok(node, name); return source.slice(node.start, node.end); };
 const queueSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='queueSource').expression.arguments[0].arguments[1];
 const gestureSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='gestureSource');
 assert.ok(gestureSourceEffect,'actual production gestureSource effect');
-const actual = ['cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'blur', 'resize'].map(declaration).join('\n');
+const actual = ['cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'beginStored', 'selectionGesture', 'beginMarquee', 'beginGroup', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
-import { DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,batch,createSignal,createMemo,createEffect,on } from 'deps';
+import { DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,selectionBox,marqueeDrawings,movedDrawings,batch,createSignal,createMemo,createEffect,on } from 'deps';
 export class Element { closest() { return {getAttribute:()=>this.id}; } }
 export function fixture(props,svg,window) {
  let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false,strokeQueue,editCacheKey,editValue,finishingValue=false;
  let historyLane,historyPreparation,historyIntents=[],preparingHistory,historyView,historyBusy=false;const historyPreview=()=>historyView,setHistoryPreview=value=>{historyView=value;props.onHistoryPreview?.(value);},historyPending=()=>historyBusy,setHistoryPending=value=>historyBusy=value;
  let queued=[],recovered=[];const queuedDrawings=()=>queued,setQueuedDrawings=value=>queued=value,setRecoveredDrawings=value=>recovered=value,[strokeVersion,setStrokeVersion]=props.reactive?createSignal(0):[()=>0,()=>{}]; let eraseSource;
- let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
+ let marqueeValue,groupDraftValue;const setMarquee=value=>marqueeValue=value,setGroupDraft=value=>groupDraftValue=value;let selectedMany=[];const selectedIds=()=>selectedMany,setSelectedIds=value=>selectedMany=value;
  const publications=[],tool=()=>toolValue,setTool=value=>toolValue=value,selected=()=>selectedId,setSelected=value=>selectedId=value;
  const draft=()=>draftValue,setDraft=value=>{draftValue=value;if(value)publications.push(JSON.parse(JSON.stringify(value)));},pending=()=>pendingValue,setPending=value=>pendingValue=value;
  const edit=()=>editValue,setEdit=value=>editValue=value,textEditor=()=>undefined,finishing=()=>finishingValue,setFinishing=value=>finishingValue=value,historyDisabled=()=>pending()||finishing()||props.busy||props.inputLocked,disabled=()=>historyDisabled()||historyPending();
  const drawings=()=>props.port.drawings(),identity=()=>cacheKey();
+ const trash={begin(){},move(){},cancel(){}},trashOver=()=>props.trashOver??false;
  const color=()=>'#ee4848',width=()=>4,highlightWidth=()=>18,mosaicReady=()=>true,blockSize=()=>8,fontSize=()=>20,textStyle=()=>props.textStyleValue??{};
  const report=error=>props.onError(error.message),clamp=(v,low,high)=>Math.max(low,Math.min(high,v));
- let openedText;const openText=value=>openedText=value,ensureSelection=async()=>{},beginStored=()=>{},beginErase=()=>{};
+ let openedText;const openText=value=>openedText=value,ensureSelection=async()=>{},beginErase=()=>{}; let storedDraftValue;const setStoredDraft=value=>storedDraftValue=value;
  const nextNumber=()=>'1',numberDiameter=()=>28,numberChanges=new Map(),numberPreference=0,setNextNumber=()=>{};
  const setWideBrush=()=>{},mosaicFailed=()=>false,setMosaicRetry=()=>{},highlightFailed=()=>false,setHighlightRetry=()=>{};
  const setViewport=()=>{},innerWidth=1200,innerHeight=800;
@@ -44,10 +46,10 @@ export function fixture(props,svg,window) {
  strokeQueue=continuousStrokes()&&!historyLane?newStrokeQueue():undefined;
  const gestureSource=props.reactive?createMemo(gestureIdentity):()=>gestureIdentity();
  if(props.reactive){ ${source.slice(gestureSourceEffect.start,gestureSourceEffect.end)} }
- return {begin,draft,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,choose,closeEditor,finishing,confirmText,loadLatest,saveText,history,historyPreview,drainHistory,historyPending,sourceChanged:${source.slice(queueSourceEffect.start,queueSourceEffect.end)},
+ return {begin,draft,selection:()=>selectedMany,marquee:()=>marqueeValue,groupDraft:()=>groupDraftValue,storedDraft:()=>storedDraftValue,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,choose,closeEditor,finishing,confirmText,loadLatest,saveText,history,historyPreview,drainHistory,historyPending,sourceChanged:${source.slice(queueSourceEffect.start,queueSourceEffect.end)},
    dispose:()=>{disposed=true;strokeQueue?.stop();historyLane?.stop();cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value),queued:()=>queued,edit,queue:()=>strokeQueue,lane:()=>historyLane,opened:()=>openedText};
 }`));
-await module.link(() => synthetic({ ...pointer,...historyModule, ...geometry, ...properties,batch:solid.batch,createSignal:solid.createSignal,createMemo:solid.createMemo,createEffect:solid.createEffect,on:solid.on, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
+await module.link(() => synthetic({ ...pointer,...historyModule, ...geometry, ...properties,...selection,batch:solid.batch,createSignal:solid.createSignal,createMemo:solid.createMemo,createEffect:solid.createEffect,on:solid.on, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
 class Events {
   listeners = new Map();
   addEventListener(type, callback) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(callback); }
@@ -1089,10 +1091,10 @@ test('release fallback excludes pen touch unknown devices mismatched types other
  }finally{clock.restore();}
 });
 
-test('release fallback keeps selection movement conservative and ignores another pointer zero-button move',async()=>{
+test('release fallback saves ordinary mouse selection movement and ignores another pointer zero-button move',async()=>{
  const clock=frames();try{
   const old={id:'old',kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},values=[structuredClone(old)],f=setup(values);f.tool('select');const target=new module.namespace.Element();target.id='old';
-  f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.commands.length,0);assert.deepEqual(values,[old]);
+  f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.commands.length,1);assert.equal(f.commands[0].type,'update_drawing');assert.equal(f.commands[0].expectedRevision,5);assert.deepEqual(f.commands[0].drawing.points,[{x:30,y:40},{x:70,y:80}]);
   const g=setup();g.begin(mouse('pointerdown',10,20));g.window.emit(mouse('pointermove',30,40));g.window.emit(mouse('pointermove',900,950,{pointerId:8,buttons:0}));assert.equal(g.hasGesture(),true);assert.equal(g.commands.length,0);
   g.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(g.commands.length,1);assert.deepEqual(g.commands[0].drawing.points,[{x:10,y:20},{x:30,y:40}]);
  }finally{clock.restore();}
@@ -1114,4 +1116,181 @@ test('release fallback reactive real gestureSource survives own publication duri
   void f.history(false);f.begin(mouse('pointerdown',100,110));assert.equal(f.hasGesture(),true);f.window.emit(mouse('pointermove',120,130));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await f.drainHistory();
   assert.equal(values.length,3);assert.deepEqual(f.commands.map(v=>v.type),['add_drawing','add_drawing','add_drawing','undo_drawing','add_drawing']);assert.deepEqual(values.at(-1).points,[{x:100,y:110},{x:120,y:130}]);assert.deepEqual(f.errors,[]);
  }finally{witness.dispose();f.dispose();f.disposeReactive();clock.restore();}
+});
+
+const videoAllowsNode=videoBody.find(n=>n.type==='VariableDeclaration'&&n.declarations[0].id.name==='port').declarations[0].init.properties.find(n=>n.key.name==='allows').value;
+const videoCurrentNode=videoBody.find(n=>n.type==='VariableDeclaration'&&n.declarations[0].id.name==='current').declarations[0].init;
+const videoStoredMoveNode=videoBody.find(n=>n.type==='VariableDeclaration'&&n.declarations[0].id.name==='port').declarations[0].init.properties.find(n=>n.key.name==='storedMove').value;
+const videoGateM=new SourceTextModule(transform(`export function gate(props,object){let disposed=false;const current=${videoCode.slice(videoCurrentNode.start,videoCurrentNode.end)};return{allows:${videoCode.slice(videoAllowsNode.start,videoAllowsNode.end)},storedMove:${videoCode.slice(videoStoredMoveNode.start,videoStoredMoveNode.end)},dispose(){disposed=true;}};}`));
+await videoGateM.link(()=>{throw Error('No native/model IO in video release fixture');});await videoGateM.evaluate();
+function storedVideoReleaseSetup(values=[]){
+ const f=setup(values);f.props.active=true;f.props.item={asset:{id:'synthetic-video-source',kind:'video'}};f.props.grant={pluginId:'mewu.core.drawing',revision:1,contributionId:'video-drawing-tools',tools:['pen','line','arrow','rect','ellipse','text','number']};f.props.info={width:1000,height:1000};
+ const gate=videoGateM.namespace.gate(f.props,id=>f.props.videoObject?.id===id?f.props.videoObject:undefined);f.props.tools=[...f.props.grant.tools];
+ f.props.port.stored=()=>f.props.storedEntries??[];f.props.port.storedMove=gate.storedMove;f.props.port.frame=()=>({x:0,y:0,width:f.props.info.width,height:f.props.info.height});f.props.port.sourceSize=()=>({...f.props.info});
+ f.props.port.sourceIdentity=()=>JSON.stringify([f.props.source,f.props.item.asset,f.props.info,f.props.grant]);f.props.port.allows=gate.allows;f.sourceChanged();
+ assert.equal(f.queue(),undefined,'stored video never enters the screenshot add queue');assert.equal(f.lane(),undefined,'stored video retains the single-CAS path');
+ const save=f.props.onCommand;let admissions=0;f.props.onCommand=async action=>{assert.equal(action.expectedRevision,f.props.revision,'actual Shared commit preserves one current CAS');assert.equal(gate.allows(action),true,'actual video port authorizes before dispatch');admissions++;await f.props.nativeHold?.promise;if(action.type==='move_stored'){f.commands.push(plain(action));f.props.revision++;return;}return save(action);};
+ return{...f,gate,admissions:()=>admissions};
+}
+
+test('stored video release fallback saves a new pen once through the production commit and actual video grant gate',async()=>{
+ const clock=frames(),f=storedVideoReleaseSetup();try{
+  f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',50,60));f.window.emit(mouse('pointermove',900,950,{buttons:0,getCoalescedEvents(){throw Error('Hover must not become video ink');}}));await tick();
+  assert.equal(f.admissions(),1);assert.equal(f.commands.length,1);assert.equal(f.commands[0].expectedRevision,5);assert.deepEqual(f.commands[0].drawing.points,[{x:10,y:20},{x:30,y:40},{x:50,y:60}]);
+  f.svg.emit(mouse('lostpointercapture',900,950,{buttons:0}));f.window.emit(mouse('pointerup',900,950));clock.paint();await tick();assert.equal(f.admissions(),1);assert.equal(f.props.revision,6);assert.deepEqual(f.errors,[]);
+ }finally{f.dispose();f.gate.dispose();clock.restore();}
+});
+
+test('stored video release fallback flushes every authorized vector preview but still rejects ungranted highlighter',async()=>{
+ const clock=frames();try{
+  for(const kind of ['line','arrow','rect','ellipse']){
+   const f=storedVideoReleaseSetup();try{f.tool(kind);f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',50,80));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.admissions(),1,kind);assert.deepEqual(f.commands[0].drawing.points,[{x:10,y:20},{x:50,y:80}],kind);assert.equal(f.commands[0].drawing.kind,kind);}finally{f.dispose();f.gate.dispose();}
+  }
+  const denied=storedVideoReleaseSetup();try{denied.props.tools.push('highlighter');denied.tool('highlighter');denied.begin(mouse('pointerdown',10,20));denied.window.emit(mouse('pointermove',30,40));denied.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(denied.admissions(),0);assert.equal(denied.commands.length,0);}finally{denied.dispose();denied.gate.dispose();}
+ }finally{clock.restore();}
+});
+
+test('stored video release fallback retains pending single-CAS and Busy inputLocked admission barriers',async()=>{
+ const clock=frames(),f=storedVideoReleaseSetup();try{
+  f.props.nativeHold=deferred();f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.admissions(),1);
+  f.begin(mouse('pointerdown',40,50));assert.equal(f.hasGesture(),false,'pending single-CAS still blocks a new video gesture');f.window.emit(mouse('pointermove',60,70));f.window.emit(mouse('pointerup',60,70));assert.equal(f.admissions(),1);
+  f.props.nativeHold.resolve();await tick();await tick();assert.equal(f.props.revision,6);
+  for(const gate of ['busy','inputLocked']){f.props[gate]=true;f.begin(mouse('pointerdown',40,50));assert.equal(f.hasGesture(),false,gate);f.props[gate]=false;}
+  f.props.nativeHold=undefined;f.begin(mouse('pointerdown',40,50));f.window.emit(mouse('pointermove',60,70));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.admissions(),2);assert.equal(f.commands[1].expectedRevision,6);
+ }finally{f.dispose();f.gate.dispose();clock.restore();}
+});
+
+test('stored video release fallback cancels changed source revision frame display active grant and explicit cancellation',async()=>{
+ const clock=frames();try{
+  for(const reason of ['source','asset','revision','frame','box','surface','tool','grant','inactive','busy','inputLocked','blur','pointercancel','lost']){
+   const f=storedVideoReleaseSetup();try{
+    f.begin(mouse('pointerdown',10,20));f.window.emit(mouse('pointermove',30,40));
+    if(reason==='source')f.props.source='successor';if(reason==='asset')f.props.item.asset.id='successor';if(reason==='revision')f.props.revision++;if(reason==='frame')f.props.info.width++;
+    if(reason==='box')f.props.box.x++;if(reason==='surface')f.svg.box.left++;if(reason==='tool')f.tool('line');if(reason==='grant')f.props.grant.tools=[];if(reason==='inactive')f.props.active=false;if(reason==='busy')f.props.busy=true;if(reason==='inputLocked')f.props.inputLocked=true;
+    if(reason==='blur')f.blur();if(reason==='pointercancel')f.window.emit(mouse('pointercancel',30,40));if(reason==='lost')f.svg.emit(mouse('lostpointercapture',30,40));
+    f.window.emit(mouse('pointermove',900,950,{buttons:0}));clock.paint();f.window.emit(mouse('pointerup',900,950));await tick();assert.equal(f.admissions(),0,reason);assert.equal(f.commands.length,0,reason);assert.equal(f.draft(),undefined,reason);
+   }finally{f.dispose();f.gate.dispose();}
+  }
+ }finally{clock.restore();}
+});
+
+test('stored video release fallback preserves pen and touch cancellation',async()=>{
+ const clock=frames();try{
+  for(const pointerType of ['pen','touch']){const g=storedVideoReleaseSetup();try{g.begin(event('pointerdown',10,20,{pointerType}));g.window.emit(event('pointermove',30,40,{pointerType}));g.window.emit(event('pointermove',900,950,{pointerType,buttons:0}));await tick();assert.equal(g.admissions(),0,pointerType);}finally{g.dispose();g.gate.dispose();}}
+ }finally{clock.restore();}
+});
+
+function prepareStoredVideoMove(f){
+ const bounds={x:10,y:20,width:40,height:30};f.props.storedEntries=[{id:'stored-vector',kind:'vector',bounds}];f.props.videoObject={id:'stored-vector',primitive:{kind:'vector',topLeft:{x:10,y:20},layout:{width:40,height:30,geometryBounds:{x:0,y:0,width:40,height:30}}}};
+ f.tool('select');const target=new module.namespace.Element();target.id='stored-vector';return target;
+}
+test('stored video Move release fallback commits only the last pressed actual storedMove once and never removes it',async()=>{
+ const clock=frames(),f=storedVideoReleaseSetup();try{
+  const target=prepareStoredVideoMove(f);f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));assert.deepEqual(plain(f.storedDraft().bounds),{x:30,y:40,width:40,height:30});
+  f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.admissions(),1);assert.equal(f.commands.length,1);assert.equal(f.commands[0].type,'move_stored');assert.equal(f.commands[0].expectedRevision,5);assert.deepEqual(f.commands[0].from,{x:10,y:20,width:40,height:30});assert.deepEqual(f.commands[0].to,{x:30,y:40,width:40,height:30});
+  f.svg.emit(mouse('lostpointercapture',900,950,{buttons:0}));f.window.emit(mouse('pointerup',900,950));await tick();assert.equal(f.admissions(),1);assert.equal(f.props.revision,6);assert.equal(f.storedDraft(),undefined);assert.deepEqual(f.errors,[]);
+ }finally{f.dispose();f.gate.dispose();clock.restore();}
+});
+test('stored video Move release fallback retains invalid-source geometry tool Busy and explicit-cancel gates',async()=>{
+ const clock=frames();try{
+  for(const reason of ['source','asset','revision','frame','box','surface','tool','inactive','busy','inputLocked','blur','pointercancel','lost','pen','touch','otherbuttons']){
+   const f=storedVideoReleaseSetup();try{
+    const target=prepareStoredVideoMove(f),pointerType=reason==='pen'?'pen':reason==='touch'?'touch':'mouse';f.begin(event('pointerdown',10,20,{target,pointerType}));f.window.emit(event('pointermove',30,40,{pointerType}));
+    if(reason==='source')f.props.source='successor';if(reason==='asset')f.props.item.asset.id='successor';if(reason==='revision')f.props.revision++;if(reason==='frame')f.props.info.width++;if(reason==='box')f.props.box.x++;if(reason==='surface')f.svg.box.left++;if(reason==='tool')f.tool('pen');if(reason==='inactive')f.props.active=false;if(reason==='busy')f.props.busy=true;if(reason==='inputLocked')f.props.inputLocked=true;
+    if(reason==='blur')f.blur();if(reason==='pointercancel')f.window.emit(event('pointercancel',30,40,{pointerType}));if(reason==='lost')f.svg.emit(event('lostpointercapture',30,40,{pointerType}));
+    f.window.emit(event('pointermove',900,950,{pointerType,buttons:reason==='otherbuttons'?2:0}));f.window.emit(event('pointerup',900,950,{pointerType}));await tick();assert.equal(f.admissions(),0,reason);assert.equal(f.commands.length,0,reason);assert.equal(f.storedDraft(),undefined,reason);
+   }finally{f.dispose();f.gate.dispose();}
+  }
+ }finally{clock.restore();}
+});
+
+function ordinaryMoveFixture(values,history){
+ const f=setup(values,history),save=f.props.onCommand;
+ f.props.onCommand=async action=>{
+  if(action.type!=='update_drawing'&&action.type!=='update_drawings')return save(action);
+  assert.equal(action.expectedRevision,f.props.revision,'ordinary move retains exact current CAS');
+  const changes=[];for(const drawing of action.type==='update_drawings'?action.drawings:[action.drawing]){const index=values.findIndex(value=>value.id===drawing.id);assert.notEqual(index,-1);const before=plain(values[index]),after=plain(drawing);changes.push({index,before,after});values[index]=after;}
+  f.commands.push(plain(action));if(history){history.undo.push(changes.length===1?changes[0]:{batch:changes});history.redo=[];}f.props.revision++;
+ };
+ f.tool('select');return f;
+}
+test('ordinary vector Move mouse release fallback publishes the prior pressed preview once and permits another move after Undo is acknowledged',async()=>{
+ const clock=frames(),old={id:'old',kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},values=[structuredClone(old)],history={undo:[],redo:[]},f=ordinaryMoveFixture(values,history),target=new module.namespace.Element();target.id='old';
+ try{
+  f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));assert.equal(clock.queued.size,1);
+  f.window.emit(mouse('pointermove',900,950,{buttons:0,getCoalescedEvents(){throw Error('Released hover must never be sampled');}}));await tick();
+  assert.equal(f.commands.length,1);assert.equal(f.commands[0].type,'update_drawing');assert.equal(f.commands[0].expectedRevision,5);assert.deepEqual(values[0].points,[{x:30,y:40},{x:70,y:80}]);
+  assert.equal(f.hasGesture(),false);assert.equal(clock.queued.size,0);assert.equal(f.props.revision,6);assert.equal(history.undo.length,1);
+  f.svg.emit(mouse('lostpointercapture',900,950,{buttons:0}));f.window.emit(mouse('pointerup',990,999));clock.paint();await tick();assert.equal(f.commands.length,1);
+  await f.history(false);await f.drainHistory();assert.deepEqual(values,[old]);assert.equal(f.props.revision,7);
+  f.begin(mouse('pointerdown',10,20,{target}));assert.equal(f.hasGesture(),true);f.window.emit(mouse('pointermove',50,60));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.commands.at(-1).expectedRevision,7);assert.deepEqual(values[0].points,[{x:50,y:60},{x:90,y:100}]);assert.deepEqual(f.errors,[]);
+ }finally{f.dispose();clock.restore();}
+});
+test('ordinary vector Move mouse release fallback preserves exact non-pen geometry and leaves an unmoved click unchanged',async()=>{
+ const clock=frames();try{
+  for(const kind of ['line','arrow','rect','ellipse','highlighter']){
+   const old={id:'old',kind,color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},values=[structuredClone(old)],f=ordinaryMoveFixture(values),target=new module.namespace.Element();target.id='old';
+   try{f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));clock.paint();f.window.emit(mouse('pointermove',50,60));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.commands.length,1,kind);assert.equal(values[0].kind,kind);assert.deepEqual(values[0].points,[{x:50,y:60},{x:90,y:100}],kind);}finally{f.dispose();}
+  }
+  const old={id:'old',kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},f=ordinaryMoveFixture([old]),target=new module.namespace.Element();target.id='old';
+  try{f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.commands.length,0);}finally{f.dispose();}
+ }finally{clock.restore();}
+});
+test('ordinary vector Move mouse release fallback retains source geometry selected tool permission Busy and explicit-cancel gates',async()=>{
+ const clock=frames();try{
+  for(const reason of ['source','revision','size','box','surface','selected','tool','permission','busy','locked','blur','pointercancel','lost']){
+   const old={id:'old',kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},values=[structuredClone(old)],f=ordinaryMoveFixture(values),target=new module.namespace.Element();target.id='old';
+   try{
+    f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));
+    if(reason==='source')f.props.source='new';if(reason==='revision')f.props.revision++;if(reason==='size')f.props.port.sourceSize=()=>({width:999,height:1000});if(reason==='box')f.props.box.x++;
+    if(reason==='surface')f.svg.box.top++;if(reason==='selected')f.selected('new');if(reason==='tool')f.tool('line');if(reason==='permission')f.props.allowed=false;if(reason==='busy')f.props.busy=true;if(reason==='locked')f.props.inputLocked=true;
+    if(reason==='blur')f.blur();if(reason==='pointercancel')f.window.emit(mouse('pointercancel',30,40));if(reason==='lost')f.svg.emit(mouse('lostpointercapture',30,40));
+    f.window.emit(mouse('pointermove',900,950,{buttons:0}));clock.paint();f.window.emit(mouse('pointerup',900,950));await tick();assert.equal(f.commands.length,0,reason);assert.deepEqual(values,[old],reason);assert.equal(f.draft(),undefined,reason);
+   }finally{f.dispose();}
+  }
+ }finally{clock.restore();}
+});
+test('ordinary vector Move mouse release fallback excludes pen touch mixed buttons and blackboard trash-object movement',async()=>{
+ const clock=frames();try{
+  for(const [downType,moveType,downButtons,moveButtons]of [['pen','pen',1,0],['touch','touch',1,0],['mouse','pen',1,0],['mouse','mouse',3,0],['mouse','mouse',1,2]]){
+   const old={id:'old',kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},values=[structuredClone(old)],f=ordinaryMoveFixture(values),target=new module.namespace.Element();target.id='old';
+   try{f.begin(event('pointerdown',10,20,{target,pointerType:downType,buttons:downButtons}));f.window.emit(event('pointermove',30,40,{pointerType:downType,buttons:downButtons}));f.window.emit(event('pointermove',900,950,{pointerType:moveType,buttons:moveButtons}));await tick();assert.equal(f.commands.length,0,downType+'/'+moveButtons);assert.deepEqual(values,[old]);}finally{f.dispose();}
+  }
+  const old={id:'old',kind:'rich',rich:{kind:'extracted'},color:'#123456',strokeWidth:4,points:[{x:10,y:20},{x:50,y:60}]},values=[structuredClone(old)],f=ordinaryMoveFixture(values),target=new module.namespace.Element();target.id='old';f.props.blackboard=true;f.props.trashOver=true;
+  try{f.begin(mouse('pointerdown',10,20,{target}));f.window.emit(mouse('pointermove',30,40));f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();assert.equal(f.commands.length,0,'MOVE0 must neither move nor delete blackboard objects');assert.deepEqual(values,[old]);}finally{f.dispose();}
+ }finally{clock.restore();}
+});
+
+function selectThreeFixture(history){
+ const values=[10,40,70].map((y,i)=>({id:'s'+i,kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y},{x:50,y:y+4}]})),f=ordinaryMoveFixture(values,history);return{...f,values};
+}
+function selectThree(f){f.begin(mouse('pointerdown',0,0));f.window.emit(mouse('pointermove',60,90));f.window.emit(mouse('pointermove',900,950,{buttons:0}));}
+test('selectionGesture mouse release fallback retains a pressed marquee without including the zero-button hover and ignores late lost/up',async()=>{
+ const clock=frames(),f=selectThreeFixture();try{
+  selectThree(f);assert.deepEqual(plain(f.selection()),['s0','s1','s2']);assert.equal(f.marquee(),undefined);assert.equal(f.commands.length,0);assert.equal(f.hasGesture(),false);
+  f.svg.emit(mouse('lostpointercapture',900,950,{buttons:0}));f.window.emit(mouse('pointerup',900,950));assert.deepEqual(plain(f.selection()),['s0','s1','s2']);assert.deepEqual(f.errors,[]);
+  f.begin(mouse('pointerdown',0,0));f.window.emit(mouse('pointermove',60,20));f.window.emit(mouse('pointermove',900,950,{buttons:0}));assert.deepEqual(plain(f.selection()),['s0'],'hover must not extend the saved rectangle to all three');
+ }finally{f.dispose();clock.restore();}
+});
+test('selectionGesture mouse release fallback saves the last pressed group movement through one batch CAS and preserves Undo',async()=>{
+ const clock=frames(),history={undo:[],redo:[]},f=selectThreeFixture(history);try{
+  const old=plain(f.values);
+  selectThree(f);const target=new module.namespace.Element();target.id='s0';f.begin(mouse('pointerdown',10,10,{target}));f.window.emit(mouse('pointermove',30,40));assert.equal(f.groupDraft().length,3);f.window.emit(mouse('pointermove',900,950,{buttons:0}));await tick();
+  assert.equal(f.commands.length,1);assert.equal(f.commands[0].type,'update_drawings');assert.equal(f.commands[0].expectedRevision,5);assert.deepEqual(f.values.map(v=>v.points),old.map(v=>v.points.map(p=>({x:p.x+20,y:p.y+30}))));assert.equal(f.groupDraft().length,0);
+  f.svg.emit(mouse('lostpointercapture',900,950,{buttons:0}));f.window.emit(mouse('pointerup',900,950));await tick();assert.equal(f.commands.length,1);
+  await f.history(false);await f.drainHistory();assert.deepEqual(f.values,old);assert.equal(f.props.revision,7);assert.deepEqual(f.errors,[]);
+ }finally{f.dispose();clock.restore();}
+});
+test('selectionGesture mouse release fallback keeps valid-source permission Busy tool and explicit cancel barriers for marquee and group',async()=>{
+ const clock=frames();try{
+  for(const mode of ['marquee','group'])for(const reason of ['source','revision','size','box','tool','busy','locked','blur','pointercancel','lost','pen','touch','chord','other-pointer']){
+   const f=selectThreeFixture();try{
+    if(mode==='group')selectThree(f);const initial=plain(f.selection()),old=plain(f.values),target=mode==='group'?Object.assign(new module.namespace.Element(),{id:'s0'}):undefined,pointerType=['pen','touch'].includes(reason)?reason:'mouse',buttons=reason==='chord'?3:1;
+    f.begin(event('pointerdown',0,0,{target,pointerType,buttons}));f.window.emit(event('pointermove',30,40,{pointerType,buttons}));
+    if(reason==='source')f.props.source='new';if(reason==='revision')f.props.revision++;if(reason==='size')f.props.port.sourceSize=()=>({width:999,height:1000});if(reason==='box')f.props.box.x++;if(reason==='tool')f.tool('line');if(reason==='busy')f.props.busy=true;if(reason==='locked')f.props.inputLocked=true;
+    if(reason==='blur')f.blur();if(reason==='pointercancel')f.window.emit(event('pointercancel',30,40,{pointerType}));if(reason==='lost')f.svg.emit(event('lostpointercapture',30,40,{pointerType}));
+    f.window.emit(event('pointermove',900,950,{pointerType,buttons:0,...(reason==='other-pointer'?{pointerId:8}:{})}));await tick();assert.equal(f.commands.length,0,mode+'/'+reason);assert.deepEqual(f.values,old,mode+'/'+reason);assert.deepEqual(plain(f.selection()),initial,mode+'/'+reason);
+   }finally{f.dispose();}
+  }
+ }finally{clock.restore();}
 });

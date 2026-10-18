@@ -1209,8 +1209,12 @@ export default function App() {
       {currentId => {
         // A keyed subtree owns this scene, even while activeSceneId changes.
         // Cleanup must not make its existing media read the next scene's items.
-        const initialScene=untrack(()=>scene()!);
-        const ownedScene=createMemo(()=>snapshot()?.scenes.find(value=>value.id===currentId)??initialScene);
+        let lastScene=untrack(()=>scene()!);
+        const ownedScene=createMemo(()=>{
+          const current=snapshot()?.scenes.find(value=>value.id===currentId);
+          if(current) lastScene=current;
+          return lastScene;
+        });
         const ownedRefs=()=>referenceDrafts()[currentId]??ownedScene().refs;
         const ownedDraft=()=>drafts()[currentId]??ownedScene().draft;
         return <Show when={!ownedScene().closed}>
