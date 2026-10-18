@@ -123,10 +123,27 @@ fn drawing_text_styles_legacy_wire_stays_identical_and_rejects_untyped_style() {
     let decoded: Drawing = serde_json::from_value(legacy.clone()).unwrap();
     assert_eq!(decoded.text_style, None);
     assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
-    let legacy_video =
-        serde_json::json!({"version":1,"text":"旧视频","color":"#EE4848","fontSize":32});
+    // The pre-style native descriptor uses f64, which serializes 32 as 32.0.
+    // Compare the actual legacy schema's wire bytes, not an integer JSON fixture.
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyVideoTextContent {
+        version: u32,
+        text: &'static str,
+        color: &'static str,
+        font_size: f64,
+    }
+    let legacy_wire = serde_json::to_vec(&LegacyVideoTextContent {
+        version: 1,
+        text: "旧视频",
+        color: "#EE4848",
+        font_size: 32.,
+    })
+    .unwrap();
+    let legacy_video = serde_json::from_slice::<serde_json::Value>(&legacy_wire).unwrap();
     let decoded: VideoTextContent = serde_json::from_value(legacy_video.clone()).unwrap();
     assert_eq!(decoded.text_style, None);
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), legacy_wire);
     assert_eq!(serde_json::to_value(decoded).unwrap(), legacy_video);
     for style in [
         serde_json::json!({"italic":"yes"}),
