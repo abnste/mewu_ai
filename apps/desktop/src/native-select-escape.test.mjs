@@ -47,7 +47,7 @@ function fixture(code) {
     closing:false,gesture:{end:()=>effect('end')},pin:{controlPin:value=>{effect(value.type);return Promise.resolve();}},report:()=>{},
     status:()=>({phase:'recording'}),stopOrCancel:()=>effect('stopRecording'),
     act:value=>effect(value),stopAnnotationPointer:()=>effect('stopPointer'),manualView:()=>({move:{}}),manual:{cancelMove:()=>effect('cancelMove')},
-    cancelPointer:()=>effect('cancelPointer'),
+    cancelPointer:()=>effect('cancelPointer'), controller:{isInteracting:()=>true},
   });
   // Compile the real shared guard in the same DOM realm as each real callback.
   vm.runInContext(helper+`\nglobalThis.run = ${code};`,context);

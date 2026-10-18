@@ -67,7 +67,7 @@ export default function VideoTrimBar(props: VideoTrimBarProps) {
   function keyDown(event: KeyboardEvent) {
     if (nativeSelectOwnsEscape(event)) return;
     if (event.isComposing || event.keyCode === 229 || (event.target as Element)?.closest('input,textarea,select,[contenteditable="true"]')) return;
-    if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); cancelPointer(true); return; }
+    if (event.key === 'Escape') { if (!controller.isInteracting()) return; event.preventDefault(); event.stopImmediatePropagation(); cancelPointer(true); return; }
     const lower = event.key.toLowerCase();
     if ((event.ctrlKey || event.metaKey) && !event.altKey && (lower === 'z' || lower === 'y')) { event.preventDefault(); event.stopImmediatePropagation(); void replay(lower === 'y' || event.shiftKey ? 'redo' : 'undo'); return; }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
