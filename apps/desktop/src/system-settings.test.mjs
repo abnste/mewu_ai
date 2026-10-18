@@ -18,7 +18,7 @@ async function load(file) {
 const { validSystemPreferences } = (await load('./settings-contracts.ts')).namespace;
 const { settingsClient } = (await load('./settings-client.ts')).namespace;
 const { SystemPreferencesController } = (await load('./system-preferences.ts')).namespace;
-const state = extra => ({ version: 1, revision: 0, networkProxyMode: 'system', networkProxyUrl: '', launchAtStartup: false, startupRegistered: false, allowScreenShare: true, autoGenerateTitle: true, ...extra });
+const state = extra => ({ version: 1, revision: 0, networkProxyMode: 'system', networkProxyUrl: '', launchAtStartup: false, startupRegistered: false, allowScreenShare: true, autoGenerateTitle: true, replaceSystemCaptureShortcut: true, ...extra });
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 
@@ -49,6 +49,42 @@ test('title choice is strict, persisted through native save and survives editing
   const reopened = new SystemPreferencesController(async () => { throw Error('unexpected save'); }, () => {});
   reopened.loaded(controller.view().state); assert.equal(reopened.view().values.autoGenerateTitle, false);
   assert.equal(reopened.view().draft, undefined);
+});
+test('system capture choice remains strict, survives unrelated edits and rejects a mismatched native receipt', async () => {
+  for (const replaceSystemCaptureShortcut of [undefined, null, 'false', 0]) assert.equal(validSystemPreferences(state({ replaceSystemCaptureShortcut })), false);
+  const calls = [], controller = new SystemPreferencesController(async (revision, value) => {
+    calls.push({ revision, value }); return state({ revision: revision + 1, ...value, startupRegistered: value.launchAtStartup });
+  }, () => {});
+  controller.loaded(state({ replaceSystemCaptureShortcut: false }));
+  controller.edit({ networkProxyMode: 'direct' }); await controller.saveDraft();
+  assert.equal(calls[0].value.replaceSystemCaptureShortcut, false);
+  assert.equal(controller.view().draft, undefined);
+  const refused = new SystemPreferencesController(async () => state({ revision: 1, replaceSystemCaptureShortcut: true }), () => {});
+  refused.loaded(state()); refused.edit({ replaceSystemCaptureShortcut: false }); await refused.saveDraft();
+  assert.equal(refused.view().state.replaceSystemCaptureShortcut, true);
+  assert.equal(refused.view().draft.value.replaceSystemCaptureShortcut, false);
+  assert.match(refused.view().error, /回执无效/);
+});
+test('system capture runtime warning is optional and strictly validated without changing the saved choice', () => {
+  for (const systemCaptureShortcutWarning of [undefined, null, '', '无法接管系统截图快捷键']) {
+    const value = state({ systemCaptureShortcutWarning });
+    assert.equal(validSystemPreferences(value), true);
+    assert.equal(value.replaceSystemCaptureShortcut, true);
+  }
+  for (const systemCaptureShortcutWarning of [false, 1, {}, [], 'x'.repeat(4097)]) assert.equal(validSystemPreferences(state({ systemCaptureShortcutWarning })), false);
+});
+test('capture and general pages cannot silently overwrite each other through an old full-settings draft', async () => {
+  let saves = 0;
+  const general = new SystemPreferencesController(async () => { saves++; throw Error('Unexpected stale save'); }, () => {});
+  general.loaded(state()); general.edit({ networkProxyMode: 'direct' });
+  general.accept(state({ revision: 1, replaceSystemCaptureShortcut: false }));
+  await general.saveDraft();
+  assert.equal(saves, 0); assert.equal(general.view().conflict, true);
+  assert.equal(general.view().values.replaceSystemCaptureShortcut, true);
+  general.loadLatest(state({ revision: 1, replaceSystemCaptureShortcut: false }), general.view().draft);
+  general.edit({ autoGenerateTitle: false });
+  assert.equal(general.view().draft.expectedRevision, 1);
+  assert.equal(general.view().values.replaceSystemCaptureShortcut, false);
 });
 test('explicit startup enable repairs a missing Run item even when saved preference is already true', async () => {
   const calls = [], controller = new SystemPreferencesController(async (revision, value) => {
@@ -84,8 +120,8 @@ test('system bridge listens before reads, fences stale state and sends only type
   const opening = client.watchSystemPreferences(value => seen.push(value.revision)); await tick();
   receive(state({ revision: 3 })); task.resolve(state({ revision: 0 })); const stop = await opening;
   assert.deepEqual(seen, [3]); stop(); receive(state({ revision: 4 })); assert.equal(stops, 1); assert.deepEqual(seen, [3]);
-  await client.saveSystemPreferences(3, { networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false, autoGenerateTitle: false });
-  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), { name: 'set_system_preferences', args: { expectedRevision: 3, networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false, autoGenerateTitle: false } });
+  await client.saveSystemPreferences(3, { networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false, autoGenerateTitle: false, replaceSystemCaptureShortcut: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))), { name: 'set_system_preferences', args: { expectedRevision: 3, networkProxyMode: 'custom', networkProxyUrl: 'http://127.0.0.1:7890', launchAtStartup: true, allowScreenShare: false, autoGenerateTitle: false, replaceSystemCaptureShortcut: false } });
 });
 test('late startup registry query cannot overwrite a same-revision noop save event', async () => {
   const task = deferred(), seen = []; let receive;
@@ -117,4 +153,64 @@ test('actual general settings initialize real status, edit startup/sharing/proxy
   assert.equal(calls.length, 1); assert.equal(calls[0].value.launchAtStartup, true); assert.equal(calls[0].value.allowScreenShare, false); assert.equal(calls[0].value.networkProxyMode, 'direct'); assert.equal(props.preferences.showButtonLabels, false);
   assert.equal(context.qa.view().draft, undefined); assert.equal(context.qa.view().state.startupRegistered, true);
   assert.equal(calls[0].value.autoGenerateTitle, false); assert.equal(context.qa.view().values.autoGenerateTitle, false);
+});
+
+const reactive = await import(new URL('../../../node_modules/solid-js/dist/solid.js', import.meta.url));
+const captureSource = await raw('./components/SystemCaptureShortcutSetting.tsx');
+const captureAst = parse(captureSource, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
+const captureBody = captureAst.program.body.find(node => node.type === 'ExportDefaultDeclaration').declaration.body.body;
+function captureShortcutSetting(api) {
+  const context = vm.createContext({ props: { active: true, api }, SystemPreferencesController, ...reactive });
+  let dispose;
+  reactive.createRoot(cleanup => {
+    dispose = cleanup;
+    vm.runInContext(ts(`${captureBody.filter(node => node.type !== 'ReturnStatement').map(node => captureSource.slice(node.start, node.end)).join('\n')}\nglobalThis.qa={initialize,view,controller,change,checked,warning};`), context);
+  });
+  return { qa: context.qa, dispose };
+}
+test('actual screenshot settings toggle saves immediately through native CAS and retains an explicit failed choice', async () => {
+  const calls = []; let fail = true;
+  const setting = captureShortcutSetting({
+    watchSystemPreferences: async receive => { receive(state({ revision: 4, networkProxyMode: 'direct', autoGenerateTitle: false })); return () => {}; },
+    getSystemPreferences: async () => state(),
+    saveSystemPreferences: async (revision, value) => { calls.push({ revision, value }); if (fail) throw Error('Hook unavailable'); return state({ revision: revision + 1, ...value }); },
+  });
+  await tick(); setting.qa.change(false); await tick();
+  assert.equal(calls.length, 1); assert.equal(calls[0].revision, 4);
+  assert.equal(calls[0].value.replaceSystemCaptureShortcut, false);
+  assert.equal(calls[0].value.networkProxyMode, 'direct'); assert.equal(calls[0].value.autoGenerateTitle, false);
+  assert.equal(setting.qa.view().state.replaceSystemCaptureShortcut, true);
+  assert.equal(setting.qa.view().draft.value.replaceSystemCaptureShortcut, false);
+  assert.match(setting.qa.view().error, /Hook unavailable/);
+  fail = false; await setting.qa.controller.saveDraft();
+  assert.equal(setting.qa.view().draft, undefined);
+  assert.equal(setting.qa.view().state.replaceSystemCaptureShortcut, false);
+  setting.dispose();
+});
+test('actual screenshot settings releases a late listener and cannot save after unmount', async () => {
+  const ready = deferred(); let stopped = 0, saves = 0, receive;
+  const setting = captureShortcutSetting({ watchSystemPreferences: callback => { receive = callback; return ready.promise; }, saveSystemPreferences: async () => { saves++; return state(); } });
+  await tick(); setting.dispose(); receive(state()); ready.resolve(() => stopped++); await tick();
+  setting.qa.change(false);
+  assert.equal(stopped, 1); assert.equal(saves, 0); assert.equal(setting.qa.view().state, undefined);
+});
+test('actual screenshot settings shows an unavailable hook as off and allows repairing an already-enabled preference', async () => {
+  let receive; const calls = [];
+  const setting = captureShortcutSetting({
+    watchSystemPreferences: async callback => { receive = callback; callback(state({ revision: 4, systemCaptureShortcutWarning: '无法接管系统截图快捷键' })); return () => {}; },
+    saveSystemPreferences: async (revision, value) => { calls.push({ revision, value }); return state({ revision, ...value, systemCaptureShortcutWarning: null }); },
+  });
+  await tick();
+  assert.equal(setting.qa.checked(), false);
+  assert.equal(setting.qa.view().state.replaceSystemCaptureShortcut, true);
+  assert.equal(setting.qa.warning(), '无法接管系统截图快捷键');
+  setting.qa.change(true); await tick();
+  assert.equal(calls.length, 1); assert.equal(calls[0].revision, 4);
+  assert.equal(calls[0].value.replaceSystemCaptureShortcut, true);
+  assert.equal('systemCaptureShortcutWarning' in calls[0].value, false);
+  assert.equal(setting.qa.view().draft, undefined);
+  assert.equal(setting.qa.checked(), true); assert.equal(setting.qa.warning(), '');
+  receive(state({ revision: 4, systemCaptureShortcutWarning: '无法接管系统截图快捷键' }));
+  assert.equal(setting.qa.checked(), false);
+  setting.dispose();
 });

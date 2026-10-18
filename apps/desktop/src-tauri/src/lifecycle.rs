@@ -762,6 +762,12 @@ fn start_shutdown(
             return;
         }
         if app.state::<Host>().exit.advance(&id, READY) {
+            // No reversible exit work remains. Release the screenshot key
+            // before installer/restart handoff; process exit is the final OS
+            // fallback if native hook teardown itself reports a failure.
+            if let Err(error) = crate::system_capture_shortcut::shutdown(&app) {
+                let _ = app.emit_to("settings", "host-error", error);
+            }
             // Workers and durable writes have drained. Presentation recovery
             // must not strand an irreversible exit; the OS destroys these HWNDs.
             #[cfg(windows)]

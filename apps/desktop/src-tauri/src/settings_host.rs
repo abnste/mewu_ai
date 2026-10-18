@@ -10,6 +10,7 @@ pub struct SystemPreferencesStatus {
     value: crate::system_preferences::SystemPreferences,
     startup_registered: bool,
     startup_warning: Option<String>,
+    system_capture_shortcut_warning: Option<String>,
 }
 
 #[tauri::command]
@@ -29,6 +30,7 @@ pub fn get_system_preferences(
         value,
         startup_registered,
         startup_warning,
+        system_capture_shortcut_warning: crate::system_capture_shortcut::warning(),
     })
 }
 
@@ -42,6 +44,7 @@ pub async fn set_system_preferences(
     launch_at_startup: bool,
     allow_screen_share: bool,
     auto_generate_title: bool,
+    replace_system_capture_shortcut: bool,
 ) -> Result<SystemPreferencesStatus, String> {
     owner(&window)?;
     if !save_allowed(&app) {
@@ -66,6 +69,7 @@ pub async fn set_system_preferences(
             startup_owner: startup_owner.clone(),
             allow_screen_share,
             auto_generate_title,
+            replace_system_capture_shortcut,
         })
         .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -100,14 +104,34 @@ pub async fn set_system_preferences(
                 }
             }
         };
+        let system_capture = match crate::system_capture_shortcut::Change::apply(
+            &app,
+            replace_system_capture_shortcut,
+        ) {
+            Ok(change) => change,
+            Err(error) => {
+                let mut errors = vec![error];
+                if let Err(rollback) = startup.rollback() {
+                    errors.push(rollback);
+                }
+                if let Err(rollback) = visibility.rollback() {
+                    errors.push(rollback);
+                }
+                return Err(errors.join("；"));
+            }
+        };
         let receipt = match task.commit(allowed) {
             Ok(receipt) => {
+                system_capture.commit();
                 startup.commit();
                 visibility.commit();
                 receipt
             }
             Err(error) => {
                 let mut errors = vec![error.to_string()];
+                if let Err(rollback) = system_capture.rollback() {
+                    errors.push(rollback);
+                }
                 if let Err(rollback) = startup.rollback() {
                     errors.push(rollback);
                 }
@@ -129,6 +153,7 @@ pub async fn set_system_preferences(
             value: receipt.value,
             startup_registered,
             startup_warning,
+            system_capture_shortcut_warning: crate::system_capture_shortcut::warning(),
         };
         let _ = app.emit_to("settings", "system-preferences-changed", &value);
         if receipt.durability_warning {

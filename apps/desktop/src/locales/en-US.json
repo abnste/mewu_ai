@@ -1114,5 +1114,7 @@
   "此功能不支持当前系统": "This feature is not supported on this system",
   "此插件的本机能力不支持当前系统": "This plugin's native capability is not supported on this system",
   "区域操作仅支持 Windows": "Region operation is available on Windows only",
-  "插件平台声明无效": "Invalid plugin platform declaration"
+  "插件平台声明无效": "Invalid plugin platform declaration",
+  "使用 Win+Shift+S 截图": "Use Win+Shift+S for screenshots",
+  "无法接管系统截图快捷键": "Cannot take over the system screenshot shortcut"
 }

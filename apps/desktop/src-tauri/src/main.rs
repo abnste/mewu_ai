@@ -174,6 +174,7 @@ mod startup_windows;
 #[cfg(any(target_os = "linux", test))]
 mod startup_webviews;
 mod system_preferences;
+mod system_capture_shortcut;
 mod storage_cli;
 mod storage_dependencies;
 mod storage_host;
@@ -2618,6 +2619,20 @@ fn start_capture(app: &AppHandle) {
 
 static EARLY_QUIT: AtomicBool = AtomicBool::new(false);
 
+/// The keyboard hook only posts a request; existing capture admission and the
+/// UI thread own presentation. A closed/replaced shortcut cancels queued work.
+#[cfg(windows)]
+pub(crate) fn capture_system_shortcut_pressed(app: &AppHandle, epoch: u64) {
+    let target = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if system_capture_shortcut::dispatch_allowed(epoch)
+            && capture_shortcut_host::system_capture_allowed(&target)
+        {
+            start_capture(&target);
+        }
+    });
+}
+
 // macOS development builds embed one Info.plist symbol per macro expansion.
 // Share the expansion while constructing a fresh context for each CLI path.
 #[cfg(target_os = "macos")]
@@ -3226,6 +3241,19 @@ fn main() {
             app.manage(pixel_sampler::PixelSampler::default());
             app.manage(pin_host::PinRegistry::default());
             capture_shortcut_host::initialize(app.handle(), &app.state::<Host>().root)?;
+            #[cfg(windows)]
+            {
+                let target = app.handle().clone();
+                let enabled = app.state::<Host>().system_preferences.view()
+                    .map(|value| value.replace_system_capture_shortcut)
+                    .unwrap_or(false);
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = system_capture_shortcut::initialize(&target, enabled) {
+                        let _ = target.emit_to("space", "host-error", &error);
+                        let _ = target.emit_to("settings", "host-error", &error);
+                    }
+                });
+            }
             recording_audio_host::initialize(app.handle(), &app.state::<Host>().root)?;
             use tauri::{
                 menu::{Menu, MenuItem},

@@ -362,6 +362,24 @@ fn emit_ended(app: &AppHandle, lease: Option<Editor>) {
         );
     }
 }
+
+fn sync_system_editor(app: &AppHandle, editors: &Editors) {
+    // Serialize with editor changes so an old expiry cannot reopen a newer
+    // lease. The Windows adapter only stores atomics here, never waits.
+    crate::system_capture_shortcut::set_editing(app, editors.active.is_some());
+}
+
+#[cfg(windows)]
+pub(crate) fn system_capture_allowed(app: &AppHandle) -> bool {
+    let Some(host) = app.try_state::<Host>() else { return false; };
+    if !host.exit.accepts_new_operations()
+        || host.capturing.load(Ordering::Acquire)
+        || crate::recording::ensure_idle(app).is_err()
+    { return false; }
+    app.try_state::<HostRuntime>().is_some_and(|runtime| {
+        runtime.0.editors.lock().map(|editors| editors.active.is_none()).unwrap_or(false)
+    })
+}
 struct NativeBackend {
     app: AppHandle,
     inner: Arc<Inner>,
@@ -490,7 +508,9 @@ fn start_expiry_timer(
         }
         let expired = {
             let mut editors = runtime.0.editors.lock().unwrap_or_else(|e| e.into_inner());
-            editors.expire_exact(&lease, Instant::now())
+            let expired = editors.expire_exact(&lease, Instant::now());
+            sync_system_editor(&app, &editors);
+            expired
         };
         emit_ended(&app, expired);
     });
@@ -607,6 +627,7 @@ pub fn begin_capture_shortcut_edit(
         } else {
             None
         };
+        sync_system_editor(&app, &editors);
         (expired, result, timer)
     };
     emit_ended(&app, expired);
@@ -637,7 +658,10 @@ pub fn end_capture_shortcut_edit(
             .lock()
             .map_err(|_| "快捷键编辑状态不可用")?;
         let expired = editors.prune(now);
-        (expired, editors.end("settings", &lease_id, now)?)
+        sync_system_editor(&app, &editors);
+        let ended = editors.end("settings", &lease_id, now)?;
+        sync_system_editor(&app, &editors);
+        (expired, ended)
     };
     emit_ended(&app, expired);
     emit_ended(&app, ended);
@@ -692,6 +716,7 @@ pub fn route_pressed(app: &AppHandle, key: &Shortcut) -> bool {
                 },
             )
         });
+        sync_system_editor(app, &editors);
         (ended, recorded)
     };
     emit_ended(app, ended);
@@ -720,12 +745,12 @@ pub fn invalidate_owner(app: &AppHandle, owner: &str) {
     let Some(runtime) = app.try_state::<HostRuntime>() else {
         return;
     };
-    let old = runtime
-        .0
-        .editors
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .invalidate(Some(owner), Instant::now());
+    let old = {
+        let mut editors = runtime.0.editors.lock().unwrap_or_else(|e| e.into_inner());
+        let old = editors.invalidate(Some(owner), Instant::now());
+        sync_system_editor(app, &editors);
+        old
+    };
     emit_ended(app, old);
 }
 /// Wayland consent legitimately moves focus to the system dialog. The portal
@@ -741,12 +766,12 @@ pub fn invalidate_all(app: &AppHandle) {
     let Some(runtime) = app.try_state::<HostRuntime>() else {
         return;
     };
-    let old = runtime
-        .0
-        .editors
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .invalidate(None, Instant::now());
+    let old = {
+        let mut editors = runtime.0.editors.lock().unwrap_or_else(|e| e.into_inner());
+        let old = editors.invalidate(None, Instant::now());
+        sync_system_editor(app, &editors);
+        old
+    };
     emit_ended(app, old);
 }
 pub async fn drain(app: &AppHandle, timeout: Duration) -> Result<(), String> {

@@ -72,8 +72,13 @@ pub struct SystemPreferences {
     pub allow_screen_share: bool,
     #[serde(default = "default_auto_title")]
     pub auto_generate_title: bool,
+    #[serde(default = "default_replace_system_capture_shortcut")]
+    pub replace_system_capture_shortcut: bool,
 }
 fn default_auto_title() -> bool {
+    true
+}
+fn default_replace_system_capture_shortcut() -> bool {
     true
 }
 impl SystemPreferences {
@@ -87,6 +92,7 @@ impl SystemPreferences {
             startup_owner: None,
             allow_screen_share: true,
             auto_generate_title: true,
+            replace_system_capture_shortcut: true,
         }
     }
     fn validate_saved(&self) -> Result<(), Error> {
@@ -110,6 +116,7 @@ pub struct SaveRequest {
     pub startup_owner: Option<String>,
     pub allow_screen_share: bool,
     pub auto_generate_title: bool,
+    pub replace_system_capture_shortcut: bool,
 }
 impl SaveRequest {
     fn same_choice(&self, current: &SystemPreferences) -> bool {
@@ -119,6 +126,7 @@ impl SaveRequest {
             && self.startup_owner == current.startup_owner
             && self.allow_screen_share == current.allow_screen_share
             && self.auto_generate_title == current.auto_generate_title
+            && self.replace_system_capture_shortcut == current.replace_system_capture_shortcut
     }
 }
 
@@ -499,6 +507,7 @@ impl SaveTask {
                 startup_owner: self.request.startup_owner.clone(),
                 allow_screen_share: self.request.allow_screen_share,
                 auto_generate_title: self.request.auto_generate_title,
+                replace_system_capture_shortcut: self.request.replace_system_capture_shortcut,
             };
             file.commit(&self.loaded, &next, admitted)
         })();
@@ -651,6 +660,7 @@ mod tests {
             startup_owner: None,
             allow_screen_share: false,
             auto_generate_title: true,
+            replace_system_capture_shortcut: true,
         }
     }
     fn saved() -> SystemPreferences {
@@ -706,12 +716,44 @@ mod tests {
         assert!(!actor.begin_save(choice).unwrap().commit(|| true).unwrap().changed);
     }
     #[test]
+    fn system_capture_shortcut_legacy_default_is_read_only_and_explicit_disable_survives_restart() {
+        let dir = Directory::new();
+        let mut legacy = serde_json::to_value(saved()).unwrap();
+        legacy.as_object_mut().unwrap().remove("replaceSystemCaptureShortcut");
+        let raw = serde_json::to_vec_pretty(&legacy).unwrap();
+        fs::write(dir.0.join(FILE_NAME), &raw).unwrap();
+        let actor = SystemPreferencesActor::open(&dir.0);
+        assert!(actor.view().unwrap().replace_system_capture_shortcut);
+        let unchanged = actor.begin_save(request(1)).unwrap().commit(|| true).unwrap();
+        assert!(!unchanged.changed);
+        assert_eq!(unchanged.value.revision, 1);
+        assert_eq!(fs::read(dir.0.join(FILE_NAME)).unwrap(), raw);
+        assert!(!dir.0.join(LOCK_NAME).exists());
+
+        let mut disable = request(1);
+        disable.replace_system_capture_shortcut = false;
+        let receipt = actor.begin_save(disable).unwrap().commit(|| true).unwrap();
+        assert!(receipt.changed);
+        assert_eq!(receipt.value.revision, 2);
+        let reopened = SystemPreferencesActor::open(&dir.0);
+        assert!(!reopened.view().unwrap().replace_system_capture_shortcut);
+        let mut unrelated = request(2);
+        unrelated.replace_system_capture_shortcut = false;
+        unrelated.auto_generate_title = false;
+        reopened.begin_save(unrelated).unwrap().commit(|| true).unwrap();
+        let value = SystemPreferencesActor::open(&dir.0).view().unwrap();
+        assert_eq!(value.revision, 3);
+        assert!(!value.replace_system_capture_shortcut);
+        assert!(!value.auto_generate_title);
+    }
+    #[test]
     fn reads_defaults_and_noop_leave_no_file_and_never_enable_startup() {
         let dir = Directory::new();
         let actor = SystemPreferencesActor::open(&dir.0);
         let value = actor.view().unwrap();
         assert_eq!(value, SystemPreferences::defaults());
         assert!(value.allow_screen_share);
+        assert!(value.replace_system_capture_shortcut);
         assert!(!value.launch_at_startup);
         let receipt = actor
             .begin_save(SaveRequest {
@@ -722,6 +764,7 @@ mod tests {
                 startup_owner: value.startup_owner,
                 allow_screen_share: value.allow_screen_share,
                 auto_generate_title: value.auto_generate_title,
+                replace_system_capture_shortcut: value.replace_system_capture_shortcut,
             })
             .unwrap()
             .commit(|| true)
@@ -766,6 +809,8 @@ mod tests {
             ("revision", serde_json::json!(0)),
             ("networkProxyMode", serde_json::json!("invalid")),
             ("allowScreenShare", serde_json::json!(0)),
+            ("replaceSystemCaptureShortcut", serde_json::json!(null)),
+            ("replaceSystemCaptureShortcut", serde_json::json!("false")),
             ("extra", serde_json::json!(true)),
         ] {
             let mut invalid = valid.clone();
@@ -775,6 +820,8 @@ mod tests {
         let mut missing = valid.clone();
         missing.as_object_mut().unwrap().remove("launchAtStartup");
         assert!(Loaded::decode(serde_json::to_vec(&missing).unwrap()).is_err());
+        let duplicate_capture = br#"{"version":1,"revision":1,"networkProxyMode":"direct","networkProxyUrl":"","launchAtStartup":false,"allowScreenShare":true,"replaceSystemCaptureShortcut":true,"replaceSystemCaptureShortcut":false}"#;
+        assert!(Loaded::decode(duplicate_capture.to_vec()).is_err());
         let bytes = br#"{"version":1,"revision":1,"revision":2,"networkProxyMode":"direct","networkProxyUrl":"","launchAtStartup":false,"allowScreenShare":true}"#;
         fs::write(dir.0.join(FILE_NAME), bytes).unwrap();
         let actor = SystemPreferencesActor::open(&dir.0);

@@ -11,8 +11,9 @@ export interface SystemPreferenceValues {
   launchAtStartup: boolean;
   allowScreenShare: boolean;
   autoGenerateTitle: boolean;
+  replaceSystemCaptureShortcut: boolean;
 }
-export interface SystemPreferences extends SystemPreferenceValues { version: 1; revision: number; startupRegistered: boolean; startupWarning?: string | null }
+export interface SystemPreferences extends SystemPreferenceValues { version: 1; revision: number; startupRegistered: boolean; startupWarning?: string | null; systemCaptureShortcutWarning?: string | null }
 export function validSystemPreferences(value: unknown): value is SystemPreferences {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const v = value as SystemPreferences;
@@ -21,9 +22,11 @@ export function validSystemPreferences(value: unknown): value is SystemPreferenc
     && typeof v.networkProxyUrl === 'string' && v.networkProxyUrl.length <= 2048 && !/[\0\r\n]/.test(v.networkProxyUrl)
     && typeof v.launchAtStartup === 'boolean' && typeof v.allowScreenShare === 'boolean' && typeof v.startupRegistered === 'boolean'
     && typeof v.autoGenerateTitle === 'boolean'
-    && (v.startupWarning === undefined || v.startupWarning === null || typeof v.startupWarning === 'string' && v.startupWarning.length <= 4096);
+    && typeof v.replaceSystemCaptureShortcut === 'boolean'
+    && (v.startupWarning === undefined || v.startupWarning === null || typeof v.startupWarning === 'string' && v.startupWarning.length <= 4096)
+    && (v.systemCaptureShortcutWarning === undefined || v.systemCaptureShortcutWarning === null || typeof v.systemCaptureShortcutWarning === 'string' && v.systemCaptureShortcutWarning.length <= 4096);
 }
-export const sameSystemValues = (a: SystemPreferenceValues, b: SystemPreferenceValues) => a.networkProxyMode === b.networkProxyMode && a.networkProxyUrl === b.networkProxyUrl && a.launchAtStartup === b.launchAtStartup && a.allowScreenShare === b.allowScreenShare && a.autoGenerateTitle === b.autoGenerateTitle;
+export const sameSystemValues = (a: SystemPreferenceValues, b: SystemPreferenceValues) => a.networkProxyMode === b.networkProxyMode && a.networkProxyUrl === b.networkProxyUrl && a.launchAtStartup === b.launchAtStartup && a.allowScreenShare === b.allowScreenShare && a.autoGenerateTitle === b.autoGenerateTitle && a.replaceSystemCaptureShortcut === b.replaceSystemCaptureShortcut;
 export interface SettingsInfo {
   application: string;
   version: string;
