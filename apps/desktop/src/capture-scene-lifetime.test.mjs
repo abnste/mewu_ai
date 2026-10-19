@@ -9,6 +9,7 @@ import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { parse } from '@babel/parser';
 import { transformSync } from '@babel/core';
 import solidPreset from 'babel-preset-solid';
+import postcss from 'postcss';
 import * as solid from '../../../node_modules/solid-js/dist/solid.js';
 
 const raw = path => readFile(new URL(path, import.meta.url), 'utf8');
@@ -70,6 +71,8 @@ export function Presentation(props){
   ${definition('scene')}
   ${definition('canvasScene')}
   ${definition('capturePresentationLive')}
+  ${definition('captureSceneBackgroundOnly')}
+  ${definition('captureSceneHidden')}
   return <div>${slice(wrapper.openingElement)}${slice(sceneShow.openingElement)}{currentId=>{
     ${ownedDeclarations}
     return <SpaceCanvas ${['scene','inputLocked','busy'].map(canvasAttribute).join(' ')}/>;
@@ -140,7 +143,7 @@ test('recording preparation countdown live capture and stop retain the same prod
     f.setRecording({...recordingStatus('starting'),hud:{rect:null,stage:'layout'}});
     assert.equal(wrapper.props.style.display,'contents');assert.equal(f.one('recording-live-mask'),undefined);
     f.setRecording({...recordingStatus('countdown',3),hud:{rect:null,stage:'layout'}});
-    assert.equal(wrapper.props.style.display,'none');assert.ok(f.one('recording-live-mask'));assert.ok(f.one('recording-countdown'));
+    assert.equal(wrapper.props.style.display,'contents');assert.equal(wrapper.props.classList['capture-background-only'],true);assert.ok(f.one('recording-live-mask'));assert.ok(f.one('recording-countdown'));
     assert.ok(f.one('recording-countdown').children.some(node=>node.text==='3'));
     const mask=f.one('recording-live-mask');
     f.setRecording({...recordingStatus('starting'),hud:{rect:null,stage:'mask'}});
@@ -168,6 +171,57 @@ test('scroll preparation capture completion and null keep one scene mounted whil
     f.setScroll(null);assert.equal(wrapper.props.style.display,'contents');assert.equal(wrapper.props.inert,false);assert.equal(f.one('qa-selection'),selection);
     assert.equal(f.one('scroll-live-mask'),undefined);assert.equal(f.document.documentElement.dataset.surface,'space');assert.equal(f.mounted.length,1);
   }finally{f.dispose();assert.equal(f.cleaned.length,1);}
+});
+
+test('native-aperture long capture keeps the same decoded background with one main mask and no editable overlays', async () => {
+  const f=await fixture();try{
+    const wrapper=f.one('capture-scene-surface'),owner=f.one('qa-canvas-owner'),image=f.one('qa-background');
+    f.setScroll({...scrollStatus('starting'),hud:{live:false,retainMain:false}});
+    assert.equal(wrapper.props.style.display,'contents');assert.equal(wrapper.props.classList['capture-background-only'],false);
+    assert.equal(f.one('scroll-live-mask'),undefined);
+    for(const phase of ['starting','capturing','finishing']){
+      f.setScroll({...scrollStatus(phase),hud:{live:true,retainMain:true}});
+      assert.equal(wrapper.props.style.display,'contents');assert.equal(wrapper.props.classList['capture-background-only'],true);
+      assert.equal(wrapper.props.inert,true);assert.ok(f.one('scroll-live-mask'));
+      assert.equal(f.one('qa-canvas-owner'),owner);assert.equal(f.one('qa-background'),image);assert.equal(f.probeBegin(),0);
+    }
+    f.setScroll(null);assert.equal(wrapper.props.classList['capture-background-only'],false);
+    assert.equal(f.one('qa-background'),image);assert.equal(f.one('scroll-live-mask'),undefined);
+    assert.equal(f.mounted.length,1);assert.equal(f.cleaned.length,0);
+    // These are the actual CSS branches used above: no original mask, region,
+    // drawing, object or composer is left over the single live capture mask.
+    const css=await raw('./components/capture.css');
+    let hide;
+    postcss.parse(css).walkRules(rule=>{if(rule.selector.includes('.capture-background-only>'))hide=rule;});
+    assert.ok(hide);
+    assert.deepEqual(hide.selectors,[
+      '.capture-background-only>.space-canvas>:not(.capture-background)',
+      '.capture-background-only>.space-canvas>:not(.capture-background) *',
+      '.capture-background-only>:not(.space-canvas)',
+      '.capture-background-only>:not(.space-canvas) *',
+    ]);
+    assert.ok(hide.nodes.some(decl=>decl.prop==='visibility'&&decl.value==='hidden'&&decl.important),
+      'focused/hovered object tools explicitly set visible, so the mode must override descendants too');
+  }finally{f.dispose();}
+});
+
+test('prepared compact recording keeps the original countdown image then one main live mask without a compound overlay', async () => {
+  const f=await fixture();try{
+    const wrapper=f.one('capture-scene-surface'),image=f.one('qa-background');
+    f.setRecording(recordingStatus('starting'));assert.equal(wrapper.props.style.display,'contents');
+    f.setRecording(recordingStatus('countdown',3));
+    assert.equal(wrapper.props.style.display,'contents');assert.equal(wrapper.props.classList['capture-background-only'],true);
+    assert.ok(f.one('recording-countdown'));assert.equal(f.one('qa-background'),image);
+    const mask=f.one('recording-live-mask');
+    for(const phase of ['starting','recording','paused','stopping']){
+      f.setRecording({...recordingStatus(phase),retainMain:true});
+      assert.equal(wrapper.props.style.display,'none');assert.equal(wrapper.props.inert,true);
+      assert.equal(f.one('recording-live-mask'),mask);assert.equal(f.one('recording-countdown'),undefined);
+      assert.equal(f.one('qa-background'),image);assert.equal(f.probeBegin(),0);
+    }
+    f.setRecording(null);assert.equal(wrapper.props.style.display,'contents');assert.equal(f.one('qa-background'),image);
+    assert.equal(f.mounted.length,1);assert.equal(f.cleaned.length,0);
+  }finally{f.dispose();}
 });
 
 test('all recording and scroll phases lock the actual SpaceCanvas props and its production pointer admission despite remaining mounted', async () => {

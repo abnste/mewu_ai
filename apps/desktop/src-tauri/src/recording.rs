@@ -73,6 +73,9 @@ pub struct Status {
     #[cfg(windows)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) hud: Option<Hud>,
+    #[cfg(windows)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) retain_main: Option<bool>,
 }
 struct Active {
     #[cfg(windows)]
@@ -437,6 +440,8 @@ pub async fn start_recording(
         audio: audio.mode,
         #[cfg(windows)]
         hud: None,
+        #[cfg(windows)]
+        retain_main: Some(false),
     };
     {
         let plugins = host.plugins.lock().map_err(|_| "插件存储需要重新启动")?;
@@ -1020,6 +1025,45 @@ pub async fn surface_ready(
     #[cfg(not(windows))]
     { let _ = (app, window, id, stage); Ok(false) }
 }
+fn recording_countdown(
+    app: &AppHandle, id: &str, commands: &crate::recording_worker::ControlBus,
+    escape: &std::cell::Cell<bool>,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    update(app, id, |s| { s.phase = "countdown"; s.countdown = 3; });
+    for number in (1..=3).rev() {
+        update(app, id, |s| s.countdown = number);
+        let until = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < until {
+            if commands.take()?.is_some_and(|c| matches!(c, backend::Control::Stop | backend::Control::Cancel)) {
+                return Ok(false);
+            }
+            let down = escape_down();
+            if down && !escape.replace(down) { return Ok(false); }
+            escape.set(down);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    update(app, id, |s| {
+        #[cfg(windows)]
+        if let Some(hud) = &mut s.hud {
+            s.phase = "starting"; s.countdown = 0;
+            hud.stage = "mask"; hud.ready = false;
+        }
+        // Compact capture retains the last numeral until the real native
+        // aperture and retainMain proof are published together. An unproven
+        // intermediate `starting` would briefly reveal the screenshot toolbar.
+        #[cfg(not(windows))]
+        { s.phase = "starting"; s.countdown = 0; }
+    });
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    crate::recording_worker::mac_diagnostic(
+        crate::recording_worker::MacStage::CountdownComplete,
+        crate::recording_worker::MacOutcome::Ok,
+    );
+    Ok(true)
+}
+
 fn supervise(
     app: &AppHandle,
     id: &str,
@@ -1027,74 +1071,51 @@ fn supervise(
     commands: Arc<crate::recording_worker::ControlBus>,
     finalized: Arc<AtomicBool>,
 ) -> Result<Option<backend::Report>, String> {
-    let mut escape = escape_down();
+    let escape = std::cell::Cell::new(escape_down());
     #[cfg(windows)]
-    update(app, id, |s| { s.phase = "countdown"; s.countdown = 3; });
-    for number in (1..=3).rev() {
-        update(app, id, |s| s.countdown = number);
-        let until = Instant::now() + Duration::from_secs(1);
-        while Instant::now() < until {
-            if commands
-                .take()?
-                .is_some_and(|c| matches!(c, backend::Control::Stop | backend::Control::Cancel))
-            {
-                return Ok(None);
-            }
-            let down = escape_down();
-            if down && !escape {
-                return Ok(None);
-            }
-            escape = down;
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-    update(app, id, |s| {
-        s.phase = "starting";
-        s.countdown = 0;
+    let capture_live = std::cell::Cell::new(false);
+    #[cfg(windows)]
+    let last_verified = std::cell::Cell::new(Instant::now());
+    let poll = || {
         #[cfg(windows)]
-        if let Some(hud) = &mut s.hud { hud.stage = "mask"; hud.ready = false; }
-    });
-    #[cfg(all(target_os = "macos", debug_assertions))]
-    crate::recording_worker::mac_diagnostic(
-        crate::recording_worker::MacStage::CountdownComplete,
-        crate::recording_worker::MacOutcome::Ok,
-    );
+        if capture_live.get() && last_verified.get().elapsed() >= Duration::from_millis(100) {
+            verify_capture(app, id)?;
+            last_verified.set(Instant::now());
+        }
+        let down = escape_down();
+        let esc = down && !escape.replace(down);
+        escape.set(down);
+        if esc { Ok(Some(backend::Control::Stop)) } else { commands.take() }
+    };
+    let progress = |progress: backend::Progress| {
+        update(app, id, |status| {
+            status.phase = if progress.paused { "paused" } else { "recording" };
+            status.elapsed_ms = progress.elapsed_ms;
+        })
+    };
+    let stopping = || update(app, id, |status| status.phase = "stopping");
+    let finalized = || finalized.store(true, Ordering::Release);
     #[cfg(windows)]
-    if !controls_windows::finish_countdown(app, id, &config)? { return Ok(None); }
-    #[cfg(windows)]
-    verify_capture(app, id)?;
-    #[cfg(windows)]
-    let mut last_verified = Instant::now();
-    crate::recording_worker::run(
-        config,
-        || {
-            #[cfg(windows)]
-            if last_verified.elapsed() >= Duration::from_millis(100) {
-                verify_capture(app, id)?;
-                last_verified = Instant::now();
-            }
-            let down = escape_down();
-            let esc = down && !escape;
-            escape = down;
-            if esc {
-                Ok(Some(backend::Control::Stop))
-            } else {
-                commands.take()
-            }
-        },
-        |progress| {
-            update(app, id, |status| {
-                status.phase = if progress.paused {
-                    "paused"
-                } else {
-                    "recording"
-                };
-                status.elapsed_ms = progress.elapsed_ms;
-            })
-        },
-        || update(app, id, |status| status.phase = "stopping"),
-        || finalized.store(true, Ordering::Release),
-    )
+    {
+        let prepare_config = config.clone();
+        crate::recording_worker::run_prepared(config, poll, || {
+            if !recording_countdown(app, id, &commands, &escape)? { return Ok(None); }
+            if !controls_windows::finish_countdown(app, id, &prepare_config)? { return Ok(None); }
+            if commands.terminal_pending()? { return Ok(None); }
+            verify_capture(app, id)?;
+            // main.prepare has flushed native composition. The child must use
+            // a compositor timestamp at/after this point, not its warm-up frame.
+            let epoch = crate::recording_audio::qpc_now()?;
+            last_verified.set(Instant::now());
+            capture_live.set(true);
+            Ok(Some(epoch))
+        }, progress, stopping, finalized)
+    }
+    #[cfg(not(windows))]
+    {
+        if !recording_countdown(app, id, &commands, &escape)? { return Ok(None); }
+        crate::recording_worker::run(config, poll, progress, stopping, finalized)
+    }
 }
 
 #[cfg(test)]
@@ -1232,6 +1253,8 @@ mod tests {
                 audio: backend::AudioMode::Mute,
                 #[cfg(windows)]
                 hud: None,
+                #[cfg(windows)]
+                retain_main: None,
             },
             commands: commands.clone(),
             grant: crate::plugins::RecordingGrant {
@@ -1278,6 +1301,8 @@ mod tests {
                 audio: backend::AudioMode::Mute,
                 #[cfg(windows)]
                 hud: None,
+                #[cfg(windows)]
+                retain_main: None,
             },
             commands: send,
             grant: crate::plugins::RecordingGrant {

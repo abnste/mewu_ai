@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0 */
-html[data-surface="recording"],html[data-surface="recording"] body,html[data-surface="recording"] #root { background:#fcfdff!important;margin:0;width:100%;height:100%;overflow:hidden; }
+html[data-surface="recording"],html[data-surface="recording"] body,html[data-surface="recording"] #root { background:transparent!important;margin:0;width:100%;height:100%;overflow:hidden; }
 html[data-surface="recording"][data-recording-platform="linux"],html[data-surface="recording"][data-recording-platform="linux"] body,html[data-surface="recording"][data-recording-platform="linux"] #root { background:transparent!important; }
 html[data-surface="recording"][data-recording-platform="linux"] .recording-controls { border-radius:12px; }
 html[data-surface="recording-live"],html[data-surface="recording-live"] body,html[data-surface="recording-live"] #root { background:transparent!important; }
@@ -9,7 +9,7 @@ html[data-surface="recording-live"],html[data-surface="recording-live"] body,htm
 .recording-region-outline { fill:none;stroke:#3297f2;stroke-width:2; }
 .recording-countdown { position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;width:82px;height:82px;border:1px solid var(--accent-line);border-radius:50%;background:#fcfdfff5;color:var(--accent);font-size:42px;font-weight:550;line-height:1;box-shadow:var(--shadow-menu); }
 .recording-control-window { width:100%;height:100%;user-select:none; }
-.recording-controls { box-sizing:border-box;width:100%;height:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:#fcfdff;color:var(--text); }
+.recording-controls { box-sizing:border-box;width:100%;height:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;border-radius:12px;background:#fcfdff;color:var(--text); }
 .recording-status-dot { width:8px;height:8px;flex:none;border-radius:50%;background:#df5360; }
 .recording-status-dot.paused { background:var(--muted); }
 .recording-status-icon { flex:none;color:var(--secondary); }

@@ -4,7 +4,7 @@
 //! after its worker has drained. Do not restore a replacement selected by label.
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Mutex,
+    LazyLock, Mutex,
 };
 use windows_sys::Win32::{
     Foundation::{GetLastError, SetLastError, HWND, RECT},
@@ -58,6 +58,10 @@ fn window_rect(hwnd: HWND) -> Result<RECT, String> {
 
 const INPUT_BITS: isize = (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize;
 const APP_CLOAK: u32 = 1;
+// One exact native owner per HWND. This also prevents a geometry publication
+// from replacing an active session's live aperture or outstanding restore debt.
+static LEASE_OWNER_KEY: LazyLock<Vec<u16>> = LazyLock::new(||
+    "Mewu-Live-Capture-Owner".encode_utf16().chain(Some(0)).collect());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Rect {
@@ -126,11 +130,11 @@ pub(crate) fn hud_position(work: Rect, roi: Rect, size: (u32, u32)) -> Option<(i
         ) as i32;
     let y = roi.top.max(work.top).min(work.bottom.saturating_sub(h));
     for (left, top) in [
-        (x, work.top.saturating_add(6)),
+        (x, roi.top.saturating_sub(h).saturating_sub(6)),
         (roi.right.saturating_add(6), y),
         (roi.left.saturating_sub(w).saturating_sub(6), y),
         (x, roi.bottom.saturating_add(6)),
-        (x, roi.top.saturating_sub(h).saturating_sub(6)),
+        (x, work.top.saturating_add(6)),
     ] {
         let candidate = Rect::new(left, top, size.0, size.1).ok()?;
         if work.contains(candidate) && !roi.intersects(candidate) {
@@ -334,6 +338,9 @@ impl Lease {
         {
             return Err("采集窗口身份已改变".into());
         }
+        if !unsafe { GetPropW(raw, LEASE_OWNER_KEY.as_ptr()) }.is_null() {
+            return Err("采集窗口仍由上一项操作持有".into());
+        }
         let before_affinity = affinity(raw)?;
         if shared && before_affinity != 0 {
             return Err("共享采集窗口仍受保护，请重新截图".into());
@@ -354,6 +361,10 @@ impl Lease {
             .collect();
         if unsafe { SetPropW(raw, cookie.as_ptr(), 1usize as _) } == 0 {
             return Err("无法绑定采集窗口".into());
+        }
+        if unsafe { SetPropW(raw, LEASE_OWNER_KEY.as_ptr(), cookie.as_ptr() as _) } == 0 {
+            unsafe { RemovePropW(raw, cookie.as_ptr()); }
+            return Err("无法绑定采集窗口所有者".into());
         }
         Ok(Self {
             hwnd,
@@ -382,7 +393,46 @@ impl Lease {
             GetCurrentThreadId() == self.thread
                 && IsWindow(self.hwnd as HWND) != 0
                 && GetPropW(self.hwnd as HWND, self.cookie.as_ptr()) as usize == 1
+                && GetPropW(self.hwnd as HWND, LEASE_OWNER_KEY.as_ptr()) as usize == self.cookie.as_ptr() as usize
         }
+    }
+    /// Author a known space geometry, never infer one from GetWindowRgn ERROR.
+    /// This temporary owner is deliberately not a prepared sampling lease.
+    fn author_full_region(&self, expected_bounds: Rect) -> Result<bool, String> {
+        if !self.current() || self.finished || self.prepared || self.scroll_clip.is_some() {
+            return Err("空间窗口身份或阶段已改变".into());
+        }
+        let hwnd = self.hwnd as HWND;
+        let actual = window_rect(hwnd)?;
+        if expected_bounds != (Rect { left: actual.left, top: actual.top, right: actual.right, bottom: actual.bottom }) {
+            return Err("空间窗口位置尚未提交".into());
+        }
+        let width = i32::try_from(i64::from(expected_bounds.right) - i64::from(expected_bounds.left)).map_err(|_| "空间窗口宽度无效")?;
+        let height = i32::try_from(i64::from(expected_bounds.bottom) - i64::from(expected_bounds.top)).map_err(|_| "空间窗口高度无效")?;
+        if width <= 0 || height <= 0 { return Err("空间窗口尺寸无效".into()); }
+        let full = Region(unsafe { CreateRectRgn(0, 0, width, height) } as usize);
+        if full.0 == 0 { return Err("无法建立空间窗口区域".into()); }
+        let unchanged = region(hwnd)?.is_some_and(|actual| unsafe { EqualRgn(actual.raw(), full.raw()) } != 0);
+        if !unchanged { full.copy()?.assign(hwnd)?; }
+        let actual_bounds = window_rect(hwnd)?;
+        let actual = region(hwnd)?.ok_or("空间窗口区域未能确认")?;
+        if !self.current() || expected_bounds != (Rect { left: actual_bounds.left, top: actual_bounds.top, right: actual_bounds.right, bottom: actual_bounds.bottom })
+            || unsafe { EqualRgn(actual.raw(), full.raw()) } == 0 {
+            return Err("空间窗口区域已改变".into());
+        }
+        Ok(!unchanged)
+    }
+    fn release_author_identity(&mut self) -> Result<(), String> {
+        if !self.current() || self.prepared || self.applied_region.is_some() || self.scroll_clip.is_some()
+            || self.input_changed || self.affinity_changed || self.cloak_changed {
+            return Err("空间窗口所有权已改变".into());
+        }
+        unsafe {
+            RemovePropW(self.hwnd as HWND, self.cookie.as_ptr());
+            RemovePropW(self.hwnd as HWND, LEASE_OWNER_KEY.as_ptr());
+        }
+        self.finished = true;
+        Ok(())
     }
     fn verify_staged(&self, roi: Rect) -> Result<(), String> {
         if !self.current() || self.finished || self.prepared || !self.before_bounds.contains(roi) {
@@ -609,6 +659,7 @@ impl Lease {
         flush()?;
         unsafe {
             RemovePropW(hwnd, self.cookie.as_ptr());
+            RemovePropW(hwnd, LEASE_OWNER_KEY.as_ptr());
         }
         self.finished = true;
         Ok(())
@@ -705,6 +756,22 @@ pub(crate) fn work_area(window: &tauri::WebviewWindow, display: Rect) -> Result<
     )
 }
 
+fn author_known_space_region(hwnd: usize, expected: Rect) -> Result<bool, String> {
+    // Use the same process/thread/native-cookie ownership as live sessions, but
+    // deliberately commit the authored geometry rather than restoring ERROR/None.
+    let mut owner = Lease::capture(hwnd, false)?;
+    let result = owner.author_full_region(expected);
+    let released = owner.release_author_identity();
+    match result { Err(error) => Err(error), Ok(changed) => released.map(|()| changed) }
+}
+
+/// Call only after the owned Space's explicit physical geometry commit. No
+/// generic focus/show path may reset a region while capture owns its HWND.
+pub(crate) fn author_space_region(window: &tauri::WebviewWindow, expected: Rect) -> Result<bool, String> {
+    if window.label() != "space" { return Err("只有空间窗口可以提交截图区域".into()); }
+    author_known_space_region(window.hwnd().map_err(|_| "空间窗口不存在")?.0 as usize, expected)
+}
+
 /// Both the overlay and its one HUD are bound while on their message thread.
 pub(crate) struct Session {
     pub main: Lease,
@@ -719,6 +786,30 @@ impl Session {
             )?,
             hud: None,
         })
+    }
+    /// Prediction only: the original explicit native region can preserve the
+    /// scene outside a future ROI. A caller must still prepare and verify it.
+    pub fn can_retain_main_outside(&self) -> Result<bool, String> {
+        self.main.verify_staged(self.main.before_bounds)?;
+        if !self.main.shared || self.main.before_cloak != 0 { return Ok(false); }
+        let Some(original) = &self.main.before_region else { return Ok(false); };
+        let hwnd = self.main.hwnd as HWND;
+        if input_style(hwnd)? & INPUT_BITS != self.main.before_input || cloak(hwnd)? != self.main.before_cloak {
+            return Err("采集窗口显示状态已改变".into());
+        }
+        let actual = region(hwnd)?.ok_or("采集窗口原区域已改变")?;
+        if unsafe { EqualRgn(original.raw(), actual.raw()) } == 0 { return Err("采集窗口原区域已改变".into()); }
+        Ok(true)
+    }
+    /// Actual proof, not the earlier prediction or a published UI flag.
+    pub fn retains_main_outside(&self) -> Result<bool, String> {
+        if !self.main.shared || !self.main.prepared || !self.main.ready || self.main.finished
+            || self.main.applied_region.is_none() || self.main.cloak_changed || self.main.before_cloak != 0 {
+            return Ok(false);
+        }
+        let Some(roi) = self.main.roi else { return Ok(false); };
+        self.main.verify(roi)?;
+        Ok(cloak(self.main.hwnd as HWND)? == 0)
     }
     pub fn attach_hud(&mut self, window: &tauri::WebviewWindow) -> Result<(), String> {
         if self.hud.is_some() {
@@ -958,10 +1049,91 @@ mod tests {
     fn roi() -> Rect {
         Rect::new(-1900, 0, 300, 200).unwrap()
     }
+    fn physical_bounds(window: &Window) -> Rect {
+        let value = window_rect(window.0).unwrap();
+        Rect { left: value.left, top: value.top, right: value.right, bottom: value.bottom }
+    }
+    fn middle_roi(bounds: Rect) -> Rect {
+        let width = u32::try_from(i64::from(bounds.right) - i64::from(bounds.left)).unwrap();
+        let height = u32::try_from(i64::from(bounds.bottom) - i64::from(bounds.top)).unwrap();
+        Rect::offset(bounds.left, bounds.top, width / 4, height / 4, width / 2, height / 2).unwrap()
+    }
+    #[test]
+    fn authored_space_region_is_explicit_idempotent_and_keeps_actual_negative_physical_geometry() {
+        use windows_sys::Win32::Graphics::Gdi::PtInRegion;
+        let window = Window::new();
+        let bounds = physical_bounds(&window);
+        assert!(bounds.left < 0 && bounds.top < 0);
+        let before = (input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap());
+        assert!(region(window.0).unwrap().is_none());
+        assert!(author_known_space_region(window.0 as usize, bounds).unwrap());
+        let explicit = region(window.0).unwrap().unwrap();
+        let width = bounds.right - bounds.left; let height = bounds.bottom - bounds.top;
+        for (x, y) in [(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)] {
+            assert_ne!(unsafe { PtInRegion(explicit.raw(), x, y) }, 0);
+        }
+        assert_eq!(unsafe { PtInRegion(explicit.raw(), width, height / 2) }, 0);
+        assert!(!author_known_space_region(window.0 as usize, bounds).unwrap(), "same authored shape must skip SetWindowRgn");
+        assert_eq!(physical_bounds(&window), bounds);
+        assert_eq!((input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap()), before);
+        assert!(unsafe { GetPropW(window.0, LEASE_OWNER_KEY.as_ptr()) }.is_null());
+    }
+    #[test]
+    fn authored_space_region_rejects_wrong_geometry_and_active_native_lease_without_resetting_hole() {
+        let window = Window::new(); let bounds = physical_bounds(&window);
+        let wrong = Rect { left: bounds.left + 1, ..bounds };
+        assert!(author_known_space_region(window.0 as usize, wrong).is_err());
+        assert!(region(window.0).unwrap().is_none());
+        author_known_space_region(window.0 as usize, bounds).unwrap();
+        let mut lease = Lease::capture(window.0 as usize, true).unwrap();
+        assert!(Lease::capture(window.0 as usize, true).is_err());
+        lease.prepare(middle_roi(bounds), false).unwrap();
+        let aperture = region(window.0).unwrap().unwrap();
+        assert!(author_known_space_region(window.0 as usize, bounds).is_err());
+        assert_ne!(unsafe { EqualRgn(aperture.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+        lease.verify(middle_roi(bounds)).unwrap(); lease.restore().unwrap();
+    }
+    #[test]
+    fn authored_space_retention_is_predicted_then_proven_and_restores_full_region_while_none_still_cloaks() {
+        let window = Window::new(); let bounds = physical_bounds(&window); let roi = middle_roi(bounds);
+        author_known_space_region(window.0 as usize, bounds).unwrap();
+        let full = region(window.0).unwrap().unwrap();
+        let mut session = Session { main: Lease::capture(window.0 as usize, true).unwrap(), hud: None };
+        assert!(session.can_retain_main_outside().unwrap());
+        assert!(!session.retains_main_outside().unwrap());
+        session.main.prepare(roi, false).unwrap();
+        assert!(session.retains_main_outside().unwrap());
+        assert_eq!(cloak(window.0).unwrap(), 0);
+        session.restore().unwrap();
+        assert_ne!(unsafe { EqualRgn(full.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+        let fallback = Window::new(); let fallback_roi = middle_roi(physical_bounds(&fallback));
+        let mut session = Session { main: Lease::capture(fallback.0 as usize, true).unwrap(), hud: None };
+        assert!(!session.can_retain_main_outside().unwrap());
+        session.main.prepare(fallback_roi, false).unwrap();
+        assert!(!session.retains_main_outside().unwrap());
+        assert_eq!(cloak(fallback.0).unwrap(), APP_CLOAK);
+        session.restore().unwrap(); assert!(region(fallback.0).unwrap().is_none());
+    }
+    #[test]
+    fn authored_space_cookie_loss_and_foreign_thread_cannot_change_current_region() {
+        let window = Window::new(); let bounds = physical_bounds(&window);
+        let hwnd = window.0 as usize;
+        assert!(std::thread::spawn(move || author_known_space_region(hwnd, bounds)).join().unwrap().is_err());
+        assert!(region(window.0).unwrap().is_none());
+        let mut owner = Lease::capture(window.0 as usize, false).unwrap();
+        let distinct = Region(unsafe { CreateRectRgn(0, 0, 30, 40) } as usize);
+        distinct.copy().unwrap().assign(window.0).unwrap();
+        unsafe { RemovePropW(window.0, owner.cookie.as_ptr()); }
+        assert!(owner.author_full_region(bounds).is_err());
+        assert!(author_known_space_region(hwnd, bounds).is_err());
+        assert_ne!(unsafe { EqualRgn(distinct.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+        assert!(owner.restore().is_err());
+    }
     #[test]
     fn shared_hud_stays_outside_roi_and_fullscreen_requires_stop_hotkey() {
         let work = Rect::new(-2000, -100, 800, 600).unwrap();
         let point = hud_position(work, roi(), (176, 44)).unwrap();
+        assert_eq!(point.1, roi().top - 44 - 6, "controls prefer directly above the ROI, not the screen edge");
         assert!(!roi().intersects(Rect::new(point.0, point.1, 176, 44).unwrap()));
         assert_eq!(hud_position(work, work, (176, 44)), None);
         assert_eq!(hud_position(work, roi(), (900, 44)), None);

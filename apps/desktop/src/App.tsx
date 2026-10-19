@@ -152,13 +152,18 @@ export default function App() {
   });
   let stopRecordingAudio: (() => void) | undefined, audioRead: Promise<void> | undefined;
   const [scroll, setScroll] = createSignal<scrollBridge.ScrollStatus | null>(null);
-  // Preparation keeps the screenshot in place. Live capture hides its DOM
-  // without disposing the scene, media, editor or their pending acknowledgements.
+  // Keep the original decoded image during countdown and, when the native
+  // window has a real capture aperture, throughout long capture.
   const capturePresentationLive = () => Boolean(
-    (recording() && (recording()!.phase !== 'starting' ||
+    (recording() && (recording()!.phase !== 'starting' || recording()!.retainMain === true ||
       recording()!.hud?.stage === 'mask' || recording()!.hud?.stage === 'live')) ||
     (scroll() && (scroll()!.phase !== 'starting' || scroll()!.hud?.live === true))
   );
+  const captureSceneBackgroundOnly = () => Boolean(
+    recording()?.phase === 'countdown' ||
+    (scroll()?.hud?.live && scroll()?.hud?.retainMain === true)
+  );
+  const captureSceneHidden = () => capturePresentationLive() && !captureSceneBackgroundOnly();
   const [scrollReady, setScrollReady] = createSignal(false);
   const [translations, setTranslations] = createSignal<TranslationPending[]>([]);
   const [translationNotices, setTranslationNotices] = createSignal<Record<string, { regionId: string; text: string }>>({});
@@ -1251,7 +1256,7 @@ export default function App() {
   onCleanup(() => { document.removeEventListener('keydown', videoExportEscape, true); document.removeEventListener('keydown', pinEscape, true); document.removeEventListener('keydown', escape); });
 
   return <div class="app" inert={exitPreparing()} classList={{ 'recording-active': Boolean(recording()), 'scroll-active': Boolean(scroll()), 'reduce-motion': preferences().reduceMotion, 'text-small': preferences().textSize === 'small', 'text-large': preferences().textSize === 'large' }}>
-    <div class="capture-scene-surface" inert={Boolean(recording() || scroll())} style={{ display: capturePresentationLive() ? 'none' : 'contents' }}>
+    <div class="capture-scene-surface" classList={{ 'capture-background-only': captureSceneBackgroundOnly() }} inert={Boolean(recording() || scroll())} style={{ display: captureSceneHidden() ? 'none' : 'contents' }}>
     <Show when={scene()?.id} keyed fallback={<div class="startup-state"><Show when={!error()} fallback={<><CircleAlert size={19} /><span>{error()}</span><button onClick={() => location.reload()}>{t("重新载入")}</button></>}><LoaderCircle size={20} class="spin" /></Show></div>}>
       {currentId => {
         // A keyed subtree owns this scene, even while activeSceneId changes.
@@ -1283,7 +1288,7 @@ export default function App() {
     <Show when={!exitPreparing() && pendingDrawingDrafts().length}><DrawingDraftsDialog entries={pendingDrawingDrafts()} onDiscard={discardDrawingDraft} onClose={() => setPendingDrawingDrafts([])} /></Show>
     <Show when={error() && snapshot()}><div class="toast" role="alert"><CircleAlert size={15} /><span>{error()}</span><button class="icon-button compact" aria-label={t("关闭提示")} onClick={() => setError('')}><X size={13} /></button></div></Show>
     </div>
-    <Show when={capturePresentationLive() && recording()?.hud?.stage !== 'live' && recording()}>{status => <RecordingBackdrop status={status()} maskOpacity={preferences().maskOpacity} />}</Show>
-    <Show when={capturePresentationLive() && !scroll()?.hud?.live && scroll()}>{status => <ScrollBackdrop status={status()} maskOpacity={preferences().maskOpacity} />}</Show>
+    <Show when={capturePresentationLive() && (recording()?.retainMain === true || recording()?.hud?.stage !== 'live') && recording()}>{status => <RecordingBackdrop status={status()} maskOpacity={preferences().maskOpacity} />}</Show>
+    <Show when={capturePresentationLive() && (!scroll()?.hud?.live || scroll()?.hud?.retainMain === true) && scroll()}>{status => <ScrollBackdrop status={status()} maskOpacity={preferences().maskOpacity} />}</Show>
   </div>;
 }

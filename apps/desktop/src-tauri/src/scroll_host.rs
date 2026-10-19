@@ -49,7 +49,8 @@ pub struct Status {
     hud: Option<HudPresentation>,
 }
 #[derive(Clone, Serialize)]
-struct HudPresentation { outline: Rect, preview: Option<Rect>, controls: Option<Rect>, live: bool }
+#[serde(rename_all = "camelCase")]
+struct HudPresentation { outline: Rect, preview: Option<Rect>, controls: Option<Rect>, live: bool, retain_main: bool }
 struct Active {
     #[cfg(windows)]
     capture_session: Option<crate::shared_capture_windows::Session>,
@@ -932,18 +933,23 @@ fn layout_scroll_hud(app: &AppHandle, id: &str, g: &Geometry, image: (u32,u32), 
     let outline=BoxRect{x:i32::try_from(i64::from(g.x)-i64::from(border)).map_err(|_|"截图位置无效")?,
         y:i32::try_from(i64::from(g.y)-i64::from(border)).map_err(|_|"截图位置无效")?,
         width:g.width.checked_add(border*2).ok_or("截图尺寸无效")?,height:g.height.checked_add(border*2).ok_or("截图尺寸无效")?};
-    // Keep the original screenshot dimming everywhere outside the live source.
-    // The native region still subtracts every acquired pixel, so neither the
-    // backdrop nor its input target can cover or contaminate the capture ROI.
+    // Keep one native aperture for the real source. The main screenshot owns
+    // the frozen outside pixels when its verified clip survives preparation;
+    // only the original cloaked fallback needs a backdrop in this HUD.
     // Preview growth changes DOM layout only; this fixed aperture stays stable.
+    let mut retain_main = false;
     edit_capture_session(&app.state::<ScrollState>(),id,|session| {
         if staged { session.stage_scroll_hud(roi, &[display]) }
-        else { session.configure_scroll_hud(roi, &[display]) }
+        else {
+            session.configure_scroll_hud(roi, &[display])?;
+            retain_main = session.retains_main_outside()?;
+            Ok(())
+        }
     })?;
     let normalized=|rect:BoxRect|Rect{x:(f64::from(rect.x)-f64::from(g.origin_x))/f64::from(g.monitor_width),
         y:(f64::from(rect.y)-f64::from(g.origin_y))/f64::from(g.monitor_height),
         width:f64::from(rect.width)/f64::from(g.monitor_width),height:f64::from(rect.height)/f64::from(g.monitor_height)};
-    let hud=HudPresentation{outline:normalized(outline),preview:shown.preview.map(normalized),controls:shown.controls.map(normalized),live:!staged};
+    let hud=HudPresentation{outline:normalized(outline),preview:shown.preview.map(normalized),controls:shown.controls.map(normalized),live:!staged,retain_main};
     update(app,id,|status|status.hud=Some(hud));
     Ok(())
 }
@@ -1065,14 +1071,17 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
         let result = (|| {
             ensure_preparing(&target, &id)?;
             let roi = crate::shared_capture_windows::Rect::new(g.x,g.y,g.width,g.height)?;
+            let mut retain_main = false;
             edit_capture_session(&target.state::<ScrollState>(), &id, |session| {
                 session.main.prepare(roi, automatic)?;
-                session.verify()
+                session.verify()?;
+                retain_main = session.retains_main_outside()?;
+                Ok(())
             })?;
             if automatic && !shared {
                 target.get_webview_window("space").ok_or("截图窗口不存在")?.hide().map_err(|_| "无法释放应用窗口画面")?;
             }
-            update(&target, &id, |status| { if let Some(hud) = &mut status.hud { hud.live = true; } });
+            update(&target, &id, |status| { if let Some(hud) = &mut status.hud { hud.retain_main = retain_main; hud.live = true; } });
             Ok::<_, String>(())
         })();
         let _ = send.send(result);

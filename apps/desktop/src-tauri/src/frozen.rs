@@ -296,6 +296,9 @@ pub async fn prepare_restore(
                             f64::from(monitor.position().y) + f64::from(monitor.size().height) / 2.,
                         ))
                         .map_err(|_| "无法全屏恢复空间")?;
+                    crate::shared_capture_windows::author_space_region(&target, crate::shared_capture_windows::Rect::new(
+                        monitor.position().x, monitor.position().y, monitor.size().width, monitor.size().height,
+                    )?)?;
                 }
                 #[cfg(not(windows))]
                 {

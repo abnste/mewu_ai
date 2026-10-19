@@ -146,7 +146,7 @@ pub fn run(
     validate(&config)?;
     #[cfg(windows)]
     {
-        native::run(config, commands, progress)
+        native::run(config, commands, progress, None)
     }
     #[cfg(target_os = "macos")]
     {
@@ -157,6 +157,26 @@ pub fn run(
         let _ = (commands, progress);
         Err("当前平台尚未实现原生录屏".into())
     }
+}
+
+#[cfg(windows)]
+pub(crate) struct Preparation {
+    start: Receiver<u64>,
+    ready: Box<dyn FnOnce() -> Result<(), String> + Send>,
+}
+
+/// Device/codec preparation is not recording authority. No sample or audio
+/// clock is committed until the parent has verified its native aperture.
+#[cfg(windows)]
+pub(crate) fn run_prepared(
+    config: Config,
+    commands: Receiver<Control>,
+    start: Receiver<u64>,
+    ready: impl FnOnce() -> Result<(), String> + Send + 'static,
+    progress: impl Fn(Progress) + Send + Sync + 'static,
+) -> Result<Option<Report>, String> {
+    validate(&config)?;
+    native::run(config, commands, progress, Some(Preparation { start, ready: Box::new(ready) }))
 }
 
 #[cfg(target_os = "macos")]
@@ -530,6 +550,44 @@ mod native {
         Ok(latest.pixels.clone())
     }
 
+    fn replace_prepared_capture<C>(
+        capture: &mut Option<C>, latest: &mut Arc<Mutex<Latest>>,
+        stop: impl FnOnce(C) -> Result<(), String>,
+        start: impl FnOnce(Arc<Mutex<Latest>>) -> Result<C, String>,
+    ) -> Result<(), String> {
+        stop(capture.take().ok_or("录屏采集会话已结束")?)?;
+        // Drain succeeds before a new identity or latest slot is created. A
+        // real device error from the old session is not reset into success.
+        let _ = latest_frame(latest)?;
+        *latest = Arc::new(Mutex::new(Latest::default()));
+        *capture = Some(start(latest.clone())?);
+        Ok(())
+    }
+
+    fn wait_first_frame(
+        latest: &Mutex<Latest>, commands: &Receiver<Control>, paused: &mut bool,
+        finished: impl Fn() -> bool,
+    ) -> Result<Option<Arc<[u8]>>, String> {
+        let waiting = Instant::now();
+        loop {
+            match commands.recv_timeout(POLL) {
+                Ok(Control::Cancel | Control::Stop) => return Ok(None),
+                Ok(Control::Pause) => *paused = true,
+                Ok(Control::Resume) => *paused = false,
+                Err(RecvTimeoutError::Disconnected) => return Err("录制控制连接已断开".into()),
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            let frame = latest_frame(latest)?;
+            if frame.is_some() { return Ok(frame); }
+            if finished() { return Err("屏幕采集已意外结束".into()); }
+            if waiting.elapsed() >= Duration::from_secs(5) { return Err("等待屏幕画面超时".into()); }
+        }
+    }
+
+    fn checked_start_epoch(epoch: u64, now: u64) -> Result<u64, String> {
+        if epoch == 0 || epoch > now { Err("录屏起始时钟无效".into()) } else { Ok(epoch) }
+    }
+
     fn receive_control(command: Control, clock: &mut Timeline, now: u64) -> Result<bool, String> {
         match command {
             Control::Stop => Ok(true),
@@ -553,6 +611,7 @@ mod native {
         config: Config,
         commands: Receiver<Control>,
         progress: impl Fn(Progress) + Send + Sync + 'static,
+        preparation: Option<Preparation>,
     ) -> Result<Option<Report>, String> {
         let _runtime = Runtime::new()?;
         let monitor = Monitor::enumerate()
@@ -571,7 +630,7 @@ mod native {
                 .open(&config.output)
                 .map_err(|e| failure("无法创建录制文件", e))?,
         );
-        let result = record(&config, monitor, commands, progress);
+        let result = record(&config, monitor, commands, progress, preparation);
         if result.is_err() || matches!(&result, Ok(None)) {
             let _ = fs::remove_file(&config.output);
         }
@@ -582,6 +641,64 @@ mod native {
     mod codec_tests {
         use super::*;
         use windows::core::Interface;
+
+        #[test]
+        fn prepared_static_capture_starts_a_new_generation_before_accepting_its_only_frame() {
+            let mut latest = Arc::new(Mutex::new(Latest { pixels: Some(Arc::from([9u8, 9, 9, 9])), error: None }));
+            let old = latest.clone();
+            let order = std::cell::Cell::new(0);
+            let mut capture = Some(1);
+            replace_prepared_capture(&mut capture, &mut latest, |owner| {
+                assert_eq!(owner, 1);
+                // The old source's final clean static composition predates the
+                // StartAt clock. Its last callback drains before stop returns.
+                old.lock().unwrap().pixels = Some(Arc::from([8u8, 8, 8, 8]));
+                order.set(1); Ok(())
+            }, |fresh| {
+                assert_eq!(order.get(), 1);
+                assert!(!Arc::ptr_eq(&old, &fresh));
+                assert!(latest_frame(&fresh)?.is_none());
+                fresh.lock().unwrap().pixels = Some(Arc::from([1u8, 2, 3, 4]));
+                order.set(2); Ok(2)
+            }).unwrap();
+            assert_eq!(capture, Some(2));
+            assert_eq!(order.get(), 2);
+            let (_sender, receiver) = std::sync::mpsc::channel();
+            // No further updates are sent. The fresh session's one current
+            // frame must suffice, without a false >=old-composition-QPC gate.
+            assert_eq!(&*wait_first_frame(&latest, &receiver, &mut false, || false).unwrap().unwrap(), &[1, 2, 3, 4]);
+            assert_eq!(&*latest_frame(&old).unwrap().unwrap(), &[8, 8, 8, 8]);
+        }
+
+        #[test]
+        fn prepared_capture_failed_drain_or_device_failure_cannot_start_a_successor() {
+            for drain_failure in [true, false] {
+                let mut latest = Arc::new(Mutex::new(Latest { pixels: Some(Arc::from([7u8])),
+                    error: if drain_failure { None } else { Some("fixture lost device".to_owned()) } }));
+                let old = latest.clone();
+                let began = std::cell::Cell::new(false);
+                let mut capture = Some(1);
+                let error = replace_prepared_capture(&mut capture, &mut latest,
+                    |_| if drain_failure { Err("fixture drain rejected".into()) } else { Ok(()) },
+                    |_| { began.set(true); Ok(2) }).unwrap_err();
+                assert_eq!(error, if drain_failure { "fixture drain rejected" } else { "fixture lost device" });
+                assert!(!began.get());
+                assert!(capture.is_none());
+                assert!(Arc::ptr_eq(&old, &latest));
+            }
+        }
+
+        #[test]
+        fn prepared_start_clock_and_terminal_before_first_sample_are_strict() {
+            assert!(checked_start_epoch(0, 100).is_err());
+            assert!(checked_start_epoch(101, 100).is_err());
+            assert_eq!(checked_start_epoch(100, 100).unwrap(), 100);
+            for terminal in [Control::Stop, Control::Cancel] {
+                let latest = Mutex::new(Latest { pixels: Some(Arc::from([1u8])), error: None });
+                let (sender, receiver) = std::sync::mpsc::channel(); sender.send(terminal).unwrap();
+                assert!(wait_first_frame(&latest, &receiver, &mut false, || false).unwrap().is_none());
+            }
+        }
 
         #[test]
         #[ignore = "requires actual Windows H.264 encode/decode; uses synthetic screen pixels only"]
@@ -1441,6 +1558,7 @@ mod native {
         monitor: Monitor,
         commands: Receiver<Control>,
         progress: impl Fn(Progress),
+        preparation: Option<Preparation>,
     ) -> Result<Option<Report>, String> {
         let mut initially_paused = false;
         if !startup_control(&commands, &mut initially_paused)? {
@@ -1460,48 +1578,58 @@ mod native {
         if !startup_control(&commands, &mut initially_paused)? {
             return Ok(None);
         }
-        let latest = Arc::new(Mutex::new(Latest::default()));
+        let mut latest = Arc::new(Mutex::new(Latest::default()));
         let handle = monitor.as_raw_hmonitor() as usize;
-        let settings = Settings::new(
-            monitor,
-            CursorCaptureSettings::WithCursor,
-            DrawBorderSettings::Default,
-            SecondaryWindowSettings::Default,
-            MinimumUpdateIntervalSettings::Default,
-            DirtyRegionSettings::Default,
-            ColorFormat::Bgra8,
-            CaptureFlags {
-                config: config.clone(),
-                handle,
-                latest: latest.clone(),
-            },
-        );
-        let capture = Capture::start_free_threaded(settings)
-            .map_err(|e| failure("无法启动 Windows 屏幕录制", e))?;
+        let start_capture = |latest: Arc<Mutex<Latest>>| {
+            let settings = Settings::new(
+                monitor.clone(), CursorCaptureSettings::WithCursor, DrawBorderSettings::Default,
+                SecondaryWindowSettings::Default, MinimumUpdateIntervalSettings::Default,
+                DirtyRegionSettings::Default, ColorFormat::Bgra8,
+                CaptureFlags { config: config.clone(), handle, latest },
+            );
+            Capture::start_free_threaded(settings)
+                .map_err(|error| failure("无法启动 Windows 屏幕录制", error))
+        };
+        let mut capture = Some(start_capture(latest.clone())?);
         let result = (|| {
-            let started_waiting = Instant::now();
-            let first = loop {
-                match commands.recv_timeout(POLL) {
-                    Ok(Control::Cancel | Control::Stop) => return Ok(None),
-                    Ok(Control::Pause) => initially_paused = true,
-                    Ok(Control::Resume) => initially_paused = false,
-                    Err(RecvTimeoutError::Disconnected) => return Err("录制控制连接已断开".into()),
-                    Err(RecvTimeoutError::Timeout) => {}
-                }
-                if let Some(frame) = latest_frame(&latest)? {
-                    break frame;
-                }
-                if capture.is_finished() {
-                    return Err("屏幕采集已意外结束".into());
-                }
-                if started_waiting.elapsed() >= Duration::from_secs(5) {
-                    return Err("等待屏幕画面超时".into());
-                }
-            };
+            let mut committed_epoch = None;
+            let Some(mut first) = wait_first_frame(&latest, &commands, &mut initially_paused,
+                || capture.as_ref().is_none_or(|capture| capture.is_finished()))? else { return Ok(None); };
+            if let Some(preparation) = preparation {
+                // Warm pixels only prove device readiness and are never encoded.
+                drop(first);
+                (preparation.ready)()?;
+                let waiting = Instant::now();
+                let epoch = loop {
+                    if !startup_control(&commands, &mut initially_paused)? { return Ok(None); }
+                    match preparation.start.try_recv() {
+                        Ok(epoch) => break checked_start_epoch(epoch, qpc_now()?)?,
+                        Err(TryRecvError::Disconnected) => return Err("录屏起始连接已断开".into()),
+                        Err(TryRecvError::Empty) => {}
+                    }
+                    let _ = latest_frame(&latest)?;
+                    if capture.as_ref().is_none_or(|capture| capture.is_finished()) {
+                        return Err("屏幕采集已意外结束".into());
+                    }
+                    if waiting.elapsed() >= Duration::from_secs(20) { return Err("等待录屏开始超时".into()); }
+                    std::thread::sleep(POLL);
+                };
+                // WGC promises new frames, not a constant frame rate. Its sole
+                // clean static frame may have composed during DwmFlush before
+                // the parent read QPC. Start a fresh session now, never wait for
+                // a nonexistent later update or adopt any pre-commit pixels.
+                replace_prepared_capture(&mut capture, &mut latest,
+                    |old| old.stop().map_err(|error| failure("停止预备屏幕采集失败", error)),
+                    start_capture)?;
+                let Some(frame) = wait_first_frame(&latest, &commands, &mut initially_paused,
+                    || capture.as_ref().is_none_or(|capture| capture.is_finished()))? else { return Ok(None); };
+                first = frame;
+                committed_epoch = Some(epoch);
+            }
             if !startup_control(&commands, &mut initially_paused)? {
                 return Ok(None);
             }
-            let epoch = qpc_now()?;
+            let epoch = match committed_epoch { Some(epoch) => epoch, None => qpc_now()? };
             let mut clock = Timeline::new(epoch, initially_paused);
             if let Some(audio) = &mut audio {
                 audio.arm()?;
@@ -1527,7 +1655,7 @@ mod native {
                 if let Some(frame) = latest_frame(&latest)? {
                     last_pixels = frame;
                 }
-                if capture.is_finished() {
+                if capture.as_ref().is_none_or(|capture| capture.is_finished()) {
                     return Err("屏幕采集已意外结束".into());
                 }
                 if clock.elapsed(now).map_err(|_| "录制时钟无效")? >= ticks(MAX_ACTIVE) as u64
@@ -1645,7 +1773,7 @@ mod native {
         if let Some(audio) = &mut audio {
             audio.stop();
         }
-        let stop_result = capture.stop().map_err(|e| failure("停止屏幕采集失败", e));
+        let stop_result = capture.take().map_or(Ok(()), |capture| capture.stop().map_err(|e| failure("停止屏幕采集失败", e)));
         match result {
             Ok(Some(report)) => {
                 // A warning is still successful only after the complete MP4

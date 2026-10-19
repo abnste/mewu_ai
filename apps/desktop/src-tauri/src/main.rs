@@ -1500,6 +1500,10 @@ async fn expand_capture_space(
                 }
                 capture_visibility::apply(&target)?;
                 target.set_always_on_top(true).map_err(|_| "无法置顶空间")?;
+                #[cfg(windows)]
+                shared_capture_windows::author_space_region(&target, shared_capture_windows::Rect::new(
+                    captured.origin_x, captured.origin_y, captured.display_width, captured.display_height,
+                )?)?;
                 #[cfg(target_os = "linux")]
                 allowed()?;
                 Ok(())

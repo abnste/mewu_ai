@@ -6,6 +6,12 @@
 .capture-blackboard .capture-region::after,.capture-blackboard .capture-region-number,.capture-blackboard .capture-handle,.capture-blackboard .capture-edge{display:none}
 .capture-blackboard .capture-toolbar{display:none}
 .capture-surface .capture-background{-webkit-user-drag:none}
+/* Keep the same decoded image and scene owner. The live backdrop replaces the
+   old selection masks; native window clipping exposes only the capture ROI. */
+.capture-background-only>.space-canvas>:not(.capture-background),
+.capture-background-only>.space-canvas>:not(.capture-background) *,
+.capture-background-only>:not(.space-canvas),
+.capture-background-only>:not(.space-canvas) *{visibility:hidden!important}
 .capture-region,.capture-selection{position:absolute;z-index:5;box-sizing:border-box;border:0;--capture-border:#559aef;min-width:1px;min-height:1px;touch-action:none}
 .capture-region::after,.capture-selection::after{content:"";position:absolute;inset:0;z-index:1;box-sizing:border-box;border:1.5px solid var(--capture-border);pointer-events:none}
 .capture-region{cursor:move}

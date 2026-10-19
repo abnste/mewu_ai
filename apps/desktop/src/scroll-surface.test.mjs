@@ -66,7 +66,7 @@ async function fixture({ hidden = false, ready = () => Promise.resolve() } = {})
     visibility: hidden => { document.hidden = hidden; keys.get('visibilitychange')?.(); }, dispose: () => disposed(), stopped: () => stopped };
 }
 const initial = { id: 'capture-a', sceneId: 'synthetic', phase: 'capturing', rect: { x: .3, y: .25, width: .4, height: .5 }, width: 600, height: 400, status: 'initial', stopHotkey: 'F8 / Esc', preview: 'data:image/png;base64,first',
-  hud: { outline: { x: .299, y: .248, width: .402, height: .504 }, preview: { x: .15, y: .45, width: .12, height: .3 }, controls: { x: .35, y: .1, width: .2, height: .08 } } };
+  hud: { outline: { x: .299, y: .248, width: .402, height: .504 }, preview: { x: .15, y: .45, width: .12, height: .3 }, controls: { x: .35, y: .1, width: .2, height: .08 }, live: true, retainMain: false } };
 
 test('source-monitor outline and growing accepted preview stay mounted while image height and image pixels update', async () => {
   const f = await fixture(); f.next(initial); await tick();
@@ -123,6 +123,41 @@ test('live native HUD keeps the configured outside dimming and an exact clear so
   assert.equal(f.one('scroll-live-mask'), mask); assert.equal(shade.props['fill-opacity'], .66);
   f.next(null); await tick(); assert.equal(f.one('scroll-live-mask'), undefined);
   assert.equal(f.document.documentElement.dataset.surface, 'scroll'); f.dispose();
+});
+
+test('staged scroll HUD never shades the still-visible screenshot and verified retained main keeps its original outside presentation', async () => {
+  const f = await fixture(); try {
+    f.next({ ...initial, phase: 'starting', hud: { ...initial.hud, live: false, retainMain: false } }); await tick();
+    const outline = f.one('scroll-live-outline'), controls = f.one('scroll-controls-slot'), preview = f.one('scroll-preview');
+    assert.ok(outline && controls && preview);
+    assert.equal(f.one('scroll-live-mask'), undefined, 'staging cannot double the main screenshot dimming');
+    assert.equal(f.document.documentElement.dataset.surface, 'scroll');
+    f.next({ ...initial, phase: 'starting', hud: { ...initial.hud, retainMain: true } }); await tick();
+    assert.equal(f.one('scroll-live-mask'), undefined, 'a verified native main aperture keeps the frozen background outside the ROI');
+    f.next({ ...initial, height: 1600, status: 'extended', preview: 'data:image/png;base64,retained', hud: { ...initial.hud, retainMain: true } }); await tick();
+    assert.equal(f.one('scroll-live-mask'), undefined);
+    assert.equal(f.one('scroll-live-outline'), outline); assert.equal(f.one('scroll-controls-slot'), controls); assert.equal(f.one('scroll-preview'), preview);
+    assert.equal(f.nodes().find(node => node.type === 'img').props.src, 'data:image/png;base64,retained');
+    f.next({ ...initial, phase: 'finishing', hud: { ...initial.hud, retainMain: true } }); await tick();
+    assert.equal(f.one('scroll-live-mask'), undefined, 'finishing cannot add another dark layer while the original window is being restored');
+  } finally { f.dispose(); }
+});
+
+test('cloaked scroll fallback adds exactly one configured ROI mask only after native preparation without remounting existing controls', async () => {
+  const f = await fixture(); try {
+    f.next({ ...initial, phase: 'starting', hud: { ...initial.hud, live: false, retainMain: false } }); await tick();
+    const controls = f.one('scroll-controls-slot'), outline = f.one('scroll-live-outline');
+    assert.equal(f.one('scroll-live-mask'), undefined);
+    f.next({ ...initial, phase: 'starting' }); await tick();
+    const mask = f.one('scroll-live-mask'); assert.ok(mask);
+    assert.equal(f.nodes().filter(node => node.props?.class === 'scroll-live-mask').length, 1);
+    assert.equal(f.nodes().find(node => node.props?.mask === 'url(#scroll-cutout)').props['fill-opacity'], .66);
+    const hole = f.nodes().find(node => node.type === 'mask').children.find(node => node.props?.fill === 'black');
+    assert.deepEqual(plain({ x: hole.props.x, y: hole.props.y, width: hole.props.width, height: hole.props.height }), initial.rect);
+    f.next({ ...initial, phase: 'finishing' }); await tick();
+    assert.equal(f.one('scroll-live-mask'), mask); assert.equal(f.one('scroll-controls-slot'), controls); assert.equal(f.one('scroll-live-outline'), outline);
+    f.next(null); await tick(); assert.equal(f.one('scroll-live-mask'), undefined); assert.equal(f.document.documentElement.dataset.surface, 'scroll');
+  } finally { f.dispose(); }
 });
 
 test('scroll layout readiness waits for a visible connected nonzero production surface and is canceled when capture becomes live', async () => {

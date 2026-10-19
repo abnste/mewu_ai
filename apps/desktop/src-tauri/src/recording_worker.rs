@@ -88,10 +88,36 @@ impl ControlBus {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum WorkerEvent {
+    Prepared {},
     Progress(backend::Progress),
     Completed(backend::Report),
     StoppedBeforeReady {},
     Failed { error: String },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum WorkerCommand {
+    Stop {},
+    Pause {},
+    Resume {},
+    Cancel {},
+    StartAt { qpc: u64 },
+}
+impl From<backend::Control> for WorkerCommand {
+    fn from(value: backend::Control) -> Self {
+        match value {
+            backend::Control::Stop => Self::Stop {},
+            backend::Control::Pause => Self::Pause {},
+            backend::Control::Resume => Self::Resume {},
+            backend::Control::Cancel => Self::Cancel {},
+        }
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum WorkerRequest {
+    Prepare { config: backend::Config },
 }
 fn write_line(writer: &mut impl Write, value: &impl Serialize) -> Result<(), String> {
     let mut bytes = serde_json::to_vec(value).map_err(|_| "无效录屏通信")?;
@@ -125,26 +151,41 @@ pub fn worker_main() -> i32 {
     #[cfg(not(target_os="linux"))]
     {
     let mut input = BufReader::new(std::io::stdin());
-    let config = match read_line(&mut input).and_then(|line| {
-        serde_json::from_str::<backend::Config>(&line.ok_or("缺少录屏配置")?)
-            .map_err(|_| "无效录屏配置".into())
+    let (config, preparing) = match read_line(&mut input).and_then(|line| {
+        let line = line.ok_or("缺少录屏配置")?;
+        if let Ok(config) = serde_json::from_str::<backend::Config>(&line) {
+            return Ok((config, false));
+        }
+        #[cfg(windows)]
+        if let Ok(WorkerRequest::Prepare { config }) = serde_json::from_str(&line) {
+            return Ok((config, true));
+        }
+        Err("无效录屏配置".into())
     }) {
         Ok(config) => config,
         Err(_) => return 2,
     };
     let (sender, receiver) = mpsc::sync_channel(8);
+    let (start_sender, start_receiver) = mpsc::sync_channel(1);
     let controls = match std::thread::Builder::new()
         .name("mewu-recording-controls".into())
         .spawn(move || {
+            let mut started = false;
             while let Ok(Some(line)) = read_line(&mut input) {
-                match serde_json::from_str::<backend::Control>(&line) {
-                    Ok(control) => {
-                        if sender.send(control).is_err() {
-                            return;
-                        }
+                let control = match serde_json::from_str::<WorkerCommand>(&line) {
+                    Ok(WorkerCommand::StartAt { qpc }) if preparing && !started && qpc > 0 => {
+                        started = true;
+                        if start_sender.try_send(qpc).is_err() { break; }
+                        continue;
                     }
+                    Ok(WorkerCommand::Stop {}) => backend::Control::Stop,
+                    Ok(WorkerCommand::Pause {}) => backend::Control::Pause,
+                    Ok(WorkerCommand::Resume {}) => backend::Control::Resume,
+                    Ok(WorkerCommand::Cancel {}) => backend::Control::Cancel,
                     Err(_) => break,
-                }
+                    _ => break,
+                };
+                if sender.send(control).is_err() { return; }
             }
             let _ = sender.send(backend::Control::Cancel);
         }) {
@@ -153,11 +194,23 @@ pub fn worker_main() -> i32 {
     };
     let output = Arc::new(Mutex::new(std::io::stdout()));
     let progress = output.clone();
-    let result = backend::run(config, receiver, move |value| {
+    let progress = move |value| {
         if let Ok(mut out) = progress.lock() {
             let _ = write_line(&mut *out, &WorkerEvent::Progress(value));
         }
-    });
+    };
+    #[cfg(windows)]
+    let result = if preparing {
+        let ready = output.clone();
+        backend::run_prepared(config, receiver, start_receiver, move || {
+            let mut out = ready.lock().map_err(|_| "录屏连接已断开")?;
+            write_line(&mut *out, &WorkerEvent::Prepared {})
+        }, progress)
+    } else {
+        backend::run(config, receiver, progress)
+    };
+    #[cfg(not(windows))]
+    let result = { let _ = start_receiver; backend::run(config, receiver, progress) };
     let event = match result {
         Ok(Some(report)) => WorkerEvent::Completed(report),
         Ok(None) => WorkerEvent::StoppedBeforeReady {},
@@ -195,6 +248,25 @@ pub fn run(
     on_stopping: impl FnMut(),
     on_finalized: impl FnMut(),
 ) -> Result<Option<backend::Report>, String> {
+    supervise(
+        worker_command(&config)?, config, poll_control, on_progress, on_stopping, on_finalized,
+    )
+}
+
+#[cfg(windows)]
+pub(crate) fn run_prepared(
+    config: backend::Config,
+    poll_control: impl FnMut() -> Result<Option<backend::Control>, String>,
+    mut commit: impl FnMut() -> Result<Option<u64>, String>,
+    on_progress: impl FnMut(backend::Progress),
+    on_stopping: impl FnMut(),
+    on_finalized: impl FnMut(),
+) -> Result<Option<backend::Report>, String> {
+    supervise_inner(worker_command(&config)?, config, poll_control, on_progress,
+        on_stopping, on_finalized, Some(&mut commit))
+}
+
+fn worker_command(config: &backend::Config) -> Result<Command, String> {
     #[cfg(all(target_os = "macos", debug_assertions))]
     mac_diagnostic(MacStage::WorkerLaunch, MacOutcome::Pending);
     let mut command = Command::new(std::env::current_exe().map_err(|_| "无法启动录屏进程")?);
@@ -227,24 +299,30 @@ pub fn run(
     if let Some(parent) = config.output.parent() {
         command.current_dir(parent);
     }
-    supervise(
-        command,
-        config,
-        poll_control,
-        on_progress,
-        on_stopping,
-        on_finalized,
-    )
+    Ok(command)
 }
 
 fn supervise(
+    command: Command,
+    config: backend::Config,
+    poll_control: impl FnMut() -> Result<Option<backend::Control>, String>,
+    on_progress: impl FnMut(backend::Progress),
+    on_stopping: impl FnMut(),
+    on_finalized: impl FnMut(),
+) -> Result<Option<backend::Report>, String> {
+    supervise_inner(command, config, poll_control, on_progress, on_stopping, on_finalized, None)
+}
+
+fn supervise_inner(
     mut command: Command,
     config: backend::Config,
     mut poll_control: impl FnMut() -> Result<Option<backend::Control>, String>,
     mut on_progress: impl FnMut(backend::Progress),
     mut on_stopping: impl FnMut(),
     mut on_finalized: impl FnMut(),
+    mut commit: Option<&mut dyn FnMut() -> Result<Option<u64>, String>>,
 ) -> Result<Option<backend::Report>, String> {
+    let preparing = commit.is_some();
     let permit = Permit::acquire()?;
     command
         .stdin(Stdio::piped())
@@ -268,7 +346,7 @@ fn supervise(
         .stdout
         .take()
         .ok_or("无法读取录屏状态")?;
-    let (writer_tx, writer_rx) = mpsc::sync_channel::<backend::Control>(8);
+    let (writer_tx, writer_rx) = mpsc::sync_channel::<WorkerCommand>(8);
     let (write_error_tx, write_error_rx) = mpsc::sync_channel(1);
     let wire_config = config.clone();
     process.track_io(
@@ -276,7 +354,11 @@ fn supervise(
             .name("mewu-recording-writer".into())
             .spawn(move || {
                 let result = (|| {
-                    write_line(&mut input, &wire_config)?;
+                    if preparing {
+                        write_line(&mut input, &WorkerRequest::Prepare { config: wire_config })?;
+                    } else {
+                        write_line(&mut input, &wire_config)?;
+                    }
                     while let Ok(control) = writer_rx.recv() {
                         write_line(&mut input, &control)?;
                     }
@@ -323,6 +405,9 @@ fn supervise(
     let mut last_progress = started;
     let mut elapsed_ms = 0;
     let mut ready = false;
+    let mut prepared = false;
+    let mut start_sent = false;
+    let mut startup_deadline = started + Duration::from_secs(15);
     let mut stopping: Option<Instant> = None;
     let mut canceled = false;
     let mut terminal: Option<Result<Option<backend::Report>, String>> = None;
@@ -339,7 +424,7 @@ fn supervise(
                     writer_tx
                         .as_ref()
                         .ok_or("录屏连接已断开")?
-                        .try_send(control)
+                        .try_send(control.into())
                         .map_err(|_| "录屏控制未能送达")?;
                 }
             }
@@ -349,7 +434,49 @@ fn supervise(
                         return Err("无效录屏状态".into());
                     }
                     match event {
+                        WorkerEvent::Prepared {} => {
+                            if !preparing || prepared || ready {
+                                return Err("无效录屏准备状态".into());
+                            }
+                            prepared = true;
+                            // Stop/Cancel can overtake the child's one readiness
+                            // notification. Never run a countdown or StartAt for
+                            // that already-terminal parent operation.
+                            if stopping.is_some() { continue; }
+                            let epoch = commit.as_mut().ok_or("录屏准备已失效")?()?;
+                            let command = if let Some(qpc) = epoch {
+                                if qpc == 0 { return Err("录屏起始时钟无效".into()); }
+                                // A terminal action may have become observable
+                                // during native commit/verification. Do not send
+                                // StartAt ahead of that already pending action.
+                                match poll_control()? {
+                                    Some(control @ (backend::Control::Stop | backend::Control::Cancel)) => {
+                                        canceled = matches!(control, backend::Control::Cancel);
+                                        stopping = Some(Instant::now());
+                                        on_stopping();
+                                        control.into()
+                                    }
+                                    other => {
+                                        if let Some(control) = other {
+                                            writer_tx.as_ref().ok_or("录屏连接已断开")?
+                                                .try_send(control.into()).map_err(|_| "录屏控制未能送达")?;
+                                        }
+                                        start_sent = true;
+                                        startup_deadline = Instant::now() + Duration::from_secs(5);
+                                        WorkerCommand::StartAt { qpc }
+                                    }
+                                }
+                            } else {
+                                canceled = true;
+                                stopping = Some(Instant::now());
+                                on_stopping();
+                                WorkerCommand::Cancel {}
+                            };
+                            writer_tx.as_ref().ok_or("录屏连接已断开")?
+                                .try_send(command).map_err(|_| "录屏起始未能送达")?;
+                        }
                         WorkerEvent::Progress(progress) => {
+                            if preparing && !start_sent { return Err("录屏尚未获准开始".into()); }
                             if progress.elapsed_ms < elapsed_ms || progress.elapsed_ms > 600_100 {
                                 return Err("无效录屏进度".into());
                             }
@@ -365,6 +492,7 @@ fn supervise(
                             }
                         }
                         WorkerEvent::Completed(report) => {
+                            if preparing && !start_sent { return Err("录屏尚未获准开始".into()); }
                             #[cfg(all(target_os = "macos", debug_assertions))]
                             mac_diagnostic(MacStage::WorkerTerminal, MacOutcome::Completed);
                             validate_report(&config, &report)?;
@@ -424,7 +552,7 @@ fn supervise(
             if terminal.is_none() && write_error_rx.try_recv().is_ok() {
                 return Err("录屏控制未能送达".into());
             }
-            if (!ready && started.elapsed() > Duration::from_secs(15))
+            if (!ready && stopping.is_none() && Instant::now() > startup_deadline)
                 || stopping.is_some_and(|time| time.elapsed() > Duration::from_secs(20))
                 || (ready
                     && stopping.is_none()
@@ -444,7 +572,7 @@ fn supervise(
                 writer_tx
                     .as_ref()
                     .ok_or("录屏连接已断开")?
-                    .try_send(backend::Control::Stop)
+                    .try_send(backend::Control::Stop.into())
                     .map_err(|_| "录屏控制未能送达")?;
             }
             if bytes > 512 * 1024 * 1024 {
@@ -686,6 +814,84 @@ mod tests {
             r#"{"type":"stopped_before_ready","extra":true}"#
         )
         .is_err());
+    }
+    #[test]
+    fn prepared_recording_wire_rejects_unknown_fields_and_invalid_clock_types() {
+        assert!(serde_json::from_str::<WorkerEvent>(r#"{"type":"prepared","extra":true}"#).is_err());
+        for value in [r#"{"type":"start_at","qpc":-1}"#, r#"{"type":"start_at","qpc":1.5}"#,
+            r#"{"type":"start_at","qpc":1,"extra":true}"#, r#"{"type":"start_at"}"#] {
+            assert!(serde_json::from_str::<WorkerCommand>(value).is_err());
+        }
+        assert!(matches!(serde_json::from_str::<WorkerCommand>(r#"{"type":"start_at","qpc":42}"#).unwrap(),
+            WorkerCommand::StartAt { qpc: 42 }));
+        assert!(serde_json::from_str::<WorkerRequest>(r#"{"type":"prepare","config":{},"extra":true}"#).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prepared_supervisor_commits_only_once_and_preserves_cancel_failure_and_real_child_drain() {
+        let config = backend::Config {
+            output: std::env::temp_dir().join(format!("mewu-prepared-protocol-{}.mp4", uuid::Uuid::new_v4())),
+            origin_x: 0, origin_y: 0, monitor_width: 64, monitor_height: 64,
+            x: 0, y: 0, width: 64, height: 64, audio: backend::AudioMode::Mute,
+        };
+        // The real supervisor/job/pipe code runs; no desktop/device or media is
+        // created. The child checks that preparation is not StartAt authority.
+        let script = r#"
+$ErrorActionPreference='Stop'
+$request=[Console]::In.ReadLine()|ConvertFrom-Json
+if($request.type -ne 'prepare' -or $request.config.width -ne 64){exit 9}
+if($env:MEWU_PREPARED_CASE -eq 'premature'){
+ [Console]::Out.WriteLine('{"type":"progress","elapsedMs":0,"paused":false}')
+}else{
+ [Console]::Out.WriteLine('{"type":"prepared"}')
+ if($env:MEWU_PREPARED_CASE -eq 'duplicate'){[Console]::Out.WriteLine('{"type":"prepared"}')}
+ $command=[Console]::In.ReadLine()|ConvertFrom-Json
+ if($command.type -in @('stop','cancel')){
+  [Console]::Out.WriteLine('{"type":"stopped_before_ready"}')
+ }elseif($command.type -eq 'start_at' -and $command.qpc -eq 42){
+  [Console]::Out.WriteLine('{"type":"progress","elapsedMs":0,"paused":false}')
+  [Console]::Out.WriteLine('{"type":"completed","width":64,"height":64,"durationMs":1000,"frames":15,"audio":"mute"}')
+ }else{exit 8}
+}
+while($null -ne [Console]::In.ReadLine()){}
+Start-Sleep -Milliseconds 100
+exit 0
+"#;
+        for mode in ["start", "cancel", "stop-before-ready", "late-cancel", "premature", "duplicate", "commit-failure"] {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+            command.env("MEWU_PREPARED_CASE", mode);
+            let commits = std::cell::Cell::new(0);
+            let progress = std::cell::Cell::new(0);
+            let late_cancel = std::cell::Cell::new(false);
+            let mut sent_stop = false;
+            let mut commit = || {
+                commits.set(commits.get() + 1);
+                assert_eq!(progress.get(), 0, "no sample progress before native commit");
+                if mode == "commit-failure" { return Err("fixture aperture rejected".to_owned()); }
+                if mode == "late-cancel" { late_cancel.set(true); }
+                Ok(if mode == "cancel" { None } else { Some(42) })
+            };
+            let result = supervise_inner(command, config.clone(), || {
+                if late_cancel.replace(false) { return Ok(Some(backend::Control::Cancel)); }
+                if mode == "stop-before-ready" && !sent_stop {
+                    sent_stop = true; Ok(Some(backend::Control::Stop))
+                } else { Ok(None) }
+            }, |_| progress.set(progress.get() + 1), || {}, || {}, Some(&mut commit));
+            match mode {
+                "start" => { assert!(result.unwrap().is_some()); assert_eq!(commits.get(), 1); assert_eq!(progress.get(), 1); }
+                "cancel" => { assert!(result.unwrap().is_none()); assert_eq!(commits.get(), 1); assert_eq!(progress.get(), 0); }
+                "late-cancel" => { assert!(result.unwrap().is_none()); assert_eq!(commits.get(), 1); assert_eq!(progress.get(), 0); }
+                "stop-before-ready" => { assert!(result.unwrap().is_none()); assert_eq!(commits.get(), 0); }
+                "premature" => { assert!(result.is_err()); assert_eq!(commits.get(), 0); }
+                _ => { assert!(result.is_err()); assert_eq!(commits.get(), 1); }
+            }
+            let until = Instant::now() + Duration::from_secs(3);
+            while busy() && Instant::now() < until { std::thread::sleep(Duration::from_millis(20)); }
+            assert!(!busy(), "real prepared child and pipe drain: {mode}");
+            assert!(!config.output.exists());
+        }
     }
     #[cfg(windows)]
     #[test]

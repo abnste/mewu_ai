@@ -179,7 +179,23 @@ test('actual recording subscription admits layout-to-countdown but rejects stale
   f.next({ ...initial, phase: 'recording', hud: { ...initial.hud, stage: 'live' }, elapsedMs: 1000 });
   f.next({ ...initial, phase: 'countdown', countdown: 1 }); f.next(maskStatus()); assert.equal(f.values.length, 5);
   f.next(null); f.next(initial); assert.equal(f.values.at(-1), null); f.stop();
-  const fallback = await subscriptionFixture(); fallback.values.length = 0; fallback.next({ ...initial, hud: undefined }); fallback.next({ ...initial, hud: undefined, phase: 'countdown', countdown: 3 }); assert.equal(fallback.values.length, 1); fallback.stop();
+  const compact = await subscriptionFixture(); compact.values.length = 0;
+  const prepared = { ...initial, hud: undefined, retainMain: false };
+  compact.next(prepared); compact.next({ ...prepared, phase: 'countdown', countdown: 3 }); assert.equal(compact.values.length, 2);
+  compact.next({ ...prepared, phase: 'countdown', countdown: 2 }); compact.next(prepared); assert.equal(compact.values.length, 3,
+    'a late warmup reply cannot flash the complete screenshot UI during countdown');
+  compact.next({ ...prepared, retainMain: true }); assert.equal(compact.values.length, 4);
+  compact.next({ ...prepared, phase: 'countdown', countdown: 1 }); assert.equal(compact.values.length, 4, 'a late countdown cannot reappear after the compact surface completed its countdown');
+  compact.next({ ...prepared, phase: 'recording', retainMain: true });
+  compact.next({ ...prepared, phase: 'recording', retainMain: false, elapsedMs: 20 });
+  assert.equal(compact.values.length, 5, 'a late reply cannot remove the verified main aperture');
+  compact.next({ ...prepared, phase: 'paused', retainMain: true, elapsedMs: 30 }); assert.equal(compact.values.length, 6);
+  compact.next(null); compact.next({ ...prepared, id: 'record-b' }); compact.next({ ...prepared, id: 'record-b', phase: 'countdown', countdown: 3 });
+  assert.equal(compact.values.at(-1).countdown, 3, 'the next recording has its own countdown admission'); compact.stop();
+  const legacy = await subscriptionFixture(); legacy.values.length = 0;
+  legacy.next({ ...initial, hud: undefined, phase: 'countdown', countdown: 3 });
+  legacy.next({ ...initial, hud: undefined }); assert.equal(legacy.values.length, 2,
+    'the existing macOS countdown-to-starting path has no Windows aperture field'); legacy.stop();
 });
 
 test('actual recording subscription cannot remove or roll back a ready compound mask on late same-owner status', async () => {

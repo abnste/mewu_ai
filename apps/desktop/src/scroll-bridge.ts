@@ -10,9 +10,9 @@ export interface ScrollStatus {
   status: 'initial' | 'extended' | 'retraced' | 'unchanged' | 'low_information' | 'ambiguous' | 'lost_overlap' | 'limit_reached';
   stopHotkey: string;
   preview?:string;
-  // Normalized to the source monitor. The native HUD dims the surrounding
-  // monitor while retaining a real hole for every acquired pixel.
-  hud?: { outline: ScrollStatus['rect']; preview: ScrollStatus['rect'] | null; controls: ScrollStatus['rect'] | null; live?: boolean };
+  // Normalized to the source monitor. retainMain is published only after the
+  // native aperture is verified; the HUD shades only the cloaked fallback.
+  hud?: { outline: ScrollStatus['rect']; preview: ScrollStatus['rect'] | null; controls: ScrollStatus['rect'] | null; live?: boolean; retainMain?: boolean };
   automatic?: boolean;
 }
 export type ScrollAction = 'finish' | 'keep' | 'cancel';
@@ -42,6 +42,7 @@ export class ScrollStatusGate {
     const ranks = { starting: 0, capturing: 1, finishing: 2 };
     if (next && this.current?.id === next.id && ranks[next.phase] < ranks[this.current.phase]) return false;
     if (next && this.current?.id === next.id && this.current.hud?.live && !next.hud?.live) return false;
+    if (next && this.current?.id === next.id && this.current.hud?.live && Boolean(next.hud?.retainMain) !== Boolean(this.current.hud.retainMain)) return false;
     if (this.current && this.current.id !== next?.id) {
       this.ended.add(this.current.id);
       if (this.ended.size > 64) this.ended.delete(this.ended.values().next().value!);
