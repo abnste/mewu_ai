@@ -1,6 +1,8 @@
 <div align="center">
   <img src="./Assets/MewuAI.Icon.png" width="88" alt="喵呜AI" />
   <h1>喵呜AI（MewuAI）— 截图与 AI 空间</h1>
+  <h1>注意！暂时还在测试阶段</h1>
+  
   <p>开源桌面应用，让截图、对话、标注与可交互的 AI 结果共处同一空间。</p>
   <p>
     <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.2"><img src="https://img.shields.io/badge/正式版-1.0.2-7C6CF0?style=flat-square" alt="1.0.2 正式版" /></a>
