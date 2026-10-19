@@ -7,7 +7,39 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {browserFixtureUrl, commandFor, redact, root, start, validMutation} from './server.mjs';
+import {pathToFileURL} from 'node:url';
+import {browserFixtureUrl, commandFor, redact, root, validMutation} from './server.mjs';
+
+async function isolatedServer(t) {
+  await fs.mkdir(path.join(root, '.private'), {recursive: true});
+  const privateRoot = await fs.realpath(path.join(root, '.private'));
+  const fixtureRoot = await fs.mkdtemp(path.join(privateRoot, 'dev-check-http-test-'));
+  t.after(async () => {
+    const actual = await fs.realpath(fixtureRoot);
+    const relative = path.relative(privateRoot, actual);
+    assert.ok(relative.startsWith('dev-check-http-test-') && !relative.includes(path.sep) && !path.isAbsolute(relative),
+      'cleanup must stay inside the exact owned private fixture');
+    await fs.rm(actual, {recursive: true, force: true});
+  });
+  const fixtureScripts = path.join(fixtureRoot, 'scripts/dev-check');
+  await fs.mkdir(fixtureScripts, {recursive: true});
+  await fs.mkdir(path.join(fixtureRoot, 'apps/desktop/src'), {recursive: true});
+  for (const file of ['server.mjs', 'index.html', 'app.js', 'style.css']) {
+    const bytes = await fs.readFile(new URL(file, import.meta.url));
+    const copied = path.join(fixtureScripts, file);
+    await fs.writeFile(copied, bytes, {flag: 'wx'});
+    assert.deepEqual(await fs.readFile(copied), bytes, `${file} must be the unchanged production file`);
+  }
+  await fs.writeFile(path.join(fixtureRoot, '.gitignore'), '.private/\n', {flag: 'wx'});
+  const git = args => promisify(execFile)('git', [
+    '-c', 'core.autocrlf=false', '-c', 'core.hooksPath=.git/no-test-hooks', '-c', 'commit.gpgsign=false',
+    '-c', 'user.name=Mewu HTTP Test', '-c', 'user.email=mewu-http-test@example.invalid', ...args,
+  ], {cwd: fixtureRoot, timeout: 10000});
+  await git(['init', '--quiet']);
+  await git(['add', '--all']);
+  await git(['commit', '--quiet', '-m', 'Isolated unchanged development server fixture']);
+  return {root: fixtureRoot, ...await import(pathToFileURL(path.join(fixtureScripts, 'server.mjs')).href)};
+}
 
 test('write requests require exact loopback host, origin, JSON and CSRF token', () => {
   const origin = 'http://127.0.0.1:49370';
@@ -42,7 +74,8 @@ test('browser links reject old workspaces, remote hosts and URL credentials', ()
   for (const url of [`https://example.invalid${fixture}`, `http://person:credential@127.0.0.1:49352${fixture}`, `http://127.0.0.1:49352${fixture}?token=credential`, `http://127.0.0.1:49352/@fs/D:/old-repository${fixture}`, 'javascript:alert(1)']) assert.throws(() => browserFixtureUrl(url));
 });
 
-test('HTTP does not expose files or execute cross-origin mutations', async () => {
+test('HTTP does not expose files or execute cross-origin mutations', async t => {
+  const {root: fixtureRoot, start} = await isolatedServer(t);
   const reservation = net.createServer();
   await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port;
@@ -56,10 +89,10 @@ test('HTTP does not expose files or execute cross-origin mutations', async () =>
     const second = await (await fetch(`${base}/api/state`)).json();
     assert.equal(first.currentSource.checkedAt, second.currentSource.checkedAt);
     const evidence = `.private/dev-check/${options.privateStateName}/browser-receipt.json`;
-    await fs.writeFile(path.join(root, evidence), JSON.stringify({testOnly: true, sourceCommit: first.currentSource.head}), {flag: 'wx'});
-    await promisify(execFile)(process.execPath, [path.join(root, 'scripts/dev-check/server.mjs'), 'record', '--private-state', options.privateStateName,
+    await fs.writeFile(path.join(fixtureRoot, evidence), JSON.stringify({testOnly: true, sourceCommit: first.currentSource.head}), {flag: 'wx'});
+    await promisify(execFile)(process.execPath, [path.join(fixtureRoot, 'scripts/dev-check/server.mjs'), 'record', '--private-state', options.privateStateName,
       '--lane', 'browser', '--status', 'passed', '--source', first.currentSource.head, '--kind', 'browser-gui', '--fingerprint', first.currentSource.fingerprint,
-      '--url', 'http://127.0.0.1:49371/.private/remake-review/snapshot-ui-fixture.html', '--evidence', evidence], {cwd: root, timeout: 10000});
+      '--url', 'http://127.0.0.1:49371/.private/remake-review/snapshot-ui-fixture.html', '--evidence', evidence], {cwd: fixtureRoot, timeout: 10000});
     const recordedResponse = await fetch(`${base}/api/state`);
     assert.equal(recordedResponse.status, 200);
     const recorded = await recordedResponse.json();
@@ -67,9 +100,9 @@ test('HTTP does not expose files or execute cross-origin mutations', async () =>
     assert.equal(recorded.lanes.browser.status, 'passed');
     for (const lane of ['windows', 'linux', 'mac']) assert.equal(recorded.lanes[lane].status, 'pending');
     const invalidLanes = structuredClone(recorded.lanes); invalidLanes.mac = {status: 'passed', reported: true};
-    await fs.writeFile(path.join(root, `.private/dev-check/${options.privateStateName}/lanes.json`), JSON.stringify(invalidLanes));
+    await fs.writeFile(path.join(fixtureRoot, `.private/dev-check/${options.privateStateName}/lanes.json`), JSON.stringify(invalidLanes));
     assert.equal((await fetch(`${base}/api/state`)).status, 400);
-    await fs.writeFile(path.join(root, `.private/dev-check/${options.privateStateName}/lanes.json`), JSON.stringify(recorded.lanes));
+    await fs.writeFile(path.join(fixtureRoot, `.private/dev-check/${options.privateStateName}/lanes.json`), JSON.stringify(recorded.lanes));
     const page = await fetch(base);
     assert.equal(page.status, 200);
     assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);

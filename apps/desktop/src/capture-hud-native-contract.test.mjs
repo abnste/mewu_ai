@@ -12,11 +12,13 @@ test('scroll and recording attach the exact hidden HUD lease before their first 
   const capture = attach.indexOf('let lease = Lease::capture(');
   const disable = attach.indexOf('lease.disable_hud_transitions_before_show()?');
   const publish = attach.indexOf('self.hud = Some(');
+  const exposure = attach.indexOf('.1.set_hud_exposure(exposure)');
   assert.ok(capture >= 0 && capture < disable && disable < publish,
     'a real new lease must disable transitions successfully before the HUD is admitted');
-  for (const file of ['scroll_host.rs', 'recording_controls_windows.rs']) {
+  assert.ok(publish < exposure, 'the session must retain the HUD lease before changing its capture affinity');
+  for (const [file, method] of [['scroll_host.rs', 'attach_hud'], ['recording_controls_windows.rs', 'attach_hud_with_exposure']]) {
     const source = await native(file);
-    const attach = source.indexOf('session.attach_hud(&toolbar,');
+    const attach = source.indexOf(`session.${method}(&toolbar,`);
     const show = source.indexOf('toolbar.show()');
     assert.ok(source.indexOf('.visible(false)') >= 0 && source.indexOf('.visible(false)') < attach,
       `${file} must create the HUD hidden`);
@@ -29,14 +31,19 @@ test('only retained capture paths bind the original native main as the top-level
   const recording = await native('recording_controls_windows.rs');
   const scrollFile = await native('scroll_host.rs');
   const scroll = scrollFile.slice(scrollFile.indexOf('async fn prepare_windows('), scrollFile.indexOf('fn ensure_preparing('));
-  for (const [source, retained] of [[recording, 'retain_main'], [scroll, 'retained_owner']]) {
-    assert.match(source, /Ok\(\(shared, (?:retain_main|retained_owner), main\)\)/);
-    assert.match(source, /let \(shared, (?:retain_main|retained_owner), main\) = receive\.await/);
+  assert.match(recording, /Ok\(\(shared, retain_main, exposure, work, main\)\)/);
+  assert.match(recording, /let \(shared, retain_main, exposure, planned_work, main\) = receive\.await/);
+  assert.match(scroll, /Ok\(\(shared, retained_owner, main\)\)/);
+  assert.match(scroll, /let \(shared, retained_owner, main\) = receive\.await/);
+  for (const [source, retained, attach] of [
+    [recording, 'retain_main', 'session.attach_hud_with_exposure(&toolbar, retain_main, exposure)'],
+    [scroll, 'retained_owner', 'session.attach_hud(&toolbar, retained_owner)'],
+  ]) {
     assert.equal((source.match(/get_webview_window\("space"\)/g) || []).length, 1,
       'builder and later preparation must keep the original captured main, not a successor found by label');
     assert.ok(source.includes(`if ${retained} {\n            builder.owner(&main)`) || source.includes(`if ${retained} {\n        builder.owner(&main)`));
     assert.ok(source.includes('} else { builder };'), 'cloaked fallbacks must remain unowned');
-    assert.ok(source.includes(`session.attach_hud(&toolbar, ${retained})`));
+    assert.ok(source.includes(attach));
     assert.doesNotMatch(source, /\.parent(?:_raw)?\(/, 'an owned top-level HUD is not a child window');
     for (const show of source.matchAll(/toolbar\.show\(\)/g)) {
       const previous = source.slice(Math.max(0, show.index - 220), show.index);
