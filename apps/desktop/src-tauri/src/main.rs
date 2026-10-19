@@ -52,6 +52,8 @@ mod capture_wayland_portal;
 mod recording_portal_linux;
 #[cfg(target_os = "linux")]
 mod recording_pipewire_linux;
+#[cfg(target_os = "linux")]
+mod recording_tray_linux;
 #[cfg(any(target_os = "linux", test))]
 mod window_actions_linux;
 #[cfg(target_os = "linux")]
@@ -3393,6 +3395,16 @@ fn main() {
                 menu::{Menu, MenuItem},
                 tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
             };
+            // AppIndicator does not report tray left-click events on Linux.
+            // Keep a native menu entry into the same capture admission path.
+            #[cfg(target_os = "linux")]
+            let capture = MenuItem::with_id(
+                app,
+                "capture",
+                ui_language::text("截图", "Capture"),
+                true,
+                None::<&str>,
+            )?;
             let settings = MenuItem::with_id(
                 app,
                 "settings",
@@ -3407,11 +3419,18 @@ fn main() {
                 true,
                 None::<&str>,
             )?;
+            #[cfg(target_os = "linux")]
+            let menu = Menu::with_items(app, &[&capture, &settings, &quit])?;
+            #[cfg(not(target_os = "linux"))]
+            let menu = Menu::with_items(app, &[&settings, &quit])?;
             app.manage(ui_language::TrayLabels {
+                #[cfg(target_os = "linux")]
+                capture: capture.clone(),
+                #[cfg(target_os = "linux")]
+                recording_controls: recording_tray_linux::Controls::new(menu.clone()),
                 settings: settings.clone(),
                 quit: quit.clone(),
             });
-            let menu = Menu::with_items(app, &[&settings, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .menu(&menu)
                 .tooltip("Mewu 1.0")
@@ -3427,6 +3446,10 @@ fn main() {
                     }
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
+                    #[cfg(target_os = "linux")]
+                    "capture" => start_capture(app),
+                    #[cfg(target_os = "linux")]
+                    id if recording_tray_linux::handle(app, id) => {},
                     "settings" => {
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {

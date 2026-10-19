@@ -107,7 +107,10 @@ pub(crate) fn selecting()->bool { state().lock().is_ok_and(|s|s.lease.as_ref().i
     l.status.is_none()&&l.controls.lock().is_ok_and(|c|c.terminal.is_none()))) }
 pub(crate) fn has_lease()->bool { state().lock().is_ok_and(|s|s.lease.is_some()) }
 pub(crate) fn status()->Result<Option<recording::Status>,String>{Ok(state().lock().map_err(|_|"录屏状态不可用")?.lease.as_ref().and_then(|l|l.status.clone()))}
-fn emit(app:&AppHandle,value:&Option<recording::Status>){let _=app.emit_to("space","recording-status",value);let _=app.emit_to("recording-controls","recording-status",value);}
+fn emit(app:&AppHandle,value:&Option<recording::Status>){
+    crate::recording_tray_linux::refresh(app,value.as_ref().map(|status|status.phase));
+    let _=app.emit_to("space","recording-status",value);
+}
 pub(crate) fn reconcile(snapshot:&Snapshot){
     if let Ok(s)=state().lock(){if let Some(l)=s.lease.as_ref().filter(|l|l.status.is_none()) {
         if l.background.as_ref().is_some_and(|background|!snapshot.scenes.iter().any(|scene|
@@ -282,7 +285,6 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
         if !adopted{let _=std::fs::remove_file(&preview);}
         if !finalized{let _=std::fs::remove_file(&output);}else if receipt.is_err(){let _=std::fs::rename(&output,output.with_extension("completed.mp4"));}
         emit(&owner,&None);
-        if let Some(toolbar)=owner.get_webview_window("recording-controls"){let _=toolbar.destroy();}
         if reveal{crate::show(&owner);}
         if let Err(error)=receipt{let _=owner.emit_to("space","host-error",error);}
     });
@@ -300,41 +302,19 @@ pub(crate) async fn prepare_wayland_recording(app:AppHandle,window:WebviewWindow
     Ok(Some(snapshot))
 }
 
-async fn present_controls(window:&WebviewWindow,nonce:&str)->Result<(),String>{
-    use gtk::prelude::*;
-    let (tx,rx)=tokio::sync::oneshot::channel::<Result<(),String>>();
-    let target=window.clone();let nonce=nonce.to_owned();
-    window.with_webview(move|native|{
-        // Wry's GtkFixed child retains the initial (unconfigured) native size
-        // as its minimum request. Resize that owned child before the first map;
-        // resizing only the Tauri window cannot shrink the retained minimum.
-        let result=(||{
-            if tx.is_closed(){return Err("录屏控制条初始化已取消".into());}
-            target.app_handle().state::<Host>().exit.ensure_new_operation()?;
-            let s=state().lock().map_err(|_|"录屏状态不可用")?;
-            let lease=s.lease.as_ref().filter(|l|l.nonce==nonce&&l.status.is_some()).ok_or("录屏已结束")?;
-            let controls=lease.controls.lock().map_err(|_|"录屏控制不可用")?;
-            if controls.terminal.is_some(){return Err("录屏已结束".into());}
-            let widget=target.gtk_window().map_err(|_|"录屏控制条不可用")?;
-            let webview=native.inner();
-            webview.set_size_request(176,44);
-            if let Some(parent)=webview.parent(){parent.set_size_request(176,44);}
-            widget.set_size_request(176,44);
-            widget.set_default_size(176,44);
-            widget.resize(176,44);
-            let style=gtk::CssProvider::new();
-            style.load_from_data(b"window { background-color: transparent; border: 0; padding: 0; margin: 0; box-shadow: none; }")
-                .map_err(|_|"录屏控制条样式不可用")?;
-            // Provider is attached only to this owned GTK window, never a screen.
-            widget.style_context().add_provider(&style,gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
-            target.show().map_err(|_|"无法显示录屏控制条")?;
-            #[cfg(debug_assertions)]
-            eprintln!("mewu-recording-controls request=176x44 webview-request={}x{}",webview.width_request(),webview.height_request());
-            Ok(())
-        })();let _=tx.send(result);
-    }).map_err(|_|"无法初始化录屏控制条")?;
-    tokio::time::timeout(Duration::from_secs(2),rx).await
-        .map_err(|_|"录屏控制条初始化超时")?.map_err(|_|"录屏控制条初始化中断")?
+fn tray_can_begin(actual:&str,expected:&str,phase:&str,terminal:bool)->bool{
+    actual==expected&&phase=="countdown"&&!terminal
+}
+pub(crate) fn tray_admission(app:&AppHandle,nonce:&str)->Result<(),String>{
+    app.state::<Host>().exit.ensure_new_operation()?;
+    let s=state().lock().map_err(|_|"录屏状态不可用")?;
+    let lease=s.lease.as_ref().ok_or("录屏准备已结束")?;
+    let status=lease.status.as_ref().ok_or("录屏尚未开始")?;
+    let controls=lease.controls.lock().map_err(|_|"录屏控制不可用")?;
+    if !tray_can_begin(&lease.nonce,nonce,status.phase,controls.terminal.is_some()){
+        return Err("录屏准备已结束".into());
+    }
+    Ok(())
 }
 
 pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,region_id:String,
@@ -365,22 +345,12 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
     // The prepared worker is already alive. Every early error or dropped
     // invoke must cancel this exact lease until the countdown task owns it.
     let mut starting=StartingGuard{nonce:id.clone(),armed:true};
+    // ScreenCast captures the compositor's monitor. Wayland offers neither
+    // WDA/SCK exclusion nor a guaranteed window position outside this crop.
+    // Admit an actual tray Stop entry before publishing countdown or hiding.
+    crate::recording_tray_linux::present(&app,&id).await?;
     emit(&app,&Some(status));
-    // Wayland does not offer WDA/SCK window exclusion. Hide the source canvas;
-    // the ordinary native controller is independently accessible for stopping.
     window.hide().map_err(|_|"无法隐藏录屏选区窗口")?;
-    let toolbar=tauri::WebviewWindowBuilder::new(&app,"recording-controls",tauri::WebviewUrl::App("index.html?surface=recording&native-platform=linux".into()))
-        .title("Mewu · 录屏").inner_size(176.,44.).decorations(false).transparent(true).shadow(false).visible(false)
-        .background_color(tauri::window::Color(0,0,0,0)).resizable(false).maximizable(false)
-        .minimizable(false).always_on_top(true).skip_taskbar(true).focused(false).disable_drag_drop_handler()
-        .on_navigation(|url|(url.scheme()=="tauri"&&url.host_str()==Some("localhost"))
-            ||(matches!(url.scheme(),"http"|"https")&&url.host_str()==Some("tauri.localhost"))
-            ||(cfg!(debug_assertions)&&url.scheme()=="http"&&url.host_str()==Some("127.0.0.1")&&url.port()==Some(1420)))
-        .build();
-    let toolbar=match toolbar{Ok(toolbar)=>toolbar,Err(_)=>{let _=control(&id,"cancel");return Err("无法显示录屏控制条".into());}};
-    if let Err(error)=present_controls(&toolbar,&id).await{
-        let _=control(&id,"cancel");let _=toolbar.destroy();return Err(error);
-    }
     let owner=app.clone();tauri::async_runtime::spawn(async move {
         for number in (1..=3).rev(){
             if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().filter(|l|l.nonce==id).and_then(|l|l.status.as_mut()){
@@ -409,6 +379,15 @@ mod lifecycle_tests {
                 stop_hotkey:String::new(),audio:backend::AudioMode::Mute}),finalized:false,suppress_reveal:false,grant:None,audio_grant:None},controls)
     }
     #[test]
+    fn tray_admission_requires_the_exact_uncanceled_countdown(){
+        assert!(tray_can_begin("current","current","countdown",false));
+        assert!(!tray_can_begin("replacement","current","countdown",false));
+        assert!(!tray_can_begin("current","current","countdown",true));
+        for phase in ["starting","recording","paused","stopping"]{
+            assert!(!tray_can_begin("current","current",phase,false));
+        }
+    }
+    #[test]
     fn starting_invoke_drop_cancels_only_its_live_lease_and_preserves_stop(){
         let saved=std::mem::take(&mut *state().lock().unwrap());let _restore=RestoreState(Some(saved));
         let (current,commands)=lease("current");state().lock().unwrap().lease=Some(current);
@@ -424,8 +403,10 @@ mod lifecycle_tests {
         // Likewise, cancellation of a late HUD invoke cannot discard an already
         // requested real Stop and change its completed video into Cancel.
         control("replacement","stop").unwrap();
+        control("replacement","stop").unwrap();
         drop(StartingGuard{nonce:"replacement".into(),armed:true});
         assert!(matches!(commands.lock().unwrap().take(),Some(worker::Control::Stop{})));
+        assert!(commands.lock().unwrap().take().is_none());
 
         let (transferred,commands)=lease("transferred");state().lock().unwrap().lease=Some(transferred);
         drop(StartingGuard{nonce:"transferred".into(),armed:false});

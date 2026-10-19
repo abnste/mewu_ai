@@ -768,6 +768,7 @@
   "录屏声音 · {0}": "Recording audio · {0}",
   "录屏声音：{0}": "Recording audio: {0}",
   "录屏控制": "Recording controls",
+  "框选录制范围": "Select the recording area",
   "录屏错误": "Recording error",
   "待处理记录已满": "The pending record queue is full",
   "待执行": "Ready to run",

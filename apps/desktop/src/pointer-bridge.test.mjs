@@ -26,4 +26,31 @@ for (const file of await readdir(capabilityDir)) {
 }
 assert.equal(found, 1);
 checks.push('The enabled native capability grants sampling only to the space window');
+{
+  // Tauri uses RFC7396 JSON merge: the platform windows array replaces the base
+  // array. This checks actual source JSON, not a native CLI dump or focus state.
+  const platform = JSON.parse(await readFile(new URL('../src-tauri/tauri.macos.conf.json', import.meta.url), 'utf8'));
+  function merge(doc, patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return structuredClone(patch);
+    const result = doc && typeof doc === 'object' && !Array.isArray(doc) ? structuredClone(doc) : {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === null) delete result[key];
+      else result[key] = merge(result[key], value);
+    }
+    return result;
+  }
+  const capture = value => value.app.windows.find(window => window.label === 'space');
+  const merged = merge(config, platform);
+  assert.equal(capture(config).acceptFirstMouse, true);
+  assert.equal(capture(merged).acceptFirstMouse, true);
+  assert.deepEqual(merged.app.windows, platform.app.windows);
+  assert.deepEqual(merged.app.security, config.app.security);
+  assert.equal(capture(merged).fullscreen, false);
+  assert.equal(capture(merged).visible, false);
+  checks.push('Merged real macOS configuration accepts the first capture-window click and preserves platform geometry and security');
+  const omitted = structuredClone(platform);
+  delete capture(omitted).acceptFirstMouse;
+  assert.equal(capture(merge(config, omitted)).acceptFirstMouse ?? false, false);
+  checks.push('Omitting the macOS field still reproduces the false default; the base true cannot leak through a replaced windows array');
+}
 console.log(JSON.stringify({ passed: checks.length, checks }, null, 2));

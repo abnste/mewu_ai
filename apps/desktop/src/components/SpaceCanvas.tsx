@@ -81,6 +81,7 @@ interface Props {
   onSelectionActivity?: (active: boolean) => void;
   onExportActivity?: (active: boolean) => void;
   onSelectionComplete?: (region: Region) => void;
+  recordingSelection?: boolean;
   onActiveRegionChange?: (sceneId: string, regionId: string | undefined) => void;
   onFocusComposer?: () => void;
   onBeforeExport?: () => Promise<void>;
@@ -846,6 +847,7 @@ export default function SpaceCanvas(props: Props) {
     finally { if (!disposed) { setExporting(false); props.onExportActivity?.(false); } }
   }
   return <main ref={canvas} tabIndex={-1} class="space-canvas capture-surface" classList={{ 'capture-blackboard':props.blackboard, 'can-select': !props.blackboard&&Boolean(props.scene.background), 'capture-dragging': activity(), 'capture-add-mode': forceNew() }} onPointerDown={begin} aria-label={t("AI 空间")}>
+    <Show when={props.recordingSelection}><span class="capture-recording-hint" role="status">{t("框选录制范围")}</span></Show>
     <Show when={visibleCodes()}>{view => <SelectionCodeCard result={view().result} region={display(props.scene.regions.find(region => region.id === view().result.regionId)!)} toolbar={toolbarVisible() ? toolbarBox() : undefined} hidden={codesPaused()} disabled={Boolean(props.codeActionBusy)} onAction={(token, id, action) => props.onCodeAction?.(token, id, action) ?? Promise.resolve(false)} />}</Show>
     <Show when={!props.blackboard && pointerNative && props.scene.background}>{background => <PointerInspector sceneId={props.scene.id} background={background()} imageBox={geometry()} dimensions={pointerSelectionDimensions(selection(), geometry(), activeRegion())} disabled={props.busy || exporting() || props.scene.frozen || props.scene.closed || backgroundError() || Boolean(drawingSession() || imageDrawing() || pluginMenu() || ocrPending() || props.translationPending) || props.scene.regions.some(region => ocrVisible(region) || translationVisible(region))} blockedAt={(x, y) => toolbarVisible() && contains(toolbarBox(), x, y, TOLERANCE)} onReady={value => { pointerInspector = value; }} onError={props.onError} />}</Show>
     <Show when={props.scene.background?.id} keyed>{id => <img ref={image => backgroundAttached(image, id)} class="screen-background capture-background" data-asset={id} src={assetUrl(props.scene.background!)} style={geometry().nativePixels ? { left: '0px', top: '0px', width: `${geometry().width}px`, height: `${geometry().height}px` } : undefined} alt={t("屏幕截图")} draggable={false} decoding="sync" onLoad={event => backgroundLoaded(event.currentTarget, id)} onError={event => backgroundFailed(event.currentTarget, id)} />}</Show>

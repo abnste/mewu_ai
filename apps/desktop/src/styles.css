@@ -14,3 +14,5 @@
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 .region-frame{cursor:move}.corner{pointer-events:auto;touch-action:none;width:7px;height:7px}.corner.tl,.corner.br{cursor:nwse-resize}.corner.tr,.corner.bl{cursor:nesw-resize}.settings-content kbd{font:10px inherit;padding:5px 7px;border:1px solid var(--line);border-radius:6px;color:var(--secondary);background:var(--surface-subtle)}
+
+.capture-recording-hint{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);padding:8px 14px;border-radius:999px;background:#23252bd9;color:#fff;font-size:12px;line-height:1.4;pointer-events:none;z-index:25}

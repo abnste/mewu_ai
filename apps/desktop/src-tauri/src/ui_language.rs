@@ -11,6 +11,10 @@ pub enum DisplayLanguage {
     English,
 }
 pub struct TrayLabels {
+    #[cfg(target_os = "linux")]
+    pub capture: MenuItem<tauri::Wry>,
+    #[cfg(target_os = "linux")]
+    pub recording_controls: crate::recording_tray_linux::Controls,
     pub settings: MenuItem<tauri::Wry>,
     pub quit: MenuItem<tauri::Wry>,
 }
@@ -60,6 +64,13 @@ pub fn set_ui_language(
         Ordering::Relaxed,
     );
     if let Some(labels) = app.try_state::<TrayLabels>() {
+        #[cfg(target_os = "linux")]
+        labels.recording_controls.update_language()?;
+        #[cfg(target_os = "linux")]
+        labels
+            .capture
+            .set_text(text("截图", "Capture"))
+            .map_err(|_| "无法更新托盘语言")?;
         labels
             .settings
             .set_text(text("设置", "Settings"))
