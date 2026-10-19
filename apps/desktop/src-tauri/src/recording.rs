@@ -51,6 +51,14 @@ pub struct Rect {
     pub(crate) width: f64,
     pub(crate) height: f64,
 }
+#[cfg(windows)]
+#[derive(Clone, Serialize)]
+pub(crate) struct Hud {
+    pub(crate) rect: Option<Rect>,
+    pub(crate) stage: &'static str,
+    #[serde(skip)]
+    ready: bool,
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
@@ -62,6 +70,9 @@ pub struct Status {
     pub(crate) rect: Rect,
     pub(crate) stop_hotkey: String,
     pub(crate) audio: backend::AudioMode,
+    #[cfg(windows)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hud: Option<Hud>,
 }
 struct Active {
     #[cfg(windows)]
@@ -413,8 +424,8 @@ pub async fn start_recording(
     let status = Status {
         id: id.clone(),
         scene_id: scene_id.clone(),
-        phase: "countdown",
-        countdown: 3,
+        phase: if cfg!(windows) { "starting" } else { "countdown" },
+        countdown: if cfg!(windows) { 0 } else { 3 },
         elapsed_ms: 0,
         rect: Rect {
             x: config.x as f64 / config.monitor_width as f64,
@@ -424,6 +435,8 @@ pub async fn start_recording(
         },
         stop_hotkey: String::new(),
         audio: audio.mode,
+        #[cfg(windows)]
+        hud: None,
     };
     {
         let plugins = host.plugins.lock().map_err(|_| "插件存储需要重新启动")?;
@@ -994,6 +1007,19 @@ fn verify_capture(app: &AppHandle, id: &str) -> Result<(), String> {
             .and_then(|active| active.capture_session.as_ref()).ok_or("录屏已结束")?.verify()
     })
 }
+/// A presentation ACK is admitted only by the current owned recording HWND.
+/// macOS/Linux retain their existing recording surfaces and do not use this gate.
+pub async fn surface_ready(
+    app: &AppHandle,
+    window: tauri::WebviewWindow,
+    id: &str,
+    stage: &str,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    { controls_windows::surface_ready(app, window, id, stage).await }
+    #[cfg(not(windows))]
+    { let _ = (app, window, id, stage); Ok(false) }
+}
 fn supervise(
     app: &AppHandle,
     id: &str,
@@ -1002,6 +1028,8 @@ fn supervise(
     finalized: Arc<AtomicBool>,
 ) -> Result<Option<backend::Report>, String> {
     let mut escape = escape_down();
+    #[cfg(windows)]
+    update(app, id, |s| { s.phase = "countdown"; s.countdown = 3; });
     for number in (1..=3).rev() {
         update(app, id, |s| s.countdown = number);
         let until = Instant::now() + Duration::from_secs(1);
@@ -1023,12 +1051,16 @@ fn supervise(
     update(app, id, |s| {
         s.phase = "starting";
         s.countdown = 0;
+        #[cfg(windows)]
+        if let Some(hud) = &mut s.hud { hud.stage = "mask"; hud.ready = false; }
     });
     #[cfg(all(target_os = "macos", debug_assertions))]
     crate::recording_worker::mac_diagnostic(
         crate::recording_worker::MacStage::CountdownComplete,
         crate::recording_worker::MacOutcome::Ok,
     );
+    #[cfg(windows)]
+    if !controls_windows::finish_countdown(app, id, &config)? { return Ok(None); }
     #[cfg(windows)]
     verify_capture(app, id)?;
     #[cfg(windows)]
@@ -1198,6 +1230,8 @@ mod tests {
                 },
                 stop_hotkey: String::new(),
                 audio: backend::AudioMode::Mute,
+                #[cfg(windows)]
+                hud: None,
             },
             commands: commands.clone(),
             grant: crate::plugins::RecordingGrant {
@@ -1242,6 +1276,8 @@ mod tests {
                 },
                 stop_hotkey: String::new(),
                 audio: backend::AudioMode::Mute,
+                #[cfg(windows)]
+                hud: None,
             },
             commands: send,
             grant: crate::plugins::RecordingGrant {

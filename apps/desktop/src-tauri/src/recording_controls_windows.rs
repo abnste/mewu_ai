@@ -6,6 +6,7 @@ use super::{
     LABEL,
 };
 use tauri::{AppHandle, Emitter, Manager};
+use std::time::{Duration, Instant};
 
 /// Own the exact newly built window until the original capture session accepts
 /// it. A late worker result, a dropped await or failed UI dispatch must not leave
@@ -103,6 +104,45 @@ fn current_policy(
     Ok(())
 }
 
+fn presentation_ready(app: &AppHandle, id: &str, stage: &str) -> Result<bool, PrepareFailure> {
+    let state = app.state::<RecordingState>();
+    let slot = state.0.lock().map_err(|_| "录屏状态不可用")?;
+    let active = slot.as_ref().ok_or("录屏已结束")?;
+    current_policy(active, id, true, app.state::<Host>().exit.accepts_new_operations())?;
+    let hud = active.status.hud.as_ref().filter(|hud| hud.stage == stage)
+        .ok_or("录屏界面阶段已改变")?;
+    Ok(hud.ready)
+}
+
+fn accept_surface_ready(active: &mut super::Active, id: &str, stage: &str, owned: bool, accepts_new: bool) -> Result<bool, String> {
+    if active.status.id != id || active.plugin_revoked || active.commands.terminal_pending()? || !accepts_new {
+        return Ok(false);
+    }
+    if !owned { return Err("录屏界面不属于当前窗口".into()); }
+    let Some(hud) = active.status.hud.as_mut().filter(|hud| hud.stage == stage) else { return Ok(false); };
+    hud.ready = true;
+    Ok(true)
+}
+
+pub(super) async fn surface_ready(
+    app: &AppHandle, window: tauri::WebviewWindow, id: &str, stage: &str,
+) -> Result<bool, String> {
+    if !matches!(stage, "layout" | "mask") { return Err("录屏界面阶段无效".into()); }
+    let target = app.clone(); let id = id.to_owned(); let stage = stage.to_owned();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let result = (|| -> Result<bool, String> {
+            let state = target.state::<RecordingState>();
+            let mut slot = state.0.lock().map_err(|_| "录屏状态不可用")?;
+            let Some(active) = slot.as_mut().filter(|active| active.status.id == id) else { return Ok(false); };
+            let owned = active.capture_session.as_ref().is_some_and(|session| session.owns_hud(&window));
+            accept_surface_ready(active, &id, &stage, owned, target.state::<Host>().exit.accepts_new_operations())
+        })();
+        let _ = send.send(result);
+    }).map_err(|_| "无法确认录屏界面")?;
+    receive.await.map_err(|_| "录屏界面确认中断")?
+}
+
 pub(super) async fn prepare(
     app: &AppHandle,
     id: &str,
@@ -110,6 +150,7 @@ pub(super) async fn prepare(
     scale: f64,
     f8: bool,
 ) -> Result<(), PrepareFailure> {
+    if !scale.is_finite() || scale <= 0. { return Err("录屏显示比例无效".into()); }
     // Phase 1: save the original capture lease before mutating its HWND. Native
     // callbacks may reenter, so no RecordingState mutex spans window operations.
     let target = app.clone();
@@ -147,9 +188,9 @@ pub(super) async fn prepare(
                 }
                 active.capture_session = Some(session);
             }
-            edit_capture_session(&target.state::<RecordingState>(), &operation, |session| {
-                session.main.prepare(roi, false)
-            })?;
+            // Keep the original overlay visible through actual 3/2/1 rendering.
+            // Its native capture lease is prepared only after the HUD mask ACK.
+            let _ = roi;
             current(&target, &operation, true)?;
             Ok(shared)
         })();
@@ -162,20 +203,23 @@ pub(super) async fn prepare(
     // a WebView synchronously inside a Windows event callback can deadlock.
     let target = app.clone();
     let operation = id.to_owned();
+    let config_for_window = config.clone();
+    let (page_send, mut page_receive) = tokio::sync::oneshot::channel();
     let pending = tauri::async_runtime::spawn_blocking(move || {
         current(&target, &operation, true)?;
+        let page_send = std::sync::Mutex::new(Some(page_send));
         let window = tauri::WebviewWindowBuilder::new(
             &target,
             LABEL,
-            tauri::WebviewUrl::App("index.html?surface=recording".into()),
+            tauri::WebviewUrl::App("index.html?surface=recording&compound=1".into()),
         )
         .title("Mewu · 录屏")
-        .inner_size(CONTROLS_WIDTH, CONTROLS_HEIGHT)
+        .inner_size(config_for_window.monitor_width as f64 / scale, config_for_window.monitor_height as f64 / scale)
         .decorations(false)
-        // Retain layered-window affinity support and the existing opaque HUD.
+        // One compound surface: transparent live ROI plus outside mask/controls.
         .transparent(true)
-        .background_color(tauri::window::Color(252, 253, 255, 255))
-        .shadow(!shared)
+        .background_color(tauri::window::Color(0, 0, 0, 0))
+        .shadow(false)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
@@ -183,6 +227,13 @@ pub(super) async fn prepare(
         .skip_taskbar(true)
         .focused(false)
         .visible(false)
+        .on_page_load(move |_, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                if let Ok(mut pending) = page_send.lock() {
+                    if let Some(send) = pending.take() { let _ = send.send(()); }
+                }
+            }
+        })
         .disable_drag_drop_handler()
         .on_navigation(|url| {
             (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
@@ -205,6 +256,21 @@ pub(super) async fn prepare(
     .await
     .map_err(|_| "录屏控制条创建中断")??;
 
+    // Native navigation completion lets the compound page establish its initial
+    // transparency before show. Hidden pages need not produce animation frames;
+    // actual visible layout is still acknowledged separately after show below.
+    let page_until = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        current(app, id, true)?;
+        match page_receive.try_recv() {
+            Ok(()) => break,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => return Err("录屏页面加载中断".into()),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+        }
+        if tokio::time::Instant::now() >= page_until { return Err("录屏页面加载超时".into()); }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
     // Phase 3: only the original message thread may attach, verify, position and
     // show this HUD. If any fence fails before attachment the guard owns cleanup;
     // after attachment the existing finish() restores the exact capture session.
@@ -216,32 +282,24 @@ pub(super) async fn prepare(
         let mut pending = pending;
         let result = (|| -> Result<(), PrepareFailure> {
             current(&target, &operation, true)?;
-            edit_capture_session(&target.state::<RecordingState>(), &operation, |session| {
-                session.verify()
-            })?;
             let toolbar = pending.window().clone();
+            toolbar.set_position(tauri::PhysicalPosition::new(config.origin_x, config.origin_y))
+                .map_err(|_| "无法放置录屏界面")?;
+            toolbar.set_size(tauri::PhysicalSize::new(config.monitor_width, config.monitor_height))
+                .map_err(|_| "无法调整录屏界面")?;
+            if !shared { exclude(&toolbar, true)?; }
             edit_capture_session(&target.state::<RecordingState>(), &operation, |session| {
                 session.attach_hud(&toolbar)
             })?;
             // edit_capture_session has returned the lease to the same Active.
             pending.transferred();
-            if !shared {
-                exclude(&toolbar, true)?;
-            }
-            let x = config.origin_x as f64
-                + (config.monitor_width as f64 - CONTROLS_WIDTH * scale) / 2.;
-            let y = config.origin_y as f64 + 10. * scale;
-            toolbar
-                .set_position(tauri::PhysicalPosition::new(x as i32, y as i32))
-                .map_err(|_| "无法放置录屏控制条")?;
-            let show_hud = if shared {
-                let display = crate::shared_capture_windows::Rect::new(
+            let display = crate::shared_capture_windows::Rect::new(
                     config.origin_x,
                     config.origin_y,
                     config.monitor_width,
                     config.monitor_height,
                 )?;
-                let roi = crate::shared_capture_windows::Rect::offset(
+            let roi = crate::shared_capture_windows::Rect::offset(
                     config.origin_x,
                     config.origin_y,
                     config.x,
@@ -249,24 +307,73 @@ pub(super) async fn prepare(
                     config.width,
                     config.height,
                 )?;
-                let work = crate::shared_capture_windows::work_area(&toolbar, display)?;
-                crate::shared_capture_windows::place_hud(&toolbar, roi, work, f8)?
-            } else {
-                true
-            };
+            let work = crate::shared_capture_windows::work_area(&toolbar, display)?;
+            let position = crate::shared_capture_windows::hud_position(work, roi,
+                ((CONTROLS_WIDTH * scale).round() as u32, (CONTROLS_HEIGHT * scale).round() as u32));
+            if position.is_none() && !f8 { return Err("录屏区域外没有控制条空间，请使用较小选区".into()); }
+            let rect = position.map(|(x,y)| super::Rect {
+                x: (x as f64 - config.origin_x as f64) / config.monitor_width as f64,
+                y: (y as f64 - config.origin_y as f64) / config.monitor_height as f64,
+                width: CONTROLS_WIDTH * scale / config.monitor_width as f64,
+                height: CONTROLS_HEIGHT * scale / config.monitor_height as f64,
+            });
             current(&target, &operation, true)?;
             edit_capture_session(&target.state::<RecordingState>(), &operation, |session| {
-                session.verify()
+                session.stage_scroll_hud(roi, &[display])
             })?;
-            if show_hud {
-                toolbar.show().map_err(|_| "无法显示录屏控制条")?;
-            }
+            super::update(&target, &operation, |status| {
+                status.hud = Some(super::Hud { rect, stage: "layout", ready: false });
+            });
+            toolbar.show().map_err(|_| "无法显示录屏界面")?;
             Ok(())
         })();
         let _ = send.send(result);
     })
     .map_err(|_| "无法准备录屏窗口")?;
-    receive.await.map_err(|_| "录屏窗口准备中断")?
+    receive.await.map_err(|_| "录屏窗口准备中断")??;
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    while !presentation_ready(app, id, "layout")? {
+        if tokio::time::Instant::now() >= until { return Err("录屏界面未能完成布局".into()); }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    Ok(())
+}
+
+/// The worker cannot sample until the visible outside mask was acknowledged and
+/// the original message thread has removed every owned HWND pixel from the ROI.
+pub(super) fn finish_countdown(app: &AppHandle, id: &str, config: &backend::Config) -> Result<bool, String> {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        match presentation_ready(app, id, "mask") {
+            Ok(true) => break,
+            Ok(false) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+            Ok(false) => return Err("录屏遮罩未能完成显示".into()),
+            Err(PrepareFailure::Canceled) => return Ok(false),
+            Err(PrepareFailure::Failed(error)) => return Err(error),
+        }
+    }
+    let target = app.clone(); let operation = id.to_owned(); let config = config.clone();
+    let transitioned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let completed = transitioned.clone();
+    crate::shared_capture_windows::check(app, move || {
+        match current(&target, &operation, true) {
+            Ok(()) => {},
+            Err(PrepareFailure::Canceled) => return Ok(()),
+            Err(PrepareFailure::Failed(error)) => return Err(error),
+        }
+        let roi = crate::shared_capture_windows::Rect::offset(config.origin_x,config.origin_y,config.x,config.y,config.width,config.height)?;
+        let display = crate::shared_capture_windows::Rect::new(config.origin_x,config.origin_y,config.monitor_width,config.monitor_height)?;
+        edit_capture_session(&target.state::<RecordingState>(), &operation, |session| {
+            session.stage_scroll_hud(roi, &[display])?;
+            session.main.prepare(roi, false)?;
+            session.configure_scroll_hud(roi, &[display])?;
+            session.verify()
+        })?;
+        super::update(&target, &operation, |status| { if let Some(hud) = &mut status.hud { hud.stage = "live"; } });
+        completed.store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
+    })?;
+    Ok(transitioned.load(std::sync::atomic::Ordering::Acquire))
 }
 
 #[cfg(test)]
@@ -310,6 +417,7 @@ mod tests {
                 },
                 stop_hotkey: "F8 / Esc".into(),
                 audio: backend::AudioMode::System,
+                hud: Some(super::super::Hud { rect: None, stage: "layout", ready: false }),
             },
             commands: commands.clone(),
             grant: crate::plugins::RecordingGrant {
@@ -322,6 +430,16 @@ mod tests {
             suppress_reveal: false,
         };
         assert!(current_policy(&active, "original", false, true).is_ok());
+        assert!(!accept_surface_ready(&mut active, "replacement", "layout", true, true).unwrap());
+        assert!(!accept_surface_ready(&mut active, "original", "mask", true, true).unwrap());
+        assert!(accept_surface_ready(&mut active, "original", "layout", false, true).is_err());
+        assert!(!active.status.hud.as_ref().unwrap().ready);
+        assert!(!accept_surface_ready(&mut active, "original", "layout", true, false).unwrap());
+        assert!(accept_surface_ready(&mut active, "original", "layout", true, true).unwrap());
+        assert!(accept_surface_ready(&mut active, "original", "layout", true, true).unwrap());
+        active.status.hud.as_mut().unwrap().stage = "mask";
+        active.status.hud.as_mut().unwrap().ready = false;
+        assert!(!accept_surface_ready(&mut active, "original", "layout", true, true).unwrap());
         assert!(matches!(
             current_policy(&active, "replacement", false, true),
             Err(PrepareFailure::Failed(_))
@@ -341,6 +459,8 @@ mod tests {
         ));
         active.suppress_reveal = false;
         commands.send(backend::Control::Cancel).unwrap();
+        assert!(!accept_surface_ready(&mut active, "original", "mask", true, true).unwrap());
+        assert!(!active.status.hud.as_ref().unwrap().ready);
         assert!(matches!(
             current_policy(&active, "original", false, true),
             Err(PrepareFailure::Canceled)
@@ -350,6 +470,7 @@ mod tests {
             Some(backend::Control::Cancel)
         ));
         active.plugin_revoked = true;
+        assert!(!accept_surface_ready(&mut active, "original", "mask", true, true).unwrap());
         assert!(matches!(
             current_policy(&active, "original", false, true),
             Err(PrepareFailure::Failed(_))

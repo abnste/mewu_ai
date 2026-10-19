@@ -339,6 +339,16 @@ fn get_window_snap_map_blocking(
     timing.finish(matches!(&result, Ok(Some(_))));
     result
 }
+#[tauri::command]
+async fn recording_surface_ready(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    stage: String,
+) -> Result<bool, String> {
+    recording::surface_ready(&app, window, &id, &stage).await
+}
+
 impl Host {
     fn lock(&self) -> Result<MutexGuard<'_, Engine>, String> {
         self.engine
@@ -3072,6 +3082,7 @@ fn main() {
                 scroll_host::start_scroll_capture,
                 scroll_host::control_scroll_capture,
                 scroll_host::get_scroll_status,
+                scroll_host::scroll_surface_ready,
                 ocr_host::run_plugin_ocr,
                 speech_host::get_voice_capabilities,
                 speech_host::run_plugin_dictation,
@@ -3109,6 +3120,7 @@ fn main() {
                 get_frozen_scenes,
                 resize_frozen_widget,
                 recording::get_recording_status,
+                recording_surface_ready,
                 recording_audio_host::get_recording_audio,
                 recording_audio_host::set_recording_audio,
                 recording::start_recording,

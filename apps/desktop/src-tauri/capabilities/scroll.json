@@ -8,6 +8,7 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-get-scroll-status",
-    "allow-control-scroll-capture"
+    "allow-control-scroll-capture",
+    "allow-scroll-surface-ready"
   ]
 }

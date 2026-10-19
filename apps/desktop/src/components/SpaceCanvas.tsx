@@ -412,16 +412,18 @@ export default function SpaceCanvas(props: Props) {
     const place = () => { if (!disposed && toolbar === element && element.isConnected && toolbarVisible()) { const region = activeRegion(); if (region) untrack(() => placeToolbar(region)); } };
     toolbarObserver = new ResizeObserver(place); toolbarObserver.observe(element); queueMicrotask(place);
   }
-  function revealToolbar(region: Region) {
+  function revealToolbar(region: Region, preservePendingPresentation = false) {
     if (activity() || forceNew()) return;
-    if ((pendingSelection() || pendingSelectionOutlines().length) && pendingSelection()?.region.id !== region.id) clearPendingSelection();
+    // A completed save does not cancel other admitted presentation outlines.
+    if (!preservePendingPresentation && (pendingSelection() || pendingSelectionOutlines().length) && pendingSelection()?.region.id !== region.id) clearPendingSelection();
     batch(() => { clearHideTimer(); setActiveItemId(''); setActive(region.id); placeToolbar(region); setToolbarVisible(true); });
   }
   function hover(event: PointerEvent) {
     if (extensionInteracting()) { clearHideTimer(); return; }
     if (event.target instanceof Element && event.target.closest('.selection-code-card')) { clearSnapPreview(); clearHideTimer(); return; }
     updateSnapPreview({ x: event.clientX, y: event.clientY, shiftKey: event.shiftKey });
-    if (activity() || forceNew() || exporting() || props.geometryView.held || props.geometryView.pending) return;
+    // Passive movement cannot replace an unfinished selection's presentation owner.
+    if (activity() || forceNew() || exporting() || props.geometryView.held || props.geometryView.pending || pendingSelection() || pendingSelectionOutlines().length) return;
     if (activeItemId()) { scheduleHide(); return; }
     const target = event.target instanceof Element ? event.target : undefined;
     if ((pluginMenu()) && target?.closest('.capture-toolbar')) { clearHideTimer(); return; }
@@ -625,7 +627,7 @@ export default function SpaceCanvas(props: Props) {
       if (!pending.complete || !pending.presented) { if (!pending.acknowledged) setPendingSelection({ ...pending, acknowledged: true }); return; }
       setPendingSelection(undefined);
       if (pending.automatic) { snapshotSelections.bind(saved, pending.automatic); setSnapshotVersion(value => value + 1); }
-      revealToolbar(saved); props.onSelectionComplete?.(saved);
+      revealToolbar(saved, true); props.onSelectionComplete?.(saved);
     });
   }
   createEffect(reconcilePendingSelection);

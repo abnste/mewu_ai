@@ -66,21 +66,21 @@ export default function PendingOwner(props) {
   const sameGeometry = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
   const composerBox = () => { props.readLayout(); return props.composerBox; };
   const toolbarBox = () => ({x:0,y:0,width:0,height:0}), TOLERANCE = 24;
-  const clearHideTimer = () => {}, placeToolbar = () => props.placed.push(active()), endNudge = () => {};
+  const clearHideTimer = () => {}, placeToolbar = () => props.placed.push(active()), endNudge = () => {}, scheduleHide = () => {};
   const setCodeFocused = () => {}, setViewport = () => {};
   const hideToolbar = () => setToolbarVisible(false), deferGeometryPointer = () => false;
   const ocrRequests = { cancel() {}, dispose() {} }, snapshotSelections = { bind: (...args) => props.bound.push(args) };
   const snapMutations = {disconnect(){}}, toolbarObserver = undefined, flashTimer = undefined;
   const getWindowSnapMap = request => props.getWindowSnapMap(request);
   ${variable('snapLoader')}
-  const codeFocus = () => {}, leave = () => {}, focusReference = () => {}, recordKey = () => {}, releaseKey = () => {}, snapFocus = () => {}, hover = () => {};
-  ${['setSelectionActivity', 'trackPointer', 'begin', 'editRegion', 'currentPendingSource', 'currentPendingSelection', 'removePendingOutline', 'retirePendingSelection', 'clearPendingSelection', 'presentPendingSelection', 'activateItem', 'reconcilePendingSelection', 'revealToolbar', 'candidateAt', 'previewCandidateAt', 'updateSnapPreview', 'clearSnapPreview'].map(handler).join('\n')}
+  const codeFocus = () => {}, leave = () => {}, focusReference = () => {}, recordKey = () => {}, releaseKey = () => {}, snapFocus = () => {};
+  ${['hover', 'setSelectionActivity', 'trackPointer', 'begin', 'editRegion', 'currentPendingSource', 'currentPendingSelection', 'removePendingOutline', 'retirePendingSelection', 'clearPendingSelection', 'presentPendingSelection', 'activateItem', 'reconcilePendingSelection', 'revealToolbar', 'candidateAt', 'previewCandidateAt', 'updateSnapPreview', 'clearSnapPreview'].map(handler).join('\n')}
   ${['blur', 'resize', 'snapVisibility'].map(variable).join('\n')}
   createEffect(reconcilePendingSelection);
   ${slice(snapEffect)};
   ${slice(sourceEffect)};
   ${slice(cleanup)};
-  Object.assign(props.control, { begin, editRegion, activateItem, blur, resize, snapVisibility, previewCandidateAt, updateSnapPreview, revealToolbar, cancel: () => cancelGesture?.(),
+  Object.assign(props.control, { begin, editRegion, activateItem, hover, blur, resize, snapVisibility, previewCandidateAt, updateSnapPreview, revealToolbar, cancel: () => cancelGesture?.(),
     state: () => ({selection:selection(),pending:pendingSelection(),active:active(),preview:selectionPreview(),toolbar:toolbarVisible()}),
     lateVersion: () => interactionVersion });
   return <div>${slice(mask)}${slice(snapShow)}<For each={regionIds()}>{(id,index)=>{
@@ -577,6 +577,68 @@ test('multiple queued selections hand off their own connected outlines without s
     f.ack(1);f.ack(2);f.requests[1].resolve();f.requests[2].resolve();await tick();assert.equal(pendingOutlines(f).length,2);assert.equal(f.control.state().toolbar,false);
     f.flushPresentation();assert.equal(pendingOutlines(f).length,0);assert.equal(savedOutlines(f).length,3);assert.equal(f.cutouts().length,3);
     assert.deepEqual(f.completed.map(region=>region.id),[f.calls[2].id]);assert.equal(f.control.state().active,f.calls[2].id);
+  }finally{f.dispose();}
+});
+
+test('passive hover over an older saved region preserves a finished overlapping outline through delayed acknowledgement and DOM handoff', async () => {
+  const f=await fixture({holdPresentation:true});try{
+    const old={id:'existing-region',x:100,y:100,width:400,height:300};
+    f.setScene(value=>({...value,regions:[old]}));
+    f.begin(600,450);f.drag(400,300);f.up(400,300);await tick();
+    const pending=f.outline();assert.ok(pending);assert.equal(f.calls.length,1);
+    f.control.hover(f.pointer(400,301));
+    assert.equal(f.outline(),pending,'ordinary movement after pointerup cannot withdraw the only unsaved border');
+    assert.equal(f.control.state().active,f.calls[0].id);assert.equal(f.control.state().toolbar,false);
+    assert.equal(f.scene().regions.length,1);assert.deepEqual(f.completed,[]);
+    f.requests[0].resolve();await tick();assert.equal(f.outline(),pending);assert.deepEqual(f.completed,[]);
+    f.ack();assert.equal(f.outline(),pending);assert.equal(savedOutlines(f).length,2);
+    f.control.hover(f.pointer(400,301));assert.equal(f.outline(),pending);
+    f.flushPresentation();assert.equal(f.outline(),undefined);assert.equal(savedOutlines(f).length,2);
+    assert.deepEqual(f.completed.map(region=>region.id),[f.calls[0].id]);assert.deepEqual(f.errors,[]);
+  }finally{f.dispose();}
+});
+
+test('passive hover cannot discard several admitted outlines while their independent saves and section attachments arrive', async () => {
+  const f=await fixture({holdPresentation:true});try{
+    const old={id:'existing-region',x:100,y:100,width:400,height:300};
+    f.setScene(value=>({...value,regions:[old]}));
+    for(let index=0;index<3;index++){
+      f.begin(600+index*20,450+index*20);f.up(400+index*10,300+index*10);await tick();
+      const pending=pendingOutlines(f);f.control.hover(f.pointer(400,301));
+      assert.equal(pendingOutlines(f).length,index+1);assert.deepEqual(pendingOutlines(f),pending);
+    }
+    assert.equal(f.calls.length,3);assert.equal(f.scene().regions.length,1);assert.deepEqual(f.completed,[]);
+    f.ack(0);f.requests[0].resolve();await tick();f.flushPresentation();
+    assert.equal(pendingOutlines(f).length,2);f.control.hover(f.pointer(400,301));assert.equal(pendingOutlines(f).length,2);
+    f.ack(2);f.requests[2].resolve();await tick();f.flushPresentation();
+    assert.equal(pendingOutlines(f).length,1);assert.deepEqual(f.completed.map(region=>region.id),[f.calls[2].id]);
+    f.ack(1);f.requests[1].resolve();await tick();f.flushPresentation();
+    assert.equal(pendingOutlines(f).length,0);assert.equal(savedOutlines(f).length,4);assert.deepEqual(f.errors,[]);
+  }finally{f.dispose();}
+});
+
+test('an explicit saved region press clears hovered pending presentation and its late reply cannot steal the action owner', async () => {
+  const f=await fixture({holdPresentation:true});try{
+    const old={id:'existing-region',x:100,y:100,width:400,height:300};
+    f.setScene(value=>({...value,regions:[old]}));f.begin(600,450);f.up(400,300);await tick();
+    f.control.hover(f.pointer(400,301));assert.equal(pendingOutlines(f).length,1);
+    assert.equal(f.control.state().toolbar,false);assert.equal(f.all().some(node=>node.props?.['aria-label']==='authorized-toolbar'),false);
+    f.control.editRegion(f.pointer(400,301),old);assert.equal(pendingOutlines(f).length,0);assert.equal(f.control.state().pending,undefined);
+    f.control.cancel();await tick();
+    f.ack();f.requests[0].resolve();await tick();f.flushPresentation();
+    assert.equal(pendingOutlines(f).length,0);assert.equal(f.control.state().active,old.id);assert.deepEqual(f.completed,[]);
+  }finally{f.dispose();}
+});
+
+test('a real background replacement clears hovered pending outlines and rejects their late attachment or error', async () => {
+  const f=await fixture({holdPresentation:true});try{
+    const old={id:'existing-region',x:100,y:100,width:400,height:300};
+    f.setScene(value=>({...value,regions:[old]}));f.begin(600,450);f.up(400,300);await tick();
+    f.control.hover(f.pointer(400,301));assert.equal(pendingOutlines(f).length,1);
+    f.setScene(value=>({...value,background:{...value.background,id:'successor-background'},regions:[]}));
+    assert.equal(pendingOutlines(f).length,0);assert.equal(f.control.state().pending,undefined);
+    f.requests[0].reject(Error('late original-source save'));await tick();f.flushPresentation();
+    assert.equal(pendingOutlines(f).length,0);assert.deepEqual(f.errors,[]);assert.deepEqual(f.completed,[]);
   }finally{f.dispose();}
 });
 test('a delayed saved-section handoff cannot restore cleared detached or successor-source presentation', async () => {

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "./i18n";
 import { nativeSelectOwnsEscape } from './native-select-escape';
-import { createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from 'solid-js';
 import { Check, CircleAlert, LoaderCircle, X } from 'lucide-solid';
-import { controlScrollCapture, scrollNeedsKeep, subscribeScroll, type ScrollAction, type ScrollStatus } from './scroll-bridge';
+import { controlScrollCapture, scrollNeedsKeep, scrollSurfaceReady, subscribeScroll, type ScrollAction, type ScrollStatus } from './scroll-bridge';
 import { readPreferences } from './interface-preferences';
 import './scroll.css';
 
@@ -30,6 +30,30 @@ export default function ScrollSurface() {
   const maskOpacity = readPreferences().maskOpacity;
   const [status, setStatus] = createSignal<ScrollStatus | null>(null), [pending, setPending] = createSignal(false), [error, setError] = createSignal('');
   let disposed = false, stop: (() => void) | undefined;
+  let surface: HTMLDivElement | undefined;
+  const preparingSurface = createMemo(() => status()?.phase === 'starting' && status()?.hud && !status()?.hud?.live ? status()!.id : undefined);
+  createEffect(on(preparingSurface, id => {
+    if (!id) return;
+    let canceled = false, frame = 0;
+    const ready = () => {
+      if (canceled || disposed || status()?.id !== id || status()?.phase !== 'starting') return;
+      if (document.hidden) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (canceled || disposed || document.hidden || status()?.id !== id || status()?.phase !== 'starting' || !surface?.isConnected) return;
+        const box = surface.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) return;
+        // A visible layout acknowledgement is not an optical first-frame claim.
+        void scrollSurfaceReady(id).catch(cause => {
+          if (!canceled && !disposed && status()?.id === id) setError(cause instanceof Error ? cause.message : String(cause));
+        });
+      });
+    };
+    const visibility = () => { if (!document.hidden && !frame) ready(); };
+    document.addEventListener('visibilitychange', visibility);
+    ready();
+    onCleanup(() => { canceled = true; if (frame) cancelAnimationFrame(frame); document.removeEventListener('visibilitychange', visibility); });
+  }));
   onMount(async () => {
     try { stop = await subscribeScroll(value => { if (!disposed) { setStatus(value); setError(''); } }, 'scroll-controls'); if (disposed) stop(); }
     catch (cause) { if (!disposed) setError(String(cause)); }
@@ -48,7 +72,7 @@ export default function ScrollSurface() {
   };
   document.addEventListener('keydown', keyboard);
   onCleanup(() => { disposed = true; stop?.(); document.removeEventListener('keydown', keyboard); });
-  return <div class="scroll-control-window" classList={{ 'scroll-compound-window': Boolean(status()?.hud) }}><Show when={status()} fallback={<Show when={error()}><div class="scroll-controls scroll-error" role="alert"><CircleAlert size={15} /><span>{error()}</span></div></Show>}>
+  return <div ref={element => { surface = element; }} class="scroll-control-window" classList={{ 'scroll-compound-window': Boolean(status()?.hud) }}><Show when={status()} fallback={<Show when={error()}><div class="scroll-controls scroll-error" role="alert"><CircleAlert size={15} /><span>{error()}</span></div></Show>}>
     {current => <><Show when={current().hud}>{hud => <><ScrollBackdrop status={current()} maskOpacity={maskOpacity} /><div class="scroll-live-outline" style={hudStyle(hud().outline)} aria-label={t('长截图区域')} /></>}</Show>
     <Show when={!current().hud || current().hud?.preview}><Show when={current().preview}>{preview=><div class="scroll-preview" style={hudStyle(current().hud?.preview)}><img src={preview()} alt={t('长截图预览')} draggable={false} onLoad={event=>{const host=event.currentTarget.parentElement;if(host)host.scrollTop=host.scrollHeight;}}/></div>}</Show></Show>
     <Show when={!current().hud || current().hud?.controls}><div class="scroll-controls-slot" style={hudStyle(current().hud?.controls)}><div class="scroll-controls" role="toolbar" aria-label={t("长截图控制")}>

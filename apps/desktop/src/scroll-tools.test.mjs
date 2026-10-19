@@ -36,6 +36,15 @@ async function scrollFixture(native = true, query = Promise.resolve(null)) {
 const ready = await scrollFixture(), { ScrollStatusGate, scrollNeedsKeep } = ready.api;
 const initial = { id: 'one', sceneId: 'scene', phase: 'starting', rect: { x: .1, y: .2, width: .4, height: .5 }, width: 800, height: 500, status: 'initial', stopHotkey: 'F8 / Esc' };
 const gate = new ScrollStatusGate(); assert.equal(gate.accept(initial), true);
+const liveGate = new ScrollStatusGate();
+const stagedHud = { outline: initial.rect, preview: null, controls: null, live: false };
+assert.equal(liveGate.accept({ ...initial, hud: stagedHud }), true);
+assert.equal(liveGate.accept({ ...initial, hud: { ...stagedHud, live: true } }), true);
+assert.equal(liveGate.accept({ ...initial, hud: stagedHud }), false, 'late staging cannot bring the screenshot back over a live source');
+assert.equal(liveGate.accept(initial), false, 'late unprepared status cannot discard the active native presentation');
+assert.equal(liveGate.accept({ ...initial, phase: 'finishing', hud: { ...stagedHud, live: true } }), true);
+assert.equal(liveGate.accept(null), true);
+assert.equal(liveGate.accept({ ...initial, id: 'fresh', hud: stagedHud }), true, 'a new capture gets its own preparation');
 assert.equal(gate.accept({ ...initial, phase: 'capturing', status: 'extended', height: 1000 }), true);
 assert.equal(gate.accept(initial), false); assert.equal(gate.accept({ ...initial, phase: 'finishing' }), true);
 assert.equal(gate.accept({ ...initial, phase: 'capturing' }), false); assert.equal(gate.accept(null), true); assert.equal(gate.accept(initial), false);
@@ -62,6 +71,9 @@ assert.deepEqual(plain(ready.calls.at(-1)), { command: 'start_scroll_capture', a
 for (const id of [0, -1, .5, NaN, Infinity, 0x1_0000_0000]) await assert.rejects(ready.api.startScrollCapture('mewu.scroll', 2, 'capture', target, id));
 assert.equal(scrollNeedsKeep({ ...initial, automatic: true, status: 'ambiguous' }), false);
 checks.push('Exact IPC keeps original screen geometry/background identity; browser never fabricates scroll capture or completion');
+await ready.api.scrollSurfaceReady('one');assert.deepEqual(plain(ready.calls.at(-1)),{command:'scroll_surface_ready',args:{id:'one'}});
+await browser.api.scrollSurfaceReady('one');assert.equal(browser.calls.length,0);
+checks.push('Only the native first-party scroll surface sends its exact operation identity for layout readiness; browser performs no IPC');
 
 async function mainBridgeFixture(native, probe) {
   const calls = [], context = createContext({ crypto: webcrypto, structuredClone, Date, Map, Set, URL, Blob, setTimeout, clearTimeout, Image: class { naturalWidth = 100; naturalHeight = 200; decode() { return Promise.resolve(); } } });
@@ -106,7 +118,8 @@ const controlCapability = JSON.parse(await readFile(new URL('../src-tauri/capabi
 const spaceCapability = JSON.parse(await readFile(new URL('../src-tauri/capabilities/space.json', import.meta.url), 'utf8'));
 assert.ok(config.app.security.capabilities.includes(controlCapability.identifier), 'explicit capability list must reference identifier, not filename');
 assert.deepEqual(controlCapability.windows, ['scroll-controls']);
-assert.deepEqual([...controlCapability.permissions].sort(), ['allow-control-scroll-capture', 'allow-get-scroll-status', 'core:event:allow-listen', 'core:event:allow-unlisten'].sort());
+assert.deepEqual([...controlCapability.permissions].sort(), ['allow-control-scroll-capture', 'allow-get-scroll-status', 'allow-scroll-surface-ready', 'core:event:allow-listen', 'core:event:allow-unlisten'].sort());
+assert.equal(spaceCapability.permissions.includes('allow-scroll-surface-ready'),false);
 for (const permission of ['allow-start-scroll-capture', 'allow-get-scroll-status', 'allow-control-scroll-capture']) assert.ok(spaceCapability.permissions.includes(permission));
 checks.push('Native config explicitly enables the actual scroll-controls capability identifier; control window is least-privileged and space owns start/get/control');
 console.log(JSON.stringify({ passed: true, checks }, null, 2));

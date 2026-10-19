@@ -6,6 +6,7 @@
 - 连续绘制按顺序保存，撤销、重做与退出等待已接受的笔迹；多个选区更新时保留已有对象和工具条。
 - 改进鼠标释放事件缺失时的分笔处理，新一笔不再沿用上一笔的采样点；触笔、触控和对象拖动保持各自的输入规则。
 - 连续框选时保留尚在保存的选框，避免开始下一框后上一框短暂消失；保存失败单独提示，操作工具仍等待真实保存完成。
+- 修复鼠标经过旧选区时误清除待保存选框。长截图和录屏切换保留原画布，窗口加载完成后再交接；Windows 录屏保留倒计时与选区外暗罩，遮罩就绪后才开始采集。
 - Windows 自动吸附保留悬停描边，原地点击松手后确认；直接拖框不再先提亮整个窗口。长截图保留选区边框、外圈暗色遮罩和随滚动增长的旁侧预览。
 - 修复远程鼠标先报告按键释放时，画线、移动和框选被误取消的问题，覆盖视频批注；切换选区与媒体对象时统一工具条归属，鼠标经过选区不会中断视频播放或编辑。
 - 视频播放与剪辑控件空闲时不再拦截 Esc，可直接退出截图；正在拖动剪辑或选择标注时仍先取消局部操作。
@@ -32,6 +33,7 @@ Windows 安装版、便携版，macOS ARM64 安装包和 Linux x64 AppImage 均�
 - Saves continuous drawing in order and preserves existing objects and toolbars across selection updates.
 - Separates ordinary mouse strokes when a release event is missing, without sharing the previous stroke's samples. Pen, touch and object gestures keep their existing input rules.
 - Keeps pending selection outlines visible while the next selection starts, reports individual save failures, and enables tools only after the selection is actually saved.
+- Prevents hovering an older region from clearing a pending selection. Scrolling capture and recording retain the original scene while their controls load. Windows recording shows its countdown and outside dimming before acquisition starts.
 - Windows snap selection keeps its hover outline and confirms on a stationary release, avoiding full-window highlighting when dragging. Scrolling capture retains the region border, outside dimming and growing side preview.
 - Preserves strokes, moves and marquee selection when remote mouse input reports released buttons before pointer-up, including video annotations. Keeps region and media toolbars mutually exclusive without interrupting video playback or editing on hover.
 - Idle playback and trim controls let Escape close the capture space; active trim gestures and annotation selection still cancel locally first.

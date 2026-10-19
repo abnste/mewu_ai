@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from './i18n';
 import { nativeSelectOwnsEscape } from './native-select-escape';
-import { createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show } from 'solid-js';
 import { CircleAlert, LoaderCircle, Pause, Play, Square, X } from 'lucide-solid';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { controlRecording, subscribeRecording, type RecordingAction, type RecordingStatus } from './bridge';
+import { controlRecording, recordingSurfaceReady, subscribeRecording, type RecordingAction, type RecordingStatus } from './bridge';
+import { readPreferences } from './interface-preferences';
 import './recording.css';
 
 export function RecordingBackdrop(props: { status: RecordingStatus; maskOpacity: number }) {
@@ -42,12 +43,63 @@ const timeLabel = (elapsedMs: number) => {
 
 export default function RecordingSurface() {
   document.documentElement.dataset.surface = 'recording';
-  const nativeLinux = new URLSearchParams(location.search).get('native-platform') === 'linux';
+  const parameters = new URLSearchParams(location.search);
+  const nativeLinux = parameters.get('native-platform') === 'linux', nativeCompound = parameters.get('compound') === '1';
+  const previousCompound = document.documentElement.dataset.recordingCompound;
+  if (nativeCompound) document.documentElement.dataset.recordingCompound = 'true';
   if (nativeLinux) document.documentElement.dataset.recordingPlatform = 'linux';
   const [status, setStatus] = createSignal<RecordingStatus | null>(null);
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal('');
   let disposed = false, stop: (() => void) | undefined;
+  let surface: HTMLDivElement | undefined, controls: HTMLDivElement | undefined;
+  const maskOpacity = readPreferences().maskOpacity;
+  createEffect(() => {
+    if (nativeCompound || status()?.hud) document.documentElement.dataset.recordingCompound = 'true';
+    else delete document.documentElement.dataset.recordingCompound;
+  });
+  const readyKey = createMemo(() => {
+    const current = status(), hud = current?.hud;
+    if (!current || !hud || (hud.stage === 'layout' ? !['starting', 'countdown'].includes(current.phase) : hud.stage !== 'mask' || current.phase !== 'starting')) return undefined;
+    return JSON.stringify([current.id, hud.stage, hud.rect]);
+  });
+  createEffect(on(readyKey, key => {
+    if (!key) return;
+    const current = status()!, id = current.id, stage = current.hud!.stage as 'layout' | 'mask';
+    let canceled = false, sent = false, frame = 0;
+    const owns = () => !canceled && !disposed && readyKey() === key;
+    const laidOut = () => {
+      if (!surface?.isConnected || (current.hud!.rect && !controls?.isConnected)) return false;
+      const boxes = [surface, ...(current.hud!.rect ? [controls!] : [])].map(element => element.getBoundingClientRect());
+      return boxes.every(box => Number.isFinite(box.width) && Number.isFinite(box.height) && box.width > 0 && box.height > 0);
+    };
+    const cancelFrame = () => { if (frame) cancelAnimationFrame(frame); frame = 0; };
+    const schedule = () => {
+      cancelFrame();
+      if (!owns() || sent || document.hidden) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (!owns() || document.hidden || !laidOut()) return;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          if (!owns() || sent || document.hidden || !laidOut()) return;
+          sent = true;
+          // Visible layout is necessary readiness, not an optical first-frame claim.
+          void recordingSurfaceReady(id, stage).catch(cause => {
+            if (owns()) setError(cause instanceof Error ? cause.message : String(cause));
+          });
+        });
+      });
+    };
+    const timer = setTimeout(() => { canceled = true; cancelFrame(); }, 10000);
+    document.addEventListener('visibilitychange', schedule);
+    window.addEventListener('resize', schedule);
+    schedule();
+    onCleanup(() => {
+      canceled = true; cancelFrame(); clearTimeout(timer);
+      document.removeEventListener('visibilitychange', schedule); window.removeEventListener('resize', schedule);
+    });
+  }));
   const label = () => ({ countdown: t('倒计时'), starting: t('准备中'), recording: t('录制中'), paused: t('已暂停'), stopping: t('处理中') }[status()?.phase || 'starting']);
   const waiting = () => status()?.phase === 'starting' || status()?.phase === 'stopping';
   const canPause = () => status()?.phase === 'recording' || status()?.phase === 'paused';
@@ -79,15 +131,21 @@ export default function RecordingSurface() {
     event.preventDefault(); event.stopPropagation(); stopOrCancel();
   };
   document.addEventListener('keydown', keyboard);
-  onCleanup(() => { disposed = true; stop?.(); document.removeEventListener('keydown', keyboard); if (nativeLinux) delete document.documentElement.dataset.recordingPlatform; });
-  return <div class="recording-control-window">
-    <Show when={status()} fallback={<Show when={error()}><div class="recording-controls recording-control-error" role="alert"><CircleAlert size={16} /><span title={error()}>{error()}</span></div></Show>}>
-      {current => <div class="recording-controls" role="toolbar" aria-label={t("录屏控制")}>
+  onCleanup(() => { disposed = true; stop?.(); document.removeEventListener('keydown', keyboard); if (nativeLinux) delete document.documentElement.dataset.recordingPlatform;
+    if (previousCompound) document.documentElement.dataset.recordingCompound = previousCompound;
+    else delete document.documentElement.dataset.recordingCompound;
+  });
+  return <div ref={element => { surface = element; }} class="recording-control-window" classList={{ 'recording-compound-window': Boolean(nativeCompound || status()?.hud) }}>
+    <Show when={status()} fallback={<Show when={!nativeCompound && error()}><div class="recording-controls recording-control-error" role="alert"><CircleAlert size={16} /><span title={error()}>{error()}</span></div></Show>}>
+      {current => <><Show when={current().hud && current().hud!.stage !== 'layout'}><RecordingBackdrop status={current()} maskOpacity={maskOpacity} /></Show>
+      <Show when={(!nativeCompound && !current().hud) || current().hud?.rect}><div ref={element => { controls = element; }} class="recording-controls-slot" style={current().hud?.rect ? {
+        left: `${current().hud!.rect!.x * 100}%`, top: `${current().hud!.rect!.y * 100}%`, width: `${current().hud!.rect!.width * 100}%`, height: `${current().hud!.rect!.height * 100}%`,
+      } : undefined}><div class="recording-controls" role="toolbar" aria-label={t("录屏控制")}>
         <Show when={!error()} fallback={<CircleAlert size={13} class="recording-status-icon" />}><Show when={!waiting()} fallback={<LoaderCircle size={13} class="spin recording-status-icon" />}><span class="recording-status-dot" classList={{ paused: current().phase === 'paused' }} title={label()} /></Show></Show>
         <output class="recording-elapsed" classList={{ 'recording-control-error': Boolean(error()), 'recording-control-draggable': nativeLinux }} onPointerDown={beginDrag} title={error() || label()} role={error() ? 'alert' : undefined} aria-label={error() ? t('录屏错误') : t('录制时长')}>{error() || timeLabel(current().elapsedMs)}</output>
         <button class="recording-control-button" disabled={pending() || !canPause()} title={current().phase === 'paused' ? t('继续录制') : t('暂停录制')} aria-label={current().phase === 'paused' ? t('继续录制') : t('暂停录制')} onClick={() => void act(current().phase === 'paused' ? 'resume' : 'pause')}><Show when={current().phase === 'paused'} fallback={<Pause size={16} />}><Play size={16} /></Show></button>
         <button class="recording-control-button recording-stop" disabled={pending() || current().phase === 'stopping'} title={canceling() ? t('取消录屏') : t("停止录屏{0}").replaceAll("{0}", () => String(current().stopHotkey ? ` · ${current().stopHotkey}` : ''))} aria-label={canceling() ? t('取消录屏') : t('停止录屏')} onClick={stopOrCancel}><Show when={canceling()} fallback={<Square size={13} fill="currentColor" />}><X size={17} /></Show></button>
-      </div>}
+      </div></div></Show></>}
     </Show>
   </div>;
 }

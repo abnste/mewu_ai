@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recording-surface-ready"
+description = "Enables the recording_surface_ready command without any pre-configured scope."
+commands.allow = ["recording_surface_ready"]
+
+[[permission]]
+identifier = "deny-recording-surface-ready"
+description = "Denies the recording_surface_ready command without any pre-configured scope."
+commands.deny = ["recording_surface_ready"]

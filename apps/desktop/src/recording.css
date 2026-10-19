@@ -24,3 +24,9 @@ html[data-surface="recording-live"],html[data-surface="recording-live"] body,htm
 .recording-control-error>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px; }
 .capture-toolbar .capture-record { color:#df5360; }
 .capture-toolbar .capture-record:hover { color:#ce4756;background:#fbecef; }
+
+html[data-recording-compound="true"],html[data-recording-compound="true"] body,html[data-recording-compound="true"] #root { background:transparent!important; }
+.recording-compound-window { position:fixed;inset:0;pointer-events:none; }
+.recording-controls-slot { width:100%;height:100%; }
+.recording-compound-window .recording-controls-slot { position:absolute;pointer-events:auto; }
+.recording-compound-window .recording-controls { border-radius:12px; }

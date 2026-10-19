@@ -309,8 +309,8 @@ pub(crate) struct Lease {
     before_cloak: u32,
     before_bounds: Rect,
     before_region: Option<Region>,
-    // Only the disposable long-capture HUD uses this explicit native aperture.
-    // Recording and the main capture lease continue through their original path.
+    // Only disposable compound HUDs use this explicit native aperture.
+    // The main capture lease retains its original region/cloak fallback.
     scroll_clip: Option<ScrollClip>,
     applied_region: Option<Region>,
     region_restoring: bool,
@@ -383,6 +383,19 @@ impl Lease {
                 && IsWindow(self.hwnd as HWND) != 0
                 && GetPropW(self.hwnd as HWND, self.cookie.as_ptr()) as usize == 1
         }
+    }
+    fn verify_staged(&self, roi: Rect) -> Result<(), String> {
+        if !self.current() || self.finished || self.prepared || !self.before_bounds.contains(roi) {
+            return Err("采集窗口身份或阶段已改变".into());
+        }
+        let native = window_rect(self.hwnd as HWND)?;
+        if self.before_bounds != (Rect { left: native.left, top: native.top, right: native.right, bottom: native.bottom }) {
+            return Err("采集窗口位置已改变".into());
+        }
+        if affinity(self.hwnd as HWND)? != self.before_affinity {
+            return Err("采集窗口可见性已改变".into());
+        }
+        Ok(())
     }
     fn set_scroll_clip(&mut self, roi: Rect, shapes: &[Rect]) -> Result<(), String> {
         if !self.current() || self.finished || self.prepared {
@@ -726,7 +739,20 @@ impl Session {
             }
         }
     }
-    /// Long-capture-only extension. Existing recording HUDs never call this.
+    /// Presentation ACKs must name this exact owned HWND on its message thread.
+    /// A replacement with the same Tauri label must never acknowledge this lease.
+    pub fn owns_hud(&self, window: &tauri::WebviewWindow) -> bool {
+        !self.main.finished && self.main.current() && self.hud.as_ref().is_some_and(|(_, lease)| {
+            !lease.finished && lease.current() && window.hwnd().is_ok_and(|hwnd| hwnd.0 as usize == lease.hwnd)
+        })
+    }
+    /// Stage only the disposable HUD aperture. The original main window remains
+    /// visible and untouched until its frontend has presented the countdown.
+    pub fn stage_scroll_hud(&mut self, roi: Rect, shapes: &[Rect]) -> Result<(), String> {
+        self.main.verify_staged(roi)?;
+        self.hud.as_mut().ok_or("采集控件不存在")?.1.set_scroll_clip(roi, shapes)
+    }
+    /// Update only an already owned compound HUD after the main is safe to sample.
     pub fn configure_scroll_hud(&mut self, roi: Rect, shapes: &[Rect]) -> Result<(), String> {
         self.main.verify(roi)?;
         self.hud.as_mut().ok_or("长截图控件不存在")?.1.set_scroll_clip(roi,shapes)
@@ -1072,6 +1098,35 @@ mod tests {
         assert!(region(window.0).unwrap().is_none());
         assert_eq!(cloak(window.0).unwrap(), old_cloak);
         assert_eq!(input_style(window.0).unwrap(), before);
+    }
+    #[test]
+    fn staged_native_hud_keeps_main_unchanged_until_capture_and_rejects_late_staging() {
+        let main_window = Window::new();
+        let hud_window = Window::new();
+        let mut main = Lease::capture(main_window.0 as usize, true).unwrap();
+        let mut hud = Lease::capture(hud_window.0 as usize, true).unwrap();
+        let bounds = main.before_bounds;
+        let width = (bounds.right - bounds.left) as u32;
+        let height = (bounds.bottom - bounds.top) as u32;
+        let roi = Rect::new(bounds.left + (width / 4) as i32, bounds.top + (height / 4) as i32, width / 2, height / 2).unwrap();
+        let before = (input_style(main_window.0).unwrap(), affinity(main_window.0).unwrap(), cloak(main_window.0).unwrap());
+        main.verify_staged(roi).unwrap();
+        assert!(main.verify_staged(Rect::new(bounds.right, bounds.bottom, 1, 1).unwrap()).is_err());
+        let hud_bounds = hud.before_bounds;
+        hud.set_scroll_clip(roi, &[hud_bounds]).unwrap();
+        main.verify_staged(roi).unwrap();
+        assert!(region(main_window.0).unwrap().is_none());
+        assert_eq!((input_style(main_window.0).unwrap(), affinity(main_window.0).unwrap(), cloak(main_window.0).unwrap()), before);
+        hud.verify_scroll_clip(roi).unwrap();
+        main.prepare(roi, false).unwrap();
+        assert!(main.verify_staged(roi).is_err());
+        main.verify(roi).unwrap();
+        hud.verify_scroll_clip(roi).unwrap();
+        main.restore().unwrap();
+        assert!(region(main_window.0).unwrap().is_none());
+        assert_eq!((input_style(main_window.0).unwrap(), affinity(main_window.0).unwrap(), cloak(main_window.0).unwrap()), before);
+        drop(hud_window);
+        hud.restore().unwrap();
     }
     #[test]
     fn shared_native_empty_and_complex_regions_restore_exactly_after_callback() {

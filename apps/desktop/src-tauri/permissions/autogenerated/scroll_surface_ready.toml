@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-scroll-surface-ready"
+description = "Enables the scroll_surface_ready command without any pre-configured scope."
+commands.allow = ["scroll_surface_ready"]
+
+[[permission]]
+identifier = "deny-scroll-surface-ready"
+description = "Denies the scroll_surface_ready command without any pre-configured scope."
+commands.deny = ["scroll_surface_ready"]

@@ -17,10 +17,11 @@ const plain = value => JSON.parse(JSON.stringify(value));
 const source = await raw('./ScrollSurface.tsx');
 const compiled = stripTypeScriptTypes(transformSync(source, { filename: 'ScrollSurface.tsx', configFile: false, babelrc: false,
   parserOpts: { plugins: ['typescript', 'jsx'] }, presets: [[solidPreset, { generate: 'universal', moduleName: 'test-renderer' }]] }).code, { mode: 'transform' });
-async function fixture() {
-  const keys = new Map(), calls = []; let listener, stopped = 0, disposed;
-  const document = { documentElement: { dataset: {} }, addEventListener: (name, fn) => keys.set(name, fn), removeEventListener: (name, fn) => { if (keys.get(name) === fn) keys.delete(name); } };
-  const context = createContext({ document, console, Promise, Intl,
+async function fixture({ hidden = false, ready = () => Promise.resolve() } = {}) {
+  const keys = new Map(), calls = [], readyCalls = [], frames = new Map(); let listener, stopped = 0, disposed, frameId = 0;
+  let bounds = { width: 1200, height: 800 };
+  const document = { hidden, documentElement: { dataset: {} }, addEventListener: (name, fn) => keys.set(name, fn), removeEventListener: (name, fn) => { if (keys.get(name) === fn) keys.delete(name); } };
+  const context = createContext({ document, console, Promise, Intl, requestAnimationFrame: fn => { frames.set(++frameId, fn); return frameId; }, cancelAnimationFrame: id => frames.delete(id),
     localStorage: { getItem: () => JSON.stringify({ maskOpacity: .66 }) } });
   const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); }, { context });
   const sources = new Map();
@@ -35,7 +36,7 @@ async function fixture() {
   const core = synthetic(solid), universal = new SourceTextModule(await raw('../../../node_modules/solid-js/universal/dist/universal.js'), { context });
   await universal.link(() => core); await universal.evaluate();
   const renderer = universal.namespace.createRenderer({
-    createElement: type => ({ type, children: [], props: {}, parent: null }), createTextNode: text => ({ text, children: [], parent: null }),
+    createElement: type => ({ type, children: [], props: {}, parent: null, get isConnected() { return Boolean(this.parent?.isConnected); }, getBoundingClientRect: () => bounds }), createTextNode: text => ({ text, children: [], parent: null }),
     replaceText: (node, text) => { node.text = text; }, setProperty: (node, key, value) => { node.props[key] = value; },
     insertNode: (parent, node, anchor) => { if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1); const index = anchor ? parent.children.indexOf(anchor) : -1; parent.children.splice(index < 0 ? parent.children.length : index, 0, node); node.parent = parent; },
     removeNode: (parent, node) => { parent.children.splice(parent.children.indexOf(node), 1); node.parent = null; },
@@ -50,17 +51,19 @@ async function fixture() {
     if (name === './i18n') return synthetic({ t: value => value });
     if (name === './interface-preferences') return preferences;
     if (name === './native-select-escape') return synthetic({ nativeSelectOwnsEscape: () => false });
-    if (name === './scroll-bridge') return synthetic({ scrollNeedsKeep: bridge.namespace.scrollNeedsKeep, subscribeScroll: async (next, surface) => { assert.equal(surface, 'scroll-controls'); listener = next; return () => stopped++; }, controlScrollCapture: async (id, action) => { calls.push({ id, action }); } });
+    if (name === './scroll-bridge') return synthetic({ scrollNeedsKeep: bridge.namespace.scrollNeedsKeep, scrollSurfaceReady: id => { readyCalls.push(id); return ready(id); }, subscribeScroll: async (next, surface) => { assert.equal(surface, 'scroll-controls'); listener = next; return () => stopped++; }, controlScrollCapture: async (id, action) => { calls.push({ id, action }); } });
     if (name === 'lucide-solid') return synthetic({ Check: () => null, CircleAlert: () => null, LoaderCircle: () => null, X: () => null });
     if (name.endsWith('.css')) return synthetic({});
     throw Error(`Unexpected import ${name}`);
   }); await module.evaluate();
-  const root = { children: [] };
+  const root = { children: [], isConnected: true };
   solid.createRoot(dispose => { disposed = dispose; renderer.insert(root, () => module.namespace.default()); });
   await tick();
   const nodes = () => { const result = []; const walk = node => { result.push(node); node.children?.forEach(walk); }; walk(root); return result; };
   const one = key => nodes().find(node => node.props?.class === key);
-  return { next: value => listener(value), nodes, one, calls, keys, module, renderer, document, dispose: () => disposed(), stopped: () => stopped };
+  return { next: value => listener(value), nodes, one, calls, readyCalls, keys, frames, root, module, renderer, document,
+    setBounds: value => { bounds = value; }, flushFrames: () => { const batch = [...frames.values()]; frames.clear(); for (const fn of batch) fn(); },
+    visibility: hidden => { document.hidden = hidden; keys.get('visibilitychange')?.(); }, dispose: () => disposed(), stopped: () => stopped };
 }
 const initial = { id: 'capture-a', sceneId: 'synthetic', phase: 'capturing', rect: { x: .3, y: .25, width: .4, height: .5 }, width: 600, height: 400, status: 'initial', stopHotkey: 'F8 / Esc', preview: 'data:image/png;base64,first',
   hud: { outline: { x: .299, y: .248, width: .402, height: .504 }, preview: { x: .15, y: .45, width: .12, height: .3 }, controls: { x: .35, y: .1, width: .2, height: .08 } } };
@@ -120,4 +123,55 @@ test('live native HUD keeps the configured outside dimming and an exact clear so
   assert.equal(f.one('scroll-live-mask'), mask); assert.equal(shade.props['fill-opacity'], .66);
   f.next(null); await tick(); assert.equal(f.one('scroll-live-mask'), undefined);
   assert.equal(f.document.documentElement.dataset.surface, 'scroll'); f.dispose();
+});
+
+test('scroll layout readiness waits for a visible connected nonzero production surface and is canceled when capture becomes live', async () => {
+  const f=await fixture({hidden:true});try{
+    f.next({...initial,phase:'starting',hud:undefined});await tick();assert.equal(f.frames.size,0);assert.deepEqual(f.readyCalls,[]);
+    f.next({...initial,phase:'starting',hud:{...initial.hud,live:false}});await tick();
+    assert.equal(f.frames.size,0);assert.ok(f.keys.has('visibilitychange'));
+    f.visibility(false);assert.equal(f.frames.size,1);assert.deepEqual(f.readyCalls,[]);
+    f.flushFrames();await tick();assert.deepEqual(f.readyCalls,['capture-a']);
+    f.next({...initial,phase:'starting',height:700,hud:{...initial.hud,live:false}});await tick();
+    assert.equal(f.frames.size,0,'a same-owner status refresh cannot restart readiness');
+    f.next({...initial,phase:'starting',hud:{...initial.hud,live:true}});await tick();
+    assert.equal(f.keys.has('visibilitychange'),false);assert.equal(f.frames.size,0);
+  }finally{f.dispose();}
+});
+
+test('scroll readiness rejects hidden detached and zero-size layouts before acknowledging the exact current owner', async () => {
+  const f=await fixture();try{
+    f.next({...initial,phase:'starting',hud:{...initial.hud,live:false}});await tick();
+    f.visibility(true);f.flushFrames();assert.deepEqual(f.readyCalls,[]);
+    f.root.isConnected=false;f.visibility(false);f.flushFrames();assert.deepEqual(f.readyCalls,[]);
+    f.root.isConnected=true;f.setBounds({width:0,height:800});f.visibility(false);f.flushFrames();assert.deepEqual(f.readyCalls,[]);
+    f.setBounds({width:1200,height:800});f.visibility(false);f.flushFrames();await tick();assert.deepEqual(f.readyCalls,['capture-a']);
+  }finally{f.dispose();}
+});
+
+test('canceling ending or disposing a pending scroll layout removes its frame and listener without a late acknowledgement', async () => {
+  for(const action of ['finishing','null','dispose']){
+    const f=await fixture();let disposed=false;try{
+      f.next({...initial,phase:'starting',hud:{...initial.hud,live:false}});await tick();assert.equal(f.frames.size,1,action);
+      if(action==='dispose'){f.dispose();disposed=true;}else f.next(action==='null'?null:{...initial,phase:'finishing'});
+      await tick();assert.equal(f.frames.size,0,action);assert.equal(f.keys.has('visibilitychange'),false,action);
+      f.flushFrames();assert.deepEqual(f.readyCalls,[],action);
+    }finally{if(!disposed)f.dispose();}
+  }
+});
+
+test('a late scroll layout acknowledgement failure cannot reach a successor or disposed surface while current failures remain visible', async () => {
+  let rejectOld;
+  const old=new Promise((resolve,reject)=>{rejectOld=reject;});
+  const f=await fixture({ready:id=>id==='capture-a'?old:Promise.reject(Error('current readiness failed'))});try{
+    f.next({...initial,phase:'starting',hud:{...initial.hud,live:false}});await tick();f.flushFrames();await tick();
+    f.next({...initial,id:'capture-b',phase:'starting',hud:{...initial.hud,live:false}});await tick();
+    rejectOld(Error('obsolete readiness failed'));await tick();assert.equal(f.one('scroll-notice'),undefined);
+    f.flushFrames();await tick();assert.deepEqual(f.readyCalls,['capture-a','capture-b']);
+    assert.ok(f.one('scroll-notice').children.some(node=>node.text?.includes('current readiness failed')));
+  }finally{f.dispose();}
+  let rejectDisposed;
+  const ended=await fixture({ready:()=>new Promise((resolve,reject)=>{rejectDisposed=reject;})});
+  ended.next({...initial,phase:'starting',hud:{...initial.hud,live:false}});await tick();ended.flushFrames();await tick();
+  ended.dispose();rejectDisposed(Error('disposed readiness failed'));await tick();assert.equal(ended.frames.size,0);assert.equal(ended.keys.has('visibilitychange'),false);
 });
