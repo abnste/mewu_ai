@@ -91,6 +91,29 @@ test('native compound URL is transparent before any status or HUD arrives and ne
   f.dispose(); assert.equal(f.document.documentElement.dataset.recordingCompound, undefined);
 });
 
+test('full-monitor recording keeps one compact toolbar with working stop and no compound mask', async () => {
+  for (const retainMain of [false, true]) {
+    const f = await fixture();
+    const full = { ...initial, retainMain, stopHotkey: '', rect: { x: 0, y: 0, width: 1, height: 1 }, hud: undefined };
+    f.next(full); await tick();
+    const toolbar = f.one('recording-controls'); assert.ok(toolbar);
+    for (const phase of ['countdown', 'starting', 'recording', 'paused', 'recording']) {
+      f.next({ ...full, phase, countdown: phase === 'countdown' ? 3 : 0, elapsedMs: 1200 }); await tick();
+      assert.equal(f.one('recording-controls'), toolbar);
+      assert.equal(f.nodes().filter(node => node.props?.class === 'recording-controls').length, 1);
+      assert.equal(f.one('recording-live-mask'), undefined);
+      assert.equal(f.one('recording-countdown'), undefined);
+      assert.equal(f.document.documentElement.dataset.recordingCompound, undefined);
+      assert.equal(f.one('recording-control-window').props.classList['recording-compound-window'], false);
+    }
+    const stop = f.nodes().find(node => node.props?.['aria-label'] === '停止录屏'); assert.ok(stop);
+    assert.equal(stop.props.disabled, false); stop.props.onClick(); await tick();
+    assert.deepEqual(plain(f.calls), [{ id: 'record-a', action: 'stop' }]);
+    assert.deepEqual(f.ready, [], 'compact controls must not acknowledge a compound ROI aperture');
+    f.dispose(); assert.equal(f.stopped(), 1);
+  }
+});
+
 test('recording layout waits for two visible layouts, retains one toolbar and leaves countdown on the main surface', async () => {
   const f = await fixture(); f.next(initial); await tick();
   const controls = f.one('recording-controls'), slot = f.one('recording-controls-slot'); assert.ok(controls && slot);

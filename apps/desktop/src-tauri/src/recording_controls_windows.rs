@@ -2,7 +2,7 @@
 //! Keep synchronous WebView construction outside Windows event dispatch. Only
 //! the owned HWND's message thread mutates capture leases and presents the HUD.
 use super::{
-    backend, edit_capture_session, exclude, Host, RecordingState, CONTROLS_HEIGHT, CONTROLS_WIDTH,
+    backend, edit_capture_session, Host, RecordingState, CONTROLS_HEIGHT, CONTROLS_WIDTH,
     LABEL,
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -151,6 +151,11 @@ pub(super) async fn prepare(
     f8: bool,
 ) -> Result<(), PrepareFailure> {
     if !scale.is_finite() || scale <= 0. { return Err("录屏显示比例无效".into()); }
+    let physical_size = ((CONTROLS_WIDTH * scale).round(), (CONTROLS_HEIGHT * scale).round());
+    if [physical_size.0, physical_size.1].into_iter().any(|value| !value.is_finite() || value < 1. || value > u32::MAX as f64) {
+        return Err("录屏控制条大小无效".into());
+    }
+    let controls_size = (physical_size.0 as u32, physical_size.1 as u32);
     // Phase 1: save the original capture lease before mutating its HWND. Native
     // callbacks may reenter, so no RecordingState mutex spans window operations.
     let target = app.clone();
@@ -158,7 +163,7 @@ pub(super) async fn prepare(
     let config_for_capture = config.clone();
     let (send, receive) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = (|| -> Result<(bool, bool, tauri::WebviewWindow), PrepareFailure> {
+        let result = (|| -> Result<(bool, bool, crate::shared_capture_windows::HudExposure, crate::shared_capture_windows::Rect, tauri::WebviewWindow), PrepareFailure> {
             current(&target, &operation, false)?;
             let main = target.get_webview_window("space").ok_or("窗口不存在")?;
             let shared = target
@@ -175,6 +180,12 @@ pub(super) async fn prepare(
                 config_for_capture.width,
                 config_for_capture.height,
             )?;
+            let display = crate::shared_capture_windows::Rect::new(
+                config_for_capture.origin_x, config_for_capture.origin_y,
+                config_for_capture.monitor_width, config_for_capture.monitor_height,
+            )?;
+            let work = crate::shared_capture_windows::work_area(&main, display)?;
+            let exposure = crate::shared_capture_windows::recording_hud_exposure(work, roi, controls_size);
             let session = crate::shared_capture_windows::Session::capture(&main, shared)?;
             let retain_main = session.can_retain_main_outside()?;
             {
@@ -191,14 +202,16 @@ pub(super) async fn prepare(
             }
             // Keep the original overlay visible through actual 3/2/1 rendering.
             // Its native capture lease is prepared only after the HUD mask ACK.
-            let _ = roi;
             current(&target, &operation, true)?;
-            Ok((shared, retain_main, main))
+            Ok((shared, retain_main, exposure, work, main))
         })();
         let _ = send.send(result);
     })
     .map_err(|_| "无法准备录屏窗口")?;
-    let (shared, retain_main, main) = receive.await.map_err(|_| "录屏窗口准备中断")??;
+    let (shared, retain_main, exposure, planned_work, main) = receive.await.map_err(|_| "录屏窗口准备中断")??;
+    // No outside position also covers even-cropped odd monitors and near-full
+    // work areas. Keep one compact controls-only HWND and exclude only it.
+    let compact = retain_main || exposure == crate::shared_capture_windows::HudExposure::CaptureExcluded;
 
     // Phase 2: let Tauri dispatch creation from a blocking worker. Constructing
     // a WebView synchronously inside a Windows event callback can deadlock.
@@ -212,7 +225,7 @@ pub(super) async fn prepare(
         let builder = tauri::WebviewWindowBuilder::new(
             &target,
             LABEL,
-            tauri::WebviewUrl::App(if retain_main { "index.html?surface=recording" } else { "index.html?surface=recording&compound=1" }.into()),
+            tauri::WebviewUrl::App(if compact { "index.html?surface=recording" } else { "index.html?surface=recording&compound=1" }.into()),
         );
         // Owned HUDs stay above the retained main overlay. The cloak fallback
         // remains unowned so it cannot inherit its main window's cloak state.
@@ -221,8 +234,8 @@ pub(super) async fn prepare(
         } else { builder };
         let window = builder
         .title("Mewu · 录屏")
-        .inner_size(if retain_main { CONTROLS_WIDTH } else { config_for_window.monitor_width as f64 / scale },
-            if retain_main { CONTROLS_HEIGHT } else { config_for_window.monitor_height as f64 / scale })
+        .inner_size(if compact { CONTROLS_WIDTH } else { config_for_window.monitor_width as f64 / scale },
+            if compact { CONTROLS_HEIGHT } else { config_for_window.monitor_height as f64 / scale })
         .decorations(false)
         // One compound surface: transparent live ROI plus outside mask/controls.
         .transparent(true)
@@ -291,15 +304,21 @@ pub(super) async fn prepare(
         let result = (|| -> Result<(), PrepareFailure> {
             current(&target, &operation, true)?;
             let toolbar = pending.window().clone();
-            if !retain_main { toolbar.set_position(tauri::PhysicalPosition::new(config.origin_x, config.origin_y))
+            if !compact { toolbar.set_position(tauri::PhysicalPosition::new(config.origin_x, config.origin_y))
                 .map_err(|_| "无法放置录屏界面")?; }
             toolbar.set_size(tauri::PhysicalSize::new(
-                if retain_main { (CONTROLS_WIDTH * scale).round() as u32 } else { config.monitor_width },
-                if retain_main { (CONTROLS_HEIGHT * scale).round() as u32 } else { config.monitor_height }))
+                if compact { controls_size.0 } else { config.monitor_width },
+                if compact { controls_size.1 } else { config.monitor_height }))
                 .map_err(|_| "无法调整录屏界面")?;
-            if !shared { exclude(&toolbar, true)?; }
+            if compact {
+                let actual_size = toolbar.outer_size().map_err(|_| "无法确认录屏控制条大小")?;
+                if (actual_size.width, actual_size.height) != controls_size { return Err("录屏控制条大小已改变".into()); }
+            }
+            let exposure = if !shared {
+                crate::shared_capture_windows::HudExposure::CaptureExcluded
+            } else { exposure };
             edit_capture_session(&target.state::<RecordingState>(), &operation, |session| {
-                session.attach_hud(&toolbar, retain_main)
+                session.attach_hud_with_exposure(&toolbar, retain_main, exposure)
             })?;
             // edit_capture_session has returned the lease to the same Active.
             pending.transferred();
@@ -318,12 +337,12 @@ pub(super) async fn prepare(
                     config.height,
                 )?;
             let work = crate::shared_capture_windows::work_area(&toolbar, display)?;
-            if retain_main {
-                let show = crate::shared_capture_windows::place_hud(&toolbar, roi, work, f8)?;
-                if show {
-                    edit_capture_session(&target.state::<RecordingState>(), &operation, |session| session.verify_hud_owner())?;
-                    toolbar.show().map_err(|_| "无法显示录屏控制条")?;
-                }
+            if work != planned_work { return Err("录屏控制条显示范围已改变".into()); }
+            if compact {
+                let show = crate::shared_capture_windows::place_hud_with_exposure(&toolbar, roi, work, f8, exposure)?;
+                if !show { return Err("录屏控制条位置已改变".into()); }
+                edit_capture_session(&target.state::<RecordingState>(), &operation, |session| session.verify_hud_owner())?;
+                toolbar.show().map_err(|_| "无法显示录屏控制条")?;
                 return Ok(());
             }
             let position = crate::shared_capture_windows::hud_position(work, roi,
@@ -350,7 +369,7 @@ pub(super) async fn prepare(
     })
     .map_err(|_| "无法准备录屏窗口")?;
     receive.await.map_err(|_| "录屏窗口准备中断")??;
-    if !retain_main {
+    if !compact {
         let until = tokio::time::Instant::now() + Duration::from_secs(10);
         while !presentation_ready(app, id, "layout")? {
             if tokio::time::Instant::now() >= until { return Err("录屏界面未能完成布局".into()); }

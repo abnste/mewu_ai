@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! A capture lease for an owned HWND. Shared capture never enables WDA protection.
+//! A capture lease for an owned HWND. Shared presentation windows stay visible
+//! to capture; a separate, controls-only HUD may be explicitly capture-excluded.
 //! Mutations and restoration run on the HWND's message thread, before sampling and
 //! after its worker has drained. Do not restore a replacement selected by label.
 use std::sync::{
@@ -146,6 +147,48 @@ pub(crate) fn hud_position(work: Rect, roi: Rect, size: (u32, u32)) -> Option<(i
         }
     }
     None
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HudExposure {
+    OutsideROI,
+    CaptureExcluded,
+}
+impl HudExposure {
+    fn affinity(self) -> u32 {
+        match self {
+            Self::OutsideROI => 0,
+            Self::CaptureExcluded => 0x11,
+        }
+    }
+}
+
+pub(crate) fn recording_hud_exposure(work: Rect, roi: Rect, size: (u32, u32)) -> HudExposure {
+    if hud_position(work, roi, size).is_some() { HudExposure::OutsideROI } else { HudExposure::CaptureExcluded }
+}
+
+fn hud_position_with_exposure(
+    work: Rect, roi: Rect, size: (u32, u32), exposure: HudExposure,
+) -> Option<(i32, i32)> {
+    if let Some(position) = hud_position(work, roi, size) { return Some(position); }
+    if exposure != HudExposure::CaptureExcluded { return None; }
+    let width = i32::try_from(size.0).ok()?;
+    let height = i32::try_from(size.1).ok()?;
+    if width <= 0 || height <= 0 { return None; }
+    let available_width = i64::from(work.right) - i64::from(work.left);
+    let available_height = i64::from(work.bottom) - i64::from(work.top);
+    if i64::from(width) > available_width || i64::from(height) > available_height { return None; }
+    let left = i32::try_from(i64::from(work.left) + (available_width - i64::from(width)) / 2).ok()?;
+    let top = i32::try_from(i64::from(work.top) + 18.min(available_height - i64::from(height))).ok()?;
+    Some((left, top))
+}
+
+fn verify_hud_bounds(exposure: HudExposure, roi: Rect, bounds: Rect, actual_affinity: u32) -> Result<(), String> {
+    if actual_affinity != exposure.affinity()
+        || (exposure == HudExposure::OutsideROI && roi.intersects(bounds)) {
+        return Err("采集控制条无法避开选区".into());
+    }
+    Ok(())
 }
 
 struct Region(usize);
@@ -569,6 +612,50 @@ impl Lease {
         }
         Ok(())
     }
+    fn set_hud_exposure(&mut self, exposure: HudExposure) -> Result<(), String> {
+        // Microsoft explicitly supports a visible recording-controls HWND that
+        // is excluded from capture. This policy never applies to the separate
+        // shared presentation/annotation window.
+        // https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity
+        self.set_hud_exposure_with(exposure,
+            |hwnd, value| unsafe { SetWindowDisplayAffinity(hwnd, value) } != 0,
+            affinity)
+    }
+    fn set_hud_exposure_with(
+        &mut self, exposure: HudExposure,
+        write: impl FnOnce(HWND, u32) -> bool,
+        mut read: impl FnMut(HWND) -> Result<u32, String>,
+    ) -> Result<(), String> {
+        let hwnd = self.hwnd as HWND;
+        if !self.current() || self.finished || self.prepared || self.scroll_clip.is_some()
+            || self.input_changed || self.cloak_changed || unsafe { IsWindowVisible(hwnd) } != 0 {
+            return Err("采集控制条保护阶段已改变".into());
+        }
+        let expected = exposure.affinity();
+        if exposure == HudExposure::OutsideROI && self.before_affinity != 0 {
+            return Err("采集控制条仍受保护".into());
+        }
+        let actual = read(hwnd)?;
+        if actual != self.before_affinity && !(self.affinity_changed && actual == expected) {
+            return Err("采集控制条可见性已改变".into());
+        }
+        if actual != expected {
+            // The Session already owns this lease. Even a partial write or a
+            // failed readback must retain the original restoration obligation.
+            self.affinity_changed = true;
+            if !write(hwnd, expected) { return Err("无法排除录屏控制条".into()); }
+        }
+        if !self.current() || read(hwnd)? != expected {
+            return Err("无法确认录屏控制条可见性".into());
+        }
+        Ok(())
+    }
+    fn verify_hud_exposure(&self, exposure: HudExposure) -> Result<(), String> {
+        if !self.current() || self.finished || affinity(self.hwnd as HWND)? != exposure.affinity() {
+            return Err("录屏控制条可见性已改变".into());
+        }
+        Ok(())
+    }
     /// Author a known space geometry, never infer one from GetWindowRgn ERROR.
     /// This temporary owner is deliberately not a prepared sampling lease.
     fn author_full_region(&self, expected_bounds: Rect) -> Result<bool, String> {
@@ -887,8 +974,13 @@ pub(crate) fn place_hud(
     work: Rect,
     f8: bool,
 ) -> Result<bool, String> {
+    place_hud_with_exposure(window, roi, work, f8, HudExposure::OutsideROI)
+}
+pub(crate) fn place_hud_with_exposure(
+    window: &tauri::WebviewWindow, roi: Rect, work: Rect, f8: bool, exposure: HudExposure,
+) -> Result<bool, String> {
     let size = window.outer_size().map_err(|_| "无法读取采集控制条大小")?;
-    if let Some((x, y)) = hud_position(work, roi, (size.width, size.height)) {
+    if let Some((x, y)) = hud_position_with_exposure(work, roi, (size.width, size.height), exposure) {
         window
             .set_position(tauri::PhysicalPosition::new(x, y))
             .map_err(|_| "无法放置采集控制条")?;
@@ -900,10 +992,13 @@ pub(crate) fn place_hud(
             right: actual.right,
             bottom: actual.bottom,
         };
-        if !work.contains(actual) || roi.intersects(actual) || affinity(hwnd)? != 0 {
+        if !work.contains(actual) {
             return Err("采集控制条无法避开选区".into());
         }
+        verify_hud_bounds(exposure, roi, actual, affinity(hwnd)?)?;
         Ok(true)
+    } else if exposure == HudExposure::CaptureExcluded {
+        Err("显示器工作区无法容纳录屏控制条".into())
     } else if f8 {
         Ok(false)
     } else {
@@ -952,7 +1047,7 @@ pub(crate) fn author_space_region(window: &tauri::WebviewWindow, expected: Rect)
 /// Both the overlay and its one HUD are bound while on their message thread.
 pub(crate) struct Session {
     pub main: Lease,
-    hud: Option<(tauri::WebviewWindow, Lease, bool)>,
+    hud: Option<(tauri::WebviewWindow, Lease, bool, HudExposure)>,
 }
 impl Session {
     pub fn capture(window: &tauri::WebviewWindow, shared: bool) -> Result<Self, String> {
@@ -997,6 +1092,12 @@ impl Session {
         Ok(cloak(self.main.hwnd as HWND)? == 0)
     }
     pub fn attach_hud(&mut self, window: &tauri::WebviewWindow, retained_owner: bool) -> Result<(), String> {
+        let exposure = if self.main.shared { HudExposure::OutsideROI } else { HudExposure::CaptureExcluded };
+        self.attach_hud_with_exposure(window, retained_owner, exposure)
+    }
+    pub fn attach_hud_with_exposure(
+        &mut self, window: &tauri::WebviewWindow, retained_owner: bool, exposure: HudExposure,
+    ) -> Result<(), String> {
         if self.hud.is_some() {
             return Err("采集控制条已存在".into());
         }
@@ -1014,8 +1115,8 @@ impl Session {
             })
         {
             Ok(lease) => {
-                self.hud = Some((window.clone(), lease, retained_owner));
-                Ok(())
+                self.hud = Some((window.clone(), lease, retained_owner, exposure));
+                self.hud.as_mut().ok_or("采集控件不存在")?.1.set_hud_exposure(exposure)
             }
             Err(error) => {
                 let _ = window.destroy();
@@ -1026,14 +1127,16 @@ impl Session {
     /// Presentation ACKs must name this exact owned HWND on its message thread.
     /// A replacement with the same Tauri label must never acknowledge this lease.
     pub fn owns_hud(&self, window: &tauri::WebviewWindow) -> bool {
-        !self.main.finished && self.main.current() && self.hud.as_ref().is_some_and(|(_, lease, retained_owner)| {
+        !self.main.finished && self.main.current() && self.hud.as_ref().is_some_and(|(_, lease, retained_owner, exposure)| {
             self.main.verify_hud_owner(lease, *retained_owner).is_ok()
+                && lease.verify_hud_exposure(*exposure).is_ok()
                 && window.hwnd().is_ok_and(|hwnd| hwnd.0 as usize == lease.hwnd)
         })
     }
     pub fn verify_hud_owner(&self) -> Result<(), String> {
-        let (_, lease, retained_owner) = self.hud.as_ref().ok_or("采集控件不存在")?;
+        let (_, lease, retained_owner, exposure) = self.hud.as_ref().ok_or("采集控件不存在")?;
         self.main.verify_hud_owner(lease, *retained_owner)?;
+        lease.verify_hud_exposure(*exposure)?;
         if *retained_owner && self.main.prepared && !self.retains_main_outside()? {
             return Err("采集主窗口未保留控制条层级".into());
         }
@@ -1054,7 +1157,7 @@ impl Session {
     }
     fn restore(&mut self) -> Result<(), String> {
         let hud = (|| {
-            if let Some((window, lease, _)) = &mut self.hud {
+            if let Some((window, lease, _, _)) = &mut self.hud {
                 if lease.current() {
                     window.destroy().map_err(|_| "无法关闭采集控制条")?;
                 } else if unsafe { IsWindow(lease.hwnd as HWND) } != 0 {
@@ -1071,12 +1174,11 @@ impl Session {
     pub fn verify(&self) -> Result<(), String> {
         let roi = self.main.roi.ok_or("采集窗口尚未准备完成")?;
         self.main.verify(roi)?;
-        if let Some((_, lease, _)) = &self.hud {
+        if let Some((_, lease, _, exposure)) = &self.hud {
             self.verify_hud_owner()?;
             if lease.scroll_clip.is_some() {
                 lease.verify_scroll_clip(roi)?;
-            } else if self.main.shared
-                && unsafe {
+            } else if unsafe {
                     windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible(lease.hwnd as HWND)
                 } != 0
             {
@@ -1087,9 +1189,7 @@ impl Session {
                     right: bounds.right,
                     bottom: bounds.bottom,
                 };
-                if roi.intersects(bounds) || affinity(lease.hwnd as HWND)? != 0 {
-                    return Err("采集控制条遮挡选区".into());
-                }
+                verify_hud_bounds(*exposure, roi, bounds, affinity(lease.hwnd as HWND)?)?;
             }
         }
         Ok(())
@@ -1189,7 +1289,7 @@ pub(crate) fn abandon_for_process_exit(exit: &crate::lifecycle::ExitState) -> Re
     }
     for mut session in queue.drain(..) {
         session.main.finished = true;
-        if let Some((_, lease, _)) = &mut session.hud {
+        if let Some((_, lease, _, _)) = &mut session.hud {
             lease.finished = true;
         }
     }
@@ -1813,6 +1913,131 @@ mod tests {
         assert_eq!(hud_position(work, work, (176, 44)), None);
         assert_eq!(hud_position(work, roi(), (900, 44)), None);
         assert!(Rect::new(i32::MAX, 0, 1, 1).is_err());
+    }
+    #[test]
+    fn fullscreen_recording_hud_uses_capture_exclusion_without_weakening_outside_roi_geometry() {
+        let display = Rect::new(-2000, -100, 800, 600).unwrap();
+        let work = Rect::new(-2000, -100, 800, 560).unwrap();
+        assert_eq!(recording_hud_exposure(work, display, (176, 44)), HudExposure::CaptureExcluded);
+        assert_eq!(recording_hud_exposure(work, roi(), (176, 44)), HudExposure::OutsideROI);
+        assert_eq!(hud_position_with_exposure(work, display, (176, 44), HudExposure::OutsideROI), None);
+        let point = hud_position_with_exposure(work, display, (176, 44), HudExposure::CaptureExcluded).unwrap();
+        assert_eq!(point, (-1688, -82));
+        let bounds = Rect::new(point.0, point.1, 176, 44).unwrap();
+        assert!(work.contains(bounds) && display.intersects(bounds));
+        assert!(verify_hud_bounds(HudExposure::CaptureExcluded, display, bounds, 0x11).is_ok());
+        assert!(verify_hud_bounds(HudExposure::OutsideROI, display, bounds, 0).is_err());
+        assert!(verify_hud_bounds(HudExposure::CaptureExcluded, display, bounds, 0).is_err());
+        assert!(verify_hud_bounds(HudExposure::OutsideROI, roi(), bounds, 0x11).is_err());
+        assert_eq!(hud_position_with_exposure(work, display, (801, 44), HudExposure::CaptureExcluded), None);
+        assert_eq!(hud_position_with_exposure(work, display, (176, 561), HudExposure::CaptureExcluded), None);
+        let normal = hud_position(work, roi(), (176, 44));
+        assert_eq!(hud_position_with_exposure(work, roi(), (176, 44), HudExposure::OutsideROI), normal);
+    }
+    #[test]
+    fn recording_hud_exposure_handles_even_cropped_odd_monitors_and_taskbar_work_areas() {
+        let display = Rect::new(-1365, -767, 1365, 767).unwrap();
+        let work = Rect::new(-1365, -767, 1365, 727).unwrap();
+        let even_cropped = Rect::new(display.left, display.top, 1364, 766).unwrap();
+        for selected in [display, even_cropped, work] {
+            assert_eq!(recording_hud_exposure(work, selected, (220, 55)), HudExposure::CaptureExcluded);
+            let position = hud_position_with_exposure(work, selected, (220, 55), HudExposure::CaptureExcluded).unwrap();
+            assert!(work.contains(Rect::new(position.0, position.1, 220, 55).unwrap()));
+        }
+        let partial = Rect::new(-1200, -600, 700, 400).unwrap();
+        assert_eq!(recording_hud_exposure(work, partial, (220, 55)), HudExposure::OutsideROI);
+        let expected = hud_position(work, partial, (220, 55)).unwrap();
+        assert_eq!(hud_position_with_exposure(work, partial, (220, 55), HudExposure::OutsideROI), Some(expected));
+    }
+    #[test]
+    fn capture_excluded_hud_keeps_main_shared_and_restores_its_original_native_affinity() {
+        let main = Window::new();
+        let hud = Window::with_owner(main.0);
+        let mut main_lease = Lease::capture(main.0 as usize, true).unwrap();
+        let mut hud_lease = Lease::capture(hud.0 as usize, true).unwrap();
+        let before = (physical_bounds(&hud), input_style(hud.0).unwrap(), cloak(hud.0).unwrap());
+        main_lease.verify_hud_owner(&hud_lease, true).unwrap();
+        hud_lease.set_hud_exposure(HudExposure::CaptureExcluded).unwrap();
+        hud_lease.verify_hud_exposure(HudExposure::CaptureExcluded).unwrap();
+        assert!(hud_lease.verify_hud_exposure(HudExposure::OutsideROI).is_err());
+        assert_eq!(affinity(main.0).unwrap(), 0, "presentation sharing policy must stay intact");
+        assert_eq!(affinity(hud.0).unwrap(), 0x11);
+        assert!(hud_lease.affinity_changed);
+        assert_eq!((physical_bounds(&hud), input_style(hud.0).unwrap(), cloak(hud.0).unwrap()), before);
+        assert_eq!(unsafe { GetWindow(hud.0, GW_OWNER) }, main.0);
+        hud_lease.set_hud_exposure_with(HudExposure::CaptureExcluded,
+            |_, _| panic!("repeated protection must not write"), affinity).unwrap();
+        hud_lease.restore().unwrap();
+        assert_eq!(affinity(hud.0).unwrap(), 0);
+        assert!(!hud_lease.affinity_changed);
+        main_lease.restore().unwrap();
+    }
+    #[test]
+    fn capture_excluded_hud_failed_write_or_readback_keeps_the_original_restore_debt() {
+        for failure in 0..3 {
+            let hud = Window::new();
+            let mut lease = Lease::capture(hud.0 as usize, true).unwrap();
+            let mut reads = 0;
+            let result = lease.set_hud_exposure_with(HudExposure::CaptureExcluded,
+                |hwnd, value| {
+                    if failure != 0 { assert_ne!(unsafe { SetWindowDisplayAffinity(hwnd, value) }, 0); }
+                    failure == 2
+                },
+                |hwnd| {
+                    reads += 1;
+                    if failure == 2 && reads == 2 { return Err("synthetic native readback failure".into()); }
+                    affinity(hwnd)
+                });
+            assert!(result.is_err());
+            assert!(lease.affinity_changed && lease.current() && !lease.finished);
+            assert_eq!(affinity(hud.0).unwrap(), if failure == 0 { 0 } else { 0x11 });
+            lease.restore().unwrap();
+            assert_eq!(affinity(hud.0).unwrap(), 0);
+            assert!(!lease.affinity_changed && lease.finished);
+        }
+    }
+    #[test]
+    fn capture_excluded_hud_rejects_a_wrong_thread_or_cookie_before_native_mutation() {
+        let hud = Window::new();
+        let mut lease = Lease::capture(hud.0 as usize, true).unwrap();
+        std::thread::scope(|scope| {
+            let lease = &mut lease;
+            assert!(scope.spawn(move || lease.set_hud_exposure_with(HudExposure::CaptureExcluded,
+                |_, _| panic!("wrong thread must not write"), affinity)).join().unwrap().is_err());
+        });
+        unsafe { RemovePropW(hud.0, lease.cookie.as_ptr()); }
+        assert!(lease.set_hud_exposure_with(HudExposure::CaptureExcluded,
+            |_, _| panic!("wrong cookie must not write"), affinity).is_err());
+        assert_eq!(affinity(hud.0).unwrap(), 0);
+        assert!(!lease.affinity_changed);
+        assert_ne!(unsafe { SetPropW(hud.0, lease.cookie.as_ptr(), 1usize as _) }, 0);
+        lease.restore().unwrap();
+        let private_hud = Window::new();
+        assert_ne!(unsafe { SetWindowDisplayAffinity(private_hud.0, 0x11) }, 0);
+        let mut private_lease = Lease::capture(private_hud.0 as usize, false).unwrap();
+        assert!(private_lease.set_hud_exposure_with(HudExposure::OutsideROI,
+            |_, _| panic!("outside policy must not clear pre-existing capture protection"), affinity).is_err());
+        assert_eq!(affinity(private_hud.0).unwrap(), 0x11);
+        assert!(!private_lease.affinity_changed);
+        private_lease.restore().unwrap();
+    }
+    #[test]
+    fn capture_excluded_hud_verification_rejects_affinity_drift_and_restores_after_destruction() {
+        let hud = Window::new();
+        let mut lease = Lease::capture(hud.0 as usize, true).unwrap();
+        lease.set_hud_exposure(HudExposure::CaptureExcluded).unwrap();
+        assert_ne!(unsafe { SetWindowDisplayAffinity(hud.0, 0) }, 0);
+        assert!(lease.verify_hud_exposure(HudExposure::CaptureExcluded).is_err());
+        lease.restore().unwrap();
+        let destroyed = Window::new();
+        let mut old = Lease::capture(destroyed.0 as usize, true).unwrap();
+        old.set_hud_exposure(HudExposure::CaptureExcluded).unwrap();
+        assert_ne!(unsafe { DestroyWindow(destroyed.0) }, 0);
+        assert!(old.verify_hud_exposure(HudExposure::CaptureExcluded).is_err());
+        old.restore().unwrap();
+        assert!(old.finished);
+        let successor = Window::new();
+        assert_eq!(affinity(successor.0).unwrap(), 0, "a successor must never inherit a stale lease mutation");
     }
     #[test]
     fn scroll_native_aperture_always_subtracts_every_acquired_pixel_even_from_overlapping_shapes() {
