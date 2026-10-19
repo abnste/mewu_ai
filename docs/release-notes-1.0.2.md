@@ -8,6 +8,7 @@
 - 连续框选时保留尚在保存的选框，避免开始下一框后上一框短暂消失；保存失败单独提示，操作工具仍等待真实保存完成。
 - 修复鼠标经过旧选区时误清除待保存选框。长截图和录屏切换保留原画布，窗口加载完成后再交接；Windows 录屏保留倒计时与选区外暗罩，遮罩就绪后才开始采集。
 - Windows 自动吸附保留悬停描边，原地点击松手后确认；直接拖框不再先提亮整个窗口。长截图保留选区边框、外圈暗色遮罩和随滚动增长的旁侧预览。
+- 关闭 Windows 采集控件的系统出现动画，录屏控制条保持在截图遮罩上方；补齐采集期间的鼠标穿透样式，结束后恢复原窗口状态。
 - 修复远程鼠标先报告按键释放时，画线、移动和框选被误取消的问题，覆盖视频批注；切换选区与媒体对象时统一工具条归属，鼠标经过选区不会中断视频播放或编辑。
 - 视频播放与剪辑控件空闲时不再拦截 Esc，可直接退出截图；正在拖动剪辑或选择标注时仍先取消局部操作。
 - 截图与黑板使用三个固定颜色槽，默认红、黄、蓝。单击切换，选中后再次单击换色；已有自定义颜色保持。
@@ -35,6 +36,7 @@ Windows 安装版、便携版，macOS ARM64 安装包和 Linux x64 AppImage 均�
 - Keeps pending selection outlines visible while the next selection starts, reports individual save failures, and enables tools only after the selection is actually saved.
 - Prevents hovering an older region from clearing a pending selection. Scrolling capture and recording retain the original scene while their controls load. Windows recording shows its countdown and outside dimming before acquisition starts.
 - Windows snap selection keeps its hover outline and confirms on a stationary release, avoiding full-window highlighting when dragging. Scrolling capture retains the region border, outside dimming and growing side preview.
+- Disables Windows capture-control show transitions, keeps recording controls above the retained overlay, and restores the original window input styles after capture.
 - Preserves strokes, moves and marquee selection when remote mouse input reports released buttons before pointer-up, including video annotations. Keeps region and media toolbars mutually exclusive without interrupting video playback or editing on hover.
 - Idle playback and trim controls let Escape close the capture space; active trim gestures and annotation selection still cancel locally first.
 - Screenshot and blackboard share three fixed color slots, initially red, yellow and blue. Click to select; click the selected slot again to edit. Existing custom palettes are retained.

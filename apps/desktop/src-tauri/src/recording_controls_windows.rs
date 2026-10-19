@@ -158,7 +158,7 @@ pub(super) async fn prepare(
     let config_for_capture = config.clone();
     let (send, receive) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = (|| -> Result<(bool, bool), PrepareFailure> {
+        let result = (|| -> Result<(bool, bool, tauri::WebviewWindow), PrepareFailure> {
             current(&target, &operation, false)?;
             let main = target.get_webview_window("space").ok_or("窗口不存在")?;
             let shared = target
@@ -193,12 +193,12 @@ pub(super) async fn prepare(
             // Its native capture lease is prepared only after the HUD mask ACK.
             let _ = roi;
             current(&target, &operation, true)?;
-            Ok((shared, retain_main))
+            Ok((shared, retain_main, main))
         })();
         let _ = send.send(result);
     })
     .map_err(|_| "无法准备录屏窗口")?;
-    let (shared, retain_main) = receive.await.map_err(|_| "录屏窗口准备中断")??;
+    let (shared, retain_main, main) = receive.await.map_err(|_| "录屏窗口准备中断")??;
 
     // Phase 2: let Tauri dispatch creation from a blocking worker. Constructing
     // a WebView synchronously inside a Windows event callback can deadlock.
@@ -209,11 +209,17 @@ pub(super) async fn prepare(
     let pending = tauri::async_runtime::spawn_blocking(move || {
         current(&target, &operation, true)?;
         let page_send = std::sync::Mutex::new(Some(page_send));
-        let window = tauri::WebviewWindowBuilder::new(
+        let builder = tauri::WebviewWindowBuilder::new(
             &target,
             LABEL,
             tauri::WebviewUrl::App(if retain_main { "index.html?surface=recording" } else { "index.html?surface=recording&compound=1" }.into()),
-        )
+        );
+        // Owned HUDs stay above the retained main overlay. The cloak fallback
+        // remains unowned so it cannot inherit its main window's cloak state.
+        let builder = if retain_main {
+            builder.owner(&main).map_err(|_| "无法绑定录屏控制条")?
+        } else { builder };
+        let window = builder
         .title("Mewu · 录屏")
         .inner_size(if retain_main { CONTROLS_WIDTH } else { config_for_window.monitor_width as f64 / scale },
             if retain_main { CONTROLS_HEIGHT } else { config_for_window.monitor_height as f64 / scale })
@@ -293,7 +299,7 @@ pub(super) async fn prepare(
                 .map_err(|_| "无法调整录屏界面")?;
             if !shared { exclude(&toolbar, true)?; }
             edit_capture_session(&target.state::<RecordingState>(), &operation, |session| {
-                session.attach_hud(&toolbar)
+                session.attach_hud(&toolbar, retain_main)
             })?;
             // edit_capture_session has returned the lease to the same Active.
             pending.transferred();
@@ -314,7 +320,10 @@ pub(super) async fn prepare(
             let work = crate::shared_capture_windows::work_area(&toolbar, display)?;
             if retain_main {
                 let show = crate::shared_capture_windows::place_hud(&toolbar, roi, work, f8)?;
-                if show { toolbar.show().map_err(|_| "无法显示录屏控制条")?; }
+                if show {
+                    edit_capture_session(&target.state::<RecordingState>(), &operation, |session| session.verify_hud_owner())?;
+                    toolbar.show().map_err(|_| "无法显示录屏控制条")?;
+                }
                 return Ok(());
             }
             let position = crate::shared_capture_windows::hud_position(work, roi,
@@ -333,6 +342,7 @@ pub(super) async fn prepare(
             super::update(&target, &operation, |status| {
                 status.hud = Some(super::Hud { rect, stage: "layout", ready: false });
             });
+            edit_capture_session(&target.state::<RecordingState>(), &operation, |session| session.verify_hud_owner())?;
             toolbar.show().map_err(|_| "无法显示录屏界面")?;
             Ok(())
         })();

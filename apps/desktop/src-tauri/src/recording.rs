@@ -791,7 +791,7 @@ async fn prepare_windows(
             .map_err(|_| "无法打开录屏控制条")?;
             #[cfg(windows)]
             {
-                edit_capture_session(&target.state::<RecordingState>(), &id, |session| session.attach_hud(&toolbar))?;
+                edit_capture_session(&target.state::<RecordingState>(), &id, |session| session.attach_hud(&toolbar, false))?;
                 if !shared { exclude(&toolbar, true)?; }
             }
             #[cfg(not(windows))]

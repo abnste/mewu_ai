@@ -971,12 +971,13 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
     let owner = id.to_owned();
     let (send, receive) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = (|| -> Result<bool, String> {
+        let result = (|| -> Result<(bool, bool, tauri::WebviewWindow), String> {
             ensure_preparing(&target, &owner)?;
             let main = target.get_webview_window("space").ok_or("截图窗口不存在")?;
             let shared = target.state::<Host>().system_preferences.snapshot_for_operation()
                 .map_err(|error| error.to_string())?.allow_screen_share;
             let session = crate::shared_capture_windows::Session::capture(&main, shared)?;
+            let retained_owner = !automatic && session.can_retain_main_outside()?;
             {
                 let state = target.state::<ScrollState>();
                 let mut slot = state.0.lock().map_err(|_| "长截图状态不可用")?;
@@ -984,17 +985,21 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
                 if active.capture_session.is_some() { return Err("长截图窗口已准备".into()); }
                 active.capture_session = Some(session);
             }
-            Ok(shared)
+            Ok((shared, retained_owner, main))
         })();
         let _ = send.send(result);
     }).map_err(|_| "无法准备长截图窗口")?;
-    let shared = receive.await.map_err(|_| "长截图窗口准备中断")??;
+    let (shared, retained_owner, main) = receive.await.map_err(|_| "长截图窗口准备中断")??;
     ensure_preparing(app, id)?;
     let (page_send, mut page_receive) = tokio::sync::oneshot::channel();
     let page_send = Arc::new(Mutex::new(Some(page_send)));
     // Keep WebView2 creation outside a synchronous message-thread callback.
-    let toolbar = tauri::WebviewWindowBuilder::new(app, LABEL,
-        tauri::WebviewUrl::App("index.html?surface=scroll".into()))
+    let builder = tauri::WebviewWindowBuilder::new(app, LABEL,
+        tauri::WebviewUrl::App("index.html?surface=scroll".into()));
+    let builder = if retained_owner {
+        builder.owner(&main).map_err(|_| "无法绑定长截图控制条")?
+    } else { builder };
+    let toolbar = builder
         .title("Mewu · 长截图").inner_size(g.monitor_width as f64/g.scale,g.monitor_height as f64/g.scale)
         .decorations(false).transparent(true).background_color(tauri::window::Color(0, 0, 0, 0))
         .shadow(false).resizable(false).maximizable(false).minimizable(false)
@@ -1041,7 +1046,7 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
             if (position.x,position.y,size.width,size.height)!=(g.origin_x,g.origin_y,g.monitor_width,g.monitor_height) {
                 return Err("显示器位置已改变，请重新截图".into());
             }
-            edit_capture_session(&target.state::<ScrollState>(), &id, |session| session.attach_hud(&toolbar))?;
+            edit_capture_session(&target.state::<ScrollState>(), &id, |session| session.attach_hud(&toolbar, retained_owner))?;
             pending.0.take();
             target.state::<Host>().exit.ensure_running()?;
             if !shared { crate::recording::exclude(&toolbar, true)?; }
@@ -1053,6 +1058,7 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
                 active.surface_ready = Some(ready_send);
             }
             layout_scroll_hud(&target,&id,&g,(g.width,g.height),true)?;
+            edit_capture_session(&target.state::<ScrollState>(), &id, |session| session.verify_hud_owner())?;
             toolbar.show().map_err(|_| "无法显示长截图控制条")?;
             Ok(())
         })();
@@ -1079,7 +1085,7 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
                 Ok(())
             })?;
             if automatic && !shared {
-                target.get_webview_window("space").ok_or("截图窗口不存在")?.hide().map_err(|_| "无法释放应用窗口画面")?;
+                main.hide().map_err(|_| "无法释放应用窗口画面")?;
             }
             update(&target, &id, |status| { if let Some(hud) = &mut status.hud { hud.retain_main = retain_main; hud.live = true; } });
             Ok::<_, String>(())

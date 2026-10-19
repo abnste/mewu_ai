@@ -9,7 +9,8 @@ use std::sync::{
 use windows_sys::Win32::{
     Foundation::{GetLastError, SetLastError, HWND, RECT},
     Graphics::{
-        Dwm::{DwmFlush, DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED},
+        Dwm::{DwmFlush, DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED,
+            DWMWA_TRANSITIONS_FORCEDISABLED},
         Gdi::{
             CombineRgn, CreateRectRgn, DeleteObject, EqualRgn, GetWindowRgn, SetWindowRgn, HRGN,
             RGN_COPY, RGN_DIFF, RGN_OR,
@@ -17,10 +18,10 @@ use windows_sys::Win32::{
     },
     System::Threading::{GetCurrentProcessId, GetCurrentThreadId},
     UI::WindowsAndMessaging::{
-        GetPropW, GetWindowDisplayAffinity, GetWindowLongPtrW, GetWindowRect,
-        GetWindowThreadProcessId, IsWindow, RemovePropW, SetPropW, SetWindowDisplayAffinity,
-        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE, SWP_NOZORDER, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
+        GetPropW, GetWindow, GetWindowDisplayAffinity, GetWindowLongPtrW, GetWindowRect,
+        GetWindowThreadProcessId, IsWindow, IsWindowVisible, RemovePropW, SetPropW, SetWindowDisplayAffinity,
+        SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, GW_OWNER, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_NOZORDER, WS_CHILD, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
     },
 };
 
@@ -56,7 +57,10 @@ fn window_rect(hwnd: HWND) -> Result<RECT, String> {
     }
 }
 
-const INPUT_BITS: isize = (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize;
+// Match Tao's ignore-cursor-events policy. TRANSPARENT alone only affects paint
+// ordering; on a layered window it also passes mouse events to windows beneath.
+// All three original bits are captured and restored without changing opacity.
+const INPUT_BITS: isize = (WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize;
 const APP_CLOAK: u32 = 1;
 // One exact native owner per HWND. This also prevents a geometry publication
 // from replacing an active session's live aperture or outstanding restore debt.
@@ -395,6 +399,45 @@ impl Lease {
                 && GetPropW(self.hwnd as HWND, self.cookie.as_ptr()) as usize == 1
                 && GetPropW(self.hwnd as HWND, LEASE_OWNER_KEY.as_ptr()) as usize == self.cookie.as_ptr() as usize
         }
+    }
+    /// Only a newly attached, still-hidden owned HUD may disable its DWM show
+    /// transition. A composed show animation can move the otherwise safe native
+    /// aperture through the sampled pixels; DwmFlush is not an animation fence.
+    fn disable_hud_transitions_before_show(&self) -> Result<(), String> {
+        let hwnd = self.hwnd as HWND;
+        if !self.current() || self.finished || self.prepared || self.scroll_clip.is_some()
+            || self.input_changed || self.affinity_changed || self.cloak_changed
+            || unsafe { IsWindowVisible(hwnd) } != 0 {
+            return Err("采集控件身份或显示阶段已改变".into());
+        }
+        let disabled = 1i32;
+        let result = unsafe { DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+            (&disabled as *const i32).cast(), std::mem::size_of::<i32>() as u32) };
+        if result < 0 {
+            return Err("无法关闭采集控件的窗口动画".into());
+        }
+        // This attribute is documented for Set, not a promised Get readback.
+        if !self.current() || unsafe { IsWindowVisible(hwnd) } != 0 {
+            return Err("采集控件显示阶段已改变".into());
+        }
+        Ok(())
+    }
+    /// Pin the chosen top-level relationship. Retained overlays own their HUD;
+    /// cloaked/protected fallbacks keep it unowned to avoid inherited cloaking.
+    fn verify_hud_owner(&self, hud: &Lease, retained_owner: bool) -> Result<(), String> {
+        if self.finished || hud.finished || !self.current() || !hud.current() {
+            return Err("采集窗口或控制条身份已改变".into());
+        }
+        let hwnd = hud.hwnd as HWND;
+        let expected = if retained_owner { self.hwnd as HWND } else { std::ptr::null_mut() };
+        if unsafe { GetWindow(hwnd, GW_OWNER) } != expected
+            || unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } & WS_CHILD as isize != 0 {
+            return Err("采集控制条的所属窗口已改变".into());
+        }
+        if retained_owner && cloak(self.hwnd as HWND)? != 0 {
+            return Err("采集控制条不能继承已隐藏窗口".into());
+        }
+        Ok(())
     }
     /// Author a known space geometry, never infer one from GetWindowRgn ERROR.
     /// This temporary owner is deliberately not a prepared sampling lease.
@@ -775,7 +818,7 @@ pub(crate) fn author_space_region(window: &tauri::WebviewWindow, expected: Rect)
 /// Both the overlay and its one HUD are bound while on their message thread.
 pub(crate) struct Session {
     pub main: Lease,
-    hud: Option<(tauri::WebviewWindow, Lease)>,
+    hud: Option<(tauri::WebviewWindow, Lease, bool)>,
 }
 impl Session {
     pub fn capture(window: &tauri::WebviewWindow, shared: bool) -> Result<Self, String> {
@@ -811,17 +854,25 @@ impl Session {
         self.main.verify(roi)?;
         Ok(cloak(self.main.hwnd as HWND)? == 0)
     }
-    pub fn attach_hud(&mut self, window: &tauri::WebviewWindow) -> Result<(), String> {
+    pub fn attach_hud(&mut self, window: &tauri::WebviewWindow, retained_owner: bool) -> Result<(), String> {
         if self.hud.is_some() {
             return Err("采集控制条已存在".into());
         }
         match window
             .hwnd()
             .map_err(|_| "采集控制条不存在".to_string())
-            .and_then(|hwnd| Lease::capture(hwnd.0 as usize, self.main.shared))
+            .and_then(|hwnd| {
+                let lease = Lease::capture(hwnd.0 as usize, self.main.shared)?;
+                self.main.verify_hud_owner(&lease, retained_owner)?;
+                if retained_owner && !self.can_retain_main_outside()? {
+                    return Err("采集主窗口不能保留控制条层级".into());
+                }
+                lease.disable_hud_transitions_before_show()?;
+                Ok(lease)
+            })
         {
             Ok(lease) => {
-                self.hud = Some((window.clone(), lease));
+                self.hud = Some((window.clone(), lease, retained_owner));
                 Ok(())
             }
             Err(error) => {
@@ -833,24 +884,35 @@ impl Session {
     /// Presentation ACKs must name this exact owned HWND on its message thread.
     /// A replacement with the same Tauri label must never acknowledge this lease.
     pub fn owns_hud(&self, window: &tauri::WebviewWindow) -> bool {
-        !self.main.finished && self.main.current() && self.hud.as_ref().is_some_and(|(_, lease)| {
-            !lease.finished && lease.current() && window.hwnd().is_ok_and(|hwnd| hwnd.0 as usize == lease.hwnd)
+        !self.main.finished && self.main.current() && self.hud.as_ref().is_some_and(|(_, lease, retained_owner)| {
+            self.main.verify_hud_owner(lease, *retained_owner).is_ok()
+                && window.hwnd().is_ok_and(|hwnd| hwnd.0 as usize == lease.hwnd)
         })
+    }
+    pub fn verify_hud_owner(&self) -> Result<(), String> {
+        let (_, lease, retained_owner) = self.hud.as_ref().ok_or("采集控件不存在")?;
+        self.main.verify_hud_owner(lease, *retained_owner)?;
+        if *retained_owner && self.main.prepared && !self.retains_main_outside()? {
+            return Err("采集主窗口未保留控制条层级".into());
+        }
+        Ok(())
     }
     /// Stage only the disposable HUD aperture. The original main window remains
     /// visible and untouched until its frontend has presented the countdown.
     pub fn stage_scroll_hud(&mut self, roi: Rect, shapes: &[Rect]) -> Result<(), String> {
+        self.verify_hud_owner()?;
         self.main.verify_staged(roi)?;
         self.hud.as_mut().ok_or("采集控件不存在")?.1.set_scroll_clip(roi, shapes)
     }
     /// Update only an already owned compound HUD after the main is safe to sample.
     pub fn configure_scroll_hud(&mut self, roi: Rect, shapes: &[Rect]) -> Result<(), String> {
+        self.verify_hud_owner()?;
         self.main.verify(roi)?;
         self.hud.as_mut().ok_or("长截图控件不存在")?.1.set_scroll_clip(roi,shapes)
     }
     fn restore(&mut self) -> Result<(), String> {
         let hud = (|| {
-            if let Some((window, lease)) = &mut self.hud {
+            if let Some((window, lease, _)) = &mut self.hud {
                 if lease.current() {
                     window.destroy().map_err(|_| "无法关闭采集控制条")?;
                 } else if unsafe { IsWindow(lease.hwnd as HWND) } != 0 {
@@ -867,10 +929,8 @@ impl Session {
     pub fn verify(&self) -> Result<(), String> {
         let roi = self.main.roi.ok_or("采集窗口尚未准备完成")?;
         self.main.verify(roi)?;
-        if let Some((_, lease)) = &self.hud {
-            if !lease.current() {
-                return Err("采集控制条身份已改变".into());
-            }
+        if let Some((_, lease, _)) = &self.hud {
+            self.verify_hud_owner()?;
             if lease.scroll_clip.is_some() {
                 lease.verify_scroll_clip(roi)?;
             } else if self.main.shared
@@ -987,7 +1047,7 @@ pub(crate) fn abandon_for_process_exit(exit: &crate::lifecycle::ExitState) -> Re
     }
     for mut session in queue.drain(..) {
         session.main.finished = true;
-        if let Some((_, lease)) = &mut session.hud {
+        if let Some((_, lease, _)) = &mut session.hud {
             lease.finished = true;
         }
     }
@@ -1010,7 +1070,8 @@ pub(crate) async fn recover(app: &tauri::AppHandle) -> Result<(), String> {
 mod tests {
     use super::*;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, WS_EX_LAYERED, WS_POPUP,
+        CreateWindowExW, DestroyWindow, GWLP_HWNDPARENT, WS_EX_NOREDIRECTIONBITMAP,
+        WS_EX_TOOLWINDOW, WS_POPUP,
     };
     // Only tests that mutate the global recovery queue share this lock. Each
     // fixture's HWND must be recovered by its own test/message thread.
@@ -1018,10 +1079,16 @@ mod tests {
     struct Window(HWND);
     impl Window {
         fn new() -> Self {
+            Self::with_owner(std::ptr::null_mut())
+        }
+        fn with_owner(owner: HWND) -> Self {
+            Self::with_ex_style(owner, WS_EX_LAYERED)
+        }
+        fn with_ex_style(owner: HWND, style: u32) -> Self {
             let class: Vec<_> = "STATIC".encode_utf16().chain(Some(0)).collect();
             let hwnd = unsafe {
                 CreateWindowExW(
-                    WS_EX_LAYERED,
+                    style,
                     class.as_ptr(),
                     class.as_ptr(),
                     WS_POPUP,
@@ -1029,7 +1096,7 @@ mod tests {
                     -100,
                     800,
                     600,
-                    std::ptr::null_mut(),
+                    owner,
                     std::ptr::null_mut(),
                     std::ptr::null_mut(),
                     std::ptr::null(),
@@ -1057,6 +1124,189 @@ mod tests {
         let width = u32::try_from(i64::from(bounds.right) - i64::from(bounds.left)).unwrap();
         let height = u32::try_from(i64::from(bounds.bottom) - i64::from(bounds.top)).unwrap();
         Rect::offset(bounds.left, bounds.top, width / 4, height / 4, width / 2, height / 2).unwrap()
+    }
+    #[test]
+    fn hidden_hud_owner_is_the_exact_top_level_main_and_survives_capture_restore() {
+        for shared in [false, true] {
+            let main = Window::new();
+            let hud = Window::with_owner(main.0);
+            if shared { author_known_space_region(main.0 as usize, physical_bounds(&main)).unwrap(); }
+            let mut main_lease = Lease::capture(main.0 as usize, shared).unwrap();
+            let mut hud_lease = Lease::capture(hud.0 as usize, shared).unwrap();
+            assert_eq!(unsafe { GetWindow(hud.0, GW_OWNER) }, main.0);
+            assert_eq!(unsafe { GetWindowLongPtrW(hud.0, GWL_STYLE) } & WS_CHILD as isize, 0);
+            assert_eq!(unsafe { IsWindowVisible(hud.0) }, 0);
+            main_lease.verify_hud_owner(&hud_lease, true).unwrap();
+            let before = (physical_bounds(&hud), input_style(hud.0).unwrap(), affinity(hud.0).unwrap());
+            main_lease.prepare(middle_roi(physical_bounds(&main)), false).unwrap();
+            main_lease.verify_hud_owner(&hud_lease, true).unwrap();
+            main_lease.restore().unwrap();
+            hud_lease.restore().unwrap();
+            assert_eq!(unsafe { GetWindow(hud.0, GW_OWNER) }, main.0);
+            assert_eq!((physical_bounds(&hud), input_style(hud.0).unwrap(), affinity(hud.0).unwrap()), before);
+        }
+    }
+    #[test]
+    fn hidden_hud_owner_rejects_missing_or_wrong_main_without_reparenting() {
+        let main = Window::new();
+        let other = Window::new();
+        let mut main_lease = Lease::capture(main.0 as usize, true).unwrap();
+        for owner in [std::ptr::null_mut(), other.0] {
+            let hud = Window::with_owner(owner);
+            let mut hud_lease = Lease::capture(hud.0 as usize, true).unwrap();
+            let before = (physical_bounds(&hud), input_style(hud.0).unwrap(), affinity(hud.0).unwrap());
+            assert!(main_lease.verify_hud_owner(&hud_lease, true).is_err());
+            assert_eq!(unsafe { GetWindow(hud.0, GW_OWNER) }, owner);
+            assert_eq!((physical_bounds(&hud), input_style(hud.0).unwrap(), affinity(hud.0).unwrap()), before);
+            hud_lease.restore().unwrap();
+        }
+        main_lease.restore().unwrap();
+    }
+    #[test]
+    fn hidden_hud_owner_loss_or_old_main_cookie_cannot_authorize_the_hud() {
+        let main = Window::new();
+        let hud = Window::with_owner(main.0);
+        let mut main_lease = Lease::capture(main.0 as usize, true).unwrap();
+        let mut hud_lease = Lease::capture(hud.0 as usize, true).unwrap();
+        main_lease.verify_hud_owner(&hud_lease, true).unwrap();
+        assert_eq!(unsafe { SetWindowLongPtrW(hud.0, GWLP_HWNDPARENT, 0) }, main.0 as isize);
+        assert!(main_lease.verify_hud_owner(&hud_lease, true).is_err());
+        assert!(unsafe { GetWindow(hud.0, GW_OWNER) }.is_null(), "verification must not reparent a changed HUD");
+        unsafe { SetLastError(0); }
+        let previous = unsafe { SetWindowLongPtrW(hud.0, GWLP_HWNDPARENT, main.0 as isize) };
+        assert!(previous != 0 || unsafe { GetLastError() } == 0);
+        main_lease.verify_hud_owner(&hud_lease, true).unwrap();
+        unsafe { RemovePropW(main.0, main_lease.cookie.as_ptr()); }
+        assert!(main_lease.verify_hud_owner(&hud_lease, true).is_err());
+        assert_eq!(unsafe { GetWindow(hud.0, GW_OWNER) }, main.0);
+        assert_ne!(unsafe { SetPropW(main.0, main_lease.cookie.as_ptr(), 1usize as _) }, 0);
+        hud_lease.restore().unwrap();
+        main_lease.restore().unwrap();
+    }
+    #[test]
+    fn destroying_main_removes_owned_hud_and_old_leases_retire_without_touching_a_successor() {
+        let main = Window::new();
+        let hud = Window::with_owner(main.0);
+        let mut main_lease = Lease::capture(main.0 as usize, false).unwrap();
+        let mut hud_lease = Lease::capture(hud.0 as usize, false).unwrap();
+        main_lease.verify_hud_owner(&hud_lease, true).unwrap();
+        assert_ne!(unsafe { DestroyWindow(main.0) }, 0);
+        assert_eq!(unsafe { IsWindow(hud.0) }, 0);
+        assert!(main_lease.verify_hud_owner(&hud_lease, true).is_err());
+        hud_lease.restore().unwrap();
+        main_lease.restore().unwrap();
+        assert!(hud_lease.finished && main_lease.finished);
+        let successor = Window::new();
+        let before = (physical_bounds(&successor), input_style(successor.0).unwrap(), affinity(successor.0).unwrap());
+        hud_lease.restore().unwrap(); main_lease.restore().unwrap();
+        assert_eq!((physical_bounds(&successor), input_style(successor.0).unwrap(), affinity(successor.0).unwrap()), before);
+    }
+    #[test]
+    fn unowned_hud_survives_main_cloak_fallback_and_rejects_an_unknown_owner() {
+        for owned in [false, true] {
+            let main = Window::new();
+            let hud = Window::with_owner(if owned { main.0 } else { std::ptr::null_mut() });
+            let mut session = Session { main: Lease::capture(main.0 as usize, true).unwrap(), hud: None };
+            let mut hud_lease = Lease::capture(hud.0 as usize, true).unwrap();
+            assert!(!session.can_retain_main_outside().unwrap(), "no explicit main region must retain the cloak fallback");
+            assert_eq!(session.main.verify_hud_owner(&hud_lease, false).is_ok(), !owned);
+            let before = (physical_bounds(&hud), input_style(hud.0).unwrap(), affinity(hud.0).unwrap());
+            session.main.prepare(middle_roi(physical_bounds(&main)), false).unwrap();
+            assert_eq!(cloak(main.0).unwrap(), APP_CLOAK);
+            assert!(!session.retains_main_outside().unwrap());
+            if owned {
+                assert!(session.main.verify_hud_owner(&hud_lease, true).is_err(), "a cloaked main cannot authorize the owned mode");
+                assert!(session.main.verify_hud_owner(&hud_lease, false).is_err(), "fallback cannot silently accept an unknown owner");
+            } else {
+                session.main.verify_hud_owner(&hud_lease, false).unwrap();
+                assert_eq!(cloak(hud.0).unwrap(), 0, "the unowned HUD does not inherit the main cloak");
+            }
+            assert_eq!((physical_bounds(&hud), input_style(hud.0).unwrap(), affinity(hud.0).unwrap()), before);
+            session.restore().unwrap(); hud_lease.restore().unwrap();
+            assert_eq!(cloak(main.0).unwrap(), 0);
+            assert_eq!(unsafe { GetWindow(hud.0, GW_OWNER) }, if owned { main.0 } else { std::ptr::null_mut() });
+        }
+    }
+    #[test]
+    fn owned_hud_is_rejected_if_an_explicit_main_region_takes_whole_window_cloak_fallback() {
+        let main = Window::new(); let bounds = physical_bounds(&main);
+        author_known_space_region(main.0 as usize, bounds).unwrap();
+        let hud = Window::with_owner(main.0);
+        let mut session = Session { main: Lease::capture(main.0 as usize, true).unwrap(), hud: None };
+        let mut hud_lease = Lease::capture(hud.0 as usize, true).unwrap();
+        assert!(session.can_retain_main_outside().unwrap());
+        session.main.verify_hud_owner(&hud_lease, true).unwrap();
+        session.main.prepare(middle_roi(bounds), true).unwrap();
+        assert_eq!(cloak(main.0).unwrap(), APP_CLOAK);
+        assert!(!session.retains_main_outside().unwrap());
+        assert!(session.main.verify_hud_owner(&hud_lease, true).is_err());
+        session.restore().unwrap(); hud_lease.restore().unwrap();
+        assert_eq!(unsafe { GetWindow(hud.0, GW_OWNER) }, main.0);
+    }
+    #[test]
+    fn nonlayered_composition_capture_adds_all_input_bits_and_restores_exact_original_state() {
+        for initial in [0, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE | WS_EX_TRANSPARENT] {
+            for shared in [false, true] {
+                let window = Window::with_ex_style(std::ptr::null_mut(), WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | initial);
+                let bounds = physical_bounds(&window); let roi = middle_roi(bounds);
+                author_known_space_region(window.0 as usize, bounds).unwrap();
+                let original = region(window.0).unwrap().unwrap();
+                let before = (input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap());
+                assert_eq!(before.0 & WS_EX_LAYERED as isize, 0);
+                assert_ne!(before.0 & WS_EX_NOREDIRECTIONBITMAP as isize, 0);
+                let mut lease = Lease::capture(window.0 as usize, shared).unwrap();
+                lease.prepare(roi, false).unwrap(); lease.verify(roi).unwrap();
+                let during = input_style(window.0).unwrap();
+                assert_eq!(during & INPUT_BITS, INPUT_BITS);
+                assert_eq!(during & !INPUT_BITS, before.0 & !INPUT_BITS);
+                assert_eq!(physical_bounds(&window), bounds);
+                assert_eq!(cloak(window.0).unwrap(), before.2);
+                assert_eq!(affinity(window.0).unwrap(), if shared { before.1 } else { 0x11 });
+                lease.restore().unwrap();
+                assert_eq!((input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap()), before);
+                assert_eq!(physical_bounds(&window), bounds);
+                assert_ne!(unsafe { EqualRgn(original.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+            }
+        }
+    }
+    #[test]
+    fn already_layered_capture_preserves_each_original_input_combination_after_restore() {
+        for initial in [0, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT, WS_EX_NOACTIVATE | WS_EX_TRANSPARENT] {
+            let window = Window::with_ex_style(std::ptr::null_mut(), WS_EX_LAYERED | WS_EX_TOOLWINDOW | initial);
+            let bounds = physical_bounds(&window); let roi = middle_roi(bounds);
+            author_known_space_region(window.0 as usize, bounds).unwrap();
+            let original = region(window.0).unwrap().unwrap();
+            let before = (input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap());
+            let mut lease = Lease::capture(window.0 as usize, true).unwrap();
+            lease.prepare(roi, false).unwrap(); lease.verify(roi).unwrap();
+            assert_eq!(input_style(window.0).unwrap() & INPUT_BITS, INPUT_BITS);
+            assert_eq!(input_style(window.0).unwrap() & !INPUT_BITS, before.0 & !INPUT_BITS);
+            lease.restore().unwrap();
+            assert_eq!((input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap()), before);
+            assert_eq!(physical_bounds(&window), bounds);
+            assert_ne!(unsafe { EqualRgn(original.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+        }
+    }
+    #[test]
+    fn capture_verify_rejects_layered_bit_loss_without_rewriting_unrelated_state() {
+        let window = Window::with_ex_style(std::ptr::null_mut(), WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW);
+        let bounds = physical_bounds(&window); let roi = middle_roi(bounds);
+        author_known_space_region(window.0 as usize, bounds).unwrap();
+        let original = region(window.0).unwrap().unwrap();
+        let before = (input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap());
+        let mut lease = Lease::capture(window.0 as usize, true).unwrap();
+        lease.prepare(roi, false).unwrap();
+        let removed = input_style(window.0).unwrap() & !(WS_EX_LAYERED as isize);
+        assert_ne!(unsafe { SetWindowLongPtrW(window.0, GWL_EXSTYLE, removed) }, 0);
+        let hole = region(window.0).unwrap().unwrap();
+        assert_eq!(removed & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize, (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize);
+        assert!(lease.verify(roi).is_err(), "the other two flags cannot authorize a nonlayered live overlay");
+        assert_eq!(input_style(window.0).unwrap(), removed, "verification must not repair another writer's style");
+        assert_eq!((physical_bounds(&window), affinity(window.0).unwrap(), cloak(window.0).unwrap()), (bounds, before.1, before.2));
+        assert_ne!(unsafe { EqualRgn(hole.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+        lease.restore().unwrap();
+        assert_eq!((input_style(window.0).unwrap(), affinity(window.0).unwrap(), cloak(window.0).unwrap()), before);
+        assert_ne!(unsafe { EqualRgn(original.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
     }
     #[test]
     fn authored_space_region_is_explicit_idempotent_and_keeps_actual_negative_physical_geometry() {
@@ -1128,6 +1378,61 @@ mod tests {
         assert!(author_known_space_region(hwnd, bounds).is_err());
         assert_ne!(unsafe { EqualRgn(distinct.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
         assert!(owner.restore().is_err());
+    }
+    #[test]
+    fn hidden_hud_disables_transitions_without_changing_capture_region_or_native_state() {
+        for shared in [false, true] {
+            let window = Window::new();
+            let original = Region(unsafe { CreateRectRgn(0, 0, 83, 97) } as usize);
+            assert_ne!(original.0, 0);
+            original.copy().unwrap().assign(window.0).unwrap();
+            let mut lease = Lease::capture(window.0 as usize, shared).unwrap();
+            let before = (physical_bounds(&window), affinity(window.0).unwrap(),
+                input_style(window.0).unwrap(), cloak(window.0).unwrap());
+            assert_eq!(unsafe { IsWindowVisible(window.0) }, 0);
+            lease.disable_hud_transitions_before_show().unwrap();
+            assert_eq!((physical_bounds(&window), affinity(window.0).unwrap(),
+                input_style(window.0).unwrap(), cloak(window.0).unwrap()), before);
+            assert_ne!(unsafe { EqualRgn(original.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+            assert!(lease.current());
+            assert!(!lease.prepared && !lease.ready && lease.scroll_clip.is_none());
+            lease.restore().unwrap();
+        }
+    }
+    #[test]
+    fn hidden_hud_transition_change_rejects_stale_cookie_and_foreign_thread() {
+        let window = Window::new();
+        let mut lease = Lease::capture(window.0 as usize, false).unwrap();
+        let before = (physical_bounds(&window), affinity(window.0).unwrap(),
+            input_style(window.0).unwrap(), cloak(window.0).unwrap());
+        std::thread::scope(|scope| {
+            assert!(scope.spawn(|| lease.disable_hud_transitions_before_show()).join().unwrap().is_err());
+        });
+        unsafe { RemovePropW(window.0, lease.cookie.as_ptr()); }
+        assert!(lease.disable_hud_transitions_before_show().is_err());
+        assert_eq!((physical_bounds(&window), affinity(window.0).unwrap(),
+            input_style(window.0).unwrap(), cloak(window.0).unwrap()), before);
+        assert!(region(window.0).unwrap().is_none());
+        assert_ne!(unsafe { SetPropW(window.0, lease.cookie.as_ptr(), 1usize as _) }, 0);
+        lease.restore().unwrap();
+    }
+    #[test]
+    fn hidden_hud_transition_change_rejects_prepared_lease_without_resetting_aperture() {
+        let window = Window::new();
+        let bounds = physical_bounds(&window);
+        author_known_space_region(window.0 as usize, bounds).unwrap();
+        let mut lease = Lease::capture(window.0 as usize, true).unwrap();
+        let roi = middle_roi(bounds);
+        lease.prepare(roi, false).unwrap();
+        let aperture = region(window.0).unwrap().unwrap();
+        let before = (physical_bounds(&window), affinity(window.0).unwrap(),
+            input_style(window.0).unwrap(), cloak(window.0).unwrap());
+        assert!(lease.disable_hud_transitions_before_show().is_err());
+        assert_eq!((physical_bounds(&window), affinity(window.0).unwrap(),
+            input_style(window.0).unwrap(), cloak(window.0).unwrap()), before);
+        assert_ne!(unsafe { EqualRgn(aperture.raw(), region(window.0).unwrap().unwrap().raw()) }, 0);
+        lease.verify(roi).unwrap();
+        lease.restore().unwrap();
     }
     #[test]
     fn shared_hud_stays_outside_roi_and_fullscreen_requires_stop_hotkey() {
