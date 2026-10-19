@@ -307,6 +307,59 @@ fn region(hwnd: HWND) -> Result<Option<Region>, String> {
     Ok(None)
 }
 
+// Same-thread live main-window guard. Refdata contains identity numbers only;
+// no callback ever dereferences a Lease, Vec, Box or other movable Rust owner.
+static NONCLIENT_KEY: LazyLock<Vec<u16>> = LazyLock::new(||
+    "Mewu-Live-Capture-Nonclient".encode_utf16().chain(Some(0)).collect());
+static NEXT_NONCLIENT_ID: AtomicUsize = AtomicUsize::new(1);
+
+#[derive(Clone, Copy)]
+struct NonclientGuard { id: usize, cookie: usize }
+
+fn nonclient_data(hwnd: HWND, id: usize) -> Option<usize> {
+    let mut data = 0usize;
+    unsafe { windows::Win32::UI::Shell::GetWindowSubclass(
+        windows::Win32::Foundation::HWND(hwnd), Some(nonclient_proc), id, Some(&mut data)) }
+        .as_bool().then_some(data)
+}
+
+unsafe extern "system" fn nonclient_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+    id: usize,
+    cookie: usize,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, WM_NCACTIVATE, WM_NCDESTROY, WS_CAPTION};
+    let raw = hwnd.0;
+    if msg == WM_NCDESTROY {
+        // Windows is ending this exact HWND's lifetime. No Rust pointer is
+        // released and no engine/lease lock is taken during reentrant dispatch.
+        unsafe { RemoveWindowSubclass(hwnd, Some(nonclient_proc), id); }
+        if unsafe { GetPropW(raw, NONCLIENT_KEY.as_ptr()) } as usize == id {
+            unsafe { RemovePropW(raw, NONCLIENT_KEY.as_ptr()); }
+        }
+        return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+    }
+    if msg == WM_NCACTIVATE {
+        let mut process = 0u32;
+        let thread = unsafe { GetWindowThreadProcessId(raw, &mut process) };
+        if thread != 0 && thread == unsafe { GetCurrentThreadId() }
+            && process == unsafe { GetCurrentProcessId() }
+            && unsafe { GetPropW(raw, NONCLIENT_KEY.as_ptr()) } as usize == id
+            && unsafe { GetPropW(raw, LEASE_OWNER_KEY.as_ptr()) } as usize == cookie
+            && unsafe { GetWindowLongPtrW(raw, GWL_STYLE) } & (WS_CAPTION | WS_CHILD) as isize == 0
+            && unsafe { IsIconic(raw) } == 0 {
+            // Keep Tao's active/focus dispatch and the normal subclass chain.
+            // Microsoft documents -1 as no NC repaint, not no activation.
+            return unsafe { DefSubclassProc(hwnd, msg, wparam, windows::Win32::Foundation::LPARAM(-1)) };
+        }
+    }
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
 pub(crate) struct Lease {
     hwnd: usize,
     thread: u32,
@@ -329,6 +382,7 @@ pub(crate) struct Lease {
     ready: bool,
     roi: Option<Rect>,
     finished: bool,
+    nonclient: Option<NonclientGuard>,
 }
 impl Lease {
     /// Must be called on the actual window's message thread.
@@ -390,6 +444,7 @@ impl Lease {
             ready: false,
             roi: None,
             finished: false,
+            nonclient: None,
         })
     }
     fn current(&self) -> bool {
@@ -400,6 +455,81 @@ impl Lease {
                 && GetPropW(self.hwnd as HWND, LEASE_OWNER_KEY.as_ptr()) as usize == self.cookie.as_ptr() as usize
         }
     }
+    fn verify_main_nonclient(&self) -> Result<(), String> {
+        let Some(guard) = self.nonclient else { return Ok(()); };
+        if !self.current()
+            || unsafe { GetPropW(self.hwnd as HWND, NONCLIENT_KEY.as_ptr()) } as usize != guard.id
+            || nonclient_data(self.hwnd as HWND, guard.id) != Some(guard.cookie) {
+            return Err("采集窗口的无边框状态已改变".into());
+        }
+        Ok(())
+    }
+    fn install_main_nonclient(&mut self) -> Result<(), String> {
+        self.install_main_nonclient_with(|hwnd, guard| unsafe {
+            windows::Win32::UI::Shell::SetWindowSubclass(
+                windows::Win32::Foundation::HWND(hwnd), Some(nonclient_proc), guard.id, guard.cookie).as_bool()
+        })
+    }
+    fn install_main_nonclient_with(
+        &mut self, install: impl FnOnce(HWND, NonclientGuard) -> bool,
+    ) -> Result<(), String> {
+        use windows_sys::Win32::UI::WindowsAndMessaging::WS_CAPTION;
+        if !self.current() || self.finished { return Err("采集窗口身份已改变".into()); }
+        if self.nonclient.is_some() { return self.verify_main_nonclient(); }
+        if self.prepared || self.scroll_clip.is_some() || self.input_changed || self.affinity_changed || self.cloak_changed
+            || unsafe { GetWindowLongPtrW(self.hwnd as HWND, GWL_STYLE) } & (WS_CAPTION | WS_CHILD) as isize != 0
+            || !unsafe { GetPropW(self.hwnd as HWND, NONCLIENT_KEY.as_ptr()) }.is_null() {
+            return Err("采集窗口的无边框阶段无效".into());
+        }
+        let id = NEXT_NONCLIENT_ID.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| "采集窗口标识已耗尽")?;
+        let hwnd = self.hwnd as HWND;
+        let guard = NonclientGuard { id, cookie: self.cookie.as_ptr() as usize };
+        if nonclient_data(hwnd, id).is_some() { return Err("采集窗口标识已占用".into()); }
+        if unsafe { SetPropW(hwnd, NONCLIENT_KEY.as_ptr(), id as _) } == 0 {
+            return Err("无法绑定采集窗口的无边框状态".into());
+        }
+        // Record cleanup debt before a fallible installation/readback. This
+        // stores only numbers, so moving or deferred recovery is safe.
+        self.nonclient = Some(guard);
+        let installed = install(hwnd, guard);
+        if !installed || self.verify_main_nonclient().is_err() {
+            self.remove_main_nonclient()?;
+            return Err("无法设置采集窗口的无边框状态".into());
+        }
+        Ok(())
+    }
+    fn remove_main_nonclient(&mut self) -> Result<(), String> {
+        self.remove_main_nonclient_with(|hwnd, guard| unsafe {
+            windows::Win32::UI::Shell::RemoveWindowSubclass(
+                windows::Win32::Foundation::HWND(hwnd), Some(nonclient_proc), guard.id).as_bool()
+        })
+    }
+    fn remove_main_nonclient_with(
+        &mut self, remove: impl FnOnce(HWND, NonclientGuard) -> bool,
+    ) -> Result<(), String> {
+        let Some(guard) = self.nonclient else { return Ok(()); };
+        if !self.current()
+            || unsafe { GetPropW(self.hwnd as HWND, NONCLIENT_KEY.as_ptr()) } as usize != guard.id {
+            return Err("采集窗口无边框恢复身份已改变".into());
+        }
+        let hwnd = self.hwnd as HWND;
+        if let Some(data) = nonclient_data(hwnd, guard.id) {
+            if data != guard.cookie { return Err("采集窗口无边框回调已改变".into()); }
+            if !remove(hwnd, guard) || nonclient_data(hwnd, guard.id).is_some() {
+                return Err("采集窗口无边框状态尚未恢复".into());
+            }
+        }
+        // Callback is absent before its identity property is released. Refdata
+        // is never a pointer, including when a failed restore is deferred.
+        unsafe { RemovePropW(hwnd, NONCLIENT_KEY.as_ptr()); }
+        if !unsafe { GetPropW(hwnd, NONCLIENT_KEY.as_ptr()) }.is_null() {
+            return Err("采集窗口无边框标识尚未恢复".into());
+        }
+        self.nonclient = None;
+        Ok(())
+    }
+
     /// Only a newly attached, still-hidden owned HUD may disable its DWM show
     /// transition. A composed show animation can move the otherwise safe native
     /// aperture through the sampled pixels; DwmFlush is not an animation fence.
@@ -467,7 +597,7 @@ impl Lease {
     }
     fn release_author_identity(&mut self) -> Result<(), String> {
         if !self.current() || self.prepared || self.applied_region.is_some() || self.scroll_clip.is_some()
-            || self.input_changed || self.affinity_changed || self.cloak_changed {
+            || self.input_changed || self.affinity_changed || self.cloak_changed || self.nonclient.is_some() {
             return Err("空间窗口所有权已改变".into());
         }
         unsafe {
@@ -478,6 +608,7 @@ impl Lease {
         Ok(())
     }
     fn verify_staged(&self, roi: Rect) -> Result<(), String> {
+        self.verify_main_nonclient()?;
         if !self.current() || self.finished || self.prepared || !self.before_bounds.contains(roi) {
             return Err("采集窗口身份或阶段已改变".into());
         }
@@ -607,6 +738,7 @@ impl Lease {
         self.verify_native(roi)
     }
     fn verify_native(&self, roi: Rect) -> Result<(), String> {
+        self.verify_main_nonclient()?;
         if !self.current() {
             return Err("采集窗口身份已改变".into());
         }
@@ -672,6 +804,7 @@ impl Lease {
             // Destroyed/replaced HWNDs no longer contain our overlay. Never
             // mutate the new window, even if the label or numeric handle matches.
             if unsafe { IsWindow(self.hwnd as HWND) } == 0 {
+                self.nonclient = None;
                 self.finished = true;
                 return Ok(());
             }
@@ -700,6 +833,7 @@ impl Lease {
             self.affinity_changed = false;
         }
         flush()?;
+        self.remove_main_nonclient()?;
         unsafe {
             RemovePropW(hwnd, self.cookie.as_ptr());
             RemovePropW(hwnd, LEASE_OWNER_KEY.as_ptr());
@@ -822,13 +956,21 @@ pub(crate) struct Session {
 }
 impl Session {
     pub fn capture(window: &tauri::WebviewWindow, shared: bool) -> Result<Self, String> {
-        Ok(Self {
+        if window.label() != "space" { return Err("只有空间窗口可以开始实时采集".into()); }
+        let mut session = Self {
             main: Lease::capture(
                 window.hwnd().map_err(|_| "采集窗口不存在")?.0 as usize,
                 shared,
             )?,
             hud: None,
-        })
+        };
+        if let Err(error) = session.main.install_main_nonclient() {
+            // Any partial installation has already recorded its exact cleanup
+            // debt. The original finish/defer path owns a failed restoration.
+            finish(session)?;
+            return Err(error);
+        }
+        Ok(session)
     }
     /// Prediction only: the original explicit native region can preserve the
     /// scene outside a future ROI. A caller must still prepare and verify it.
@@ -1125,6 +1267,234 @@ mod tests {
         let height = u32::try_from(i64::from(bounds.bottom) - i64::from(bounds.top)).unwrap();
         Rect::offset(bounds.left, bounds.top, width / 4, height / 4, width / 2, height / 2).unwrap()
     }
+    thread_local! {
+        static NONCLIENT_OBSERVED: std::cell::RefCell<Vec<(u32, usize, isize)>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+    const NONCLIENT_OTHER: u32 = 0x8000 + 0x253;
+    unsafe extern "system" fn observed_nonclient_window(
+        hwnd: HWND, message: u32, wparam: usize, lparam: isize,
+    ) -> isize {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{DefWindowProcW, WM_NCACTIVATE};
+        if message == WM_NCACTIVATE || message == NONCLIENT_OTHER {
+            NONCLIENT_OBSERVED.with(|value| value.borrow_mut().push((message, wparam, lparam)));
+            return 0x253;
+        }
+        unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    }
+    struct NonclientWindow { raw: HWND, class: Vec<u16>, instance: *mut std::ffi::c_void }
+    impl NonclientWindow {
+        fn new() -> Self { Self::with_style(0) }
+        fn with_style(extra: u32) -> Self {
+            use windows_sys::Win32::{System::LibraryLoader::GetModuleHandleW,
+                UI::WindowsAndMessaging::{RegisterClassW, WNDCLASSW}};
+            let class: Vec<_> = format!("Mewu-NC-test-{}", uuid::Uuid::new_v4()).encode_utf16().chain(Some(0)).collect();
+            let instance = unsafe { GetModuleHandleW(std::ptr::null()) };
+            assert!(!instance.is_null());
+            let descriptor = WNDCLASSW { lpfnWndProc: Some(observed_nonclient_window), hInstance: instance,
+                lpszClassName: class.as_ptr(), ..Default::default() };
+            assert_ne!(unsafe { RegisterClassW(&descriptor) }, 0);
+            let raw = unsafe { CreateWindowExW(WS_EX_LAYERED, class.as_ptr(), class.as_ptr(), WS_POPUP | extra,
+                -2000, -100, 800, 600, std::ptr::null_mut(), std::ptr::null_mut(), instance, std::ptr::null()) };
+            assert!(!raw.is_null());
+            NONCLIENT_OBSERVED.with(|value| value.borrow_mut().clear());
+            Self { raw, class, instance }
+        }
+        fn send(&self, message: u32, wparam: usize, lparam: isize) -> Vec<(u32, usize, isize)> {
+            use windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW;
+            NONCLIENT_OBSERVED.with(|value| value.borrow_mut().clear());
+            assert_eq!(unsafe { SendMessageW(self.raw, message, wparam, lparam) }, 0x253);
+            NONCLIENT_OBSERVED.with(|value| std::mem::take(&mut *value.borrow_mut()))
+        }
+    }
+    impl Drop for NonclientWindow {
+        fn drop(&mut self) {
+            unsafe {
+                DestroyWindow(self.raw);
+                windows_sys::Win32::UI::WindowsAndMessaging::UnregisterClassW(self.class.as_ptr(), self.instance);
+            }
+        }
+    }
+    fn set_nonclient_test_data(hwnd: HWND, guard: NonclientGuard, data: usize) {
+        assert!(unsafe { windows::Win32::UI::Shell::SetWindowSubclass(
+            windows::Win32::Foundation::HWND(hwnd), Some(nonclient_proc), guard.id, data) }.as_bool());
+    }
+    #[test]
+    fn native_nonclient_main_guard_forwards_activation_and_other_messages_through_original_wndproc() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE;
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        lease.install_main_nonclient().unwrap();
+        for active in [0, 1] {
+            assert_eq!(window.send(WM_NCACTIVATE, active, 0x1234), vec![(WM_NCACTIVATE, active, -1)]);
+        }
+        assert_eq!(window.send(NONCLIENT_OTHER, 0x7788, 0x3344), vec![(NONCLIENT_OTHER, 0x7788, 0x3344)]);
+        lease.restore().unwrap();
+        assert_eq!(window.send(WM_NCACTIVATE, 0, 0x1234), vec![(WM_NCACTIVATE, 0, 0x1234)]);
+    }
+    #[test]
+    fn native_nonclient_main_guard_install_move_repeat_and_remove_are_exact_and_idempotent() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE;
+        let window = NonclientWindow::new();
+        let mut original = Lease::capture(window.raw as usize, true).unwrap();
+        original.install_main_nonclient().unwrap();
+        let guard = original.nonclient.unwrap();
+        let mut moved = vec![original].pop().unwrap();
+        moved.install_main_nonclient_with(|_, _| panic!("repeat must not install again")).unwrap();
+        assert_eq!(moved.nonclient.unwrap().id, guard.id);
+        assert_eq!(window.send(WM_NCACTIVATE, 1, 55), vec![(WM_NCACTIVATE, 1, -1)]);
+        moved.restore().unwrap(); moved.restore().unwrap();
+        assert!(nonclient_data(window.raw, guard.id).is_none());
+        assert!(unsafe { GetPropW(window.raw, NONCLIENT_KEY.as_ptr()) }.is_null());
+        let mut next = Lease::capture(window.raw as usize, true).unwrap();
+        next.install_main_nonclient().unwrap();
+        assert_ne!(next.nonclient.unwrap().id, guard.id, "new generation must not reuse callback identity");
+        next.restore().unwrap();
+        assert_eq!(window.send(WM_NCACTIVATE, 1, 55), vec![(WM_NCACTIVATE, 1, 55)]);
+    }
+    #[test]
+    fn native_nonclient_main_guard_failed_or_partial_install_rolls_back_before_any_capture_mutation() {
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        let before = (input_style(window.raw).unwrap(), affinity(window.raw).unwrap(), cloak(window.raw).unwrap());
+        for partial in [false, true] {
+            assert!(lease.install_main_nonclient_with(|hwnd, guard| {
+                if partial { set_nonclient_test_data(hwnd, guard, guard.cookie); }
+                false
+            }).is_err());
+            assert!(lease.nonclient.is_none());
+            assert!(lease.current());
+            assert!(unsafe { GetPropW(window.raw, NONCLIENT_KEY.as_ptr()) }.is_null());
+            assert!(!lease.input_changed && !lease.affinity_changed && !lease.cloak_changed && !lease.prepared);
+            assert_eq!((input_style(window.raw).unwrap(), affinity(window.raw).unwrap(), cloak(window.raw).unwrap()), before);
+        }
+        lease.restore().unwrap();
+    }
+    #[test]
+    fn native_nonclient_main_guard_wrong_callback_readback_retains_cleanup_debt_without_overwrite() {
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        assert!(lease.install_main_nonclient_with(|hwnd, guard| {
+            set_nonclient_test_data(hwnd, guard, guard.cookie ^ 1); true
+        }).is_err());
+        let guard = lease.nonclient.unwrap();
+        assert_eq!(nonclient_data(window.raw, guard.id), Some(guard.cookie ^ 1));
+        assert!(lease.restore().is_err());
+        assert!(!lease.finished && lease.current() && lease.nonclient.is_some());
+        assert_eq!(nonclient_data(window.raw, guard.id), Some(guard.cookie ^ 1));
+        set_nonclient_test_data(window.raw, guard, guard.cookie);
+        lease.restore().unwrap();
+        assert!(lease.finished && lease.nonclient.is_none());
+    }
+    #[test]
+    fn native_nonclient_main_guard_remove_failure_keeps_callback_and_cookie_until_retry() {
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        lease.install_main_nonclient().unwrap(); let guard = lease.nonclient.unwrap();
+        assert!(lease.remove_main_nonclient_with(|_, _| false).is_err());
+        assert!(lease.nonclient.is_some() && lease.current() && !lease.finished);
+        assert_eq!(nonclient_data(window.raw, guard.id), Some(guard.cookie));
+        lease.restore().unwrap();
+        assert!(nonclient_data(window.raw, guard.id).is_none());
+        assert!(unsafe { GetPropW(window.raw, LEASE_OWNER_KEY.as_ptr()) }.is_null());
+    }
+    #[test]
+    fn native_nonclient_main_guard_foreign_cookie_or_token_disables_filter_and_never_rewrites_identity() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE;
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        lease.install_main_nonclient().unwrap(); let guard = lease.nonclient.unwrap();
+        assert_ne!(unsafe { SetPropW(window.raw, LEASE_OWNER_KEY.as_ptr(), 7usize as _) }, 0);
+        assert_eq!(window.send(WM_NCACTIVATE, 0, 99), vec![(WM_NCACTIVATE, 0, 99)]);
+        assert!(lease.restore().is_err());
+        assert_eq!(unsafe { GetPropW(window.raw, LEASE_OWNER_KEY.as_ptr()) } as usize, 7);
+        assert_ne!(unsafe { SetPropW(window.raw, LEASE_OWNER_KEY.as_ptr(), guard.cookie as _) }, 0);
+        assert_ne!(unsafe { SetPropW(window.raw, NONCLIENT_KEY.as_ptr(), (guard.id + 1) as _) }, 0);
+        assert_eq!(window.send(WM_NCACTIVATE, 0, 99), vec![(WM_NCACTIVATE, 0, 99)]);
+        assert!(lease.restore().is_err());
+        assert_eq!(unsafe { GetPropW(window.raw, NONCLIENT_KEY.as_ptr()) } as usize, guard.id + 1);
+        assert_ne!(unsafe { SetPropW(window.raw, NONCLIENT_KEY.as_ptr(), guard.id as _) }, 0);
+        lease.restore().unwrap();
+    }
+    #[test]
+    fn native_nonclient_main_guard_cross_thread_cannot_install_remove_or_restore_original_owner() {
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        lease.install_main_nonclient().unwrap(); let guard = lease.nonclient.unwrap();
+        let mut lease = std::thread::spawn(move || {
+            let mut lease = lease;
+            assert!(lease.install_main_nonclient().is_err());
+            assert!(lease.remove_main_nonclient().is_err());
+            assert!(lease.restore().is_err());
+            lease
+        }).join().unwrap();
+        assert_eq!(nonclient_data(window.raw, guard.id), Some(guard.cookie));
+        lease.restore().unwrap();
+    }
+    #[test]
+    fn native_nonclient_main_guard_rejects_decorated_native_window_and_stale_capture_phase() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::WS_CAPTION;
+        let window = NonclientWindow::with_style(WS_CAPTION);
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        assert!(lease.install_main_nonclient().is_err()); assert!(lease.nonclient.is_none()); lease.restore().unwrap();
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        lease.prepared = true;
+        assert!(lease.install_main_nonclient().is_err()); assert!(lease.nonclient.is_none()); lease.restore().unwrap();
+    }
+    #[test]
+    fn native_nonclient_main_guard_destroyed_hwnd_retires_without_touching_a_successor() {
+        let window = NonclientWindow::new();
+        let mut lease = Lease::capture(window.raw as usize, true).unwrap();
+        lease.install_main_nonclient().unwrap(); let guard = lease.nonclient.unwrap();
+        assert_ne!(unsafe { DestroyWindow(window.raw) }, 0);
+        assert_eq!(unsafe { IsWindow(window.raw) }, 0);
+        lease.restore().unwrap();
+        assert!(lease.finished && lease.nonclient.is_none());
+        let next = NonclientWindow::new();
+        let before = (input_style(next.raw).unwrap(), affinity(next.raw).unwrap(), cloak(next.raw).unwrap());
+        lease.restore().unwrap();
+        assert!(nonclient_data(next.raw, guard.id).is_none());
+        assert!(unsafe { GetPropW(next.raw, NONCLIENT_KEY.as_ptr()) }.is_null());
+        assert_eq!((input_style(next.raw).unwrap(), affinity(next.raw).unwrap(), cloak(next.raw).unwrap()), before);
+    }
+    #[test]
+    fn native_nonclient_main_guard_capture_restore_keeps_original_region_input_and_affinity_contract() {
+        for shared in [false, true] {
+            let window = NonclientWindow::new();
+            let native = window_rect(window.raw).unwrap();
+            let bounds = Rect { left: native.left, top: native.top, right: native.right, bottom: native.bottom };
+            author_known_space_region(window.raw as usize, bounds).unwrap();
+            let original = region(window.raw).unwrap().unwrap();
+            let before = (input_style(window.raw).unwrap(), affinity(window.raw).unwrap(), cloak(window.raw).unwrap());
+            let mut lease = Lease::capture(window.raw as usize, shared).unwrap();
+            lease.install_main_nonclient().unwrap(); let guard = lease.nonclient.unwrap();
+            lease.prepare(middle_roi(bounds), false).unwrap(); lease.verify(middle_roi(bounds)).unwrap();
+            assert_eq!(nonclient_data(window.raw, guard.id), Some(guard.cookie));
+            lease.restore().unwrap();
+            assert!(nonclient_data(window.raw, guard.id).is_none());
+            assert_eq!((input_style(window.raw).unwrap(), affinity(window.raw).unwrap(), cloak(window.raw).unwrap()), before);
+            assert_ne!(unsafe { EqualRgn(original.raw(), region(window.raw).unwrap().unwrap().raw()) }, 0);
+        }
+    }
+    #[test]
+    fn native_nonclient_main_guard_failed_restore_remains_in_original_recovery_queue_until_exact_retry() {
+        let _serial = RECOVERY_TEST.lock().unwrap();
+        assert!(!pending());
+        let window = NonclientWindow::new();
+        let mut main = Lease::capture(window.raw as usize, true).unwrap();
+        main.install_main_nonclient().unwrap(); let guard = main.nonclient.unwrap();
+        set_nonclient_test_data(window.raw, guard, guard.cookie ^ 1);
+        assert!(finish(Session { main, hud: None }).is_err());
+        assert!(pending());
+        assert!(recover_with(|| {}).is_err()); assert!(pending());
+        assert_eq!(nonclient_data(window.raw, guard.id), Some(guard.cookie ^ 1));
+        set_nonclient_test_data(window.raw, guard, guard.cookie);
+        recover_with(|| {}).unwrap();
+        assert!(!pending());
+        assert!(nonclient_data(window.raw, guard.id).is_none());
+        assert!(unsafe { GetPropW(window.raw, LEASE_OWNER_KEY.as_ptr()) }.is_null());
+    }
+
     #[test]
     fn hidden_hud_owner_is_the_exact_top_level_main_and_survives_capture_restore() {
         for shared in [false, true] {
