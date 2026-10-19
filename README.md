@@ -1,6 +1,8 @@
 <div align="center">
   <img src="./Assets/MewuAI.Icon.png" width="88" alt="MewuAI" />
   <h1>MewuAI — Capture and AI Space</h1>
+  <h1>BUT！It's still in beta</h1>
+  
   <p>An open-source desktop space for screenshots, conversations, annotations and interactive AI results.</p>
   <p>
     <a href="https://github.com/abnste/mewu_ai/releases/tag/v1.0.2"><img src="https://img.shields.io/badge/Stable-1.0.2-7C6CF0?style=flat-square" alt="1.0.2" /></a>
