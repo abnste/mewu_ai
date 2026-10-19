@@ -9,6 +9,7 @@ import { finishDrawing, outputDrawing } from "../capture-completion";
 import { clipEraserSweep, eraserCursor, eraserHit, eraserStrokeHits, ObjectEraser, PixelEraser, type EraserMode } from "./drawing-eraser";
 import { changeProperty, drawingDraftKey, drawingDrafts, drawingPropertyCommand, propertyDraft, settleDrawingEdit, strokeKinds, type DrawingPropertyDraft } from "./drawing-properties";
 import { DrawingAddQueue, drawingFrame, drawingPointerSamples, liveDrawing } from './drawing-pointer';
+import { DrawingMouseInput } from './drawing-input';
 import { DrawingHistoryLane, type DrawingHistoryState } from './drawing-history';
 import type { DrawingFlush, RegisterDrawingFlush } from "../drawing-flush";
 import type { DrawingTableFormat } from "../drawing-layout-preview";
@@ -38,6 +39,8 @@ export default function SharedDrawingEditor(props: Props) {
   onCleanup(()=>editorShell.removeEventListener('wheel',objectWheel,true));
   let svg!: SVGSVGElement, toolbar!: HTMLDivElement, toolsRow!: HTMLDivElement, trashButton!:HTMLButtonElement, textarea: HTMLTextAreaElement | undefined;
   let cancelGesture: (() => void) | undefined, refreshConstraint: ((shift: boolean) => void) | undefined, disposed = false, serial = 0, numberPreference = 0;
+  const drawingInput = new DrawingMouseInput();
+  onMount(() => { const detach = drawingInput.attach(document); onCleanup(detach); });
   let flight: Promise<boolean> | undefined;
   let tableCopy: Promise<void> | undefined;
   let flushImages: DrawingFlush | undefined;
@@ -509,6 +512,15 @@ export default function SharedDrawingEditor(props: Props) {
     window.addEventListener('pointermove',moved);window.addEventListener('pointerup',released);window.addEventListener('pointercancel',canceled);svg.addEventListener('lostpointercapture',canceled);
     try{svg.setPointerCapture(pointerId);}catch{finish(false);}
   }
+  function pointerBegin(event: PointerEvent) {
+    if (drawingInput.pointerDown(event)) begin(event);
+  }
+  function mouseBegin(event: MouseEvent) {
+    if ((!strokeKinds.includes(tool() as DrawingKind) && tool() !== 'mark')
+      || (event.target instanceof Element && event.target.closest('.drawing-resize-handle'))) return;
+    const input = drawingInput.mouseDown(event);
+    if (input) begin(input);
+  }
   function begin(event: PointerEvent, forcedImage?: Drawing) {
     event.stopPropagation();
     diagnoseInput(DrawingInputPhase.begin, event);
@@ -648,11 +660,11 @@ export default function SharedDrawingEditor(props: Props) {
       if (next.type === 'pointerup') publish(); else previewFrame.request();
     };
     refreshConstraint = shift => { if (!original && ['line', 'arrow', 'rect', 'ellipse', 'highlighter', 'mark'].includes(kind)) { latest = { end: latest?.end ?? lastEnd, shift }; previewFrame.request(); } };
+    let detachInput: (() => void) | undefined;
     const cleanup = () => {
       previewFrame.cancel(); latest = undefined;
-      window.removeEventListener('pointermove', moved); window.removeEventListener('pointerup', released);
-      window.removeEventListener('pointercancel', canceled); svg.removeEventListener('lostpointercapture', canceled);
-      cancelGesture = undefined; refreshConstraint = undefined; if (svg.hasPointerCapture(pointerId)) svg.releasePointerCapture(pointerId);
+      detachInput?.();
+      cancelGesture = undefined; refreshConstraint = undefined; drawingInput.release(svg, event);
     };
     const finish = (save: boolean) => {
       if (ended) return;
@@ -677,8 +689,8 @@ export default function SharedDrawingEditor(props: Props) {
     const canceled = (next: PointerEvent) => { if (next.pointerId === pointerId) { diagnoseInput(DrawingInputPhase.canceled, next, next.type === 'lostpointercapture' ? 3 : 6); finish(false); } };
     diagnoseInput(DrawingInputPhase.admitted, event);
     cancelGesture = () => finish(false);
-    window.addEventListener('pointermove', moved); window.addEventListener('pointerup', released); window.addEventListener('pointercancel', canceled); svg.addEventListener('lostpointercapture', canceled);
-    if (!original) try { svg.setPointerCapture(pointerId); } catch { diagnoseInput(DrawingInputPhase.canceled, event, 6); finish(false); }
+    detachInput = drawingInput.listen(window, svg, event, moved, released, canceled, () => finish(false));
+    if (!original) try { drawingInput.capture(svg, event); } catch { diagnoseInput(DrawingInputPhase.canceled, event, 6); finish(false); }
   }
   async function finishTextAt(event: PointerEvent) {
     // A click commits at the current position, then starts the next inline text.
@@ -877,8 +889,8 @@ export default function SharedDrawingEditor(props: Props) {
     if (['c', 's'].includes(event.key.toLowerCase()) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { event.preventDefault(); event.stopImmediatePropagation(); if (event.key.toLowerCase() === 's' && props.imageExport !== false) { if (!disabled() && !cancelGesture) openImageExport?.(); } else void done(false, event.key.toLowerCase() === 'c', false); return; }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); remove(); }
   }
-  const resize = () => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 2); cancelGesture?.(); setViewport({ width: innerWidth, height: innerHeight }); };
-  const blur = (event?: FocusEvent) => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, event, 1); cancelGesture?.(); };
+  const resize = () => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 2); cancelGesture?.(); drawingInput.reset(); setViewport({ width: innerWidth, height: innerHeight }); };
+  const blur = (event?: FocusEvent) => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, event, 1); cancelGesture?.(); drawingInput.reset(); };
   const identity = createMemo(cacheKey);
   const queueSource = createMemo(strokeSource);
   createEffect(on(queueSource, () => {
@@ -886,7 +898,7 @@ export default function SharedDrawingEditor(props: Props) {
     strokeQueue?.stop(); strokeQueue = continuousStrokes() && !historyLane ? newStrokeQueue() : undefined; setQueuedDrawings([]); setRecoveredDrawings([]); editCacheKey = undefined;
   }));
   createEffect(on(identity, () => {
-    if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 4); cancelGesture?.(); setDraft(undefined);
+    if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 4); cancelGesture?.(); drawingInput.reset(); setDraft(undefined);
     const saved = props.documentOnly ? undefined : drawingDrafts.get(cacheKey()); setEdit(saved);
     if (saved) { setSelected(saved.drawing.id); setTool(saved.mode === 'text' ? 'text' : 'select'); }
     else { setSelected(''); restoreStrokeDraft(); }
@@ -910,7 +922,7 @@ export default function SharedDrawingEditor(props: Props) {
   }));
   document.addEventListener('keydown', keyboard, true); document.addEventListener('keyup', keyboard, true); window.addEventListener('resize', resize); window.addEventListener('blur', blur);
   const unregisterFlush = props.onRegisterFlush?.(async active => {
-    const origin = identity(); cancelGesture?.();
+    const origin = identity(); cancelGesture?.(); drawingInput.reset();
     await strokeQueue?.drain(active);
     await drainHistory(active);
     if(eraseFlight)await eraseFlight;
@@ -927,7 +939,7 @@ export default function SharedDrawingEditor(props: Props) {
     canRedo:()=>!historyDisabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(true),
   });
   onCleanup(()=>unregisterHistory?.());
-  onCleanup(() => { unregisterFlush?.(); disposed = true; strokeQueue?.stop(); historyLane?.stop(); serial++; cancelGesture?.(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
+  onCleanup(() => { unregisterFlush?.(); disposed = true; strokeQueue?.stop(); historyLane?.stop(); serial++; cancelGesture?.(); drawingInput.reset(); document.removeEventListener('keydown', keyboard, true); document.removeEventListener('keyup', keyboard, true); window.removeEventListener('resize', resize); window.removeEventListener('blur', blur); });
   function DrawingItem(item: { id: string }) {
     const isDraft = createMemo(() => activeDraftId() === item.id), isEdit = createMemo(() => activeEditId() === item.id);
     const value = createMemo(() => {const saved=drawingIndex().get(item.id),preview=pixelIndex().get(item.id)??previews().get(item.id);return preview??(saved?linkedRepairPreview(saved,drawingIndex(),previews()):undefined);});
@@ -944,8 +956,8 @@ export default function SharedDrawingEditor(props: Props) {
   }
   return <div ref={editorShell} class="drawing-editor" classList={{'drawing-blackboard':props.blackboard}} onPointerMove={props.onObjectPointerMove} onPointerLeave={props.onObjectPointerLeave} onContextMenu={event=>{if(props.blackboard){event.preventDefault();event.stopPropagation();}}} onPointerDown={event => event.stopPropagation()}>
     {props.objects?.(()=>tool()==='select')}
-    <Show when={props.blackboard&&tool()==='select'}><div class="drawing-selection-background" style={{left:`${props.box.x}px`,top:`${props.box.y}px`,width:`${props.box.width}px`,height:`${props.box.height}px`}} onPointerDown={begin}/></Show>
-    <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser'||erasing() }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px`,'pointer-events':props.blackboard&&tool()==='select'?'none':undefined,cursor:tool()==='eraser'||erasing()?eraseCursor():undefined }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={begin} onContextMenu={event=>event.preventDefault()} onDblClick={doubleClick} aria-label={t("绘制区域")}>
+    <Show when={props.blackboard&&tool()==='select'}><div class="drawing-selection-background" style={{left:`${props.box.x}px`,top:`${props.box.y}px`,width:`${props.box.width}px`,height:`${props.box.height}px`}} onPointerDown={pointerBegin} onMouseDown={mouseBegin} onPointerMove={event => drawingInput.observe(event)}/></Show>
+    <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser'||erasing() }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px`,'pointer-events':props.blackboard&&tool()==='select'?'none':undefined,cursor:tool()==='eraser'||erasing()?eraseCursor():undefined }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={pointerBegin} onMouseDown={mouseBegin} onPointerMove={event => drawingInput.observe(event)} onContextMenu={event=>event.preventDefault()} onDblClick={doubleClick} aria-label={t("绘制区域")}>
       <For each={drawingIds()}>{id => <DrawingItem id={id} />}</For>
       <Show when={textEditor()}>{value => <InlineDrawingText drawing={value().drawing} disabled={pending() || !!props.inputLocked} ref={element => {textarea=element;}} onInput={setText} onConfirm={confirmText} onBlur={textBlur}/>}</Show>
       <Show when={marquee()}>{box=><rect class="drawing-marquee" {...box()} fill="#348bf1" fill-opacity=".07" stroke="#348bf1" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>}</Show>

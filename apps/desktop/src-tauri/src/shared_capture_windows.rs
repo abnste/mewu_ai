@@ -964,23 +964,39 @@ mod tests {
         use windows_sys::Win32::Graphics::Gdi::PtInRegion;
         let main = Window::new();
         let mut main_lease = Lease::capture(main.0 as usize,true).unwrap();
-        main_lease.prepare(roi(),false).unwrap();
+        // CreateWindowEx uses the test thread's awareness context; the native
+        // lease deliberately reads PMv2 physical bounds. Never infer local
+        // region pixels from the fixture's requested logical coordinates.
+        let bounds = main_lease.before_bounds;
+        let width = u32::try_from(bounds.right-bounds.left).unwrap();
+        let height = u32::try_from(bounds.bottom-bounds.top).unwrap();
+        let selected = Rect::new(bounds.left+(width/4) as i32,bounds.top+(height/4) as i32,width/4,height/3).unwrap();
+        main_lease.prepare(selected,false).unwrap();
         assert_eq!(cloak(main.0).unwrap(),APP_CLOAK);
         let hud = Window::new();
         let mut lease = Lease::capture(hud.0 as usize,true).unwrap();
-        let outline = Rect::new(-1902,-2,304,204).unwrap();
-        let short = Rect::new(-1550,0,150,100).unwrap();
-        lease.set_scroll_clip(roi(),&[outline,short]).unwrap();
+        assert_eq!(lease.before_bounds,bounds);
+        let outline = Rect::new(selected.left-2,selected.top-2,width/4+4,height/3+4).unwrap();
+        let left = selected.right+16;
+        let preview_width = u32::try_from(bounds.right-left-16).unwrap().min(150);
+        let short_height = u32::try_from(bounds.bottom-selected.top-16).unwrap()/3;
+        let short = Rect::new(left,selected.top,preview_width,short_height).unwrap();
+        let tall = Rect::new(left,selected.top,preview_width,short_height*2).unwrap();
+        assert!(bounds.contains(tall)); assert!(!selected.intersects(tall));
+        let added_point = (tall.left+(preview_width/2) as i32-bounds.left,
+            short.bottom+(short_height/2) as i32-bounds.top);
+        let hole_point = (selected.left+(width/8) as i32-bounds.left,
+            selected.top+(height/6) as i32-bounds.top);
+        lease.set_scroll_clip(selected,&[outline,short]).unwrap();
         let first = region(hud.0).unwrap().unwrap();
-        assert_eq!(unsafe { PtInRegion(first.raw(),500,250) },0);
-        let tall = Rect::new(-1550,0,150,300).unwrap();
-        lease.set_scroll_clip(roi(),&[outline,tall]).unwrap();
+        assert_eq!(unsafe { PtInRegion(first.raw(),added_point.0,added_point.1) },0);
+        lease.set_scroll_clip(selected,&[outline,tall]).unwrap();
         let grown = region(hud.0).unwrap().unwrap();
-        assert_ne!(unsafe { PtInRegion(grown.raw(),500,250) },0);
-        assert_eq!(unsafe { PtInRegion(grown.raw(),250,200) },0);
-        lease.set_scroll_clip(roi(),&[outline,tall]).unwrap();
-        lease.verify_scroll_clip(roi()).unwrap();
-        main_lease.verify(roi()).unwrap();
+        assert_ne!(unsafe { PtInRegion(grown.raw(),added_point.0,added_point.1) },0);
+        assert_eq!(unsafe { PtInRegion(grown.raw(),hole_point.0,hole_point.1) },0);
+        lease.set_scroll_clip(selected,&[outline,tall]).unwrap();
+        lease.verify_scroll_clip(selected).unwrap();
+        main_lease.verify(selected).unwrap();
         assert_eq!(cloak(main.0).unwrap(),APP_CLOAK);
         assert_eq!(affinity(hud.0).unwrap(),0);
         // Session cleanup destroys only its disposable HUD before restoring it.

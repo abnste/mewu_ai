@@ -12,7 +12,7 @@ const transform = source => stripTypeScriptTypes(source, { mode: 'transform' });
 const plain = value => JSON.parse(JSON.stringify(value));
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
 async function pure(path) { const module = new SourceTextModule(transform(await raw(path))); await module.link(() => { throw Error('Unexpected runtime dependency'); }); await module.evaluate(); return module.namespace; }
-const geometry = await pure('./components/drawing-geometry.ts'), properties = await pure('./components/drawing-properties.ts'), preview = await pure('./drawing-layout-preview.ts'), diagnostics = await pure('./drawing-diagnostics.ts');
+const geometry = await pure('./components/drawing-geometry.ts'), properties = await pure('./components/drawing-properties.ts'), preview = await pure('./drawing-layout-preview.ts'), diagnostics = await pure('./drawing-diagnostics.ts'), mouseInput = await pure('./components/drawing-input.ts');
 const imageCode=await raw('./components/DrawingEditor.tsx'),imageAst=parse(imageCode,{sourceType:'module',plugins:['typescript','jsx']});
 const imageBody=imageAst.program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
 const imagePortCode=imageBody.filter(node=>node.type!=='ReturnStatement').map(node=>{let value=imageCode.slice(node.start,node.end);if(node.type==='VariableDeclaration'&&node.declarations[0].id.name==='port'){const render=node.declarations[0].init.properties.find(property=>property.key.name==='render').value;value=value.slice(0,render.start-node.start)+'()=>undefined'+value.slice(render.end-node.start);}return value;}).join('\n');
@@ -23,9 +23,9 @@ function declaration(name) {
   const node = body.find(node => node.type === 'FunctionDeclaration' ? node.id.name === name : node.type === 'VariableDeclaration' && node.declarations.some(value => value.id.name === name));
   assert.ok(node, `Missing product declaration ${name}`); return code.slice(node.start, node.end);
 }
-const actual = ['diagnoseInput', 'cacheKey', 'gestureIdentity', 'point', 'target', 'handleSize', 'commit', 'beginResize', 'blur', 'resize'].map(declaration).join('\n');
+const actual = ['drawingInput', 'diagnoseInput', 'cacheKey', 'gestureIdentity', 'point', 'target', 'handleSize', 'commit', 'beginResize', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
-import { recordDrawingInput,DrawingInputPhase,drawingResizeHandles, resizedDrawingPoints, drawingDraftKey, settleDrawingEdit, richSourceIdentity, imagePort } from 'dependencies';
+import { DrawingMouseInput,recordDrawingInput,DrawingInputPhase,drawingResizeHandles, resizedDrawingPoints, drawingDraftKey, settleDrawingEdit, richSourceIdentity, imagePort } from 'dependencies';
 export function fixture(props, svg, window) { props.port=imagePort(props);
   let strokeQueue, historyLane; const strokeVersion=()=>0;
   let cancelGesture, refreshConstraint, disposed = false, serial = 0, flight, pendingValue = false, draft, finishing = false;
@@ -42,7 +42,7 @@ export function fixture(props, svg, window) { props.port=imagePort(props);
     dispose: () => { disposed = true; cancelGesture?.(); }, hasGesture: () => !!cancelGesture };
 }
 `));
-await module.link(() => synthetic({ ...diagnostics, drawingResizeHandles: geometry.drawingResizeHandles, resizedDrawingPoints: geometry.resizedDrawingPoints, drawingDraftKey: properties.drawingDraftKey, settleDrawingEdit: properties.settleDrawingEdit, richSourceIdentity: preview.richSourceIdentity, imagePort: imageMod.namespace.imagePort }));
+await module.link(() => synthetic({ ...mouseInput,...diagnostics, drawingResizeHandles: geometry.drawingResizeHandles, resizedDrawingPoints: geometry.resizedDrawingPoints, drawingDraftKey: properties.drawingDraftKey, settleDrawingEdit: properties.settleDrawingEdit, richSourceIdentity: preview.richSourceIdentity, imagePort: imageMod.namespace.imagePort }));
 await module.evaluate();
 const region = { x: 100, y: 200, width: 400, height: 300 };
 const shape = (kind = 'rect', points = [{ x: 140, y: 240 }, { x: 260, y: 320 }]) => ({ id: 'shape', kind, points, color: '#123456', strokeWidth: 7, origin: { runId: 'run', userMessageId: 'message', toolEventId: 'tool', groupId: 'group', targetHandle: 'target', manifestSha256: 'a'.repeat(64) } });
@@ -181,11 +181,11 @@ test('real Solid source fence cancels on revision/source change but survives unr
   const solid = await import('solid-js/dist/solid.js');
   const effect = body.find(node => node.type === 'ExpressionStatement' && node.expression.type === 'CallExpression' && node.expression.callee.name === 'createEffect' && node.expression.arguments[0]?.type === 'CallExpression' && node.expression.arguments[0].arguments[0]?.name === 'gestureSource');
   assert.ok(effect);
-  const product = new SourceTextModule(transform(`import { recordDrawingInput,DrawingInputPhase,drawingDraftKey, richSourceIdentity } from 'dependencies';
+  const product = new SourceTextModule(transform(`import { DrawingMouseInput,recordDrawingInput,DrawingInputPhase,drawingDraftKey, richSourceIdentity } from 'dependencies';
     export function fence(props, createMemo, createEffect, on, cancel) { let cancelGesture = cancel, eraseSource, strokeQueue, historyLane; const strokeVersion=()=>0;
       ${declaration('diagnoseInput')} ${declaration('cacheKey')} ${declaration('gestureIdentity')} ${declaration('gestureSource')} ${code.slice(effect.start, effect.end)}
     }`));
-  await product.link(() => synthetic({ ...diagnostics, drawingDraftKey: properties.drawingDraftKey, richSourceIdentity: preview.richSourceIdentity })); await product.evaluate();
+  await product.link(() => synthetic({ ...mouseInput,...diagnostics, drawingDraftKey: properties.drawingDraftKey, richSourceIdentity: preview.richSourceIdentity })); await product.evaluate();
   const baseline = setup().props, [state, setState] = solid.createSignal(baseline);
   let reactivePort; const props = new Proxy({}, { get: (_, key) => key === "port" ? reactivePort : state()[key] }); reactivePort=imageMod.namespace.imagePort(props);
   let canceled = 0, dispose;
