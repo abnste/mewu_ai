@@ -57,9 +57,9 @@ const shellRef = shell.attributes.find(attr => attr.name?.name === 'ref').value.
 const harness = `import { batch, createSignal, createMemo, createEffect, For, Show, untrack, on, onCleanup } from 'solid-js';
 import {VideoPlayback} from 'test-video-playback';
 export default function Owner(props) {
-  let disposed = false, interactionVersion = 0, flashTimer;
+  let disposed = false, interactionVersion = 0, pendingSelectionEpoch = 0, flashTimer;
   const imageDrawingItem = () => props.scene.items.find(item => item.id === imageDrawing()?.itemId);
-  ${['active', 'activeItemId', 'toolbarVisible', 'pendingSelection', 'activity', 'forceNew', 'pluginMenu', 'imageExportOpen', 'imageDrawing', 'flashedRegion', 'backgroundAnchored', 'displayedItem'].map(variable).join('\n')}
+  ${['active', 'activeItemId', 'toolbarVisible', 'pendingSelection', 'pendingSelectionOutlines', 'activity', 'forceNew', 'pluginMenu', 'imageExportOpen', 'imageDrawing', 'flashedRegion', 'backgroundAnchored', 'displayedItem'].map(variable).join('\n')}
   const drawingSession = () => undefined, exporting = () => false, settling = () => false, extensionRunning = () => false, extensionInteracting = () => false;
   const viewport = () => ({ width: 1200, height: 800 }), geometry = () => ({x:0,y:0,width:1200,height:800,scale:1});
   const projectBackgroundItem = item => item, regionById = id => props.scene.regions.find(region => region.id === id);
@@ -76,7 +76,7 @@ export default function Owner(props) {
   const clamp = (value,low,high) => Math.max(low,Math.min(Math.max(low,high),value));
   const geometryTarget = (scene,id) => {const r = scene.regions.find(r=>r.id===id);return r&&{geometry:r,width:1200,height:800};};
   const trackPointer = (event, move, finish) => finish(true);
-  ${['clearPendingSelection', 'currentPendingSelection', 'reconcilePendingSelection', 'hideToolbar', 'revealToolbar', 'setSelectionActivity', 'editRegion', 'hover'].map(name => handler(name)).join('\n')}
+  ${['clearPendingSelection', 'retirePendingSelection', 'removePendingOutline', 'currentPendingSource', 'currentPendingSelection', 'reconcilePendingSelection', 'hideToolbar', 'revealToolbar', 'setSelectionActivity', 'editRegion', 'hover'].map(name => handler(name)).join('\n')}
   ${handler('activateItem', true)}
   ${variable('beginImageDrawing')}
   ${variable('focusReference')}

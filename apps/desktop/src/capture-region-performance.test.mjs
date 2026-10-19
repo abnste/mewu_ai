@@ -47,7 +47,7 @@ export default function Owner(props){
   const drawingSession=()=>undefined,forceNew=()=>false,flashedRegion=()=>'',ocrPending=()=>undefined,ocrNotice=()=>undefined;
   const exporting=()=>false,settling=()=>false,extensionRunning=()=>false;
   const geometry=createMemo(()=>props.geometry),blocked=()=>false,ocrVisible=()=>false,translationVisible=()=>false;
-  const selectionPreview=()=>undefined,savedTranslation=()=>undefined,savedOcr=()=>undefined;
+  const selectionPreview=()=>undefined,queuedSelectionPreviews=()=>[],savedTranslation=()=>undefined,savedOcr=()=>undefined;
   const t=value=>value,assetUrl=value=>value.path,EDGES=['n','e','s','w'],CORNERS=['nw','ne','sw','se'];
   const TranslationLayer=()=>null,OcrTextLayer=()=>null,LoaderCircle=()=>null,X=()=>null;
   const DrawingLayer=layer=>{createMemo(()=>{layer.region;layer.sourceRegion;metrics.drawingReads++;});return null;};

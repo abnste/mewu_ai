@@ -4,6 +4,7 @@
 - 数据库日志整理移到独立后台连接，合并连续操作的日志整理，减少重复磁盘同步；保留每次提交的持久保存、失败回滚与历史导出的一致快照。
 - 减少大量历史会话时的数据库页面重写；窗口改用轻量修订通知合并读取状态，避免重复传送整份历史。绘制保存后保留几何未变的 SVG 节点。
 - 连续绘制按顺序保存，撤销、重做与退出等待已接受的笔迹；多个选区更新时保留已有对象和工具条。
+- 连续框选时保留尚在保存的选框，避免开始下一框后上一框短暂消失；保存失败单独提示，操作工具仍等待真实保存完成。
 - 修复远程鼠标先报告按键释放时，画线、移动和框选被误取消的问题，覆盖视频批注；切换选区与媒体对象时统一工具条归属，鼠标经过选区不会中断视频播放或编辑。
 - 视频播放与剪辑控件空闲时不再拦截 Esc，可直接退出截图；正在拖动剪辑或选择标注时仍先取消局部操作。
 - 截图与黑板使用三个固定颜色槽，默认红、黄、蓝。单击切换，选中后再次单击换色；已有自定义颜色保持。
@@ -26,6 +27,7 @@ Windows 安装版、便携版，macOS ARM64 安装包和 Linux x64 AppImage 均�
 - Moves WAL checkpoint maintenance to a separate connection and batches maintenance across consecutive operations to reduce redundant disk synchronization, while retaining durable commits, rollback and consistent history exports.
 - Reduces database page rewrites with large histories, coalesces full-state reads behind small revision notices, and preserves unchanged SVG path nodes after drawing saves.
 - Saves continuous drawing in order and preserves existing objects and toolbars across selection updates.
+- Keeps pending selection outlines visible while the next selection starts, reports individual save failures, and enables tools only after the selection is actually saved.
 - Preserves strokes, moves and marquee selection when remote mouse input reports released buttons before pointer-up, including video annotations. Keeps region and media toolbars mutually exclusive without interrupting video playback or editing on hover.
 - Idle playback and trim controls let Escape close the capture space; active trim gestures and annotation selection still cancel locally first.
 - Screenshot and blackboard share three fixed color slots, initially red, yellow and blue. Click to select; click the selected slot again to edit. Existing custom palettes are retained.

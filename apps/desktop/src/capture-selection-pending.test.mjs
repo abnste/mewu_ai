@@ -36,6 +36,8 @@ const elementWithClass = name => nodes.find(node => node.type === 'JSXElement'
   && node.openingElement.attributes.some(attribute => attribute.name?.name === 'class' && attribute.value?.value === name));
 const mask = elementWithClass('capture-mask'), outline = elementWithClass('capture-selection');
 const selectionShow = nodes.find(node => node.type === 'JSXElement' && node.openingElement.name.name === 'Show' && node.start < outline.start && node.end > outline.end);
+const queuedOutline = nodes.find(node => node.type === 'JSXElement' && node.openingElement.name.name === 'For' && source.slice(node.start,node.end).includes('data-pending-selection="queued"'));
+assert.ok(queuedOutline);
 const toolbar = elementWithClass('capture-toolbar');
 const toolbarShow = nodes.find(node => node.type === 'JSXElement' && node.openingElement.name.name === 'Show' && node.start < toolbar.start && node.end > toolbar.end);
 const toolbarWhen = toolbarShow.openingElement.attributes.find(attribute => attribute.name?.name === 'when').value.expression;
@@ -46,13 +48,13 @@ const harness = `import { batch, createSignal, createMemo, createEffect, Show, F
 import { SnapSelectionGesture, snapResize } from './window-snap';
 import { geometryTarget, overlayRegion } from './region-geometry';
 export default function PendingOwner(props) {
-  let disposed = false, interactionVersion = 0, forceManualSelection, cancelGesture, cancelDeferredPointer, snapPointer, newSelectionSource, lastSource;
+  let disposed = false, interactionVersion = 0, pendingSelectionEpoch = 0, forceManualSelection, cancelGesture, cancelDeferredPointer, snapPointer, newSelectionSource, lastSource;
   const canvas = props.canvas;
-  ${['selection', 'pendingSelection', 'active', 'activeItemId', 'activity', 'forceNew', 'toolbarVisible', 'imageExportOpen', 'pluginMenu', 'snapshotVersion', 'snapPreview'].map(variable).join('\n')}
+  ${['selection', 'pendingSelection', 'pendingSelectionOutlines', 'active', 'activeItemId', 'activity', 'forceNew', 'toolbarVisible', 'imageExportOpen', 'pluginMenu', 'snapshotVersion', 'snapPreview'].map(variable).join('\n')}
   const backgroundError = () => false, drawingSession = () => undefined, imageDrawing = () => undefined;
   const exporting = () => false, settling = () => false, extensionRunning = () => false, extensionInteracting = () => false, ocrPending = () => undefined;
   const geometry = () => props.geometry, viewport = () => props.viewport, regionById = id => props.scene.regions.find(region => region.id === id);
-  ${['regionIds', 'activeRegion', 'display', 'regions', 'point', 'selectionPreview', 'blocked', 'snapUnavailable'].map(variable).join('\n')}
+  ${['regionIds', 'activeRegion', 'display', 'regions', 'point', 'selectionPreview', 'queuedSelectionPreviews', 'blocked', 'snapUnavailable'].map(variable).join('\n')}
   const clamp = (value, low, high) => Math.max(low, Math.min(Math.max(low, high), value));
   const contains = (box, x, y, padding = 0) => x >= box.x - padding && x <= box.x + box.width + padding && y >= box.y - padding && y <= box.y + box.height + padding;
   const sameGeometry = (a, b) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
@@ -65,15 +67,15 @@ export default function PendingOwner(props) {
   const ocrRequests = { cancel() {}, dispose() {} }, snapshotSelections = { bind: (...args) => props.bound.push(args) };
   const snapLoader = {dispose(){}}, snapMutations = {disconnect(){}}, toolbarObserver = undefined, flashTimer = undefined;
   const codeFocus = () => {}, leave = () => {}, focusReference = () => {}, recordKey = () => {}, releaseKey = () => {}, snapFocus = () => {}, hover = () => {};
-  ${['setSelectionActivity', 'trackPointer', 'begin', 'editRegion', 'currentPendingSelection', 'clearPendingSelection', 'reconcilePendingSelection', 'revealToolbar', 'previewCandidateAt'].map(handler).join('\n')}
+  ${['setSelectionActivity', 'trackPointer', 'begin', 'editRegion', 'currentPendingSource', 'currentPendingSelection', 'removePendingOutline', 'retirePendingSelection', 'clearPendingSelection', 'activateItem', 'reconcilePendingSelection', 'revealToolbar', 'previewCandidateAt'].map(handler).join('\n')}
   ${['blur', 'resize', 'snapVisibility'].map(variable).join('\n')}
   createEffect(reconcilePendingSelection);
   ${slice(sourceEffect)};
   ${slice(cleanup)};
-  Object.assign(props.control, { begin, editRegion, blur, resize, snapVisibility, previewCandidateAt, revealToolbar, cancel: () => cancelGesture?.(),
+  Object.assign(props.control, { begin, editRegion, activateItem, blur, resize, snapVisibility, previewCandidateAt, revealToolbar, cancel: () => cancelGesture?.(),
     state: () => ({selection:selection(),pending:pendingSelection(),active:active(),preview:selectionPreview(),toolbar:toolbarVisible()}),
     lateVersion: () => interactionVersion });
-  return <div>${slice(mask)}${slice(selectionShow)}<Show when={${slice(toolbarWhen)}}><button aria-label="authorized-toolbar" /></Show></div>;
+  return <div>${slice(mask)}${slice(selectionShow)}${slice(queuedOutline)}<Show when={${slice(toolbarWhen)}}><button aria-label="authorized-toolbar" /></Show></div>;
 }`;
 const compiled = ts(transformSync(harness, { filename: 'capture-selection-pending.tsx', babelrc: false, configFile: false,
   parserOpts: { plugins: ['typescript', 'jsx'] }, presets: [[solidPreset, { generate: 'universal', moduleName: 'test-renderer' }]] }).code);
@@ -290,4 +292,59 @@ test('tiny and canceled gestures never submit; blocked automatic preview avoids 
     f.up(102, 102); await tick(); assert.equal(f.calls.length, 0); assert.equal(f.outline(), undefined);
     f.begin(); f.drag(); f.control.cancel(); await tick(); assert.equal(f.calls.length, 0); assert.equal(f.outline(), undefined); assert.equal(f.pointerListeners, 0);
   } finally { f.dispose(); }
+});
+
+const pendingOutlines = f => f.all().filter(node => node.props?.class === 'capture-selection');
+const outlineGeometry = f => pendingOutlines(f).map(node => JSON.parse(JSON.stringify(node.props.style))).sort((a,b) => parseInt(a.left)-parseInt(b.left));
+async function addHeldSelections(f, count) {
+  for (let index=0; index<count; index++) { f.begin(30+index*20,100); f.up(45+index*20,180); await tick(); }
+}
+test('several finished production selections keep every unacknowledged outline and cutout while tools remain unauthorized', async () => {
+  const f=await fixture();try{
+    await addHeldSelections(f,3);assert.equal(f.calls.length,3);assert.equal(f.scene().regions.length,0);
+    assert.equal(pendingOutlines(f).length,3);assert.equal(f.cutouts().length,3);assert.deepEqual(outlineGeometry(f).map(box=>box.left),['30px','50px','70px']);
+    assert.equal(f.control.state().active,f.calls[2].id);assert.equal(f.control.state().toolbar,false);assert.deepEqual(f.completed,[]);
+    assert.equal(f.all().some(node=>node.props?.['aria-label']==='authorized-toolbar'),false);
+    const oldest = pendingOutlines(f).find(node=>node.props.style.left==='30px'); assert.ok(oldest);
+    f.begin(90,100); f.up(105,180); await tick(); assert.equal(pendingOutlines(f).length,4);
+    assert.equal(pendingOutlines(f).find(node=>node.props.style.left==='30px'),oldest,'another completion must retain the older queued DOM node');
+    f.requests[1].resolve(); await tick(); assert.equal(pendingOutlines(f).find(node=>node.props.style.left==='30px'),oldest,'an unrelated pending promise must not recreate queued DOM');
+  }finally{f.dispose();}
+  const skipped=await fixture();let admitted=0;try{skipped.props.onAddRegion=()=>{admitted++;throw Error('unadmitted callback ran');};skipped.begin();skipped.up();skipped.control.activateItem('successor-owner');await tick();assert.equal(admitted,0);assert.deepEqual(skipped.errors,[]);assert.equal(pendingOutlines(skipped).length,0);}finally{skipped.dispose();}
+});
+test('an older failed save removes only its own pending outline; late exact acknowledgements never steal the newest owner', async () => {
+  const f=await fixture();try{
+    await addHeldSelections(f,3);assert.equal(pendingOutlines(f).length,3);
+    f.requests[0].reject(Error('older synthetic save failed'));await tick();assert.equal(pendingOutlines(f).length,2);assert.deepEqual(outlineGeometry(f).map(box=>box.left),['50px','70px']);
+    assert.equal(f.control.state().active,f.calls[2].id);assert.deepEqual(f.completed,[]);assert.deepEqual(f.errors,['older synthetic save failed'],'an admitted older failure must remain visible without changing the newest owner');
+    f.requests[0].reject(Error('repeated rejection'));await tick();assert.equal(f.errors.length,1);
+    f.ack(1);f.requests[1].resolve();await tick();assert.equal(pendingOutlines(f).length,1);assert.equal(f.control.state().active,f.calls[2].id);assert.deepEqual(f.completed,[]);
+    f.ack(2);f.requests[2].resolve();await tick();assert.equal(pendingOutlines(f).length,0);assert.deepEqual(f.completed.map(region=>region.id),[f.calls[2].id]);
+  }finally{f.dispose();}
+});
+test('pending outline queue clears on true source exit and explicit region or media owner change without reviving from late replies', async () => {
+  for(const action of ['scene','background','closed','frozen','running','exit','blur','hidden','resize','region-owner','media-owner','dispose']){
+    const f=await fixture();let disposed=false;try{
+      await addHeldSelections(f,2);assert.equal(pendingOutlines(f).length,2,action);
+      if(action==='scene')f.setScene(value=>({...value,id:'successor'}));
+      else if(action==='background')f.setScene(value=>({...value,background:{...value.background,id:'successor'}}));
+      else if(['closed','frozen'].includes(action))f.setScene(value=>({...value,[action]:true}));
+      else if(action==='running')f.setScene(value=>({...value,run:{status:'running'}}));
+      else if(action==='exit')f.setInputLocked(true);
+      else if(action==='hidden'){f.document.hidden=true;f.control.snapVisibility();}
+      else if(action==='region-owner'){const saved={id:'saved-owner',x:800,y:500,width:50,height:50};f.setScene(value=>({...value,regions:[saved]}));f.control.revealToolbar(saved);}
+      else if(action==='media-owner')f.control.activateItem('owned-media');
+      else if(action==='dispose'){f.dispose();disposed=true;}
+      else f.control[action]();
+      assert.equal(pendingOutlines(f).length,0,action);f.requests[0].reject(Error('late failure after true clear'));for(const request of f.requests.slice(1))request.resolve();await tick();assert.equal(pendingOutlines(f).length,0,action);assert.deepEqual(f.completed,[],action);assert.deepEqual(f.errors,[],action+' must not inject a canceled presentation error');
+    }finally{if(!disposed)f.dispose();}
+  }
+});
+test('presentation queue is bounded to sixteen while every admitted selection still persists and the newest failed save leaves older outlines intact', async () => {
+  const f=await fixture();try{
+    await addHeldSelections(f,20);assert.equal(f.calls.length,20);assert.equal(pendingOutlines(f).length,16);assert.equal(f.scene().regions.length,0);assert.deepEqual(f.completed,[]);
+    f.requests[0].reject(Error('evicted admitted failure'));await tick();assert.equal(pendingOutlines(f).length,16);assert.deepEqual(f.errors,['evicted admitted failure']);assert.equal(f.control.state().active,f.calls[19].id);
+    f.requests[19].reject(Error('newest synthetic failure'));await tick();assert.equal(pendingOutlines(f).length,15);assert.deepEqual(f.errors,['evicted admitted failure','newest synthetic failure']);assert.equal(f.control.state().active,'');
+    for(let i=1;i<19;i++){f.ack(i);f.requests[i].resolve();}await tick();assert.equal(f.scene().regions.length,18);assert.equal(pendingOutlines(f).length,0);assert.deepEqual(f.completed,[]);assert.equal(f.control.state().toolbar,false);
+  }finally{f.dispose();}
 });

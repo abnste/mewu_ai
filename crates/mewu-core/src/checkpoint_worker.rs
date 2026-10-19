@@ -67,7 +67,10 @@ impl CheckpointWorker {
                 let mut deferred = false;
                 loop {
                     let message = if deferred {
-                        receiver.recv_timeout(std::time::Duration::from_secs(1))
+                        // Keep ordinary pauses between drawing/selection gestures in
+                        // one WAL generation. FULL still syncs every commit;
+                        // frame/count pressure and final shutdown drain sooner.
+                        receiver.recv_timeout(std::time::Duration::from_secs(30))
                     } else {
                         receiver
                             .recv()
@@ -727,7 +730,7 @@ mod tests {
             .execute("UPDATE sample SET value='idle committed' WHERE id=1", [])
             .unwrap();
         assert!(worker.notify());
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(35);
         loop {
             let (_, frames, copied) = status(&writer);
             if frames > 0 && frames == copied {
@@ -811,5 +814,52 @@ mod tests {
             scheduled(&memory, &mut changed, false),
             Attempt::Failed
         ));
+    }
+
+    #[test]
+    fn real_worker_preserves_append_across_multi_second_gesture_pauses() {
+        let fixture = Fixture::new();
+        let writer = fixture.writer();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .unwrap();
+        let mut worker = CheckpointWorker::start(fixture.maintenance()).unwrap();
+        let mut previous = 0;
+        for index in 0..3 {
+            writer
+                .execute(
+                    "UPDATE sample SET value=?1 WHERE id=1",
+                    [format!("gesture {index}")],
+                )
+                .unwrap();
+            assert!(worker.notify());
+            thread::sleep(Duration::from_millis(2100));
+            let (_, logged, copied) = status(&writer);
+            assert!(
+                logged > previous,
+                "an ordinary gesture pause must not reset the WAL"
+            );
+            assert_eq!(
+                copied, 0,
+                "the quiet policy must not checkpoint after only 2.1s"
+            );
+            previous = logged;
+            assert_eq!(
+                writer
+                    .pragma_query_value::<i64, _>(None, "synchronous", |row| row.get(0))
+                    .unwrap(),
+                2
+            );
+        }
+        assert!(worker.shutdown());
+        let (_, logged, copied) = status(&writer);
+        assert_eq!(logged, copied);
+        assert_eq!(
+            writer
+                .query_row::<String, _, _>("SELECT value FROM sample WHERE id=1", [], |row| row
+                    .get(0))
+                .unwrap(),
+            "gesture 2"
+        );
     }
 }

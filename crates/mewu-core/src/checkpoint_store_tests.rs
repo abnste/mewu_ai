@@ -17,7 +17,7 @@ fn settings(store:&Store)->(String,i64,i64){(
 fn durable(store:&Store)->(String,i64){store.db.query_row("SELECT payload,revision FROM app_state WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap()}
 fn draft(store:&mut Store,text:&str)->Result<Snapshot>{let scene_id=store.state.active_scene_id.clone();store.apply(SceneCommand::SetDraft{scene_id,draft:text.into()})}
 fn wait_for_backfill(store:&Store){
- let limit=Instant::now()+Duration::from_secs(5);
+ let limit=Instant::now()+Duration::from_secs(35);
  loop{let (_busy,frames,copied):(i64,i64,i64)=store.db.query_row("PRAGMA wal_checkpoint(NOOP)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();if frames==copied{return;}assert!(Instant::now()<limit,"background checkpoint did not finish");thread::sleep(Duration::from_millis(5));}
 }
 

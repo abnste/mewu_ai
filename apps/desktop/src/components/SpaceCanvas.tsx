@@ -164,6 +164,7 @@ export default function SpaceCanvas(props: Props) {
   let lastSceneId: string | undefined;
   let pointerInspector: PointerInspectorHandle | undefined;
   let interactionVersion = 0;
+  let pendingSelectionEpoch = 0;
   let disposed = false;
   let cancelDeferredPointer: (() => void) | undefined;
   let forceManualSelection: (() => void) | undefined;
@@ -175,6 +176,8 @@ export default function SpaceCanvas(props: Props) {
   const [natural, setNatural] = createSignal({ width: 0, height: 0 });
   const [selection, setSelection] = createSignal<Box>();
   const [pendingSelection, setPendingSelection] = createSignal<PendingSelection>();
+  // Presentation-only backlog; saved regions and tool authority remain native-owned.
+  const [pendingSelectionOutlines, setPendingSelectionOutlines] = createSignal<PendingSelection[]>([]);
   const [snapMap, setSnapMap] = createSignal<FrameSnapMap>();
   const snapshotSelections = new SnapshotSelections();
   const [snapshotVersion, setSnapshotVersion] = createSignal(0);
@@ -304,6 +307,9 @@ export default function SpaceCanvas(props: Props) {
     if (!pending || !currentPendingSelection(pending) || props.scene.regions.some(region => region.id === pending.region.id)) return;
     return display(pending.region);
   });
+  const queuedSelectionPreviews = createMemo(() => pendingSelectionOutlines()
+    .filter(pending => pending.region.id !== pendingSelection()?.region.id && currentPendingSource(pending)
+      && !props.scene.regions.some(region => region.id === pending.region.id)));
   const point = (event: PointerEvent) => ({ x: clamp(event.clientX, geometry().x, geometry().x + geometry().width), y: clamp(event.clientY, geometry().y, geometry().y + geometry().height) });
   const referenced = (id: string) => props.refs.some(ref => ref.kind === 'region' && ref.id === id);
   const blocked = () => props.busy || exporting() || settling() || extensionRunning() || props.scene.run?.status === 'running';
@@ -397,7 +403,7 @@ export default function SpaceCanvas(props: Props) {
   }
   function revealToolbar(region: Region) {
     if (activity() || forceNew()) return;
-    if (pendingSelection() && pendingSelection()!.region.id !== region.id) clearPendingSelection();
+    if ((pendingSelection() || pendingSelectionOutlines().length) && pendingSelection()?.region.id !== region.id) clearPendingSelection();
     batch(() => { clearHideTimer(); setActiveItemId(''); setActive(region.id); placeToolbar(region); setToolbarVisible(true); });
   }
   function hover(event: PointerEvent) {
@@ -475,10 +481,10 @@ export default function SpaceCanvas(props: Props) {
     if (translationEntries().length === 1) runTranslation(translationEntries()[0], region);
     else if (translationEntries().length) { setPluginMenu('translation'); }
   }
-  function trackPointer(event: PointerEvent, move: (event: PointerEvent) => void, finish: (committed: boolean) => void, sourceCurrent?: () => boolean) {
+  function trackPointer(event: PointerEvent, move: (event: PointerEvent) => void, finish: (committed: boolean) => void, sourceCurrent?: () => boolean, preservePendingOutlines = false) {
     ocrRequests.cancel(); props.onTranslationCancel?.(); cancelGesture?.(); event.preventDefault(); event.stopPropagation();
     interactionVersion++;
-    clearPendingSelection();
+    if (preservePendingOutlines) retirePendingSelection(); else clearPendingSelection();
     clearSnapPreview();
     window.getSelection()?.removeAllRanges(); hideToolbar(); setSelectionActivity(true);
     const pointerId = event.pointerId;
@@ -507,7 +513,7 @@ export default function SpaceCanvas(props: Props) {
     if (target.closest('button,.artifact-card,.capture-toolbar,.selection-code-card')) return;
     if (target.closest('.capture-region') && !event.shiftKey && !forceNew()) return;
     if (deferGeometryPointer(event, () => begin(event))) return;
-    clearPendingSelection();
+    retirePendingSelection();
     setActiveItemId('');
     endNudge();
     const start = point(event), scale = geometry().scale, offset = { x: geometry().x, y: geometry().y };
@@ -528,39 +534,54 @@ export default function SpaceCanvas(props: Props) {
       const left = Math.round((selected.x - offset.x) / scale), top = Math.round((selected.y - offset.y) / scale);
       const right = Math.round((selected.x + selected.width - offset.x) / scale), bottom = Math.round((selected.y + selected.height - offset.y) / scale);
       const region: Region = { id: crypto.randomUUID(), x: left, y: top, width: right - left, height: bottom - top };
-      const version = interactionVersion;
+      const version = interactionVersion, presentationEpoch = pendingSelectionEpoch;
+      let admitted = false;
       const pending: PendingSelection = { sceneId, backgroundId, region, version, automatic: gesture.isAutomatic ? automatic : undefined, complete: false };
       setPendingSelection(pending);
+      setPendingSelectionOutlines(previous => [...previous.slice(-15), pending]);
       setActive(region.id);
       void Promise.resolve().then(() => {
-        if (currentPendingSelection(pending)) return props.onAddRegion(region);
+        if (currentPendingSelection(pending)) { admitted = true; return props.onAddRegion(region); }
+        removePendingOutline(pending);
       }).then(() => {
         if (currentPendingSelection(pending)) setPendingSelection(current => current && { ...current, complete: true });
       }).catch(error => {
-        if (!currentPendingSelection(pending)) return;
-        clearPendingSelection(); props.onError(error instanceof Error ? error.message : '无法添加区域');
+        removePendingOutline(pending);
+        if (!admitted || presentationEpoch !== pendingSelectionEpoch || !currentPendingSource(pending)) return;
+        if (currentPendingSelection(pending)) retirePendingSelection();
+        props.onError(error instanceof Error ? error.message : '无法添加区域');
       });
     }, () => !disposed && !document.hidden && !props.inputLocked && !props.blackboard && !props.scene.closed && !props.scene.frozen && !blocked()
       && props.scene.id === sceneId && props.scene.background?.id === backgroundId && sameGeometry(geometry(), sourceGeometry) && geometry().scale === scale
-      && viewport().width === sourceViewport.width && viewport().height === sourceViewport.height && viewport().deviceScale === sourceViewport.deviceScale);
+      && viewport().width === sourceViewport.width && viewport().height === sourceViewport.height && viewport().deviceScale === sourceViewport.deviceScale, true);
+  }
+  function currentPendingSource(pending: PendingSelection) {
+    return !disposed && !document.hidden && !props.inputLocked && !props.blackboard && !props.scene.closed && !props.scene.frozen
+      && props.scene.run?.status !== 'running' && props.scene.id === pending.sceneId && props.scene.background?.id === pending.backgroundId;
   }
   function currentPendingSelection(pending: PendingSelection) {
-    return !disposed && !document.hidden && !props.inputLocked && !props.blackboard && !props.scene.closed && !props.scene.frozen
-      && props.scene.run?.status !== 'running' && props.scene.id === pending.sceneId && props.scene.background?.id === pending.backgroundId
-      && interactionVersion === pending.version && pendingSelection()?.region.id === pending.region.id;
+    return currentPendingSource(pending) && interactionVersion === pending.version && pendingSelection()?.region.id === pending.region.id;
   }
-  function clearPendingSelection() {
+  function removePendingOutline(pending: PendingSelection) {
+    setPendingSelectionOutlines(previous => previous.filter(value => value.region.id !== pending.region.id));
+  }
+  function retirePendingSelection() {
     const pending = pendingSelection();
     if (pending && active() === pending.region.id) setActive('');
     setPendingSelection(undefined);
   }
+  function clearPendingSelection() { pendingSelectionEpoch++; retirePendingSelection(); setPendingSelectionOutlines([]); }
   function reconcilePendingSelection() {
+    const outlines = pendingSelectionOutlines();
+    const remaining = outlines.filter(pending => currentPendingSource(pending) && !props.scene.regions.some(region => region.id === pending.region.id));
+    if (remaining.length !== outlines.length) untrack(() => setPendingSelectionOutlines(remaining));
     const pending = pendingSelection();
     if (!pending) return;
     const current = currentPendingSelection(pending), saved = props.scene.regions.find(region => region.id === pending.region.id);
     untrack(() => {
-      if (!current || saved && (!sameGeometry(saved, pending.region) || saved.imageOverride)) { clearPendingSelection(); return; }
-      if (!saved) { if (pending.acknowledged) clearPendingSelection(); return; }
+      if (!current) { clearPendingSelection(); return; }
+      if (saved && (!sameGeometry(saved, pending.region) || saved.imageOverride)) { removePendingOutline(pending); retirePendingSelection(); return; }
+      if (!saved) { if (pending.acknowledged) { removePendingOutline(pending); retirePendingSelection(); } return; }
       if (!pending.complete) { if (!pending.acknowledged) setPendingSelection({ ...pending, acknowledged: true }); return; }
       setPendingSelection(undefined);
       if (pending.automatic) { snapshotSelections.bind(saved, pending.automatic); setSnapshotVersion(value => value + 1); }
@@ -836,6 +857,7 @@ export default function SpaceCanvas(props: Props) {
           return <rect x={box().x} y={box().y} width={box().width} height={box().height} fill="black" />;
         }}</For>
         <Show when={selectionPreview()}>{box => <rect x={box().x} y={box().y} width={box().width} height={box().height} fill="black" />}</Show>
+        <For each={queuedSelectionPreviews()}>{pending => { const box = createMemo(() => display(pending.region)); return <rect x={box().x} y={box().y} width={box().width} height={box().height} fill="black" />; }}</For>
       </mask></defs>
       <rect width="100%" height="100%" fill="#000" fill-opacity={!props.blackboard&&props.scene.background ? props.maskOpacity : '0'} mask="url(#region-cutouts)" />
     </svg>
@@ -870,6 +892,7 @@ export default function SpaceCanvas(props: Props) {
       }}</For>
     </div>
     <Show when={selectionPreview()}>{box => <div class="capture-selection" style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} />}</Show>
+    <For each={queuedSelectionPreviews()}>{pending => { const box = createMemo(() => display(pending.region)); return <div class="capture-selection" data-pending-selection="queued" aria-hidden="true" style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} />; }}</For>
     {/* Native region observation temporarily hides this window and causes blur; keep the invocation owner mounted. */}
     <Show when={(toolbarVisible() || extensionInteracting()) && !drawingSession() && !imageDrawing() && !activity() && !forceNew() && activeRegion()}>{region => <div ref={bindToolbar} class="capture-toolbar" role="toolbar" aria-label={t("截图工具")} style={{ left: `${toolbarBox().x}px`, top: `${toolbarBox().y}px` }} onPointerDown={event => { event.stopPropagation(); if (window.getSelection()?.anchorNode?.parentElement?.closest('.ocr-text-layer')) event.preventDefault(); }} onPointerEnter={clearHideTimer}>
       <Show when={props.aiAvailable !== false}><button data-caption={t("引用")} class="capture-reference" classList={{ 'capture-referenced': referenced(region().id) }} title={referenced(region().id) ? t("已引用") : t("引用当前区域")} aria-label={t("引用当前区域")} disabled={blocked()} onClick={() => { if (!referenced(region().id)) props.onReference({ kind: 'region', id: region().id }); props.onFocusComposer?.(); }}>@</button></Show>
