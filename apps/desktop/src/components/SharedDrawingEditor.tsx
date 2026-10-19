@@ -689,7 +689,8 @@ export default function SharedDrawingEditor(props: Props) {
     const canceled = (next: PointerEvent) => { if (next.pointerId === pointerId) { diagnoseInput(DrawingInputPhase.canceled, next, next.type === 'lostpointercapture' ? 3 : 6); finish(false); } };
     diagnoseInput(DrawingInputPhase.admitted, event);
     cancelGesture = () => finish(false);
-    detachInput = drawingInput.listen(window, svg, event, moved, released, canceled, () => finish(false));
+    detachInput = drawingInput.listen(window, svg, event, moved, released, canceled, () => finish(false),
+      !original && strokeKinds.includes(kind as DrawingKind) ? () => { publish(); finish(true); } : undefined);
     if (!original) try { drawingInput.capture(svg, event); } catch { diagnoseInput(DrawingInputPhase.canceled, event, 6); finish(false); }
   }
   async function finishTextAt(event: PointerEvent) {

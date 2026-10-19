@@ -7,6 +7,13 @@ export class DrawingMouseInput {
   private handledId: number | undefined;
   private fallback = new WeakSet<Event>();
   private cancelMouse: (() => void) | undefined;
+  private seenDown = new WeakSet<Event>();
+  private ordinary: { down: PointerEvent; finishLast: () => void } | undefined;
+
+  private ordinaryMouseDown(event: PointerEvent): boolean {
+    return event.type === 'pointerdown' && event.pointerType === 'mouse' && event.isPrimary === true
+      && event.button === 0 && event.buttons === 1 && Number.isFinite(event.timeStamp);
+  }
 
   observe(event: PointerEvent): void {
     this.device = event.pointerType;
@@ -14,9 +21,16 @@ export class DrawingMouseInput {
     else if (event.pointerType !== 'mouse') this.cancelMouse?.();
   }
   pointerDown(event: PointerEvent): boolean {
+    if (this.seenDown.has(event)) return false;
+    this.seenDown.add(event);
     this.observe(event);
     // A late pointer stream must not start a second copy of an accepted mouse gesture.
     if (this.cancelMouse) return false;
+    const previous = this.ordinary;
+    // A new genuine single-button press can close an unterminated ordinary
+    // mouse vector. Its coordinates never become samples of the old vector.
+    if (previous && this.ordinaryMouseDown(event) && event.pointerId === previous.down.pointerId
+      && event !== previous.down && event.timeStamp > previous.down.timeStamp) previous.finishLast();
     this.handled = true; this.handledId = event.pointerId;
     return true;
   }
@@ -68,32 +82,46 @@ export class DrawingMouseInput {
   }
   listen(window: Window, svg: SVGSVGElement, event: PointerEvent,
     moved: (event: PointerEvent) => void, released: (event: PointerEvent) => void,
-    canceled: (event: PointerEvent) => void, cancel: () => void): () => void {
+    canceled: (event: PointerEvent) => void, cancel: () => void, finishLast?: () => void): () => void {
     const mouse = this.fallback.has(event);
-    const move = mouse ? (next: Event) => {
+    const ordinary = !mouse && finishLast && this.ordinaryMouseDown(event) ? { down: event, finishLast } : undefined;
+    let listening = true;
+    // This only rejects an already-created event from before the current down;
+    // timestamps cannot identify an old release newly timestamped after it.
+    const current = (next: Event) => listening && (!ordinary || !Number.isFinite(next.timeStamp) || next.timeStamp >= event.timeStamp);
+    const move = (next: Event) => {
+      if (!current(next)) return;
+      if (!mouse) { moved(next as PointerEvent); return; }
       const value = next as MouseEvent;
       if (this.fromTouch(value) || value.buttons !== 0 && value.buttons !== 1) { cancel(); return; }
       moved(this.sample(value, event.pointerId, 'pointermove'));
-    } : moved as EventListener;
-    const up = mouse ? (next: Event) => {
+    };
+    const up = (next: Event) => {
+      if (!current(next)) return;
+      if (!mouse) { released(next as PointerEvent); return; }
       const value = next as MouseEvent;
       if (value.button === 0 && !this.fromTouch(value)) released(this.sample(value, event.pointerId, 'pointerup'));
-    } : released as EventListener;
+    };
+    const canceledInput = (next: Event) => { if (current(next)) canceled(next as PointerEvent); };
     if (mouse) this.cancelMouse = cancel;
+    if (ordinary) this.ordinary = ordinary;
     window.addEventListener(mouse ? 'mousemove' : 'pointermove', move);
     window.addEventListener(mouse ? 'mouseup' : 'pointerup', up);
-    window.addEventListener('pointercancel', canceled as EventListener);
-    svg.addEventListener('lostpointercapture', canceled as EventListener);
+    window.addEventListener('pointercancel', canceledInput);
+    svg.addEventListener('lostpointercapture', canceledInput);
     return () => {
+      listening = false;
       window.removeEventListener(mouse ? 'mousemove' : 'pointermove', move);
       window.removeEventListener(mouse ? 'mouseup' : 'pointerup', up);
-      window.removeEventListener('pointercancel', canceled as EventListener);
-      svg.removeEventListener('lostpointercapture', canceled as EventListener);
+      window.removeEventListener('pointercancel', canceledInput);
+      svg.removeEventListener('lostpointercapture', canceledInput);
       if (this.cancelMouse === cancel) this.cancelMouse = undefined;
+      if (this.ordinary === ordinary) this.ordinary = undefined;
     };
   }
   reset(): void {
     this.cancelMouse?.();
+    this.ordinary = undefined;
     this.handled = false; this.handledId = undefined; this.device = ''; this.mouseId = undefined;
   }
 }

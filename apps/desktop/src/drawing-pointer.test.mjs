@@ -1497,3 +1497,96 @@ test('selectionGesture mouse release fallback keeps valid-source permission Busy
   }
  }finally{clock.restore();}
 });
+
+function press(input,f,x,y,time,extra={}){const e=input.pointer('pointerdown',x,y,{isPrimary:true,timeStamp:time,target:f.svg,...extra});input.document.emit(e);f.pointerBegin(e);return e;}
+function drag(input,f,x,y,time,extra={}){f.window.emit(input.pointer('pointermove',x,y,{isPrimary:true,timeStamp:time,...extra}));}
+function release(input,f,x,y,time,extra={}){const e=input.pointer('pointerup',x,y,{isPrimary:true,timeStamp:time,...extra});input.document.emit(e);f.window.emit(e);return e;}
+function recoveryScope(){const clock=frames(),f=setup([],undefined,true),input=mouseSurface(f);return{f,input,clock,close(){input.detach();f.dispose();f.disposeReactive();clock.restore();}};}
+
+test('a complete ordinary mouse stroke and a repeated identical down never create an extra drawing',async()=>{
+ const s=recoveryScope(),{f,input}=s;try{
+  const old=press(input,f,10,10,10);drag(input,f,20,20,11);release(input,f,30,30,12);await tick();
+  const next=press(input,f,70,70,20);f.pointerBegin(next);f.pointerBegin(old);drag(input,f,80,80,21);release(input,f,90,90,22);await tick();
+  assert.deepEqual(f.commands.map(c=>c.drawing.points),[[{x:10,y:10},{x:20,y:20},{x:30,y:30}],[{x:70,y:70},{x:80,y:80},{x:90,y:90}]]);
+  assert.equal(f.window.count(),0);assert.deepEqual(f.errors,[]);
+ }finally{s.close();}
+});
+
+test('a newer primary mouse press separates missing releases without using its coordinates in the old drawing',async()=>{
+ for(const compatibility of ['none','zero','stale']){
+  const s=recoveryScope(),{f,input}=s;try{
+   press(input,f,10,10,10);drag(input,f,20,20,11);
+   if(compatibility!=='none')input.up(20,20,{buttons:compatibility==='stale'?1:0,timeStamp:12});
+   press(input,f,70,70,20);drag(input,f,80,80,21);release(input,f,90,90,22);await tick();
+   assert.deepEqual(f.commands.map(c=>c.drawing.points),[[{x:10,y:10},{x:20,y:20}],[{x:70,y:70},{x:80,y:80},{x:90,y:90}]],compatibility);
+   assert.equal(f.window.count(),0);assert.deepEqual(f.errors,[]);
+  }finally{s.close();}
+ }
+});
+
+test('ordinary vector recovery publishes each prior unpainted preview and supports the blackboard through the original command path',async()=>{
+ for(const tool of ['pen','line','arrow','rect','ellipse','highlighter'])for(const blackboard of [false,true]){
+  const s=recoveryScope(),{f,input}=s;try{
+   f.props.blackboard=blackboard;f.tool(tool);press(input,f,10,10,10);drag(input,f,20,20,11);press(input,f,70,70,20);drag(input,f,80,80,21);release(input,f,90,90,22);await tick();
+   assert.equal(f.commands.length,2,tool+'/'+blackboard);assert.equal(f.commands[0].drawing.kind,tool);assert.deepEqual(f.commands[0].drawing.points,[{x:10,y:10},{x:20,y:20}]);
+   assert.deepEqual(f.errors,[]);assert.equal(f.window.count(),0);
+  }finally{s.close();}
+ }
+});
+
+test('old-timestamp pointer events and detached old callbacks cannot finish or append to the successor',async()=>{
+ const s=recoveryScope(),{f,input}=s;try{
+  press(input,f,10,10,10);drag(input,f,20,20,11);
+  const oldMove=[...f.window.listeners.get('pointermove')],oldUp=[...f.window.listeners.get('pointerup')],oldCancel=[...f.window.listeners.get('pointercancel')],oldLost=[...f.svg.listeners.get('lostpointercapture')];
+  press(input,f,70,70,20);drag(input,f,80,80,21);
+  for(const type of ['pointermove','pointerup','pointercancel','lostpointercapture']){
+   const e=input.pointer(type,35,35,{isPrimary:true,timeStamp:12});if(type==='lostpointercapture')f.svg.emit(e);else{input.document.emit(e);f.window.emit(e);}
+   assert.equal(f.hasGesture(),true,type+' has an old timestamp');
+  }
+  for(const [callbacks,type] of [[oldMove,'pointermove'],[oldUp,'pointerup'],[oldCancel,'pointercancel'],[oldLost,'lostpointercapture']])for(const callback of callbacks)callback(input.pointer(type,44,44,{isPrimary:true,timeStamp:25}));
+  assert.equal(f.hasGesture(),true,'detached downstream callbacks cannot act on the successor');
+  release(input,f,90,90,26);await tick();
+  assert.deepEqual(f.commands.map(c=>c.drawing.points),[[{x:10,y:10},{x:20,y:20}],[{x:70,y:70},{x:80,y:80},{x:90,y:90}]]);assert.equal(f.window.count(),0);
+ }finally{s.close();}
+});
+
+test('different pointer pen touch secondary chord and non-new timestamps cannot recover an ordinary mouse vector',async()=>{
+ const alternatives=[{pointerId:82},{pointerType:'pen'},{pointerType:'touch'},{isPrimary:false},{button:2,buttons:2},{buttons:3},{timeStamp:9},{timeStamp:10}];
+ for(const extra of alternatives){const s=recoveryScope(),{f,input}=s;try{
+  press(input,f,10,10,10);drag(input,f,20,20,11);press(input,f,70,70,20,extra);await tick();assert.equal(f.commands.length,0,JSON.stringify(extra));f.cancel();assert.equal(f.window.count(),0);assert.deepEqual(f.errors,[]);
+ }finally{s.close();}}
+});
+
+test('recovery preserves the actual source geometry permission busy blur cancel and disposal boundaries',async()=>{
+ for(const reason of ['source','revision','geometry','permission','busy','inputLocked','tool','blur','resize','cancel','dispose']){
+  const s=recoveryScope(),{f,input}=s;try{
+   press(input,f,10,10,10);drag(input,f,20,20,11);
+   if(reason==='source'){f.props.source='new-source';f.props.revision++;f.sourceChanged();}if(reason==='revision')f.props.revision++;
+   if(reason==='geometry')f.svg.box.width++;if(reason==='permission')f.props.allowed=false;
+   if(reason==='busy')f.props.busy=true;if(reason==='inputLocked')f.props.inputLocked=true;if(reason==='tool')f.tool('line');
+   if(reason==='blur')f.blur();if(reason==='resize')f.resize();if(reason==='cancel')f.cancel();if(reason==='dispose')f.dispose();
+   press(input,f,70,70,20);await tick();assert.equal(f.commands.length,0,reason+' cannot save the old vector');
+   f.cancel();assert.equal(f.window.count(),0,reason);assert.deepEqual(f.errors,reason==='dispose'?['请先保存未完成的笔迹']:[],reason+' preserves the existing queue error');
+  }finally{s.close();}
+ }
+});
+
+test('mark and existing-object movement retain their active-gesture behavior without automatic recovery',async()=>{
+ for(const kind of ['mark','existing']){
+  const clock=frames(),values=kind==='existing'?[{id:'existing',kind:'line',color:'#eee',strokeWidth:4,points:[{x:10,y:10},{x:40,y:40}]}]:[],f=setup(values,undefined,true),input=mouseSurface(f);
+  try{
+   if(kind==='mark')f.tool('mark');else f.tool('select');const target=kind==='existing'?new module.namespace.Element():f.svg;if(kind==='existing')target.id='existing';
+   press(input,f,10,10,10,{target});drag(input,f,20,20,11);press(input,f,70,70,20,{target});await tick();
+   assert.equal(f.commands.length,0,kind);f.cancel();assert.equal(f.window.count(),0);assert.deepEqual(f.errors,[]);
+  }finally{input.detach();f.dispose();f.disposeReactive();clock.restore();}
+ }
+});
+
+test('delayed compatibility mouse events from a rejected old press cannot terminate a valid normal-pointer successor',async()=>{
+ const s=recoveryScope(),{f,input}=s;try{
+  f.props.busy=true;press(input,f,10,10,10);assert.equal(f.hasGesture(),false);release(input,f,30,30,12);f.props.busy=false;
+  press(input,f,70,70,20);drag(input,f,80,80,21);input.missing(10,10,{timeStamp:11});input.up(30,30,{buttons:1,timeStamp:13});
+  assert.equal(f.hasGesture(),true,'mouse compatibility release is not a pointer terminal');drag(input,f,90,90,23);release(input,f,100,100,24);await tick();
+  assert.equal(f.commands.length,1);assert.deepEqual(f.commands[0].drawing.points,[{x:70,y:70},{x:80,y:80},{x:90,y:90},{x:100,y:100}]);assert.equal(f.window.count(),0);assert.deepEqual(f.errors,[]);
+ }finally{s.close();}
+});
