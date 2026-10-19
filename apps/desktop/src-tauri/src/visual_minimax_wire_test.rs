@@ -55,7 +55,11 @@ fn observed_minimax_wire_maps_to_the_same_validated_geometry_without_changing_te
 #[test]
 fn minimax_wire_keeps_field_units_target_numeric_and_point_limits_fail_closed() {
     let input = super::tests::normalized_input();
-    for model in ["MiniMax-M3", "MiniMax-M3.1-Flash-Preview"] {
+    for model in [
+        "MiniMax-M3",
+        "MiniMax-M3.1-Flash-Preview",
+        "MiniMax-M3.1-Flash",
+    ] {
         let mut connection = profile();
         connection.model = model.into();
         let scope = super::tests::scope(input.clone()).for_connection(&connection);
@@ -119,7 +123,11 @@ fn minimax_wire_keeps_field_units_target_numeric_and_point_limits_fail_closed() 
 fn minimax_wire_is_bound_to_the_preflight_model_protocol_and_official_endpoint() {
     let input = super::tests::normalized_input();
     let wire = observed(&input).to_string();
-    for model in ["MiniMax-M3", "MiniMax-M3.1-Flash-Preview"] {
+    for model in [
+        "MiniMax-M3",
+        "MiniMax-M3.1-Flash-Preview",
+        "MiniMax-M3.1-Flash",
+    ] {
         for address in [
             "https://api.minimax.cn/v1",
             "https://api.minimaxi.com/v1",
@@ -166,6 +174,7 @@ fn minimax_wire_is_bound_to_the_preflight_model_protocol_and_official_endpoint()
     for model in [
         "other-model",
         "MiniMax-M3.1-Flash-Preview-extra",
+        "MiniMax-M3.1-Flash-extra",
         "custom-MiniMax-M3.1-Flash-Preview",
         "minimax-m3.1-flash-preview",
     ] {

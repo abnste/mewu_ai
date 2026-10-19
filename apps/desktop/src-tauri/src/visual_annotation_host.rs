@@ -74,7 +74,7 @@ impl RunScope {
     pub fn for_connection(mut self, profile: &mewu_core::ConnectionProfile) -> Self {
         self.minimax_wire = matches!(
             profile.model.as_str(),
-            "MiniMax-M3" | "MiniMax-M3.1-Flash-Preview"
+            "MiniMax-M3" | "MiniMax-M3.1-Flash-Preview" | "MiniMax-M3.1-Flash"
         ) && profile.advanced.protocol
             == mewu_core::ConnectionProtocol::ChatCompletions
             && crate::provider_transport::endpoint(profile).is_ok_and(|url| {
