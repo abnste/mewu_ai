@@ -19,7 +19,8 @@ class Target {
 class Element {
   constructor(category) { this.category = category; }
   closest(selector) {
-    const selectors = { color: '.drawing-recent-color', canvas: '.drawing-edit-surface', toolbar: '.drawing-toolbar', editor: '.drawing-editor', button: 'button' };
+    const selectors = { color: '.drawing-recent-color', canvas: '.drawing-edit-surface', toolbar: '.drawing-toolbar', editor: '.drawing-editor', button: 'button',
+      capture: '.capture-surface', region: '.capture-region', edge: '.capture-handle,.capture-edge' };
     return selectors[this.category] === selector ? this : null;
   }
 }
@@ -39,8 +40,39 @@ test('default and explicitly disabled drawing diagnostics touch no clock DOM obs
     setTimeout: () => { throw Error('Unexpected timer'); }, clearTimeout: () => { throw Error('Unexpected timer'); } });
   const event = new Proxy({}, { get() { throw Error('Must not inspect input in disabled mode'); } });
   api.recordDrawingInput(10, event, () => { stateReads++; throw Error('Must not inspect business state'); });
+  api.recordDrawingInput(api.DrawingInputPhase.windowSnapMap, event, undefined, 3);
+  api.recordDrawingInput(api.DrawingInputPhase.windowSnapDown, event, undefined, 10);
+  api.recordDrawingInput(api.DrawingInputPhase.regionBegin, event, undefined, 6);
+  api.recordDrawingInput(api.DrawingInputPhase.regionFinish, event, undefined, 7);
+  api.recordDrawingInput(api.DrawingInputPhase.regionEdit, event, undefined, 5);
+  assert.equal(api.drawingDiagnosticsEnabled(), false);
   api.startDrawingDiagnostics(false, async () => { sends++; })();
   assert.deepEqual({ reads, sends, stateReads }, { reads: 0, sends: 0, stateReads: 0 });
+});
+
+test('snap phases reuse the original fixed numeric row shape and install no extra event observers', async () => {
+  const f = await fixture(), sent = [];
+  const stop = f.api.startDrawingDiagnostics(true, async payload => sent.push(JSON.parse(payload)));
+  assert.equal(f.api.drawingDiagnosticsEnabled(), true);
+  f.api.recordDrawingInput(f.api.DrawingInputPhase.windowSnapMap, undefined, undefined, 2);
+  f.api.recordDrawingInput(f.api.DrawingInputPhase.windowSnapDown, undefined, undefined, 10);
+  await f.tick();
+  assert.deepEqual(sent[0].rows.map(row => [row.phase, row.code, row.count]), [[20, 2, 0], [21, 10, 0]]);
+  assert.equal(f.document.installed + f.window.installed, 6);
+  stop(); assert.equal(f.api.drawingDiagnosticsEnabled(), false);
+});
+
+test('capture background region and resize categories use only bounded enums on the existing observers', async () => {
+  const f = await fixture(), sent = [];
+  const stop = f.api.startDrawingDiagnostics(true, async payload => sent.push(JSON.parse(payload)));
+  for (const category of ['capture', 'region', 'edge']) f.document.emit('pointerdown', new Element(category));
+  f.api.recordDrawingInput(f.api.DrawingInputPhase.regionBegin, undefined, undefined, 6);
+  f.api.recordDrawingInput(f.api.DrawingInputPhase.regionFinish, undefined, undefined, 7);
+  f.api.recordDrawingInput(f.api.DrawingInputPhase.regionEdit, undefined, undefined, 5);
+  await f.tick();
+  assert.deepEqual(sent[0].rows.map(row => [row.phase, row.target, row.code]), [[1, 8, 0], [1, 9, 0], [1, 10, 0], [22, 0, 6], [23, 0, 7], [24, 0, 5]]);
+  assert.equal(f.document.installed + f.window.installed, 6);
+  stop();
 });
 test('enabled real observer sends only fixed numeric input categories and lazy guard flags without content', async () => {
   const f = await fixture(), sent = [];

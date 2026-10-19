@@ -37,9 +37,10 @@ const handler = name => slice(nodes.find(node => node.type === 'FunctionDeclarat
 const element = name => nodes.find(node => node.type === 'JSXElement' && node.openingElement.attributes.some(attribute => attribute.name?.name === 'class' && attribute.value?.value === name));
 const mask = element('capture-mask'), passive = element('capture-saved-drawings'), region = element('capture-region');
 const regionList = nodes.find(node => node.type === 'JSXElement' && node.openingElement.name.name === 'For' && node.start < region.start && node.end > region.end);
-const harness = `import {createSignal,createMemo,Show,For,batch} from 'solid-js';
+const harness = `import {createSignal,createMemo,Show,For,batch,untrack} from 'solid-js';
 import {overlayRegion,geometryTarget,sameGeometry} from './region-geometry';
 import {regionImageProjection} from './region-image';
+import {DrawingInputPhase,drawingDiagnosticsEnabled,recordDrawingInput} from './drawing-diagnostics';
 export default function Owner(props){
   const metrics=props.metrics,canvas=props.canvas;
   let disposed=false,interactionVersion=0,cancelGesture,newSelectionSource;
@@ -48,6 +49,7 @@ export default function Owner(props){
   const exporting=()=>false,settling=()=>false,extensionRunning=()=>false;
   const geometry=createMemo(()=>props.geometry),blocked=()=>false,ocrVisible=()=>false,translationVisible=()=>false;
   const selectionPreview=()=>undefined,queuedSelectionPreviews=()=>[],savedTranslation=()=>undefined,savedOcr=()=>undefined;
+  const pendingSelectionOutlines=()=>[];
   const t=value=>value,assetUrl=value=>value.path,EDGES=['n','e','s','w'],CORNERS=['nw','ne','sw','se'];
   const TranslationLayer=()=>null,OcrTextLayer=()=>null,LoaderCircle=()=>null,X=()=>null;
   const DrawingLayer=layer=>{createMemo(()=>{layer.region;layer.sourceRegion;metrics.drawingReads++;});return null;};
@@ -59,7 +61,7 @@ export default function Owner(props){
   ${variable('display',true)}
   ${variable('imageProjection',true)}
   ${variable('regions')}
-  ${['setSelectionActivity','trackPointer','editRegion'].map(handler).join('\n')}
+  ${['setSelectionActivity','trackPointer','editRegion','presentPendingSelection'].map(handler).join('\n')}
   Object.assign(props.control,{regionById,regions,stop:()=>cancelGesture?.()});
   return <div>${slice(mask)}${slice(regionList)}${slice(passive)}</div>;
 }`;
@@ -89,8 +91,10 @@ async function fixture(count) {
   await geometryModule.link(() => { throw Error('unexpected import'); }); await geometryModule.evaluate();
   const imageModule = new SourceTextModule(plain(await raw('./region-image.ts')), { context });
   await imageModule.link(() => { throw Error('unexpected import'); }); await imageModule.evaluate();
+  const diagnosticModule = new SourceTextModule(plain(await raw('./drawing-diagnostics.ts')), { context });
+  await diagnosticModule.link(() => { throw Error('unexpected diagnostics import'); }); await diagnosticModule.evaluate();
   const owner = new SourceTextModule(compiled, { context });
-  await owner.link(name => name === 'solid-js' ? core : name === 'renderer' ? synthetic(renderer) : name === './region-geometry' ? geometryModule : imageModule); await owner.evaluate();
+  await owner.link(name => name === 'solid-js' ? core : name === 'renderer' ? synthetic(renderer) : name === './region-geometry' ? geometryModule : name === './drawing-diagnostics' ? diagnosticModule : imageModule); await owner.evaluate();
   const measureRegions = values => new Proxy(values, { get(target, key, receiver) {
     if (key !== 'find') return Reflect.get(target, key, receiver);
     return predicate => target.find((value, index) => { metrics.findComparisons++; return predicate(value, index, target); });

@@ -121,13 +121,15 @@ export class SnapSelectionGesture {
 
 const sameRequest = (a: SnapMapRequest, b: SnapMapRequest) => a.sceneId === b.sceneId && a.backgroundId === b.backgroundId && a.width === b.width && a.height === b.height;
 interface Slot { request: SnapMapRequest; generation: number; status: 'waiting' | 'running' | 'done' }
+type MapObservation = (outcome: 0 | 1 | 2 | 3, count: number) => void;
 /** One real invocation plus one latest identity; cancellation never frees an active slot early. */
 export class SnapMapLoader {
   private generation = 0;
   private current?: Slot;
   private running?: Slot;
   private disposed = false;
-  constructor(private readonly fetch: (request: SnapMapRequest) => Promise<unknown>, private readonly changed: (value: FrameSnapMap | undefined) => void) {}
+  constructor(private readonly fetch: (request: SnapMapRequest) => Promise<unknown>, private readonly changed: (value: FrameSnapMap | undefined) => void,
+    private readonly observation?: () => MapObservation | undefined) {}
   request(request: SnapMapRequest) {
     if (this.disposed || this.current && sameRequest(this.current.request, request)) return;
     this.current = { request: { ...request }, generation: ++this.generation, status: 'waiting' };
@@ -140,14 +142,18 @@ export class SnapMapLoader {
     if (this.disposed || this.running || !slot || slot.status !== 'waiting') return;
     this.running = slot; slot.status = 'running';
     let promise: Promise<unknown>;
-    try { promise = this.fetch(slot.request); } catch { promise = Promise.resolve(null); }
-    void Promise.resolve(promise).then(value => this.complete(slot, value), () => this.complete(slot, null));
+    let failed = false;
+    try { promise = this.fetch(slot.request); } catch { failed = true; promise = Promise.resolve(null); }
+    void Promise.resolve(promise).then(value => this.complete(slot, value, failed), () => this.complete(slot, null, true));
   }
-  private complete(slot: Slot, value: unknown) {
+  private complete(slot: Slot, value: unknown, failed: boolean) {
     if (this.running === slot) this.running = undefined;
     if (!this.disposed && this.current === slot && slot.generation === this.generation) {
       slot.status = 'done';
-      this.changed(validateSnapMap(value, slot.request));
+      const map = validateSnapMap(value, slot.request);
+      try { this.observation?.()?.(failed ? 3 : map ? 0 : value == null ? 1 : 2, map?.roots.length ?? 0); }
+      catch { /* Advisory observation must not replace a map or its failure. */ }
+      this.changed(map);
     }
     this.pump();
   }

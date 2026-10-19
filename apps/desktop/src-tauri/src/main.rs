@@ -314,18 +314,30 @@ fn get_window_snap_map_blocking(
     scene_id: String,
     background_id: String,
 ) -> Result<Option<window_snap::FrameSnapMap>, String> {
-    if window.label() != "space" {
-        return Err("此窗口不能读取截图选区".into());
-    }
-    host.exit.ensure_running()?;
-    let engine = host.lock()?;
-    let background = engine
-        .store
-        .active_background_for_preview(&scene_id, &background_id)
-        .map_err(|error| error.to_string())?;
-    let result = host.window_snap.get(&background);
-    host.exit.ensure_running()?;
-    Ok(result)
+    use interaction_performance::{Kind, Stage, Trace};
+    let mut timing = Trace::start(Kind::WindowSnap);
+    timing.mark(Stage::SnapGet);
+    let result = (|| {
+        if window.label() != "space" {
+            return Err("此窗口不能读取截图选区".into());
+        }
+        host.exit.ensure_running()?;
+        let engine = host.lock()?;
+        let background = engine
+            .store
+            .active_background_for_preview(&scene_id, &background_id)
+            .map_err(|error| error.to_string())?;
+        let result = host.window_snap.get(&background);
+        host.exit.ensure_running()?;
+        Ok(result)
+    })();
+    timing.mark(match &result {
+        Ok(Some(_)) => Stage::SnapAvailable,
+        Ok(None) => Stage::SnapMissing,
+        Err(_) => Stage::SnapDenied,
+    });
+    timing.finish(matches!(&result, Ok(Some(_))));
+    result
 }
 impl Host {
     fn lock(&self) -> Result<MutexGuard<'_, Engine>, String> {

@@ -26,6 +26,7 @@ pub(crate) enum Kind {
     StorePersist,
     CaptureFrontend,
     CaptureAck,
+    WindowSnap,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -72,6 +73,18 @@ pub(crate) enum Stage {
     AckLocked,
     AckIdentityChecked,
     AckAccepted,
+    SnapCapture,
+    SnapBeforeReady,
+    SnapBeforeMissing,
+    SnapAfterReady,
+    SnapAfterMissing,
+    SnapBuilt,
+    SnapRejected,
+    SnapInsert,
+    SnapGet,
+    SnapAvailable,
+    SnapMissing,
+    SnapDenied,
 }
 
 /// Call once, before admitting interactions. Failure disables measurement only.
@@ -369,6 +382,38 @@ mod tests {
                 assert_eq!(stage["stage"], name);
                 assert_eq!(stage["elapsedMicros"], (index * 10) as u64);
             }
+        }
+    }
+    #[test]
+    fn window_snap_outcomes_reuse_only_the_existing_bounded_timing_shape() {
+        let fixture = Fixture::new();
+        let recorder = create_recorder(true, &fixture.0).unwrap();
+        for (stage, success) in [
+            (Stage::SnapAvailable, true),
+            (Stage::SnapMissing, false),
+            (Stage::SnapDenied, false),
+        ] {
+            let mut trace = Trace::from_recorder(Some(recorder.clone()), Kind::WindowSnap);
+            trace.mark(Stage::SnapGet);
+            trace.mark(stage);
+            trace.finish(success);
+        }
+        let records = fixture.records();
+        assert_eq!(records.len(), 3);
+        for (record, outcome) in records
+            .iter()
+            .zip(["snapAvailable", "snapMissing", "snapDenied"])
+        {
+            assert_eq!(record.as_object().unwrap().len(), 5);
+            assert_eq!(record["kind"], "windowSnap");
+            assert_eq!(record["success"], outcome == "snapAvailable");
+            let stages = record["stages"].as_array().unwrap();
+            assert_eq!(stages.len(), 2);
+            assert_eq!(stages[0]["stage"], "snapGet");
+            assert_eq!(stages[1]["stage"], outcome);
+            assert!(stages
+                .iter()
+                .all(|stage| stage.as_object().unwrap().len() == 2));
         }
     }
     #[test]

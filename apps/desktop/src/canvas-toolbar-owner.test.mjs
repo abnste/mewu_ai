@@ -56,6 +56,7 @@ const shell = cardNodes.find(node => node.type === 'JSXOpeningElement' && node.n
 const shellRef = shell.attributes.find(attr => attr.name?.name === 'ref').value.expression;
 const harness = `import { batch, createSignal, createMemo, createEffect, For, Show, untrack, on, onCleanup } from 'solid-js';
 import {VideoPlayback} from 'test-video-playback';
+import {DrawingInputPhase,drawingDiagnosticsEnabled,recordDrawingInput} from './drawing-diagnostics';
 export default function Owner(props) {
   let disposed = false, interactionVersion = 0, pendingSelectionEpoch = 0, flashTimer;
   const imageDrawingItem = () => props.scene.items.find(item => item.id === imageDrawing()?.itemId);
@@ -139,7 +140,9 @@ async function fixture({ kind = 'video', blackboard = false } = {}) {
     removeNode:(parent,node)=>{parent.children.splice(parent.children.indexOf(node),1);node.parent=null;},isTextNode:node=>'text'in node,
     getParentNode:node=>node.parent,getFirstChild:node=>node.children[0],getNextSibling:node=>node.parent?.children[node.parent.children.indexOf(node)+1],
   });
-  const module = new SourceTextModule(compiled, {context}); await module.link(name=>name==='solid-js'?core:name==='test-video-playback'?synthetic({VideoPlayback}):synthetic(renderer));await module.evaluate();
+  const diagnosticModule = new SourceTextModule(plain(await readFile(new URL('./src/drawing-diagnostics.ts', desktop), 'utf8')), {context});
+  await diagnosticModule.link(() => { throw Error('unexpected diagnostics import'); }); await diagnosticModule.evaluate();
+  const module = new SourceTextModule(compiled, {context}); await module.link(name=>name==='solid-js'?core:name==='test-video-playback'?synthetic({VideoPlayback}):name==='./drawing-diagnostics'?diagnosticModule:synthetic(renderer));await module.evaluate();
   const [scene,setScene] = solid.createSignal({id:'scene',background:{id:'background',width:1200,height:800},regions:[{id:'region',x:100,y:100,width:300,height:200}],items:[{id:'object',asset:{id:'asset',kind},x:.1,y:.2,width:.3,height:.4}]});
   const control={},probe={mounted:[],disposed:[],observed:[],videoOwners:new Map(),pauseCalls:0,editorsMounted:[],editorsDisposed:[]},frames=[],placed=[],completions=[],updates=[];
   const props={get scene(){return scene();},blackboard,blackboardEnabled:true,busy:false,inputLocked:false,aiAvailable:true,refs:[{kind:'region',id:'region'},{kind:'item',id:'object'}],control,probe,frames,placed,

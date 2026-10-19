@@ -45,6 +45,7 @@ import { sameOcrTarget } from '../ocr-selection';
 import { finishCapture } from '../capture-completion';
 import { regionImageProjection } from '../region-image';
 import { getWindowSnapMap } from '../window-snap-bridge';
+import { DrawingInputPhase, drawingDiagnosticsEnabled, recordDrawingInput } from '../drawing-diagnostics';
 import { SnapMapLoader, SnapSelectionGesture, SnapshotSelections, snapImagePoint, snapResize, snapTarget, type FrameSnapMap, type SnapNode } from '../window-snap';
 import './capture.css';
 import type { RegisterDrawingHistory } from '../drawing-editor-port';
@@ -109,7 +110,7 @@ interface Props {
   maskOpacity: number;
 }
 interface Box { x: number; y: number; width: number; height: number }
-interface PendingSelection { sceneId: string; backgroundId: string; region: Region; version: number; automatic?: SnapNode; complete: boolean; acknowledged?: boolean }
+interface PendingSelection { sceneId: string; backgroundId: string; region: Region; version: number; automatic?: SnapNode; complete: boolean; acknowledged?: boolean; presented?: boolean }
 interface PluginEntry { plugin: PluginRecord; contribution: PluginContribution }
 type Handle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se';
 const CORNERS: Handle[] = ['nw', 'ne', 'sw', 'se'];
@@ -212,7 +213,8 @@ export default function SpaceCanvas(props: Props) {
   const [exporting, setExporting] = createSignal(false);
   const [codeFocused, setCodeFocused] = createSignal(document.hasFocus() && !document.hidden);
   const [codeModal, setCodeModal] = createSignal(false);
-  const snapLoader = new SnapMapLoader(getWindowSnapMap, value => { if (!disposed) { setSnapMap(value); if (snapPointer) updateSnapPreview(snapPointer); } });
+  const snapLoader = new SnapMapLoader(getWindowSnapMap, value => { if (!disposed) { setSnapMap(value); if (snapPointer) updateSnapPreview(snapPointer); } },
+    () => drawingDiagnosticsEnabled() ? (code, count) => recordDrawingInput(DrawingInputPhase.windowSnapMap, undefined, undefined, code, count) : undefined);
   const ocrRequests = new OcrRequestGate<Snapshot>({
     run: request => props.onOcrRequest(request), cancel: id => props.onOcrCancel(id), pending: setOcrPending,
     result: (snapshot, request) => {
@@ -305,12 +307,11 @@ export default function SpaceCanvas(props: Props) {
   const selectionPreview = createMemo(() => {
     if (selection()) return selection();
     const pending = pendingSelection();
-    if (!pending || !currentPendingSelection(pending) || props.scene.regions.some(region => region.id === pending.region.id)) return;
+    if (!pending || !currentPendingSelection(pending) || pending.presented) return;
     return display(pending.region);
   });
   const queuedSelectionPreviews = createMemo(() => pendingSelectionOutlines()
-    .filter(pending => pending.region.id !== pendingSelection()?.region.id && currentPendingSource(pending)
-      && !props.scene.regions.some(region => region.id === pending.region.id)));
+    .filter(pending => pending.region.id !== pendingSelection()?.region.id && currentPendingSource(pending) && !pending.presented));
   const point = (event: PointerEvent) => ({ x: clamp(event.clientX, geometry().x, geometry().x + geometry().width), y: clamp(event.clientY, geometry().y, geometry().y + geometry().height) });
   const referenced = (id: string) => props.refs.some(ref => ref.kind === 'region' && ref.id === id);
   const blocked = () => props.busy || exporting() || settling() || extensionRunning() || props.scene.run?.status === 'running';
@@ -329,11 +330,20 @@ export default function SpaceCanvas(props: Props) {
     const pixel = snapImagePoint(x, y, box, box.scale);
     return pixel && snapTarget(map, pixel.x, pixel.y);
   }
-  function previewCandidateAt(pointer: { x: number; y: number; shiftKey: boolean }) {
-    if (snapUnavailable() || pointer.shiftKey || !document.hasFocus()) return;
+  function previewCandidateAt(pointer: { x: number; y: number; shiftKey: boolean }, observe?: (reason: number) => void) {
+    if (snapUnavailable()) { observe?.(1); return; }
+    if (pointer.shiftKey) { observe?.(2); return; }
+    if (!document.hasFocus()) { observe?.(3); return; }
     const target = document.elementFromPoint(pointer.x, pointer.y), composer = composerBox();
-    if (!target?.closest('.capture-surface') || target.closest('button,a,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.artifact-card,.capture-region,.capture-toolbar,.selection-code-card,.ocr-text-layer,.drawing-editor') || document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu,[role="menu"]') || (toolbarVisible() && contains(toolbarBox(), pointer.x, pointer.y, TOLERANCE)) || (composer && contains(composer, pointer.x, pointer.y)) || regions().some(entry => contains(entry.box, pointer.x, pointer.y, 5))) return;
-    return candidateAt(pointer.x, pointer.y);
+    if (!target?.closest('.capture-surface')) { observe?.(4); return; }
+    if (target.closest('button,a,input,textarea,select,[contenteditable]:not([contenteditable="false"]),.artifact-card,.capture-region,.capture-toolbar,.selection-code-card,.ocr-text-layer,.drawing-editor')) { observe?.(5); return; }
+    if (document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu,[role="menu"]')) { observe?.(6); return; }
+    if (toolbarVisible() && contains(toolbarBox(), pointer.x, pointer.y, TOLERANCE)) { observe?.(7); return; }
+    if (composer && contains(composer, pointer.x, pointer.y)) { observe?.(8); return; }
+    if (regions().some(entry => contains(entry.box, pointer.x, pointer.y, 5))) { observe?.(9); return; }
+    const candidate = candidateAt(pointer.x, pointer.y);
+    observe?.(candidate ? 0 : 10);
+    return candidate;
   }
   function updateSnapPreview(pointer: { x: number; y: number; shiftKey: boolean }) {
     snapPointer = pointer;
@@ -508,19 +518,24 @@ export default function SpaceCanvas(props: Props) {
     try { canvas.setPointerCapture(pointerId); } catch { end(false); }
   }
   function begin(event: PointerEvent) {
-    if (props.blackboard) return;
-    if (event.button !== 0 || activity() || !props.scene.background || backgroundError() || !geometry().width || blocked()) return;
+    if (props.blackboard) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 5); return; }
+    if (event.button !== 0) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 1); return; }
+    if (activity()) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 2); return; }
+    if (!props.scene.background || backgroundError() || !geometry().width) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 4); return; }
+    if (blocked()) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 3); return; }
     const target = event.target as Element;
-    if (target.closest('button,.artifact-card,.capture-toolbar,.selection-code-card')) return;
-    if (target.closest('.capture-region') && !event.shiftKey && !forceNew()) return;
-    if (deferGeometryPointer(event, () => begin(event))) return;
+    if (target.closest('button,.artifact-card,.capture-toolbar,.selection-code-card')) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 5); return; }
+    if (target.closest('.capture-region') && !event.shiftKey && !forceNew()) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 5); return; }
+    if (deferGeometryPointer(event, () => begin(event))) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event, undefined, 6); return; }
+    if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionBegin, event);
     retirePendingSelection();
     setActiveItemId('');
     endNudge();
     const start = point(event), scale = geometry().scale, offset = { x: geometry().x, y: geometry().y };
     const sourceGeometry = { ...geometry() }, sourceViewport = { ...viewport() };
     const sceneId = props.scene.id, backgroundId = props.scene.background.id;
-    const automatic = previewCandidateAt({ x: event.clientX, y: event.clientY, shiftKey: event.shiftKey });
+    const automatic = previewCandidateAt({ x: event.clientX, y: event.clientY, shiftKey: event.shiftKey },
+      drawingDiagnosticsEnabled() ? code => recordDrawingInput(DrawingInputPhase.windowSnapDown, event, undefined, code) : undefined);
     const gesture = new SnapSelectionGesture(start, automatic && display(automatic.bounds));
     let lastPoint = start;
     setForceNew(false); setSelection(gesture.move(start));
@@ -531,7 +546,9 @@ export default function SpaceCanvas(props: Props) {
     }, committed => {
       forceManualSelection = undefined;
       const selected = committed ? gesture.finish(lastPoint) : undefined; setSelection(undefined);
-      if (!committed || disposed || props.scene.id !== sceneId || props.scene.background?.id !== backgroundId || !selected || (!gesture.isAutomatic && (selected.width < 8 || selected.height < 8))) return;
+      if (!committed) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, event, undefined, 1); return; }
+      if (disposed || props.scene.id !== sceneId || props.scene.background?.id !== backgroundId) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, event, undefined, 2); return; }
+      if (!selected || (!gesture.isAutomatic && (selected.width < 8 || selected.height < 8))) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, event, undefined, 3); return; }
       const left = Math.round((selected.x - offset.x) / scale), top = Math.round((selected.y - offset.y) / scale);
       const right = Math.round((selected.x + selected.width - offset.x) / scale), bottom = Math.round((selected.y + selected.height - offset.y) / scale);
       const region: Region = { id: crypto.randomUUID(), x: left, y: top, width: right - left, height: bottom - top };
@@ -541,13 +558,17 @@ export default function SpaceCanvas(props: Props) {
       setPendingSelection(pending);
       setPendingSelectionOutlines(previous => [...previous.slice(-15), pending]);
       setActive(region.id);
+      if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, event);
       void Promise.resolve().then(() => {
-        if (currentPendingSelection(pending)) { admitted = true; return props.onAddRegion(region); }
+        if (currentPendingSelection(pending)) { admitted = true; if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, undefined, undefined, 4); return props.onAddRegion(region); }
+        if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, undefined, undefined, 7);
         removePendingOutline(pending);
       }).then(() => {
+        if (admitted && drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, undefined, undefined, 5);
         if (currentPendingSelection(pending)) setPendingSelection(current => current && { ...current, complete: true });
       }).catch(error => {
         removePendingOutline(pending);
+        if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionFinish, undefined, undefined, admitted ? 6 : 7);
         if (!admitted || presentationEpoch !== pendingSelectionEpoch || !currentPendingSource(pending)) return;
         if (currentPendingSelection(pending)) retirePendingSelection();
         props.onError(error instanceof Error ? error.message : '无法添加区域');
@@ -572,9 +593,27 @@ export default function SpaceCanvas(props: Props) {
     setPendingSelection(undefined);
   }
   function clearPendingSelection() { pendingSelectionEpoch++; retirePendingSelection(); setPendingSelectionOutlines([]); }
+  function presentPendingSelection(id: string, element: HTMLElement) {
+    const pending = untrack(() => pendingSelectionOutlines().find(value => value.region.id === id));
+    if (!pending || pending.presented) return;
+    const epoch = pendingSelectionEpoch;
+    // Solid assigns ref before insertion. Keep the old outline until this exact
+    // saved section is connected; a snapshot alone is not a DOM handoff.
+    queueMicrotask(() => {
+      const saved = props.scene.regions.find(region => region.id === id);
+      if (epoch !== pendingSelectionEpoch || !element.isConnected || !currentPendingSource(pending) || !saved || saved.imageOverride || !sameGeometry(saved, pending.region)) return;
+      batch(() => {
+        setPendingSelectionOutlines(values => values.map(value => value === pending ? { ...value, presented: true } : value));
+        setPendingSelection(value => value?.region.id === id && value.version === pending.version && currentPendingSelection(value) ? { ...value, presented: true } : value);
+      });
+    });
+  }
   function reconcilePendingSelection() {
     const outlines = pendingSelectionOutlines();
-    const remaining = outlines.filter(pending => currentPendingSource(pending) && !props.scene.regions.some(region => region.id === pending.region.id));
+    const remaining = outlines.filter(pending => {
+      const saved = props.scene.regions.find(region => region.id === pending.region.id);
+      return currentPendingSource(pending) && !pending.presented && !(saved && (!sameGeometry(saved, pending.region) || saved.imageOverride));
+    });
     if (remaining.length !== outlines.length) untrack(() => setPendingSelectionOutlines(remaining));
     const pending = pendingSelection();
     if (!pending) return;
@@ -583,7 +622,7 @@ export default function SpaceCanvas(props: Props) {
       if (!current) { clearPendingSelection(); return; }
       if (saved && (!sameGeometry(saved, pending.region) || saved.imageOverride)) { removePendingOutline(pending); retirePendingSelection(); return; }
       if (!saved) { if (pending.acknowledged) { removePendingOutline(pending); retirePendingSelection(); } return; }
-      if (!pending.complete) { if (!pending.acknowledged) setPendingSelection({ ...pending, acknowledged: true }); return; }
+      if (!pending.complete || !pending.presented) { if (!pending.acknowledged) setPendingSelection({ ...pending, acknowledged: true }); return; }
       setPendingSelection(undefined);
       if (pending.automatic) { snapshotSelections.bind(saved, pending.automatic); setSnapshotVersion(value => value + 1); }
       revealToolbar(saved); props.onSelectionComplete?.(saved);
@@ -592,11 +631,12 @@ export default function SpaceCanvas(props: Props) {
   createEffect(reconcilePendingSelection);
   function editRegion(event: PointerEvent, region: Region, handle?: Handle) {
     if (event.shiftKey || forceNew()) { begin(event); return; }
-    if (event.button !== 0 || activity() || blocked()) return;
-    if (deferGeometryPointer(event, () => { const saved = regionById(region.id); if (saved) editRegion(event, saved, handle); })) return;
+    if (event.button !== 0 || activity() || blocked()) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionEdit, event, undefined, 1); return; }
+    if (deferGeometryPointer(event, () => { const saved = regionById(region.id); if (saved) editRegion(event, saved, handle); })) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionEdit, event, undefined, 3); return; }
     endNudge();
     const target = geometryTarget(props.scene, region.id);
-    if (!target || !props.geometryController.beginPointer(target)) return;
+    if (!target || !props.geometryController.beginPointer(target)) { if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionEdit, event, undefined, 2); return; }
+    if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionEdit, event);
     setActiveItemId('');
     canvas.focus({ preventScroll: true });
     const original = target.geometry, scale = geometry().scale;
@@ -619,6 +659,7 @@ export default function SpaceCanvas(props: Props) {
       }
       props.geometryController.previewPointer(updated);
     }, committed => {
+      if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionEdit, event, undefined, committed ? 4 : 5);
       void props.geometryController.endPointer(committed && props.scene.id === sceneId).then(() => {
         const saved = regionById(region.id); if (!disposed && props.scene.id === sceneId && saved) revealToolbar(saved);
       }).catch(() => {});
@@ -868,7 +909,7 @@ export default function SpaceCanvas(props: Props) {
       const region = createMemo(() => regionById(id)!);
       const box = createMemo(() => display(region()), undefined, { equals: sameGeometry });
       const image = createMemo(() => imageProjection(region()));
-      return <section class="capture-region" classList={{ 'capture-active': active() === id, 'capture-located': flashedRegion() === id, 'capture-image-override': Boolean(region().imageOverride) }} style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} onPointerDown={event => editRegion(event, region())} aria-label={`区域 ${index() + 1}`}>
+      return <section ref={element => presentPendingSelection(id, element)} class="capture-region" classList={{ 'capture-active': active() === id, 'capture-located': flashedRegion() === id, 'capture-image-override': Boolean(region().imageOverride) }} style={{ left: `${box().x}px`, top: `${box().y}px`, width: `${box().width}px`, height: `${box().height}px` }} onPointerDown={event => editRegion(event, region())} aria-label={`区域 ${index() + 1}`}>
         <div class="capture-region-content" style={{ left: `${image().box.x - box().x}px`, top: `${image().box.y - box().y}px`, width: `${image().box.width}px`, height: `${image().box.height}px` }}>
           <Show when={region().imageOverride?.id} keyed>{assetId => <img data-asset={assetId} class="capture-override-image" src={assetUrl(region().imageOverride!)} alt={t("长截图")} draggable={false} onError={() => props.onError('无法读取长截图')} />}</Show>
           <Show when={savedTranslation(region())}>{value => <TranslationLayer value={value()} active={active() === id && !drawingSession()} disabled={blocked()} onRemove={props.onTranslationRemove ? () => settledRegion(region(), saved => props.onTranslationRemove!(ocrTarget(saved))) : undefined} onError={props.onError} />}</Show>

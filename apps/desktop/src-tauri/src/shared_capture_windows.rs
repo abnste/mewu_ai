@@ -180,7 +180,7 @@ impl Drop for Region {
 struct ScrollClip { bounds: Rect, roi: Rect, expected: Region }
 
 /// A long-capture HUD may span the source, but its real HWND region must not.
-/// The sole WebView paints the outside outline, preview and controls. Removing
+/// The sole WebView paints the outside dimming, outline, preview and controls. Removing
 /// the acquired rectangle at the native boundary also removes its input target;
 /// CSS transparency is deliberately not used as proof of clean capture pixels.
 fn scroll_region(bounds: Rect, roi: Rect, shapes: &[Rect]) -> Result<Region, String> {
@@ -1004,6 +1004,30 @@ mod tests {
         lease.restore().unwrap();
         main_lease.restore().unwrap();
         assert!(region(main.0).unwrap().is_none());
+    }
+    #[test]
+    fn scroll_native_dimmed_monitor_keeps_every_roi_pixel_and_input_target_outside_the_hud() {
+        use windows_sys::Win32::Graphics::Gdi::PtInRegion;
+        let hud = Window::new();
+        let mut lease = Lease::capture(hud.0 as usize,true).unwrap();
+        let bounds = lease.before_bounds;
+        let width = bounds.right-bounds.left; let height = bounds.bottom-bounds.top;
+        let selected = Rect::new(bounds.left+width/4,bounds.top+height/4,(width/2) as u32,(height/2) as u32).unwrap();
+        lease.set_scroll_clip(selected,&[bounds]).unwrap();
+        let original = region(hud.0).unwrap().unwrap();
+        for (x,y) in [(0,0),(width-1,0),(0,height-1),(width-1,height-1)] {
+            assert_ne!(unsafe { PtInRegion(original.raw(),x,y) },0);
+        }
+        let left=selected.left-bounds.left; let top=selected.top-bounds.top;
+        let right=selected.right-bounds.left; let bottom=selected.bottom-bounds.top;
+        for (x,y) in [(left,top),(right-1,top),(left,bottom-1),(right-1,bottom-1),((left+right)/2,(top+bottom)/2)] {
+            assert_eq!(unsafe { PtInRegion(original.raw(),x,y) },0);
+        }
+        // Repainted/growing preview pixels must not resize the native aperture.
+        lease.set_scroll_clip(selected,&[bounds]).unwrap();
+        lease.verify_scroll_clip(selected).unwrap();
+        assert_ne!(unsafe { EqualRgn(original.raw(),region(hud.0).unwrap().unwrap().raw()) },0);
+        drop(hud); lease.restore().unwrap();
     }
     #[test]
     fn scroll_native_hud_rejects_foreign_region_or_identity_without_overwriting_it() {

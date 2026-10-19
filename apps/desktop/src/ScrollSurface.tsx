@@ -4,6 +4,7 @@ import { nativeSelectOwnsEscape } from './native-select-escape';
 import { createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { Check, CircleAlert, LoaderCircle, X } from 'lucide-solid';
 import { controlScrollCapture, scrollNeedsKeep, subscribeScroll, type ScrollAction, type ScrollStatus } from './scroll-bridge';
+import { readPreferences } from './interface-preferences';
 import './scroll.css';
 
 export function ScrollBackdrop(props: { status: ScrollStatus; maskOpacity: number }) {
@@ -26,6 +27,7 @@ const hudStyle = (rect: ScrollStatus['rect'] | null | undefined) => rect ? {
 } : undefined;
 export default function ScrollSurface() {
   document.documentElement.dataset.surface = 'scroll';
+  const maskOpacity = readPreferences().maskOpacity;
   const [status, setStatus] = createSignal<ScrollStatus | null>(null), [pending, setPending] = createSignal(false), [error, setError] = createSignal('');
   let disposed = false, stop: (() => void) | undefined;
   onMount(async () => {
@@ -47,7 +49,7 @@ export default function ScrollSurface() {
   document.addEventListener('keydown', keyboard);
   onCleanup(() => { disposed = true; stop?.(); document.removeEventListener('keydown', keyboard); });
   return <div class="scroll-control-window" classList={{ 'scroll-compound-window': Boolean(status()?.hud) }}><Show when={status()} fallback={<Show when={error()}><div class="scroll-controls scroll-error" role="alert"><CircleAlert size={15} /><span>{error()}</span></div></Show>}>
-    {current => <><Show when={current().hud}>{hud => <div class="scroll-live-outline" style={hudStyle(hud().outline)} aria-label={t('长截图区域')} />}</Show>
+    {current => <><Show when={current().hud}>{hud => <><ScrollBackdrop status={current()} maskOpacity={maskOpacity} /><div class="scroll-live-outline" style={hudStyle(hud().outline)} aria-label={t('长截图区域')} /></>}</Show>
     <Show when={!current().hud || current().hud?.preview}><Show when={current().preview}>{preview=><div class="scroll-preview" style={hudStyle(current().hud?.preview)}><img src={preview()} alt={t('长截图预览')} draggable={false} onLoad={event=>{const host=event.currentTarget.parentElement;if(host)host.scrollTop=host.scrollHeight;}}/></div>}</Show></Show>
     <Show when={!current().hud || current().hud?.controls}><div class="scroll-controls-slot" style={hudStyle(current().hud?.controls)}><div class="scroll-controls" role="toolbar" aria-label={t("长截图控制")}>
       <div class="scroll-measure"><output aria-label={t("长截图尺寸")}>{current().width} × {current().height}</output><Show when={error() || notices[current().status]}><span class="scroll-notice" title={error() || t(notices[current().status] ?? '')}>{error() || t(notices[current().status] ?? '')}</span></Show></div>

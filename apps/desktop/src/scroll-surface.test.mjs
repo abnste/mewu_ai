@@ -20,8 +20,18 @@ const compiled = stripTypeScriptTypes(transformSync(source, { filename: 'ScrollS
 async function fixture() {
   const keys = new Map(), calls = []; let listener, stopped = 0, disposed;
   const document = { documentElement: { dataset: {} }, addEventListener: (name, fn) => keys.set(name, fn), removeEventListener: (name, fn) => { if (keys.get(name) === fn) keys.delete(name); } };
-  const context = createContext({ document, console, Promise });
+  const context = createContext({ document, console, Promise, Intl,
+    localStorage: { getItem: () => JSON.stringify({ maskOpacity: .66 }) } });
   const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); }, { context });
+  const sources = new Map();
+  async function loadSource(url) {
+    if (sources.has(url.href)) return sources.get(url.href);
+    const value = new SourceTextModule(stripTypeScriptTypes(await readFile(url, 'utf8'), { mode: 'transform' }), { context, identifier: url.href });
+    sources.set(url.href, value);
+    await value.link(name => loadSource(new URL(`${name}.ts`, url)));
+    return value;
+  }
+  const preferences = await loadSource(new URL('./interface-preferences.ts', import.meta.url)); await preferences.evaluate();
   const core = synthetic(solid), universal = new SourceTextModule(await raw('../../../node_modules/solid-js/universal/dist/universal.js'), { context });
   await universal.link(() => core); await universal.evaluate();
   const renderer = universal.namespace.createRenderer({
@@ -38,6 +48,7 @@ async function fixture() {
     if (name === 'solid-js') return core;
     if (name === 'test-renderer') return synthetic(renderer);
     if (name === './i18n') return synthetic({ t: value => value });
+    if (name === './interface-preferences') return preferences;
     if (name === './native-select-escape') return synthetic({ nativeSelectOwnsEscape: () => false });
     if (name === './scroll-bridge') return synthetic({ scrollNeedsKeep: bridge.namespace.scrollNeedsKeep, subscribeScroll: async (next, surface) => { assert.equal(surface, 'scroll-controls'); listener = next; return () => stopped++; }, controlScrollCapture: async (id, action) => { calls.push({ id, action }); } });
     if (name === 'lucide-solid') return synthetic({ Check: () => null, CircleAlert: () => null, LoaderCircle: () => null, X: () => null });
@@ -94,4 +105,19 @@ test('compound HUD is transparent/passive outside its controls and preview fits 
   assert.equal(rules.get('.scroll-compound-window .scroll-preview img')['object-position'], 'center bottom');
   assert.equal(rules.get('.scroll-compound-window .scroll-preview img').height, '100%');
   assert.equal(rules.get('.scroll-compound-window .scroll-preview').overflow, 'hidden');
+});
+
+test('live native HUD keeps the configured outside dimming and an exact clear source hole through preview updates', async () => {
+  const f = await fixture(); f.next(initial); await tick();
+  const mask = f.one('scroll-live-mask'); assert.ok(mask);
+  const cutout = f.nodes().find(node => node.type === 'mask');
+  assert.equal(cutout.props.maskUnits, 'userSpaceOnUse');
+  const hole = cutout.children.find(node => node.props?.fill === 'black');
+  assert.deepEqual(plain({ x: hole.props.x, y: hole.props.y, width: hole.props.width, height: hole.props.height }), initial.rect);
+  const shade = f.nodes().find(node => node.props?.mask === 'url(#scroll-cutout)');
+  assert.equal(shade.props['fill-opacity'], .66);
+  f.next({ ...initial, height: 1200, status: 'extended', preview: 'data:image/png;base64,tall' }); await tick();
+  assert.equal(f.one('scroll-live-mask'), mask); assert.equal(shade.props['fill-opacity'], .66);
+  f.next(null); await tick(); assert.equal(f.one('scroll-live-mask'), undefined);
+  assert.equal(f.document.documentElement.dataset.surface, 'scroll'); f.dispose();
 });

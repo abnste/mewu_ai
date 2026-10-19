@@ -4,6 +4,8 @@ export const DrawingInputPhase = {
   pointerDown: 1, mouseDown: 2, pointerUp: 3, mouseUp: 4, focus: 5, blur: 6,
   begin: 10, rejected: 11, admitted: 12, canceled: 13, finished: 14,
   enqueued: 15, history: 16, style: 17,
+  windowSnapMap: 20, windowSnapDown: 21,
+  regionBegin: 22, regionFinish: 23, regionEdit: 24,
 } as const;
 export type DrawingInputPhaseValue = typeof DrawingInputPhase[keyof typeof DrawingInputPhase];
 export interface DrawingInputState { flags: number }
@@ -18,6 +20,9 @@ let rows: Row[] = [], timer: ReturnType<typeof setTimeout> | undefined;
 let sender: ((payload: string) => Promise<unknown>) | undefined;
 let flight: Promise<unknown> | undefined, detach: (() => void) | undefined;
 
+/** A boolean-only gate; callers do not inspect DOM or clocks when disabled. */
+export function drawingDiagnosticsEnabled(): boolean { return enabled && sequence < MAX_ROWS; }
+
 function target(value: EventTarget | null | undefined): number {
   if (!(value instanceof Element)) return 0;
   if (value.closest('.drawing-recent-color')) return 3;
@@ -25,6 +30,9 @@ function target(value: EventTarget | null | undefined): number {
   if (value.closest('.drawing-toolbar')) return 2;
   if (value.closest('.drawing-editor')) return 5;
   if (value.closest('button')) return 4;
+  if (value.closest('.capture-handle,.capture-edge')) return 10;
+  if (value.closest('.capture-region')) return 9;
+  if (value.closest('.capture-surface')) return 8;
   if (value === document.body || value === document.documentElement) return 6;
   return 7;
 }

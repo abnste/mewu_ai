@@ -888,11 +888,11 @@ fn layout_scroll_hud(app: &AppHandle, id: &str, g: &Geometry, image: (u32,u32)) 
     let outline=BoxRect{x:i32::try_from(i64::from(g.x)-i64::from(border)).map_err(|_|"截图位置无效")?,
         y:i32::try_from(i64::from(g.y)-i64::from(border)).map_err(|_|"截图位置无效")?,
         width:g.width.checked_add(border*2).ok_or("截图尺寸无效")?,height:g.height.checked_add(border*2).ok_or("截图尺寸无效")?};
-    let mut shapes=Vec::with_capacity(3);
-    for rect in [Some(outline),shown.preview,shown.controls].into_iter().flatten() {
-        shapes.push(NativeRect::new(rect.x,rect.y,rect.width,rect.height)?);
-    }
-    edit_capture_session(&app.state::<ScrollState>(),id,|session|session.configure_scroll_hud(roi,&shapes))?;
+    // Keep the original screenshot dimming everywhere outside the live source.
+    // The native region still subtracts every acquired pixel, so neither the
+    // backdrop nor its input target can cover or contaminate the capture ROI.
+    // Preview growth changes DOM layout only; this fixed aperture stays stable.
+    edit_capture_session(&app.state::<ScrollState>(),id,|session|session.configure_scroll_hud(roi,&[display]))?;
     let normalized=|rect:BoxRect|Rect{x:(f64::from(rect.x)-f64::from(g.origin_x))/f64::from(g.monitor_width),
         y:(f64::from(rect.y)-f64::from(g.origin_y))/f64::from(g.monitor_height),
         width:f64::from(rect.width)/f64::from(g.monitor_width),height:f64::from(rect.height)/f64::from(g.monitor_height)};

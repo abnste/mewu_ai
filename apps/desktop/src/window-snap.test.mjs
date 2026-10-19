@@ -92,6 +92,27 @@ const map = roots => ({ version: 1, backgroundId: 'bg', width: 1200, height: 800
   checks.push('One actual request plus only the latest identity survives scene changes; canceled/old replies cannot publish, unavailable maps stay silent and unmount rejects late completion');
 }
 {
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const valid = map([node(1, box(0, 0, 20, 20))]);
+  for (const [fetch, expected] of [[async () => valid, [0, 1]], [async () => null, [1, 0]],
+    [async () => ({ invalid: true }), [2, 0]], [async () => { throw Error('private transport detail'); }, [3, 0]],
+    [() => { throw Error('private immediate detail'); }, [3, 0]]]) {
+    const observed = [], published = [];
+    const loader = new SnapMapLoader(fetch, value => published.push(value), () => (code, count) => observed.push([code, count]));
+    loader.request(request); await tick();
+    assert.deepEqual(observed, [expected]); assert.equal(Boolean(published.at(-1)), expected[0] === 0);
+    loader.request(request); await tick(); assert.equal(observed.length, 1); loader.dispose();
+  }
+  for (const getObserver of [() => undefined, () => { throw Error('observer unavailable'); }, () => () => { throw Error('observer unavailable'); }]) {
+    const published = [], loader = new SnapMapLoader(async () => valid, value => published.push(value), getObserver);
+    loader.request(request); await tick(); assert.equal(published.at(-1).roots.length, 1); loader.dispose();
+  }
+  let release; const observed = [];
+  const loader = new SnapMapLoader(() => new Promise(resolve => { release = resolve; }), () => {}, () => (...args) => observed.push(args));
+  loader.request(request); loader.dispose(); release(valid); await tick(); assert.deepEqual(observed, []);
+  checks.push('Opt-in observers classify only current completed maps into fixed pass/missing/invalid/transport numbers; disabled, throwing and stale observers cannot change the original map result or issue another request');
+}
+{
   let native = false; const calls = [];
   const core = new SyntheticModule(['invoke', 'isTauri'], function () { this.setExport('isTauri', () => native); this.setExport('invoke', async (command, args) => { calls.push({ command, args }); return null; }); });
   const bridge = new SourceTextModule(await source('./window-snap-bridge.ts')); await bridge.link(() => core); await bridge.evaluate();

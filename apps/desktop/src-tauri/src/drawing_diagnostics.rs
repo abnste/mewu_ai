@@ -73,14 +73,19 @@ fn parse(payload: &str) -> Result<Batch, String> {
             13 => (1..=6).contains(&row.code),
             14 => (1..=4).contains(&row.code),
             16..=17 => row.code <= 1,
+            20 => row.code <= 3,
+            21 => row.code <= 10,
+            22 => row.code <= 6,
+            23 => row.code <= 7,
+            24 => row.code <= 5,
             _ => false,
         };
         if !valid_code
             || row.sequence == 0
             || usize::from(row.sequence) > MAX_ROWS
             || row.at_micros > 600_000_000
-            || row.target > 7
-            || row.active > 7
+            || row.target > 10
+            || row.active > 10
             || !(-1..=5).contains(&row.button)
             || row.buttons > 31
             || row.pointer > 3
@@ -256,6 +261,44 @@ mod tests {
         );
     }
     #[test]
+    fn window_snap_observations_keep_the_fixed_schema_code_and_window_limits() {
+        for (phase, maximum) in [(20, 3), (21, 10), (22, 6), (23, 7), (24, 5)] {
+            for code in 0..=maximum {
+                let mut observed = row(1);
+                observed["phase"] = json!(phase);
+                observed["code"] = json!(code);
+                assert!(parse(&payload(vec![observed])).is_ok());
+            }
+            for target in [8, 9, 10] {
+                let mut observed = row(1);
+                observed["phase"] = json!(phase);
+                observed["target"] = json!(target);
+                observed["active"] = json!(target);
+                assert!(parse(&payload(vec![observed])).is_ok());
+            }
+            let mut invalid = row(1);
+            invalid["phase"] = json!(phase);
+            invalid["code"] = json!(maximum + 1);
+            assert!(parse(&payload(vec![invalid])).is_err());
+            let mut observed = row(1);
+            observed["phase"] = json!(phase);
+            let fixture = Fixture::new();
+            let sink = Mutex::new(None);
+            for label in ["settings", "pin-test", "frozen", ""] {
+                assert!(record(
+                    label,
+                    true,
+                    &payload(vec![observed.clone()]),
+                    &sink,
+                    &fixture.0
+                )
+                .is_err());
+            }
+            assert!(record("space", false, &payload(vec![observed]), &sink, &fixture.0).is_err());
+            assert!(!fixture.0.exists());
+        }
+    }
+    #[test]
     fn unknown_content_and_byte_or_batch_budgets_are_rejected_before_file_creation() {
         let fixture = Fixture::new();
         let sink = Mutex::new(None);
@@ -284,8 +327,8 @@ mod tests {
             ("atMicros", json!(600_000_001u64)),
             ("phase", json!(7)),
             ("phase", json!(255)),
-            ("target", json!(8)),
-            ("active", json!(8)),
+            ("target", json!(11)),
+            ("active", json!(11)),
             ("button", json!(-2)),
             ("buttons", json!(32)),
             ("pointer", json!(4)),

@@ -174,7 +174,20 @@ impl WindowSnapRegistry {
         source: &Asset,
         captured: impl Into<CapturedWindowMap>,
     ) -> Result<(), String> {
-        let CapturedWindowMap { map, snapshots } = captured.into();
+        use crate::interaction_performance::{Kind, Stage, Trace};
+        let mut timing = Trace::start(Kind::WindowSnap);
+        timing.mark(Stage::SnapInsert);
+        let result = self.insert_captured(source, captured.into());
+        timing.mark(if result.is_ok() {
+            Stage::SnapAvailable
+        } else {
+            Stage::SnapDenied
+        });
+        timing.finish(result.is_ok());
+        result
+    }
+    fn insert_captured(&self, source: &Asset, captured: CapturedWindowMap) -> Result<(), String> {
+        let CapturedWindowMap { map, snapshots } = captured;
         validate(&map)?;
         if source.kind != AssetKind::Image
             || source.id != map.background_id
@@ -318,6 +331,17 @@ struct DesktopRect {
     right: i64,
     bottom: i64,
 }
+/// A successful native bounds query may describe a visible, zero-area helper
+/// window. It has no pixels to occlude; an API failure or reversed bounds is
+/// still unknown and must reject the pass rather than expose a window behind it.
+#[cfg(any(target_os = "windows", test))]
+fn observed_bounds(observed: Result<DesktopRect, ()>) -> Result<Option<DesktopRect>, ()> {
+    let bounds = observed?;
+    if bounds.left > bounds.right || bounds.top > bounds.bottom {
+        return Err(());
+    }
+    Ok((bounds.left < bounds.right && bounds.top < bounds.bottom).then_some(bounds))
+}
 impl DesktopRect {
     fn intersection(self, other: Self) -> Option<Self> {
         let result = Self {
@@ -362,6 +386,7 @@ impl RawNode {
 pub(crate) struct CaptureProbe {
     frame: DesktopRect,
     roots: Vec<RawNode>,
+    timing: crate::interaction_performance::Trace,
 }
 
 /// Must run within the capture worker's physical-DPI scope, never on the UI
@@ -376,9 +401,19 @@ pub(crate) fn begin_capture(x: i32, y: i32, width: u32, height: u32) -> Option<C
         right: i64::from(x) + i64::from(width),
         bottom: i64::from(y) + i64::from(height),
     };
+    use crate::interaction_performance::{Kind, Stage, Trace};
+    let mut timing = Trace::start(Kind::WindowSnap);
+    timing.mark(Stage::SnapCapture);
+    let Some(roots) = platform::snapshot(frame) else {
+        timing.mark(Stage::SnapBeforeMissing);
+        timing.finish(false);
+        return None;
+    };
+    timing.mark(Stage::SnapBeforeReady);
     Some(CaptureProbe {
         frame,
-        roots: platform::snapshot(frame)?,
+        roots,
+        timing,
     })
 }
 #[cfg(all(windows, test))]
@@ -389,9 +424,26 @@ pub(crate) fn finish_capture(
     probe: Option<CaptureProbe>,
     background_id: &str,
 ) -> Option<CapturedWindowMap> {
-    let probe = probe?;
-    let after = platform::snapshot(probe.frame)?;
-    build_captured_map(probe.frame, background_id, &probe.roots, &after)
+    use crate::interaction_performance::Stage;
+    let CaptureProbe {
+        frame,
+        roots,
+        mut timing,
+    } = probe?;
+    let Some(after) = platform::snapshot(frame) else {
+        timing.mark(Stage::SnapAfterMissing);
+        timing.finish(false);
+        return None;
+    };
+    timing.mark(Stage::SnapAfterReady);
+    let result = build_captured_map(frame, background_id, &roots, &after);
+    timing.mark(if result.is_some() {
+        Stage::SnapBuilt
+    } else {
+        Stage::SnapRejected
+    });
+    timing.finish(result.is_some());
+    result
 }
 
 fn subtract(rect: DesktopRect, cover: DesktopRect) -> Vec<DesktopRect> {
@@ -665,6 +717,36 @@ mod platform {
         },
         UI::{Input::KeyboardAndMouse::IsWindowEnabled, WindowsAndMessaging::*},
     };
+    #[cfg(test)]
+    thread_local! {
+        static OBSERVED_FAILURE: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
+    }
+    fn decline<T>(_stage: u8) -> Option<T> {
+        #[cfg(test)]
+        OBSERVED_FAILURE.with(|value| {
+            if value.get() == Some(0) {
+                value.set(Some(_stage));
+            }
+        });
+        None
+    }
+    /// Explicitly invoked test-only metadata probe. The ordinary product and
+    /// ordinary tests have no observer, output, file, or extra native queries.
+    #[cfg(test)]
+    pub(super) fn observe_snapshot(
+        frame: DesktopRect,
+    ) -> (Option<Vec<RawNode>>, serde_json::Value) {
+        OBSERVED_FAILURE.with(|value| value.set(Some(0)));
+        let started = Instant::now();
+        let result = snapshot(frame);
+        let failure = OBSERVED_FAILURE
+            .with(|value| value.replace(None))
+            .unwrap_or(0);
+        let metadata = serde_json::json!({ "available": result.is_some(),
+            "count": result.as_ref().map_or(0, Vec::len), "failureStage": failure,
+            "elapsedMicros": started.elapsed().as_micros() });
+        (result, metadata)
+    }
     fn process_creation(process: u32) -> Option<u64> {
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process);
@@ -682,6 +764,10 @@ mod platform {
             )
             .filter(|&v| v != 0)
         }
+    }
+    #[cfg(test)]
+    pub(super) fn read_test_window(handle: usize) -> Result<Option<RawNode>, ()> {
+        read(handle as HWND, true, unsafe { GetCurrentProcessId() })
     }
     #[cfg(test)]
     pub(super) fn test_window(handle: usize) -> Option<SnapshotWindow> {
@@ -759,14 +845,6 @@ mod platform {
         state.handles.push(handle as usize);
         1
     }
-    fn rect(value: RECT) -> Option<DesktopRect> {
-        (value.left < value.right && value.top < value.bottom).then_some(DesktopRect {
-            left: i64::from(value.left),
-            top: i64::from(value.top),
-            right: i64::from(value.right),
-            bottom: i64::from(value.bottom),
-        })
-    }
     // None is positively absent/hidden. Err means visible but without reliable
     // bounds: discard this sibling pass instead of exposing a window behind it.
     fn read(handle: HWND, root: bool, own_process: u32) -> Result<Option<RawNode>, ()> {
@@ -801,10 +879,19 @@ mod platform {
                     size_of::<RECT>() as u32,
                 )
             } >= 0;
-        if !dwm_ok && unsafe { GetWindowRect(handle, &mut native) } == 0 {
-            return Err(());
-        }
-        let bounds = rect(native).ok_or(())?;
+        let observed = if !dwm_ok && unsafe { GetWindowRect(handle, &mut native) } == 0 {
+            Err(())
+        } else {
+            Ok(DesktopRect {
+                left: i64::from(native.left),
+                top: i64::from(native.top),
+                right: i64::from(native.right),
+                bottom: i64::from(native.bottom),
+            })
+        };
+        let Some(bounds) = observed_bounds(observed)? else {
+            return Ok(None);
+        };
         let mut process = 0u32;
         let thread = unsafe { GetWindowThreadProcessId(handle, &mut process) };
         let mut name = [0u16; 128];
@@ -914,7 +1001,7 @@ mod platform {
             )
         };
         if complete == 0 || enumeration.overflow {
-            return None;
+            return decline(if enumeration.overflow { 2 } else { 1 });
         }
         let handles: HashSet<usize> = enumeration.handles.into_iter().collect();
         // EnumWindows is reliable for the handle set; use the documented Z
@@ -923,41 +1010,53 @@ mod platform {
         let mut handle = unsafe { GetTopWindow(null_mut()) };
         let mut roots = Vec::new();
         while !handle.is_null() {
-            if seen.len() >= MAX_HANDLES
-                || !seen.insert(handle as usize)
-                || Instant::now() >= deadline
-            {
-                return None;
+            if seen.len() >= MAX_HANDLES || !seen.insert(handle as usize) {
+                return decline(3);
             }
-            append_root(
+            if Instant::now() >= deadline {
+                return decline(4);
+            }
+            let observed = match read(handle, true, unsafe { GetCurrentProcessId() }) {
+                Ok(value) => Ok(value),
+                Err(()) => return decline(5),
+            };
+            if append_root(
                 &mut roots,
                 handles.contains(&(handle as usize)),
-                read(handle, true, unsafe { GetCurrentProcessId() }),
+                observed,
                 frame,
-            )?;
+            )
+            .is_none()
+            {
+                return decline(6);
+            }
             handle = unsafe { GetWindow(handle, GW_HWNDNEXT) };
         }
         // A captured root that vanished while Z order was read cannot be silently
         // treated as a transparent hole. Decline the map on topology uncertainty.
         for missing in handles.difference(&seen) {
-            if read(*missing as HWND, true, unsafe { GetCurrentProcessId() })
-                .ok()?
-                .is_some_and(|n| n.bounds.intersection(frame).is_some())
-            {
-                return None;
+            let observed = match read(*missing as HWND, true, unsafe { GetCurrentProcessId() }) {
+                Ok(value) => value,
+                Err(()) => return decline(7),
+            };
+            if observed.is_some_and(|n| n.bounds.intersection(frame).is_some()) {
+                return decline(8);
             }
         }
         let mut remaining = MAX_NODES - roots.len();
         for root in &mut roots {
             if Instant::now() >= deadline {
-                return None;
+                return decline(9);
             }
             if root.selectable {
                 root.children = children(root, root.bounds, frame, 2, &mut remaining, deadline)
                     .unwrap_or_default();
             }
         }
-        (Instant::now() < deadline).then_some(roots)
+        if Instant::now() >= deadline {
+            return decline(10);
+        }
+        Some(roots)
     }
 }
 
@@ -1020,6 +1119,163 @@ mod tests {
             origin_y: Some(100),
             scale_factor: Some(1.5),
         }
+    }
+    #[test]
+    fn zero_area_observations_do_not_discard_unrelated_window_candidates() {
+        let frame = bounds(-200, 100, 800, 600);
+        for empty in [
+            bounds(-100, 150, 0, 80),
+            bounds(-100, 150, 80, 0),
+            bounds(0, 0, 0, 0),
+        ] {
+            // Before the fix rect(native).ok_or(()) treated a successful empty
+            // result exactly like a failed bounds API, discarding this pass.
+            assert!(append_root(&mut Vec::new(), true, Err(()), frame).is_none());
+            let observed = observed_bounds(Ok(empty)).map(|value| value.map(|r| raw(1, r, true)));
+            let mut roots = Vec::new();
+            assert!(append_root(&mut roots, true, observed, frame).is_some());
+            let normal = raw(2, bounds(-180, 120, 300, 200), true);
+            assert!(append_root(&mut roots, true, Ok(Some(normal.clone())), frame).is_some());
+            let captured =
+                build_map(frame, &uuid::Uuid::new_v4().to_string(), &roots, &roots).unwrap();
+            assert_eq!(captured.roots.len(), 1);
+            assert_eq!(
+                hit(&captured.roots, 30, 30, true),
+                Some(normal.bounds.local(frame))
+            );
+        }
+    }
+    #[test]
+    fn failed_bounds_queries_and_reversed_observations_still_reject_the_pass() {
+        let frame = bounds(-200, 100, 800, 600);
+        for observed in [
+            Err(()),
+            Ok(bounds(20, 30, -1, 40)),
+            Ok(bounds(20, 30, 40, -1)),
+        ] {
+            let result = observed_bounds(observed).map(|value| value.map(|r| raw(1, r, true)));
+            let mut roots = vec![raw(2, bounds(-180, 120, 300, 200), true)];
+            assert!(append_root(&mut roots, true, result, frame).is_none());
+        }
+    }
+    #[cfg(windows)]
+    #[test]
+    fn visible_zero_area_native_window_is_absent_without_losing_a_normal_sibling() {
+        use std::ptr::null_mut;
+        use windows_sys::Win32::{Foundation::HWND, UI::WindowsAndMessaging::*};
+        struct Window(HWND);
+        impl Drop for Window {
+            fn drop(&mut self) {
+                unsafe {
+                    DestroyWindow(self.0);
+                }
+            }
+        }
+        let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+        // The WS_VISIBLE bit is real but there are no displayed pixels, and
+        // NOACTIVATE prevents the test from taking the user's input focus.
+        let window = Window(unsafe {
+            CreateWindowExW(
+                WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                class.as_ptr(),
+                class.as_ptr(),
+                WS_POPUP | WS_VISIBLE,
+                0,
+                0,
+                0,
+                40,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+            )
+        });
+        assert!(!window.0.is_null());
+        assert_ne!(unsafe { IsWindowVisible(window.0) }, 0);
+        let observed = platform::read_test_window(window.0 as usize);
+        assert!(matches!(observed, Ok(None)));
+        let frame = bounds(-200, 100, 800, 600);
+        let mut roots = Vec::new();
+        assert!(append_root(&mut roots, true, observed, frame).is_some());
+        let normal = raw(2, bounds(-180, 120, 300, 200), true);
+        assert!(append_root(&mut roots, true, Ok(Some(normal.clone())), frame).is_some());
+        let captured = build_map(frame, &uuid::Uuid::new_v4().to_string(), &roots, &roots).unwrap();
+        assert_eq!(captured.roots.len(), 1);
+        assert_eq!(
+            hit(&captured.roots, 30, 30, true),
+            Some(normal.bounds.local(frame))
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "Explicit read-only live desktop metadata diagnostic; no pixel capture or input"]
+    fn observe_live_capture_map_metadata() {
+        use windows::Win32::UI::HiDpi::{
+            SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        };
+        use windows_sys::Win32::{
+            Foundation::POINT,
+            Graphics::Gdi::{
+                GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            },
+            UI::WindowsAndMessaging::GetCursorPos,
+        };
+        struct Dpi(DPI_AWARENESS_CONTEXT);
+        impl Drop for Dpi {
+            fn drop(&mut self) {
+                unsafe {
+                    SetThreadDpiAwarenessContext(self.0);
+                }
+            }
+        }
+        let dpi = Dpi(unsafe {
+            SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+        });
+        assert!(
+            !dpi.0 .0.is_null(),
+            "Physical coordinate context unavailable"
+        );
+        let mut point = POINT { x: 0, y: 0 };
+        assert_ne!(
+            unsafe { GetCursorPos(&mut point) },
+            0,
+            "Current monitor unavailable"
+        );
+        let monitor = unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) };
+        let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        assert_ne!(
+            unsafe { GetMonitorInfoW(monitor, &mut info) },
+            0,
+            "Physical monitor bounds unavailable"
+        );
+        let frame = DesktopRect {
+            left: i64::from(info.rcMonitor.left),
+            top: i64::from(info.rcMonitor.top),
+            right: i64::from(info.rcMonitor.right),
+            bottom: i64::from(info.rcMonitor.bottom),
+        };
+        let (before, before_metadata) = platform::observe_snapshot(frame);
+        let (after, after_metadata) = platform::observe_snapshot(frame);
+        let map = before
+            .as_ref()
+            .zip(after.as_ref())
+            .and_then(|(before, after)| {
+                build_map(frame, &uuid::Uuid::new_v4().to_string(), before, after)
+            });
+        // Anonymous fixed fields only: never emit HWND, identity, class, title,
+        // coordinates, monitor ID, image data, or generated background ID.
+        eprintln!(
+            "{}",
+            serde_json::json!({ "before": before_metadata, "after": after_metadata,
+            "mapAvailable": map.is_some(), "count": map.as_ref().map_or(0, |map| map.roots.len()),
+            "selectableCount": map.as_ref().map_or(0, |map| map.roots.iter().filter(|root| root.selectable).count()) })
+        );
+        assert!(
+            map.is_some(),
+            "Read-only live map unavailable; inspect fixed failureStage metadata"
+        );
     }
     #[test]
     fn maps_clip_negative_screen_coordinates_and_keep_front_root_occlusion() {
