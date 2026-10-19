@@ -11,6 +11,7 @@ export type EditorDrawingAction = {expectedRevision:number} & (
   | {type:'update_drawings';drawings:Drawing[]}
   | {type:'erase_drawing_strokes';erasures:DrawingStrokeErase[]}
   | {type:'remove_drawing';drawingId:string}
+  | {type:'remove_drawings';drawingIds:string[]}
   | {type:'undo_drawing'|'redo_drawing'}
   | {type:'move_stored';drawingId:string;from:EditorBox;to:EditorBox}
 );

@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule, createContext } from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { loadProviderPresets, loadAssetImport, loadGeometryHistory, loadHighlightSource } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadAssetImport, loadGeometryHistory, loadDrawingDiagnostics, loadHighlightSource } from './geometry-test-module.mjs';
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
 const plain = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -62,7 +62,7 @@ async function bridgeFixture(native = false) {
   const connection = new SourceTextModule(await source('connection-policy.ts'), { context }); await connection.link(() => { throw Error('Unexpected'); });
   const mosaic = new SourceTextModule(await source('mosaic-preview.ts'), { context }); await mosaic.link(() => { throw Error('Unexpected'); });
   const bridge = new SourceTextModule(await source('bridge.ts'), { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
-  await bridge.link(async name => name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? connection : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : synthetic({ listen: async () => () => {} }, context));
+  await bridge.link(async name => name === './drawing-diagnostics' ? await loadDrawingDiagnostics(context) : name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? connection : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : synthetic({ listen: async () => () => {} }, context));
   await bridge.evaluate(); return { api: bridge.namespace, calls, inputs, urls, removed, downloads, pick: values => { pickerFiles = values; } };
 }
 const preview = await bridgeFixture();

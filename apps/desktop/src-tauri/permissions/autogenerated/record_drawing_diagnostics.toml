@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-record-drawing-diagnostics"
+description = "Enables the record_drawing_diagnostics command without any pre-configured scope."
+commands.allow = ["record_drawing_diagnostics"]
+
+[[permission]]
+identifier = "deny-record-drawing-diagnostics"
+description = "Denies the record_drawing_diagnostics command without any pre-configured scope."
+commands.deny = ["record_drawing_diagnostics"]

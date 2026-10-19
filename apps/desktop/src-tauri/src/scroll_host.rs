@@ -21,6 +21,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 pub const LABEL: &str = "scroll-controls";
+#[path = "scroll_presentation.rs"]
+mod presentation;
 #[derive(Clone, Serialize)]
 pub struct Rect {
     x: f64,
@@ -43,7 +45,11 @@ pub struct Status {
     stop_hotkey: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hud: Option<HudPresentation>,
 }
+#[derive(Clone, Serialize)]
+struct HudPresentation { outline: Rect, preview: Option<Rect>, controls: Option<Rect> }
 struct Active {
     #[cfg(windows)]
     capture_session: Option<crate::shared_capture_windows::Session>,
@@ -453,6 +459,7 @@ pub async fn start_scroll_capture(
             status: StitchStatus::Initial,
             stop_hotkey: String::new(),
             preview: None,
+            hud: None,
         };
         emit(&app, &Some(status.clone()));
         *slot = Some(Active {
@@ -526,7 +533,7 @@ pub async fn start_scroll_capture(
                         #[cfg(windows)]
                         verify_capture(&work_app, &work_id)?;
                         progress(&work_app, &work_id, state);
-                        publish_preview(&work_app, &work_id, stitch, &cancel)
+                        publish_preview(&work_app, &work_id, &geometry, stitch, &cancel)
                     });
                 let closed = session.close();
                 let image = result?;
@@ -561,7 +568,7 @@ pub async fn start_scroll_capture(
             )
             .map_err(|e| e.to_string())?;
             update(&work_app, &work_id, |s| s.phase = "capturing");
-            publish_preview(&work_app, &work_id, &stitch, &cancel)?;
+            publish_preview(&work_app, &work_id, &geometry, &stitch, &cancel)?;
             let mut preview_at = Instant::now();
             let mut preview_dirty = false;
             let started = Instant::now();
@@ -574,7 +581,7 @@ pub async fn start_scroll_capture(
                     return Ok(None);
                 }
                 if preview_dirty && preview_at.elapsed() >= Duration::from_millis(200) {
-                    publish_preview(&work_app, &work_id, &stitch, &cancel)?;
+                    publish_preview(&work_app, &work_id, &geometry, &stitch, &cancel)?;
                     preview_at = Instant::now();
                     preview_dirty = false;
                 }
@@ -702,6 +709,7 @@ fn verify_capture(app: &AppHandle, id: &str) -> Result<(), String> {
 fn publish_preview(
     app: &AppHandle,
     id: &str,
+    geometry: &Geometry,
     stitch: &ScrollStitcher,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
@@ -722,6 +730,10 @@ fn publish_preview(
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(bytes)
     );
+    #[cfg(windows)]
+    update_scroll_hud(app, id, geometry, stitch.state(), cancel)?;
+    #[cfg(not(windows))]
+    let _ = geometry;
     update(app, id, |s| s.preview = Some(value));
     Ok(())
 }
@@ -854,7 +866,54 @@ fn settle_file(path: &std::path::Path, registration: Result<bool, String>) -> Re
     }
 }
 #[cfg(windows)]
-async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: bool, f8: bool) -> Result<(), String> {
+fn layout_scroll_hud(app: &AppHandle, id: &str, g: &Geometry, image: (u32,u32)) -> Result<(),String> {
+    use crate::shared_capture_windows::{Rect as NativeRect, work_area};
+    use presentation::{BoxRect, layout};
+    let f8 = {
+        let state=app.state::<ScrollState>();
+        let slot=state.0.lock().map_err(|_| "长截图状态不可用")?;
+        let active=slot.as_ref().filter(|active| active.status.id==id).ok_or("长截图已结束")?;
+        if active.cancel.load(Ordering::Acquire) || active.status.phase=="finishing" { return Ok(()); }
+        active.status.stop_hotkey.contains("F8")
+    };
+    app.state::<Host>().exit.ensure_running()?;
+    let toolbar=app.get_webview_window(LABEL).ok_or("长截图控件不存在")?;
+    let display=NativeRect::new(g.origin_x,g.origin_y,g.monitor_width,g.monitor_height)?;
+    let roi=NativeRect::new(g.x,g.y,g.width,g.height)?;
+    let work=work_area(&toolbar,display)?;
+    let work=BoxRect{x:work.left,y:work.top,width:(work.right-work.left) as u32,height:(work.bottom-work.top) as u32};
+    let selected=BoxRect{x:g.x,y:g.y,width:g.width,height:g.height};
+    let shown=layout(work,selected,g.scale,image,f8)?;
+    let border=(2.*g.scale).ceil() as u32;
+    let outline=BoxRect{x:i32::try_from(i64::from(g.x)-i64::from(border)).map_err(|_|"截图位置无效")?,
+        y:i32::try_from(i64::from(g.y)-i64::from(border)).map_err(|_|"截图位置无效")?,
+        width:g.width.checked_add(border*2).ok_or("截图尺寸无效")?,height:g.height.checked_add(border*2).ok_or("截图尺寸无效")?};
+    let mut shapes=Vec::with_capacity(3);
+    for rect in [Some(outline),shown.preview,shown.controls].into_iter().flatten() {
+        shapes.push(NativeRect::new(rect.x,rect.y,rect.width,rect.height)?);
+    }
+    edit_capture_session(&app.state::<ScrollState>(),id,|session|session.configure_scroll_hud(roi,&shapes))?;
+    let normalized=|rect:BoxRect|Rect{x:(f64::from(rect.x)-f64::from(g.origin_x))/f64::from(g.monitor_width),
+        y:(f64::from(rect.y)-f64::from(g.origin_y))/f64::from(g.monitor_height),
+        width:f64::from(rect.width)/f64::from(g.monitor_width),height:f64::from(rect.height)/f64::from(g.monitor_height)};
+    let hud=HudPresentation{outline:normalized(outline),preview:shown.preview.map(normalized),controls:shown.controls.map(normalized)};
+    update(app,id,|status|status.hud=Some(hud));
+    Ok(())
+}
+#[cfg(windows)]
+fn update_scroll_hud(app: &AppHandle, id: &str, g: &Geometry, state: StitchState, cancel: &AtomicBool) -> Result<(),String> {
+    if cancel.load(Ordering::Acquire) { return Ok(()); }
+    let target=app.clone(); let id=id.to_owned(); let geometry=g.clone();
+    let(send,receive)=std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        // The exact Active id/cancel/phase and original HWND cookie are checked
+        // again here. A delayed callback cannot repaint a successor operation.
+        let _=send.send(layout_scroll_hud(&target,&id,&geometry,(state.width,state.height)));
+    }).map_err(|_|"无法更新长截图预览位置")?;
+    receive.recv_timeout(Duration::from_secs(2)).map_err(|_|"长截图预览更新超时")?
+}
+#[cfg(windows)]
+async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: bool, _f8: bool) -> Result<(), String> {
     let target = app.clone();
     let geometry = g.clone();
     let owner = id.to_owned();
@@ -883,7 +942,7 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
     // Keep WebView2 creation outside a synchronous message-thread callback.
     let toolbar = tauri::WebviewWindowBuilder::new(app, LABEL,
         tauri::WebviewUrl::App("index.html?surface=scroll".into()))
-        .title("Mewu · 长截图").inner_size(preview_size(g).0, preview_size(g).1)
+        .title("Mewu · 长截图").inner_size(g.monitor_width as f64/g.scale,g.monitor_height as f64/g.scale)
         .decorations(false).transparent(true).background_color(tauri::window::Color(0, 0, 0, 0))
         .shadow(false).resizable(false).maximizable(false).minimizable(false)
         .always_on_top(true).skip_taskbar(true).focused(false).visible(false)
@@ -898,18 +957,18 @@ async fn prepare_windows(app: &AppHandle, id: &str, g: &Geometry, automatic: boo
     let (send, receive) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         let result = (|| -> Result<(), String> {
+            toolbar.set_position(tauri::PhysicalPosition::new(g.origin_x,g.origin_y)).map_err(|_|"无法放置长截图预览")?;
+            toolbar.set_size(tauri::PhysicalSize::new(g.monitor_width,g.monitor_height)).map_err(|_|"无法设置长截图预览大小")?;
+            let position=toolbar.outer_position().map_err(|_|"无法确认长截图预览位置")?;
+            let size=toolbar.outer_size().map_err(|_|"无法确认长截图预览大小")?;
+            if (position.x,position.y,size.width,size.height)!=(g.origin_x,g.origin_y,g.monitor_width,g.monitor_height) {
+                return Err("显示器位置已改变，请重新截图".into());
+            }
             edit_capture_session(&target.state::<ScrollState>(), &id, |session| session.attach_hud(&toolbar))?;
             target.state::<Host>().exit.ensure_running()?;
             if !shared { crate::recording::exclude(&toolbar, true)?; }
-            let (x, y) = preview_placement(&g);
-            toolbar.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|_| "无法放置长截图控制条")?;
-            let show_hud = if shared {
-                let display = crate::shared_capture_windows::Rect::new(g.origin_x, g.origin_y, g.monitor_width, g.monitor_height)?;
-                let roi = crate::shared_capture_windows::Rect::new(g.x, g.y, g.width, g.height)?;
-                let work = crate::shared_capture_windows::work_area(&toolbar, display)?;
-                crate::shared_capture_windows::place_hud(&toolbar, roi, work, f8)?
-            } else { true };
-            if show_hud { toolbar.show().map_err(|_| "无法显示长截图控制条")?; }
+            layout_scroll_hud(&target,&id,&g,(g.width,g.height))?;
+            toolbar.show().map_err(|_| "无法显示长截图控制条")?;
             if automatic && !shared {
                 target.get_webview_window("space").ok_or("截图窗口不存在")?.hide().map_err(|_| "无法释放应用窗口画面")?;
             }

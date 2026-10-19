@@ -371,6 +371,15 @@ fn apply_drawing_document_blocking(
     crate::ensure_scene_command_admission(&app, &host, window.label(), &command, Some(&engine.store))?;
     crate::optional_capabilities::authoring_command(&engine, &command)?;
     match &command {
+        SceneCommand::RemoveDrawings { scene_id, region_id, drawing_ids, .. } => {
+            let scene = engine.store.scene(scene_id).map_err(|error| error.to_string())?;
+            let region = scene.regions.iter().find(|region| &region.id == region_id).ok_or("选区不存在")?;
+            if !drawing_ids.iter().any(|id| region.drawings.iter().any(|drawing| &drawing.id == id && drawing.kind == DrawingKind::Rich)) {
+                return Err("此入口仅移除已有富图层".into());
+            }
+            // Core validates every ID and performs the entire mixed batch,
+            // including linked repairs, as one revision and one undo step.
+        }
         SceneCommand::UpdateDrawings { .. } => { /* Core validates the entire geometry-only batch and immutable references. */
         }
         SceneCommand::UpdateDrawing {

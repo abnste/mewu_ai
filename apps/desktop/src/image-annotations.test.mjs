@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule } from 'node:vm';
+import { parse } from '@babel/parser';
 async function load(file) { const value=new SourceTextModule(stripTypeScriptTypes(await readFile(new URL(file,import.meta.url),'utf8'),{mode:'transform'}));await value.link(()=>{throw Error('Unexpected runtime dependency');});await value.evaluate();return value.namespace; }
 const images=await load('./image-annotations.ts'),rich=await load('./drawing-layout-preview.ts');
 const plain=value=>JSON.parse(JSON.stringify(value));
@@ -35,4 +36,18 @@ test('image passive ink resets screenshot border compensation and does not inter
   const css=await readFile(new URL('./components/image-object.css',import.meta.url),'utf8');
   assert.match(css,/\.image-annotations-layer\{[^}]*pointer-events:none/);assert.match(css,/\.image-annotations-layer>\.drawing-layer\{inset:0;width:100%;height:100%;pointer-events:none\}/);
   const editor=await readFile(new URL('./components/ImageDrawingEditor.tsx',import.meta.url),'utf8');assert.match(editor,/SharedDrawingEditor/);assert.match(editor,/!\['mosaic','highlighter','mark'\]\.includes\(kind\)/);
+});
+test('actual image editor sends one source-bound batch annotation edit and never removes the media item',async()=>{
+  const sourceCode=await readFile(new URL('./components/ImageDrawingEditor.tsx',import.meta.url),'utf8'),ast=parse(sourceCode,{sourceType:'module',plugins:['typescript','jsx']});
+  const body=ast.program.body.find(node=>node.type==='ExportDefaultDeclaration').declaration.body.body;
+  const command=body.find(node=>node.type==='VariableDeclaration'&&node.declarations[0].id.name==='command');
+  const port=body.find(node=>node.type==='VariableDeclaration'&&node.declarations[0].id.name==='port').declarations[0].init;
+  const allows=port.properties.find(property=>property.key.name==='allows').value;
+  const actual=new SourceTextModule(stripTypeScriptTypes(`export function fixture(props){${sourceCode.slice(command.start,command.end)};return{command,allows:${sourceCode.slice(allows.start,allows.end)}};}`,{mode:'transform'}));
+  await actual.link(()=>{throw Error('No runtime dependency');});await actual.evaluate();
+  const calls=[],value=item(),adapter=actual.namespace.fixture({sceneId:scene,item:value,onCommand:async action=>{calls.push(plain(action));}});
+  const action={type:'remove_drawings',drawingIds:['ink-a','ink-b'],expectedRevision:7};
+  assert.equal(adapter.allows(action),true);await adapter.command(action);
+  assert.deepEqual(calls,[{type:'edit_image_annotations',sceneId:scene,itemId:id,sourceAssetId:source,expectedRevision:7,action:{type:'remove_drawings',drawingIds:['ink-a','ink-b']}}]);
+  assert.deepEqual(value,item());assert.equal(calls.some(value=>value.type==='remove_item'),false);
 });

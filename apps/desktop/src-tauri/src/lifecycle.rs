@@ -1530,6 +1530,10 @@ mod tests {
             expected_revision: 1,
             drawing_id: "text".into(),
         };
+        let remove_batch = SceneCommand::RemoveDrawings {
+            scene_id: "s".into(), background_id: "b".into(), region_id: "r".into(),
+            expected_revision: 1, drawing_ids: vec!["text".into(), "other".into()],
+        };
         let state = ExitState::default();
         let (id, _) = state.begin().unwrap();
         state.prepare_with("space", &id, || {}).unwrap();
@@ -1537,8 +1541,10 @@ mod tests {
         assert!(state.ensure_scene_command(&add).is_ok());
         assert!(state.ensure_scene_command(&update).is_ok());
         assert!(state.ensure_scene_command(&remove).is_err());
+        assert!(!is_exit_flush_command(&remove_batch));
+        assert!(state.ensure_scene_command(&remove_batch).is_err());
         assert!(state.advance(&id, DRAINING));
-        for command in [&add, &update, &remove] {
+        for command in [&add, &update, &remove, &remove_batch] {
             assert!(state.ensure_scene_command(command).is_err());
         }
         assert!(state.advance(&id, READY));
@@ -1553,7 +1559,7 @@ mod tests {
         let drawing=Drawing { id:uuid::Uuid::new_v4().to_string(),kind:DrawingKind::Line,color:"#ff0000".into(),stroke_width:2.,points:vec![DrawingPoint{x:10.,y:10.},DrawingPoint{x:30.,y:30.}],text:None,font_size:None, text_style: None,origin:None,rich:None };
         let command=|action,revision|SceneCommand::EditImageAnnotations { scene_id:scene_id.clone(),item_id:image.id.clone(),source_asset_id:image.asset.id.clone(),expected_revision:revision,action };
         let state=ExitState::default();let(id,_)=state.begin().unwrap();state.prepare_with("space",&id,||{}).unwrap();
-        for action in [ImageAnnotationEdit::UndoDrawing,ImageAnnotationEdit::RedoDrawing,ImageAnnotationEdit::RemoveDrawing{drawing_id:drawing.id.clone()}] { let replay=command(action,0);assert!(!is_exit_flush_command(&replay));assert!(state.ensure_scene_command_with_store("space",&replay,&store).is_err()); }
+        for action in [ImageAnnotationEdit::UndoDrawing,ImageAnnotationEdit::RedoDrawing,ImageAnnotationEdit::RemoveDrawing{drawing_id:drawing.id.clone()},ImageAnnotationEdit::RemoveDrawings{drawing_ids:vec![drawing.id.clone()]}] { let replay=command(action,0);assert!(!is_exit_flush_command(&replay));assert!(state.ensure_scene_command_with_store("space",&replay,&store).is_err()); }
         let add=command(ImageAnnotationEdit::AddDrawing{drawing:drawing.clone()},0);assert!(is_exit_flush_command(&add));state.ensure_scene_command_with_store("space",&add,&store).unwrap();store.apply(add).unwrap();
         let saved=store.active_scene().unwrap().items[0].clone();let before=store.snapshot();
         assert!(store.apply(command(ImageAnnotationEdit::AddDrawing{drawing},0)).is_err());assert_eq!(store.snapshot(),before);

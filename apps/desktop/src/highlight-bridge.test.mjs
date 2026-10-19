@@ -5,7 +5,7 @@ import {readFile} from 'node:fs/promises';
 import {stripTypeScriptTypes} from 'node:module';
 import {SourceTextModule,SyntheticModule,createContext} from 'node:vm';
 import {webcrypto} from 'node:crypto';
-import {loadProviderPresets,loadAssetImport,loadGeometryHistory,loadHighlightSource} from './geometry-test-module.mjs';
+import {loadProviderPresets,loadAssetImport,loadGeometryHistory,loadDrawingDiagnostics, loadHighlightSource} from './geometry-test-module.mjs';
 const read=async name=>stripTypeScriptTypes(await readFile(new URL(name,import.meta.url),'utf8'),{mode:'transform'});
 test('actual highlight bridge coalesces unchanged ink, sends exact raster targets, rejects bad mapping and releases a failed cache entry',async()=>{
   const context=createContext({crypto:webcrypto,structuredClone,Date,Map,Set,Blob,URL,setTimeout,clearTimeout,
@@ -17,7 +17,7 @@ test('actual highlight bridge coalesces unchanged ink, sends exact raster target
   const mosaic=new SourceTextModule(await read('./mosaic-preview.ts'),{context});await mosaic.link(()=>{throw Error('Unexpected');});
   const assets=await loadAssetImport(context),history=await loadGeometryHistory(context),foreground=await loadHighlightSource(context),providers=await loadProviderPresets(context);
   const module=new SourceTextModule(await read('./bridge.ts'),{context,initializeImportMeta:meta=>{meta.glob=()=>({});}});
-  await module.link(name=>name==='./highlight-source'?foreground:name==='./asset-import'?assets:name==='./region-geometry-history'?history:name==='./provider-presets'?providers:name==='./connection-policy'?connection:name==='./mosaic-preview'?mosaic:name.endsWith('/core')?core:synthetic({listen:async()=>()=>{}}));await module.evaluate();
+  await module.link(async name=>name==='./drawing-diagnostics'?await loadDrawingDiagnostics(context):name==='./highlight-source'?foreground:name==='./asset-import'?assets:name==='./region-geometry-history'?history:name==='./provider-presets'?providers:name==='./connection-policy'?connection:name==='./mosaic-preview'?mosaic:name.endsWith('/core')?core:synthetic({listen:async()=>()=>{}}));await module.evaluate();
   const background={id:'owned',path:'owned.png',kind:'image',name:'owned',width:180,height:100};
   const ink={id:'ink',kind:'pen',color:'#ff0000',strokeWidth:2,points:[{x:30,y:25}]};
   const redaction={...ink,id:'redaction',kind:'mosaic',strokeWidth:6,points:[{x:30,y:25},{x:40,y:35}]};

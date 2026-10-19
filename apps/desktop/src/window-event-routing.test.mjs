@@ -7,7 +7,7 @@ import { createContext, SourceTextModule, SyntheticModule, runInNewContext } fro
 import { webcrypto } from 'node:crypto';
 import { parse } from '@babel/parser';
 import { test } from 'node:test';
-import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadHighlightSource } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadDrawingDiagnostics, loadHighlightSource } from './geometry-test-module.mjs';
 
 const raw = file => readFile(new URL(file, import.meta.url), 'utf8');
 const ts = source => stripTypeScriptTypes(source, { mode: 'transform' });
@@ -49,7 +49,7 @@ async function bridgeFixture(events, native = true) {
   const mosaic = new SourceTextModule(ts(await raw('mosaic-preview.ts')), { context });
   await mosaic.link(() => { throw Error('unexpected mosaic dependency'); });
   const bridge = new SourceTextModule(ts(await raw('bridge.ts')), { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
-  await bridge.link(async name => name === './highlight-source' ? await loadHighlightSource(context)
+  await bridge.link(async name => name === './drawing-diagnostics' ? await loadDrawingDiagnostics(context) : name === './highlight-source' ? await loadHighlightSource(context)
     : name === './provider-presets' ? await loadProviderPresets(context)
     : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history
     : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic

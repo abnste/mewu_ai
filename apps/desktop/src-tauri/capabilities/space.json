@@ -16,6 +16,7 @@
     "allow-add-capture-region",
     "allow-capture-screen",
     "allow-capture-background-ready",
+    "allow-record-drawing-diagnostics",
     "allow-create-blackboard",
     "allow-import-assets",
     "allow-read-artifact",

@@ -30,3 +30,11 @@ export async function loadGeometryHistory(context) {
   await history.link(name => { if (name === './region-geometry') return geometry; throw Error(`Unexpected history import ${name}`); });
   await history.evaluate(); return history;
 }
+
+// Real opt-in observer stays off in ordinary bridge fixtures.
+export async function loadDrawingDiagnostics(context) {
+  const source = stripTypeScriptTypes(await readFile(new URL('./drawing-diagnostics.ts', import.meta.url), 'utf8'), { mode: 'transform' });
+  const module = new SourceTextModule(source, context ? { context } : undefined);
+  await module.link(() => { throw Error('Unexpected drawing diagnostics import'); });
+  await module.evaluate(); return module;
+}

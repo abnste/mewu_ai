@@ -148,6 +148,144 @@ fn split_stroke(drawing: &Drawing) -> DrawingStrokeErase {
     ] }
 }
 
+fn remove_batch_command(scope: &(String, String, String), revision: u64, ids: Vec<String>) -> SceneCommand {
+    SceneCommand::RemoveDrawings { scene_id: scope.0.clone(), region_id: scope.2.clone(),
+        background_id: scope.1.clone(), expected_revision: revision, drawing_ids: ids }
+}
+fn database_revision(path: &std::path::Path) -> i64 {
+    Connection::open(path).unwrap().query_row("SELECT revision FROM app_state WHERE id=1", [], |row| row.get(0)).unwrap()
+}
+
+#[test]
+fn batch_remove_commits_one_cas_and_one_reversible_history_step_then_reopens() {
+    let file = TestDb::new(); let mut store = Store::open(&file.0).unwrap(); let scope = prepare(&mut store);
+    let objects = [object(DrawingKind::Pen), object(DrawingKind::Text), object(DrawingKind::Rect), object(DrawingKind::Line)];
+    for value in &objects { add(&mut store, &scope, value.clone()).unwrap(); }
+    let before = region(&store, &scope); let revision = database_revision(&file.0);
+    let command = remove_batch_command(&scope, before.drawing_revision, vec![objects[2].id.clone(), objects[0].id.clone(), objects[3].id.clone()]);
+    let wire = serde_json::to_value(&command).unwrap();
+    assert_eq!(wire["type"], "remove_drawings");
+    assert_eq!(wire["drawingIds"], serde_json::json!([objects[2].id, objects[0].id, objects[3].id]));
+    let mut forged = wire.clone(); forged["allowPartial"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<SceneCommand>(forged).is_err());
+    store.apply(serde_json::from_value(wire).unwrap()).unwrap();
+    let removed = region(&store, &scope);
+    assert_eq!(database_revision(&file.0), revision + 1);
+    assert_eq!(removed.drawing_revision, before.drawing_revision + 1);
+    assert_eq!(removed.drawings, vec![objects[1].clone()]);
+    assert_eq!(removed.drawing_history.undo.len(), before.drawing_history.undo.len() + 1);
+    let DrawingStep::Batch(batch) = removed.drawing_history.undo.last().unwrap() else { panic!("one atomic history batch required") };
+    assert_eq!(batch.batch.iter().map(|edit| edit.index).collect::<Vec<_>>(), vec![3, 2, 0]);
+    history(&mut store, &scope, false).unwrap(); assert_eq!(region(&store, &scope).drawings, before.drawings);
+    history(&mut store, &scope, true).unwrap(); assert_eq!(region(&store, &scope).drawings, removed.drawings);
+    let expected = store.snapshot(); drop(store);
+    assert_eq!(Store::open(&file.0).unwrap().snapshot(), expected);
+}
+
+#[test]
+fn batch_remove_rejects_the_entire_invalid_or_stale_selection_without_partial_changes() {
+    let file = TestDb::new(); let mut store = Store::open(&file.0).unwrap(); let scope = prepare(&mut store);
+    let first = object(DrawingKind::Pen); let second = object(DrawingKind::Text);
+    add(&mut store, &scope, first.clone()).unwrap(); add(&mut store, &scope, second.clone()).unwrap();
+    let before = store.snapshot(); let revision = database_revision(&file.0); let drawing_revision = region(&store, &scope).drawing_revision;
+    for ids in [vec![], vec![first.id.clone(), first.id.clone()], vec![first.id.clone(), Uuid::new_v4().to_string()], (0..257).map(|_| Uuid::new_v4().to_string()).collect()] {
+        assert!(store.apply(remove_batch_command(&scope, drawing_revision, ids)).is_err());
+        assert_eq!(store.snapshot(), before); assert_eq!(database_revision(&file.0), revision);
+    }
+    assert!(store.apply(remove_batch_command(&scope, drawing_revision - 1, vec![first.id.clone(), second.id.clone()])).is_err());
+    let mut wrong = remove_batch_command(&scope, drawing_revision, vec![first.id, second.id]);
+    if let SceneCommand::RemoveDrawings { background_id, .. } = &mut wrong { *background_id = Uuid::new_v4().to_string(); }
+    assert!(store.apply(wrong).is_err()); assert_eq!(store.snapshot(), before); assert_eq!(database_revision(&file.0), revision);
+}
+
+#[test]
+fn batch_remove_sqlite_abort_and_stale_writer_leave_every_object_and_history_intact() {
+    let file = TestDb::new(); let mut store = Store::open(&file.0).unwrap(); let scope = prepare(&mut store);
+    let objects = [object(DrawingKind::Pen), object(DrawingKind::Text)];
+    for drawing in &objects { add(&mut store, &scope, drawing.clone()).unwrap(); }
+    let mut stale = Store::open(&file.0).unwrap(); let before = store.snapshot(); let revision = database_revision(&file.0);
+    let db = Connection::open(&file.0).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_batch_remove BEFORE UPDATE ON app_state BEGIN SELECT RAISE(ABORT,'batch remove rollback'); END;").unwrap();
+    let command = remove_batch_command(&scope, region(&store, &scope).drawing_revision, objects.iter().map(|drawing| drawing.id.clone()).collect());
+    assert!(store.apply(command.clone()).is_err()); assert_eq!(store.snapshot(), before); assert_eq!(database_revision(&file.0), revision);
+    db.execute_batch("DROP TRIGGER reject_batch_remove").unwrap(); store.apply(command.clone()).unwrap();
+    let durable = store.snapshot(); let stale_before = stale.snapshot();
+    assert!(matches!(stale.apply(command), Err(CoreError::ConcurrentModification)));
+    assert_eq!(stale.snapshot(), stale_before); assert_eq!(database_revision(&file.0), revision + 1);
+    drop(stale); drop(db); drop(store); assert_eq!(Store::open(&file.0).unwrap().snapshot(), durable);
+}
+
+#[test]
+fn batch_remove_image_annotations_uses_one_revision_and_undo_preserves_the_media_item() {
+    let file = TestDb::new(); let mut store = Store::open(&file.0).unwrap(); let scope = prepare(&mut store);
+    let source = Asset { id: Uuid::new_v4().to_string(), name: "import.png".into(), kind: AssetKind::Image,
+        path: "synthetic-import.png".into(), width: Some(800), height: Some(600), origin_x: None, origin_y: None, scale_factor: None, capture_coordinates: None };
+    store.add_asset(&scope.0, source.clone()).unwrap();
+    let item_id = store.scene(&scope.0).unwrap().items[0].id.clone();
+    let command = |revision, action| SceneCommand::EditImageAnnotations { scene_id: scope.0.clone(), item_id: item_id.clone(), source_asset_id: source.id.clone(), expected_revision: revision, action };
+    let values = [object(DrawingKind::Pen), object(DrawingKind::Text)];
+    for (index, drawing) in values.iter().enumerate() { store.apply(command(index as u64, ImageAnnotationEdit::AddDrawing { drawing: drawing.clone() })).unwrap(); }
+    let before = store.scene(&scope.0).unwrap().items[0].clone(); let revision = database_revision(&file.0);
+    let action = ImageAnnotationEdit::RemoveDrawings { drawing_ids: values.iter().map(|drawing| drawing.id.clone()).collect() };
+    let wire = serde_json::to_value(action).unwrap();
+    assert_eq!(wire, serde_json::json!({ "type": "remove_drawings", "drawingIds": [values[0].id, values[1].id] }));
+    let mut forged = wire.clone(); forged["allowPartial"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<ImageAnnotationEdit>(forged).is_err());
+    store.apply(command(2, serde_json::from_value(wire).unwrap())).unwrap();
+    let removed = store.scene(&scope.0).unwrap().items[0].clone(); let document = removed.image_annotations.as_ref().unwrap();
+    assert_eq!(database_revision(&file.0), revision + 1); assert_eq!(document.revision, 3); assert!(document.drawings.is_empty());
+    assert_eq!(document.history.undo.len(), 3); assert_eq!(removed.asset, source); assert_eq!(store.scene(&scope.0).unwrap().items.len(), 1);
+    store.apply(command(3, ImageAnnotationEdit::UndoDrawing)).unwrap(); assert_eq!(store.scene(&scope.0).unwrap().items[0].image_annotations.as_ref().unwrap().drawings, before.image_annotations.as_ref().unwrap().drawings);
+    store.apply(command(4, ImageAnnotationEdit::RedoDrawing)).unwrap(); assert!(store.scene(&scope.0).unwrap().items[0].image_annotations.as_ref().unwrap().drawings.is_empty());
+    let expected = store.snapshot(); drop(store); assert_eq!(Store::open(&file.0).unwrap().snapshot(), expected);
+}
+
+#[test]
+fn batch_remove_image_annotation_failure_retains_the_entire_document_and_history() {
+    let file = TestDb::new(); let mut store = Store::open(&file.0).unwrap(); let scope = prepare(&mut store);
+    let source = Asset { id: Uuid::new_v4().to_string(), name: "import.png".into(), kind: AssetKind::Image,
+        path: "synthetic-import.png".into(), width: Some(800), height: Some(600), origin_x: None, origin_y: None, scale_factor: None, capture_coordinates: None };
+    store.add_asset(&scope.0, source.clone()).unwrap(); let item_id = store.scene(&scope.0).unwrap().items[0].id.clone();
+    let command = |revision, action| SceneCommand::EditImageAnnotations { scene_id: scope.0.clone(), item_id: item_id.clone(), source_asset_id: source.id.clone(), expected_revision: revision, action };
+    let values = [object(DrawingKind::Pen), object(DrawingKind::Text)];
+    for (index, drawing) in values.iter().enumerate() { store.apply(command(index as u64, ImageAnnotationEdit::AddDrawing { drawing: drawing.clone() })).unwrap(); }
+    let before = store.snapshot(); let revision = database_revision(&file.0);
+    assert!(store.apply(command(2, ImageAnnotationEdit::RemoveDrawings { drawing_ids: vec![values[0].id.clone(), Uuid::new_v4().to_string()] })).is_err());
+    assert_eq!(store.snapshot(), before); assert_eq!(database_revision(&file.0), revision);
+    let db = Connection::open(&file.0).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_image_batch BEFORE UPDATE ON app_state BEGIN SELECT RAISE(ABORT,'image batch rollback'); END;").unwrap();
+    assert!(store.apply(command(2, ImageAnnotationEdit::RemoveDrawings { drawing_ids: values.iter().map(|drawing| drawing.id.clone()).collect() })).is_err());
+    assert_eq!(store.snapshot(), before); assert_eq!(database_revision(&file.0), revision);
+    drop(db); drop(store); assert_eq!(Store::open(&file.0).unwrap().snapshot(), before);
+}
+
+#[test]
+fn batch_remove_extracted_parent_keeps_root_repair_and_atomically_removes_attached_repairs() {
+    let file = TestDb::new(); let mut store = Store::open(&file.0).unwrap(); let scope = prepare(&mut store);
+    let background = store.scene(&scope.0).unwrap().background.clone().unwrap();
+    let png = vec![137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,4,0,0,0,181,28,12,2,0,0,0,11,73,68,65,84,120,218,99,252,255,31,0,3,3,2,0,239,154,55,219,0,0,0,0,73,69,78,68,174,66,96,130];
+    let layout = |role, source: &VisualSourceFence, parent_id| VerifiedRichLayout::new(Uuid::new_v4().to_string(), RichContent::Raster { version: 1, role, source_sha256: source.visual_sha256.clone(), parent_id },
+        RichRendererIdentity { id: "mewu.local-raster-edit".into(), version: "1".into(), font_sha256: "a".repeat(64), style_version: 1 }, 1, 1, png.clone()).unwrap();
+    let drawing = |layout: &VerifiedRichLayout| Drawing { id: Uuid::new_v4().to_string(), kind: DrawingKind::Rich, color: RICH_DRAWING_COLOR.into(), stroke_width: RICH_DRAWING_STROKE_WIDTH,
+        points: vec![DrawingPoint { x: 30., y: 40. }, DrawingPoint { x: 31., y: 41. }], text: None, font_size: None, text_style: None, origin: None, rich: Some(layout.reference().clone()) };
+    let fence = visual_source_fence(&background, &region(&store, &scope)).unwrap();
+    let root_layout = layout(RasterRole::Repair, &fence, None); let parent_layout = layout(RasterRole::Extracted, &fence, None);
+    let root_repair = drawing(&root_layout); let parent = drawing(&parent_layout);
+    store.append_raster_edit(&scope.0, &scope.2, &fence, vec![root_repair.clone(), parent.clone()], vec![root_layout, parent_layout]).unwrap();
+    let fence = visual_source_fence(&background, &region(&store, &scope)).unwrap();
+    let child_layout = layout(RasterRole::Repair, &fence, Some(parent.id.clone())); let child = drawing(&child_layout);
+    store.append_raster_edit(&scope.0, &scope.2, &fence, vec![child.clone()], vec![child_layout]).unwrap();
+    let ink = object(DrawingKind::Pen); add(&mut store, &scope, ink.clone()).unwrap();
+    let before = region(&store, &scope); let revision = database_revision(&file.0);
+    assert!(store.apply(remove_batch_command(&scope, before.drawing_revision, vec![ink.id.clone(), child.id.clone()])).is_err());
+    assert_eq!(region(&store, &scope), before); assert_eq!(database_revision(&file.0), revision);
+    store.apply(remove_batch_command(&scope, before.drawing_revision, vec![parent.id.clone(), ink.id])).unwrap();
+    assert_eq!(region(&store, &scope).drawings, vec![root_repair]); assert_eq!(database_revision(&file.0), revision + 1);
+    history(&mut store, &scope, false).unwrap(); assert_eq!(region(&store, &scope).drawings, before.drawings);
+    history(&mut store, &scope, true).unwrap(); let expected = store.snapshot(); drop(store);
+    assert_eq!(Store::open(&file.0).unwrap().snapshot(), expected);
+}
+
 #[test]
 fn pixel_eraser_is_one_persisted_history_step_and_keeps_style_order_and_unrelated_objects() {
     let db = TestDb::new();

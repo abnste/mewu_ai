@@ -39,6 +39,14 @@ test('actual video adapter explicitly rejects unsupported partial erasing withou
   await assert.rejects(f.command(action),/视频绘制操作无效/);
   assert.deepEqual(f.documents,[]);assert.deepEqual(f.snapshots,[]);f.dispose();
 });
+test('actual stored video adapter disables atomic multi-delete instead of dispatching several partial removes',async()=>{
+  const f=setup();try{
+    const action={type:'remove_drawings',expectedRevision:5,drawingIds:[id(100),id(101)]};
+    assert.equal(f.port.allows(action),false);await assert.rejects(f.command(action),/视频暂不支持批量删除/);
+    assert.equal(f.documents.length,0);assert.equal(f.snapshots.length,0);
+    assert.equal(f.port.allows({type:'remove_drawing',expectedRevision:5,drawingId:id(100)}),true);
+  }finally{f.dispose();}
+});
 test('actual JSX adapter mounts 4096 compact refs without a getter; visibility/render/Move never infer control points',async()=>{
   const f=setup(item(4096),{visibleAnnotationIds:[id(100)]});await tick();assert.equal(f.reads.length,0);assert.equal(f.port.stored().length,1);assert.equal(f.port.drawings().length,0);
   const object=f.port.stored()[0],to=f.port.storedMove(object.id,object.bounds,{x:-20.5,y:3.5});assert.deepEqual(plain(to),{x:-2,y:31,width:24,height:26});

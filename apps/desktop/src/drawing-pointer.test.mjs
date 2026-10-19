@@ -13,7 +13,7 @@ const transform = value => stripTypeScriptTypes(value, { mode: 'transform' });
 const plain = value => JSON.parse(JSON.stringify(value));
 const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [key, value] of Object.entries(values)) this.setExport(key, value); });
 async function pure(path) { const module = new SourceTextModule(transform(await raw(path))); await module.link(() => { throw Error('Unexpected runtime import'); }); await module.evaluate(); return module.namespace; }
-const pointer = await pure('./components/drawing-pointer.ts'), historyModule = await pure('./components/drawing-history.ts'), geometry = await pure('./components/drawing-geometry.ts'), properties = await pure('./components/drawing-properties.ts'), highlightSource = await pure('./highlight-source.ts');
+const pointer = await pure('./components/drawing-pointer.ts'), historyModule = await pure('./components/drawing-history.ts'), geometry = await pure('./components/drawing-geometry.ts'), properties = await pure('./components/drawing-properties.ts'), highlightSource = await pure('./highlight-source.ts'), diagnostics = await pure('./drawing-diagnostics.ts');
 const selectionM=new SourceTextModule(transform(await raw('./components/drawing-selection.ts')));await selectionM.link(()=>synthetic(geometry));await selectionM.evaluate();const selection=selectionM.namespace;
 const source = await raw('./components/SharedDrawingEditor.tsx'), ast = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const body = ast.program.body.find(value => value.type === 'ExportDefaultDeclaration').declaration.body.body;
@@ -21,9 +21,9 @@ const declaration = name => { const node = body.find(value => value.type === 'Fu
 const queueSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='queueSource').expression.arguments[0].arguments[1];
 const gestureSourceEffect=body.find(node=>node.type==='ExpressionStatement'&&node.expression.type==='CallExpression'&&node.expression.callee.name==='createEffect'&&node.expression.arguments[0]?.type==='CallExpression'&&node.expression.arguments[0].arguments[0]?.name==='gestureSource');
 assert.ok(gestureSourceEffect,'actual production gestureSource effect');
-const actual = ['cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'beginStored', 'selectionGesture', 'beginMarquee', 'beginGroup', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'blur', 'resize'].map(declaration).join('\n');
+const actual = ['diagnoseInput', 'cacheKey', 'strokeSource', 'continuousStrokes', 'gestureIdentity', 'point', 'target', 'editableIds', 'cachedStrokes', 'restoreStrokeDraft', 'newStrokeQueue', 'strokeCacheKey', 'releaseFailedStrokes', 'storeEdit', 'cancelEdit', 'commit', 'saveText', 'loadLatest', 'confirmText', 'begin', 'beginStored', 'selectionGesture', 'beginMarquee', 'beginGroup', 'readHistory', 'historyAcknowledged', 'createHistoryLane', 'drainHistory', 'history', 'historyAvailable', 'choose', 'closeEditor', 'removeAction', 'remove', 'keyboard', 'blur', 'resize'].map(declaration).join('\n');
 const module = new SourceTextModule(transform(`
-import { DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,selectionBox,marqueeDrawings,movedDrawings,batch,createSignal,createMemo,createEffect,on } from 'deps';
+import { recordDrawingInput,DrawingInputPhase,untrack,DrawingHistoryLane,projectDrawingHistory,DrawingAddQueue,drawingFrame,drawingPointerSamples,settleDrawingEdit,drawingMoveDelta,drawingBounds,constrainedEnd,validNextNumber,t,blackboardImage,propertyDraft,drawingDrafts,strokeKinds,selectionBox,marqueeDrawings,movedDrawings,selectionRemovals,batch,createSignal,createMemo,createEffect,on,nativeSelectOwnsEscape } from 'deps';
 export class Element { closest() { return {getAttribute:()=>this.id}; } }
 export function fixture(props,svg,window) {
  let disposed=false,serial=0,flight,cancelGesture,refreshConstraint,toolValue='pen',selectedId='',draftValue,pendingValue=false,strokeQueue,editCacheKey,editValue,finishingValue=false;
@@ -46,10 +46,10 @@ export function fixture(props,svg,window) {
  strokeQueue=continuousStrokes()&&!historyLane?newStrokeQueue():undefined;
  const gestureSource=props.reactive?createMemo(gestureIdentity):()=>gestureIdentity();
  if(props.reactive){ ${source.slice(gestureSourceEffect.start,gestureSourceEffect.end)} }
- return {begin,draft,selection:()=>selectedMany,marquee:()=>marqueeValue,groupDraft:()=>groupDraftValue,storedDraft:()=>storedDraftValue,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,choose,closeEditor,finishing,confirmText,loadLatest,saveText,history,historyPreview,drainHistory,historyPending,sourceChanged:${source.slice(queueSourceEffect.start,queueSourceEffect.end)},
+ return {begin,draft,selection:()=>selectedMany,marquee:()=>marqueeValue,groupDraft:()=>groupDraftValue,storedDraft:()=>storedDraftValue,publications,tool:setTool,selected:setSelected,cancel:()=>cancelGesture?.(),blur,resize,choose,closeEditor,removeAction,remove,keyboard,finishing,confirmText,loadLatest,saveText,history,historyPreview,drainHistory,historyPending,sourceChanged:${source.slice(queueSourceEffect.start,queueSourceEffect.end)},
    dispose:()=>{disposed=true;strokeQueue?.stop();historyLane?.stop();cancelGesture?.();},hasGesture:()=>!!cancelGesture,shift:value=>refreshConstraint?.(value),queued:()=>queued,edit,queue:()=>strokeQueue,lane:()=>historyLane,opened:()=>openedText};
 }`));
-await module.link(() => synthetic({ ...pointer,...historyModule, ...geometry, ...properties,...selection,batch:solid.batch,createSignal:solid.createSignal,createMemo:solid.createMemo,createEffect:solid.createEffect,on:solid.on, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
+await module.link(() => synthetic({ ...diagnostics,untrack:solid.untrack,...pointer,...historyModule, ...geometry, ...properties,...selection,batch:solid.batch,createSignal:solid.createSignal,createMemo:solid.createMemo,createEffect:solid.createEffect,on:solid.on,nativeSelectOwnsEscape:()=>false, t: value => value,blackboardImage:d=>d.rich?.kind==='extracted' })); await module.evaluate();
 class Events {
   listeners = new Map();
   addEventListener(type, callback) { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type).add(callback); }
@@ -1265,6 +1265,70 @@ function selectThreeFixture(history){
  const values=[10,40,70].map((y,i)=>({id:'s'+i,kind:'pen',color:'#123456',strokeWidth:4,points:[{x:10,y},{x:50,y:y+4}]})),f=ordinaryMoveFixture(values,history);return{...f,values};
 }
 function selectThree(f){f.begin(mouse('pointerdown',0,0));f.window.emit(mouse('pointermove',60,90));f.window.emit(mouse('pointermove',900,950,{buttons:0}));}
+function selectionDeleteFixture(history = {undo:[],redo:[]}) {
+ const f=selectThreeFixture(history),previous=f.props.onCommand;
+ f.props.onCommand=async action=>{
+  if(action.type!=='remove_drawings'&&action.type!=='remove_drawing')return previous(action);
+  f.commands.push(plain(action));if(f.deleteWait)await f.deleteWait.promise;if(f.deleteError)throw Error(f.deleteError);
+  assert.equal(action.expectedRevision,f.props.revision);
+  const ids=new Set(action.type==='remove_drawings'?action.drawingIds:[action.drawingId]),batch=f.values.flatMap((value,index)=>ids.has(value.id)?[{index,before:plain(value),after:null}]:[]).reverse();
+  for(const edit of batch)f.values.splice(edit.index,1);history.undo.push({batch});history.redo=[];f.props.revision++;
+ };
+ return Object.assign(f,{savedHistory:history});
+}
+function deleteKey(f,extra={}){
+ const old=globalThis.document;globalThis.document={activeElement:null,querySelector:()=>null};
+ const e={type:'keydown',key:'Delete',target:null,isComposing:false,keyCode:46,repeat:false,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},...extra};
+ try{f.keyboard(e);return e;}finally{globalThis.document=old;}
+}
+test('actual marquee followed by Delete sends one exact batch; one Undo restores every object in original order',async()=>{
+ const clock=frames(),f=selectionDeleteFixture();try{
+  const original=plain(f.values);selectThree(f);const e=deleteKey(f);await tick();
+  assert.equal(e.prevented,true);assert.equal(e.stopped,true);assert.deepEqual(f.commands,[{expectedRevision:5,type:'remove_drawings',drawingIds:['s0','s1','s2']}]);
+  assert.equal(f.values.length,0);assert.equal(f.savedHistory.undo.length,1);assert.deepEqual(plain(f.selection()),[]);
+  void f.history(false);await f.drainHistory();assert.deepEqual(f.values,original);assert.equal(f.commands.at(-1).type,'undo_drawing');
+  void f.history(true);await f.drainHistory();assert.equal(f.values.length,0);assert.equal(f.commands.at(-1).type,'redo_drawing');assert.deepEqual(f.errors,[]);
+ }finally{f.dispose();clock.restore();}
+});
+test('batch Delete waits its real authority and preserves all selection and objects after a rejected save',async()=>{
+ const clock=frames(),f=selectionDeleteFixture();try{
+  f.deleteWait=deferred();f.deleteError='CAS changed';selectThree(f);const before=plain(f.values);f.remove();await tick();
+  assert.deepEqual(plain(f.selection()),['s0','s1','s2']);assert.deepEqual(f.values,before);assert.equal(f.commands.length,1);
+  f.deleteWait.resolve();await tick();assert.deepEqual(f.values,before);assert.deepEqual(plain(f.selection()),['s0','s1','s2']);assert.deepEqual(f.errors,['CAS changed']);
+ }finally{f.dispose();clock.restore();}
+});
+test('unsupported stored multi-delete has no action and never falls back to deleting the first item',async()=>{
+ const clock=frames(),f=selectionDeleteFixture();try{
+  selectThree(f);f.props.port.stored=()=>f.values.map(value=>({id:value.id,kind:'vector',bounds:{x:0,y:0,width:1,height:1}}));
+  f.props.port.allows=action=>action.type!=='remove_drawings';assert.equal(f.removeAction(),undefined);
+  deleteKey(f);await tick();assert.equal(f.commands.length,0);assert.equal(f.values.length,3);assert.deepEqual(plain(f.selection()),['s0','s1','s2']);
+ }finally{f.dispose();clock.restore();}
+});
+test('a stale member revokes the entire multi-delete instead of partially deleting surviving objects',async()=>{
+ const clock=frames(),f=selectionDeleteFixture();try{
+  selectThree(f);f.values.pop();const before=plain(f.values);assert.equal(f.removeAction(),undefined);
+  deleteKey(f);await tick();assert.equal(f.commands.length,0);assert.deepEqual(f.values,before);
+ }finally{f.dispose();clock.restore();}
+});
+test('blackboard multi-delete removes only selected ink and leaves extracted media selected for drag-to-trash',async()=>{
+ const clock=frames(),f=selectionDeleteFixture();try{
+  f.props.blackboard=true;const picture={id:'picture',kind:'rich',points:[{x:5,y:5},{x:55,y:85}],rich:{kind:'extracted'}};f.values.unshift(picture);selectThree(f);
+  assert.deepEqual(plain(f.selection()),['picture','s0','s1','s2']);deleteKey(f);await tick();
+  assert.deepEqual(f.commands,[{expectedRevision:5,type:'remove_drawings',drawingIds:['s0','s1','s2']}]);assert.deepEqual(f.values,[picture]);assert.deepEqual(plain(f.selection()),['picture']);
+  assert.equal(f.removeAction(),undefined);deleteKey(f);await tick();assert.equal(f.commands.length,1);
+ }finally{f.dispose();clock.restore();}
+});
+test('Delete in a text input, composition, locked input or active gesture cannot remove the marquee',async()=>{
+ const clock=frames();try{
+  for(const mode of ['input','composition','locked','gesture']){
+   const f=selectionDeleteFixture();selectThree(f);let extra={};
+   if(mode==='input'){const input=new module.namespace.Element();input.closest=selector=>selector.includes('textarea')?input:null;extra.target=input;}
+   if(mode==='composition')extra.isComposing=true;if(mode==='locked')f.props.inputLocked=true;
+   if(mode==='gesture')f.begin(mouse('pointerdown',0,0));
+   deleteKey(f,extra);await tick();assert.equal(f.commands.length,0,mode);assert.equal(f.values.length,3,mode);f.dispose();
+  }
+ }finally{clock.restore();}
+});
 test('selectionGesture mouse release fallback retains a pressed marquee without including the zero-button hover and ignores late lost/up',async()=>{
  const clock=frames(),f=selectThreeFixture();try{
   selectThree(f);assert.deepEqual(plain(f.selection()),['s0','s1','s2']);assert.equal(f.marquee(),undefined);assert.equal(f.commands.length,0);assert.equal(f.hasGesture(),false);

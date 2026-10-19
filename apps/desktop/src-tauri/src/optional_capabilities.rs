@@ -65,6 +65,7 @@ pub(crate) fn authoring_command(engine: &Engine, command: &SceneCommand) -> Resu
         | UpdateDrawings { scene_id, .. }
         | EraseDrawingStrokes { scene_id, .. }
         | RemoveDrawing { scene_id, .. }
+        | RemoveDrawings { scene_id, .. }
         | UndoDrawing { scene_id, .. }
         | RedoDrawing { scene_id, .. }
         | UpdateItem { scene_id, .. }

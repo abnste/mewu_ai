@@ -530,7 +530,7 @@ export default function SpaceCanvas(props: Props) {
       lastPoint = end; setSelection(gesture.move(end, next.shiftKey, { x: next.clientX, y: next.clientY }));
     }, committed => {
       forceManualSelection = undefined;
-      const selected = selection(); setSelection(undefined);
+      const selected = committed ? gesture.finish(lastPoint) : undefined; setSelection(undefined);
       if (!committed || disposed || props.scene.id !== sceneId || props.scene.background?.id !== backgroundId || !selected || (!gesture.isAutomatic && (selected.width < 8 || selected.height < 8))) return;
       const left = Math.round((selected.x - offset.x) / scale), top = Math.round((selected.y - offset.y) / scale);
       const right = Math.round((selected.x + selected.width - offset.x) / scale), bottom = Math.round((selected.y + selected.height - offset.y) / scale);

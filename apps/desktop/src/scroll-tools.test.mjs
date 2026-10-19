@@ -69,8 +69,9 @@ async function mainBridgeFixture(native, probe) {
   const policy = new SourceTextModule(await source('connection-policy.ts'), { context }); await policy.link(() => { throw new Error('unexpected'); });
   const history = await loadGeometryHistory(context); const importedAssets = await loadAssetImport(context);
   const mosaic = new SourceTextModule(await source('mosaic-preview.ts'), { context }); await mosaic.link(() => { throw new Error('unexpected'); });
+  const diagnostics = new SourceTextModule(await source('drawing-diagnostics.ts'), { context }); await diagnostics.link(() => { throw new Error('unexpected diagnostics import'); });
   const module = new SourceTextModule(await source('bridge.ts') + '\nexport function seedBackground(value) { findScene(preview.activeSceneId).background = value; }', { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
-  await module.link(async name => name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : synthetic({ listen: async () => () => {} }, context)); await module.evaluate();
+  await module.link(async name => name === './drawing-diagnostics' ? diagnostics : name === './highlight-source' ? await loadHighlightSource(context) : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? core : synthetic({ listen: async () => () => {} }, context)); await module.evaluate();
   return { api: module.namespace, calls };
 }
 const main = await mainBridgeFixture(true), image = { id: 'long', width: 1200, height: 2400, kind: 'image', path: '/long.png', name: 'long' };

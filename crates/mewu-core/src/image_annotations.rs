@@ -20,6 +20,7 @@ pub enum ImageAnnotationEdit {
     UpdateDrawings { drawings: Vec<Drawing> },
     EraseDrawingStrokes { erasures: Vec<crate::DrawingStrokeErase> },
     RemoveDrawing { drawing_id: String },
+    RemoveDrawings { drawing_ids: Vec<String> },
     UndoDrawing,
     RedoDrawing,
 }
@@ -32,6 +33,7 @@ impl ImageAnnotationEdit {
             UpdateDrawings { drawings } => crate::drawing::Mutation::UpdateBatch(drawings),
             EraseDrawingStrokes { erasures } => crate::drawing::Mutation::EraseStrokes(erasures),
             RemoveDrawing { drawing_id } => crate::drawing::Mutation::Remove(drawing_id),
+            RemoveDrawings { drawing_ids } => crate::drawing::Mutation::RemoveBatch(drawing_ids),
             UndoDrawing => crate::drawing::Mutation::Undo,
             RedoDrawing => crate::drawing::Mutation::Redo,
         }

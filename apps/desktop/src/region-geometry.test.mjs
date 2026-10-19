@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule } from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadHighlightSource } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadDrawingDiagnostics, loadHighlightSource } from './geometry-test-module.mjs';
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
 const mod = new SourceTextModule(await source('./region-geometry.ts')); await mod.link(() => { throw Error('Unexpected runtime import'); }); await mod.evaluate();
 const { RegionGeometryCoordinator, geometryTarget, geometryReceipt, overlayRegion, nudgedGeometry } = mod.namespace;
@@ -95,7 +95,7 @@ const mosaic = new SourceTextModule(await source('./mosaic-preview.ts')); await 
 const history = await loadGeometryHistory(); const importedAssets = await loadAssetImport();
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 const bridge = new SourceTextModule(`${await source('./bridge.ts')}\nexport const seed = value => { preview = value; };`, { initializeImportMeta: meta => { meta.glob = () => ({}); } });
-await bridge.link(async name => name === './highlight-source' ? await loadHighlightSource() : name === './provider-presets' ? await loadProviderPresets() : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? synthetic({ invoke: () => { throw Error('No native IPC allowed'); }, isTauri: () => false }) : synthetic({ listen: () => { throw Error('No native events allowed'); } })); await bridge.evaluate();
+await bridge.link(async name => name === './drawing-diagnostics' ? await loadDrawingDiagnostics() : name === './highlight-source' ? await loadHighlightSource() : name === './provider-presets' ? await loadProviderPresets() : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? synthetic({ invoke: () => { throw Error('No native IPC allowed'); }, isTauri: () => false }) : synthetic({ listen: () => { throw Error('No native events allowed'); } })); await bridge.evaluate();
 {
   const scene = makeScene(), region = scene.regions[0], state = { schemaVersion: 1, activeSceneId: scene.id, scenes: [scene], agents: [], memories: [], memoryStats: [], mcpServers: [], connections: [], defaultConnectionId: null };
   bridge.namespace.seed(state);

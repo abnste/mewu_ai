@@ -33,6 +33,7 @@ export type DrawingCommand = DrawingTarget & (
   | {type:'update_drawings';drawings:Drawing[]}
   | {type:'erase_drawing_strokes';erasures:DrawingStrokeErase[]}
   | { type: 'remove_drawing'; drawingId: string }
+  | { type: 'remove_drawings'; drawingIds: string[] }
   | { type: 'undo_drawing' | 'redo_drawing' }
 );
 // Region coordinates are pixels relative to the background; item bounds are viewport fractions.
@@ -115,5 +116,6 @@ export type ImageAnnotationEdit =
   | { type: 'update_drawings'; drawings: Drawing[] }
   | { type: 'erase_drawing_strokes'; erasures: DrawingStrokeErase[] }
   | { type: 'remove_drawing'; drawingId: string }
+  | { type: 'remove_drawings'; drawingIds: string[] }
   | { type: 'undo_drawing' | 'redo_drawing' };
 export interface RunEvent { sceneId: string; runId: string; text?: string; reasoning?: string; status: 'running' | 'completed' | 'failed' | 'canceled'; error?: string }

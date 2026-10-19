@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from '../i18n';
 import { nativeSelectOwnsEscape } from '../native-select-escape';
-import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js';
+import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { ArrowUpRight, BrushCleaning, Check, Circle, Copy, Eraser, Grid2X2, Hash, Highlighter, LoaderCircle, Minus, MousePointer2, Pencil, Pin, Redo2, RotateCcw, Scissors, Square, Trash2, Type, Undo2, X } from 'lucide-solid';
 import type { Drawing, DrawingKind, DrawingPoint, DrawingTextStyle, ImageExportVariant, ManualDrawingKind } from '../contracts';
 import { constrainedEnd, drawingBounds, drawingMoveDelta, drawingOrder, drawingResizeHandles, resizedDrawingPoints, validNextNumber } from "./drawing-geometry";
@@ -22,7 +22,8 @@ import InlineDrawingText from './InlineDrawingText';
 import DrawingTextStylePicker from './DrawingTextStylePicker';
 import ImageExportButton from './ImageExportButton';
 import { initialDrawingColor } from '../drawing-colors';
-import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview} from './drawing-selection';
+import { DrawingInputPhase, recordDrawingInput, type DrawingInputPhaseValue } from '../drawing-diagnostics';
+import {selectionBox,marqueeDrawings,movedDrawings,linkedRepairPreview,selectionRemovals} from './drawing-selection';
 
 import type { SharedDrawingEditorProps as Props, EditorDrawingAction } from '../drawing-editor-port';
 const labels: Record<ManualDrawingKind, string> = { pen: '画笔', line: '直线', arrow: '箭头', rect: '矩形', ellipse: '椭圆', text: '文字', highlighter: '荧光笔', mark: '重点高亮', number: '序号', mosaic: '马赛克' };
@@ -100,6 +101,12 @@ export default function SharedDrawingEditor(props: Props) {
   const controlsLocked = () => props.busy || props.inputLocked || finishing() || imageZooming();
   const disabled = () => pending() || controlsLocked() || historyPending();
   const historyDisabled = () => pending() || controlsLocked();
+  function diagnoseInput(phase: DrawingInputPhaseValue, event?: Event, code = 0, count = 0) {
+    recordDrawingInput(phase, event, () => untrack(() => ({ flags:
+      (props.busy ? 1 : 0) | (props.inputLocked ? 2 : 0) | (pending() ? 4 : 0)
+      | (finishing() ? 8 : 0) | (cancelGesture ? 16 : 0) | (edit() ? 32 : 0)
+      | (historyPending() ? 64 : 0) | (imageZooming() ? 128 : 0) })), code, count);
+  }
   const [objectDragging,setObjectDragging]=createSignal(false),[trashOver,setTrashOver]=createSignal(false);
   const trash=objectTrash(()=>trashButton,()=>Boolean(disabled()||edit()),(dragging,over)=>{setObjectDragging(dragging);setTrashOver(over);});
   const unregisterTrash=props.blackboard?props.onRegisterObjectTrash?.(trash):undefined;
@@ -255,6 +262,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (value.mode === 'text') openText(latest, true); else setSelected(latest.id);
   }
   function changeStyle(patch: { color?: string; strokeWidth?: number; fontSize?: number; textStyle?: DrawingTextStyle }, submit: boolean) {
+    diagnoseInput(DrawingInputPhase.style, undefined, submit ? 1 : 0);
     if (disabled() || cancelGesture) return;
     const selectedObject = propertyTarget();
     if (selectedObject && !props.port.canStyle(selectedObject)) return;
@@ -503,23 +511,24 @@ export default function SharedDrawingEditor(props: Props) {
   }
   function begin(event: PointerEvent, forcedImage?: Drawing) {
     event.stopPropagation();
+    diagnoseInput(DrawingInputPhase.begin, event);
     const queueable = event.button === 0 && !forcedImage && continuousStrokes() && strokeKinds.includes(tool() as DrawingKind);
-    if ((strokeQueue?.pending() || historyLane?.pending()) && !queueable) return;
-    if (queueable && (historyLane ?? strokeQueue) && !(historyLane ?? strokeQueue)!.capacity()) { props.onError('请先保存未完成的笔迹'); return; }
+    if ((strokeQueue?.pending() || historyLane?.pending()) && !queueable) { diagnoseInput(DrawingInputPhase.rejected, event, 1); return; }
+    if (queueable && (historyLane ?? strokeQueue) && !(historyLane ?? strokeQueue)!.capacity()) { diagnoseInput(DrawingInputPhase.rejected, event, 2); props.onError('请先保存未完成的笔迹'); return; }
     if (!forcedImage && event.button === 2) {
       event.preventDefault();
       if (!disabled() && !textEditor() && !edit() && !cancelGesture) { svg.focus({preventScroll:true}); beginErase(event,true); }
       return;
     }
-    if (event.button !== 0 || (queueable ? historyDisabled() : disabled()) || cancelGesture) return;
+    if (event.button !== 0 || (queueable ? historyDisabled() : disabled()) || cancelGesture) { diagnoseInput(DrawingInputPhase.rejected, event, 3); return; }
     event.preventDefault();
-    if (textEditor()) { void finishTextAt(event); return; }
-    if (edit()) { void saveText(); return; }
+    if (textEditor()) { diagnoseInput(DrawingInputPhase.rejected, event, 5); void finishTextAt(event); return; }
+    if (edit()) { diagnoseInput(DrawingInputPhase.rejected, event, 6); void saveText(); return; }
     svg.focus({ preventScroll: true });
     if (!forcedImage && tool() === 'eraser') { beginErase(event); return; }
     if (!forcedImage && (tool() === 'extract' || tool() === 'heal')) { beginRaster(event,tool() as 'extract'|'heal'); return; }
     const initialBox = svg.getBoundingClientRect();
-    if (initialBox.width <= 0 || initialBox.height <= 0) return;
+    if (initialBox.width <= 0 || initialBox.height <= 0) { diagnoseInput(DrawingInputPhase.rejected, event, 7); return; }
     const initialFrame = props.port.frame();
     const start = point(event, true, initialBox, initialFrame), originalTool = tool(), kind = forcedImage ? 'select' : originalTool, revision = props.port.revision(), origin = gestureSource();
     const strokeRevision = historyLane?.revisionIdentity() ?? strokeQueue?.revisionIdentity() ?? revision;
@@ -647,7 +656,7 @@ export default function SharedDrawingEditor(props: Props) {
     };
     const finish = (save: boolean) => {
       if (ended) return;
-      const valid = current() && surfaceCurrent(); ended = true; cleanup();
+      const valid = current() && surfaceCurrent(); diagnoseInput(DrawingInputPhase.finished, undefined, (save ? 1 : 2) + (valid ? 0 : 2), value.points.length); ended = true; cleanup();
       try {
       const removeObject=objectMove&&save&&valid&&dragStarted&&trashOver();if(objectMove)trash.cancel();
       if(removeObject){setDraft(undefined);void commit({...target(revision),type:'remove_drawing',drawingId:original!.id}).finally(()=>{if(!disposed)setSelected('');});return;}
@@ -657,18 +666,19 @@ export default function SharedDrawingEditor(props: Props) {
       // A receipt owns an immutable snapshot; late input cannot mutate its point array.
       value = { ...value, points: value.points.map(point => ({ ...point })) };
       if (!original && queueable && (historyLane || strokeQueue)) {
-        if (historyLane ? historyLane.enqueueAdd(value, strokeRevision) : strokeQueue!.enqueue(value, strokeRevision)) setDraft(undefined);
-        else { const saved = { ...propertyDraft(value, props.port.revision(), 'style', false), error: '笔迹尚未保存' }; drawingDrafts.set(strokeKey!, saved); editCacheKey = strokeKey; setEdit(saved); }
+        if (historyLane ? historyLane.enqueueAdd(value, strokeRevision) : strokeQueue!.enqueue(value, strokeRevision)) { diagnoseInput(DrawingInputPhase.enqueued, undefined, 0, 1); setDraft(undefined); }
+        else { diagnoseInput(DrawingInputPhase.enqueued, undefined, 0, 0); const saved = { ...propertyDraft(value, props.port.revision(), 'style', false), error: '笔迹尚未保存' }; drawingDrafts.set(strokeKey!, saved); editCacheKey = strokeKey; setEdit(saved); }
         return;
       }
       void commit({ ...target(revision), type: original ? 'update_drawing' : 'add_drawing', drawing: value }).finally(()=>{if(forcedImage&&!disposed)setSelected('');});
       } finally { releaseStrokeReservation?.(); }
     };
     const released = (next: PointerEvent) => { if (next.pointerId === pointerId) { moved(next); finish(true); } };
-    const canceled = (next: PointerEvent) => { if (next.pointerId === pointerId) finish(false); };
+    const canceled = (next: PointerEvent) => { if (next.pointerId === pointerId) { diagnoseInput(DrawingInputPhase.canceled, next, next.type === 'lostpointercapture' ? 3 : 6); finish(false); } };
+    diagnoseInput(DrawingInputPhase.admitted, event);
     cancelGesture = () => finish(false);
     window.addEventListener('pointermove', moved); window.addEventListener('pointerup', released); window.addEventListener('pointercancel', canceled); svg.addEventListener('lostpointercapture', canceled);
-    if (!original) try { svg.setPointerCapture(pointerId); } catch { finish(false); }
+    if (!original) try { svg.setPointerCapture(pointerId); } catch { diagnoseInput(DrawingInputPhase.canceled, event, 6); finish(false); }
   }
   async function finishTextAt(event: PointerEvent) {
     // A click commits at the current position, then starts the next inline text.
@@ -741,7 +751,26 @@ export default function SharedDrawingEditor(props: Props) {
     catch (error) { if (!disposed) report(error); }
     finally { if (!disposed) setFinishing(false); }
   }
-  const remove = () => { const value = selectedDrawing() ?? props.port.stored?.().find(value=>value.id===selected()); if (value && !(props.blackboard&&'rich' in value&&blackboardImage(value as Drawing)) && !disabled() && !cancelGesture && !edit()) void commit({ ...target(), type: 'remove_drawing', drawingId: value.id }).then(ok => { if (ok) setSelected(''); }); };
+  const removeAction = (): EditorDrawingAction | undefined => {
+    const ids = selectedIds().length ? selectedIds() : selected() ? [selected()] : [];
+    const removable = selectionRemovals(ids, drawings(), props.port.stored?.().map(value => value.id) ?? [],
+      drawing => drawing.rich?.kind === 'repair' || Boolean(props.blackboard && blackboardImage(drawing)));
+    if (!removable?.length) return;
+    const action: EditorDrawingAction = removable.length === 1
+      ? { ...target(), type: 'remove_drawing', drawingId: removable[0] }
+      : { ...target(), type: 'remove_drawings', drawingIds: removable };
+    return props.port.allows(action) ? action : undefined;
+  };
+  const remove = () => {
+    if (disabled() || cancelGesture || edit()) return;
+    const action = removeAction(); if (!action) return;
+    const owner = identity(), removed = new Set(action.type === 'remove_drawings' ? action.drawingIds : action.type === 'remove_drawing' ? [action.drawingId] : []);
+    void commit(action).then(ok => {
+      if (!ok || disposed || identity() !== owner) return;
+      const remaining = selectedIds().filter(id => !removed.has(id));
+      batch(() => { setSelected(remaining[0] ?? ''); setSelectedIds(remaining); });
+    });
+  };
   async function pin() {
     if (disabled() || cancelGesture || !props.onPin) return;
     const currentIdentity = identity(); setFinishing(true);
@@ -803,6 +832,7 @@ export default function SharedDrawingEditor(props: Props) {
     if (!active()) throw Error('绘制编辑已切换');
   }
   async function history(redo: boolean) {
+    diagnoseInput(DrawingInputPhase.history, undefined, redo ? 1 : 0);
     if (historyDisabled() || edit() || cancelGesture) return;
     if (props.port.history && !props.port.stored) {
       try {
@@ -847,8 +877,8 @@ export default function SharedDrawingEditor(props: Props) {
     if (['c', 's'].includes(event.key.toLowerCase()) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) { event.preventDefault(); event.stopImmediatePropagation(); if (event.key.toLowerCase() === 's' && props.imageExport !== false) { if (!disabled() && !cancelGesture) openImageExport?.(); } else void done(false, event.key.toLowerCase() === 'c', false); return; }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); event.stopImmediatePropagation(); remove(); }
   }
-  const resize = () => { cancelGesture?.(); setViewport({ width: innerWidth, height: innerHeight }); };
-  const blur = () => cancelGesture?.();
+  const resize = () => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 2); cancelGesture?.(); setViewport({ width: innerWidth, height: innerHeight }); };
+  const blur = (event?: FocusEvent) => { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, event, 1); cancelGesture?.(); };
   const identity = createMemo(cacheKey);
   const queueSource = createMemo(strokeSource);
   createEffect(on(queueSource, () => {
@@ -856,15 +886,15 @@ export default function SharedDrawingEditor(props: Props) {
     strokeQueue?.stop(); strokeQueue = continuousStrokes() && !historyLane ? newStrokeQueue() : undefined; setQueuedDrawings([]); setRecoveredDrawings([]); editCacheKey = undefined;
   }));
   createEffect(on(identity, () => {
-    cancelGesture?.(); setDraft(undefined);
+    if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 4); cancelGesture?.(); setDraft(undefined);
     const saved = props.documentOnly ? undefined : drawingDrafts.get(cacheKey()); setEdit(saved);
     if (saved) { setSelected(saved.drawing.id); setTool(saved.mode === 'text' ? 'text' : 'select'); }
     else { setSelected(''); restoreStrokeDraft(); }
   }));
-  createEffect(() => { if (props.busy || props.inputLocked) cancelGesture?.(); });
+  createEffect(() => { if (props.busy || props.inputLocked) { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 5); cancelGesture?.(); } });
   const gestureSource = createMemo(gestureIdentity);
-  createEffect(on(gestureSource, () => { if (!eraseSource?.()) cancelGesture?.(); }));
-  createEffect(() => { if (svg) { const observer = new ResizeObserver(() => { const box = svg.getBoundingClientRect(); const before = surfaceSize(); if (before.width !== box.width || before.height !== box.height) { cancelGesture?.(); setSurfaceSize({ width: box.width, height: box.height }); } }); observer.observe(svg); onCleanup(() => observer.disconnect()); } });
+  createEffect(on(gestureSource, () => { if (!eraseSource?.()) { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 4); cancelGesture?.(); } }));
+  createEffect(() => { if (svg) { const observer = new ResizeObserver(() => { const box = svg.getBoundingClientRect(); const before = surfaceSize(); if (before.width !== box.width || before.height !== box.height) { if (cancelGesture) diagnoseInput(DrawingInputPhase.canceled, undefined, 2); cancelGesture?.(); setSurfaceSize({ width: box.width, height: box.height }); } }); observer.observe(svg); onCleanup(() => observer.disconnect()); } });
   createEffect(() => { if (toolbar) { const observer = new ResizeObserver(() => { setToolbarSize({ width: toolbar.offsetWidth, height: toolbar.offsetHeight }); setToolsWidth(toolsRow.offsetWidth); }); observer.observe(toolbar); observer.observe(toolsRow); onCleanup(() => observer.disconnect()); } });
   const mosaicIdentity = createMemo(() => tool() === 'mosaic' && props.port.mosaic ? JSON.stringify([props.port.sourceIdentity(), blockSize(), mosaicRetry()]) : '');
   const highlightIdentity = createMemo(() => ['highlighter', 'mark'].includes(tool()) && props.port.highlight ? JSON.stringify([props.port.highlight.identity?.() ?? props.port.sourceIdentity(), highlightRetry()]) : '');
@@ -953,7 +983,7 @@ export default function SharedDrawingEditor(props: Props) {
       <div class="drawing-history-actions">
       <button data-caption={t("撤销")} title={t("撤销 · Ctrl + Z")} aria-label={t("撤销绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(false)} disabled={historyDisabled() || !!edit() || !historyAvailable(false)} onClick={() => history(false)}><Undo2 size={17} /></button>
       <button data-caption={t("重做")} title={t("重做 · Ctrl + Shift + Z")} aria-label={t("重做绘制")} data-unavailable={controlsLocked() || !!edit() || !historyAvailable(true)} disabled={historyDisabled() || !!edit() || !historyAvailable(true)} onClick={() => history(true)}><Redo2 size={17} /></button>
-      <button ref={trashButton} class="drawing-trash" classList={{'object-dragging':objectDragging(),'object-trash-over':trashOver()}} data-unavailable={!!edit() || (!objectDragging()&&(!(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))||Boolean(props.blackboard&&selectedDrawing()&&blackboardImage(selectedDrawing()!))))} data-caption={t("删除")} title={props.blackboard?t('拖入删除'):t("删除对象 · Delete")} aria-label={props.blackboard?t('删除对象'):t("删除绘制对象")} disabled={disabled() || !!edit() || (!objectDragging()&&(!(selectedDrawing() || props.port.stored?.().some(value=>value.id===selected()))||Boolean(props.blackboard&&selectedDrawing()&&blackboardImage(selectedDrawing()!))))} onClick={remove}><Trash2 size={16} /></button>
+      <button ref={trashButton} class="drawing-trash" classList={{'object-dragging':objectDragging(),'object-trash-over':trashOver()}} data-unavailable={!!edit() || (!objectDragging()&&!removeAction())} data-caption={t("删除")} title={props.blackboard?t('拖入删除'):t("删除对象 · Delete")} aria-label={props.blackboard?t('删除对象'):t("删除绘制对象")} disabled={disabled() || !!edit() || (!objectDragging()&&!removeAction())} onClick={remove}><Trash2 size={16} /></button>
       <Show when={props.imageExport !== false}><ImageExportButton scope={strokeSource()} disabled={disabled()} onRegister={open => { openImageExport = open; return () => { if (openImageExport === open) openImageExport = undefined; }; }} onSelect={variant => void done(false, false, false, variant)} /></Show>
       <Show when={props.onPin}><button data-caption={t("贴图")} title={t("贴图 · P")} aria-label={t("贴图")} disabled={disabled()} onClick={() => void pin()}><Pin size={17} /></button></Show>
       <button data-caption={t("完成")} class="drawing-done" title={props.retainOnDone ? t("完成") : t("完成并复制")} aria-label={props.retainOnDone ? t("完成") : t("完成并复制")} disabled={props.blackboard && props.inputLocked ? props.busy || pending() || finishing() : disabled()} onClick={() => void done()}><Check size={18} /></button>

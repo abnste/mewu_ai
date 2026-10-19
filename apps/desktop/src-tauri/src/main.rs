@@ -5,6 +5,7 @@ mod agent_tools;
 mod ai;
 mod inline_reasoning;
 mod interaction_performance;
+mod drawing_diagnostics;
 mod run_cancellation;
 mod asset_host;
 mod asset_locations;
@@ -502,6 +503,7 @@ async fn apply_scene_command(
         | SceneCommand::UpdateDrawings { .. }
         | SceneCommand::EraseDrawingStrokes { .. }
         | SceneCommand::RemoveDrawing { .. }
+        | SceneCommand::RemoveDrawings { .. }
         | SceneCommand::UndoDrawing { .. }
         | SceneCommand::RedoDrawing { .. } => return Err("请从绘制工具操作".into()),
         command => command,
@@ -2998,6 +3000,7 @@ fn main() {
                 add_capture_region,
                 capture_screen,
                 capture_background_ready,
+                drawing_diagnostics::record_drawing_diagnostics,
                 blackboard::create_blackboard,
                 blackboard::finish_blackboard,
                 blackboard::open_blackboard,

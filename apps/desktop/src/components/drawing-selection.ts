@@ -6,6 +6,19 @@ export const selectionBox=(a:DrawingPoint,b:DrawingPoint):EditorBox=>({x:Math.mi
 export function marqueeDrawings(drawings:Drawing[],box:EditorBox,canSelect:(d:Drawing)=>boolean):string[]{
   return drawings.filter(d=>{if(!canSelect(d))return false;const b=drawingBounds(d);return b.x<=box.x+box.width&&b.y<=box.y+box.height&&b.x+b.width>=box.x&&b.y+b.height>=box.y;}).map(d=>d.id);
 }
+/** Resolve the whole current selection before issuing one revision-bound edit.
+ * Protected media stay selected for the existing drag-to-trash interaction. */
+export function selectionRemovals(ids: readonly string[], drawings: readonly Drawing[], storedIds: readonly string[], protectedObject: (drawing: Drawing) => boolean): string[] | undefined {
+  if (!ids.length || ids.length > 256 || new Set(ids).size !== ids.length) return;
+  const objects = new Map(drawings.map(drawing => [drawing.id, drawing])), stored = new Set(storedIds), result: string[] = [];
+  for (const id of ids) {
+    const object = objects.get(id);
+    if (object) { if (!protectedObject(object)) result.push(id); }
+    else if (stored.has(id)) result.push(id);
+    else return; // A stale mixed selection must not partially delete its rest.
+  }
+  return result;
+}
 export function movedDrawings(drawings:Drawing[],dx:number,dy:number,frame:EditorBox,source:{width:number;height:number}):Drawing[]{
   const ink=drawings.filter(d=>d.rich?.kind!=='extracted');
   if(ink.length){const boxes=ink.map(drawingBounds),x=Math.min(...boxes.map(b=>b.x)),y=Math.min(...boxes.map(b=>b.y)),right=Math.max(...boxes.map(b=>b.x+b.width)),bottom=Math.max(...boxes.map(b=>b.y+b.height));dx=drawingMoveDelta(dx,x,right,frame.x,frame.x+frame.width,source.width);dy=drawingMoveDelta(dy,y,bottom,frame.y,frame.y+frame.height,source.height);}

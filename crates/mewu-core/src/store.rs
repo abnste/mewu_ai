@@ -891,6 +891,12 @@ impl Store {
                     crate::drawing::Mutation::Remove(drawing_id),
                 )?;
             }
+            SceneCommand::RemoveDrawings {
+                scene_id, region_id, background_id, expected_revision, drawing_ids,
+            } => {
+                edit_drawing(&mut next, &scene_id, &region_id, &background_id,
+                    expected_revision, crate::drawing::Mutation::RemoveBatch(drawing_ids))?;
+            }
             SceneCommand::UpdateDrawings {
                 scene_id,
                 region_id,

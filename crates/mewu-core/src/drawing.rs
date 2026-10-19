@@ -24,6 +24,7 @@ pub(crate) enum Mutation {
     UpdateBatch(Vec<Drawing>),
     EraseStrokes(Vec<crate::DrawingStrokeErase>),
     Remove(String),
+    RemoveBatch(Vec<String>),
     Undo,
     Redo,
 }
@@ -334,6 +335,9 @@ fn trim_history(history: &mut DrawingHistory) -> Result<()> {
 }
 
 pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation) -> Result<bool> {
+    if let Mutation::RemoveBatch(ids) = mutation {
+        return remove_batch(region, background, ids);
+    }
     if let Mutation::EraseStrokes(erasures) = mutation {
         return erase_strokes(region, background, erasures);
     }
@@ -481,7 +485,7 @@ pub(crate) fn apply(region: &mut Region, background: &Asset, mutation: Mutation)
             validate(region, Some(background))?;
             return Ok(true);
         }
-        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) | Mutation::EraseStrokes(_) => {
+        Mutation::AppendBatch(_) | Mutation::UpdateBatch(_) | Mutation::EraseStrokes(_) | Mutation::RemoveBatch(_) => {
             unreachable!("handled above")
         }
     };
@@ -506,6 +510,35 @@ fn commit_batch(region: &mut Region, background: &Asset, batch: Vec<DrawingEdit>
     region.drawing_revision = next_revision(region)?;
     validate(region, Some(background))?;
     Ok(true)
+}
+
+fn remove_batch(region: &mut Region, background: &Asset, ids: Vec<String>) -> Result<bool> {
+    if ids.is_empty() || ids.len() > MAX_OBJECTS {
+        return Err(invalid("删除批次无效"));
+    }
+    let mut selected = HashSet::new();
+    for id in &ids {
+        if uuid::Uuid::parse_str(id).is_err() {
+            return Err(invalid("绘制对象标识无效"));
+        }
+        if !selected.insert(id.as_str()) {
+            return Err(invalid("删除对象重复"));
+        }
+        let object = region.drawings.iter().find(|object| &object.id == id)
+            .ok_or_else(|| invalid("绘制对象已不存在"))?;
+        if object.rich.as_ref().is_some_and(|reference| reference.kind == crate::RichKind::Repair) {
+            return Err(invalid("背景修补只能随历史撤销"));
+        }
+    }
+    // Match single Remove: an extracted parent's linked repairs travel with
+    // it. Descending indices make the whole saved step exactly reversible.
+    let batch = region.drawings.iter().enumerate().rev()
+        .filter(|(_, object)| selected.contains(object.id.as_str())
+            || object.rich.as_ref().and_then(|reference| reference.parent_id.as_deref())
+                .is_some_and(|parent| selected.contains(parent)))
+        .map(|(index, object)| DrawingEdit { index, before: Some(object.clone()), after: None })
+        .collect();
+    commit_batch(region, background, batch)
 }
 
 fn erase_strokes(

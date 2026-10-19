@@ -101,15 +101,21 @@ export function snapResize(value: SnapBounds, handle: SnapHandle, target: SnapBo
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-/** A candidate is fixed on down; exceeding either 4 CSS px threshold makes it manual. */
+/** Keep the down candidate advisory until release; dragging never flashes its full bounds. */
 export class SnapSelectionGesture {
-  private automatic?: SnapBounds;
-  constructor(private readonly start: Point, candidate?: SnapBounds) { this.automatic = candidate && { ...candidate }; }
-  get isAutomatic() { return Boolean(this.automatic); }
-  forceManual() { this.automatic = undefined; }
+  private candidate?: SnapBounds;
+  private automatic = false;
+  constructor(private readonly start: Point, candidate?: SnapBounds) { this.candidate = candidate && { ...candidate }; }
+  get isAutomatic() { return this.automatic; }
+  forceManual() { this.candidate = undefined; this.automatic = false; }
   move(point: Point, manual = false, rawPoint: Point = point): SnapBounds {
     if (manual || Math.abs(rawPoint.x - this.start.x) > 4 || Math.abs(rawPoint.y - this.start.y) > 4) this.forceManual();
-    return this.automatic ?? { x: Math.min(this.start.x, point.x), y: Math.min(this.start.y, point.y), width: Math.abs(point.x - this.start.x), height: Math.abs(point.y - this.start.y) };
+    return { x: Math.min(this.start.x, point.x), y: Math.min(this.start.y, point.y), width: Math.abs(point.x - this.start.x), height: Math.abs(point.y - this.start.y) };
+  }
+  finish(point: Point): SnapBounds {
+    const manual = this.move(point);
+    this.automatic = Boolean(this.candidate);
+    return this.candidate ?? manual;
   }
 }
 

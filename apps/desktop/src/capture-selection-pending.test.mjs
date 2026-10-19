@@ -229,6 +229,49 @@ test('exact automatic selection is held across the same-ID cloned scene and bind
   } finally { f.dispose(); }
 });
 
+test('automatic down does not flash a window-sized cutout and only an unmoved release confirms it', async () => {
+  const automatic = { id: 7, selectable: true, snapshot: true, children: [], bounds: { x: 80, y: 70, width: 900, height: 650 } };
+  const f = await fixture({ automatic });
+  try {
+    f.begin();
+    assert.deepEqual(JSON.parse(JSON.stringify(f.control.state().selection)), { x: 100, y: 100, width: 0, height: 0 });
+    assert.equal(f.cutouts().every(node => node.props.width === 0 && node.props.height === 0), true);
+    await tick(); assert.equal(f.calls.length, 0); assert.equal(f.bound.length, 0);
+    f.up(100, 100); await tick();
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].width, 900); assert.equal(f.calls[0].height, 650);
+    assert.equal(f.bound.length, 0); assert.equal(f.control.state().toolbar, false);
+    f.ack(); f.requests[0].resolve(); await tick(); assert.equal(f.bound.length, 1);
+  } finally { f.dispose(); }
+});
+
+test('fast manual dragging within one snap candidate never exposes its full window bounds', async () => {
+  const automatic = { id: 7, selectable: true, snapshot: true, children: [], bounds: { x: 80, y: 70, width: 900, height: 650 } };
+  const f = await fixture({ automatic });
+  try {
+    f.begin(); f.drag(120, 125);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.control.state().selection)), { x: 100, y: 100, width: 20, height: 25 });
+    assert.equal(f.cutouts().some(node => node.props.width === 900), false);
+    f.up(300, 260); await tick();
+    assert.deepEqual(JSON.parse(JSON.stringify(f.calls[0])), { id: 'new-region-1', x: 100, y: 100, width: 200, height: 160 });
+    f.ack(); f.requests[0].resolve(); await tick(); assert.equal(f.bound.length, 0);
+  } finally { f.dispose(); }
+});
+
+test('dragging away then returning, or canceling a held automatic candidate, cannot turn into a snap click', async () => {
+  const automatic = { id: 7, selectable: true, snapshot: true, children: [], bounds: { x: 80, y: 70, width: 900, height: 650 } };
+  for (const mode of ['return', 'cancel', 'blur']) {
+    const f = await fixture({ automatic });
+    try {
+      f.begin();
+      if (mode === 'return') { f.drag(180, 170); f.up(100, 100); }
+      else if (mode === 'cancel') f.control.cancel();
+      else f.control.blur();
+      await tick(); assert.equal(f.calls.length, 0, mode); assert.equal(f.bound.length, 0, mode);
+      assert.equal(f.outline(), undefined, mode); assert.equal(f.pointerListeners, 0, mode);
+    } finally { f.dispose(); }
+  }
+});
+
 test('a mismatching saved geometry or replacement image cannot acknowledge the pending selection', async () => {
   for (const patch of [{ width: 201 }, { imageOverride: { id: 'other-image' } }]) {
     const f = await fixture();

@@ -101,6 +101,8 @@ const checks = [];
   assert.equal(domain.hasDrawingDocument({ ...region, drawings: [], drawingHistory: { undo: [], redo: [mixed] } }), true);
   assert.equal(domain.usesDrawingDocument(region, { type: 'add_drawing', drawing }), false);
   assert.equal(domain.usesDrawingDocument(region, { type: 'remove_drawing', drawingId: vector.id }), false);
+  assert.equal(domain.usesDrawingDocument(region, { type: 'remove_drawings', drawingIds: [drawing.id, vector.id] }), true);
+  assert.equal(domain.usesDrawingDocument(region, { type: 'remove_drawings', drawingIds: [vector.id] }), false);
   assert.equal(domain.usesDrawingDocument(region, { type: 'update_drawing', drawing }), true);
   assert.equal(domain.usesDrawingDocument({ ...region, drawingHistory: { undo: [mixed], redo: [] } }, { type: 'undo_drawing' }), true);
   checks.push('Rich boxes have exact hit bounds/layer order, detached immutable refs/provenance, no style draft; mixed history remains one document step');

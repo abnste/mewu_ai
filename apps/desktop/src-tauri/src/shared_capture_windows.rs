@@ -12,7 +12,7 @@ use windows_sys::Win32::{
         Dwm::{DwmFlush, DwmGetWindowAttribute, DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_CLOAKED},
         Gdi::{
             CombineRgn, CreateRectRgn, DeleteObject, EqualRgn, GetWindowRgn, SetWindowRgn, HRGN,
-            RGN_COPY, RGN_DIFF,
+            RGN_COPY, RGN_DIFF, RGN_OR,
         },
     },
     System::Threading::{GetCurrentProcessId, GetCurrentThreadId},
@@ -177,6 +177,33 @@ impl Drop for Region {
     }
 }
 
+struct ScrollClip { bounds: Rect, roi: Rect, expected: Region }
+
+/// A long-capture HUD may span the source, but its real HWND region must not.
+/// The sole WebView paints the outside outline, preview and controls. Removing
+/// the acquired rectangle at the native boundary also removes its input target;
+/// CSS transparency is deliberately not used as proof of clean capture pixels.
+fn scroll_region(bounds: Rect, roi: Rect, shapes: &[Rect]) -> Result<Region, String> {
+    if !bounds.contains(roi) || shapes.len() > 3 { return Err("长截图显示区域无效".into()); }
+    let visible = Region::empty()?;
+    for shape in shapes {
+        let left = shape.left.max(bounds.left); let top = shape.top.max(bounds.top);
+        let right = shape.right.min(bounds.right); let bottom = shape.bottom.min(bounds.bottom);
+        if right <= left || bottom <= top { continue; }
+        let local = |value: i32, origin: i32| i32::try_from(i64::from(value)-i64::from(origin)).map_err(|_| "长截图显示坐标无效");
+        let piece = Region(unsafe { CreateRectRgn(local(left,bounds.left)?,local(top,bounds.top)?,local(right,bounds.left)?,local(bottom,bounds.top)?) } as usize);
+        if piece.0 == 0 || unsafe { CombineRgn(visible.raw(),visible.raw(),piece.raw(),RGN_OR) } == 0 {
+            return Err("无法准备长截图显示区域".into());
+        }
+    }
+    let local = |value: i32, origin: i32| i32::try_from(i64::from(value)-i64::from(origin)).map_err(|_| "长截图采集坐标无效");
+    let hole = Region(unsafe { CreateRectRgn(local(roi.left,bounds.left)?,local(roi.top,bounds.top)?,local(roi.right,bounds.left)?,local(roi.bottom,bounds.top)?) } as usize);
+    if hole.0 == 0 || unsafe { CombineRgn(visible.raw(),visible.raw(),hole.raw(),RGN_DIFF) } == 0 {
+        return Err("无法留出长截图采集区域".into());
+    }
+    Ok(visible)
+}
+
 fn affinity(hwnd: HWND) -> Result<u32, String> {
     let mut value = u32::MAX;
     if unsafe { GetWindowDisplayAffinity(hwnd, &mut value) } == 0 {
@@ -282,6 +309,9 @@ pub(crate) struct Lease {
     before_cloak: u32,
     before_bounds: Rect,
     before_region: Option<Region>,
+    // Only the disposable long-capture HUD uses this explicit native aperture.
+    // Recording and the main capture lease continue through their original path.
+    scroll_clip: Option<ScrollClip>,
     applied_region: Option<Region>,
     region_restoring: bool,
     input_changed: bool,
@@ -335,6 +365,7 @@ impl Lease {
             before_cloak,
             before_bounds,
             before_region,
+            scroll_clip: None,
             applied_region: None,
             region_restoring: false,
             input_changed: false,
@@ -352,6 +383,45 @@ impl Lease {
                 && IsWindow(self.hwnd as HWND) != 0
                 && GetPropW(self.hwnd as HWND, self.cookie.as_ptr()) as usize == 1
         }
+    }
+    fn set_scroll_clip(&mut self, roi: Rect, shapes: &[Rect]) -> Result<(), String> {
+        if !self.current() || self.finished || self.prepared {
+            return Err("长截图控件身份已改变".into());
+        }
+        let hwnd = self.hwnd as HWND;
+        let native = window_rect(hwnd)?;
+        let bounds = Rect { left:native.left,top:native.top,right:native.right,bottom:native.bottom };
+        if bounds != self.before_bounds { return Err("长截图控件位置已改变".into()); }
+        if let Some(clip) = &self.scroll_clip {
+            let actual = region(hwnd)?.ok_or("长截图显示区域已改变")?;
+            if clip.roi != roi || unsafe { EqualRgn(actual.raw(),clip.expected.raw()) } == 0 {
+                return Err("长截图显示区域已改变".into());
+            }
+        }
+        let expected = scroll_region(bounds,roi,shapes)?;
+        if self.scroll_clip.as_ref().is_some_and(|clip| unsafe { EqualRgn(clip.expected.raw(),expected.raw()) } != 0) {
+            // Once the preview reaches its cap, new image pixels do not require
+            // another SetWindowRgn/DwmFlush or native window repaint.
+            return self.verify_scroll_clip(roi);
+        }
+        expected.copy()?.assign(hwnd)?;
+        // Remember successful native mutation before any fallible readback.
+        self.scroll_clip = Some(ScrollClip { bounds,roi,expected });
+        flush()?;
+        self.verify_scroll_clip(roi)
+    }
+    fn verify_scroll_clip(&self, roi: Rect) -> Result<(), String> {
+        if !self.current() || self.finished { return Err("长截图控件身份已改变".into()); }
+        let clip = self.scroll_clip.as_ref().ok_or("长截图显示区域未就绪")?;
+        let hwnd = self.hwnd as HWND;
+        let native = window_rect(hwnd)?;
+        let bounds = Rect { left:native.left,top:native.top,right:native.right,bottom:native.bottom };
+        let actual = region(hwnd)?.ok_or("长截图显示区域已改变")?;
+        if clip.roi != roi || clip.bounds != bounds || unsafe { EqualRgn(actual.raw(),clip.expected.raw()) } == 0
+            || affinity(hwnd)? != if self.shared { 0 } else { 0x11 } {
+            return Err("长截图控件无法避开采集区域".into());
+        }
+        Ok(())
     }
     pub fn prepare(&mut self, roi: Rect, whole_window: bool) -> Result<(), String> {
         if !self.current() || self.finished || self.prepared {
@@ -656,6 +726,11 @@ impl Session {
             }
         }
     }
+    /// Long-capture-only extension. Existing recording HUDs never call this.
+    pub fn configure_scroll_hud(&mut self, roi: Rect, shapes: &[Rect]) -> Result<(), String> {
+        self.main.verify(roi)?;
+        self.hud.as_mut().ok_or("长截图控件不存在")?.1.set_scroll_clip(roi,shapes)
+    }
     fn restore(&mut self) -> Result<(), String> {
         let hud = (|| {
             if let Some((window, lease)) = &mut self.hud {
@@ -679,7 +754,9 @@ impl Session {
             if !lease.current() {
                 return Err("采集控制条身份已改变".into());
             }
-            if self.main.shared
+            if lease.scroll_clip.is_some() {
+                lease.verify_scroll_clip(roi)?;
+            } else if self.main.shared
                 && unsafe {
                     windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible(lease.hwnd as HWND)
                 } != 0
@@ -863,6 +940,83 @@ mod tests {
         assert_eq!(hud_position(work, work, (176, 44)), None);
         assert_eq!(hud_position(work, roi(), (900, 44)), None);
         assert!(Rect::new(i32::MAX, 0, 1, 1).is_err());
+    }
+    #[test]
+    fn scroll_native_aperture_always_subtracts_every_acquired_pixel_even_from_overlapping_shapes() {
+        use windows_sys::Win32::Graphics::Gdi::{PtInRegion, RGN_AND};
+        let bounds = Rect::new(-2000,-100,800,600).unwrap();
+        let clip = scroll_region(bounds,roi(),&[bounds]).unwrap();
+        let hole = Region(unsafe { CreateRectRgn(100,100,400,300) } as usize);
+        let intersection = Region::empty().unwrap();
+        assert_ne!(unsafe { CombineRgn(intersection.raw(),clip.raw(),hole.raw(),RGN_AND) },0);
+        assert_ne!(unsafe { EqualRgn(intersection.raw(),Region::empty().unwrap().raw()) },0);
+        for (x,y) in [(100,100),(399,100),(100,299),(399,299),(250,200)] {
+            assert_eq!(unsafe { PtInRegion(clip.raw(),x,y) },0);
+        }
+        for (x,y) in [(99,100),(400,100),(100,99),(100,300)] {
+            assert_ne!(unsafe { PtInRegion(clip.raw(),x,y) },0);
+        }
+        assert!(scroll_region(bounds,Rect::new(0,0,10,10).unwrap(),&[]).is_err());
+        assert!(scroll_region(bounds,roi(),&[bounds;4]).is_err());
+    }
+    #[test]
+    fn scroll_native_shared_hud_grows_while_main_window_stays_safely_cloaked() {
+        use windows_sys::Win32::Graphics::Gdi::PtInRegion;
+        let main = Window::new();
+        let mut main_lease = Lease::capture(main.0 as usize,true).unwrap();
+        main_lease.prepare(roi(),false).unwrap();
+        assert_eq!(cloak(main.0).unwrap(),APP_CLOAK);
+        let hud = Window::new();
+        let mut lease = Lease::capture(hud.0 as usize,true).unwrap();
+        let outline = Rect::new(-1902,-2,304,204).unwrap();
+        let short = Rect::new(-1550,0,150,100).unwrap();
+        lease.set_scroll_clip(roi(),&[outline,short]).unwrap();
+        let first = region(hud.0).unwrap().unwrap();
+        assert_eq!(unsafe { PtInRegion(first.raw(),500,250) },0);
+        let tall = Rect::new(-1550,0,150,300).unwrap();
+        lease.set_scroll_clip(roi(),&[outline,tall]).unwrap();
+        let grown = region(hud.0).unwrap().unwrap();
+        assert_ne!(unsafe { PtInRegion(grown.raw(),500,250) },0);
+        assert_eq!(unsafe { PtInRegion(grown.raw(),250,200) },0);
+        lease.set_scroll_clip(roi(),&[outline,tall]).unwrap();
+        lease.verify_scroll_clip(roi()).unwrap();
+        main_lease.verify(roi()).unwrap();
+        assert_eq!(cloak(main.0).unwrap(),APP_CLOAK);
+        assert_eq!(affinity(hud.0).unwrap(),0);
+        // Session cleanup destroys only its disposable HUD before restoring it.
+        drop(hud);
+        lease.restore().unwrap();
+        main_lease.restore().unwrap();
+        assert!(region(main.0).unwrap().is_none());
+    }
+    #[test]
+    fn scroll_native_hud_rejects_foreign_region_or_identity_without_overwriting_it() {
+        let hud = Window::new();
+        let mut lease = Lease::capture(hud.0 as usize,true).unwrap();
+        let shape = Rect::new(-1550,0,150,100).unwrap();
+        lease.set_scroll_clip(roi(),&[shape]).unwrap();
+        let empty = Region::empty().unwrap();
+        empty.copy().unwrap().assign(hud.0).unwrap();
+        assert!(lease.verify_scroll_clip(roi()).is_err());
+        assert!(lease.set_scroll_clip(roi(),&[shape]).is_err());
+        assert_ne!(unsafe { EqualRgn(region(hud.0).unwrap().unwrap().raw(),empty.raw()) },0);
+        unsafe { RemovePropW(hud.0,lease.cookie.as_ptr()); }
+        assert!(lease.set_scroll_clip(roi(),&[shape]).is_err());
+        assert_ne!(unsafe { EqualRgn(region(hud.0).unwrap().unwrap().raw(),empty.raw()) },0);
+        drop(hud);
+        lease.restore().unwrap();
+    }
+    #[test]
+    fn scroll_native_protected_hud_retains_original_capture_exclusion_policy() {
+        let hud = Window::new();
+        let mut lease = Lease::capture(hud.0 as usize,false).unwrap();
+        assert_ne!(unsafe { SetWindowDisplayAffinity(hud.0,0x11) },0);
+        lease.set_scroll_clip(roi(),&[Rect::new(-1550,0,150,100).unwrap()]).unwrap();
+        lease.verify_scroll_clip(roi()).unwrap();
+        assert_eq!(affinity(hud.0).unwrap(),0x11);
+        assert_eq!(cloak(hud.0).unwrap(),0);
+        drop(hud);
+        lease.restore().unwrap();
     }
     #[test]
     fn shared_native_no_explicit_region_cloaks_without_rewriting_region_or_affinity() {

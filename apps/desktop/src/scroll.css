@@ -20,3 +20,9 @@ html[data-surface="scroll-live"],html[data-surface="scroll-live"] body,html[data
 .scroll-preview{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;border-radius:12px;background:transparent;box-shadow:var(--shadow-menu)}
 .scroll-preview img{display:block;width:100%;height:auto}
 .scroll-controls{flex:none}
+.scroll-controls-slot{flex:none}
+.scroll-compound-window{position:fixed;inset:0;display:block;padding:0;overflow:hidden;pointer-events:none}
+.scroll-compound-window .scroll-controls-slot{position:absolute;padding:10px;pointer-events:auto}
+.scroll-compound-window .scroll-preview{position:absolute;display:block;overflow:hidden;border:1px solid var(--line);background:#fcfdffbf;padding:4px;pointer-events:none}
+.scroll-compound-window .scroll-preview img{width:100%;height:100%;object-fit:contain;object-position:center bottom}
+.scroll-live-outline{position:absolute;box-sizing:border-box;border:2px solid #3297f2;pointer-events:none}

@@ -999,6 +999,13 @@ pub enum SceneCommand {
         expected_revision: u64,
         drawing_id: String,
     },
+    RemoveDrawings {
+        scene_id: String,
+        region_id: String,
+        background_id: String,
+        expected_revision: u64,
+        drawing_ids: Vec<String>,
+    },
     UndoDrawing {
         scene_id: String,
         region_id: String,

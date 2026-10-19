@@ -529,6 +529,7 @@ fn apply_plugin_drawing_blocking(
             })
         }
         SceneCommand::RemoveDrawing { .. }
+        | SceneCommand::RemoveDrawings { .. }
         | SceneCommand::EraseDrawingStrokes { .. }
         | SceneCommand::UndoDrawing { .. }
         | SceneCommand::RedoDrawing { .. } => None,

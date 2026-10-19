@@ -119,6 +119,7 @@ fn main() {
             "add_capture_region",
             "capture_screen",
             "capture_background_ready",
+            "record_drawing_diagnostics",
             "import_assets",
             "open_web_link",
             "set_ui_language",

@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { createContext, SourceTextModule, SyntheticModule } from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadHighlightSource } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadDrawingDiagnostics, loadHighlightSource } from './geometry-test-module.mjs';
 
 const raw = file => readFile(new URL(file, import.meta.url), 'utf8');
 const ts = text => stripTypeScriptTypes(text, { mode: 'transform' });
@@ -36,7 +36,7 @@ async function fixture(failEvent) {
   const history = await loadGeometryHistory(context), imported = await loadAssetImport(context);
   const mosaic = new SourceTextModule(ts(await raw('mosaic-preview.ts')), { context }); await mosaic.link(() => { throw Error('unexpected dependency'); });
   const bridge = new SourceTextModule(ts(await raw('bridge.ts')), { context, initializeImportMeta: meta => { meta.glob = () => ({}); } });
-  await bridge.link(async name => name === './highlight-source' ? await loadHighlightSource(context)
+  await bridge.link(async name => name === './drawing-diagnostics' ? await loadDrawingDiagnostics(context) : name === './highlight-source' ? await loadHighlightSource(context)
     : name === './provider-presets' ? await loadProviderPresets(context) : name === './asset-import' ? imported
     : name === './region-geometry-history' ? history : name === './connection-policy' ? policy
     : name === './mosaic-preview' ? mosaic : name === './capture-performance' ? performance

@@ -53,11 +53,16 @@ const map = roots => ({ version: 1, backgroundId: 'bg', width: 1200, height: 800
   assert.deepEqual(snapImagePoint(200, 125, image, .5), { x: 200, y: 100 });
   assert.equal(snapImagePoint(99, 125, image, .5), undefined); assert.equal(snapImagePoint(700, 125, image, .5), undefined); assert.equal(snapImagePoint(200, 475, image, .5), undefined);
   const candidate = box(110, 80, 300, 200), gesture = new SnapSelectionGesture({ x: 120, y: 90 }, candidate);
-  assert.deepEqual(gesture.move({ x: 124, y: 94 }), candidate); const dragged = gesture.move({ x: 124.01, y: 90 }); assert.ok(Math.abs(dragged.width - 4.01) < 1e-10); assert.equal(dragged.height, 0);
+  assert.deepEqual(gesture.move({ x: 120, y: 90 }), box(120, 90, 0, 0)); assert.equal(gesture.isAutomatic, false);
+  assert.deepEqual(gesture.move({ x: 124, y: 94 }), box(120, 90, 4, 4)); const dragged = gesture.move({ x: 124.01, y: 90 }); assert.ok(Math.abs(dragged.width - 4.01) < 1e-10); assert.equal(dragged.height, 0);
   assert.equal(gesture.isAutomatic, false); assert.deepEqual(gesture.move({ x: 120, y: 90 }), box(120, 90, 0, 0));
-  const edge = new SnapSelectionGesture({ x: 101, y: 100 }, candidate); edge.move({ x: 100, y: 100 }, false, { x: 80, y: 100 }); assert.equal(edge.isAutomatic, false);
-  const shift = new SnapSelectionGesture({ x: 120, y: 90 }, candidate); shift.forceManual(); assert.equal(shift.isAutomatic, false);
-  checks.push('Contain uses CSS coordinates without screen-origin/DPI multiplication; strict >4px per axis commits to manual mode even when dragged outside the clamped image');
+  assert.deepEqual(gesture.finish({ x: 120, y: 90 }), box(120, 90, 0, 0)); assert.equal(gesture.isAutomatic, false);
+  const click = new SnapSelectionGesture({ x: 120, y: 90 }, candidate); assert.deepEqual(click.move({ x: 120, y: 90 }), box(120, 90, 0, 0)); assert.equal(click.isAutomatic, false); assert.deepEqual(click.finish({ x: 120, y: 90 }), candidate); assert.equal(click.isAutomatic, true);
+  const jitter = new SnapSelectionGesture({ x: 120, y: 90 }, candidate); jitter.move({ x: 124, y: 94 }); assert.deepEqual(jitter.finish({ x: 124, y: 94 }), candidate); assert.equal(jitter.isAutomatic, true);
+  const edge = new SnapSelectionGesture({ x: 101, y: 100 }, candidate); edge.move({ x: 100, y: 100 }, false, { x: 80, y: 100 }); assert.deepEqual(edge.finish({ x: 100, y: 100 }), box(100, 100, 1, 0)); assert.equal(edge.isAutomatic, false);
+  const shift = new SnapSelectionGesture({ x: 120, y: 90 }, candidate); shift.forceManual(); assert.deepEqual(shift.finish({ x: 120, y: 90 }), box(120, 90, 0, 0)); assert.equal(shift.isAutomatic, false);
+  const manual = new SnapSelectionGesture({ x: 120, y: 90 }); assert.deepEqual(manual.finish({ x: 220, y: 190 }), box(120, 90, 100, 100)); assert.equal(manual.isAutomatic, false);
+  checks.push('Pointer down and drag show only manual bounds; an unmoved release alone confirms the fixed snap candidate, with 4 CSS px jitter tolerance and sticky Shift/outside/drag cancellation');
 }
 {
   const value = box(100, 100, 200, 150), target = box(104, 105, 200, 150);

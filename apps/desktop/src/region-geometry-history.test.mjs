@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { SourceTextModule, SyntheticModule } from 'node:vm';
 import { webcrypto } from 'node:crypto';
-import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadHighlightSource } from './geometry-test-module.mjs';
+import { loadProviderPresets, loadGeometryHistory, loadAssetImport, loadDrawingDiagnostics, loadHighlightSource } from './geometry-test-module.mjs';
 const source = async file => stripTypeScriptTypes(await readFile(new URL(file, import.meta.url), 'utf8'), { mode: 'transform' });
 const history = await loadGeometryHistory(), { geometryHistoryCommand, geometryHistoryReceipt, geometryHistoryKey } = history.namespace;
 const importedAssets = await loadAssetImport();
@@ -14,7 +14,7 @@ const policy = new SourceTextModule(await source('./connection-policy.ts')); awa
 const mosaic = new SourceTextModule(await source('./mosaic-preview.ts')); await mosaic.link(() => { throw Error('Unexpected import'); });
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 const bridge = new SourceTextModule(`${await source('./bridge.ts')}\nexport const seed = value => { previewGeometry.close(); preview = value; };`, { initializeImportMeta: meta => { meta.glob = () => ({}); } });
-await bridge.link(async name => name === './highlight-source' ? await loadHighlightSource() : name === './provider-presets' ? await loadProviderPresets() : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? synthetic({ isTauri: () => false, invoke: () => { throw Error('No native'); } }) : synthetic({ listen: () => { throw Error('No native'); } })); await bridge.evaluate();
+await bridge.link(async name => name === './drawing-diagnostics' ? await loadDrawingDiagnostics() : name === './highlight-source' ? await loadHighlightSource() : name === './provider-presets' ? await loadProviderPresets() : name === './asset-import' ? importedAssets : name === './region-geometry-history' ? history : name === './connection-policy' ? policy : name === './mosaic-preview' ? mosaic : name.endsWith('/core') ? synthetic({ isTauri: () => false, invoke: () => { throw Error('No native'); } }) : synthetic({ listen: () => { throw Error('No native'); } })); await bridge.evaluate();
 const api = bridge.namespace, id = () => webcrypto.randomUUID(), checks = [];
 const region = name => ({ id: name, x: 10, y: 20, width: 100, height: 80, drawingRevision: 0, drawings: [], drawingHistory: { undo: [], redo: [] } });
 const fixture = () => {

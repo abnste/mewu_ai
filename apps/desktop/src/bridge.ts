@@ -15,6 +15,7 @@ import type { PluginManifest } from './plugin-contracts';
 import { bundledProviderPresets } from './provider-presets';
 import type { CaptureBackgroundReady } from './capture-presentation';
 import * as capturePerformance from './capture-performance';
+import { startDrawingDiagnostics } from './drawing-diagnostics';
 
 export const native = isTauri();
 export async function captureBackgroundReady(ready: CaptureBackgroundReady): Promise<boolean> {
@@ -574,6 +575,12 @@ export async function previewDrawingCommand(command:DrawingCommand):Promise<Snap
     for(const {index,old,values} of operations){if(values.length===1&&JSON.stringify(values[0])===JSON.stringify(old))continue;batch.push({index,before:structuredClone(old),after:null});for(let i=0;i<values.length;i++)batch.push({index:index+i,before:null,after:values[i]});}
     if(!batch.length)return clone();
     for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];if(history.undo.length>128)history.undo.shift();
+  }else if(command.type==='remove_drawings'){
+    if(!command.drawingIds.length||command.drawingIds.length>256||new Set(command.drawingIds).size!==command.drawingIds.length)throw Error('删除批次无效');
+    const selected=new Set(command.drawingIds);
+    for(const id of selected){const drawing=drawings.find(d=>d.id===id);if(!drawing)throw Error('绘制对象已不存在');if(drawing.rich?.kind==='repair')throw Error('背景修补只能随历史撤销');}
+    const batch:DrawingEdit[]=drawings.flatMap((drawing,index)=>selected.has(drawing.id)||Boolean(drawing.rich?.parentId&&selected.has(drawing.rich.parentId))?[{index,before:structuredClone(drawing),after:null}]:[]).reverse();
+    for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];if(history.undo.length>128)history.undo.shift();
   }else if(command.type==='update_drawings'){
     const batch=command.drawings.map(drawing=>{const index=drawings.findIndex(d=>d.id===drawing.id);if(index<0)throw Error('绘制对象不存在');return {index,before:structuredClone(drawings[index]),after:structuredClone(drawing)};});
     for(const edit of batch)apply(edit,true);history.undo.push({batch});history.redo=[];
@@ -787,7 +794,9 @@ export async function exportSnapshot(): Promise<void> {
 export async function subscribe(onSnapshot: (snapshot: Snapshot) => void, onRun: (event: RunEvent) => void, onError: (message: string) => void, surface: 'space' | 'settings' = 'space'): Promise<() => void> {
   if (!native) { snapshotListeners.add(onSnapshot); return () => snapshotListeners.delete(onSnapshot); }
   // Events can arrive before getSnapshot resolves; prepare document URLs first.
-  await runtimeInfo();
+  const info = await runtimeInfo();
+  const stopDrawingDiagnostics = surface === 'space' && info.measureInteractions === true
+    ? startDrawingDiagnostics(true, payload => invoke('record_drawing_diagnostics', { payload })) : undefined;
   // Tauri's default Any target also receives events sent to other windows.
   // Run fragments are emitted separately to space and the minimized-scene widget.
   const publication = new SnapshotNoticePump(getSnapshot, onSnapshot, onError);
@@ -796,7 +805,7 @@ export async function subscribe(onSnapshot: (snapshot: Snapshot) => void, onRun:
   let unlistenSnapshot: (() => void) | undefined;
   const stopSnapshot = () => {
     if (snapshotStopped) return;
-    snapshotStopped = true; publication.dispose();
+    snapshotStopped = true; publication.dispose(); stopDrawingDiagnostics?.();
     if (surface === 'space') snapshotMeasurementConsumers--;
     unlistenSnapshot?.();
   };
