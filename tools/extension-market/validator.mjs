@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lstat, realpath } from 'node:fs/promises';
-import { readBounded } from '../plugin-catalog/cli.mjs';
+import { readBounded } from './files.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const CONTRACT_PATHS = [
@@ -45,7 +45,7 @@ export function invokeExtensionValidator(executable, mode, bytes, expectedFinger
       if (result?.protocolVersion !== 1 || (project
           ? result.projectContractVersion !== 1 || result.projectContractSha256 !== expectedFingerprint
           : result.extensionContractVersion !== 2 || result.extensionContractSha256 !== expectedFingerprint) || typeof result.ok !== 'boolean') {
-        return reject(new Error('原生 API 2 契约与可信源码不一致，请重新构建校验器'));
+        return reject(new Error('原生 API 契约与可信源码不一致，请重新构建校验器'));
       }
       if (code === 0 && result.ok && Object.hasOwn(result, 'value')) return resolve(result.value);
       if (code === 1 && !result.ok && typeof result.error === 'string') return reject(new Error(result.error));

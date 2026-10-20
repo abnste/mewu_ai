@@ -125,7 +125,6 @@ mod extension_focus;
 mod extension_input;
 mod extension_agent;
 mod extension_agent_authority;
-mod plugin_sources;
 mod plugins;
 mod provider_transport;
 mod sse_budget;
@@ -3067,6 +3066,8 @@ fn main() {
                 connection_host::cancel_connection_probe,
                 mcp_host::discover_mcp_server,
                 plugin_host::get_plugins,
+                plugin_host::get_official_plugins,
+                plugin_host::control_official_plugin,
                 extension_host::get_extensions,
                 extension_host::get_extension_bindings,
                 extension_host::set_extension_binding,
@@ -3078,14 +3079,6 @@ fn main() {
                 extension_host::control_extension,
                 extension_host::invoke_extension,
                 extension_host::stop_extension,
-                plugin_host::get_plugin_catalog,
-                plugin_host::prepare_plugin,
-                plugin_host::install_plugin,
-                plugin_host::set_plugin_enabled,
-                plugin_host::uninstall_plugin,
-                plugin_host::rollback_plugin,
-                plugin_host::reinstall_official_plugin,
-                plugin_host::prepare_plugin_update,
                 plugin_host::run_plugin_workflow,
                 plugin_host::apply_plugin_drawing,
                 mosaic_preview::get_mosaic_preview,

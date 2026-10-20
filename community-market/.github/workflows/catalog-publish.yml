@@ -35,7 +35,7 @@ jobs:
       - name: Verify every release and rebuild public index
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node trusted-host/tools/extension-market/cli.mjs build entries --out mewu-catalog-v2.json --legacy-out mewu-catalog.json --previous mewu-catalog.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
+        run: node trusted-host/tools/extension-market/cli.mjs build entries --out mewu-market.json --legacy-out mewu-catalog.json --previous mewu-catalog.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
       - name: Check trusted project tooling and actual native contracts
         working-directory: trusted-host
         env:
@@ -47,12 +47,12 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path -LiteralPath projects)) { New-Item -ItemType Directory -Path projects | Out-Null }
-          node trusted-host/tools/extension-market/cli.mjs build-projects projects --catalog mewu-catalog-v2.json --out mewu-projects.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
+          node trusted-host/tools/extension-market/cli.mjs build-projects projects --catalog mewu-market.json --out mewu-projects.json --validator trusted-host/target/debug/mewu-plugin-validator.exe --json
           if ($LASTEXITCODE -ne 0) { throw 'Project verification failed; no indexes committed' }
       - name: Commit generated index only
         shell: pwsh
         run: |
-          git add -- mewu-catalog-v2.json mewu-catalog.json mewu-projects.json
+          git add -- mewu-market.json mewu-catalog.json mewu-projects.json
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 0) { exit 0 }
           if ($LASTEXITCODE -ne 1) { throw 'Cannot inspect generated catalog diff' }

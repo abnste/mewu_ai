@@ -1,6 +1,8 @@
-# Executable extensions (API 2)
+# Executable extensions (API)
 
-Mewu keeps its Rust/Tauri screenshot interface. API 2 extensions contain executable JavaScript modules, run on demand in a separate QuickJS worker, and use a versioned host bridge. Installing a plugin does not install Electron, Node.js or Python. The earlier JSON-only API 1 packages remain supported.
+Mewu keeps its Rust/Tauri screenshot interface. API extensions contain executable JavaScript modules, run on demand in a separate QuickJS worker, and use a versioned host bridge. Installing a plugin does not install Electron, Node.js or Python. Community plugins use executable JavaScript packages; JSON-only declaration packages are no longer accepted. Existing user data and built-in module choices are preserved.
+
+Built-in modules retain their historical on-disk metadata for user preferences and data audits. That metadata is not an installable plugin API. There is no declaration-package importer, remote declaration catalog or declaration update command; retained third-party declarations are excluded from capability snapshots and rejected at execution. The executable package's `schemaVersion` and `hostApi` fields remain versioned for validation, under the single public name **Mewu API**.
 
 The community catalog is maintained separately at [abnste/mewu-plugins](https://github.com/abnste/mewu-plugins). Authors keep their code and versioned ZIP releases in their own GitHub repository and submit an entry to the catalog. Catalog entries are discovery metadata; installation downloads the actual ZIP and checks its size, SHA-256 and manifest identity.
 
@@ -110,8 +112,8 @@ The separate [journal memory](../extensions/examples/journal-memory) and [intera
 
 ## Lifecycle and permissions
 
-Workers have no ambient file, network, process or native-module API. Host calls require the plugin's declared permission and live version/state checks. Limits on script memory, execution time, protocol messages and individual values protect the application; they are not a promise that arbitrary native code has an OS security sandbox. Third-party native executables are not accepted as API 2 package modules.
+Workers have no ambient file, network, process or native-module API. Host calls require the plugin's declared permission and live version/state checks. Limits on script memory, execution time, protocol messages and individual values protect the application; they are not a promise that arbitrary native code has an OS security sandbox. Third-party native executables are not accepted as API package modules.
 
 `network.fetch` permits HTTPS and HTTP on literal loopback addresses or `localhost`, including an operator's local Agent or memory service. It does not grant unrestricted HTTP, redirects, shell execution or a host credential export. Package authors must implement their service's protocol in JavaScript or delegate to another declared plugin service.
 
-Activations and invocations run off the UI thread. Unload cancels requests, disposes registrations and waits for the worker to exit. The registry, package bytes, rollback version, provider bindings and plugin-owned storage live in `extensions.db` under the user's configured Mewu data directory. They move with that directory; the original conversation and API 1 databases are preserved.
+Activations and invocations run off the UI thread. Unload cancels requests, disposes registrations and waits for the worker to exit. The registry, package bytes, rollback version, provider bindings and plugin-owned storage live in `extensions.db` under the user's configured Mewu data directory. They move with that directory; existing conversations, built-in module choices and retired declaration records are preserved. Retired third-party declarations do not grant capabilities or execute.

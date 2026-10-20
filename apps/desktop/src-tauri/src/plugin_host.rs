@@ -1,97 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 use crate::{
-    plugin_sources::{self, Catalog, CatalogEntry},
     plugins::{self, PluginManifest, PluginSnapshot, PluginSource, PluginState, PluginStore},
     Host, HostSnapshot,
 };
 use mewu_core::SceneCommand;
-use serde::Serialize;
-use sha2::{Digest, Sha256};
+use serde::Deserialize;
 use std::{
     collections::HashMap,
     path::Path,
-    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginProposal {
-    id: String,
-    manifest: PluginManifest,
-    source: PluginSource,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    expected_revision: Option<u64>,
-    sha256: String,
-}
-struct Pending {
-    proposal: PluginProposal,
-    bytes: Vec<u8>,
-    created: Instant,
-}
-pub struct PluginRuntime {
-    pub store: PluginStore,
-    proposals: HashMap<String, Pending>,
-    catalog_generation: u64,
-}
+pub struct PluginRuntime { pub store: PluginStore }
 impl PluginRuntime {
-    pub fn open(root: &Path) -> Result<Self, String> {
-        Self::open_with_blackboard(root, false)
-    }
+    pub fn open(root: &Path) -> Result<Self, String> { Self::open_with_blackboard(root, false) }
     pub fn open_with_blackboard(root: &Path, existing_blackboard: bool) -> Result<Self, String> {
-        Ok(Self {
-            store: PluginStore::open_with_blackboard(root, existing_blackboard)?,
-            proposals: HashMap::new(),
-            catalog_generation: 0,
-        })
-    }
-    fn prepare(
-        &mut self,
-        bytes: Vec<u8>,
-        source: PluginSource,
-        expected: Option<(String, u64)>,
-    ) -> Result<PluginProposal, String> {
-        let manifest = plugins::parse_manifest(&bytes)?;
-        if manifest.id.starts_with("mewu.") {
-            return Err("第三方包不能替换官方插件".into());
-        }
-        let installed = self
-            .store
-            .list()?
-            .into_iter()
-            .find(|p| p.manifest.id == manifest.id);
-        if let Some((id, revision)) = expected {
-            if manifest.id != id || installed.as_ref().is_none_or(|p| p.revision != revision) {
-                return Err("插件已变更，请重新读取".into());
-            }
-            if installed
-                .as_ref()
-                .is_some_and(|p| p.manifest.version == manifest.version)
-            {
-                return Err("已是当前版本".into());
-            }
-        }
-        self.proposals
-            .retain(|_, p| p.created.elapsed() < Duration::from_secs(600));
-        if self.proposals.len() >= 16 {
-            return Err("待安装插件过多，请稍后重新读取".into());
-        }
-        let proposal = PluginProposal {
-            id: uuid::Uuid::new_v4().to_string(),
-            expected_revision: installed.map(|p| p.revision),
-            sha256: format!("{:x}", Sha256::digest(&bytes)),
-            manifest,
-            source,
-        };
-        self.proposals.insert(
-            proposal.id.clone(),
-            Pending {
-                proposal: proposal.clone(),
-                bytes,
-                created: Instant::now(),
-            },
-        );
-        Ok(proposal)
+        Ok(Self { store: PluginStore::open_with_blackboard(root, existing_blackboard)? })
     }
 }
 fn lock(host: &Host) -> Result<std::sync::MutexGuard<'_, PluginRuntime>, String> {
@@ -249,148 +173,7 @@ pub fn get_plugins(host: tauri::State<'_, Host>) -> Result<PluginSnapshot, Strin
 }
 
 #[tauri::command]
-pub async fn get_plugin_catalog(
-    app: AppHandle,
-    source_url: Option<String>,
-) -> Result<Catalog, String> {
-    let (source, generation) = {
-        let host = app.state::<Host>();
-        let mut runtime = lock(&host)?;
-        runtime.catalog_generation = runtime.catalog_generation.wrapping_add(1);
-        (
-            source_url.or(runtime.store.get_catalog_source()?),
-            runtime.catalog_generation,
-        )
-    };
-    let mut entries: Vec<_> = plugins::bundled_manifests()
-        .into_iter()
-        .map(|manifest| CatalogEntry {
-            manifest,
-            source: PluginSource::Official,
-            installed: None,
-        })
-        .collect();
-    let source = source.filter(|s| !s.trim().is_empty());
-    let mut error = None;
-    if let Some(url) = &source {
-        let result = async {
-            let parsed = plugin_sources::parse_url(url, "mewu-catalog.json")?;
-            let (bytes, _) = plugin_sources::download(parsed, 2 * 1024 * 1024).await?;
-            plugin_sources::parse_catalog(&bytes)
-        }
-        .await;
-        match result {
-            Ok(remote) => entries.extend(remote),
-            Err(e) => error = Some(e),
-        }
-    }
-    let host = app.state::<Host>();
-    let mut runtime = lock(&host)?;
-    host.exit.ensure_running()?;
-    if runtime.catalog_generation == generation && error.is_none() {
-        runtime.store.set_catalog_source(source.as_deref())?;
-    }
-    let installed = runtime.store.list()?;
-    for entry in &mut entries {
-        entry.installed = installed
-            .iter()
-            .find(|p| p.manifest.id == entry.manifest.id)
-            .cloned();
-    }
-    Ok(Catalog {
-        entries,
-        source,
-        error,
-    })
-}
-
-#[tauri::command]
-pub async fn prepare_plugin(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    url: Option<String>,
-) -> Result<Option<PluginProposal>, String> {
-    let (bytes, source) = if let Some(url) = url {
-        plugin_sources::download(
-            plugin_sources::parse_url(&url, "mewu-plugin.json")?,
-            plugins::MAX_MANIFEST_BYTES,
-        )
-        .await?
-    } else {
-        let result = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
-            let Some(path) = rfd::FileDialog::new()
-                .set_parent(&window)
-                .add_filter("Mewu 插件", &["json"])
-                .pick_file()
-            else {
-                return Ok(None);
-            };
-            let bytes = plugins::read_validated_local(&path)?;
-            let path = path
-                .canonicalize()
-                .map_err(|_| "无法读取插件路径")?
-                .to_string_lossy()
-                .into_owned();
-            Ok(Some((bytes, PluginSource::Local { path })))
-        })
-        .await
-        .map_err(|_| "读取插件中断")??;
-        let Some(result) = result else {
-            return Ok(None);
-        };
-        result
-    };
-    let host = app.state::<Host>();
-    let result = lock(&host)?.prepare(bytes, source, None)?;
-    Ok(Some(result))
-}
-
-#[tauri::command]
-pub async fn prepare_plugin_update(
-    app: AppHandle,
-    id: String,
-    expected_revision: u64,
-) -> Result<PluginProposal, String> {
-    let record = {
-        let host = app.state::<Host>();
-        let runtime = lock(&host)?;
-        runtime
-            .store
-            .list()?
-            .into_iter()
-            .find(|p| {
-                p.manifest.id == id
-                    && p.revision == expected_revision
-                    && p.state != PluginState::Removed
-            })
-            .ok_or("插件已变更，请重新读取")?
-    };
-    let (bytes, source) = match record.source {
-        PluginSource::Github {
-            repository, path, ..
-        } => {
-            plugin_sources::download(
-                plugin_sources::GithubFile {
-                    repository,
-                    reference: "HEAD".into(),
-                    path,
-                },
-                plugins::MAX_MANIFEST_BYTES,
-            )
-            .await?
-        }
-        PluginSource::Local { path } => tauri::async_runtime::spawn_blocking(move || {
-            let bytes = plugins::read_validated_local(Path::new(&path))?;
-            Ok::<_, String>((bytes, PluginSource::Local { path }))
-        })
-        .await
-        .map_err(|_| "读取插件中断")??,
-        PluginSource::Official => return Err("官方插件随 Mewu 更新".into()),
-    };
-    let host = app.state::<Host>();
-    let result = lock(&host)?.prepare(bytes, source, Some((id, expected_revision)))?;
-    Ok(result)
-}
+pub fn get_official_plugins() -> Vec<PluginManifest> { plugins::bundled_manifests() }
 
 async fn mutate(
     app: AppHandle,
@@ -410,75 +193,26 @@ async fn mutate(
     .await
     .map_err(|_| "插件操作中断".to_string())?
 }
-#[tauri::command]
-pub async fn install_plugin(app: AppHandle, proposal_id: String) -> Result<PluginSnapshot, String> {
-    mutate(app, move |runtime| {
-        let pending = runtime
-            .proposals
-            .remove(&proposal_id)
-            .ok_or("安装预览已失效，请重新读取")?;
-        if pending.created.elapsed() >= Duration::from_secs(600) {
-            return Err("安装预览已过期，请重新读取".into());
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OfficialControl { Enable, Disable, Remove, Restore }
+fn control_official_store(store: &mut PluginStore, id: &str, expected_revision: u64, action: OfficialControl) -> Result<(), String> {
+        if !plugins::bundled_manifests().iter().any(|manifest| manifest.id == id) {
+            return Err("未找到此官方模块".into());
         }
-        runtime.store.install_bytes(
-            &pending.bytes,
-            pending.proposal.source,
-            pending.proposal.expected_revision,
-        )?;
+        let record = store.list()?.into_iter().find(|record| record.manifest.id == id).ok_or("未找到此官方模块")?;
+        if record.source != PluginSource::Official { return Err("官方模块来源无效".into()); }
+        match action {
+            OfficialControl::Enable => { store.set_enabled(id, expected_revision, true)?; }
+            OfficialControl::Disable => { store.set_enabled(id, expected_revision, false)?; }
+            OfficialControl::Remove => { store.uninstall(id, expected_revision)?; }
+            OfficialControl::Restore => { store.install_official(id, Some(expected_revision))?; }
+        }
         Ok(())
-    })
-    .await
 }
 #[tauri::command]
-pub async fn set_plugin_enabled(
-    app: AppHandle,
-    id: String,
-    expected_revision: u64,
-    enabled: bool,
-) -> Result<PluginSnapshot, String> {
-    mutate(app, move |runtime| {
-        runtime.store.set_enabled(&id, expected_revision, enabled)?;
-        Ok(())
-    })
-    .await
-}
-#[tauri::command]
-pub async fn uninstall_plugin(
-    app: AppHandle,
-    id: String,
-    expected_revision: u64,
-) -> Result<PluginSnapshot, String> {
-    mutate(app, move |runtime| {
-        runtime.store.uninstall(&id, expected_revision)?;
-        Ok(())
-    })
-    .await
-}
-#[tauri::command]
-pub async fn rollback_plugin(
-    app: AppHandle,
-    id: String,
-    expected_revision: u64,
-) -> Result<PluginSnapshot, String> {
-    mutate(app, move |runtime| {
-        runtime.store.rollback(&id, expected_revision)?;
-        Ok(())
-    })
-    .await
-}
-#[tauri::command]
-pub async fn reinstall_official_plugin(
-    app: AppHandle,
-    id: String,
-    expected_revision: u64,
-) -> Result<PluginSnapshot, String> {
-    mutate(app, move |runtime| {
-        runtime
-            .store
-            .install_official(&id, Some(expected_revision))?;
-        Ok(())
-    })
-    .await
+pub async fn control_official_plugin(app: AppHandle, id: String, expected_revision: u64, action: OfficialControl) -> Result<PluginSnapshot, String> {
+    mutate(app, move |runtime| control_official_store(&mut runtime.store, &id, expected_revision, action)).await
 }
 
 #[tauri::command]
@@ -837,40 +571,42 @@ mod tests {
         root
     }
     #[test]
-    fn reviewed_bytes_are_immutable_and_proposals_bind_revision() {
+    fn retired_declarations_keep_their_data_but_never_appear_or_execute() {
         let root = root();
-        let mut runtime = PluginRuntime::open(&root).unwrap();
-        let mut manifest =
-            plugins::parse_manifest(include_bytes!("../../plugins/official-table.json")).unwrap();
-        manifest.id = "example.table".into();
-        let bytes = serde_json::to_vec(&manifest).unwrap();
-        std::fs::write(root.join("example.json"), &bytes).unwrap();
-        let proposal = runtime
-            .prepare(
-                bytes.clone(),
-                PluginSource::Local {
-                    path: root.join("example.json").to_string_lossy().into_owned(),
-                },
-                None,
-            )
-            .unwrap();
-        assert_eq!(proposal.sha256, format!("{:x}", Sha256::digest(&bytes)));
-        assert_eq!(proposal.expected_revision, None);
-        assert_eq!(runtime.proposals.get(&proposal.id).unwrap().bytes, bytes);
-        runtime
-            .store
-            .install_bytes(&bytes, proposal.source.clone(), None)
-            .unwrap();
-        let pending = runtime.proposals.remove(&proposal.id).unwrap();
-        assert!(runtime
-            .store
-            .install_bytes(
-                &pending.bytes,
-                pending.proposal.source,
-                pending.proposal.expected_revision
-            )
-            .is_err());
-        drop(runtime);
-        std::fs::remove_dir_all(root).unwrap();
+        let before;
+        let bytes;
+        {
+            let mut runtime = PluginRuntime::open(&root).unwrap();
+            let mut manifest = plugins::parse_manifest(include_bytes!("../../plugins/official-table.json")).unwrap();
+            manifest.id = "example.retired".into();
+            bytes = serde_json::to_vec(&manifest).unwrap();
+            let file = root.join("retired.json"); std::fs::write(&file, &bytes).unwrap();
+            let record = runtime.store.install_bytes(&bytes, PluginSource::Local { path: file.to_string_lossy().into_owned() }, None).unwrap();
+            before = serde_json::to_vec(&record).unwrap();
+            assert!(!runtime.store.snapshot().unwrap().plugins.iter().any(|record| record.manifest.id == manifest.id));
+            let error = runtime.store.workflow(&manifest.id, record.revision, "recognize-table").unwrap_err();
+            assert!(error.contains("停止支持"));
+        }
+        let runtime = PluginRuntime::open(&root).unwrap();
+        let retained = runtime.store.list().unwrap().into_iter().find(|record| record.manifest.id == "example.retired").unwrap();
+        assert_eq!(serde_json::to_vec(&retained).unwrap(), before);
+        assert_eq!(std::fs::read(root.join("retired.json")).unwrap(), bytes);
+        assert!(!runtime.store.snapshot().unwrap().plugins.iter().any(|record| record.manifest.id == "example.retired"));
+        drop(runtime); std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn official_controls_keep_saved_choices_and_cas_without_a_package_installer() {
+        let root = root(); let mut store = PluginStore::open(&root).unwrap();
+        assert!(control_official_store(&mut store, "example.retired", 1, OfficialControl::Enable).is_err());
+        control_official_store(&mut store, "mewu.agent", 1, OfficialControl::Disable).unwrap();
+        assert!(store.require_agent().is_err());
+        assert!(control_official_store(&mut store, "mewu.agent", 1, OfficialControl::Enable).is_err());
+        control_official_store(&mut store, "mewu.agent", 2, OfficialControl::Remove).unwrap();
+        drop(store); let mut store = PluginStore::open(&root).unwrap();
+        assert!(store.require_agent().is_err());
+        control_official_store(&mut store, "mewu.agent", 3, OfficialControl::Restore).unwrap();
+        assert!(store.require_agent().is_ok());
+        assert!(serde_json::from_str::<OfficialControl>("\"rollback\"").is_err());
+        drop(store); std::fs::remove_dir_all(root).unwrap();
     }
 }

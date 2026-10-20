@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-official-plugins"
+description = "Enables the get_official_plugins command without any pre-configured scope."
+commands.allow = ["get_official_plugins"]
+
+[[permission]]
+identifier = "deny-get-official-plugins"
+description = "Denies the get_official_plugins command without any pre-configured scope."
+commands.deny = ["get_official_plugins"]

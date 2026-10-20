@@ -1,7 +1,7 @@
 {
   "name": "@mewu/sdk",
   "version": "0.1.0",
-  "description": "Mewu API 2 executable extension SDK",
+  "description": "Mewu API executable extension SDK",
   "type": "module",
   "license": "MPL-2.0",
   "exports": {
@@ -11,8 +11,15 @@
     }
   },
   "types": "./index.d.ts",
-  "files": ["index.mjs", "index.d.ts", "README.md", "LICENSE"],
-  "engines": { "node": ">=20.6" },
+  "files": [
+    "index.mjs",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.6"
+  },
   "scripts": {
     "check:sync": "node tools/sync.mjs --check",
     "sync": "node tools/sync.mjs --write",

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readBounded, writeAtomic } from '../plugin-catalog/cli.mjs';
+import { readBounded, writeAtomic } from './files.mjs';
 import { githubBytes } from './github.mjs';
 
 const utf8 = new TextDecoder('utf-8', { fatal: true });

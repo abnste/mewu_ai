@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { readBounded, writeAtomic } from '../plugin-catalog/cli.mjs';
+import { readBounded, writeAtomic } from './files.mjs';
 import { bindEntryManifest, downloadReleaseAsset, getRelease, githubBytes, repositoryParts, sha256 } from './github.mjs';
 import { crc32, readZip } from './zip.mjs';
 

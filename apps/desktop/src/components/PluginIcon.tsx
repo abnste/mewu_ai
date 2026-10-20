@@ -11,7 +11,10 @@ const builtins = { 'app.cli': TerminalSquare, 'agent.runtime': Bot, 'space.black
   'selection.ocr': ScanText, 'selection.scroll': GalleryVerticalEnd, 'selection.translation': Languages, 'selection.pin': Pin,
   'selection.recording': Video, 'agent.visual-annotations': Captions, 'input.speech-to-text': Mic, 'memory.provider': BrainCircuit };
 export default function PluginIcon(props: { plugin: Identity; kind?: PluginContribution['kind']; size?: number; sha256?: string; source?: ExtensionSource }) {
-  onMount(() => { void ensureExtensionIcons(); });
+  onMount(() => {
+    if (!props.kind && props.source?.type !== 'local' && !displayIcon(props.plugin.icon)
+      && !displayIcon(props.source?.type === 'github' ? props.source.entry.icon : undefined)) void ensureExtensionIcons();
+  });
   const icon = createMemo(() => displayIcon(props.plugin.icon) ?? displayIcon(props.source?.type === 'github' ? props.source.entry.icon : undefined)
     ?? cachedExtensionIcon(props.plugin.id, props.plugin.version ?? '', props.sha256 ?? props.plugin.sha256 ?? (props.source?.type === 'github' ? props.source.entry.sha256 : undefined)));
   const fallback = createMemo(() => {

@@ -13,7 +13,7 @@ const header=Buffer.alloc(13);header.writeUInt32BE(16);header.writeUInt32BE(16,4
 const signature=Buffer.from([137,80,78,71,13,10,26,10]);
 const image=Buffer.concat([signature,chunk('IHDR',header),chunk('IDAT',deflateSync(Buffer.alloc(16*(1+16*4)))),chunk('IEND',Buffer.alloc(0))]);
 const project={id:'thirdparty.gallery',version:'1.0.0',packageSha256:'a'.repeat(64),sourceRepository:'author/gallery',sourceCommit:'b'.repeat(40),screenshots:[{path:'screenshots/real.png',size:image.length,sha256:sha256(image),width:16,height:16,caption:'真实格式合成像素'}]};
-test('actual native project parser accepts immutable project and no-screenshot projects independently of API2 catalog',async()=>{
+test('actual native project parser accepts immutable project and no-screenshot projects independently of the plugin catalog',async()=>{
  assert.deepEqual(await validate('extension-project',encoded(project)),project);
  assert.deepEqual((await validate('extension-projects',encoded({schemaVersion:1,projects:[{...project,screenshots:[]}]}))).projects[0].screenshots,[]);
  assert.match(await projectFingerprint(),/^[a-f0-9]{64}$/);

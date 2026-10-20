@@ -26,6 +26,3 @@ export type PluginTag = 'agi' | 'ui-enhancement' | 'billing' | 'themes' | 'model
 export interface PluginManifest { schemaVersion: 1; id: string; version: string; name: string; description: string; publisher?: string; license: string; hostApi: 1; tags?: PluginTag[]; platforms?: import('./extension-contracts').PluginPlatform[]; contributions: PluginContribution[] }
 export interface PluginRecord { manifest: PluginManifest; source: PluginSource; revision: number; state: 'enabled' | 'disabled' | 'removed'; hasRollback: boolean; error?: string }
 export interface PluginSnapshot { revision: number; plugins: PluginRecord[] }
-export interface CatalogEntry { manifest: PluginManifest; source: PluginSource; installed?: PluginRecord }
-export interface PluginCatalog { entries: CatalogEntry[]; source?: string; error?: string }
-export interface PluginProposal { id: string; manifest: PluginManifest; source: PluginSource; expectedRevision?: number; sha256: string }

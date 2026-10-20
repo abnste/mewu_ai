@@ -97,6 +97,17 @@ test('offline cache is bounded and malformed artwork never adds markup or extern
   } finally { f.dispose(); }
 });
 
+test('builtins and self-contained local icons never request the community catalog', async () => {
+  const f = await fixture();
+  try {
+    f.mountIcon({ plugin: { ...entry, icon: undefined }, kind: 'app.cli' });
+    f.mountIcon({ plugin: entry, source: { type: 'local', path: 'local.zip' } });
+    f.mountIcon({ plugin: { ...entry, icon: undefined }, source: { type: 'local', path: 'local.zip' } });
+    await tick(); assert.equal(f.reads, 0);
+    assert.ok(f.all().some(node => node.props?.glyph === 'TerminalSquare'));
+  } finally { f.dispose(); }
+});
+
 test('individual lower-left command buttons show their own artwork and preserve Stop until completion', async () => {
   const records = [entry, { ...entry, id: 'independent.memory', icon: { ...art, paths: ['M12 2v20'] } }].map((manifest, index) => ({ manifest, sha256: entry.sha256, revision: 1, state: 'enabled', source: { type: 'local', path: 'test.zip' }, services: [{ kind: 'command', id: 'open', title: `Plugin ${index + 1}`, metadata: { placement: 'space-toolbar' } }] }));
   const f = await fixture({ records });

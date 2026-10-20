@@ -63,7 +63,6 @@ const callbacks = [
   ['Settings dialog','./components/SettingsDialog.tsx','keyboard'],
   ['Pinned image','./PinView.tsx','keyboard'],
   ['Connections panel','./components/ConnectionsPanel.tsx','keyboard'],
-  ['Plugins panel','./components/PluginsPanel.tsx','keyboard'],
   ['Recorder','./RecordingSurface.tsx','keyboard'],
   ['Scroll capture','./ScrollSurface.tsx','keyboard'],
   ['Unsaved drawing dialog','./components/DrawingDraftsDialog.tsx','keydown'],

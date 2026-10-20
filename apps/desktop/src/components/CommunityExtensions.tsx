@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show, type JSX } from 'solid-js';
 import { ArrowLeft, Check, ChevronRight, Download, LoaderCircle, RefreshCw, Trash2, Undo2, X } from 'lucide-solid';
 import * as api from '../extension-bridge';
 import type { ExtensionCatalogEntry, ExtensionControl, ExtensionManifest, ExtensionProposal, ExtensionRecord, ExtensionSource } from '../extension-contracts';
@@ -16,6 +16,7 @@ interface Props {
   active: boolean; pane: 'discover' | 'installed'; query: string; filter: string;
   addRequest: number; refreshRequest: number; onDetail: (open: boolean) => void;
   platform?: HostPlatform;
+  siblingDetail?: boolean; children?: JSX.Element;
 }
 const sourceText = (source: ExtensionSource) => source.type === 'github' ? `${source.entry.repository}\n${source.entry.releaseTag}\n${source.entry.assetName}` : source.path;
 const tagText = (tag: string) => t(pluginTagLabels[tag as PluginTag] ?? tag);
@@ -99,6 +100,7 @@ export default function CommunityExtensions(props: Props) {
   const status = (value?: ExtensionRecord) => !value || value.state === 'removed' ? t('未安装') : value.state === 'enabled' ? t('已启用') : t('已停用');
   const updateEntry = () => { const value = selectedCatalog(), installed = selectedRecord(); return value && installed && value.version !== installed.manifest.version ? value : undefined; };
   return <div class="community-extensions" onKeyDown={event => { if (event.key === 'Escape' && detail()) { event.preventDefault(); event.stopPropagation(); back(); } }}>
+    <Show when={!props.siblingDetail}>
     <Show when={!api.extensionNative}><p class="plugin-empty">{t('请在桌面版管理插件')}</p></Show>
     <Show when={error()}><div class="plugin-error" role="alert"><span>{error()}</span><button class="icon-button compact" aria-label={t('关闭提示')} onClick={() => setError('')}><X size={13}/></button></div></Show>
     <Show when={loading()}><div class="plugin-loading"><LoaderCircle size={14} class="spin"/>{t('加载中')}</div></Show>
@@ -133,6 +135,6 @@ export default function CommunityExtensions(props: Props) {
         <Show when={proposal() || selectedRecord()}><dt>SHA-256</dt><dd>{proposal()?.sha256 ?? selectedRecord()?.sha256}</dd></Show></dl>
       <Show when={proposal()}>{prepared => <section class="plugin-detail-section"><h4>{t('权限')}</h4><ul><For each={prepared().manifest.permissions}>{permission => <li><code>{permission}</code></li>}</For></ul><Show when={!prepared().manifest.permissions.length}><p class="plugin-description">{t('无')}</p></Show></section>}</Show>
       <Show when={!proposal() && selectedRecord()?.services.length}><section class="plugin-detail-section"><h4>{t('能力')}</h4><ul><For each={selectedRecord()?.services}>{service => <li>{service.title}<Show when={selectedRecord()?.unsupportedServices?.[service.id]} fallback={<Show when={service.description}><span class="plugin-description"> · {service.description}</span></Show>}>{reason => <span class="plugin-status"> · {t(reason())}</span>}</Show></li>}</For></ul></section></Show>
-    </div>}</Show>
+    </div>}</Show></Show><Show when={!detail()}>{props.children}</Show>
   </div>;
 }

@@ -3,14 +3,14 @@ import { spawn } from 'node:child_process';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readBounded, writeAtomic } from '../plugin-catalog/cli.mjs';
+import { readBounded, writeAtomic } from './files.mjs';
 import { createValidator } from './validator.mjs';
 import { createZip, MAX_EXPANDED_BYTES, MAX_PACKAGE_BYTES, packagePath, readZip } from './zip.mjs';
 import { bindEntryManifest, downloadReleaseAsset, getRelease, sha256, verifyEntry } from './github.mjs';
 import { buildProjects, bindProjectEntry, verifyProject } from './projects.mjs';
 
 const MAX_CATALOG = 2 * 1024 * 1024;
-const HELP = `Mewu API 2 JavaScript 插件与 GitHub 社区市场（Node.js 22+）
+const HELP = `Mewu API JavaScript 插件与 GitHub 社区市场（Node.js 22+）
 
 node tools/extension-market/cli.mjs manifest <mewu-plugin.json>
 node tools/extension-market/cli.mjs entry <entry.json>

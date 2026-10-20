@@ -1,8 +1,8 @@
 # JavaScript 插件发行与社区市场
 
-Mewu API 2 插件在独立 QuickJS 进程中执行 ES Modules，通过 SDK 动态注册命令、工具、Agent、记忆、模型、渠道、渲染器和界面服务。这个工具负责把独立插件打成 ZIP、发布到 GitHub Release，再核验社区目录中的真实发行资产。它不启动插件、不调用模型、不执行作者安装脚本。
+Mewu API 插件在独立 QuickJS 进程中执行 ES Modules，通过 SDK 动态注册命令、工具、Agent、记忆、模型、渠道、渲染器和界面服务。这个工具负责把独立插件打成 ZIP、发布到 GitHub Release，再核验社区目录中的真实发行资产。它不启动插件、不调用模型、不执行作者安装脚本。
 
-需要 Node.js 22+、GitHub CLI（仅 `publish` 需要），以及从可信 Mewu 源码构建的独立校验器。插件清单、目录条目、完整目录均把**原始 JSON 字节**交给宿主的同一 Rust parser；没有另一份 JavaScript 清单 schema。API 1 的声明插件工具仍在相邻 `plugin-catalog` 中，不能代替 API 2 校验器。
+需要 Node.js 22+、GitHub CLI（仅 `publish` 需要），以及从可信 Mewu 源码构建的独立校验器。插件清单、目录条目、完整目录均把**原始 JSON 字节**交给宿主的同一 Rust parser；没有另一份 JavaScript 清单 schema。第三方插件只使用同一套可执行插件运行时；不再接受旧 JSON 声明包。
 
 ```powershell
 cargo build -p mewu-desktop --bin mewu-plugin-validator --features catalog-validator --locked
@@ -10,7 +10,7 @@ $env:MEWU_PLUGIN_VALIDATOR = (Resolve-Path target/debug/mewu-plugin-validator.ex
 node tools/extension-market/cli.mjs --help
 ```
 
-API 2 校验器额外返回 `extensionContractVersion: 2` 和 `extensionContractSha256`；指纹按照 `contract.rs`、`package.rs`、`sdk.js`、`extension_market.rs` 的原始字节，以 NUL 分隔计算。源码变化后必须重编译，不能用旧二进制冒充当前格式验收。指纹检测契约失配，不证明一个外来 EXE 的来源。
+API 校验器额外返回 `extensionContractVersion: 2` 和 `extensionContractSha256`；指纹按照 `contract.rs`、`package.rs`、`sdk.js`、`extension_market.rs` 的原始字节，以 NUL 分隔计算。源码变化后必须重编译，不能用旧二进制冒充当前格式验收。指纹检测契约失配，不证明一个外来 EXE 的来源。
 
 项目与图库使用独立 `mewu-projects.json`，原 `mewu-catalog.json` 的 schemaVersion 2 和安装来源保持不变。新校验模式为 `extension-project`、`extension-projects`、`extension-project-image`，使用生产 `extension_project.rs`；输出单独的 `projectContractVersion: 1` / `projectContractSha256`，不改变原四源指纹。
 
@@ -33,14 +33,14 @@ node tools/extension-market/cli.mjs build-projects projects --catalog mewu-catal
 Windows PowerShell，使用默认 Cargo target 目录：
 
 ```powershell
-git clone --branch next --single-branch https://github.com/abnste/mewu_ai.git ./mewu-host
+git clone --branch master --single-branch https://github.com/abnste/mewu_ai.git ./mewu-host
 cargo build --manifest-path ./mewu-host/Cargo.toml -p mewu-desktop --bin mewu-plugin-validator --features catalog-validator --locked
 New-Item -ItemType Directory -Force ./packages | Out-Null
 node ./mewu-host/tools/extension-market/cli.mjs manifest ./my-plugin/mewu-plugin.json --validator ./mewu-host/target/debug/mewu-plugin-validator.exe --json
 node ./mewu-host/tools/extension-market/cli.mjs pack ./my-plugin --out ./packages/my-plugin-1.0.0.zip --validator ./mewu-host/target/debug/mewu-plugin-validator.exe --json
 ```
 
-先从 Mewu 设置 → 插件 → 添加 → 安装 ZIP 插件进行本机验证。启用后，命令由声明的截图/空间入口运行；Agent 与记忆服务在对应 Agent 设置中选择。打包校验不能代替这些实际交互测试。macOS/Linux 将校验器文件名改为无 `.exe`，并使用系统对应的建目录命令；如设置 `CARGO_TARGET_DIR`，校验器路径也须对应调整。
+先从 Mewu 设置 → 插件 → 添加，选择 ZIP 插件进行本机验证。启用后，命令由声明的截图/空间入口运行；Agent 与记忆服务在对应 Agent 设置中选择。打包校验不能代替这些实际交互测试。macOS/Linux 将校验器文件名改为无 `.exe`，并使用系统对应的建目录命令；如设置 `CARGO_TARGET_DIR`，校验器路径也须对应调整。
 
 以下只向作者自己的仓库上传包，向社区仓库提交条目 PR；不向 Mewu 宿主提交实现 PR，也不修改社区索引。`gh release create` 创建已发布版本，不能使用草稿：
 
@@ -97,10 +97,10 @@ node tools/extension-market/cli.mjs build D:/catalog/entries --out D:/catalog/me
 
 每条记录包括 `id/name/description/tags/repository/version/releaseTag/assetName/sha256/size/hostApi/platforms`，`manifestPath` 如指定只能是根 `mewu-plugin.json`。完整索引为 `{"schemaVersion":2,"plugins":[...]}`，按 ID 排序，以 UTF-8 无 BOM、LF 输出。空目录合法，工具不会捏造种子插件。
 
-`icon` 是可选的结构化 SVG 路径图标，格式见 [SDK 图标说明](../../packages/sdk/README.md)。`publish` 自动从包清单复制图标；旧包无图标时，可只在市场条目中补充，不更换 ZIP、版本或 SHA。包与条目都声明图标时必须一致。新版客户端读取 `mewu-catalog-v2.json`；原 `mewu-catalog.json` 保留不含图标字段的兼容目录，避免旧宿主的严格解析器拒绝整个市场。维护者用同一次已验证构建生成两份目录：
+`icon` 是可选的结构化 SVG 路径图标，格式见 [SDK 图标说明](../../packages/sdk/README.md)。`publish` 自动从包清单复制图标；旧包无图标时，可只在市场条目中补充，不更换 ZIP、版本或 SHA。包与条目都声明图标时必须一致。新版客户端读取 `mewu-market.json`；原 `mewu-catalog.json` 保留不含图标字段的兼容目录，避免旧宿主的严格解析器拒绝整个市场。维护者用同一次已验证构建生成两份目录：
 
 ```powershell
-node tools/extension-market/cli.mjs build D:/catalog/entries --out D:/catalog/mewu-catalog-v2.json --legacy-out D:/catalog/mewu-catalog.json --previous D:/catalog/mewu-catalog.json --json
+node tools/extension-market/cli.mjs build D:/catalog/entries --out D:/catalog/mewu-market.json --legacy-out D:/catalog/mewu-catalog.json --previous D:/catalog/mewu-catalog.json --json
 ```
 
 `build` 默认实际核验每条 GitHub Release ZIP。`--offline` 仅做开发结构检查，结果明确标识 `releasesVerified:false`；公开目录发布不可使用它。`--previous` 指定可信旧目录，避免 PR 通过替换生成文件掩盖 ID 换源；已有 ID 的仓库不能悄悄变更。安装端仍要独立绑定已安装插件的来源并重新验包。对于移除后保留的永久 ID 所有权，目录维护者须保留历史或保留条目，不能只凭新 PR 的声明认可转移。
@@ -109,9 +109,9 @@ node tools/extension-market/cli.mjs build D:/catalog/entries --out D:/catalog/me
 
 ## 社区仓库与 CI
 
-[community-market](../../community-market/README.md) 可作为独立 `abnste/mewu-plugins` 仓库发布：`entries/<id>.json` 与 `projects/<id>.json` 供 PR 收录，`mewu-catalog-v2.json` 是新版安装索引，`mewu-catalog.json` 是旧版兼容索引，`mewu-projects.json` 是源码与图库索引。初始化模板的索引为空，只有真实发布并验证过的资产才可加入。
+[community-market](../../community-market/README.md) 可作为独立 `abnste/mewu-plugins` 仓库发布：`entries/<id>.json` 与 `projects/<id>.json` 供 PR 收录，`mewu-market.json` 是新版安装索引，`mewu-catalog.json` 是旧版兼容索引，`mewu-projects.json` 是源码与图库索引。初始化模板的索引为空，只有真实发布并验证过的资产才可加入。
 
-首次发布前，维护者必须把 `host-source.json` 固定为包含 API 2、项目图库解析器及其工具的可信 Mewu **完整提交 SHA**。`commit:null` 会让 CI 明确失败，不能用 `next`、`main` 或作者 PR 中的代码代替。审核流程只检出社区可信 base，构建固定宿主源码中的原生校验器，随后通过固定 Git tree/blob API 把 PR 的条目和项目元数据读取为 JSON 数据；不检出、不加载、不执行作者的脚本、ZIP 源码或工作流。GitHub 令牌只用于读取官方 API，PR 任务无写权限。合并后主分支任务重新核验真实发行、独立源码和截图，只提交新版安装、兼容安装与图库三个生成索引。
+首次发布前，维护者必须把 `host-source.json` 固定为包含 API、项目图库解析器及其工具的可信 Mewu **完整提交 SHA**。`commit:null` 会让 CI 明确失败，不能用 `next`、`main` 或作者 PR 中的代码代替。审核流程只检出社区可信 base，构建固定宿主源码中的原生校验器，随后通过固定 Git tree/blob API 把 PR 的条目和项目元数据读取为 JSON 数据；不检出、不加载、不执行作者的脚本、ZIP 源码或工作流。GitHub 令牌只用于读取官方 API，PR 任务无写权限。合并后主分支任务重新核验真实发行、独立源码和截图，只提交新版安装、兼容安装与图库三个生成索引。
 
 ```powershell
 node --test tools/extension-market/test.mjs tools/extension-market/project-test.mjs

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Declarative host capabilities. No executable plugin code is loaded.
+//! Fixed built-in host modules and their saved user choices.
+//! Third-party plugins are handled exclusively by the executable extension host.
 //! The application must own its single-instance lease before opening this store.
 //! SQLite is authoritative; a durable intent record recovers file changes that
 //! were interrupted before the registry transaction committed.
@@ -765,6 +766,7 @@ pub fn bundled_manifests() -> Vec<PluginManifest> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn read_validated_local(path: &Path) -> Result<Vec<u8>, String> {
     if !path.is_absolute() {
         return Err("请选择绝对路径的插件 JSON 文件".into());
@@ -1038,7 +1040,7 @@ impl PluginStore {
         if record.package.source != PluginSource::Official || record.package.manifest != canonical {
             return Err("命令行插件来源无效".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         Ok(Some(record.revision))
     }
     pub fn open(app_data: &Path) -> Result<Self, String> {
@@ -1122,7 +1124,7 @@ impl PluginStore {
         if record.package.source != PluginSource::Official
             || record.package.manifest != original
             || record.state != PluginState::Enabled
-            || self.check_package(&record.package).is_err()
+            || self.check_capability_package(&record.package).is_err()
         {
             return Ok(());
         }
@@ -1131,7 +1133,7 @@ impl PluginStore {
             (2, Some(package)) => {
                 package.source == PluginSource::Official
                     && package.manifest == previous
-                    && self.check_package(package).is_ok()
+                    && self.check_capability_package(package).is_ok()
             }
             _ => false,
         };
@@ -1193,7 +1195,7 @@ impl PluginStore {
                 && (record.state == PluginState::Disabled
                     || record.package.source != PluginSource::Official
                     || !legacy_recording_is_canonical(&record.package.manifest)?
-                    || self.check_package(&record.package).is_err())
+                    || self.check_capability_package(&record.package).is_err())
             {
                 state = PluginState::Disabled;
             }
@@ -1237,7 +1239,7 @@ impl PluginStore {
         self.ready()?;
         Ok(PluginSnapshot {
             revision: self.global_revision()?,
-            plugins: self.list()?,
+            plugins: self.list()?.into_iter().filter(|record| record.source == PluginSource::Official).collect(),
         })
     }
     pub(crate) fn require_agent(&self) -> Result<crate::optional_authorizations::Grant, String> {
@@ -1250,18 +1252,10 @@ impl PluginStore {
     pub fn model_connection_presets(&self) -> Result<Vec<ModelConnectionPreset>, String> {
         let mut result = Vec::new();
         for record in self.list()? {
-            if record.state != PluginState::Enabled || record.error.is_some() { continue; }
+            if record.source != PluginSource::Official || record.state != PluginState::Enabled || record.error.is_some() { continue; }
             for contribution in record.manifest.contributions {
                 let PluginContribution::ModelConnection { id, title, template } = contribution else { continue; };
-                let provider_id = if record.source == PluginSource::Official {
-                    template.provider_id.clone()
-                } else {
-                    // Stable across updates; community IDs cannot shadow the
-                    // original provider names or another package's templates.
-                    let mut digest = Sha256::new();
-                    digest.update(record.manifest.id.as_bytes()); digest.update([0]); digest.update(id.as_bytes());
-                    format!("plugin.{:x}", digest.finalize())
-                };
+                let provider_id = template.provider_id.clone();
                 result.push(ModelConnectionPreset {
                     id: provider_id, name: title, group: template.group, base_url: template.base_url,
                     model: template.model, advanced: template.advanced, search_terms: template.search_terms,
@@ -1299,6 +1293,7 @@ impl PluginStore {
     }
 
     /// Host validates its network policy before saving this preference.
+    // Read-only relocation audit of retained preferences; never used to load plugins.
     pub fn get_catalog_source(&self) -> Result<Option<String>, String> {
         self.connection
             .query_row(
@@ -1310,6 +1305,7 @@ impl PluginStore {
             .map_err(err_db)
     }
 
+    #[cfg(test)]
     pub fn set_catalog_source(&mut self, source: Option<&str>) -> Result<(), String> {
         match source {
             Some(source) => {
@@ -1327,7 +1323,8 @@ impl PluginStore {
         Ok(())
     }
 
-    pub fn install_local(
+    #[cfg(test)]
+pub fn install_local(
         &mut self,
         path: &Path,
         expected_revision: Option<u64>,
@@ -1343,7 +1340,8 @@ impl PluginStore {
         )
     }
 
-    pub fn install_bytes(
+    #[cfg(test)]
+pub fn install_bytes(
         &mut self,
         bytes: &[u8],
         mut source: PluginSource,
@@ -1465,7 +1463,7 @@ impl PluginStore {
             return Err("插件已卸载，请先重新安装".into());
         }
         if enabled {
-            self.check_package(&before.package)?;
+            self.check_capability_package(&before.package)?;
         }
         let state = if enabled {
             PluginState::Enabled
@@ -1494,6 +1492,7 @@ impl PluginStore {
         self.change(Some(before), after, true)
     }
 
+    #[cfg(test)]
     pub fn rollback(&mut self, id: &str, expected_revision: u64) -> Result<PluginRecord, String> {
         self.ready()?;
         let before = self.required(id, expected_revision)?;
@@ -1524,7 +1523,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         for item in record.package.manifest.contributions {
             if let PluginContribution::Workflow {
                 id,
@@ -1577,7 +1576,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         for item in record.package.manifest.contributions {
             if let PluginContribution::DrawingTools { id, tools, .. } = item {
                 if id == contribution_id {
@@ -1615,7 +1614,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1638,7 +1637,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         for item in record.package.manifest.contributions {
             if let PluginContribution::Ocr { id, engine, .. } = item {
                 if id == contribution_id {
@@ -1658,7 +1657,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         if record.package.manifest.contributions.iter().any(
             |item| matches!(item, PluginContribution::Scroll { id, .. } if id == contribution_id),
         ) {
@@ -1681,7 +1680,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         if record.package.manifest.contributions.iter().any(
             |item| matches!(item, PluginContribution::Translation { id, .. } if id == contribution_id),
         ) {
@@ -1704,7 +1703,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1730,7 +1729,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("原位作答插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1772,7 +1771,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("屏幕录制插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1818,7 +1817,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此 GIF 导出插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1854,7 +1853,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此录屏声音插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1892,7 +1891,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此视频裁剪插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record.package.manifest.contributions.into_iter().find(|item| {
             matches!(item, PluginContribution::ArtifactVideoTrim { id, .. } if id == contribution_id)
         }).ok_or_else(|| "未找到此视频裁剪功能".into())
@@ -1911,7 +1910,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此语音插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1941,7 +1940,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此二维码与条码插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -1967,7 +1966,7 @@ impl PluginStore {
         if record.state != PluginState::Enabled {
             return Err("此记忆插件未启用".into());
         }
-        self.check_package(&record.package)?;
+        self.check_capability_package(&record.package)?;
         record
             .package
             .manifest
@@ -2051,6 +2050,11 @@ impl PluginStore {
             has_rollback: record.previous.is_some(),
             error,
         })
+    }
+
+    fn check_capability_package(&self, package: &Package) -> Result<(), String> {
+        if package.source != PluginSource::Official { return Err("旧声明式插件已停止支持，请安装新版插件".into()); }
+        self.check_package(package)
     }
 
     fn check_package(&self, package: &Package) -> Result<(), String> {
@@ -2580,7 +2584,7 @@ mod tests {
     }
     #[test]
     fn model_connections_validate_typed_protocols_addresses_and_secret_free_options() {
-        let bytes = include_bytes!("../../plugins/examples/model-connection/mewu-plugin.json");
+        let bytes = include_bytes!("../../plugins/migrations/retired-model-connection.json");
         let valid: serde_json::Value = serde_json::from_slice(bytes).unwrap();
         for protocol in ["chat_completions", "anthropic_messages", "openai_responses"] {
             let mut value = valid.clone();
@@ -2676,21 +2680,15 @@ mod tests {
     }
 
     #[test]
-    fn community_model_templates_have_stable_namespaces_and_updates_only_change_defaults() {
+    fn retired_model_declarations_never_supply_connection_templates_or_authority() {
         let dir=Directory::new(); let mut store=PluginStore::open(&dir.0).unwrap();
-        let mut manifest=parse_manifest(include_bytes!("../../plugins/examples/model-connection/mewu-plugin.json")).unwrap();
-        if let PluginContribution::ModelConnection{template,..}=&mut manifest.contributions[0] { template.provider_id="OpenAI".into(); }
-        let bytes=serde_json::to_vec(&manifest).unwrap(); store.install_bytes(&bytes,source(),None).unwrap();
-        let first=store.model_connection_presets().unwrap().into_iter().find(|value|value.plugin_id==manifest.id).unwrap();
-        assert!(first.id.starts_with("plugin.")); assert_ne!(first.id,"OpenAI"); assert_eq!(first.id.len(),71);
-        manifest.version="1.1.0".into();
-        if let PluginContribution::ModelConnection{template,..}=&mut manifest.contributions[0] { template.base_url="https://changed.example/v1".into(); }
-        store.install_bytes(&serde_json::to_vec(&manifest).unwrap(),source(),Some(1)).unwrap();
-        let updated=store.model_connection_presets().unwrap().into_iter().find(|value|value.plugin_id==manifest.id).unwrap();
-        assert_eq!(updated.id,first.id); assert_eq!(updated.plugin_revision,2); assert_ne!(updated.base_url,first.base_url);
-        manifest.id="example.another-model".into(); store.install_bytes(&serde_json::to_vec(&manifest).unwrap(),source(),None).unwrap();
-        let another=store.model_connection_presets().unwrap().into_iter().find(|value|value.plugin_id==manifest.id).unwrap();
-        assert_ne!(another.id,first.id);
+        let before=store.model_connection_presets().unwrap();
+        let manifest=parse_manifest(include_bytes!("../../plugins/migrations/retired-model-connection.json")).unwrap();
+        let record=store.install_bytes(&serde_json::to_vec(&manifest).unwrap(),source(),None).unwrap();
+        assert_eq!(store.model_connection_presets().unwrap(), before);
+        assert!(!store.snapshot().unwrap().plugins.iter().any(|value|value.manifest.id==record.manifest.id));
+        assert!(store.set_enabled(&record.manifest.id,record.revision,true).is_err());
+        assert_eq!(store.list().unwrap().into_iter().find(|value|value.manifest.id==record.manifest.id).unwrap(), record);
     }
 
     #[test]
@@ -3334,38 +3332,14 @@ mod tests {
     }
 
     #[test]
-    fn drawing_manifest_accepts_legacy_external_tools_and_rejects_unknown_or_duplicate_tools() {
-        let dir = Directory::new();
-        let mut store = PluginStore::open(&dir.0).unwrap();
-        let mut legacy = parse_manifest(OFFICIAL_DRAWING_V1_0_0).unwrap();
-        legacy.id = "example.drawing".into();
-        store
-            .install_bytes(&serde_json::to_vec(&legacy).unwrap(), source(), None)
-            .unwrap();
-        assert_eq!(
-            store
-                .drawing_tools("example.drawing", 1, "drawing-tools")
-                .unwrap(),
-            [
-                DrawingTool::Pen,
-                DrawingTool::Arrow,
-                DrawingTool::Rect,
-                DrawingTool::Ellipse,
-                DrawingTool::Text
-            ]
-        );
-        let mut current = parse_manifest(OFFICIAL_DRAWING).unwrap();
-        current.id = legacy.id.clone();
-        store
-            .install_bytes(&serde_json::to_vec(&current).unwrap(), source(), Some(1))
-            .unwrap();
-        assert_eq!(
-            store
-                .drawing_tools("example.drawing", 2, "drawing-tools")
-                .unwrap()
-                .len(),
-            9
-        );
+    fn retired_drawing_declarations_cannot_register_tools_but_old_records_remain_readable() {
+        let dir = Directory::new(); let mut store = PluginStore::open(&dir.0).unwrap();
+        let mut legacy = parse_manifest(OFFICIAL_DRAWING_V1_0_0).unwrap(); legacy.id = "example.drawing".into();
+        store.install_bytes(&serde_json::to_vec(&legacy).unwrap(), source(), None).unwrap();
+        assert!(store.drawing_tools("example.drawing", 1, "drawing-tools").unwrap_err().contains("停止支持"));
+        let mut current = parse_manifest(OFFICIAL_DRAWING).unwrap(); current.id = "example.drawing".into();
+        store.install_bytes(&serde_json::to_vec(&current).unwrap(), source(), Some(1)).unwrap();
+        assert!(store.drawing_tools("example.drawing", 2, "drawing-tools").is_err());
         for tools in [
             serde_json::json!([]),
             serde_json::json!(["pen", "pen"]),
@@ -5031,7 +5005,7 @@ mod tests {
                     .any(|p| p.manifest.id == manifest.id));
                 assert!(!path(&dir.0, &manifest.id, &manifest.version).exists());
             }
-            assert_eq!(store.ocr(&manifest.id, 1, "recognize").is_ok(), native);
+            assert_eq!(store.ocr(&manifest.id, 1, "recognize").is_ok(), false);
         }
         for engine in [
             "AppleVision",
@@ -5050,19 +5024,19 @@ mod tests {
         let reopened = PluginStore::open(&dir.0).unwrap();
         assert_eq!(
             reopened.ocr("example.ocr-windows", 1, "recognize").is_ok(),
-            cfg!(windows)
+            false
         );
         assert_eq!(
             reopened
                 .ocr("example.ocr-apple-vision", 1, "recognize")
                 .is_ok(),
-            cfg!(target_os = "macos")
+            false
         );
         assert_eq!(
             reopened
                 .ocr("example.ocr-linux-tesseract", 1, "recognize")
                 .is_ok(),
-            cfg!(target_os = "linux")
+            false
         );
     }
 
@@ -5113,10 +5087,11 @@ mod tests {
         let original = store.snapshot().unwrap();
         assert!(store
             .workflow("example.table", 1, "recognize-table")
-            .is_ok());
+            .is_err());
         assert!(store.set_enabled("example.table", 0, false).is_err());
         assert_eq!(store.snapshot().unwrap(), original);
-        assert_eq!(store.set_enabled("example.table", 1, true).unwrap(), record);
+        assert!(store.set_enabled("example.table", 1, true).is_err());
+        assert_eq!(store.list().unwrap().into_iter().find(|value|value.manifest.id == record.manifest.id).unwrap(), record);
         assert_eq!(store.snapshot().unwrap(), original);
         let disabled = store.set_enabled("example.table", 1, false).unwrap();
         assert!(store
@@ -5157,7 +5132,8 @@ mod tests {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
         install(&mut store, "1.0.0", None);
-        let before = store.snapshot().unwrap();
+        let before = store.list().unwrap();
+        let revision = store.global_revision().unwrap();
         store.connection.execute_batch("CREATE TRIGGER fail_plugin_update BEFORE UPDATE ON registry BEGIN SELECT RAISE(ABORT, 'fixture'); END;").unwrap();
         assert!(store
             .install_bytes(
@@ -5166,16 +5142,17 @@ mod tests {
                 Some(1)
             )
             .is_err());
-        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(store.list().unwrap(), before);
         assert!(!path(&dir.0, "example.table", "2.0.0").exists());
         assert!(store
             .workflow("example.table", 1, "recognize-table")
-            .is_ok());
+            .is_err());
         assert!(store.uninstall("example.table", 1).is_err());
-        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(store.list().unwrap(), before);
+        assert_eq!(store.global_revision().unwrap(), revision);
         assert!(path(&dir.0, "example.table", "1.0.0").is_file());
         assert!(store.set_enabled("example.table", 1, false).is_err());
-        assert_eq!(store.snapshot().unwrap(), before);
+        assert_eq!(store.list().unwrap(), before);
     }
 
     #[test]
@@ -5183,7 +5160,8 @@ mod tests {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
         install(&mut store, "1.0.0", None);
-        let snapshot = store.snapshot().unwrap();
+        let snapshot = store.list().unwrap();
+        let revision = store.global_revision().unwrap();
         let before = store.read("example.table").unwrap().unwrap();
         let mut after = before.clone();
         after.package.manifest.version = "2.0.0".into();
@@ -5205,11 +5183,12 @@ mod tests {
         assert!(store.snapshot().is_err());
         drop(store);
         let reopened = PluginStore::open(&dir.0).unwrap();
-        assert_eq!(reopened.snapshot().unwrap(), snapshot);
+        assert_eq!(reopened.list().unwrap(), snapshot);
+        assert_eq!(reopened.global_revision().unwrap(), revision);
         assert!(!path(&dir.0, "example.table", "2.0.0").exists());
         assert!(reopened
             .workflow("example.table", 1, "recognize-table")
-            .is_ok());
+            .is_err());
     }
 
     #[test]

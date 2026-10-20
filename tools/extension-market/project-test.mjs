@@ -125,7 +125,7 @@ test('PR sidecars are fixed Git blobs only; author workflow changes and source s
   await assert.rejects(collectPullRequest({event,repository:'market/catalog',output:path.join(directory,'link-entry'),projectOutput:path.join(directory,'link-project')},{fetchImpl}),/链接/);
 });
 
-test('project validator protocol rejects stale project fingerprint and API2-only producer',async t=>{
+test('project validator protocol rejects stale project fingerprint and a producer without the project protocol',async t=>{
   const directory=await temporary(t),script=path.join(directory,'producer.mjs');
   await writeFile(script,'process.stdin.resume();process.stdin.on("end",()=>console.log(JSON.stringify({protocolVersion:1,projectContractVersion:1,projectContractSha256:"new-project",ok:true,value:{projects:[]}})));');
   assert.deepEqual(await invokeExtensionValidator(process.execPath,script,Buffer.from('{}'),'new-project',15000,true),{projects:[]});

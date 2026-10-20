@@ -1,11 +1,11 @@
 # Mewu 插件市场
 
-这个仓库收录 Mewu API 2 JavaScript 插件的真实 GitHub 发行。插件代码和版本包由作者在自己的仓库维护；本仓库保存每插件一个目录条目，经审核及 ZIP 下载核验后生成公开索引。
+这个仓库收录 Mewu API JavaScript 插件的真实 GitHub 发行。插件代码和版本包由作者在自己的仓库维护；本仓库保存每插件一个目录条目，经审核及 ZIP 下载核验后生成公开索引。
 
 向市场贡献插件请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。Mewu 宿主、SDK、打包和发行工具在 [abnste/mewu_ai](https://github.com/abnste/mewu_ai/tree/master)，无需向宿主核心提交 PR 才能新增普通插件逻辑。
 
 - `entries/<plugin-id>.json`：社区提交的发行记录。
-- `mewu-catalog-v2.json`：新版 Mewu 使用的 API 2 索引，含插件图标。
+- `mewu-market.json`：新版 Mewu 使用的 API 索引，含插件图标。
 - `mewu-catalog.json`：旧版 Mewu 的兼容索引，保留原字段。
 - `projects/<plugin-id>.json`：独立源码提交和真实截图元数据。
 - `mewu-projects.json`：经验证生成的源码与图库索引。
@@ -30,6 +30,6 @@
 
 ## 独立项目与真实图库
 
-两份安装索引均使用 schemaVersion 2，新版 `mewu-catalog-v2.json` 增加图标，原 `mewu-catalog.json` 保留旧版字段；独立 `mewu-projects.json` 绑定插件 ID、版本及安装包 SHA256，提供固定源码提交和真实静态截图。它不改变安装来源或权限。作者提交 `projects/<id>.json`，格式与源码/ZIP/图片验证方式见 [贡献说明](CONTRIBUTING.md)；没有真实截图时保留空数组。
+两份安装索引均使用 schemaVersion 2，新版 `mewu-market.json` 增加图标，原 `mewu-catalog.json` 保留旧版字段；独立 `mewu-projects.json` 绑定插件 ID、版本及安装包 SHA256，提供固定源码提交和真实静态截图。它不改变安装来源或权限。作者提交 `projects/<id>.json`，格式与源码/ZIP/图片验证方式见 [贡献说明](CONTRIBUTING.md)；没有真实截图时保留空数组。
 
 插件图标由 `icon.paths` 声明为 24×24 坐标系的 SVG 路径，可配六位十六进制 `color` 与 `filled`。市场、已安装列表与截图窗口共用图标；完整限制见 [SDK 图标契约](https://github.com/abnste/mewu_ai/blob/master/packages/sdk/README.md)。既有无图标包可以只补目录图标，不替换发行包。

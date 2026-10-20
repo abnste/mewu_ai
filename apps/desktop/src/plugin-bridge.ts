@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { PluginCatalog, PluginManifest, PluginProposal, PluginSnapshot } from './plugin-contracts';
+import type { PluginManifest, PluginSnapshot } from './plugin-contracts';
 import type { DrawingCommand, OcrTarget, Snapshot } from './contracts';
 import { previewDrawingCommand } from './bridge';
 import type { OptionalCapabilities } from './optional-capabilities';
@@ -17,35 +17,15 @@ export async function getOptionalCapabilities(): Promise<OptionalCapabilities> {
   if (!pluginNative) return { pluginRevision: 0, connectionRevisions: {}, agent: null, blackboard: null, configuredConnectionIds: [], readyAgentIds: [], boundAgentIds: [] };
   return invoke('get_optional_capabilities');
 }
-export async function getPluginCatalog(sourceUrl?: string): Promise<PluginCatalog> {
-  if (pluginNative) return invoke('get_plugin_catalog', { sourceUrl: sourceUrl ?? null });
-  if (sourceUrl) throw new Error('请在桌面版读取插件目录');
-  return { entries: Object.values(bundled).map(manifest => ({ manifest, source: { type: 'official' as const } })) };
+export async function getOfficialPlugins(): Promise<PluginManifest[]> {
+  return pluginNative ? invoke('get_official_plugins') : Object.values(bundled);
 }
 export async function subscribePlugins(accept: (value: PluginSnapshot) => void, surface: 'space' | 'settings' = 'space'): Promise<() => void> {
   if (!pluginNative) return () => undefined;
   return listen<PluginSnapshot>('plugin-state', event => accept(event.payload), { target: surface });
 }
-export async function preparePlugin(url?: string): Promise<PluginProposal | null> {
-  desktop(); return invoke('prepare_plugin', { url: url ?? null });
-}
-export async function installPlugin(proposalId: string): Promise<PluginSnapshot> {
-  desktop(); return invoke('install_plugin', { proposalId });
-}
-export async function setPluginEnabled(id: string, expectedRevision: number, enabled: boolean): Promise<PluginSnapshot> {
-  desktop(); return invoke('set_plugin_enabled', { id, expectedRevision, enabled });
-}
-export async function uninstallPlugin(id: string, expectedRevision: number): Promise<PluginSnapshot> {
-  desktop(); return invoke('uninstall_plugin', { id, expectedRevision });
-}
-export async function rollbackPlugin(id: string, expectedRevision: number): Promise<PluginSnapshot> {
-  desktop(); return invoke('rollback_plugin', { id, expectedRevision });
-}
-export async function reinstallOfficialPlugin(id: string, expectedRevision: number): Promise<PluginSnapshot> {
-  desktop(); return invoke('reinstall_official_plugin', { id, expectedRevision });
-}
-export async function preparePluginUpdate(id: string, expectedRevision: number): Promise<PluginProposal> {
-  desktop(); return invoke('prepare_plugin_update', { id, expectedRevision });
+export async function controlOfficialPlugin(id: string, expectedRevision: number, action: 'enable' | 'disable' | 'remove' | 'restore'): Promise<PluginSnapshot> {
+  desktop(); return invoke('control_official_plugin', { id, expectedRevision, action });
 }
 export async function applyPluginDrawing(pluginId: string, pluginRevision: number, contributionId: string, command: DrawingCommand): Promise<number | Snapshot> {
   if(!pluginNative&&pluginId==='mewu.core.drawing'&&pluginRevision===1&&contributionId==='drawing-tools')return previewDrawingCommand(command);

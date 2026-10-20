@@ -23,7 +23,7 @@ async function component(path) {
   const attribute = (node, name) => node.attributes.find(value => value.name?.name === name)?.value?.expression;
   return { source, ast, body, functions, variable, slice, all, jsx, attribute };
 }
-const canvas = await component('./components/SpaceCanvas.tsx'), panel = await component('./components/PluginsPanel.tsx');
+const canvas = await component('./components/SpaceCanvas.tsx'), panel = await component('./components/BuiltinPlugins.tsx');
 function run(source, values) { const context = vm.createContext(values); vm.runInContext(plain(source), context); return context; }
 test('actual Canvas opens core drawing for an empty region or long image without plugin state; blocked/background fences remain', () => {
   const region = { id: 'region', drawings: [], imageOverride: { id: 'long' } }, calls = [];
@@ -92,21 +92,23 @@ test('only actual settings select changes sound modes; App and Canvas expose rec
   assert.equal(audioController.type, 'NewExpression'); assert.equal(audioController.arguments[0].name, 'undefined');
   assert.equal(app.jsx('SpaceCanvas').attributes.some(value => value.name?.name === 'recordingAudio'), false);
 });
-test('actual market lists hide only exact legacy core IDs without mutating retained registry or external extensions', () => {
-  const ids = ['mewu.annotations', 'mewu.drawing', 'mewu.recording', 'mewu.recording-audio', 'mewu.video-trim', 'mewu.gif', 'example.recording', 'example.ocr'];
-  const records = ids.map((id, index) => ({ manifest: { id, name: id, contributions: [{ kind: index === ids.length - 1 ? 'selection.ocr' : 'selection.recording' }] }, state: index % 2 ? 'disabled' : 'enabled', revision: index + 1 }));
-  const before = structuredClone(records), snapshot = { plugins: records }, catalog = records.map(value => ({ manifest: value.manifest }));
-  const scope = run(`${panel.slice(panel.variable('sourceEntries'))}\n${panel.slice(panel.variable('entries'))}\nglobalThis.list=sourceEntries;globalThis.filtered=entries;`, {
-    createMemo: callback => callback, pane: () => scope.paneValue, paneValue: 'installed', catalog: () => catalog, snapshot: () => snapshot,
-    isCoreReplacementPlugin: pluginCore.isCoreReplacementPlugin, pluginModuleTags: categories.pluginModuleTags, pluginTagLabels: categories.pluginTagLabels, t:value=>value, query:()=>'', filter:()=>scope.filterValue, filterValue:'',
+test('builtin list hides retired core IDs, preserves user choices and cannot expose a retired community record', () => {
+  const ids = ['mewu.annotations', 'mewu.drawing', 'mewu.recording', 'mewu.recording-audio', 'mewu.video-trim', 'mewu.gif', 'mewu.voice', 'mewu.ocr'];
+  const records = ids.map((id, index) => ({ manifest: { id, name: id, description: '', contributions: [{ kind: index === ids.length - 1 ? 'selection.ocr' : 'input.speech-to-text' }] }, source:{type:'official'}, state: index % 2 ? 'disabled' : 'enabled', revision: index + 1 }));
+  records.push({manifest:{id:'example.retired',name:'retired'},source:{type:'local'},state:'enabled',revision:1});
+  const before = structuredClone(records), snapshot = { plugins: records }, catalog = records.slice(0,8).map(value => value.manifest);
+  const scope = run(`${panel.slice(panel.variable('record'))}\n${panel.slice(panel.variable('entries'))}\nglobalThis.list=entries;`, {
+    createMemo: callback => callback, props:{get pane(){return scope.paneValue},query:'',get filter(){return scope.filterValue}}, paneValue:'installed', filterValue:'', catalog:()=>catalog,snapshot:()=>snapshot,
+    isCoreReplacementPlugin:pluginCore.isCoreReplacementPlugin,pluginModuleTags:categories.pluginModuleTags,pluginTagLabels:categories.pluginTagLabels,t:value=>value,
   });
-  assert.deepEqual(Array.from(scope.list(), value => value.manifest.id), ['example.recording', 'example.ocr']);
-  scope.paneValue = 'discover'; assert.deepEqual(Array.from(scope.list(), value => value.manifest.id), ['example.recording', 'example.ocr']);
-  scope.filterValue='audio'; assert.deepEqual(Array.from(scope.filtered(), value=>value.manifest.id), ['example.recording']);
-  scope.filterValue='documents'; assert.deepEqual(Array.from(scope.filtered(), value=>value.manifest.id), ['example.ocr']);
-  scope.filterValue='entertainment'; assert.deepEqual(Array.from(scope.filtered()), []);
-  assert.equal(categories.pluginTags.length,16); assert.deepEqual(records, before);
+  assert.deepEqual(Array.from(scope.list(), value => value.id), ['mewu.voice','mewu.ocr']);
+  scope.paneValue='discover'; assert.deepEqual(Array.from(scope.list(), value => value.id), ['mewu.voice','mewu.ocr']);
+  scope.filterValue='audio'; assert.deepEqual(Array.from(scope.list(), value=>value.id), ['mewu.voice']);
+  scope.filterValue='documents'; assert.deepEqual(Array.from(scope.list(), value=>value.id), ['mewu.ocr']);
+  scope.filterValue='entertainment'; assert.deepEqual(Array.from(scope.list()), []);
+  assert.equal(categories.pluginTags.length,16);assert.deepEqual(records,before);
 });
+
 test('receipt-only capture controller defaults to computer audio but preserves explicitly saved mute and cannot save from capture', async () => {
   const controller = new audio.RecordingAudioController(undefined, () => {});
   controller.reconcile(audio.recordingAudioGrants()); assert.equal(controller.view().mode, 'system');

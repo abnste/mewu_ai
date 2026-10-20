@@ -261,6 +261,6 @@ test('PR collector reads fixed Git blobs as data and rejects author code or stal
 
 test('CLI usage errors do not invoke a validator or write files', async () => {
   let output = '', invocations = 0; const io = { stdout: { write: text => { output += text; } }, stderr: { write: text => { output += text; } } };
-  assert.equal(await run(['--help'], io), 0); assert.match(output, /API 2/);
+  assert.equal(await run(['--help'], io), 0); assert.match(output, /Mewu API/); assert.doesNotMatch(output, /API\s*[12]/);
   assert.equal(await run(['build', '.', '--unknown', '--json'], io, { validate: async () => { invocations++; } }), 1); assert.equal(invocations, 0);
 });

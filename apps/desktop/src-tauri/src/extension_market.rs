@@ -11,7 +11,7 @@ use std::{
 };
 
 pub const DEFAULT_CATALOG: &str =
-    "https://raw.githubusercontent.com/abnste/mewu-plugins/main/mewu-catalog-v2.json";
+    "https://raw.githubusercontent.com/abnste/mewu-plugins/main/mewu-market.json";
 pub const MAX_ARCHIVE: usize = 16 * 1024 * 1024;
 pub const MAX_CATALOG: usize = 2 * 1024 * 1024;
 

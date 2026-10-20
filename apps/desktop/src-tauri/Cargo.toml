@@ -11,7 +11,7 @@ path = "../../../tools/mewu-cli/main.rs"
 
 [[bin]]
 name = "mewu-plugin-validator"
-path = "../../../tools/plugin-catalog/native.rs"
+path = "../../../tools/extension-market/native.rs"
 test = false
 required-features = ["catalog-validator"]
 

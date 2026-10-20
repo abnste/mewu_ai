@@ -19,14 +19,6 @@
     "allow-memory-page",
     "allow-memory-entry",
     "allow-get-plugins",
-    "allow-get-plugin-catalog",
-    "allow-prepare-plugin",
-    "allow-install-plugin",
-    "allow-set-plugin-enabled",
-    "allow-uninstall-plugin",
-    "allow-rollback-plugin",
-    "allow-reinstall-official-plugin",
-    "allow-prepare-plugin-update",
     "allow-get-provider-presets",
     "allow-save-connection-profile",
     "allow-delete-connection-profile",
@@ -82,6 +74,8 @@
     "allow-invoke-extension",
     "allow-stop-extension",
     "allow-get-extension-bindings",
-    "allow-set-extension-binding"
+    "allow-set-extension-binding",
+    "allow-get-official-plugins",
+    "allow-control-official-plugin"
   ]
 }
