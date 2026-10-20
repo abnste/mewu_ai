@@ -142,6 +142,7 @@ struct Fixture {
     store: Store,
     input: VerifiedVisualInput,
     authority: VerifiedVisualAuthority,
+    grant: VisualAnnotationGrant,
     scene: String,
     region: String,
     background: String,
@@ -297,6 +298,7 @@ impl Fixture {
             store,
             input,
             authority,
+            grant,
             scene,
             region,
             background,
@@ -441,18 +443,29 @@ async fn complete_first_table_then_unreadable_second_table_never_writes_half_a_b
     let mut tiny = table_object();
     tiny["points"] = json!([{"x":1,"y":1},{"x":2,"y":2}]);
     value["groups"][0]["objects"] = json!([table_object(), tiny]);
-    assert!(render_plan(
+    let failure = render_plan(
         parse_plan(&value.to_string(), &fixture.input).unwrap(),
         fixture.root.clone(),
-        || Ok(())
+        || Ok(()),
     )
     .await
-    .is_err());
+    .unwrap_err();
+    assert!(matches!(
+        failure,
+        preparation::Failure::Correctable(preparation::Rejection::ImageBoundsTooSmall)
+    ));
     assert_eq!(fixture.proof(), before);
-    fixture
-        .store
-        .record_tool_not_sent(&fixture.lease, NotSentReason::PreparationFailed)
-        .unwrap();
+    let (_, feedback) = preparation::reject(
+        &mut fixture.store,
+        &fixture.lease,
+        preparation::Rejection::ImageBoundsTooSmall,
+    )
+    .unwrap();
+    let feedback: Value = serde_json::from_str(&feedback.model_json).unwrap();
+    assert_eq!(feedback["code"], "annotation_bounds_too_small");
+    assert_eq!(feedback["executed"], false);
+    assert_eq!(feedback["correctable"], true);
+    assert!(fixture.store.run_is_active(&fixture.scene, &fixture.run));
     assert!(fixture.store.snapshot().scenes[0].regions[0]
         .drawings
         .is_empty());
@@ -463,6 +476,48 @@ async fn complete_first_table_then_unreadable_second_table_never_writes_half_a_b
             .unwrap(),
         0
     );
+    // A later real model proposal may correct the bounds; the rejected lease
+    // itself is never re-used, and the first full table was not half committed.
+    let model = fixture
+        .store
+        .begin_model_request(
+            &fixture.scene,
+            &fixture.run,
+            ModelDispatchInput {
+                round: 1,
+                projected_request_sha256: "d".repeat(64),
+            },
+        )
+        .unwrap();
+    let lease = fixture
+        .store
+        .record_model_turn(
+            &model,
+            CompletePublicTurn {
+                text: String::new(),
+                calls: vec![ProposedTool {
+                    call_id: uuid::Uuid::new_v4().to_string(),
+                    binding: fixture.grant.binding(fixture.input.sha256()),
+                    arguments_wire_sha256: "e".repeat(64),
+                }],
+            },
+        )
+        .unwrap()
+        .tools
+        .remove(0)
+        .lease;
+    let (batch, layouts) = render_plan(
+        parse_plan(&table_args(&fixture.input).to_string(), &fixture.input).unwrap(),
+        fixture.root.clone(),
+        || Ok(()),
+    )
+    .await
+    .unwrap();
+    let committed = fixture
+        .store
+        .apply_visual_annotations_with_rich_receipt(&lease, &fixture.authority, batch, layouts)
+        .unwrap();
+    assert!(committed.result.model_visible_json.is_some());
 }
 
 #[tokio::test]
@@ -482,8 +537,38 @@ async fn cancellation_after_real_table_render_discards_uncommitted_pixels() {
         },
     )
     .await;
-    assert!(result.is_err());
+    assert!(matches!(result, Err(preparation::Failure::Hard(_))));
     assert!(checks.load(Ordering::SeqCst) >= 3);
+    assert_eq!(fixture.proof(), before);
+}
+
+#[test]
+fn preparation_feedback_requires_a_durable_receipt_and_never_overwrites_unknown() {
+    let mut fixture = Fixture::new();
+    let db = Connection::open(fixture.root.join("spaces.db")).unwrap();
+    let before = fixture.proof();
+    db.execute_batch("CREATE TRIGGER fail_preparation_feedback BEFORE UPDATE ON agent_run_events BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END").unwrap();
+    assert!(preparation::reject(
+        &mut fixture.store,
+        &fixture.lease,
+        preparation::Rejection::ImageBoundsTooSmall
+    )
+    .is_err());
+    assert_eq!(fixture.proof(), before);
+    db.execute_batch("DROP TRIGGER fail_preparation_feedback")
+        .unwrap();
+    fixture.store.mark_tool_dispatched(&fixture.lease).unwrap();
+    fixture
+        .store
+        .record_request_unknown(&fixture.lease, NoResponseReason::IncompleteResponse)
+        .unwrap();
+    let before = fixture.proof();
+    assert!(preparation::reject(
+        &mut fixture.store,
+        &fixture.lease,
+        preparation::Rejection::ImageBoundsTooSmall
+    )
+    .is_err());
     assert_eq!(fixture.proof(), before);
 }
 

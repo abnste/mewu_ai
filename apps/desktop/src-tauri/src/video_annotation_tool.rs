@@ -2,7 +2,7 @@
 //! One authorized video input permits optional annotations to its own real frames.
 use crate::{
     ai, journal_runtime,
-    visual_annotation_host::{RunOrigin, SourceKind},
+    visual_annotation_host::{preparation, RunOrigin, SourceKind},
     Host,
 };
 use mewu_core::{
@@ -172,12 +172,27 @@ impl RunScope {
             })
         })
         .await
-        .map_err(|_| "视频批注排版中断".to_string())
+        .map_err(|_| preparation::Failure::Hard("视频批注排版中断".into()))
         .and_then(|v| v);
         let (batch, layouts) = match rendered {
             Ok(v) => v,
+            Err(preparation::Failure::Correctable(rejection)) => {
+                if let Err(error) = self.check_live(app, scene, run) {
+                    return self.not_sent(app, scene, run, &lease, NotSentReason::AuthorityChanged, error);
+                }
+                let output = {
+                    let host = app.state::<Host>();
+                    let mut engine = host.lock()?;
+                    let (receipt, output) = preparation::reject(&mut engine.store, &lease, rejection)?;
+                    journal_runtime::emit_changed(app, scene, run, receipt.journal_revision);
+                    crate::publish(app, &engine.store.snapshot());
+                    output
+                };
+                self.check_live(app, scene, run)?;
+                return Ok(output);
+            }
             Err(e) => {
-                return self.not_sent(app, scene, run, &lease, NotSentReason::PreparationFailed, e)
+                return self.not_sent(app, scene, run, &lease, NotSentReason::PreparationFailed, e.to_string())
             }
         };
         let result = (|| {
@@ -648,7 +663,7 @@ fn render_model(
     parsed: PreparedModel,
     input: &VerifiedVideoInput,
     live: impl Fn() -> Result<(), String>,
-) -> Result<(ValidatedVideoAppendBatch, Vec<VerifiedVideoTextLayout>), String> {
+) -> Result<(ValidatedVideoAppendBatch, Vec<VerifiedVideoTextLayout>), preparation::Failure> {
     let target = &input.manifest().targets[0];
     let mut objects = Vec::new();
     let mut layouts = Vec::new();
@@ -687,6 +702,14 @@ fn render_model(
                     color,
                     font_size,
                 })?;
+                // Native measurement is available now; reject only this exact
+                // placement condition before the atomic annotation transaction.
+                // Other renderer and Store failures remain hard errors.
+                if top_left.x + f64::from(layout.width()) > f64::from(target.source.source_width)
+                    || top_left.y + f64::from(layout.height()) > f64::from(target.source.source_height)
+                {
+                    return Err(preparation::Failure::Correctable(preparation::Rejection::VideoTextOutsideFrame));
+                }
                 bytes = bytes
                     .checked_add(layout.png().len())
                     .ok_or("视频文字图片过大")?;
@@ -1318,6 +1341,7 @@ mod tests {
                     entered.set(entered.get() + 1);
                     Ok(())
                 })
+                .map_err(|error| error.to_string())
             })
             .err()
             .unwrap();
@@ -1462,6 +1486,7 @@ mod tests {
                     entered.set(entered.get() + 1);
                     Ok(())
                 })
+                .map_err(|error| error.to_string())
             });
             assert!(result.is_err());
             assert_eq!(entered.get(), 0, "invalid batch reached renderer");
@@ -1696,8 +1721,24 @@ mod tests {
             let raw = args(&f.input, vec![rect(), last]).to_string();
             let lease = f.lease(&raw);
             // 999 is a valid anchor, but actual measured glyph width cannot fit.
-            let (batch, layouts) =
-                render_model(parse_model(&raw, &f.input).unwrap(), &f.input, || Ok(())).unwrap();
+            let rendered = render_model(parse_model(&raw, &f.input).unwrap(), &f.input, || Ok(()));
+            if !sql_failure {
+                assert!(matches!(rendered, Err(preparation::Failure::Correctable(preparation::Rejection::VideoTextOutsideFrame))));
+                assert!(f.store.video_source(&f.scene, &f.item).unwrap().annotations.is_none());
+                assert_eq!(db.conn().query_row("SELECT count(*) FROM video_text_layouts", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+                let (_, output) = preparation::reject(&mut f.store, &lease, preparation::Rejection::VideoTextOutsideFrame).unwrap();
+                let output: Value = serde_json::from_str(&output.model_json).unwrap();
+                assert_eq!(output["code"], "video_text_outside_frame");
+                assert_eq!(output["executed"], false);
+                assert!(f.store.run_is_active(&f.scene, &f.run));
+                let corrected = args(&f.input, vec![rect(), text()]).to_string();
+                let corrected_lease = f.lease_at_round(&corrected, 1);
+                let (batch, layouts) = render_model(parse_model(&corrected, &f.input).unwrap(), &f.input, || Ok(())).unwrap();
+                f.store.apply_video_annotations_with_receipt(&corrected_lease, &f.authority, batch, layouts).unwrap();
+                assert_eq!(f.document().objects.len(), 2);
+                continue;
+            }
+            let (batch, layouts) = rendered.unwrap();
             assert_eq!(layouts.len(), 1);
             let sql = db.conn();
             let before = proof(&sql);

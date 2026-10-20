@@ -19,6 +19,8 @@ use tokio::sync::Semaphore;
 mod argument_diagnostic;
 use argument_diagnostic::Rejection;
 use mewu_core::ArgumentDiagnosticReason as DiagnosticReason;
+#[path = "annotation_preparation.rs"]
+pub(crate) mod preparation;
 
 pub(crate) static TABLE_WORKERS: Semaphore = Semaphore::const_new(2);
 const INVOCATION_GUIDANCE: &str = "The current image label calls its handle targetHandle; copy that exact value into groups[i].target, never a targetHandle field in the call. The argument root is an object containing only groups, not an array. fontSize, strokeWidth, x and y are JSON numbers, never quoted strings. The example illustrates one current target, not instructions to draw its literal A or coordinates; choose the intended current target from the supplied schema and image labels, and replace the synthetic content only when the task calls for annotations.";
@@ -179,6 +181,21 @@ impl RunScope {
         let (batch, layouts) =
             match render_plan(plan, root, || self.check_live(app, scene, run)).await {
                 Ok(result) => result,
+                Err(preparation::Failure::Correctable(rejection)) => {
+                    if let Err(error) = self.check_live(app, scene, run) {
+                        return self.not_sent(app, scene, run, &lease, mewu_core::NotSentReason::AuthorityChanged, error);
+                    }
+                    let output = {
+                        let host = app.state::<Host>();
+                        let mut engine = host.lock()?;
+                        let (receipt, output) = preparation::reject(&mut engine.store, &lease, rejection)?;
+                        journal_runtime::emit_changed(app, scene, run, receipt.journal_revision);
+                        publish(app, &engine.store.snapshot());
+                        output
+                    };
+                    self.check_live(app, scene, run)?;
+                    return Ok(output);
+                }
                 Err(error) => {
                     return self.not_sent(
                         app,
@@ -186,7 +203,7 @@ impl RunScope {
                         run,
                         &lease,
                         mewu_core::NotSentReason::PreparationFailed,
-                        error,
+                        error.to_string(),
                     )
                 }
             };
@@ -1163,7 +1180,7 @@ fn fit(
     bounds: [DrawingPoint; 2],
     style_scale: f64,
     layout: &VerifiedRichLayout,
-) -> Result<[DrawingPoint; 2], String> {
+) -> Result<[DrawingPoint; 2], preparation::Failure> {
     let width = bounds[1].x - bounds[0].x;
     let height = bounds[1].y - bounds[0].y;
     let maximum = match layout.content() {
@@ -1179,8 +1196,11 @@ fn fit(
         RichContent::Formula { font_size, .. } => font_size * scale >= 8.,
         RichContent::Raster { .. } => false,
     };
-    if !scale.is_finite() || scale <= 0. || !readable {
-        return Err("可用范围太小，无法完整显示表格或公式".into());
+    if !scale.is_finite() || scale <= 0. {
+        return Err("批注排版比例无效".into());
+    }
+    if !readable {
+        return Err(preparation::Failure::Correctable(preparation::Rejection::ImageBoundsTooSmall));
     }
     Ok([
         bounds[0],
@@ -1195,7 +1215,7 @@ async fn render_plan(
     plan: ParsedBatch,
     root: PathBuf,
     check: impl Fn() -> Result<(), String>,
-) -> Result<(VisualAppendBatch, Vec<VerifiedRichLayout>), String> {
+) -> Result<(VisualAppendBatch, Vec<VerifiedRichLayout>), preparation::Failure> {
     let mut groups = Vec::new();
     let mut layouts = Vec::new();
     let mut content_bytes = 0_u64;

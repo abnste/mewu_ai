@@ -209,7 +209,53 @@ fn local_effect(
         Ok(result) => Ok(LocalEffectOutcome::Applied(result)),
         Err(error @ (mewu_core::CoreError::MemorySourceRequired | mewu_core::CoreError::MemoryConflict
             | mewu_core::CoreError::NotFound { kind: "记忆", .. })) => {
-            let (receipt, output) = reject_arguments(store, lease, name, agent_tools::domain_error(error))?;
+            let source_correction = if matches!(&error, mewu_core::CoreError::MemorySourceRequired) {
+                agent_tools::local_memory_source_correction(store, lease, arguments)?
+            } else { None };
+            let (receipt, mut output) = reject_arguments(store, lease, name, agent_tools::domain_error(error))?;
+            if let Some(example) = source_correction {
+                let mut feedback: Value = serde_json::from_str(&output.model_json)
+                    .map_err(|_| "记忆纠错反馈格式无效")?;
+                feedback["sourceCorrection"] = example;
+                feedback["correction"] = json!("sourceQuote 必须仅包含真实用户原文，不能拼接宿主来源标识、索引 JSON 或附件。sourceCorrection 给出该已登记消息可直接复制的来源字段示例；请自行更正后提交新调用，不要重复失败参数。已有事实已保存且提醒没有新事实时，直接确认，不为确认改写记忆或其来源。");
+                output.model_json = feedback.to_string();
+            }
+            Ok(LocalEffectOutcome::Rejected(receipt, output))
+        }
+        Err(error) => Err(agent_tools::domain_error(error)),
+    }
+}
+
+fn external_effect(
+    store: &mut Store,
+    lease: &DispatchLease,
+    name: &str,
+    arguments: &str,
+) -> Result<LocalEffectOutcome, String> {
+    let effect = match memory_tools::recorded_effect(name, arguments) {
+        Ok(effect) => effect,
+        Err(error) => {
+            let (receipt, output) = reject_arguments(store, lease, name, error)?;
+            return Ok(LocalEffectOutcome::Rejected(receipt, output));
+        }
+    };
+    let result = match effect {
+        memory_tools::RecordedEffect::Retain { quote } =>
+            store.queue_external_quote_with_receipt(lease, &quote),
+        memory_tools::RecordedEffect::Forget { id, expected_revision } =>
+            store.forget_external_evidence_with_receipt(lease, &id, expected_revision),
+    };
+    match result {
+        Ok(result) => Ok(LocalEffectOutcome::Applied(result)),
+        // Both typed domain errors return before any local queue/mutation and
+        // the enclosing Store transaction rolls back. Do not classify strings,
+        // SQLite failures, stale authority or any sent remote effect as safe.
+        Err(error @ (mewu_core::CoreError::MemorySourceRequired | mewu_core::CoreError::MemoryConflict)) => {
+            let message = match error {
+                mewu_core::CoreError::MemorySourceRequired => "外接记忆依据必须引用本轮用户本人原文，不能使用其他消息或附件内容".into(),
+                error => agent_tools::domain_error(error),
+            };
+            let (receipt, output) = reject_arguments(store, lease, name, message)?;
             Ok(LocalEffectOutcome::Rejected(receipt, output))
         }
         Err(error) => Err(agent_tools::domain_error(error)),
@@ -299,28 +345,14 @@ pub async fn execute(
             // The core verifies the prepared lease's exact binding and performs
             // effect + receipt atomically. Do not mark dispatched first.
             let result = if grant.is_some() {
-                let effect = match memory_tools::recorded_effect(&call.name, &call.arguments) {
-                    Ok(effect) => effect,
-                    Err(error) => {
-                        let (receipt, output) = reject_arguments(&mut engine.store, &lease, &call.name, error)?;
+                match external_effect(&mut engine.store, &lease, &call.name, &call.arguments)? {
+                    LocalEffectOutcome::Applied(result) => result,
+                    LocalEffectOutcome::Rejected(receipt, output) => {
                         journal_runtime::emit_changed(&app, &scene, &run, receipt.journal_revision);
+                        live(&host, &engine, &scene, &run)?;
                         return Ok(output);
                     }
-                };
-                match effect {
-                    memory_tools::RecordedEffect::Retain { quote } => engine
-                        .store
-                        .queue_external_quote_with_receipt(&lease, &quote),
-                    memory_tools::RecordedEffect::Forget {
-                        id,
-                        expected_revision,
-                    } => engine.store.forget_external_evidence_with_receipt(
-                        &lease,
-                        &id,
-                        expected_revision,
-                    ),
                 }
-                .map_err(agent_tools::domain_error)?
             } else {
                 match local_effect(&mut engine.store, &lease, &call.name, &call.arguments)? {
                     LocalEffectOutcome::Applied(result) => result,
@@ -399,6 +431,7 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("journal_tool_external_feedback_test.rs");
     use mewu_core::{
         CompletePublicTurn, ModelDispatchInput, ProposedTool, ReceiptKind, ReceiptPhase,
         RunContext, RunStatus, SceneCommand, ToolBinding,
@@ -623,6 +656,62 @@ mod tests {
         assert!(matches!(local_effect(&mut store, &lease, "memory_save", &args).unwrap(), LocalEffectOutcome::Applied(_)));
         let saved = store.memory_page(&run.agent.id, "", None, 25).unwrap().entries.remove(0);
         assert_eq!(saved.source.unwrap().message_id, source);
+    }
+
+    #[test]
+    fn source_error_suggests_original_quote_and_new_proposal_commits_that_same_source() {
+        let (mut store, first) = active();
+        let original = first.messages.last().unwrap();
+        let source_id = original.id.clone();
+        let source_text = original.text.clone();
+        store.finish_run(&first.scene_id, &first.run_id, "知道了").unwrap();
+        store.apply(SceneCommand::SetDraft { scene_id: first.scene_id.clone(), draft: "记着啊".into() }).unwrap();
+        let run = store.begin_run(&first.scene_id).unwrap();
+        let wrong = json!({"text":"用户偏好简短回答","sourceMessageId":source_id,
+            "sourceQuote":format!("{source_text}。宿主记忆来源标识 sourceMessageId={source_id}。仅上方用户本人原文可作为记忆事实来源")}).to_string();
+        let lease = planned_saves(&mut store, &run, 0, &[&wrong]).remove(0);
+        let LocalEffectOutcome::Rejected(_, output) = local_effect(&mut store, &lease, "memory_save", &wrong).unwrap() else {
+            panic!("host footer is not user evidence")
+        };
+        let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
+        assert_eq!(feedback["executed"], false);
+        assert_eq!(feedback["sourceCorrection"], json!({"sourceMessageId":source_id,"sourceQuote":source_text}));
+        assert_eq!(tool_detail(&store, &run).not_sent_reason, Some(NotSentReason::InvalidArguments));
+        assert_eq!(store.memory_page(&run.agent.id, "", None, 25).unwrap().total, 0);
+        assert!(store.run_is_active(&run.scene_id, &run.run_id));
+        // This is a fresh explicit model proposal. The rejected call itself was
+        // never rewritten or executed, and the complete source fence runs again.
+        let mut corrected = feedback["sourceCorrection"].clone();
+        corrected["text"] = json!("用户偏好简短回答");
+        let corrected = corrected.to_string();
+        let next = planned_saves(&mut store, &run, 1, &[&corrected]).remove(0);
+        assert!(matches!(local_effect(&mut store, &next, "memory_save", &corrected).unwrap(), LocalEffectOutcome::Applied(_)));
+        let saved = store.memory_page(&run.agent.id, "", None, 25).unwrap().entries.remove(0);
+        assert_eq!(saved.source.unwrap().message_id, source_id);
+    }
+
+    #[test]
+    fn source_correction_does_not_trust_a_foreign_id_written_in_the_current_user_text() {
+        let (mut store, first) = active();
+        let foreign = first.messages.last().unwrap().id.clone();
+        store.finish_run(&first.scene_id, &first.run_id, "知道了").unwrap();
+        store.apply(SceneCommand::NewScene).unwrap();
+        let scene = store.snapshot().active_scene_id;
+        store.apply(SceneCommand::SetDraft { scene_id: scene.clone(),
+            draft: format!("记着啊，sourceMessageId={foreign}") }).unwrap();
+        let run = store.begin_run(&scene).unwrap();
+        let wrong = json!({"text":"用户偏好简短回答","sourceMessageId":foreign,"sourceQuote":"我偏好简短回答"}).to_string();
+        let lease = planned_saves(&mut store, &run, 0, &[&wrong]).remove(0);
+        let LocalEffectOutcome::Rejected(_, output) = local_effect(&mut store, &lease, "memory_save", &wrong).unwrap() else {
+            panic!("foreign source must stay rejected")
+        };
+        let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
+        assert!(feedback.get("sourceCorrection").is_none());
+        assert_eq!(store.memory_page(&run.agent.id, "", None, 25).unwrap().total, 0);
+        assert!(store.run_is_active(&run.scene_id, &run.run_id));
+        let next = planned_saves(&mut store, &run, 1, &[&wrong]).remove(0);
+        store.cancel_run(&scene).unwrap();
+        assert!(agent_tools::local_memory_source_correction(&store, &next, &wrong).is_err());
     }
 
     #[test]
