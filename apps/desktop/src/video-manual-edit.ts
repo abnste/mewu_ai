@@ -36,7 +36,9 @@ export function validateVideoTextContent(value: unknown): value is VideoTextCont
   const v = value as Record<string, unknown>;
   const style = v.textStyle;
   const validStyle = style === undefined || !!style && typeof style === 'object' && !Array.isArray(style) && Object.entries(style).every(([key, enabled]) => ['bold', 'italic', 'underline', 'strikethrough'].includes(key) && typeof enabled === 'boolean');
-  return Object.keys(v).length === 4 + ('textStyle' in v ? 1 : 0) && validStyle && v.version === 1 && typeof v.text === 'string' && v.text.trim().length > 0 && [...v.text].length <= 500 && new TextEncoder().encode(v.text).length <= 4096 && !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(v.text) && typeof v.color === 'string' && /^#[0-9a-f]{6}$/i.test(v.color) && typeof v.fontSize === 'number' && Number.isFinite(v.fontSize) && v.fontSize >= 8 && v.fontSize <= 128;
+  const box = v.textBox as Record<string, unknown> | undefined;
+  const validBox = box === undefined || !!box && typeof box === 'object' && !Array.isArray(box) && Object.keys(box).length === 2 && ['width', 'height'].every(key => typeof box[key] === 'number' && Number.isFinite(box[key]) && Number(box[key]) >= 1 && Number(box[key]) <= 5992);
+  return Object.keys(v).length === 4 + ('textStyle' in v ? 1 : 0) + ('textBox' in v ? 1 : 0) && validStyle && validBox && v.version === 1 && typeof v.text === 'string' && v.text.trim().length > 0 && [...v.text].length <= 500 && new TextEncoder().encode(v.text).length <= 4096 && !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(v.text) && typeof v.color === 'string' && /^#[0-9a-f]{6}$/i.test(v.color) && typeof v.fontSize === 'number' && Number.isFinite(v.fontSize) && v.fontSize >= 8 && v.fontSize <= 128;
 }
 export function validateVideoTextRead(raw: VideoTextRead, requestId: string, target: VideoAnnotationTarget, annotationId: string, reference: VideoTextLayoutRef): VideoTextRead {
   if (!raw || Object.keys(raw).length !== 5 || raw.requestId !== requestId || !equal(raw.target, target) || raw.annotationId !== annotationId || !equal(raw.reference, reference) || !validateVideoTextContent(raw.content)) throw Error('视频文字回执不一致');

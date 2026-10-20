@@ -70,12 +70,31 @@ function event(type, sourceX, sourceY, extra = {}) {
 const fire = (fixture, type, x, y, extra) => fixture.window.dispatch(event(type, x, y, extra));
 const settled = () => new Promise(resolve => setImmediate(resolve));
 
-test('only supported two-point primitives expose geometry handles; rich/text/number remain fixed', () => {
+test('shape geometry handles preserve old primitives; text adds width/height handles', () => {
   assert.deepEqual(plain(geometry.drawingResizeHandles(shape())), [{ x: 140, y: 240 }, { x: 260, y: 240 }, { x: 260, y: 320 }, { x: 140, y: 320 }]);
   assert.deepEqual(plain(geometry.drawingResizeHandles(shape('mark'))), [{ x: 140, y: 240 }, { x: 260, y: 240 }, { x: 260, y: 320 }, { x: 140, y: 320 }]);
   for (const kind of ['line', 'arrow']) assert.deepEqual(plain(geometry.drawingResizeHandles(shape(kind))), shape().points);
-  for (const kind of ['rich', 'text', 'number', 'pen', 'highlighter', 'mosaic']) assert.deepEqual(geometry.drawingResizeHandles(shape(kind)), []);
+  for (const kind of ['rich', 'number', 'pen', 'highlighter', 'mosaic']) assert.deepEqual(geometry.drawingResizeHandles(shape(kind)), []);
   assert.deepEqual(geometry.drawingResizeHandles(shape('rect', [{ x: 1, y: 2 }])), []);
+});
+
+test('real text resize converts a legacy anchor into a box in one update, preserves styled text and font, and retains overflowing content', async () => {
+  const drawing = { ...shape('text', [{ x: 140, y: 240 }]), text: '中文 abcd\n第二行 e\u0301 👨‍👩‍👧', fontSize: 24, textStyle: { bold: true, italic: true, underline: true, strikethrough: true } };
+  const fixture = setup(drawing), handles = geometry.drawingResizeHandles(drawing);
+  assert.equal(handles.length, 3);
+  fixture.beginResize(event('pointerdown', handles[2].x, handles[2].y), 2);
+  fire(fixture, 'pointermove', 195, 250); fire(fixture, 'pointerup', 195, 250); await settled();
+  assert.equal(fixture.commands.length, 1);
+  const result = fixture.commands[0].drawing;
+  assert.deepEqual(result, { ...drawing, points: [{ x: 140, y: 240 }, { x: 195, y: 250 }] });
+  const layout = geometry.drawingTextLayout(result);
+  assert.equal(layout.lines.join(''), drawing.text.replaceAll('\n', ''));
+  assert.ok(layout.lines.length > 2); assert.ok(layout.height > 10);
+  assert.ok(layout.lines.some(line => line.includes('e\u0301')));
+  assert.ok(layout.lines.some(line => line.includes('👨‍👩‍👧')));
+  const framed = { ...drawing, text: 'abc', points: [{ x: 140, y: 240 }, { x: 260, y: 320 }] };
+  assert.deepEqual(plain(geometry.resizedDrawingPoints(framed, 0, { x: 200, y: 400 }, false, region)), [{ x: 140, y: 240 }, { x: 200, y: 320 }]);
+  assert.deepEqual(plain(geometry.resizedDrawingPoints(framed, 1, { x: 410, y: 400 }, false, region)), [{ x: 140, y: 240 }, { x: 260, y: 400 }]);
 });
 
 test('all four corners fix their diagonal source anchor, preserve orientation and prevent flipping', () => {
@@ -218,7 +237,7 @@ test('accepted resize stays single-flight; rejected CAS leaves original shape an
 });
 
 test('fixed rich identity and document-only mode cannot enter resize even through direct event invocation', () => {
-  for (const kind of ['rich', 'text', 'number', 'pen', 'highlighter', 'mosaic']) {
+  for (const kind of ['rich', 'number', 'pen', 'highlighter', 'mosaic']) {
     const fixture = setup(shape(kind)); fixture.beginResize(event('pointerdown', 260, 320), 0); assert.equal(fixture.hasGesture(), false); assert.equal(fixture.commands.length, 0);
   }
   const fixture = setup(); fixture.props.documentOnly = true; fixture.beginResize(event('pointerdown', 260, 320), 2); assert.equal(fixture.hasGesture(), false);

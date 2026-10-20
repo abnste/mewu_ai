@@ -19,6 +19,9 @@ use std::{
 #[path = "drawing_mosaic.rs"]
 mod mosaic;
 pub use mosaic::mosaic_grid;
+#[path = "drawing_text_wrap.rs"]
+mod text_wrap;
+pub(crate) use text_wrap::literal_text_lines;
 
 const MAX_PIXELS: u64 = 32 * 1024 * 1024;
 const MAX_DRAWINGS_BYTES: usize = 4 * 1024 * 1024;
@@ -310,7 +313,7 @@ fn vector_overlay(
     if drawings.iter().all(|d| d.kind == DrawingKind::Mosaic) {
         return Ok(None);
     }
-    let xml = drawing_svg(drawings, source_width, source_height);
+    let xml = drawing_svg(drawings, source_width, source_height)?;
     let mut options = usvg::Options::default();
     // Defense in depth: even future serialization mistakes cannot dereference
     // files, embedded images, or network resources through usvg's defaults.
@@ -411,7 +414,8 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
         let count = drawing.points.len();
         if !(match drawing.kind {
             DrawingKind::Pen | DrawingKind::Highlighter => (1..=4096).contains(&count),
-            DrawingKind::Text | DrawingKind::Number => count == 1,
+            DrawingKind::Text => count == 1 || count == 2,
+            DrawingKind::Number => count == 1,
             _ => count == 2,
         }) || drawing.points.iter().any(|p| {
             !p.x.is_finite()
@@ -434,6 +438,12 @@ fn validate_drawings(drawings: &[Drawing], width: u32, height: u32) -> Result<()
             return Err("绘制坐标无效".into());
         }
         if drawing.kind == DrawingKind::Text {
+            if count == 2
+                && (drawing.points[1].x <= drawing.points[0].x
+                    || drawing.points[1].y <= drawing.points[0].y)
+            {
+                return Err("文字框宽高必须大于零".into());
+            }
             let text = drawing.text.as_deref().ok_or("绘制文字为空")?;
             if text.trim().is_empty()
                 || text.chars().count() > 2000
@@ -533,10 +543,10 @@ pub(crate) fn video_vector_svg(
         return Err("视频绘制类型无效".into());
     }
     validate_drawings(std::slice::from_ref(drawing), width, height)?;
-    Ok(drawing_svg(std::slice::from_ref(drawing), width, height))
+    drawing_svg(std::slice::from_ref(drawing), width, height)
 }
 
-fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
+fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> Result<String, String> {
     let mut svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\">");
     for drawing in drawings {
         let first = drawing.points[0];
@@ -589,11 +599,17 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
             }
             DrawingKind::Text => {
                 let size = drawing.font_size.unwrap();
+                let lines = literal_text_lines(
+                    drawing.text.as_deref().unwrap(),
+                    size,
+                    drawing.text_style,
+                    drawing.points.get(1).map(|end| end.x - first.x),
+                )?;
                 if let Some(style) = drawing
                     .text_style
                     .filter(|style| *style != Default::default())
                 {
-                    for (line, text) in drawing.text.as_deref().unwrap().split('\n').enumerate() {
+                    for (line, text) in lines.iter().enumerate() {
                         svg.push_str(&styled_text_line_svg(
                             text,
                             color,
@@ -606,7 +622,7 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
                     continue;
                 }
                 let _ = write!(svg, "<text fill=\"{color}\" font-family=\"{FONT_FAMILY}\" font-size=\"{size}\" xml:space=\"preserve\">");
-                for (line, text) in drawing.text.as_deref().unwrap().split('\n').enumerate() {
+                for (line, text) in lines.iter().enumerate() {
                     let _ = write!(
                         svg,
                         "<tspan x=\"{}\" y=\"{}\">{}</tspan>",
@@ -633,7 +649,7 @@ fn drawing_svg(drawings: &[Drawing], width: u32, height: u32) -> String {
         }
     }
     svg.push_str("</svg>");
-    svg
+    Ok(svg)
 }
 
 fn mark_paths(a: DrawingPoint, b: DrawingPoint, border: f64) -> (String, String) {
@@ -1060,7 +1076,8 @@ mod tests {
         let mut options = usvg::Options::default();
         options.font_family = family;
         options.fontdb = database;
-        let tree = usvg::Tree::from_str(&drawing_svg(&[item], 1000, 160), &options).unwrap();
+        let tree =
+            usvg::Tree::from_str(&drawing_svg(&[item], 1000, 160).unwrap(), &options).unwrap();
         let glyphs: Vec<_> = tree
             .root()
             .children()
@@ -1115,7 +1132,8 @@ mod tests {
             resolve_string: Box::new(|_, _| None),
         };
         let tree =
-            usvg::Tree::from_str(&drawing_svg(&[item.clone()], 1000, 160), &options).unwrap();
+            usvg::Tree::from_str(&drawing_svg(&[item.clone()], 1000, 160).unwrap(), &options)
+                .unwrap();
         let glyphs: Vec<_> = tree
             .root()
             .children()
@@ -1182,17 +1200,17 @@ mod tests {
         let mut item = drawing(DrawingKind::Text, &[(40., 20.)]);
         item.text = Some("中文 <&>\nAbc".into());
         item.font_size = Some(40.);
-        let legacy = drawing_svg(&[item.clone()], 800, 240);
+        let legacy = drawing_svg(&[item.clone()], 800, 240).unwrap();
         assert!(legacy.contains("<tspan x=\"40\" y=\"60\">中文 &lt;&amp;&gt;</tspan>"));
         item.text_style = Some(Default::default());
-        assert_eq!(drawing_svg(&[item.clone()], 800, 240), legacy);
+        assert_eq!(drawing_svg(&[item.clone()], 800, 240).unwrap(), legacy);
         item.text_style = Some(mewu_core::DrawingTextStyle {
             bold: true,
             italic: true,
             underline: true,
             strikethrough: true,
         });
-        let styled = drawing_svg(&[item], 800, 240);
+        let styled = drawing_svg(&[item], 800, 240).unwrap();
         assert_eq!(styled.matches("font-weight=\"700\"").count(), 2);
         assert_eq!(styled.matches("font-style=\"normal\"").count(), 2);
         assert_eq!(
@@ -1205,6 +1223,99 @@ mod tests {
         assert!(styled.contains("translate(0 110) skewX(-12) translate(0 -110)"));
         assert!(!styled.contains("<tspan"));
         assert!(styled.contains("中文 &lt;&amp;&gt;"));
+    }
+
+    #[test]
+    fn text_box_export_matches_explicit_lines_and_does_not_clip_to_minimum_height() {
+        let source =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(360, 360, Rgba([255, 255, 255, 255])));
+        for style in [
+            None,
+            Some(mewu_core::DrawingTextStyle {
+                bold: true,
+                italic: true,
+                underline: true,
+                strikethrough: true,
+            }),
+        ] {
+            let mut boxed = drawing(DrawingKind::Text, &[(24., 18.), (124., 38.)]);
+            boxed.text = Some("WWWWWW 中文测试\n\nA\u{301} B<&> WWWW".into());
+            boxed.font_size = Some(28.);
+            boxed.text_style = style;
+            let lines =
+                literal_text_lines(boxed.text.as_deref().unwrap(), 28., style, Some(100.)).unwrap();
+            assert!(lines.len() >= 5);
+            let mut explicit = boxed.clone();
+            explicit.points.truncate(1);
+            explicit.text = Some(lines.join("\n"));
+            let xml = drawing_svg(&[boxed.clone()], 360, 360).unwrap();
+            assert_eq!(xml, drawing_svg(&[explicit.clone()], 360, 360).unwrap());
+            assert!(xml.contains("font-size=\"28\""));
+            assert!(!xml.contains("clipPath"));
+            let region = |item| Region {
+                x: 0.,
+                y: 0.,
+                width: 360.,
+                height: 360.,
+                drawings: vec![item],
+                ..Default::default()
+            };
+            let actual = crop_region(&source, &region(boxed.clone()))
+                .unwrap()
+                .into_rgba8();
+            let expected = crop_region(&source, &region(explicit))
+                .unwrap()
+                .into_rgba8();
+            assert_eq!(
+                actual, expected,
+                "box export must use the same real glyph raster as explicit line breaks"
+            );
+            assert!(
+                actual
+                    .enumerate_pixels()
+                    .filter(|(_, y, p)| *y > 70 && p[1] < 200)
+                    .count()
+                    > 100,
+                "text below the minimum-height frame was clipped"
+            );
+            boxed.points[1].y = 300.;
+            assert_eq!(
+                actual,
+                crop_region(&source, &region(boxed)).unwrap().into_rgba8(),
+                "changing minimum height must not scale or crop the text"
+            );
+        }
+    }
+
+    #[test]
+    fn text_box_validation_preserves_legacy_admission_and_rejects_reversed_or_flat_frames() {
+        let mut text = drawing(DrawingKind::Text, &[(20., 20.)]);
+        text.text = Some("legacy\n文字".into());
+        text.font_size = Some(24.);
+        assert!(validate_drawings(&[text.clone()], 200, 200).is_ok());
+        let legacy = drawing_svg(&[text.clone()], 200, 200).unwrap();
+        assert!(legacy.contains(
+            "<tspan x=\"20\" y=\"44\">legacy</tspan><tspan x=\"20\" y=\"74\">文字</tspan>"
+        ));
+        text.points.push(DrawingPoint { x: 90., y: 80. });
+        assert!(validate_drawings(&[text.clone()], 200, 200).is_ok());
+        for end in [(20., 80.), (19., 80.), (90., 20.), (90., 19.)] {
+            text.points[1] = DrawingPoint { x: end.0, y: end.1 };
+            assert!(validate_drawings(&[text.clone()], 200, 200).is_err());
+        }
+        text.points[1] = DrawingPoint { x: 90., y: 80. };
+        text.text = Some("ordinary\ttext".into());
+        assert!(
+            validate_drawings(&[text.clone()], 200, 200).is_err(),
+            "ordinary text did not gain a control-character exception"
+        );
+        text.kind = DrawingKind::Number;
+        text.text = Some("1".into());
+        text.font_size = Some(28.);
+        assert!(
+            validate_drawings(&[text], 200, 200).is_err(),
+            "number geometry stays one point"
+        );
     }
 
     #[test]
@@ -1670,9 +1781,9 @@ mod tests {
         assert_eq!(output.get_pixel(76, 47), Rgba([255, 0, 0, 255]));
         assert_eq!(output.get_pixel(78, 44), Rgba([255, 255, 255, 255]));
         assert_eq!(output.get_pixel(40, 40), Rgba([255, 0, 0, 255]));
-        let narrow = drawing_svg(&[arrow.clone()], 200, 100);
+        let narrow = drawing_svg(&[arrow.clone()], 200, 100).unwrap();
         arrow.stroke_width = 12.;
-        let wide = drawing_svg(&[arrow], 200, 100);
+        let wide = drawing_svg(&[arrow], 200, 100).unwrap();
         let wing_points = |svg: &str| {
             roxmltree::Document::parse(svg)
                 .unwrap()
@@ -1937,7 +2048,7 @@ mod tests {
         let mut text = drawing(DrawingKind::Text, &[(25., 20.)]);
         text.text = Some("</text><image href=\"file:///private\"/>".into());
         text.font_size = Some(14.);
-        let xml = drawing_svg(&[text], 200, 100);
+        let xml = drawing_svg(&[text], 200, 100).unwrap();
         assert!(!xml.contains("<image"));
         assert!(xml.contains("&lt;image"));
         let mut invalid = region(vec![]);

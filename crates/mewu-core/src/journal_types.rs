@@ -470,7 +470,16 @@ pub struct ReceiptCommit {
 }
 
 // Typed local-effect entry points are internal Rust APIs, never renderer IPC.
-// Store validates quote against the originating user message before mutation.
+// Store validates quote against a real user message before mutation. Earlier
+// messages are eligible only within this run's current conversation and bound.
+pub const LOCAL_MEMORY_SOURCE_MESSAGE_LIMIT: usize = 8;
+
+pub fn local_memory_sources(messages: &[crate::Message]) -> impl Iterator<Item = &crate::Message> {
+    messages.iter().rev()
+        .filter(|message| message.role == crate::MessageRole::User)
+        .take(LOCAL_MEMORY_SOURCE_MESSAGE_LIMIT)
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(
     tag = "type",
@@ -484,6 +493,8 @@ pub enum LocalMemoryEffect {
         text: String,
         expected_revision: Option<u64>,
         source_quote: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_message_id: Option<String>,
     },
     Forget {
         id: String,

@@ -808,12 +808,13 @@ impl Store {
         let (result, receipt) = self.journal_transaction(|db, state| {
             let (r, e, _) = j::leased(db, lease)?;
             live(state, &r)?;
-            let (name, mutation, quote) = match effect {
+            let (name, mutation, quote, source_message_id) = match effect {
                 LocalMemoryEffect::Save {
                     id,
                     text,
                     expected_revision,
                     source_quote,
+                    source_message_id,
                 } => (
                     "memory_save",
                     MemoryMutation::Save {
@@ -822,6 +823,7 @@ impl Store {
                         expected_revision,
                     },
                     Some(source_quote),
+                    source_message_id,
                 ),
                 LocalMemoryEffect::Forget {
                     id,
@@ -833,6 +835,7 @@ impl Store {
                         expected_revision,
                     },
                     None,
+                    None,
                 ),
             };
             if e.summary.phase != ReceiptPhase::Prepared
@@ -840,18 +843,25 @@ impl Store {
             {
                 return Err(CoreError::JournalConflict);
             }
-            let (agent, source) = local_memory_scope(state, &r.scene, &r.id)?;
+            let (agent, mut source) = local_memory_scope(state, &r.scene, &r.id)?;
             if let Some(quote) = quote {
                 let quote = quote.trim();
+                let scene = scope(state, &r)?;
+                let current = scene.messages.iter().position(|m| m.id == r.user)
+                    .ok_or(CoreError::JournalConflict)?;
+                let start = scene.conversation_start.unwrap_or(0);
+                let visible = scene.messages.get(start..=current)
+                    .ok_or(CoreError::JournalConflict)?;
+                let source_id = source_message_id.as_deref().unwrap_or(&r.user);
+                let evidence = crate::local_memory_sources(visible)
+                    .find(|message| message.id == source_id);
                 if quote.is_empty()
                     || quote.chars().count() > 500
-                    || !scope(state, &r)?
-                        .messages
-                        .iter()
-                        .any(|m| m.id == r.user && m.text.contains(quote))
+                    || !evidence.is_some_and(|message| message.text.contains(quote))
                 {
-                    return Err(j::bad("记忆依据必须来自本轮用户输入"));
+                    return Err(CoreError::MemorySourceRequired);
                 }
+                source.message_id = source_id.to_owned();
             }
             crate::memory::mutate(db, &agent, mutation, Some(source))?;
             let result = local_result(if name == "memory_save" {

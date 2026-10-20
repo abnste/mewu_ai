@@ -7,16 +7,62 @@ export function drawingTextLineTransform(italic: boolean | undefined, baseline: 
   return italic ? `translate(0 ${baseline}) skewX(${DRAWING_TEXT_SKEW_DEGREES}) translate(0 ${-baseline})` : undefined;
 }
 
+let textMeasureContext: CanvasRenderingContext2D | null | undefined;
+/** Measure complete candidate lines with the native exporter's shared
+ * exponential/binary search policy. Contextual shaping can change earlier
+ * advances, so this is not a promise of first-overflow greedy equivalence. */
+export function drawingTextLayout(drawing: Drawing, measureText?: (text: string) => number) {
+  const size = drawing.fontSize ?? 20, lineHeight = size * 1.25;
+  if (textMeasureContext === undefined && typeof document !== 'undefined') textMeasureContext = document.createElement('canvas').getContext('2d');
+  const context = textMeasureContext;
+  if (context) context.font = `normal ${drawing.textStyle?.bold ? '700' : '400'} ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+  const widths = new Map<string, number>();
+  const measure = (text: string) => {
+    const cached = widths.get(text); if (cached !== undefined) return cached;
+    const width = measureText?.(text) ?? context?.measureText(text.replaceAll('\t', '    ')).width ?? [...text].reduce((sum, char) => sum + (char.codePointAt(0)! > 255 ? size : size * .6), 0);
+    widths.set(text, width); return width;
+  };
+  const frame = drawing.kind === 'text' && drawing.points.length === 2 ? { width: drawing.points[1].x - drawing.points[0].x, height: drawing.points[1].y - drawing.points[0].y } : undefined;
+  const lines: string[] = [];
+  const segmenter = frame ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : undefined;
+  // Video's literal renderer expands TAB before finding wrap opportunities.
+  // Expand only this display copy; the editable/stored source keeps its TABs.
+  for (const paragraph of (drawing.text ?? '').replaceAll('\t', '    ').split('\n')) {
+    if (!frame || !paragraph) { lines.push(paragraph); continue; }
+    const ends = [...segmenter!.segment(paragraph)].map(part => part.index);
+    ends.push(paragraph.length);
+    const count = ends.length - 1;
+    let start = 0;
+    while (start < count) {
+      // Match drawing_text_wrap::wrap_lines: an indivisible over-wide grapheme
+      // occupies one line. Probe whole lines rather than shaping every prefix.
+      let fit = start + 1, step = 1, limit = count;
+      while (fit < count) {
+        const probe = Math.min(start + step * 2, count);
+        if (measure(paragraph.slice(ends[start], ends[probe])) > frame.width + .001) { limit = probe; break; }
+        fit = probe; step *= 2;
+      }
+      while (fit + 1 < limit) {
+        const middle = fit + Math.floor((limit - fit) / 2);
+        if (measure(paragraph.slice(ends[start], ends[middle])) <= frame.width + .001) fit = middle;
+        else limit = middle;
+      }
+      lines.push(paragraph.slice(ends[start], ends[fit]));
+      start = fit;
+    }
+  }
+  const contentWidth = Math.max(1, ...lines.map(measure));
+  return { lines, size, lineHeight, contentWidth, width: frame?.width ?? contentWidth, height: Math.max(frame?.height ?? 0, lines.length * lineHeight), framed: !!frame };
+}
+
 export function drawingBounds(drawing: Drawing) {
   const points = drawing.kind === 'arrow' ? [...drawing.points, ...(arrowWings(drawing.points) ?? [])] : drawing.points;
   const xs = points.map(point => point.x), ys = points.map(point => point.y);
   let x = Math.min(...xs), y = Math.min(...ys), width = Math.max(...xs) - x, height = Math.max(...ys) - y;
   if (drawing.kind === 'text') {
-    const lines = (drawing.text ?? '').split('\n'), size = drawing.fontSize ?? 20;
-    width = Math.max(...lines.map(line => [...line].reduce((sum, char) => sum + (char.charCodeAt(0) > 255 ? 1 : .6), 0))) * size;
-    height = Math.max(1, lines.length) * size * 1.25;
+    const layout = drawingTextLayout(drawing), size = layout.size;
+    width = Math.max(layout.width, layout.contentWidth); height = layout.height;
     // Oblique glyphs extend right above the baseline and slightly left below it.
-    if (drawing.textStyle?.bold) width *= 1.12;
     if (drawing.textStyle?.italic) { const overhang = Math.tan(-DRAWING_TEXT_SKEW_DEGREES * Math.PI / 180) * size; x -= overhang * .25; width += overhang * 1.25; }
   }
   if (drawing.kind === 'number') width = height = drawing.fontSize ?? 28;
@@ -48,6 +94,13 @@ export function constrainedEnd(kind: DrawingKind, start: DrawingPoint, end: Draw
   return { x: start.x + ux * distance, y: start.y + uy * distance };
 }
 export function drawingResizeHandles(drawing: Drawing): DrawingPoint[] {
+  if (drawing.kind === 'text' && (drawing.points.length === 1 || drawing.points.length === 2)) {
+    const first = drawing.points[0], layout = drawingTextLayout(drawing);
+    if (![first.x, first.y, layout.width, layout.height].every(Number.isFinite) || layout.width <= 0 || layout.height <= 0) return [];
+    // Keep the text origin fixed. Side handles adjust width/height independently;
+    // the lower-right handle adjusts both, without scaling the font.
+    return [{ x: first.x + layout.width, y: first.y + layout.height / 2 }, { x: first.x + layout.width / 2, y: first.y + layout.height }, { x: first.x + layout.width, y: first.y + layout.height }];
+  }
   if (drawing.points.length !== 2 || !['line', 'arrow', 'rect', 'ellipse', 'mark'].includes(drawing.kind)) return [];
   const [a, b] = drawing.points;
   if (![a.x, a.y, b.x, b.y].every(Number.isFinite)) return [];
@@ -61,6 +114,15 @@ export function resizedDrawingPoints(drawing: Drawing, handle: number, pointer: 
   const [a, b] = drawing.points;
   const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
   const end = { x: clamp(pointer.x, region.x, region.x + region.width), y: clamp(pointer.y, region.y, region.y + region.height) };
+  if (drawing.kind === 'text') {
+    const layout = drawingTextLayout(drawing), first = drawing.points[0];
+    if (first.x >= region.x + region.width || first.y >= region.y + region.height) return;
+    const right = handle === 1 ? first.x + layout.width : Math.max(first.x + 1, end.x);
+    const bottom = handle === 0 ? first.y + layout.height : Math.max(first.y + 1, end.y);
+    // The box is a minimum height. Wrapped text always remains in the document
+    // and is painted at its natural height, even when the box is shortened.
+    return [{ ...first }, { x: clamp(right, first.x + 1, region.x + region.width), y: clamp(bottom, first.y + 1, region.y + region.height) }];
+  }
   if (drawing.kind === 'line' || drawing.kind === 'arrow') {
     const anchor = handle === 0 ? b : a;
     const adjusted = constrainedEnd(drawing.kind, anchor, shift ? pointer : end, shift, region);

@@ -625,6 +625,7 @@ fn local_effect_receipt_and_step_are_one_sqlite_commit() {
         text: "用户喜欢中文".into(),
         expected_revision: None,
         source_quote: "喜欢中文".into(),
+        source_message_id: None,
     };
     assert!(s
         .apply_local_memory_with_receipt(&t.tools[0].lease, effect.clone())
@@ -643,6 +644,77 @@ fn local_effect_receipt_and_step_are_one_sqlite_commit() {
         ToolStepStatus::Completed
     );
     assert_eq!(page(&s, &c).entries[1].phase, ReceiptPhase::Responded);
+}
+
+#[test]
+fn memory_follow_up_binds_the_exact_prior_user_source_and_survives_reopen() {
+    let file = Db::new();
+    let mut store = Store::open(&file.0).unwrap();
+    let mut agent = store.snapshot().agents[0].clone();
+    agent.memory_enabled = true;
+    store.apply(SceneCommand::SaveAgent { agent: agent.clone() }).unwrap();
+    let first = start(&mut store, "我是stephen");
+    let source = first.messages.last().unwrap().id.clone();
+    store.finish_run(&first.scene_id, &first.run_id, "你好").unwrap();
+    let follow_up = start(&mut store, "记着啊");
+    let proposal = turn(&mut store, &follow_up, "", vec![call("memory_save")]);
+    store.apply_local_memory_with_receipt(&proposal.tools[0].lease, LocalMemoryEffect::Save {
+        id: None, text: "用户姓名是stephen".into(), expected_revision: None,
+        source_quote: "我是stephen".into(), source_message_id: Some(source.clone()),
+    }).unwrap();
+    let saved = store.memory_page(&agent.id, "", None, 25).unwrap().entries.remove(0);
+    assert_eq!(saved.source, Some(MemorySource { scene_id: first.scene_id.clone(), message_id: source }));
+    assert_ne!(saved.source.as_ref().unwrap().message_id, follow_up.messages.last().unwrap().id);
+    assert_eq!(page(&store, &follow_up).entries[1].phase, ReceiptPhase::Responded);
+    store.finish_run(&follow_up.scene_id, &follow_up.run_id, "已记住").unwrap();
+    drop(store);
+    let reopened = Store::open(&file.0).unwrap();
+    assert_eq!(reopened.memory_entry(&agent.id, &saved.id).unwrap(), Some(saved));
+}
+
+#[test]
+fn memory_source_rejects_assistant_cross_scene_reset_and_unlabelled_old_messages() {
+    let mut store = Store::open_in_memory().unwrap();
+    let mut agent = store.snapshot().agents[0].clone();
+    agent.memory_enabled = true;
+    store.apply(SceneCommand::SaveAgent { agent: agent.clone() }).unwrap();
+    let first = start(&mut store, "我是stephen");
+    let source = first.messages.last().unwrap().id.clone();
+    store.finish_run(&first.scene_id, &first.run_id, "我是stephen").unwrap();
+    let assistant = store.snapshot().scenes.iter().find(|scene| scene.id == first.scene_id)
+        .unwrap().messages.last().unwrap().id.clone();
+    store.apply(SceneCommand::NewScene).unwrap();
+    let other = start(&mut store, "我是stephen");
+    let cross_scene = other.messages.last().unwrap().id.clone();
+    store.finish_run(&other.scene_id, &other.run_id, "知道了").unwrap();
+    store.apply(SceneCommand::ActivateScene { scene_id: first.scene_id.clone() }).unwrap();
+    let follow_up = start(&mut store, "记着啊");
+    let proposal = turn(&mut store, &follow_up, "", vec![call("memory_save")]);
+    let effect = |source_message_id| LocalMemoryEffect::Save {
+        id: None, text: "用户姓名是stephen".into(), expected_revision: None,
+        source_quote: "我是stephen".into(), source_message_id,
+    };
+    for invalid in [None, Some(assistant), Some(cross_scene), Some(uuid::Uuid::new_v4().to_string())] {
+        assert!(matches!(store.apply_local_memory_with_receipt(&proposal.tools[0].lease, effect(invalid)), Err(CoreError::MemorySourceRequired)));
+    }
+    store.fail_run(&follow_up.scene_id, &follow_up.run_id, "fixture").unwrap();
+    store.apply(SceneCommand::NewConversation { scene_id: first.scene_id.clone() }).unwrap();
+    let reset = start(&mut store, "记着啊");
+    let proposal = turn(&mut store, &reset, "", vec![call("memory_save")]);
+    assert!(matches!(store.apply_local_memory_with_receipt(&proposal.tools[0].lease, effect(Some(source.clone()))), Err(CoreError::MemorySourceRequired)));
+    store.finish_run(&reset.scene_id, &reset.run_id, "fixture").unwrap();
+    let recent = start(&mut store, "我是stephen");
+    let recent_source = recent.messages.last().unwrap().id.clone();
+    store.finish_run(&recent.scene_id, &recent.run_id, "知道了").unwrap();
+    for _ in 0..LOCAL_MEMORY_SOURCE_MESSAGE_LIMIT {
+        let run = start(&mut store, "继续");
+        store.finish_run(&run.scene_id, &run.run_id, "继续").unwrap();
+    }
+    let old = start(&mut store, "记着啊");
+    let proposal = turn(&mut store, &old, "", vec![call("memory_save")]);
+    assert!(matches!(store.apply_local_memory_with_receipt(&proposal.tools[0].lease, effect(Some(recent_source))), Err(CoreError::MemorySourceRequired)));
+    assert_eq!(store.memory_page(&agent.id, "", None, 25).unwrap().total, 0);
+    assert_eq!(page(&store, &old).entries[1].phase, ReceiptPhase::Prepared);
 }
 
 #[test]

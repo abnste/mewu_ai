@@ -46,7 +46,7 @@ pub use video_annotation_algorithm::{
     resolve_model_interval as resolve_video_model_interval,
     source_point as video_annotation_source_point, source_rect as video_annotation_source_rect,
 };
-pub use video_annotation_layouts::{VerifiedVideoTextLayout, VideoTextContent, VideoTextLayoutRef};
+pub use video_annotation_layouts::{VerifiedVideoTextLayout, VideoTextBox, VideoTextContent, VideoTextLayoutRef};
 pub use video_annotations::*;
 pub use video_registered_layouts::{
     VideoAnnotationLayouts, MAX_VIDEO_DOCUMENT_LAYOUT_DESCRIPTOR_BYTES,

@@ -38,6 +38,9 @@ export interface DrawingEditorPort {
   move?:(original:Drawing,start:{x:number;y:number},end:{x:number;y:number})=>Drawing;
   persistedId?:(temporaryId:string)=>string;
   rejectPointOverflow?:boolean;
+  /** Native video text rasters reserve a four-pixel margin around the content. */
+  textInset?:number;
+  textBoxLimit?:number;
   pixelEraser?:boolean;
   mosaic?:{blockSize:()=>number;prepare:()=>Promise<unknown>};
   highlight?:{identity?:()=>string;prepare:()=>Promise<unknown>};

@@ -262,6 +262,7 @@ pub(crate) fn validate_content(content: &VideoTextContent) -> Result<(), String>
             .any(|c| c.is_control() && c != '\n' && c != '\t')
         || !content.font_size.is_finite()
         || !(8. ..=128.).contains(&content.font_size)
+        || content.text_box.is_some_and(|area| !area.is_valid())
         || content.color.len() != 7
         || !content.color.starts_with('#')
         || !content.color.as_bytes()[1..]
@@ -770,6 +771,7 @@ mod manual_edit_tests {
     }
     fn content(text: &str) -> VideoTextContent {
         VideoTextContent {
+            text_box: None,
             text_style: None, version: 1,
             text: text.into(),
             color: "#1357b9".into(),
@@ -1345,6 +1347,7 @@ mod manual_edit_media_gate {
     const TEXT_Y: u32 = 40;
     fn content(s: &str) -> VideoTextContent {
         VideoTextContent {
+            text_box: None,
             text_style: None, version: 1,
             text: s.into(),
             color: "#ffffff".into(),

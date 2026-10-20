@@ -67,7 +67,7 @@ test('actual inline caret measures the same normal/bold advance without opening 
   try {
     const Inline = (await load(new URL('./components/InlineDrawingText.tsx', import.meta.url))).namespace.default;
     const html = web.renderToString(() => Inline({ drawing: { ...text, textStyle: { bold: true, italic: true, underline: true, strikethrough: true } }, disabled: false, ref() {}, onInput() {}, onConfirm() {}, onBlur() {} }));
-    assert.deepEqual(fonts, ['normal 700 40px "Segoe UI", "Microsoft YaHei", sans-serif']);
+    assert.ok(fonts.length >= 1); assert.ok(fonts.every(font => font === 'normal 700 40px "Segoe UI", "Microsoft YaHei", sans-serif'));
     assert.equal((html.match(/<textarea/g) ?? []).length, 1);
     assert.ok(html.includes('font-weight:700;'));
     assert.ok(html.includes('font-style:normal;'));
@@ -105,4 +105,54 @@ test('actual video projection restores styles and never treats style-only change
   const moved = { ...context.result, points: [{ x: 60, y: 40 }] };
   assert.equal(context.move(context.result, moved), true);
   assert.equal(context.move(context.result, { ...moved, textStyle: { ...style, bold: false } }), false);
+});
+
+test('video text boxes preserve inner dimensions and restore native four-pixel inset on resize without moving stored origin', async () => {
+  const source = await readFile(new URL('./components/VideoDrawingEditor.tsx', import.meta.url), 'utf8');
+  const body = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx'] }).program.body.find(node => node.type === 'ExportDefaultDeclaration').declaration.body.body;
+  const projected = body.find(node => node.type === 'VariableDeclaration' && node.declarations.some(entry => entry.id.name === 'projected'));
+  const content = { version: 1, color: '#EE4848', fontSize: 28, text: '中文 e\u0301', textStyle: { bold: true, underline: true }, textBox: { width: 150, height: 20 } };
+  const context = createContext({ structuredClone, cacheVersion() {}, object: () => ({ primitive: { kind: 'text', topLeft: { x: 40, y: 20 }, layout: 'ref' } }), texts: new Map([['text', { reference: 'ref', content }]]), sameVideoDrawingValue: (a, b) => JSON.stringify(a) === JSON.stringify(b) });
+  runInContext(`${plain(source.slice(projected.start, projected.end))}\nglobalThis.result = projected('text');`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.result.points)), [{ x: 44, y: 24 }, { x: 194, y: 44 }]);
+  const roundTrip = wire.drawingToVideoSource(context.result, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(roundTrip)), { kind: 'text', topLeft: { x: 40, y: 20 }, content });
+  const resized = wire.drawingToVideoSource({ ...context.result, points: [{ x: 44, y: 24 }, { x: 244, y: 124 }] }, 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(resized.topLeft)), { x: 40, y: 20 });
+  assert.deepEqual(JSON.parse(JSON.stringify(resized.content.textBox)), { width: 200, height: 100 });
+  assert.ok(video.validateVideoTextContent(resized.content)); assert.ok(wire.validVideoSourceDrawing(resized));
+  for (const textBox of [null, [], { width: 0, height: 10 }, { width: 10, height: -1 }, { width: 6001, height: 20 }, { width: 20 }, { width: 20, height: 10, css: 'url()' }]) {
+    assert.equal(video.validateVideoTextContent({ ...content, textBox }), false);
+    assert.equal(wire.validVideoSourceDrawing({ ...resized, content: { ...content, textBox } }), false);
+  }
+});
+
+test('real text layout and SVG expand video TABs before wrapping without rewriting source content', () => {
+  const value = { ...text, fontSize: 24, text: 'A\tB', points: [{ x: 40, y: 20 }, { x: 41, y: 21 }] };
+  const layout = geometry.drawingTextLayout(value);
+  assert.deepEqual(JSON.parse(JSON.stringify(layout.lines)), ['A', ' ', ' ', ' ', ' ', 'B']);
+  assert.equal(layout.height, 6 * 24 * 1.25);
+  const html = web.renderToString(() => drawing.DrawingShape({ drawing: value }));
+  assert.equal((html.match(/<text /g) ?? []).length, 6);
+  for (const baseline of [44, 74, 104, 134, 164, 194]) assert.ok(html.includes(`y="${baseline}"`));
+  assert.equal(value.text, 'A\tB');
+  assert.equal(wire.drawingToVideoSource(value).content.text, 'A\tB');
+});
+
+test('actual layout shares whole-line search for contextual nonmonotonic advances without losing graphemes', () => {
+  // A real Segoe UI 28px prefix profile observed with GDI+ typographic metrics.
+  // Inject it into the production layout; this test does not claim native/Canvas
+  // pixel equality. Native wrap_lines uses the same candidate search order.
+  const advances = new Map([['ا', 7.013672], ['اس', 39.744141], ['اسل', 49.095703], ['اسلا', 46.757812]]), probes = [];
+  const value = { ...text, fontSize: 28, text: 'اسلا', points: [{ x: 40, y: 20 }, { x: 88, y: 60 }] };
+  const layout = geometry.drawingTextLayout(value, part => { probes.push(part); assert.ok(advances.has(part)); return advances.get(part); });
+  assert.deepEqual(JSON.parse(JSON.stringify(layout.lines)), ['اسلا']);
+  assert.deepEqual(probes, ['اس', 'اسلا']);
+  assert.equal(layout.contentWidth, advances.get('اسلا')); assert.ok(layout.contentWidth <= 48);
+  assert.equal(layout.lines.join(''), value.text);
+  for (const [literal, width, expected] of [['iiii', 4, ['iiii']], ['WWWW', 4, ['W', 'W', 'W', 'W']], ['中文中文', 4, ['中文', '中文']]]) {
+    const drawing = { ...value, text: literal, points: [{ x: 40, y: 20 }, { x: 40 + width, y: 60 }] };
+    const result = geometry.drawingTextLayout(drawing, part => [...part].reduce((sum, character) => sum + (character === 'i' ? 1 : character === 'W' ? 4 : 2), 0));
+    assert.deepEqual(JSON.parse(JSON.stringify(result.lines)), expected); assert.equal(result.lines.join(''), literal);
+  }
 });

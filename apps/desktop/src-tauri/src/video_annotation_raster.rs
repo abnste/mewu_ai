@@ -179,13 +179,19 @@ pub fn decode(png: &[u8], width: u32, height: u32) -> Result<image::RgbaImage, S
 }
 
 fn literal_text_svg(content: &VideoTextContent) -> Result<(String, f64), String> {
+    let lines = crate::drawing_render::literal_text_lines(
+        &content.text,
+        content.font_size,
+        content.text_style,
+        content.text_box.map(|area| area.width),
+    )?;
     if let Some(style) = content
         .text_style
         .filter(|style| *style != Default::default())
     {
         let mut text = String::new();
         let mut last_baseline = 0.;
-        for (index, line) in content.text.split('\n').enumerate() {
+        for (index, line) in lines.iter().enumerate() {
             last_baseline = 4. + content.font_size * (1. + index as f64 * 1.25);
             text.push_str(&crate::drawing_render::styled_text_line_svg(
                 &line.replace('\t', "    "),
@@ -200,7 +206,7 @@ fn literal_text_svg(content: &VideoTextContent) -> Result<(String, f64), String>
     }
     let mut text = format!("<text fill=\"{}\" font-family=\"Segoe UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, DejaVu Sans, sans-serif\" font-size=\"{}\" xml:space=\"preserve\">", content.color, content.font_size);
     let mut last_baseline = 0.;
-    for (index, line) in content.text.split('\n').enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         last_baseline = 4. + content.font_size * (1. + index as f64 * 1.25);
         let literal = crate::table_document::escape(&line.replace('\t', "    "));
         write!(
@@ -221,6 +227,7 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
         || content.text.len() > 4096
         || !content.font_size.is_finite()
         || !(8. ..=128.).contains(&content.font_size)
+        || content.text_box.is_some_and(|area| !area.is_valid())
         || content
             .text
             .chars()
@@ -276,9 +283,11 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
         (0., 0.)
     };
     let (width, height) = dimensions(
-        f64::from(bounds.right()) + shift_x + 4.,
+        (f64::from(bounds.right()) + shift_x + 4.)
+            .max(content.text_box.map_or(0., |area| area.width + 8.)),
         (f64::from(bounds.bottom()) + shift_y + 4.)
-            .max(last_baseline + shift_y + content.font_size * 0.3 + 4.),
+            .max(last_baseline + shift_y + content.font_size * 0.3 + 4.)
+            .max(content.text_box.map_or(0., |area| area.height + 8.)),
     )?;
     let text = if translated {
         format!("<g transform=\"translate({shift_x} {shift_y})\">{text}</g>")
@@ -291,7 +300,9 @@ pub fn render_text(content: VideoTextContent) -> Result<VerifiedVideoTextLayout,
         return Err("视频批注含当前字体无法绘制的字符".into());
     }
     let png = rasterize(&tree, width, height)?;
-    let style_version = if content
+    let style_version = if content.text_box.is_some() {
+        4
+    } else if content
         .text_style
         .is_some_and(|style| style != Default::default())
     {
@@ -403,11 +414,67 @@ mod tests {
 
     fn text_content(text: &str, font_size: f64) -> VideoTextContent {
         VideoTextContent {
+            text_box: None,
             text_style: None,
             version: 1,
             text: text.into(),
             color: "#1357b9".into(),
             font_size,
+        }
+    }
+
+    #[test]
+    fn resized_text_box_wraps_real_glyphs_without_changing_text_or_font_size() {
+        let mut content = text_content(
+            "Resize text without losing words or growing the font size",
+            24.,
+        );
+        content.text_box = Some(mewu_core::VideoTextBox {
+            width: 140.,
+            height: 12.,
+        });
+        content.text_style = Some(mewu_core::DrawingTextStyle {
+            bold: true,
+            italic: true,
+            underline: true,
+            strikethrough: true,
+        });
+        let (svg, baseline) = literal_text_svg(&content).unwrap();
+        assert!(svg.matches("<text ").count() > 2);
+        assert!(baseline > content.font_size * 3.);
+        let layout = render_text(content.clone()).unwrap();
+        assert_eq!(layout.content(), &content);
+        assert_eq!(layout.renderer().style_version, 4);
+        assert!(layout.width() >= 148);
+        assert!(layout.height() > 60);
+        let image = decode(layout.png(), layout.width(), layout.height()).unwrap();
+        let ink: Vec<_> = image
+            .enumerate_pixels()
+            .filter(|(_, _, p)| p[3] > 0)
+            .map(|(x, y, _)| (x, y))
+            .collect();
+        assert!(!ink.is_empty());
+        assert!(ink
+            .iter()
+            .all(|&(x, y)| x > 0 && y > 0 && x + 1 < layout.width() && y + 1 < layout.height()));
+    }
+
+    #[test]
+    fn text_box_keeps_requested_empty_height_and_rejects_invalid_sizes() {
+        let mut content = text_content("Hello", 24.);
+        content.text_box = Some(mewu_core::VideoTextBox {
+            width: 180.,
+            height: 180.,
+        });
+        let layout = render_text(content.clone()).unwrap();
+        assert_eq!((layout.width(), layout.height()), (188, 188));
+        for value in [0., -1., f64::NAN, f64::INFINITY, 5993.] {
+            content.text_box = Some(mewu_core::VideoTextBox {
+                width: value,
+                height: 40.,
+            });
+            assert!(render_text(content.clone()).is_err());
+            assert!(crate::video_annotation_host::validate_content(&content).is_err());
         }
     }
 
@@ -467,6 +534,7 @@ mod tests {
             );
         }
         let (svg, _) = literal_text_svg(&VideoTextContent {
+            text_box: None,
             text_style: Some(S {
                 italic: true,
                 ..Default::default()
@@ -660,6 +728,7 @@ mod tests {
     #[test]
     fn chinese_multiline_text_is_measured_and_markup_stays_literal() {
         let layout = render_text(VideoTextContent {
+            text_box: None,
             text_style: None,
             version: 1,
             text: "中文标注\n<svg>&公式 x²".into(),
@@ -678,6 +747,7 @@ mod tests {
     #[test]
     fn mixed_missing_glyph_is_rejected_instead_of_persisting_a_placeholder() {
         assert!(render_text(VideoTextContent {
+            text_box: None,
             text_style: None,
             version: 1,
             text: "中文\u{10ffff}".into(),

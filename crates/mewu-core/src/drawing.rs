@@ -63,7 +63,8 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
     let count = object.points.len();
     let valid_count = match object.kind {
         DrawingKind::Pen | DrawingKind::Highlighter => (1..=MAX_POINTS).contains(&count),
-        DrawingKind::Text | DrawingKind::Number => count == 1,
+        DrawingKind::Text => (1..=2).contains(&count),
+        DrawingKind::Number => count == 1,
         _ => count == 2,
     };
     let floating = object
@@ -125,6 +126,9 @@ fn validate_object(object: &Drawing, width: f64, height: f64) -> Result<()> {
             }
         }
         DrawingKind::Text => {
+            if count == 2 && (object.points[1].x <= object.points[0].x || object.points[1].y <= object.points[0].y) {
+                return Err(invalid("文字框宽高必须大于零"));
+            }
             let text = object
                 .text
                 .as_deref()

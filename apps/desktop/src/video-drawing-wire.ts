@@ -40,16 +40,18 @@ export function validVideoSourceDrawing(value: unknown): value is VideoSourceDra
   if (value.kind !== 'text') return validVector(value, 'sourcePoints') && encoded(value) <= 256 * 1024;
   const content = value.content;
   const style = object(content) ? content.textStyle : undefined;
+  const box = object(content) ? content.textBox : undefined;
   const validStyle = style === undefined || object(style) && Object.keys(style).every(key => ['bold', 'italic', 'underline', 'strikethrough'].includes(key) && typeof style[key] === 'boolean');
-  return keys(value, ['kind', 'topLeft', 'content']) && point(value.topLeft) && object(content) && keys(content, ['version', 'text', 'color', 'fontSize', ...('textStyle' in content ? ['textStyle'] : [])]) && validStyle && content.version === 1 && typeof content.text === 'string' && content.text.trim().length > 0 && [...content.text].length <= 500 && new TextEncoder().encode(content.text).length <= 4096 && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(content.text) && color(content.color) && typeof content.fontSize === 'number' && Number.isFinite(content.fontSize) && content.fontSize >= 8 && content.fontSize <= 128;
+  const validBox = box === undefined || object(box) && keys(box, ['width', 'height']) && [box.width, box.height].every(value => typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 5992);
+  return keys(value, ['kind', 'topLeft', 'content']) && point(value.topLeft) && object(content) && keys(content, ['version', 'text', 'color', 'fontSize', ...('textStyle' in content ? ['textStyle'] : []), ...('textBox' in content ? ['textBox'] : [])]) && validStyle && validBox && content.version === 1 && typeof content.text === 'string' && content.text.trim().length > 0 && [...content.text].length <= 500 && new TextEncoder().encode(content.text).length <= 4096 && !/[\x00-\x08\x0b-\x1f\x7f-\x9f]/.test(content.text) && color(content.color) && typeof content.fontSize === 'number' && Number.isFinite(content.fontSize) && content.fontSize >= 8 && content.fontSize <= 128;
 }
-export function drawingToVideoSource(drawing: Drawing): VideoSourceDrawing {
+export function drawingToVideoSource(drawing: Drawing, textInset = 0): VideoSourceDrawing {
   if (drawing.origin || drawing.rich || drawing.kind !== 'text' && drawing.textStyle !== undefined) throw Error('视频绘制对象无效');
   const points = drawing.points.map(point => ({ ...point }));
-  const value: unknown = drawing.kind === 'text' ? { kind: 'text', topLeft: points[0], content: { version: 1, text: drawing.text, color: drawing.color, fontSize: drawing.fontSize, ...(drawing.textStyle === undefined ? {} : { textStyle: structuredClone(drawing.textStyle) }) } }
+  const value: unknown = drawing.kind === 'text' ? { kind: 'text', topLeft: points[0] && { x: points[0].x - textInset, y: points[0].y - textInset }, content: { version: 1, text: drawing.text, color: drawing.color, fontSize: drawing.fontSize, ...(drawing.textStyle === undefined ? {} : { textStyle: structuredClone(drawing.textStyle) }), ...(points.length === 2 ? { textBox: { width: points[1].x - points[0].x, height: points[1].y - points[0].y } } : {}) } }
     : drawing.kind === 'number' ? { kind: 'number', version: 1, sourcePoints: points, color: drawing.color, number: Number(drawing.text), diameter: drawing.fontSize }
     : { kind: drawing.kind, version: 1, sourcePoints: points, color: drawing.color, strokeWidth: drawing.strokeWidth };
-  if (drawing.kind === 'text' && points.length !== 1 || drawing.kind !== 'text' && drawing.kind !== 'number' && (drawing.text !== undefined || drawing.fontSize !== undefined) || drawing.kind === 'number' && !/^[1-9]\d{0,3}$/.test(drawing.text ?? '') || !validVideoSourceDrawing(value)) throw Error('视频绘制对象无效');
+  if (drawing.kind === 'text' && points.length !== 1 && points.length !== 2 || drawing.kind !== 'text' && drawing.kind !== 'number' && (drawing.text !== undefined || drawing.fontSize !== undefined) || drawing.kind === 'number' && !/^[1-9]\d{0,3}$/.test(drawing.text ?? '') || !validVideoSourceDrawing(value)) throw Error('视频绘制对象无效');
   return value;
 }
 export function validateVideoVectorRead(raw: unknown, expected: Omit<VideoVectorRead, 'content'>): VideoVectorRead {

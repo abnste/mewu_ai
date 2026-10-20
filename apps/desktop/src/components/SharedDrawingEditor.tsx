@@ -47,7 +47,7 @@ export default function SharedDrawingEditor(props: Props) {
   const [imageZooming, setImageZooming] = createSignal(false);
   let eraseSource: (()=>boolean) | undefined;
   const [erasing,setErasing]=createSignal(false);
-  const [eraserMode,setEraserMode]=createSignal<EraserMode>('pixel');
+  const [eraserMode,setEraserMode]=createSignal<EraserMode>('object');
   const [pixelDraft,setPixelDraft]=createSignal<Map<string,Drawing[]>|undefined>();
   const pixelIndex=createMemo(()=>new Map([...(pixelDraft()?.values()??[])].flat().map(d=>[d.id,d])));
   const [wideBrush,setWideBrush]=createSignal(props.tools[0]==='highlighter');
@@ -410,10 +410,13 @@ export default function SharedDrawingEditor(props: Props) {
     const update = (end: DrawingPoint, shift: boolean) => {
       if (!current()) { finish(false); return; }
       last = end;
-      const points = resizedDrawingPoints(original, handle, end, shift, props.port.frame());
+      const frame = props.port.frame(), inset = original.kind === 'text' ? props.port.textInset ?? 0 : 0;
+      const limit = original.kind === 'text' ? props.port.textBoxLimit ?? Infinity : Infinity;
+      const resizeFrame = inset || Number.isFinite(limit) ? { ...frame, width: Math.min(frame.width - inset, original.points[0].x - frame.x + limit), height: Math.min(frame.height - inset, original.points[0].y - frame.y + limit) } : frame;
+      const points = resizedDrawingPoints(original, handle, end, shift, resizeFrame);
       if (!points) { finish(false); return; }
       value = { ...value, points };
-      changed = points.some((point, index) => point.x !== original.points[index].x || point.y !== original.points[index].y);
+      changed = points.length !== original.points.length || points.some((point, index) => point.x !== original.points[index]?.x || point.y !== original.points[index]?.y);
       setDraft(changed ? value : undefined);
     };
     const moved = (next: PointerEvent) => {
@@ -553,7 +556,7 @@ export default function SharedDrawingEditor(props: Props) {
     if(kind==='text'&&stored?.kind==='text'){setSelected(stored.id);void ensureSelection(stored.id).then(value=>{if(value)openText(value,true);});return;}
     if (kind === 'text') {
       if (hit?.kind === 'text') openText(hit, true);
-      else openText({ id: crypto.randomUUID(), kind, color: color(), strokeWidth: width(), points: [start], fontSize: fontSize(), ...(Object.keys(textStyle()).length ? { textStyle: { ...textStyle() } } : {}), text: '' }, false);
+      else openText({ id: crypto.randomUUID(), kind, color: color(), strokeWidth: width(), points: [{ x: Math.max(initialFrame.x + (props.port.textInset ?? 0), start.x), y: Math.max(initialFrame.y + (props.port.textInset ?? 0), start.y) }], fontSize: fontSize(), ...(Object.keys(textStyle()).length ? { textStyle: { ...textStyle() } } : {}), text: '' }, false);
       return;
     }
     if (kind === 'number') {
@@ -596,7 +599,7 @@ export default function SharedDrawingEditor(props: Props) {
     let latest: { end: DrawingPoint; shift: boolean } | undefined;
     // An old long stroke's bounds are invariant during a move; compute them once.
     const originalBounds = original ? (() => {
-      if (original.kind === 'number') return drawingBounds(original);
+      if (original.kind === 'number' || original.kind === 'text') return drawingBounds(original);
       let x = Infinity, y = Infinity, right = -Infinity, bottom = -Infinity;
       for (const point of original.points) { x = Math.min(x, point.x); y = Math.min(y, point.y); right = Math.max(right, point.x); bottom = Math.max(bottom, point.y); }
       return { x, y, width: right - x, height: bottom - y };
@@ -955,15 +958,20 @@ export default function SharedDrawingEditor(props: Props) {
       {_ => <Show when={isPreview()} fallback={stored()}>{_ => render()}</Show>}
     </Show>;
   }
+  // Render callbacks create owners. Calling one in a reactive JSX expression
+  // recreates every media element when a snapshot supplies a fresh callback.
+  // Keep the layer's component owner until its actual editor source changes.
+  const objectLayerIdentity = createMemo(() => props.objects ? JSON.stringify([identity(), props.port.sourceIdentity()]) : undefined);
+  const ObjectLayer = () => props.objects?.(() => tool() === 'select');
   return <div ref={editorShell} class="drawing-editor" classList={{'drawing-blackboard':props.blackboard}} onPointerMove={props.onObjectPointerMove} onPointerLeave={props.onObjectPointerLeave} onContextMenu={event=>{if(props.blackboard){event.preventDefault();event.stopPropagation();}}} onPointerDown={event => event.stopPropagation()}>
-    {props.objects?.(()=>tool()==='select')}
+    <Show when={objectLayerIdentity()} keyed><ObjectLayer /></Show>
     <Show when={props.blackboard&&tool()==='select'}><div class="drawing-selection-background" style={{left:`${props.box.x}px`,top:`${props.box.y}px`,width:`${props.box.width}px`,height:`${props.box.height}px`}} onPointerDown={pointerBegin} onMouseDown={mouseBegin} onPointerMove={event => drawingInput.observe(event)}/></Show>
     <svg ref={svg} tabindex={0} class="drawing-edit-surface" classList={{ 'drawing-select-mode': tool() === 'select', 'drawing-text-mode': tool() === 'text', 'drawing-eraser-mode': tool() === 'eraser'||erasing() }} style={{ left: `${props.box.x}px`, top: `${props.box.y}px`, width: `${props.box.width}px`, height: `${props.box.height}px`,'pointer-events':props.blackboard&&tool()==='select'?'none':undefined,cursor:tool()==='eraser'||erasing()?eraseCursor():undefined }} viewBox={`${props.port.frame().x} ${props.port.frame().y} ${props.port.frame().width} ${props.port.frame().height}`} preserveAspectRatio="none" onPointerDown={pointerBegin} onMouseDown={mouseBegin} onPointerMove={event => drawingInput.observe(event)} onContextMenu={event=>event.preventDefault()} onDblClick={doubleClick} aria-label={t("绘制区域")}>
       <For each={drawingIds()}>{id => <DrawingItem id={id} />}</For>
       <Show when={textEditor()}>{value => <InlineDrawingText drawing={value().drawing} disabled={pending() || !!props.inputLocked} ref={element => {textarea=element;}} onInput={setText} onConfirm={confirmText} onBlur={textBlur}/>}</Show>
       <Show when={marquee()}>{box=><rect class="drawing-marquee" {...box()} fill="#348bf1" fill-opacity=".07" stroke="#348bf1" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none"/>}</Show>
       <Show when={rasterPreview()}>{value=> <Show when={value().mode==='extract'} fallback={<polyline points={value().points.map(p=>`${p.x},${p.y}`).join(' ')} fill="none" stroke="#428fff" stroke-opacity=".38" stroke-width={value().width} stroke-linecap="round" stroke-linejoin="round" pointer-events="none" />}><rect x={Math.min(value().points[0].x,value().points.at(-1)!.x)} y={Math.min(value().points[0].y,value().points.at(-1)!.y)} width={Math.abs(value().points.at(-1)!.x-value().points[0].x)} height={Math.abs(value().points.at(-1)!.y-value().points[0].y)} fill="none" stroke="#428fff" stroke-width="1" vector-effect="non-scaling-stroke" pointer-events="none" /></Show>}</Show>
-      <For each={resizeHandles()}>{(point, index) => <ellipse class="drawing-resize-handle" cx={point.x} cy={point.y} rx={handleSize().x / 2} ry={handleSize().y / 2} vector-effect="non-scaling-stroke" style={{ cursor: resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? 'move' : index() % 2 ? 'nesw-resize' : 'nwse-resize' }} aria-label={resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? t('调整端点') : t('缩放图形')} onPointerDown={event => beginResize(event, index())} />}</For>
+      <For each={resizeHandles()}>{(point, index) => <ellipse class="drawing-resize-handle" cx={point.x} cy={point.y} rx={handleSize().x / 2} ry={handleSize().y / 2} vector-effect="non-scaling-stroke" style={{ cursor: resizeDrawing()?.kind === 'text' ? ['ew-resize', 'ns-resize', 'nwse-resize'][index()] : resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? 'move' : index() % 2 ? 'nesw-resize' : 'nwse-resize' }} aria-label={resizeDrawing()?.kind === 'line' || resizeDrawing()?.kind === 'arrow' ? t('调整端点') : t('缩放图形')} onPointerDown={event => beginResize(event, index())} />}</For>
     </svg>
     <div ref={toolbar} class="drawing-toolbar" data-controls-locked={controlsLocked()} classList={{ 'drawing-dock-right': rightDocked() }} role="toolbar" aria-label={t("绘制工具")} style={position()}>
       <div ref={toolsRow} class="drawing-tools-row">

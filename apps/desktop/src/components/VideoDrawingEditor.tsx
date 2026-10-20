@@ -46,7 +46,7 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
   const projected=(id:string):Drawing|undefined=>{
     cacheVersion();const p=object(id)?.primitive;
     if(p?.kind==='vector'){const reply=descriptor(id);return reply&&localVectorDrawing(reply,p.topLeft);}
-    if(p?.kind==='text'){const reply=texts.get(id);if(reply&&sameVideoDrawingValue(reply.reference,p.layout))return{id,kind:'text',points:[{...p.topLeft}],color:reply.content.color,strokeWidth:1,fontSize:reply.content.fontSize,text:reply.content.text,...(reply.content.textStyle===undefined?{}:{textStyle:structuredClone(reply.content.textStyle)})};}
+    if(p?.kind==='text'){const reply=texts.get(id);if(reply&&sameVideoDrawingValue(reply.reference,p.layout))return{id,kind:'text',points:[{x:p.topLeft.x+4,y:p.topLeft.y+4},...(reply.content.textBox?[{x:p.topLeft.x+4+reply.content.textBox.width,y:p.topLeft.y+4+reply.content.textBox.height}]:[])],color:reply.content.color,strokeWidth:1,fontSize:reply.content.fontSize,text:reply.content.text,...(reply.content.textStyle===undefined?{}:{textStyle:structuredClone(reply.content.textStyle)})};}
   };
   const values=()=>{cacheVersion();return (doc()?.objects??[]).flatMap(entry=>{const value=projected(entry.id);return value?[value]:[];});};
   const trimCache=()=>{let bytes=[...vectors.values()].reduce((sum,v)=>sum+new TextEncoder().encode(JSON.stringify(v.content)).length,0);while(vectors.size>8||bytes>2*1024*1024){const [id,value]=vectors.entries().next().value!;vectors.delete(id);bytes-=new TextEncoder().encode(JSON.stringify(value.content)).length;}while(texts.size>8)texts.delete(texts.keys().next().value!);};
@@ -92,11 +92,11 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
         const toTopLeft={x:fromTopLeft.x+value.points[0].x-prior.points[0].x,y:fromTopLeft.y+value.points[0].y-prior.points[0].y};
         receipt=await props.onDocument(requestTarget,{type:'move',annotationId:stored.id,fromTopLeft,toTopLeft});
       }else if(action.type==='update_drawing'&&stored?.primitive.kind==='text'){
-        const content=drawingToVideoSource(value);if(content.kind!=='text'||!sameVideoDrawingValue(content.topLeft,stored.primitive.topLeft))throw Error('视频文字已变化');
+        const content=drawingToVideoSource(value,4);if(content.kind!=='text'||!sameVideoDrawingValue(content.topLeft,stored.primitive.topLeft))throw Error('视频文字已变化');
         receipt=await props.onEditText(crypto.randomUUID(),requestTarget,stored.id,stored.primitive.layout,content.content);
       }else{
         if(!grant||!authorizes(value))throw Error('视频绘制工具不可用');
-        const content=drawingToVideoSource(value);
+        const content=drawingToVideoSource(value,4);
         const nativeAction:VideoDrawingAction=action.type==='add_drawing'?{type:'add',content}:stored?.primitive.kind==='vector'&&content.kind!=='text'?{type:'update',annotationId:stored.id,reference:stored.primitive.layout,content}:(()=>{throw Error('视频绘制对象已变化');})();
         receipt=await props.onApplyDrawing(crypto.randomUUID(),requestTarget,grant,nativeAction);
         const accepted=acceptVideoDrawingReceipt(receipt,sceneId,before,nativeAction,info);
@@ -115,9 +115,9 @@ export default function VideoDrawingEditor(props:VideoDrawingEditorProps) {
     renderStored:(id,interactive,selected,preview)=>props.renderStored(id,interactive,selected,preview),
     canSelect:()=>true,canStyle:drawing=>drawing.kind==='text'||Boolean(descriptor(drawing.id)&&authorizes(drawing)),
     allows:action=>action.type!=='remove_drawings'&&action.type!=='update_drawings'&&action.type!=='erase_drawing_strokes'&&current()&&(action.type!=='add_drawing'||Boolean(props.grant?.tools.includes(action.drawing.kind as never))),
-    propertyCommand:draft=>{if(!draftChanged(draft))return;drawingToVideoSource(draft.drawing);return{type:draft.base?'update_drawing':'add_drawing',expectedRevision:draft.expectedRevision,drawing:draft.drawing};},
+    propertyCommand:draft=>{if(!draftChanged(draft))return;drawingToVideoSource(draft.drawing,4);return{type:draft.base?'update_drawing':'add_drawing',expectedRevision:draft.expectedRevision,drawing:draft.drawing};},
     historyAvailable:redo=>Boolean(doc()?.[redo?'redo':'undo'].length),
-    persistedId:id=>aliases.get(id)??id,rejectPointOverflow:true,
+    persistedId:id=>aliases.get(id)??id,rejectPointOverflow:true,textInset:4,textBoxLimit:5992,
     move:(original,start,end)=>{
       const entry=object(original.id),p=entry?.primitive;
       if(p?.kind==='vector')return movedVideoVector(original,p.topLeft,p.layout,start,end,{width:props.info.width,height:props.info.height});

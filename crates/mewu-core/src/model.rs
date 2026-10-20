@@ -348,8 +348,9 @@ impl<'de> Deserialize<'de> for DrawingTextStyle {
 }
 
 /// Editable manual markup in original background pixels, never executable SVG.
-/// Two shape points are endpoints/opposite corners; text/number use a top-left
-/// anchor. Number font_size is its circle diameter; mosaic stroke_width is its
+/// Two shape points are endpoints/opposite corners; text uses a legacy top-left
+/// anchor, or two points for a positive wrapping box whose height is a minimum.
+/// Number uses a top-left anchor; font_size is its diameter. Mosaic stroke_width is its
 /// integer background-aligned pixel block size.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

@@ -7,6 +7,7 @@ export const colorHistoryChanged = 'mewu:drawing-colors';
 export const colorPaletteKey = 'mewu.drawing-palette.v1';
 export const colorPaletteChanged = 'mewu:drawing-palette';
 export const defaultDrawingPalette = ['#EE4848', '#F4C94D', '#348BF1'] as const;
+export const colorHistoryLimit = 5;
 /** Fixed current-color slot followed by two distinct previous colors. */
 export function toolbarRecentColors(recent: readonly string[], current: string): string[] {
   const selected = normalizeColor(current) ?? '#EE4848';
@@ -15,7 +16,7 @@ export function toolbarRecentColors(recent: readonly string[], current: string):
 }
 export const normalizeColor = (value:string) => /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim().toUpperCase() : undefined;
 export function normalizeColorHistory(value: unknown): string[] {
-  return Array.isArray(value)?[...new Set(value.filter((entry):entry is string=>typeof entry==='string').map(normalizeColor).filter((entry):entry is string=>!!entry))].slice(0,3):[];
+  return Array.isArray(value)?[...new Set(value.filter((entry):entry is string=>typeof entry==='string').map(normalizeColor).filter((entry):entry is string=>!!entry))].slice(0,colorHistoryLimit):[];
 }
 export function normalizeColorPalette(value: unknown): string[] | undefined {
   if(!Array.isArray(value)||value.length!==3)return;
@@ -64,7 +65,7 @@ export function recentColors(storage:Pick<Storage,'getItem'>=localStorage):strin
 export function rememberColor(value:string,storage:Pick<Storage,'getItem'|'setItem'>=localStorage,previous?:string):string[] {
   const normalized=normalizeColor(value),before=recentColors(storage);if(!normalized)return before;
   const prior=previous?normalizeColor(previous):undefined;
-  const next=[...new Set([normalized,...(prior?[prior]:[]),...before])].slice(0,3);
+  const next=[...new Set([normalized,...(prior?[prior]:[]),...before])].slice(0,colorHistoryLimit);
   try{storage.setItem(colorHistoryKey,JSON.stringify(next));}catch{/* Drawing remains usable when local storage is unavailable. */}
   return next;
 }

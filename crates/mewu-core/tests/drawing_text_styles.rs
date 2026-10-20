@@ -260,3 +260,44 @@ fn drawing_text_styles_reject_nontext_and_keep_failed_transaction_unchanged() {
     let store = Store::open(&file.0).unwrap();
     assert_eq!(serde_json::to_value(store.snapshot()).unwrap(), before);
 }
+
+#[test]
+fn drawing_text_box_resize_persists_reopens_and_undo_restores_legacy_anchor() {
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.private/remake-review/text-box-20261020-001")
+        .join(Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = TestDb(directory.join("spaces.db"));
+    let mut store = Store::open(&file.0).unwrap();
+    let target = setup(&mut store);
+    let mut original = text();
+    original.text_style = Some(all_styles());
+    store.apply(command(&store, &target, original.clone(), true)).unwrap();
+    let mut framed = original.clone();
+    framed.points.push(DrawingPoint { x: 190., y: 180. });
+    store.apply(command(&store, &target, framed.clone(), false)).unwrap();
+    assert_eq!(region(&store, &target).drawings, vec![framed.clone()]);
+    assert_eq!(region(&store, &target).drawing_history.undo.len(), 2);
+    drop(store);
+    let mut store = Store::open(&file.0).unwrap();
+    assert_eq!(region(&store, &target).drawings, vec![framed.clone()]);
+    for (redo, expected) in [(false, original), (true, framed.clone())] {
+        let expected_revision = region(&store, &target).drawing_revision;
+        let scene_id = target.0.clone();
+        let region_id = target.1.clone();
+        let background_id = target.2.clone();
+        store.apply(if redo {
+            SceneCommand::RedoDrawing { scene_id, region_id, background_id, expected_revision }
+        } else {
+            SceneCommand::UndoDrawing { scene_id, region_id, background_id, expected_revision }
+        }).unwrap();
+        assert_eq!(region(&store, &target).drawings, vec![expected]);
+    }
+    let before = serde_json::to_value(store.snapshot()).unwrap();
+    for point in [DrawingPoint { x: 40., y: 180. }, DrawingPoint { x: 190., y: 39. }, DrawingPoint { x: 801., y: 180. }] {
+        let mut invalid = framed.clone();
+        invalid.points[1] = point;
+        assert!(store.apply(command(&store, &target, invalid, false)).is_err());
+        assert_eq!(serde_json::to_value(store.snapshot()).unwrap(), before);
+    }
+}

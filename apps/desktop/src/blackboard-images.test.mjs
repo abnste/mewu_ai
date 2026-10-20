@@ -36,11 +36,20 @@ test('RGB and HSV conversion round trips presets, gray and custom colors with bo
   assert.equal(colors.normalizeColor(' #abcdef '),'#ABCDEF');
   assert.equal(colors.normalizeColor('rgb(1,2,3)'),undefined);
 });
-test('recent colors persist three unique most recently used values and tolerate unavailable or malformed storage',()=>{
+test('picker recent colors retain five while the independent toolbar palette stays at three',()=>{
   let data;const storage={getItem:()=>data,setItem:(_,value)=>data=value};
   for(const color of ['#abcdef','#123456','#789abc','#ABCDEF','#12ABCD'])colors.rememberColor(color,storage);
-  assert.deepEqual(colors.recentColors(storage),['#12ABCD','#ABCDEF','#789ABC']);
-  assert.deepEqual(colors.rememberColor('invalid',storage),['#12ABCD','#ABCDEF','#789ABC']);
+  assert.deepEqual(colors.recentColors(storage),['#12ABCD','#ABCDEF','#789ABC','#123456']);
+  colors.rememberColor('#112233',storage);colors.rememberColor('#445566',storage);
+  assert.deepEqual(colors.recentColors(storage),['#445566','#112233','#12ABCD','#ABCDEF','#789ABC']);
+  colors.rememberColor('#abcdef',storage);
+  assert.deepEqual(colors.recentColors(storage),['#ABCDEF','#445566','#112233','#12ABCD','#789ABC']);
+  assert.deepEqual(colors.rememberColor('invalid',storage),colors.recentColors(storage));
+  assert.deepEqual(colors.initialColorPalette('#ABCDEF',storage),['#ABCDEF','#445566','#112233']);
+  assert.equal(colors.normalizeColorPalette(colors.recentColors(storage)),undefined);
+  const savedPalette=['#EE4848','#F4C94D','#348BF1'];
+  assert.deepEqual(colors.rememberColorPalette(savedPalette,storage),savedPalette);
+  assert.deepEqual(colors.normalizeColorPalette(savedPalette),savedPalette);
   data='{"unknown":true}';assert.deepEqual(colors.recentColors(storage),[]);
   data='["bad","#abcdef","#ABCDEF",42,"#123456"]';assert.deepEqual(colors.recentColors(storage),['#ABCDEF','#123456']);
   const blocked={getItem(){throw Error('disabled');},setItem(){throw Error('quota');}};

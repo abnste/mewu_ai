@@ -29,6 +29,22 @@ pub struct VideoTextContent {
     pub font_size: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_style: Option<crate::DrawingTextStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_box: Option<VideoTextBox>,
+}
+/// Editable inner text area, in source pixels. Raster padding is not included.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VideoTextBox {
+    pub width: f64,
+    pub height: f64,
+}
+impl VideoTextBox {
+    pub fn is_valid(self) -> bool {
+        [self.width, self.height]
+            .into_iter()
+            .all(|value| value.is_finite() && (1. ..=5992.).contains(&value))
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -147,6 +163,11 @@ fn validate_descriptor(v: &Descriptor) -> Result<()> {
         || !color[1..].iter().all(u8::is_ascii_hexdigit)
         || !v.content.font_size.is_finite()
         || !(8. ..=128.).contains(&v.content.font_size)
+        || v.content.text_box.is_some_and(|area| {
+            !area.is_valid()
+                || f64::from(v.width) < (area.width + 8.).ceil()
+                || f64::from(v.height) < (area.height + 8.).ceil()
+        })
         || v.renderer.style_version == 0
         || !valid_hash(&v.renderer.font_sha256)
         || [&v.renderer.id, &v.renderer.version]

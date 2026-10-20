@@ -90,6 +90,8 @@ pub enum CoreError {
     ConcurrentModification,
     #[error("记忆已被修改，请重新读取后再保存")]
     MemoryConflict,
+    #[error("记忆依据必须来自本轮可用的真实用户原文；引用先前消息时请提供有效 sourceMessageId")]
+    MemorySourceRequired,
     #[error("当前 Agent 未启用长期记忆")]
     MemoryDisabled,
     #[error("记忆来源或授权已改变，请重新读取")]

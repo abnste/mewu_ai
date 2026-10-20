@@ -197,10 +197,7 @@ struct Forget {
     expected_revision: u64,
 }
 fn parse<T: serde::de::DeserializeOwned>(value: &str) -> Result<T, String> {
-    if value.len() > 16 * 1024 {
-        return Err("工具参数过长".into());
-    }
-    serde_json::from_str(value).map_err(|_| "工具参数格式无效".into())
+    crate::agent_tools::parse(value)
 }
 
 pub(crate) enum RecordedEffect {

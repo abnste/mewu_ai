@@ -3,7 +3,7 @@ import { createEffect, createMemo, createSignal, createUniqueId, For, Match, on,
 import type { Asset, Drawing, Region } from '../contracts';
 import { getMosaicPreview, getHighlightPreview, type MosaicSource } from '../bridge';
 import type { MosaicPreview } from '../mosaic-preview';
-import { arrowHead, drawingBounds, drawingOrder, drawingTextLineTransform, markPaths } from './drawing-geometry';
+import { arrowHead, drawingBounds, drawingOrder, drawingTextLayout, drawingTextLineTransform, markPaths } from './drawing-geometry';
 import { penSegments } from './drawing-pointer';
 import RichDrawingShape from './RichDrawingShape';
 import type { RichDrawingContext } from '../drawing-layout-preview';
@@ -59,6 +59,7 @@ export function DrawingShape(props: { drawing: Drawing; interactive?: boolean; s
   const bounds = () => drawingBounds(props.drawing);
   const diameter = () => props.drawing.fontSize ?? 28;
   const numberSize = () => Math.min(diameter() * .55, diameter() * .78 / ((props.drawing.text?.length ?? 1) * .6));
+  const textLayout = createMemo(() => props.drawing.kind === 'text' ? drawingTextLayout(props.drawing) : undefined);
   return <g data-drawing-id={props.drawing.id} classList={{ 'drawing-hit': props.interactive }} fill="none" stroke={props.drawing.color} stroke-width={props.drawing.strokeWidth} stroke-linecap="round" stroke-linejoin="round">
     <Switch>
       <Match when={props.drawing.kind === 'rich'}><RichDrawingShape drawing={props.drawing} interactive={props.interactive} context={props.richContext} onError={props.onError} /></Match>
@@ -70,7 +71,7 @@ export function DrawingShape(props: { drawing: Drawing; interactive?: boolean; s
       <Match when={props.drawing.kind === 'ellipse'}><ellipse cx={box().x + box().width / 2} cy={box().y + box().height / 2} rx={box().width / 2} ry={box().height / 2} /></Match>
       <Match when={props.drawing.kind === 'mosaic'}><MosaicShape drawing={props.drawing} context={props.mosaicContext} /></Match>
       <Match when={props.drawing.kind === 'number'}><circle cx={first().x + diameter() / 2} cy={first().y + diameter() / 2} r={diameter() / 2} fill={props.drawing.color} stroke="none" /><text x={first().x + diameter() / 2} y={first().y + diameter() / 2 + numberSize() * .35} text-anchor="middle" font-family={'"Segoe UI", "Microsoft YaHei", sans-serif'} font-size={String(numberSize())} font-weight="600" fill={numberForeground(props.drawing.color)} stroke="none">{props.drawing.text}</text></Match>
-      <Match when={props.drawing.kind === 'text'}><g font-family={'"Segoe UI", "Microsoft YaHei", sans-serif'} font-size={String(props.drawing.fontSize ?? 20)} font-weight={props.drawing.textStyle?.bold ? '700' : '400'} font-style="normal" fill={props.drawing.color} stroke="none" style={{ 'white-space': 'pre' }}><For each={(props.drawing.text ?? '').split('\n')}>{(line, index) => <text x={first().x} y={first().y + (props.drawing.fontSize ?? 20) * (1 + index() * 1.25)} transform={drawingTextLineTransform(props.drawing.textStyle?.italic, first().y + (props.drawing.fontSize ?? 20) * (1 + index() * 1.25))} style={{ 'text-decoration': [props.drawing.textStyle?.underline && 'underline', props.drawing.textStyle?.strikethrough && 'line-through'].filter(Boolean).join(' ') || 'none' }}>{line || ' '}</text>}</For></g></Match>
+      <Match when={props.drawing.kind === 'text'}><g font-family={'"Segoe UI", "Microsoft YaHei", sans-serif'} font-size={String(props.drawing.fontSize ?? 20)} font-weight={props.drawing.textStyle?.bold ? '700' : '400'} font-style="normal" fill={props.drawing.color} stroke="none" style={{ 'white-space': 'pre' }}><For each={textLayout()?.lines ?? []}>{(line, index) => <text x={first().x} y={first().y + (props.drawing.fontSize ?? 20) * (1 + index() * 1.25)} transform={drawingTextLineTransform(props.drawing.textStyle?.italic, first().y + (props.drawing.fontSize ?? 20) * (1 + index() * 1.25))} style={{ 'text-decoration': [props.drawing.textStyle?.underline && 'underline', props.drawing.textStyle?.strikethrough && 'line-through'].filter(Boolean).join(' ') || 'none' }}>{line.replaceAll('\t', '    ') || ' '}</text>}</For></g></Match>
     </Switch>
     <Show when={props.selected}><rect {...bounds()} fill="none" stroke="#348bf1" stroke-width="1" vector-effect="non-scaling-stroke" stroke-dasharray="4 3" pointer-events="none" /></Show>
   </g>;
