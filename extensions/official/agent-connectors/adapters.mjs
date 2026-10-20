@@ -110,7 +110,12 @@ export async function runAcp(ctx,config,input,previous,checkpoint=async()=>{}){
       if(update.sessionUpdate==='agent_thought_chunk')await stream(ctx,'agent.reasoning',update.content.text);
     };
     const result=await peer.request('session/prompt',{sessionId,prompt},bindings,250000);
-    if(result.stopReason!=='end_turn')throw Error(`Agent 未完成回答：${result.stopReason??'未知状态'}`);
+    if(result.stopReason!=='end_turn'){
+      let detail=result._meta?.['codebuddy.ai/errorMessage'];
+      if(typeof detail==='string'){try{detail=JSON.parse(detail);}catch{detail=null;}}
+      if(detail?.data?.category==='auth')throw Error('请先在该 Agent 的官方客户端或 CLI 中登录');
+      throw Error(`Agent 未完成回答：${result.stopReason??'未知状态'}`);
+    }
     if(!content.trim())throw Error('Agent 未返回回答');
     return {content,session:{id:sessionId}};
   }finally{await peer.close();}

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import activate from '../../../extensions/official/agent-connectors/index.mjs';
 import {connectCodex,runCodex,connectAcp,runAcp} from '../../../extensions/official/agent-connectors/adapters.mjs';
 import {openPeer} from '../../../extensions/official/agent-connectors/rpc.mjs';
+import {profiles,detectProfile,validateConfig} from '../../../extensions/official/agent-connectors/profiles.mjs';
 
 function fixture(answer){
   const queue=[],writes=[],events=[],services=new Map(),data=new Map();let closed=0;
@@ -126,4 +127,25 @@ test('ACP grouped model options are flattened and restored sessions receive curr
   assert.match(prompt,/最新灵魂/);assert.match(prompt,/继续/);
   const c=fixture((message,q)=>message.method==='session/new'?{sessionId:'one',configOptions:[{id:'model',category:'model',currentValue:'fast',options:[{group:'Provider',options:[{value:'fast',name:'Fast'}]}]}]}:acp(message,q));
   const connected=await connectAcp(c.ctx,config);assert.deepEqual(connected.models,[{id:'fast',name:'Fast',default:true}]);await connected.peer.close();
+});
+
+test('WorkBuddy desktop discovery selects the plugin HTTP bridge rather than its broken stdio entry',async()=>{
+  const f=fixture(acp);let calls=0;
+  f.ctx.processes.resolve=async()=>++calls===1?{platform:'windows',executables:[]}:{platform:'windows',executables:['C:/Program Files/WorkBuddy/WorkBuddy.exe'],files:['C:/Program Files/WorkBuddy/resources/app.asar.unpacked/cli/bin/codebuddy']};
+  const profile=profiles.find(p=>p.id==='workbuddy'),found=await detectProfile(f.ctx,profile);
+  assert.equal(found.transport,'workbuddy-http');assert.equal(found.args.length,1);
+  assert.equal(validateConfig(found,profile).transport,'workbuddy-http');
+  assert.throws(()=>validateConfig(found,profiles[0]),/方式/);
+});
+
+test('WorkBuddy upstream authentication failures are reported as login requirements rather than opaque refusals',async()=>{
+  const f=fixture((message,q)=>message.method==='session/prompt'?{stopReason:'refusal',_meta:{'codebuddy.ai/errorMessage':JSON.stringify({code:-32000,message:'Authentication required',data:{category:'auth'}})}}:acp(message,q));
+  await assert.rejects(runAcp(f.ctx,config,{task:'hello'}),/官方客户端或 CLI 中登录/);assert.equal(f.closed(),1);
+});
+
+test('independent Agent emits only an intentional public login diagnostic before failing its run',async()=>{
+  const f=fixture((message,q)=>message.method==='session/prompt'?{stopReason:'refusal',_meta:{'codebuddy.ai/errorMessage':JSON.stringify({data:{category:'auth'}})}}:acp(message,q));
+  f.data.set('config/connections',{workbuddy:config});await activate(f.ctx);
+  await assert.rejects(f.services.get('workbuddy').handler({task:'hello'},{context:{agentId:'a',sceneId:'s'}}),/登录/);
+  assert.deepEqual(f.events,[{name:'agent.text',value:'请先在该 Agent 的官方客户端或 CLI 中登录'}]);
 });

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
+import {workbuddyProcess} from './workbuddy.mjs';
 /** Protocol implementation belongs to this independently packaged module. */
 export async function openPeer(ctx, config, jsonrpc = true){
+  config=workbuddyProcess(config);
   let process;
   try{process=await ctx.processes.open({executable:config.executable,args:config.args,...(config.cwd?{cwd:config.cwd}:{}),...(config.env?{env:config.env}:{})});}
   catch{throw Error('无法启动外部程序，请检查运行程序和启动参数');}

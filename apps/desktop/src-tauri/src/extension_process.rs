@@ -140,7 +140,7 @@ mod tests {
         let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap();
         // Authoring projects may contain README/tests; runtime packages contain
         // only the explicit manifest/module allowlist, exactly like CLI pack.
-        let files=["mewu-plugin.json","index.mjs","profiles.mjs","rpc.mjs","adapters.mjs","view.mjs"];
+        let files=["mewu-plugin.json","index.mjs","profiles.mjs","rpc.mjs","adapters.mjs","view.mjs","workbuddy.mjs"];
         let stage=file.parent().unwrap().join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir(&stage).unwrap();
         for file in files {std::fs::copy(root.join("extensions/official/agent-connectors").join(file),stage.join(file)).unwrap();}
@@ -184,7 +184,7 @@ mod tests {
             }else {match runtime.poll_result(){
                 Ok(Some(value))=>{
                     if chat && round==1 && probe["rounds"]==2 {
-                        assert!(value["content"].as_str().is_some_and(|text|text.contains("MEWU_CONNECTOR_OK")));
+                        assert!(value["content"].as_str().is_some_and(|text|text.trim()=="MEWU_CONNECTOR_OK"));
                         round=2;
                         runtime.begin_invoke(probe["provider"].as_str().unwrap(),&probe["input"],&json!({"agentId":"probe","sceneId":"probe"})).unwrap();
                     }else{break value;}
@@ -195,7 +195,7 @@ mod tests {
         // or login material. Probe storage is synthetic, not a user database.
         let receipt=std::env::var_os("MEWU_AGENT_CONNECTOR_RECEIPT").expect("receipt path required");
         if chat {
-            let valid=result["content"].as_str().is_some_and(|text|text.contains("MEWU_CONNECTOR_OK"));
+            let valid=result["content"].as_str().is_some_and(|text|text.trim()=="MEWU_CONNECTOR_OK");
             let resumed=methods.iter().any(|method|matches!(method.as_str(),"thread/resume"|"session/load"));
             std::fs::write(receipt,serde_json::to_vec_pretty(&json!({"provider":probe["provider"],"ok":valid,"sessionCheckpointed":!storage.is_empty(),"rounds":round,"resumed":resumed,"imageBindings":image_bindings})).unwrap()).unwrap();
             assert!(valid,"local Agent test prompt failed");assert!(!storage.is_empty());

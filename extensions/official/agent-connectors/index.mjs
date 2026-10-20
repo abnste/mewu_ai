@@ -33,6 +33,7 @@ export default definePlugin(async ctx=>{
     throw Error('不支持的设置操作');
   });
   for(const profile of profiles)ctx.agents.register({id:profile.id,title:profile.name,description:'使用本机官方客户端的登录与模型'},async(input,call)=>{
+    try{
     const config=validateConfig((await ctx.configuration.get('connections'))?.[profile.id],profile);
     const key=`sessions/${profile.id}/${call.context.agentId}/${call.context.sceneId}`;
     const saved=await ctx.storage.get(key);
@@ -40,5 +41,11 @@ export default definePlugin(async ctx=>{
     const result=await (profile.protocol==='codex'?runCodex:runAcp)(ctx,config,input,saved?.config===fingerprint?saved.session:undefined,
       session=>ctx.storage.set(key,{config:fingerprint,session}));
     return {content:result.content};
+    }catch(error){
+      // Explicit public diagnostics, never arbitrary exceptions, paths or stacks.
+      const publicErrors=['请先在该 Agent 的官方客户端或 CLI 中登录','请先在 Codex 官方客户端登录','请选择已安装的运行程序','所选 Codex 模型不可用','该 Agent 未声明图片支持'];
+      if(publicErrors.includes(error?.message))await ctx.events.emit('agent.text',error.message);
+      throw error;
+    }
   });
 });

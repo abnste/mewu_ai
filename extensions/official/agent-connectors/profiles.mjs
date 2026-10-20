@@ -19,7 +19,8 @@ export function validateConfig(value,profile){
   if(!text(value.cwd??'',4096)||!text(value.model??'',300)||!text(value.effort??'',80))throw Error('连接选项无效');
   const env=value.env??{};
   if(!env||typeof env!=='object'||Array.isArray(env)||Object.keys(env).length>64||Object.entries(env).some(([key,v])=>!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key)||!text(v,16384)))throw Error('环境变量需要填写 JSON 字符串对象');
-  return {executable:value.executable,args:[...args],...(value.cwd?{cwd:value.cwd}:{}),...(Object.keys(env).length?{env}:{}),model:value.model??'',effort:value.effort??''};
+  if(value.transport!==undefined&&!['stdio','workbuddy-http'].includes(value.transport)||value.transport==='workbuddy-http'&&profile.id!=='workbuddy')throw Error('连接方式无效');
+  return {executable:value.executable,args:[...args],...(value.transport==='workbuddy-http'?{transport:value.transport}:{}),...(value.cwd?{cwd:value.cwd}:{}),...(Object.keys(env).length?{env}:{}),model:value.model??'',effort:value.effort??''};
 }
 export async function detectProfile(ctx,profile){
   const found=await ctx.processes.resolve(profile.candidates);
@@ -31,7 +32,7 @@ export async function detectProfile(ctx,profile){
   for(const executable of bundle.executables){
     const root=executable.replaceAll('\\','/').replace(/\/(?:MacOS\/)?WorkBuddy(?:\.exe)?$/i,'').toLowerCase();
     const script=(bundle.files??[]).find(path=>path.replaceAll('\\','/').toLowerCase().startsWith(root+'/'));
-    if(script)return {executable,args:[script,'--acp'],env:{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_CONFIG_DIR:'${home}/.workbuddy'},platform:bundle.platform};
+    if(script)return {executable,args:[script],transport:'workbuddy-http',env:{ELECTRON_RUN_AS_NODE:'1',CODEBUDDY_FORCE_LITE_WB_BUNDLE:'1',CODEBUDDY_CONFIG_DIR:'${home}/.workbuddy'},platform:bundle.platform};
   }
   return {executable:'',args:profile.args,platform:found.platform};
 }
