@@ -136,7 +136,11 @@ configure_profile() {
     head -c "$finish" "$profile_backup" | tail -c "$((finish - start))" > "$profile_found" || return 1
     cmp -s "$profile_found" "$profile_block" || return 1
     if [ "$action" = install ]; then return 0; fi
-    head -c "$start" "$profile_backup" > "$profile_candidate" || return 1
+    # BSD head rejects a zero-byte count. A block at byte zero has no prefix.
+    : > "$profile_candidate" || return 1
+    if [ "$start" -gt 0 ]; then
+      head -c "$start" "$profile_backup" > "$profile_candidate" || return 1
+    fi
     tail -c "+$((finish + 1))" "$profile_backup" >> "$profile_candidate" || return 1
   fi
   [ "$(wc -c < "$profile_candidate")" -le 1048576 ] || return 1

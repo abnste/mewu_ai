@@ -179,7 +179,9 @@ test('bash managed PATH block preserves original bytes, is idempotent, works in 
   assert.equal(installed.toString().split('# >>> mewu CLI PATH v1 >>>').length, 2);
   const repeated = integrate(f.install, f.env); assert.equal(repeated.status, 0, repeated.stderr); assert.equal(JSON.parse(repeated.stdout).changed, false);
   assert.deepEqual(fs.readFileSync(profile), installed);
-  const next = spawnSync(bash, ['--noprofile', '--rcfile', shellPath(profile), '-ic', 'command -v mewu; printf "%s\\n" "$ORIGINAL_RC_VALUE"'], { encoding: 'utf8', env: { ...process.env, ...f.env } });
+  // Invoking macOS Bash as sh ignores --rcfile, per Bash's startup contract.
+  const interactiveBash = process.platform === 'win32' ? bash : '/bin/bash';
+  const next = spawnSync(interactiveBash, ['--noprofile', '--rcfile', shellPath(profile), '-ic', 'command -v mewu; printf "%s\\n" "$ORIGINAL_RC_VALUE"'], { encoding: 'utf8', env: { ...process.env, ...f.env } });
   assert.equal(next.status, 0, next.stderr); assert.equal(next.stdout, `${shellPath(path.join(f.bin, 'mewu'))}\nkept\n`);
   const removed = integrate(f.uninstall, f.env); assert.equal(removed.status, 0, removed.stderr); assert.equal(JSON.parse(removed.stdout).newShellRequired, true);
   assert.deepEqual(fs.readFileSync(profile), original); assert.equal(fs.existsSync(path.join(f.bin, 'mewu')), false);
@@ -249,6 +251,18 @@ test('a profile edit observed while taking the bounded snapshot is preserved', {
   const result = integrate(f.install, f.env, `${shellPath(tools)}:/usr/bin:/bin`); assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).shellSetupRequired, true); assert.equal(fs.readFileSync(profile, 'utf8'), '# user original\n# concurrent user edit\n');
   assert.equal(fs.readdirSync(f.home).some(name => name.startsWith('.mewu-cli-') || name.endsWith('.mewu-cli.lock')), false);
+}));
+
+test('removing a block at byte zero works with BSD head and preserves a following user suffix', { skip: shellSkip }, () => fixture(root => {
+  const f = shellFixture(root); const profile = path.join(f.home, f.profileName);
+  const tools = path.join(root, 'BSD tools');
+  put(tools, 'head', '#!/bin/sh\nif [ "$1" = -c ] && [ "$2" = 0 ]; then printf "head: illegal byte count -- 0\\n" >&2; exit 1; fi\nexec /usr/bin/head "$@"\n');
+  const commandPath = `${shellPath(tools)}:/usr/bin:/bin`;
+  const installed = integrate(f.install, f.env, commandPath); assert.equal(installed.status, 0, installed.stderr);
+  const suffix = Buffer.from('# preserve user suffix without final LF'); fs.appendFileSync(profile, suffix);
+  const removed = integrate(f.uninstall, f.env, commandPath); assert.equal(removed.status, 0, removed.stderr);
+  assert.equal(JSON.parse(removed.stdout).shellSetupRequired, false);
+  assert.deepEqual(fs.readFileSync(profile), suffix);
 }));
 
 const nsis = path.join(process.env.LOCALAPPDATA || '', 'tauri/NSIS/makensis.exe');
