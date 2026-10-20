@@ -766,6 +766,11 @@ fn validate_report(config: &backend::Config, report: &backend::Report) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    // These real supervisor fixtures share the production process-wide BUSY
+    // permit. Serialize the fixtures, retaining the lock through their child/IO
+    // drain assertions; the production permit and every deadline stay intact.
+    #[cfg(windows)]
+    static SUPERVISOR_FIXTURE: Mutex<()> = Mutex::new(());
     #[test]
     fn recording_preparation_terminal_probe_does_not_consume_stop_or_cancel() {
         for terminal in [backend::Control::Stop, backend::Control::Cancel] {
@@ -830,6 +835,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn prepared_supervisor_commits_only_once_and_preserves_cancel_failure_and_real_child_drain() {
+        let _fixture = SUPERVISOR_FIXTURE.lock()
+            .expect("recording supervisor fixture lock poisoned by an earlier failed test");
         let config = backend::Config {
             output: std::env::temp_dir().join(format!("mewu-prepared-protocol-{}.mp4", uuid::Uuid::new_v4())),
             origin_x: 0, origin_y: 0, monitor_width: 64, monitor_height: 64,
@@ -896,6 +903,8 @@ exit 0
     #[cfg(windows)]
     #[test]
     fn supervised_terminal_waits_for_real_child_and_io_and_rejects_invalid_report() {
+        let _fixture = SUPERVISOR_FIXTURE.lock()
+            .expect("recording supervisor fixture lock poisoned by an earlier failed test");
         let config = backend::Config {
             output: std::env::temp_dir()
                 .join(format!("mewu-audio-protocol-{}.mp4", uuid::Uuid::new_v4())),
