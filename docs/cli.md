@@ -1,8 +1,8 @@
 # Mewu CLI / 命令行控制
 
-The CLI in the current development source lets other local agents operate the same Mewu desktop space as its user. The existing published 1.0.2 installers predate this interface; use a build containing the CLI. This is an inbound control interface, separate from Mewu's outbound MCP connections.
+The CLI introduced in MewuAI 1.0.3 lets other local agents operate the same Mewu desktop space as its user. Earlier 1.0.2 installers predate this interface. This is an inbound control interface, separate from Mewu's outbound MCP connections.
 
-当前开发源码提供命令行，让其他本机 Agent 与用户共同操作同一个 Mewu 空间。已发布的旧 1.0.2 安装包不包含此接口，需要使用包含 CLI 的构建。它与 Mewu 调用外部工具的 MCP 连接是两个方向。
+MewuAI 1.0.3 起提供命令行，让其他本机 Agent 与用户共同操作同一个 Mewu 空间。旧 1.0.2 安装包不包含此接口。它与 Mewu 调用外部工具的 MCP 连接是两个方向。
 
 ## Start / 开始
 
