@@ -56,3 +56,24 @@ test('closing a surface rejects pending calls and cannot reopen its port',async(
   await assert.rejects(c.api.call({type:'save'}),/unavailable/);
   assert.equal(c.sent.length,1);
 });
+test('WebKit pointer events relay only the live trusted pointer and stop after completion',async()=>{
+  const c=client();await c.api.ready;
+  const press=new c.PointerEvent();c.listeners.get('pointerdown')(press);
+  const pending=c.api.drag(press);
+  const id=c.sent[0].id;
+  const sample={isTrusted:true,pointerId:1,type:'pointermove',clientX:120,clientY:-30,buttons:1};
+  c.listeners.get('pointermove')({...sample,isTrusted:false});
+  c.listeners.get('pointermove')({...sample,pointerId:9});
+  assert.equal(c.sent.length,1);
+  c.listeners.get('pointermove')(sample);
+  assert.equal(c.sent[1].type,'pointer-drag-event');
+  assert.equal(c.sent[1].id,id);
+  assert.equal(c.sent[1].event.y,-30);
+  c.listeners.get('pointerup')({...sample,type:'pointerup',buttons:0});
+  assert.equal(c.sent[2].event.type,'pointerup');
+  c.listeners.get('pointermove')(sample);
+  assert.equal(c.sent.length,3);
+  c.port.onmessage({data:{type:'response',id,ok:true,value:{cancelled:false,x:120,y:-30}}});
+  assert.deepEqual(await pending,{cancelled:false,x:120,y:-30});
+  c.api.dispose();
+});

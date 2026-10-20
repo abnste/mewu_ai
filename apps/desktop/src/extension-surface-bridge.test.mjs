@@ -58,10 +58,32 @@ test('cross-document gesture returns local coordinates and releases its shield o
     children[0].send('pointerup',{type:'pointerup',clientX:320,clientY:100});
     assert.deepEqual(await first.done,{cancelled:false,x:280,y:20});
     assert.equal(children.length,0);assert.equal(host.listeners.size,0);
+    const relayed=pointer.surfacePointerDrag(frame);
+    relayed.forward({type:'pointerup',x:450,y:-50,buttons:0});
+    assert.deepEqual(await relayed.done,{cancelled:false,x:450,y:-50});
+    relayed.forward({type:'pointerup',x:999,y:999,buttons:0});
+    assert.equal(children.length,0);
     const closed=pointer.surfacePointerDrag(frame);closed.cancel();
     assert.equal((await closed.done).cancelled,true);
     const escaped=pointer.surfacePointerDrag(frame);host.send('keydown',{key:'Escape'});
     assert.equal((await escaped.done).cancelled,true);
     assert.equal(children.length,0);assert.equal(host.listeners.size,0);
   }finally{globalThis.document=previous.document;globalThis.window=previous.window;}
+});
+test('pointer relay cannot complete a foreign request or outlive its surface',async()=>{
+  let handler,finish;const forwarded=[],sent=[];
+  const scope=bridge.surfaceBridge({set onmessage(v){handler=v;},postMessage:v=>sent.push(v),start(){},close(){}},
+    async()=>{},()=>{},()=>({done:new Promise(resolve=>finish=resolve),forward:v=>forwarded.push(v),cancel:()=>finish({cancelled:true,x:0,y:0})}));
+  const pending=handler({data:{type:'pointer-drag',id:7,input:{}}});
+  const event={type:'pointerup',x:100,y:20,buttons:0};
+  for(const data of [
+    {type:'pointer-drag-event',id:8,event},
+    {type:'pointer-drag-event',id:7,event:{...event,x:Infinity}},
+    {type:'pointer-drag-event',id:7,event:{...event,buttons:-1}},
+  ])await handler({data});
+  assert.equal(forwarded.length,0);
+  await handler({data:{type:'pointer-drag-event',id:7,event}});
+  assert.deepEqual(forwarded,[event]);
+  scope.close();await pending;
+  assert.equal(sent.length,0);
 });

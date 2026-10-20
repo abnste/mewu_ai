@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
 /** One MessagePort belongs to one rendered generation. It cannot choose an IPC
  * method, plugin, service, scene, filesystem path or captured object source. */
+import type {SurfacePointerGesture,SurfacePointerSample} from './extension-surface-pointer';
 export interface DropTarget {id:string;x:number;y:number;width:number;height:number}
 export function surfaceBridge(port:MessagePort, call:(input:unknown)=>Promise<unknown>,
-  targets:(value:DropTarget[])=>void, drag?:(input:unknown)=>Promise<unknown>, escape?:()=>void, closeError?:(message:string)=>void) {
+  targets:(value:DropTarget[])=>void, drag?:(input:unknown)=>SurfacePointerGesture, escape?:()=>void, closeError?:(message:string)=>void) {
   let closed=false, pending=0;
   const active=new Set<number>();
+  const gestures=new Map<number,SurfacePointerGesture>();
   port.onmessage=async ({data})=>{
     if(closed||!data||typeof data!=='object')return;
     let bytes:number;try{bytes=JSON.stringify(data).length;}catch{return;}
     if(bytes>256*1024)return;
+    if(data.type==='pointer-drag-event'){
+      const gesture=gestures.get(data.id),event=data.event;
+      if(!gesture||!event||!['pointermove','pointerup','pointercancel'].includes(event.type)
+        ||![event.x,event.y].every((n:unknown)=>typeof n==='number'&&Number.isFinite(n)&&Math.abs(n)<=32768)
+        ||!Number.isSafeInteger(event.buttons)||event.buttons<0||event.buttons>31)return;
+      gesture.forward(event as SurfacePointerSample);return;
+    }
     if(data.type==='escape'){escape?.();return;}
     if(data.type==='close-error'){closeError?.(typeof data.error==='string'?data.error.slice(0,240):'保存失败');return;}
     if(data.type==='drop-targets'){
@@ -28,15 +37,19 @@ export function surfaceBridge(port:MessagePort, call:(input:unknown)=>Promise<un
     active.add(data.id);pending++;
     try{
       if(data.type==='pointer-drag'&&!drag)throw Error('拖动不可用');
-      const value=await (data.type==='pointer-drag'?drag!(data.input):call(data.input));
+      let value:unknown;
+      if(data.type==='pointer-drag'){
+        const gesture=drag!(data.input);gestures.set(data.id,gesture);
+        value=await gesture.done;
+      }else value=await call(data.input);
       if(!closed)port.postMessage({type:'response',id:data.id,ok:true,value});
     }
     catch(error){if(!closed)port.postMessage({type:'response',id:data.id,ok:false,error:error instanceof Error?error.message:'Plugin request failed'});}
-    finally{active.delete(data.id);pending--;}
+    finally{gestures.delete(data.id);active.delete(data.id);pending--;}
   };
   port.start();
   return {
     event(name:string,value:unknown){if(!closed)port.postMessage({type:'event',name,value});},
-    close(){closed=true;port.onmessage=null;port.close();active.clear();targets([]);}
+    close(){closed=true;port.onmessage=null;for(const gesture of gestures.values())gesture.cancel();gestures.clear();port.close();active.clear();targets([]);}
   };
 }

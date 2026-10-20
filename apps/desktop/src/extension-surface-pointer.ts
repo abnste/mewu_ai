@@ -2,7 +2,13 @@
 /** A bounded parent-document gesture keeps pointer release out of iframe gaps.
  * Coordinates are returned to the owning client; all drop semantics stay there. */
 let active=false;
-export function surfacePointerDrag(frame:HTMLIFrameElement,input?:unknown) {
+export interface SurfacePointerSample {type:'pointermove'|'pointerup'|'pointercancel';x:number;y:number;buttons:number}
+export interface SurfacePointerGesture {
+  done:Promise<{cancelled:boolean;x:number;y:number}>;
+  cancel:()=>void;
+  forward:(sample:SurfacePointerSample)=>void;
+}
+export function surfacePointerDrag(frame:HTMLIFrameElement,input?:unknown):SurfacePointerGesture {
   if(active)throw Error('已有拖动操作');
   active=true;
   const shield=document.createElement('div');
@@ -23,13 +29,21 @@ export function surfacePointerDrag(frame:HTMLIFrameElement,input?:unknown) {
     const rect=frame.getBoundingClientRect();ghost.style.transform=`translate(${rect.left+detail.x!+12}px,${rect.top+detail.y!+12}px)`;
   }
   let finish:(cancel:boolean,x?:number,y?:number)=>void=()=>{};
+  let forward:SurfacePointerGesture['forward']=()=>{};
   const done=new Promise<{cancelled:boolean;x:number;y:number}>(resolve=>{
     let ended=false;
     const move=(event:PointerEvent)=>{event.preventDefault();if(!(event.buttons&1)){finish(true);return;}if(ghost)ghost.style.transform=`translate(${event.clientX+12}px,${event.clientY+12}px)`;};
     const up=(event:PointerEvent)=>{event.preventDefault();event.stopPropagation();finish(event.type!=='pointerup',event.clientX,event.clientY);};
     const key=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();finish(true);}};
     const blur=()=>finish(true);
-    const timer=setTimeout(blur,30000);
+    const timer=setTimeout(blur,25000);
+    forward=sample=>{
+      if(ended)return;
+      const rect=frame.getBoundingClientRect(),x=rect.left+sample.x,y=rect.top+sample.y;
+      if(sample.type!=='pointermove'){finish(sample.type!=='pointerup',x,y);return;}
+      if(!(sample.buttons&1)){finish(true);return;}
+      if(ghost)ghost.style.transform=`translate(${x+12}px,${y+12}px)`;
+    };
     finish=(cancelled,x=0,y=0)=>{
       if(ended)return;ended=true;active=false;clearTimeout(timer);
       const rect=frame.getBoundingClientRect();
@@ -42,5 +56,5 @@ export function surfacePointerDrag(frame:HTMLIFrameElement,input?:unknown) {
     window.addEventListener('blur',blur);window.addEventListener('keydown',key,true);
     document.body.append(shield);
   });
-  return {done,cancel:()=>finish(true)};
+  return {done,cancel:()=>finish(true),forward:sample=>forward(sample)};
 }

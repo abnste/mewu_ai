@@ -9,10 +9,18 @@
     catch(error){port?.postMessage({type:'close-error',error:String(error?.message||'保存失败')});}
     finally{closing=false;}
   }
-  let press;
+  let press, activeDrag;
+  function relayPointer(event) {
+    if (!activeDrag || !event.isTrusted || event.pointerId !== activeDrag.pointerId) return;
+    const {id}=activeDrag;
+    if (!pending.has(id)) { activeDrag=undefined; return; }
+    port.postMessage({type:'pointer-drag-event',id,event:{type:event.type,x:event.clientX,y:event.clientY,buttons:event.buttons}});
+    if(event.type!=='pointermove')activeDrag=undefined;
+  }
   addEventListener('pointerdown',event=>{if(event.isTrusted&&event.button===0)press=event;},true);
-  addEventListener('pointerup',()=>{press=undefined;},true);
-  addEventListener('pointercancel',()=>{press=undefined;},true);
+  addEventListener('pointermove',relayPointer,true);
+  addEventListener('pointerup',event=>{press=undefined;relayPointer(event);},true);
+  addEventListener('pointercancel',event=>{press=undefined;relayPointer(event);},true);
   // Keys in an opaque iframe never bubble to the containing space.
   addEventListener('keydown',event=>{
     if(event.key!=='Escape'||event.isComposing||event.keyCode===229||event.repeat||event.target instanceof HTMLSelectElement)return;
@@ -23,7 +31,7 @@
     if (closed || !port || pending.size >= 16) throw new Error('Surface unavailable');
     const id = ++serial;
     return new Promise((resolve,reject) => {
-      const timer=setTimeout(() => {pending.delete(id);reject(new Error('Plugin request timed out'));}, 30000);
+      const timer=setTimeout(() => {pending.delete(id);if(activeDrag?.id===id)activeDrag=undefined;reject(new Error('Plugin request timed out'));}, 30000);
       pending.set(id,{resolve,reject,timer});
       port.postMessage({type,id,input});
     });
@@ -39,6 +47,7 @@
           const entry = pending.get(data.id);
           if (!entry) return;
           pending.delete(data.id); clearTimeout(entry.timer);
+          if(activeDrag?.id===data.id)activeDrag=undefined;
           data.ok ? entry.resolve(data.value) : entry.reject(new Error(data.error || 'Plugin request failed'));
         } else if (data.type === 'event') {
           if(data.name==='close-request'){void requestClose();return;}
@@ -52,7 +61,7 @@
     addEventListener('message', connect);
   });
   function dispose() {
-    closed = true; port?.close();
+    closed = true; activeDrag=undefined; port?.close();
     for (const entry of pending.values()) {clearTimeout(entry.timer);entry.reject(new Error('Surface closed'));}
     pending.clear(); listeners.clear(); beforeClose.clear();
   }
@@ -72,7 +81,12 @@
       event.preventDefault();
       const target=event.target;
       if(target instanceof Element && target.hasPointerCapture(event.pointerId))target.releasePointerCapture(event.pointerId);
-      return request('pointer-drag',{x:event.clientX,y:event.clientY,preview});
+      const id=serial+1;
+      const result=request('pointer-drag',{x:event.clientX,y:event.clientY,preview});
+      // WebKit can keep dispatching a pressed pointer to its original iframe
+      // even after the host installs an overlay. Relay only this live gesture.
+      activeDrag={id,pointerId:event.pointerId};
+      return result;
     },
     async setDropTargets(targets) {await ready;if(!closed)port.postMessage({type:'drop-targets',targets});},
     on(name, callback) {

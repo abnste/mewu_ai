@@ -44,10 +44,11 @@ export default function ExtensionObjectView(){
       }
       const owner=value.owner;
       return invoke('invoke_extension',{invocation:{pluginId:owner.plugin,revision:owner.revision,serviceId:owner.service,sceneId:owner.scene,surface:{action:'call',id:value.surfaceId},input}});
-    },value=>{targets=value;publishTargets();},async input=>{
+    },value=>{targets=value;publishTargets();},input=>{
       if(gesture||!frame)throw Error('拖动不可用');
       const current=surfacePointerDrag(frame,input);gesture=current;
-      try{return await current.done;}finally{if(gesture===current)gesture=undefined;}
+      void current.done.finally(()=>{if(gesture===current)gesture=undefined;});
+      return current;
     },()=>{void control('close').catch(report);},report);
     frame.contentWindow.postMessage({type:'mewu-connect'},'*',[channel.port2]);
     void control('ready').catch(report);

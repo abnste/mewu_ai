@@ -164,10 +164,11 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
         return {x:Math.max(0,Math.min(.95,(rect.left+x)/innerWidth)),y:Math.max(0,Math.min(.95,(rect.top+y)/innerHeight))};
       }
       return request(input);
-    },value=>{targets=value;},async input=>{
+    },value=>{targets=value;},input=>{
       if(disposed||props.disabled||!open()||!frame||pointerGesture)throw Error('拖动不可用');
       const gesture=surfacePointerDrag(frame,input);pointerGesture=gesture;
-      try{return await gesture.done;}finally{if(pointerGesture===gesture)pointerGesture=undefined;}
+      void gesture.done.finally(()=>{if(pointerGesture===gesture)pointerGesture=undefined;});
+      return gesture;
     },close,report);
     frame.contentWindow.postMessage({type:'mewu-connect'},'*',[channel.port2]);
   }
