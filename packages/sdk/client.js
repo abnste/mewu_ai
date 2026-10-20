@@ -10,12 +10,18 @@
     finally{closing=false;}
   }
   let press, activeDrag;
+  function releaseDrag() {
+    const drag=activeDrag;activeDrag=undefined;
+    if(drag?.capture){
+      try{if(drag.capture.hasPointerCapture(drag.pointerId))drag.capture.releasePointerCapture(drag.pointerId);}catch{/* the surface may already be detached */}
+    }
+  }
   function relayPointer(event) {
     if (!activeDrag || !event.isTrusted || event.pointerId !== activeDrag.pointerId) return;
     const {id}=activeDrag;
-    if (!pending.has(id)) { activeDrag=undefined; return; }
+    if (!pending.has(id)) { releaseDrag(); return; }
     port.postMessage({type:'pointer-drag-event',id,event:{type:event.type,x:event.clientX,y:event.clientY,buttons:event.buttons}});
-    if(event.type!=='pointermove')activeDrag=undefined;
+    if(event.type!=='pointermove')releaseDrag();
   }
   addEventListener('pointerdown',event=>{if(event.isTrusted&&event.button===0)press=event;},true);
   addEventListener('pointermove',relayPointer,true);
@@ -31,7 +37,7 @@
     if (closed || !port || pending.size >= 16) throw new Error('Surface unavailable');
     const id = ++serial;
     return new Promise((resolve,reject) => {
-      const timer=setTimeout(() => {pending.delete(id);if(activeDrag?.id===id)activeDrag=undefined;reject(new Error('Plugin request timed out'));}, 30000);
+      const timer=setTimeout(() => {pending.delete(id);if(activeDrag?.id===id)releaseDrag();reject(new Error('Plugin request timed out'));}, 30000);
       pending.set(id,{resolve,reject,timer});
       port.postMessage({type,id,input});
     });
@@ -47,7 +53,7 @@
           const entry = pending.get(data.id);
           if (!entry) return;
           pending.delete(data.id); clearTimeout(entry.timer);
-          if(activeDrag?.id===data.id)activeDrag=undefined;
+          if(activeDrag?.id===data.id)releaseDrag();
           data.ok ? entry.resolve(data.value) : entry.reject(new Error(data.error || 'Plugin request failed'));
         } else if (data.type === 'event') {
           if(data.name==='close-request'){void requestClose();return;}
@@ -61,7 +67,7 @@
     addEventListener('message', connect);
   });
   function dispose() {
-    closed = true; activeDrag=undefined; port?.close();
+    closed = true; releaseDrag(); port?.close();
     for (const entry of pending.values()) {clearTimeout(entry.timer);entry.reject(new Error('Surface closed'));}
     pending.clear(); listeners.clear(); beforeClose.clear();
   }
@@ -77,15 +83,23 @@
       if (press!==event || !(event instanceof PointerEvent) || !event.isTrusted || event.type!=='pointerdown' || event.button!==0 || !(event.buttons&1)) {
         return Promise.reject(new Error('Drag requires a user pointer press'));
       }
+      if(activeDrag)return Promise.reject(new Error('A drag is already active'));
       press=undefined;
       event.preventDefault();
       const target=event.target;
-      if(target instanceof Element && target.hasPointerCapture(event.pointerId))target.releasePointerCapture(event.pointerId);
+      let capture;
+      if(target instanceof Element){
+        // Keep the real gesture in its originating document across iframe edges.
+        // The host still owns the preview and validates every forwarded sample.
+        try{target.setPointerCapture(event.pointerId);capture=target;}catch{/* the parent shield remains a fallback */}
+      }
       const id=serial+1;
-      const result=request('pointer-drag',{x:event.clientX,y:event.clientY,preview});
+      activeDrag={id,pointerId:event.pointerId,capture};
+      let result;
+      try{result=request('pointer-drag',{x:event.clientX,y:event.clientY,preview});}
+      catch(error){releaseDrag();return Promise.reject(error);}
       // WebKit can keep dispatching a pressed pointer to its original iframe
       // even after the host installs an overlay. Relay only this live gesture.
-      activeDrag={id,pointerId:event.pointerId};
       return result;
     },
     async setDropTargets(targets) {await ready;if(!closed)port.postMessage({type:'drop-targets',targets});},

@@ -35,8 +35,10 @@ export function surfacePointerDrag(frame:HTMLIFrameElement,input?:unknown):Surfa
     const move=(event:PointerEvent)=>{event.preventDefault();if(!(event.buttons&1)){finish(true);return;}if(ghost)ghost.style.transform=`translate(${event.clientX+12}px,${event.clientY+12}px)`;};
     const up=(event:PointerEvent)=>{event.preventDefault();event.stopPropagation();finish(event.type!=='pointerup',event.clientX,event.clientY);};
     const key=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();finish(true);}};
-    const blur=()=>finish(true);
-    const timer=setTimeout(blur,25000);
+    // Focusing the originating iframe can blur the parent Window without
+    // leaving this document tree. Only actual application focus loss cancels.
+    const blur=()=>{if(!document.hasFocus())finish(true);};
+    const timer=setTimeout(()=>finish(true),25000);
     forward=sample=>{
       if(ended)return;
       const rect=frame.getBoundingClientRect(),x=rect.left+sample.x,y=rect.top+sample.y;

@@ -48,7 +48,8 @@ test('cross-document gesture returns local coordinates and releases its shield o
   }
   const host=new Target(),children=[];
   globalThis.window=host;
-  globalThis.document={body:{append(el){children.push(el);}},createElement(){
+  let focused=true;
+  globalThis.document={hasFocus:()=>focused,body:{append(el){children.push(el);}},createElement(){
     const el=new Target();el.style={};el.setAttribute=()=>{};el.remove=()=>children.splice(children.indexOf(el),1);return el;
   }};
   const frame={getBoundingClientRect:()=>({left:40,top:80})};
@@ -59,6 +60,8 @@ test('cross-document gesture returns local coordinates and releases its shield o
     assert.deepEqual(await first.done,{cancelled:false,x:280,y:20});
     assert.equal(children.length,0);assert.equal(host.listeners.size,0);
     const relayed=pointer.surfacePointerDrag(frame);
+    host.send('blur'); // Moving focus into the originating iframe is not cancellation.
+    assert.equal(children.length,1);
     relayed.forward({type:'pointerup',x:450,y:-50,buttons:0});
     assert.deepEqual(await relayed.done,{cancelled:false,x:450,y:-50});
     relayed.forward({type:'pointerup',x:999,y:999,buttons:0});
@@ -67,6 +70,9 @@ test('cross-document gesture returns local coordinates and releases its shield o
     assert.equal((await closed.done).cancelled,true);
     const escaped=pointer.surfacePointerDrag(frame);host.send('keydown',{key:'Escape'});
     assert.equal((await escaped.done).cancelled,true);
+    assert.equal(children.length,0);assert.equal(host.listeners.size,0);
+    const outside=pointer.surfacePointerDrag(frame);focused=false;host.send('blur');
+    assert.equal((await outside.done).cancelled,true);
     assert.equal(children.length,0);assert.equal(host.listeners.size,0);
   }finally{globalThis.document=previous.document;globalThis.window=previous.window;}
 });

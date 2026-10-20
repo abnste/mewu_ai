@@ -7,11 +7,17 @@ const source=await readFile(new URL('../client.js',import.meta.url),'utf8');
 function client(){
   const listeners=new Map(),sent=[],parent={},port={start(){},close(){},postMessage(value){sent.push(value);}};
   class PointerEvent {constructor(trusted=true){this.isTrusted=trusted;this.type='pointerdown';this.button=0;this.buttons=1;this.pointerId=1;}preventDefault(){}}
-  const context=vm.createContext({parent,PointerEvent,Element:class{},HTMLSelectElement:class{},setTimeout,clearTimeout,
+  class Element {
+    captures=new Set();
+    setPointerCapture(id){this.captures.add(id);}
+    hasPointerCapture(id){return this.captures.has(id);}
+    releasePointerCapture(id){this.captures.delete(id);}
+  }
+  const context=vm.createContext({parent,PointerEvent,Element,HTMLSelectElement:class{},setTimeout,clearTimeout,
     addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}});
   vm.runInContext(source,context);
   listeners.get('message')({source:parent,data:{type:'mewu-connect'},ports:[port]});
-  return {api:context.mewu,listeners,sent,port,PointerEvent};
+  return {api:context.mewu,listeners,sent,port,PointerEvent,Element};
 }
 test('client drag requires an unconsumed current trusted pointer press',async()=>{
   const c=client();await c.api.ready;
@@ -76,4 +82,26 @@ test('WebKit pointer events relay only the live trusted pointer and stop after c
   c.port.onmessage({data:{type:'response',id,ok:true,value:{cancelled:false,x:120,y:-30}}});
   assert.deepEqual(await pending,{cancelled:false,x:120,y:-30});
   c.api.dispose();
+});
+test('originating pointer capture survives iframe crossings and is released on reply, release, or disposal',async()=>{
+  for(const end of ['reply','release','dispose']){
+    const c=client();await c.api.ready;
+    const press=new c.PointerEvent();press.target=new c.Element();
+    c.listeners.get('pointerdown')(press);
+    const pending=c.api.drag(press),id=c.sent[0].id;
+    assert.equal(press.target.hasPointerCapture(1),true);
+    const next=new c.PointerEvent();c.listeners.get('pointerdown')(next);
+    await assert.rejects(c.api.drag(next),/already active/);
+    assert.equal(press.target.hasPointerCapture(1),true);
+    if(end==='dispose'){c.api.dispose();await assert.rejects(pending,/Surface closed/);}
+    else{
+      if(end==='release'){
+        c.listeners.get('pointerup')({type:'pointerup',isTrusted:true,pointerId:1,buttons:0,clientX:-30,clientY:900});
+        assert.equal(press.target.hasPointerCapture(1),false);
+      }
+      c.port.onmessage({data:{type:'response',id,ok:true,value:{cancelled:false,x:-30,y:900}}});
+      await pending;c.api.dispose();
+    }
+    assert.equal(press.target.hasPointerCapture(1),false);
+  }
 });
