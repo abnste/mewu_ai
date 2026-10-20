@@ -20,6 +20,36 @@ static NEVER_STOP: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct Wire(pub(crate) Stream);
 impl Wire {
+    pub(crate) fn new(stream: Stream) -> io::Result<Self> {
+        let wire = Self(stream);
+        #[cfg(windows)]
+        {
+            let Stream::NamedPipe(pipe) = &wire.0;
+            // Accept stays nonblocking on the listener's next instance. Each
+            // connected handle instead uses real overlapped I/O: Microsoft's
+            // legacy PIPE_NOWAIT mode must not be mixed with that mechanism.
+            // Reads below still Peek first and request only available bytes.
+            pipe.inner().set_nonblocking(false)?;
+        }
+        Ok(wire)
+    }
+    pub(crate) fn write_available(
+        &mut self,
+        bytes: &[u8],
+        deadline: Instant,
+        stop: &AtomicBool,
+        sent: &mut bool,
+    ) -> Result<usize, FrameError> {
+        #[cfg(windows)]
+        {
+            write_windows(&self.0, bytes, deadline, stop, sent)
+        }
+        #[cfg(unix)]
+        {
+            let _ = (deadline, stop, sent);
+            self.0.write(bytes).map_err(FrameError::Io)
+        }
+    }
     fn read_available(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         #[cfg(windows)]
         {
@@ -52,6 +82,80 @@ impl Wire {
         }
     }
 }
+
+#[cfg(windows)]
+fn write_windows(
+    stream: &Stream,
+    bytes: &[u8],
+    deadline: Instant,
+    stop: &AtomicBool,
+    sent: &mut bool,
+) -> Result<usize, FrameError> {
+    use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::{
+        Foundation::{ERROR_IO_INCOMPLETE, ERROR_IO_PENDING},
+        Storage::FileSystem::WriteFile,
+        System::{
+            Threading::CreateEventW,
+            IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
+        },
+    };
+    let Stream::NamedPipe(pipe) = stream;
+    let handle = pipe.as_handle().as_raw_handle();
+    let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+    if event.is_null() {
+        return Err(FrameError::Io(io::Error::last_os_error()));
+    }
+    let event = unsafe { OwnedHandle::from_raw_handle(event) };
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    overlapped.hEvent = event.as_raw_handle();
+    // Interprocess 2.4.6 waits for WriteFileEx's APC with SleepEx(INFINITE),
+    // outside our deadline. Its legacy PIPE_NOWAIT setup also completed 16 KiB
+    // writes with zero bytes even on an empty real pipe. Wire::new uses PIPE_WAIT
+    // on connected handles; this live OVERLAPPED/event lets our own deadline
+    // control the pending write without enlarging the kernel buffer.
+    let started = unsafe {
+        WriteFile(
+            handle,
+            bytes.as_ptr(),
+            bytes.len() as u32,
+            std::ptr::null_mut(),
+            &mut overlapped,
+        )
+    };
+    if started == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+            return Err(FrameError::Io(error));
+        }
+        // A pending native write may already have an external effect. A later
+        // timeout cannot safely be reported as NotSent, even before its count.
+        *sent = true;
+    }
+    loop {
+        let mut written = 0;
+        if unsafe { GetOverlappedResult(handle, &overlapped, &mut written, 0) } != 0 {
+            return Ok(written as usize);
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_IO_INCOMPLETE as i32) {
+            *sent = true;
+            return Err(FrameError::Io(error));
+        }
+        *sent = true;
+        if let Err(stopped) = check(deadline, stop).and_then(|_| wait(deadline, stop)) {
+            // Cancel only this operation. A canceled/finished OVERLAPPED must
+            // be observed before its stack and borrowed buffer can be freed.
+            // This is native I/O cancellation, never a peer-dependent flush.
+            unsafe {
+                let _ = CancelIoEx(handle, &overlapped);
+                let mut ignored = 0;
+                let _ = GetOverlappedResult(handle, &overlapped, &mut ignored, 1);
+            }
+            return Err(stopped);
+        }
+    }
+}
 impl Drop for Wire {
     fn drop(&mut self) {
         before_close(&self.0);
@@ -80,7 +184,9 @@ impl Client {
                 .connect_sync();
             match result {
                 Ok(stream) => {
-                    let wire = Wire(stream);
+                    let wire = Wire::new(stream).map_err(|_| {
+                        ControlError::not_sent(ErrorCode::Unavailable, "Local control connection setup failed")
+                    })?;
                     // Authenticate the server before a single request byte is sent.
                     endpoint.verify_peer(&wire.0, false).map_err(|_| {
                         ControlError::not_sent(
@@ -303,9 +409,9 @@ pub(crate) fn write_frame(
         let mut rest = part;
         while !rest.is_empty() {
             check(deadline, stop)?;
-            // A bounded write also avoids asking a nonblocking Windows pipe to
-            // admit one very large message into its finite kernel buffer.
-            match wire.0.write(&rest[..rest.len().min(16 * 1024)]) {
+            // Keep native chunks bounded; every partial/pending write shares
+            // the frame's absolute deadline and shutdown signal.
+            match wire.write_available(&rest[..rest.len().min(16 * 1024)], deadline, stop, sent) {
                 Ok(0) => {
                     #[cfg(windows)]
                     wait(deadline, stop)?;
@@ -316,9 +422,12 @@ pub(crate) fn write_frame(
                     *sent = true;
                     rest = &rest[count..];
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => wait(deadline, stop)?,
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => (),
-                Err(error) => return Err(FrameError::Io(error)),
+                Err(FrameError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
+                    wait(deadline, stop)?
+                }
+                #[cfg(unix)]
+                Err(FrameError::Io(error)) if error.kind() == io::ErrorKind::Interrupted => (),
+                Err(error) => return Err(error),
             }
         }
     }

@@ -36,7 +36,7 @@ fn raw(endpoint: &Endpoint) -> Wire {
             .wait_mode(ConnectWaitMode::Timeout(TIMEOUT))
             .connect_sync()
         {
-            Ok(stream) => return Wire(stream),
+            Ok(stream) => return Wire::new(stream).unwrap(),
             Err(error) => {
                 assert!(Instant::now() < deadline, "raw IPC connect failed: {error}");
                 thread::sleep(Duration::from_millis(5));
@@ -119,6 +119,245 @@ fn actual_local_ipc_verified_server_roundtrips_multiple_calls_and_typed_errors()
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     drop(client);
     server.shutdown(TIMEOUT).unwrap();
+}
+
+#[test]
+fn actual_local_ipc_fast_reader_receives_schema_sized_response_and_keeps_connection() {
+    let endpoint = Endpoint::for_test();
+    // The actual first-party schema is over 100 KiB. A small status response
+    // does not establish that a continuously reading peer can receive it.
+    let payload: String = (0..107_106)
+        .map(|index| (b'a' + (index % 26) as u8) as char)
+        .collect();
+    let expected = json!({"catalog": payload, "unicode": "中文\nexact bytes"});
+    let outgoing = expected.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut server = Server::start(
+        endpoint.clone(),
+        Arc::new(move |request| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            if request.method == "app.schema" {
+                Response::success(request.id, outgoing.clone())
+            } else {
+                Response::success(request.id, json!({"afterLargeResponse": true}))
+            }
+        }),
+        options(),
+    )
+    .unwrap();
+    let mut client =
+        Client::connect_verified(&endpoint, &std::env::current_exe().unwrap(), TIMEOUT).unwrap();
+    let response = client
+        .call(&Request::new("schema", "app.schema", json!({})), TIMEOUT)
+        .unwrap();
+    assert_eq!(
+        serde_json::to_vec(&response).unwrap(),
+        serde_json::to_vec(&Response::success("schema", expected)).unwrap()
+    );
+    let next = client.call(&request("next"), TIMEOUT).unwrap();
+    assert_eq!(next.result().unwrap(), &json!({"afterLargeResponse": true}));
+    server.revoke();
+    let denied = client.call(&request("revoked"), TIMEOUT).unwrap();
+    assert_eq!(denied.error_ref().unwrap().code, ErrorCode::Disabled);
+    assert_eq!(
+        denied.error_ref().unwrap().outcome,
+        ExecutionOutcome::NotSent
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    drop(client);
+    server.shutdown(TIMEOUT).unwrap();
+}
+
+#[test]
+fn actual_local_ipc_fast_reader_roundtrips_near_limit_request_and_response() {
+    let endpoint = Endpoint::for_test();
+    let payload: String = (0..900_000)
+        .map(|index| (b'a' + (index % 26) as u8) as char)
+        .collect();
+    let large = Request::new(
+        "large",
+        "app.echo",
+        json!({"body": payload, "unicode": "中\r\n文"}),
+    );
+    let expected_request = serde_json::to_vec(&large).unwrap();
+    assert!(expected_request.len() < MAX_FRAME_BYTES);
+    let received = Arc::new(Mutex::new(None));
+    let recorded = received.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut server = Server::start(
+        endpoint.clone(),
+        Arc::new(move |request| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            if request.method == "app.echo" {
+                *recorded.lock().unwrap() = Some(serde_json::to_vec(&request).unwrap());
+            }
+            Response::success(request.id, request.params)
+        }),
+        options(),
+    )
+    .unwrap();
+    let mut client =
+        Client::connect_verified(&endpoint, &std::env::current_exe().unwrap(), TIMEOUT).unwrap();
+    let response = client.call(&large, TIMEOUT).unwrap();
+    assert_eq!(
+        received.lock().unwrap().as_ref().unwrap(),
+        &expected_request
+    );
+    assert_eq!(
+        serde_json::to_vec(&response).unwrap(),
+        serde_json::to_vec(&Response::success("large", large.params)).unwrap()
+    );
+    let next = client
+        .call(
+            &Request::new("next", "app.echo", json!({"next": true})),
+            TIMEOUT,
+        )
+        .unwrap();
+    assert_eq!(next.result().unwrap(), &json!({"next": true}));
+    server.revoke();
+    let denied = client.call(&request("revoked"), TIMEOUT).unwrap();
+    assert_eq!(denied.error_ref().unwrap().code, ErrorCode::Disabled);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    drop(client);
+    server.shutdown(TIMEOUT).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn actual_windows_overlapped_write_completes_with_reader_and_reports_exact_bytes() {
+    use interprocess::local_socket::prelude::*;
+    use std::{
+        io::Read,
+        os::windows::io::{AsHandle, AsRawHandle},
+    };
+    use windows_sys::Win32::System::Pipes::{GetNamedPipeHandleStateW, PeekNamedPipe, PIPE_NOWAIT};
+    let endpoint = Endpoint::for_test();
+    let (listener, _guard) = endpoint.listen().unwrap();
+    let mut writer = raw(&endpoint);
+    let until = Instant::now() + TIMEOUT;
+    let mut reader = loop {
+        match listener.accept() {
+            Ok(stream) => break Wire::new(stream).unwrap(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < until);
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("native fixture accept failed: {error}"),
+        }
+    };
+    for wire in [&writer, &reader] {
+        let interprocess::local_socket::Stream::NamedPipe(pipe) = &wire.0;
+        let mut mode = u32::MAX;
+        assert_ne!(
+            unsafe {
+                GetNamedPipeHandleStateW(
+                    pipe.as_handle().as_raw_handle(),
+                    &mut mode,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    0,
+                )
+            },
+            0
+        );
+        assert_eq!(
+            mode & PIPE_NOWAIT,
+            0,
+            "connected streams must use PIPE_WAIT for overlapped I/O"
+        );
+    }
+    let data: Vec<u8> = (0..16_384).map(|index| (index % 251) as u8).collect();
+    let consume = thread::spawn(move || {
+        let mut received = vec![0; 16_384];
+        let mut offset = 0;
+        let until = Instant::now() + TIMEOUT;
+        while offset < received.len() {
+            assert!(Instant::now() < until);
+            let interprocess::local_socket::Stream::NamedPipe(pipe) = &reader.0;
+            let mut available = 0;
+            assert_ne!(
+                unsafe {
+                    PeekNamedPipe(
+                        pipe.as_handle().as_raw_handle(),
+                        std::ptr::null_mut(),
+                        0,
+                        std::ptr::null_mut(),
+                        &mut available,
+                        std::ptr::null_mut(),
+                    )
+                },
+                0
+            );
+            if available == 0 {
+                thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            let end = received.len().min(offset + available as usize);
+            let count = reader.0.read(&mut received[offset..end]).unwrap();
+            assert!(count > 0);
+            offset += count;
+        }
+        received
+    });
+    let reported = writer
+        .write_available(
+            &data,
+            Instant::now() + TIMEOUT,
+            &AtomicBool::new(false),
+            &mut false,
+        )
+        .unwrap();
+    let received = consume.join().unwrap();
+    eprintln!(
+        "synthetic PIPE_WAIT requested={} reported={} received={}",
+        data.len(),
+        reported,
+        received.len()
+    );
+    assert_eq!(reported, data.len());
+    assert_eq!(received, data);
+}
+
+#[cfg(windows)]
+#[test]
+fn actual_windows_overlapped_unread_write_cancels_at_deadline_before_freeing_buffer() {
+    use interprocess::local_socket::prelude::*;
+    let endpoint = Endpoint::for_test();
+    let (listener, _guard) = endpoint.listen().unwrap();
+    let mut writer = raw(&endpoint);
+    let until = Instant::now() + TIMEOUT;
+    let _reader = loop {
+        match listener.accept() {
+            Ok(stream) => break Wire::new(stream).unwrap(),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < until);
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("native fixture accept failed: {error}"),
+        }
+    };
+    let data = vec![0x5a; 900_000];
+    let started = Instant::now();
+    let mut sent = false;
+    let result = writer.write_available(
+        &data,
+        started + Duration::from_millis(100),
+        &AtomicBool::new(false),
+        &mut sent,
+    );
+    assert!(matches!(result, Err(transport::FrameError::Deadline)));
+    assert!(sent, "pending I/O must retain an Unknown execution outcome");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "cancellation must not wait for this still-live, unread peer"
+    );
+    // The peer deliberately remains alive until after pending cancellation and
+    // completion, so releasing its read end cannot make this assertion pass.
+    drop(writer);
 }
 
 #[test]

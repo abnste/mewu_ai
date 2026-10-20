@@ -192,7 +192,7 @@ fn accept(listener: Listener, send: mpsc::SyncSender<Connection>, state: Arc<Sta
     while !state.stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok(stream) => {
-                let wire = Wire(stream);
+                let Ok(wire) = Wire::new(stream) else { continue; };
                 if !acquire_client(&state.clients, max) {
                     continue;
                 }
