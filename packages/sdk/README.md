@@ -61,18 +61,24 @@ export default definePlugin(ctx => {
 `metadata: {surface: "space-overlay"}`，处理 `{type:"mount"}` 并返回
 `{html, width, height}`。宿主可同时显示多个独立服务，不认识九宫格、文件夹、
 垃圾桶或某个插件 ID。声明 `ui.render` 权限；对象持久化再声明 `objects.library`。
+增加 `presentation: "object"` 可使用通用浮动对象外壳：顶部拖动条、大小调整、
+置顶与关闭由宿主处理，内容继续由插件提供。置顶对象可在截图空间关闭后继续编辑；
+应用退出后重新打开插件恢复其持久内容。停用或卸载仍会立即撤销对象的权限。
 
 客户端文档是持续存在的隔离沙箱。内嵌客户端 API：
 
 - `await mewu.ready` 等待当前文档的专属 MessagePort。
 - `await mewu.call(input)` 调用自己的已注册服务。不能选择其他插件、IPC 或文件路径。
 - `mewu.on(name, callback)` 接收 `drag` 与 `change` 事件，返回解除监听函数。
+- `mewu.onBeforeClose(async () => save())` 在 Esc 或关闭前保存编辑内容；
+  回调失败保留界面和正文并报告错误，不能把失败视为已保存。
 - `mewu.setDropTargets([{id,x,y,width,height}])` 声明文档内的放置区域。
 - `await mewu.viewportPoint(x,y)` 将客户端坐标转换为当前空间比例坐标。
 - `await mewu.drag(pointerDownEvent)` 接续一次真实左键手势，返回
   `{cancelled,x,y}`（客户端坐标）。宿主只保证跨文档收到松手；移动、重排、删除、
   恢复对象的决定由插件做。Esc、关闭、失焦和 30 秒超时取消手势，不能重放旧事件。
   浏览器端类型可引用 `@mewu/sdk/client`。
+  可传第二个参数 `{image, label}` 展示跟随鼠标的拖动预览；图片仅接受受限大小的 PNG data URL。
 
 处理拖入时输入为 `{type:"drop",target,kind}`。来源引用由第一方界面单独传递，
 插件 JS 不能自行构造。`ctx.objects.commit({expectedRevision,state,captureKey,remove})`
@@ -81,11 +87,14 @@ export default definePlugin(ctx => {
 目录含名称、类型、尺寸，没有本机路径和原会话。`ctx.objects.restore(revision,key,{x,y})`
 取出新副本。插件返回 `{removeSource:true}` 时，只有仍有效的当前用户拖放动作才能
 移除原对象，普通 RPC 不能借此删除场景内容。
+`ctx.objects.preview(revision,key)` 返回 `{image}`，包含不超过 240×180 的图片对象
+PNG 缩略图（含标注），不支持预览的类型返回 `null`，不暴露本机文件路径。
 
 关闭文档、切换会话、插件停用/卸载或版本变化，会撤销旧界面的操作资格；持久数据在
 卸载后保留。无布局和目录层级规定。单插件上限：256 KiB JSON 状态、4096 个对象、
 32 MiB 模板；客户端 HTML 256 KiB。首次激活用 `ctx.objects.describe()` 检查
 `capabilities` 是否包含 `ui.surfaces`，旧版宿主应明确拒绝，不注册不可用按钮。
+需要浮动对象或缩略图的插件还应检查 `ui.objects`、`objects.preview`。
 
 完整示例：`extensions/official/object-toolbox`（九宫格、文件夹、拖出、垃圾桶）和
 `extensions/examples/research-notes`（编辑便笺、列表引用）。两者只通过同一通用接口，

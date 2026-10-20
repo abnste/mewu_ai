@@ -61,6 +61,7 @@ import { VoiceInput, voiceLanguages, type VoiceScope } from './voice-input';
 import type { VoiceCapabilities, VoiceLanguage, VoicePending } from './voice-contracts';
 import { cancelPinOnEscape, preparePin } from './pin-interaction';
 import { nativeSelectOwnsEscape } from './native-select-escape';
+import { closeTopSurface } from './extension-surface-escape';
 import { TranslationRequests, translationScopeValid, type TranslationPending, type TranslationRequest } from './translation-request';
 import type { OcrTarget } from './contracts';
 import { ExitPreparation, pendingSceneDrafts, persistSceneDrafts, SpaceOperations } from './exit-preparation';
@@ -1424,6 +1425,7 @@ export default function App() {
     if (nativeSelectOwnsEscape(event)) return;
     if (exitPreparing()) return;
     if (event.key !== 'Escape' || settings() || pendingDrawingDrafts().length) return;
+    if (!event.isComposing && closeTopSurface()){event.preventDefault();return;}
     const activeScroll = scroll();
     if (activeScroll) {
       event.preventDefault();

@@ -68,6 +68,7 @@ export function createContext(send) {
     objects: Object.freeze({
       describe: () => host.call('objects.library.describe'),
       get: () => host.call('objects.library.get'),
+      preview: (expectedRevision, id) => host.call('objects.library.preview', {expectedRevision, id}),
       commit: transaction => host.call('objects.library.commit', transaction),
       restore: (expectedRevision, id, position) => host.call('objects.library.restore', { expectedRevision, id, ...position })
     }),

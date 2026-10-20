@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+html[data-surface=extension-object],html[data-surface=extension-object] body,html[data-surface=extension-object] #root{margin:0;width:100%;height:100%;background:transparent;overflow:hidden}
+.extension-object-shell{position:absolute;inset:0;padding:12px;background:transparent}
+.extension-object-body{position:relative;width:100%;height:100%;border-radius:10px;box-shadow:0 3px 10px #0003}
+.extension-object-body iframe{width:100%;height:100%;display:block;border:0;border-radius:10px;background:transparent}
+.extension-object-controls{position:absolute;top:3px;right:4px;display:flex;opacity:0;transition:opacity .12s}
+.extension-object-controls:hover,.extension-object-controls:focus-within{opacity:1}
+.extension-object-controls button{display:grid;place-items:center;width:25px;height:25px;padding:0;border:0;border-radius:6px;background:transparent;color:#626779;cursor:pointer}
+.extension-object-controls button:hover{background:#98a1b52b}.extension-object-controls button.selected{color:#5969b5}
+.extension-object-error{position:absolute;bottom:14px;left:16px;right:16px;color:#a22;background:#fff;font:12px system-ui}

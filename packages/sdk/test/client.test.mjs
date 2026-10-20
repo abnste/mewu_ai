@@ -7,7 +7,7 @@ const source=await readFile(new URL('../client.js',import.meta.url),'utf8');
 function client(){
   const listeners=new Map(),sent=[],parent={},port={start(){},close(){},postMessage(value){sent.push(value);}};
   class PointerEvent {constructor(trusted=true){this.isTrusted=trusted;this.type='pointerdown';this.button=0;this.buttons=1;this.pointerId=1;}preventDefault(){}}
-  const context=vm.createContext({parent,PointerEvent,Element:class{},setTimeout,clearTimeout,
+  const context=vm.createContext({parent,PointerEvent,Element:class{},HTMLSelectElement:class{},setTimeout,clearTimeout,
     addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}});
   vm.runInContext(source,context);
   listeners.get('message')({source:parent,data:{type:'mewu-connect'},ports:[port]});
@@ -24,6 +24,30 @@ test('client drag requires an unconsumed current trusted pointer press',async()=
   assert.deepEqual(await pending,{cancelled:false,x:100,y:20});
   const released=new c.PointerEvent();c.listeners.get('pointerdown')(released);c.listeners.get('pointerup')({});
   await assert.rejects(c.api.drag(released),/user pointer/);c.api.dispose();
+});
+test('Escape waits for saved edits; failed persistence keeps the surface open and allows retry',async()=>{
+  const c=client();await c.api.ready;
+  let resolve,attempt=0;
+  c.api.onBeforeClose(()=>{attempt++;return new Promise(done=>resolve=done);});
+  const event={key:'Escape',preventDefault(){},stopPropagation(){}};
+  c.listeners.get('keydown')(event);c.listeners.get('keydown')(event);
+  assert.equal(attempt,1);assert.equal(c.sent.length,0);
+  resolve();await new Promise(setImmediate);
+  assert.equal(c.sent[0].type,'escape');c.api.dispose();
+  const failed=client();await failed.api.ready;
+  const stop=failed.api.onBeforeClose(()=>{throw Error('disk unavailable');});
+  failed.port.onmessage({data:{type:'event',name:'close-request'}});
+  await new Promise(setImmediate);
+  assert.equal(failed.sent[0].type,'close-error');assert.equal(failed.sent[0].error,'disk unavailable');
+  stop();failed.port.onmessage({data:{type:'event',name:'close-request'}});
+  await new Promise(setImmediate);assert.equal(failed.sent[1].type,'escape');failed.api.dispose();
+});
+test('composition and repeat Escape never close the surface',async()=>{
+  const c=client();await c.api.ready;
+  for(const extra of [{isComposing:true},{keyCode:229},{repeat:true}]){
+    c.listeners.get('keydown')({key:'Escape',...extra,preventDefault(){throw Error('consumed');}});
+  }
+  await new Promise(setImmediate);assert.equal(c.sent.length,0);c.api.dispose();
 });
 test('closing a surface rejects pending calls and cannot reopen its port',async()=>{
   const c=client();await c.api.ready;

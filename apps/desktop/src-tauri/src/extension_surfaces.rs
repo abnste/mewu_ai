@@ -4,7 +4,8 @@ use std::{collections::HashMap, sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}}}
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all="camelCase")]
 pub(crate) struct Owner {
     pub plugin: String,
     pub revision: u64,
@@ -12,13 +13,13 @@ pub(crate) struct Owner {
     pub scene: String,
 }
 struct Generation { live:AtomicBool,commit:Mutex<()> }
-struct Document { owner: Owner, html: Vec<u8>,generation:Arc<Generation> }
+struct Document { owner: Owner, html: Vec<u8>,generation:Arc<Generation>,width:u32,height:u32,window:Option<bool>,prepared:bool }
 #[derive(Default)]
 pub(crate) struct Surfaces(Mutex<HashMap<String, Document>>);
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 pub(crate) struct DocumentInput { pub html: String, pub width: u32, pub height: u32 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all="camelCase")]
 pub(crate) struct Mounted { pub surface_id: String, pub url: String, pub width: u32, pub height: u32 }
 impl Surfaces {
@@ -32,6 +33,11 @@ impl Surfaces {
             return Err("插件界面尺寸或内容无效".into());
         }
         let mut entries=self.0.lock().map_err(|_|"插件界面不可用")?;
+        // A detached object keeps its client and unsaved editor state when the
+        // space toolbar is recreated. Never replace a live pinned document.
+        if let Some((id,d))=entries.iter().find(|(_,d)|d.owner==owner&&d.window.is_some()&&d.generation.live.load(Ordering::SeqCst)){
+            return Ok(Mounted{surface_id:id.clone(),url:format!("{origin}/{id}"),width:d.width,height:d.height});
+        }
         // Reopening replaces exactly this service and scene's prior generation.
         entries.retain(|_,v|{
             if v.owner==owner {v.generation.live.store(false,Ordering::SeqCst);false}else{true}
@@ -40,9 +46,35 @@ impl Surfaces {
         let id=uuid::Uuid::new_v4().to_string();
         let html=format!("<!doctype html><meta charset=\"utf-8\"><script>{}</script>{}",
             include_str!("../../../../packages/sdk/client.js"),document.html).into_bytes();
-        entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(())})});
+        entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(() )}),width:document.width,height:document.height,window:None,prepared:false});
         Ok(Mounted{url:format!("{origin}/{id}"),surface_id:id,width:document.width,height:document.height})
     }
+    pub(crate) fn window_owner(&self,id:&str)->Option<Owner>{
+        self.0.lock().ok()?.get(id).filter(|d|d.window.is_some()&&d.generation.live.load(Ordering::SeqCst)).map(|d|d.owner.clone())
+    }
+    pub(crate) fn mark_window_prepared(&self,id:&str)->Result<(),String>{
+        let mut entries=self.0.lock().map_err(|_|"插件界面不可用")?;
+        let d=entries.get_mut(id).filter(|d|d.window.is_some()&&d.generation.live.load(Ordering::SeqCst)).ok_or("插件对象已关闭")?;
+        d.prepared=true;Ok(())
+    }
+    pub(crate) fn window_prepared(&self,id:&str)->bool{
+        self.0.lock().ok().is_some_and(|e|e.get(id).is_some_and(|d|d.prepared&&d.window.is_some()&&d.generation.live.load(Ordering::SeqCst)))
+    }
+    pub(crate) fn window_state(&self,id:&str,origin:&str)->Option<serde_json::Value>{
+        let entries=self.0.lock().ok()?;let d=entries.get(id)?;
+        Some(serde_json::json!({"owner":d.owner,"surfaceId":id,"url":format!("{origin}/{id}"),"width":d.width,"height":d.height,"pinned":d.window?}))
+    }
+    pub(crate) fn attach_window(&self,id:&str)->Result<Owner,String>{
+        let mut entries=self.0.lock().map_err(|_|"插件界面不可用")?;let d=entries.get_mut(id).ok_or("插件界面已关闭")?;
+        if d.window.is_some(){return Err("插件对象已打开".into());}
+        d.window=Some(false);Ok(d.owner.clone())
+    }
+    pub(crate) fn pin_window(&self,id:&str,pinned:bool)->Result<(),String>{
+        let mut entries=self.0.lock().map_err(|_|"插件界面不可用")?;let d=entries.get_mut(id).ok_or("插件界面已关闭")?;
+        if d.window.is_none(){return Err("此界面不是独立对象".into());}
+        d.window=Some(pinned);Ok(())
+    }
+    pub(crate) fn pinned(&self,id:&str)->bool{self.0.lock().ok().and_then(|v|v.get(id).and_then(|d|d.window)).unwrap_or(false)}
     pub(crate) fn check(&self,id:&str,owner:&Owner)->Result<(),String> {
         if self.0.lock().map_err(|_|"插件界面不可用")?.get(id).is_some_and(|v|&v.owner==owner&&v.generation.live.load(Ordering::SeqCst)) {Ok(())}
         else {Err("插件界面已关闭或过期".into())}
@@ -94,7 +126,7 @@ pub(crate) fn read(app:&AppHandle,id:&str)->Option<Vec<u8>> {
     let host=app.state::<crate::Host>();
     let engine=host.lock().ok()?;
     let scene=engine.store.active_scene().ok()?;
-    if scene.id!=document.owner.scene || scene.closed {return None;}
+    if document.window.is_none()&&(scene.id!=document.owner.scene || scene.closed) {return None;}
     Some(document.html.clone())
 }
 
@@ -103,6 +135,24 @@ mod tests {
     use super::*;
     fn owner(plugin:&str)->Owner {Owner{plugin:plugin.into(),revision:1,service:"view".into(),scene:"scene".into()}}
     fn document()->DocumentInput {DocumentInput{html:"<button>Test</button>".into(),width:300,height:200}}
+    #[test]
+    fn pinned_windows_keep_the_document_and_storage_lease_until_explicit_close_or_revoke(){
+        let surfaces=Surfaces::default();let a=owner("one");
+        let first=surfaces.mount(a.clone(),document(),"http://localhost:1").unwrap();
+        assert!(surfaces.window_owner(&first.surface_id).is_none());
+        surfaces.attach_window(&first.surface_id).unwrap();
+        surfaces.pin_window(&first.surface_id,true).unwrap();
+        assert!(surfaces.pinned(&first.surface_id));
+        let again=surfaces.mount(a.clone(),document(),"http://localhost:1").unwrap();
+        assert_eq!(first.surface_id,again.surface_id);
+        assert_eq!(surfaces.window_owner(&first.surface_id),Some(a.clone()));
+        assert!(surfaces.with_owner(&first.surface_id,&owner("other"),||Ok(())).is_err());
+        surfaces.pin_window(&first.surface_id,false).unwrap();
+        assert!(!surfaces.pinned(&first.surface_id));
+        surfaces.revoke(Some("one"));
+        assert!(surfaces.window_owner(&first.surface_id).is_none());
+        assert!(surfaces.with_owner(&first.surface_id,&a,||Ok(())).is_err());
+    }
     #[test]
     fn generations_are_owned_replaced_and_revoked_independently() {
         let surfaces=Surfaces::default();

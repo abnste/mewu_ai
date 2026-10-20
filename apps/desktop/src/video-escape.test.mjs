@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { parse } from '@babel/parser';
 import vm from 'node:vm';
+const surfaceEscape=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(await readFile(new URL('./extension-surface-escape.ts',import.meta.url),'utf8'),{mode:'transform'})).toString('base64'));
 import test from 'node:test';
 
 const videoSource = await readFile(new URL('./components/VideoArtifact.tsx', import.meta.url), 'utf8');
@@ -23,7 +24,7 @@ const keydown = video.attributes.find(node => node.name?.type === 'JSXNamespaced
 const escape = find(parse(appSource, { sourceType: 'module', plugins: ['typescript', 'jsx'] }), node => node.type === 'VariableDeclarator' && node.id.name === 'escape').init;
 function fixture(minimized = false) {
   const calls = [];
-  const scope = { pausePlayback: () => calls.push('pause'), toggle: () => calls.push('toggle'), openDrawing: () => calls.push('drawing'), nativeSelectOwnsEscape: () => false, exitPreparing: () => false, settings: () => false, pendingDrawingDrafts: () => [], scroll: () => undefined, recording: () => undefined, busy: () => false, sessionsOpen: () => false, scene: () => ({ id: 'owned-video-scene', minimized }), freeze: () => calls.push('freeze'), closeScene: id => calls.push(`close:${id}`) };
+  const scope = { closeTopSurface:surfaceEscape.closeTopSurface, pausePlayback: () => calls.push('pause'), toggle: () => calls.push('toggle'), openDrawing: () => calls.push('drawing'), nativeSelectOwnsEscape: () => false, exitPreparing: () => false, settings: () => false, pendingDrawingDrafts: () => [], scroll: () => undefined, recording: () => undefined, busy: () => false, sessionsOpen: () => false, scene: () => ({ id: 'owned-video-scene', minimized }), freeze: () => calls.push('freeze'), closeScene: id => calls.push(`close:${id}`) };
   vm.createContext(scope);
   vm.runInContext(stripTypeScriptTypes(`videoKey = (${videoSource.slice(keydown.start, keydown.end)}); appEscape = (${appSource.slice(escape.start, escape.end)});`, { mode: 'transform' }), scope);
   function dispatch(key) {

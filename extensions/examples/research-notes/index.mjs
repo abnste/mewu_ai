@@ -3,8 +3,8 @@ import {definePlugin} from '@mewu/sdk';
 import {html} from './view.mjs';
 export default definePlugin(async ctx=>{
   const capabilities=await ctx.objects.describe();
-  if(!capabilities?.capabilities?.includes('ui.surfaces'))throw Error('Update Mewu to use plugin surfaces');
-  ctx.ui.register({id:'notes',title:'研究便笺',metadata:{surface:'space-overlay'}},async input=>{
+  if(!capabilities?.capabilities?.includes('ui.objects'))throw Error('请更新 Mewu 后使用便笺');
+  ctx.ui.register({id:'notes',title:'研究便笺',metadata:{surface:'space-overlay',presentation:'object'}},async input=>{
     if(input?.type==='mount')return {html,width:340,height:360};
     const library=await ctx.objects.get();
     const state=library.state??{text:'',references:[]};

@@ -24,7 +24,7 @@ test('plugin-owned toolbox uses only atomic object API; host has no folder or sl
   const {default:activate}=await import('../../../extensions/official/object-toolbox/index.mjs');
   let value={revision:0,state:null,objects:{}};
   const {scope,calls}=harness(async(method,params)=>{
-    if(method==='objects.library.describe')return {version:1,capabilities:['ui.surfaces','objects.library']};
+    if(method==='objects.library.describe')return {version:1,capabilities:['ui.surfaces','ui.objects','objects.library','objects.preview']};
     if(method==='objects.library.get')return structuredClone(value);
     if(method==='objects.library.commit'){
       assert.equal(params.expectedRevision,value.revision);
@@ -50,7 +50,7 @@ test('independent notes owns a different state and layout with the same host con
   const {default:activate}=await import('../../../extensions/examples/research-notes/index.mjs');
   let value={revision:0,state:null,objects:{}};
   const {scope}=harness(async(method,params)=>{
-    if(method==='objects.library.describe')return {version:1,capabilities:['ui.surfaces','objects.library']};
+    if(method==='objects.library.describe')return {version:1,capabilities:['ui.surfaces','ui.objects','objects.library','objects.preview']};
     if(method==='objects.library.get')return structuredClone(value);
     if(method==='objects.library.commit'){value={revision:value.revision+1,state:params.state,objects:{}};return value;}
     throw Error('revoked');
@@ -62,9 +62,24 @@ test('independent notes owns a different state and layout with the same host con
   assert.equal((await invoke(scope,'notes',{type:'restore',id:'foreign',x:.2,y:.3})).ok,false);
   await scope.deactivate();
 });
+test('toolbox preview resolves its owned key and invokes the published thumbnail API',async()=>{
+  const {default:activate}=await import('../../../extensions/official/object-toolbox/index.mjs');
+  const {scope,calls}=harness(async(method,params)=>{
+    if(method==='objects.library.describe')return {capabilities:['objects.preview']};
+    if(method==='objects.library.get')return {revision:5,state:{slots:[{id:'entry',key:'owned'}]},objects:{owned:{name:'picture.png'}}};
+    if(method==='objects.library.preview'){assert.deepEqual(params,{expectedRevision:5,id:'owned'});return {image:'data:image/png;base64,example'};}
+    throw Error('unexpected method');
+  });
+  await activate(scope.ctx);scope.finishRegistration();
+  const result=await invoke(scope,'toolbox',{type:'preview',id:'entry'});
+  assert.equal(result.ok,true);assert.equal(result.result.image,'data:image/png;base64,example');
+  assert.equal((await invoke(scope,'toolbox',{type:'preview',id:'foreign'})).ok,false);
+  assert.equal(calls.filter(c=>c.method==='objects.library.preview').length,1);
+  await scope.deactivate();
+});
 test('native refusal remains a failed plugin invocation, never fabricated success',async()=>{
   const {default:activate}=await import('../../../extensions/official/object-toolbox/index.mjs');
-  const {scope}=harness(async method=>{if(method==='objects.library.describe')return {version:1,capabilities:['ui.surfaces','objects.library']};throw Error('revoked');});
+  const {scope}=harness(async method=>{if(method==='objects.library.describe')return {version:1,capabilities:['ui.surfaces','ui.objects','objects.library','objects.preview']};throw Error('revoked');});
   await activate(scope.ctx);scope.finishRegistration();
   assert.equal((await invoke(scope,'toolbox',{type:'drop',target:'root/0'})).ok,false);
   await scope.deactivate();

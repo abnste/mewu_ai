@@ -20,6 +20,14 @@ mod linux;
 #[cfg(target_os = "macos")]
 #[path = "pin_window_macos.rs"]
 mod macos;
+/// Shared platform preparation; does not register a pin or any plugin business.
+pub(crate) fn prepare_floating(window:&WebviewWindow)->Result<(),String>{
+    #[cfg(target_os="linux")]
+    linux::prepare_floating(window)?;
+    #[cfg(not(target_os="linux"))]
+    let _=window;
+    Ok(())
+}
 const MAX_SIDE: f64 = 8192.;
 const MAX_SURFACE_PIXELS: f64 = 16. * 1024. * 1024.;
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -114,6 +114,10 @@
     "allow-invoke-extension",
     "allow-stop-extension",
     "allow-get-extension-bindings",
-    "allow-set-extension-binding"
+    "allow-set-extension-binding",
+    "allow-open-extension-surface-window",
+    "allow-release-extension-surface-window",
+    "allow-request-close-extension-surface-window",
+    "allow-forward-extension-surface-event"
   ]
 }

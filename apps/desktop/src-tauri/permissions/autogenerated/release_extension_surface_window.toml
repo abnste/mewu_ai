@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-release-extension-surface-window"
+description = "Enables the release_extension_surface_window command without any pre-configured scope."
+commands.allow = ["release_extension_surface_window"]
+
+[[permission]]
+identifier = "deny-release-extension-surface-window"
+description = "Denies the release_extension_surface_window command without any pre-configured scope."
+commands.deny = ["release_extension_surface_window"]

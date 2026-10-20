@@ -23,6 +23,7 @@ mod capture_permission_macos;
 mod blackboard;
 mod extension_objects_host;
 mod extension_surfaces;
+mod extension_surface_window;
 #[cfg(test)]
 mod extension_surface_tests;
 mod optional_capabilities;
@@ -395,6 +396,7 @@ fn publish_owned(app: &AppHandle, owned: Snapshot) -> HostSnapshot {
     image_host::reconcile(app, snapshot);
     pixel_sampler::reconcile(app, snapshot);
     pin_host::reconcile(app, snapshot);
+    extension_surface_window::reconcile_snapshot(app, snapshot);
     timing.mark(interaction_performance::Stage::Validated);
     let revision = app.state::<Host>().revision.fetch_add(1, Ordering::AcqRel) + 1;
     let snapshot = HostSnapshot {
@@ -3082,6 +3084,14 @@ fn main() {
                 extension_host::install_extension,
                 extension_host::control_extension,
                 extension_host::invoke_extension,
+                extension_surface_window::open_extension_surface_window,
+                extension_surface_window::get_extension_surface_window,
+                extension_surface_window::control_extension_surface_window,
+                extension_surface_window::release_extension_surface_window,
+                extension_surface_window::request_close_extension_surface_window,
+                extension_surface_window::extension_surface_viewport_point,
+                extension_surface_window::publish_extension_surface_targets,
+                extension_surface_window::forward_extension_surface_event,
                 extension_host::stop_extension,
                 plugin_host::run_plugin_workflow,
                 plugin_host::apply_plugin_drawing,
@@ -3172,6 +3182,14 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            if let Some(id)=extension_surface_window::id(window.label()){
+                if let tauri::WindowEvent::CloseRequested{api,..}=event{
+                    api.prevent_close();
+                    extension_surface_window::request_close(window.app_handle(),id);
+                }
+                if matches!(event,tauri::WindowEvent::Destroyed){extension_surface_window::destroyed(window.app_handle(),id);}
+                return;
+            }
             if window.label() == "space" && matches!(event, tauri::WindowEvent::Destroyed) {
                 app_control_host::renderer_invalidated(window.app_handle());
             }

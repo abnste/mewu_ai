@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-close-extension-surface-window"
+description = "Enables the request_close_extension_surface_window command without any pre-configured scope."
+commands.allow = ["request_close_extension_surface_window"]
+
+[[permission]]
+identifier = "deny-request-close-extension-surface-window"
+description = "Denies the request_close_extension_surface_window command without any pre-configured scope."
+commands.deny = ["request_close_extension_surface_window"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-forward-extension-surface-event"
+description = "Enables the forward_extension_surface_event command without any pre-configured scope."
+commands.allow = ["forward_extension_surface_event"]
+
+[[permission]]
+identifier = "deny-forward-extension-surface-event"
+description = "Denies the forward_extension_surface_event command without any pre-configured scope."
+commands.deny = ["forward_extension_surface_event"]

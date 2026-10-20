@@ -40,6 +40,11 @@ fn local_display_name(value: &str) -> bool {
 }
 
 pub(super) fn prepare(window: &WebviewWindow) -> Result<(), String> {
+    prepare_floating(window)?;
+    bind_space(window.app_handle())?;
+    Ok(())
+}
+pub(crate) fn prepare_floating(window: &WebviewWindow) -> Result<(), String> {
     if !gtk::is_initialized_main_thread() {
         return Err("贴图窗口只能在界面线程操作".into());
     }
@@ -82,7 +87,6 @@ pub(super) fn prepare(window: &WebviewWindow) -> Result<(), String> {
     widget.set_keep_above(true);
     widget.set_skip_taskbar_hint(true);
     widget.set_skip_pager_hint(true);
-    bind_space(window.app_handle())?;
     Ok(())
 }
 

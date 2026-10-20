@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "extension-object",
+  "description": "First-party shell bound to one plugin surface. Remote plugin documents receive no IPC.",
+  "windows": [
+    "extension-surface-*"
+  ],
+  "permissions": [
+    "allow-get-extension-surface-window",
+    "allow-control-extension-surface-window",
+    "allow-invoke-extension",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-extension-surface-viewport-point",
+    "allow-publish-extension-surface-targets"
+  ]
+}

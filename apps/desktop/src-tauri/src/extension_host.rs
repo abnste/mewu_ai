@@ -187,7 +187,7 @@ impl ExtensionHost {
             }
         }
     }
-    fn close_surface(&self,id:&str,owner:&crate::extension_surfaces::Owner)->Result<(),String> {
+    pub(crate) fn close_surface(&self,id:&str,owner:&crate::extension_surfaces::Owner)->Result<(),String> {
         if let Ok(runs)=self.runs.lock() {
             for run in runs.values().filter(|run|run.surface.as_ref().is_some_and(|(key,value)|key==id&&value==owner)) {
                 run.canceled.store(true,Ordering::SeqCst);
@@ -214,6 +214,7 @@ fn publish(app: &AppHandle) {
     if let Ok(records) = app.state::<ExtensionHost>().store().and_then(|s| s.list()) {
         let _ = app.emit("extension-state", records);
     }
+    crate::extension_surface_window::reconcile(app);
 }
 #[tauri::command]
 pub fn get_extensions(
@@ -603,6 +604,7 @@ impl HostCallFailure {
             ),
             "ui.render" => ("ui.render", "RENDER_OPERATION_FAILED", "界面生成失败"),
             "objects.library.get" => ("objects.library.get", "COLLECTION_OPERATION_FAILED", "对象库读取失败"),
+            "objects.library.preview" => ("objects.library.preview", "COLLECTION_OPERATION_FAILED", "对象预览失败"),
             "objects.library.describe" => ("objects.library.describe", "COLLECTION_OPERATION_FAILED", "宿主不支持对象库"),
             "objects.library.commit" => ("objects.library.commit", "COLLECTION_OPERATION_FAILED", "对象收藏失败"),
             "objects.library.restore" => ("objects.library.restore", "COLLECTION_OPERATION_FAILED", "收藏对象取出失败"),
@@ -678,6 +680,7 @@ impl HostCallProgress {
             "services.call" => "services.call",
             "ui.render" => "ui.render",
             "objects.library.get" => "objects.library.get",
+            "objects.library.preview" => "objects.library.preview",
             "objects.library.describe" => "objects.library.describe",
             "objects.library.commit" => "objects.library.commit",
             "objects.library.restore" => "objects.library.restore",
@@ -1089,7 +1092,15 @@ pub async fn invoke_extension(
     window: tauri::WebviewWindow,
     invocation: Invocation,
 ) -> Result<Value, String> {
-    trusted(&window)?;
+    let detached=crate::extension_surface_window::id(window.label()).is_some();
+    if detached {
+        let (id,owner)=crate::extension_surface_window::bound(&app,&window)?;
+        if invocation.plugin_id!=owner.plugin||invocation.revision!=owner.revision||invocation.service_id!=owner.service
+            || invocation.scene_id.as_deref()!=Some(&owner.scene)||invocation.region_id.is_some()||invocation.object_source.is_some()
+            || !matches!(&invocation.surface,Some(SurfaceInvocation::Call{id:key}) if key==&id){
+            return Err("插件对象不能调用其他界面".into());
+        }
+    } else {trusted(&window)?;}
     // Releasing a previous generation must remain possible after scene change,
     // disable or shutdown admission closes. This never executes plugin code.
     if let Some(SurfaceInvocation::Close{id})=&invocation.surface {
@@ -1121,7 +1132,7 @@ pub async fn invoke_extension(
             .iter()
             .find(|s| &s.id == scene_id)
             .ok_or("会话不存在")?;
-        if engine.store.snapshot().active_scene_id != *scene_id {
+        if !detached && engine.store.snapshot().active_scene_id != *scene_id {
             return Err("请使用当前会话".into());
         }
         scene.agent_id.clone()
@@ -1144,7 +1155,7 @@ pub async fn invoke_extension(
         service: invocation.service_id.clone(), scene: invocation.scene_id.clone().unwrap_or_default(),
     };
     if invocation.surface.is_some() {
-        if window.label()!="space" || owner.scene.is_empty() || !crate::extension_objects_host::is_surface(service)
+        if (!detached&&window.label()!="space") || owner.scene.is_empty() || !crate::extension_objects_host::is_surface(service)
             || !record.manifest.permissions.iter().any(|p|p=="ui.render") { return Err("插件界面未授权".into()); }
         let state=app.state::<ExtensionHost>();
         match &invocation.surface {
@@ -1156,7 +1167,7 @@ pub async fn invoke_extension(
     }
     let object_access=if matches!(invocation.surface,Some(SurfaceInvocation::Call{..})) && crate::extension_objects_host::is_surface(service)
         && record.manifest.permissions.iter().any(|p|p=="objects.library") {
-        if window.label()!="space" || !matches!(invocation.surface,Some(SurfaceInvocation::Call{..})) {
+        if (!detached&&window.label()!="space") || !matches!(invocation.surface,Some(SurfaceInvocation::Call{..})) {
             return Err("此窗口不能授权对象库".into());
         }
         Some(crate::extension_objects_host::Access {
@@ -1174,7 +1185,7 @@ pub async fn invoke_extension(
         record,
         run_id,
         canceled,
-        scene_id: invocation.scene_id,
+        scene_id: if detached {None}else{invocation.scene_id},
         region_id: invocation.region_id,
         scope,
         region: None,
@@ -1226,6 +1237,7 @@ pub fn stop_extension(
     } else {
         state.cancel_all()
     }
+    crate::extension_surface_window::reconcile(&app);
     Ok(())
 }
 
@@ -1930,7 +1942,7 @@ fn bridge_impl(
         "region.action" => "region.input",
         "services.list" | "services.call" => "services.call",
         "ui.render" => "ui.render",
-        "objects.library.describe" | "objects.library.get" | "objects.library.commit" | "objects.library.restore" => "objects.library",
+        "objects.library.describe" | "objects.library.get" | "objects.library.preview" | "objects.library.commit" | "objects.library.restore" => "objects.library",
         "network.fetch" => "network.fetch",
         "events.emit" => "events.emit",
         _ => return Err("宿主不支持此扩展接口".into()),
@@ -1941,7 +1953,7 @@ fn bridge_impl(
     }
     let result = match method {
         "objects.library.describe" => Ok(crate::extension_objects_host::describe()),
-        "objects.library.get" | "objects.library.commit" | "objects.library.restore" => {
+        "objects.library.get" | "objects.library.preview" | "objects.library.commit" | "objects.library.restore" => {
             let access=context.object_access.as_mut().ok_or("此运行没有对象库界面授权")?;
             crate::extension_objects_host::bridge(app, access, method, params)
         }

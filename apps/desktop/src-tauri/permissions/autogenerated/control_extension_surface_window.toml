@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-control-extension-surface-window"
+description = "Enables the control_extension_surface_window command without any pre-configured scope."
+commands.allow = ["control_extension_surface_window"]
+
+[[permission]]
+identifier = "deny-control-extension-surface-window"
+description = "Denies the control_extension_surface_window command without any pre-configured scope."
+commands.deny = ["control_extension_surface_window"]

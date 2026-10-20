@@ -57,13 +57,14 @@ impl Access {
             || !record.manifest.permissions.iter().any(|p|p=="objects.library") { return Err("对象库授权已撤销".into()); }
         record.ensure_supported()?;
         registry.validate_dependencies(&record.manifest)?;
+        let detached=extensions.surfaces.window_owner(&self.surface_id).is_some();
         extensions.surfaces.with_owner(&self.surface_id,&crate::extension_surfaces::Owner {
             plugin:self.plugin_id.clone(),revision:self.revision,service:self.service_id.clone(),scene:self.scene_id.clone()
         },||{
             let host=app.state::<Host>(); host.exit.ensure_new_operation()?;
             let mut engine=host.lock()?;
             let scene=engine.store.active_scene().map_err(|e|e.to_string())?;
-            if scene.id!=self.scene_id || scene.closed || scene.frozen || scene.run.as_ref().is_some_and(|r|r.status==mewu_core::RunStatus::Running) { return Err("对象库所属会话已变化".into()); }
+            if !detached&&(scene.id!=self.scene_id || scene.closed || scene.frozen || scene.run.as_ref().is_some_and(|r|r.status==mewu_core::RunStatus::Running)) { return Err("对象库所属会话已变化".into()); }
             // Registry -> surface -> engine stays held through the transaction.
             action(&mut engine.store)
         })
@@ -73,7 +74,7 @@ pub(crate) fn is_surface(service:&mewu_extension::ServiceRegistration)->bool {
     service.kind==mewu_extension::ServiceKind::Ui && service.metadata.as_ref().is_some_and(|m|
         m.get("surface").and_then(Value::as_str)==Some("space-overlay"))
 }
-pub(crate) fn describe()->Value { json!({"version":1,"capabilities":["ui.surfaces","objects.library"]}) }
+pub(crate) fn describe()->Value { json!({"version":1,"capabilities":["ui.surfaces","ui.objects","objects.library","objects.preview"]}) }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]
 pub(crate) struct Commit {
@@ -84,6 +85,29 @@ pub(crate) struct Commit {
 }
 pub(crate) fn bridge(app:&AppHandle, access:&mut Access, method:&str, params:Value)->Result<Value,String> {
     match method {
+        "objects.library.preview"=>{
+            #[derive(Deserialize)]
+            #[serde(rename_all="camelCase",deny_unknown_fields)]
+            struct Preview { expected_revision:u64,id:String }
+            let input:Preview=serde_json::from_value(params).map_err(|_|"预览参数无效")?;
+            let item=access.with_store(app,|s|{
+                let library=s.object_library(&access.plugin_id);
+                if library.revision!=input.expected_revision{return Err("对象库已变化".into());}
+                Ok(library.objects.get(&input.id).ok_or("对象不存在")?.item.clone())
+            })?;
+            if item.asset.kind!=AssetKind::Image{return Ok(json!({"image":null}));}
+            let root=app.state::<Host>().assets.clone();
+            let image=crate::assets::image_item(&item,&root)?.thumbnail(240,180);
+            let mut bytes=std::io::Cursor::new(Vec::new());
+            image.write_to(&mut bytes,image::ImageFormat::Png).map_err(|_|"无法生成预览")?;
+            access.with_store(app,|s|{
+                let library=s.object_library(&access.plugin_id);
+                if library.revision!=input.expected_revision||library.objects.get(&input.id).map(|v|&v.item)!=Some(&item){return Err("对象已变化".into());}
+                Ok(())
+            })?;
+            use base64::Engine as _;
+            Ok(json!({"image":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(bytes.into_inner()))}))
+        },
         "objects.library.get"=>access.with_store(app,|s|Ok(s.object_library(&access.plugin_id).catalogue())),
         "objects.library.commit"=>{
             let commit:Commit=serde_json::from_value(params).map_err(|_|"对象事务参数无效")?;
@@ -101,7 +125,11 @@ pub(crate) fn bridge(app:&AppHandle, access:&mut Access, method:&str, params:Val
             #[serde(rename_all="camelCase",deny_unknown_fields)]
             struct Restore { expected_revision:u64,id:String,x:f64,y:f64 }
             let value:Restore=serde_json::from_value(params).map_err(|_|"对象恢复参数无效")?;
-            let snapshot=access.with_store(app,|s|s.restore_object(&access.plugin_id,&value.id,value.expected_revision,&access.scene_id,value.x,value.y).map_err(|e|e.to_string()))?;
+            let snapshot=access.with_store(app,|s|{
+                let scene=s.active_scene().map_err(|e|e.to_string())?;
+                if scene.id!=access.scene_id||scene.closed||scene.frozen{return Err("请回到原截图空间取出对象".into());}
+                s.restore_object(&access.plugin_id,&value.id,value.expected_revision,&access.scene_id,value.x,value.y).map_err(|e|e.to_string())
+            })?;
             crate::publish_owned(app,snapshot);
             Ok(json!({"restored":true}))
         },

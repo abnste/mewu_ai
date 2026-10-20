@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import { parse } from '@babel/parser';
 import vm from 'node:vm';
+const surfaceEscape=await import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(await readFile(new URL('./extension-surface-escape.ts',import.meta.url),'utf8'),{mode:'transform'})).toString('base64'));
 const source = file => readFile(new URL(file, import.meta.url), 'utf8');
 const ts = value => stripTypeScriptTypes(value, { mode: 'transform' });
 async function callback(file, name) {
@@ -35,6 +36,7 @@ function fixture(code) {
   const doc = { activeElement:root, querySelector:selector => selector === 'select:open' ? doc.picker : null, picker:null };
   const effect = (...value) => { effects.push(value); };
   const context = vm.createContext({
+    closeTopSurface:surfaceEscape.closeTopSurface,
     Element, document:doc, effects, console,
     props:{onClose:()=>effect('close'),inputLocked:false,scene:{items:[]}},
     cancelGesture:undefined, disabled:()=>false, historyDisabled:()=>false, edit:()=>undefined,textEditor:()=>undefined,confirmText:()=>effect('confirmText'),closeEditor:()=>effect('close'),
@@ -79,6 +81,13 @@ test('ordinary Escape closes an unminimized conversation even when expanded, but
   f.run(f.event(f.root));assert.deepEqual(f.effects,[['minimize']]);
   f.effects.length=0;f.context.sessionsOpen=()=>true;f.context.setSessionsOpen=()=>f.effects.push(['closePicker']);
   f.run(f.event(f.root));assert.deepEqual(f.effects,[['closePicker']]);
+});
+test('Escape closes the active plugin surface before the screenshot session',async()=>{
+  const f=fixture(await callback('./App.tsx','escape'));
+  const panel=surfaceEscape.registerSurfaceEscape(()=>f.effects.push(['plugin']));
+  try{f.run(f.event(f.root));assert.deepEqual(f.effects,[['plugin'],['prevent']]);}
+  finally{panel.dispose();}
+  f.effects.length=0;f.run(f.event(f.root));assert.deepEqual(f.effects,[['closeScene']]);
 });
 for (const [label,file,name] of callbacks) test(`${label}: native picker Escape never closes/cancels content; normal Escape retains behavior`, async () => {
   const f = fixture(await callback(file,name));

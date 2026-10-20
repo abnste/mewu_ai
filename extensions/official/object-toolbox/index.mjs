@@ -23,13 +23,18 @@ function put(target,item,revision) {
 }
 export default definePlugin(async ctx=>{
   const capabilities=await ctx.objects.describe();
-  if(!capabilities?.capabilities?.includes('ui.surfaces'))throw Error('Update Mewu to use plugin surfaces');
+  if(!capabilities?.capabilities?.includes('objects.preview'))throw Error('请更新 Mewu 后使用工具包');
   ctx.ui.register({id:'toolbox',title:'工具包',metadata:{surface:'space-overlay'}},async input=>{
     if(input?.type==='mount')return {html,width:268,height:328};
     const value=await ctx.objects.get();
     const slots=value.state?.slots??root();
     const present=()=>({...value,state:{slots}});
     if(input?.type==='get')return present();
+    if(input?.type==='preview'){
+      const entry=locate(slots,input.id)?.value;
+      if(!entry?.key)throw Error('Object missing');
+      return ctx.objects.preview(value.revision,entry.key);
+    }
     if(input?.type==='drop'&&input.target==='trash')return {removeSource:true};
     if(input?.type==='restore'){
       const entry=locate(slots,input.id)?.value;

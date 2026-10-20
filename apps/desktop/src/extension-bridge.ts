@@ -19,6 +19,14 @@ export async function controlExtension(record: ExtensionRecord, action: Extensio
   desktop(); return invoke('control_extension', { pluginId: record.manifest.id, revision: record.revision, action });
 }
 export async function invokeExtension(invocation: ExtensionInvocation): Promise<unknown> { desktop(); return invoke('invoke_extension', { invocation }); }
+export async function openSurfaceWindow(surfaceId:string,x:number,y:number):Promise<void>{desktop();return invoke('open_extension_surface_window',{surfaceId,x,y});}
+export async function releaseSurfaceWindow(surfaceId:string):Promise<void>{desktop();return invoke('release_extension_surface_window',{surfaceId});}
+export async function requestCloseSurfaceWindow(surfaceId:string):Promise<void>{desktop();return invoke('request_close_extension_surface_window',{surfaceId});}
+export async function subscribeSurfaceClosed(accept:(id:string)=>void):Promise<()=>void>{return listen<string>('extension-surface-closed',e=>accept(e.payload),{target:'space'});}
+export async function subscribeSurfaceTargets(accept:(value:{surfaceId:string;targets:Array<{id:string;x:number;y:number;width:number;height:number}>})=>void):Promise<()=>void>{
+  return listen('extension-surface-targets',e=>accept(e.payload as Parameters<typeof accept>[0]),{target:'space'});
+}
+export async function forwardSurfaceEvent(surfaceId:string,name:string,value:unknown):Promise<void>{desktop();return invoke('forward_extension_surface_event',{surfaceId,name,value});}
 export async function stopExtension(pluginId?: string): Promise<void> { desktop(); return invoke('stop_extension', { pluginId: pluginId ?? null }); }
 export async function getExtensionBindings(): Promise<ExtensionBinding[]> { desktop(); return invoke('get_extension_bindings'); }
 export async function subscribeExtensionBindings(accept: (bindings: ExtensionBinding[]) => void): Promise<() => void> {
