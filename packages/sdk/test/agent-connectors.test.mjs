@@ -6,6 +6,7 @@ import activate from '../../../extensions/official/agent-connectors/index.mjs';
 import {connectCodex,runCodex,connectAcp,runAcp} from '../../../extensions/official/agent-connectors/adapters.mjs';
 import {openPeer} from '../../../extensions/official/agent-connectors/rpc.mjs';
 import {profiles,detectProfile,validateConfig} from '../../../extensions/official/agent-connectors/profiles.mjs';
+import {workbuddyProcess} from '../../../extensions/official/agent-connectors/workbuddy.mjs';
 
 function fixture(answer){
   const queue=[],writes=[],events=[],services=new Map(),data=new Map();let closed=0;
@@ -155,6 +156,16 @@ test('WorkBuddy discovery sends only absolute candidates for the actual host pla
     assert.equal((await detectProfile(f.ctx,profiles.find(p=>p.id==='workbuddy'))).executable,'');
     assert.equal(calls,platform==='linux'?1:2);
   }
+});
+
+test('WorkBuddy bridge accepts the native resolver Windows namespace script path',()=>{
+  const executable=String.raw`\\?\C:\Program Files\WorkBuddy\WorkBuddy.exe`;
+  const cli=String.raw`\\?\C:\Program Files\WorkBuddy\resources\app.asar.unpacked\cli\bin\codebuddy`;
+  const command=workbuddyProcess({executable,args:[cli],transport:'workbuddy-http'});
+  assert.equal(command.executable,executable);
+  assert.equal(JSON.parse(command.args[2]).cli,cli.slice(4));
+  const unix='/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy';
+  assert.equal(JSON.parse(workbuddyProcess({args:[unix],transport:'workbuddy-http'}).args[2]).cli,unix);
 });
 
 test('WorkBuddy upstream authentication failures are reported as login requirements rather than opaque refusals',async()=>{

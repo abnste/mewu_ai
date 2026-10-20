@@ -4,7 +4,11 @@
 export function workbuddyProcess(config){
   if(config.transport!=='workbuddy-http')return config;
   if(!config.args?.[0])throw Error('请选择 WorkBuddy 内置 CLI 入口');
-  return {...config,args:['--eval',`eval(${JSON.stringify(bootstrap)})`,JSON.stringify({cli:config.args[0],args:config.args.slice(1)})]};
+  // The desktop client's embedded Node cannot load its entry script through a
+  // Win32 namespace prefix (realpathSync fails at the drive root). Preserve the
+  // resolved executable; use the equivalent ordinary drive path for the script.
+  const cli=config.args[0].replace(/^\\\\\?\\(?=[A-Za-z]:\\)/,'');
+  return {...config,args:['--eval',`eval(${JSON.stringify(bootstrap)})`,JSON.stringify({cli,args:config.args.slice(1)})]};
 }
 export const bootstrap=String.raw`
 const http=require('node:http'),net=require('node:net'),readline=require('node:readline'),{spawn}=require('node:child_process');
