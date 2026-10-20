@@ -3,6 +3,9 @@
 `mewu` 通过本机控制接口访问正在运行的 Mewu。独立 console 程序与桌面程序放在同一目录；客户端在发送正文前核验宿主进程身份。CLI 不自动启动 GUI，不读取聊天数据库、模型配置或 API Key。
 
 ```powershell
+mewu
+mewu chat "你好，帮我解释一下 MCP"
+mewu chat --scene SCENE_ID
 mewu help
 mewu version
 mewu status
@@ -15,7 +18,21 @@ mewu run get SCENE_ID --limit 10
 
 `help`、`version` 离线可用。其他命令需要 Mewu 已正常启动，且命令行插件已启用。`schema` / `capabilities` 返回当前宿主实际支持的方法；客户端不会假设未列出的方法可用。
 
-直接运行 `mewu` 显示排版后的简短帮助；`mewu scene --help`、`mewu help call` 可查看分级帮助。`version` 输出普通版本文字。终端里的 `status`、`scene list/get`、`run get`、`capabilities` 使用文字视图，查询通过管道或重定向时仍输出原协议 JSON。可使用 `--output text` 或 `--output json` 显式选择；帮助、版本重定向后仍默认是文字，需要 JSON 时也应显式选择。此为当前源码的调整，已发布的 1.0.3 尚使用原 JSON 帮助。
+当前源码中，在终端直接运行 `mewu` 或 `mewu chat` 进入连续对话；`mewu chat "问题"` 回答后退出。`mewu --help` 显示帮助，`mewu scene --help`、`mewu help call` 查看分级用法。`version` 输出普通版本文字。终端里的 `status`、`scene list/get`、`run get`、`capabilities` 使用文字视图，查询进入管道或重定向时仍输出原协议 JSON。可用 `--output text` 或 `--output json` 明确选择。已发布的 1.0.3 安装包尚无这些新聊天入口，需使用包含该修改的后续构建。
+
+## 直接对话
+
+默认在首次发送时新建独立会话，不附带截图、文件或当前草稿。`--scene ID` 继续已有会话；新消息使用原有 `chat.send`，沿用 Mewu 的 Agent 引擎、灵魂、记忆、模型与工具。CLI 不直接访问模型服务，也不单独保存 API Key 或聊天数据库。回答会保存在 Mewu；退出 CLI 不删除会话。
+
+```powershell
+mewu chat --agent "助理" --model "模型连接名称"
+Get-Content -Raw -Encoding utf8 question.txt | mewu chat --stdin
+mewu chat "计算 6×7" --output json
+```
+
+聊天中输入 `/help`、`/new`、`/agent`、`/model`、`/session`、`/use ID`、`/clear` 或 `/exit`。`/agent 名称或ID`、`/model 名称或ID` 选择现有配置，重名时使用完整 ID。Enter 发送，↑ 浏览当前进程的输入历史；历史不另写磁盘。Ctrl+C 停止本次回答，Ctrl+D 结束输入；停止请求绑定已确认的 run ID，不会取消另一个新回答。桌面主动切换会话后，不会在下一条消息时擅自切回；使用 `/use ID` 明确续接。
+
+`chat` 默认输出答复文字，即使进入管道；`--output json` 返回最终 `{sceneId, runId, status, text}`，`--jsonl` 返回真实运行进度。`chat --stdin` 是问题文字，区别于 `call --stdin` 的 JSON 对象。正常完成退出码 0，已确认停止为 130；发送后断线或超时仍标记结果未知，不能重发原消息。新宿主通过 `run.get.stream` 提供有界、临时的文字前缀，最终已保存消息为准；旧宿主没有该字段时显示最终答复。`NO_COLOR` 关闭颜色。
 
 包含 CLI 的 Windows 安装程序会将安装目录加入当前用户 PATH。安装后打开新终端；若 Windows Terminal、编辑器或 Agent 已在运行，需重新打开该应用，不能保证仅新建标签页就会刷新环境。便携版可在解压目录直接运行 `.\mewu.exe status`。
 

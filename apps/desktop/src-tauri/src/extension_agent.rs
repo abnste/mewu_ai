@@ -63,6 +63,7 @@ pub(crate) async fn start_external_run(
                 },
             )
             .map_err(|e| e.to_string())?;
+        crate::app_control_host::begin_run_stream(&app, &scene_id, &context.run_id);
         let (cancel, receiver) = tokio::sync::oneshot::channel();
         engine.runs.insert(context.run_id.clone(), cancel);
         engine.agent_runs.insert(

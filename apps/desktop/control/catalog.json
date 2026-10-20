@@ -3529,6 +3529,17 @@
             },
             "minItems": 0,
             "maxItems": 100
+          },
+          "connectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Actual selected connection for this scene; omitted by older hosts."
           }
         },
         "required": [
@@ -3625,6 +3636,23 @@
             },
             "minItems": 0,
             "maxItems": 100
+          },
+          "stream": {
+            "type": "object",
+            "description": "Optional in-memory live text prefix for this exact running scene/run. Final stored messages remain authoritative; no reasoning or credentials. Omitted when unavailable.",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "text",
+              "truncated"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

@@ -22,6 +22,8 @@ tauri-build = { version = "=2.7.1", features = [] }
 mewu-control = { path = "../../../crates/mewu-control" }
 mewu-core = { path = "../../../crates/mewu-core" }
 mewu-extension = { path = "../../../crates/mewu-extension" }
+rustyline = { version = "=18.0.1", default-features = false }
+crossterm = "=0.29.0"
 zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }
 tauri = { version = "=2.12.1", features = [ "tray-icon"] }
 tauri-plugin-global-shortcut = "=2.4.0"

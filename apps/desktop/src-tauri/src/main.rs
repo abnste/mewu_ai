@@ -3,6 +3,7 @@
 mod agent_loop;
 mod app_control_host;
 mod app_control_integration;
+mod control_run_stream;
 #[path = "../../../../tools/mewu-cli/cli.rs"]
 mod control_cli;
 mod agent_tools;
@@ -372,6 +373,7 @@ struct SnapshotNotice {
     revision: u64,
 }
 fn emit_run_event(app: &AppHandle, value: serde_json::Value) -> tauri::Result<()> {
+    app_control_host::observe_run_event(app, &value);
     app.emit_to("space", "run-event", &value)?;
     app.emit_to(frozen::LABEL, "run-event", &value)
 }
@@ -2369,6 +2371,7 @@ fn start_run_with_extensions(
     );
     let (cancel, receiver) = oneshot::channel();
     engine.runs.insert(context.run_id.clone(), cancel);
+    app_control_host::begin_run_stream(app, &context.scene_id, &context.run_id);
     if let Some(origin) = annotation_origin {
         engine.visual_runs.insert(context.run_id.clone(), origin);
     }

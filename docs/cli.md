@@ -11,6 +11,8 @@ Start Mewu normally, then open a terminal and run:
 先正常运行 Mewu，再打开终端：
 
 ```sh
+mewu chat "你好"
+mewu chat
 mewu help
 mewu status
 mewu schema
@@ -19,9 +21,9 @@ mewu scene list --limit 20
 
 ### Terminal output / 终端输出
 
-Current source displays concise text for `mewu`, `mewu help` and `mewu version`, including when redirected. Use `mewu scene --help` or `mewu help call` for command-specific help. Interactive status, scene, run and capability queries display readable text; piping or redirecting those queries preserves the original JSON response. `call` and `schema` remain JSON by default. Use `--output json` or `--output text` to select a format explicitly. The already released 1.0.3 installers still use the previous JSON help; this presentation change is for the next build.
+Current source opens interactive Agent chat when `mewu` is run in a terminal. `mewu --help` displays help; `mewu scene --help` and `mewu help call` provide command-specific help. With no terminal, bare `mewu` still prints offline help. Interactive status, scene, run and capability queries display readable text; piping or redirecting those queries preserves the original JSON response. `call` and `schema` remain JSON by default. Use `--output json` or `--output text` to select a format explicitly. The released 1.0.3 installers predate this chat interface and still use JSON help; these changes require a later build.
 
-当前源码中，直接运行 `mewu`、`mewu help` 和 `mewu version` 显示普通文字，重定向时也如此；通过 `mewu scene --help`、`mewu help call` 查看分级帮助。终端里查看状态、会话、AI 任务和能力时使用文字排版，查询进入管道或文件时保留原有 JSON。`call` 和 `schema` 默认仍为 JSON。使用 `--output json` 或 `--output text` 可明确选择格式。已发布 1.0.3 的帮助仍为原 JSON，此项调整会随下一构建提供。
+当前源码中，在终端直接运行 `mewu` 进入 Agent 对话，`mewu --help` 显示帮助；`mewu scene --help`、`mewu help call` 查看分级用法。没有终端时，裸 `mewu` 仍输出离线帮助。状态、会话、AI 任务和能力查询在终端使用文字排版，进入管道或文件时保留原 JSON。`call` 和 `schema` 默认仍为 JSON。可用 `--output json` 或 `--output text` 明确选择。已发布 1.0.3 没有此聊天入口且仍使用原 JSON 帮助，需要包含这些修改的后续构建。
 
 ```sh
 mewu
@@ -29,6 +31,28 @@ mewu scene --help
 mewu status --output json
 mewu scene list --output text
 ```
+
+### Chat with the Agent / 直接和 Agent 聊天
+
+```sh
+mewu chat
+mewu chat "解释一下什么是 MCP"
+mewu chat --scene 会话ID
+mewu chat --agent "助理" --model "已有模型连接名称"
+mewu chat "计算 6×7" --output json
+```
+
+`chat` starts a separate conversation on its first message. It sends text through the existing desktop `chat.send` operation, using Mewu's Agent engine, soul, memory, model and tools. It does not load another engine or access API credentials directly. By default it sends no screenshot/file references and will not overwrite an unsent draft in a resumed conversation. `--scene ID` explicitly selects a previous conversation. Replies remain in Mewu after the console exits.
+
+`chat` 首次发送时创建独立会话，经原有 `chat.send` 使用 Mewu 的 Agent 引擎、灵魂、记忆、模型与工具，不另建引擎、不直接读取凭据。默认只发送文字，不附带截图或文件引用；续接的会话如果有未发送草稿，会拒绝覆盖。`--scene ID` 明确选择旧会话。退出控制台后，会话和答复仍保存在 Mewu。
+
+Inside chat, use `/new`, `/agent [name or ID]`, `/model [name or ID]`, `/session`, `/use ID`, `/clear`, `/help` and `/exit`. Enter sends; the Up arrow recalls in-process input history. This input history is not written to a separate file. Ctrl+C requests cancellation of the exact accepted run; a confirmed cancellation returns 130 in one-shot mode. Ctrl+D exits input. If the desktop switches scenes during a conversation, the next message is rejected rather than silently switching the user back; `/use ID` is an explicit switch.
+
+对话内使用 `/new`、`/agent [名称或ID]`、`/model [名称或ID]`、`/session`、`/use ID`、`/clear`、`/help`、`/exit`。Enter 发送，↑ 浏览本进程的输入历史，不另存历史文件。Ctrl+C 请求停止已确认的当前 run，单次提问确认停止后退出码为 130；Ctrl+D 结束输入。用户在桌面切换会话后，下一条消息会拒绝发送，使用 `/use ID` 明确切换，不会擅自抢回当前会话。
+
+`chat --stdin` reads raw question text, whereas `call --stdin` reads a JSON params object. Chat defaults to answer text even when piped. `--output json` returns the final `{sceneId, runId, status, text}` response; `--jsonl` emits actual progress. The optional `run.get.stream` field contains a bounded in-memory live prefix for the exact scene/run, with an explicit `truncated` flag; stored final messages remain authoritative and long-term memory is unaffected. Older hosts without live-prefix support return their final message. `NO_COLOR` disables color.
+
+`chat --stdin` 读取问题文字，`call --stdin` 才读取 JSON 参数对象。聊天即使进入管道也默认输出答复文字；`--output json` 返回最终 `{sceneId, runId, status, text}`，`--jsonl` 输出真实进度。可选 `run.get.stream` 仅提供对应 scene/run 的有界临时文字前缀，截断由 `truncated` 明示；最终以已保存消息为准，不限制长期记忆。旧宿主不支持前缀时仍返回最终答复。`NO_COLOR` 关闭颜色。
 
 The official **命令行 / CLI** plugin is enabled by default. The control listener lives in the existing Rust desktop process; it does not start Node.js, Python, Electron or a second Agent engine. The console client does not open a second UI or independently open Mewu's databases.
 

@@ -26,6 +26,7 @@ pub(super) enum HelpTopic {
     Run,
     RunGet,
     Call,
+    Chat,
 }
 impl HelpTopic {
     pub(super) fn from_words(words: &[&str]) -> Option<Self> {
@@ -41,6 +42,7 @@ impl HelpTopic {
             ["run"] => Self::Run,
             ["run", "get"] | ["run", "get", _] => Self::RunGet,
             ["call"] | ["call", _] => Self::Call,
+            ["chat", ..] => Self::Chat,
             _ => return None,
         })
     }
@@ -48,7 +50,8 @@ impl HelpTopic {
 
 pub(super) fn help(topic: HelpTopic) -> String {
     let body = match topic {
-        HelpTopic::Root => "用法\n  mewu <命令> [选项]\n\n常用命令\n  status          查看运行状态\n  scene list      列出会话\n  scene get <ID>  查看会话内容\n  run get <ID>    查看 AI 回复与任务状态\n  call <方法>     调用截图、绘制、录屏等能力\n  capabilities    列出可调用的方法\n  schema          输出完整接口 JSON\n  version         查看版本\n\n示例\n  mewu status\n  mewu call capture.open --wait\n  mewu scene list --output json\n\n使用 mewu <命令> --help 查看详细用法。",
+        HelpTopic::Root => "用法\n  mewu                     进入终端对话\n  mewu chat \"你好\"         直接提问\n\n常用命令\n  chat            和 Mewu Agent 对话\n  status          查看运行状态\n  scene list      列出会话\n  scene get <ID>  查看会话内容\n  run get <ID>    查看 AI 回复与任务状态\n  call <方法>     调用截图、绘制、录屏等能力\n  capabilities    列出可调用的方法\n  schema          输出完整接口 JSON\n  version         查看版本\n\n示例\n  mewu chat --agent \"助理\"\n  mewu chat --scene 会话ID\n  mewu call capture.open --wait\n\n使用 mewu <命令> --help 查看详细用法。",
+        HelpTopic::Chat => "用法\n  mewu chat [消息] [选项]\n\n不带消息进入连续对话；带消息则回答后退出。\n沿用 Mewu 的 Agent 底座、模型、记忆与工具。\n\n选项\n  --scene ID        继续指定会话；默认新建独立会话\n  --agent 名称或ID  选择已有 Agent\n  --model 名称或ID  选择已有模型连接\n  --stdin           从标准输入读取问题文字\n  --output json     输出最终答复与会话 ID\n  --jsonl           输出真实回复进度\n\n对话命令\n  /new              开始新会话\n  /agent [名称或ID]  列出或切换 Agent\n  /model [名称或ID]  列出或切换模型连接\n  /session          查看会话 ID\n  /use ID           切换到已有会话\n  /clear            清理终端显示，保留会话\n  /exit             退出命令行\n\nEnter 发送 · ↑ 历史 · Ctrl+C 停止回答\n示例\n  mewu chat \"解释一下什么是 MCP\"\n  mewu chat --scene 会话ID",
         HelpTopic::Status => "用法\n  mewu status [--output text|json]\n\n查看正在运行的 Mewu 版本、平台、当前会话与 CLI 状态。\n需要先启动 Mewu，并开启“命令行 / CLI”插件。",
         HelpTopic::Version => "用法\n  mewu version [--output text|json]\n\n查看命令行客户端版本；不需要启动 Mewu。",
         HelpTopic::Schema => "用法\n  mewu schema\n\n从正在运行的 Mewu 获取完整接口 JSON，包含参数、结果和示例。\n仅查看方法列表可用 mewu capabilities。",
@@ -70,7 +73,7 @@ pub(super) fn output_format(call: &Invocation, terminal: bool) -> OutputFormat {
     if let Some(output) = call.output {
         return output;
     }
-    if matches!(call.action, Action::Help | Action::Version) {
+    if matches!(call.action, Action::Help | Action::Version | Action::Chat) {
         return OutputFormat::Text;
     }
     // Keep existing automation and the low-level API command machine-readable.

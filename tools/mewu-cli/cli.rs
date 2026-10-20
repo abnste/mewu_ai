@@ -20,8 +20,12 @@ use std::{
 const MAX_TIMEOUT_MS: u64 = 3_600_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+#[path = "chat.rs"]
+mod chat;
 #[path = "presentation.rs"]
 mod presentation;
+#[path = "terminal.rs"]
+mod terminal;
 use presentation::{HelpTopic, OutputFormat};
 
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +33,7 @@ enum Action {
     Help,
     Version,
     Request,
+    Chat,
 }
 #[derive(Clone, Debug)]
 struct Invocation {
@@ -41,6 +46,9 @@ struct Invocation {
     output: Option<OutputFormat>,
     help_topic: HelpTopic,
     raw_call: bool,
+    prompt: Option<String>,
+    agent: Option<String>,
+    model: Option<String>,
 }
 
 fn invalid() -> ControlError {
@@ -173,6 +181,7 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
     let mut input: Option<(&str, String)> = None;
     let (mut wait, mut jsonl) = (false, false);
     let (mut help, mut output) = (false, None);
+    let (mut agent, mut model) = (None, None);
     let mut request_timeout = Duration::from_secs(10);
     let mut wait_timeout = Duration::from_secs(120);
     let (mut scene, mut revision, mut offset, mut limit) = (None, None, None, None);
@@ -181,6 +190,10 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
     let mut index = 0;
     while index < words.len() {
         let word = words[index].as_str();
+        if word == "--" {
+            positional.extend(words[index + 1..].iter().cloned());
+            break;
+        }
         if matches!(word, "-h" | "--help") {
             if help {
                 return Err(invalid());
@@ -214,6 +227,8 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
                 | "--offset"
                 | "--limit"
                 | "--output"
+                | "--agent"
+                | "--model"
         ) || !seen.insert(word.to_owned())
         {
             return Err(invalid());
@@ -235,6 +250,16 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
         let value = words.get(index).ok_or_else(invalid)?;
         match word {
             "--request-id" => id = value.clone(),
+            "--agent" | "--model" => {
+                if !identifier(value) {
+                    return Err(invalid());
+                }
+                if word == "--agent" {
+                    agent = Some(value.clone());
+                } else {
+                    model = Some(value.clone());
+                }
+            }
             "--output" => {
                 output = Some(match value.as_str() {
                     "text" => OutputFormat::Text,
@@ -292,10 +317,47 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
         HelpTopic::Root
     };
     let mut params = json!({});
+    let mut prompt = None;
     let (action, method) = if show_help {
         (Action::Help, "help".to_owned())
     } else {
         match command.as_slice() {
+            ["chat", rest @ ..] => {
+                if offset.is_some() || limit.is_some() || (revision.is_some() && scene.is_none()) {
+                    return Err(invalid());
+                }
+                prompt = match input.as_ref() {
+                    Some(("stdin", _)) if rest.is_empty() => {
+                        let mut bytes = Vec::new();
+                        stdin
+                            .take(128 * 1024 + 1)
+                            .read_to_end(&mut bytes)
+                            .map_err(|_| invalid())?;
+                        if bytes.len() > 128 * 1024 {
+                            return Err(too_large());
+                        }
+                        Some(String::from_utf8(bytes).map_err(|_| invalid())?)
+                    }
+                    Some(_) => return Err(invalid()),
+                    None if rest.is_empty() => None,
+                    None => Some(rest.join(" ")),
+                };
+                if let Some(text) = &prompt {
+                    chat::validate_prompt(text)?;
+                }
+                if prompt.is_none()
+                    && (jsonl
+                        || output == Some(OutputFormat::Json)
+                        || seen.contains("--request-id"))
+                {
+                    return Err(invalid());
+                }
+                wait = true;
+                if !seen.contains("--wait-timeout-ms") {
+                    wait_timeout = Duration::from_secs(600);
+                }
+                (Action::Chat, "chat".to_owned())
+            }
             ["version"] => (Action::Version, "version".to_owned()),
             ["status"] => (Action::Request, "app.status".to_owned()),
             ["schema"] => (Action::Request, "app.schema".to_owned()),
@@ -349,7 +411,7 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
             _ => return Err(invalid()),
         }
     };
-    if command.first() != Some(&"call") && input.is_some() {
+    if command.first() != Some(&"call") && !matches!(action, Action::Chat) && input.is_some() {
         return Err(invalid());
     }
     if method != "scene.list"
@@ -359,7 +421,10 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
     {
         return Err(invalid());
     }
-    if !matches!(action, Action::Request)
+    if !matches!(action, Action::Chat) && (agent.is_some() || model.is_some()) {
+        return Err(invalid());
+    }
+    if !matches!(action, Action::Request | Action::Chat)
         && (wait
             || input.is_some()
             || scene.is_some()
@@ -400,6 +465,9 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
         output,
         help_topic,
         raw_call: command.first() == Some(&"call") && !show_help,
+        prompt,
+        agent,
+        model,
     })
 }
 
@@ -601,6 +669,11 @@ pub fn run(args: Vec<OsString>) -> i32 {
 
 fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
     let terminal = io::stdout().is_terminal();
+    let args = if args.len() == 1 && terminal && io::stdin().is_terminal() {
+        vec![args[0].clone(), OsString::from("chat")]
+    } else {
+        args
+    };
     let fallback_output = presentation::error_output(&args, terminal);
     let invocation = parse(args, &mut io::stdin().lock());
     let output = invocation.as_ref().map_or(fallback_output, |call| {
@@ -610,6 +683,11 @@ fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
         .as_ref()
         .map(|call| call.request.method.clone())
         .unwrap_or_default();
+    if let Ok(call) = &invocation {
+        if matches!(call.action, Action::Chat) {
+            return chat::run(call, server_executable);
+        }
+    }
     let mut stdout = io::stdout().lock();
     let (response, already_emitted) = match invocation {
         Err(error) => (Response::error("cli", error), false),
@@ -628,31 +706,9 @@ fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
                 ),
                 false,
             ),
+            Action::Chat => unreachable!("chat owns its terminal before stdout is locked"),
             Action::Request => {
-                let connected = (|| {
-                    let endpoint = Endpoint::for_current_user().map_err(|error| {
-                        if error.kind() == io::ErrorKind::PermissionDenied {
-                            ControlError::not_sent(
-                                ErrorCode::PermissionDenied,
-                                "Local control identity rejected",
-                            )
-                        } else {
-                            unavailable()
-                        }
-                    })?;
-                    // Only the desktop host's explicit --cli entry may opt in.
-                    // A failed AppImage proof is final; never retry exact-path
-                    // or unauthenticated connections after this selection.
-                    #[cfg(target_os = "linux")]
-                    if server_executable.is_some() && std::env::var_os("APPIMAGE").is_some() {
-                        return Client::connect_appimage_verified(&endpoint, invocation.timeout);
-                    }
-                    let expected = match server_executable {
-                        Some(path) => path.to_path_buf(),
-                        None => companion_server()?,
-                    };
-                    Client::connect_verified(&endpoint, &expected, invocation.timeout)
-                })();
+                let connected = connect_control(server_executable, invocation.timeout);
                 match connected {
                     Err(error) => (Response::error(invocation.request.id, error), false),
                     Ok(mut control) => {
@@ -674,6 +730,13 @@ fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
     if !already_emitted
         && match output {
             OutputFormat::Json => emit(&mut stdout, &response),
+            OutputFormat::Text if method == "help" && terminal => terminal::help(
+                &mut stdout,
+                response
+                    .result()
+                    .and_then(|v| v["usage"].as_str())
+                    .unwrap_or_default(),
+            ),
             OutputFormat::Text => presentation::emit_text(&mut stdout, &method, &response),
         }
         .is_err()
@@ -694,6 +757,31 @@ fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
         }
     }
     code
+}
+
+fn connect_control(
+    server_executable: Option<&Path>,
+    timeout: Duration,
+) -> Result<Client, ControlError> {
+    let endpoint = Endpoint::for_current_user().map_err(|error| {
+        if error.kind() == io::ErrorKind::PermissionDenied {
+            ControlError::not_sent(
+                ErrorCode::PermissionDenied,
+                "Local control identity rejected",
+            )
+        } else {
+            unavailable()
+        }
+    })?;
+    #[cfg(target_os = "linux")]
+    if server_executable.is_some() && std::env::var_os("APPIMAGE").is_some() {
+        return Client::connect_appimage_verified(&endpoint, timeout);
+    }
+    let expected = match server_executable {
+        Some(path) => path.to_path_buf(),
+        None => companion_server()?,
+    };
+    Client::connect_verified(&endpoint, &expected, timeout)
 }
 
 #[cfg(test)]

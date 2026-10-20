@@ -51,6 +51,7 @@ pub(crate) struct Runtime {
     #[cfg(unix)]
     integration_started: AtomicBool,
     inner: Mutex<Inner>, server: Mutex<Option<ServerHandle>>,
+    streams: Mutex<crate::control_run_stream::Streams>,
 }
 
 fn error(code: ErrorCode, message: &'static str) -> ControlError { ControlError::not_sent(code, message) }
@@ -89,14 +90,18 @@ struct SceneQuery { scene_id: String, #[serde(default = "default_limit")] limit:
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SceneView<'a> {
-    scene_id: &'a str, title: &'a str, agent_id: &'a str, revision: u64,
+    scene_id: &'a str, title: &'a str, agent_id: &'a str, connection_id: &'a Option<String>, revision: u64,
     background: &'a Option<mewu_core::Asset>, regions: &'a [mewu_core::Region],
     items: &'a [mewu_core::SpaceItem], refs: &'a [mewu_core::Reference], draft: &'a str,
     frozen: bool, closed: bool, run: &'a Option<mewu_core::Run>, messages: &'a [mewu_core::Message],
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RunView<'a> { scene_id: &'a str, run: &'a Option<mewu_core::Run>, messages: &'a [mewu_core::Message] }
+struct RunView<'a> {
+    scene_id: &'a str, run: &'a Option<mewu_core::Run>, messages: &'a [mewu_core::Message],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream: Option<crate::control_run_stream::StreamView>,
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Page { #[serde(default)] offset: usize, #[serde(default = "default_limit")] limit: usize }
@@ -116,6 +121,20 @@ fn current_revision(app: &AppHandle) -> Result<u64, ControlError> {
 pub(crate) fn require_enabled(app: &AppHandle) -> Result<u64, String> {
     current_revision(app).map_err(|_| "命令行插件不可用".into())
 }
+// These hooks run inside the already-authorized Agent path. They never acquire
+// plugins/Engine again, never persist text, and never alter event delivery.
+pub(crate) fn begin_run_stream(app: &AppHandle, scene: &str, run: &str) {
+    let Some(runtime)=app.try_state::<Runtime>() else{return};
+    if runtime.revision.load(Ordering::Acquire)==0 {return;}
+    if let Ok(mut streams)=runtime.streams.lock() {streams.begin(scene,run,Instant::now());};
+}
+pub(crate) fn observe_run_event(app: &AppHandle, event: &Value) {
+    let Some(runtime)=app.try_state::<Runtime>() else{return};
+    if runtime.revision.load(Ordering::Acquire)==0 || event["status"]!="running" {return;}
+    if let (Some(scene),Some(run),Some(text))=(event["sceneId"].as_str(),event["runId"].as_str(),event["text"].as_str()) {
+        if let Ok(mut streams)=runtime.streams.lock() {streams.push(scene,run,text,Instant::now());};
+    }
+}
 
 /// Called with the already-validated plugin snapshot, including the fail-closed
 /// empty snapshot. Never reacquire plugins while a mutation owns that mutex.
@@ -128,6 +147,7 @@ pub(crate) fn reconcile(app: &AppHandle, snapshot: &crate::plugins::PluginSnapsh
     ).map(|record| record.revision).unwrap_or(0);
     let previous = runtime.revision.swap(revision, Ordering::AcqRel);
     if previous != revision {
+        if let Ok(mut streams) = runtime.streams.lock() { streams.clear(); }
         if let Ok(mut inner) = runtime.inner.lock() {
             for operation in inner.operations.values_mut().filter(|op| op.phase == Phase::Queued) {
                 operation.phase = Phase::Complete;
@@ -187,6 +207,7 @@ pub(crate) fn shutdown(app: &AppHandle) {
     if let Some(runtime) = app.try_state::<Runtime>() {
         runtime.stopped.store(true, Ordering::Release);
         runtime.revision.store(0, Ordering::Release);
+        if let Ok(mut streams) = runtime.streams.lock() { streams.clear(); }
         renderer_invalidated(app);
         if let Ok(mut server) = runtime.server.lock() {
             if let Some(server) = server.as_mut() {
@@ -302,9 +323,11 @@ fn dispatch_inner(app: &AppHandle, request: Request, revision: u64) -> Result<Va
             let scene = engine.store.scene(&query.scene_id).map_err(|_| error(ErrorCode::InvalidRequest,"会话不存在"))?;
             let messages = &scene.messages[scene.messages.len().saturating_sub(limit)..];
             if request.method == "run.get" {
-                return output(RunView { scene_id: &scene.id, run: &scene.run, messages });
+                let stream = scene.run.as_ref().and_then(|run|app.state::<Runtime>().streams.lock().ok()
+                    .and_then(|mut streams|streams.view(&scene.id,&run.id,run.status==mewu_core::RunStatus::Running,Instant::now())));
+                return output(RunView { scene_id: &scene.id, run: &scene.run, messages, stream });
             }
-            output(SceneView { scene_id: &scene.id, title: &scene.title, agent_id: &scene.agent_id,
+            output(SceneView { scene_id: &scene.id, title: &scene.title, agent_id: &scene.agent_id, connection_id: &scene.connection_id,
                 revision: host.revision.load(Ordering::Acquire), background: &scene.background,
                 regions: &scene.regions, items: &scene.items, refs: &scene.refs, draft: &scene.draft,
                 frozen: scene.frozen, closed: scene.closed, run: &scene.run, messages })
