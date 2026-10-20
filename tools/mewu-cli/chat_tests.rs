@@ -343,3 +343,39 @@ fn terminal_failure_after_sending_preserves_unknown_execution() {
         1
     );
 }
+
+#[test]
+fn final_render_failure_is_unknown_without_repeating_the_message() {
+    struct BrokenFinish;
+    impl ChatUi for BrokenFinish {
+        fn progress(&mut self, _: &str) -> io::Result<()> {
+            Ok(())
+        }
+        fn delta(&mut self, _: &str, _: bool) -> io::Result<()> {
+            Ok(())
+        }
+        fn interrupted(&mut self) -> io::Result<bool> {
+            Ok(false)
+        }
+        fn finish(&mut self) -> io::Result<()> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+    }
+    let c = call(&["chat", "hi"]);
+    let mut h = FakeHost::default();
+    let mut s = Session::new(&c);
+    let err = turn(
+        &mut h,
+        &mut FakeClock::default(),
+        &c,
+        &mut s,
+        "hi",
+        &mut BrokenFinish,
+    )
+    .unwrap_err();
+    assert_eq!(err.error_ref().unwrap().outcome, ExecutionOutcome::Unknown);
+    assert_eq!(
+        h.calls.iter().filter(|r| r.method == "chat.send").count(),
+        1
+    );
+}

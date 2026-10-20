@@ -30,9 +30,11 @@ Get-Content -Raw -Encoding utf8 question.txt | mewu chat --stdin
 mewu chat "计算 6×7" --output json
 ```
 
-聊天中输入 `/help`、`/new`、`/agent`、`/model`、`/session`、`/use ID`、`/clear` 或 `/exit`。`/agent 名称或ID`、`/model 名称或ID` 选择现有配置，重名时使用完整 ID。Enter 发送，↑ 浏览当前进程的输入历史；历史不另写磁盘。Ctrl+C 停止本次回答，Ctrl+D 结束输入；停止请求绑定已确认的 run ID，不会取消另一个新回答。桌面主动切换会话后，不会在下一条消息时擅自切回；使用 `/use ID` 明确续接。
+聊天中输入 `/help`、`/new`、`/agent`、`/model`、`/session`、`/use ID`、`/clear` 或 `/exit`。`/agent 名称或ID`、`/model 名称或ID` 选择现有配置，重名时使用完整 ID。Enter 发送，↑ 浏览当前进程的输入历史；历史不另写磁盘。回答中按 Ctrl+C 停止本次回答，等待输入时按 Ctrl+C 退出 CLI（退出码 130）；Ctrl+D 或 `/exit` 正常退出。停止请求绑定已确认的 run ID，不会取消另一个新回答，也不退出 Mewu 桌面软件。桌面主动切换会话后，不会在下一条消息时擅自切回；使用 `/use ID` 明确续接。
 
 `chat` 默认输出答复文字，即使进入管道；`--output json` 返回最终 `{sceneId, runId, status, text}`，`--jsonl` 返回真实运行进度。`chat --stdin` 是问题文字，区别于 `call --stdin` 的 JSON 对象。正常完成退出码 0，已确认停止为 130；发送后断线或超时仍标记结果未知，不能重发原消息。新宿主通过 `run.get.stream` 提供有界、临时的文字前缀，最终已保存消息为准；旧宿主没有该字段时显示最终答复。`NO_COLOR` 关闭颜色。
+
+终端对话用分隔线区分输入，用左侧对话线呈现回复，并按中英文显示宽度换行。粗体、标题、列表、行内代码和代码块使用现有 CommonMark 解析器显示；流式输出只更新未完成的行，历史内容留在终端滚动记录中。管道及 JSON 输出不加入这些装饰。
 
 包含 CLI 的 Windows 安装程序会将安装目录加入当前用户 PATH。安装后打开新终端；若 Windows Terminal、编辑器或 Agent 已在运行，需重新打开该应用，不能保证仅新建标签页就会刷新环境。便携版可在解压目录直接运行 `.\mewu.exe status`。
 

@@ -19,6 +19,9 @@ pub(super) trait ChatUi {
     fn progress(&mut self, label: &str) -> io::Result<()>;
     fn delta(&mut self, text: &str, replacement: bool) -> io::Result<()>;
     fn interrupted(&mut self) -> io::Result<bool>;
+    fn finish(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 fn failure(code: ErrorCode, message: &'static str) -> Response {
     Response::error("chat", ControlError::not_sent(code, message))
@@ -431,6 +434,15 @@ pub(super) fn turn(
                     ControlError::unknown(ErrorCode::InvalidResponse, "Missing final answer"),
                 ));
             }
+            ui.finish().map_err(|_| {
+                Response::error(
+                    run.clone(),
+                    ControlError::unknown(
+                        ErrorCode::Internal,
+                        "Reply output interrupted; inspect the original run",
+                    ),
+                )
+            })?;
             return Ok(Answer {
                 scene,
                 run,
@@ -608,10 +620,11 @@ pub(super) fn run(call: &Invocation, server: Option<&Path>) -> i32 {
         }
     };
     loop {
-        let prompt = ("› ".to_owned(), terminal::prompt());
+        terminal::before_prompt();
+        let prompt = ("  › ".to_owned(), terminal::prompt());
         let line = match editor.readline(&prompt) {
             Ok(s) => s,
-            Err(ReadlineError::Interrupted) => continue,
+            Err(ReadlineError::Interrupted) => return 130,
             Err(ReadlineError::Eof) => break,
             Err(_) => {
                 terminal::error("无法读取终端输入。");
