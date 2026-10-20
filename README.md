@@ -57,6 +57,8 @@ MewuAI is maintained on **[master](https://github.com/abnste/mewu_ai/tree/master
 
 Build extensions with the [SDK](./packages/sdk/README.md), [extension guide](./docs/extensions.md) and [packaging tools](./tools/extension-market/README.md). Independent examples include the [region Agent](https://github.com/abnste/mewu-plugin-region-agent), [journal memory](https://github.com/abnste/mewu-plugin-journal-memory) and [interactive ruler](https://github.com/abnste/mewu-plugin-interactive-widget). Reference a region and send an instruction in the existing conversation bar; no separate region-task window is needed. The native region-input example currently supports **Windows only**.
 
+**CLI in current development builds:** The default-enabled official CLI plugin lets local agents operate Mewu through `mewu schema` and fixed JSON commands, sharing the existing screenshot, conversation, drawing and recording paths. See the [CLI guide](./docs/cli.md) and [machine-readable catalog](./apps/desktop/control/catalog.json). Existing published 1.0.2 installers predate this interface.
+
 <details>
 <summary>Original .NET 0.7.x feature reference</summary>
 

@@ -1,0 +1,22 @@
+[package]
+name = "mewu-control"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MPL-2.0"
+description = "Bounded authenticated local control transport for Mewu"
+
+[dependencies]
+interprocess = "=2.4.6"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sha2 = "=0.10.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_Memory"] }
+widestring = "1.2"

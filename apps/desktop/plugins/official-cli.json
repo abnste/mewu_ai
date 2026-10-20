@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "mewu.cli",
+  "version": "1.0.0",
+  "name": "命令行",
+  "description": "从终端访问 Mewu",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "hostApi": 1,
+  "tags": ["automation", "tools"],
+  "contributions": [
+    { "id": "cli", "title": "命令行", "kind": "app.cli" }
+  ]
+}

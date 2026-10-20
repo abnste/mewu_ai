@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 mod agent_loop;
+mod app_control_host;
+mod app_control_integration;
+#[path = "../../../../tools/mewu-cli/cli.rs"]
+mod control_cli;
 mod agent_tools;
 mod ai;
 mod inline_reasoning;
@@ -2809,6 +2813,15 @@ fn enable_console_diagnostics(view: &webkit2gtk::WebView) {
 }
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--cli")) {
+        let mut args: Vec<_> = std::env::args_os().collect();
+        args.remove(1);
+        let code = match std::env::current_exe() {
+            Ok(host) => control_cli::run_for_host(args, &host),
+            Err(_) => 3,
+        };
+        std::process::exit(code);
+    }
     // A code extension has only piped protocol access; do not open user storage,
     // register the single-instance plugin, or create any WebView in this child.
     if std::env::args().nth(1).as_deref() == Some("--extension-worker") {
@@ -2949,7 +2962,10 @@ fn main() {
                 .build(),
         )
         .on_permission_request(|_, _| tauri::webview::PermissionResponse::Deny)
-        .on_page_load(|webview, _| {
+        .on_page_load(|webview, payload| {
+            if webview.label() == "space" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                app_control_host::renderer_invalidated(webview.app_handle());
+            }
             #[cfg(target_os = "linux")]
             if webview.label() == "settings" {
                 if let Some(window) = webview.app_handle().get_webview_window("settings") {
@@ -2979,6 +2995,9 @@ fn main() {
             let handlers: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 recording_wayland_host_prepare,
                 get_snapshot,
+                app_control_host::register_control_renderer,
+                app_control_host::claim_control_request,
+                app_control_host::complete_control_request,
                 capture_shortcut_host::get_capture_shortcut,
                 settings_host::get_system_preferences,
                 settings_host::set_system_preferences,
@@ -3035,6 +3054,7 @@ fn main() {
                 ui_language::set_ui_language,
                 asset_host::export_text_asset,
                 image_host::export_image_item,
+                image_host::export_control_image,
                 read_artifact,
                 connection_host::get_provider_presets,
                 connection_host::save_connection_profile,
@@ -3152,6 +3172,9 @@ fn main() {
             }
         })
         .on_window_event(|window, event| {
+            if window.label() == "space" && matches!(event, tauri::WindowEvent::Destroyed) {
+                app_control_host::renderer_invalidated(window.app_handle());
+            }
             if window.label() == frozen::LABEL && matches!(event, tauri::WindowEvent::Destroyed) {
                 frozen::destroyed(window.app_handle());
             }
@@ -3396,6 +3419,7 @@ fn main() {
                 image_exports: image_host::Registry::default(),
             });
             app.manage(frozen::Lifecycle::default());
+            app.manage(app_control_host::Runtime::default());
             #[cfg(target_os = "linux")]
             for config in &deferred_windows {
                 tauri::WebviewWindowBuilder::from_config(app.handle(), config)?.build()?;
@@ -3507,6 +3531,10 @@ fn main() {
                 storage_root::mark_initialized(&storage_paths, &resolved)?;
             }
             app.state::<Host>().storage.mark_ready();
+            {
+                let snapshot = app.state::<Host>().plugins.lock().map_err(|_| "插件状态不可用")?.store.snapshot()?;
+                app_control_host::reconcile(app.handle(), &snapshot);
+            }
             memory_worker::start(app.handle());
             let content_app = app.handle().clone();
             std::thread::Builder::new()

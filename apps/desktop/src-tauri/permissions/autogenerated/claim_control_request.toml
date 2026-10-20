@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-claim-control-request"
+description = "Enables the claim_control_request command without any pre-configured scope."
+commands.allow = ["claim_control_request"]
+
+[[permission]]
+identifier = "deny-claim-control-request"
+description = "Denies the claim_control_request command without any pre-configured scope."
+commands.deny = ["claim_control_request"]

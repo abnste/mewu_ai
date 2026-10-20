@@ -600,17 +600,32 @@ pub async fn export_region(
     clipboard: bool,
     variant: Option<ImageExportVariant>,
 ) -> Result<bool, String> {
-    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard, variant).await
+    export_document(app, window, scene_id, ExportSource::Region(region_id), clipboard, variant, None).await
 }
 enum ExportSource { Region(String), ImageItem { item_id: String, source_asset_id: String } }
 #[tauri::command]
 pub async fn export_image_item(app: AppHandle, window: WebviewWindow, scene_id: String, item_id: String, source_asset_id: String, clipboard: bool, variant: Option<ImageExportVariant>) -> Result<bool, String> {
-    export_document(app, window, scene_id, ExportSource::ImageItem { item_id, source_asset_id }, clipboard, variant).await
+    export_document(app, window, scene_id, ExportSource::ImageItem { item_id, source_asset_id }, clipboard, variant, None).await
 }
-async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String, source: ExportSource, clipboard: bool, variant: Option<ImageExportVariant>) -> Result<bool, String> {
+#[tauri::command]
+pub async fn export_control_image(app: AppHandle, window: WebviewWindow, scene_id: String, region_id: String, path: String, variant: ImageExportVariant) -> Result<serde_json::Value, String> {
+    crate::app_control_host::require_enabled(&app)?;
+    let destination = PathBuf::from(&path);
+    if path.len() > 16 * 1024 || path.chars().any(char::is_control) || !destination.is_absolute() {
+        return Err("请提供绝对保存路径".into());
+    }
+    let written = export_document(app, window, scene_id, ExportSource::Region(region_id), false, Some(variant), Some(destination.clone())).await?;
+    if !written { return Err("图片未导出".into()); }
+    let path = destination.canonicalize().map_err(|_| "导出文件不可用")?;
+    Ok(serde_json::json!({"path":path}))
+}
+async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String, source: ExportSource, clipboard: bool, variant: Option<ImageExportVariant>, explicit_destination: Option<PathBuf>) -> Result<bool, String> {
     if window.label() != "space" {
         return Err("此窗口不能导出截图".into());
     }
+    let cli_revision = if explicit_destination.is_some() {
+        Some(crate::app_control_host::require_enabled(&app)?)
+    } else { None };
     let handle = window_handle(&window)?; // Tauri HWND/title queries outside shared locks.
     let (work, cancel, origin, background, region, assets_root, managed_root) = {
         let host = app.state::<Host>();
@@ -705,6 +720,16 @@ async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String
                 return Ok(());
                 }
             }
+            let no_clobber = explicit_destination.is_some();
+            let selected = if let Some(path) = explicit_destination {
+                let format = match path.extension().and_then(|extension|extension.to_str()) {
+                    Some(extension) if extension.eq_ignore_ascii_case("png") => image_export::ImageSaveFormat::Png,
+                    Some(extension) if extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg") => image_export::ImageSaveFormat::Jpeg,
+                    _ => return Err("图片格式须为 PNG 或 JPEG".into()),
+                };
+                if path.exists() { return Err("保存目标已存在，请使用新文件名".into()); }
+                SaveDialogOutcome::Selected { path, format }
+            } else {
             let picker_app = app.clone();
             let picker_registry = work.registry.clone();
             let picker_id = work.id.clone();
@@ -752,6 +777,8 @@ async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String
                     region_allowed(&picker_app, &picker_registry, &picker_id, &picker_origin, handle)
                 },
             ).map_err(|error| error.to_string())?;
+            selected
+            };
             let (path, format) = match selected {
                 SaveDialogOutcome::Selected { path, format } => (path, format),
                 SaveDialogOutcome::UserCanceled | SaveDialogOutcome::RequestCanceled => {
@@ -769,8 +796,27 @@ async fn export_document(app: AppHandle, window: WebviewWindow, scene_id: String
                 |temp, target| {
                     // Disk/source checks before short Engine->registry acceptance.
                     protect_destination(&destination, &managed_root, &sources)?;
+                    let host = app.state::<Host>();
+                    // Explicit CLI publication follows the shared lock order:
+                    // plugins -> Engine -> export registry. Keep this grant
+                    // through the atomic link, so revocation cannot race it.
+                    let plugins = if cli_revision.is_some() {
+                        Some(host.plugins.lock().map_err(|_| "插件状态不可用")?)
+                    } else { None };
+                    if let (Some(expected), Some(plugins)) = (cli_revision, plugins.as_ref()) {
+                        if plugins.store.cli_revision()? != Some(expected) {
+                            return Err("命令行插件已变更，图片未导出".into());
+                        }
+                    }
                     accept_region(&app, &work, &origin, handle)?;
-                    fs::rename(temp, target).map_err(|_| "无法完成图片保存，原文件未被覆盖".into())
+                    if no_clobber {
+                        // Same-directory link creation publishes complete bytes
+                        // atomically and never replaces a concurrently created
+                        // destination. The encoder owns cleanup of its temp.
+                        image_export::publish_new_image(temp, target)
+                    } else {
+                        fs::rename(temp, target).map_err(|_| "无法完成图片保存，原文件未被覆盖".into())
+                    }
                 },
             )
         })();

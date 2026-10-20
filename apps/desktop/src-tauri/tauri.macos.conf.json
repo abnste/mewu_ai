@@ -1,6 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
+    "resources": {
+      "resources/cli/integrate-unix.sh": "cli/integrate-unix.sh"
+    },
     "targets": [
       "app"
     ],

@@ -6,6 +6,10 @@ license = "MPL-2.0"
 default-run = "mewu-desktop"
 
 [[bin]]
+name = "mewu"
+path = "../../../tools/mewu-cli/main.rs"
+
+[[bin]]
 name = "mewu-plugin-validator"
 path = "../../../tools/plugin-catalog/native.rs"
 test = false
@@ -15,6 +19,7 @@ required-features = ["catalog-validator"]
 tauri-build = { version = "=2.7.1", features = [] }
 
 [dependencies]
+mewu-control = { path = "../../../crates/mewu-control" }
 mewu-core = { path = "../../../crates/mewu-core" }
 mewu-extension = { path = "../../../crates/mewu-extension" }
 zip = { version = "=6.0.0", default-features = false, features = ["deflate"] }

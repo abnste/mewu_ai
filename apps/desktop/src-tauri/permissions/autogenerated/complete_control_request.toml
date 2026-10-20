@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-complete-control-request"
+description = "Enables the complete_control_request command without any pre-configured scope."
+commands.allow = ["complete_control_request"]
+
+[[permission]]
+identifier = "deny-complete-control-request"
+description = "Denies the complete_control_request command without any pre-configured scope."
+commands.deny = ["complete_control_request"]

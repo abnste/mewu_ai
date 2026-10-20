@@ -1,0 +1,61 @@
+# Mewu console 客户端
+
+`mewu` 通过本机控制接口访问正在运行的 Mewu。独立 console 程序与桌面程序放在同一目录；客户端在发送正文前核验宿主进程身份。CLI 不自动启动 GUI，不读取聊天数据库、模型配置或 API Key。
+
+```powershell
+mewu help
+mewu version
+mewu status
+mewu schema
+mewu capabilities
+mewu scene list --offset 0 --limit 20
+mewu scene get SCENE_ID --limit 10
+mewu run get SCENE_ID --limit 10
+```
+
+`help`、`version` 离线可用。其他命令需要 Mewu 已正常启动，且命令行插件已启用。`schema` / `capabilities` 返回当前宿主实际支持的方法；客户端不会假设未列出的方法可用。
+
+包含 CLI 的 Windows 安装程序会将安装目录加入当前用户 PATH。安装后打开新终端；若 Windows Terminal、编辑器或 Agent 已在运行，需重新打开该应用，不能保证仅新建标签页就会刷新环境。便携版可在解压目录直接运行 `.\mewu.exe status`。
+
+macOS、Linux 的已安装构建在 CLI 插件开启后，正常启动会自动尝试创建 `~/.local/bin/mewu` 并为识别到的 Bash/Zsh 配置 PATH，完成后打开新 shell。Mac 需先安装到 `/Applications` 或 `~/Applications`；Linux 使用持久路径的原始 AppImage，移动后需从新位置重启 Mewu。未设置或未知的 `SHELL`、Fish 等未适配 shell、启动文件受保护或存在冲突时会保留原配置，需按自己的 shell 语法手动加入 `~/.local/bin`，也可用完整路径运行入口。创建入口不等于刷新当前终端环境。启动文件选择和完整示例见[CLI 使用说明](../../docs/cli.md)。
+
+通用调用接受一个 JSON 对象，可选命令行、UTF-8 文件或 stdin 三种输入之一：
+
+```powershell
+mewu call agent.list
+mewu call recording.status
+mewu call chat.setDraft --json '{"text":"请检查当前截图"}' --scene SCENE_ID --revision 12 --wait
+mewu call chat.send --file request.json --request-id agent-turn-001 --wait
+Get-Content -LiteralPath request.json -Raw -Encoding utf8 | mewu call chat.send --stdin --wait --jsonl
+mewu call operation.get --json '{"id":"agent-turn-001"}'
+```
+
+`--scene`、`--revision` 为 `params.context` 补充缺失的目标和一致性版本；已有字段保持原值。它们适用于接受 context 的宿主操作。先用 `status` / `scene get` 获取当前目标和版本；插件、场景或版本变化由宿主拒绝。方法专属参数（例如 `drawing.apply` 内的 `expectedRevision`）仍需按宿主 schema 提供。
+
+`--request-id` 指定本次请求的幂等 ID，只允许 1–128 个 ASCII 字母、数字、`.`、`_`、`-`、`:`。未指定时生成 UUID。客户端从不自动重发原操作。宿主返回 `queued` / `accepted` 仅表示已接收；`--wait` 只轮询 `operation.get`，直到 `completed` / `failed` 或等待超时。同一 ID 的相同请求可由宿主在当前运行期内去重，不能据此承诺跨重启的永久去重。
+
+stdout 始终输出 JSON。默认输出一条完整 response（`id` 与 `result` 或 `error`）；`--jsonl` 每行输出一条实际响应，配合 `--wait` 可读进度。`--wait` 的终态响应仍保留宿主的 `operationId`、`status` 与 `result` / `error`。stderr 仅输出固定诊断提示。
+
+| 选项 | 含义 |
+| --- | --- |
+| `--timeout-ms MS` | 单次连接或请求超时，默认 10000，最大 3600000 |
+| `--wait-timeout-ms MS` | 总等待期限，默认 120000，最大 3600000，需同时使用 `--wait` |
+| `--json JSON` / `--file PATH` / `--stdin` | 通用 `call` 的对象参数，三选一，默认 `{}` |
+| `--jsonl` | 每行一个响应；不改变执行次数 |
+
+JSON 输入和最终请求均最多 1 MiB。重复 flag、未知参数、重复 JSON 字段、无效数字和非对象参数会在发送前拒绝。文件必须是 UTF-8 JSON，不能含 BOM。
+
+| 退出码 | 含义 |
+| --- | --- |
+| 0 | 查询成功，或已取得接收/完成响应；未使用 `--wait` 时不能据此认定操作已完成 |
+| 1 | 宿主拒绝或操作明确失败 |
+| 2 | 输入格式或大小无效 |
+| 3 | 宿主不可用或已断开 |
+| 4 | 本机身份或权限校验失败 |
+| 5 | 已知未执行的请求超时 |
+| 6 | 原操作执行结果未知；使用响应中的 operation ID 查询，勿自动重复 mutation |
+| 74 | stdout 无法写入 |
+
+桌面程序的 `--cli` 入口复用同一解析和调度模块，在创建 WebView 前分流；例如 Linux AppImage 可用 `MewuAI.AppImage --cli status`。AppImage 专用入口及自动创建的 launcher 在连接宿主时要求 Linux 6.5+ 提供的 `SO_PEERPIDFD`，以绑定真实 socket 对端的完整进程生命周期，并在发送正文前验证双方运行文件的完整 SHA256 和同一原始 AppImage 文件身份。API 不可用或身份校验失败会拒绝连接，不自动回退到较弱验证；客户端与桌面程序须来自同一个原始 AppImage。该门槛针对 AppImage 命令行连接，离线 `help`/`version` 与截图 UI 不受此新增要求影响；普通客户端仍验证宿主完整路径，Windows、macOS 验证不变。
+
+`tests.rs` 覆盖真实协议 Request / Response 的解析与本地 mock 调度：输入限额、重复 JSON、context 保留、操作终态/未知结果、stdout 失败和原操作不重发。真实本机传输、插件准入和 GUI 操作需另做集成验证。

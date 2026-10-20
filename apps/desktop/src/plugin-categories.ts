@@ -14,6 +14,7 @@ export const pluginTagLabels: Record<PluginTag, string> = {
 };
 export const pluginTags = Object.keys(pluginTagLabels) as PluginTag[];
 const legacyModule: Record<PluginContribution['kind'], PluginTag[]> = {
+  'app.cli':['automation','tools'],
   'agent.runtime':['agi'], 'space.blackboard':['ui-enhancement','vision'],
   'model.connection':['model-providers'],
   'selection.workflow':['tools','automation','vision'], 'selection.drawing-tools':['vision','tools'],

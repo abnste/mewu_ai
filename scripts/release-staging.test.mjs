@@ -14,7 +14,7 @@ function fixture(run, version = baselineVersion) {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'mewu-staging-')), root = path.join(parent, 'repo');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   try {
-    for (const name of ['release-contract.mjs', 'release-api.mjs', 'prepare-release.mjs', 'assemble-release.mjs', 'publish-release.mjs', 'legacy-update-bridge.mjs', 'publish-legacy-update-bridge.mjs', 'legacy-feed-migration.mjs', 'publish-legacy-feed-migration.mjs']) fs.copyFileSync(path.join(scripts, name), path.join(root, 'scripts', name));
+    for (const name of ['release-contract.mjs', 'release-api.mjs', 'cli-package.mjs', 'prepare-release.mjs', 'assemble-release.mjs', 'publish-release.mjs', 'legacy-update-bridge.mjs', 'publish-legacy-update-bridge.mjs', 'legacy-feed-migration.mjs', 'publish-legacy-feed-migration.mjs']) fs.copyFileSync(path.join(scripts, name), path.join(root, 'scripts', name));
     fs.mkdirSync(path.join(root, 'apps/desktop/src-tauri'), { recursive: true });
     fs.mkdirSync(path.join(root, 'docs'));
     fs.writeFileSync(path.join(root, '.gitignore'), 'out/\n');
@@ -40,12 +40,13 @@ for (const version of [baselineVersion, '1.0.0', '1.0.1-preview.1']) test(`${ver
     const bundle = path.join(parent, platform); fs.mkdirSync(bundle);
     const installer = path.join(bundle, 'installer.bin'), updater = platform === 'darwin-aarch64' ? path.join(bundle, 'update.bin') : installer;
     fs.writeFileSync(installer, `fixture installer ${platform}`); fs.writeFileSync(updater, `fixture updater ${platform}`);
+    const cliBinary = path.join(bundle, 'mewu.exe'); fs.writeFileSync(cliBinary, 'fixture console binary');
     fs.writeFileSync(path.join(bundle, 'private-key.pem'), 'adjacent secret fixture');
     fs.writeFileSync(path.join(bundle, 'agent.md'), 'adjacent notes fixture');
     const signature = Buffer.from(`untrusted comment: fixture\nfixture\ntrusted comment: timestamp:1\tversion:${version}\nfixture\n`).toString('base64');
     fs.writeFileSync(`${updater}.sig`, signature);
     const input = path.join(parent, `${platform}.json`), output = `out/${platform}`;
-    fs.writeFileSync(input, JSON.stringify({ installer, updater, binary: installer }));
+    fs.writeFileSync(input, JSON.stringify({ installer, updater, binary: installer, cliBinary }));
     // The Windows ZIP can also be constructed directly on non-Windows runners;
     // this fixture validates its bytes/receipt rather than a ZIP encoder.
     if (platform === 'windows-x86_64' && process.platform !== 'win32') {

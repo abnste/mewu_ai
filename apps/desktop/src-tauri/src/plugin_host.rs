@@ -192,6 +192,7 @@ fn settle_engine(engine: &mut crate::Engine, snapshot: &PluginSnapshot) -> Resul
 }
 /// All plugin mutations and starts use plugin -> Engine lock order.
 fn settle_runs(app: &AppHandle, host: &Host, snapshot: &PluginSnapshot) -> Result<(), String> {
+    crate::app_control_host::reconcile(app, snapshot);
     let next_agent = crate::optional_capabilities::Authorizations::from_snapshot(snapshot).agent;
     if host.lock()?.optional.agent != next_agent {
         host.session_titles.cancel_all();

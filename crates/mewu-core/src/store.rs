@@ -521,6 +521,11 @@ impl Store {
             .ok_or_else(|| not_found("Agent", agent_id))
     }
 
+    /// Public profile metadata without copying conversations or media history.
+    pub fn agent_profiles(&self) -> &[AgentProfile] {
+        &self.state.agents
+    }
+
     pub fn connection_profiles(&self) -> &[ConnectionProfile] {
         &self.state.connections
     }

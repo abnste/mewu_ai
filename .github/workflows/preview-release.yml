@@ -155,6 +155,8 @@ jobs:
           );
           console.log(JSON.stringify(receipt));
           JS
+      - name: Verify the packaged console and user-level CLI integrator
+        run: node scripts/cli-package.mjs ${{ matrix.platform }}
       - name: Archive Mac application for later coordinator signing
         if: runner.os == 'macOS'
         run: tar -czf target/release/bundle/macos/MewuAI.app.tar.gz -C target/release/bundle/macos MewuAI.app

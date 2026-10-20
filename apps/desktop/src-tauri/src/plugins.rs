@@ -48,7 +48,8 @@ const OFFICIAL_ANNOTATIONS: &[u8] =
     include_bytes!("../../plugins/migrations/official-annotations-1.0.0.json");
 const RECORDING_MIGRATION_KEY: &str = "migration.recording-bundle.v1";
 const LEGACY_RECORDING_IDS: [&str; 3] = ["mewu.video-trim", "mewu.recording-audio", "mewu.gif"];
-const BUNDLED: [&[u8]; 28] = [
+const BUNDLED: [&[u8]; 29] = [
+    include_bytes!("../../plugins/official-cli.json"),
     include_bytes!("../../plugins/official-agent.json"),
     include_bytes!("../../plugins/official-blackboard.json"),
     OFFICIAL_TABLE,
@@ -152,6 +153,8 @@ pub enum PluginTag {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum PluginContribution {
+    #[serde(rename = "app.cli")]
+    Cli { id: String, title: String },
     #[serde(rename = "agent.runtime")]
     AgentRuntime { id: String, title: String, engine: AgentRuntimeEngine },
     #[serde(rename = "space.blackboard")]
@@ -906,7 +909,8 @@ fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
                 }
                 (id, title)
             }
-            PluginContribution::AgentRuntime { id, title, .. }
+            PluginContribution::Cli { id, title }
+            | PluginContribution::AgentRuntime { id, title, .. }
             | PluginContribution::Blackboard { id, title, .. }
             | PluginContribution::SelectionRecording { id, title, .. }
             | PluginContribution::AgentVisualAnnotations { id, title, .. }
@@ -1024,6 +1028,19 @@ fn json<T: Serialize>(value: &T) -> Result<String, String> {
 }
 
 impl PluginStore {
+    /// Only the exact first-party package may expose the local control service.
+    /// Keeping its tombstone makes an explicit disable/removal survive restart.
+    pub(crate) fn cli_revision(&self) -> Result<Option<u64>, String> {
+        self.ready()?;
+        let Some(record) = self.read("mewu.cli")? else { return Ok(None); };
+        if record.state != PluginState::Enabled { return Ok(None); }
+        let canonical = parse_manifest(include_bytes!("../../plugins/official-cli.json"))?;
+        if record.package.source != PluginSource::Official || record.package.manifest != canonical {
+            return Err("命令行插件来源无效".into());
+        }
+        self.check_package(&record.package)?;
+        Ok(Some(record.revision))
+    }
     pub fn open(app_data: &Path) -> Result<Self, String> {
         Self::open_with_blackboard(app_data, false)
     }
@@ -2680,7 +2697,7 @@ mod tests {
     fn model_connection_seed_upgrade_only_adds_eighteen_exact_packages_once() {
         let dir=Directory::new(); let store=PluginStore::open(&dir.0).unwrap();
         // Recreate the previous eight-package registry in this owned fixture.
-        for manifest in bundled_manifests().into_iter().filter(|value|value.id.starts_with("mewu.provider.") || matches!(value.id.as_str(), "mewu.agent" | "mewu.blackboard")) {
+        for manifest in bundled_manifests().into_iter().filter(|value|value.id.starts_with("mewu.provider.") || matches!(value.id.as_str(), "mewu.agent" | "mewu.blackboard" | "mewu.cli")) {
             store.connection.execute("DELETE FROM registry WHERE id=?1",[&manifest.id]).unwrap();
             fs::remove_file(path(&dir.0,&manifest.id,&manifest.version)).unwrap();
             fs::remove_dir(path(&dir.0,&manifest.id,&manifest.version).parent().unwrap()).unwrap();
@@ -4921,6 +4938,42 @@ mod tests {
         assert_eq!(store.snapshot().unwrap(), chosen);
         assert!(store.pin("mewu.pin", 1, "pin").is_err());
         assert!(store.pin("mewu.pin", 2, "pin").is_ok());
+    }
+
+    #[test]
+    fn cli_is_default_enabled_and_an_explicit_disable_or_removal_survives_restart() {
+        let dir = Directory::new();
+        let mut store = PluginStore::open(&dir.0).unwrap();
+        assert_eq!(store.cli_revision().unwrap(), Some(1));
+        store.set_enabled("mewu.cli", 1, false).unwrap();
+        assert_eq!(store.cli_revision().unwrap(), None);
+        drop(store);
+        let mut store = PluginStore::open(&dir.0).unwrap();
+        assert_eq!(store.cli_revision().unwrap(), None);
+        store.set_enabled("mewu.cli", 2, true).unwrap();
+        assert_eq!(store.cli_revision().unwrap(), Some(3));
+        store.uninstall("mewu.cli", 3).unwrap();
+        drop(store);
+        let mut store = PluginStore::open(&dir.0).unwrap();
+        assert_eq!(store.cli_revision().unwrap(), None);
+        store.install_official("mewu.cli", Some(4)).unwrap();
+        assert_eq!(store.cli_revision().unwrap(), Some(5));
+    }
+
+    #[test]
+    fn cli_authority_rejects_a_modified_official_declaration() {
+        let dir = Directory::new();
+        let mut store = PluginStore::open(&dir.0).unwrap();
+        let mut manifest = parse_manifest(include_bytes!("../../plugins/official-cli.json")).unwrap();
+        manifest.description.push_str(" changed");
+        let original = store.snapshot().unwrap();
+        assert!(store.install_package(manifest.clone(), PluginSource::Official, Some(1), true).is_err());
+        assert_eq!(store.snapshot().unwrap(), original);
+        // A distinct installable version must still not acquire the canonical
+        // first-party CLI authority merely by declaring the same contribution.
+        manifest.version = "1.0.1".into();
+        store.install_package(manifest, PluginSource::Official, Some(1), true).unwrap();
+        assert!(store.cli_revision().is_err());
     }
 
     #[test]

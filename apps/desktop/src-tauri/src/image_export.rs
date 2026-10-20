@@ -16,6 +16,12 @@ pub const MAX_ENCODED_BYTES: u64 = 128 * 1024 * 1024;
 pub const JPEG_QUALITY: u8 = 92;
 pub const CANCELED: &str = "图片保存已取消";
 
+/// Explicit console outputs never replace an existing name. The encoder owns
+/// its same-directory temporary and removes that extra link after publication.
+pub(crate) fn publish_new_image(temp: &Path, destination: &Path) -> Result<(), String> {
+    fs::hard_link(temp, destination).map_err(|_| "无法保存图片或目标已存在".into())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ImageSaveFormat {
     Png,
@@ -348,6 +354,30 @@ mod tests {
     }
     fn publish(temp: &Path, dest: &Path) -> Result<(), String> {
         fs::rename(temp, dest).map_err(|_| "rename failed".into())
+    }
+    #[test]
+    fn console_png_publication_is_complete_and_cleans_its_temporary() {
+        let root = TestRoot::new();
+        let pixels = RgbaImage::from_pixel(12, 8, image::Rgba([255, 0, 0, 128]));
+        let path = root.path.join("cli.png");
+        let destination = ImageDestination::prepare(&path, ImageSaveFormat::Png).unwrap();
+        save_image_atomic(ImageSaveFormat::Png, &pixels, &destination, &AtomicBool::new(false), publish_new_image).unwrap();
+        assert_eq!(image::open(&path).unwrap().into_rgba8(), pixels);
+        assert_eq!(fs::read_dir(&root.path).unwrap().count(), 1);
+    }
+    #[test]
+    fn console_export_never_clobbers_a_destination_created_during_encoding() {
+        let root = TestRoot::new();
+        let pixels = RgbaImage::from_pixel(12, 8, image::Rgba([255, 0, 0, 128]));
+        let path = root.path.join("cli.png");
+        let destination = ImageDestination::prepare(&path, ImageSaveFormat::Png).unwrap();
+        let result = save_image_atomic(ImageSaveFormat::Png, &pixels, &destination, &AtomicBool::new(false), |temp, target| {
+            fs::write(target, b"other process output").unwrap();
+            publish_new_image(temp, target)
+        });
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"other process output");
+        assert_eq!(fs::read_dir(&root.path).unwrap().count(), 1);
     }
     #[test]
     fn png_keeps_exact_alpha_and_jpeg_drops_alpha_without_full_rgb_copy() {

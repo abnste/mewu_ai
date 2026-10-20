@@ -1124,5 +1124,7 @@
   "下划线": "Underline",
   "删除线": "Strikethrough",
   "带标注图": "Annotated image",
-  "原图": "Original image"
+  "原图": "Original image",
+  "命令行": "Command line",
+  "从终端访问 Mewu": "Access Mewu from a terminal"
 }

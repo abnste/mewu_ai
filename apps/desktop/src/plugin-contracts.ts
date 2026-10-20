@@ -3,6 +3,7 @@ import type { ConnectionAdvanced } from './contracts';
 export interface ModelConnectionTemplate { providerId: string; group: 'china' | 'global' | 'custom'; baseUrl: string; model: string; searchTerms?: string; advanced: ConnectionAdvanced }
 export type PluginSource = { type: 'official' } | { type: 'local'; path: string } | { type: 'github'; repository: string; commit: string; path: string };
 export type PluginContribution =
+  | { id: string; title: string; kind: 'app.cli' }
   | { id: string; title: string; kind: 'agent.runtime'; engine: 'host.agent-v1' }
   | { id: string; title: string; kind: 'space.blackboard'; engine: 'host.blackboard-v1' }
   | { id: string; title: string; kind: 'model.connection'; template: ModelConnectionTemplate }

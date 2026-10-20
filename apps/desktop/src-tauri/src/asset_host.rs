@@ -101,10 +101,19 @@ pub async fn import_assets(
     app: AppHandle,
     window: WebviewWindow,
     scene_id: String,
+    paths: Option<Vec<String>>,
 ) -> Result<HostSnapshot, String> {
     if window.label() != "space" {
         return Err("此窗口不能导入素材".into());
     }
+    let explicit_paths = paths.map(|paths| {
+        if paths.is_empty() || paths.len() > 32 || paths.iter().any(|path|
+            path.is_empty() || path.len() > 16 * 1024 || path.chars().any(char::is_control)
+            || !std::path::Path::new(path).is_absolute()) {
+            return Err("请提供 1–32 个绝对文件路径".to_string());
+        }
+        Ok(paths.into_iter().map(std::path::PathBuf::from).collect::<Vec<_>>())
+    }).transpose()?;
     crate::recording::ensure_idle(&app)?;
     let host = app.state::<Host>();
     host.exit.ensure_running()?;
@@ -115,12 +124,16 @@ pub async fn import_assets(
     let cancel = Arc::new(AtomicBool::new(false));
     let _invoke = ImportCancellation(cancel.clone());
     host.exit.ensure_running()?;
-    let (target, authoring_grant) = {
-        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+    let (target, authoring_grant, cli_revision) = {
+        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        let cli_revision = if explicit_paths.is_some() {
+            Some(plugins.store.cli_revision()?.ok_or("命令行插件未启用")?)
+        } else { None };
         let engine = host.lock()?;
         (
             ImportTarget::capture(&engine.store, &scene_id)?,
             crate::optional_capabilities::scene_authoring(&engine, &scene_id)?,
+            cli_revision,
         )
     };
     let root = host.assets.clone();
@@ -130,7 +143,7 @@ pub async fn import_assets(
     let (permit, prepared) = tauri::async_runtime::spawn_blocking(move || {
         // The permit stays with actual blocking work even if its caller disappears.
         worker_app.state::<Host>().exit.ensure_running()?;
-        let files = rfd::FileDialog::new()
+        let files = if let Some(files) = explicit_paths { files } else { rfd::FileDialog::new()
             .set_parent(&window)
             .add_filter(
                 "素材",
@@ -140,7 +153,7 @@ pub async fn import_assets(
                 ],
             )
             .pick_files()
-            .unwrap_or_default();
+            .unwrap_or_default() };
         if files.is_empty() {
             return Ok((permit, None));
         }
@@ -192,7 +205,10 @@ pub async fn import_assets(
                 .map_err(|_| "无法读取空间缩放")?,
         );
     let published = {
-        let _plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        let plugins = host.plugins.lock().map_err(|_| "插件状态不可用")?;
+        if let Some(revision) = cli_revision {
+            if plugins.store.cli_revision()? != Some(revision) { return Err("命令行插件已变更".into()); }
+        }
         let mut engine = host.lock()?;
         host.exit.ensure_running()?;
         crate::recording::ensure_idle(&app)?;

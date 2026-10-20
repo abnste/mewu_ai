@@ -1,8 +1,18 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=MEWU_BUILD_COMMIT");
+    // Cargo's PROFILE reports `release` for profiles inheriting release (daily
+    // included). Tauri's production feature controls embedding independently of
+    // optimization/debug_assertions. A fast local package must never depend on
+    // the developer's Vite process to display its windows.
+    if std::env::var("PROFILE").as_deref() == Ok("release") && tauri_build::is_dev() {
+        panic!("Production Mewu builds require --features tauri/custom-protocol (or tauri build)");
+    }
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "get_snapshot",
+            "register_control_renderer",
+            "claim_control_request",
+            "complete_control_request",
             "get_optional_capabilities",
             "create_blackboard",
             "finish_blackboard",
@@ -141,6 +151,7 @@ fn main() {
             "hide_frozen_widget",
             "export_region",
             "export_image_item",
+            "export_control_image",
             "export_snapshot",
             "runtime_info",
             "freeze_space",

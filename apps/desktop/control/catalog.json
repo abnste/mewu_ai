@@ -1,0 +1,3922 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "SPDX-License-Identifier: MPL-2.0",
+  "protocolVersion": 1,
+  "pluginId": "mewu.cli",
+  "transport": "authenticated-local-socket",
+  "operationTtlSeconds": 600,
+  "automaticRetries": false,
+  "schemaUsage": "inputSchema/resultSchema references resolve against this catalog.$defs. Operation input context is stripped by the host and is not forwarded as feature parameters. Native queries do not accept context. Native source, authorization, bounds and exact CAS checks remain authoritative.",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Use the real UUID returned by Mewu; do not invent a source, scene, region or revision."
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "Context": {
+      "type": "object",
+      "properties": {
+        "sceneId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Point": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false
+    },
+    "Region": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "additionalProperties": false,
+      "description": "A new screenshot region in ORIGINAL background pixels, not normalized 0–1 coordinates or viewport CSS pixels. Coordinates must fit the current background. No drawings, OCR, image override or history can be injected here."
+    },
+    "Reference": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "region",
+            "item"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "Refs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Reference"
+      },
+      "minItems": 0,
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "TextStyle": {
+      "type": "object",
+      "properties": {
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strikethrough": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Drawing": {
+      "description": "Manual markup in ORIGINAL background pixels. IDs are UUIDs; the current region drawingRevision is required by DrawingCommand.expectedRevision. Read the fresh document after each write. Native code checks bounds, point relationships, duplicate IDs, history, exact CAS and tool availability. This schema does not create rich/native layouts, provenance or executable SVG.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "kind": {
+              "enum": [
+                "pen",
+                "highlighter"
+              ]
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "strokeWidth": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 64
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point"
+              },
+              "minItems": 1,
+              "maxItems": 4096
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "color",
+            "strokeWidth",
+            "points"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "kind": {
+              "enum": [
+                "line",
+                "arrow",
+                "rect",
+                "ellipse",
+                "mark"
+              ]
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "strokeWidth": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 64
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "color",
+            "strokeWidth",
+            "points"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "kind": {
+              "const": "mosaic"
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "strokeWidth": {
+              "type": "integer",
+              "minimum": 6,
+              "maximum": 40
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "color",
+            "strokeWidth",
+            "points"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "kind": {
+              "const": "text"
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "strokeWidth": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 64
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point"
+              },
+              "minItems": 1,
+              "maxItems": 2
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                },
+                {
+                  "pattern": "^[^\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009f]*$"
+                }
+              ]
+            },
+            "fontSize": {
+              "type": "number",
+              "minimum": 6,
+              "maximum": 256
+            },
+            "textStyle": {
+              "$ref": "#/$defs/TextStyle"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "color",
+            "strokeWidth",
+            "points",
+            "text",
+            "fontSize"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "kind": {
+              "const": "number"
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$"
+            },
+            "strokeWidth": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 64
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Point"
+              },
+              "minItems": 1,
+              "maxItems": 1
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,3}$"
+            },
+            "fontSize": {
+              "type": "number",
+              "minimum": 22,
+              "maximum": 64
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "color",
+            "strokeWidth",
+            "points",
+            "text",
+            "fontSize"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "StrokeFragment": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Point"
+          },
+          "minItems": 1,
+          "maxItems": 4096
+        }
+      },
+      "required": [
+        "id",
+        "points"
+      ],
+      "additionalProperties": false
+    },
+    "StrokeErase": {
+      "type": "object",
+      "properties": {
+        "drawingId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "fragments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StrokeFragment"
+          },
+          "minItems": 0,
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "drawingId",
+        "fragments"
+      ],
+      "additionalProperties": false
+    },
+    "DrawingCommand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "add_drawing"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "drawing": {
+              "$ref": "#/$defs/Drawing"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision",
+            "drawing"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "update_drawing"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "drawing": {
+              "$ref": "#/$defs/Drawing"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision",
+            "drawing"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "update_drawings"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "drawings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Drawing"
+              },
+              "minItems": 1,
+              "maxItems": 256
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision",
+            "drawings"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "erase_drawing_strokes"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "erasures": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/StrokeErase"
+              },
+              "minItems": 1,
+              "maxItems": 256
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision",
+            "erasures"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "remove_drawing"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "drawingId": {
+              "$ref": "#/$defs/Uuid"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision",
+            "drawingId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "remove_drawings"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "drawingIds": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Uuid"
+              },
+              "minItems": 1,
+              "maxItems": 256,
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision",
+            "drawingIds"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "undo_drawing"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "redo_drawing"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "backgroundId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "expectedRevision": {
+              "$ref": "#/$defs/Revision"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId",
+            "backgroundId",
+            "expectedRevision"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "A single durable edit/undo step. expectedRevision is the exact drawingRevision returned by scene.get or the previous mutation receipt. Never guess a revision or retry a failed/unknown write automatically. Native rich-layout references cannot be fabricated through this schema."
+    },
+    "OcrTarget": {
+      "type": "object",
+      "properties": {
+        "sceneId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "regionId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "backgroundId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "drawingRevision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "sceneId",
+        "regionId",
+        "backgroundId",
+        "drawingRevision",
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "additionalProperties": false,
+      "description": "Exact current region identity, drawing revision and original background-pixel geometry from scene.get. The host revalidates source and plugin authority before and after work."
+    },
+    "SceneCommand": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "rename_scene"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "title"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "set_agent"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "agentId": {
+              "$ref": "#/$defs/Uuid"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "agentId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "set_scene_connection"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "connectionId": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "connectionId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "remove_region"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "regionId": {
+              "$ref": "#/$defs/Uuid"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "regionId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "remove_item"
+            },
+            "sceneId": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "itemId": {
+              "$ref": "#/$defs/Uuid"
+            }
+          },
+          "required": [
+            "type",
+            "sceneId",
+            "itemId"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Finite scene changes only. Does not expose arbitrary Tauri commands, credential changes, MCP grants, filesystem operations or arbitrary Store commands."
+    },
+    "CompactReceipt": {
+      "type": "object",
+      "properties": {
+        "sceneId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "backgroundId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sceneId",
+        "revision",
+        "backgroundId"
+      ],
+      "additionalProperties": false
+    },
+    "RecordingStatus": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Actual native recording status. stop/cancel may return a stopping state; they do not by themselves prove a completed playable file.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "sceneId": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "phase": {
+          "enum": [
+            "countdown",
+            "starting",
+            "recording",
+            "paused",
+            "stopping"
+          ]
+        },
+        "countdown": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rect": {
+          "type": "object"
+        },
+        "stopHotkey": {
+          "type": "string"
+        },
+        "audio": {
+          "type": "string"
+        },
+        "retainMain": {
+          "type": "boolean"
+        },
+        "hud": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "sceneId",
+        "phase"
+      ],
+      "additionalProperties": true
+    },
+    "ScrollStatus": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Uuid"
+        },
+        "phase": {
+          "enum": [
+            "starting",
+            "capturing",
+            "finishing"
+          ]
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "status": {
+          "enum": [
+            "initial",
+            "extended",
+            "retraced",
+            "unchanged",
+            "low_information",
+            "ambiguous",
+            "lost_overlap",
+            "limit_reached"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "phase",
+        "width",
+        "height",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "AsyncAccepted": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "$ref": "#/$defs/TokenId"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "accepted"
+          ]
+        },
+        "duplicate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operationId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "TokenId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "ControlError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "not_sent",
+            "executed",
+            "unknown"
+          ]
+        },
+        "retryable": {
+          "const": false
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "outcome",
+        "retryable"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "commands": [
+    {
+      "method": "capture.open",
+      "description": "唤起原有截图空间，保留三端原生截图授权与交互。返回已提交的背景标识，不内嵌截图二进制。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-capture-open",
+            "method": "capture.open",
+            "params": {
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001",
+                "revision": 8
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "region.add",
+      "description": "在当前截图原始像素坐标中添加选区，并添加其引用。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "region": {
+            "$ref": "#/$defs/Region"
+          },
+          "backgroundId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "region",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regionId": {
+            "$ref": "#/$defs/Uuid"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "regionId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-region-add",
+            "method": "region.add",
+            "params": {
+              "region": {
+                "id": "00000000-0000-4000-8000-000000000003",
+                "x": 20,
+                "y": 30,
+                "width": 400,
+                "height": 240
+              },
+              "backgroundId": "00000000-0000-4000-8000-000000000002",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "chat.setDraft",
+      "description": "保存对话草稿。expectedDraft 可防止覆盖用户已修改的文本。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "expectedDraft": {
+            "type": "string"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draftSaved": {
+            "const": true
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "draftSaved"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-chat-setDraft",
+            "method": "chat.setDraft",
+            "params": {
+              "text": "请解释选区",
+              "expectedDraft": "",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "chat.send",
+      "description": "通过当前所选 Agent 引擎发送文本和引用；独立于具体模型或第三方 Agent 插件。仅启动回答，后续使用 run.get。显式文本不会先覆盖用户正在编辑的本地草稿。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "refs": {
+            "$ref": "#/$defs/Refs"
+          },
+          "expectedDraft": {
+            "type": "string"
+          },
+          "expectedRefs": {
+            "$ref": "#/$defs/Refs"
+          },
+          "regionId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "runStatus": {
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "canceled"
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "runId",
+          "runStatus"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-chat-send",
+            "method": "chat.send",
+            "params": {
+              "text": "解释这个截图区域",
+              "refs": [
+                {
+                  "kind": "region",
+                  "id": "00000000-0000-4000-8000-000000000003"
+                }
+              ],
+              "regionId": "00000000-0000-4000-8000-000000000003",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "chat.cancel",
+      "description": "取消精确的当前回答。expectedRunId 不匹配时拒绝，避免取消后续新回答。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "expectedRunId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "expectedRunId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "canceled": {
+            "const": true
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "runId",
+          "canceled"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-chat-cancel",
+            "method": "chat.cancel",
+            "params": {
+              "expectedRunId": "00000000-0000-4000-8000-000000000006",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "blackboard.create",
+      "description": "打开电子黑板；截图选区沿原 UI 交互带入黑板。需要电子黑板插件启用。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blackboard": {
+            "const": true
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "blackboard"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-blackboard-create",
+            "method": "blackboard.create",
+            "params": {
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "blackboard.finish",
+      "description": "排空黑板作者状态并完成黑板，回到原截图/对话空间。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blackboard": {
+            "const": false
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "blackboard"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-blackboard-finish",
+            "method": "blackboard.finish",
+            "params": {
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "blackboard.open",
+      "description": "重开当前空间中已有的黑板对象。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "itemId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "blackboard": {
+            "const": true
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "blackboard"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-blackboard-open",
+            "method": "blackboard.open",
+            "params": {
+              "itemId": "00000000-0000-4000-8000-000000000004",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "drawing.apply",
+      "description": "在当前截图/黑板选区执行一次普通绘制、擦除、批量删除或撤销重做。复用原生绘制和 CAS 历史。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "$ref": "#/$defs/DrawingCommand"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regionId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "drawingRevision": {
+            "$ref": "#/$defs/Revision"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "regionId",
+          "drawingRevision"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-drawing-apply",
+            "method": "drawing.apply",
+            "params": {
+              "command": {
+                "type": "add_drawing",
+                "sceneId": "00000000-0000-4000-8000-000000000001",
+                "regionId": "00000000-0000-4000-8000-000000000003",
+                "backgroundId": "00000000-0000-4000-8000-000000000002",
+                "expectedRevision": 0,
+                "drawing": {
+                  "id": "00000000-0000-4000-8000-000000000007",
+                  "kind": "arrow",
+                  "color": "#FF3B30",
+                  "strokeWidth": 3,
+                  "points": [
+                    {
+                      "x": 40,
+                      "y": 50
+                    },
+                    {
+                      "x": 200,
+                      "y": 150
+                    }
+                  ]
+                }
+              },
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "recording.start",
+      "description": "录制当前真实屏幕选区，沿用原音频偏好、倒计时与控制条。Wayland 若需新授权选区会返回 requiresSelection，不冒称已开始录制。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "backgroundId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "regionId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recordingStatus": {
+            "$ref": "#/$defs/RecordingStatus"
+          },
+          "requiresSelection": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "recordingStatus"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-recording-start",
+            "method": "recording.start",
+            "params": {
+              "regionId": "00000000-0000-4000-8000-000000000003",
+              "backgroundId": "00000000-0000-4000-8000-000000000002",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "recording.control",
+      "description": "对精确录屏 ID 暂停、继续、停止或取消。停止回执可能仍在排空成片，使用 recording.status 与 scene.get 查看最终视频。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "action": {
+            "enum": [
+              "pause",
+              "resume",
+              "stop",
+              "cancel"
+            ]
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "id",
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recordingId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "recordingStatus": {
+            "$ref": "#/$defs/RecordingStatus"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "recordingId",
+          "recordingStatus"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-recording-control",
+            "method": "recording.control",
+            "params": {
+              "id": "00000000-0000-4000-8000-000000000008",
+              "action": "stop"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scroll.start",
+      "description": "在真实已保存截图选区中启动原长截图。仅已启用且适用于本平台的插件贡献可执行。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "contributionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "target": {
+            "$ref": "#/$defs/OcrTarget"
+          },
+          "snapshotNodeId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4294967295
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "pluginId",
+          "revision",
+          "contributionId",
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scrollStatus": {
+            "$ref": "#/$defs/ScrollStatus"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "scrollStatus"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scroll-start",
+            "method": "scroll.start",
+            "params": {
+              "pluginId": "mewu.scroll",
+              "revision": 1,
+              "contributionId": "capture",
+              "target": {
+                "sceneId": "00000000-0000-4000-8000-000000000001",
+                "regionId": "00000000-0000-4000-8000-000000000003",
+                "backgroundId": "00000000-0000-4000-8000-000000000002",
+                "drawingRevision": 0,
+                "x": 20,
+                "y": 30,
+                "width": 400,
+                "height": 240
+              },
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scroll.control",
+      "description": "完成或取消精确的长截图操作。stop 映射到原长截图 finish 操作，等待成片仍需查看场景结果。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "action": {
+            "enum": [
+              "stop",
+              "cancel"
+            ]
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "id",
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scrollId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "scrollStatus": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ScrollStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "scrollId",
+          "scrollStatus"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scroll-control",
+            "method": "scroll.control",
+            "params": {
+              "id": "00000000-0000-4000-8000-000000000009",
+              "action": "stop"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.activate",
+      "description": "先保存当前 UI 状态，再切换到指定历史/活跃场景。context.sceneId 是切换前的活动场景，params.sceneId 是目标。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "sceneId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-activate",
+            "method": "scene.activate",
+            "params": {
+              "sceneId": "00000000-0000-4000-8000-000000000010",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.new",
+      "description": "沿原场景命令创建新截图空间。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-new",
+            "method": "scene.new",
+            "params": {
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.newConversation",
+      "description": "在当前场景开始新对话，保留原有会话历史。需要 Agent 能力可用。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-newConversation",
+            "method": "scene.newConversation",
+            "params": {
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.freeze",
+      "description": "通过原最小化交互保存并最小化当前会话。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-freeze",
+            "method": "scene.freeze",
+            "params": {
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.close",
+      "description": "保存作者状态并关闭当前会话；保留已保存历史与独立置顶对象。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-close",
+            "method": "scene.close",
+            "params": {
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.command",
+      "description": "执行有限的场景重命名、角色/模型选择、选区或对象移除命令。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "$ref": "#/$defs/SceneCommand"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-command",
+            "method": "scene.command",
+            "params": {
+              "command": {
+                "type": "set_agent",
+                "sceneId": "00000000-0000-4000-8000-000000000001",
+                "agentId": "00000000-0000-4000-8000-000000000005"
+              },
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "references.set",
+      "description": "保存显式截图/对象引用列表。expectedRefs 可拒绝覆盖已变化的引用列表。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "refs": {
+            "$ref": "#/$defs/Refs"
+          },
+          "expectedRefs": {
+            "$ref": "#/$defs/Refs"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "refs"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "referencesSaved": {
+            "const": true
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "referencesSaved"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-references-set",
+            "method": "references.set",
+            "params": {
+              "refs": [
+                {
+                  "kind": "region",
+                  "id": "00000000-0000-4000-8000-000000000003"
+                }
+              ],
+              "expectedRefs": [],
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "settings.open",
+      "description": "打开原设置窗口。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "settingsOpened": {
+            "const": true
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "settingsOpened"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-settings-open",
+            "method": "settings.open",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "asset.import",
+      "description": "从明确本机路径导入文件到当前空间，沿用原素材验证、保存、对象和引用逻辑；不弹文件选择器。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32767,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "description": "Explicit local file path. Use an absolute path on the current host; no URL. Native code validates the opened source or output destination."
+            },
+            "minItems": 1,
+            "maxItems": 32,
+            "uniqueItems": true
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "itemId": {
+                  "$ref": "#/$defs/Uuid"
+                },
+                "assetId": {
+                  "$ref": "#/$defs/Uuid"
+                },
+                "kind": {
+                  "enum": [
+                    "image",
+                    "video",
+                    "html",
+                    "svg",
+                    "text",
+                    "file"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "itemId",
+                "assetId",
+                "kind",
+                "name"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 32
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-asset-import",
+            "method": "asset.import",
+            "params": {
+              "paths": [
+                "/absolute/path/input.png"
+              ],
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "image.export",
+      "description": "将截图选区导出为带标注图或原图到明确路径。返回实际保存回执；不会把点击 UI 按钮当作已导出。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "variant": {
+            "enum": [
+              "annotated",
+              "original"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32767,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "description": "Explicit local file path. Use an absolute path on the current host; no URL. Native code validates the opened source or output destination."
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "regionId",
+          "variant",
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32767,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "description": "Explicit local file path. Use an absolute path on the current host; no URL. Native code validates the opened source or output destination."
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "output"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-image-export",
+            "method": "image.export",
+            "params": {
+              "regionId": "00000000-0000-4000-8000-000000000003",
+              "variant": "annotated",
+              "path": "/absolute/path/output.png",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "ocr.run",
+      "description": "调用已启用的原生 OCR 插件贡献并返回实际识别文本；无新 OCR 引擎或虚假结果。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "contributionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "target": {
+            "$ref": "#/$defs/OcrTarget"
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "pluginId",
+          "revision",
+          "contributionId",
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regionId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "regionId",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-ocr-run",
+            "method": "ocr.run",
+            "params": {
+              "pluginId": "mewu.ocr",
+              "revision": 1,
+              "contributionId": "recognize",
+              "target": {
+                "sceneId": "00000000-0000-4000-8000-000000000001",
+                "regionId": "00000000-0000-4000-8000-000000000003",
+                "backgroundId": "00000000-0000-4000-8000-000000000002",
+                "drawingRevision": 0,
+                "x": 20,
+                "y": 30,
+                "width": 400,
+                "height": 240
+              },
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "translation.run",
+      "description": "执行原截图翻译插件，等待译文图层实际保存后返回译文和图层 ID。省略 language 使用用户设置。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "contributionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "target": {
+            "$ref": "#/$defs/OcrTarget"
+          },
+          "language": {
+            "enum": [
+              "zh-Hans",
+              "en",
+              "ja",
+              "ko",
+              "de",
+              "fr",
+              "es"
+            ]
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "pluginId",
+          "revision",
+          "contributionId",
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regionId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "overlayId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "language": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "regionId",
+          "overlayId",
+          "language",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-translation-run",
+            "method": "translation.run",
+            "params": {
+              "pluginId": "mewu.translation",
+              "revision": 1,
+              "contributionId": "translate",
+              "target": {
+                "sceneId": "00000000-0000-4000-8000-000000000001",
+                "regionId": "00000000-0000-4000-8000-000000000003",
+                "backgroundId": "00000000-0000-4000-8000-000000000002",
+                "drawingRevision": 0,
+                "x": 20,
+                "y": 30,
+                "width": 400,
+                "height": 240
+              },
+              "language": "en",
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "pin.create",
+      "description": "通过原置顶插件将精确截图区域置顶。translationId:null 使用原区域，省略时沿用已有译文图层。",
+      "execution": "operation",
+      "asyncOperation": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pluginId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "contributionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "target": {
+            "$ref": "#/$defs/OcrTarget"
+          },
+          "translationId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "context": {
+            "$ref": "#/$defs/Context"
+          }
+        },
+        "required": [
+          "pluginId",
+          "revision",
+          "contributionId",
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "backgroundId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pinId": {
+            "$ref": "#/$defs/Uuid"
+          }
+        },
+        "required": [
+          "sceneId",
+          "revision",
+          "backgroundId",
+          "pinId"
+        ],
+        "additionalProperties": false
+      },
+      "acceptedSchema": {
+        "$ref": "#/$defs/AsyncAccepted"
+      },
+      "completion": "Poll operation.get with the same operationId. A successful enqueue/claim is not success of the requested feature. Unknown outcomes are never automatically retried.",
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-pin-create",
+            "method": "pin.create",
+            "params": {
+              "pluginId": "mewu.pin",
+              "revision": 1,
+              "contributionId": "pin",
+              "target": {
+                "sceneId": "00000000-0000-4000-8000-000000000001",
+                "regionId": "00000000-0000-4000-8000-000000000003",
+                "backgroundId": "00000000-0000-4000-8000-000000000002",
+                "drawingRevision": 0,
+                "x": 20,
+                "y": 30,
+                "width": 400,
+                "height": 240
+              },
+              "translationId": null,
+              "context": {
+                "sceneId": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "app.status",
+      "description": "读取当前主进程、平台、活动场景和 CLI 插件修订号。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "protocolVersion": {
+            "const": 1
+          },
+          "application": {
+            "const": "MewuAI"
+          },
+          "version": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "activeSceneId": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "cliPluginRevision": {
+            "$ref": "#/$defs/Revision"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "application",
+          "version",
+          "platform",
+          "activeSceneId",
+          "revision",
+          "cliPluginRevision"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-app-status",
+            "method": "app.status",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "app.schema",
+      "description": "读取此协议目录、输入/回执 Schema 和示例。可发现的方法不保证当前插件、模型、系统授权均已就绪；执行时由宿主验证。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "protocolVersion": {
+            "const": 1
+          },
+          "pluginId": {
+            "const": "mewu.cli"
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "minItems": 1,
+            "maxItems": 128
+          },
+          "$defs": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "pluginId",
+          "commands",
+          "$defs"
+        ],
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-app-schema",
+            "method": "app.schema",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "app.capabilities",
+      "description": "读取此协议目录、输入/回执 Schema 和示例。可发现的方法不保证当前插件、模型、系统授权均已就绪；执行时由宿主验证。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "protocolVersion": {
+            "const": 1
+          },
+          "pluginId": {
+            "const": "mewu.cli"
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "minItems": 1,
+            "maxItems": 128
+          },
+          "$defs": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "pluginId",
+          "commands",
+          "$defs"
+        ],
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-app-capabilities",
+            "method": "app.capabilities",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.list",
+      "description": "分页读取场景摘要，不默认导出全部历史正文。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "scenes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/Uuid"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "agentId": {
+                  "$ref": "#/$defs/Uuid"
+                },
+                "frozen": {
+                  "type": "boolean"
+                },
+                "closed": {
+                  "type": "boolean"
+                },
+                "regionCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "itemCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "messageCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "agentId",
+                "frozen",
+                "closed",
+                "regionCount",
+                "itemCount",
+                "messageCount"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 0,
+            "maxItems": 100
+          },
+          "nextOffset": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "scenes",
+          "nextOffset"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-list",
+            "method": "scene.list",
+            "params": {
+              "offset": 0,
+              "limit": 20
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "scene.get",
+      "description": "读取一个场景的背景、选区、对象、引用、草稿、绘制 revision 和最近消息。limit 仅限制最近消息；过大结果明确拒绝，不静默截断。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        },
+        "required": [
+          "sceneId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "agentId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "background": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "minItems": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "minItems": 0
+          },
+          "refs": {
+            "$ref": "#/$defs/Refs"
+          },
+          "draft": {
+            "type": "string"
+          },
+          "frozen": {
+            "type": "boolean"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/Uuid"
+                  },
+                  "status": {
+                    "enum": [
+                      "running",
+                      "completed",
+                      "failed",
+                      "canceled"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "status"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "minItems": 0,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "sceneId",
+          "title",
+          "agentId",
+          "revision",
+          "regions",
+          "items",
+          "refs",
+          "draft",
+          "frozen",
+          "closed",
+          "messages"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-scene-get",
+            "method": "scene.get",
+            "params": {
+              "sceneId": "00000000-0000-4000-8000-000000000001",
+              "limit": 20
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "run.get",
+      "description": "读取指定场景当前回答状态和最近消息；不触发模型请求，不把轮询当成自动重试。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        },
+        "required": [
+          "sceneId"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "sceneId": {
+            "$ref": "#/$defs/Uuid"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/$defs/Uuid"
+                  },
+                  "status": {
+                    "enum": [
+                      "running",
+                      "completed",
+                      "failed",
+                      "canceled"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "status"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "minItems": 0,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "sceneId",
+          "run",
+          "messages"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-run-get",
+            "method": "run.get",
+            "params": {
+              "sceneId": "00000000-0000-4000-8000-000000000001",
+              "limit": 5
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "agent.list",
+      "description": "列出灵魂设定和记忆提供方等公开角色配置，独立于 Agent 底座。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "name": {
+              "type": "string"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "memory": {
+              "type": "string"
+            },
+            "memoryEnabled": {
+              "type": "boolean"
+            },
+            "defaultConnectionId": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memoryProvider": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "instructions",
+            "memory",
+            "memoryEnabled"
+          ],
+          "additionalProperties": true
+        },
+        "minItems": 0
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-agent-list",
+            "method": "agent.list",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "model.list",
+      "description": "列出公开模型连接资料。hasKey/credentialId 仅表示配置和宿主引用，不返回 API 密钥。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Uuid"
+            },
+            "name": {
+              "type": "string"
+            },
+            "providerId": {
+              "type": "string"
+            },
+            "baseUrl": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "hasKey": {
+              "type": "boolean"
+            },
+            "credentialId": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "advanced": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "providerId",
+            "baseUrl",
+            "model",
+            "hasKey",
+            "revision"
+          ],
+          "additionalProperties": true
+        },
+        "minItems": 0
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-model-list",
+            "method": "model.list",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "plugin.list",
+      "description": "读取真实已安装插件、启停状态、贡献点和 revision，供 OCR、翻译、置顶和长截图调用选择。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "$ref": "#/$defs/Revision"
+          },
+          "plugins": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "minItems": 0
+          }
+        },
+        "required": [
+          "revision",
+          "plugins"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-plugin-list",
+            "method": "plugin.list",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "recording.status",
+      "description": "读取原生当前录屏状态或 null。null 表示当前无活动录屏，不单独证明上一成片已导出。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "$ref": "#/$defs/RecordingStatus"
+      },
+      "examples": [
+        {
+          "description": "Replace example UUIDs/revisions/paths/plugin IDs with values from app.status, scene.get and plugin.list on the current host.",
+          "request": {
+            "id": "example-recording-status",
+            "method": "recording.status",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "method": "operation.get",
+      "description": "查询一个异步操作回执。queued/running 不代表成功，failed.error.outcome 区分未执行、已执行和结果未知；不自动重复未知操作。",
+      "execution": "query",
+      "asyncOperation": false,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/TokenId"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "resultSchema": {
+        "type": "object",
+        "properties": {
+          "operationId": {
+            "$ref": "#/$defs/TokenId"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "result": {},
+          "error": {
+            "$ref": "#/$defs/ControlError"
+          }
+        },
+        "required": [
+          "operationId",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "description": "Use the operationId returned by an operation request; preserve this ID until completion instead of submitting the same action under a new ID.",
+          "request": {
+            "id": "example-operation-get",
+            "method": "operation.get",
+            "params": {
+              "id": "example-capture-open"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "queuedTimeoutSeconds": 30,
+  "claimedTimeoutSeconds": 300,
+  "timeoutSemantics": "Queued expiry is not_sent. Claimed expiry is unknown and never proves cancellation of the native feature. Inspect actual state; do not replay automatically."
+}

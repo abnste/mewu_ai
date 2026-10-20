@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-register-control-renderer"
+description = "Enables the register_control_renderer command without any pre-configured scope."
+commands.allow = ["register_control_renderer"]
+
+[[permission]]
+identifier = "deny-register-control-renderer"
+description = "Denies the register_control_renderer command without any pre-configured scope."
+commands.deny = ["register_control_renderer"]

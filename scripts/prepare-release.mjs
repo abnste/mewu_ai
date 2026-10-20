@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { releaseVersion, releasePlan, updateUrl, fingerprint, regularFile, verifySignatureVersion, validateUpdateConfiguration } from './release-contract.mjs';
+import { inspectPortableCli, portableFiles } from './cli-package.mjs';
 const root = fs.realpathSync(process.cwd());
 const config = JSON.parse(fs.readFileSync('apps/desktop/src-tauri/tauri.conf.json', 'utf8'));
 validateUpdateConfiguration(config);
@@ -32,13 +33,19 @@ fs.mkdirSync(output, { recursive: true });
 for (const [source, name] of sources) fs.copyFileSync(source, path.join(output, name));
 if (platform === 'windows-x86_64') {
   const binary = path.resolve(request.binary || defaults.binary); regularFile(binary);
+  const cliBinary = path.resolve(request.cliBinary || path.join(path.dirname(binary), 'mewu.exe')); regularFile(cliBinary);
+  const binaries = [[binary, 'MewuAI.exe'], [cliBinary, 'mewu.exe']].map(([source, name]) => ({ source, name, before: fingerprint(source) }));
   const portable = path.join(output, '.portable'); fs.mkdirSync(portable);
-  fs.copyFileSync(binary, path.join(portable, 'MewuAI.exe'));
+  for (const { source, name } of binaries) fs.copyFileSync(source, path.join(portable, name));
   for (const [source, name] of [['LICENSE', 'LICENSE'], ['apps/desktop/THIRD-PARTY-NOTICES', 'THIRD-PARTY-NOTICES']]) fs.copyFileSync(source, path.join(portable, name));
   fs.writeFileSync(path.join(portable, 'SOURCE.md'), `# Mewu ${version}\n\nSource: https://github.com/abnste/mewu_ai/tree/${tag}\n\nCommit: ${commit}\n\nMPL-2.0. Third-party rights and license texts are retained in THIRD-PARTY-NOTICES.\n`);
+  inspectPortableCli(portable);
+  for (const { source, name, before } of binaries) {
+    for (const actual of [fingerprint(source), fingerprint(path.join(portable, name))]) if (actual.bytes !== before.bytes || actual.sha256 !== before.sha256) throw Error('CLI/native binary changed during portable staging');
+  }
   const quote = value => `'${value.replaceAll("'", "''")}'`;
   execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Compress-Archive -LiteralPath ${fs.readdirSync(portable).map(name => quote(path.join(portable, name))).join(',')} -DestinationPath ${quote(path.join(output, plan.files[1]))} -CompressionLevel Optimal`], { stdio: 'pipe' });
-  for (const name of ['MewuAI.exe', 'LICENSE', 'THIRD-PARTY-NOTICES', 'SOURCE.md']) fs.unlinkSync(path.join(portable, name));
+  for (const name of portableFiles) fs.unlinkSync(path.join(portable, name));
   fs.rmdirSync(portable);
 }
 for (let i = 0; i < sources.length; i++) {

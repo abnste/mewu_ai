@@ -798,6 +798,7 @@ fn start_shutdown(
             let _ =
                 crate::shared_capture_windows::abandon_for_process_exit(&app.state::<Host>().exit);
             crate::pin_host::shutdown(&app);
+            crate::app_control_host::shutdown(&app);
             if let Some(update) = update {
                 // Windows installer launch exits the process. Do this only once
                 // drafts, media, native workers and durable cancellations settled.

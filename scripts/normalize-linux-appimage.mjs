@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 const MAX_ENTRIES = 4096, MAX_DEPTH = 16, MAX_FILE = 512 * 1024 * 1024, MAX_TOTAL = 2 * 1024 * 1024 * 1024;
 const REQUIRED = [
-  ['usr/bin/MewuAI', 'file'], ['usr/lib/gtk-3.0', 'dir'],
+  ['usr/bin/MewuAI', 'file'], ['usr/bin/mewu', 'file'], ['usr/lib/gtk-3.0', 'dir'],
+  ['usr/lib/MewuAI/cli/integrate-unix.sh', 'file'],
   ['usr/lib/gtk-3.0/3.0.0/immodules.cache', 'file'],
   ['usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache', 'file'],
   ['usr/lib/girepository-1.0', 'dir'], ['usr/lib/gio/modules', 'dir'],
@@ -75,7 +76,7 @@ export async function inspectAppDir(input, { normalized = false, requireResource
   if (requireResources) for (const [relative, kind] of REQUIRED) {
     const entry = entries.find(e => e.relative === relative);
     if (!entry || entry.kind !== kind) fail('Required package resource missing');
-    if ((relative === 'usr/bin/MewuAI' || relative.endsWith('gst-plugin-scanner') || relative.endsWith('gst-ptp-helper')) && !(entry.mode & 0o111)) fail('Required executable missing permission');
+    if ((relative === 'usr/bin/MewuAI' || relative === 'usr/bin/mewu' || relative.endsWith('gst-plugin-scanner') || relative.endsWith('gst-ptp-helper')) && !(entry.mode & 0o111)) fail('Required executable missing permission');
   }
   return { root, entries, totalBytes };
 }
