@@ -26,6 +26,18 @@ export default definePlugin(ctx => {
 
 插件目录只包含 `mewu-plugin.json` 与 `.js` / `.mjs` 模块。清单需声明 `schemaVersion: 2`、`hostApi: 2`、`runtime: "javascript"` 和入口文件。完整示例在仓库 `extensions/examples`。
 
+清单可声明自己的 `icon`，市场、已安装列表与截图窗口的插件按钮共用它：
+
+```json
+"icon": {
+  "paths": ["M4 4h16v16H4z", "M8 8l8 8"],
+  "color": "#8b5cf6",
+  "filled": false
+}
+```
+
+路径使用固定 `0 0 24 24` SVG 坐标系，最多 16 条、每条 4096 字节、合计 8192 字节；颜色可省略以适配当前主题，或指定六位十六进制颜色。`filled` 默认 `false`。只接受路径数据，不接受 SVG/HTML 字符串、脚本、外部图片或 URL。未声明时按插件功能显示默认图标。此可选字段需使用支持图标的新版宿主；旧插件包无需重发，市场条目可提供图标，但不能覆盖包内已声明的不同图标。
+
 普通 JavaScript 插件省略清单 `platforms`、市场条目填写 `platforms: ["any"]`，同一个 ZIP 即可在 Windows、macOS、Linux 使用同一套 SDK。仅整包确实依赖本机能力时，才填写 `platforms: ["windows-x86_64"]` 等允许清单；另两个目标为 `darwin-aarch64`、`linux-x86_64`。市场不得声明比包更广的平台，`any` 不能与具体平台混用。本地安装、启用、回退、依赖和运行也受宿主校验，无法仅绕过按钮安装。
 
 同包只有个别功能受限时，用服务 `metadata.platforms` 限制该功能，其他 UI、记忆等继续跨平台。`metadata.requiresRegion: true` 的原生区域操作目前仅 Windows 可用，其他系统显示禁用原因；不能仅凭插件是 JavaScript 就宣称所有本机能力都已实现。处理函数内可按宿主提供的 `context.platform`（`windows` / `macos` / `linux`）适配可选行为。

@@ -45,3 +45,23 @@ test('actual native catalog rejects duplicate identity, unknown root metadata an
     await assert.rejects(validate('extension-catalog', encoded(value)));
   }
 });
+
+test('actual host accepts bounded vector icons in manifests and market entries without changing old packages', async () => {
+  const icon = { paths: ['M4 4h16v16H4z', 'M8 8l8 8'], color: '#8b5cf6', filled: false };
+  assert.deepEqual((await validate('extension-manifest', encoded({ ...manifest, icon }))).icon, icon);
+  assert.deepEqual((await validate('extension-entry', encoded({ ...entry, icon }))).icon, icon);
+  assert.equal('icon' in await validate('extension-manifest', encoded(manifest)), false);
+  assert.equal('icon' in await validate('extension-entry', encoded(entry)), false);
+  assert.equal((await validate('extension-entry', encoded({ ...entry, icon: { paths: ['M0 0L1 1'] } }))).icon.filled, false);
+  const invalid = [
+    { paths: [] }, { paths: Array(17).fill('M0 0') }, { paths: [' '] }, { paths: ['M'.repeat(4097)] },
+    { paths: Array(3).fill('M'.repeat(3000)) }, { paths: ['<script>alert(1)</script>'] },
+    { paths: ['M0 0'], color: 'url(https://example.com/icon)' }, { paths: ['M0 0'], color: '#fff' },
+    { paths: ['M0 0'], filled: 'yes' }, { paths: ['M0 0'], onload: 'alert(1)' },
+    { url: 'https://example.com/icon.svg' }, '<svg></svg>',
+  ];
+  for (const value of invalid) {
+    await assert.rejects(validate('extension-manifest', encoded({ ...manifest, icon: value })));
+    await assert.rejects(validate('extension-entry', encoded({ ...entry, icon: value })));
+  }
+});

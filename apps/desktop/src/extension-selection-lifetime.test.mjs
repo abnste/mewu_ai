@@ -86,12 +86,12 @@ async function fixture({ draft = 'Click the test control', multiple = false } = 
     stopExtension: async id => { stops.push(id); },
   });
   const state = new SourceTextModule(ts(await raw('./extension-state.ts')), { context }); await state.link(() => { throw Error('Unexpected state import'); }); await state.evaluate();
-  const icons = synthetic(Object.fromEntries(['LoaderCircle', 'Puzzle', 'Square', 'X'].map(name => [name, () => renderer.createElement('svg')])));
+  const icons = synthetic(Object.fromEntries(['LoaderCircle', 'Ellipsis', 'Square', 'X'].map(name => [name, () => renderer.createElement('svg')])));
   const compile = source => ts(transformSync(source, { filename: 'selection-lifetime.tsx', babelrc: false, configFile: false,
     parserOpts: { plugins: ['typescript', 'jsx'] }, presets: [[solidPreset, { generate: 'universal', moduleName: 'test-renderer' }]] }).code);
   const child = new SourceTextModule(compile(await raw('./components/ExtensionSelectionTools.tsx')), { context });
   await child.link(name => name === 'solid-js' ? core : name === 'test-renderer' ? rendererModule : name === 'lucide-solid' ? icons
-    : name === '../extension-bridge' ? native : name === '../extension-state' ? state : name === '../i18n' ? synthetic({ t: value => value }) : synthetic({}));
+    : name === '../extension-bridge' ? native : name === '../extension-state' ? state : name === '../i18n' ? synthetic({ t: value => value }) : name === './PluginIcon' ? synthetic({ default: () => renderer.createElement('svg') }) : synthetic({}));
   await child.evaluate();
   const owner = new SourceTextModule(compile(harness), { context });
   await owner.link(name => name === 'solid-js' ? core : name === 'test-renderer' ? rendererModule : child); await owner.evaluate();

@@ -65,6 +65,9 @@ pub fn validate_package(
     modules: &BTreeMap<String, String>,
 ) -> Result<(), ExtensionError> {
     let invalid = ExtensionError::InvalidPackage;
+    if manifest.icon.as_ref().is_some_and(|icon| !valid_extension_icon(icon)) {
+        return Err(invalid("invalid extension icon"));
+    }
     if manifest.platforms.as_ref().is_some_and(|p| !valid_plugin_platforms(p)) {
         return Err(invalid("invalid extension platforms"));
     }

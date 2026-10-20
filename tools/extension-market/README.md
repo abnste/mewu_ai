@@ -97,15 +97,21 @@ node tools/extension-market/cli.mjs build D:/catalog/entries --out D:/catalog/me
 
 每条记录包括 `id/name/description/tags/repository/version/releaseTag/assetName/sha256/size/hostApi/platforms`，`manifestPath` 如指定只能是根 `mewu-plugin.json`。完整索引为 `{"schemaVersion":2,"plugins":[...]}`，按 ID 排序，以 UTF-8 无 BOM、LF 输出。空目录合法，工具不会捏造种子插件。
 
+`icon` 是可选的结构化 SVG 路径图标，格式见 [SDK 图标说明](../../packages/sdk/README.md)。`publish` 自动从包清单复制图标；旧包无图标时，可只在市场条目中补充，不更换 ZIP、版本或 SHA。包与条目都声明图标时必须一致。新版客户端读取 `mewu-catalog-v2.json`；原 `mewu-catalog.json` 保留不含图标字段的兼容目录，避免旧宿主的严格解析器拒绝整个市场。维护者用同一次已验证构建生成两份目录：
+
+```powershell
+node tools/extension-market/cli.mjs build D:/catalog/entries --out D:/catalog/mewu-catalog-v2.json --legacy-out D:/catalog/mewu-catalog.json --previous D:/catalog/mewu-catalog.json --json
+```
+
 `build` 默认实际核验每条 GitHub Release ZIP。`--offline` 仅做开发结构检查，结果明确标识 `releasesVerified:false`；公开目录发布不可使用它。`--previous` 指定可信旧目录，避免 PR 通过替换生成文件掩盖 ID 换源；已有 ID 的仓库不能悄悄变更。安装端仍要独立绑定已安装插件的来源并重新验包。对于移除后保留的永久 ID 所有权，目录维护者须保留历史或保留条目，不能只凭新 PR 的声明认可转移。
 
 条目目录仅接受直属 `.json` 普通文件，最多 256 条，总计和生成索引各不超过 2 MiB；目录、软链接、杂项和重复身份会失败。全部格式、来源、网络、摘要核验通过后才在输出同目录写临时文件、同步、rename 替换；失败保留原索引。`--check` 不写文件。输出不能放在输入 entries 中。标准 GitHub 下载仅从 API 开始，人工处理 HTTPS 重定向，只允许 GitHub 的资产域名，认证头不随下载重定向转发。
 
 ## 社区仓库与 CI
 
-[community-market](../../community-market/README.md) 可作为独立 `abnste/mewu-plugins` 仓库发布：`entries/<id>.json` 与 `projects/<id>.json` 供 PR 收录，`mewu-catalog.json` 是安装索引，`mewu-projects.json` 是源码与图库索引。初始化模板的索引为空，只有真实发布并验证过的资产才可加入。
+[community-market](../../community-market/README.md) 可作为独立 `abnste/mewu-plugins` 仓库发布：`entries/<id>.json` 与 `projects/<id>.json` 供 PR 收录，`mewu-catalog-v2.json` 是新版安装索引，`mewu-catalog.json` 是旧版兼容索引，`mewu-projects.json` 是源码与图库索引。初始化模板的索引为空，只有真实发布并验证过的资产才可加入。
 
-首次发布前，维护者必须把 `host-source.json` 固定为包含 API 2、项目图库解析器及其工具的可信 Mewu **完整提交 SHA**。`commit:null` 会让 CI 明确失败，不能用 `next`、`main` 或作者 PR 中的代码代替。审核流程只检出社区可信 base，构建固定宿主源码中的原生校验器，随后通过固定 Git tree/blob API 把 PR 的条目和项目元数据读取为 JSON 数据；不检出、不加载、不执行作者的脚本、ZIP 源码或工作流。GitHub 令牌只用于读取官方 API，PR 任务无写权限。合并后主分支任务重新核验真实发行、独立源码和截图，只提交两个生成索引。
+首次发布前，维护者必须把 `host-source.json` 固定为包含 API 2、项目图库解析器及其工具的可信 Mewu **完整提交 SHA**。`commit:null` 会让 CI 明确失败，不能用 `next`、`main` 或作者 PR 中的代码代替。审核流程只检出社区可信 base，构建固定宿主源码中的原生校验器，随后通过固定 Git tree/blob API 把 PR 的条目和项目元数据读取为 JSON 数据；不检出、不加载、不执行作者的脚本、ZIP 源码或工作流。GitHub 令牌只用于读取官方 API，PR 任务无写权限。合并后主分支任务重新核验真实发行、独立源码和截图，只提交新版安装、兼容安装与图库三个生成索引。
 
 ```powershell
 node --test tools/extension-market/test.mjs tools/extension-market/project-test.mjs

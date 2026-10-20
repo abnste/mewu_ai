@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { MAX_PACKAGE_BYTES, readZip } from './zip.mjs';
 
 const apiOrigin = 'https://api.github.com';
@@ -87,6 +88,7 @@ export async function downloadReleaseAsset(repository, release, assetName, expec
 }
 
 export function bindEntryManifest(entry, manifest) {
+  if (manifest.icon && entry.icon && !isDeepStrictEqual(manifest.icon, entry.icon)) throw new Error('目录图标与实际插件清单不符');
   for (const key of ['id', 'name', 'description', 'version', 'hostApi']) {
     if (entry[key] !== manifest[key]) throw new Error(`目录 ${key} 与实际插件清单不符`);
   }

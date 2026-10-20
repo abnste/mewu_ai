@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
-import { ArrowLeft, Check, ChevronRight, Download, LoaderCircle, Puzzle, RefreshCw, Trash2, Undo2, X } from 'lucide-solid';
+import { ArrowLeft, Check, ChevronRight, Download, LoaderCircle, RefreshCw, Trash2, Undo2, X } from 'lucide-solid';
 import * as api from '../extension-bridge';
 import type { ExtensionCatalogEntry, ExtensionControl, ExtensionManifest, ExtensionProposal, ExtensionRecord, ExtensionSource } from '../extension-contracts';
 import { mergeExtensionRecords } from '../extension-state';
@@ -9,6 +9,8 @@ import { pluginTagLabels } from '../plugin-categories';
 import type { PluginTag } from '../plugin-contracts';
 import { t } from '../i18n';
 import ExtensionProjectGallery from './ExtensionProjectGallery';
+import PluginIcon from './PluginIcon';
+import { rememberExtensionIcons } from '../extension-icons';
 
 interface Props {
   active: boolean; pane: 'discover' | 'installed'; query: string; filter: string;
@@ -59,7 +61,7 @@ export default function CommunityExtensions(props: Props) {
       if (beforeEvents === eventSerial) accept(installed);
       if (props.pane === 'discover') {
         const value = await api.getExtensionCatalog();
-        if (!disposed && current === serial) setCatalog(value.plugins);
+        if (!disposed && current === serial) { rememberExtensionIcons(value.plugins); setCatalog(value.plugins); }
       }
       initialized = true;
     } catch (cause) { if (!disposed && current === serial) setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -102,7 +104,7 @@ export default function CommunityExtensions(props: Props) {
     <Show when={loading()}><div class="plugin-loading"><LoaderCircle size={14} class="spin"/>{t('加载中')}</div></Show>
     <Show when={detail()} fallback={<>
       <div class="plugin-list"><For each={entries()}>{entry => <article class="plugin-row">
-        <span class="plugin-glyph"><Puzzle size={18}/></span><div class="plugin-summary">
+        <span class="plugin-glyph"><PluginIcon plugin={entry} source={record(entry.id)?.source} sha256={record(entry.id)?.sha256} size={24}/></span><div class="plugin-summary">
           <button class="plugin-name" onClick={() => open(entry.id)}><span>{entry.name}</span><ChevronRight size={13}/></button>
           <p class="plugin-description">{entry.description}</p><div class="plugin-tags"><span>{entry.version}</span><span>{entry.repository || t('本地开发包')}</span><For each={entry.tags}>{tag => <span>{tagText(tag)}</span>}</For></div>
         </div><div class="plugin-row-actions">
@@ -114,7 +116,7 @@ export default function CommunityExtensions(props: Props) {
       <Show when={api.extensionNative && !loading() && !error() && !entries().length && props.pane === 'discover'}><p class="plugin-empty">{props.query.trim() || props.filter ? t('无匹配插件') : t('目录为空')}</p></Show>
     </>}>{value => <div class="plugin-detail">
       <button class="text-button plugin-detail-back" onClick={back}><ArrowLeft size={14}/>{t('返回')}</button>
-      <div class="plugin-detail-heading"><span class="plugin-glyph"><Puzzle size={20}/></span><div><h3>{value().manifest.name}</h3><div class="plugin-tags"><span>{value().manifest.version}</span><span>{value().source.type === 'github' ? 'GitHub' : t('本地开发包')}</span><For each={value().manifest.tags}>{tag => <span>{tagText(tag)}</span>}</For></div></div></div>
+      <div class="plugin-detail-heading"><span class="plugin-glyph"><PluginIcon plugin={value().manifest} source={value().source} size={26}/></span><div><h3>{value().manifest.name}</h3><div class="plugin-tags"><span>{value().manifest.version}</span><span>{value().source.type === 'github' ? 'GitHub' : t('本地开发包')}</span><For each={value().manifest.tags}>{tag => <span>{tagText(tag)}</span>}</For></div></div></div>
       <p class="plugin-description">{value().manifest.description}</p>
       <ExtensionProjectGallery active={props.active} entry={value().source.type === 'github' ? (value().source as Extract<ExtensionSource, { type: 'github' }>).entry : undefined} name={value().manifest.name}/>
       <div class="plugin-detail-actions"><span class="plugin-status"><Show when={busy()} fallback={selectedError() ? t(selectedError()!) : proposal() ? t('待确认') : status(selectedRecord())}><LoaderCircle size={13} class="spin"/>{t('处理中')}</Show></span>

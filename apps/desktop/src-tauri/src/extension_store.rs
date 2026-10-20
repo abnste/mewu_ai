@@ -542,6 +542,7 @@ mod tests {
                 id: manifest.id.clone(),
                 name: manifest.name.clone(),
                 description: manifest.description.clone(),
+                icon: manifest.icon.clone(),
                 tags: vec![],
                 repository: repository.into(),
                 version: version.into(),

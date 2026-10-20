@@ -78,19 +78,19 @@ test('single space command executes metadata input with its exact scene and no r
   const calls = [], errors = [];
   const api = { extensionNative: true, subscribeExtensions: async () => () => {}, getExtensions: async () => [spaceRecord()],
     invokeExtension: async value => { calls.push(value); return { content: 'Ruler ready' }; }, stopExtension: async () => {} };
-  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'trigger', 'running', 'result', 'menu'], { sceneId: 'actual-scene', disabled: false, onError: message => errors.push(message) });
-  await tick(); value.trigger(); await tick();
+  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'execute', 'running', 'result'], { sceneId: 'actual-scene', disabled: false, onError: message => errors.push(message) });
+  await tick(); await value.execute(value.services()[0]);
   assert.deepEqual(normalize(calls), [{ pluginId: manifest.id, revision: 1, serviceId: spaceCommand.id, input: spaceCommand.metadata.input, sceneId: 'actual-scene' }]);
-  assert.equal('regionId' in calls[0], false); assert.equal(value.result(), 'Ruler ready'); assert.equal(value.running(), undefined); assert.equal(value.menu(), false); assert.deepEqual(errors, []); dispose();
+  assert.equal('regionId' in calls[0], false); assert.equal(value.result(), 'Ruler ready'); assert.equal(value.running(), undefined); assert.deepEqual(errors, []); dispose();
 });
 
-test('multiple space commands expose a menu without executing; selection revalidates revision and defaults input to an object', async () => {
+test('multiple space commands expose individual choices without executing; activation revalidates revision and defaults input to an object', async () => {
   let receive; const calls = [], errors = [];
   const other = { ...spaceCommand, id: 'second-command', metadata: { placement: 'space-toolbar', input: ['invalid input'] } };
   const api = { extensionNative: true, subscribeExtensions: async callback => { receive = callback; return () => {}; }, getExtensions: async () => [spaceRecord({ services: [spaceCommand, other] })],
     invokeExtension: async input => { calls.push(input); return { artifactId: 'view' }; }, stopExtension: async () => {} };
-  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'trigger', 'execute', 'menu', 'result'], { sceneId: 'scene', disabled: false, onError: error => errors.push(error) });
-  await tick(); value.trigger(); assert.equal(value.menu(), true); assert.equal(calls.length, 0);
+  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'buttons', 'execute', 'result'], { sceneId: 'scene', disabled: false, onError: error => errors.push(error) });
+  await tick(); assert.equal(value.buttons().length, 2); assert.equal(calls.length, 0);
   await value.execute(value.services()[1]); assert.deepEqual(normalize(calls[0].input), {}); assert.equal(calls[0].serviceId, other.id); assert.equal(value.result(), '');
   const stale = value.services()[0]; receive([spaceRecord({ revision: 2 })]); await value.execute(stale);
   assert.equal(calls.length, 1); assert.deepEqual(errors, ['插件状态已变化']); dispose();
@@ -110,13 +110,13 @@ test('space subscription is single-flight, preserves same-revision registration 
   late.dispose(); listen.resolve(() => lateReleased++); await tick(); assert.equal(lateReleased, 1); assert.equal(lateReads, 0);
 });
 
-test('ordinary scene updates preserve the space command menu and completed result when scene identity and availability are unchanged', async () => {
+test('ordinary scene updates preserve plugin choices and completed result when scene identity and availability are unchanged', async () => {
   const [scene, setScene] = reactive.createSignal({ id: 'scene', frozen: false, revision: 1 });
   const other = { ...spaceCommand, id: 'other' };
   const api = { extensionNative: true, subscribeExtensions: async () => () => {}, getExtensions: async () => [spaceRecord({ services: [spaceCommand, other] })], invokeExtension: async () => ({ content: 'Completed' }) };
-  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'trigger', 'execute', 'result', 'menu'], { get sceneId() { return scene().id; }, get disabled() { return scene().frozen; }, onError: message => { throw new Error(message); } });
-  await tick(); value.trigger(); assert.equal(value.menu(), true);
-  setScene(before => ({ ...before, revision: 2 })); assert.equal(value.menu(), true);
+  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'buttons', 'execute', 'result'], { get sceneId() { return scene().id; }, get disabled() { return scene().frozen; }, onError: message => { throw new Error(message); } });
+  await tick(); const choices = value.buttons();
+  setScene(before => ({ ...before, revision: 2 })); assert.equal(value.buttons(), choices);
   await value.execute(value.services()[0]); assert.equal(value.result(), 'Completed');
   setScene(before => ({ ...before, revision: 3 })); assert.equal(value.result(), 'Completed'); dispose();
 });
@@ -125,8 +125,8 @@ test('Stop rejects late results and holds the invocation slot until both native 
   const request = deferred(), stopped = deferred(), calls = [], stops = [];
   const api = { extensionNative: true, subscribeExtensions: async () => () => {}, getExtensions: async () => [spaceRecord()],
     invokeExtension: input => { calls.push(input); return request.promise; }, stopExtension: id => { stops.push(id); return stopped.promise; } };
-  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['trigger', 'execute', 'services', 'stop', 'running', 'result'], { sceneId: 'scene', disabled: false, onError: message => { throw new Error(message); } });
-  await tick(); value.trigger(); const canceling = value.stop(); await tick(); request.resolve({ content: 'late output' }); await tick();
+  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['execute', 'services', 'stop', 'running', 'result'], { sceneId: 'scene', disabled: false, onError: message => { throw new Error(message); } });
+  await tick(); if (value.services().length) void value.execute(value.services()[0]); const canceling = value.stop(); await tick(); request.resolve({ content: 'late output' }); await tick();
   assert.equal(value.result(), ''); assert.ok(value.running()); await value.execute(value.services()[0]); assert.equal(calls.length, 1);
   stopped.resolve(); await canceling; assert.equal(value.running(), undefined); assert.deepEqual(stops, [manifest.id]); dispose();
 });
@@ -135,8 +135,8 @@ test('a failed Stop remains retryable without duplicate rejection or reporting a
   const request = deferred(), stopping = deferred(), errors = []; let stops = 0;
   const api = { extensionNative: true, subscribeExtensions: async () => () => {}, getExtensions: async () => [spaceRecord()], invokeExtension: () => request.promise,
     stopExtension: () => ++stops === 1 ? stopping.promise : Promise.resolve() };
-  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['trigger', 'stop', 'running', 'stopping', 'result'], { sceneId: 'scene', disabled: false, onError: message => errors.push(message) });
-  await tick(); value.trigger(); const first = value.stop(), duplicate = value.stop(); await tick(); stopping.reject(Error('Stop transport failed'));
+  const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['execute', 'services', 'stop', 'running', 'stopping', 'result'], { sceneId: 'scene', disabled: false, onError: message => errors.push(message) });
+  await tick(); if (value.services().length) void value.execute(value.services()[0]); const first = value.stop(), duplicate = value.stop(); await tick(); stopping.reject(Error('Stop transport failed'));
   await Promise.all([first, duplicate]); assert.deepEqual(errors, ['Stop transport failed']); assert.equal(stops, 1); assert.equal(value.stopping(), false); assert.ok(value.running());
   await value.stop(); assert.equal(stops, 2); request.resolve({ content: 'canceled output' }); await tick(); assert.equal(value.result(), ''); assert.equal(value.running(), undefined); dispose();
 });
@@ -147,8 +147,8 @@ test('space commands cancel on busy, changed scene, revoked registration and dis
     let receive; const [disabled, setDisabled] = reactive.createSignal(false), [sceneId, setSceneId] = reactive.createSignal('scene');
     const api = { extensionNative: true, subscribeExtensions: async callback => { receive = callback; return () => {}; }, getExtensions: async () => [spaceRecord()],
       invokeExtension: () => request.promise, stopExtension: async id => stops.push(id) };
-    const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['trigger', 'running', 'result'], { get sceneId() { return sceneId(); }, get disabled() { return disabled(); }, onError: message => errors.push(message) });
-    await tick(); value.trigger();
+    const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['execute', 'services', 'running', 'result'], { get sceneId() { return sceneId(); }, get disabled() { return disabled(); }, onError: message => errors.push(message) });
+    await tick(); if (value.services().length) void value.execute(value.services()[0]);
     if (reason === 'disabled') setDisabled(true);
     if (reason === 'scene') setSceneId('other');
     if (reason === 'revoked') receive([spaceRecord({ state: 'disabled', revision: 2 })]);
@@ -163,8 +163,8 @@ test('no enabled space plugin or an ordinary browser performs no invocation, and
   for (const mode of ['none', 'disabled', 'browser']) {
     let reads = 0, calls = 0;
     const api = { extensionNative: mode !== 'browser', subscribeExtensions: async () => () => {}, getExtensions: async () => { reads++; return mode === 'none' ? [record()] : [spaceRecord()]; }, invokeExtension: async () => calls++ };
-    const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'trigger', 'running'], { sceneId: 'scene', disabled: mode === 'disabled', onError: message => { throw new Error(message); } });
-    await tick(); value.trigger(); await tick(); assert.equal(calls, 0); assert.equal(value.running(), undefined);
+    const { value, dispose } = await controller('./components/ExtensionSpaceCommands.tsx', api, ['services', 'execute', 'running'], { sceneId: 'scene', disabled: mode === 'disabled', onError: message => { throw new Error(message); } });
+    await tick(); if (value.services().length) void value.execute(value.services()[0]); await tick(); assert.equal(calls, 0); assert.equal(value.running(), undefined);
     if (mode !== 'disabled') assert.equal(value.services().length, 0);
     if (mode === 'browser') assert.equal(reads, 0); dispose();
   }

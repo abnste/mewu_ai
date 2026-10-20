@@ -12,6 +12,24 @@ pub const MAX_PROTOCOL_BYTES: usize = 12 * 1024 * 1024;
 pub const MAX_VALUE_BYTES: usize = 1024 * 1024;
 pub const MAX_SERVICES: usize = 128;
 
+/// Small vector artwork, rendered as fixed SVG path nodes, never HTML/URLs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionIcon {
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub filled: bool,
+}
+pub fn valid_extension_icon(icon: &ExtensionIcon) -> bool {
+    !icon.paths.is_empty() && icon.paths.len() <= 16
+        && icon.paths.iter().map(String::len).sum::<usize>() <= 8192
+        && icon.paths.iter().all(|path| !path.trim().is_empty() && path.len() <= 4096
+            && path.bytes().all(|b| b.is_ascii_digit() || b"MmZzLlHhVvCcSsQqTtAaEe.,+- \t\n".contains(&b)))
+        && icon.color.as_ref().is_none_or(|color| color.len()==7 && color.starts_with('#') && color[1..].bytes().all(|b|b.is_ascii_hexdigit()))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExtensionManifest {
@@ -20,6 +38,8 @@ pub struct ExtensionManifest {
     pub version: String,
     pub name: String,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<ExtensionIcon>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publisher: Option<String>,
     pub license: String,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, Show } from 'solid-js';
-import { LoaderCircle, Puzzle, Square, X } from 'lucide-solid';
+import { LoaderCircle, Ellipsis, Square, X } from 'lucide-solid';
+import PluginIcon from './PluginIcon';
 import * as api from '../extension-bridge';
 import type { ExtensionRecord } from '../extension-contracts';
 import { extensionResultText, extensionServiceKey, mergeExtensionRecords, selectionExtensionServices, type ExtensionServiceChoice } from '../extension-state';
@@ -68,9 +69,9 @@ export default function ExtensionSelectionTools(props: Props) {
     <Show when={services().length || running()}><button class="capture-plugin" data-caption={running() ? t('停止') : services().length === 1 ? services()[0].service.title : t('插件')}
       title={running() ? t('停止') : services().length === 1 ? t(services()[0].unavailableReason || services()[0].service.title) : t('插件')} aria-label={running() ? t('停止插件执行') : t('选区插件')}
       disabled={running() ? stopping() : props.disabled || (services().length === 1 && Boolean(services()[0].unavailableReason))} onClick={() => running() ? void stop() : services().length === 1 ? choose(services()[0]) : setMenu(!menu())}>
-      <Show when={running()} fallback={<Puzzle size={18}/>}><Show when={stopping()} fallback={<Square size={16}/>}><LoaderCircle size={18} class="spin"/></Show></Show>
+      <Show when={running()} fallback={<Show when={services().length === 1} fallback={<Ellipsis size={18}/>}><PluginIcon plugin={services()[0].record.manifest} source={services()[0].record.source} sha256={services()[0].record.sha256} size={18}/></Show>}><Show when={stopping()} fallback={<Square size={16}/>}><LoaderCircle size={18} class="spin"/></Show></Show>
     </button></Show>
-    <Show when={menu()}><div class="capture-plugin-menu extension-command-menu" role="menu" onKeyDown={keyboard}><For each={services()}>{choice => <button role="menuitem" title={choice.unavailableReason && t(choice.unavailableReason)} disabled={props.disabled || Boolean(choice.unavailableReason)} onClick={() => choose(choice)}>{choice.service.title}</button>}</For></div></Show>
+    <Show when={menu()}><div class="capture-plugin-menu extension-command-menu" role="menu" onKeyDown={keyboard}><For each={services()}>{choice => <button role="menuitem" title={choice.unavailableReason && t(choice.unavailableReason)} disabled={props.disabled || Boolean(choice.unavailableReason)} onClick={() => choose(choice)}><PluginIcon plugin={choice.record.manifest} source={choice.record.source} sha256={choice.record.sha256} size={17}/>{choice.service.title}</button>}</For></div></Show>
     <Show when={taskChoice()}>{choice => <form class="extension-task-popover" role="dialog" aria-label={choice().service.title} onKeyDown={keyboard} onSubmit={event => { event.preventDefault(); void execute(choice(), task()); }}>
       <label class="field-label">{choice().service.title}<textarea autofocus rows={3} aria-label={t('任务')} placeholder={t('输入任务')} value={task()} onInput={event => setTask(event.currentTarget.value)} /></label>
       <div class="extension-task-actions"><button type="button" class="secondary-button" onClick={() => setTaskChoice(undefined)}>{t('取消')}</button><button type="submit" class="primary-button" disabled={props.disabled || !task().trim()}>{t('执行')}</button></div>

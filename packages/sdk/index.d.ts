@@ -5,12 +5,15 @@ export type JsonObject = { [key: string]: JsonValue };
 export type Dispose = () => void;
 export type ServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'service';
 export type PluginPlatform = 'any' | 'windows-x86_64' | 'darwin-aarch64' | 'linux-x86_64';
+/** SVG paths in a 24×24 viewBox. No markup, URLs, scripts or external assets. */
+export interface ExtensionIcon { paths: string[]; color?: string; filled?: boolean }
 export interface ExtensionManifest {
   schemaVersion: 2;
   id: string;
   version: string;
   name: string;
   description: string;
+  icon?: ExtensionIcon;
   publisher?: string;
   license: string;
   hostApi: 2;

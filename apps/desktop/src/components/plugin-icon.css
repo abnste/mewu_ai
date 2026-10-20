@@ -1,0 +1,7 @@
+/* SPDX-License-Identifier: MPL-2.0 */
+.plugin-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;vertical-align:middle;pointer-events:none;line-height:1}
+.plugin-icon>svg{display:block;flex:none;overflow:hidden}
+.plugin-icon-initial{font:650 0.85em/1 var(--font-family,system-ui);text-align:center}
+.plugin-glyph>.plugin-icon{width:24px;height:24px}
+.extension-command-menu [role=menuitem]{display:flex;align-items:center;gap:9px}
+.extension-space-commands{gap:2px}

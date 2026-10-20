@@ -20,7 +20,7 @@ node tools/extension-market/cli.mjs project <project.json>
 node tools/extension-market/cli.mjs projects <mewu-projects.json>
 node tools/extension-market/cli.mjs verify-project <project.json> --catalog <mewu-catalog.json>
 node tools/extension-market/cli.mjs build-projects <projects> --catalog <mewu-catalog.json> --out <mewu-projects.json> [--previous <mewu-projects.json>] [--check] [--offline]
-node tools/extension-market/cli.mjs build <entries> --out <catalog.json> [--previous <catalog.json>] [--check] [--offline]
+node tools/extension-market/cli.mjs build <entries> --out <catalog.json> [--legacy-out <catalog.json>] [--previous <catalog.json>] [--check] [--offline]
 node tools/extension-market/cli.mjs pack <plugin-directory> --out <package.zip> [--file <relative.js> ...]
 node tools/extension-market/cli.mjs publish <package.zip> --repository <owner/repo> --release-tag <tag> --entry-out <entry.json> [--platform <platform> ...]
 
@@ -40,7 +40,7 @@ function optionsFor(args) {
   const [kind, input, ...flags] = args;
   if (!['manifest', 'entry', 'catalog', 'verify', 'build', 'pack', 'publish', 'project', 'projects', 'verify-project', 'build-projects'].includes(kind) || !input || input.startsWith('--')) throw new Error('指定命令和输入路径；使用 --help 查看用法');
   const result = { kind, input: path.resolve(input), files: [], platforms: [], json: false, offline: false, check: false }, seen = new Set();
-  const allowed = new Set(['--validator', '--json', ...({ build: ['--out', '--previous', '--check', '--offline'], 'build-projects': ['--catalog', '--out', '--previous', '--check', '--offline'], 'verify-project': ['--catalog'], pack: ['--out', '--file'], publish: ['--repository', '--release-tag', '--entry-out', '--platform'] }[kind] ?? [])]);
+  const allowed = new Set(['--validator', '--json', ...({ build: ['--out', '--legacy-out', '--previous', '--check', '--offline'], 'build-projects': ['--catalog', '--out', '--previous', '--check', '--offline'], 'verify-project': ['--catalog'], pack: ['--out', '--file'], publish: ['--repository', '--release-tag', '--entry-out', '--platform'] }[kind] ?? [])]);
   for (let at = 0; at < flags.length; at++) {
     const flag = flags[at];
     if (!allowed.has(flag) || (seen.has(flag) && !['--file', '--platform'].includes(flag))) throw new Error(`无效或重复参数：${flag}`);
@@ -57,7 +57,7 @@ function optionsFor(args) {
   if (['pack', 'build', 'build-projects'].includes(kind) && !result.out) throw new Error(`${kind} 必须指定 --out`);
   if (['build-projects', 'verify-project'].includes(kind) && !result.catalog) throw new Error(`${kind} 必须指定 --catalog`);
   if (kind === 'publish' && (!result.repository || !result.releaseTag || !result.entryOut)) throw new Error('publish 必须指定 --repository、--release-tag、--entry-out');
-  for (const key of ['out', 'previous', 'entryOut', 'validator', 'catalog']) if (result[key]) result[key] = path.resolve(result[key]);
+  for (const key of ['out', 'legacyOut', 'previous', 'entryOut', 'validator', 'catalog']) if (result[key]) result[key] = path.resolve(result[key]);
   return result;
 }
 
@@ -66,6 +66,8 @@ export async function buildCatalog(options, validate, verify = verifyEntry) {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('条目路径必须是普通目录');
   const directory = await realpath(options.input), output = path.join(await realpath(path.dirname(options.out)), path.basename(options.out));
   if (within(directory, output)) throw new Error('输出不能放在 entries 条目目录内');
+  const legacyOutput = options.legacyOut && path.join(await realpath(path.dirname(options.legacyOut)), path.basename(options.legacyOut));
+  if (legacyOutput && (within(directory, legacyOutput) || legacyOutput.toLowerCase() === output.toLowerCase())) throw new Error('兼容目录输出必须独立于新版目录和 entries');
   const files = await readdir(directory, { withFileTypes: true });
   if (files.length > 256) throw new Error('社区目录最多 256 个插件');
   const entries = []; let total = 0;
@@ -81,6 +83,9 @@ export async function buildCatalog(options, validate, verify = verifyEntry) {
   const bytes = Buffer.from(`${JSON.stringify({ schemaVersion: 2, plugins: entries }, null, 2)}\n`, 'utf8');
   if (bytes.length > MAX_CATALOG) throw new Error('生成目录超过 2 MiB');
   const catalog = await validate('extension-catalog', bytes);
+  // Older released hosts reject unknown entry fields. Never put icon metadata in their feed.
+  const legacyBytes = legacyOutput && Buffer.from(`${JSON.stringify({ schemaVersion: 2, plugins: entries.map(({ icon, ...entry }) => entry) }, null, 2)}\n`, 'utf8');
+  if (legacyBytes) await validate('extension-catalog', legacyBytes);
   let previous;
   try { previous = await validate('extension-catalog', await readBounded(options.previous ?? output, MAX_CATALOG)); }
   catch (error) { if (error.code !== 'ENOENT') throw error; if (options.previous) throw new Error('指定的可信旧目录不存在'); }
@@ -96,8 +101,12 @@ export async function buildCatalog(options, validate, verify = verifyEntry) {
   if (!options.offline) for (const entry of catalog.plugins) verified.push(await verify(entry, validate));
   if (options.check) {
     if (!(await readBounded(output, MAX_CATALOG)).equals(bytes)) throw new Error('目录与条目不一致');
-  } else await writeAtomic(output, bytes);
-  return { count: entries.length, bytes: bytes.length, output, checked: !!options.check, releasesVerified: !options.offline, verified };
+    if (legacyOutput && !(await readBounded(legacyOutput, MAX_CATALOG)).equals(legacyBytes)) throw new Error('兼容目录与条目不一致');
+  } else {
+    await writeAtomic(output, bytes);
+    if (legacyOutput) await writeAtomic(legacyOutput, legacyBytes);
+  }
+  return { count: entries.length, bytes: bytes.length, output, ...(legacyOutput ? { legacyOutput } : {}), checked: !!options.check, releasesVerified: !options.offline, verified };
 }
 
 export async function packPlugin(options, validate) {
@@ -147,6 +156,7 @@ export async function publishPlugin(options, validate, network = { getRelease, d
   const manifest = await validate('extension-manifest', files.get('mewu-plugin.json'));
   if (!files.has(manifest.entry)) throw new Error('ZIP 缺少清单指定的 JavaScript 入口');
   const entry = { id: manifest.id, name: manifest.name, description: manifest.description, tags: manifest.tags,
+    ...(manifest.icon ? { icon: manifest.icon } : {}),
     repository: options.repository, version: manifest.version, releaseTag: options.releaseTag, assetName: path.basename(options.input),
     sha256: sha256(bytes), size: bytes.length, hostApi: 2, platforms: options.platforms?.length ? options.platforms : ['any'] };
   const validated = await validate('extension-entry', Buffer.from(JSON.stringify(entry)));

@@ -117,6 +117,30 @@ test('catalog build uses native result, deterministic order, real verification b
   assert.deepEqual(await readFile(options.out), expected);
 });
 
+test('icon feed keeps older strict hosts on an unchanged legacy catalog, including check mode', async t => {
+  const icon = { paths: ['M4 4h16v16H4z'], color: '#3478f6', filled: false };
+  const options = await fixture(t, [{ ...entry, icon }]), legacyOut = path.join(options.directory, 'legacy.json');
+  await writeFile(legacyOut, catalog([entry]));
+  const before = await readFile(legacyOut), verified = [];
+  await buildCatalog({ ...options, legacyOut, previous: legacyOut }, validate, async value => { verified.push(value); return {}; });
+  assert.deepEqual(verified.map(value => value.icon), [icon]);
+  assert.deepEqual(JSON.parse(await readFile(options.out)).plugins[0].icon, icon);
+  assert.deepEqual(await readFile(legacyOut), before);
+  await buildCatalog({ ...options, legacyOut, check: true, offline: true }, validate);
+  await writeFile(legacyOut, '{}');
+  await assert.rejects(buildCatalog({ ...options, legacyOut, check: true, offline: true }, validate), /兼容目录/);
+  for (const filename of [options.out, path.join(options.input, 'legacy.json')]) {
+    await assert.rejects(buildCatalog({ ...options, legacyOut: filename, offline: true }, validate), /兼容目录输出/);
+  }
+});
+
+test('market branding may decorate old packages, but cannot replace a package author icon', () => {
+  const icon = { paths: ['M0 0L24 24'], color: '#ff3344', filled: false };
+  bindEntryManifest({ ...entry, icon }, manifest);
+  bindEntryManifest({ ...entry, icon: { filled: false, color: '#ff3344', paths: icon.paths } }, { ...manifest, icon });
+  assert.throws(() => bindEntryManifest({ ...entry, icon: { ...icon, color: '#000000' } }, { ...manifest, icon }), /图标/);
+});
+
 test('catalog duplicate identity, filename mismatch, invalid inputs and remote failures preserve old bytes', async t => {
   const options = await fixture(t); await writeFile(options.out, catalog([])); const original = await readFile(options.out);
   await assert.rejects(buildCatalog(options, validate, async () => { throw new Error('remote hash mismatch'); }), /hash mismatch/);

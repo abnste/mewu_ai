@@ -11,7 +11,7 @@ use std::{
 };
 
 pub const DEFAULT_CATALOG: &str =
-    "https://raw.githubusercontent.com/abnste/mewu-plugins/main/mewu-catalog.json";
+    "https://raw.githubusercontent.com/abnste/mewu-plugins/main/mewu-catalog-v2.json";
 pub const MAX_ARCHIVE: usize = 16 * 1024 * 1024;
 pub const MAX_CATALOG: usize = 2 * 1024 * 1024;
 
@@ -21,6 +21,8 @@ pub struct Entry {
     pub id: String,
     pub name: String,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<mewu_extension::ExtensionIcon>,
     #[serde(default)]
     pub tags: Vec<String>,
     pub repository: String,
@@ -51,6 +53,9 @@ fn segment(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
 pub fn validate_entry(entry: &Entry) -> Result<(), String> {
+    if entry.icon.as_ref().is_some_and(|icon| !mewu_extension::valid_extension_icon(icon)) {
+        return Err("插件图标无效".into());
+    }
     let pieces: Vec<_> = entry.repository.split('/').collect();
     if pieces.len() != 2
         || !pieces.iter().all(|p| segment(p))
@@ -203,6 +208,9 @@ pub fn verify_package(entry: &Entry, bytes: &[u8]) -> Result<ExtensionPackage, S
     {
         return Err("插件清单与社区条目身份不一致".into());
     }
+    if package.manifest.icon.as_ref().is_some_and(|icon| entry.icon.as_ref().is_some_and(|advertised| advertised != icon)) {
+        return Err("目录图标与插件声明不一致".into());
+    }
     if mewu_extension::PLUGIN_PLATFORMS.into_iter().any(|platform|
         mewu_extension::plugin_platform_supported(Some(&entry.platforms), platform)
             && !mewu_extension::plugin_platform_supported(package.manifest.platforms.as_deref(), platform)) {
@@ -287,6 +295,7 @@ mod tests {
             id: "community.example".into(),
             name: "Example".into(),
             description: "Example".into(),
+            icon: None,
             tags: vec![],
             repository: "abnste/mewu-plugins".into(),
             version: "1.0.0".into(),
