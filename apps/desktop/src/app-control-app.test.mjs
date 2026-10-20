@@ -12,6 +12,7 @@ const raw = await readFile(new URL('./App.tsx', import.meta.url), 'utf8');
 const ast = parse(raw, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
 const control = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL('./app-control.ts', import.meta.url), 'utf8'), { mode: 'transform' })).toString('base64')}`);
 const submission = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL('./scene-submission.ts', import.meta.url), 'utf8'), { mode: 'transform' })).toString('base64')}`);
+const { DrawingFlushRegistry } = await import(`data:text/javascript;base64,${Buffer.from(stripTypeScriptTypes(await readFile(new URL('./drawing-flush.ts', import.meta.url), 'utf8'), { mode: 'transform' })).toString('base64')}`);
 function productFunction(name) {
   let found;
   const walk = node => {
@@ -41,7 +42,8 @@ function fixture() {
     selection: false, exiting: false, exporting: false, held: false, recording: null, scroll: null, operations: 0, references: {}, drafts: {}, errors: [] };
   const record = name => async (...args) => { f.calls.push([name, ...args]); f.saved.revision++; };
   const scope = {
-    AppControlError: control.AppControlError, disposed: false, crypto: webcrypto,
+    AppControlError: control.AppControlError, disposed: false, crypto: webcrypto, drawingFlush: new DrawingFlushRegistry(),
+    objectFlush: { interacting: () => f.objectInteracting ?? false },
     scene: () => f.saved.scenes.find(value => value.id === f.saved.activeSceneId), snapshot: () => f.saved,
     busy: () => f.busy, sending: () => f.sending, selectionActive: () => f.selection, exportActive: () => f.exporting,
     exitPreparing: () => f.exiting, geometryView: () => ({ held: f.held }), recording: () => f.recording, scroll: () => f.scroll,
@@ -134,6 +136,40 @@ test('actual flush adapter locks input for the shared barrier and releases opera
     const next = fixture(); next.f[field] = true;
     await assert.rejects(next.scope.flushControl(), error => error.code === 'BUSY'); assert.equal(next.f.calls.length, 0);
   }
+});
+
+test('an idle mounted drawing owner allows blackboard finish and drawing writes through the actual control barrier', async () => {
+  for (const method of ['blackboard.finish', 'drawing.apply']) {
+    const { f, scope } = fixture(); f.selection = true; f.board = true;
+    const flush = async () => {};
+    flush.controlTarget = () => ({ sceneId: 'scene', backgroundId: 'background' });
+    flush.interacting = () => false;
+    scope.drawingFlush.register(flush);
+    await scope.flushControl();
+    const params = method === 'drawing.apply' ? { command: { type: 'undo_drawing', sceneId: 'scene', regionId: 'region', backgroundId: 'background', expectedRevision: 3 } } : {};
+    const result = await scope.executeControl(method, params);
+    assert.equal(result.sceneId, 'scene');
+    assert.ok(f.calls.some(call => call[0] === (method === 'blackboard.finish' ? 'finishBlackboard' : 'drawingCommand')));
+    assert.equal(f.selection, true, 'the existing UI editing-mode signal remains unchanged');
+    assert.equal(f.busy, false); assert.equal(f.operations, 0);
+  }
+});
+
+test('active, unknown or mismatched authoring owners cannot let control cancel or save human input', async () => {
+  for (const state of ['active', 'unknown', 'wrong-scene', 'wrong-background', 'throw']) {
+    const { f, scope } = fixture(); f.selection = true;
+    const flush = async () => { throw Error('must not flush human input'); };
+    flush.controlTarget = () => ({ sceneId: state === 'wrong-scene' ? 'other' : 'scene', backgroundId: state === 'wrong-background' ? 'other' : 'background' });
+    if (state !== 'unknown') flush.interacting = () => { if (state === 'throw') throw Error('unavailable'); return state === 'active'; };
+    scope.drawingFlush.register(flush);
+    await assert.rejects(scope.flushControl(), error => error.code === 'BUSY', state);
+    await assert.rejects(scope.executeControl('blackboard.finish', {}), error => error.code === 'BUSY', state);
+    assert.deepEqual(f.calls, [], state); assert.equal(f.busy, false); assert.equal(f.operations, 0);
+  }
+  const object = fixture(); object.f.objectInteracting = true;
+  await assert.rejects(object.scope.flushControl(), error => error.code === 'BUSY');
+  assert.equal(object.f.selection, false, 'ordinary object movement has no persistent selection mode');
+  assert.deepEqual(object.f.calls, []);
 });
 
 test('actual drawing route preserves core authority and selects the existing document path for rich objects', async () => {

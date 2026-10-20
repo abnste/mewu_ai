@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import { TrimCanceled } from './video-trim';
+import type { DrawingFlush } from './drawing-flush';
 type VideoRequestKind = 'info' | 'export' | 'copy' | 'text-read' | 'text-edit';
 const replaceable = (kind: VideoRequestKind) => kind === 'info' || kind === 'text-read';
 interface Ticket<T> { id: string; kind: VideoRequestKind; run: (id: string) => Promise<T>; resolve: (value: T) => void; reject: (error: unknown) => void; canceled: boolean; succeeded?: boolean; cleanup?: Promise<void>; cleanupError?: unknown; done?: Promise<void> }
@@ -56,10 +57,17 @@ export class VideoRequestLane {
   dispose() { this.disposed = true; return this.cancelAll(); }
 }
 
-export type RegisterVideoFlush = (flush: (active: () => boolean) => Promise<void>) => () => void;
+export type RegisterVideoFlush = (flush: DrawingFlush) => () => void;
 export class VideoFlushRegistry {
-  private entries = new Set<(active: () => boolean) => Promise<void>>();
+  private entries = new Set<DrawingFlush>();
   register: RegisterVideoFlush = flush => { this.entries.add(flush); return () => { this.entries.delete(flush); }; };
+  interacting(): boolean {
+    for (const entry of this.entries) {
+      try { if (entry.interacting?.() !== false) return true; }
+      catch { return true; }
+    }
+    return false;
+  }
   async flush(active: () => boolean) {
     for (const entry of [...this.entries]) { if (!active()) throw new TrimCanceled(); await entry(active); }
     if (!active()) throw new TrimCanceled();

@@ -2,7 +2,7 @@
 import type { JSX } from 'solid-js';
 import type { Drawing, DrawingPoint, DrawingStep, DrawingStrokeErase, ImageExportVariant, ManualDrawingKind } from './contracts';
 import type { DrawingPropertyDraft } from "./components/drawing-properties";
-import type { RegisterDrawingFlush } from "./drawing-flush";
+import type { DrawingFlush, RegisterDrawingFlush } from "./drawing-flush";
 import type { DrawingTableFormat } from "./drawing-layout-preview";
 import type { ObjectTrashPort } from './object-trash';
 export interface EditorBox { x:number;y:number;width:number;height:number }
@@ -55,11 +55,12 @@ export interface SharedDrawingEditorProps {
   onExport:(copy:boolean,closeSpace:boolean,variant?:ImageExportVariant)=>Promise<boolean>;
   imageExport?:boolean;
   onPin?:()=>Promise<boolean>;onRegisterFlush?:RegisterDrawingFlush;
+  controlTarget?:()=>{sceneId:string;backgroundId:string};
   blackboard?:boolean;
   onFinishBlackboard?:()=>Promise<boolean>;
   extraTools?:()=>JSX.Element;
   objects?:(interactive:()=>boolean)=>JSX.Element;
-  objectsFlush?:(active:()=>boolean)=>Promise<void>;
+  objectsFlush?:DrawingFlush;
   onObjectPointerMove?:(event:PointerEvent)=>void;
   onObjectPointerLeave?:()=>void;
   onObjectWheel?:(event:WheelEvent)=>boolean;

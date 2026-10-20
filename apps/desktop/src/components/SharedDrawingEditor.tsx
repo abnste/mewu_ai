@@ -925,7 +925,16 @@ export default function SharedDrawingEditor(props: Props) {
     onCleanup(() => { alive = false; });
   }));
   document.addEventListener('keydown', keyboard, true); document.addEventListener('keyup', keyboard, true); window.addEventListener('resize', resize); window.addEventListener('blur', blur);
-  const unregisterFlush = props.onRegisterFlush?.(async active => {
+  function controlInteractionActive(): boolean {
+    // Editing mode itself is not a gesture. Keep the same mounted authoring
+    // owner and consult its real drafts, gestures and in-flight writes instead.
+    return Boolean(disposed || cancelGesture || edit() || draft() || marquee() || groupDraft().length
+      || storedDraft() || erasing() || rasterPreview() || selectionReading() || finishing()
+      || imageZooming() || objectDragging() || pending() || historyPending()
+      || flight || eraseFlight || tableCopy || strokeQueue?.pending() || historyLane?.pending()
+      || (props.objectsFlush && props.objectsFlush.interacting?.() !== false));
+  }
+  const authoringFlush: DrawingFlush = async active => {
     const origin = identity(); cancelGesture?.(); drawingInput.reset();
     await strokeQueue?.drain(active);
     await drainHistory(active);
@@ -936,7 +945,10 @@ export default function SharedDrawingEditor(props: Props) {
     await props.objectsFlush?.(active);
     if (!active() || disposed || origin !== identity()) throw new Error('标注编辑已切换');
     if (!(await saveText(true, () => active() && !disposed && origin === identity()))) throw new Error('标注尚未保存');
-  });
+  };
+  authoringFlush.interacting = controlInteractionActive;
+  authoringFlush.controlTarget = props.controlTarget;
+  const unregisterFlush = props.onRegisterFlush?.(authoringFlush);
   const unregisterHistory = props.onRegisterHistory?.({
     undo:()=>history(false),redo:()=>history(true),
     canUndo:()=>!historyDisabled()&&!edit()&&!erasing()&&!cancelGesture&&historyAvailable(false),

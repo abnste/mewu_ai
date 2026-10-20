@@ -60,7 +60,9 @@ export default function ArtifactCard(props: Props) {
   let gestureFlight:Promise<void>|undefined;
   let zoomTimer:ReturnType<typeof setTimeout>|undefined,zoomAsset:string|undefined;
   let textFlush:DrawingFlush|undefined;
-  const unregisterFlush=props.onRegisterFlush?.(async active=>{disposeGesture?.();await flushZoom();if(gestureFlight)await gestureFlight;if(textFlush)await textFlush(active);if(!active())throw Error('素材编辑已切换');});
+  const objectFlush:DrawingFlush=async active=>{disposeGesture?.();await flushZoom();if(gestureFlight)await gestureFlight;if(textFlush)await textFlush(active);if(!active())throw Error('素材编辑已切换');};
+  objectFlush.interacting=()=>Boolean(disposeGesture||gestureFlight||zoomAsset||pinning()||(textFlush&&textFlush.interacting?.()!==false));
+  const unregisterFlush=props.onRegisterFlush?.(objectFlush);
   const unregisterWheel=props.onRegisterWheel?.(wheel);
   const activate = () => props.onActivate?.();
   // An isolated iframe does not bubble its pointer events into this document.

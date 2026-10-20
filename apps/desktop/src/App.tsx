@@ -1196,7 +1196,8 @@ export default function App() {
   }
   function assertControlIdle() {
     if (disposed || exitPreparing() || !scene()) throw new AppControlError('NOT_READY', '空间尚未就绪');
-    if (busy() || sending() || selectionActive() || exportActive() || geometryView().held || recording() || scroll()) {
+    if (busy() || sending() || (selectionActive() && !drawingFlush.idle(scene()!.id, scene()?.background?.id)) || drawingFlush.interacting() || objectFlush.interacting()
+      || exportActive() || geometryView().held || recording() || scroll()) {
       throw new AppControlError('BUSY', '空间正在处理其他操作');
     }
   }
