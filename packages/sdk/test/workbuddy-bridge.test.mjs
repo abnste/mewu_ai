@@ -38,7 +38,7 @@ http.createServer(async(req,res)=>{
 `);
   let child,exit,closed=false,buffer='',stderr='';const queue=[];
   const ctx={processes:{
-    open:async config=>{child=spawn(config.executable,config.args,{cwd:temp,stdio:['pipe','pipe','pipe'],windowsHide:true});exit=once(child,'exit');child.stderr.on('data',chunk=>{stderr+=chunk;});child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{buffer+=chunk;let at;while((at=buffer.indexOf('\n'))>=0){queue.push(JSON.parse(buffer.slice(0,at)));buffer=buffer.slice(at+1);}});return{id:'owned',cwd:temp};},
+    open:async config=>{assert.ok(config.args.every(arg=>!/[\u0000-\u001f]/.test(arg)),'fixed-program transport arguments must not contain control characters');assert.ok(config.executable.length+config.args.join('').length<16384);child=spawn(config.executable,config.args,{cwd:temp,stdio:['pipe','pipe','pipe'],windowsHide:true});exit=once(child,'exit');child.stderr.on('data',chunk=>{stderr+=chunk;});child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{buffer+=chunk;let at;while((at=buffer.indexOf('\n'))>=0){queue.push(JSON.parse(buffer.slice(0,at)));buffer=buffer.slice(at+1);}});return{id:'owned',cwd:temp};},
     write:async(id,message)=>{assert.equal(id,'owned');child.stdin.write(JSON.stringify(message)+'\n');},
     read:async()=>{const until=Date.now()+250;while(!queue.length&&Date.now()<until){if(child.exitCode!==null)throw Error('fixture closed');await new Promise(r=>setTimeout(r,5));}return queue.shift()??null;},
     close:async()=>{if(closed)return;closed=true;child.stdin.end();await Promise.race([exit,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('bridge did not stop')),4000);timer.unref();})]);}

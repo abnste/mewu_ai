@@ -3191,6 +3191,9 @@ fn main() {
                 if matches!(event,tauri::WindowEvent::Destroyed){extension_surface_window::destroyed(window.app_handle(),id);}
                 return;
             }
+            if matches!(window.label(),"space"|"settings") && matches!(event,tauri::WindowEvent::Destroyed){
+                if let Some(extensions)=window.app_handle().try_state::<extension_host::ExtensionHost>(){extensions.window_destroyed(window.label());}
+            }
             if window.label() == "space" && matches!(event, tauri::WindowEvent::Destroyed) {
                 app_control_host::renderer_invalidated(window.app_handle());
             }

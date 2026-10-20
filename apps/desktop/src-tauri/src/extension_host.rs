@@ -49,6 +49,7 @@ struct ActiveRun {
     scope: String,
     canceled: Arc<AtomicBool>,
     surface: Option<(String,crate::extension_surfaces::Owner)>,
+    surface_window: Option<crate::extension_surfaces::WindowTicket>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +138,12 @@ pub(crate) fn external_agent_for_scene(
     }))
 }
 impl ExtensionHost {
+    pub(crate) fn window_destroyed(&self,label:&str){
+        self.surfaces.revoke_window(label);
+        if let Ok(runs)=self.runs.lock(){for run in runs.values().filter(|run|run.surface_window.as_ref().is_some_and(|ticket|ticket.label==label)){
+            run.canceled.store(true,Ordering::SeqCst);
+        }}
+    }
     pub fn open(
         root: &Path,
         storage_lock: Arc<crate::storage_root::RuntimeLock>,
@@ -934,6 +941,7 @@ struct Context {
     object_access: Option<crate::extension_objects_host::Access>,
     processes: crate::extension_process::Scope,
     surface_owner: Option<(String,crate::extension_surfaces::Owner)>,
+    surface_window: Option<crate::extension_surfaces::WindowTicket>,
 }
 impl Context {
     fn check(&self, app: &AppHandle) -> Result<(), String> {
@@ -944,6 +952,7 @@ impl Context {
         host.exit.ensure_background()?;
         {
             let extensions = app.state::<ExtensionHost>();
+            if self.surface_window.as_ref().is_some_and(|ticket|!extensions.surfaces.window_current(ticket)){return Err("插件宿主窗口已关闭".into());}
             let store = extensions.store()?;
             if let Some((id,owner))=&self.surface_owner {extensions.surfaces.check(id,owner)?;}
             let record = store.get(&self.record.manifest.id)?;
@@ -1076,6 +1085,7 @@ fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
                 object_access: None,
                 processes: Default::default(),
         surface_owner: None,
+        surface_window: None,
     };
     let result = (|| {
         let mut registration = register_run(app, &context)?;
@@ -1110,6 +1120,7 @@ pub async fn invoke_extension(
             return Err("插件对象不能调用其他界面".into());
         }
     } else {trusted(&window)?;}
+    let surface_window=if invocation.surface.is_some(){app.state::<ExtensionHost>().surfaces.ticket(window.label())}else{None};
     // Releasing a previous generation must remain possible after scene change,
     // disable or shutdown admission closes. This never executes plugin code.
     if let Some(SurfaceInvocation::Close{id})=&invocation.surface {
@@ -1165,7 +1176,7 @@ pub async fn invoke_extension(
     };
     if invocation.surface.is_some() {
         let settings = crate::extension_objects_host::is_settings_surface(service)
-            && window.label()=="settings" && invocation.scene_id.is_none()
+            && matches!(window.label(),"settings"|"space") && invocation.scene_id.is_none()
             && invocation.region_id.is_none() && invocation.object_source.is_none();
         let space = (detached||window.label()=="space") && !owner.scene.is_empty()
             && crate::extension_objects_host::is_surface(service);
@@ -1224,6 +1235,7 @@ pub async fn invoke_extension(
                 object_access,
         processes: Default::default(),
         surface_owner: match &invocation.surface {Some(SurfaceInvocation::Call{id})=>Some((id.clone(),owner.clone())),_=>None},
+        surface_window: surface_window.clone(),
     };
     let mount=matches!(invocation.surface,Some(SurfaceInvocation::Mount));
     let result=run_context(app.clone(), context, invocation.service_id, invocation.input).await?;
@@ -1236,7 +1248,7 @@ pub async fn invoke_extension(
         let host=app.state::<Host>();
         let engine=host.lock()?;
         if !owner.scene.is_empty() && engine.store.active_scene().map_err(|e|e.to_string())?.id!=owner.scene {return Err("会话已变化".into());}
-        serde_json::to_value(state.surfaces.mount(owner,document,&host.content_origin)?).map_err(|_|"插件界面无效".into())
+        serde_json::to_value(state.surfaces.mount_scoped(owner,document,&host.content_origin,surface_window.as_ref())?).map_err(|_|"插件界面无效".into())
     } else { Ok(result) }
 }
 #[tauri::command]
@@ -1426,6 +1438,7 @@ fn register_run(app: &AppHandle, context: &Context) -> Result<RunRegistration, S
             scope: context.scope.clone(),
             canceled: context.canceled.clone(),
             surface: context.surface_owner.clone(),
+            surface_window: context.surface_window.clone(),
         },
     );
     Ok(RunRegistration {
@@ -1513,6 +1526,7 @@ pub async fn run_bound_service(
                 object_access: None,
                 processes: Default::default(),
         surface_owner: None,
+        surface_window: None,
     };
     run_context(app, context, service, prepared.input)
         .await
@@ -1665,6 +1679,7 @@ pub(crate) async fn invoke_tool_for_run(
                 object_access: None,
                 processes: Default::default(),
         surface_owner: None,
+        surface_window: None,
         })
     })();
     let mut context = match prepare {
@@ -1788,6 +1803,7 @@ pub(crate) async fn run_external_agent(
                 object_access: None,
                 processes: Default::default(),
         surface_owner: None,
+        surface_window: None,
     };
     context.check(&app)?;
     let output = run_context(app, context, provider.service_id, prepared.input).await?;
@@ -2108,6 +2124,7 @@ fn bridge_impl(
                 object_access: None,
                 processes: Default::default(),
                 surface_owner: context.surface_owner.clone(),
+                surface_window: context.surface_window.clone(),
             };
             execute(
                 app,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Ephemeral plugin client documents. Durable state belongs to plugin storage.
-use std::{collections::HashMap, sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}}};
+use std::{collections::HashMap, sync::{Arc,Mutex,atomic::{AtomicBool,AtomicU64,Ordering}}};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -13,9 +13,11 @@ pub(crate) struct Owner {
     pub scene: String,
 }
 struct Generation { live:AtomicBool,commit:Mutex<()> }
-struct Document { owner: Owner, html: Vec<u8>,generation:Arc<Generation>,width:u32,height:u32,window:Option<bool>,prepared:bool }
+#[derive(Clone,Debug)]
+pub(crate) struct WindowTicket {pub label:String,epoch:u64}
+struct Document { owner: Owner, html: Vec<u8>,generation:Arc<Generation>,width:u32,height:u32,window:Option<bool>,prepared:bool,host_window:Option<WindowTicket> }
 #[derive(Default)]
-pub(crate) struct Surfaces(Mutex<HashMap<String, Document>>);
+pub(crate) struct Surfaces(Mutex<HashMap<String, Document>>,AtomicU64,AtomicU64);
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 pub(crate) struct DocumentInput { pub html: String, pub width: u32, pub height: u32 }
@@ -23,16 +25,32 @@ pub(crate) struct DocumentInput { pub html: String, pub width: u32, pub height: 
 #[serde(rename_all="camelCase")]
 pub(crate) struct Mounted { pub surface_id: String, pub url: String, pub width: u32, pub height: u32 }
 impl Surfaces {
+    fn epoch(&self,label:&str)->Option<&AtomicU64>{match label{"settings"=>Some(&self.1),"space"=>Some(&self.2),_=>None}}
+    pub(crate) fn ticket(&self,label:&str)->Option<WindowTicket>{Some(WindowTicket{label:label.into(),epoch:self.epoch(label)?.load(Ordering::Acquire)})}
+    pub(crate) fn window_current(&self,ticket:&WindowTicket)->bool{self.epoch(&ticket.label).is_some_and(|epoch|epoch.load(Ordering::Acquire)==ticket.epoch)}
+    pub(crate) fn revoke_window(&self,label:&str){
+        if let Some(epoch)=self.epoch(label){if let Ok(mut entries)=self.0.lock(){
+            epoch.fetch_add(1,Ordering::AcqRel);
+            entries.retain(|_,document|{
+                let revoke=document.window.is_none()&&document.host_window.as_ref().is_some_and(|ticket|ticket.label==label);
+                if revoke{document.generation.live.store(false,Ordering::SeqCst);}!revoke
+            });
+        }}
+    }
     #[cfg(test)]
     pub(crate) fn test_html(&self,id:&str)->String {
         String::from_utf8(self.0.lock().unwrap().get(id).unwrap().html.clone()).unwrap()
     }
     pub(crate) fn mount(&self, owner: Owner, document: DocumentInput, origin: &str) -> Result<Mounted,String> {
+        self.mount_scoped(owner,document,origin,None)
+    }
+    pub(crate) fn mount_scoped(&self, owner: Owner, document: DocumentInput, origin: &str,host_window:Option<&WindowTicket>) -> Result<Mounted,String> {
         if document.html.len()>256*1024 || document.html.is_empty()
             || !(80..=1600).contains(&document.width) || !(40..=1200).contains(&document.height) {
             return Err("插件界面尺寸或内容无效".into());
         }
         let mut entries=self.0.lock().map_err(|_|"插件界面不可用")?;
+        if host_window.is_some_and(|ticket|!self.window_current(ticket)){return Err("插件宿主窗口已关闭".into());}
         // A detached object keeps its client and unsaved editor state when the
         // space toolbar is recreated. Never replace a live pinned document.
         if let Some((id,d))=entries.iter().find(|(_,d)|d.owner==owner&&d.window.is_some()&&d.generation.live.load(Ordering::SeqCst)){
@@ -46,7 +64,7 @@ impl Surfaces {
         let id=uuid::Uuid::new_v4().to_string();
         let html=format!("<!doctype html><meta charset=\"utf-8\"><script>{}</script>{}",
             include_str!("../../../../packages/sdk/client.js"),document.html).into_bytes();
-        entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(() )}),width:document.width,height:document.height,window:None,prepared:false});
+        entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(() )}),width:document.width,height:document.height,window:None,prepared:false,host_window:host_window.cloned()});
         Ok(Mounted{url:format!("{origin}/{id}"),surface_id:id,width:document.width,height:document.height})
     }
     pub(crate) fn window_owner(&self,id:&str)->Option<Owner>{
@@ -123,12 +141,12 @@ pub(crate) fn read(app:&AppHandle,id:&str)->Option<Vec<u8>> {
     if record.state!="enabled" || record.revision!=document.owner.revision {return None;}
     record.ensure_supported().ok()?;
     registry.validate_dependencies(&record.manifest).ok()?;
-    let host=app.state::<crate::Host>();
-    let engine=host.lock().ok()?;
-    let scene=engine.store.active_scene().ok()?;
     let settings=document.owner.scene.is_empty() && record.services.iter().any(|service|
         service.id==document.owner.service && crate::extension_objects_host::is_settings_surface(service));
-    if !settings && document.window.is_none()&&(scene.id!=document.owner.scene || scene.closed) {return None;}
+    if !settings && document.window.is_none(){
+        let host=app.state::<crate::Host>();let engine=host.lock().ok()?;let scene=engine.store.active_scene().ok()?;
+        if scene.id!=document.owner.scene || scene.closed{return None;}
+    }
     Some(document.html.clone())
 }
 
@@ -137,6 +155,27 @@ mod tests {
     use super::*;
     fn owner(plugin:&str)->Owner {Owner{plugin:plugin.into(),revision:1,service:"view".into(),scene:"scene".into()}}
     fn document()->DocumentInput {DocumentInput{html:"<button>Test</button>".into(),width:300,height:200}}
+    #[test]
+    fn native_window_close_revokes_only_its_documents_and_rejects_late_mounts_after_recreation(){
+        let surfaces=Surfaces::default();let settings=surfaces.ticket("settings").unwrap();let space=surfaces.ticket("space").unwrap();
+        let mut settings_owner=owner("settings");settings_owner.scene.clear();
+        let a=surfaces.mount_scoped(settings_owner.clone(),document(),"http://localhost:1",Some(&settings)).unwrap();
+        let b_owner=owner("space");let b=surfaces.mount_scoped(b_owner.clone(),document(),"http://localhost:1",Some(&space)).unwrap();
+        let c_owner=owner("pinned");let c=surfaces.mount_scoped(c_owner.clone(),document(),"http://localhost:1",Some(&space)).unwrap();
+        surfaces.attach_window(&c.surface_id).unwrap();surfaces.pin_window(&c.surface_id,true).unwrap();
+        surfaces.revoke_window("settings");
+        assert!(!surfaces.window_current(&settings));assert!(surfaces.window_current(&space));
+        assert!(surfaces.check(&a.surface_id,&settings_owner).is_err());assert!(surfaces.check(&b.surface_id,&b_owner).is_ok());
+        assert!(surfaces.with_owner(&a.surface_id,&settings_owner,||Ok(())).is_err());
+        assert!(surfaces.mount_scoped(settings_owner.clone(),document(),"http://localhost:1",Some(&settings)).is_err());
+        let recreated=surfaces.ticket("settings").unwrap();
+        let next=surfaces.mount_scoped(settings_owner.clone(),document(),"http://localhost:1",Some(&recreated)).unwrap();
+        surfaces.revoke_window("space");
+        assert!(surfaces.check(&b.surface_id,&b_owner).is_err());
+        assert!(surfaces.check(&c.surface_id,&c_owner).is_ok());assert!(surfaces.pinned(&c.surface_id));
+        assert!(surfaces.check(&next.surface_id,&settings_owner).is_ok());
+        assert!(surfaces.ticket("unknown-native-window").is_none());
+    }
     #[test]
     fn pinned_windows_keep_the_document_and_storage_lease_until_explicit_close_or_revoke(){
         let surfaces=Surfaces::default();let a=owner("one");

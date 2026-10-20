@@ -4,7 +4,7 @@
 export function workbuddyProcess(config){
   if(config.transport!=='workbuddy-http')return config;
   if(!config.args?.[0])throw Error('请选择 WorkBuddy 内置 CLI 入口');
-  return {...config,args:['--eval',bootstrap,JSON.stringify({cli:config.args[0],args:config.args.slice(1)})]};
+  return {...config,args:['--eval',`eval(${JSON.stringify(bootstrap)})`,JSON.stringify({cli:config.args[0],args:config.args.slice(1)})]};
 }
 export const bootstrap=String.raw`
 const http=require('node:http'),net=require('node:net'),readline=require('node:readline'),{spawn}=require('node:child_process');
