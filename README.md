@@ -177,7 +177,7 @@ New data defaults to `~/.mewu`. Existing installations keep their configured loc
 | Independent Agent | API Agent-provider plugins can use their own runtime, with memory chosen separately. Host-model access uses the current connection and granted permissions. |
 | MCP | Configure local MCP services under **Agent and connections → MCP**; installed plugin tools also join the existing Agent conversation. |
 
-Hermes, ChatGPT Work / Codex, WorkBuddy and MiniMax Code desktop-client adapters are **not included in 1.0.4**. They remain extension work; general model templates do not mean their proprietary Agent protocols are implemented. Dedicated image/video-generation APIs and device synchronization are also not included. Actual AI annotations depend on model output and need review.
+The development [External Agents plugin](./extensions/official/agent-connectors/README.md) adds a settings entry and adapters for Codex App Server and ACP clients, including Hermes, MiniMax Code CLI and CodeBuddy. It requires the new host interfaces; public 1.0.3 cannot run it. Compatibility with a desktop application's bundled CLI must be tested separately. Dedicated image/video-generation APIs and device synchronization are also not included. Actual AI annotations depend on model output and need review.
 
 <details>
 <summary>Original .NET desktop-client connection guide</summary>

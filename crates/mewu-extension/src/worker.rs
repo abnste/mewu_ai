@@ -140,9 +140,18 @@ pub fn run_worker<R: Read + Send + 'static, W: Write + Send + 'static>(
                 }
                 canceled.store(false, Ordering::Release);
                 *active_id.lock().map_err(|_| ExtensionError::Transport)? = Some(id.clone());
+                let mut invocation_limits=limits.clone();
+                // Process-backed protocols can spend time waiting for their
+                // peer. Explicit shorter embedding/test budgets stay intact.
+                if manifest.permissions.iter().any(|p|p=="process.rpc")
+                    && invocation_limits.request_timeout==std::time::Duration::from_secs(90)
+                    && invocation_limits.max_host_calls==512 {
+                    invocation_limits.request_timeout=std::time::Duration::from_secs(300);
+                    invocation_limits.max_host_calls=4096;
+                }
                 let result = ExtensionRuntime::new(
                     ExtensionPackage { manifest, modules },
-                    limits.clone(),
+                    invocation_limits,
                     canceled.clone(),
                     output.clone(),
                 );

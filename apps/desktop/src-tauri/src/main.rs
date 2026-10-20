@@ -129,6 +129,7 @@ mod extension_escape;
 mod extension_focus;
 mod extension_input;
 mod extension_agent;
+mod extension_process;
 mod extension_agent_authority;
 mod plugins;
 mod provider_transport;

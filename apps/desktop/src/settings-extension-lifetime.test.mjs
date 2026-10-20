@@ -108,6 +108,20 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
     mountProvider: props => renderer.render(() => provider.namespace.default(props), renderer.createElement('provider-root')) };
 }
 
+test('settings plugin contributes its own navigation page and disable revokes it without replacing native settings',async()=>{
+  const record=extension({manifest:{id:'independent.connector',name:'Connector',permissions:['ui.render']},services:[{id:'settings',kind:'ui',title:'外部 Agent',metadata:{surface:'settings'}}]});
+  const f=await fixture({initialExtensions:[record]});
+  try{
+    const entry=f.find(node=>node.type==='button'&&f.text(node)==='外部 Agent');assert.ok(entry);
+    entry.props.onClick({});await tick();
+    assert.ok(f.find(node=>node.type==='ExtensionSettings'),'plugin supplies the settings content');
+    assert.ok(f.find(node=>node.type==='button'&&f.text(node)==='数据'),'native settings stay available');
+    f.changeExtensions([{...record,state:'disabled',revision:2}]);await tick();
+    assert.equal(f.find(node=>node.type==='button'&&f.text(node)==='外部 Agent'),undefined);
+    assert.equal(f.find(node=>node.type==='ExtensionSettings'),undefined);
+  }finally{f.dispose();}
+});
+
 test('real Settings mount retains expanded Agent and unsaved soul through pending→true, then removes it on actual false', async () => {
   const f = await fixture();
   try {

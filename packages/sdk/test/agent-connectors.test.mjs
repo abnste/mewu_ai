@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: MPL-2.0
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import activate from '../../../extensions/official/agent-connectors/index.mjs';
+import {connectCodex,runCodex,connectAcp,runAcp} from '../../../extensions/official/agent-connectors/adapters.mjs';
+import {openPeer} from '../../../extensions/official/agent-connectors/rpc.mjs';
+
+function fixture(answer){
+  const queue=[],writes=[],events=[],services=new Map(),data=new Map();let closed=0;
+  const ctx={
+    runtime:{describe:async()=>({hostApi:2,capabilities:['ui.settings','configuration.shared','process.jsonlines','process.frame-bindings']})},
+    configuration:{get:async key=>data.get('config/'+key)??null,compareAndSet:async(key,old,value)=>{
+      if(JSON.stringify(data.get('config/'+key)??null)!==JSON.stringify(old))return false;data.set('config/'+key,structuredClone(value));return true;
+    }},
+    storage:{get:async key=>data.get(key)??null,set:async(key,value)=>{data.set(key,structuredClone(value));}},
+    processes:{resolve:async()=>({platform:'windows',executables:['C:/local/agent.exe']}),open:async()=>({id:'process',cwd:'C:/workspace'}),close:async()=>{closed++;},
+      write:async(id,message,bindings)=>{writes.push({message:structuredClone(message),bindings:structuredClone(bindings)});const reply=answer(message,queue);if(reply!==undefined)queue.push({id:message.id,result:reply});},
+      read:async()=>queue.shift()??null},
+    events:{emit:async(name,value)=>{events.push({name,value});}},
+    ui:{register:(descriptor,handler)=>services.set(descriptor.id,{descriptor,handler})},
+    agents:{register:(descriptor,handler)=>services.set(descriptor.id,{descriptor,handler})}
+  };
+  return {ctx,writes,events,services,data,queue,closed:()=>closed};
+}
+const config={executable:'C:/local/agent.exe',args:[]};
+function codex(message,queue){
+  switch(message.method){
+    case 'initialize':return {userAgent:'codex'};
+    case 'account/read':return {account:{type:'chatgpt'}};
+    case 'model/list':return {data:[{model:'model',displayName:'Model',inputModalities:['image'],supportedReasoningEfforts:[]}],nextCursor:null};
+    case 'config/read':return {config:{mcp_servers:{existing:{}}}};
+    case 'thread/start':case 'thread/resume':return {thread:{id:'thread'}};
+    case 'turn/start':
+      queue.push({method:'item/agentMessage/delta',params:{threadId:'unrelated',turnId:'alien',delta:'must not leak'}});
+      queue.push({method:'item/agentMessage/delta',params:{threadId:'thread',turnId:'previous-turn',delta:'old answer must not leak'}});
+      queue.push({method:'item/reasoning/summaryTextDelta',params:{threadId:'thread',turnId:'previous-turn',delta:'old thought must not leak'}});
+      queue.push({method:'turn/completed',params:{threadId:'thread',turn:{id:'previous-turn',status:'completed'}}});
+      queue.push({method:'item/reasoning/summaryTextDelta',params:{threadId:'thread',turnId:'turn',delta:'思考'}});
+      queue.push({method:'item/agentMessage/delta',params:{threadId:'thread',turnId:'turn',delta:'回答'}});
+      queue.push({method:'turn/completed',params:{threadId:'thread',turn:{id:'turn',status:'completed'}}});
+      return {turn:{id:'turn'}};
+  }
+}
+function acp(message,queue){
+  switch(message.method){
+    case 'initialize':return {protocolVersion:1,agentCapabilities:{loadSession:true,promptCapabilities:{image:true}}};
+    case 'session/new':return {sessionId:'session',models:{availableModels:[{modelId:'model',name:'Model'}]}};
+    case 'session/load':return {models:{availableModels:[{modelId:'model',name:'Model'}]}};
+    case 'session/set_model':return {};
+    case 'session/prompt':
+      queue.push({method:'session/update',params:{sessionId:'other',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'foreign'}}}});
+      for(const [kind,text] of [['agent_thought_chunk','思考'],['agent_message_chunk','答'],['agent_message_chunk','案']])queue.push({method:'session/update',params:{sessionId:message.params.sessionId,update:{sessionUpdate:kind,content:{type:'text',text}}}});
+      return {stopReason:'end_turn'};
+  }
+}
+test('one independent package contributes settings and four Agent services without provider branches in host',async()=>{
+  const f=fixture(()=>undefined);await activate(f.ctx);
+  assert.deepEqual([...f.services.keys()],['settings','codex','minimax','workbuddy','hermes']);
+  assert.deepEqual(f.services.get('settings').descriptor.metadata,{surface:'settings'});
+  const mount=await f.services.get('settings').handler({type:'mount'});
+  assert.match(mount.html,/测试连接/);assert.equal(f.writes.length,0);
+});
+test('settings configuration survives reload, shares across roles and rejects stale provider edits',async()=>{
+  const f=fixture(()=>undefined);await activate(f.ctx);const ui=f.services.get('settings').handler;
+  assert.equal((await ui({type:'detect',provider:'codex'})).executable,config.executable);
+  await ui({type:'save',provider:'codex',config,expected:null});
+  assert.equal((await ui({type:'get'})).connections.codex.executable,config.executable);
+  await assert.rejects(ui({type:'save',provider:'codex',config:{...config,model:'another'},expected:null}),/已变化/);
+  const second=fixture(codex);second.data.set('config/connections',f.data.get('config/connections'));await activate(second.ctx);
+  const result=await second.services.get('codex').handler({task:'继续',messages:[{role:'user',content:'继续'}]}, {context:{agentId:'other-role',sceneId:'scene'}});
+  assert.equal(result.content,'回答');assert.ok(second.data.has('sessions/codex/other-role/scene'));
+});
+test('Codex tests actual account/model handshake and keeps reasoning separate from answer',async()=>{
+  const f=fixture(codex),connected=await connectCodex(f.ctx,config);
+  assert.equal(connected.models[0].id,'model');await connected.peer.close();assert.equal(f.closed(),1);
+  const run=fixture(codex),result=await runCodex(run.ctx,{...config,model:'model'},{task:'看图',messages:[{role:'system',content:'灵魂'},{role:'user',content:'看图'}],images:['frame']});
+  assert.equal(result.content,'回答');assert.equal(result.reasoning,'思考');assert.equal(run.closed(),1);
+  assert.deepEqual(run.events.map(e=>e.name),['agent.reasoning','agent.text']);
+  const start=run.writes.find(v=>v.message.method==='thread/start').message.params;
+  assert.equal(start.developerInstructions,'灵魂');assert.equal(start.config['mcp_servers.existing.enabled'],false);
+  const turn=run.writes.find(v=>v.message.method==='turn/start');
+  assert.deepEqual(turn.bindings,[{frameId:'frame',pointer:'/params/input/1/url',encoding:'dataUrl'}]);
+  assert.equal(turn.message.params.input[1].url,null);
+});
+test('ACP streams only the correct session and resumes without creating a redundant session',async()=>{
+  const f=fixture(acp);const result=await runAcp(f.ctx,{...config,model:'model'}, {task:'本轮',messages:[{role:'user',content:'旧消息'},{role:'user',content:'本轮'}],images:['frame']}, {id:'continued'});
+  assert.equal(result.content,'答案');assert.equal(result.session.id,'continued');
+  assert.equal(f.writes.some(v=>v.message.method==='session/new'),false);
+  const prompt=f.writes.find(v=>v.message.method==='session/prompt');
+  assert.equal(prompt.message.params.prompt[0].text,'本轮');assert.equal(prompt.bindings[0].frameId,'frame');
+  assert.deepEqual(f.events.map(e=>e.name),['agent.reasoning','agent.text','agent.text']);assert.equal(f.closed(),1);
+});
+test('missing login, invalid image capability and protocol errors never report a working connection',async()=>{
+  const unauth=fixture((message,q)=>message.method==='account/read'?{account:null}:codex(message,q));
+  await assert.rejects(connectCodex(unauth.ctx,config),/登录/);assert.equal(unauth.closed(),1);
+  const incompatible=fixture((message,q)=>message.method==='initialize'?{protocolVersion:2}:acp(message,q));
+  await assert.rejects(connectAcp(incompatible.ctx,config),/版本/);assert.equal(incompatible.closed(),1);
+  const image=fixture((message,q)=>message.method==='initialize'?{protocolVersion:1,agentCapabilities:{}}:acp(message,q));
+  await assert.rejects(runAcp(image.ctx,config,{task:'图',images:['frame']}),/图片/);assert.equal(image.closed(),1);
+});
+test('server permission requests are answered explicitly and unsupported host tools are not executed',async()=>{
+  const f=fixture(()=>undefined),peer=await openPeer(f.ctx,config);
+  f.queue.push({id:'permission',method:'session/request_permission',params:{options:[{optionId:'no',kind:'reject_once'},{optionId:'yes',kind:'allow_always'}]}});
+  await peer.poll();assert.deepEqual(f.writes.at(-1).message.result,{outcome:{outcome:'selected',optionId:'no'}});
+  f.queue.push({id:'fs',method:'fs/read_text_file',params:{path:'unrelated'}});await peer.poll();
+  assert.equal(f.writes.at(-1).message.error.code,-32601);await peer.close();await peer.close();assert.equal(f.closed(),1);
+});
+test('resumed ACP sessions receive only this turn images, without repeatedly uploading historical screenshots',async()=>{
+  const f=fixture(acp);
+  await runAcp(f.ctx,config,{task:'继续',images:['historical','current'],currentImages:['current']},{id:'continued'});
+  const prompt=f.writes.find(v=>v.message.method==='session/prompt');
+  assert.deepEqual(prompt.bindings.map(v=>v.frameId),['current']);
+});
+test('remote session is checkpointed before prompt dispatch, even when that turn later fails',async()=>{
+  const f=fixture((message,q)=>message.method==='session/prompt'?{stopReason:'cancelled'}:acp(message,q));
+  const checkpoints=[];
+  await assert.rejects(runAcp(f.ctx,config,{task:'本轮'},undefined,async session=>{
+    assert.equal(f.writes.some(v=>v.message.method==='session/prompt'),false);checkpoints.push(session);
+  }),/未完成/);
+  assert.deepEqual(checkpoints,[{id:'session'}]);assert.equal(f.closed(),1);
+});
+test('ACP grouped model options are flattened and restored sessions receive current soul instructions',async()=>{
+  const f=fixture((message,q)=>message.method==='session/load'?{configOptions:[{id:'model',category:'model',options:[{group:'Provider',options:[{value:'fast',name:'Fast'}]}]}]}:acp(message,q));
+  await runAcp(f.ctx,config,{task:'继续',messages:[{role:'system',content:'最新灵魂'}]},{id:'continued'});
+  const prompt=f.writes.find(v=>v.message.method==='session/prompt').message.params.prompt[0].text;
+  assert.match(prompt,/最新灵魂/);assert.match(prompt,/继续/);
+  const c=fixture((message,q)=>message.method==='session/new'?{sessionId:'one',configOptions:[{id:'model',category:'model',currentValue:'fast',options:[{group:'Provider',options:[{value:'fast',name:'Fast'}]}]}]}:acp(message,q));
+  const connected=await connectAcp(c.ctx,config);assert.deepEqual(connected.models,[{id:'fast',name:'Fast',default:true}]);await connected.peer.close();
+});

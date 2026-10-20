@@ -74,6 +74,10 @@ pub(crate) fn is_surface(service:&mewu_extension::ServiceRegistration)->bool {
     service.kind==mewu_extension::ServiceKind::Ui && service.metadata.as_ref().is_some_and(|m|
         m.get("surface").and_then(Value::as_str)==Some("space-overlay"))
 }
+pub(crate) fn is_settings_surface(service:&mewu_extension::ServiceRegistration)->bool {
+    service.kind==mewu_extension::ServiceKind::Ui && service.metadata.as_ref().is_some_and(|m|
+        m.get("surface").and_then(Value::as_str)==Some("settings"))
+}
 pub(crate) fn describe()->Value { json!({"version":1,"capabilities":["ui.surfaces","ui.objects","objects.library","objects.preview"]}) }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]

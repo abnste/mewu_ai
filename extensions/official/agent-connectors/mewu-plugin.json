@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "hostApi": 2,
+  "runtime": "javascript",
+  "id": "abnste.agent-connectors",
+  "version": "0.1.0",
+  "name": "外部 Agent",
+  "description": "在原对话条接入 Codex、MiniMax Code、WorkBuddy / CodeBuddy 和 Hermes，并在设置中管理和检测连接。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "entry": "index.mjs",
+  "permissions": ["ui.render", "storage.read", "storage.write", "configuration.read", "configuration.write", "process.rpc", "media.read", "events.emit"],
+  "tags": ["agents", "model-providers"],
+  "icon": { "paths": ["M8 3v4M16 3v4M5 7h14v4a7 7 0 0 1-14 0V7zM12 18v3"] },
+  "dependencies": {}
+}

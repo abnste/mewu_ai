@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite, ReadBuf},
+    io::{AsyncRead, AsyncWrite, AsyncBufReadExt, AsyncWriteExt, BufReader, ReadBuf},
     process::Command,
     sync::{OwnedSemaphorePermit, Semaphore},
 };
@@ -862,108 +862,121 @@ pub struct McpSession {
     tools: HashMap<String, Validator>,
 }
 
+// Shared transport only: no Agent or MCP wire messages are interpreted here.
+async fn start_stdio(config: &McpCommand, environment: Option<&std::collections::BTreeMap<String,String>>) -> Result<(ProcessGuard, BoundedRead<PipeReader>, PipeWriter), String> {
+    let (executable, cwd) = validate_command(config)?;
+    let epoch = registry()
+        .lock()
+        .map_err(|_| "MCP 状态不可用")?
+        .admission_epoch()?;
+    let slot = process_slots()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| "MCP 已停止")?;
+    let mut command = Command::new(&executable);
+    command.args(&config.args).current_dir(cwd);
+    // External program permission grants a normal local CLI invocation,
+    // including its configured login/runtime environment. MCP keeps its
+    // original reduced environment and fixed descendant PATH policy.
+    if environment.is_none() {
+    command.env_clear();
+    for name in [
+        "SystemRoot",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "HOME",
+        "USERPROFILE",
+        "LANG",
+        "LC_ALL",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    // Fixed program resolution never uses PATH. Descendants receive only the
+    // runtime directory and OS binary directories, not the host's custom PATH.
+    let mut paths = vec![executable.parent().ok_or("MCP 程序目录无效")?.to_path_buf()];
+    #[cfg(windows)]
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        paths.push(PathBuf::from(root).join("System32"));
+    }
+    #[cfg(unix)]
+    paths.extend([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
+    command.env(
+        "PATH",
+        std::env::join_paths(paths).map_err(|_| "MCP 程序目录无效")?,
+    );
+    } else {command.envs(environment.unwrap());}
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let state = ProcessState::new(slot);
+    let process = ProcessGuard {
+        state: state.clone(),
+    };
+    let mut command = CommandWrap::from(command);
+    command.wrap(KillOnDrop);
+    #[cfg(windows)]
+    command
+        .wrap(process_wrap::tokio::CreationFlags(
+            windows::Win32::System::Threading::CREATE_NO_WINDOW,
+        ))
+        .wrap(ObserveSuspended(state.clone()))
+        .wrap(process_wrap::tokio::JobObject);
+    #[cfg(unix)]
+    command
+        .wrap(ObserveGroup(state.clone()))
+        .wrap(process_wrap::tokio::ProcessGroup::leader());
+    {
+        let mut registry = registry().lock().map_err(|_| "MCP 状态不可用")?;
+        if !registry.admits(epoch) {
+            return Err("MCP 已停止".into());
+        }
+        registry.children.retain(|entry| entry.strong_count() > 0);
+        registry.children.push(Arc::downgrade(&state));
+        let child = command
+            .spawn()
+            .map_err(|_| "无法启动 MCP 程序，请检查路径和运行权限")?;
+        *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+    }
+    let (stdin, stdout, stderr) = {
+        let mut lock = state.child.lock().unwrap_or_else(|e| e.into_inner());
+        let child = lock.as_mut().ok_or("MCP 进程已结束")?;
+        (
+            child.stdin().take().ok_or("无法连接 MCP 输入")?,
+            child.stdout().take().ok_or("无法连接 MCP 输出")?,
+            child.stderr().take().ok_or("无法连接 MCP 错误输出")?,
+        )
+    };
+    // These conversions happen before the first Tokio OS pipe poll. No
+    // hidden Blocking<ArcFile> operation has been started or detached.
+    let stdin = native_stdin(stdin).map_err(|_| "无法连接 MCP 输入")?;
+    let stdout = native_stdout(stdout).map_err(|_| "无法连接 MCP 输出")?;
+    let stderr = native_stderr(stderr).map_err(|_| "无法连接 MCP 错误输出")?;
+    let stdin = pipe_writer(stdin, &state).map_err(|_| "无法连接 MCP 输入")?;
+    let stdout = pipe_reader(stdout, &state).map_err(|_| "无法连接 MCP 输出")?;
+    pipe_stderr(stderr, &state).map_err(|_| "无法连接 MCP 错误输出")?;
+    state.setup_done.store(true, Ordering::Release);
+    state.check()?;
+    let bounded = BoundedRead {
+        inner: stdout,
+        process: state.clone(),
+        line: 0,
+        total: 0,
+        lines: 0,
+    };
+    Ok((process, bounded, stdin))
+}
+
 /// Starts only the exact local executable selected by the host. Acquisition,
 /// spawn and SDK discovery/legacy fallback share one 15-second deadline.
 pub async fn connect(config: &McpCommand) -> Result<McpSession, String> {
     tokio::time::timeout(START_TIMEOUT, async {
-        let (executable, cwd) = validate_command(config)?;
-        let epoch = registry()
-            .lock()
-            .map_err(|_| "MCP 状态不可用")?
-            .admission_epoch()?;
-        let slot = process_slots()
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| "MCP 已停止")?;
-        let mut command = Command::new(&executable);
-        command.args(&config.args).current_dir(cwd).env_clear();
-        for name in [
-            "SystemRoot",
-            "WINDIR",
-            "TEMP",
-            "TMP",
-            "HOME",
-            "USERPROFILE",
-            "LANG",
-            "LC_ALL",
-        ] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
-        // Fixed program resolution never uses PATH. Descendants receive only the
-        // runtime directory and OS binary directories, not the host's custom PATH.
-        let mut paths = vec![executable.parent().ok_or("MCP 程序目录无效")?.to_path_buf()];
-        #[cfg(windows)]
-        if let Some(root) = std::env::var_os("SystemRoot") {
-            paths.push(PathBuf::from(root).join("System32"));
-        }
-        #[cfg(unix)]
-        paths.extend([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
-        command.env(
-            "PATH",
-            std::env::join_paths(paths).map_err(|_| "MCP 程序目录无效")?,
-        );
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let state = ProcessState::new(slot);
-        let process = ProcessGuard {
-            state: state.clone(),
-        };
-        let mut command = CommandWrap::from(command);
-        command.wrap(KillOnDrop);
-        #[cfg(windows)]
-        command
-            .wrap(process_wrap::tokio::CreationFlags(
-                windows::Win32::System::Threading::CREATE_NO_WINDOW,
-            ))
-            .wrap(ObserveSuspended(state.clone()))
-            .wrap(process_wrap::tokio::JobObject);
-        #[cfg(unix)]
-        command
-            .wrap(ObserveGroup(state.clone()))
-            .wrap(process_wrap::tokio::ProcessGroup::leader());
-        {
-            let mut registry = registry().lock().map_err(|_| "MCP 状态不可用")?;
-            if !registry.admits(epoch) {
-                return Err("MCP 已停止".into());
-            }
-            registry.children.retain(|entry| entry.strong_count() > 0);
-            registry.children.push(Arc::downgrade(&state));
-            let child = command
-                .spawn()
-                .map_err(|_| "无法启动 MCP 程序，请检查路径和运行权限")?;
-            *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
-        }
-        let (stdin, stdout, stderr) = {
-            let mut lock = state.child.lock().unwrap_or_else(|e| e.into_inner());
-            let child = lock.as_mut().ok_or("MCP 进程已结束")?;
-            (
-                child.stdin().take().ok_or("无法连接 MCP 输入")?,
-                child.stdout().take().ok_or("无法连接 MCP 输出")?,
-                child.stderr().take().ok_or("无法连接 MCP 错误输出")?,
-            )
-        };
-        // These conversions happen before the first Tokio OS pipe poll. No
-        // hidden Blocking<ArcFile> operation has been started or detached.
-        let stdin = native_stdin(stdin).map_err(|_| "无法连接 MCP 输入")?;
-        let stdout = native_stdout(stdout).map_err(|_| "无法连接 MCP 输出")?;
-        let stderr = native_stderr(stderr).map_err(|_| "无法连接 MCP 错误输出")?;
-        let stdin = pipe_writer(stdin, &state).map_err(|_| "无法连接 MCP 输入")?;
-        let stdout = pipe_reader(stdout, &state).map_err(|_| "无法连接 MCP 输出")?;
-        pipe_stderr(stderr, &state).map_err(|_| "无法连接 MCP 错误输出")?;
-        state.setup_done.store(true, Ordering::Release);
-        state.check()?;
-        let bounded = BoundedRead {
-            inner: stdout,
-            process: state.clone(),
-            line: 0,
-            total: 0,
-            lines: 0,
-        };
+        let (process, bounded, stdin) = start_stdio(config, None).await?;
+        let state = process.state.clone();
         let transport = AsyncRwTransport::<RoleClient, _, _>::new(bounded, stdin);
         let service = RestrictedClient
             .serve_with_lifecycle(
@@ -984,6 +997,46 @@ pub async fn connect(config: &McpCommand) -> Result<McpSession, String> {
     })
     .await
     .map_err(|_| "MCP 启动超时")?
+}
+
+/// Invocation-owned JSON lines for independently implemented protocols. Uses
+/// the same bounded pipes, executable admission, process group and exit drain.
+pub(crate) struct JsonLinesProcess {
+    process: ProcessGuard,
+    input: PipeWriter,
+    output: BufReader<BoundedRead<PipeReader>>,
+    partial: Vec<u8>,
+}
+impl JsonLinesProcess {
+    pub(crate) async fn open(config: &McpCommand,env:&std::collections::BTreeMap<String,String>) -> Result<Self,String> {
+        let (process, output, input)=tokio::time::timeout(START_TIMEOUT,start_stdio(config,Some(env))).await
+            .map_err(|_|"外部程序启动超时")??;
+        Ok(Self{process,input,output:BufReader::new(output),partial:Vec::new()})
+    }
+    pub(crate) async fn write(&mut self, value: Value) -> Result<(),String> {
+        self.process.state.check()?;
+        if !value.is_object(){return Err("进程消息必须是JSON对象".into());}
+        let mut bytes=serde_json::to_vec(&value).map_err(|_|"进程消息无效")?;
+        if bytes.len()>12*1024*1024{return Err("进程消息过大".into());}bytes.push(b'\n');
+        tokio::time::timeout(Duration::from_secs(5),async {
+            self.input.write_all(&bytes).await?;self.input.flush().await
+        }).await.map_err(|_|"进程写入超时")?.map_err(|_|"进程输入已关闭".to_string())
+    }
+    pub(crate) async fn read(&mut self, timeout_ms:u64) -> Result<Value,String> {
+        // read_until is cancellation safe; retain partial bytes across polls.
+        let result=tokio::time::timeout(Duration::from_millis(timeout_ms.clamp(1,250)),
+            self.output.read_until(b'\n', &mut self.partial)).await;
+        match result {
+            Err(_)=>Ok(Value::Null),
+            Ok(Err(_))=>Err("进程输出已关闭或超过限制".into()),
+            Ok(Ok(0))=>Err("外部程序已结束".into()),
+            Ok(Ok(_))=>{
+                let value=serde_json::from_slice(&self.partial).map_err(|_|"进程返回了无效JSON");
+                self.partial.clear();let value:Value=value?;
+                if !value.is_object(){return Err("进程返回格式无效".into());}Ok(value)
+            }
+        }
+    }
 }
 
 impl McpSession {
@@ -1276,7 +1329,7 @@ fn observe_complete(result: rmcp::model::CallToolResult) -> Result<ObservedToolR
     Ok(observed)
 }
 
-fn validate_command(config: &McpCommand) -> Result<(PathBuf, PathBuf), String> {
+pub(crate) fn validate_command(config: &McpCommand) -> Result<(PathBuf, PathBuf), String> {
     if config.executable.trim().is_empty()
         || config.executable.chars().count() > 4096
         || config.executable.chars().any(char::is_control)
@@ -1435,6 +1488,28 @@ fn inspect_schema(
 mod tests {
     use super::*;
     static FIXTURE_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn json_lines_transport_owns_real_child_and_preserves_partial_utf8_across_timeout(){
+        let _serial=FIXTURE_TESTS.lock().await;
+        let mut fixture=Fixture::new("raw");
+        fixture.command.args[0]=PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agent_json_lines.cjs").to_string_lossy().into_owned();
+        let mut peer=JsonLinesProcess::open(&fixture.command,&Default::default()).await.unwrap();
+        let started=fixture.started().await;
+        #[cfg(windows)]let proof=ProcessProof::open(started["pid"].as_u64().unwrap() as u32);
+        #[cfg(not(windows))]let _=started;
+        peer.write(json!({"id":1,"method":"partial","params":{}})).await.unwrap();
+        assert_eq!(peer.read(1).await.unwrap(),Value::Null);
+        let until=tokio::time::Instant::now()+Duration::from_secs(3);
+        let response=loop{let value=peer.read(250).await.unwrap();if !value.is_null(){break value;}assert!(tokio::time::Instant::now()<until);};
+        assert_eq!(response,json!({"id":1,"result":{"text":"中文🙂"}}));
+        peer.write(json!({"id":2,"method":"echo","params":{"text":"second"}})).await.unwrap();
+        let value=peer.read(250).await.unwrap();assert_eq!(value["result"]["text"],"second");
+        assert!(peer.write(Value::String("not a wire object".into())).await.is_err());
+        drop(peer);
+        #[cfg(windows)]proof.assert_exited().await;
+        assert!(wait_until_idle(Duration::from_secs(3)).await);
+    }
 
     struct Fixture {
         directory: PathBuf,

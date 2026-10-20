@@ -90,9 +90,15 @@ export interface RenderedObject {
   height: number;
 }
 export interface ExtensionContext {
+  readonly runtime: { describe(): Promise<{ hostApi: 2; capabilities: string[] }> };
   readonly hostApi: 2;
   readonly host: HostBridge;
   readonly storage: ExtensionStorage;
+  /** Shared plugin configuration. Writes require a live settings surface. */
+  readonly configuration: {
+    get(key: string): Promise<JsonValue>;
+    compareAndSet(key: string, expected: JsonValue, value: JsonValue): Promise<boolean>;
+  };
   readonly commands: ServiceRegistry;
   readonly tools: ServiceRegistry;
   readonly agents: ServiceRegistry;
@@ -111,6 +117,15 @@ export interface ExtensionContext {
     restore(expectedRevision:number,id:string,position:{x:number;y:number}): Promise<JsonValue>;
   };
   readonly model: { invoke(request: ModelRequest): Promise<ModelReply> };
+  /** Requires process.rpc. Fixed local executables only, no shell/installer.
+   * Processes stop on invocation completion, cancellation or revocation. */
+  readonly processes: {
+    resolve(candidates: string[], files?: string[]): Promise<{ platform: string; executables: string[]; files: string[] }>;
+    open(command: { executable: string; args: string[]; cwd?: string; env?: Record<string,string> }): Promise<{ id: string; cwd: string }>;
+    write(id: string, message: JsonObject, bindings?: { frameId: string; pointer: string; encoding: 'base64' | 'dataUrl' }[]): Promise<JsonValue>;
+    read(id: string, timeoutMs?: number): Promise<JsonObject | null>;
+    close(id: string): Promise<JsonValue>;
+  };
   readonly region: {
     observe(regionId: string): Promise<RegionObservation>;
     action(regionId: string, action: RegionAction): Promise<JsonValue>;

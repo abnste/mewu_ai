@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Executable extension lifecycle and capability bridge. No plugin receives a
-//! Tauri handle, an API key, a filesystem path, or an ambient OS API.
+//! Executable extension lifecycle and capability bridge. Plugins receive no
+//! Tauri handle or ambient OS API. Explicit process.rpc permission admits local
+//! programs under the user's normal OS identity; it is not an OS sandbox.
 use crate::{
     extension_market as market, extension_region as region,
     extension_store::{service_platform_error, Binding, Record, Source, Store},
@@ -567,6 +568,11 @@ impl HostCallFailure {
             ),
             "model.invoke" => ("model.invoke", "MODEL_REQUEST_FAILED", "模型请求失败"),
             "network.fetch" => ("network.fetch", "NETWORK_REQUEST_FAILED", "网络请求失败"),
+            "process.resolve" => ("process.resolve", "PROCESS_RESOLVE_FAILED", "无法找到已安装的运行程序"),
+            "process.open" => ("process.open", "PROCESS_OPEN_FAILED", "无法启动外部程序"),
+            "process.write" => ("process.write", "PROCESS_WRITE_FAILED", "外部程序输入失败"),
+            "process.read" => ("process.read", "PROCESS_READ_FAILED", "外部程序输出失败或连接已关闭"),
+            "process.close" => ("process.close", "PROCESS_CLOSE_FAILED", "外部程序关闭失败"),
             "storage.get" => (
                 "storage.get",
                 "STORAGE_OPERATION_FAILED",
@@ -670,7 +676,8 @@ impl HostCallProgress {
             "region.observe" => "region.observe",
             "region.action" => "region.action",
             "model.invoke" => "model.invoke",
-            "network.fetch" => "network.fetch",
+            "process.resolve" | "process.open" | "process.write" | "process.read" | "process.close" => "process.rpc",
+        "network.fetch" => "network.fetch",
             "storage.get" => "storage.get",
             "storage.set" => "storage.set",
             "storage.delete" => "storage.delete",
@@ -925,6 +932,7 @@ struct Context {
     memory_enabled_required: bool,
     depth: u8,
     object_access: Option<crate::extension_objects_host::Access>,
+    processes: crate::extension_process::Scope,
     surface_owner: Option<(String,crate::extension_surfaces::Owner)>,
 }
 impl Context {
@@ -1066,7 +1074,8 @@ fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
         memory_enabled_required: false,
         depth: 0,
                 object_access: None,
-                surface_owner: None,
+                processes: Default::default(),
+        surface_owner: None,
     };
     let result = (|| {
         let mut registration = register_run(app, &context)?;
@@ -1104,7 +1113,7 @@ pub async fn invoke_extension(
     // Releasing a previous generation must remain possible after scene change,
     // disable or shutdown admission closes. This never executes plugin code.
     if let Some(SurfaceInvocation::Close{id})=&invocation.surface {
-        if window.label()!="space" {return Err("此窗口不能关闭插件界面".into());}
+        if window.label()!="space" && !(window.label()=="settings" && invocation.scene_id.is_none()) {return Err("此窗口不能关闭插件界面".into());}
         let owner=crate::extension_surfaces::Owner {
             plugin:invocation.plugin_id.clone(),revision:invocation.revision,
             service:invocation.service_id.clone(),scene:invocation.scene_id.clone().unwrap_or_default(),
@@ -1155,7 +1164,12 @@ pub async fn invoke_extension(
         service: invocation.service_id.clone(), scene: invocation.scene_id.clone().unwrap_or_default(),
     };
     if invocation.surface.is_some() {
-        if (!detached&&window.label()!="space") || owner.scene.is_empty() || !crate::extension_objects_host::is_surface(service)
+        let settings = crate::extension_objects_host::is_settings_surface(service)
+            && window.label()=="settings" && invocation.scene_id.is_none()
+            && invocation.region_id.is_none() && invocation.object_source.is_none();
+        let space = (detached||window.label()=="space") && !owner.scene.is_empty()
+            && crate::extension_objects_host::is_surface(service);
+        if !(settings||space)
             || !record.manifest.permissions.iter().any(|p|p=="ui.render") { return Err("插件界面未授权".into()); }
         let state=app.state::<ExtensionHost>();
         match &invocation.surface {
@@ -1208,6 +1222,7 @@ pub async fn invoke_extension(
         memory_enabled_required: false,
         depth: 0,
                 object_access,
+        processes: Default::default(),
         surface_owner: match &invocation.surface {Some(SurfaceInvocation::Call{id})=>Some((id.clone(),owner.clone())),_=>None},
     };
     let mount=matches!(invocation.surface,Some(SurfaceInvocation::Mount));
@@ -1220,7 +1235,7 @@ pub async fn invoke_extension(
         if record.revision!=owner.revision || record.state!="enabled" {return Err("插件界面已撤权".into());}
         let host=app.state::<Host>();
         let engine=host.lock()?;
-        if engine.store.active_scene().map_err(|e|e.to_string())?.id!=owner.scene {return Err("会话已变化".into());}
+        if !owner.scene.is_empty() && engine.store.active_scene().map_err(|e|e.to_string())?.id!=owner.scene {return Err("会话已变化".into());}
         serde_json::to_value(state.surfaces.mount(owner,document,&host.content_origin)?).map_err(|_|"插件界面无效".into())
     } else { Ok(result) }
 }
@@ -1496,7 +1511,8 @@ pub async fn run_bound_service(
         memory_enabled_required: kind == "memory",
         depth: 0,
                 object_access: None,
-                surface_owner: None,
+                processes: Default::default(),
+        surface_owner: None,
     };
     run_context(app, context, service, prepared.input)
         .await
@@ -1647,7 +1663,8 @@ pub(crate) async fn invoke_tool_for_run(
             memory_enabled_required: false,
             depth: 0,
                 object_access: None,
-                surface_owner: None,
+                processes: Default::default(),
+        surface_owner: None,
         })
     })();
     let mut context = match prepare {
@@ -1769,7 +1786,8 @@ pub(crate) async fn run_external_agent(
         memory_enabled_required: false,
         depth: 0,
                 object_access: None,
-                surface_owner: None,
+                processes: Default::default(),
+        surface_owner: None,
     };
     context.check(&app)?;
     let output = run_context(app, context, provider.service_id, prepared.input).await?;
@@ -1920,7 +1938,10 @@ fn bridge(
         .map_err(|message| HostCallFailure::from_error(method, &message, diagnostic))
 }
 fn tool_initialization_read(method: &str) -> bool {
-    matches!(method, "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
+    matches!(method, "runtime.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
+}
+pub(crate) fn runtime_capabilities()->Value {
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","process.jsonlines","process.frame-bindings"]})
 }
 
 fn bridge_impl(
@@ -1934,8 +1955,13 @@ fn bridge_impl(
     if context.tool_preparing && !tool_initialization_read(method) {
         return Err("工具初始化阶段不能执行宿主操作".into());
     }
+    if method=="runtime.describe" {
+        return Ok(runtime_capabilities());
+    }
     let permission = match method {
         "storage.get" | "storage.list" => "storage.read",
+        "configuration.get" => "configuration.read",
+        "configuration.compareAndSet" => "configuration.write",
         "storage.set" | "storage.delete" | "storage.compareAndSet" => "storage.write",
         "model.invoke" => "model.invoke",
         "region.observe" => "region.observe",
@@ -1943,6 +1969,7 @@ fn bridge_impl(
         "services.list" | "services.call" => "services.call",
         "ui.render" => "ui.render",
         "objects.library.describe" | "objects.library.get" | "objects.library.preview" | "objects.library.commit" | "objects.library.restore" => "objects.library",
+        "process.resolve" | "process.open" | "process.write" | "process.read" | "process.close" => "process.rpc",
         "network.fetch" => "network.fetch",
         "events.emit" => "events.emit",
         _ => return Err("宿主不支持此扩展接口".into()),
@@ -1952,6 +1979,16 @@ fn bridge_impl(
         return Err("区域操作仅支持 Windows".into());
     }
     let result = match method {
+        "configuration.get" => live_store(app,context,|store|store.value(&context.record.manifest.id,"plugin-configuration",string(&params,"key")?)),
+        "configuration.compareAndSet" => {
+            if !context.surface_owner.as_ref().is_some_and(|(_,owner)|owner.scene.is_empty()) {
+                return Err("请在插件设置界面修改配置".into());
+            }
+            Ok(Value::Bool(live_store(app,context,|store|store.compare_and_set(
+                &context.record.manifest.id,"plugin-configuration",string(&params,"key")?,
+                params.get("expected").ok_or("缺少比较值")?,params.get("value").ok_or("缺少插件配置")?
+            ))?))
+        },
         "objects.library.describe" => Ok(crate::extension_objects_host::describe()),
         "objects.library.get" | "objects.library.preview" | "objects.library.commit" | "objects.library.restore" => {
             let access=context.object_access.as_mut().ok_or("此运行没有对象库界面授权")?;
@@ -2069,6 +2106,7 @@ fn bridge_impl(
                 memory_enabled_required: context.memory_enabled_required,
                 depth: context.depth + 1,
                 object_access: None,
+                processes: Default::default(),
                 surface_owner: context.surface_owner.clone(),
             };
             execute(
@@ -2181,6 +2219,23 @@ fn bridge_impl(
             app.emit("extension-event",json!({"pluginId":context.record.manifest.id,"runId":context.run_id,"name":string(&params,"name")?,"data":params.get("data")})).map_err(|_|"无法发送插件事件")?;
             Ok(Value::Null)
         }
+        "process.resolve" | "process.open" | "process.write" | "process.read" | "process.close" => {
+            let mut params=params;
+            if method=="process.open" && params.pointer("/command/cwd").is_none_or(Value::is_null) {
+                let host=app.state::<Host>();
+                let root=host.assets.parent().ok_or("插件工作目录不可用")?.join("plugin-workspaces").join(&context.record.manifest.id);
+                std::fs::create_dir_all(&root).map_err(|_|"无法创建插件工作目录")?;
+                let command=params.get_mut("command").and_then(Value::as_object_mut).ok_or("缺少进程配置")?;
+                command.insert("cwd".into(),Value::String(root.to_string_lossy().into_owned()));
+            }
+            if method=="process.write" {
+                if let Some(bindings)=params.as_object_mut().and_then(|value|value.remove("bindings")) {
+                    context.permission("media.read")?;
+                    crate::extension_process::bind_frames(&mut params,bindings,&context.frames)?;
+                }
+            }
+            let value=context.processes.call(method,params,context.canceled.clone())?;context.check(app)?;Ok(value)
+        },
         "network.fetch" => network_fetch(app, context, params),
         _ => unreachable!(),
     };

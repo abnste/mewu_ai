@@ -68,3 +68,5 @@
 .settings-document>.secondary-button { align-self:flex-start; }
 
 .thinking-glow-setting{display:flex;align-items:center;gap:12px}.thinking-glow-setting input[type="color"]{width:32px;height:28px;border:1px solid var(--line,#dedfe4);border-radius:6px;padding:3px;background:transparent;cursor:pointer}
+.extension-settings-page { display:flex; flex-direction:column; height:100%; min-height:440px; }
+.extension-settings-page iframe { border:0; width:100%; flex:1; min-height:440px; background:transparent; }

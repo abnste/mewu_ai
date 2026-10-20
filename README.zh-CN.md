@@ -174,7 +174,7 @@ Linux Wayland 通过桌面 portal 授权截图和录屏。录屏授权后需在�
 | 独立 Agent | Mewu API Agent 提供方插件可使用自己的运行时，记忆独立选择；调用宿主模型时使用当前连接及已授权能力。 |
 | MCP | 在 **Agent 与连接 → MCP** 配置本地服务；已安装的插件工具也进入现有 Agent 对话。 |
 
-Hermes、ChatGPT Work / Codex、WorkBuddy、MiniMax Code 桌面客户端适配 **尚未包含在 1.0.3 中**，后续通过扩展接入；普通模型模板不代表已实现它们的专有 Agent 协议。专用图片/视频生成接口及跨设备同步也尚未交付。AI 原位和视频标注的内容仍取决于模型，需要人工核对。
+开发中的[外部 Agent 插件](./extensions/official/agent-connectors/README.md)通过设置入口管理 Codex App Server 与 ACP 客户端，包括 Hermes、MiniMax Code CLI 和 CodeBuddy。它需要本轮新增的宿主接口，公开版 1.0.3 无法运行；桌面应用内置 CLI 的兼容性需单独验证。专用图片/视频生成接口及跨设备同步也尚未交付。AI 原位和视频标注的内容仍取决于模型，需要人工核对。
 
 <details>
 <summary>.NET 原版的第三方客户端接入说明</summary>

@@ -126,7 +126,9 @@ pub(crate) fn read(app:&AppHandle,id:&str)->Option<Vec<u8>> {
     let host=app.state::<crate::Host>();
     let engine=host.lock().ok()?;
     let scene=engine.store.active_scene().ok()?;
-    if document.window.is_none()&&(scene.id!=document.owner.scene || scene.closed) {return None;}
+    let settings=document.owner.scene.is_empty() && record.services.iter().any(|service|
+        service.id==document.owner.service && crate::extension_objects_host::is_settings_surface(service));
+    if !settings && document.window.is_none()&&(scene.id!=document.owner.scene || scene.closed) {return None;}
     Some(document.html.clone())
 }
 

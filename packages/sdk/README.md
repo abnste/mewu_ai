@@ -47,6 +47,20 @@ export default definePlugin(ctx => {
 
 可注册命令、工具、Agent、记忆、模型、通讯渠道、渲染器和 UI 服务。注册发生在激活阶段；返回的函数可注销服务，`ctx.onDispose` 可登记卸载清理。服务的设置、菜单位置等通过 descriptor 的 `metadata` 声明。API 类型以 `index.d.ts` 为准。
 
+### 设置插槽和本机 Agent 协议（开发版本）
+
+`ctx.runtime.describe()` 返回当前宿主的能力名称。依赖新接口的插件应在激活时检查，不能将相同 API 格式版本当成所有可选能力都存在。
+
+UI 服务声明 `metadata: {surface: 'settings'}`，返回 `{html,width,height}`，即可在设置侧栏注册入口。客户端仍通过隔离 MessagePort 的 `mewu.call()` 调用自己的服务；没有 Tauri、任意 IPC 或其他插件的接口。关闭页面、停用和更新撤销旧文档。
+
+声明 `configuration.read` 后可用 `ctx.configuration.get(key)` 读取插件共享配置。写入需要 `configuration.write` 且调用来自该插件的活动设置文档，使用 `compareAndSet(key,expected,value)` 防止覆盖并发更改。普通 `ctx.storage` 继续按 Agent 作用域隔离，用于各角色的会话和记忆。
+
+声明 `process.rpc` 后，`ctx.processes.resolve(candidates,files)` 可检测有界的安装路径；`${home}`、`${appData}`、`${localAppData}`、`${programFiles}` 是宿主展开的系统路径。`open({executable,args,cwd?,env?})` 启动固定本机可执行文件并返回 `{id,cwd}`。参数为数组，禁止 shell/自动安装器。`write(id,message)` 和 `read(id,timeoutMs)` 交换 JSON 行；读取超时返回 null，关闭/坏 JSON/资源超限返回失败。协议、请求 ID、重试和会话规则由插件实现。
+
+本机程序按正常用户环境运行，拥有该用户权限；它不是 QuickJS 沙箱的一部分。运行包必须如实说明这一权限。进程句柄仅在本次调用有效，`close`、完成、取消、插件停用或卸载会清理它；不提供永久后台进程或跨插件句柄。
+
+若声明 `media.read`，`write` 可附加 `{frameId,pointer,encoding:'base64'|'dataUrl'}` 绑定。宿主只把当前 Agent 输入中已授权的图片注入消息的 null JSON Pointer 占位，不向插件开放任意文件路径或他人素材。这个接口与所有平台协议无关。示例：[外部 Agent 插件](../../extensions/official/agent-connectors)。
+
 让普通 Agent 按任务调用的能力使用 `ctx.tools.register`，提供明确的 `description` 和 `inputSchema`。需要本次用户授权选区的工具声明 `metadata: { requiresRegion: true }`；只有已明确授权区域的运行才会向模型提供该工具，插件也应拒绝缺少 `context.regionId` 的调用。注册工具不会创建截图工具条命令，也不会自行获得区域授权。
 
 [`region-agent`](https://github.com/abnste/mewu-plugin-region-agent) 的 0.1.2 版将区域操作注册为工具，并保留独立 Agent 服务；Agent 在没有选区时仍可正常聊天。它继续使用 API 与 SDK 0.1.0 已有的注册接口，普通 Agent 的自动工具调度需要支持该能力的新版宿主。独立仓库附有 Windows 原生运行截图。更新插件时发布新的版本与 ZIP，不覆盖社区已发布的资产。
@@ -100,7 +114,7 @@ PNG 缩略图（含标注），不支持预览的类型返回 `null`，不暴露
 `extensions/examples/research-notes`（编辑便笺、列表引用）。两者只通过同一通用接口，
 均可独立打包。它们尚未发布到市场，不能把开发源码说成已安装的公开版本。
 
-worker 当前按服务调用创建；常驻后台订阅、通用设置插槽、第三方场景对象 codec
+worker 当前按服务调用创建；通用设置插槽见上文，常驻后台订阅与第三方场景对象 codec
 仍未完成。具体边界见 `docs/plugin-boundaries.md`。不要把注册方法存在当作产品接线完成。
 
 当前区域自动操作的原生适配器仅支持 Windows。macOS 与 Linux 的截图交互不受影响，但它们的输入适配器尚未实现，会返回明确的不支持错误。Windows 区域须来自真实截图、位于同一个前台应用内容区，目标身份、显示器、选区与输入焦点会持续校验；Esc 或宿主停止可撤权。

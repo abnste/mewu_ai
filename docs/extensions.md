@@ -112,6 +112,23 @@ The separate [journal memory](../extensions/examples/journal-memory) and [intera
 
 ## Lifecycle and permissions
 
+The development host also supports settings services: register a `ui` service with
+`metadata: {surface: 'settings'}` to add its own sidebar entry. The existing
+isolated document bridge delivers `mount` and subsequent client calls, with no
+scene or screenshot authority. Closing or disabling it revokes its generation.
+`configuration.get/compareAndSet` share plugin-owned settings across Agent roles;
+writes require a live settings surface and the declared configuration permission.
+
+`process.rpc` explicitly admits installed local executables over bounded JSON-lines
+stdio. Processes belong to one invocation and close on completion, cancellation
+or revocation; no background Node runtime is bundled. Native programs run under
+the user's normal account and inherit its environment, so this permission is not
+an OS sandbox. Protocols, arguments and UI belong to the plugin. The independent
+[External Agents plugin](../extensions/official/agent-connectors/README.md) is an
+example. Current-input image bindings additionally require `media.read`; only
+host-owned frame handles can fill null protocol fields. Use `ctx.runtime.describe()`
+to check the required capabilities before registering services on older hosts.
+
 Workers have no ambient file, network, process or native-module API. Host calls require the plugin's declared permission and live version/state checks. Limits on script memory, execution time, protocol messages and individual values protect the application; they are not a promise that arbitrary native code has an OS security sandbox. Third-party native executables are not accepted as API package modules.
 
 `network.fetch` permits HTTPS and HTTP on literal loopback addresses or `localhost`, including an operator's local Agent or memory service. It does not grant unrestricted HTTP, redirects, shell execution or a host credential export. Package authors must implement their service's protocol in JavaScript or delegate to another declared plugin service.

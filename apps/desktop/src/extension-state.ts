@@ -36,6 +36,11 @@ export function surfaceExtensionServices(records: ExtensionRecord[]): ExtensionS
     record.manifest.permissions.includes('ui.render')
     && (service.metadata as Record<string,unknown>|undefined)?.surface==='space-overlay');
 }
+export function settingsExtensionServices(records: ExtensionRecord[]): ExtensionServiceChoice[] {
+  return extensionServices(records, 'ui').filter(({record, service}) =>
+    record.manifest.permissions?.includes('ui.render')
+    && (service.metadata as Record<string, unknown> | undefined)?.surface === 'settings');
+}
 function placedExtensionServices(records: ExtensionRecord[], placement: string): ExtensionServiceChoice[] {
   return extensionServices(records, 'command', true).filter(({ service }) => service.metadata !== null && typeof service.metadata === 'object'
     && !Array.isArray(service.metadata) && (service.metadata as Record<string, unknown>).placement === placement);

@@ -123,10 +123,12 @@ pub(crate) fn prepare(input: Value) -> Result<PreparedInput, String> {
     // artifacts or alleged execution history from the input object.
     if has_request {
         object.remove("images");
+        object.remove("currentImages");
         object.remove("messages");
     }
     let mut frames = HashMap::new();
     let mut images = Vec::new();
+    let mut current_images = Vec::new();
     let mut messages = Vec::new();
     let mut input_bytes = 0usize;
     let mut output_bytes = 0usize;
@@ -162,7 +164,7 @@ pub(crate) fn prepare(input: Value) -> Result<PreparedInput, String> {
         if history.len() > MAX_MESSAGES {
             return Err("插件会话历史过长".into());
         }
-        for message in history {
+        for (message_index,message) in history.iter().enumerate() {
             let Some(role @ ("user" | "assistant" | "system")) =
                 message.get("role").and_then(Value::as_str)
             else {
@@ -206,6 +208,7 @@ pub(crate) fn prepare(input: Value) -> Result<PreparedInput, String> {
                                 let frame = inline_image(url, &mut input_bytes, &mut output_bytes)?;
                                 let id = uuid::Uuid::new_v4().to_string();
                                 images.push(Value::String(id.clone()));
+                                if role=="user" && message_index+1==history.len(){current_images.push(Value::String(id.clone()));}
                                 frames.insert(id, frame);
                             }
                             // Unknown multimodal/tool-bearing blocks are not
@@ -223,6 +226,7 @@ pub(crate) fn prepare(input: Value) -> Result<PreparedInput, String> {
     }
     if has_request {
         object.insert("images".into(), Value::Array(images));
+        object.insert("currentImages".into(), Value::Array(current_images));
         object.insert("messages".into(), Value::Array(messages.clone()));
     }
     Ok(PreparedInput {
@@ -251,6 +255,20 @@ mod tests {
     }
     fn input(url: &str) -> Value {
         json!({"task":"看图", "request":{"messages":[{"role":"user","content":[{"type":"text","text":"你好"},{"type":"image_url","image_url":{"url":url}}]}]}})
+    }
+    #[test]
+    fn resumed_agents_can_distinguish_current_images_from_history_and_cannot_supply_their_own(){
+        let url=format!("data:image/png;base64,{}",STANDARD.encode(png()));
+        let mut value=input(&url);
+        value["request"]["messages"].as_array_mut().unwrap().push(json!({"role":"user","content":"继续"}));
+        value["currentImages"]=json!(["forged"]);
+        let prepared=prepare(value.clone()).unwrap();
+        assert_eq!(prepared.input["images"].as_array().unwrap().len(),1);
+        assert_eq!(prepared.input["currentImages"],json!([]));
+        value["request"]["messages"].as_array_mut().unwrap().push(json!({"role":"user","content":[{"type":"image_url","image_url":{"url":url}}]}));
+        let prepared=prepare(value).unwrap();
+        assert_eq!(prepared.input["images"].as_array().unwrap().len(),2);
+        assert_eq!(prepared.input["currentImages"],json!([prepared.input["images"][1]]));
     }
 
     #[test]

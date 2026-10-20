@@ -3,7 +3,9 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { createOptionalFeatureState } from '../optional-feature-state';
 import * as extensions from '../extension-bridge';
 import type { ExtensionRecord } from '../extension-contracts';
-import { extensionServices, mergeExtensionRecords } from '../extension-state';
+import { extensionServices, mergeExtensionRecords, settingsExtensionServices, extensionServiceKey } from '../extension-state';
+import ExtensionSettings from './ExtensionSettings';
+import PluginIcon from './PluginIcon';
 import { Database, Info, Link2, Puzzle, ScanLine, Settings2, UserRound, Wrench, X } from 'lucide-solid';
 import type { AgentProfile, ConnectionProfile, DiscoverMcpServer, Snapshot } from '../contracts';
 import type { DeleteMemory, SaveMemory } from './MemoryList';
@@ -20,7 +22,7 @@ import { t } from '../i18n';
 import { nativeSelectOwnsEscape } from '../native-select-escape';
 import '../settings-sections.css';
 
-export type SettingsTab = 'general' | 'capture' | 'agent' | 'plugins' | 'data' | 'about';
+export type SettingsTab = 'general' | 'capture' | 'agent' | 'plugins' | 'data' | 'about' | `extension:${string}`;
 interface Props {
   snapshot: Snapshot;
   initialTab: SettingsTab;
@@ -48,6 +50,7 @@ export default function SettingsDialog(props: Props) {
   }, false);
   const [extensionRecords, setExtensionRecords] = createSignal<ExtensionRecord[]>([]);
   const externalAgentVisible = createMemo(() => extensionServices(extensionRecords(), 'agent').length > 0);
+  const pluginPages = createMemo(() => settingsExtensionServices(extensionRecords()));
   const agentEnabled = () => hostAgentVisible() || externalAgentVisible();
   let extensionDisposed = false, extensionEvents = 0, stopExtensions: (() => void) | undefined;
   onMount(async () => {
@@ -62,6 +65,8 @@ export default function SettingsDialog(props: Props) {
   });
   onCleanup(() => { extensionDisposed = true; stopExtensions?.(); });
   const [tab, setTab] = createSignal(props.initialTab);
+  const activePluginPage = createMemo(() => pluginPages().find(choice => tab() === `extension:${extensionServiceKey(choice)}`));
+  createEffect(() => { if (tab().startsWith('extension:') && !activePluginPage()) setTab('plugins'); });
   const facts = createSettingsInformation(() => tab() === 'general' || tab() === 'capture' || tab() === 'data' || tab() === 'about');
   const [agentId, setAgentId] = createSignal(props.snapshot.scenes.find(s => s.id === props.snapshot.activeSceneId)?.agentId || props.snapshot.agents[0]?.id || '');
   const [agentPane, setAgentPane] = createSignal<'identity' | 'connection' | 'tools'>(props.initialTab === 'agent' ? 'connection' : 'identity');
@@ -94,7 +99,7 @@ export default function SettingsDialog(props: Props) {
     <section ref={dialog} class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="settings-header" data-tauri-drag-region={props.draggable ? true : undefined}><h1 id="settings-title" data-tauri-drag-region={props.draggable ? true : undefined}>{t("设置")}</h1><button ref={closeButton} class="icon-button" title={t("关闭")} aria-label={t("关闭设置")} onClick={props.onClose}><X size={18} /></button></header>
       <div class="settings-body">
-        <nav class="settings-nav" aria-label={t("设置分类")}><For each={nav}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.id === 'agent' && !agentEnabled() ? '连接' : entry.label)}</span></button>}</For></nav>
+        <nav class="settings-nav" aria-label={t("设置分类")}><For each={nav}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.id === 'agent' && !agentEnabled() ? '连接' : entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></nav>
         <div class="settings-content">
           <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
           <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
@@ -109,6 +114,7 @@ export default function SettingsDialog(props: Props) {
           <div hidden={tab() !== 'plugins'}><PluginsPanel active={tab() === 'plugins'} /></div>
           <div hidden={tab() !== 'data'}><DataSettings data={facts} active={tab() === 'data'} /></div>
           <div hidden={tab() !== 'about'}><AboutSettings data={facts} active={tab() === 'about'} /></div>
+          <Show when={activePluginPage()} keyed>{choice => <ExtensionSettings choice={choice} onEscape={props.onClose}/>}</Show>
         </div>
       </div>
     </section>
