@@ -10,7 +10,7 @@ import { isCoreReplacementPlugin } from '../plugin-core';
 import { t } from '../i18n';
 import PluginIcon from './PluginIcon';
 
-interface Props { active: boolean; platform?: HostPlatform; pane: 'discover' | 'installed'; query: string; filter: string; refreshRequest: number; onDetail: (open: boolean) => void }
+interface Props { active: boolean; platform?: HostPlatform; query: string; filter: string; refreshRequest: number; onDetail: (open: boolean) => void }
 export default function BuiltinPlugins(props: Props) {
   const [snapshot, setSnapshot] = createSignal<PluginSnapshot>({ revision: -1, plugins: [] });
   const [catalog, setCatalog] = createSignal<PluginManifest[]>([]);
@@ -19,7 +19,6 @@ export default function BuiltinPlugins(props: Props) {
   const accept = (value: PluginSnapshot) => { if (!disposed && value.revision >= snapshot().revision) setSnapshot(value); };
   const record = (id: string) => snapshot().plugins.find(value => value.source.type === 'official' && value.manifest.id === id);
   const entries = createMemo(() => catalog().filter(value => !isCoreReplacementPlugin(value.id)
-    && (props.pane === 'discover' || Boolean(record(value.id) && record(value.id)!.state !== 'removed'))
     && (!props.filter || pluginModuleTags(value).includes(props.filter as PluginTag))
     && (!props.query.trim() || [value.id, value.name, value.description, ...pluginModuleTags(value).map(tag => t(pluginTagLabels[tag]))].join(' ').toLocaleLowerCase().includes(props.query.trim().toLocaleLowerCase()))));
   const detail = () => catalog().find(value => value.id === selected());
@@ -38,7 +37,6 @@ export default function BuiltinPlugins(props: Props) {
   }
   createEffect(on(() => props.active, active => { if (active && !initialized) void refresh(); }));
   createEffect(on(() => props.refreshRequest, () => { if (props.active) void refresh(); }, { defer: true }));
-  createEffect(on(() => props.pane, () => { setSelected(''); setConfirm(false); }, { defer: true }));
   onCleanup(() => { disposed = true; unsubscribe?.(); props.onDetail(false); });
   async function control(manifest: PluginManifest, action: 'enable' | 'disable' | 'remove' | 'restore') {
     const current = record(manifest.id); if (busy() || !current) return;

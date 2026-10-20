@@ -98,15 +98,33 @@ test('builtin list hides retired core IDs, preserves user choices and cannot exp
   records.push({manifest:{id:'example.retired',name:'retired'},source:{type:'local'},state:'enabled',revision:1});
   const before = structuredClone(records), snapshot = { plugins: records }, catalog = records.slice(0,8).map(value => value.manifest);
   const scope = run(`${panel.slice(panel.variable('record'))}\n${panel.slice(panel.variable('entries'))}\nglobalThis.list=entries;`, {
-    createMemo: callback => callback, props:{get pane(){return scope.paneValue},query:'',get filter(){return scope.filterValue}}, paneValue:'installed', filterValue:'', catalog:()=>catalog,snapshot:()=>snapshot,
+    createMemo: callback => callback, props:{query:'',get filter(){return scope.filterValue}}, filterValue:'', catalog:()=>catalog,snapshot:()=>snapshot,
     isCoreReplacementPlugin:pluginCore.isCoreReplacementPlugin,pluginModuleTags:categories.pluginModuleTags,pluginTagLabels:categories.pluginTagLabels,t:value=>value,
   });
   assert.deepEqual(Array.from(scope.list(), value => value.id), ['mewu.voice','mewu.ocr']);
-  scope.paneValue='discover'; assert.deepEqual(Array.from(scope.list(), value => value.id), ['mewu.voice','mewu.ocr']);
   scope.filterValue='audio'; assert.deepEqual(Array.from(scope.list(), value=>value.id), ['mewu.voice']);
   scope.filterValue='documents'; assert.deepEqual(Array.from(scope.list(), value=>value.id), ['mewu.ocr']);
   scope.filterValue='entertainment'; assert.deepEqual(Array.from(scope.list()), []);
   assert.equal(categories.pluginTags.length,16);assert.deepEqual(records,before);
+});
+
+test('installed community list excludes native, local and removed packages while retaining disabled GitHub plugins', async () => {
+  const community = await component('./components/CommunityExtensions.tsx');
+  const manifest = id => ({id,name:id,description:'',tags:['tools']});
+  const records = [
+    {manifest:manifest('github.enabled'),source:{type:'github',entry:{repository:'author/plugin'}},state:'enabled'},
+    {manifest:manifest('github.disabled'),source:{type:'github',entry:{repository:'author/plugin'}},state:'disabled'},
+    {manifest:manifest('github.removed'),source:{type:'github',entry:{repository:'author/plugin'}},state:'removed'},
+    {manifest:manifest('native.module'),source:{type:'official'},state:'enabled'},
+    {manifest:manifest('local.zip'),source:{type:'local',path:'fixture.zip'},state:'enabled'},
+  ];
+  const before=structuredClone(records), catalog=[{...manifest('market.entry'),repository:'author/market'}];
+  const scope=run(`${community.slice(community.variable('entries'))}\nglobalThis.list=entries;`,{
+    createMemo:callback=>callback,props:{get pane(){return scope.paneValue},query:'',filter:''},paneValue:'installed',records:()=>records,catalog:()=>catalog,tagText:value=>value,
+  });
+  assert.deepEqual(Array.from(scope.list(),value=>value.id),['github.enabled','github.disabled']);
+  scope.paneValue='discover';assert.deepEqual(Array.from(scope.list(),value=>value.id),['market.entry']);
+  assert.deepEqual(records,before);
 });
 
 test('receipt-only capture controller defaults to computer audio but preserves explicitly saved mute and cannot save from capture', async () => {
