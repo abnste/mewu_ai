@@ -248,7 +248,7 @@ pub async fn control_extension_surface_window(
             window.show().map_err(|_| "无法显示插件对象")?;
             window.set_focus().map_err(|_| "无法聚焦插件对象")?;
         }
-        "drag" => window.start_dragging().map_err(|_| "无法移动插件对象")?,
+        "drag" => crate::pin_window::start_drag(&window).await?,
         "pin" => app
             .state::<ExtensionHost>()
             .surfaces
