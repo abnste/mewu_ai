@@ -38,7 +38,7 @@
 入口为 `index.mjs`，无需 Node 依赖随插件安装。使用项目 SDK 打包器生成安装 ZIP，README 和测试文件不放入运行包。
 
 ```sh
-node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.0.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --validator /path/to/mewu-plugin-validator
+node tools/extension-market/cli.mjs pack extensions/official/agent-connectors --out out/agent-connectors-0.1.1.zip --file profiles.mjs --file rpc.mjs --file adapters.mjs --file view.mjs --file workbuddy.mjs --validator /path/to/mewu-plugin-validator
 ```
 
 一手参考：[ACP v1](https://agentclientprotocol.com/protocol/v1/overview)、[Codex App Server](https://developers.openai.com/codex/app-server)、[MiniMax Code](https://github.com/MiniMax-AI/minimax-code)、[CodeBuddy ACP](https://www.codebuddy.ai/docs/cli/acp)、[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/)。
