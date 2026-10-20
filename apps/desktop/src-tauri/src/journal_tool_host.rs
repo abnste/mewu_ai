@@ -579,7 +579,6 @@ mod tests {
 
     #[test]
     fn rejected_memory_arguments_do_not_coerce_or_write_entries() {
-        let (mut store, run) = active();
         let invalid = [
             r#"{"id":"existing","text":"x","sourceQuote":"我"}"#,
             r#"{"expectedRevision":1,"text":"x","sourceQuote":"我"}"#,
@@ -592,12 +591,24 @@ mod tests {
             r#"[null,"用户偏好简短回答",null,"我偏好简短回答",null]"#,
             "[]",
         ];
-        let leases = planned_saves(&mut store, &run, 0, &invalid);
-        for (lease, arguments) in leases.iter().zip(invalid) {
-            assert!(matches!(local_effect(&mut store, lease, "memory_save", arguments).unwrap(), LocalEffectOutcome::Rejected(_, _)));
+        for arguments in invalid {
+            // A real model turn permits at most eight proposals. Keep all ten
+            // independent rejection cases, each in its own live run and lease.
+            let (mut store, run) = active();
+            let lease = planned_saves(&mut store, &run, 0, &[arguments]).remove(0);
+            let LocalEffectOutcome::Rejected(_, output) = local_effect(&mut store, &lease, "memory_save", arguments).unwrap() else {
+                panic!("invalid memory arguments must be rejected")
+            };
+            let feedback: Value = serde_json::from_str(&output.model_json).unwrap();
+            assert_eq!(feedback["executed"], false);
+            let correction = feedback["correction"].as_str().unwrap();
+            assert!(correction.contains("当前工具 schema"));
+            assert!(correction.contains("已声明的字段"));
+            assert!(!correction.contains("sourceMessageId"));
+            assert_eq!(tool_detail(&store, &run).not_sent_reason, Some(NotSentReason::InvalidArguments));
+            assert_eq!(store.memory_page(&run.agent.id, "", None, 25).unwrap().total, 0);
+            assert!(store.run_is_active(&run.scene_id, &run.run_id));
         }
-        assert_eq!(store.memory_page(&run.agent.id, "", None, 25).unwrap().total, 0);
-        assert!(store.run_is_active(&run.scene_id, &run.run_id));
     }
 
     #[test]
