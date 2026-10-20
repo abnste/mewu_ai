@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import * as extensions from '../extension-bridge';
 import { surfaceExtensionServices, mergeExtensionRecords, type ExtensionServiceChoice } from '../extension-state';
 import type { ExtensionRecord } from '../extension-contracts';
@@ -33,11 +34,11 @@ export default function ExtensionSurfaces(props:Props) {
   const offset=(choice:ExtensionServiceChoice)=>{
     let x=16;for(const entry of choices()){if(key(entry)===key(choice))break;const width=widths()[key(entry)];if(width)x+=width+12;}return x;
   };
-  return <div class="extension-surfaces"><For each={generations()}>{id=>{
+  return <For each={generations()}>{id=>{
     const choice=choices().find(value=>generation(value)===id)!;
     return <Show when={props.sceneId} keyed>{_identity=> <Surface {...props} choice={choice} left={offset(choice)}
       onWidth={width=>setWidths(old=>({...old,[key(choice)]:width}))}/>}</Show>;
-  }}</For></div>;
+  }}</For>;
 }
 function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:(width:number)=>void}) {
   const [open,setOpen]=createSignal(false),[mounted,setMounted]=createSignal<Mounted>(),[dragging,setDragging]=createSignal(false);
@@ -140,10 +141,11 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
     });
     frame.contentWindow.postMessage({type:'mewu-connect'},'*',[channel.port2]);
   }
-  return <aside class="extension-surface" onPointerDown={e=>e.stopPropagation()} onWheel={e=>e.stopPropagation()}>
-    <button ref={trigger} class="extension-surface-toggle" classList={{selected:open()}} title={props.choice.service.title} aria-label={props.choice.service.title} aria-expanded={open()} disabled={props.disabled}
-      onClick={()=>open()?close():void show()}><PluginIcon plugin={props.choice.record.manifest} sha256={props.choice.record.sha256} source={props.choice.record.source} size={21}/></button>
-    <Show when={mounted()}>{value=><iframe ref={frame} class="extension-surface-frame" classList={{'receiving-object':dragging()}} sandbox="allow-scripts" allow="" referrerpolicy="no-referrer"
-      title={props.choice.service.title} src={value().url} style={{width:`${value().width}px`,height:`${value().height}px`,left:`${Math.max(16,Math.min(props.left,innerWidth-value().width-16))}px`}} onLoad={loaded}/>}</Show>
-  </aside>;
+  return <>
+    <button ref={trigger} class="icon-button" classList={{selected:open()}} title={props.choice.service.title} aria-label={props.choice.service.title} aria-expanded={open()} disabled={props.disabled}
+      onPointerDown={e=>e.stopPropagation()} onClick={()=>open()?close():void show()}><PluginIcon plugin={props.choice.record.manifest} sha256={props.choice.record.sha256} source={props.choice.record.source} size={17}/></button>
+    <Show when={mounted()}>{value=><Portal><iframe ref={frame} class="extension-surface-frame" classList={{'receiving-object':dragging()}} sandbox="allow-scripts" allow="" referrerpolicy="no-referrer"
+      onPointerDown={e=>e.stopPropagation()} onWheel={e=>e.stopPropagation()}
+      title={props.choice.service.title} src={value().url} style={{width:`${value().width}px`,height:`${value().height}px`,left:`${Math.max(16,Math.min(props.left,innerWidth-value().width-16))}px`}} onLoad={loaded}/></Portal>}</Show>
+  </>;
 }

@@ -270,8 +270,9 @@ pub async fn prepare_extension(
         let (package, bytes) = market::get_package(&entry).await?;
         (package, bytes, Source::Github { entry })
     } else {
-        let picked = tauri::async_runtime::spawn_blocking(|| {
+        let picked = tauri::async_runtime::spawn_blocking(move || {
             rfd::FileDialog::new()
+                .set_parent(&window)
                 .add_filter("Mewu 插件", &["zip"])
                 .pick_file()
         })

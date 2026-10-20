@@ -1,9 +1,5 @@
 /* SPDX-License-Identifier: MPL-2.0 */
-.extension-surfaces{position:fixed;left:16px;bottom:76px;z-index:85;display:flex;gap:8px;pointer-events:none}
-.extension-surface{position:relative;pointer-events:auto}
-.extension-surface-toggle{display:grid;place-items:center;width:40px;height:40px;border:0;border-radius:12px;background:var(--surface,#fafcff);color:var(--text,#334155);box-shadow:0 4px 18px #18253a30;cursor:pointer}
-.extension-surface-toggle:hover,.extension-surface-toggle.selected{background:var(--surface-hover,#eaf0fa)}
-.extension-surface-toggle:disabled{opacity:.45}
-.extension-surface-frame{position:fixed;bottom:126px;border:0;background:transparent;max-width:calc(100vw - 32px);max-height:calc(100vh - 150px);border-radius:16px;box-shadow:0 10px 40px #14213a38}
+.extension-surface-frame{position:fixed;bottom:74px;z-index:85;border:0;background:transparent;max-width:calc(100vw - 32px);max-height:calc(100vh - 98px);border-radius:16px;box-shadow:0 10px 40px #14213a38}
+@media(max-width:1000px){.extension-surface-frame{bottom:210px;max-height:calc(100vh - 234px)}}
 /* The parent owns external pointer drags, including release over a cross-origin document. */
 .extension-surface-frame.receiving-object{pointer-events:none}
