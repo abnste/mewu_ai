@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "hostApi": 2,
+  "runtime": "javascript",
+  "id": "abnste.object-toolbox",
+  "version": "0.1.0",
+  "name": "工具包",
+  "description": "跨会话收藏空间对象，拖出复用，支持文件夹和垃圾桶。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "entry": "index.mjs",
+  "permissions": [
+    "objects.library",
+    "ui.render"
+  ],
+  "tags": [
+    "ui",
+    "tools"
+  ],
+  "icon": {
+    "paths": [
+      "M4 8h16v12H4z M3 4h18v4H3z M9 12h6"
+    ]
+  },
+  "dependencies": {}
+}

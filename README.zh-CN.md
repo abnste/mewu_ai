@@ -55,6 +55,9 @@ MewuAI 维护于 **[master](https://github.com/abnste/mewu_ai/tree/master)**；�
 
 开发方式见 [SDK](./packages/sdk/README.md)、[扩展指南](./docs/extensions.md)与[打包发行工具](./tools/extension-market/README.md)。独立示例有[区域 Agent](https://github.com/abnste/mewu-plugin-region-agent)、[日志记忆](https://github.com/abnste/mewu-plugin-journal-memory)和[交互圆角尺](https://github.com/abnste/mewu-plugin-interactive-widget)。引用区域后直接在现有对话条发指令，无需额外任务窗口；原生区域输入示例目前仅支持 **Windows**。
 
+开发版 SDK 新增隔离客户端界面与插件对象存储。已实现接口、仍在核心的耦合及限制
+见[插件边界核查](./docs/plugin-boundaries.md)；能注册服务不代表对应产品流程已经完整接通。
+
 **CLI**：默认开启的官方命令行插件让其他本机 Agent 通过 `mewu schema` 和固定 JSON 指令操作 Mewu，复用原截图、对话、绘制与录屏流程。见[命令行指南](./docs/cli.md)与[机器可读目录](./apps/desktop/control/catalog.json)。从 1.0.3 起提供，旧安装包不包含此接口。
 
 <details>

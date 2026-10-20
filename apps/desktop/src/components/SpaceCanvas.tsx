@@ -4,6 +4,7 @@ import { nativeSelectOwnsEscape } from '../native-select-escape';
 import { batch, createEffect, createMemo, createSignal, For, on, onCleanup, Show, untrack } from 'solid-js';
 import { Check, ChevronDown, Circle, Copy, Languages, LoaderCircle, Pencil, Pin, Plus, Table2, TextSelect, Trash2, X } from 'lucide-solid';
 import ScrollCaptureIcon from './ScrollCaptureIcon';
+import { beginObjectDrag, type ObjectDrag } from '../extension-object-drag';
 import ApplicationSnapshotIcon from './ApplicationSnapshotIcon';
 import ExtensionSelectionTools from './ExtensionSelectionTools';
 import { recordingGrant, recordingTrimGrant } from '../recording-audio';
@@ -647,10 +648,14 @@ export default function SpaceCanvas(props: Props) {
     const original = target.geometry, scale = geometry().scale;
     const width = target.width, height = target.height, minimum = Math.max(1, Math.round(8 / scale));
     const startX = event.clientX, startY = event.clientY, sceneId = props.scene.id;
+    let collection: ObjectDrag | undefined, collectionPoint = { x: startX, y: startY };
     clearPendingSelection();
     setActive(region.id);
     trackPointer(event, next => {
       const dx = Math.round((next.clientX - startX) / scale), dy = Math.round((next.clientY - startY) / scale);
+      collectionPoint = { x: next.clientX, y: next.clientY };
+      if (!handle && !collection && Math.hypot(next.clientX - startX, next.clientY - startY) >= 3) collection = beginObjectDrag({ source: { kind: 'region', sceneId, regionId: region.id }, remove: () => props.onRemoveRegion(region.id) });
+      collection?.move(collectionPoint);
       let updated: RegionGeometry;
       if (!handle) updated = { ...original, x: clamp(original.x + dx, 0, width - original.width), y: clamp(original.y + dy, 0, height - original.height) };
       else {
@@ -665,7 +670,8 @@ export default function SpaceCanvas(props: Props) {
       props.geometryController.previewPointer(updated);
     }, committed => {
       if (drawingDiagnosticsEnabled()) recordDrawingInput(DrawingInputPhase.regionEdit, event, undefined, committed ? 4 : 5);
-      void props.geometryController.endPointer(committed && props.scene.id === sceneId).then(() => {
+      const collected = Boolean(committed && collection?.finish(collectionPoint)); collection?.cancel();
+      void props.geometryController.endPointer(committed && !collected && props.scene.id === sceneId).then(() => {
         const saved = regionById(region.id); if (!disposed && props.scene.id === sceneId && saved) revealToolbar(saved);
       }).catch(() => {});
     });

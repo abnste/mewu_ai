@@ -48,8 +48,9 @@ async function pinObjectFixture() {
   let position={x:.1,y:.2};const calls=[],errors=[],flights=[];
   const props={busy:false,exiting:false,object:{id:'pin',x:.1,y:.2,displayWidth:.3,displayHeight:.2},onError:cause=>errors.push(cause)};
   const {moveImageObject}=(await load('image-object-geometry.ts')).namespace;
+  const {beginObjectDrag}=(await load('extension-object-drag.ts')).namespace;
   const context=createContext({props,moving:false,disposed:false,zooming:false,zoomSteps:0,intentGeneration:0,cleanup:undefined,
-    position:()=>position,setPosition:value=>{position=value;},innerWidth:1000,innerHeight:800,moveImageObject,
+    position:()=>position,setPosition:value=>{position=value;},innerWidth:1000,innerHeight:800,moveImageObject,beginObjectDrag,
     controlPinObject:(id,action)=>{const flight=deferred();calls.push({id,action:JSON.parse(JSON.stringify(action))});flights.push(flight);return flight.promise;}});
   const api=runInContext(code,context);
   const wheel=()=>({deltaY:-1,preventDefault(){},stopPropagation(){}});

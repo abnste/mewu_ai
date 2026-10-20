@@ -52,6 +52,7 @@ assert.ok(mask && selectionShow && toolbarWhen && cleanup && sourceEffect && sna
 const harness = `import { batch, createSignal, createMemo, createEffect, Show, For, untrack, onCleanup } from 'solid-js';
 import { SnapMapLoader, SnapSelectionGesture, snapImagePoint, snapTarget, snapResize } from './window-snap';
 import { DrawingInputPhase, drawingDiagnosticsEnabled, recordDrawingInput } from './drawing-diagnostics';
+import { beginObjectDrag } from './extension-object-drag';
 import { geometryTarget, overlayRegion } from './region-geometry';
 export default function PendingOwner(props) {
   let disposed = false, interactionVersion = 0, pendingSelectionEpoch = 0, forceManualSelection, cancelGesture, cancelDeferredPointer, snapPointer, newSelectionSource, lastSource, snapIdentity = '';
@@ -121,8 +122,9 @@ async function fixture({ automatic, map: suppliedMap, fetchMap, diagnostics = fa
   const diagnosticRows = [];
   const stopDiagnostics = diagnostics ? diagnosticModule.namespace.startDrawingDiagnostics(true, async payload => diagnosticRows.push(...JSON.parse(payload).rows)) : () => {};
   const geometryModule = new SourceTextModule(ts(await raw('./region-geometry.ts')), { context }); await geometryModule.link(() => { throw Error('unexpected geometry import'); }); await geometryModule.evaluate();
+  const toolboxModule = new SourceTextModule(ts(await raw('./extension-object-drag.ts')), { context }); await toolboxModule.link(() => { throw Error('unexpected toolbox import'); }); await toolboxModule.evaluate();
   const owner = new SourceTextModule(compiled, { context });
-  await owner.link(name => name === 'solid-js' ? core : name === 'test-renderer' ? synthetic(renderer) : name === './window-snap' ? snap : name === './drawing-diagnostics' ? diagnosticModule : geometryModule); await owner.evaluate();
+  await owner.link(name => name === 'solid-js' ? core : name === 'test-renderer' ? synthetic(renderer) : name === './window-snap' ? snap : name === './drawing-diagnostics' ? diagnosticModule : name === './extension-object-drag' ? toolboxModule : geometryModule); await owner.evaluate();
   const [scene, setScene] = solid.createSignal({ id: 'scene', background: { id: 'background', width: 1200, height: 800 }, regions: [], items: [] });
   const [inputLocked, setInputLocked] = solid.createSignal(false);
   const mapRequests = [];

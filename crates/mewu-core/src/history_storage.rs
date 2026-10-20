@@ -136,6 +136,7 @@ impl Store {
                     )
             })
             .cloned()
+            .chain(self.object_libraries.values().flat_map(|library|library.assets()))
             .collect()
     }
 

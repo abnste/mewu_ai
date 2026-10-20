@@ -2,6 +2,9 @@
 
 Mewu API 插件运行在独立 QuickJS worker 中。宿主提供 SDK 模块，安装插件不需要 Node.js；此 npm 包用于开发时的类型提示与契约测试。
 
+仓库中的 0.2.0 是开发版本，新增通用客户端与对象事务。下面的已发布 0.1.0
+下载仍可用于既有插件，但不包含这些新增类型；开发新接口应使用本仓库对应 SDK。
+
 在独立 ESM 项目中安装已发布的开发 SDK：
 
 ```sh
@@ -51,6 +54,45 @@ export default definePlugin(ctx => {
 宿主按插件和 Agent 隔离持久存储。每条记忆可以独立保存，通过分页键目录检索；不存在固定 64 条的模型记忆槽位。`storage.list` 的 cursor 用于分页，prefix 用于过滤，不能互相替代。并发读改写使用 `storage.compareAndSet(key, expected, value)`：返回是否成功，`expected: null` 明确表示键不存在，不匹配已保存的 JSON null。单值及一次请求有资源限制，长期数据应拆分为独立记录。
 
 模型调用使用宿主已配置的连接，插件不获得 API Key。区域观察返回宿主图片 artifact ID；将该 ID 放到 `ctx.model.invoke({ prompt, images: [artifactId] })`，由宿主提供真实图片。区域操作还需要用户此次明确发起的运行授权，仅有清单权限不够。坐标是观察图内的像素，不能传桌面全局坐标。
+
+### 插件界面与对象事务（开发中，需要新版宿主）
+
+插件 UI 自己返回 HTML/CSS/JavaScript。以 `ctx.ui.register` 注册
+`metadata: {surface: "space-overlay"}`，处理 `{type:"mount"}` 并返回
+`{html, width, height}`。宿主可同时显示多个独立服务，不认识九宫格、文件夹、
+垃圾桶或某个插件 ID。声明 `ui.render` 权限；对象持久化再声明 `objects.library`。
+
+客户端文档是持续存在的隔离沙箱。内嵌客户端 API：
+
+- `await mewu.ready` 等待当前文档的专属 MessagePort。
+- `await mewu.call(input)` 调用自己的已注册服务。不能选择其他插件、IPC 或文件路径。
+- `mewu.on(name, callback)` 接收 `drag` 与 `change` 事件，返回解除监听函数。
+- `mewu.setDropTargets([{id,x,y,width,height}])` 声明文档内的放置区域。
+- `await mewu.viewportPoint(x,y)` 将客户端坐标转换为当前空间比例坐标。
+- `await mewu.drag(pointerDownEvent)` 接续一次真实左键手势，返回
+  `{cancelled,x,y}`（客户端坐标）。宿主只保证跨文档收到松手；移动、重排、删除、
+  恢复对象的决定由插件做。Esc、关闭、失焦和 30 秒超时取消手势，不能重放旧事件。
+  浏览器端类型可引用 `@mewu/sdk/client`。
+
+处理拖入时输入为 `{type:"drop",target,kind}`。来源引用由第一方界面单独传递，
+插件 JS 不能自行构造。`ctx.objects.commit({expectedRevision,state,captureKey,remove})`
+在一个事务内保存任意 JSON 状态并保留/移除对象；`captureKey` 消费当前实际拖放
+来源一次，失败不会自动重试该手势。`ctx.objects.get()` 返回 `{revision,state,objects}`，
+目录含名称、类型、尺寸，没有本机路径和原会话。`ctx.objects.restore(revision,key,{x,y})`
+取出新副本。插件返回 `{removeSource:true}` 时，只有仍有效的当前用户拖放动作才能
+移除原对象，普通 RPC 不能借此删除场景内容。
+
+关闭文档、切换会话、插件停用/卸载或版本变化，会撤销旧界面的操作资格；持久数据在
+卸载后保留。无布局和目录层级规定。单插件上限：256 KiB JSON 状态、4096 个对象、
+32 MiB 模板；客户端 HTML 256 KiB。首次激活用 `ctx.objects.describe()` 检查
+`capabilities` 是否包含 `ui.surfaces`，旧版宿主应明确拒绝，不注册不可用按钮。
+
+完整示例：`extensions/official/object-toolbox`（九宫格、文件夹、拖出、垃圾桶）和
+`extensions/examples/research-notes`（编辑便笺、列表引用）。两者只通过同一通用接口，
+均可独立打包。它们尚未发布到市场，不能把开发源码说成已安装的公开版本。
+
+worker 当前按服务调用创建；常驻后台订阅、通用设置插槽、第三方场景对象 codec
+仍未完成。具体边界见 `docs/plugin-boundaries.md`。不要把注册方法存在当作产品接线完成。
 
 当前区域自动操作的原生适配器仅支持 Windows。macOS 与 Linux 的截图交互不受影响，但它们的输入适配器尚未实现，会返回明确的不支持错误。Windows 区域须来自真实截图、位于同一个前台应用内容区，目标身份、显示器、选区与输入焦点会持续校验；Esc 或宿主停止可撤权。
 

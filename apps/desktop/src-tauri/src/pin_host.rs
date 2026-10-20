@@ -365,6 +365,8 @@ pub async fn drain_pending(app: &AppHandle, timeout: Duration) -> Result<(), Str
 
 struct Source {
     asset: Asset,
+    // Immutable video object captured at pin creation, independent of scene history.
+    saved_item: Option<mewu_core::SpaceItem>,
     media: Option<media::PinVideo>,
     extra_assets: Vec<Asset>,
     _extra_pixels: Vec<OwnedSemaphorePermit>,
@@ -375,6 +377,7 @@ struct Source {
     _root_directory: File,
     _pixels: OwnedSemaphorePermit,
 }
+pub(crate) use objects::capture_extension_pin;
 impl Drop for Source {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.asset.path);
@@ -421,11 +424,12 @@ pub(crate) fn storage_assets(app: &AppHandle) -> Result<Vec<Asset>, String> {
     };
     let state = registry.state.lock().map_err(|_| "贴图状态不可用")?;
     // Source pixels live in their own pin-staging directory and hold leases.
-    // Only durable orientation copies participate in the assets inventory.
+    // Retain the immutable video template too, so history cleanup cannot remove
+    // its original media before the user collects or closes the pin.
     Ok(state
         .entries
         .values()
-        .flat_map(|entry| entry.object_assets.values())
+        .flat_map(|entry| entry.object_assets.values().chain(entry.source.0.saved_item.iter().map(|item| &item.asset)))
         .cloned()
         .collect())
 }
@@ -1755,6 +1759,7 @@ fn stage(
         },
         root: staging,
         media: None,
+        saved_item: None,
         extra_assets: Vec::new(),
         _extra_pixels: Vec::new(),
         _directory: staging_lock,

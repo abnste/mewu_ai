@@ -313,7 +313,7 @@ fn completion_preserves_frozen_conversation_and_restart_without_switching_scene(
     let version: u32 = sql
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     assert_eq!(reopened.snapshot().schema_version, 1);
 }
 

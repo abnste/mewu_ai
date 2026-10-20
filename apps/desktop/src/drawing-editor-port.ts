@@ -48,6 +48,7 @@ export interface DrawingEditorPort {
   copyTable?:(drawing:Drawing,format:DrawingTableFormat)=>Promise<void>;
 }
 export interface SharedDrawingEditorProps {
+  objectSource?:()=>import('./extension-object-drag').DrawingSource;
   port:DrawingEditorPort;box:EditorBox;tools:ManualDrawingKind[];
   documentOnly?:boolean;busy:boolean;inputLocked?:boolean;retainOnDone?:boolean;keyboardIgnore?:string;
   onCommand:(action:EditorDrawingAction)=>Promise<void>;

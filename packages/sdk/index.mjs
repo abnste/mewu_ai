@@ -65,6 +65,12 @@ export function createContext(send) {
     channels: Object.freeze({ register: register('channel') }),
     renderers: Object.freeze({ register: register('renderer') }),
     ui: Object.freeze({ register: register('ui'), render: value => host.call('ui.render', value) }),
+    objects: Object.freeze({
+      describe: () => host.call('objects.library.describe'),
+      get: () => host.call('objects.library.get'),
+      commit: transaction => host.call('objects.library.commit', transaction),
+      restore: (expectedRevision, id, position) => host.call('objects.library.restore', { expectedRevision, id, ...position })
+    }),
     model: Object.freeze({ invoke: request => host.call('model.invoke', request) }),
     region: Object.freeze({
       observe: regionId => host.call('region.observe', { regionId }),

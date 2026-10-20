@@ -109,7 +109,7 @@ fn public_reasoning_is_optional_exact_persistent_and_never_part_of_request_text(
     assert_eq!(
         db.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .unwrap(),
-        10
+        11
     );
 }
 

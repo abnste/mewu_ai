@@ -461,7 +461,7 @@ fn rectangular_mark_keeps_revision_fences_and_persisted_edit_history() {
             .unwrap()
             .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        10
+        11
     );
 }
 

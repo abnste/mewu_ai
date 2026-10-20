@@ -21,6 +21,10 @@ mod capture_macos;
 #[cfg(target_os = "macos")]
 mod capture_permission_macos;
 mod blackboard;
+mod extension_objects_host;
+mod extension_surfaces;
+#[cfg(test)]
+mod extension_surface_tests;
 mod optional_capabilities;
 mod optional_authorizations;
 mod capture_cursor;

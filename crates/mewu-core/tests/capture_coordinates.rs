@@ -164,7 +164,7 @@ fn db9_migration_preserves_raw_document_tables_fts_blobs_and_does_not_repeat() {
     assert_eq!(
         db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        10
+        11
     );
     assert_eq!(
         db.query_row(
@@ -197,11 +197,11 @@ fn migration_failure_is_atomic_and_future_schema_does_not_touch_data() {
             .unwrap(),
         9
     );
-    db.execute_batch("DROP TRIGGER reject_coordinate_migration; PRAGMA user_version=11;")
+    db.execute_batch("DROP TRIGGER reject_coordinate_migration; PRAGMA user_version=12;")
         .unwrap();
     assert!(matches!(
         Store::open(&file.0),
-        Err(CoreError::UnsupportedSchema(11))
+        Err(CoreError::UnsupportedSchema(12))
     ));
     assert_eq!(payload(&db), before);
     assert_eq!(rows(&db), all_rows);

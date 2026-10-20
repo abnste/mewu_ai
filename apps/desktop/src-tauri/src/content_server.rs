@@ -74,6 +74,9 @@ impl ContentServer {
                     request.url(),
                     &self.authority,
                 )?;
+                if let Some(html)=super::extension_surfaces::read(&app,id) {
+                    return Some(document_response(200,html,"text/html; charset=utf-8").boxed());
+                }
                 let host = app.state::<super::Host>();
                 // Drop the state mutex before disk I/O or sending any response.
                 let asset = {

@@ -312,6 +312,42 @@ pub async fn reference_pin_object(
     })
 }
 
+/// Save a pin's current pixels without adding a conversation reference.
+pub(crate) async fn capture_extension_pin(app: AppHandle, id: String, access: &crate::extension_objects_host::Access, commit: crate::extension_objects_host::Commit) -> Result<mewu_core::ObjectLibrary, String> {
+    if !valid_uuid(&id) { return Err("贴图对象无效".into()); }
+    let label = format!("pin-{id}");
+    let registry = app.state::<PinRegistry>();
+    let (source, turns) = {
+        let state = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+        let entry = state.entries.get(&label).filter(|entry| entry.live).ok_or("贴图已关闭")?;
+        (entry.source.clone(), entry.quarter_turns)
+    };
+    let work = registry.work.begin(&app)?;
+    let decode = registry.decode.clone().try_acquire_owned().map_err(|_| "贴图正在处理，请稍后重试")?;
+    // Pixel decoding runs on the existing extension blocking worker.
+    {
+        let (_work, _decode) = (work, decode);
+        let host = app.state::<Host>(); host.exit.ensure_new_operation()?;
+        let (item, mut file) = if source.0.media.is_some() {
+            let item = source.0.saved_item.clone().ok_or("视频贴图来源不可用")?;
+            (item, None)
+        } else {
+            let (asset, file) = prepare_attachment(&source, turns, &host.assets)?;
+            (crate::extension_objects_host::template(asset), Some(file))
+        };
+        let value = access.with_store(&app, |store| {
+        let registry = app.state::<PinRegistry>();
+        let state = registry.state.lock().map_err(|_| "贴图状态不可用")?;
+        if !state.entries.get(&label).is_some_and(|entry| entry.live && entry.source.asset() == source.asset() && entry.quarter_turns == turns) { return Err("贴图已变化".into()); }
+        host.exit.ensure_new_operation()?;
+        store.commit_objects(&access.plugin_id,commit.expected_revision,commit.state,&commit.remove,
+            Some((commit.capture_key.ok_or("缺少对象标识")?,mewu_core::ObjectTemplate{item,board:None}))).map_err(|e| e.to_string())
+        })?;
+        if let Some(file) = &mut file { file.adopted = true; }
+        Ok(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

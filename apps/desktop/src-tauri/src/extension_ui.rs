@@ -22,6 +22,7 @@ pub(crate) fn render(
     scene_id: &str,
     plugin_id: &str,
     revision: u64,
+    surface: Option<&(String,crate::extension_surfaces::Owner)>,
     html: &str,
     width: u32,
     height: u32,
@@ -86,15 +87,18 @@ pub(crate) fn render(
         if record.state != "enabled" || record.revision != revision {
             return Err("插件已停用或版本已变化".into());
         }
-        let mut engine = host.lock()?;
-        host.exit.ensure_new_operation()?;
-        if engine.store.snapshot().active_scene_id != scene_id {
-            return Err("界面所属会话已切换".to_string());
-        }
-        let snapshot = engine
-            .store
-            .add_html_asset_in_viewport(scene_id, asset, viewport_width, viewport_height)
-            .map_err(|e| e.to_string())?;
+        let commit=||{
+            let mut engine = host.lock()?;
+            host.exit.ensure_new_operation()?;
+            if engine.store.snapshot().active_scene_id != scene_id {
+                return Err("界面所属会话已切换".to_string());
+            }
+            engine.store.add_html_asset_in_viewport(scene_id, asset, viewport_width, viewport_height).map_err(|e|e.to_string())
+        };
+        let snapshot=match surface {
+            Some((id,owner))=>extensions.surfaces.with_owner(id,owner,commit),
+            None=>commit()
+        }?;
         crate::publish(app, &snapshot);
         Ok(json!({"assetId":id,"sceneId":scene_id}))
     })();

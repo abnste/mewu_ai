@@ -41,6 +41,7 @@ const harness = `import {createSignal,createMemo,Show,For,batch,untrack} from 's
 import {overlayRegion,geometryTarget,sameGeometry} from './region-geometry';
 import {regionImageProjection} from './region-image';
 import {DrawingInputPhase,drawingDiagnosticsEnabled,recordDrawingInput} from './drawing-diagnostics';
+import {beginObjectDrag} from './extension-object-drag';
 export default function Owner(props){
   const metrics=props.metrics,canvas=props.canvas;
   let disposed=false,interactionVersion=0,cancelGesture,newSelectionSource;
@@ -93,8 +94,10 @@ async function fixture(count) {
   await imageModule.link(() => { throw Error('unexpected import'); }); await imageModule.evaluate();
   const diagnosticModule = new SourceTextModule(plain(await raw('./drawing-diagnostics.ts')), { context });
   await diagnosticModule.link(() => { throw Error('unexpected diagnostics import'); }); await diagnosticModule.evaluate();
+  const toolboxModule = new SourceTextModule(plain(await raw('./extension-object-drag.ts')), { context });
+  await toolboxModule.link(() => { throw Error('unexpected toolbox import'); }); await toolboxModule.evaluate();
   const owner = new SourceTextModule(compiled, { context });
-  await owner.link(name => name === 'solid-js' ? core : name === 'renderer' ? synthetic(renderer) : name === './region-geometry' ? geometryModule : name === './drawing-diagnostics' ? diagnosticModule : imageModule); await owner.evaluate();
+  await owner.link(name => name === 'solid-js' ? core : name === 'renderer' ? synthetic(renderer) : name === './region-geometry' ? geometryModule : name === './drawing-diagnostics' ? diagnosticModule : name === './extension-object-drag' ? toolboxModule : imageModule); await owner.evaluate();
   const measureRegions = values => new Proxy(values, { get(target, key, receiver) {
     if (key !== 'find') return Reflect.get(target, key, receiver);
     return predicate => target.find((value, index) => { metrics.findComparisons++; return predicate(value, index, target); });

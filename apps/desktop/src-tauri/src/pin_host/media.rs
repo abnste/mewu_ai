@@ -265,6 +265,7 @@ pub(super) fn stage_video(
     assets::open_video(&asset, &staging)?;
     let source = Source {
         asset,
+        saved_item: Some(item.clone()),
         media: Some(media),
         extra_assets,
         _extra_pixels: extra_pixels,

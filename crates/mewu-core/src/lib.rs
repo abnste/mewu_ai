@@ -38,6 +38,7 @@ pub use rich_annotations::{
     RICH_DRAWING_STROKE_WIDTH,
 };
 pub use store::{CheckpointDrain, CoreError, ExportView, Store};
+pub use store::extension_objects::{ObjectLibrary, ObjectTemplate};
 pub use store::session_title_store::{title_request_is_current, SessionTitleRequest};
 pub use store::history_storage::HistoryCleanupPlan;
 pub use translation::validate_translation_document;

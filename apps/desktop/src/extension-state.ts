@@ -30,6 +30,12 @@ export function selectionExtensionServices(records: ExtensionRecord[]): Extensio
 export function spaceExtensionServices(records: ExtensionRecord[]): ExtensionServiceChoice[] {
   return placedExtensionServices(records, 'space-toolbar');
 }
+/** Client UI is supplied by each registered plugin, with no layout predicate. */
+export function surfaceExtensionServices(records: ExtensionRecord[]): ExtensionServiceChoice[] {
+  return extensionServices(records, 'ui').filter(({record,service}) =>
+    record.manifest.permissions.includes('ui.render')
+    && (service.metadata as Record<string,unknown>|undefined)?.surface==='space-overlay');
+}
 function placedExtensionServices(records: ExtensionRecord[], placement: string): ExtensionServiceChoice[] {
   return extensionServices(records, 'command', true).filter(({ service }) => service.metadata !== null && typeof service.metadata === 'object'
     && !Array.isArray(service.metadata) && (service.metadata as Record<string, unknown>).placement === placement);

@@ -18,6 +18,7 @@ import DrawingColorPicker from './DrawingColorPicker';
 import BlackboardImageControls from './BlackboardImageControls';
 import {blackboardImage} from '../blackboard-image';
 import {objectTrash} from '../object-trash';
+import { beginObjectDrag, type ObjectDrag } from '../extension-object-drag';
 import DrawingWidthSlider from './DrawingWidthSlider';
 import InlineDrawingText from './InlineDrawingText';
 import DrawingTextStylePicker from './DrawingTextStylePicker';
@@ -474,7 +475,9 @@ export default function SharedDrawingEditor(props: Props) {
   }
   function beginGroup(event:PointerEvent){
     const ids=selectedIds(),originals=drawings().filter(d=>ids.includes(d.id)&&props.port.canSelect(d)),start=point(event,false),revision=props.port.revision();let values=originals;
-    selectionGesture(event,end=>{values=movedDrawings(originals,end.x-start.x,end.y-start.y,props.port.frame(),props.port.sourceSize());setGroupDraft(values);},save=>{
+    let collection:ObjectDrag|undefined;let collectionPoint={x:event.clientX,y:event.clientY};
+    selectionGesture(event,end=>{const frame=props.port.frame();collectionPoint={x:event.clientX+(end.x-start.x)*props.box.width/frame.width,y:event.clientY+(end.y-start.y)*props.box.height/frame.height};const source=props.objectSource?.();if(source&&!collection&&Math.hypot(collectionPoint.x-event.clientX,collectionPoint.y-event.clientY)>4)collection=beginObjectDrag({source:{kind:'drawings',...source,drawingIds:ids},remove:async()=>{await commit({...target(),type:'remove_drawings',drawingIds:ids});}});collection?.move(collectionPoint);values=movedDrawings(originals,end.x-start.x,end.y-start.y,frame,props.port.sourceSize());setGroupDraft(values);},save=>{
+      const collected=save&&collection?.finish(collectionPoint);collection?.cancel();if(collected){setGroupDraft([]);return;}
       if(!save||values.every((d,i)=>d.points.every((p,j)=>p.x===originals[i].points[j].x&&p.y===originals[i].points[j].y))){setGroupDraft([]);return;}
       void commit({...target(revision),type:'update_drawings',drawings:values}).finally(()=>{if(!disposed)setGroupDraft([]);});
     });
@@ -573,6 +576,7 @@ export default function SharedDrawingEditor(props: Props) {
       }); return;
     }
     const original = kind === 'select' ? hit : undefined;
+    let collection:ObjectDrag|undefined;let collectionPoint={x:event.clientX,y:event.clientY};
     const objectMove=Boolean(props.blackboard&&original&&blackboardImage(original));
     if(kind==='select'&&!original){beginMarquee(event);return;}
     if(kind==='select'&&original&&!forcedImage&&selectedIds().length>1&&selectedIds().includes(original.id)&&props.port.allows({...target(),type:'update_drawings',drawings:drawings().filter(d=>selectedIds().includes(d.id))})){beginGroup(event);return;}
@@ -656,6 +660,7 @@ export default function SharedDrawingEditor(props: Props) {
         if (next.buttons & 1) try { svg.setPointerCapture(pointerId); } catch { /* Window listeners still finish this gesture. */ }
       }
       next.preventDefault();
+      if(original&&props.objectSource){collectionPoint={x:next.clientX,y:next.clientY};collection??=beginObjectDrag({source:{kind:'drawings',...props.objectSource(),drawingIds:[original.id]},remove:async()=>{await commit({...target(),type:'remove_drawing',drawingId:original.id});}});collection?.move(collectionPoint);}
       if (!original && (kind === 'pen' || kind === 'highlighter')) {
         latest = undefined;
         for (const sample of drawingPointerSamples(next)) { if (sample.pointerId !== pointerId) continue; update(point(sample, true, initialBox, initialFrame), next.shiftKey, next.type === 'pointerup'); if (ended) return; }
@@ -673,6 +678,7 @@ export default function SharedDrawingEditor(props: Props) {
       if (ended) return;
       const valid = current() && surfaceCurrent(); diagnoseInput(DrawingInputPhase.finished, undefined, (save ? 1 : 2) + (valid ? 0 : 2), value.points.length); ended = true; cleanup();
       try {
+      const collected=save&&valid&&dragStarted&&collection?.finish(collectionPoint);collection?.cancel();if(collected){if(objectMove)trash.cancel();setDraft(undefined);return;}
       const removeObject=objectMove&&save&&valid&&dragStarted&&trashOver();if(objectMove)trash.cancel();
       if(removeObject){setDraft(undefined);void commit({...target(revision),type:'remove_drawing',drawingId:original!.id}).finally(()=>{if(!disposed)setSelected('');});return;}
       if (!save || !valid || (original && !changed)) { setDraft(undefined); return; }

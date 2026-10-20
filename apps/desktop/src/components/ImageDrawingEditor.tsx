@@ -47,5 +47,5 @@ export default function ImageDrawingEditor(props: Props) {
     const { expectedRevision, ...edit } = action;
     return props.onCommand({ type: 'edit_image_annotations', sceneId: props.sceneId, itemId: props.item.id, sourceAssetId: props.item.asset.id, expectedRevision, action: edit });
   };
-  return <SharedDrawingEditor port={port} box={props.box} tools={coreDrawingTools.filter(kind => !['mosaic','highlighter','mark'].includes(kind))} busy={props.busy} inputLocked={props.inputLocked} onCommand={command} onError={props.onError} onClose={props.onClose} onExport={props.onExport} onPin={props.onPin} onRegisterFlush={props.onRegisterFlush} onRegisterHistory={props.onRegisterHistory} />;
+  return <SharedDrawingEditor objectSource={()=>({sceneId:props.sceneId,itemId:props.item.id})} port={port} box={props.box} tools={coreDrawingTools.filter(kind => !['mosaic','highlighter','mark'].includes(kind))} busy={props.busy} inputLocked={props.inputLocked} onCommand={command} onError={props.onError} onClose={props.onClose} onExport={props.onExport} onPin={props.onPin} onRegisterFlush={props.onRegisterFlush} onRegisterHistory={props.onRegisterHistory} />;
 }

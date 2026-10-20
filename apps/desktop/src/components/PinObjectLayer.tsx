@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import { controlPinObject, type PinObject } from '../pin-objects';
 import './pin-objects.css';
 import {moveImageObject} from '../image-object-geometry';
+import { beginObjectDrag, type ObjectDrag } from '../extension-object-drag';
 import PinVideo from './PinVideo';
 interface Props { aiAvailable?: boolean; objects: PinObject[]; busy: boolean; exiting?: boolean; referenced: (object: PinObject) => boolean; onReference: (object: PinObject) => void; onError: (error: unknown) => void }
 function ImageObject(props: Props & { object: PinObject }) {
@@ -40,11 +41,11 @@ function ImageObject(props: Props & { object: PinObject }) {
     if (props.busy || props.exiting || disposed || event.button !== 0 || !grip && (event.target as Element).closest('button,.pin-video-content')) return;
     event.preventDefault();event.stopPropagation();cleanup?.();
     const target=event.currentTarget as HTMLElement,start=position(),x=event.clientX,y=event.clientY,vw=innerWidth,vh=innerHeight,generation=intentGeneration;
-    let changed=false;moving=true;target.setPointerCapture(event.pointerId);
-    const move=(e:PointerEvent)=>{changed=true;const next=moveImageObject({...start,width:props.object.displayWidth,height:props.object.displayHeight},(e.clientX-x)/vw,(e.clientY-y)/vh,vw,vh);setPosition({x:next.x,y:next.y});};
+    let changed=false;let collection:ObjectDrag|undefined;moving=true;target.setPointerCapture(event.pointerId);
+    const move=(e:PointerEvent)=>{changed=true;collection??=beginObjectDrag({source:{kind:'pin',id:props.object.id},remove:closeObject});collection?.move({x:e.clientX,y:e.clientY});const next=moveImageObject({...start,width:props.object.displayWidth,height:props.object.displayHeight},(e.clientX-x)/vw,(e.clientY-y)/vh,vw,vh);setPosition({x:next.x,y:next.y});};
     const stop=()=>{target.removeEventListener('pointermove',move);target.removeEventListener('pointerup',end);target.removeEventListener('pointercancel',end);if(target.hasPointerCapture(event.pointerId))target.releasePointerCapture(event.pointerId);cleanup=undefined;};
-    const end=async(e:PointerEvent)=>{stop();try{if(changed&&e.type!=='pointercancel'&&!disposed&&!props.exiting&&generation===intentGeneration)await controlPinObject(props.object.id,{type:'move',x:position().x,y:position().y});}catch(cause){if(!disposed&&generation===intentGeneration){setPosition({x:props.object.x,y:props.object.y});props.onError(cause);}}finally{if(!disposed&&generation===intentGeneration){moving=false;if(!changed||e.type==='pointercancel'||props.object.x!==start.x||props.object.y!==start.y)setPosition({x:props.object.x,y:props.object.y});}}};
-    cleanup=stop;target.addEventListener('pointermove',move);target.addEventListener('pointerup',end);target.addEventListener('pointercancel',end);
+    const end=async(e:PointerEvent)=>{stop();const collected=e.type==='pointerup'&&collection?.finish({x:e.clientX,y:e.clientY});collection?.cancel();try{if(changed&&!collected&&e.type!=='pointercancel'&&!disposed&&!props.exiting&&generation===intentGeneration)await controlPinObject(props.object.id,{type:'move',x:position().x,y:position().y});}catch(cause){if(!disposed&&generation===intentGeneration){setPosition({x:props.object.x,y:props.object.y});props.onError(cause);}}finally{if(!disposed&&generation===intentGeneration){moving=false;if(collected||!changed||e.type==='pointercancel'||props.object.x!==start.x||props.object.y!==start.y)setPosition({x:props.object.x,y:props.object.y});}}};
+    cleanup=()=>{collection?.cancel();stop();};target.addEventListener('pointermove',move);target.addEventListener('pointerup',end);target.addEventListener('pointercancel',end);
   }
   return <section class="space-pin-object" tabindex={0} aria-label={t('贴图')} onPointerDown={down} onWheel={wheel} style={{left:`${position().x*100}%`,top:`${position().y*100}%`,width:`${props.object.displayWidth*100}%`,height:`${props.object.displayHeight*100}%`,opacity:props.object.opacity}}>
     <Show when={props.object.media} fallback={<img src={props.object.imageUrl} alt={t('贴图')} draggable={false} style={{width:props.object.quarterTurns%2?`${props.object.displayHeight/props.object.displayWidth*innerHeight/innerWidth*100}%`:'100%',height:props.object.quarterTurns%2?`${props.object.displayWidth/props.object.displayHeight*innerWidth/innerHeight*100}%`:'100%',transform:`translate(-50%,-50%) rotate(${props.object.quarterTurns*90}deg)`}}/>}><PinVideo source={props.object.imageUrl} media={props.object.media!} width={props.object.width} height={props.object.height} onError={props.onError} onDrag={event => down(event, true)} /></Show>

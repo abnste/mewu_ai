@@ -10,7 +10,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const APPLICATION_ID: i64 = 0x4d455755;
-pub(crate) const DB_SCHEMA_VERSION: u32 = 10;
+pub(crate) const DB_SCHEMA_VERSION: u32 = 11;
 
 const SNAPSHOT_PADDING_MIN_BYTES: usize = 1024 * 1024;
 const SNAPSHOT_PADDING_BUCKET_BYTES: usize = 64 * 1024;
@@ -56,6 +56,8 @@ mod visual_annotations_store;
 mod raster_edit_store;
 #[path = "blackboard_store.rs"]
 mod blackboard_store;
+#[path = "extension_objects.rs"]
+pub(crate) mod extension_objects;
 #[path = "history_storage.rs"]
 pub(crate) mod history_storage;
 
@@ -136,6 +138,7 @@ type Result<T> = std::result::Result<T, CoreError>;
 /// A revision fence also prevents a second process from silently overwriting this writer.
 pub struct Store {
     db: SqlConnection,
+    object_libraries: std::collections::BTreeMap<String, extension_objects::ObjectLibrary>,
     state: Snapshot,
     revision: i64,
     geometry_group: Option<crate::geometry_history::ActiveEdit>,
@@ -345,7 +348,7 @@ impl Store {
                 transaction.pragma_update(None, "application_id", APPLICATION_ID)?;
                 (state, 0)
             }
-            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | DB_SCHEMA_VERSION => {
+            1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | DB_SCHEMA_VERSION => {
                 if app_id != APPLICATION_ID {
                     return Err(invalid("数据库应用标识不匹配"));
                 }
@@ -382,6 +385,11 @@ impl Store {
         }
         crate::video_registered_layouts::validate(&transaction, &state)?;
         crate::video_annotations::validate_ledger(&transaction, &state)?;
+        if version < 11 {
+            // Older hosts do not know that these templates retain media assets.
+            // The schema fence prevents their history cleanup deleting that media.
+            extension_objects::migrate(&transaction)?;
+        }
         // Old payload fields are an import source only. Modern snapshots must
         // never broadcast or rewrite the entire durable memory collection.
         state.memories.clear();
@@ -405,7 +413,7 @@ impl Store {
             // Connection migration and its version gate are one transaction:
             // a v2 binary must never overwrite the new routing identities.
             validate_snapshot(&state)?;
-            let changed = if matches!(version, 6 | 7 | 8 | 9) && !recovering {
+            let changed = if matches!(version, 6 | 7 | 8 | 9 | 10) && !recovering {
                 // Rich/video layouts add empty, independent binary tables. Keep
                 // the exact existing document payload during this migration,
                 // including fields derived only for the in-memory view.
@@ -425,9 +433,11 @@ impl Store {
             transaction.pragma_update(None, "user_version", DB_SCHEMA_VERSION)?;
             revision += 1;
         }
+        let object_libraries = extension_objects::load(&transaction)?;
         transaction.commit()?;
         let store = Self {
             db,
+            object_libraries,
             state,
             revision,
             geometry_group: None,
@@ -539,7 +549,7 @@ impl Store {
     /// Borrow live typed references. The host clones only selected metadata
     /// before releasing its lock, without copying any conversation bodies.
     pub fn asset(&self, id: &str) -> Option<&Asset> {
-        self.state.asset(id)
+        self.state.asset(id).or_else(|| self.object_libraries.values().find_map(|library|library.asset(id)))
     }
 
     /// Narrow metadata view for host relocation preflight; avoid cloning every

@@ -923,7 +923,7 @@ fn db7_normal_upgrade_preserves_raw_payload_and_all_existing_sql_rows_and_schema
     assert_eq!(
         db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
             .unwrap(),
-        10
+        11
     );
     assert_eq!(migrated.snapshot(), state);
     for (kind, name, sql) in &schema {
