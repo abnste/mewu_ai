@@ -25,7 +25,9 @@ export function validateConfig(value,profile){
 export async function detectProfile(ctx,profile){
   const found=await ctx.processes.resolve(profile.candidates);
   if(found.executables.length||profile.id!=='workbuddy')return {executable:found.executables[0]??'',args:profile.args,platform:found.platform};
-  const roots=['${programFiles}/WorkBuddy','${localAppData}/Programs/WorkBuddy','${localAppData}/WorkBuddy','/Applications/WorkBuddy.app/Contents'];
+  const roots=found.platform==='windows'?['${programFiles}/WorkBuddy','${localAppData}/Programs/WorkBuddy','${localAppData}/WorkBuddy']
+    :found.platform==='macos'?['/Applications/WorkBuddy.app/Contents']:[];
+  if(!roots.length)return {executable:'',args:profile.args,platform:found.platform};
   const candidates=roots.map(root=>root.startsWith('/Applications')?root+'/MacOS/WorkBuddy':root+'/WorkBuddy.exe');
   const scripts=roots.flatMap(root=>['bin/codebuddy','dist/codebuddy.js'].map(name=>root+(root.startsWith('/Applications')?'/Resources':'/resources')+'/app.asar.unpacked/cli/'+name));
   const bundle=await ctx.processes.resolve(candidates,scripts);

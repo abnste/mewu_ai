@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import activate from '../../../extensions/official/agent-connectors/index.mjs';
 import {connectCodex,runCodex,connectAcp,runAcp} from '../../../extensions/official/agent-connectors/adapters.mjs';
 import {openPeer} from '../../../extensions/official/agent-connectors/rpc.mjs';
@@ -136,6 +137,24 @@ test('WorkBuddy desktop discovery selects the plugin HTTP bridge rather than its
   assert.equal(found.transport,'workbuddy-http');assert.equal(found.args.length,1);
   assert.equal(validateConfig(found,profile).transport,'workbuddy-http');
   assert.throws(()=>validateConfig(found,profiles[0]),/方式/);
+});
+
+test('WorkBuddy discovery sends only absolute candidates for the actual host platform',async()=>{
+  for(const platform of ['windows','macos','linux']){
+    const f=fixture(acp);let calls=0;
+    f.ctx.processes.resolve=async(candidates,files=[])=>{
+      calls++;
+      if(calls===1)return {platform,executables:[]};
+      const expand=value=>value.replace('${programFiles}','C:/Program Files').replace('${localAppData}','C:/Users/Test/AppData/Local');
+      const isAbsolute=platform==='windows'?path.win32.isAbsolute:path.posix.isAbsolute;
+      assert.ok(candidates.every(value=>isAbsolute(expand(value))));
+      assert.ok(files.every(value=>isAbsolute(expand(value))));
+      assert.equal(candidates.some(value=>value.startsWith('/Applications')),platform==='macos');
+      return {platform,executables:[],files:[]};
+    };
+    assert.equal((await detectProfile(f.ctx,profiles.find(p=>p.id==='workbuddy'))).executable,'');
+    assert.equal(calls,platform==='linux'?1:2);
+  }
 });
 
 test('WorkBuddy upstream authentication failures are reported as login requirements rather than opaque refusals',async()=>{
