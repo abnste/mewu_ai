@@ -1126,11 +1126,20 @@ mod tests {
             revision: 1,
             contribution_id: "recognize".into(),
         });
-        assert_eq!(
-            combined.authorize(&store).unwrap(),
-            code_worker::ScanMode::CodesAndText
-        );
-        assert!(combined.current(&store.snapshot().unwrap()));
+        // The native code decoder is unavailable on Linux. OCR still has its
+        // independent permission there; a combined grant must not enable the
+        // unavailable decoder or borrow OCR's authority.
+        let native_codes = cfg!(any(target_os = "windows", target_os = "macos"));
+        if native_codes {
+            assert_eq!(
+                combined.authorize(&store).unwrap(),
+                code_worker::ScanMode::CodesAndText
+            );
+            assert!(combined.current(&store.snapshot().unwrap()));
+        } else {
+            assert_eq!(combined.authorize(&store).unwrap_err(), "此插件未启用");
+            assert!(!combined.current(&store.snapshot().unwrap()));
+        }
         let text = Grant {
             plugin_id: "mewu.ocr".into(),
             revision: 1,
@@ -1158,10 +1167,14 @@ mod tests {
         assert!(!combined.current(&store.snapshot().unwrap()));
         assert!(combined.authorize(&store).is_err());
         assert!(text.authorize(&store).is_err());
-        assert_eq!(
-            origin.grant.authorize(&store).unwrap(),
-            code_worker::ScanMode::Codes
-        );
+        if native_codes {
+            assert_eq!(
+                origin.grant.authorize(&store).unwrap(),
+                code_worker::ScanMode::Codes
+            );
+        } else {
+            assert_eq!(origin.grant.authorize(&store).unwrap_err(), "此插件未启用");
+        }
     }
     use mewu_core::{AssetKind, DrawingEdit, OcrDocument, RegionOcr, TranslationDocument};
 
