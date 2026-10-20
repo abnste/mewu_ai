@@ -155,7 +155,10 @@ function shellFixture(root, shell = 'bash', extraEnv = {}) {
   const bin = path.join(home, "bin's commands");
   const image = put(root, 'stable.AppImage', '#!/bin/sh\nprintf "%s\\n" "$@"\n');
   const env = { HOME: shellPath(home), SHELL: `/bin/${shell}`, ZDOTDIR: '', ...extraEnv };
-  return { home, bin, env, install: ['--appimage', shellPath(image), '--bin-dir', shellPath(bin), '--configure-shell'], uninstall: ['--uninstall', '--bin-dir', shellPath(bin)] };
+  // Match the native platform's documented Bash entry point. The dedicated
+  // Darwin priority test below independently exercises existing login files.
+  const profileName = process.platform === 'darwin' ? '.bash_profile' : '.bashrc';
+  return { home, bin, env, profileName, install: ['--appimage', shellPath(image), '--bin-dir', shellPath(bin), '--configure-shell'], uninstall: ['--uninstall', '--bin-dir', shellPath(bin)] };
 }
 test('shell PATH configuration is opt-in and reports an unsupported shell honestly', { skip: shellSkip }, () => fixture(root => {
   const f = shellFixture(root, 'fish');
@@ -169,7 +172,7 @@ test('shell PATH configuration is opt-in and reports an unsupported shell honest
 test('bash managed PATH block preserves original bytes, is idempotent, works in a new interactive shell, and uninstalls exactly', { skip: shellSkip }, () => fixture(root => {
   const f = shellFixture(root);
   const original = Buffer.concat([Buffer.from('# 原有 UTF-8 + raw '), Buffer.from([0xff]), Buffer.from('\r\nexport ORIGINAL_RC_VALUE=kept')]);
-  const profile = put(f.home, '.bashrc', original);
+  const profile = put(f.home, f.profileName, original);
   const result = integrate(f.install, f.env); assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), { success: true, changed: true, pathConfigured: false, shellSetupRequired: false, newShellRequired: true });
   const installed = fs.readFileSync(profile); assert.deepEqual(installed.subarray(0, original.length), original);
@@ -197,7 +200,7 @@ test('zsh PATH block uses ZDOTDIR and preserves user edits to its own block on u
   assert.equal(fs.readFileSync(profile, 'utf8'), edited);
 }));
 test('shell profile links, nonordinary files and oversized contents are preserved', { skip: shellSkip }, () => fixture(root => {
-  const f = shellFixture(root); const profile = path.join(f.home, '.bashrc');
+  const f = shellFixture(root); const profile = path.join(f.home, f.profileName);
   fs.mkdirSync(profile);
   let result = integrate(f.install, f.env); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).shellSetupRequired, true); assert.equal(fs.statSync(profile).isDirectory(), true);
   fs.rmdirSync(profile); fs.writeFileSync(profile, Buffer.alloc(1024 * 1024 + 1, 120));
@@ -222,14 +225,14 @@ test('macOS bash uses the existing login startup file in documented priority ord
   const removed = integrate(f.uninstall, f.env, commandPath); assert.equal(removed.status, 0, removed.stderr); assert.equal(fs.readFileSync(login, 'utf8'), '# existing login\n');
 }));
 test('shell block conflicts and profile locks never overwrite user configuration', { skip: shellSkip }, () => fixture(root => {
-  const f = shellFixture(root); const profile = put(f.home, '.bashrc', '# >>> mewu CLI PATH v1 >>>\n# unrelated or incomplete\n'); const original = fs.readFileSync(profile);
+  const f = shellFixture(root); const profile = put(f.home, f.profileName, '# >>> mewu CLI PATH v1 >>>\n# unrelated or incomplete\n'); const original = fs.readFileSync(profile);
   let result = integrate(f.install, f.env); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).shellSetupRequired, true); assert.deepEqual(fs.readFileSync(profile), original);
   fs.writeFileSync(profile, '# clean original\n'); fs.mkdirSync(`${profile}.mewu-cli.lock`);
   result = integrate(f.install, f.env); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).shellSetupRequired, true); assert.equal(fs.readFileSync(profile, 'utf8'), '# clean original\n');
   fs.rmdirSync(`${profile}.mewu-cli.lock`);
 }));
 test('opt-in shell setup creates a private startup file and uses the original GUI PATH only for diagnostics', { skip: shellSkip }, () => fixture(root => {
-  const f = shellFixture(root); const profile = path.join(f.home, '.bashrc');
+  const f = shellFixture(root); const profile = path.join(f.home, f.profileName);
   const result = integrate(f.install.filter(value => value !== '--configure-shell'), f.env); assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.existsSync(profile), false); assert.equal(JSON.parse(result.stdout).shellSetupRequired, true);
   const configured = integrate(f.install, { ...f.env, MEWU_CLI_ORIGINAL_PATH: `${shellPath(f.bin)}:/other/original/gui/path` });
@@ -240,7 +243,7 @@ test('opt-in shell setup creates a private startup file and uses the original GU
   const removed = integrate(f.uninstall, f.env); assert.equal(removed.status, 0, removed.stderr); assert.equal(fs.readFileSync(profile, 'utf8'), '');
 }));
 test('a profile edit observed while taking the bounded snapshot is preserved', { skip: shellSkip }, () => fixture(root => {
-  const f = shellFixture(root); const profile = put(f.home, '.bashrc', '# user original\n');
+  const f = shellFixture(root); const profile = put(f.home, f.profileName, '# user original\n');
   const tools = path.join(root, 'fixture tools');
   put(tools, 'head', '#!/bin/sh\n/usr/bin/head "$@"\nif [ "$1" = -c ] && [ "$2" = 1048577 ]; then printf "# concurrent user edit\\n" >> "$3"; fi\n');
   const result = integrate(f.install, f.env, `${shellPath(tools)}:/usr/bin:/bin`); assert.equal(result.status, 0, result.stderr);
