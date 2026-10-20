@@ -591,6 +591,10 @@ pub(super) fn run(call: &Invocation, server: Option<&Path>) -> i32 {
     }
     let (agent, model) = identity(&mut control, call, session.scene.as_deref());
     terminal::welcome(&agent, &model);
+    // The server intentionally limits each frame to 10 s. Do not keep an idle
+    // connection/worker while a human is composing; verify a fresh peer for
+    // each explicit input instead of extending deadlines or replaying a call.
+    drop(control);
     let config = Config::builder()
         .max_history_size(256)
         .unwrap()
@@ -628,16 +632,26 @@ pub(super) fn run(call: &Invocation, server: Option<&Path>) -> i32 {
                 terminal::commands();
                 continue;
             }
-            ("/clear", "") => {
-                terminal::clear();
-                let (a, m) = identity(&mut control, call, session.scene.as_deref());
-                terminal::welcome(&a, &m);
-                continue;
-            }
             ("/new", "") => {
                 session.scene = None;
                 session.activate = false;
                 terminal::notice("新会话，下条消息开始。");
+                continue;
+            }
+            _ => {}
+        }
+        let mut control = match connect_control(server, call.timeout) {
+            Ok(c) => c,
+            Err(e) => {
+                report(Response::error("chat", e), call);
+                continue;
+            }
+        };
+        match command {
+            ("/clear", "") => {
+                terminal::clear();
+                let (a, m) = identity(&mut control, call, session.scene.as_deref());
+                terminal::welcome(&a, &m);
                 continue;
             }
             ("/session", "") => {
