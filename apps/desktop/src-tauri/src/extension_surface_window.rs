@@ -4,6 +4,18 @@ use crate::{extension_host::ExtensionHost, extension_surfaces::Owner, Host};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 const PREFIX: &str = "extension-surface-";
+fn navigation_allowed(url: &tauri::Url, document_url: &tauri::Url) -> bool {
+    // WebKit calls the navigation delegate for subframes as well. Permit only
+    // this surface's exact document, not the whole loopback content server.
+    url == document_url
+        || (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
+        || (matches!(url.scheme(), "http" | "https")
+            && url.host_str() == Some("tauri.localhost"))
+        || (cfg!(debug_assertions)
+            && url.scheme() == "http"
+            && url.host_str() == Some("127.0.0.1")
+            && url.port() == Some(1420))
+}
 pub(crate) fn id(label: &str) -> Option<&str> {
     let id = label.strip_prefix(PREFIX)?;
     uuid::Uuid::parse_str(id)
@@ -130,6 +142,10 @@ pub async fn open_extension_surface_window(
             .surfaces
             .window_state(&surface_id, &app.state::<Host>().content_origin)
             .ok_or("插件界面已关闭")?;
+        let document_url = view["url"]
+            .as_str()
+            .and_then(|value| tauri::Url::parse(value).ok())
+            .ok_or("插件界面地址无效")?;
         let scale = window.scale_factor().map_err(|_| "无法读取屏幕比例")?;
         let origin = window
             .inner_position()
@@ -161,15 +177,7 @@ pub async fn open_extension_surface_window(
         .visible(false)
         .disable_drag_drop_handler()
         .zoom_hotkeys_enabled(false)
-        .on_navigation(|url| {
-            (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
-                || (matches!(url.scheme(), "http" | "https")
-                    && url.host_str() == Some("tauri.localhost"))
-                || (cfg!(debug_assertions)
-                    && url.scheme() == "http"
-                    && url.host_str() == Some("127.0.0.1")
-                    && url.port() == Some(1420))
-        })
+        .on_navigation(move |url| navigation_allowed(url, &document_url))
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
         #[cfg(target_os = "macos")]
         let builder = builder.accept_first_mouse(true);
@@ -396,4 +404,36 @@ pub fn forward_extension_surface_event(
         serde_json::json!({"name":name,"value":value}),
     )
     .map_err(|_| "无法发送插件事件".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::navigation_allowed;
+
+    #[test]
+    fn surface_navigation_allows_its_document_without_opening_other_content() {
+        let document = tauri::Url::parse(
+            "http://127.0.0.1:43123/2352a796-4f50-4bd0-b796-4826f3f85de9",
+        )
+        .unwrap();
+        assert!(navigation_allowed(&document, &document));
+        for shell in [
+            "tauri://localhost/index.html?surface=extension-object",
+            "http://tauri.localhost/index.html?surface=extension-object",
+            "https://tauri.localhost/index.html?surface=extension-object",
+        ] {
+            assert!(navigation_allowed(&tauri::Url::parse(shell).unwrap(), &document));
+        }
+        for denied in [
+            "http://127.0.0.1:43123/2352a796-4f50-4bd0-b796-4826f3f85de8",
+            "http://127.0.0.1:43124/2352a796-4f50-4bd0-b796-4826f3f85de9",
+            "http://127.0.0.1:43123/2352a796-4f50-4bd0-b796-4826f3f85de9?other=1",
+            "http://user@127.0.0.1:43123/2352a796-4f50-4bd0-b796-4826f3f85de9",
+            "https://example.com/",
+            "file:///tmp/other.html",
+            "javascript:alert(1)",
+        ] {
+            assert!(!navigation_allowed(&tauri::Url::parse(denied).unwrap(), &document));
+        }
+    }
 }
