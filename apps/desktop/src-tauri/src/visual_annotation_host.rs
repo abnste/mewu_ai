@@ -315,7 +315,7 @@ fn reject_arguments(
         None => store.record_tool_not_sent(lease, mewu_core::NotSentReason::InvalidArguments),
     }
     .map_err(journal_runtime::store_error)?;
-    let mut feedback = json!({"error":error.message,"executed":false,"correction":"Use the advertised visual_annotate JSON schema exactly. Keep the supplied target, coordinateSpace and styleUnit. Text: one point, text, fontSize, color and anchor=topLeft. Shapes: points, color and strokeWidth. Tables/formulas: their own fields only, no strokeWidth or text. Correct the indicated field or explain the failure; do not claim annotations were drawn."});
+    let mut feedback = json!({"isError":true,"error":error.message,"executed":false,"correction":"Use the advertised visual_annotate JSON schema exactly. Keep the supplied target, coordinateSpace and styleUnit. Text: one point, text, fontSize, color and anchor=topLeft. Shapes: points, color and strokeWidth. Tables/formulas: their own fields only, no strokeWidth or text. Correct the indicated field or explain the failure; do not claim annotations were drawn."});
     if let Some(diagnostic) = &error.diagnostic {
         feedback["argumentDiagnostic"] =
             serde_json::to_value(diagnostic).map_err(|_| "参数诊断编码失败")?;

@@ -345,28 +345,28 @@ impl RunTools {
             .await;
         let host = app.state::<Host>();
         let mut engine = host.lock()?;
-        let (commit, content) = match outcome {
+        let (commit, content, not_sent) = match outcome {
             McpCallOutcome::Responded(result) => {
                 let content = result.model_visible_json.clone();
                 let commit = engine
                     .store
                     .record_tool_response(&lease, result)
                     .map_err(journal_runtime::store_error)?;
-                (commit, content)
+                (commit, content, None)
             }
             McpCallOutcome::NotSent(reason) => {
                 let commit = engine
                     .store
-                    .record_tool_not_sent(&lease, reason)
+                    .record_tool_not_sent(&lease, reason.clone())
                     .map_err(journal_runtime::store_error)?;
-                (commit, None)
+                (commit, None, Some(reason))
             }
             McpCallOutcome::Unknown(reason) => {
                 let commit = engine
                     .store
                     .record_request_unknown(&lease, reason)
                     .map_err(journal_runtime::store_error)?;
-                (commit, None)
+                (commit, None, None)
             }
         };
         journal_runtime::emit_changed(app, scene_id, run_id, commit.journal_revision);
@@ -391,6 +391,7 @@ impl RunTools {
             .map_err(store_error)?;
         content
             .map(|model_json| CommittedToolOutput { model_json })
+            .or_else(|| not_sent.and_then(journal_runtime::not_sent_feedback))
             .ok_or_else(|| "工具处理已停止".into())
     }
 

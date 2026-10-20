@@ -17,6 +17,34 @@ pub struct CommittedToolOutput {
     pub model_json: String,
 }
 
+/// Call only after the real NotSent receipt is durable and the host has passed
+/// its current live/exit/permission fences. This is model feedback, never an
+/// execution result or an automatic retry. Unknown outcomes cannot enter here.
+pub(crate) fn not_sent_feedback(reason: NotSentReason) -> Option<CommittedToolOutput> {
+    let (code, message, correctable, correction) = match reason {
+        NotSentReason::InvalidArguments => (
+            "invalid_arguments",
+            "工具参数不符合已提供的参数规范，本次未调用工具。",
+            true,
+            "请根据已提供的工具 schema 修正参数后再决定是否调用；不要原样重复无效参数。",
+        ),
+        NotSentReason::PreparationFailed => (
+            "preparation_failed",
+            "工具在调用前准备失败，本次未调用工具。",
+            false,
+            "可以在本轮既有预算内决定重试，或改用其他已提供的工具；持续失败时向用户说明，不得声称已执行成功。",
+        ),
+        _ => return None,
+    };
+    Some(CommittedToolOutput {
+        model_json: serde_json::json!({
+            "isError":true,"error":message,"code":code,"executed":false,
+            "correctable":correctable,"retryable":true,"correction":correction
+        })
+        .to_string(),
+    })
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Changed<'a> {

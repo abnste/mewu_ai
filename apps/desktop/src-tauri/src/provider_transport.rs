@@ -360,7 +360,16 @@ pub fn append_result(
             messages.push(json!({"type":"function_call_output","call_id":call_id,"output":content}))
         }
         ConnectionProtocol::AnthropicMessages => {
-            let result = json!({"type":"tool_result","tool_use_id":call_id,"content":content});
+            // Only the explicit tool envelope marks an error. Do not infer it
+            // from ordinary text, nested data or a field named `error`.
+            let failed = serde_json::from_str::<Value>(&content)
+                .ok()
+                .and_then(|value| value.as_object()?.get("isError")?.as_bool())
+                == Some(true);
+            let mut result = json!({"type":"tool_result","tool_use_id":call_id,"content":content});
+            if failed {
+                result["is_error"] = json!(true);
+            }
             if let Some(previous) = messages.last_mut().filter(|p| p["role"] == "user") {
                 previous
                     .get_mut("content")
@@ -940,18 +949,95 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[test]
+    fn explicit_tool_error_flag_reaches_anthropic_without_rewriting_content_or_guessing() {
+        use super::*;
+        for content in [
+            r#"{"isError":true,"error":"invalid arguments","executed":false}"#,
+            r#"{"isError":true,"content":[{"type":"text","text":"tool failed"}]}"#,
+        ] {
+            let mut body = json!({"messages":[]});
+            append_result(
+                ConnectionProtocol::AnthropicMessages,
+                &mut body,
+                "call-a",
+                content.into(),
+            )
+            .unwrap();
+            assert_eq!(body["messages"][0]["content"][0]["is_error"], true);
+            assert_eq!(body["messages"][0]["content"][0]["content"], content);
+            append_result(
+                ConnectionProtocol::AnthropicMessages,
+                &mut body,
+                "call-b",
+                "{}".into(),
+            )
+            .unwrap();
+            assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+            assert!(body["messages"][0]["content"][1].get("is_error").is_none());
+        }
+        for content in [
+            "error",
+            r#"{"error":"ordinary data"}"#,
+            r#"{"isError":false}"#,
+            r#"{"isError":"true"}"#,
+            r#"{"data":{"isError":true}}"#,
+            r#"[{"isError":true}]"#,
+        ] {
+            let mut body = json!({"messages":[]});
+            append_result(
+                ConnectionProtocol::AnthropicMessages,
+                &mut body,
+                "call",
+                content.into(),
+            )
+            .unwrap();
+            let result = &body["messages"][0]["content"][0];
+            assert!(result.get("is_error").is_none());
+            assert_eq!(result["content"], content);
+        }
+        let content = r#"{"isError":true,"executed":false}"#;
+        for protocol in [
+            ConnectionProtocol::ChatCompletions,
+            ConnectionProtocol::OpenAiResponses,
+        ] {
+            let key = if protocol == ConnectionProtocol::OpenAiResponses {
+                "input"
+            } else {
+                "messages"
+            };
+            let mut body = json!({});
+            body[key] = json!([]);
+            append_result(protocol, &mut body, "call", content.into()).unwrap();
+            assert_eq!(
+                body[key][0][if key == "input" { "output" } else { "content" }],
+                content
+            );
+            assert!(body[key][0].get("is_error").is_none());
+        }
+    }
     use super::*;
     #[tokio::test]
     async fn unfinished_events_are_rejected_early_in_both_native_protocols() {
-        for protocol in [ConnectionProtocol::OpenAiResponses, ConnectionProtocol::AnthropicMessages] {
+        for protocol in [
+            ConnectionProtocol::OpenAiResponses,
+            ConnectionProtocol::AnthropicMessages,
+        ] {
             let pulled = std::cell::Cell::new(0);
             let fragments = std::iter::repeat_with(|| {
                 pulled.set(pulled.get() + 1);
                 Ok::<_, String>(vec![b'x'; 32 * 1024])
-            }).take(1024);
-            let result = consume(futures_util::stream::iter(fragments), protocol, |_| panic!("No incomplete event may be displayed")).await;
+            })
+            .take(1024);
+            let result = consume(futures_util::stream::iter(fragments), protocol, |_| {
+                panic!("No incomplete event may be displayed")
+            })
+            .await;
             assert!(result.is_err());
-            assert!(pulled.get() <= 131, "must reject before the old 32MiB wire limit");
+            assert!(
+                pulled.get() <= 131,
+                "must reject before the old 32MiB wire limit"
+            );
         }
     }
     pub(crate) fn sse(events: Vec<Value>) -> String {

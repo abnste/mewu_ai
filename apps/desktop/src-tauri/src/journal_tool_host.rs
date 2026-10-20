@@ -186,7 +186,7 @@ fn reject_arguments(
     };
     Ok((receipt, CommittedToolOutput {
         model_json: json!({
-            "error":error,"executed":false,
+            "isError":true,"error":error,"executed":false,
             "correction":correction
         }).to_string(),
     }))

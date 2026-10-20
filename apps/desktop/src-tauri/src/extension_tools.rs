@@ -235,7 +235,7 @@ pub(crate) async fn execute_recorded(
         .as_ref()
         .err()
         .and_then(ToolInvocationOutcome::diagnostic);
-    let (commit, content) = match observation {
+    let (commit, content, not_sent) = match observation {
         Ok(result) => {
             let content = result.model_visible_json.clone();
             (
@@ -244,20 +244,23 @@ pub(crate) async fn execute_recorded(
                     .record_tool_response(&lease, result)
                     .map_err(journal_runtime::store_error)?,
                 content,
+                None,
             )
         }
         Err(ToolInvocationOutcome::NotSent(reason)) => (
             engine
                 .store
-                .record_tool_not_sent(&lease, reason)
+                .record_tool_not_sent(&lease, reason.clone())
                 .map_err(journal_runtime::store_error)?,
             None,
+            Some(reason),
         ),
         Err(ToolInvocationOutcome::Unknown { reason, .. }) => (
             engine
                 .store
                 .record_request_unknown(&lease, reason)
                 .map_err(journal_runtime::store_error)?,
+            None,
             None,
         ),
         Err(ToolInvocationOutcome::Responded(_)) => unreachable!(),
@@ -271,6 +274,7 @@ pub(crate) async fn execute_recorded(
     }
     content
         .map(|model_json| journal_runtime::CommittedToolOutput { model_json })
+        .or_else(|| not_sent.and_then(journal_runtime::not_sent_feedback))
         .ok_or_else(|| stop_diagnostic.unwrap_or_else(|| "扩展工具处理已停止".into()))
 }
 

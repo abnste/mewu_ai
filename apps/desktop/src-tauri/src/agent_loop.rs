@@ -496,6 +496,7 @@ fn advertised_names(tools: &[Value]) -> Result<HashSet<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("agent_loop_feedback_test.rs");
     use std::{
         io::Read,
         sync::{

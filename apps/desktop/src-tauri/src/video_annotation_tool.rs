@@ -249,6 +249,7 @@ fn reject_arguments(
         )
     })?;
     let mut feedback = json!({
+        "isError": true,
         "error": error,
         "executed": false,
         "correction": "Correct the indicated field using the advertised video_annotate schema and the sent target/frame handles. The rejected batch added no annotations."
