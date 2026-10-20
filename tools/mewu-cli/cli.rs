@@ -12,7 +12,7 @@ use std::{
     ffi::OsString,
     fmt,
     fs::File,
-    io::{self, Read, Write},
+    io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -20,7 +20,9 @@ use std::{
 const MAX_TIMEOUT_MS: u64 = 3_600_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 const SAFE_INTEGER: u64 = 9_007_199_254_740_991;
-const USAGE: &str = "mewu help | version | status | schema | capabilities\nmewu scene list [--offset N] [--limit N]\nmewu scene get SCENE_ID [--limit N]\nmewu run get SCENE_ID [--limit N]\nmewu call METHOD [--json JSON | --file PATH | --stdin]\nOptions: --request-id ID --scene ID --revision N --wait --jsonl\n         --timeout-ms MS --wait-timeout-ms MS\nAll stdout is JSON. --jsonl emits actual response progress lines.\n--wait polls operation.get; it never resends the original operation.\n--scene/--revision fill missing params.context fields and never replace supplied values.\nMewu must already be running with its CLI plugin enabled.";
+#[path = "presentation.rs"]
+mod presentation;
+use presentation::{HelpTopic, OutputFormat};
 
 #[derive(Clone, Copy, Debug)]
 enum Action {
@@ -36,6 +38,9 @@ struct Invocation {
     jsonl: bool,
     timeout: Duration,
     wait_timeout: Duration,
+    output: Option<OutputFormat>,
+    help_topic: HelpTopic,
+    raw_call: bool,
 }
 
 fn invalid() -> ControlError {
@@ -167,6 +172,7 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
     let mut id = uuid::Uuid::new_v4().to_string();
     let mut input: Option<(&str, String)> = None;
     let (mut wait, mut jsonl) = (false, false);
+    let (mut help, mut output) = (false, None);
     let mut request_timeout = Duration::from_secs(10);
     let mut wait_timeout = Duration::from_secs(120);
     let (mut scene, mut revision, mut offset, mut limit) = (None, None, None, None);
@@ -176,7 +182,10 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
     while index < words.len() {
         let word = words[index].as_str();
         if matches!(word, "-h" | "--help") {
-            positional.push("help".to_owned());
+            if help {
+                return Err(invalid());
+            }
+            help = true;
             index += 1;
             continue;
         }
@@ -204,6 +213,7 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
                 | "--wait-timeout-ms"
                 | "--offset"
                 | "--limit"
+                | "--output"
         ) || !seen.insert(word.to_owned())
         {
             return Err(invalid());
@@ -225,6 +235,13 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
         let value = words.get(index).ok_or_else(invalid)?;
         match word {
             "--request-id" => id = value.clone(),
+            "--output" => {
+                output = Some(match value.as_str() {
+                    "text" => OutputFormat::Text,
+                    "json" => OutputFormat::Json,
+                    _ => return Err(invalid()),
+                })
+            }
             "--json" | "--file" => {
                 if input
                     .replace((
@@ -258,60 +275,79 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
         index += 1;
     }
     let command = positional.iter().map(String::as_str).collect::<Vec<_>>();
+    if jsonl && output == Some(OutputFormat::Text) {
+        return Err(invalid());
+    }
+    let help_words = if command.first() == Some(&"help") {
+        &command[1..]
+    } else {
+        &command[..]
+    };
+    let show_help = help
+        || command.first() == Some(&"help")
+        || matches!(command.as_slice(), [] | ["scene"] | ["run"] | ["call"]);
+    let help_topic = if show_help {
+        HelpTopic::from_words(help_words).ok_or_else(invalid)?
+    } else {
+        HelpTopic::Root
+    };
     let mut params = json!({});
-    let (action, method) = match command.as_slice() {
-        [] | ["help"] => (Action::Help, "help".to_owned()),
-        ["version"] => (Action::Version, "version".to_owned()),
-        ["status"] => (Action::Request, "app.status".to_owned()),
-        ["schema"] => (Action::Request, "app.schema".to_owned()),
-        ["capabilities"] => (Action::Request, "app.capabilities".to_owned()),
-        ["scene", "list"] => {
-            if let Some(value) = offset {
-                params["offset"] = value.into();
-            }
-            if let Some(value) = limit {
-                params["limit"] = value.into();
-            }
-            (Action::Request, "scene.list".to_owned())
-        }
-        ["scene", "get", scene_id] | ["run", "get", scene_id] => {
-            if !identifier(scene_id) || offset.is_some() {
-                return Err(invalid());
-            }
-            params["sceneId"] = json!(scene_id);
-            if let Some(value) = limit {
-                params["limit"] = value.into();
-            }
-            (
-                Action::Request,
-                if command[0] == "scene" {
-                    "scene.get"
-                } else {
-                    "run.get"
+    let (action, method) = if show_help {
+        (Action::Help, "help".to_owned())
+    } else {
+        match command.as_slice() {
+            ["version"] => (Action::Version, "version".to_owned()),
+            ["status"] => (Action::Request, "app.status".to_owned()),
+            ["schema"] => (Action::Request, "app.schema".to_owned()),
+            ["capabilities"] => (Action::Request, "app.capabilities".to_owned()),
+            ["scene", "list"] => {
+                if let Some(value) = offset {
+                    params["offset"] = value.into();
                 }
-                .to_owned(),
-            )
-        }
-        ["call", method] => {
-            if offset.is_some() || limit.is_some() {
-                return Err(invalid());
-            }
-            params = match input.as_ref() {
-                Some(("json", value)) => bounded_json(value.as_bytes())?,
-                Some(("file", value)) => {
-                    bounded_json(File::open(Path::new(value)).map_err(|_| {
-                        ControlError::not_sent(
-                            ErrorCode::InvalidRequest,
-                            "Cannot read JSON input file",
-                        )
-                    })?)?
+                if let Some(value) = limit {
+                    params["limit"] = value.into();
                 }
-                Some(("stdin", _)) => bounded_json(stdin)?,
-                _ => json!({}),
-            };
-            (Action::Request, (*method).to_owned())
+                (Action::Request, "scene.list".to_owned())
+            }
+            ["scene", "get", scene_id] | ["run", "get", scene_id] => {
+                if !identifier(scene_id) || offset.is_some() {
+                    return Err(invalid());
+                }
+                params["sceneId"] = json!(scene_id);
+                if let Some(value) = limit {
+                    params["limit"] = value.into();
+                }
+                (
+                    Action::Request,
+                    if command[0] == "scene" {
+                        "scene.get"
+                    } else {
+                        "run.get"
+                    }
+                    .to_owned(),
+                )
+            }
+            ["call", method] => {
+                if offset.is_some() || limit.is_some() {
+                    return Err(invalid());
+                }
+                params = match input.as_ref() {
+                    Some(("json", value)) => bounded_json(value.as_bytes())?,
+                    Some(("file", value)) => {
+                        bounded_json(File::open(Path::new(value)).map_err(|_| {
+                            ControlError::not_sent(
+                                ErrorCode::InvalidRequest,
+                                "Cannot read JSON input file",
+                            )
+                        })?)?
+                    }
+                    Some(("stdin", _)) => bounded_json(stdin)?,
+                    _ => json!({}),
+                };
+                (Action::Request, (*method).to_owned())
+            }
+            _ => return Err(invalid()),
         }
-        _ => return Err(invalid()),
     };
     if command.first() != Some(&"call") && input.is_some() {
         return Err(invalid());
@@ -324,7 +360,11 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
         return Err(invalid());
     }
     if !matches!(action, Action::Request)
-        && (wait || scene.is_some() || revision.is_some() || seen.contains("--wait-timeout-ms"))
+        && (wait
+            || input.is_some()
+            || scene.is_some()
+            || revision.is_some()
+            || seen.contains("--wait-timeout-ms"))
     {
         return Err(invalid());
     }
@@ -357,6 +397,9 @@ fn parse(args: Vec<OsString>, stdin: &mut dyn Read) -> Result<Invocation, Contro
         jsonl,
         timeout: request_timeout,
         wait_timeout,
+        output,
+        help_topic,
+        raw_call: command.first() == Some(&"call") && !show_help,
     })
 }
 
@@ -557,7 +600,16 @@ pub fn run(args: Vec<OsString>) -> i32 {
 }
 
 fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
+    let terminal = io::stdout().is_terminal();
+    let fallback_output = presentation::error_output(&args, terminal);
     let invocation = parse(args, &mut io::stdin().lock());
+    let output = invocation.as_ref().map_or(fallback_output, |call| {
+        presentation::output_format(call, terminal)
+    });
+    let method = invocation
+        .as_ref()
+        .map(|call| call.request.method.clone())
+        .unwrap_or_default();
     let mut stdout = io::stdout().lock();
     let (response, already_emitted) = match invocation {
         Err(error) => (Response::error("cli", error), false),
@@ -565,7 +617,7 @@ fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
             Action::Help => (
                 Response::success(
                     invocation.request.id,
-                    json!({"usage":USAGE,"protocolVersion":PROTOCOL_VERSION}),
+                    json!({"usage":presentation::help(invocation.help_topic),"protocolVersion":PROTOCOL_VERSION}),
                 ),
                 false,
             ),
@@ -619,13 +671,27 @@ fn run_inner(args: Vec<OsString>, server_executable: Option<&Path>) -> i32 {
             }
         },
     };
-    if !already_emitted && emit(&mut stdout, &response).is_err() {
+    if !already_emitted
+        && match output {
+            OutputFormat::Json => emit(&mut stdout, &response),
+            OutputFormat::Text => presentation::emit_text(&mut stdout, &method, &response),
+        }
+        .is_err()
+    {
         eprintln!("{}", stderr_message(74));
         return 74;
     }
     let code = exit_code(&response);
     if code != 0 {
-        eprintln!("{}", stderr_message(code));
+        if output == OutputFormat::Text {
+            eprintln!("{}", presentation::error_message(code));
+            if code == 6 {
+                eprintln!("操作 ID: {}", presentation::safe_text(&response.id));
+                eprintln!("查询: mewu call operation.get --file operation.json\n文件内容: {{\"id\":\"操作 ID\"}}");
+            }
+        } else {
+            eprintln!("{}", stderr_message(code));
+        }
     }
     code
 }

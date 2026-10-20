@@ -35,6 +35,169 @@ fn offline_help_and_version_require_no_input_or_host() {
 }
 
 #[test]
+fn human_help_is_concise_offline_and_supports_real_subcommands() {
+    for values in [
+        vec![],
+        vec!["--help"],
+        vec!["help", "scene"],
+        vec!["scene"],
+        vec!["scene", "list", "--help"],
+        vec!["scene", "get", "--help"],
+        vec!["run", "get", "example", "-h"],
+        vec!["call"],
+        vec!["call", "--help"],
+        vec!["call", "capture.open", "--help"],
+        vec!["help", "status"],
+    ] {
+        let call = parse(arguments(&values), &mut NoInput).unwrap();
+        assert!(matches!(call.action, Action::Help));
+        assert_eq!(
+            presentation::output_format(&call, false),
+            OutputFormat::Text
+        );
+        let usage = presentation::help(call.help_topic);
+        let response = Response::success("offline", json!({"usage":usage}));
+        let mut output = Vec::new();
+        presentation::emit_text(&mut output, "help", &response).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.starts_with("MewuAI ") && text.contains("用法\n"));
+        assert!(!text.contains("\"result\"") && !text.contains("\\n"));
+        assert!(text.lines().count() <= 32);
+    }
+    assert!(
+        presentation::help(invocation(&["scene", "--help"]).help_topic).contains("mewu scene get")
+    );
+    assert!(presentation::help(invocation(&["call", "--help"]).help_topic).contains("--file PATH"));
+    for values in [
+        vec!["help", "not-a-command"],
+        vec!["scene", "bad", "--help"],
+        vec!["call", "--help", "--stdin"],
+        vec!["--help", "-h"],
+    ] {
+        assert!(parse(arguments(&values), &mut NoInput).is_err());
+    }
+}
+
+#[test]
+fn terminal_views_and_machine_output_have_explicit_and_compatible_selection() {
+    for command in [
+        vec!["status"],
+        vec!["scene", "list"],
+        vec!["scene", "get", "id"],
+        vec!["run", "get", "id"],
+        vec!["capabilities"],
+    ] {
+        let call = invocation(&command);
+        assert_eq!(presentation::output_format(&call, true), OutputFormat::Text);
+        assert_eq!(
+            presentation::output_format(&call, false),
+            OutputFormat::Json
+        );
+    }
+    for command in [
+        vec!["schema"],
+        vec!["call", "capture.open"],
+        vec!["call", "app.status"],
+        vec!["help", "--output", "json"],
+        vec!["status", "--jsonl"],
+    ] {
+        let call = invocation(&command);
+        assert_eq!(presentation::output_format(&call, true), OutputFormat::Json);
+        assert_eq!(
+            presentation::output_format(&call, false),
+            OutputFormat::Json
+        );
+    }
+    for terminal in [true, false] {
+        let call = invocation(&["status", "--output", "text"]);
+        assert_eq!(
+            presentation::output_format(&call, terminal),
+            OutputFormat::Text
+        );
+        let call = invocation(&["status", "--output", "json"]);
+        assert_eq!(
+            presentation::output_format(&call, terminal),
+            OutputFormat::Json
+        );
+    }
+    for args in [
+        vec!["status", "--output", "yaml"],
+        vec!["status", "--output"],
+        vec!["status", "--output", "text", "--jsonl"],
+        vec!["status", "--output", "json", "--output", "json"],
+    ] {
+        assert!(parse(arguments(&args), &mut io::empty()).is_err());
+    }
+    // --json remains the input object; selecting output must not consume it.
+    let call = invocation(&[
+        "call",
+        "chat.send",
+        "--json",
+        r#"{"text":"你好"}"#,
+        "--output",
+        "text",
+    ]);
+    assert_eq!(call.request.params, json!({"text":"你好"}));
+    assert_eq!(
+        presentation::output_format(&call, false),
+        OutputFormat::Text
+    );
+}
+
+#[test]
+fn human_views_render_real_results_without_protocol_noise_or_terminal_injection() {
+    let mut output = Vec::new();
+    presentation::emit_text(
+        &mut output,
+        "app.status",
+        &Response::success(
+            "r",
+            json!({"version":"1.0.3","platform":"windows","activeSceneId":null,"revision":8}),
+        ),
+    )
+    .unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("运行中") && text.contains("当前会话  —") && !text.contains("\"id\""));
+    let mut output = Vec::new();
+    presentation::emit_text(&mut output,"scene.list",&Response::success("r",json!({"scenes":[{"id":"scene-id","title":"标题\n\u{1b}[31m\r坏\u{202e}标题","frozen":true,"closed":false}],"nextOffset":20}))).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(text.contains("已冻结") && text.contains("下一页: mewu scene list --offset 20"));
+    assert!(!text.contains('\u{1b}') && !text.contains('\r') && !text.contains('\u{202e}'));
+    assert_eq!(text.lines().count(), 4);
+    let catalog: Value =
+        serde_json::from_str(include_str!("../../apps/desktop/control/catalog.json")).unwrap();
+    let mut output = Vec::new();
+    presentation::emit_text(
+        &mut output,
+        "app.capabilities",
+        &Response::success("r", catalog),
+    )
+    .unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(
+        text.contains("capture.open")
+            && text.contains("recording.start")
+            && text.contains("可调用方法（37）")
+    );
+    let mut output = Vec::new();
+    presentation::emit_text(&mut output,"run.get",&Response::success("r",json!({"sceneId":"scene-id","run":{"status":"completed"},"messages":[{"role":"assistant","text":"第一行\n第二行","reasoning":"do not show this"}]}))).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    assert!(
+        text.contains("已完成")
+            && text.contains("AI\n第一行\n第二行")
+            && !text.contains("do not show this")
+    );
+    let mut output = Vec::new();
+    presentation::emit_text(
+        &mut output,
+        "app.status",
+        &Response::error("r", unavailable()),
+    )
+    .unwrap();
+    assert!(output.is_empty());
+}
+
+#[test]
 fn convenience_queries_generate_the_actual_server_contract() {
     assert_eq!(invocation(&["status"]).request.method, "app.status");
     assert_eq!(invocation(&["schema"]).request.method, "app.schema");

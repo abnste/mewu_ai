@@ -15,6 +15,8 @@ mewu run get SCENE_ID --limit 10
 
 `help`、`version` 离线可用。其他命令需要 Mewu 已正常启动，且命令行插件已启用。`schema` / `capabilities` 返回当前宿主实际支持的方法；客户端不会假设未列出的方法可用。
 
+直接运行 `mewu` 显示排版后的简短帮助；`mewu scene --help`、`mewu help call` 可查看分级帮助。`version` 输出普通版本文字。终端里的 `status`、`scene list/get`、`run get`、`capabilities` 使用文字视图，查询通过管道或重定向时仍输出原协议 JSON。可使用 `--output text` 或 `--output json` 显式选择；帮助、版本重定向后仍默认是文字，需要 JSON 时也应显式选择。此为当前源码的调整，已发布的 1.0.3 尚使用原 JSON 帮助。
+
 包含 CLI 的 Windows 安装程序会将安装目录加入当前用户 PATH。安装后打开新终端；若 Windows Terminal、编辑器或 Agent 已在运行，需重新打开该应用，不能保证仅新建标签页就会刷新环境。便携版可在解压目录直接运行 `.\mewu.exe status`。
 
 macOS、Linux 的已安装构建在 CLI 插件开启后，正常启动会自动尝试创建 `~/.local/bin/mewu` 并为识别到的 Bash/Zsh 配置 PATH，完成后打开新 shell。Mac 需先安装到 `/Applications` 或 `~/Applications`；Linux 使用持久路径的原始 AppImage，移动后需从新位置重启 Mewu。未设置或未知的 `SHELL`、Fish 等未适配 shell、启动文件受保护或存在冲突时会保留原配置，需按自己的 shell 语法手动加入 `~/.local/bin`，也可用完整路径运行入口。创建入口不等于刷新当前终端环境。启动文件选择和完整示例见[CLI 使用说明](../../docs/cli.md)。
@@ -34,13 +36,14 @@ mewu call operation.get --json '{"id":"agent-turn-001"}'
 
 `--request-id` 指定本次请求的幂等 ID，只允许 1–128 个 ASCII 字母、数字、`.`、`_`、`-`、`:`。未指定时生成 UUID。客户端从不自动重发原操作。宿主返回 `queued` / `accepted` 仅表示已接收；`--wait` 只轮询 `operation.get`，直到 `completed` / `failed` 或等待超时。同一 ID 的相同请求可由宿主在当前运行期内去重，不能据此承诺跨重启的永久去重。
 
-stdout 始终输出 JSON。默认输出一条完整 response（`id` 与 `result` 或 `error`）；`--jsonl` 每行输出一条实际响应，配合 `--wait` 可读进度。`--wait` 的终态响应仍保留宿主的 `operationId`、`status` 与 `result` / `error`。stderr 仅输出固定诊断提示。
+`call`、`schema` 默认保留 JSON 输出，便于 Agent 和脚本使用；`--output json` 也返回原有完整 response（`id` 与 `result` 或 `error`）。`--jsonl` 每行输出一条实际响应，配合 `--wait` 可读进度，不能与 `--output text` 同时使用。`--wait` 的终态响应仍保留宿主的 `operationId`、`status` 与 `result` / `error`。诊断写入 stderr；文字模式不会将协议错误包混进 stdout。
 
 | 选项 | 含义 |
 | --- | --- |
 | `--timeout-ms MS` | 单次连接或请求超时，默认 10000，最大 3600000 |
 | `--wait-timeout-ms MS` | 总等待期限，默认 120000，最大 3600000，需同时使用 `--wait` |
 | `--json JSON` / `--file PATH` / `--stdin` | 通用 `call` 的对象参数，三选一，默认 `{}` |
+| `--output text\|json` | 选择输出格式；与输入参数 `--json JSON` 无关 |
 | `--jsonl` | 每行一个响应；不改变执行次数 |
 
 JSON 输入和最终请求均最多 1 MiB。重复 flag、未知参数、重复 JSON 字段、无效数字和非对象参数会在发送前拒绝。文件必须是 UTF-8 JSON，不能含 BOM。

@@ -17,6 +17,19 @@ mewu schema
 mewu scene list --limit 20
 ```
 
+### Terminal output / 终端输出
+
+Current source displays concise text for `mewu`, `mewu help` and `mewu version`, including when redirected. Use `mewu scene --help` or `mewu help call` for command-specific help. Interactive status, scene, run and capability queries display readable text; piping or redirecting those queries preserves the original JSON response. `call` and `schema` remain JSON by default. Use `--output json` or `--output text` to select a format explicitly. The already released 1.0.3 installers still use the previous JSON help; this presentation change is for the next build.
+
+当前源码中，直接运行 `mewu`、`mewu help` 和 `mewu version` 显示普通文字，重定向时也如此；通过 `mewu scene --help`、`mewu help call` 查看分级帮助。终端里查看状态、会话、AI 任务和能力时使用文字排版，查询进入管道或文件时保留原有 JSON。`call` 和 `schema` 默认仍为 JSON。使用 `--output json` 或 `--output text` 可明确选择格式。已发布 1.0.3 的帮助仍为原 JSON，此项调整会随下一构建提供。
+
+```sh
+mewu
+mewu scene --help
+mewu status --output json
+mewu scene list --output text
+```
+
 The official **命令行 / CLI** plugin is enabled by default. The control listener lives in the existing Rust desktop process; it does not start Node.js, Python, Electron or a second Agent engine. The console client does not open a second UI or independently open Mewu's databases.
 
 官方 **命令行 / CLI** 插件默认开启。控制服务在现有 Rust 桌面进程内运行；命令行客户端连接该进程，不另开截图窗口或直接操作用户数据库。
@@ -71,9 +84,9 @@ mewu call METHOD --file request-params.json --wait
 mewu call METHOD --stdin --wait
 ```
 
-`--json`, `--file` and `--stdin` are mutually exclusive and contain the **params object**, not a complete request envelope. Files must be UTF-8 without a BOM. Use `--stdin` or `--file` when shell quoting would alter JSON. All stdout is JSON; diagnostics use stderr. `--jsonl` emits actual response progress as separate JSON lines.
+`--json`, `--file` and `--stdin` are mutually exclusive and contain the **params object**, not a complete request envelope. Files must be UTF-8 without a BOM. Use `--stdin` or `--file` when shell quoting would alter JSON. `call` outputs the original JSON response by default; `--output text` selects a readable view and does not change execution. `--json` selects input, not output. Diagnostics use stderr. `--jsonl` emits actual response progress as separate JSON lines and cannot be combined with `--output text`.
 
-`--json`、`--file`、`--stdin` 三选一，内容是 **params 对象**，不是完整请求包。文件使用无 BOM 的 UTF-8；复杂文本建议用文件或标准输入，避免被 shell 改写引号。标准输出只包含 JSON，诊断写入 stderr；`--jsonl` 按行输出真实响应进度。
+`--json`、`--file`、`--stdin` 三选一，内容是 **params 对象**，不是完整请求包。文件使用无 BOM 的 UTF-8；复杂文本建议用文件或标准输入，避免被 shell 改写引号。`call` 默认输出原协议 JSON，`--output text` 切换可读视图但不改变执行。`--json` 指定输入，与输出格式无关。诊断写入 stderr；`--jsonl` 按行输出真实响应进度，不能与 `--output text` 同时使用。
 
 Operations first return an `operationId` with `status: "queued"`. **Queued is not completed.** `--wait` only polls `operation.get`; it never sends the original mutation again. `chat.send --wait` waits for the message to start a run, not for the entire AI answer. Read that run with `mewu run get SCENE_ID`.
 
