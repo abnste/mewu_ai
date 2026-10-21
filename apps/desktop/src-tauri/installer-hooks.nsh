@@ -4,6 +4,8 @@
 ; for the one-time, host-owned connection import.
 Var MewuLegacyUpgrade
 !define MEWU_CLI_PATH_SCRIPT "${__FILEDIR__}\resources\cli\integrate-windows.ps1"
+LangString MewuCliPathFailed ${LANG_ENGLISH} "Mewu is installed, but CLI PATH setup failed ($0). Re-run this installer to repair it. CLI: $INSTDIR\mewu.exe"
+LangString MewuCliPathFailed ${LANG_SIMPCHINESE} "Mewu 已安装，但命令行 PATH 配置失败（$0）。可重新运行安装器修复。命令行程序：$INSTDIR\mewu.exe"
 
 Function MewuInstallCliPath
   Push $0
@@ -11,12 +13,12 @@ Function MewuInstallCliPath
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File /oname=mewu-cli-path.ps1 "${MEWU_CLI_PATH_SCRIPT}"
-  nsExec::ExecToStack /TIMEOUT=15000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\mewu-cli-path.ps1" -Mode Install -InstallDirectory "$INSTDIR"'
+  nsExec::ExecToStack /TIMEOUT=60000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\mewu-cli-path.ps1" -Mode Install -InstallDirectory "$INSTDIR"'
   Pop $0
   Pop $1
   ${If} $0 != "0"
-    DetailPrint "Mewu CLI PATH registration failed. The console remains available at $INSTDIR\mewu.exe."
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Mewu CLI could not be added to your user PATH. You can run $INSTDIR\mewu.exe directly." /SD IDOK
+    DetailPrint "Mewu CLI PATH registration failed ($0): $1"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(MewuCliPathFailed)" /SD IDOK
   ${EndIf}
   SetOutPath "$INSTDIR"
   Pop $1
@@ -29,7 +31,7 @@ Function un.MewuUninstallCliPath
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File /oname=mewu-cli-path.ps1 "${MEWU_CLI_PATH_SCRIPT}"
-  nsExec::ExecToStack /TIMEOUT=15000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\mewu-cli-path.ps1" -Mode Uninstall -InstallDirectory "$INSTDIR"'
+  nsExec::ExecToStack /TIMEOUT=60000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\mewu-cli-path.ps1" -Mode Uninstall -InstallDirectory "$INSTDIR"'
   Pop $0
   Pop $1
   ${If} $0 != "0"

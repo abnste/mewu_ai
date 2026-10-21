@@ -94,6 +94,16 @@ test('platform configs package the noninteractive Unix integrator without publis
 });
 
 const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : '/bin/sh';
+test('Windows installer registry integration survives notification failure on both PowerShell architectures', { skip: process.platform !== 'win32' }, () => fixture(root => {
+  put(root, 'MewuAI.exe'); put(root, 'mewu.exe');
+  const helper = path.join(repository, 'apps/desktop/src-tauri/resources/cli/integrate-windows.ps1');
+  for (const architecture of ['System32', 'SysWOW64']) {
+    const powershell = path.join(process.env.SystemRoot, architecture, 'WindowsPowerShell/v1.0/powershell.exe');
+    const result = JSON.parse(execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(repository, 'scripts/cli-windows-registry.fixture.ps1'), '-Helper', helper, '-Directory', root], { encoding: 'utf8', timeout: 30000 }));
+    assert.equal(result.success, true);
+    assert.equal(result.notificationFailurePreservesInstall, true);
+  }
+}));
 const shellAvailable = fs.existsSync(bash);
 function shellPath(file) {
   if (process.platform !== 'win32') return file;

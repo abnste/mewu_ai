@@ -71,6 +71,38 @@ function Get-MewuUserPathSnapshot {
         return [PSCustomObject]@{ exists = $exists; kind = $kind; path = $value }
     } finally { if ($null -ne $key) { $key.Dispose() } }
 }
+function Send-MewuEnvironmentChange {
+    # HWND_BROADCAST's timeout applies separately to every top-level window.
+    # A hung unrelated app must not turn a successful registry write into an
+    # installer failure. Keep the string alive on a background native call;
+    # exiting this short-lived helper terminates any unfinished notification.
+    try {
+        if (-not ('MewuCliEnvironment' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class MewuCliEnvironment {
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,string l,uint f,uint t,out IntPtr r);
+    public static bool Notify() {
+        bool sent = false;
+        var worker = new Thread(() => {
+            try {
+                IntPtr result;
+                sent = SendMessageTimeout(new IntPtr(0xffff),0x1a,IntPtr.Zero,"Environment",2,200,out result) != IntPtr.Zero;
+            } catch { }
+        });
+        worker.IsBackground = true;
+        worker.Start();
+        return worker.Join(2000) && sent;
+    }
+}
+'@
+        }
+        return [MewuCliEnvironment]::Notify()
+    } catch { return $false }
+}
 function Invoke-MewuWindowsIntegration([string]$Action, [string]$Directory) {
     if ($Action -eq 'Install' -and (-not [IO.File]::Exists([IO.Path]::Combine($Directory, 'mewu.exe')) -or -not [IO.File]::Exists([IO.Path]::Combine($Directory, 'MewuAI.exe')))) { throw 'CLI_PATH_PACKAGE_INCOMPLETE' }
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -109,16 +141,15 @@ function Invoke-MewuWindowsIntegration([string]$Action, [string]$Directory) {
                 try { if ($null -ne $key) { $key.DeleteValue('Ownership', $false) } }
                 finally { if ($null -ne $key) { $key.Dispose() } }
             }
+            $verified = Get-MewuUserPathSnapshot
+            $expectedExists = -not $plan.deletePath -and ($before.exists -or $plan.write)
+            if ($verified.exists -ne $expectedExists -or ($expectedExists -and ($verified.path -cne $plan.path -or $verified.kind -ne $before.kind))) { throw 'CLI_PATH_VERIFY_FAILED' }
             $done = $true
             break
         }
         if (-not $done) { throw 'CLI_PATH_CHANGED_CONCURRENTLY' }
-        if ($plan.write) {
-            Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class MewuCliEnvironment { [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,string l,uint f,uint t,out IntPtr r); }'
-            $result = [IntPtr]::Zero
-            [void][MewuCliEnvironment]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [IntPtr]::Zero, 'Environment', 2, 2000, [ref]$result)
-        }
-        return [PSCustomObject]@{ success = $true; changed = [bool]$plan.write; newShellRequired = [bool]$plan.write }
+        $notificationSent = if ($plan.write) { Send-MewuEnvironmentChange } else { $true }
+        return [PSCustomObject]@{ success = $true; changed = [bool]$plan.write; newShellRequired = [bool]$plan.write; notificationSent = [bool]$notificationSent }
     } finally { if ($held) { $mutex.ReleaseMutex() }; $mutex.Dispose() }
 }
 
@@ -128,6 +159,7 @@ try {
     exit 0
 } catch {
     # Do not relay raw paths, registry contents or a PowerShell stack to NSIS.
-    [Console]::Error.WriteLine('MEWU_CLI_PATH_INTEGRATION_FAILED')
+    $code = if ($_.Exception.Message -cmatch '^CLI_PATH_[A-Z_]+$') { $_.Exception.Message } elseif ($_.Exception -is [UnauthorizedAccessException] -or $_.Exception -is [Security.SecurityException]) { 'CLI_PATH_ACCESS_DENIED' } else { 'CLI_PATH_INTEGRATION_FAILED' }
+    [Console]::Error.WriteLine($code)
     exit 1
 }
