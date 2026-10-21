@@ -198,28 +198,38 @@ test('native Agent revocation removes its full settings tree before a pending me
   } finally { f.dispose(); }
 });
 
-test('an enabled unbound external Agent exposes configuration without a host key while execution stays fail-closed', async () => {
-  const f = await fixture({ initialExtensions: [extension()] });
+test('an external Agent keeps its own settings but never revives disabled native Agent, connection or MCP panels', async () => {
+  const record = extension({ manifest: { id: 'author.external', name: 'External', permissions: ['ui.render'] }, services: [
+    { id: 'engine', kind: 'agent', title: 'External Agent' },
+    { id: 'settings', kind: 'ui', title: '外部 Agent', metadata: { surface: 'settings' } },
+  ] });
+  const f = await fixture({ initialExtensions: [record] });
   try {
-    f.reads[0].resolve(capability({ agent: null })); await tick();
-    assert.equal(f.optional.agent, null); assert.equal(f.optional.readyAgentIds.length, 0); f.clickTab(); f.openAgent(); assert.ok(f.editor());
-    f.changed(); await tick(); assert.equal(f.optional, undefined); assert.ok(f.editor());
-    f.reads.at(-1).resolve(capability({ agent: null })); await tick(); assert.ok(f.editor());
-    f.changeExtensions([extension({ state: 'disabled', revision: 2 })]); await tick(); assert.equal(f.panel(), undefined);
-    f.reads.at(-1).resolve(capability({ agent: null })); await tick(); assert.equal(f.panel(), undefined);
-    assert.equal(f.extensionReads, 2, 'Settings and its opened provider each read once');
+    f.reads[0].resolve(capability()); await tick(); f.clickTab(); f.openAgent(); assert.ok(f.editor());
+    f.plugins({ revision: 2, plugins: plugins.plugins.map(plugin => ({ ...plugin, state: 'disabled', revision: 2 })) }); await tick();
+    assert.equal(f.panel(), undefined);
+    assert.equal(f.find(node => node.type === 'ConnectionsPanel'), undefined);
+    assert.equal(f.find(node => node.type === 'ToolsPanel'), undefined);
+    assert.equal(f.find(node => node.type === 'button' && f.text(node) === 'Agent 与连接'), undefined);
+    const external = f.find(node => node.type === 'button' && f.text(node) === '外部 Agent'); assert.ok(external);
+    external.props.onClick({}); await tick(); assert.ok(f.find(node => node.type === 'ExtensionSettings'));
+    f.reads.at(-1).resolve(capability({ pluginRevision: 2, agent: null, readyAgentIds: ['agent'], boundAgentIds: ['agent'] })); await tick();
+    assert.equal(f.panel(), undefined, 'an independently usable engine does not own the native page');
+    f.changeExtensions([{ ...record, state: 'disabled', revision: 2 }]); await tick();
+    assert.equal(f.find(node => node.type === 'ExtensionSettings'), undefined);
+    assert.equal(f.find(node => node.type === 'button' && f.text(node) === '外部 Agent'), undefined);
   } finally { f.dispose(); }
 });
 
-test('initial Agent settings wait for external discovery when the native Agent is disabled', async () => {
+test('a disabled native Agent deep link exits even while external discovery is pending', async () => {
   const f = await fixture({ delayedExtensionRead: true });
   try {
     f.plugins({ revision: 2, plugins: plugins.plugins.map(plugin => ({ ...plugin, state: 'disabled', revision: 2 })) });
     await tick();
     f.reads.at(-1).resolve(capability({ pluginRevision: 2, agent: null })); await tick();
-    assert.equal(f.find(node => node.type === 'button' && f.text(node) === '插件' && node.props.classList?.selected), undefined);
+    assert.ok(f.find(node => node.type === 'button' && f.text(node) === '插件' && node.props.classList?.selected));
     f.resolveExtensions([extension()]); await tick();
-    assert.ok(f.find(node => node.type === 'button' && f.text(node) === 'Agent 与连接' && node.props.classList?.selected));
+    assert.equal(f.find(node => node.type === 'button' && f.text(node) === 'Agent 与连接'), undefined);
     f.changeExtensions([extension({ state: 'disabled', revision: 2 })]); await tick();
     assert.equal(f.panel(), undefined);
     assert.ok(f.find(node => node.type === 'button' && f.text(node) === '插件' && node.props.classList?.selected));
@@ -240,12 +250,15 @@ test('external memory hides local sources during reads, and clearing restores on
   } finally { f.dispose(); }
 });
 
-test('live external Agent registration wins over a late initial lookup at the same revision', async () => {
+test('live external settings registration wins over a late initial lookup without enabling native Agent settings', async () => {
   const f = await fixture({ delayedExtensionRead: true });
   try {
     f.reads[0].resolve(capability({ agent: null })); await tick(); assert.equal(f.panel(), undefined);
-    f.changeExtensions([extension()]); await tick(); f.clickTab(); assert.ok(f.panel());
-    const panel = f.panel(); f.resolveExtensions([]); await tick(); assert.equal(f.panel(), panel);
+    f.changeExtensions([extension({ manifest: { id: 'author.external', name: 'External', permissions: ['ui.render'] }, services: [{ id: 'settings', kind: 'ui', title: '外部 Agent', metadata: { surface: 'settings' } }] })]); await tick();
+    const entry = () => f.find(node => node.type === 'button' && f.text(node) === '外部 Agent');
+    assert.ok(entry()); entry().props.onClick({}); await tick(); assert.ok(f.find(node => node.type === 'ExtensionSettings'));
+    f.resolveExtensions([]); await tick(); assert.ok(entry()); assert.ok(f.find(node => node.type === 'ExtensionSettings'));
+    assert.equal(f.panel(), undefined);
   } finally { f.dispose(); }
 });
 
