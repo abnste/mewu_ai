@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { batch, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { createOptionalFeatureState } from '../optional-feature-state';
 import * as extensions from '../extension-bridge';
 import type { ExtensionRecord } from '../extension-contracts';
@@ -55,24 +55,28 @@ export default function SettingsDialog(props: Props) {
     const value = optional(); return value === undefined ? previous : Boolean(value.agent);
   }, false);
   const [extensionRecords, setExtensionRecords] = createSignal<ExtensionRecord[]>([]);
+  const [extensionDiscoveryReady, setExtensionDiscoveryReady] = createSignal(!extensions.extensionNative);
   const externalAgentVisible = createMemo(() => extensionServices(extensionRecords(), 'agent').length > 0);
   const pluginPages = createMemo(() => settingsExtensionServices(extensionRecords()));
   const agentEnabled = () => hostAgentVisible() || externalAgentVisible();
   let extensionDisposed = false, extensionEvents = 0, stopExtensions: (() => void) | undefined;
   onMount(async () => {
     if (!extensions.extensionNative) return;
-    const accept = (values: ExtensionRecord[]) => { if (!extensionDisposed) setExtensionRecords(old => mergeExtensionRecords(old, values)); };
+    const accept = (values: ExtensionRecord[]) => { if (!extensionDisposed) batch(() => {
+      setExtensionRecords(old => mergeExtensionRecords(old, values));
+      setExtensionDiscoveryReady(true);
+    }); };
     try {
       stopExtensions = await extensions.subscribeExtensions(values => { extensionEvents++; accept(values); });
       if (extensionDisposed) { stopExtensions(); return; }
       const beforeEvents = extensionEvents, installed = await extensions.getExtensions();
       if (beforeEvents === extensionEvents) accept(installed);
-    } catch { /* Unavailable discovery does not grant execution authority. */ }
+    } catch { if (!extensionDisposed) setExtensionDiscoveryReady(true); /* Unavailable discovery does not grant execution authority. */ }
   });
   onCleanup(() => { extensionDisposed = true; stopExtensions?.(); });
   const [tab, setTab] = createSignal(props.initialTab);
   const activePluginPage = createMemo(() => pluginPages().find(choice => tab() === `extension:${extensionServiceKey(choice)}`));
-  createEffect(() => { if (tab().startsWith('extension:') && !activePluginPage()) setTab('plugins'); });
+  createEffect(() => { if (extensionDiscoveryReady() && tab().startsWith('extension:') && !activePluginPage()) setTab('plugins'); });
   const facts = createSettingsInformation(() => tab() === 'general' || tab() === 'capture' || tab() === 'data' || tab() === 'about');
   const [agentId, setAgentId] = createSignal(props.snapshot.scenes.find(s => s.id === props.snapshot.activeSceneId)?.agentId || props.snapshot.agents[0]?.id || '');
   const [agentPane, setAgentPane] = createSignal<'identity' | 'connection' | 'tools'>(props.initialTab === 'agent' ? 'connection' : 'identity');

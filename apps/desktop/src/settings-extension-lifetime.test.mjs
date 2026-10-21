@@ -20,7 +20,7 @@ const capability = patch => ({ pluginRevision: 1, connectionRevisions: {}, agent
 const extension = patch => ({ manifest: { id: 'author.external', name: 'External' }, revision: 1, state: 'enabled', services: [{ id: 'engine', kind: 'agent', title: 'External Agent' }, { id: 'memory', kind: 'memory', title: 'Journal' }], ...patch });
 const memoryBinding = patch => ({ agentId: 'agent', kind: 'memory', pluginId: 'author.external', serviceId: 'memory', revision: 1, ...patch });
 
-async function fixture({ initialExtensions = [], initialBindings = [], delayedBindings = false, delayedExtensionRead = false, onDeleteAgent = async () => {}, realMemory = false, memoryState = { selection: { revision: 0, bindingId: null }, bindings: [], nextCursor: null } } = {}) {
+async function fixture({ initialTab = 'agent', initialExtensions = [], initialBindings = [], delayedBindings = false, delayedExtensionRead = false, onDeleteAgent = async () => {}, realMemory = false, memoryState = { selection: { revision: 0, bindingId: null }, bindings: [], nextCursor: null } } = {}) {
   const reads = [], extensionListeners = new Set(), bindingListeners = new Set(), pluginListeners = new Set(), domListeners = new Set();
   const bindingRead = deferred(), extensionsRead = deferred();
   let pluginValues = plugins;
@@ -97,7 +97,7 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
   const dialog = await component('SettingsDialog'), provider = await component('ExtensionProviders');
   const [snapshot, setSnapshot] = solid.createSignal({ activeSceneId: 'scene', scenes: [{ id: 'scene', agentId: 'agent' }], agents: [{ id: 'agent', name: 'My Agent', instructions: 'Original soul', memory: '', memoryEnabled: true, defaultConnectionId: null }], connections: [], memoryStats: [] });
   const root = renderer.createElement('root');
-  const dispose = renderer.render(() => dialog.namespace.default({ get snapshot() { return snapshot(); }, initialTab: 'agent', preferences: {}, hotkey: '', onClose() {}, onSaveAgent: async () => {}, onDeleteAgent }), root);
+  const dispose = renderer.render(() => dialog.namespace.default({ get snapshot() { return snapshot(); }, initialTab, preferences: {}, hotkey: '', onClose() {}, onSaveAgent: async () => {}, onDeleteAgent }), root);
   const all = () => { const list = []; const walk = node => { list.push(node); node.children.forEach(walk); }; walk(root); return list; };
   const text = node => 'text' in node ? node.text : node.children.map(text).join('');
   const find = predicate => all().find(predicate);
@@ -130,6 +130,27 @@ test('settings plugin contributes its own navigation page and disable revokes it
     assert.equal(f.find(node=>node.type==='button'&&f.text(node)==='外部 Agent'),undefined);
     assert.equal(f.find(node=>node.type==='ExtensionSettings'),undefined);
   }finally{f.dispose();}
+});
+
+test('opening a plugin settings page waits for discovery, but revocation never waits for a stale read',async()=>{
+  const record=extension({manifest:{id:'independent.connector',name:'Connector',permissions:['ui.render']},services:[{id:'settings',kind:'ui',title:'外部 Agent',metadata:{surface:'settings'}}]});
+  const initialTab='extension:'+JSON.stringify([record.manifest.id,'settings']);
+  const f=await fixture({initialTab,initialExtensions:[record],delayedExtensionRead:true});
+  try{
+    assert.equal(f.find(node=>node.type==='button'&&f.text(node)==='插件'&&node.props.classList?.selected),undefined,'pending discovery must not replace the requested page');
+    f.changeExtensions([record]);await tick();
+    assert.ok(f.find(node=>node.type==='ExtensionSettings'));
+    f.changeExtensions([{...record,state:'disabled',revision:2}]);await tick();
+    assert.equal(f.find(node=>node.type==='ExtensionSettings'),undefined);
+    assert.ok(f.find(node=>node.type==='button'&&f.text(node)==='插件'&&node.props.classList?.selected));
+    f.resolveExtensions([record]);await tick();
+    assert.equal(f.find(node=>node.type==='ExtensionSettings'),undefined,'late initial data cannot resurrect the disabled page');
+  }finally{f.dispose();}
+  const missing=await fixture({initialTab,delayedExtensionRead:true});
+  try{
+    missing.resolveExtensions([]);await tick();
+    assert.ok(missing.find(node=>node.type==='button'&&missing.text(node)==='插件'&&node.props.classList?.selected),'a known missing plugin returns to plugin management');
+  }finally{missing.dispose();}
 });
 
 test('real Settings mount retains expanded Agent and unsaved soul through pending→true, then removes it on actual false', async () => {
