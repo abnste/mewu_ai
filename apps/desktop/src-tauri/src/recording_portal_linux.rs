@@ -191,14 +191,23 @@ fn single_monitor(mut streams: Vec<(u32, HashMap<String, OwnedValue>)>) -> Resul
 }
 
 fn valid_recording_parent(value:&str)->bool{
+    // The desktop session may be Wayland while the owned GTK window is XWayland.
+    // Its identifier must match that actual window, not the session backend.
+    // Only the host's exported parent enters this worker; this is wire-format
+    // validation, not permission to accept a renderer-provided window ID.
+    if let Some(xid)=value.strip_prefix("x11:") {
+        return !xid.is_empty() && xid.len()<=8 && xid.bytes().all(|b|b.is_ascii_hexdigit())
+            && u32::from_str_radix(xid,16).is_ok_and(|id|id!=0);
+    }
     value.strip_prefix("wayland:").is_some_and(|handle|!handle.is_empty()&&handle.len()<=512&&!handle.chars().any(char::is_control))
 }
 
 #[cfg(test)] mod tests {
     use super::*;
-    #[test] fn recording_parent_is_a_bounded_wayland_handle_not_a_renderer_url(){
+    #[test] fn recording_parent_accepts_both_owned_portal_window_formats(){
         assert!(valid_recording_parent("wayland:~12l9jdl.-a"));
-        for value in ["","wayland:","x11:1234","https://host/","wayland:bad\nhandle"]{assert!(!valid_recording_parent(value));}
+        for value in ["x11:1234","x11:1","x11:ffffffff","x11:ABCDEF12"]{assert!(valid_recording_parent(value));}
+        for value in ["","wayland:","x11:","x11:0","x11:00000000","x11:100000000","x11:-1","x11:0x1234","x11:12\n34","x11: 1234","x11:xyz","https://host/","wayland:bad\nhandle"]{assert!(!valid_recording_parent(value),"{value:?}");}
         assert!(!valid_recording_parent(&format!("wayland:{}","a".repeat(513))));
     }
     #[test] fn stream_admission_requires_exact_single_monitor() {
