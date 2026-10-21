@@ -355,6 +355,24 @@ test('region boundary failures reach the parent Agent with no input and no priva
   await scope.deactivate();
 });
 
+test('Mac accessibility admission failures give actionable feedback without sending model or input requests', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  const { scope, calls } = harness(async () => {
+    throw Object.assign(new Error('private platform details'), {code:'region_accessibility_permission'});
+  });
+  activate(scope.ctx); scope.finishRegistration();
+  const reply = await invoke(scope, 'example.region-agent.operate', {task:'点击目标'}, {regionId:'authorized-region'});
+  assert.equal(reply.ok, true);
+  assert.equal(reply.result.isError, true);
+  assert.equal(reply.result.completed, false);
+  assert.equal(reply.result.steps, 0);
+  assert.equal(reply.result.stopReason, 'region_accessibility_permission');
+  assert.match(reply.result.content, /macOS.*辅助功能.*未发出新的输入动作/u);
+  assert.doesNotMatch(JSON.stringify(reply), /private platform details/);
+  assert.deepEqual(calls.map(call => call.method), ['region.observe']);
+  await scope.deactivate();
+});
+
 test('valid supported actions keep their exact JSON and always request fresh feedback', async () => {
   const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
   for (const action of [

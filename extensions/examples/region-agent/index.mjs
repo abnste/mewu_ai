@@ -135,6 +135,7 @@ export default definePlugin(ctx => {
       // the host journal; never invite the parent Agent to replay the action.
       if (phase === 'action') throw error;
       const reasons = {
+        region_accessibility_permission: '请在 macOS 系统设置的隐私与安全性中，为 MewuAI 开启辅助功能后重新发起',
         region_window_boundary: '选区跨出了目标窗口，请重新框选同一窗口',
         region_target_changed: '目标窗口已改变或失去焦点，请回到目标窗口后重新发起',
         region_target_obscured: '操作区域被其他窗口遮挡，请移开遮挡后重新发起',
