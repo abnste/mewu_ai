@@ -581,6 +581,7 @@ mod tests {
                 name: "A".into(),
                 instructions: String::new(),
                 memory: String::new(),
+                archived: false,
                 memory_enabled: true,
                 memory_provider: Default::default(),
                 default_connection_id: None,

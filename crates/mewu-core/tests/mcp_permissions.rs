@@ -87,6 +87,7 @@ fn other_agent(store: &mut Store) -> String {
         name: "其他 Agent".into(),
         instructions: String::new(),
         memory: String::new(),
+        archived: false,
         memory_enabled: false,
         memory_provider: Default::default(),
         default_connection_id: None,

@@ -568,6 +568,7 @@ fn run_input_is_immutable_and_switching_agent_requires_fresh_context() {
         name: "研究员".into(),
         instructions: "研究".into(),
         memory: "手动资料".into(),
+        archived: false,
         memory_enabled: false,
         memory_provider: Default::default(),
         default_connection_id: None,

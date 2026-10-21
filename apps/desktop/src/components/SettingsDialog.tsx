@@ -31,6 +31,7 @@ interface Props {
   draggable?: boolean;
   onPreferences: (value: Preferences) => void;
   onSaveAgent: (agent: AgentProfile) => Promise<void>;
+  onDeleteAgent: (id: string, replacementAgentId: string) => Promise<void>;
   onSaveMemory: (value: SaveMemory) => Promise<void>;
   onDeleteMemory: (value: DeleteMemory) => Promise<void>;
   onSaveConnectionProfile: (profile: ConnectionProfile, expectedRevision?: number, apiKey?: string) => Promise<void>;
@@ -106,7 +107,7 @@ export default function SettingsDialog(props: Props) {
           <div hidden={tab() !== 'agent'}><header class="settings-page-heading"><h2>{t(agentEnabled() ? "Agent 与连接" : "连接")}</h2></header>
             <div class="segmented"><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'identity'} classList={{ selected: agentPane() === 'identity' }} onClick={() => setAgentPane('identity')}><UserRound size={13} />Agent</button></Show><button aria-pressed={agentPane() === 'connection'} classList={{ selected: agentPane() === 'connection' }} onClick={() => setAgentPane('connection')}><Link2 size={13} />{t("连接")}</button><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'tools'} classList={{ selected: agentPane() === 'tools' }} onClick={() => setAgentPane('tools')}><Wrench size={13} />MCP</button></Show></div>
             <div hidden={agentPane() !== 'identity'}>
-              <Show when={agentEnabled()}><AgentsPanel agents={props.snapshot.agents} connections={props.snapshot.connections} scenes={props.snapshot.scenes} memoryStats={props.snapshot.memoryStats} active={tab() === 'agent' && agentPane() === 'identity'} onSelect={setAgentId} onSave={props.onSaveAgent} onSaveMemory={props.onSaveMemory} onDeleteMemory={props.onDeleteMemory} /></Show>
+              <Show when={agentEnabled()}><AgentsPanel agents={props.snapshot.agents.filter(agent => !agent.archived)} connections={props.snapshot.connections} scenes={props.snapshot.scenes} memoryStats={props.snapshot.memoryStats} active={tab() === 'agent' && agentPane() === 'identity'} onSelect={setAgentId} onSave={props.onSaveAgent} onDelete={props.onDeleteAgent} onSaveMemory={props.onSaveMemory} onDeleteMemory={props.onDeleteMemory} /></Show>
             </div>
             <div hidden={agentPane() !== 'connection'}><ConnectionsPanel connections={props.snapshot.connections} defaultConnectionId={props.snapshot.defaultConnectionId} active={tab() === 'agent' && agentPane() === 'connection'} onSave={props.onSaveConnectionProfile} onDelete={props.onDeleteConnectionProfile} onDefault={props.onSetDefaultConnection} /></div>
             <div hidden={agentPane() !== 'tools'}><Show when={agentEnabled()}><ToolsPanel snapshot={props.snapshot} agentId={agentId()} onAgent={setAgentId} onDiscover={props.onDiscoverMcpServer} onCommand={props.onMcpCommand} /></Show></div>

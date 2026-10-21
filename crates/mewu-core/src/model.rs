@@ -631,6 +631,9 @@ fn title_revision_is_zero(value: &u64) -> bool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentProfile {
     pub id: String,
+    /// Retained only as the immutable identity behind existing history.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
     pub name: String,
     pub instructions: String,
     pub memory: String,
@@ -1029,6 +1032,10 @@ pub enum SceneCommand {
     },
     SaveAgent {
         agent: AgentProfile,
+    },
+    DeleteAgent {
+        agent_id: String,
+        replacement_agent_id: String,
     },
     SetAgent {
         scene_id: String,

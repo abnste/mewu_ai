@@ -551,6 +551,7 @@ async fn apply_scene_command(
     let finishing_geometry = lifecycle::is_geometry_finish_command(&command);
     let disabled_memory = match &command {
         SceneCommand::SaveAgent { agent } if !agent.memory_enabled => Some(agent.id.clone()),
+        SceneCommand::DeleteAgent { agent_id, .. } => Some(agent_id.clone()),
         _ => None,
     };
     let snapshot = engine.store.apply(command).map_err(|e| e.to_string())?;

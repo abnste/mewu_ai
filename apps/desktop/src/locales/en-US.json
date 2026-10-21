@@ -1131,5 +1131,11 @@
   "收起代码": "Collapse code",
   "展开代码": "Expand code",
   "放到空间": "Add to space",
-  "点击恢复，或拖到空间": "Restore, or drag into the space"
+  "点击恢复，或拖到空间": "Restore, or drag into the space",
+  "删除 Agent": "Delete Agent",
+  "历史会话保留，已删除人格不再执行任务": "History is kept. The deleted Agent can no longer run tasks.",
+  "所选记忆插件已停用": "The selected memory plugin is disabled",
+  "使用本地记忆": "Use local memory",
+  "空白会话改用": "Empty conversations use",
+  "至少保留一个 Agent": "Keep at least one Agent"
 }

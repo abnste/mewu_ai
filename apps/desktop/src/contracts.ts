@@ -50,7 +50,7 @@ export interface ToolStep { id: string; name: string; label: string; status: 'ru
 export interface Run { id: string; status: 'running' | 'completed' | 'failed' | 'canceled'; kind?: 'chat' | 'workflow' | 'continuation'; error?: string; steps?: ToolStep[] }
 export interface Scene { id: string; title: string; autoTitleAttempted?: boolean; titleRevision?: number; agentId: string; connectionId?: string | null; createdAt: number; updatedAt: number; frozen: boolean; minimized?: boolean; closed: boolean; background?: Asset; blackboardLink?: { parentSceneId: string; itemId: string }; regions: Region[]; geometryHistory?: RegionGeometryHistory; items: SpaceItem[]; refs: Reference[]; draft: string; messages: Message[]; conversationStart?: number; run?: Run }
 export interface MemoryProviderSelection { revision: number; bindingId: string | null }
-export interface AgentProfile { id: string; name: string; instructions: string; memory: string; memoryEnabled: boolean; defaultConnectionId?: string | null; memoryProvider?: MemoryProviderSelection }
+export interface AgentProfile { id: string; archived?: boolean; name: string; instructions: string; memory: string; memoryEnabled: boolean; defaultConnectionId?: string | null; memoryProvider?: MemoryProviderSelection }
 export interface MemoryEntry { id: string; agentId: string; text: string; revision: number; createdAt: number; updatedAt: number; origin?: 'legacy_memory' | 'legacy_reference' | 'manual' | 'conversation'; source?: { sceneId: string; messageId: string } }
 export interface MemoryStats { agentId: string; count: number; revision: number }
 export interface MemoryPage { entries: MemoryEntry[]; total: number; nextCursor?: string; revision: number }
@@ -107,6 +107,7 @@ export type SceneCommand =
   | { type: 'update_item'; sceneId: string; item: SpaceItem }
   | { type: 'remove_item'; sceneId: string; itemId: string }
   | { type: 'save_agent'; agent: AgentProfile }
+  | { type: 'delete_agent'; agentId: string; replacementAgentId: string }
   | { type: 'save_memory'; agentId: string; id?: string; text: string; expectedRevision?: number }
   | { type: 'delete_memory'; agentId: string; id: string; expectedRevision: number }
   | { type: 'set_mcp_grants'; serverId: string; expectedRevision: number; agentId: string; toolNames: string[] }

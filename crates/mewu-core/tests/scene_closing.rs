@@ -75,6 +75,7 @@ fn closing_active_retains_everything_and_creates_same_agent_blank_scene() {
         name: "研究员".into(),
         instructions: String::new(),
         memory: String::new(),
+        archived: false,
         memory_enabled: true,
         memory_provider: Default::default(),
         default_connection_id: None,

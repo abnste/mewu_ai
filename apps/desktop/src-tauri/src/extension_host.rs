@@ -1309,7 +1309,7 @@ pub fn set_extension_binding(
             .snapshot()
             .agents
             .iter()
-            .any(|a| a.id == binding.agent_id)
+            .any(|a| a.id == binding.agent_id && !a.archived)
         {
             return Err("Agent 不存在".into());
         }

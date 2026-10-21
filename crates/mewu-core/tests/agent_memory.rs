@@ -68,6 +68,7 @@ fn other_agent(store: &mut Store) -> AgentProfile {
         name: "另一个 Agent".into(),
         instructions: String::new(),
         memory: String::new(),
+        archived: false,
         memory_enabled: true,
         memory_provider: Default::default(),
         default_connection_id: None,

@@ -410,6 +410,32 @@ fn assert_not_claimed(result: Result<Option<MemoryDispatch>, CoreError>) {
 }
 
 #[test]
+fn deleting_a_profile_preserves_remote_receipts_but_revokes_pending_memory_work() {
+    let temp = TestDb::new();
+    let mut store = Store::open(&temp.0).unwrap();
+    let agent = enable(&mut store);
+    let mut replacement = store.snapshot().agents[0].clone();
+    replacement.id = uid();
+    let replacement_id = replacement.id.clone();
+    store.apply(SceneCommand::SaveAgent { agent: replacement }).unwrap();
+    let b = setup(&mut store, &agent, true);
+    let written = queue(&mut store, &b, &uid(), "保留原始外接记录");
+    let work = pending(&store, written.operation_id.as_deref().unwrap());
+    let db = Database::open(&temp.0).unwrap();
+    let before = counts(&db);
+    store.apply(SceneCommand::DeleteAgent { agent_id: agent.clone(), replacement_agent_id: replacement_id }).unwrap();
+    assert_eq!(counts(&db), before);
+    assert!(store.snapshot().agents.iter().any(|a|a.id == agent && a.archived && !a.memory_enabled));
+    assert_not_claimed(store.claim_memory_work(&work.operation_id, work.revision, &work.grant, tick()));
+    let after = store.snapshot();
+    drop(store);
+    let mut reopened = Store::open(&temp.0).unwrap();
+    assert_eq!(reopened.snapshot(), after);
+    assert_not_claimed(reopened.claim_memory_work(&work.operation_id, work.revision, &work.grant, tick()));
+    assert!(reopened.external_memory_entry(&agent, &b.id, &written.evidence_id).unwrap().is_some());
+}
+
+#[test]
 fn manual_evidence_and_outbox_are_atomic_and_request_identity_is_idempotent() {
     let temp = TestDb::new();
     let mut store = Store::open(&temp.0).unwrap();

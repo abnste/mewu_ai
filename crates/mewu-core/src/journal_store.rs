@@ -984,7 +984,7 @@ impl Store {
             let projection=build_projection(db,&r,plan)?;
             let original=scope(state,&r)?;
             let connection=state.connections.iter().find(|c|Some(c.id.as_str())==original.connection_id.as_deref()&&c.id==input.expected_connection_id&&c.revision==input.expected_connection_revision).cloned().ok_or(CoreError::ConnectionConflict)?;
-            let mut agent=state.agents.iter().find(|a|a.id==r.agent).cloned().ok_or(CoreError::JournalConflict)?;agent.memory_enabled=false;
+            let mut agent=state.agents.iter().find(|a|a.id==r.agent && !a.archived).cloned().ok_or(CoreError::JournalConflict)?;agent.memory_enabled=false;
             let new_id=id();let user_id=id();let scene=scene_mut(state,&r.scene)?;
             scene.messages.push(Message{id:user_id.clone(),role:MessageRole::User,text:"继续回答".into(),reasoning:None,conversation_start:None,created_at:now(),run_id:Some(new_id.clone()),refs:Some(vec![]),attachments:Some(vec![]),tool_steps:vec![]});
             scene.run=Some(Run{id:new_id.clone(),kind:RecordedRunKind::Continuation,status:RunStatus::Running,connection_id:Some(connection.id.clone()),connection_revision:Some(connection.revision),external_runtime:None,memory_authority:None,error:None,steps:vec![]});touch(scene);

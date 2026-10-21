@@ -145,6 +145,7 @@ pub(crate) async fn get_optional_capabilities(app: AppHandle) -> Result<Capabili
             let agent_ids = snapshot
                 .agents
                 .into_iter()
+                .filter(|agent| !agent.archived)
                 .map(|agent| agent.id)
                 .collect::<Vec<_>>();
             (

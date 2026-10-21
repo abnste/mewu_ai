@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
-import { Check, ChevronDown, ChevronRight, LoaderCircle } from 'lucide-solid';
+import { Check, ChevronDown, ChevronRight, LoaderCircle, Trash2 } from 'lucide-solid';
 import type { AgentProfile, ConnectionProfile, MemoryStats, Scene } from '../contracts';
 import { t } from '../i18n';
 import MemoryList, { type DeleteMemory, type SaveMemory } from './MemoryList';
 import MemoryProviderSettings from './MemoryProviderSettings';
 import ExtensionProviders from './ExtensionProviders';
 import { Row, SettingsAddButton, Toggle } from './SettingControls';
+import { nativeSelectOwnsEscape } from '../native-select-escape';
 import '../connections.css';
 
 interface Props {
@@ -17,6 +18,7 @@ interface Props {
   active: boolean;
   onSelect: (id: string) => void;
   onSave: (agent: AgentProfile) => Promise<void>;
+  onDelete: (id: string, replacementAgentId: string) => Promise<void>;
   onSaveMemory: (value: SaveMemory) => Promise<void>;
   onDeleteMemory: (value: DeleteMemory) => Promise<void>;
 }
@@ -27,6 +29,8 @@ export default function AgentsPanel(props: Props) {
   const [opened, setOpened] = createSignal<Record<string, boolean>>({});
   const [pending, setPending] = createSignal('');
   const [saved, setSaved] = createSignal('');
+  const [deleting, setDeleting] = createSignal('');
+  const [replacement, setReplacement] = createSignal('');
   const [errors, setErrors] = createSignal<Record<string, string>>({});
   const [externalMemory, setExternalMemory] = createSignal<Record<string, boolean | undefined>>({});
   let disposed = false;
@@ -70,10 +74,36 @@ export default function AgentsPanel(props: Props) {
       if (!disposed) setErrors(old => ({ ...old, [id]: cause instanceof Error ? cause.message : String(cause) }));
     } finally { if (!disposed) setPending(''); }
   }
-  return <section class="agents-panel" aria-label="Agent">
+  function beginDelete(id: string) {
+    if (pending()) return;
+    setReplacement(props.agents.find(agent => agent.id !== id)?.id ?? '');
+    setDeleting(id);
+  }
+  async function remove(id: string) {
+    if (pending() || deleting() !== id) return;
+    if (profile(id) && !props.agents.some(agent => agent.id === replacement() && agent.id !== id)) return;
+    setPending(id); clearError(id);
+    try {
+      if (profile(id)) await props.onDelete(id, replacement());
+      if (disposed) return;
+      setDrafts(old => { const next = { ...old }; delete next[id]; return next; });
+      setOpened(old => { const next = { ...old }; delete next[id]; return next; });
+      setExternalMemory(old => { const next = { ...old }; delete next[id]; return next; });
+      if (expanded() === id) { setExpanded(''); props.onSelect(replacement()); }
+      setDeleting(''); setSaved('');
+    } catch (cause) {
+      if (!disposed) setErrors(old => ({ ...old, [id]: cause instanceof Error ? cause.message : String(cause) }));
+    } finally { if (!disposed) setPending(''); }
+  }
+  return <section class="agents-panel" aria-label="Agent" onKeyDown={event => { if (event.key === 'Escape' && deleting() && !nativeSelectOwnsEscape(event)) { event.preventDefault(); event.stopPropagation(); if (!pending()) setDeleting(''); } }}>
     <div class="settings-section-heading"><span>{t('我的 Agent')}</span><SettingsAddButton onClick={add} /></div>
     <For each={ids()}>{id => <article class="connection-card agent-card" classList={{ expanded: expanded() === id }}>
-      <div class="connection-summary"><button class="connection-expand" aria-expanded={expanded() === id} aria-controls={`agent-editor-${id}`} onClick={() => open(id)}><Show when={expanded() === id} fallback={<ChevronRight size={15} />}><ChevronDown size={15} /></Show><span><strong>{view(id).name || t('新 Agent')}</strong><Show when={soul(id)}>{summary => <small title={summary()}>{summary()}</small>}</Show></span></button><Show when={drafts()[id]}><i class="connection-dirty" title={t('未保存')} aria-label={t('未保存')} /></Show></div>
+      <div class="connection-summary"><button class="connection-expand" aria-expanded={expanded() === id} aria-controls={`agent-editor-${id}`} onClick={() => open(id)}><Show when={expanded() === id} fallback={<ChevronRight size={15} />}><ChevronDown size={15} /></Show><span><strong>{view(id).name || t('新 Agent')}</strong><Show when={soul(id)}>{summary => <small title={summary()}>{summary()}</small>}</Show></span></button><Show when={drafts()[id]}><i class="connection-dirty" title={t('未保存')} aria-label={t('未保存')} /></Show><button class="icon-button compact" title={t(profile(id) && props.agents.length < 2 ? '至少保留一个 Agent' : '删除 Agent')} aria-label={t('删除 Agent')} disabled={Boolean(pending()) || (Boolean(profile(id)) && props.agents.length < 2)} onClick={() => beginDelete(id)}><Trash2 size={15} /></button></div>
+      <Show when={deleting() === id}><div class="connection-remove">
+        <span>{t('删除')}{view(id).name || t('新 Agent')}？</span><Show when={props.scenes.some(scene => scene.agentId === id && scene.messages?.length)}><span>{t('历史会话保留，已删除人格不再执行任务')}</span></Show>
+        <Show when={profile(id)}><label class="field-label">{t('空白会话改用')}<select aria-label={t('空白会话改用')} value={replacement()} disabled={Boolean(pending())} onChange={event => setReplacement(event.currentTarget.value)}><For each={props.agents.filter(agent => agent.id !== id)}>{agent => <option value={agent.id}>{agent.name}</option>}</For></select></label></Show>
+        <button class="text-button" disabled={Boolean(pending())} onClick={() => setDeleting('')}>{t('取消')}</button><button class="secondary-button" disabled={Boolean(pending())} onClick={() => void remove(id)}>{t('删除')}</button>
+      </div></Show>
       <Show when={opened()[id]}><div id={`agent-editor-${id}`} class="connection-editor agent-editor" hidden={expanded() !== id}>
         <label class="field-label">{t('名称')}<input id={`agent-name-${id}`} value={view(id).name} onInput={event => edit(id, { name: event.currentTarget.value })} maxlength={80} /></label>
         <label class="field-label">{t('灵魂设定')}<textarea rows={5} value={view(id).instructions} onInput={event => edit(id, { instructions: event.currentTarget.value })} /></label>

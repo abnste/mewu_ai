@@ -358,13 +358,15 @@ export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
     previewGeometry.close();
     old.frozen = true;
     if(command.type==='freeze_scene')old.minimized=true;
-    const next = emptyScene(old.agentId);
-    next.connectionId = previewConnectionFor(old.agentId);
+    const agentId = preview.agents.find(agent => agent.id === old.agentId && !agent.archived)?.id ?? preview.agents.find(agent => !agent.archived)!.id;
+    const next = emptyScene(agentId);
+    next.connectionId = previewConnectionFor(agentId);
     preview.scenes.push(next);
     preview.activeSceneId = next.id;
   } else if (command.type === 'new_conversation') {
     const scene = findScene(command.sceneId);
     if (scene.id !== preview.activeSceneId || scene.closed || scene.frozen || scene.run?.status === 'running') throw new Error('当前无法开始新会话');
+    if (preview.agents.find(agent => agent.id === scene.agentId)?.archived) return applyCommand({ type: 'new_scene' });
     scene.conversationStart = scene.messages.length; scene.draft = ''; scene.run = undefined;
   } else if (command.type === 'close_scene') {
     const scene = findScene(command.sceneId);
@@ -387,6 +389,7 @@ export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
     if (command.connectionId !== null && !preview.connections.some(value => value.id === command.connectionId)) throw new Error('连接不存在');
     preview.defaultConnectionId = command.connectionId;
   } else if (command.type === 'save_agent') {
+    if (command.agent.archived || preview.agents.some(agent => agent.id === command.agent.id && agent.archived)) throw new Error('此 Agent 已删除');
     if (!command.agent.name.trim()) throw new Error('请输入名称');
     const agent = { ...structuredClone(command.agent), name: command.agent.name.trim(), memoryEnabled: command.agent.memoryEnabled !== false };
     if (agent.defaultConnectionId && !preview.connections.some(value => value.id === agent.defaultConnectionId)) throw new Error('连接不存在');
@@ -396,6 +399,24 @@ export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
     if (index >= 0 && preview.agents[index].memoryEnabled && !agent.memoryEnabled) cancelPreviewAgents([agent.id], '长期记忆已关闭');
     if (index < 0) preview.agents.push(agent);
     else preview.agents[index] = agent;
+  } else if (command.type === 'delete_agent') {
+    if (command.agentId === command.replacementAgentId || !preview.agents.some(agent => agent.id === command.replacementAgentId && !agent.archived)) throw new Error('请选择不同的替代 Agent');
+    const agent = preview.agents.find(agent => agent.id === command.agentId && !agent.archived);
+    if (!agent) throw new Error('Agent 不存在');
+    const scenes = preview.scenes.filter(scene => scene.agentId === agent.id);
+    if (scenes.some(scene => scene.run?.status === 'running')) throw new Error('请先停止此 Agent 的任务');
+    const preserve = scenes.some(scene => scene.messages.length > 0) || Boolean(agent.memoryProvider?.bindingId);
+    if (preserve) { agent.archived = true; agent.memoryEnabled = false; }
+    else {
+      preview.agents = preview.agents.filter(value => value.id !== agent.id);
+      for (let index = previewMemories.length - 1; index >= 0; index--) if (previewMemories[index].agentId === agent.id) previewMemories.splice(index, 1);
+    }
+    for (const scene of scenes) if (!preserve || !scene.messages.length) scene.agentId = command.replacementAgentId;
+    for (const server of preview.mcpServers) {
+      if (!server.grants.some(grant => grant.agentId === agent.id)) continue;
+      cancelPreviewAgents(server.grants.map(grant => grant.agentId), 'MCP 授权已更改');
+      server.grants = server.grants.filter(grant => grant.agentId !== agent.id); server.revision++;
+    }
   } else if (command.type === 'save_memory' || command.type === 'delete_memory') {
     if (!preview.agents.some(agent => agent.id === command.agentId)) throw new Error('Agent 不存在');
     const index = command.id ? previewMemories.findIndex(entry => entry.id === command.id && entry.agentId === command.agentId) : -1;
@@ -505,7 +526,7 @@ export async function applyCommand(command: SceneCommand): Promise<Snapshot> {
         break;
       }
       case 'set_agent':
-        if (!preview.agents.some(agent => agent.id === command.agentId)) throw new Error('Agent 不存在');
+        if (!preview.agents.some(agent => agent.id === command.agentId && !agent.archived)) throw new Error('Agent 不存在');
         if (scene.run?.status === 'running') throw new Error('请先停止当前请求');
         if (scene.messages.length > 0 && scene.agentId !== command.agentId) throw new Error('新会话中可切换 Agent');
         scene.agentId = command.agentId;

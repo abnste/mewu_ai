@@ -230,7 +230,7 @@ export default function MemoryProviderSettings(props: Props) {
   function sourceName(value: MemoryEvidenceView) { return props.scenes.find(scene => scene.id === value.source.sceneId)?.title ?? t(originLabels[value.source.origin]); }
   function reloadSource() { setSourceDrafts(old => { const next = { ...old }; delete next[props.agentId]; return next; }); setError(props.agentId, 'source', ''); refreshState(); }
   const disabled = () => Boolean(pending() || foreground());
-  return <section class="memory-provider" aria-label={t("记忆来源")}>
+  return <Show when={availablePlugin() || bindings().some(value => availablePlugin(value))} fallback={<Show when={selection().bindingId}><div class="memory-provider-conflict"><span>{t('所选记忆插件已停用')}</span><button class="text-button" disabled={disabled() || !api.memoryProviderNative || !props.agent} onClick={() => { setSourceDrafts(old => ({ ...old, [props.agentId]: { id: null, revision: selection().revision } })); useSource(); }}>{t('使用本地记忆')}</button><Show when={error('source')}><span role="alert">{error('source')}</span></Show></div></Show>}><section class="memory-provider" aria-label={t("记忆来源")}>
     <div class="memory-provider-source"><label class="field-label">{t("记忆来源")}<select aria-label={t("记忆来源")} disabled={!props.agent || !api.memoryProviderNative || disabled()} value={source().id ?? ''} onChange={event => setSourceDrafts(old => ({ ...old, [props.agentId]: { id: event.currentTarget.value || null, revision: selection().revision } }))}>
       <option value="">{t("本地")}</option>
       <Show when={selection().bindingId && !binding(selection().bindingId!)}><option value={selection().bindingId!}>Hindsight</option></Show>
@@ -241,7 +241,7 @@ export default function MemoryProviderSettings(props: Props) {
     <Show when={source().revision !== selection().revision || error('source')}><div class="memory-provider-conflict"><span role="alert">{error('source') || t('配置已更改，草稿已保留')}</span><button class="text-button" disabled={disabled()} onClick={reloadSource}>{t("载入最新")}</button></div></Show>
     <div class="memory-provider-heading"><Show when={props.agent && availablePlugin()}><button class="text-button" disabled={disabled()} onClick={toggleConfig}><Plus size={13} />{t("连接 Hindsight")}</button></Show><Show when={loading()}><LoaderCircle size={13} class="spin" aria-label={t("加载记忆来源")} /></Show></div>
     <Show when={error('load')}><div class="memory-provider-conflict"><span role="alert">{error('load')}</span><button class="text-button" onClick={refreshState}>{t("重试")}</button></div></Show>
-    <Show when={configOpen()[props.agentId] && config()}>{value => <div class="memory-provider-config">
+    <Show when={availablePlugin() && configOpen()[props.agentId] && config()}>{value => <div class="memory-provider-config">
       <label class="field-label">{t("服务地址")}<input aria-label={t("记忆服务地址")} type="url" value={value().endpoint} placeholder="https://…" spellcheck={false} onInput={event => editConfig({ endpoint: event.currentTarget.value })} /></label>
       <label class="field-label">{t("独立密钥")}<input aria-label={t("记忆服务独立密钥")} type="password" value={value().key} autocomplete="off" spellcheck={false} onInput={event => editConfig({ key: event.currentTarget.value })} /></label>
       <div class="memory-provider-config-actions"><button class="secondary-button" disabled={disabled() || !availablePlugin()} onClick={() => void configure('probe')}><Show when={foreground()?.kind === 'probe'}><LoaderCircle size={13} class="spin" /></Show>{t("验证连接")}</button>
@@ -276,5 +276,5 @@ export default function MemoryProviderSettings(props: Props) {
       </div></Show>
     </article>}</Show>}</For></div>
     <Show when={bindingPage() > 0 || state()?.nextCursor}><footer class="memory-pagination"><span>{t("记忆连接")}</span><button class="icon-button compact" title={t("上一页连接")} aria-label={t("上一页记忆连接")} disabled={loading() || !bindingPage()} onClick={() => void loadState(bindingCursors()[bindingPage() - 1], bindingPage() - 1)}><ChevronLeft size={15} /></button><button class="icon-button compact" title={t("下一页连接")} aria-label={t("下一页记忆连接")} disabled={loading() || !state()?.nextCursor} onClick={() => void loadState(state()!.nextCursor!, bindingPage() + 1)}><ChevronRight size={15} /></button></footer></Show>
-  </section>;
+  </section></Show>;
 }

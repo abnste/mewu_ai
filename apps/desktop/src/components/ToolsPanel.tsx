@@ -31,7 +31,7 @@ export default function ToolsPanel(props: Props) {
   const [removeConfirmation, setRemoveConfirmation] = createSignal<{ id: string; revision: number }>();
   let disposed = false;
   onCleanup(() => { disposed = true; });
-  const agentId = createMemo(() => props.snapshot.agents.some(agent => agent.id === props.agentId) ? props.agentId : props.snapshot.agents[0]?.id ?? '');
+  const agentId = createMemo(() => props.snapshot.agents.some(agent => agent.id === props.agentId && !agent.archived) ? props.agentId : props.snapshot.agents.find(agent => !agent.archived)?.id ?? '');
   const server = (id: string) => props.snapshot.mcpServers.find(value => value.id === id);
   const ids = createMemo(() => [...props.snapshot.mcpServers.map(value => value.id), ...(configs().new ? ['new'] : [])]);
   const label = (id: string) => configs()[id]?.dirty ? configs()[id].label : server(id)?.label ?? configs()[id]?.label;
@@ -142,7 +142,7 @@ export default function ToolsPanel(props: Props) {
         <div class="mcp-config-actions"><Show when={configStale(id)}><button class="text-button" disabled={blocked(id)} onClick={() => ensureConfig(id, true)}>{t('载入最新配置')}</button></Show><button class="primary-button" disabled={Boolean(discovering()) || blocked(id)} onClick={() => void discover(id)}><Show when={discovering() === id} fallback={<RefreshCw size={13} />}><LoaderCircle size={13} class="spin" /></Show>{t('启动并读取工具')}</button></div>
         <Show when={configErrors()[id]}><p class="settings-error" role="alert">{configErrors()[id]}</p></Show>
         <Show when={server(id)}>{value => <div class="mcp-permissions">
-          <label class="field-label">Agent<select aria-label={t('MCP 所属 Agent')} value={agentId()} onChange={event => props.onAgent(event.currentTarget.value)}><For each={props.snapshot.agents.map(agent => agent.id)}>{agent => <option value={agent}>{props.snapshot.agents.find(value => value.id === agent)?.name}</option>}</For></select></label>
+          <label class="field-label">Agent<select aria-label={t('MCP 所属 Agent')} value={agentId()} onChange={event => props.onAgent(event.currentTarget.value)}><For each={props.snapshot.agents.filter(agent => !agent.archived).map(agent => agent.id)}>{agent => <option value={agent}>{props.snapshot.agents.find(value => value.id === agent)?.name}</option>}</For></select></label>
           <div class="mcp-tool-list"><For each={value().tools.map(tool => tool.name)}>{name => <Show when={value().tools.find(tool => tool.name === name)}>{tool => <div class="mcp-tool">
             <label><input type="checkbox" checked={selectedNames(value()).includes(name)} disabled={!value().enabled || !agentId() || blocked(id)} onChange={event => choose(value(), name, event.currentTarget.checked)} /><span>{name}</span></label>
             <details><summary><ChevronRight size={12} /><span>{t('详情')}</span></summary><Show when={tool().description}><p>{tool().description}</p></Show><pre>{JSON.stringify(tool().inputSchema, null, 2)}</pre></details>

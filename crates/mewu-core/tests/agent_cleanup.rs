@@ -55,7 +55,7 @@ fn local_profile_delete_preserves_scene_draft_and_assets_and_removes_only_its_me
         })
         .unwrap();
     let before = store.snapshot().scenes[0].clone();
-    store.delete_agent(&removed, &fallback).unwrap();
+    store.apply(SceneCommand::DeleteAgent { agent_id: removed.clone(), replacement_agent_id: fallback.clone() }).unwrap();
     let after = store.snapshot();
     assert!(!after.agents.iter().any(|a| a.id == removed));
     assert_eq!(after.scenes[0].agent_id, fallback);
@@ -76,8 +76,9 @@ fn local_profile_delete_preserves_scene_draft_and_assets_and_removes_only_its_me
     assert_eq!(Store::open(&file.0).unwrap().snapshot(), after);
 }
 #[test]
-fn execution_history_blocks_profile_deletion_and_preserves_every_record() {
-    let mut store = Store::open_in_memory().unwrap();
+fn execution_history_is_archived_without_rewriting_provenance_and_survives_reopen() {
+    let file = Db::new();
+    let mut store = Store::open(&file.0).unwrap();
     let (removed, fallback, scene) = profiles(&mut store);
     store
         .apply(SceneCommand::SetDraft {
@@ -88,12 +89,44 @@ fn execution_history_blocks_profile_deletion_and_preserves_every_record() {
     let run = store.begin_run(&scene).unwrap();
     store.finish_run(&scene, &run.run_id, "回答").unwrap();
     let before = store.snapshot();
-    assert!(store.delete_agent(&removed, &fallback).is_err());
-    assert_eq!(store.snapshot(), before);
+    store.apply(SceneCommand::DeleteAgent { agent_id: removed.clone(), replacement_agent_id: fallback.clone() }).unwrap();
+    let after = store.snapshot();
+    let archived = after.agents.iter().find(|agent| agent.id == removed).unwrap();
+    assert!(archived.archived);
+    assert!(!archived.memory_enabled);
+    assert_eq!(after.scenes, before.scenes);
+    assert!(store.agent_profile(&removed).is_err());
+    assert!(store.apply(SceneCommand::SaveAgent { agent: archived.clone() }).is_err());
     assert!(store
         .run_journal_summary(&scene, &run.run_id)
         .unwrap()
         .is_some());
+    drop(store);
+    let mut store = Store::open(&file.0).unwrap();
+    assert_eq!(store.snapshot(), after);
+    store.apply(SceneCommand::SetDraft { scene_id: scene.clone(), draft: "不可继续旧身份".into() }).unwrap();
+    assert!(store.begin_run(&scene).is_err());
+    store.apply(SceneCommand::NewConversation { scene_id: scene.clone() }).unwrap();
+    let next = store.snapshot();
+    assert_ne!(next.active_scene_id, scene);
+    assert_eq!(store.scene(&next.active_scene_id).unwrap().agent_id, fallback);
+}
+
+#[test]
+fn deletion_rejects_live_runs_and_the_last_active_profile() {
+    let mut store = Store::open_in_memory().unwrap();
+    let (removed, fallback, scene) = profiles(&mut store);
+    store.apply(SceneCommand::SetDraft { scene_id: scene.clone(), draft: "问题".into() }).unwrap();
+    let run = store.begin_run(&scene).unwrap();
+    let before = store.snapshot();
+    assert!(store.delete_agent(&removed, &fallback).is_err());
+    assert_eq!(store.snapshot(), before);
+    store.finish_run(&scene, &run.run_id, "完成").unwrap();
+    store.delete_agent(&removed, &fallback).unwrap();
+    let before = store.snapshot();
+    assert!(store.delete_agent(&fallback, &removed).is_err());
+    assert!(store.delete_agent(&fallback, &fallback).is_err());
+    assert_eq!(store.snapshot(), before);
 }
 #[test]
 fn profile_delete_sqlite_failure_rolls_back_local_memory_and_scene_identity() {

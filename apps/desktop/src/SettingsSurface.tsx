@@ -80,6 +80,7 @@ export default function SettingsSurface() {
       <SettingsDialog snapshot={snapshot()!} initialTab="general" preferences={preferences()} hotkey={hotkey()} draggable
         onPreferences={changePreferences}
         onSaveAgent={agent => command({ type: 'save_agent', agent })}
+        onDeleteAgent={(agentId, replacementAgentId) => command({ type: 'delete_agent', agentId, replacementAgentId })}
         onSaveMemory={value => command({ type: 'save_memory', ...value })}
         onDeleteMemory={value => command({ type: 'delete_memory', ...value })}
         onSaveConnectionProfile={(profile, revision, key) => save(() => bridge.saveConnectionProfile(profile, revision, key))}

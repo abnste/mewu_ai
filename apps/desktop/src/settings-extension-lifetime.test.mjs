@@ -20,12 +20,14 @@ const capability = patch => ({ pluginRevision: 1, connectionRevisions: {}, agent
 const extension = patch => ({ manifest: { id: 'author.external', name: 'External' }, revision: 1, state: 'enabled', services: [{ id: 'engine', kind: 'agent', title: 'External Agent' }, { id: 'memory', kind: 'memory', title: 'Journal' }], ...patch });
 const memoryBinding = patch => ({ agentId: 'agent', kind: 'memory', pluginId: 'author.external', serviceId: 'memory', revision: 1, ...patch });
 
-async function fixture({ initialExtensions = [], initialBindings = [], delayedBindings = false, delayedExtensionRead = false } = {}) {
+async function fixture({ initialExtensions = [], initialBindings = [], delayedBindings = false, delayedExtensionRead = false, onDeleteAgent = async () => {}, realMemory = false, memoryState = { selection: { revision: 0, bindingId: null }, bindings: [], nextCursor: null } } = {}) {
   const reads = [], extensionListeners = new Set(), bindingListeners = new Set(), pluginListeners = new Set(), domListeners = new Set();
   const bindingRead = deferred(), extensionsRead = deferred();
+  let pluginValues = plugins;
+  const memoryCalls = [];
   let extensionValues = initialExtensions, bindingValues = initialBindings, delayedExtensions = delayedExtensionRead, observedOptional, extensionReads = 0;
-  const document = { addEventListener: (name, callback) => domListeners.add(callback), removeEventListener: (name, callback) => domListeners.delete(callback), activeElement: null };
-  const context = createContext({ console, document, queueMicrotask, crypto: globalThis.crypto });
+  const document = { addEventListener: (name, callback) => domListeners.add(callback), removeEventListener: (name, callback) => domListeners.delete(callback), activeElement: null, getElementById: () => undefined };
+  const context = createContext({ console, Error, URL, document, queueMicrotask, crypto: globalThis.crypto });
   const synthetic = values => new SyntheticModule(Object.keys(values), function () { for (const [name, value] of Object.entries(values)) this.setExport(name, value); }, { context });
   const core = synthetic(solid), modules = new Map();
   const policy = new SourceTextModule(ts(await raw('./optional-capabilities.ts')), { context }); await policy.link(() => { throw Error('Unexpected policy import'); }); await policy.evaluate();
@@ -45,7 +47,7 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
   const nativeModule = synthetic(native);
   const pluginBridge = synthetic({
     getOptionalCapabilities: () => { const request = deferred(); reads.push(request); return request.promise; },
-    getPlugins: async () => plugins,
+    getPlugins: async () => pluginValues,
     subscribePlugins: async callback => { pluginListeners.add(callback); return () => pluginListeners.delete(callback); },
   });
   const hook = new SourceTextModule(ts(await raw('./optional-feature-state.ts')), { context });
@@ -61,7 +63,10 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
     removeNode: (parent, node) => { parent.children.splice(parent.children.indexOf(node), 1); node.parent = null; },
     isTextNode: node => 'text' in node, getParentNode: node => node.parent, getFirstChild: node => node.children[0], getNextSibling: node => node.parent?.children[node.parent.children.indexOf(node) + 1],
   });
-  const rendererModule = synthetic(renderer), icons = synthetic(Object.fromEntries(['Check', 'ChevronDown', 'ChevronRight', 'LoaderCircle', 'Plus', 'Database', 'Info', 'Link2', 'Puzzle', 'ScanLine', 'Settings2', 'UserRound', 'Wrench', 'X'].map(name => [name, () => renderer.createElement('svg')])));
+  const memoryStateModule = new SourceTextModule(ts(await raw('./memory-provider-state.ts')), { context });
+  await memoryStateModule.link(() => { throw Error('Unexpected memory helper import'); }); await memoryStateModule.evaluate();
+  const memoryApi = synthetic({ memoryProviderNative: true, getMemoryProviderState: async () => memoryState, subscribeMemoryProvider: async () => () => {}, cancelMemoryRequest: async id => memoryCalls.push(['cancel', id]), selectMemoryProvider: async value => { memoryCalls.push(['select', value]); memoryState = { ...memoryState, selection: { bindingId: value.bindingId, revision: value.expectedProviderRevision + 1 } }; return memoryState; } });
+  const rendererModule = synthetic(renderer), icons = synthetic(Object.fromEntries(['ChevronLeft', 'RefreshCw', 'Trash2', 'Check', 'ChevronDown', 'ChevronRight', 'LoaderCircle', 'Plus', 'Database', 'Info', 'Link2', 'Puzzle', 'ScanLine', 'Settings2', 'UserRound', 'Wrench', 'X'].map(name => [name, () => renderer.createElement('svg')])));
   const placeholder = name => () => { const node = renderer.createElement(name); return node; };
   const facts = synthetic({ createSettingsInformation: () => ({ info: () => undefined }), AboutSettings: placeholder('about'), DataSettings: placeholder('data') });
   async function component(file) {
@@ -76,6 +81,10 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
       if (name === '../optional-feature-state') return watchedHook;
       if (name === '../extension-bridge') return nativeModule;
       if (name === '../extension-state') return state;
+      if (name === '../memory-provider-bridge') return memoryApi;
+      if (name === '../memory-provider-state') return memoryStateModule;
+      if (name === '../plugin-bridge') return pluginBridge;
+      if (realMemory && name === './MemoryProviderSettings') return component('MemoryProviderSettings');
       if (name === '../i18n') return synthetic({ t: value => value });
       if (name === '../native-select-escape') return synthetic({ nativeSelectOwnsEscape: () => false });
       if (name === './SettingsFacts') return facts;
@@ -88,7 +97,7 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
   const dialog = await component('SettingsDialog'), provider = await component('ExtensionProviders');
   const [snapshot, setSnapshot] = solid.createSignal({ activeSceneId: 'scene', scenes: [{ id: 'scene', agentId: 'agent' }], agents: [{ id: 'agent', name: 'My Agent', instructions: 'Original soul', memory: '', memoryEnabled: true, defaultConnectionId: null }], connections: [], memoryStats: [] });
   const root = renderer.createElement('root');
-  const dispose = renderer.render(() => dialog.namespace.default({ get snapshot() { return snapshot(); }, initialTab: 'agent', preferences: {}, hotkey: '', onClose() {}, onSaveAgent: async () => {} }), root);
+  const dispose = renderer.render(() => dialog.namespace.default({ get snapshot() { return snapshot(); }, initialTab: 'agent', preferences: {}, hotkey: '', onClose() {}, onSaveAgent: async () => {}, onDeleteAgent }), root);
   const all = () => { const list = []; const walk = node => { list.push(node); node.children.forEach(walk); }; walk(root); return list; };
   const text = node => 'text' in node ? node.text : node.children.map(text).join('');
   const find = predicate => all().find(predicate);
@@ -101,8 +110,9 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
   const changeExtensions = values => { extensionValues = values; for (const callback of extensionListeners) callback(values); };
   await tick();
   return { root, reads, panel, editor, legacy, clickTab, openAgent, all, find, text, changed, changeExtensions, get optional() { return observedOptional(); }, dispose,
+    memoryCalls, plugins: value => { pluginValues = value; for (const callback of pluginListeners) callback(value); },
     bindings: values => { bindingValues = values; for (const callback of bindingListeners) callback(values); },
-    resolveBindings: value => bindingRead.resolve(value), setSnapshot,
+    resolveBindings: value => bindingRead.resolve(value), setSnapshot, snapshot,
     get listeners() { return { extensions: extensionListeners.size, bindings: bindingListeners.size, plugins: pluginListeners.size, dom: domListeners.size }; },
     get extensionReads() { return extensionReads; }, delayExtensions: () => { delayedExtensions = true; }, resolveExtensions: values => extensionsRead.resolve(values), delayBindings: () => { delayedBindings = true; },
     mountProvider: props => renderer.render(() => provider.namespace.default(props), renderer.createElement('provider-root')) };
@@ -187,4 +197,55 @@ test('production provider resets memory presentation on Agent change and retains
     f.resolveBindings([]); await tick(); assert.equal(values.at(-1), false);
   } finally { stop(); f.dispose(); }
   assert.deepEqual(f.listeners, { extensions: 0, bindings: 0, plugins: 0, dom: 0 });
+});
+
+
+test('Agent deletion uses the common row action, can discard drafts, and preserves saved edits on failure', async () => {
+  const calls = []; let failing = true;
+  const f = await fixture({ onDeleteAgent: async (...args) => { calls.push(args); if (failing) throw Error('busy'); f.setSnapshot(old => ({ ...old, agents: old.agents.filter(agent => agent.id !== args[0]) })); } });
+  try {
+    f.reads[0].resolve(capability()); await tick(); f.clickTab();
+    const deleteButtons = () => f.all().filter(node => node.type === 'button' && node.props['aria-label'] === '删除 Agent');
+    assert.equal(deleteButtons().length, 1); assert.equal(deleteButtons()[0].props.disabled, true);
+    f.find(node => node.type === 'button' && node.props.class === 'secondary-button settings-add-button').props.onClick(); await tick();
+    assert.equal(deleteButtons().length, 2); assert.equal(deleteButtons()[1].props.disabled, false);
+    deleteButtons()[1].props.onClick(); await tick();
+    f.find(node => node.type === 'button' && f.text(node) === '删除').props.onClick(); await tick();
+    assert.equal(calls.length, 0); assert.equal(deleteButtons().length, 1);
+    f.setSnapshot(old => ({ ...old, agents: [...old.agents, { ...old.agents[0], id: 'second', name: 'Second' }] })); await tick();
+    deleteButtons()[1].props.onClick(); await tick();
+    f.find(node => node.type === 'button' && f.text(node) === '删除').props.onClick(); await tick();
+    assert.deepEqual(calls[0], ['second', 'agent']); assert.equal(deleteButtons().length, 2);
+    assert.ok(f.find(node => node.props?.role === 'alert' && f.text(node) === 'busy'));
+    failing = false;
+    f.find(node => node.type === 'button' && f.text(node) === '删除').props.onClick(); await tick();
+    assert.equal(deleteButtons().length, 1);
+    f.setSnapshot(old => ({ ...old, agents: [...old.agents, { ...old.agents[0], id: 'archived', name: 'Old', archived: true }] })); await tick();
+    assert.equal(deleteButtons().length, 1); assert.equal(deleteButtons()[0].props.disabled, true);
+  } finally { f.dispose(); }
+});
+
+
+test('disabled native memory provider removes its branded controls while preserving the selected remote binding', async () => {
+  const binding = { id: 'bank', pluginId: 'mewu.memory-hindsight', contributionId: 'hindsight', pluginRevision: 1, endpoint: 'https://memory.example', configured: true, status: 'ready', enabled: true, revision: 1, ledgerRevision: 0, policy: { completedTurnSync: false, explicitRetain: true }, evidenceCount: 0, pendingCount: 0, deletionPendingCount: 0 };
+  const f = await fixture({ realMemory: true, memoryState: { selection: { revision: 2, bindingId: 'bank' }, bindings: [binding], nextCursor: null } });
+  try {
+    f.reads[0].resolve(capability()); await tick(); f.clickTab(); f.openAgent(); await tick(); await tick();
+    const text = () => f.text(f.root);
+    assert.ok(!text().includes('Hindsight')); assert.ok(text().includes('所选记忆插件已停用'));
+    assert.equal(f.memoryCalls.length, 0, 'disable never silently switches or erases the remote binding');
+    const record = { manifest: { id: 'mewu.memory-hindsight', contributions: [{ id: 'hindsight', kind: 'memory.provider', adapter: 'hindsight' }] }, revision: 1, state: 'enabled' };
+    f.plugins({ revision: 2, plugins: [...plugins.plugins, record] }); await tick(); await tick();
+    assert.ok(text().includes('连接 Hindsight'));
+    f.find(node => node.type === 'button' && f.text(node).includes('连接 Hindsight')).props.onClick(); await tick();
+    assert.ok(f.find(node => node.type === 'input' && node.props['aria-label'] === '记忆服务地址'));
+    f.plugins({ revision: 3, plugins: [...plugins.plugins, { ...record, state: 'disabled', revision: 2 }] }); await tick(); await tick();
+    assert.ok(!text().includes('Hindsight'));
+    assert.equal(f.find(node => node.type === 'input' && node.props['aria-label'] === '记忆服务地址'), undefined);
+    assert.ok(text().includes('所选记忆插件已停用'));
+    assert.equal(f.memoryCalls.length, 0);
+    f.find(node => node.type === 'button' && f.text(node) === '使用本地记忆').props.onClick(); await tick(); await tick();
+    assert.deepEqual(JSON.parse(JSON.stringify(f.memoryCalls)), [['select', { agentId: 'agent', bindingId: null, expectedProviderRevision: 2, expectedBindingRevision: null }]]);
+    assert.ok(!text().includes('所选记忆插件已停用'));
+  } finally { f.dispose(); }
 });

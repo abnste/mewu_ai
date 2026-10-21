@@ -527,7 +527,7 @@ impl Store {
     }
 
     pub fn agent_profile(&self, agent_id: &str) -> Result<&AgentProfile> {
-        self.state.agents.iter().find(|agent| agent.id == agent_id)
+        self.state.agents.iter().find(|agent| agent.id == agent_id && !agent.archived)
             .ok_or_else(|| not_found("Agent", agent_id))
     }
 
@@ -599,6 +599,9 @@ impl Store {
     }
 
     pub fn apply(&mut self, command: SceneCommand) -> Result<Snapshot> {
+        if let SceneCommand::DeleteAgent { agent_id, replacement_agent_id } = &command {
+            return self.delete_agent(agent_id, replacement_agent_id);
+        }
         if let SceneCommand::FinishRegionGeometryEdit { scene_id, edit_id } = &command {
             crate::geometry_history::validate_edit_id(edit_id)?;
             if self
@@ -621,6 +624,7 @@ impl Store {
         );
         let mut next = self.state.clone();
         match command {
+            SceneCommand::DeleteAgent { .. } => unreachable!("handled transactionally above"),
             SceneCommand::EditImageAnnotations { scene_id, item_id, source_asset_id, expected_revision, action } => {
                 if next.active_scene_id != scene_id { return Err(CoreError::DrawingConflict); }
                 let target = scene_mut(&mut next, &scene_id)?;
@@ -631,6 +635,10 @@ impl Store {
             }
             SceneCommand::NewScene => create_scene(&mut next)?,
             SceneCommand::NewConversation { scene_id } => {
+                if next.active_scene_id == scene_id && next.agents.iter().any(|agent| agent.archived && agent.id == scene(&next, &scene_id).map(|s|s.agent_id.as_str()).unwrap_or("")) {
+                    create_scene(&mut next)?;
+                    return self.persist(next);
+                }
                 if next.active_scene_id != scene_id {
                     return Err(invalid("仅活动会话可以开始新会话"));
                 }
@@ -1008,6 +1016,9 @@ impl Store {
                 touch(target);
             }
             SceneCommand::SaveAgent { agent } => {
+                if agent.archived || next.agents.iter().any(|value| value.id == agent.id && value.archived) {
+                    return Err(invalid("此 Agent 已删除"));
+                }
                 if next
                     .agents
                     .iter()
@@ -1046,7 +1057,7 @@ impl Store {
                 }
             }
             SceneCommand::SetAgent { scene_id, agent_id } => {
-                if !next.agents.iter().any(|a| a.id == agent_id) {
+                if !next.agents.iter().any(|a| a.id == agent_id && !a.archived) {
                     return Err(not_found("Agent", &agent_id));
                 }
                 let target = scene_mut(&mut next, &scene_id)?;
@@ -1097,7 +1108,7 @@ impl Store {
                 agent_id,
                 mut tool_names,
             } => {
-                if !next.agents.iter().any(|agent| agent.id == agent_id) {
+                if !next.agents.iter().any(|agent| agent.id == agent_id && !agent.archived) {
                     return Err(not_found("Agent", &agent_id));
                 }
                 let server = mcp_server(&next, &server_id)?;
@@ -1988,6 +1999,7 @@ impl Store {
         origin: ExternalRunOrigin,
     ) -> Result<ExternalRunContext> {
         if !origin.validate() { return Err(invalid("外部 Agent 来源无效")); }
+        self.agent_profile(&self.scene(scene_id)?.agent_id)?;
         let mut next = self.state.clone();
         let target = scene_mut(&mut next, scene_id)?;
         if target.closed { return Err(invalid("会话已关闭，请先恢复会话")); }
@@ -2014,7 +2026,7 @@ impl Store {
         let target = scene(&next, scene_id)?;
         let context = ExternalRunContext {
             scene_id: scene_id.into(), run_id,
-            agent: next.agents.iter().find(|a| a.id == target.agent_id)
+            agent: next.agents.iter().find(|a| a.id == target.agent_id && !a.archived)
                 .ok_or_else(|| not_found("Agent", &target.agent_id))?.clone(),
             messages: target.messages.iter().skip(target.conversation_start.unwrap_or(0)).cloned().collect(),
             background: target.background.clone(), regions: target.regions.clone(),
@@ -2055,6 +2067,7 @@ impl Store {
         grant: Option<&MemoryAuthorityGrant>,
         video_input: Option<VerifiedVideoRunInput>,
     ) -> Result<RunContext> {
+        self.agent_profile(&self.scene(scene_id)?.agent_id)?;
         let connection_profile = self.connection_for_scene(scene_id)?;
         let memory_authority = if workflow.is_some() {
             None
@@ -2142,8 +2155,8 @@ impl Store {
         let mut agent = next
             .agents
             .iter()
-            .find(|agent| agent.id == target.agent_id)
-            .ok_or_else(|| not_found("Agent", &target.agent_id))?
+            .find(|agent| agent.id == target.agent_id && !agent.archived)
+            .ok_or_else(|| invalid("此 Agent 已删除，请新建会话"))?
             .clone();
         if workflow.is_some() {
             agent.memory_enabled = false;
@@ -2766,6 +2779,7 @@ fn initial_snapshot() -> Snapshot {
         name: "Mewu".into(),
         instructions: "你是 Mewu，与用户在同一个 AI 空间中协作。".into(),
         memory: String::new(),
+        archived: false,
         memory_enabled: true,
         memory_provider: MemoryProviderSelection::default(),
         default_connection_id: None,
@@ -2819,7 +2833,10 @@ fn new_scene(agent_id: &str, connection_id: Option<String>) -> Scene {
 }
 
 fn create_scene(state: &mut Snapshot) -> Result<()> {
-    let agent_id = scene(state, &state.active_scene_id)?.agent_id.clone();
+    let previous = &scene(state, &state.active_scene_id)?.agent_id;
+    let agent_id = state.agents.iter().find(|agent| &agent.id == previous && !agent.archived)
+        .or_else(|| state.agents.iter().find(|agent| !agent.archived))
+        .ok_or_else(|| invalid("没有可用的 Agent"))?.id.clone();
     let connection_id = state
         .agents
         .iter()
@@ -3491,7 +3508,9 @@ fn validate_snapshot(state: &Snapshot) -> Result<()> {
     crate::connections::validate(state)?;
     validate_memories(state)?;
     validate_mcp(state)?;
+    if !state.agents.iter().any(|agent| !agent.archived) { return Err(invalid("至少保留一个 Agent")); }
     for agent in &state.agents {
+        if agent.archived && agent.memory_enabled { return Err(invalid("已删除 Agent 不能启用记忆")); }
         if agent.name.trim().is_empty() {
             return Err(invalid("Agent 名称不能为空"));
         }

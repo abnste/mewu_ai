@@ -336,7 +336,7 @@ fn dispatch_inner(app: &AppHandle, request: Request, revision: u64) -> Result<Va
             let _: Empty = params(request.params)?;
             let host = app.state::<crate::Host>(); let engine = host.lock().map_err(|_| error(ErrorCode::Internal,"状态不可用"))?;
             // Public profiles contain references/hasKey flags, never credentials.
-            if request.method == "agent.list" { output(engine.store.agent_profiles()) } else { output(engine.store.connection_profiles()) }
+            if request.method == "agent.list" { output(engine.store.agent_profiles().iter().filter(|agent| !agent.archived).collect::<Vec<_>>()) } else { output(engine.store.connection_profiles()) }
         }
         "plugin.list" => { let _: Empty = params(request.params)?; let host = app.state::<crate::Host>(); let value = host.plugins.lock().map_err(|_|error(ErrorCode::Internal,"插件状态不可用"))?.store.snapshot().map_err(|_|error(ErrorCode::Internal,"插件状态不可用"))?; output(value) }
         "recording.status" => { let _: Empty = params(request.params)?; output(crate::recording::get_recording_status(app.clone()).map_err(|_|error(ErrorCode::Internal,"录屏状态不可用"))?) }
