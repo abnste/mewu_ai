@@ -9,6 +9,11 @@
 .reply-image-slot { display:block;margin:7px 0;max-width:400px; }
 .reply-image-slot>img { display:block;max-width:100%;max-height:300px;object-fit:contain;border-radius:8px; }
 .reply-code-block { position:relative; }
+.reply-code-block.collapsed code { display:none; }
+.reply-code-block.collapsed .reply-code-heading { padding-bottom:0; }
+.reply-code-toggle,.reply-code-restore {font:inherit;color:inherit;background:transparent;border:0;padding:2px 4px;cursor:pointer;white-space:nowrap}
+.reply-code-restore:hover,.reply-code-toggle:hover{color:var(--accent)}
+.reply-document-drag{position:fixed;z-index:2147483647;pointer-events:none;padding:10px 16px;border-radius:12px;background:var(--panel,#f7f8fc);color:var(--text,#223);box-shadow:0 4px 20px #0003;font:12px system-ui}
 .reply-code-heading { display:flex;align-items:center;justify-content:space-between;gap:12px;user-select:none;font-size:10px;line-height:18px;color:var(--secondary);padding-bottom:6px; }
 .reply-code-copy { margin-left:auto;font:inherit;color:inherit;padding:0 2px;border-radius:3px; }
 .reply-code-copy:hover { color:var(--accent); }

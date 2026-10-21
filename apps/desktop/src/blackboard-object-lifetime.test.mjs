@@ -90,7 +90,7 @@ async function fixture({defer=false,fail=false}={}){
    const module=new SourceTextModule(pure(`const native=true,runtime={contentOrigin:'http://synthetic.invalid/content'};${functions}\nconst readArtifact=async()=>'',isolatedDocument=text=>text;export {native,assetUrl,documentUrl,readArtifact,isolatedDocument};`),{context});moduleCache.set(name,module);await module.link(load);await module.evaluate();return module;
   }
   const allowed=['ArtifactCard','ObjectMoveGrip'];
-  if(name.startsWith('./')&&['BlackboardText','TextArtifact','VideoArtifact','DrawingLayer','ImageExportButton'].some(value=>name.endsWith('/'+value)||name==='./'+value))return synthetic({default:()=>null});
+  if(name.startsWith('./')&&['BlackboardText','TextArtifact','VideoArtifact','DocumentArtifact','DrawingLayer','ImageExportButton'].some(value=>name.endsWith('/'+value)||name==='./'+value))return synthetic({default:()=>null});
   const file=name.startsWith('../')?name.slice(3):name.startsWith('./components/')?name.slice(2):name.startsWith('./')?`components/${name.slice(2)}`:name;
   const isComponent=allowed.some(value=>file.endsWith(value));
   const text=await readFile(new URL('./'+file+(isComponent?'.tsx':'.ts'),import.meta.url),'utf8');

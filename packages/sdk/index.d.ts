@@ -112,7 +112,7 @@ export interface ExtensionContext {
   readonly objects: {
     describe(): Promise<{version: 1; capabilities: string[]}>;
     get(): Promise<{revision: number; state: JsonValue; objects: Record<string, JsonValue>}>;
-    preview(expectedRevision:number,id:string): Promise<{image:string|null}>;
+    preview(expectedRevision:number,id:string): Promise<{image:string|null;document?:{html:string;width:number;height:number}}>;
     commit(value: {expectedRevision:number;state:JsonValue;remove?:string[];captureKey?:string}): Promise<JsonValue>;
     restore(expectedRevision:number,id:string,position:{x:number;y:number}): Promise<JsonValue>;
   };

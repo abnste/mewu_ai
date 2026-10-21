@@ -99,8 +99,16 @@ pub(crate) fn bridge(app:&AppHandle, access:&mut Access, method:&str, params:Val
                 if library.revision!=input.expected_revision{return Err("对象库已变化".into());}
                 Ok(library.objects.get(&input.id).ok_or("对象不存在")?.item.clone())
             })?;
-            if item.asset.kind!=AssetKind::Image{return Ok(json!({"image":null}));}
             let root=app.state::<Host>().assets.clone();
+            if matches!(item.asset.kind,AssetKind::Html|AssetKind::Svg){
+                let html=crate::assets::read_text(&item.asset,&root)?;
+                access.with_store(app,|s|{
+                    let library=s.object_library(&access.plugin_id);
+                    if library.revision!=input.expected_revision||library.objects.get(&input.id).map(|v|&v.item)!=Some(&item){return Err("对象已变化".into());}Ok(())
+                })?;
+                return Ok(json!({"image":null,"document":{"html":html,"width":item.asset.width.unwrap_or(640),"height":item.asset.height.unwrap_or(480)}}));
+            }
+            if item.asset.kind!=AssetKind::Image{return Ok(json!({"image":null}));}
             let image=crate::assets::image_item(&item,&root)?.thumbnail(240,180);
             let mut bytes=std::io::Cursor::new(Vec::new());
             image.write_to(&mut bytes,image::ImageFormat::Png).map_err(|_|"无法生成预览")?;

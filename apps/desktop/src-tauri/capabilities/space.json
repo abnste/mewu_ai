@@ -22,6 +22,7 @@
     "allow-record-drawing-diagnostics",
     "allow-create-blackboard",
     "allow-import-assets",
+    "allow-restore-message-artifact",
     "allow-read-artifact",
     "allow-discover-mcp-server",
     "allow-send-message",

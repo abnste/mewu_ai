@@ -193,16 +193,13 @@ fn leased_asset_response(
             Some(response.boxed())
         }
         AssetKind::Html | AssetKind::Svg => {
-            let mime = if matches!(asset.kind, AssetKind::Html) {
-                "text/html; charset=utf-8"
-            } else {
-                "image/svg+xml; charset=utf-8"
-            };
+            let mime = "text/html; charset=utf-8";
             let body = super::assets::read_text(asset, root).ok()?;
             if body.len() > super::assets::MAX_TEXT {
                 return None;
             }
-            Some(document_response(200, body.into_bytes(), mime).boxed())
+            let html=format!("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head><body>{body}<script>{};mewuDocumentRuntime();</script></body></html>",include_str!("../../../../packages/sdk/document-runtime.js"));
+            Some(document_response(200, html.into_bytes(), mime).boxed())
         }
         AssetKind::File | AssetKind::Text => None,
     }

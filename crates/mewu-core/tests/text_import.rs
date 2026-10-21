@@ -58,6 +58,26 @@ fn active(store: &Store) -> Scene {
         .find(|s| s.id == snapshot.active_scene_id)
         .unwrap()
 }
+
+#[test]
+fn restored_document_position_is_durable_and_invalid_drop_does_not_write() {
+    let db=TestDb::new();
+    let mut store=Store::open(&db.0).unwrap();
+    let scene=active(&store).id;
+    let document=asset(AssetKind::Html,"恢复的交互对象.html");
+    store.add_asset_at(&scene,document.clone(),0.64,0.25).unwrap();
+    let saved=active(&store).items.last().unwrap().clone();
+    assert_eq!((saved.x,saved.y),(0.64,0.25));
+    assert_eq!(saved.asset,document);
+    let before=db.stored();
+    for (x,y) in [(f64::NAN,0.2),(0.2,f64::INFINITY),(-0.1,0.2),(0.2,1.1)]{
+        assert!(store.add_asset_at(&scene,asset(AssetKind::Html,"invalid.html"),x,y).is_err());
+        assert_eq!(db.stored(),before);
+    }
+    drop(store);
+    let reopened=Store::open(&db.0).unwrap();
+    assert_eq!(active(&reopened).items.last(),Some(&saved));
+}
 fn draft(store: &mut Store, scene_id: &str, text: &str) {
     store
         .apply(SceneCommand::SetDraft {

@@ -45,14 +45,15 @@ function queuePreview(entry,cell,label,version,group){
  const key=entry.key;
  const paint=image=>{if(!image||version!==drawVersion||!cell.isConnected)return;cell.querySelector('svg')?.remove();const img=document.createElement('img');img.src=image;img.alt='';img.draggable=false;cell.insertBefore(img,label);if(group)cell.classList.add('folder-preview');};
  if(previews.has(key)){queueMicrotask(()=>paint(previews.get(key)));return;}
- previewQueue=previewQueue.then(async()=>{if(version!==drawVersion)return;try{const result=await mewu.call({type:'preview',id:entry.id});previews.set(key,result.image);while(previews.size>32)previews.delete(previews.keys().next().value);paint(result.image);}catch{/* a removed/revoked object cannot expose a stale preview */}});
+ previewQueue=previewQueue.then(async()=>{if(version!==drawVersion)return;try{const result=await mewu.call({type:'preview',id:entry.id});const image=result.image||(result.document&&mewu.previewDocument?await mewu.previewDocument(result.document):null);if(version!==drawVersion)return;if(image)previews.set(key,image);while(previews.size>32)previews.delete(previews.keys().next().value);paint(image);}catch{/* a removed/revoked object cannot expose a stale preview */}});
 }
 async function perform(input){if(busy)return;busy=true;error.textContent='';try{const result=await mewu.call(input);if(result?.objects)value=result;else value=await mewu.call({type:'get'});draw();}catch(e){error.textContent=e.message;}finally{busy=false;}}
 async function drag(event,entry){
  if(event.button!==0||busy)return;event.preventDefault();const el=event.currentTarget,x=event.clientX,y=event.clientY,pointer=event.pointerId;
  try{
   el.classList.add('moving');
-  const end=await mewu.drag(event,{image:previews.get(entry.key),label:el.title});if(end.cancelled)return;
+  const preview=previews.get(entry.key);
+  const end=await mewu.drag(event,{image:preview?.startsWith('data:image/png;base64,')?preview:undefined,label:el.title});if(end.cancelled)return;
   const px=end.x,py=end.y,moved=Math.hypot(px-x,py-y)>5;
   if(!moved){if(entry.children){folder=entry.id;page=0;draw();}else{const p=await mewu.viewportPoint(310,80);perform({type:'restore',id:entry.id,...p});}return;}
   const cell=document.elementFromPoint(px,py)?.closest('.cell'),slot=cell?Number(cell.dataset.slot):-1;

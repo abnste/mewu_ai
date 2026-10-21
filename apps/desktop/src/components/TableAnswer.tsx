@@ -7,8 +7,9 @@ import { getMessageTables } from '../table-bridge';
 import { TableRequestGate } from '../table-resource';
 import Markdown from './Markdown';
 import ReplyTable from './ReplyTable';
+import type {RestoreReplyArtifact} from '../reply-artifact';
 
-export default function TableAnswer(props: { sceneId: string; messageId: string; text: string; onError?: (error: string) => void }) {
+export default function TableAnswer(props: { sceneId: string; messageId: string; text: string; onError?: (error: string) => void; onRestoreArtifact?:RestoreReplyArtifact }) {
   let element!: HTMLDivElement;
   const [visible, setVisible] = createSignal(false), [result, setResult] = createSignal<TableMessage>();
   const [failed, setFailed] = createSignal(false), [retry, setRetry] = createSignal(0);
@@ -27,9 +28,10 @@ export default function TableAnswer(props: { sceneId: string; messageId: string;
   });
   onCleanup(() => gate.dispose());
   const table = (index: number) => result()?.tables.find(table => table.index === index);
+  const restore=(code:string,point?:{x:number;y:number})=>props.onRestoreArtifact!({sceneId:props.sceneId,messageId:props.messageId,code,x:point?Math.max(0,Math.min(.95,point.x/innerWidth)):.32,y:point?Math.max(0,Math.min(.95,point.y/innerHeight)):.2});
   return <div ref={element} class="table-answer">
-    <Show when={result()?.tables.length} fallback={<Markdown text={text()} />}>
-      <For each={result()?.blocks}>{block => <Show when={block.kind === 'table'} fallback={<Markdown text={block.kind === 'markdown' ? block.text : ''} />}><Show when={block.kind === 'table' && table(block.tableIndex)}>{value => <ReplyTable table={value()} target={{ sceneId: sceneId(), messageId: messageId(), tableIndex: value().index }} text={text()} onError={props.onError} />}</Show></Show>}</For>
+    <Show when={result()?.tables.length} fallback={<Markdown text={text()} onRestoreCode={props.onRestoreArtifact?restore:undefined} />}>
+      <For each={result()?.blocks}>{block => <Show when={block.kind === 'table'} fallback={<Markdown text={block.kind === 'markdown' ? block.text : ''} onRestoreCode={props.onRestoreArtifact?restore:undefined} />}><Show when={block.kind === 'table' && table(block.tableIndex)}>{value => <ReplyTable table={value()} target={{ sceneId: sceneId(), messageId: messageId(), tableIndex: value().index }} text={text()} onError={props.onError} />}</Show></Show>}</For>
     </Show>
     <Show when={failed()}><button class="table-load-retry" aria-label={t("重试读取表格")} title={t("重试读取表格")} onClick={() => { setFailed(false); setRetry(value => value + 1); }}><RotateCcw size={13} />{t("重试")}</button></Show>
   </div>;

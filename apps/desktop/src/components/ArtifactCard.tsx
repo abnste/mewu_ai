@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import { t } from "../i18n";
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
 import { Code2, Copy, Download, File, Image, Link2, Maximize2, Pencil, Pin, RotateCcw, Video, X } from 'lucide-solid';
 import ObjectMoveGrip from './ObjectMoveGrip';
 import { beginObjectDrag, type ObjectDrag } from '../extension-object-drag';
@@ -12,7 +12,7 @@ import {resizeBoardObject,type ResizeCorner} from '../blackboard-text';
 import {moveImageObject,zoomImageObject} from '../image-object-geometry';
 import BlackboardText from './BlackboardText';
 import type { ImageExportVariant, SpaceItem } from '../contracts';
-import { assetUrl, documentUrl, isolatedDocument, native, readArtifact } from '../bridge';
+import { assetUrl } from '../bridge';
 import './video.css';
 import TextArtifact from './TextArtifact';
 import './image-object.css';
@@ -20,6 +20,8 @@ import VideoArtifact, { type VideoArtifactProps } from './VideoArtifact';
 import DrawingLayer from './DrawingLayer';
 import { imageAnnotationRegion, imageContentBox } from '../image-annotations';
 import ImageExportButton from './ImageExportButton';
+import DocumentArtifact from './DocumentArtifact';
+import {documentDisplay,type DocumentBounds} from '../document-layout';
 
 interface Props {
   aiAvailable?: boolean;
@@ -93,15 +95,26 @@ export default function ArtifactCard(props: Props) {
   const isVideo = () => props.item.asset.kind === 'video';
   const isImage = () => props.item.asset.kind === 'image';
   const isRasterMedia = () => isImage() || isVideo();
+  const documentIdentity=createMemo(()=>props.item.asset.id);
+  const [documentBox,setDocumentBox]=createSignal<DocumentBounds>();
+  const documentViewport=viewport;
+  createEffect(()=>{documentIdentity();reload();setDocumentBox(undefined);});
+  const documentSize=()=>documentDisplay(documentBox()??{x:0,y:0,...documentViewport()});
+  const documentMeasured=(box:DocumentBounds)=>{
+    if(!documentBox()){
+      const vp=viewport(),p=position();
+      setPosition({...p,x:Math.min(p.x,Math.max(0,1-box.width/vp.width)),y:Math.min(p.y,Math.max(0,1-box.height/vp.height))});
+    }
+    setDocumentBox(box);
+  };
   const imageBox = createMemo(() => {
     const p = position(), vp = viewport(), ratio = (props.item.asset.width ?? 1) / (props.item.asset.height ?? 1);
     const width = Math.min(p.width * vp.width, p.height * vp.height * ratio);
     return { width, height: width / ratio };
   });
   const imageInkBox=createMemo(()=>imageContentBox({x:0,y:0,...imageBox()},{width:props.item.asset.width??1,height:props.item.asset.height??1}));
-  const movePosition=()=>{const p=position(),vp=viewport();return objectMoveGripPosition({x:p.x*vp.width,y:p.y*vp.height,width:isRasterMedia()?imageBox().width:p.width*vp.width},vp);};
-  const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=p.width*vp.width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-56,left+width-56))-left}px`,top:`${Math.max(4,Math.min(vp.height-28,top+(width<176?28:4)))-top}px`};};
-  const [source] = createResource(() => isDocument() && !native ? `${props.item.asset.id}:${reload()}` : false, () => readArtifact(props.item.asset.id));
+  const movePosition=()=>{const p=position(),vp=viewport();return objectMoveGripPosition({x:p.x*vp.width,y:p.y*vp.height,width:isRasterMedia()?imageBox().width:isDocument()?documentSize().width:p.width*vp.width},vp);};
+  const controlPosition=()=>{const p=position(),vp=viewport(),left=p.x*vp.width,top=p.y*vp.height,width=documentSize().width;return{right:'auto',left:`${Math.max(4,Math.min(vp.width-56,left+width-56))-left}px`,top:`${Math.max(4,Math.min(vp.height-28,top+(width<176?28:4)))-top}px`};};
 
   async function flushZoom() {
     clearTimeout(zoomTimer);zoomTimer=undefined;
@@ -171,7 +184,11 @@ export default function ArtifactCard(props: Props) {
       setMoving(true);
       if(props.blackboard&&!resize)props.trash?.move({x:e.clientX,y:e.clientY});
       const dx = (e.clientX - startX) / vw, dy = (e.clientY - startY) / vh;
-      if(!resize&&(isImage()||props.blackboard)){setPosition(moveImageObject(start,dx,dy,vw,vh));return;}
+      if(!resize&&(isImage()||isDocument()||props.blackboard)){
+        const extent=isDocument()?{...start,width:documentSize().width/vw,height:documentSize().height/vh}:start;
+        const moved=moveImageObject(extent,dx,dy,vw,vh);
+        setPosition(isDocument()?{...start,x:moved.x,y:moved.y}:moved);return;
+      }
       if(resize&&corner){setPosition(resizeBoardObject(start,dx,dy,corner,vw,vh));return;}
       const minWidth = videoMode ? Math.min(64 / vw, 1 - start.x) : Math.min(240 / vw, .85);
       const minHeight = videoMode ? Math.min(48 / vh, 1 - start.y) : Math.min(160 / vh, .8);
@@ -227,7 +244,7 @@ export default function ArtifactCard(props: Props) {
   };
 
   return <section ref={node => { shell = node; node.addEventListener('pointerdown', activate, true); node.addEventListener('focusin', activate); }} class="artifact-card" classList={{ active: props.active, moving: moving(), 'video-artifact': props.item.asset.kind === 'video', 'image-object': isImage(), 'document-object':isDocument(), 'blackboard-object':props.blackboard,'blackboard-interactive':props.interactive,'blackboard-object-hovered':props.hovered }} tabindex={isImage() ? 0 : undefined}
-    style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isRasterMedia() ? `${imageBox().width}px` : `${position().width * 100}%`, height: isRasterMedia() ? `${imageBox().height}px` : `${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
+    style={{ left: `${position().x * 100}%`, top: `${position().y * 100}%`, width: isRasterMedia() ? `${imageBox().width}px` : isDocument()?`${documentSize().width}px`:`${position().width * 100}%`, height: isRasterMedia() ? `${imageBox().height}px` : isDocument()?`${documentSize().height}px`:`${position().height * 100}%`, 'z-index': props.active ? 3 : undefined }}
     data-video-item={isVideo() ? props.item.id : undefined} data-video-scene={isVideo() ? props.video?.sceneId : undefined}
     aria-label={props.item.asset.name} onWheel={wheel} onPointerDown={e => { e.stopPropagation(); if (isImage()&&!props.blackboard) gesture(e); }} onDblClick={event => { if (isImage() && props.onOpenBlackboard && !props.busy && !(event.target as Element).closest('button')) {event.preventDefault();event.stopPropagation();props.onOpenBlackboard();} }}>
     <Show when={props.blackboard||isImage()||isDocument()||isVideo()}><ObjectMoveGrip label={t('移动对象')} disabled={props.busy} style={movePosition()} onPointerDown={event=>gesture(event,false,true)}/></Show>
@@ -275,13 +292,7 @@ export default function ArtifactCard(props: Props) {
       </Show>
       <Show when={isDocument()}>
         <Show when={reload()+1} keyed>{_revision => <>
-        <Show when={native} fallback={<Show when={!source.error} fallback={<span class="inline-error">{t("无法读取内容")}</span>}>
-          <Show when={source()} fallback={<span class="quiet-state">{t("载入中")}</span>}>
-            <iframe title={props.item.asset.name} srcdoc={isolatedDocument(source()!)} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />
-          </Show>
-        </Show>}>
-          <iframe title={props.item.asset.name} src={documentUrl(props.item.asset)} sandbox="allow-scripts" referrerpolicy="no-referrer" allow="" />
-        </Show>
+        <DocumentArtifact asset={props.item.asset} layoutWidth={documentViewport().width} layoutHeight={documentViewport().height} box={documentBox()} scale={documentSize().scale} onBounds={documentMeasured}/>
         </>}</Show>
       </Show>
       <Show when={props.item.asset.kind === 'file'&&!props.blackboard}><div class="file-object"><File size={30} /><span>{props.item.asset.name}</span></div></Show>

@@ -71,8 +71,8 @@ impl Surfaces {
         });
         if entries.len()>=32 {return Err("插件界面数量已达上限".into());}
         let id=uuid::Uuid::new_v4().to_string();
-        let html=format!("<!doctype html><meta charset=\"utf-8\"><script>{}</script>{}",
-            include_str!("../../../../packages/sdk/client.js"),document.html).into_bytes();
+        let html=format!("<!doctype html><meta charset=\"utf-8\"><script>{}\n{}</script>{}",
+            include_str!("../../../../packages/sdk/document-runtime.js"),include_str!("../../../../packages/sdk/client.js"),document.html).into_bytes();
         entries.insert(id.clone(),Document{owner,html,generation:Arc::new(Generation{live:AtomicBool::new(true),commit:Mutex::new(() )}),width:document.width,height:document.height,window:None,prepared:false,host_window:host_window.cloned()});
         Ok(Mounted{url:format!("{origin}/{id}"),surface_id:id,width:document.width,height:document.height})
     }

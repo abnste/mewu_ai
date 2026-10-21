@@ -912,7 +912,7 @@ fn canonical_messages(
         return Err("消息与当前运行不匹配".into());
     }
     let mut system = agent.instructions.clone();
-    system.push_str("\n你在 Mewu 的 AI 空间中与用户协作。需要制作交互演示、工具、尺子、图标或角色时，输出自包含的 html 或 svg 代码块；Canvas 使用 html 中的 canvas 和内联脚本。内容是可直接交互的悬浮对象，默认 html/body 透明背景、margin:0，不添加外层卡片、标题栏、拖动/刷新/关闭按钮（这些由宿主提供）。响应可用尺寸，保留用户要求的必要按钮；不加载网络资源。仅当用户要求创作时生成内容。直接回答，避免宣传口号。");
+    system.push_str("\n你在 Mewu 的 AI 空间中与用户协作。需要制作交互演示、工具、尺子、图标或角色时，输出自包含的 html 或 svg 代码块；Canvas 使用 html 中的 canvas 和内联脚本。内容是可直接交互的悬浮对象，默认 html/body 透明背景、margin:0，不添加外层卡片、标题栏、拖动/刷新/关闭按钮（这些由宿主提供）。将对象的根元素标记为 data-mewu-object，宿主按该根元素的边界放置拖动控件，不修改其布局。对象的尺寸和布局由用户要求决定，允许全屏、明确的像素尺寸或自适应布局；全屏可以使用100vw/100vh，不受固定卡片尺寸限制。没有尺寸要求时按实际内容布局，避免无意义留白；默认完整展示对象，不添加不必要的滚动容器。透明对象通常位于暗色截图背景，默认文字、SVG文字和Canvas文字用浅色；有自己的浅色底时才用深色，保证对比度。保留用户要求的必要按钮、刻度和标签；不加载网络资源。默认只输出对象代码块，不附带前后解释、使用教程或对象内部的说明段落，除非用户明确要求。仅当用户要求创作时生成内容。");
     if matches!(
         projection,
         mewu_core::RunProjection::RecordedContinuation(_)

@@ -500,9 +500,48 @@ pub fn from_code(answer: &str, root: &Path) -> Result<Vec<Asset>, String> {
     Ok(result)
 }
 
+/// Restore only a fenced document already saved in an assistant message.
+pub fn from_message_code(answer:&str, requested:&str, root:&Path)->Result<ImportedAssets,String>{
+    use pulldown_cmark::{Parser,Event,Tag,TagEnd,CodeBlockKind};
+    if requested.is_empty()||requested.len()>MAX_TEXT{return Err("代码内容无效".into());}
+    let mut language=None;let mut body=String::new();let mut found=None;
+    for event in Parser::new(answer){match event{
+        Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info)))=>{let name=info.split_whitespace().next().unwrap_or("").to_ascii_lowercase();language=matches!(name.as_str(),"html"|"svg").then_some(name);body.clear();},
+        Event::Text(text) if language.is_some()=>body.push_str(&text),
+        Event::End(TagEnd::CodeBlock)=>{if let Some(name)=language.take(){if body.trim()==requested.trim(){found=Some((name,body.clone()));break;}}},
+        _=>{}
+    }}
+    let (language,body)=found.ok_or("此代码不在已保存的回复中")?;
+    let id=uuid::Uuid::new_v4().to_string();let path=root.join(format!("{id}.{language}"));
+    let mut batch=ImportedAssets{assets:Vec::new(),created:vec![path.clone()]};
+    std::fs::write(&path,body).map_err(|_|"无法恢复生成内容")?;
+    batch.assets.push(Asset{id,name:format!("生成内容.{language}"),kind:if language=="html"{AssetKind::Html}else{AssetKind::Svg},path:path.to_string_lossy().into_owned(),width:None,height:None,origin_x:None,origin_y:None,scale_factor:None,capture_coordinates:None});
+    Ok(batch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn message_document_restore_requires_saved_code_and_rolls_back_uncommitted_files() {
+        let fixture=Fixture::new();let root=fixture.0.join("assets");
+        let code="<button>恢复</button>";
+        let answer=format!("正文\n\n~~~HTML\n{code}\n~~~\n");
+        assert!(from_message_code(&answer,"<script>forged()</script>",&root).is_err());
+        assert!(from_message_code(&format!("```js\n{code}\n```"),code,&root).is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(),0);
+        let first=from_message_code(&answer,code,&root).unwrap();
+        let old=first.assets[0].clone();assert_eq!(old.kind,AssetKind::Html);
+        assert_eq!(read_text(&old,&root).unwrap().trim(),code);
+        drop(first);assert!(!Path::new(&old.path).exists());
+        let mut restored=from_message_code(&answer,code,&root).unwrap();
+        let saved=restored.assets[0].clone();assert_ne!(saved.id,old.id);
+        restored.commit();drop(restored);
+        assert_eq!(read_text(&saved,&root).unwrap().trim(),code);
+        let svg="<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>";
+        assert_eq!(from_message_code(&format!("```svg\n{svg}\n```"),svg,&root).unwrap().assets[0].kind,AssetKind::Svg);
+        assert!(from_message_code(&answer,&"x".repeat(MAX_TEXT+1),&root).is_err());
+    }
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {

@@ -3,6 +3,14 @@
 (() => {
   let port, closed = false, closing = false, serial = 0;
   const beforeClose=new Set();
+  const previews=new Set();
+  async function previewRaster(source){
+    const image=new Image();image.src=source;await image.decode();
+    const canvas=document.createElement('canvas');canvas.width=240;canvas.height=180;
+    const context=canvas.getContext('2d');if(!context)return source;
+    context.drawImage(image,0,0,240,180);
+    try{return canvas.toDataURL('image/png');}catch{return source;}
+  }
   async function requestClose(){
     if(closing||closed)return;closing=true;
     try{for(const callback of beforeClose)await callback();port?.postMessage({type:'escape'});}
@@ -68,12 +76,37 @@
   });
   function dispose() {
     closed = true; releaseDrag(); port?.close();
+    for(const cancel of previews)cancel();previews.clear();
     for (const entry of pending.values()) {clearTimeout(entry.timer);entry.reject(new Error('Surface closed'));}
     pending.clear(); listeners.clear(); beforeClose.clear();
   }
   addEventListener('pagehide', dispose, {once:true});
   Object.defineProperty(globalThis, 'mewu', {value: Object.freeze({
     ready,
+    async previewDocument(input) {
+      if(closed||typeof input?.html!=='string'||input.html.length>2*1024*1024)throw Error('Invalid preview document');
+      const width=Math.min(1600,Math.max(80,Number(input.width)||640)),height=Math.min(1200,Math.max(40,Number(input.height)||480));
+      const policy="default-src 'none';script-src 'unsafe-inline';style-src 'unsafe-inline';img-src data: blob:;font-src data:;media-src data: blob:;connect-src 'none';frame-src 'none';object-src 'none';base-uri 'none';form-action 'none'";
+      const html='<!doctype html><meta http-equiv="Content-Security-Policy" content="'+policy+'"><body>'+input.html+'<script>'+mewuDocumentRuntime.toString()+';mewuDocumentRuntime();<\/script>';
+      const frame=document.createElement('iframe');frame.sandbox='allow-scripts';frame.setAttribute('aria-hidden','true');frame.style.cssText='position:fixed;left:-10000px;top:0;pointer-events:none;border:0;width:'+width+'px;height:'+height+'px';
+      const channel=new MessageChannel();
+      return new Promise((resolve,reject)=>{
+        let done=false,timer,requested=false;
+        const cancel=()=>finish(null,new Error('Surface closed'));
+        const finish=(image,error)=>{if(done)return;done=true;previews.delete(cancel);clearTimeout(timer);channel.port1.close();frame.remove();error?reject(error):resolve(image);};
+        previews.add(cancel);
+        timer=setTimeout(()=>finish(null,new Error('Preview timed out')),5000);
+        channel.port1.onmessage=event=>{
+          if(event.data?.type==='layout'&&!requested){requested=true;channel.port1.postMessage({type:'preview'});}
+          if(event.data?.type==='preview'){
+            const image=typeof event.data.image==='string'&&event.data.image.length<2*1024*1024&&event.data.image.startsWith('data:image/svg+xml;base64,')?event.data.image:null;
+            if(!image){finish(null);return;}
+            void previewRaster(image).then(value=>finish(value),()=>finish(image));
+          }
+        };
+        frame.onload=()=>{if(!done)frame.contentWindow.postMessage({type:'mewu-document-connect'},'*',[channel.port2]);};frame.srcdoc=html;document.body.append(frame);channel.port1.start();
+      });
+    },
     onBeforeClose(callback){beforeClose.add(callback);return ()=>beforeClose.delete(callback);},
     async call(input) {
       await ready;

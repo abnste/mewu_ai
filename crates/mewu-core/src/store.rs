@@ -1607,14 +1607,18 @@ impl Store {
     }
 
     pub fn add_asset(&mut self, scene_id: &str, asset: Asset) -> Result<Snapshot> {
+        self.add_asset_at(scene_id,asset,0.32,0.2)
+    }
+    pub fn add_asset_at(&mut self, scene_id:&str,asset:Asset,x:f64,y:f64)->Result<Snapshot>{
+        if !x.is_finite()||!y.is_finite()||!(0.0..=1.0).contains(&x)||!(0.0..=1.0).contains(&y){return Err(invalid("对象位置无效"));}
         validate_asset(&asset)?;
         let mut next = self.state.clone();
         let target = scene_mut(&mut next, scene_id)?;
         target.items.push(SpaceItem {
             id: id(),
             asset,
-            x: 0.32,
-            y: 0.2,
+            x,
+            y,
             width: 0.36,
             height: 0.5,
             state: None,

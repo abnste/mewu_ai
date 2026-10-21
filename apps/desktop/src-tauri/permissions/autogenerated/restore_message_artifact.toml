@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-message-artifact"
+description = "Enables the restore_message_artifact command without any pre-configured scope."
+commands.allow = ["restore_message_artifact"]
+
+[[permission]]
+identifier = "deny-restore-message-artifact"
+description = "Denies the restore_message_artifact command without any pre-configured scope."
+commands.deny = ["restore_message_artifact"]

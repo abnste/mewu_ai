@@ -75,6 +75,28 @@ struct ImportTarget {
     agent_id: String,
     background: Option<Asset>,
 }
+
+#[tauri::command]
+pub async fn restore_message_artifact(app:AppHandle,window:WebviewWindow,scene_id:String,message_id:String,code:String,x:f64,y:f64)->Result<HostSnapshot,String>{
+    if window.label()!="space"||code.len()>assets::MAX_TEXT||!x.is_finite()||!y.is_finite()||!(0.0..=1.0).contains(&x)||!(0.0..=1.0).contains(&y){return Err("无法恢复此对象".into());}
+    crate::recording::ensure_idle(&app)?;
+    let host=app.state::<Host>();host.exit.ensure_new_operation()?;
+    let permit=Permit::acquire(&host.asset_transfers.importing)?;
+    let (target,grant,answer)={let engine=host.lock()?;let target=ImportTarget::capture(&engine.store,&scene_id)?;
+        let scene=engine.store.active_scene().map_err(|e|e.to_string())?;
+        if scene.run.as_ref().is_some_and(|r|r.status==mewu_core::RunStatus::Running){return Err("请等待当前回复完成".into());}
+        let message=scene.messages.iter().find(|m|m.id==message_id&&m.role==mewu_core::MessageRole::Assistant).ok_or("回复不存在")?;
+        (target,crate::optional_capabilities::scene_authoring(&engine,&scene_id)?,message.text.clone())};
+    let root=host.assets.clone();
+    let (_permit,mut batch)=tauri::async_runtime::spawn_blocking(move||assets::from_message_code(&answer,&code,&root).map(|batch|(permit,batch))).await.map_err(|_|"恢复内容中断")??;
+    host.exit.ensure_new_operation()?;crate::recording::ensure_idle(&app)?;
+    if host.capturing.load(Ordering::Acquire){return Err("截图尚未完成".into());}
+    let mut engine=host.lock()?;target.validate(&engine.store)?;
+    if engine.store.active_scene().map_err(|e|e.to_string())?.run.as_ref().is_some_and(|r|r.status==mewu_core::RunStatus::Running){return Err("请等待当前回复完成".into());}
+    crate::optional_capabilities::scene_authoring_current(&engine,&scene_id,&grant)?;
+    let snapshot=engine.store.add_asset_at(&scene_id,batch.assets[0].clone(),x,y).map_err(|e|e.to_string())?;
+    batch.commit();Ok(crate::publish(&app,&snapshot))
+}
 impl ImportTarget {
     fn capture(store: &Store, scene_id: &str) -> Result<Self, String> {
         let scene = store.active_scene().map_err(|error| error.to_string())?;

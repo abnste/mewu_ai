@@ -102,7 +102,7 @@ UI 服务声明 `metadata: {surface: 'settings'}`，返回 `{html,width,height}`
 取出新副本。插件返回 `{removeSource:true}` 时，只有仍有效的当前用户拖放动作才能
 移除原对象，普通 RPC 不能借此删除场景内容。
 `ctx.objects.preview(revision,key)` 返回 `{image}`，包含不超过 240×180 的图片对象
-PNG 缩略图（含标注），不支持预览的类型返回 `null`，不暴露本机文件路径。
+PNG 缩略图（含标注）。HTML/SVG 对象返回 `{image:null, document:{html,width,height}}`；界面可调用 `await mewu.previewDocument(result.document)` 生成静态缩略图（优先 PNG，浏览器不支持栅格化时返回 SVG）。该方法使用一次性的隔离文档，无网络和宿主 API，结束、超时或界面关闭即销毁。不支持预览的类型返回 `image:null`，不暴露本机文件路径。
 
 关闭文档、切换会话、插件停用/卸载或版本变化，会撤销旧界面的操作资格；持久数据在
 卸载后保留。无布局和目录层级规定。单插件上限：256 KiB JSON 状态、4096 个对象、

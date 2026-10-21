@@ -1127,5 +1127,9 @@
   "原图": "Original image",
   "命令行": "Command line",
   "从终端访问 Mewu": "Access Mewu from a terminal",
-  "原生": "Native"
+  "原生": "Native",
+  "收起代码": "Collapse code",
+  "展开代码": "Expand code",
+  "放到空间": "Add to space",
+  "点击恢复，或拖到空间": "Restore, or drag into the space"
 }

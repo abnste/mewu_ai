@@ -134,6 +134,7 @@ fn main() {
             "capture_background_ready",
             "record_drawing_diagnostics",
             "import_assets",
+            "restore_message_artifact",
             "open_web_link",
             "set_ui_language",
             "export_text_asset",

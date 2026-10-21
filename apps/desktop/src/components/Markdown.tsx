@@ -21,11 +21,12 @@ export function ReplyFormulaView(props: { formula: ReplyFormula; text: string })
   return <Show when={rendered()} fallback={props.text}>{html => <span class={props.formula.display ? 'reply-formula reply-formula-display' : 'reply-formula'} data-formula-source={props.text} innerHTML={html()} />}</Show>;
 }
 
-export default function Markdown(props: { text: string }) {
+export default function Markdown(props: { text: string; onRestoreCode?:(code:string,point?:{x:number;y:number})=>Promise<void> }) {
   let element!: HTMLDivElement;
   const patch = createReplyBlockPatcher(), timers = new Set<ReturnType<typeof setTimeout>>();
   const descendants = (root: Node, selector: string) => root instanceof HTMLElement ? [...(root.matches(selector) ? [root] : []), ...root.querySelectorAll<HTMLElement>(selector)] : [];
-  onCleanup(() => { for (const timer of timers) clearTimeout(timer); timers.clear(); });
+  let cancelDrag:(()=>void)|undefined;
+  onCleanup(() => { cancelDrag?.();for (const timer of timers) clearTimeout(timer); timers.clear(); });
   createEffect(() => {
     const result = replyContent(props.text), template = document.createElement('template');
     template.innerHTML = DOMPurify.sanitize(result.html, { ALLOWED_TAGS: [...replyTags, 'h5', 'h6', 'span'], ALLOWED_ATTR: ['title', 'href', 'target', 'rel', 'class', 'start', 'align', 'data-mewu-formula', 'data-mewu-image'], ALLOW_DATA_ATTR: false });
@@ -58,11 +59,30 @@ export default function Markdown(props: { text: string }) {
     for (const pre of added.flatMap(root => descendants(root, 'pre'))) {
       const code = pre.querySelector('code'); if (!code) continue;
       const language = [...code.classList].find(value => /^language-[a-z0-9_+.-]{1,32}$/i.test(value))?.slice(9) || '';
-      pre.classList.add('reply-code-block');
+      pre.classList.add('reply-code-block','collapsed');
       const header = document.createElement('div'), label = document.createElement('span'), copy = document.createElement('button');
       header.className = 'reply-code-heading'; header.dataset.replyCopyExclude = ''; label.textContent = language;
+      const toggle=document.createElement('button');toggle.type='button';toggle.className='reply-code-toggle';toggle.textContent='▸';toggle.title=t('展开代码');toggle.setAttribute('aria-label',t('展开代码'));toggle.setAttribute('aria-expanded','false');
+      toggle.onclick=event=>{event.stopPropagation();const collapsed=pre.classList.toggle('collapsed');toggle.textContent=collapsed?'▸':'▾';toggle.title=t(collapsed?'展开代码':'收起代码');toggle.setAttribute('aria-label',toggle.title);toggle.setAttribute('aria-expanded',String(!collapsed));};
       copy.type = 'button'; copy.className = 'reply-code-copy'; copy.dataset.replyCodeCopy = ''; copy.textContent = t('复制'); copy.setAttribute('aria-label', t('复制代码')); copy.title = t('复制代码');
-      header.append(label, copy); pre.prepend(header);
+      header.append(toggle,label, copy);
+      if(props.onRestoreCode&&['html','svg'].includes(language.toLowerCase())){
+        const restore=document.createElement('button');restore.type='button';restore.className='reply-code-restore';restore.textContent=t('放到空间');restore.title=t('点击恢复，或拖到空间');restore.setAttribute('aria-label',restore.textContent);
+        restore.onpointerdown=event=>{
+          if(event.button!==0||restore.disabled)return;event.preventDefault();event.stopPropagation();cancelDrag?.();
+          const x=event.clientX,y=event.clientY,id=event.pointerId;let moved=false,ghost:HTMLDivElement|undefined;
+          try{restore.setPointerCapture(id);}catch{return;}
+          const escape=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();cancel();}};
+          const cleanup=()=>{document.removeEventListener('keydown',escape,true);window.removeEventListener('blur',cancel);restore.removeEventListener('pointermove',move);restore.removeEventListener('pointerup',end);restore.removeEventListener('pointercancel',cancel);restore.removeEventListener('lostpointercapture',cancel);if(restore.hasPointerCapture(id))restore.releasePointerCapture(id);ghost?.remove();if(cancelDrag===cancel)cancelDrag=undefined;};
+          const cancel=()=>cleanup();
+          const move=(e:PointerEvent)=>{if(e.pointerId!==id)return;if(!moved&&Math.hypot(e.clientX-x,e.clientY-y)<5)return;moved=true;if(!ghost){ghost=document.createElement('div');ghost.className='reply-document-drag';ghost.textContent=language.toUpperCase();document.body.append(ghost);}ghost.style.left=`${e.clientX+12}px`;ghost.style.top=`${e.clientY+12}px`;};
+          const end=(e:PointerEvent)=>{if(e.pointerId!==id)return;cleanup();const rect=element.closest('.composer')?.getBoundingClientRect();if(moved&&(e.clientX<0||e.clientY<0||e.clientX>innerWidth||e.clientY>innerHeight||rect&&e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom))return;restore.disabled=true;void props.onRestoreCode?.(code.textContent??'',moved?{x:e.clientX,y:e.clientY}:undefined).finally(()=>{if(restore.isConnected)restore.disabled=false;});};
+          cancelDrag=cancel;document.addEventListener('keydown',escape,true);window.addEventListener('blur',cancel);restore.addEventListener('pointermove',move);restore.addEventListener('pointerup',end);restore.addEventListener('pointercancel',cancel);restore.addEventListener('lostpointercapture',cancel);
+        };
+        restore.onclick=event=>{event.preventDefault();event.stopPropagation();if(event.detail===0&&!restore.disabled){restore.disabled=true;void props.onRestoreCode?.(code.textContent??'').finally(()=>{if(restore.isConnected)restore.disabled=false;});}};
+        header.append(restore);
+      }
+      pre.prepend(header);
     }
   });
   createEffect(() => {

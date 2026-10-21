@@ -3063,6 +3063,7 @@ fn main() {
                 blackboard::finish_blackboard,
                 blackboard::open_blackboard,
                 asset_host::import_assets,
+                asset_host::restore_message_artifact,
                 web_link_host::open_web_link,
                 ui_language::set_ui_language,
                 asset_host::export_text_asset,
