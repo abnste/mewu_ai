@@ -80,7 +80,10 @@
       return request('call',input);
     },
     drag(event, preview) {
-      if (press!==event || !(event instanceof PointerEvent) || !event.isTrusted || event.type!=='pointerdown' || event.button!==0 || !(event.buttons&1)) {
+      // WebKit on macOS can report buttons=0 for a fast native primary press.
+      // The captured, unconsumed trusted pointerdown is the gesture authority;
+      // a later pointerup/cancel still revokes it before any request can start.
+      if (press!==event || !(event instanceof PointerEvent) || !event.isTrusted || event.type!=='pointerdown' || event.button!==0 || (!(event.buttons&1)&&event.buttons!==0)) {
         return Promise.reject(new Error('Drag requires a user pointer press'));
       }
       if(activeDrag)return Promise.reject(new Error('A drag is already active'));

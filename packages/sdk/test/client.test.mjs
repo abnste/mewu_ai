@@ -31,6 +31,27 @@ test('client drag requires an unconsumed current trusted pointer press',async()=
   const released=new c.PointerEvent();c.listeners.get('pointerdown')(released);c.listeners.get('pointerup')({});
   await assert.rejects(c.api.drag(released),/user pointer/);c.api.dispose();
 });
+
+test('fast native WebKit primary presses with buttons=0 remain single-use and release-bound',async()=>{
+  const c=client();await c.api.ready;
+  const press=new c.PointerEvent();press.buttons=0;press.target=new c.Element();
+  c.listeners.get('pointerdown')(press);
+  const pending=c.api.drag(press),id=c.sent[0].id;
+  assert.equal(press.target.hasPointerCapture(1),true);
+  await assert.rejects(c.api.drag(press),/user pointer/);
+  c.listeners.get('pointerup')({isTrusted:true,pointerId:1,type:'pointerup',buttons:0,clientX:12,clientY:18});
+  assert.equal(c.sent[1].event.type,'pointerup');
+  c.port.onmessage({data:{type:'response',id,ok:true,value:{cancelled:false,x:12,y:18}}});
+  assert.deepEqual(await pending,{cancelled:false,x:12,y:18});
+  const released=new c.PointerEvent();released.buttons=0;
+  c.listeners.get('pointerdown')(released);c.listeners.get('pointerup')({});
+  await assert.rejects(c.api.drag(released),/user pointer/);
+  const synthetic=new c.PointerEvent(false);synthetic.buttons=0;c.listeners.get('pointerdown')(synthetic);
+  await assert.rejects(c.api.drag(synthetic),/user pointer/);
+  const wrongButton=new c.PointerEvent();wrongButton.button=2;wrongButton.buttons=0;c.listeners.get('pointerdown')(wrongButton);
+  await assert.rejects(c.api.drag(wrongButton),/user pointer/);
+  c.api.dispose();
+});
 test('Escape waits for saved edits; failed persistence keeps the surface open and allows retry',async()=>{
   const c=client();await c.api.ready;
   let resolve,attempt=0;
