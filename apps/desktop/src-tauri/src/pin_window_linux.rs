@@ -44,6 +44,34 @@ pub(super) fn prepare(window: &WebviewWindow) -> Result<(), String> {
     bind_space(window.app_handle())?;
     Ok(())
 }
+/// The application registers a GtkWindow before Tao attaches its WebKit child.
+/// The temporary handler affects only synchronous construction on the UI thread
+/// and is removed on every return; the default display and Space stay Wayland.
+pub(super) fn build_floating<T>(
+    app:&AppHandle,
+    build:impl FnOnce(&AppHandle)->Result<T,String>,
+) -> Result<T,String> {
+    if !gtk::is_initialized_main_thread(){return Err("浮动对象只能在界面线程创建".into());}
+    let space=app.get_webview_window("space").ok_or("截图窗口不可用")?;
+    let widget=space.gtk_window().map_err(|_|"截图窗口不可用")?;
+    if widget.display().type_().name()=="GdkX11Display" {return build(app);}
+    let name=std::env::var("DISPLAY").map_err(|_|"当前桌面没有可用的原位贴图服务")?;
+    if !local_display_name(&name){return Err("原位贴图需要本机显示服务".into());}
+    let manager=gtk::gdk::DisplayManager::get();
+    let display=manager.list_displays().into_iter()
+        .find(|d|!d.is_closed()&&d.type_().name()=="GdkX11Display"&&d.name()==name)
+        .or_else(||gtk::gdk::Display::open(&name)).ok_or("无法连接原位贴图服务")?;
+    if display.is_closed()||display.type_().name()!="GdkX11Display"{return Err("原位贴图服务不可用".into());}
+    let application=widget.application().ok_or("界面应用不可用")?;
+    let screen=display.default_screen();
+    let handler=application.connect_window_added(move |_,window| {
+        if !window.is_realized()&&!window.is_mapped(){window.set_screen(&screen);}
+    });
+    struct ScopedHandler(gtk::Application,Option<gtk::glib::SignalHandlerId>);
+    impl Drop for ScopedHandler {fn drop(&mut self){if let Some(id)=self.1.take(){self.0.disconnect(id);}}}
+    let _handler=ScopedHandler(application,Some(handler));
+    build(app)
+}
 pub(crate) fn prepare_floating(window: &WebviewWindow) -> Result<(), String> {
     if !gtk::is_initialized_main_thread() {
         return Err("贴图窗口只能在界面线程操作".into());
@@ -53,33 +81,10 @@ pub(crate) fn prepare_floating(window: &WebviewWindow) -> Result<(), String> {
         return Err("贴图初始化状态无效".into());
     }
     let display = widget.display();
-    if display.type_().name() != "GdkX11Display" {
-        let name = std::env::var("DISPLAY").map_err(|_| "当前桌面没有可用的原位贴图服务")?;
-        if !local_display_name(&name) {
-            return Err("原位贴图需要本机显示服务".into());
-        }
-        let manager = gtk::gdk::DisplayManager::get();
-        let x11 = manager
-            .list_displays()
-            .into_iter()
-            .find(|d| !d.is_closed() && d.type_().name() == "GdkX11Display" && d.name() == name)
-            .or_else(|| gtk::gdk::Display::open(&name))
-            .ok_or("无法连接原位贴图服务")?;
-        if x11.is_closed() || x11.type_().name() != "GdkX11Display" {
-            return Err("原位贴图服务不可用".into());
-        }
-        // Gtk.Window.set_screen supports a different GdkScreen. Only this new,
-        // hidden pin is migrated; the Space/window action witness is untouched.
-        if widget.is_realized() {
-            widget.unrealize();
-        }
-        let screen = x11.default_screen();
-        widget.set_screen(&screen);
-        widget.set_visual(screen.rgba_visual().as_ref());
-        if widget.display() != x11 {
-            return Err("原位贴图窗口未能关联显示服务".into());
-        }
+    if display.is_closed()||display.type_().name()!="GdkX11Display" {
+        return Err("浮动对象必须先在本机显示服务创建".into());
     }
+    if !widget.is_realized(){widget.set_visual(display.default_screen().rgba_visual().as_ref());}
     widget.set_focus_on_map(false);
     widget.set_accept_focus(true);
     // These builder hints were first applied to the former Wayland drawable.

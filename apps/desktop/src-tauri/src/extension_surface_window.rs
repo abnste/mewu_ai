@@ -136,7 +136,12 @@ pub async fn open_extension_surface_window(
         }
         Ok(record.manifest.name.clone())
     })();
-    let result: Result<(WebviewWindow, crate::pin_window::Rect), String> = (|| {
+    let build_window=window.clone();
+    let build_surface_id=surface_id.clone();
+    let result: Result<(WebviewWindow, crate::pin_window::Rect), String> = crate::pin_window::build_floating(&app, move |app| {
+        let state=app.state::<ExtensionHost>();
+        let window=&build_window;
+        let surface_id=&build_surface_id;
         let title = check?;
         let view = state
             .surfaces
@@ -153,7 +158,7 @@ pub async fn open_extension_surface_window(
             .to_logical::<f64>(scale);
         let label = format!("{PREFIX}{surface_id}");
         let builder = tauri::WebviewWindowBuilder::new(
-            &app,
+            app,
             &label,
             tauri::WebviewUrl::App("index.html?surface=extension-object".into()),
         )
@@ -191,7 +196,7 @@ pub async fn open_extension_surface_window(
             height: ((view["height"].as_f64().unwrap() + 24.) * scale).round() as u32,
         };
         Ok((created, rect))
-    })();
+    }).await;
     let result: Result<(), String> = async {
         let (created, rect) = result?;
         let (tx, rx) = tokio::sync::oneshot::channel();

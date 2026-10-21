@@ -20,6 +20,25 @@ mod linux;
 #[cfg(target_os = "macos")]
 #[path = "pin_window_macos.rs"]
 mod macos;
+/// Create an independent floating view on its final display before WebKit is
+/// attached. Moving an existing WebKit tree between GdkDisplays is unsupported.
+pub(crate) async fn build_floating<T: Send + 'static>(
+    app: &AppHandle,
+    build: impl FnOnce(&AppHandle) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    #[cfg(target_os="linux")]
+    {
+        let (tx,rx)=tokio::sync::oneshot::channel();
+        let handle=app.clone();
+        app.run_on_main_thread(move || {
+            let result=linux::build_floating(&handle,build);
+            let _=tx.send(result);
+        }).map_err(|_|"无法创建浮动对象")?;
+        rx.await.map_err(|_|"浮动对象创建中断".into())?
+    }
+    #[cfg(not(target_os="linux"))]
+    { build(app) }
+}
 /// Shared platform preparation; does not register a pin or any plugin business.
 pub(crate) fn prepare_floating(window:&WebviewWindow)->Result<(),String>{
     #[cfg(target_os="linux")]
@@ -164,9 +183,11 @@ fn transformed(rect: Rect, ratio: f64, scale: f64, swap: bool) -> Result<Rect, S
     })
 }
 pub(crate) async fn build(app: &AppHandle, label: &str, original: Rect) -> Result<(), String> {
+    let own_label=label.to_string();
+    let window=build_floating(app,move |app| {
     let builder = tauri::WebviewWindowBuilder::new(
         app,
-        label,
+        &own_label,
         tauri::WebviewUrl::App("index.html?surface=pin".into()),
     )
     .title("Mewu · 贴图")
@@ -196,7 +217,8 @@ pub(crate) async fn build(app: &AppHandle, label: &str, original: Rect) -> Resul
     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
     #[cfg(target_os = "macos")]
     let builder = builder.accept_first_mouse(true);
-    let window = builder.build().map_err(|_| "无法创建贴图窗口")?;
+    builder.build().map_err(|_| "无法创建贴图窗口".to_string())
+    }).await?;
     let initial_window = window.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
     window
