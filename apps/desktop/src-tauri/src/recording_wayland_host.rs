@@ -160,7 +160,7 @@ pub(crate) async fn stop_for_exit(id:&str)->Result<bool,String>{
 async fn wayland(window:&WebviewWindow)->Result<bool,String>{
     use gtk::prelude::*;
     let (tx,rx)=tokio::sync::oneshot::channel();let target=window.clone();
-    window.run_on_main_thread(move||{let result=target.gtk_window().map(|w|w.display().type_().name()=="GdkWaylandDisplay")
+    window.run_on_main_thread(move||{let result=target.gtk_window().map(|_|crate::desktop_session_linux::uses_portal())
         .map_err(|_|"无法读取桌面类型".to_string());let _=tx.send(result);}).map_err(|_|"无法读取桌面类型")?;
     rx.await.map_err(|_|"桌面类型检查中断")?
 }

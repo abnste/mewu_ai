@@ -7,7 +7,7 @@ use tauri::{AppHandle,Manager,WebviewWindow};
 use tokio::sync::oneshot;
 
 pub(crate) fn is_wayland()->bool {
-    gtk::gdk::Display::default().is_some_and(|d|d.type_().name()=="GdkWaylandDisplay")
+    crate::desktop_session_linux::uses_portal()
 }
 #[derive(Default)]
 struct Observed {widget:usize,generation:u64}
@@ -64,7 +64,9 @@ impl ExportedParent {
 }
 impl Drop for ExportedParent {
     fn drop(&mut self){let weak=self.weak.clone();let _=self.window.run_on_main_thread(move||{
-        if let Some(window)=weak.upgrade(){if let Ok(api)=api(){unsafe{(api.unexport)(window.as_ptr() as _)}}}
+        if let Some(window)=weak.upgrade(){if window.display().type_().name()=="GdkWaylandDisplay" {
+            if let Ok(api)=api(){unsafe{(api.unexport)(window.as_ptr() as _)}}
+        }}
     });}
 }
 struct Callback { sender:Option<oneshot::Sender<Result<String,String>>> }
@@ -85,6 +87,12 @@ async fn parent(window:&WebviewWindow,owner:usize,label:&'static str)->Result<Ex
             let widget=crate::window_actions_linux::parent(&target,owner)?;
             if target.label()!=label||!crate::window_actions_linux::current_for(owner,label){return Err("授权父窗口已关闭".into())}
             let drawable=widget.window().ok_or("设置窗口尚未显示")?;
+            if drawable.type_().name()=="GdkX11Window" && drawable.display().type_().name()=="GdkX11Display" {
+                let xid=unsafe {gdk_x11_sys::gdk_x11_window_get_xid(drawable.as_ptr().cast())};
+                let xid=u32::try_from(xid).ok().filter(|id|*id!=0).ok_or("授权父窗口标识无效")?;
+                let _=result.send(Ok(format!("x11:{xid:x}")));
+                return Ok(ExportedParent {handle:String::new(),window:target.clone(),weak:gtk::glib::SendWeakRef::from(drawable.downgrade()),owner,label});
+            }
             if drawable.display().type_().name()!="GdkWaylandDisplay"{return Err("此窗口不属于 Wayland 桌面".into())}
             let api=api()?;
             let callback=Box::into_raw(Box::new(Callback{sender:Some(result)}));

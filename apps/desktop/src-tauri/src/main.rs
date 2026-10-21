@@ -44,6 +44,8 @@ mod capture_shortcut_desktop_linux;
 mod capture_shortcut_portal_linux;
 #[cfg(target_os = "linux")]
 mod capture_shortcut_wayland_host;
+#[cfg(target_os = "linux")]
+mod desktop_session_linux;
 mod clipboard_video_storage;
 mod code_decode;
 mod code_host;
@@ -2898,6 +2900,8 @@ fn main() {
         // A Shell grouping failure must not prevent capture or normal startup.
         eprintln!("[windows-identity] initialization failed: 0x{:08X}", error.code().0 as u32);
     }
+    #[cfg(target_os = "linux")]
+    desktop_session_linux::initialize();
     let quit_only = lifecycle::launch_action(&std::env::args().collect::<Vec<_>>())
         == lifecycle::LaunchAction::Quit;
     // A cold --quit may initialize the single-instance plugin, but never opens

@@ -73,9 +73,9 @@ fn witness(window: &WebviewWindow) -> Result<Witness, String> {
     if drawable.is_destroyed() || drawable.display().is_closed() {return Err("截图窗口已关闭".into());}
     let x11=match drawable.display().type_().name() {
         "GdkWaylandDisplay"=>None,
-        "GdkX11Display" if pin_owner.is_some() && drawable.type_().name()=="GdkX11Window"=> {
-            // Only a live registry-owned image lease may cross this backend.
-            // Use this drawable's display/XID; never the process default.
+        "GdkX11Display" if eligible(window.label()) && drawable.type_().name()=="GdkX11Window"=> {
+            // Only registry-owned capture windows and pins are admitted.
+            // Use this drawable's display/XID; never a guessed desktop handle.
             let xid=unsafe {gdk_x11_sys::gdk_x11_window_get_xid(drawable.as_ptr().cast())};
             let xid=u32::try_from(xid).ok().filter(|id|*id!=0).ok_or("贴图窗口标识无效")?;
             Some((xid,drawable.display().name().to_string()))
@@ -125,8 +125,8 @@ pub(crate) async fn is_wayland(window: &WebviewWindow, work: Arc<Work>, transiti
     window.run_on_main_thread(move || {
         let _transition = transition;
         let result = base_check(target.app_handle(), &work).and_then(|_| {
-            let widget = target.gtk_window().map_err(|_| "无法读取桌面窗口")?;
-            Ok(widget.display().type_().name() == "GdkWaylandDisplay")
+            let _widget = target.gtk_window().map_err(|_| "无法读取桌面窗口")?;
+            Ok(crate::desktop_session_linux::uses_portal())
         });
         let _ = tx.send(result);
     }).map_err(|_| "无法检查桌面类型")?;
@@ -171,6 +171,14 @@ mod barrier {
         if let Some(tx) = data.tx.take() { let _ = tx.send(result); }
     }
     pub(super) fn start(display: &gtk::gdk::Display, tx: oneshot::Sender<Result<(),String>>, allowed: capture::CaptureCheck, work: Option<Arc<Work>>, transition: Arc<SpaceTransition>) -> Result<(),String> {
+        if display.type_().name()=="GdkX11Display" {
+            // X11 callers separately arm a pre-hide StructureNotify guard and
+            // verify actual server UNMAPPED before admitting capture. This is
+            // only the GTK dispatch handoff, not the hiding proof.
+            display.flush();
+            let _=tx.send(allowed());
+            return Ok(());
+        }
         let api = api()?;
         let wl_display = unsafe { (api.display)(display.as_ptr().cast()) };
         if wl_display.is_null() { return Err("Wayland 显示连接不可用".into()); }
@@ -221,9 +229,17 @@ struct HiddenPins {
 }
 impl HiddenPins {
     fn subscribe(owned: &[Witness], allowed: &capture::CaptureCheck) -> Result<Option<Arc<Self>>,String> {
+        let pins=owned.iter().filter(|w|w.pin_owner.is_some()).cloned().collect::<Vec<_>>();
+        Self::subscribe_group(&pins,allowed,8)
+    }
+    fn subscribe_main(owned: &[Witness], allowed: &capture::CaptureCheck) -> Result<Option<Arc<Self>>,String> {
+        let main=owned.iter().filter(|w|matches!(w.label.as_str(),"space"|"frozen-widget")).cloned().collect::<Vec<_>>();
+        Self::subscribe_group(&main,allowed,2)
+    }
+    fn subscribe_group(owned: &[Witness], allowed: &capture::CaptureCheck,limit:usize) -> Result<Option<Arc<Self>>,String> {
         let pins:Vec<_>=owned.iter().filter_map(|w|w.x11.as_ref()).collect();
         if pins.is_empty(){return Ok(None);}
-        if pins.len()>8 || pins.iter().any(|(_,display)|display!=&pins[0].1) {return Err("贴图窗口集合无效".into());}
+        if pins.len()>limit || pins.iter().any(|(_,display)|display!=&pins[0].1) {return Err("贴图窗口集合无效".into());}
         allowed()?;
         // The existing portal waits at most180s, frame acquisition10s, delay5s
         // and native presentation3s. A fixed ceiling covers those phases; it
@@ -254,7 +270,7 @@ impl HiddenPins {
     }
 }
 
-async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>) -> Result<(Vec<Witness>,Result<(),String>,Option<Arc<HiddenPins>>),String> {
+async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transition: Arc<SpaceTransition>) -> Result<(Vec<Witness>,Result<(),String>,Option<Arc<HiddenPins>>,Option<Arc<HiddenPins>>),String> {
     let (tx, rx) = oneshot::channel(); let target = window.clone(); let app = app.clone();
     let hide_work=work.clone(); let hide_transition=transition.clone();
     window.run_on_main_thread(move || {
@@ -275,18 +291,20 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
     let scalar: capture::CaptureCheck=Arc::new(move || {base_check(&check_app,&check_work)?;owned_set_current(&check_app,&check_owned)?;current(&check_app,&check_owned,true)});
     let subscribe_owned=owned.clone();let subscribe_check=scalar.clone();
     let subscribe_transition=transition.clone();
-    let pins=tauri::async_runtime::spawn_blocking(move ||{let _transition=subscribe_transition;HiddenPins::subscribe(&subscribe_owned,&subscribe_check)}).await.map_err(|_|"贴图隐藏准备中断")??;
+    let (pins,main)=tauri::async_runtime::spawn_blocking(move ||{let _transition=subscribe_transition;
+        Ok::<_,String>((HiddenPins::subscribe(&subscribe_owned,&subscribe_check)?,HiddenPins::subscribe_main(&subscribe_owned,&subscribe_check)?))
+    }).await.map_err(|_|"贴图隐藏准备中断")??;
     let (tx,rx)=oneshot::channel();let hide_owned=owned.clone();let hide_app=window.app_handle().clone();let hide_check=scalar.clone();
     let dispatch=window.run_on_main_thread(move || {
         let result=(|| {
             hide_check()?;
             // Withdraw/suppress every owned X11 duplicate before Space unmaps:
             // its ordinary unmap callback otherwise starts a pin restore.
-            for w in hide_owned.iter().filter(|w|w.x11.is_some()) {
+            for w in hide_owned.iter().filter(|w|w.pin_owner.is_some()) {
                 let candidate=hide_app.get_webview_window(&w.label).ok_or("截图窗口已关闭")?;
                 crate::pin_window::hide_for_wayland_capture(&candidate)?;
             }
-            for w in hide_owned.iter().filter(|w|w.x11.is_none()) {
+            for w in hide_owned.iter().filter(|w|w.pin_owner.is_none()) {
                 let candidate=hide_app.get_webview_window(&w.label).ok_or("截图窗口已关闭")?;
                 let widget=candidate.gtk_window().map_err(|_|"截图窗口不可用")?;
                 hide_widget(widget.upcast_ref())?;
@@ -294,9 +312,9 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
             hide_check()
         })();let _=tx.send(result);
     });
-    if dispatch.is_err(){return Ok((owned,Err("无法隐藏截图窗口".into()),pins));}
+    if dispatch.is_err(){return Ok((owned,Err("无法隐藏截图窗口".into()),pins,main));}
     let hidden=rx.await.unwrap_or_else(|_|Err("截图隐藏中断".into()));
-    if hidden.is_err(){return Ok((owned,hidden,pins));}
+    if hidden.is_err(){return Ok((owned,hidden,pins,main));}
     let (tx,rx) = oneshot::channel(); let target=target.clone(); let witnesses=owned.clone(); let app=window.app_handle().clone(); let check_work=work.clone();
     let allowed: capture::CaptureCheck = Arc::new(move || { base_check(&app,&check_work)?; owned_set_current(&app,&witnesses)?; current(&app,&witnesses,true) });
     let barrier_transition=transition.clone();
@@ -309,17 +327,17 @@ async fn hide(app: &AppHandle, window: &WebviewWindow, work: Arc<Work>, transiti
         // A start failure closes its sender; receiver rejects without adopting an image.
         let _ = result;
     });
-    if dispatch.is_err(){return Ok((owned,Err("无法确认截图窗口隐藏".into()),pins));}
+    if dispatch.is_err(){return Ok((owned,Err("无法确认截图窗口隐藏".into()),pins,main));}
     let hidden=rx.await.map_err(|_| "截图窗口隐藏确认中断".to_string()).and_then(|result|result);
     if hidden.is_ok(){
-        if let Some(guard)=pins.clone(){
-            let check=scalar;
+        for guard in [pins.clone(),main.clone()].into_iter().flatten(){
+            let check=scalar.clone();
             let arm_transition=transition.clone();
             let result=tauri::async_runtime::spawn_blocking(move ||{let _transition=arm_transition;guard.arm(&check)}).await.unwrap_or_else(|_|Err("贴图隐藏确认中断".into()));
-            return Ok((owned,result,pins));
+            if result.is_err(){return Ok((owned,result,pins,main));}
         }
     }
-    Ok((owned,hidden,pins))
+    Ok((owned,hidden,pins,main))
 }
 
 #[cfg(debug_assertions)]
@@ -565,13 +583,30 @@ pub(crate) async fn hide_recording_parent(window:&WebviewWindow,allowed:capture:
     let allowed:capture::CaptureCheck=Arc::new(move||{
         if !live.load(std::sync::atomic::Ordering::Acquire){return Err("录屏隐藏已取消".into())}upstream()
     });
+    let (identity_tx,identity_rx)=oneshot::channel();let identity_target=window.clone();
+    let identity_check=allowed.clone();
+    window.run_on_main_thread(move||{let result=(||{
+        identity_check()?;
+        let widget=identity_target.gtk_window().map_err(|_|"录屏父窗口不可用")?;
+        if !widget.is_mapped(){return Err("录屏父窗口已隐藏".into())}
+        witness(&identity_target)
+    })();let _=identity_tx.send(result);}).map_err(|_|"无法读取录屏父窗口")?;
+    let previous=identity_rx.await.map_err(|_|"录屏父窗口读取中断")??;
+    let subscribe_previous=previous.clone();let subscribe_check=allowed.clone();
+    let native=tauri::async_runtime::spawn_blocking(move||{
+        HiddenPins::subscribe_main(std::slice::from_ref(&subscribe_previous),&subscribe_check)
+    }).await.map_err(|_|"录屏父窗口隐藏准备中断")??;
+    let after_app=window.app_handle().clone();let after_previous=previous.clone();let after_allowed=allowed.clone();
+    let after:capture::CaptureCheck=Arc::new(move||{
+        after_allowed()?;current(&after_app,std::slice::from_ref(&after_previous),true)
+    });
     let (tx,rx)=oneshot::channel();let target=window.clone();let check=allowed.clone();
     window.run_on_main_thread(move||{
         let result=(||{
             target.app_handle().state::<Host>().exit.ensure_new_operation()?;check()?;
             let widget=target.gtk_window().map_err(|_|"录屏父窗口不可用")?;
             if !widget.is_mapped(){return Err("录屏父窗口已隐藏".into())}
-            let previous=witness(&target)?;
+            current(target.app_handle(),std::slice::from_ref(&previous),true)?;
             hide_widget(widget.upcast_ref())?;
             current(target.app_handle(),std::slice::from_ref(&previous),true)?;
             let app=target.app_handle().clone();let stable=check.clone();
@@ -585,7 +620,11 @@ pub(crate) async fn hide_recording_parent(window:&WebviewWindow,allowed:capture:
         let _=result;
     }).map_err(|_|"无法隐藏录屏父窗口")?;
     tokio::time::timeout(Duration::from_secs(3),rx).await.map_err(|_|"录屏父窗口隐藏确认超时".to_string())?
-        .map_err(|_|"录屏父窗口隐藏确认中断".to_string())?
+        .map_err(|_|"录屏父窗口隐藏确认中断".to_string())??;
+    if let Some(native)=native {
+        tauri::async_runtime::spawn_blocking(move||native.arm(&after)).await.map_err(|_|"录屏父窗口隐藏确认中断")??;
+    }
+    Ok(())
 }
 pub(crate) async fn recording_surface_mapped(window:&WebviewWindow,allowed:capture::CaptureCheck)->Result<bool,String>{
     if window.label()!="space"{return Err("此窗口不能开始录屏".into())}
@@ -657,7 +696,7 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
         let scene_id=engine.store.active_scene().map_err(|error|error.to_string())?.id.clone();
         engine.translation_jobs.cancel_scene("space",&scene_id);
     }
-    let (owned,hidden,pins)=hide(&app,&window,work.clone(),transition.clone()).await?;
+    let (owned,hidden,pins,main)=hide(&app,&window,work.clone(),transition.clone()).await?;
     let check_app=app.clone(); let check_work=work.clone(); let check_owned=owned.clone();
     let scalar: capture::CaptureCheck=Arc::new(move || {base_check(&check_app,&check_work)?; owned_set_current(&check_app,&check_owned)?; current(&check_app,&check_owned,true)});
     let commit_pins=pins.clone();let commit_app=app.clone();let commit_work=work.clone();let commit_owned=owned.clone();
@@ -670,6 +709,7 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
     let allowed: capture::CaptureCheck=Arc::new(move || {
         native_check()?;
         if let Some(pins)=&pins {pins.check(&native_check)?;}
+        if let Some(main)=&main {main.check(&native_check)?;}
         Ok(())
     });
     let result=async {
@@ -706,7 +746,7 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
     let _=window.run_on_main_thread(move || {
         let _transition=restore_transition;
         let _done=restore_tx;
-        let pin_labels=owned.iter().filter(|w|w.x11.is_some()).map(|w|w.label.clone()).collect::<Vec<_>>();
+        let pin_labels=owned.iter().filter(|w|w.pin_owner.is_some()).map(|w|w.label.clone()).collect::<Vec<_>>();
         // Release this operation's suppression even if one source lease was
         // revoked. A stale/closed pin must not strand other live pins or Space.
         crate::pin_window::finish_wayland_capture(&pin_labels);
@@ -740,7 +780,7 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
             else {let _=space.hide();}
         }
         for w in owned.iter().filter(|w|allowed&&w.visible&&w.label!="space"&&same_native_owner(w)&&(!success||w.label!="frozen-widget")) {
-            if w.x11.is_none(){if let Some(window)=restore_app.get_webview_window(&w.label){let _=window.show();}}
+            if w.pin_owner.is_none(){if let Some(window)=restore_app.get_webview_window(&w.label){let _=window.show();}}
         }
         // XWayland pins retain their saved object rectangle and original
         // source lease. Space renders them while visible; its normal unmap
