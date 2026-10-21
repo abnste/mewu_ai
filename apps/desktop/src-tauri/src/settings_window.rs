@@ -74,10 +74,9 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         .transparent(false)
         .background_color(tauri::window::Color(245, 247, 251, 255))
         .shadow(true)
-        // GNOME's separate portal dialog must be able to rise above settings.
-        // Keeping this ordinary window above every application hides capture
-        // authorization when a CLI or global shortcut starts screen sharing.
-        .always_on_top(!cfg!(target_os = "linux"))
+        // Settings is an ordinary window on every platform. Opening it focuses
+        // it below, but must not keep it above other apps or system dialogs.
+        .always_on_top(false)
         .skip_taskbar(false)
         .center()
         .visible(false)
