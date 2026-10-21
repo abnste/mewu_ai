@@ -2691,8 +2691,10 @@ mod tests {
 
     #[test]
     fn model_connection_seed_upgrade_only_adds_eighteen_exact_packages_once() {
-        let dir=Directory::new(); let store=PluginStore::open(&dir.0).unwrap();
+        let dir=Directory::new(); let mut store=PluginStore::open(&dir.0).unwrap();
         // Recreate the previous eight-package registry in this owned fixture.
+        // The retired memory package is historical input, no longer a seed.
+        store.install_package(parse_manifest(OFFICIAL_MEMORY).unwrap(), PluginSource::Official, None, true).unwrap();
         for manifest in bundled_manifests().into_iter().filter(|value|value.id.starts_with("mewu.provider.") || matches!(value.id.as_str(), "mewu.agent" | "mewu.blackboard" | "mewu.cli")) {
             store.connection.execute("DELETE FROM registry WHERE id=?1",[&manifest.id]).unwrap();
             fs::remove_file(path(&dir.0,&manifest.id,&manifest.version)).unwrap();
@@ -2702,7 +2704,7 @@ mod tests {
         let old_rows:Vec<(String,String)>=store.connection.prepare("SELECT id,payload FROM registry ORDER BY id").unwrap().query_map([],|row|Ok((row.get(0)?,row.get(1)?))).unwrap().map(Result::unwrap).collect();
         let old_files:Vec<(PathBuf,Vec<u8>)>=store.records().unwrap().into_iter().map(|record| {let file=path(&dir.0,&record.package.manifest.id,&record.package.manifest.version);let bytes=fs::read(&file).unwrap();(file,bytes)}).collect();
         assert_eq!(old_rows.len(),8); drop(store);
-        let store=PluginStore::open(&dir.0).unwrap(); assert_eq!(store.global_revision().unwrap(),BUNDLED.len() as u64); assert_eq!(store.model_connection_presets().unwrap().len(),23);
+        let store=PluginStore::open(&dir.0).unwrap(); assert_eq!(store.global_revision().unwrap(),BUNDLED.len() as u64 + 1); assert_eq!(store.model_connection_presets().unwrap().len(),23);
         for (id,raw) in old_rows { let current:String=store.connection.query_row("SELECT payload FROM registry WHERE id=?1",[id],|row|row.get(0)).unwrap(); assert_eq!(current,raw); }
         for (file,raw) in old_files { assert_eq!(fs::read(file).unwrap(),raw); }
         let mut canonical = Vec::new();
