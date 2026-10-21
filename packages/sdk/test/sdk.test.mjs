@@ -13,7 +13,7 @@ function harness(dispatch) {
     calls.push({ method, params });
     queueMicrotask(async () => {
       try { scope.settle(id, JSON.stringify(await dispatch(method, params)), false); }
-      catch { scope.settle(id, 'null', true); }
+      catch (error) { scope.settle(id, JSON.stringify({code:error?.code || 'HOST_ERROR'}), true); }
     });
     return id;
   });
@@ -280,14 +280,14 @@ test('invalid JSON, shape, coordinates and action schemas stop after three decis
     activate(scope.ctx); scope.finishRegistration();
     const reply = await invoke(scope, 'example.region-agent.operate', { task: '点击目标' }, { regionId: 'authorized-region' });
     assert.equal(reply.ok, true);
-    assert.deepEqual(reply.result, { content: '模型连续返回无效操作，已停止', steps: 0,
+    assert.deepEqual(reply.result, { isError: true, content: '模型连续返回无效操作，已停止', steps: 0,
       artifactId: 'own-frame', completed: false, stopReason: 'invalid_model_decision' });
     assert.deepEqual(calls.map(call => call.method), ['region.observe', 'model.invoke', 'model.invoke', 'model.invoke']);
     await scope.deactivate();
   }
 });
 
-test('host/model/action or fresh-observation errors propagate without retrying unconfirmed input', async () => {
+test('read failures return an Agent-visible error while uncertain input remains unknown and is never replayed', async () => {
   const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
   for (const [failAt, expected] of [
     ['first-observe', ['region.observe']],
@@ -312,11 +312,47 @@ test('host/model/action or fresh-observation errors propagate without retrying u
     });
     activate(scope.ctx); scope.finishRegistration();
     const reply = await invoke(scope, 'example.region-agent.operate', { task: '点击目标' }, { regionId: 'authorized-region' });
-    assert.equal(reply.ok, false);
+    assert.equal(reply.ok, failAt !== 'action');
+    if (failAt !== 'action') {
+      assert.equal(reply.result.isError, true);
+      assert.equal(reply.result.completed, false);
+      assert.equal(reply.result.steps, failAt === 'fresh-observe' ? 1 : 0);
+      assert.equal(reply.result.feedbackPending, failAt === 'fresh-observe' ? true : undefined);
+      assert.doesNotMatch(JSON.stringify(reply), /Own .*failure/);
+    }
     assert.deepEqual(calls.map(call => call.method), expected);
     assert.ok(calls.filter(call => call.method === 'region.action').length <= 1);
     await scope.deactivate();
   }
+});
+
+test('SDK exposes only a host error code for plugin recovery, not host response text', async () => {
+  let id;
+  const scope = createContext(() => id = 'host-error');
+  const request = scope.ctx.region.observe('authorized-region');
+  scope.settle(id, JSON.stringify({code:'region_window_boundary',message:'private transport body'}), true);
+  await assert.rejects(request, error => error.code === 'region_window_boundary' && error.message === 'Host call failed');
+  const legacy = scope.ctx.region.observe('authorized-region');
+  scope.settle(id, 'null', true);
+  await assert.rejects(legacy, error => error.code === 'HOST_ERROR');
+  await scope.deactivate();
+});
+
+test('region boundary failures reach the parent Agent with no input and no private diagnostic', async () => {
+  const { default: activate } = await import('../../../extensions/examples/region-agent/index.mjs');
+  const { scope, calls } = harness(async () => {
+    throw Object.assign(new Error('private native diagnostic'), {code:'region_window_boundary'});
+  });
+  activate(scope.ctx); scope.finishRegistration();
+  const reply = await invoke(scope, 'example.region-agent.operate', {task:'点击目标'}, {regionId:'authorized-region'});
+  assert.equal(reply.ok, true);
+  assert.deepEqual(reply.result, {
+    isError:true, completed:false, stopReason:'region_window_boundary', steps:0,
+    content:'选区跨出了目标窗口，请重新框选同一窗口；本次未发出新的输入动作。',
+  });
+  assert.deepEqual(calls.map(call => call.method), ['region.observe']);
+  assert.doesNotMatch(JSON.stringify(reply), /private native diagnostic/);
+  await scope.deactivate();
 });
 
 test('valid supported actions keep their exact JSON and always request fresh feedback', async () => {

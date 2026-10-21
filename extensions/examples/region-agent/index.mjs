@@ -100,29 +100,56 @@ export default definePlugin(ctx => {
     }
     const maxSteps = input.maxSteps === undefined ? 12 : input.maxSteps;
     if (!Number.isInteger(maxSteps) || maxSteps < 1 || maxSteps > 30) throw new Error('Invalid step count');
-    let frame = await ctx.region.observe(context.regionId);
     const history = [];
-    for (let step = 0; step < maxSteps; step++) {
-      let next;
-      let correction;
-      // Only an unexecuted decision may be corrected. Host/model errors and
-      // anything after region.action escape directly; never replay OS input.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const reply = await ctx.model.invoke({ prompt: decisionPrompt(task, frame, history, correction), images: [frame.artifactId] });
-        const parsed = decision(reply.content, frame);
-        if (parsed.value) { next = parsed.value; break; }
-        correction = parsed.error;
-      }
-      if (!next) return { content: '模型连续返回无效操作，已停止', steps: history.length,
-        artifactId: frame.artifactId, completed: false, stopReason: 'invalid_model_decision' };
-      if (next.done === true) return { content: next.message, steps: history.length, artifactId: frame.artifactId, completed: true };
-      // Neither target coordinates nor screenshot pixels are supplied by Mewu
-      // core: the independent plugin interprets this model decision itself.
-      await ctx.region.action(context.regionId, next.action);
+    let frame;
+    let phase = 'observe';
+    try {
       frame = await ctx.region.observe(context.regionId);
-      history.push({ step: step + 1, action: next.action, feedbackSha256: frame.sha256 });
+      for (let step = 0; step < maxSteps; step++) {
+        let next;
+        let correction;
+        // Only an unexecuted decision may be corrected. Native input is
+        // never replayed after an action or observation failure.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          phase = 'model';
+          const reply = await ctx.model.invoke({ prompt: decisionPrompt(task, frame, history, correction), images: [frame.artifactId] });
+          const parsed = decision(reply.content, frame);
+          if (parsed.value) { next = parsed.value; break; }
+          correction = parsed.error;
+        }
+        if (!next) return { isError: true, content: '模型连续返回无效操作，已停止', steps: history.length,
+          artifactId: frame.artifactId, completed: false, stopReason: 'invalid_model_decision' };
+        if (next.done === true) return { content: next.message, steps: history.length, artifactId: frame.artifactId, completed: true };
+        // Neither target coordinates nor screenshot pixels are supplied by Mewu
+        // core: the independent plugin interprets this model decision itself.
+        phase = 'action';
+        await ctx.region.action(context.regionId, next.action);
+        history.push({ step: step + 1, action: next.action });
+        phase = 'feedback';
+        frame = await ctx.region.observe(context.regionId);
+        history[history.length - 1].feedbackSha256 = frame.sha256;
+      }
+      return { isError: true, content: '已达到本次操作步数，任务尚未完成', steps: history.length, artifactId: frame.artifactId, completed: false, stopReason: 'step_limit' };
+    } catch (error) {
+      // A failed input may already have effects. Keep that unknown outcome in
+      // the host journal; never invite the parent Agent to replay the action.
+      if (phase === 'action') throw error;
+      const reasons = {
+        region_window_boundary: '选区跨出了目标窗口，请重新框选同一窗口',
+        region_target_changed: '目标窗口已改变或失去焦点，请回到目标窗口后重新发起',
+        region_target_obscured: '操作区域被其他窗口遮挡，请移开遮挡后重新发起',
+        region_too_large: '操作选区过大，请缩小选区后重新发起',
+        region_authority_revoked: '本次区域操作已停止',
+        region_input_busy: '鼠标或修饰键仍被按住，请松开后重新发起',
+        MODEL_REQUEST_FAILED: '区域操作的模型请求失败',
+      };
+      const code = Object.prototype.hasOwnProperty.call(reasons, error?.code) ? error.code : 'region_observation_failed';
+      return { isError: true, completed: false, stopReason: code, steps: history.length,
+        content: (reasons[code] || '无法读取当前区域，操作已停止') +
+          (phase === 'feedback' ? '；上一动作已执行但未取得反馈，不要重复该动作。' : '；本次未发出新的输入动作。'),
+        ...(frame ? { artifactId: frame.artifactId } : {}),
+        ...(phase === 'feedback' ? { feedbackPending: true } : {}) };
     }
-    return { content: '已达到本次操作步数', steps: history.length, artifactId: frame.artifactId, completed: false };
   };
   ctx.tools.register({
     id: 'example.region-agent.operate', title: '区域操作', inputSchema: toolInputSchema,

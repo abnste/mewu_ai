@@ -84,18 +84,26 @@ pub(crate) trait RegionOverlayHooks: Send + Sync {
     fn restore_owned_overlays(&self);
 }
 
-struct HiddenOverlays<'a>(&'a dyn RegionOverlayHooks);
-impl<'a> HiddenOverlays<'a> {
-    fn enter(hooks: &'a dyn RegionOverlayHooks) -> Result<Self> {
+struct HiddenOverlays {
+    hooks: Arc<dyn RegionOverlayHooks>,
+    hidden: AtomicBool,
+}
+impl HiddenOverlays {
+    fn enter(hooks: Arc<dyn RegionOverlayHooks>) -> Result<Self> {
         hooks
             .hide_owned_overlays()
             .map_err(|e| RegionError::new("overlay_hide_failed", e))?;
-        Ok(Self(hooks))
+        Ok(Self { hooks, hidden: AtomicBool::new(true) })
+    }
+    fn restore(&self) {
+        if self.hidden.swap(false, Ordering::SeqCst) {
+            self.hooks.restore_owned_overlays();
+        }
     }
 }
-impl Drop for HiddenOverlays<'_> {
+impl Drop for HiddenOverlays {
     fn drop(&mut self) {
-        self.0.restore_owned_overlays();
+        self.restore();
     }
 }
 
@@ -329,6 +337,7 @@ pub(crate) struct RegionSession {
     topology: Vec<crate::capture::MonitorInfo>,
     target: platform::Target,
     hooks: Arc<dyn RegionOverlayHooks>,
+    overlays: HiddenOverlays,
     created: Instant,
     revoked: AtomicBool,
     owns_slot: AtomicBool,
@@ -375,7 +384,11 @@ impl RegionSession {
             }
         }
         let mut slot = Slot(true);
-        let _hidden = HiddenOverlays::enter(hooks.as_ref())?;
+        // Keep the real application visible throughout observation/model/action
+        // turns. Re-showing the immutable capture after each call both flickers
+        // and conceals every successful action behind an outdated screenshot.
+        // This owned guard also restores overlays if binding fails below.
+        let overlays = HiddenOverlays::enter(hooks.clone())?;
         let _dpi = platform::dpi_scope()?;
         let topology = topology()?;
         validate_monitor(&binding, viewport, &topology)?;
@@ -404,6 +417,7 @@ impl RegionSession {
             topology,
             target,
             hooks: hooks.clone(),
+            overlays,
             created: Instant::now(),
             revoked: AtomicBool::new(false),
             owns_slot: AtomicBool::new(true),
@@ -470,7 +484,6 @@ impl RegionSession {
             .lock()
             .map_err(|_| RegionError::new("region_stopped", "区域操作已停止"))?;
         self.ensure_live()?;
-        let _hidden = HiddenOverlays::enter(self.hooks.as_ref())?;
         let _dpi = platform::dpi_scope()?;
         self.check()?;
         let mut source = crate::scroll_capture::FrameSource::new(
@@ -521,7 +534,6 @@ impl RegionSession {
                 "请先观察当前区域，再执行下一步操作",
             ));
         }
-        let _hidden = HiddenOverlays::enter(self.hooks.as_ref())?;
         let _dpi = platform::dpi_scope()?;
         self.check()?;
         platform::neutral_input()?;
@@ -540,6 +552,7 @@ impl RegionSession {
     pub(crate) fn revoke(&self) {
         self.revoked.store(true, Ordering::SeqCst);
         self.release_button();
+        self.overlays.restore();
         if self.owns_slot.swap(false, Ordering::SeqCst) {
             ACTIVE_REGION.store(false, Ordering::SeqCst);
         }
@@ -691,6 +704,29 @@ mod platform;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_lease_stays_hidden_between_turns_and_restores_once_on_stop_or_unwind() {
+        use std::sync::atomic::AtomicUsize;
+        struct Hooks { hides: AtomicUsize, restores: AtomicUsize }
+        impl RegionOverlayHooks for Hooks {
+            fn validate_source(&self, _: &RegionBinding) -> std::result::Result<(), String> { Ok(()) }
+            fn hide_owned_overlays(&self) -> std::result::Result<(), String> { self.hides.fetch_add(1, Ordering::SeqCst); Ok(()) }
+            fn restore_owned_overlays(&self) { self.restores.fetch_add(1, Ordering::SeqCst); }
+        }
+        let hooks = Arc::new(Hooks { hides: AtomicUsize::new(0), restores: AtomicUsize::new(0) });
+        let lease = HiddenOverlays::enter(hooks.clone()).unwrap();
+        assert_eq!(hooks.hides.load(Ordering::SeqCst), 1);
+        assert_eq!(hooks.restores.load(Ordering::SeqCst), 0);
+        lease.restore(); lease.restore(); drop(lease);
+        assert_eq!(hooks.restores.load(Ordering::SeqCst), 1);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _lease = HiddenOverlays::enter(hooks.clone()).unwrap();
+            panic!("binding failed");
+        }));
+        assert_eq!(hooks.hides.load(Ordering::SeqCst), 2);
+        assert_eq!(hooks.restores.load(Ordering::SeqCst), 2);
+    }
 
     fn source() -> RegionSource {
         RegionSource {
@@ -844,6 +880,7 @@ mod tests {
             topology: vec![],
             target: platform::fixture_target(),
             hooks: Arc::new(NoOperations),
+            overlays: HiddenOverlays { hooks: Arc::new(NoOperations), hidden: AtomicBool::new(false) },
             created: Instant::now(),
             revoked: AtomicBool::new(false),
             owns_slot: AtomicBool::new(false),

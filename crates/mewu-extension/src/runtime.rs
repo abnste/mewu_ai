@@ -472,7 +472,15 @@ impl ExtensionRuntime {
         {
             return Err(ExtensionError::Protocol("unknown host response"));
         }
-        let result = result.unwrap_or(Value::Null);
+        // Host errors already carry a bounded public code. Preserve that code
+        // for plugin recovery, never forward transport bodies or error text.
+        let result = if let Some(error) = &error {
+            let code = if !error.code.is_empty() && error.code.len() <= 64
+                && error.code.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+                error.code.as_str()
+            } else { "HOST_ERROR" };
+            serde_json::json!({"code":code})
+        } else { result.unwrap_or(Value::Null) };
         validate_value(&result)?;
         self.context
             .with(|ctx| {

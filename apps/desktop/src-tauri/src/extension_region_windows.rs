@@ -61,6 +61,7 @@ pub(super) struct Target {
     created: u64,
     class: String,
     client: [i32; 4],
+    bounds: [i32; 4],
 }
 
 #[cfg(test)]
@@ -72,6 +73,7 @@ pub(super) fn fixture_target() -> Target {
         created: 0,
         class: String::new(),
         client: [0; 4],
+        bounds: [0; 4],
     }
 }
 
@@ -133,6 +135,15 @@ fn client_rect(handle: HWND) -> Result<[i32; 4]> {
     Ok([left.x, left.y, right.x, right.y])
 }
 
+fn window_rect(handle: HWND) -> Result<[i32; 4]> {
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetWindowRect(handle, &mut rect) } == 0
+        || rect.left >= rect.right || rect.top >= rect.bottom {
+        return Err(unavailable());
+    }
+    Ok([rect.left, rect.top, rect.right, rect.bottom])
+}
+
 fn read_target(handle: HWND) -> Result<Target> {
     if handle.is_null()
         || unsafe { IsWindow(handle) } == 0
@@ -185,6 +196,7 @@ fn read_target(handle: HWND) -> Result<Target> {
         created: process_creation(process)?,
         class,
         client: client_rect(handle)?,
+        bounds: window_rect(handle)?,
     };
     // Handle reuse/exit while collecting must not produce a mixed identity.
     let mut final_process = 0;
@@ -310,10 +322,13 @@ pub(super) fn bind(viewport: Viewport) -> Result<Target> {
         y: viewport.y + (viewport.height / 2) as i32,
     };
     let target = read_target(root(unsafe { WindowFromPoint(center) }))?;
-    if !contains(target.client, viewport) {
+    // Window snapping includes the title bar and frame. Those are part of the
+    // same authorized HWND; do not reject them as if they were another app.
+    // Individual input hit tests and keyboard focus containment still apply.
+    if !contains(target.bounds, viewport) {
         return Err(error(
             "region_window_boundary",
-            "选区必须完整位于同一个应用的内容区域",
+            "选区必须完整位于同一个应用窗口内",
         ));
     }
     validate(&target, viewport)?;
@@ -327,7 +342,7 @@ pub(super) fn description(target: &Target) -> String {
 pub(super) fn validate(target: &Target, viewport: Viewport) -> Result<()> {
     let handle = target.handle as HWND;
     if read_target(handle)? != *target
-        || !contains(target.client, viewport)
+        || !contains(target.bounds, viewport)
         || root(unsafe { GetForegroundWindow() }) != handle
     {
         return Err(unavailable());
@@ -645,6 +660,21 @@ mod tests {
         fn drop(&mut self) {
             unsafe { DestroyWindow(self.0) };
         }
+    }
+
+    #[test]
+    fn snapped_window_bounds_include_title_bar_without_granting_adjacent_pixels() {
+        let bounds = [-800, 100, 200, 800];
+        let client = [-792, 132, 192, 792];
+        let snapped = Viewport { x: -800, y: 100, width: 1000, height: 700 };
+        assert!(contains(bounds, snapped));
+        assert!(!contains(client, snapped));
+        for outside in [
+            Viewport { x: -801, ..snapped },
+            Viewport { y: 99, ..snapped },
+            Viewport { width: 1001, ..snapped },
+            Viewport { height: 701, ..snapped },
+        ] { assert!(!contains(bounds, outside)); }
     }
 
     #[test]

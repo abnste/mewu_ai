@@ -130,7 +130,13 @@ export function createContext(send) {
       const request = pending.get(id);
       if (!request) throw new Error('Unknown host response');
       pending.delete(id);
-      if (rejected) request.reject(new Error('Host call failed'));
+      if (rejected) {
+        const error = new Error('Host call failed');
+        let code;
+        try { code = JSON.parse(valueJson)?.code; } catch { /* Legacy host. */ }
+        error.code = typeof code === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(code) ? code : 'HOST_ERROR';
+        request.reject(error);
+      }
       else request.resolve(JSON.parse(valueJson));
     },
     async deactivate() {

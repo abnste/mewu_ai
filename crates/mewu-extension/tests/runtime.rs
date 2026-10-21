@@ -89,6 +89,19 @@ fn portable_runtime_preserves_feature_platforms_and_rejects_malformed_restrictio
 }
 
 #[test]
+fn plugin_can_classify_host_failures_without_receiving_private_error_text() {
+    for (code, expected) in [("region_window_boundary", "region_window_boundary"), ("bad\ncode", "HOST_ERROR")] {
+        let (mut runtime, rx, _) = runtime("export default ctx => ctx.tools.register({id:'observe',title:'Observe'},async()=>{try {await ctx.region.observe('r');} catch(e) {return {code:e.code,message:e.message};}});", &[], RuntimeLimits::default());
+        initialize(&mut runtime).unwrap();
+        runtime.begin_invoke("observe", &json!({}), &json!({})).unwrap();
+        assert!(runtime.poll_result().unwrap().is_none());
+        let WorkerResponse::HostCall { id, .. } = rx.recv_timeout(Duration::from_secs(1)).unwrap() else { panic!() };
+        runtime.host_result(&id, None, Some(ProtocolError { code:code.into(), message:"private key and transport body".into() })).unwrap();
+        assert_eq!(result(&runtime).unwrap(), json!({"code":expected,"message":"Host call failed"}));
+    }
+}
+
+#[test]
 fn genuine_async_host_roundtrip_retains_multimodal_json_and_context() {
     let (mut runtime, rx, _) = runtime("export default ctx => ctx.tools.register({id:'observe',title:'Observe'},async (input,run) => { const observation=await ctx.region.observe(run.context.regionId); const answer=await ctx.model.invoke({observation,prompt:input.prompt}); return {answer,observation}; });", &[], RuntimeLimits::default());
     initialize(&mut runtime).unwrap();

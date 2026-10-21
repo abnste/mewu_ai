@@ -69,6 +69,13 @@ UI 服务声明 `metadata: {surface: 'settings'}`，返回 `{html,width,height}`
 
 模型调用使用宿主已配置的连接，插件不获得 API Key。区域观察返回宿主图片 artifact ID；将该 ID 放到 `ctx.model.invoke({ prompt, images: [artifactId] })`，由宿主提供真实图片。区域操作还需要用户此次明确发起的运行授权，仅有清单权限不够。坐标是观察图内的像素，不能传桌面全局坐标。
 
+宿主调用失败会拒绝 Promise。新版 SDK 的 `Error.code` 提供有界的公开错误码，例如
+`region_window_boundary`、`region_target_changed` 或 `MODEL_REQUEST_FAILED`；不提供原始
+网络响应、密钥或堆栈。旧宿主或未知错误可只有 `HOST_ERROR`。插件可将观察/模型失败
+转成 `{isError:true, completed:false, content:"可操作的原因"}`，交回调用它的 Agent。
+输入调用失败可能已经产生效果，不能据错误码自动重放；输入成功但反馈失败时应保留
+已执行步数并注明需要重新观察，不能声称整个任务未执行。
+
 ### 插件界面与对象事务（开发中，需要新版宿主）
 
 插件 UI 自己返回 HTML/CSS/JavaScript。以 `ctx.ui.register` 注册
