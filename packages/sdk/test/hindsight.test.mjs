@@ -32,6 +32,20 @@ test('Hindsight probe uses semantic server version and readiness HTTP status',as
   assert.deepEqual(f.requests[0].authorization,{key:'api'});
   assert.equal(f.requests[0].headers.Authorization,undefined);
 });
+test('settings probe tests the unsaved draft without persisting its key or using the saved server',async()=>{
+  const f=fixture(p=>p.url.endsWith('/version')?json({api_version:'0.10.3'}):{status:200,body:''});
+  await activate(f.ctx);
+  const draft={endpoint:'https://draft.example.test',bankPrefix:'draft'};
+  assert.equal((await f.services.get('settings')({type:'test',config:draft,key:'test-only-key'})).ok,true);
+  assert.equal(f.values.size,0);
+  assert.ok(f.requests.every(r=>r.url.startsWith(draft.endpoint+'/')&&r.headers.Authorization==='Bearer test-only-key'&&!r.authorization));
+  f.requests.length=0;
+  assert.equal((await f.services.get('settings')({type:'test',config:draft,key:''})).ok,true);
+  assert.ok(f.requests.every(r=>!r.headers.Authorization&&!r.authorization));
+  f.requests.length=0;
+  assert.equal((await f.services.get('settings')({type:'test',config:draft,key:'bad\nkey'})).ok,false);
+  assert.equal(f.requests.length,0);
+});
 test('Hindsight never retries a failed mutation or exposes server error details',async()=>{
   const f=fixture(()=>{throw Error('server-secret-value');});await activate(f.ctx);
   const result=await f.invoke({operation:'retain',text:'remember'});

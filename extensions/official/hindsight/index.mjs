@@ -18,7 +18,7 @@ async function updateReceipt(storage,key,change) {
 const publicError=error=>{
   const value=error?.message;
   return typeof value==='string'&&(/^(服务返回 HTTP \d{3})$/u.test(value)||[
-    '请配置 Hindsight 服务','服务地址无效','记忆库前缀无效','Agent 身份无效',
+    '请配置 Hindsight 服务','服务地址无效','记忆库前缀无效','Agent 身份无效','API Key 无效',
     '连接中断，操作结果未知','服务拒绝认证','服务返回内容无效','服务 API 不兼容','服务尚未就绪',
     '配置已变化，请重新载入','记忆库身份不匹配','记忆内容无效','记忆记录不存在','记忆任务正在执行'
   ].includes(value))?value:'记忆服务操作失败';
@@ -40,7 +40,9 @@ export default definePlugin(async ctx=>{
         if(!await ctx.configuration.compareAndSet('connection',previous,value))throw Error('配置已变化，请重新载入');
         return {ok:true,config:value,secret:await ctx.secrets.status('api')};
       }
-      if(input?.type==='test')return await probe(ctx,await ctx.configuration.get('connection'));
+      // Test exactly the visible draft. An explicitly typed key is transient;
+      // an untouched field uses the host's existing origin-bound credential.
+      if(input?.type==='test')return await probe(ctx,input.config,input.key);
       return {ok:false,error:'不支持的设置操作'};
     }catch(error){return {ok:false,error:publicError(error)};}
   });
