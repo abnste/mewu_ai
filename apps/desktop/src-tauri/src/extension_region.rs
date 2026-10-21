@@ -235,17 +235,16 @@ impl Viewport {
                 "操作区域不能超过 4 Mi 像素",
             ));
         }
-        // The initial Windows implementation must not silently treat Quartz
-        // points or a derived raster as physical pixels.
-        if coordinates.space != CaptureCoordinateSpace::PhysicalPixels {
-            return Err(RegionError::new(
-                "region_platform_unsupported",
-                "当前平台尚不支持区域自动操作",
-            ));
-        }
-        let (x, y) = coordinates
+        let (native_x, native_y) = coordinates
             .point(width, height, left, top)
             .ok_or_else(invalid)?;
+        // Physical-pixel platforms retain their existing desktop viewport.
+        // Quartz uses a local raster viewport and the attested transform below;
+        // never truncate Retina points or multiply a global origin by scale.
+        let (x,y) = match coordinates.space {
+            CaptureCoordinateSpace::PhysicalPixels => (native_x,native_y),
+            CaptureCoordinateSpace::QuartzPoints => (f64::from(left),f64::from(top)),
+        };
         if x < f64::from(i32::MIN)
             || y < f64::from(i32::MIN)
             || x + f64::from(region_width) > f64::from(i32::MAX)
@@ -289,6 +288,21 @@ impl Viewport {
             && y >= self.y
             && i64::from(right) <= i64::from(self.x) + i64::from(self.width)
             && i64::from(bottom) <= i64::from(self.y) + i64::from(self.height)
+    }
+
+    fn native_point(self, binding: &RegionBinding, point: RegionPoint) -> Result<(f64,f64)> {
+        self.point(point)?;
+        binding.coordinates.point(binding.source_width,binding.source_height,
+            binding.selection.x.ceil() as u32 + point.x,
+            binding.selection.y.ceil() as u32 + point.y)
+            .ok_or_else(|| RegionError::new("region_coordinates_unavailable","操作区域坐标无效"))
+    }
+
+    fn native_rect(self,binding:&RegionBinding)->Result<[f64;4]> {
+        let (x,y)=self.native_point(binding,RegionPoint{x:0,y:0})?;
+        let right=x+f64::from(self.width)*binding.coordinates.width/f64::from(binding.source_width);
+        let bottom=y+f64::from(self.height)*binding.coordinates.height/f64::from(binding.source_height);
+        Ok([x,y,right,bottom])
     }
 }
 
@@ -348,7 +362,7 @@ pub(crate) struct RegionSession {
 
 impl RegionSession {
     pub(crate) fn supported() -> bool {
-        cfg!(windows)
+        cfg!(any(windows,target_os="macos"))
     }
 
     pub(crate) fn begin(
@@ -392,7 +406,7 @@ impl RegionSession {
         let _dpi = platform::dpi_scope()?;
         let topology = topology()?;
         validate_monitor(&binding, viewport, &topology)?;
-        let target = platform::bind(viewport)?;
+        let target = platform::bind(viewport, &binding)?;
         platform::neutral_input()?;
         let info = RegionSessionInfo {
             id: uuid::Uuid::new_v4().to_string(),
@@ -427,6 +441,21 @@ impl RegionSession {
         });
         slot.0 = false;
         session.check()?;
+        #[cfg(target_os="macos")]
+        {
+            let weak=Arc::downgrade(&session);
+            if std::thread::Builder::new().name("mewu-region-stop".into()).spawn(move||{
+                loop {
+                    let Some(session)=weak.upgrade() else {break};
+                    if session.revoked.load(Ordering::SeqCst){break}
+                    if platform::stop_requested()||session.created.elapsed()>MAX_SESSION {
+                        session.revoke();break;
+                    }
+                    drop(session);
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }).is_err(){session.revoke();return Err(RegionError::new("region_stop_unavailable","无法启用区域停止控制"))}
+        }
         Ok(session)
     }
 
@@ -486,16 +515,7 @@ impl RegionSession {
         self.ensure_live()?;
         let _dpi = platform::dpi_scope()?;
         self.check()?;
-        let mut source = crate::scroll_capture::FrameSource::new(
-            self.viewport.x,
-            self.viewport.y,
-            self.viewport.width,
-            self.viewport.height,
-        )
-        .map_err(|e| RegionError::new("region_capture_failed", e))?;
-        let pixels = source
-            .capture()
-            .map_err(|e| RegionError::new("region_capture_failed", e))?;
+        let pixels = platform::capture(self)?;
         self.check()?;
         let mut png = Vec::new();
         PngEncoder::new(&mut png)
@@ -639,17 +659,16 @@ fn validate_monitor(
 ) -> Result<()> {
     let c = binding.coordinates;
     if !monitors.iter().any(|m| {
-        m.coordinate_space == crate::capture::CoordinateSpace::PhysicalPixels
+        matches!((m.coordinate_space,c.space),
+            (crate::capture::CoordinateSpace::PhysicalPixels,CaptureCoordinateSpace::PhysicalPixels)
+            |(crate::capture::CoordinateSpace::LogicalPoints,CaptureCoordinateSpace::QuartzPoints))
             && c.origin_x == f64::from(m.origin_x)
             && c.origin_y == f64::from(m.origin_y)
             && c.width == f64::from(m.display_width)
             && c.height == f64::from(m.display_height)
-            && viewport.x >= m.origin_x
-            && viewport.y >= m.origin_y
-            && i64::from(viewport.x) + i64::from(viewport.width)
-                <= i64::from(m.origin_x) + i64::from(m.display_width)
-            && i64::from(viewport.y) + i64::from(viewport.height)
-                <= i64::from(m.origin_y) + i64::from(m.display_height)
+            && viewport.native_rect(binding).is_ok_and(|[x,y,right,bottom]| {
+                x >= c.origin_x && y >= c.origin_y && right <= c.origin_x+c.width && bottom <= c.origin_y+c.height
+            })
     }) {
         return Err(RegionError::new(
             "region_display_changed",
@@ -659,7 +678,7 @@ fn validate_monitor(
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows,target_os="macos")))]
 mod platform {
     use super::*;
     pub(super) struct Target;
@@ -669,7 +688,7 @@ mod platform {
             "当前平台尚不支持区域自动操作",
         ))
     }
-    pub(super) fn bind(_: Viewport) -> Result<Target> {
+    pub(super) fn bind(_: Viewport, _: &RegionBinding) -> Result<Target> {
         Err(RegionError::new(
             "region_platform_unsupported",
             "当前平台尚不支持区域自动操作",
@@ -677,6 +696,9 @@ mod platform {
     }
     pub(super) fn description(_: &Target) -> String {
         String::new()
+    }
+    pub(super) fn capture(_: &RegionSession) -> Result<image::RgbaImage> {
+        Err(RegionError::new("region_platform_unsupported","当前平台尚不支持区域自动操作"))
     }
     pub(super) fn validate(_: &Target, _: Viewport) -> Result<()> {
         dpi_scope()
@@ -699,6 +721,10 @@ mod platform {
 
 #[cfg(windows)]
 #[path = "extension_region_windows.rs"]
+mod platform;
+
+#[cfg(target_os="macos")]
+#[path="extension_region_macos.rs"]
 mod platform;
 
 #[cfg(test)]
@@ -800,6 +826,20 @@ mod tests {
         s.selection.x = 1919.;
         s.selection.width = 2.;
         assert!(Viewport::from_source(&s).is_err());
+    }
+
+    #[test]
+    fn retina_region_maps_pixels_to_points_without_scaling_global_origin() {
+        let mut source=source();
+        source.background.capture_coordinates=Some(CaptureCoordinates {
+            space:CaptureCoordinateSpace::QuartzPoints,origin_x:-960.,origin_y:-60.,width:960.,height:540.
+        });
+        let (v,b)=Viewport::from_source(&source).unwrap();
+        assert_eq!((v.width,v.height),(199,99));
+        assert_eq!(v.native_point(&b,RegionPoint{x:0,y:0}).unwrap(),(-909.5,-49.5));
+        assert_eq!(v.native_point(&b,RegionPoint{x:198,y:98}).unwrap(),(-810.5,-0.5));
+        assert_eq!(v.native_rect(&b).unwrap(),[-909.5,-49.5,-810.,0.]);
+        assert!(v.native_point(&b,RegionPoint{x:199,y:0}).is_err());
     }
 
     #[test]

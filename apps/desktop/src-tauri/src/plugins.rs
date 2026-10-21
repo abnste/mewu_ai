@@ -34,6 +34,8 @@ const OFFICIAL_OCR: &[u8] = include_bytes!("../../plugins/linux/official-ocr.jso
 const OFFICIAL_SCROLL: &[u8] = include_bytes!("../../plugins/official-scroll.json");
 const OFFICIAL_TRANSLATION: &[u8] = include_bytes!("../../plugins/official-translation.json");
 const OFFICIAL_PIN: &[u8] = include_bytes!("../../plugins/official-pin.json");
+// Historical format fixture only; this provider no longer ships or executes.
+#[cfg(test)]
 const OFFICIAL_MEMORY: &[u8] = include_bytes!("../../plugins/official-memory-hindsight.json");
 const OFFICIAL_VOICE: &[u8] = include_bytes!("../../plugins/official-voice.json");
 const OFFICIAL_CODES: &[u8] = include_bytes!("../../plugins/official-codes.json");
@@ -49,7 +51,7 @@ const OFFICIAL_ANNOTATIONS: &[u8] =
     include_bytes!("../../plugins/migrations/official-annotations-1.0.0.json");
 const RECORDING_MIGRATION_KEY: &str = "migration.recording-bundle.v1";
 const LEGACY_RECORDING_IDS: [&str; 3] = ["mewu.video-trim", "mewu.recording-audio", "mewu.gif"];
-const BUNDLED: [&[u8]; 29] = [
+const BUNDLED: [&[u8]; 28] = [
     include_bytes!("../../plugins/official-cli.json"),
     include_bytes!("../../plugins/official-agent.json"),
     include_bytes!("../../plugins/official-blackboard.json"),
@@ -58,7 +60,6 @@ const BUNDLED: [&[u8]; 29] = [
     OFFICIAL_SCROLL,
     OFFICIAL_TRANSLATION,
     OFFICIAL_PIN,
-    OFFICIAL_MEMORY,
     OFFICIAL_VOICE,
     OFFICIAL_CODES,
     include_bytes!("../../plugins/official-provider-minimax.json"),
@@ -1047,7 +1048,7 @@ impl PluginStore {
         Self::open_with_blackboard(app_data, false)
     }
 
-    pub fn open_with_blackboard(app_data: &Path, existing_blackboard: bool) -> Result<Self, String> {
+    pub fn open_with_blackboard(app_data: &Path, _existing_blackboard: bool) -> Result<Self, String> {
         if !app_data.is_absolute() {
             return Err("应用数据目录必须为绝对路径".into());
         }
@@ -1098,8 +1099,7 @@ impl PluginStore {
         for seed in BUNDLED {
             let manifest = parse_manifest(seed)?;
             if store.read(&manifest.id)?.is_none() {
-                let state = if (manifest.id == "mewu.blackboard" && !existing_blackboard)
-                    || manifest_platform_error(&manifest, mewu_extension::current_plugin_platform()).is_some() {
+                let state = if manifest_platform_error(&manifest, mewu_extension::current_plugin_platform()).is_some() {
                     PluginState::Disabled
                 } else { PluginState::Enabled };
                 store.install_package_with_state(manifest, PluginSource::Official, None, true, state)?;
@@ -1239,7 +1239,7 @@ impl PluginStore {
         self.ready()?;
         Ok(PluginSnapshot {
             revision: self.global_revision()?,
-            plugins: self.list()?.into_iter().filter(|record| record.source == PluginSource::Official).collect(),
+            plugins: self.list()?.into_iter().filter(|record| record.source == PluginSource::Official && !record.manifest.contributions.iter().any(|item| matches!(item, PluginContribution::MemoryProvider { .. }))).collect(),
         })
     }
     pub(crate) fn require_agent(&self) -> Result<crate::optional_authorizations::Grant, String> {
@@ -1955,30 +1955,9 @@ pub fn install_bytes(
             .ok_or_else(|| "未找到此二维码或条码识别功能".into())
     }
 
-    pub fn memory_provider(
-        &self,
-        id: &str,
-        revision: u64,
-        contribution_id: &str,
-    ) -> Result<MemoryAdapter, String> {
-        self.ready()?;
-        let record = self.required(id, revision)?;
-        if record.state != PluginState::Enabled {
-            return Err("此记忆插件未启用".into());
-        }
-        self.check_capability_package(&record.package)?;
-        record
-            .package
-            .manifest
-            .contributions
-            .into_iter()
-            .find_map(|item| match item {
-                PluginContribution::MemoryProvider { id, adapter, .. } if id == contribution_id => {
-                    Some(adapter)
-                }
-                _ => None,
-            })
-            .ok_or_else(|| "未找到此记忆服务".into())
+    // Deserialized historical declarations carry no execution authority.
+    pub fn memory_provider(&self, _: &str, _: u64, _: &str) -> Result<MemoryAdapter, String> {
+        Err("旧记忆声明已停用，请安装独立记忆插件".into())
     }
 
     fn global_revision(&self) -> Result<u64, String> {
@@ -2517,7 +2496,7 @@ mod tests {
         let agent = records.iter().find(|record| record.manifest.id == "mewu.agent").unwrap();
         let board = records.iter().find(|record| record.manifest.id == "mewu.blackboard").unwrap();
         assert_eq!(agent.state, PluginState::Enabled);
-        assert_eq!(board.state, PluginState::Disabled);
+        assert_eq!(board.state, PluginState::Enabled);
         assert_eq!(board.revision, 1);
         store.set_enabled("mewu.agent", agent.revision, false).unwrap();
         store.uninstall("mewu.blackboard", board.revision).unwrap();
@@ -2529,6 +2508,25 @@ mod tests {
         let legacy = Directory::new();
         let store = PluginStore::open_with_blackboard(&legacy.0, true).unwrap();
         assert_eq!(store.list().unwrap().iter().find(|record| record.manifest.id == "mewu.blackboard").unwrap().state, PluginState::Enabled);
+    }
+    #[test]
+    fn blackboard_default_never_overwrites_existing_disabled_records() {
+        let fresh = Directory::new();
+        let mut store = PluginStore::open(&fresh.0).unwrap();
+        store.set_enabled("mewu.blackboard", 1, false).unwrap();
+        drop(store);
+        let store = PluginStore::open(&fresh.0).unwrap();
+        let record = store.read("mewu.blackboard").unwrap().unwrap();
+        assert_eq!(record.state, PluginState::Disabled);
+        assert_eq!(record.revision, 2);
+        // Historical revision-1 defaults cannot be distinguished from a
+        // same-state explicit disable. Preserve those choices too.
+        let mut old = record.clone();
+        old.revision = 1;
+        store.connection.execute("UPDATE registry SET payload=?1 WHERE id=?2", rusqlite::params![serde_json::to_string(&old).unwrap(), "mewu.blackboard"]).unwrap();
+        drop(store);
+        let store = PluginStore::open(&fresh.0).unwrap();
+        assert_eq!(store.read("mewu.blackboard").unwrap().unwrap().state, PluginState::Disabled);
     }
     impl Directory {
         fn new() -> Self {
@@ -4726,91 +4724,22 @@ mod tests {
     }
 
     #[test]
-    fn memory_provider_declaration_cannot_inject_code_routes_or_credentials() {
+    fn retired_memory_declarations_preserve_archive_but_never_seed_or_execute() {
         let dir = Directory::new();
         let mut store = PluginStore::open(&dir.0).unwrap();
-        assert_eq!(
-            store
-                .memory_provider("mewu.memory-hindsight", 1, "hindsight")
-                .unwrap(),
-            MemoryAdapter::Hindsight
-        );
-        assert!(store
-            .memory_provider("mewu.memory-hindsight", 0, "hindsight")
-            .is_err());
-        assert!(store.memory_provider("mewu.pin", 1, "pin").is_err());
-        assert!(store
-            .workflow("mewu.memory-hindsight", 1, "hindsight")
-            .is_err());
-        for field in [
-            "url", "endpoint", "key", "bankId", "command", "prompt", "script", "tools",
-        ] {
-            let mut value: serde_json::Value = serde_json::from_slice(OFFICIAL_MEMORY).unwrap();
-            value["contributions"][0][field] = serde_json::json!("forbidden");
-            assert!(
-                parse_manifest(&serde_json::to_vec(&value).unwrap()).is_err(),
-                "{field}"
-            );
-        }
-        let mut unsupported: serde_json::Value = serde_json::from_slice(OFFICIAL_MEMORY).unwrap();
-        unsupported["contributions"][0]["adapter"] = serde_json::json!("arbitrary-code");
-        assert!(parse_manifest(&serde_json::to_vec(&unsupported).unwrap()).is_err());
-        store
-            .set_enabled("mewu.memory-hindsight", 1, false)
-            .unwrap();
-        assert!(store
-            .memory_provider("mewu.memory-hindsight", 2, "hindsight")
-            .is_err());
-        store.set_enabled("mewu.memory-hindsight", 2, true).unwrap();
-        let package = path(&dir.0, "mewu.memory-hindsight", "1.0.0");
-        let bytes = fs::read(&package).unwrap();
-        fs::write(&package, b"{}").unwrap();
-        assert!(store
-            .memory_provider("mewu.memory-hindsight", 3, "hindsight")
-            .is_err());
-        fs::write(&package, bytes).unwrap();
-        store.uninstall("mewu.memory-hindsight", 3).unwrap();
-        let removed = store.snapshot().unwrap();
-        drop(store);
-        let mut store = PluginStore::open(&dir.0).unwrap();
-        assert_eq!(store.snapshot().unwrap(), removed);
-        assert!(store
-            .memory_provider("mewu.memory-hindsight", 4, "hindsight")
-            .is_err());
-        store
-            .install_official("mewu.memory-hindsight", Some(4))
-            .unwrap();
-        assert!(store
-            .memory_provider("mewu.memory-hindsight", 5, "hindsight")
-            .is_ok());
-    }
-
-    #[test]
-    fn memory_seed_only_adds_missing_package_without_restoring_disabled_or_removed_plugins() {
-        let dir = Directory::new();
-        let mut store = PluginStore::open(&dir.0).unwrap();
-        store.set_enabled("mewu.ocr", 1, false).unwrap();
-        store.uninstall("mewu.table", 1).unwrap();
-        store
-            .connection
-            .execute("DELETE FROM registry WHERE id='mewu.memory-hindsight'", [])
-            .unwrap();
-        fs::remove_file(path(&dir.0, "mewu.memory-hindsight", "1.0.0")).unwrap();
-        let before = store.snapshot().unwrap();
+        assert!(store.read("mewu.memory-hindsight").unwrap().is_none());
+        let manifest = parse_manifest(OFFICIAL_MEMORY).unwrap();
+        store.install_package(manifest, PluginSource::Official, None, true).unwrap();
+        let archive = store.read("mewu.memory-hindsight").unwrap().unwrap();
+        let bytes = fs::read(path(&dir.0, "mewu.memory-hindsight", "1.0.0")).unwrap();
+        assert!(store.memory_provider("mewu.memory-hindsight", archive.revision, "hindsight").is_err());
+        assert!(!store.snapshot().unwrap().plugins.iter().any(|p| p.manifest.id == "mewu.memory-hindsight"));
+        assert!(store.install_official("mewu.memory-hindsight", Some(archive.revision)).is_err());
         drop(store);
         let store = PluginStore::open(&dir.0).unwrap();
-        let mut after = store.snapshot().unwrap();
-        assert_eq!(after.revision, before.revision + 1);
-        assert_eq!(
-            store
-                .memory_provider("mewu.memory-hindsight", 1, "hindsight")
-                .unwrap(),
-            MemoryAdapter::Hindsight
-        );
-        after
-            .plugins
-            .retain(|plugin| plugin.manifest.id != "mewu.memory-hindsight");
-        assert_eq!(after.plugins, before.plugins);
+        assert_eq!(store.read("mewu.memory-hindsight").unwrap().unwrap(),archive);
+        assert_eq!(fs::read(path(&dir.0, "mewu.memory-hindsight", "1.0.0")).unwrap(),bytes);
+        assert!(store.memory_provider("mewu.memory-hindsight", archive.revision, "hindsight").is_err());
     }
 
     #[test]

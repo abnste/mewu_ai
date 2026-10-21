@@ -4,7 +4,6 @@ import { Check, ChevronDown, ChevronRight, LoaderCircle, Trash2 } from 'lucide-s
 import type { AgentProfile, ConnectionProfile, MemoryStats, Scene } from '../contracts';
 import { t } from '../i18n';
 import MemoryList, { type DeleteMemory, type SaveMemory } from './MemoryList';
-import MemoryProviderSettings from './MemoryProviderSettings';
 import ExtensionProviders from './ExtensionProviders';
 import { Row, SettingsAddButton, Toggle } from './SettingControls';
 import { nativeSelectOwnsEscape } from '../native-select-escape';
@@ -113,7 +112,6 @@ export default function AgentsPanel(props: Props) {
         <Show when={errors()[id]}><p class="settings-error" role="alert">{errors()[id]}</p></Show>
         <div class="settings-actions"><Show when={saved() === id}><span class="saved-label"><Check size={13} />{t('已保存')}</span></Show><button class="primary-button" disabled={Boolean(pending())} onClick={() => void save(id)}><Show when={pending() === id}><LoaderCircle size={14} class="spin" /></Show>{t('保存')}</button></div>
         <Show when={externalMemory()[id] === false}>
-          <MemoryProviderSettings agentId={id} agent={profile(id)} active={props.active && expanded() === id} scenes={props.scenes} />
           <MemoryList agentId={id} stats={props.memoryStats.find(stats => stats.agentId === id)} scenes={props.scenes} savedAgent={Boolean(profile(id))} active={props.active && expanded() === id} onSave={props.onSaveMemory} onDelete={props.onDeleteMemory} />
         </Show>
       </div></Show>

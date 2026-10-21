@@ -280,7 +280,7 @@ pub fn read_memory(
     }
 }
 
-fn read_scoped(
+pub(crate) fn read_scoped(
     root: &Path,
     namespace: &str,
     owner_id: &str,
@@ -306,11 +306,7 @@ fn read_scoped(
     };
     #[cfg(target_os = "macos")]
     let key = {
-        let prefix = if namespace == "connections" {
-            "connection"
-        } else {
-            "memory"
-        };
+        let prefix = keychain_namespace(namespace)?;
         let account = format!("{prefix}/{owner_id}/{credential_id}");
         let bytes =
             security_framework::passwords::get_generic_password("dev.mewu.remake", &account)
@@ -340,7 +336,7 @@ pub fn create_memory(root: &Path, binding_id: &str, key: &str) -> Result<String,
     create_scoped(root, "memory", binding_id, key)
 }
 
-fn create_scoped(
+pub(crate) fn create_scoped(
     root: &Path,
     namespace: &str,
     connection_id: &str,
@@ -370,11 +366,7 @@ fn create_scoped(
     }
     #[cfg(target_os = "macos")]
     {
-        let prefix = if namespace == "connections" {
-            "connection"
-        } else {
-            "memory"
-        };
+        let prefix = keychain_namespace(namespace)?;
         security_framework::passwords::set_generic_password(
             "dev.mewu.remake",
             &format!("{prefix}/{connection_id}/{credential_id}"),
@@ -402,7 +394,7 @@ pub fn discard_uncommitted_memory(root: &Path, binding_id: &str, credential_id: 
     discard_scoped(root, "memory", binding_id, credential_id);
 }
 
-fn discard_scoped(root: &Path, namespace: &str, connection_id: &str, credential_id: &str) {
+pub(crate) fn discard_scoped(root: &Path, namespace: &str, connection_id: &str, credential_id: &str) {
     if validate_id(connection_id).is_err()
         || validate_id(credential_id).is_err()
         || credential_id == mewu_core::LEGACY_CREDENTIAL_ID
@@ -421,15 +413,21 @@ fn discard_scoped(root: &Path, namespace: &str, connection_id: &str, credential_
     }
     #[cfg(target_os = "macos")]
     {
-        let prefix = if namespace == "connections" {
-            "connection"
-        } else {
-            "memory"
-        };
+        let Ok(prefix) = keychain_namespace(namespace) else { return };
         let _ = security_framework::passwords::delete_generic_password(
             "dev.mewu.remake",
             &format!("{prefix}/{connection_id}/{credential_id}"),
         );
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn keychain_namespace(namespace: &str) -> Result<&'static str, String> {
+    match namespace {
+        "connections" => Ok("connection"),
+        "memory" => Ok("memory"),
+        "extensions" => Ok("extension"),
+        _ => Err("连接凭据命名空间无效".into()),
     }
 }
 

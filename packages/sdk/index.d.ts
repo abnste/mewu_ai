@@ -99,6 +99,12 @@ export interface ExtensionContext {
     get(key: string): Promise<JsonValue>;
     compareAndSet(key: string, expected: JsonValue, value: JsonValue): Promise<boolean>;
   };
+  /** OS-backed plugin credentials. Stored values are never returned to JS.
+   * network.fetch authorization:{key,prefix?} attaches them only to that origin. */
+  readonly secrets: {
+    status(key: string): Promise<{revision:number;configured:boolean;origin:string|null}>;
+    set(key:string,value:string,origin:string,expectedRevision:number): Promise<{revision:number;configured:boolean;origin:string}>;
+  };
   readonly commands: ServiceRegistry;
   readonly tools: ServiceRegistry;
   readonly agents: ServiceRegistry;

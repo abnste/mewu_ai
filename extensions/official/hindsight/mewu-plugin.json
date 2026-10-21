@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "hostApi": 2,
+  "runtime": "javascript",
+  "id": "abnste.hindsight",
+  "version": "0.1.0",
+  "name": "Hindsight",
+  "description": "独立的 Hindsight 长期记忆接入。连接设置与记忆协议随插件安装、停用和卸载。",
+  "publisher": "Mewu",
+  "license": "MPL-2.0",
+  "entry": "index.mjs",
+  "permissions": ["ui.render", "configuration.read", "configuration.write", "secrets.use", "secrets.write", "network.fetch", "storage.read", "storage.write"],
+  "tags": ["memory"],
+  "icon": {"paths": ["M12 3a4 4 0 0 0-7 3 4 4 0 0 0-2 7 4 4 0 0 0 5 6 4 4 0 0 0 4 2V3zM12 3a4 4 0 0 1 7 3 4 4 0 0 1 2 7 4 4 0 0 1-5 6 4 4 0 0 1-4 2M7 9l5 3 5-3M8 16l4-4 4 4"]},
+  "dependencies": {}
+}

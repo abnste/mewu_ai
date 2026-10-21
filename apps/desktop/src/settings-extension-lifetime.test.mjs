@@ -48,7 +48,7 @@ async function fixture({ initialExtensions = [], initialBindings = [], delayedBi
   const pluginBridge = synthetic({
     getOptionalCapabilities: () => { const request = deferred(); reads.push(request); return request.promise; },
     getPlugins: async () => pluginValues,
-    subscribePlugins: async callback => { pluginListeners.add(callback); return () => pluginListeners.delete(callback); },
+    subscribePlugins: async (callback, surface) => { assert.equal(surface, 'settings', 'settings listens to its own native window event target'); pluginListeners.add(callback); return () => pluginListeners.delete(callback); },
   });
   const hook = new SourceTextModule(ts(await raw('./optional-feature-state.ts')), { context });
   await hook.link(name => name === 'solid-js' ? core : name === './plugin-bridge' ? pluginBridge : name === './extension-bridge' ? nativeModule : policy); await hook.evaluate();
@@ -145,9 +145,36 @@ test('real Settings mount retains expanded Agent and unsaved soul through pendin
     f.reads.at(-1).resolve(capability()); await tick(); assert.equal(f.panel(), panel); assert.equal(f.editor(), editor); assert.equal(soul.props.value, 'Unsaved soul draft');
     f.changed(); await tick(); assert.equal(f.panel(), panel);
     f.reads.at(-1).resolve(capability({ agent: null })); await tick(); assert.equal(f.panel(), undefined);
-    assert.ok(f.find(node => node.type === 'button' && f.text(node) === '连接' && node.props['aria-pressed'] === true));
+    assert.equal(f.find(node => node.type === 'button' && f.text(node) === 'Agent 与连接'), undefined);
+    assert.equal(f.find(node => node.type === 'ConnectionsPanel'), undefined);
+    assert.equal(f.find(node => node.type === 'ToolsPanel'), undefined);
   } finally { f.dispose(); }
   assert.deepEqual(f.listeners, { extensions: 0, bindings: 0, plugins: 0, dom: 0 });
+});
+
+test('native Agent revocation removes its full settings tree before a pending metadata read settles', async () => {
+  const f = await fixture();
+  try {
+    f.reads[0].resolve(capability()); await tick(); f.clickTab(); f.openAgent();
+    assert.ok(f.editor());
+    f.changed(); await tick();
+    const stale = f.reads.at(-1);
+    f.plugins({ revision: 2, plugins: plugins.plugins.map(plugin => ({ ...plugin, state: 'disabled', revision: 2 })) });
+    await tick();
+    assert.equal(f.panel(), undefined);
+    assert.equal(f.find(node => node.type === 'ConnectionsPanel'), undefined);
+    assert.equal(f.find(node => node.type === 'button' && f.text(node) === 'Agent 与连接'), undefined);
+    assert.ok(f.find(node => node.type === 'button' && f.text(node) === '插件' && node.props.classList?.selected));
+    stale.resolve(capability()); await tick();
+    assert.equal(f.panel(), undefined, 'a stale response cannot restore a disabled plugin');
+    f.reads.at(-1).reject(Error('offline')); await tick();
+    assert.equal(f.find(node => node.type === 'ConnectionsPanel'), undefined);
+    f.plugins({ revision: 3, plugins: plugins.plugins.map(plugin => ({ ...plugin, revision: 3 })) });
+    await tick();
+    assert.equal(f.panel(), undefined, 're-enabling waits for valid new capability metadata');
+    f.reads.at(-1).resolve(capability({ pluginRevision: 3, agent: { ...grant, revision: 3 } })); await tick();
+    assert.ok(f.find(node => node.type === 'button' && f.text(node) === 'Agent 与连接'));
+  } finally { f.dispose(); }
 });
 
 test('an enabled unbound external Agent exposes configuration without a host key while execution stays fail-closed', async () => {
@@ -163,7 +190,7 @@ test('an enabled unbound external Agent exposes configuration without a host key
   } finally { f.dispose(); }
 });
 
-test('external memory hides legacy local/Hindsight sources without flashing during reads, and clearing restores them', async () => {
+test('external memory hides local sources during reads, and clearing restores only local memory', async () => {
   const f = await fixture({ initialExtensions: [extension()], initialBindings: [memoryBinding()], delayedBindings: true });
   try {
     f.reads[0].resolve(capability()); await tick(); f.clickTab(); f.openAgent(); await tick();
@@ -171,7 +198,7 @@ test('external memory hides legacy local/Hindsight sources without flashing duri
     f.resolveBindings([memoryBinding()]); await tick(); assert.equal(f.legacy().length, 0);
     const memory = f.find(node => node.type === 'select' && node.props['aria-label'] === '记忆提供方'); assert.ok(memory);
     const editor = f.editor(); f.bindings([memoryBinding({ pluginId: null, serviceId: null, revision: 2 })]); await tick();
-    assert.equal(f.legacy().length, 2); assert.equal(f.editor(), editor);
+    assert.equal(f.legacy().length, 1); assert.equal(f.editor(), editor);
     f.bindings([memoryBinding({ revision: 3 })]); await tick(); assert.equal(f.legacy().length, 0); assert.equal(f.editor(), editor);
     assert.ok(f.find(node => node.type === 'button' && node.props['aria-label'] === '长期记忆'), 'global memory switch remains available');
   } finally { f.dispose(); }
@@ -226,26 +253,21 @@ test('Agent deletion uses the common row action, can discard drafts, and preserv
 });
 
 
-test('disabled native memory provider removes its branded controls while preserving the selected remote binding', async () => {
-  const binding = { id: 'bank', pluginId: 'mewu.memory-hindsight', contributionId: 'hindsight', pluginRevision: 1, endpoint: 'https://memory.example', configured: true, status: 'ready', enabled: true, revision: 1, ledgerRevision: 0, policy: { completedTurnSync: false, explicitRetain: true }, evidenceCount: 0, pendingCount: 0, deletionPendingCount: 0 };
-  const f = await fixture({ realMemory: true, memoryState: { selection: { revision: 2, bindingId: 'bank' }, bindings: [binding], nextCursor: null } });
+test('Hindsight settings come only from the live independent extension and vanish on disable/uninstall', async () => {
+  const record=extension({manifest:{id:'abnste.hindsight',name:'Hindsight',permissions:['ui.render']},services:[{id:'settings',kind:'ui',title:'Hindsight',metadata:{surface:'settings'}}]});
+  const f=await fixture({initialExtensions:[]});
   try {
-    f.reads[0].resolve(capability()); await tick(); f.clickTab(); f.openAgent(); await tick(); await tick();
-    const text = () => f.text(f.root);
-    assert.ok(!text().includes('Hindsight')); assert.ok(text().includes('所选记忆插件已停用'));
-    assert.equal(f.memoryCalls.length, 0, 'disable never silently switches or erases the remote binding');
-    const record = { manifest: { id: 'mewu.memory-hindsight', contributions: [{ id: 'hindsight', kind: 'memory.provider', adapter: 'hindsight' }] }, revision: 1, state: 'enabled' };
-    f.plugins({ revision: 2, plugins: [...plugins.plugins, record] }); await tick(); await tick();
-    assert.ok(text().includes('连接 Hindsight'));
-    f.find(node => node.type === 'button' && f.text(node).includes('连接 Hindsight')).props.onClick(); await tick();
-    assert.ok(f.find(node => node.type === 'input' && node.props['aria-label'] === '记忆服务地址'));
-    f.plugins({ revision: 3, plugins: [...plugins.plugins, { ...record, state: 'disabled', revision: 2 }] }); await tick(); await tick();
-    assert.ok(!text().includes('Hindsight'));
-    assert.equal(f.find(node => node.type === 'input' && node.props['aria-label'] === '记忆服务地址'), undefined);
-    assert.ok(text().includes('所选记忆插件已停用'));
-    assert.equal(f.memoryCalls.length, 0);
-    f.find(node => node.type === 'button' && f.text(node) === '使用本地记忆').props.onClick(); await tick(); await tick();
-    assert.deepEqual(JSON.parse(JSON.stringify(f.memoryCalls)), [['select', { agentId: 'agent', bindingId: null, expectedProviderRevision: 2, expectedBindingRevision: null }]]);
-    assert.ok(!text().includes('所选记忆插件已停用'));
-  } finally { f.dispose(); }
+    f.reads[0].resolve(capability());await tick();f.clickTab();f.openAgent();await tick();
+    const entry=()=>f.find(node=>node.type==='button'&&f.text(node)==='Hindsight');
+    assert.equal(entry(),undefined);
+    f.plugins({revision:2,plugins:[...plugins.plugins,{manifest:{id:'mewu.memory-hindsight',contributions:[{id:'hindsight',kind:'memory.provider',adapter:'hindsight'}]},revision:1,state:'enabled'}]});
+    await tick();assert.equal(entry(),undefined,'historical native declaration never restores connection controls');
+    f.changeExtensions([record]);await tick();assert.ok(entry());entry().props.onClick({});await tick();
+    assert.ok(f.find(node=>node.type==='ExtensionSettings'));
+    for(const [state,revision] of [['disabled',2],['removed',3]]) {
+      f.changeExtensions([{...record,state,revision}]);await tick();assert.equal(entry(),undefined);
+      assert.equal(f.find(node=>node.type==='ExtensionSettings'),undefined);
+    }
+    assert.equal(f.memoryCalls.length,0,'archive records remain untouched');
+  }finally{f.dispose();}
 });

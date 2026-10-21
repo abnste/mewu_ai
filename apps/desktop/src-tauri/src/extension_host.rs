@@ -27,6 +27,9 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
+#[path = "extension_secrets.rs"]
+mod secrets;
+
 pub struct ExtensionHost {
     pub(crate) surfaces: crate::extension_surfaces::Surfaces,
     store: Mutex<Store>,
@@ -1958,7 +1961,7 @@ fn tool_initialization_read(method: &str) -> bool {
     matches!(method, "runtime.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
 }
 pub(crate) fn runtime_capabilities()->Value {
-    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","process.jsonlines","process.frame-bindings"]})
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","process.jsonlines","process.frame-bindings"]})
 }
 
 fn bridge_impl(
@@ -1979,6 +1982,8 @@ fn bridge_impl(
         "storage.get" | "storage.list" => "storage.read",
         "configuration.get" => "configuration.read",
         "configuration.compareAndSet" => "configuration.write",
+        "secrets.status" => "secrets.use",
+        "secrets.set" => "secrets.write",
         "storage.set" | "storage.delete" | "storage.compareAndSet" => "storage.write",
         "model.invoke" => "model.invoke",
         "region.observe" => "region.observe",
@@ -1992,10 +1997,12 @@ fn bridge_impl(
         _ => return Err("宿主不支持此扩展接口".into()),
     };
     context.permission(permission)?;
-    if matches!(permission, "region.observe" | "region.input") && !cfg!(windows) {
-        return Err("区域操作仅支持 Windows".into());
+    if matches!(permission, "region.observe" | "region.input") && !region::RegionSession::supported() {
+        return Err("当前平台尚不支持区域操作".into());
     }
     let result = match method {
+        "secrets.status" => secrets::status(app,context,&params),
+        "secrets.set" => secrets::set(app,context,params),
         "configuration.get" => live_store(app,context,|store|store.value(&context.record.manifest.id,"plugin-configuration",string(&params,"key")?)),
         "configuration.compareAndSet" => {
             if !context.surface_owner.as_ref().is_some_and(|(_,owner)|owner.scene.is_empty()) {
@@ -2430,9 +2437,16 @@ fn network_fetch(app: &AppHandle, context: &Context, params: Value) -> Result<Va
             );
         }
     }
+    if let Some(authorization) = params.get("authorization") {
+        if headers.contains_key(reqwest::header::AUTHORIZATION) {
+            return Err("不能同时提供认证头和托管凭据".into());
+        }
+        headers.insert(reqwest::header::AUTHORIZATION, secrets::authorization(app,context,authorization,&url)?);
+    }
     tauri::async_runtime::block_on(async {
         context.check(app)?;
         let client = crate::network_policy::apply(reqwest::Client::builder(), Some(&url))?
+            .retry(reqwest::retry::never())
             .timeout(Duration::from_secs(60))
             .redirect(reqwest::redirect::Policy::none())
             .build()

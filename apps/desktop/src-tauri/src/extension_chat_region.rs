@@ -38,9 +38,7 @@ impl PreparedChatRegion {
         active: &str,
         requested: Option<&str>,
     ) -> Result<Option<Self>, String> {
-        // Native region input is currently implemented on Windows. Images
-        // still participate in ordinary Q&A on every other platform.
-        Ok(Self::capture_source(scene, active, requested)?.filter(|_| cfg!(windows)))
+        Ok(Self::capture_source(scene, active, requested)?.filter(|_| extension_region::RegionSession::supported()))
     }
     fn capture_source(
         scene: &Scene,
@@ -309,7 +307,7 @@ mod tests {
             PreparedChatRegion::capture(&scene, &scene.id, Some("roi"))
                 .unwrap()
                 .is_some(),
-            cfg!(windows)
+            extension_region::RegionSession::supported()
         );
         assert!(PreparedChatRegion::capture_source(&scene, &scene.id, Some("missing")).is_err());
         let mut missing = scene.clone();

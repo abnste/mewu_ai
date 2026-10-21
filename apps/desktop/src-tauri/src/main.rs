@@ -83,7 +83,6 @@ mod raster_edit_host;
 mod export_variant_dialog;
 mod formula_layout;
 mod frozen;
-mod hindsight;
 mod host_preferences;
 mod image_export;
 mod image_host;
@@ -102,7 +101,6 @@ mod memory_export;
 mod memory_host;
 mod memory_runtime;
 mod memory_tools;
-mod memory_worker;
 mod mosaic_preview;
 mod highlight_foreground;
 mod highlight_preview;
@@ -2128,7 +2126,9 @@ async fn send_message(
                 .map(|scope| Arc::new(scope.for_connection(&preflight.connection)))
         })
         .transpose()?;
-    let memory_grant = memory_host::grant_for_scene(&engine.store, &plugins.store, &scene_id)?;
+    // External memory is supplied only by live executable extensions. Historical
+    // declarative bindings remain readable for migration, never grant execution.
+    let memory_grant = None;
     if let Some(scope) = &video {
         mcp_host::preflight_video_catalog(
             &engine.store.snapshot(),
@@ -2513,7 +2513,6 @@ fn start_run_with_extensions(
                     .await
                     .map_err(|_| "准备消息失败")??;
                 if !extension_custom_memory {
-                    memory_tools::augment_initial(&app2, &scene_id, &run_id, &memory_query, &mut body).await?;
                 }
                 let extension_filtered_tools: Vec<_> = run_tools.definitions().into_iter().filter(|tool| {
                     !extension_custom_memory || tool.pointer("/function/name").and_then(serde_json::Value::as_str).is_none_or(|name| agent_tools::label(name).is_none())
@@ -3045,15 +3044,9 @@ fn main() {
                 journal_commands::preview_run_continuation,
                 journal_commands::continue_run_from_journal,
                 memory_host::get_memory_provider_state,
-                memory_host::probe_memory_provider,
-                memory_host::cancel_memory_request,
-                memory_host::create_memory_binding,
-                memory_host::select_memory_provider,
-                memory_host::set_memory_sync,
                 memory_host::retire_memory_binding,
                 memory_host::external_memory_page,
                 memory_host::external_memory_entry,
-                memory_host::queue_external_memory,
                 memory_host::forget_external_memory,
                 apply_scene_command,
                 add_capture_region,
@@ -3563,7 +3556,6 @@ fn main() {
                 let snapshot = app.state::<Host>().plugins.lock().map_err(|_| "插件状态不可用")?.store.snapshot()?;
                 app_control_host::reconcile(app.handle(), &snapshot);
             }
-            memory_worker::start(app.handle());
             let content_app = app.handle().clone();
             std::thread::Builder::new()
                 .name("mewu-content".into())

@@ -62,6 +62,10 @@ export function createContext(send) {
       get: key => host.call('configuration.get', { key }),
       compareAndSet: (key, expected, value) => host.call('configuration.compareAndSet', { key, expected, value })
     }),
+    secrets: Object.freeze({
+      status: key => host.call('secrets.status', { key }),
+      set: (key, value, origin, expectedRevision) => host.call('secrets.set', { key, value, origin, expectedRevision })
+    }),
     commands: Object.freeze({ register: register('command') }),
     tools: Object.freeze({ register: register('tool') }),
     agents: Object.freeze({ register: register('agent') }),

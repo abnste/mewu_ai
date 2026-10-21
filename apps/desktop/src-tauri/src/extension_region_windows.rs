@@ -316,7 +316,7 @@ fn input_unobstructed(target: &Target, viewport: Viewport) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn bind(viewport: Viewport) -> Result<Target> {
+pub(super) fn bind(viewport: Viewport, _: &RegionBinding) -> Result<Target> {
     let center = POINT {
         x: viewport.x + (viewport.width / 2) as i32,
         y: viewport.y + (viewport.height / 2) as i32,
@@ -333,6 +333,13 @@ pub(super) fn bind(viewport: Viewport) -> Result<Target> {
     }
     validate(&target, viewport)?;
     Ok(target)
+}
+
+pub(super) fn capture(session: &RegionSession) -> Result<image::RgbaImage> {
+    let v=session.viewport;
+    crate::scroll_capture::FrameSource::new(v.x,v.y,v.width,v.height)
+        .and_then(|mut source| source.capture())
+        .map_err(|e| RegionError::new("region_capture_failed",e))
 }
 
 pub(super) fn description(target: &Target) -> String {

@@ -46,7 +46,7 @@ type Attributes = HashMap<String, String>;
 type Secret = (OwnedObjectPath, Vec<u8>, Vec<u8>, String);
 
 fn attributes(namespace: &str, owner: &str, credential: &str) -> Result<Attributes> {
-    if !matches!(namespace, "connections" | "memory")
+    if !matches!(namespace, "connections" | "memory" | "extensions")
         || super::validate_id(owner).is_err()
         || super::validate_id(credential).is_err()
     {

@@ -7,7 +7,7 @@ import { subscribeExtensionBindings, subscribeExtensions } from './extension-bri
 import { currentOptionalCapabilities, optionalCapabilityKey, type OptionalAgentConfiguration, type OptionalCapabilities } from './optional-capabilities';
 
 /** Only configuration revisions trigger host metadata queries, never drawing updates or secret reads. */
-export function createOptionalFeatureState(connections: () => ConnectionProfile[], suppliedPlugins?: () => PluginSnapshot, configuration?: () => OptionalAgentConfiguration) {
+export function createOptionalFeatureState(connections: () => ConnectionProfile[], suppliedPlugins?: () => PluginSnapshot, configuration?: () => OptionalAgentConfiguration, surface: 'space' | 'settings' = 'space') {
   const [installed, setInstalled] = createSignal<PluginSnapshot>({ revision: -1, plugins: [] });
   const plugins = suppliedPlugins ?? installed;
   const [result, setResult] = createSignal<{ key: string; value: OptionalCapabilities }>();
@@ -31,14 +31,17 @@ export function createOptionalFeatureState(connections: () => ConnectionProfile[
       if (disposed) { stopBindings(); return; }
       setListening(true);
       if (suppliedPlugins) return;
-      stop = await subscribePlugins(accept);
+      stop = await subscribePlugins(accept, surface);
       if (disposed) { stop(); return; }
       accept(await getPlugins());
     } catch { if (!disposed) setResult(undefined); }
   });
   onCleanup(() => { disposed = true; request++; stop?.(); stopExtensions?.(); stopBindings?.(); });
-  return createMemo(() => {
+  const capabilities = createMemo(() => {
     const value = result();
     return value?.key === key() && currentOptionalCapabilities(value.value, plugins(), connections(), configuration?.()) ? value.value : undefined;
   });
+  // Presentation may retain an editor across metadata refreshes, but a known
+  // plugin revocation must take effect immediately, before that request ends.
+  return Object.assign(capabilities, { installed: plugins });
 }
