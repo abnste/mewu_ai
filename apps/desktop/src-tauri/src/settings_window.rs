@@ -55,6 +55,7 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
     let mut pending = if let Some(window) = app.get_webview_window(LABEL) {
         PendingSettings::existing(window)
     } else {
+        let navigation_app = app.clone();
         let window = tauri::WebviewWindowBuilder::new(
             app,
             LABEL,
@@ -78,7 +79,7 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
         .center()
         .visible(false)
         .disable_drag_drop_handler()
-        .on_navigation(|url| {
+        .on_navigation(move |url| {
             let local_app = (url.scheme() == "tauri" && url.host_str() == Some("localhost"))
                 || (matches!(url.scheme(), "http" | "https")
                     && url.host_str() == Some("tauri.localhost"));
@@ -86,7 +87,10 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
                 && url.scheme() == "http"
                 && url.host_str() == Some("127.0.0.1")
                 && url.port() == Some(1420);
-            local_app || local_dev
+            local_app || local_dev || navigation_app
+                .state::<crate::extension_host::ExtensionHost>()
+                .surfaces
+                .allows_window_document(url, &navigation_app.state::<crate::Host>().content_origin, LABEL)
         })
         .build()
         .map_err(|error| {

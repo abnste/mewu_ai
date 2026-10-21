@@ -27,6 +27,15 @@ pub(crate) struct Mounted { pub surface_id: String, pub url: String, pub width: 
 impl Surfaces {
     fn epoch(&self,label:&str)->Option<&AtomicU64>{match label{"settings"=>Some(&self.1),"space"=>Some(&self.2),_=>None}}
     pub(crate) fn ticket(&self,label:&str)->Option<WindowTicket>{Some(WindowTicket{label:label.into(),epoch:self.epoch(label)?.load(Ordering::Acquire)})}
+    /// WebKit also sends iframe loads through the window navigation delegate.
+    /// Admit only a live document mounted by this exact host window generation,
+    /// never the content server as a whole (which also serves private media).
+    pub(crate) fn allows_window_document(&self,url:&tauri::Url,origin:&str,label:&str)->bool {
+        self.0.lock().ok().is_some_and(|entries|entries.iter().any(|(id,document)|
+            document.window.is_none() && document.generation.live.load(Ordering::SeqCst)
+                && document.host_window.as_ref().is_some_and(|ticket|ticket.label==label&&self.window_current(ticket))
+                && url.as_str()==format!("{origin}/{id}")))
+    }
     pub(crate) fn window_current(&self,ticket:&WindowTicket)->bool{self.epoch(&ticket.label).is_some_and(|epoch|epoch.load(Ordering::Acquire)==ticket.epoch)}
     pub(crate) fn revoke_window(&self,label:&str){
         if let Some(epoch)=self.epoch(label){if let Ok(mut entries)=self.0.lock(){
@@ -152,6 +161,36 @@ pub(crate) fn read(app:&AppHandle,id:&str)->Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn navigation_admits_only_live_documents_of_the_exact_host_window() {
+        let surfaces=Surfaces::default();
+        let origin="http://127.0.0.1:32123";
+        let settings=surfaces.ticket("settings").unwrap();
+        let space=surfaces.ticket("space").unwrap();
+        let mut settings_owner=owner("settings-plugin");settings_owner.scene.clear();
+        let mounted=surfaces.mount_scoped(settings_owner.clone(),document(),origin,Some(&settings)).unwrap();
+        let url=tauri::Url::parse(&mounted.url).unwrap();
+        assert!(surfaces.allows_window_document(&url,origin,"settings"));
+        assert!(!surfaces.allows_window_document(&url,origin,"space"));
+        for denied in [format!("{}?query=1",mounted.url),format!("{}#fragment",mounted.url),
+            mounted.url.replace(":32123",":32124"),format!("{origin}/{}",uuid::Uuid::new_v4()),
+            format!("https://example.com/{}",mounted.surface_id)] {
+            assert!(!surfaces.allows_window_document(&tauri::Url::parse(&denied).unwrap(),origin,"settings"));
+        }
+        let other=surfaces.mount_scoped(owner("space-plugin"),document(),origin,Some(&space)).unwrap();
+        assert!(!surfaces.allows_window_document(&tauri::Url::parse(&other.url).unwrap(),origin,"settings"));
+        let replacement=surfaces.mount_scoped(settings_owner.clone(),document(),origin,Some(&settings)).unwrap();
+        assert!(!surfaces.allows_window_document(&url,origin,"settings"));
+        let replacement_url=tauri::Url::parse(&replacement.url).unwrap();
+        assert!(surfaces.allows_window_document(&replacement_url,origin,"settings"));
+        surfaces.revoke_window("settings");
+        assert!(!surfaces.allows_window_document(&replacement_url,origin,"settings"));
+        let ticket=surfaces.ticket("settings").unwrap();
+        let next=surfaces.mount_scoped(settings_owner,document(),origin,Some(&ticket)).unwrap();
+        let next_url=tauri::Url::parse(&next.url).unwrap();
+        surfaces.attach_window(&next.surface_id).unwrap();
+        assert!(!surfaces.allows_window_document(&next_url,origin,"settings"));
+    }
     use super::*;
     fn owner(plugin:&str)->Owner {Owner{plugin:plugin.into(),revision:1,service:"view".into(),scene:"scene".into()}}
     fn document()->DocumentInput {DocumentInput{html:"<button>Test</button>".into(),width:300,height:200}}
