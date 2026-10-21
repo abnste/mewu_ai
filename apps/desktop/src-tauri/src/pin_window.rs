@@ -34,7 +34,7 @@ pub(crate) async fn build_floating<T: Send + 'static>(
             let result=linux::build_floating(&handle,build);
             let _=tx.send(result);
         }).map_err(|_|"无法创建浮动对象")?;
-        rx.await.map_err(|_|"浮动对象创建中断".into())?
+        rx.await.map_err(|_| String::from("浮动对象创建中断"))?
     }
     #[cfg(not(target_os="linux"))]
     { build(app) }
