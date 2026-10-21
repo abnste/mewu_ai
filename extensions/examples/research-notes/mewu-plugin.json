@@ -3,7 +3,7 @@
   "hostApi": 2,
   "runtime": "javascript",
   "id": "example.research-notes",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "name": "研究便笺",
   "description": "带对象引用的可编辑便笺，用独立列表界面管理研究记录。",
   "license": "MPL-2.0",

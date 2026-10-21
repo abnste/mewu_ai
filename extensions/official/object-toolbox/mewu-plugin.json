@@ -3,7 +3,7 @@
   "hostApi": 2,
   "runtime": "javascript",
   "id": "abnste.object-toolbox",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "name": "工具包",
   "description": "跨会话收藏空间对象，拖出复用，支持文件夹和垃圾桶。",
   "publisher": "Mewu",
