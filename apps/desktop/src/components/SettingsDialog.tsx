@@ -50,7 +50,7 @@ export default function SettingsDialog(props: Props) {
   });
   // Presentation only: a pending authorization read must not destroy editors.
   // Execution continues to use the current, fail-closed capability accessor.
-  const hostAgentVisible = createMemo(previous => {
+  const hostAgentVisible = createMemo<boolean>(previous => {
     if (hostAgentInstalled() === false) return false;
     const value = optional(); return value === undefined ? previous : Boolean(value.agent);
   }, false);
@@ -114,7 +114,7 @@ export default function SettingsDialog(props: Props) {
       <div class="settings-body">
         <nav class="settings-nav" aria-label={t("设置分类")}><For each={nav.filter(entry => entry.id !== 'agent' || agentEnabled())}>{entry => <button classList={{ selected: tab() === entry.id }} onClick={() => setTab(entry.id)}><entry.icon size={16} /><span>{t(entry.label)}</span></button>}</For><For each={pluginPages()}>{choice => <button classList={{ selected: tab() === `extension:${extensionServiceKey(choice)}` }} onClick={() => setTab(`extension:${extensionServiceKey(choice)}`)}><PluginIcon plugin={choice.record.manifest} size={16}/><span>{choice.service.title}</span></button>}</For></nav>
         <div class="settings-content">
-          <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
+          <div hidden={tab() !== 'general'}><GeneralSettings active={tab() === 'general'} agentEnabled={agentEnabled()} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
           <div hidden={tab() !== 'capture'}><CaptureSettings active={tab() === 'capture'} preferences={props.preferences} onPreferences={props.onPreferences} platform={facts.info()?.platform} /></div>
           <Show when={agentEnabled()}><div hidden={tab() !== 'agent'}><header class="settings-page-heading"><h2>{t("Agent 与连接")}</h2></header>
             <div class="segmented"><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'identity'} classList={{ selected: agentPane() === 'identity' }} onClick={() => setAgentPane('identity')}><UserRound size={13} />Agent</button></Show><button aria-pressed={agentPane() === 'connection'} classList={{ selected: agentPane() === 'connection' }} onClick={() => setAgentPane('connection')}><Link2 size={13} />{t("连接")}</button><Show when={agentEnabled()}><button aria-pressed={agentPane() === 'tools'} classList={{ selected: agentPane() === 'tools' }} onClick={() => setAgentPane('tools')}><Wrench size={13} />MCP</button></Show></div>

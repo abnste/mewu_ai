@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! API 2 registry is separate from the compatible API 1 registry and user scenes.
+//! Executable plugin registry, independent of native feature records and scenes.
 use crate::extension_market::{self, Entry};
 use mewu_extension::{ExtensionManifest, ExtensionPackage, ServiceRegistration};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -45,14 +45,17 @@ pub struct Record {
     pub platform_error: Option<String>,
     pub unsupported_services: BTreeMap<String, String>,
 }
+pub(crate) fn region_platform_supported(platform: &str) -> bool {
+    matches!(platform, "windows-x86_64" | "darwin-aarch64")
+}
 pub(crate) fn service_platform_error(service: &ServiceRegistration, platform: &str) -> Option<&'static str> {
     let Ok(platforms) = mewu_extension::service_platforms(service) else { return Some("插件平台声明无效") };
     if !mewu_extension::plugin_platform_supported(platforms.as_deref(), platform) {
         return Some("此功能不支持当前系统");
     }
     if service.metadata.as_ref().and_then(|m| m.get("requiresRegion")).and_then(Value::as_bool) == Some(true)
-        && platform != "windows-x86_64" {
-        return Some("区域操作仅支持 Windows");
+        && !region_platform_supported(platform) {
+        return Some("当前系统暂不支持区域操作");
     }
     None
 }
@@ -632,8 +635,8 @@ mod tests {
             for platform in mewu_extension::PLUGIN_PLATFORMS { assert!(service_platform_error(&service, platform).is_none()); }
             service.metadata = Some(serde_json::json!({"requiresRegion":true}));
             assert!(service_platform_error(&service, "windows-x86_64").is_none());
-            assert_eq!(service_platform_error(&service, "darwin-aarch64"), Some("区域操作仅支持 Windows"));
-            assert_eq!(service_platform_error(&service, "linux-x86_64"), Some("区域操作仅支持 Windows"));
+            assert!(service_platform_error(&service, "darwin-aarch64").is_none());
+            assert_eq!(service_platform_error(&service, "linux-x86_64"), Some("当前系统暂不支持区域操作"));
             service.metadata = Some(serde_json::json!({"platforms":["darwin-aarch64"]}));
             assert!(service_platform_error(&service, "darwin-aarch64").is_none());
             assert!(service_platform_error(&service, "windows-x86_64").is_some());

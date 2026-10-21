@@ -9,7 +9,7 @@ import type { SettingsClient } from '../settings-client';
 import type { SettingsInfo } from '../settings-contracts';
 import { Row, Toggle } from './SettingControls';
 
-export default function GeneralSettings(props: { active: boolean; preferences: Preferences; onPreferences: (value: Preferences) => void; platform?: SettingsInfo['platform']; api?: SettingsClient }) {
+export default function GeneralSettings(props: { active: boolean; agentEnabled?: boolean; preferences: Preferences; onPreferences: (value: Preferences) => void; platform?: SettingsInfo['platform']; api?: SettingsClient }) {
   const api = props.api ?? settingsApi;
   const [view, setView] = createSignal<SystemPreferencesView>({ pending: false, conflict: false, error: '' });
   const [loading, setLoading] = createSignal(false);
@@ -41,10 +41,10 @@ export default function GeneralSettings(props: { active: boolean; preferences: P
     <Row title={t('界面语言')}><select aria-label={t('界面语言')} value={props.preferences.uiLanguage ?? 'system'} onChange={event => props.onPreferences({ ...props.preferences, uiLanguage: event.currentTarget.value as UiLanguage })}><option value="system">{t('跟随系统')}</option><option value="zh-CN">{t('简体中文')}</option><option value="en-US">English</option></select></Row>
     <Row title={t('文字大小')}><select aria-label={t('文字大小')} value={props.preferences.textSize} onChange={event => props.onPreferences({ ...props.preferences, textSize: event.currentTarget.value as Preferences['textSize'] })}><option value="small">{t('小')}</option><option value="default">{t('默认')}</option><option value="large">{t('大')}</option></select></Row>
     <Row title={t('显示按钮功能文字')}><Toggle label={t('显示按钮功能文字')} checked={props.preferences.showButtonLabels !== false} onChange={value => props.onPreferences({ ...props.preferences, showButtonLabels: value })} /></Row>
-    <Row title={t('AI 思考时显示底部呼吸光效')}><div class="thinking-glow-setting"><input type="color" aria-label={t('呼吸光效颜色')} value={props.preferences.thinkingGlowColor ?? '#A7C7FF'} onInput={event => props.onPreferences({ ...props.preferences, thinkingGlowColor: event.currentTarget.value.toUpperCase() })} /><Toggle label={t('AI 思考时显示底部呼吸光效')} checked={props.preferences.thinkingGlowEnabled !== false} onChange={value => props.onPreferences({ ...props.preferences, thinkingGlowEnabled: value })} /></div></Row>
+    <Show when={props.agentEnabled !== false}><Row title={t('AI 思考时显示底部呼吸光效')}><div class="thinking-glow-setting"><input type="color" aria-label={t('呼吸光效颜色')} value={props.preferences.thinkingGlowColor ?? '#A7C7FF'} onInput={event => props.onPreferences({ ...props.preferences, thinkingGlowColor: event.currentTarget.value.toUpperCase() })} /><Toggle label={t('AI 思考时显示底部呼吸光效')} checked={props.preferences.thinkingGlowEnabled !== false} onChange={value => props.onPreferences({ ...props.preferences, thinkingGlowEnabled: value })} /></div></Row></Show>
     <Row title={t('减少动态效果')}><Toggle label={t('减少动态效果')} checked={props.preferences.reduceMotion} onChange={value => props.onPreferences({ ...props.preferences, reduceMotion: value })} /></Row>
     <Show when={view().values} fallback={<Show when={loading()}><LoaderCircle size={16} class="spin" aria-label={t('加载系统设置')} /></Show>}>
-      <Row title={t('自动生成会话标题')}><Toggle label={t('自动生成会话标题')} checked={view().values!.autoGenerateTitle} disabled={view().pending} onChange={value => controller.edit({ autoGenerateTitle: value })} /></Row>
+      <Show when={props.agentEnabled !== false}><Row title={t('自动生成会话标题')}><Toggle label={t('自动生成会话标题')} checked={view().values!.autoGenerateTitle} disabled={view().pending} onChange={value => controller.edit({ autoGenerateTitle: value })} /></Row></Show>
       <Show when={props.platform === 'windows'}><Row title={t('登录 Windows 后自动启动')}><Toggle label={t('登录 Windows 后自动启动')} checked={startup()} disabled={view().pending} onChange={value => controller.edit({ launchAtStartup: value })} /></Row></Show>
       <Show when={view().state?.startupWarning}><p class="settings-error" role="alert">{t(view().state!.startupWarning!)}</p></Show>
       <Row title={t('允许屏幕共享看到框选和标注')}><Toggle label={t('允许屏幕共享看到框选和标注')} checked={view().values!.allowScreenShare} disabled={view().pending} onChange={value => controller.edit({ allowScreenShare: value })} /></Row>

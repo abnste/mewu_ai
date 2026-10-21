@@ -1137,5 +1137,6 @@
   "所选记忆插件已停用": "The selected memory plugin is disabled",
   "使用本地记忆": "Use local memory",
   "空白会话改用": "Empty conversations use",
-  "至少保留一个 Agent": "Keep at least one Agent"
+  "至少保留一个 Agent": "Keep at least one Agent",
+  "当前系统暂不支持区域操作": "Region operation is not yet available on this system"
 }

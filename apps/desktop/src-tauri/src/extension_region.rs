@@ -363,6 +363,7 @@ pub(crate) struct RegionSession {
 impl RegionSession {
     pub(crate) fn supported() -> bool {
         cfg!(any(windows,target_os="macos"))
+            && crate::extension_store::region_platform_supported(mewu_extension::current_plugin_platform())
     }
 
     pub(crate) fn begin(
