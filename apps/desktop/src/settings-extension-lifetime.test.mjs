@@ -211,6 +211,21 @@ test('an enabled unbound external Agent exposes configuration without a host key
   } finally { f.dispose(); }
 });
 
+test('initial Agent settings wait for external discovery when the native Agent is disabled', async () => {
+  const f = await fixture({ delayedExtensionRead: true });
+  try {
+    f.plugins({ revision: 2, plugins: plugins.plugins.map(plugin => ({ ...plugin, state: 'disabled', revision: 2 })) });
+    await tick();
+    f.reads.at(-1).resolve(capability({ pluginRevision: 2, agent: null })); await tick();
+    assert.equal(f.find(node => node.type === 'button' && f.text(node) === '插件' && node.props.classList?.selected), undefined);
+    f.resolveExtensions([extension()]); await tick();
+    assert.ok(f.find(node => node.type === 'button' && f.text(node) === 'Agent 与连接' && node.props.classList?.selected));
+    f.changeExtensions([extension({ state: 'disabled', revision: 2 })]); await tick();
+    assert.equal(f.panel(), undefined);
+    assert.ok(f.find(node => node.type === 'button' && f.text(node) === '插件' && node.props.classList?.selected));
+  } finally { f.dispose(); }
+});
+
 test('external memory hides local sources during reads, and clearing restores only local memory', async () => {
   const f = await fixture({ initialExtensions: [extension()], initialBindings: [memoryBinding()], delayedBindings: true });
   try {

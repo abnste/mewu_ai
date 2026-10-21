@@ -85,7 +85,7 @@ export default function SettingsDialog(props: Props) {
       setAgentPane('connection');
       // Leave an explicitly requested initial page pending until discovery has
       // answered; after revocation, never leave a blank or stale settings page.
-      if (tab() === 'agent' && (optional() !== undefined || hostAgentInstalled() === false)) setTab('plugins');
+      if (tab() === 'agent' && extensionDiscoveryReady() && (optional() !== undefined || hostAgentInstalled() === false)) setTab('plugins');
     }
   });
   let dialog!: HTMLElement, closeButton!: HTMLButtonElement;

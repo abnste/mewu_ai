@@ -471,6 +471,11 @@ fn safe_region_reason(message: &str) -> &'static str {
         "请选择原始截图中的有效区域",
         "操作区域不能超过 4 Mi 像素",
         "当前平台尚不支持区域自动操作",
+        "请在系统设置中允许 MewuAI 使用辅助功能",
+        "输入焦点不在授权区域内",
+        "不能向密码框输入",
+        "请松开修饰键或停止键后重试",
+        "请松开鼠标后重试",
         "操作坐标超出授权区域",
         "截图文件已不可用",
         "截图文件大小无效",
@@ -525,6 +530,9 @@ fn record_region_error(
 ) -> String {
     let code = match error.code {
         code @ ("region_authority_revoked"
+        | "region_accessibility_permission"
+        | "region_focus_outside"
+        | "region_secure_input"
         | "region_coordinates_unavailable"
         | "region_cursor_clipped"
         | "region_display_changed"
@@ -3431,5 +3439,35 @@ mod failure_diagnostic_tests {
         );
         assert!(!public.contains("private-test-token"));
         assert!(!public.contains("unknown_internal_code"));
+    }
+
+    #[test]
+    fn mac_region_failures_preserve_actionable_codes_without_disclosing_raw_errors() {
+        for (code, reason) in [
+            ("region_accessibility_permission", "请在系统设置中允许 MewuAI 使用辅助功能"),
+            ("region_focus_outside", "输入焦点不在授权区域内"),
+            ("region_secure_input", "不能向密码框输入"),
+            ("region_input_busy", "请松开修饰键或停止键后重试"),
+            ("region_input_busy", "请松开鼠标后重试"),
+        ] {
+            for method in ["region.observe", "region.action"] {
+                let mut diagnostic = None;
+                let message = record_region_error(&mut diagnostic, region::RegionError {
+                    code, message: reason.into(),
+                });
+                let failure = HostCallFailure::from_error(method, &message, diagnostic);
+                assert_eq!(failure.code, code);
+                assert_eq!(failure.reason, reason);
+
+                let mut diagnostic = None;
+                let message = record_region_error(&mut diagnostic, region::RegionError {
+                    code, message: format!("{reason}\nprivate-test-token"),
+                });
+                let failure = HostCallFailure::from_error(method, &message, diagnostic);
+                assert_eq!(failure.code, code);
+                assert_eq!(failure.reason, "区域操作失败");
+                assert!(!failure.public_message().contains("private-test-token"));
+            }
+        }
     }
 }
