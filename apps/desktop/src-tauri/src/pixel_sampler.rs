@@ -350,7 +350,7 @@ fn encode_sample(
                 .ok_or("截图坐标无效")?;
             match coordinates.space {
                 CaptureCoordinateSpace::PhysicalPixels => (Some(sx as i64), Some(sy as i64), None),
-                CaptureCoordinateSpace::QuartzPoints => (
+                CaptureCoordinateSpace::QuartzPoints|CaptureCoordinateSpace::PortalLogical => (
                     None,
                     None,
                     Some(ScreenPoint {

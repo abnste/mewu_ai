@@ -726,7 +726,7 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
         allowed()?;
         let configured=present(&window,owned.clone(),PresentationPermit::Screenshot(work.clone()),transition.clone()).await?;
         timing.mark(Stage::Expanded);
-        let asset=Asset {id:pending.asset_id.clone(),name:"截图.png".into(),kind:AssetKind::Image,path:pending.path.to_string_lossy().into_owned(),width:Some(pending.width),height:Some(pending.height),capture_coordinates:None,origin_x:None,origin_y:None,scale_factor:None};
+        let asset=Asset {id:pending.asset_id.clone(),name:"截图.png".into(),kind:AssetKind::Image,path:pending.path.to_string_lossy().into_owned(),width:Some(pending.width),height:Some(pending.height),capture_coordinates:pending.coordinates,origin_x:None,origin_y:None,scale_factor:None};
         commit_check()?;
         if let Some(pins)=&commit_pins {pins.check(&commit_check)?;}
         let host=app.state::<Host>(); let mut engine=host.lock()?;

@@ -2,7 +2,7 @@
 import type { VideoAnnotationDocument } from './video-annotation-contracts';
 export type AssetKind = 'image' | 'video' | 'html' | 'svg' | 'text' | 'file';
 export type ImageExportVariant = 'annotated' | 'original';
-export interface CaptureCoordinates { space: 'quartzPoints' | 'physicalPixels'; originX: number; originY: number; width: number; height: number }
+export interface CaptureCoordinates { space: 'quartzPoints' | 'physicalPixels' | 'portalLogical'; originX: number; originY: number; width: number; height: number }
 export interface Asset { id: string; name: string; kind: AssetKind; path: string; width?: number; height?: number; originX?: number; originY?: number; scaleFactor?: number; captureCoordinates?: CaptureCoordinates }
 export type ManualDrawingKind = 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse' | 'text' | 'highlighter' | 'mark' | 'number' | 'mosaic';
 export type DrawingKind = ManualDrawingKind | 'rich';

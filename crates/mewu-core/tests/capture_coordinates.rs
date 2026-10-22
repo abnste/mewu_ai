@@ -28,6 +28,14 @@ fn coordinates() -> CaptureCoordinates {
         height: 720.,
     }
 }
+
+#[test]
+fn portal_logical_coordinates_preserve_their_own_units_and_round_trip() {
+    let c=CaptureCoordinates{space:CaptureCoordinateSpace::PortalLogical,..coordinates()};
+    assert_eq!(c.point(2560,1440,100,200),Some((-1230.25,120.5)));
+    assert_eq!(serde_json::from_str::<CaptureCoordinates>(&serde_json::to_string(&c).unwrap()).unwrap(),c);
+    assert!(!CaptureCoordinates{width:f64::NAN,..c}.valid_for(2560,1440));
+}
 fn asset(capture_coordinates: Option<CaptureCoordinates>) -> Asset {
     Asset {
         id: uuid::Uuid::new_v4().to_string(),

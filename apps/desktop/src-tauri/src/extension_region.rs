@@ -243,7 +243,7 @@ impl Viewport {
         // never truncate Retina points or multiply a global origin by scale.
         let (x,y) = match coordinates.space {
             CaptureCoordinateSpace::PhysicalPixels => (native_x,native_y),
-            CaptureCoordinateSpace::QuartzPoints => (f64::from(left),f64::from(top)),
+            CaptureCoordinateSpace::QuartzPoints|CaptureCoordinateSpace::PortalLogical => (f64::from(left),f64::from(top)),
         };
         if x < f64::from(i32::MIN)
             || y < f64::from(i32::MIN)

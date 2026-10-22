@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! User-initiated ScreenCast portal first-frame capture. A bitmap has no desktop
-//! coordinate claim. Call on the real capture worker, retaining Work/transition.
+//! User-initiated ScreenCast first-frame capture. Desktop coordinates come only
+//! from the selected stream's explicit logical geometry, never from bitmap size.
 use crate::capture::{CaptureCheck, CaptureOptions};
 use futures_lite::StreamExt;
 use image::{
@@ -48,6 +48,7 @@ pub(crate) struct PendingPortalCapture {
     pub(crate) path: PathBuf,
     pub(crate) width: u32,
     pub(crate) height: u32,
+    pub(crate) coordinates: Option<mewu_core::CaptureCoordinates>,
     retained: bool,
 }
 impl PendingPortalCapture {
@@ -112,13 +113,21 @@ fn capture_inner(
     timing.mark(Stage::Captured);
     // Release both the streaming pipeline and the portal lease before PNG
     // encoding or store adoption; an accepted screenshot never streams on.
+    let coordinates=portal_coordinates(session.logical_position,session.logical_size,frame.width,frame.height);
     drop(frames);
     drop(session);
     timing.mark(Stage::Released);
     allowed()?;
-    let pending=save_rgba_frame(frame.width, frame.height, &frame.rgba, asset_dir, &allowed)?;
+    let mut pending=save_rgba_frame(frame.width, frame.height, &frame.rgba, asset_dir, &allowed)?;
+    pending.coordinates=coordinates;
     timing.mark(Stage::Encoded);
     Ok(pending)
+}
+
+fn portal_coordinates(position:Option<(i32,i32)>,size:Option<(i32,i32)>,width:u32,height:u32)->Option<mewu_core::CaptureCoordinates>{
+    let (x,y)=position?;let (w,h)=size?;
+    let c=mewu_core::CaptureCoordinates{space:mewu_core::CaptureCoordinateSpace::PortalLogical,origin_x:f64::from(x),origin_y:f64::from(y),width:f64::from(w),height:f64::from(h)};
+    c.valid_for(width,height).then_some(c)
 }
 
 fn save_rgba_frame(
@@ -139,7 +148,7 @@ fn save_rgba_frame(
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&path).map_err(|_| "无法保存截图")?;
     let pending = PendingPortalCapture {
-        asset_id, path, width, height, retained: false,
+        asset_id, path, width, height, coordinates:None, retained: false,
     };
     let mut writer = LimitedWriter {
         inner: BufWriter::new(destination), written: 0, allowed,
@@ -663,6 +672,15 @@ impl Seek for CheckedReader<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn portal_coordinates_require_explicit_stream_geometry_and_preserve_fractional_scale() {
+        let c=super::portal_coordinates(Some((-1280,40)),Some((1280,720)),2560,1440).unwrap();
+        assert_eq!(c.space,mewu_core::CaptureCoordinateSpace::PortalLogical);
+        assert_eq!(c.point(2560,1440,100,200),Some((-1230.,140.)));
+        assert!(super::portal_coordinates(None,Some((1280,720)),2560,1440).is_none());
+        assert!(super::portal_coordinates(Some((0,0)),None,2560,1440).is_none());
+        assert!(super::portal_coordinates(Some((0,0)),Some((0,720)),2560,1440).is_none());
+    }
     use super::*;
     #[test]
     fn first_frame_asset_is_private_bounded_and_removed_until_adopted() {

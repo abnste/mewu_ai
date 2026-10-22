@@ -23,6 +23,7 @@ pub enum AssetKind {
 pub enum CaptureCoordinateSpace {
     QuartzPoints,
     PhysicalPixels,
+    PortalLogical,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

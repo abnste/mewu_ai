@@ -177,6 +177,10 @@ function fixture() {
   const g = fixture(), points = g.gate.sampleExact(quartz);
   g.waits[0].resolve({ ...quartz, screenPoint: { x: -1275.25, y: 20.5 + 20 * 720 / 1080, unit: 'pt' }, hex: '#1234AB', dataUrl: 'data:image/png;base64,AAAA' });
   assert.equal(pointerCoordinatesLabel(await points), 'X -1275.25 Y 33.83 pt');
+  const portal={...quartz,source:{...quartz.source,captureCoordinates:{...quartz.source.captureCoordinates,space:'portalLogical'}}};
+  const portalFixture=fixture(),portalPending=portalFixture.gate.sampleExact(portal);
+  portalFixture.waits[0].resolve({...portal,screenPoint:{x:-1275.25,y:20.5+20*720/1080,unit:'pt'},hex:'#1234AB',dataUrl:'data:image/png;base64,AAAA'});
+  assert.equal(pointerCoordinatesLabel(await portalPending),'X -1275.25 Y 33.83 pt');
   for (const mutate of [v => ({ ...v, globalX: 1 }), v => ({ ...v, screenPoint: { ...v.screenPoint, unit: 'px' } }), v => ({ ...v, screenPoint: { ...v.screenPoint, x: NaN } }), v => ({ ...v, source: { ...v.source, width: 100 } })]) {
     const h=fixture(), pending=h.gate.sampleExact(quartz), rejected=assert.rejects(pending,/不一致/);
     h.waits[0].resolve(mutate({ ...quartz, screenPoint: { x: -1275.25, y: 20.5+20*720/1080, unit:'pt' },hex:'#1234AB',dataUrl:'data:image/png;base64,AAAA' })); await rejected;

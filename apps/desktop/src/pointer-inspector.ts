@@ -18,7 +18,7 @@ function validSource(source: PointerSource): boolean {
     || source.width <= 0 || source.height <= 0 || source.width > 16384 || source.height > 16384 || source.width * source.height > 33554432) return false;
   const c = source.captureCoordinates;
   if (c === undefined) return true;
-  return !!c && (c.space === 'quartzPoints' || c.space === 'physicalPixels')
+  return !!c && (c.space === 'quartzPoints' || c.space === 'physicalPixels' || c.space === 'portalLogical')
     && [c.originX, c.originY, c.width, c.height].every(Number.isFinite)
     && c.originX >= -2147483648 && c.originX <= 2147483647 && c.originY >= -2147483648 && c.originY <= 2147483647
     && c.originX + c.width >= -2147483648 && c.originX + c.width <= 2147549183

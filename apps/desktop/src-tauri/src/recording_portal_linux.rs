@@ -9,6 +9,7 @@ type Options<'a> = HashMap<&'a str, Value<'a>>;
 type Results = HashMap<String, OwnedValue>;
 const DESKTOP: &str = "/org/freedesktop/portal/desktop";
 const SCREENCAST: &str = "org.freedesktop.portal.ScreenCast";
+const REMOTE_DESKTOP: &str = "org.freedesktop.portal.RemoteDesktop";
 const SESSION: &str = "org.freedesktop.portal.Session";
 const REQUEST: &str = "org.freedesktop.portal.Request";
 const TRANSPORT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -74,6 +75,12 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
     connection: &Connection, owner: &str, method: &str, token: &str,
     body: &B, cleanup: RequestCleanup, expires: Instant, allowed: &mut impl FnMut() -> bool,
 ) -> Result<Results, String> {
+    request_on(connection,owner,SCREENCAST,method,token,body,cleanup,expires,allowed).await
+}
+async fn request_on<B: serde::Serialize + zbus::zvariant::DynamicType>(
+    connection:&Connection,owner:&str,interface:&str,method:&str,token:&str,
+    body:&B,cleanup:RequestCleanup,expires:Instant,allowed:&mut impl FnMut()->bool,
+)->Result<Results,String> {
     if !allowed() || Instant::now() >= expires { return Err("录屏已取消".into()); }
     let sender = connection.unique_name().ok_or_else(error)?.as_str()
         .trim_start_matches(':').replace('.', "_");
@@ -88,7 +95,7 @@ async fn request<B: serde::Serialize + zbus::zvariant::DynamicType>(
     // 9a4dffa), so the latter would free that same handle twice. The enclosing
     // setup error path awaits one bounded Session.Close before returning.
     let mut guard = RequestGuard { connection, owner, path: path.clone(), ended: false, cleanup };
-    let desktop = transport(Proxy::new(connection, owner, DESKTOP, SCREENCAST), expires, allowed).await?;
+    let desktop = transport(Proxy::new(connection, owner, DESKTOP, interface), expires, allowed).await?;
     let returned = transport(desktop.call::<_, _, OwnedObjectPath>(method, body), expires, allowed).await?;
     if returned.as_str() != guard.path { return Err("屏幕共享请求身份不匹配".into()); }
     let signal = checked(async { signals.next().await.ok_or_else(error) }, expires, allowed).await?;
@@ -105,6 +112,7 @@ pub(crate) struct PortalSession {
     pub(crate) remote: OwnedFd,
     pub(crate) logical_size: Option<(i32, i32)>,
     pub(crate) logical_position: Option<(i32, i32)>,
+    control: bool,
 }
 impl Drop for PortalSession {
     fn drop(&mut self) {
@@ -114,14 +122,20 @@ impl Drop for PortalSession {
 impl PortalSession {
     pub(crate) fn open(expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
         let address = zbus::Address::session().map_err(|_| error())?;
-        futures_lite::future::block_on(Self::open_at(address, "", expires, allowed))
+        futures_lite::future::block_on(Self::open_at(address, "", false, expires, allowed))
     }
     pub(crate) fn open_parent(parent:&str,expires:Instant,allowed:&mut impl FnMut()->bool)->Result<Self,String>{
         if !valid_recording_parent(parent){return Err("录屏父窗口标识无效".into())}
         let address=zbus::Address::session().map_err(|_|error())?;
-        futures_lite::future::block_on(Self::open_at(address,parent,expires,allowed))
+        futures_lite::future::block_on(Self::open_at(address,parent,false,expires,allowed))
     }
-    async fn open_at(address: zbus::Address,parent:&str, expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
+    /// A fresh user-approved combined input/screen session. Never reuse a
+    /// screenshot grant, remembered restore token or unrestricted PipeWire FD.
+    pub(crate) fn open_control(expires:Instant,allowed:&mut impl FnMut()->bool)->Result<Self,String>{
+        let address=zbus::Address::session().map_err(|_|error())?;
+        futures_lite::future::block_on(Self::open_at(address,"",true,expires,allowed))
+    }
+    async fn open_at(address: zbus::Address,parent:&str,control:bool, expires: Instant, allowed: &mut impl FnMut() -> bool) -> Result<Self, String> {
             if !matches!(address.transport(), zbus::address::transport::Transport::Unix(_)) { return Err(error()); }
             let builder = zbus::connection::Builder::address(address).map_err(|_| error())?
                 .max_queued(16).method_timeout(TRANSPORT_TIMEOUT);
@@ -139,45 +153,85 @@ impl PortalSession {
             let types: u32 = transport(desktop.get_property("AvailableSourceTypes"), expires, allowed).await?;
             let cursors: u32 = transport(desktop.get_property("AvailableCursorModes"), expires, allowed).await?;
             if version < 3 || types & 1 == 0 || cursors & 1 == 0 { return Err(error()); }
+            let session_interface=if control {REMOTE_DESKTOP}else{SCREENCAST};
+            if control {
+                let remote=transport(Proxy::new(&connection,owner.as_str(),DESKTOP,REMOTE_DESKTOP),expires,allowed).await?;
+                let devices:u32=transport(remote.get_property("AvailableDeviceTypes"),expires,allowed).await?;
+                if devices & 3 != 3 {return Err("系统未提供鼠标和键盘控制".into());}
+            }
             let create_token = token();
             let session_token = token();
             let mut options = Options::new();
             options.insert("handle_token", Value::from(create_token.as_str()));
             options.insert("session_handle_token", Value::from(session_token.as_str()));
-            let result = request(&connection, &owner, "CreateSession", &create_token, &(options,), RequestCleanup::CloseRequest, expires, allowed).await?;
+            let result = request_on(&connection, &owner, session_interface,"CreateSession", &create_token, &(options,), RequestCleanup::CloseRequest, expires, allowed).await?;
             let path = result.get("session_handle").and_then(|v| <&str>::try_from(v).ok()).ok_or_else(error)?;
             let sender = connection.unique_name().ok_or_else(error)?.as_str().trim_start_matches(':').replace('.', "_");
             let expected = format!("/org/freedesktop/portal/desktop/session/{sender}/{session_token}");
             if path != expected { return Err("屏幕共享会话身份不匹配".into()); }
             let path = OwnedObjectPath::try_from(path.to_string()).map_err(|_| error())?;
             let setup = async {
+                if control {
+                    let devices_token=token();let mut options=Options::new();
+                    options.insert("handle_token",Value::from(devices_token.as_str()));
+                    options.insert("types",Value::from(3u32));
+                    request_on(&connection,&owner,REMOTE_DESKTOP,"SelectDevices",&devices_token,&(&path,options),RequestCleanup::ViaSession,expires,allowed).await?;
+                }
                 let select_token = token();
                 let mut options = Options::new();
                 options.insert("handle_token", Value::from(select_token.as_str()));
                 options.insert("types", Value::from(1u32));
                 options.insert("multiple", Value::from(false));
                 options.insert("cursor_mode", Value::from(1u32));
-                if version >= 4 { options.insert("persist_mode", Value::from(0u32)); }
+                if version >= 4 && !control { options.insert("persist_mode", Value::from(0u32)); }
                 request(&connection, &owner, "SelectSources", &select_token, &(&path, options), RequestCleanup::ViaSession, expires, allowed).await?;
                 let start_token = token();
                 let mut options = Options::new();
                 options.insert("handle_token", Value::from(start_token.as_str()));
-                let mut result = request(&connection, &owner, "Start", &start_token, &(&path, parent, options), RequestCleanup::ViaSession, expires, allowed).await?;
+                let mut result = request_on(&connection, &owner, session_interface,"Start", &start_token, &(&path, parent, options), RequestCleanup::ViaSession, expires, allowed).await?;
+                if control && result.get("devices").and_then(|v|u32::try_from(v).ok()).is_none_or(|devices|devices&3!=3) {
+                    return Err("未授权鼠标和键盘控制".into());
+                }
                 let streams: Vec<(u32, HashMap<String, OwnedValue>)> = result.remove("streams")
                     .ok_or_else(error)?.try_into().map_err(|_| error())?;
                 let (node, properties) = single_monitor(streams)?;
                 if !allowed() || Instant::now() >= expires { return Err("录屏已取消".into()); }
                 let empty = Options::new();
                 let remote: zbus::zvariant::OwnedFd = transport(desktop.call("OpenPipeWireRemote", &(&path, empty)), expires, allowed).await?;
-                let size = properties.get("size").and_then(|v| v.try_clone().ok()).and_then(|v| v.try_into().ok());
+                let size = properties.get("logical_size").or_else(||properties.get("size")).and_then(|v| v.try_clone().ok()).and_then(|v| v.try_into().ok());
                 let position = properties.get("position").and_then(|v| v.try_clone().ok()).and_then(|v| v.try_into().ok());
                 Ok((node, remote.into(), size, position))
             }.await;
             drop(desktop);
             match setup {
-                Ok((node, remote, logical_size, logical_position)) => Ok(Self { connection, owner, path, node, remote, logical_size, logical_position }),
+                Ok((node, remote, logical_size, logical_position)) => Ok(Self { connection, owner, path, node, remote, logical_size, logical_position, control }),
                 Err(error) => { bounded_close(&connection, &owner, path.as_str(), SESSION).await; Err(error) }
             }
+    }
+
+    /// These methods are native backend primitives, never exposed directly to
+    /// a plugin. The region owner must validate its source and focus per input.
+    pub(crate) fn input<B:serde::Serialize+zbus::zvariant::DynamicType>(&self,method:&str,body:&B,allowed:&mut impl FnMut()->bool)->Result<(),String>{
+        if !self.control || !matches!(method,"NotifyPointerMotionAbsolute"|"NotifyPointerButton"|"NotifyPointerAxisDiscrete"|"NotifyKeyboardKeysym") {return Err("区域输入会话未授权".into());}
+        futures_lite::future::block_on(async{
+            let expires=Instant::now()+TRANSPORT_TIMEOUT;
+            let desktop=transport(Proxy::new(&self.connection,self.owner.as_str(),DESKTOP,REMOTE_DESKTOP),expires,allowed).await?;
+            transport(desktop.call::<_,_,()>(method,body),expires,allowed).await
+        })
+    }
+    pub(crate) fn pointer(&self,x:f64,y:f64,allowed:&mut impl FnMut()->bool)->Result<(),String>{
+        let Some((w,h))=self.logical_size else{return Err("屏幕坐标信息缺失".into())};
+        if !x.is_finite()||!y.is_finite()||x<0.||y<0.||x>=f64::from(w)||y>=f64::from(h){return Err("输入坐标超出授权屏幕".into());}
+        self.input("NotifyPointerMotionAbsolute",&(&self.path,Options::new(),self.node,x,y),allowed)
+    }
+    pub(crate) fn button(&self,pressed:bool,allowed:&mut impl FnMut()->bool)->Result<(),String>{
+        self.input("NotifyPointerButton",&(&self.path,Options::new(),272i32,u32::from(pressed)),allowed)
+    }
+    pub(crate) fn scroll(&self,steps:i32,allowed:&mut impl FnMut()->bool)->Result<(),String>{
+        self.input("NotifyPointerAxisDiscrete",&(&self.path,Options::new(),0u32,steps),allowed)
+    }
+    pub(crate) fn keysym(&self,key:i32,pressed:bool,allowed:&mut impl FnMut()->bool)->Result<(),String>{
+        self.input("NotifyKeyboardKeysym",&(&self.path,Options::new(),key,u32::from(pressed)),allowed)
     }
 }
 
