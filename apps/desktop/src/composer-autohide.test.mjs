@@ -24,10 +24,10 @@ function fixture(overrides={}, deferredFocus=false) {
   const shell={offsetWidth:574,getBoundingClientRect:()=>state.bounds??({left:225,right:799,top:490,bottom:576}),contains:()=>true};
   const actual=runInNewContext(`
     let hideTimer, composing=false, pointerHeld=false, pointerOutsideWindow=false, lastPointer={x:0,y:0}, focusAnchor, focusVersion=0;
-    ${['cancelHide','hideBlocked','pointerInDock','scheduleHide','reveal','pointer','pointerExit'].map(handler).join('\n')}
-    ({pointer,pointerExit,reveal,cancelHide,anchor:v=>focusAnchor=v,composing:v=>composing=v});
+    ${['cancelHide','hideBlocked','pointerInDock','scheduleHide','reveal','pointer','pointerExit','selectionStarted'].map(handler).join('\n')}
+    ({pointer,pointerExit,reveal,cancelHide,selectionStarted,anchor:v=>focusAnchor=v,composing:v=>composing=v});
   `,{Element,props,shell,document:{activeElement},innerWidth:1024,innerHeight:600,
-    input:{focus:()=>focus.push(true)},queueMicrotask:fn=>deferredFocus?microtasks.push(fn):fn(),
+    input:{focus:()=>focus.push(true),blur:()=>blurred.push(true)},queueMicrotask:fn=>deferredFocus?microtasks.push(fn):fn(),
     hidden:()=>state.hidden,setHidden:v=>state.hidden=v,position:()=>state.position,dragging:()=>state.dragging,
     picker:()=>state.picker,voiceMenu:()=>state.voiceMenu,
     setTimeout:(fn,delay)=>{const id=++nextId;timers.set(id,{fn,at:clock+delay});return id;},clearTimeout:id=>timers.delete(id)
@@ -94,5 +94,16 @@ test('a queued explicit focus cannot steal focus after the bar hides, selection 
     else if(change==='closing')f.props.closing=true;
     else f.actual.reveal(false);
     f.flushFocus();assert.equal(f.focus.length,0,change);
+  }
+});
+
+test('selection releases keyboard ownership even when the composer was dragged out of the dock',()=>{
+  for(const position of [undefined,{x:20,y:30}]){
+    const f=fixture({position},true);f.props.draft='未发送草稿';f.actual.reveal(true);
+    f.props.selectionActive=true;f.actual.selectionStarted();f.flushFocus();
+    assert.equal(f.blurred.length,1,'a retained textarea focus must not turn screenshot Enter into a send');
+    assert.equal(f.focus.length,0,'a queued reveal cannot reclaim keyboard ownership');
+    assert.equal(f.state.hidden,!position,'a detached composer remains visible');
+    assert.equal(f.props.draft,'未发送草稿');
   }
 });

@@ -144,7 +144,12 @@ export default function Composer(props: Props) {
     onCleanup(observeConversationTail(host, atEnd));
   });
   createEffect(on(() => props.focusRequest, () => { focusAnchor = { ...lastPointer }; reveal(true); }));
-  createEffect(() => { if (props.selectionActive && !position()) { focusVersion++; cancelHide(); setHidden(true); focusAnchor = undefined; input?.blur(); } });
+  const selectionStarted = () => {
+    if (!props.selectionActive) return;
+    focusVersion++; cancelHide(); focusAnchor = undefined; input?.blur();
+    if (!position()) setHidden(true);
+  };
+  createEffect(selectionStarted);
   createEffect(() => {
     const text = latest(), count = props.scene.messages.length, expanded = props.expanded;
     if (atEnd()) queueMicrotask(() => { if (history && atEnd()) history.scrollTop = history.scrollHeight; });
