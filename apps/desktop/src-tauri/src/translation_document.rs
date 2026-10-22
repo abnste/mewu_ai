@@ -227,6 +227,54 @@ struct ResponseLine {
     text: String,
 }
 
+/// Count only fully decoded, valid rows from a streamed JSON prefix. This is
+/// presentation progress, never authorization to adopt an incomplete document.
+pub fn response_progress(text: &str, batch: &[SourceLine]) -> usize {
+    use serde::de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor};
+    if text.is_empty() || text.len() > MAX_RESPONSE_BYTES || batch.is_empty() || batch.len() > MAX_BATCH_LINES { return 0; }
+    struct Count<'a> { expected: BTreeSet<&'a str>, seen: BTreeSet<String> }
+    struct Root<'a, 'b>(&'b mut Count<'a>);
+    struct Lines<'a, 'b>(&'b mut Count<'a>);
+    impl<'de> DeserializeSeed<'de> for Root<'_, '_> {
+        type Value = ();
+        fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<(), D::Error> { d.deserialize_map(self) }
+    }
+    impl<'de> Visitor<'de> for Root<'_, '_> {
+        type Value = ();
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { f.write_str("translation response") }
+        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<(), M::Error> {
+            let key = map.next_key::<String>()?.ok_or_else(|| M::Error::custom("missing translations"))?;
+            if key != "translations" { return Err(M::Error::custom("unknown field")); }
+            map.next_value_seed(Lines(self.0))?;
+            if map.next_key::<String>()?.is_some() { return Err(M::Error::custom("extra field")); }
+            Ok(())
+        }
+    }
+    impl<'de> DeserializeSeed<'de> for Lines<'_, '_> {
+        type Value = ();
+        fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<(), D::Error> { d.deserialize_seq(self) }
+    }
+    impl<'de> Visitor<'de> for Lines<'_, '_> {
+        type Value = ();
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result { f.write_str("translation rows") }
+        fn visit_seq<S: SeqAccess<'de>>(self, mut seq: S) -> Result<(), S::Error> {
+            while let Some(row) = seq.next_element::<ResponseLine>()? {
+                if !self.0.expected.contains(row.id.as_str()) || !valid_translation(&row.text) || !self.0.seen.insert(row.id) {
+                    return Err(S::Error::custom("invalid translation row"));
+                }
+            }
+            Ok(())
+        }
+    }
+    let mut count = Count { expected: batch.iter().map(|row| row.id.as_str()).collect(), seen: BTreeSet::new() };
+    let mut decoder = serde_json::Deserializer::from_str(text);
+    match Root(&mut count).deserialize(&mut decoder) {
+        Ok(()) if decoder.end().is_ok() => count.seen.len(),
+        Err(error) if error.is_eof() => count.seen.len(),
+        _ => 0,
+    }
+}
+
 pub fn parse_response(text: &str, batch: &[SourceLine]) -> Result<Vec<String>, String> {
     if text.is_empty()
         || text.len() > MAX_RESPONSE_BYTES
@@ -344,6 +392,27 @@ mod tests {
                 "accepted {malformed}"
             );
         }
+    }
+
+    #[test]
+    fn streamed_progress_counts_only_complete_valid_rows_and_final_adoption_stays_strict() {
+        let plan = Plan::new(&ocr(&["one", "two"]), "ja").unwrap();
+        let batch = &plan.batches[0];
+        let one = r#"{"translations":[{"id":"line-0001","text":"引用\"、括号 } 与换行\n🙂"}"#;
+        assert_eq!(response_progress(one, batch), 1);
+        assert!(parse_response(one, batch).is_err());
+        let incomplete = format!("{one},{{\"id\":\"line-0002\",\"text\":\"未结束");
+        assert_eq!(response_progress(&incomplete, batch), 1);
+        let complete = format!("{one},{{\"id\":\"line-0002\",\"text\":\"完了\"}}]}}");
+        assert_eq!(response_progress(&complete, batch), 2);
+        assert_eq!(parse_response(&complete, batch).unwrap().len(), 2);
+        for value in [
+            r#"{"translations":[{"id":"foreign","text":"a"}]"#,
+            r#"{"translations":[{"id":"line-0001","text":""}]"#,
+            r#"{"translations":[{"id":"line-0001","text":"a","text":"b"}]"#,
+            r#"{"translations":[{"id":"line-0001","text":"a"},{"id":"line-0001","text":"b"}]"#,
+        ] { assert_eq!(response_progress(value, batch), 0, "{value}"); }
+        assert_eq!(response_progress(&(complete + " trailing"), batch), 0);
     }
 
     #[test]

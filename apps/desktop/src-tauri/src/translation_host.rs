@@ -542,27 +542,63 @@ async fn translate_plan(
     plan: Plan,
     preflight: &RunPreflight,
     cancel: &Cancellation,
-    mut before_request: impl FnMut() -> Result<(), String>,
-    mut on_progress: impl FnMut(usize),
+    mut before_request: impl FnMut() -> Result<(), String> + Send,
+    on_progress: impl FnMut(usize) + Send,
 ) -> Result<TranslationDocument, String> {
-    let mut results = Vec::with_capacity(plan.batches.len());
-    let mut completed = 0;
-    for batch in &plan.batches {
-        cancel.check()?;
-        before_request()?;
+    use futures_util::{stream, StreamExt, TryStreamExt};
+    let mut requests = Vec::with_capacity(plan.batches.len());
+    for (index, batch) in plan.batches.iter().enumerate() {
         let mut body = serde_json::json!({"model":preflight.connection.model,"messages":plan.messages(batch)?,"stream":true});
         crate::connection_host::apply_parameters(&mut body, &preflight.connection)?;
         let body = provider_transport::request_body(preflight.transport.protocol, body)?;
-        let response =
-            request_text(&preflight.transport, preflight.key.as_str(), body, cancel).await?;
-        cancel.check()?;
-        let translations = translation_document::parse_response(&response, batch)?;
-        completed += translations.len();
-        results.push(translations);
-        on_progress(completed);
+        requests.push((index, batch.clone(), body));
     }
+    let progress = std::sync::Mutex::new((vec![0usize; requests.len()], on_progress));
+    let report = |index: usize, rows: usize| {
+        if let Ok(mut state) = progress.lock() {
+            if rows > state.0[index] {
+                state.0[index] = rows;
+                let total = state.0.iter().sum(); (state.1)(total);
+            }
+        }
+    };
+    let mut results = vec![Vec::new(); requests.len()];
+    let mut requests = requests.into_iter();
+    // Validate one actual response before allowing bounded parallel batches.
+    // A malformed provider never receives the rest of this document.
+    if let Some((index, batch, body)) = requests.next() {
+        cancel.check()?; before_request()?;
+        results[index] = translate_batch(preflight, cancel, &batch, body, |rows| report(index, rows)).await?;
+    }
+    let mut pending = stream::iter(requests).map(|(index, batch, body): (usize, Vec<translation_document::SourceLine>, serde_json::Value)| {
+        let allowed = cancel.check().and_then(|_| before_request());
+        let report = &report;
+        async move {
+            allowed?;
+            let value = translate_batch(preflight, cancel, &batch, body, |rows| report(index, rows)).await?;
+            Ok::<_, String>((index, value))
+        }
+    }).buffer_unordered(2);
+    while let Some((index, value)) = pending.try_next().await? { results[index] = value; }
+    drop(pending);
     cancel.check()?;
     plan.complete(results)
+}
+
+async fn translate_batch(
+    preflight: &RunPreflight, cancel: &Cancellation,
+    batch: &[translation_document::SourceLine], body: serde_json::Value,
+    mut on_progress: impl FnMut(usize),
+) -> Result<Vec<String>, String> {
+    let mut received = 0;
+    let response = request_text_progress(&preflight.transport, preflight.key.as_str(), body, cancel, |prefix| {
+        let rows = translation_document::response_progress(prefix, batch);
+        if rows > received { received = rows; on_progress(rows); }
+    }).await?;
+    cancel.check()?;
+    let translations = translation_document::parse_response(&response, batch)?;
+    on_progress(translations.len());
+    Ok(translations)
 }
 
 async fn request_text(
@@ -571,14 +607,32 @@ async fn request_text(
     body: serde_json::Value,
     cancel: &Cancellation,
 ) -> Result<String, String> {
+    request_text_progress(transport, key, body, cancel, |_| {}).await
+}
+
+async fn request_text_progress(
+    transport: &provider_transport::Transport,
+    key: &str,
+    body: serde_json::Value,
+    cancel: &Cancellation,
+    mut on_partial: impl FnMut(&str),
+) -> Result<String, String> {
     let overflow = AtomicBool::new(false);
     let limit = Notify::new();
     let mut bytes = 0usize;
+    let mut prefix = String::new();
+    let mut last_progress = std::time::Instant::now();
     let request = provider_transport::stream_turn(transport, key, body, |delta| {
         bytes = bytes.saturating_add(delta.len());
         if bytes > translation_document::MAX_RESPONSE_BYTES {
             overflow.store(true, Ordering::Release);
             limit.notify_one();
+        } else {
+            prefix.push_str(delta);
+            if last_progress.elapsed() >= std::time::Duration::from_millis(40) {
+                on_partial(&prefix);
+                last_progress = std::time::Instant::now();
+            }
         }
     });
     let turn = tokio::select! {
@@ -1175,6 +1229,39 @@ mod tests {
             .is_err());
             assert_eq!(fixture.count(), 1);
         }
+    }
+
+    #[tokio::test]
+    async fn later_batches_overlap_but_out_of_order_responses_keep_original_line_order() {
+        let server = Server::http((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let connection = profile(ConnectionProtocol::ChatCompletions, &format!("http://{}/v1/chat/completions", server.server_addr()));
+        let preflight = RunPreflight {
+            agent_grant: crate::optional_capabilities::Authorizations::test_defaults().require_agent().unwrap(),
+            transport: crate::connection_host::transport_for(&connection).unwrap(),
+            key: zeroize::Zeroizing::new(String::new()), connection,
+        };
+        let worker = thread::spawn(move || {
+            let mut pending = Vec::new(); let mut count = 0;
+            for index in 0..3 {
+                let Some(mut request) = server.recv_timeout(Duration::from_secs(2)).unwrap() else { break; };
+                let mut raw = String::new();request.as_reader().read_to_string(&mut raw).unwrap();
+                let request_body: Value = serde_json::from_str(&raw).unwrap();
+                let input: Value = serde_json::from_str(request_body["messages"][1]["content"].as_str().unwrap()).unwrap();
+                let answer = json!({"translations":input["source"].as_array().unwrap().iter().map(|row| json!({"id":row["id"],"text":format!("译文 {}", row["id"].as_str().unwrap())})).collect::<Vec<_>>()});
+                let response = chat(&answer.to_string());count += 1;
+                if index == 0 { let _ = request.respond(Response::from_string(response).with_header(Header::from_bytes("Content-Type", "text/event-stream").unwrap())); }
+                else { pending.push((request, response)); }
+            }
+            let overlapped = pending.len() == 2;
+            for (request, response) in pending.into_iter().rev() { let _ = request.respond(Response::from_string(response).with_header(Header::from_bytes("Content-Type", "text/event-stream").unwrap())); }
+            (count, overlapped)
+        });
+        let mut progress = Vec::new();
+        let result = tokio::time::timeout(Duration::from_secs(6), translate_plan(Plan::new(&ocr(25), "zh-Hans").unwrap(), &preflight, &Cancellation::default(), || Ok(()), |value| progress.push(value))).await.unwrap().unwrap();
+        assert_eq!(worker.join().unwrap(), (3, true));
+        assert_eq!(result.lines.len(), 25);
+        for (index, row) in result.lines.iter().enumerate() { assert_eq!(row.text, format!("译文 line-{:04}", index + 1)); }
+        assert_eq!(progress.last(), Some(&25));assert!(progress.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 
     #[tokio::test]

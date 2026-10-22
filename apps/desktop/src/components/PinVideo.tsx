@@ -38,7 +38,7 @@ export default function PinVideo(props: Props) {
   }
   const visibility = () => { if (document.hidden) playback?.pause(); };
   onMount(() => {
-    playback = new VideoPlayback(video, { identity: () => props.source, range, position: ticks => { if (!disposed) setPosition(ticks); }, playing: value => { if (!disposed) setPlaying(value); }, error: props.onError });
+    playback = new VideoPlayback(video, { identity: () => props.source, range, loop: () => !disposed && !document.hidden, position: ticks => { if (!disposed) setPosition(ticks); }, playing: value => { if (!disposed) setPlaying(value); }, error: props.onError });
     document.addEventListener('visibilitychange', visibility);
     stopVisibility = () => document.removeEventListener('visibilitychange', visibility);
     if (video.readyState >= 1) metadata();

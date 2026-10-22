@@ -2,9 +2,9 @@
 /** One MessagePort belongs to one rendered generation. It cannot choose an IPC
  * method, plugin, service, scene, filesystem path or captured object source. */
 import type {SurfacePointerGesture,SurfacePointerSample} from './extension-surface-pointer';
-export interface DropTarget {id:string;x:number;y:number;width:number;height:number}
+export interface DropTarget {id:string;x:number;y:number;width:number;height:number;default?:boolean}
 export function surfaceBridge(port:MessagePort, call:(input:unknown)=>Promise<unknown>,
-  targets:(value:DropTarget[])=>void, drag?:(input:unknown)=>SurfacePointerGesture, escape?:()=>void, closeError?:(message:string)=>void) {
+  targets:(value:DropTarget[])=>void, drag?:(input:unknown)=>SurfacePointerGesture, escape?:()=>void, closeError?:(message:string)=>void, escapeKey?:()=>void) {
   let closed=false, pending=0;
   const active=new Set<number>();
   const gestures=new Map<number,SurfacePointerGesture>();
@@ -20,15 +20,17 @@ export function surfaceBridge(port:MessagePort, call:(input:unknown)=>Promise<un
       gesture.forward(event as SurfacePointerSample);return;
     }
     if(data.type==='escape'){escape?.();return;}
+    if(data.type==='escape-key'){escapeKey?.();return;}
     if(data.type==='close-error'){closeError?.(typeof data.error==='string'?data.error.slice(0,240):'保存失败');return;}
     if(data.type==='drop-targets'){
       if(!Array.isArray(data.targets)||data.targets.length>128)return;
-      const ids=new Set<string>(), accepted:DropTarget[]=[];
+      const ids=new Set<string>(), accepted:DropTarget[]=[];let defaults=0;
       for(const target of data.targets){
         if(!target||typeof target.id!=='string'||target.id.length>128||ids.has(target.id)
           ||![target.x,target.y,target.width,target.height].every(Number.isFinite)
-          ||target.width<=0||target.height<=0||target.width>1600||target.height>1200)return;
-        ids.add(target.id);accepted.push({id:target.id,x:target.x,y:target.y,width:target.width,height:target.height});
+          ||target.width<=0||target.height<=0||target.width>1600||target.height>1200
+          ||(target.default!==undefined&&typeof target.default!=='boolean')||(target.default===true&&++defaults>1))return;
+        ids.add(target.id);accepted.push({id:target.id,x:target.x,y:target.y,width:target.width,height:target.height,...(target.default===true?{default:true}:{})});
       }
       targets(accepted);return;
     }

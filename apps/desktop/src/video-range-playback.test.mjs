@@ -46,11 +46,24 @@ class Media extends EventTarget {
     queueMicrotask(() => { this.readyState = 2; this.dispatchEvent(new Event('loadedmetadata')); });
   }
 }
-function fixture() {
+function fixture(loop) {
   const node = new Media(), positions = [], observations = [], errors = []; let source = 'original-source', range = { startTicks: 2.5 * T, endTicks: 8 * T }, active = true, ready = true;
-  const player = new VideoPlayback(node, { identity: () => source, range: () => range, position: value => positions.push(value), playing() {}, observation: value => observations.push(value), error: value => errors.push(value) });
+  const player = new VideoPlayback(node, { identity: () => source, range: () => range, loop, position: value => positions.push(value), playing() {}, observation: value => observations.push(value), error: value => errors.push(value) });
   return { node, player, positions, observations, errors, isActive: () => active, isReady: () => ready, get range() { return range; }, set range(value) { range = value; }, set source(value) { source = value; }, set active(value) { active = value; }, set ready(value) { ready = value; } };
 }
+
+test('looping a pinned clip seeks back to its saved trim start and a pause cancels queued replay',async()=>{
+  const f=fixture(()=>true);
+  try{
+    let playing=f.player.play();await turn();f.node.finishSeek();await playing;
+    assert.equal(f.node.playCalls,1);
+    f.node.time=8;f.node.dispatchEvent(new Event('timeupdate'));await turn();
+    assert.equal(f.node.assignments.at(-1),2.5);f.node.finishSeek();await turn();
+    assert.equal(f.node.playCalls,2);assert.equal(f.node.paused,false);
+    f.node.time=8;f.node.dispatchEvent(new Event('timeupdate'));f.player.pause();await turn();
+    assert.equal(f.node.playCalls,2);assert.equal(f.node.paused,true);assert.deepEqual(f.errors,[]);
+  }finally{f.player.dispose();}
+});
 async function start(f, interval = { startTicks: 25_300_000, endTicks: 26_300_000 }) {
   const pending = f.player.playInterval(interval, f.isActive, f.isReady); await turn();
   f.node.finishSeek(); await pending;
@@ -599,7 +612,7 @@ test('actual video click/space toggle cancels an interval even while paused wait
 
 
 let metadataHandlerSource;
-async function eosFixture(emptyOrder = 'sync') {
+async function eosFixture(emptyOrder = 'sync', loop) {
   if (!metadataHandlerSource) {
     const code = await readFile(new URL('./components/VideoArtifact.tsx', import.meta.url), 'utf8');
     const ast = parse(code, { sourceType: 'module', plugins: ['typescript', 'jsx'] });
@@ -633,10 +646,22 @@ async function eosFixture(emptyOrder = 'sync') {
   // Match the real JSX registration before the onMount media adapter. Reload
   // metadata must not overwrite a user seek with the default trim beginning.
   node.addEventListener('loadedmetadata', metadata);
-  const player = new VideoPlayback(node, { identity: () => source, range: () => range, position: value => positions.push(value), playing() {}, error: value => errors.push(value) });
+  const player = new VideoPlayback(node, { identity: () => source, range: () => range, loop, position: value => positions.push(value), playing() {}, error: value => errors.push(value) });
   context.playback = player;
   return { node, player, errors, positions, get range() { return range; }, set range(value) { range = value; }, set source(value) { source = value; }, close() { player.dispose(); node.removeEventListener('loadedmetadata', metadata); } };
 }
+
+test('pinned looping also recovers a native ended decoder before restarting the saved clip',async()=>{
+  const f=await eosFixture('sync',()=>true);
+  try{
+    f.node.ended=false;f.node.eosLocked=false;f.node.time=2.5;
+    const pending=f.player.play();await turn();f.node.finishSeek();await pending;
+    f.node.time=f.node.duration;f.node.ended=true;f.node.eosLocked=true;f.node.paused=true;
+    f.node.dispatchEvent(new Event('ended'));await turn();
+    assert.equal(f.node.sourceLoads,1);f.node.metadata();await turn();f.node.finishSeek();await turn();
+    assert.equal(f.node.playCalls,2);assert.equal(f.node.paused,false);assert.equal(f.node.time,2.5);assert.deepEqual(f.errors,[]);
+  }finally{f.close();}
+});
 
 test('the actual trim scrub handler keeps one EOS preparation through repeated pointer updates', async () => {
   const source = await readFile(new URL('./components/VideoArtifact.tsx', import.meta.url), 'utf8');

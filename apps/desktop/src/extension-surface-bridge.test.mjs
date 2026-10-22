@@ -7,6 +7,17 @@ const load=async path=>import('data:text/javascript;base64,'+Buffer.from(stripTy
 const bridge=await load('./extension-surface-bridge.ts');
 const drag=await load('./extension-object-drag.ts');
 const pointer=await load('./extension-surface-pointer.ts');
+
+test('default drop target is explicit, unique and independent of plugin identity; keyboard Escape is distinct from close',async()=>{
+  let handler;const accepted=[];let keys=0,closes=0;
+  const scope=bridge.surfaceBridge({set onmessage(v){handler=v;},postMessage(){},start(){},close(){}},async()=>{},v=>accepted.push(v),undefined,()=>closes++,undefined,()=>keys++);
+  const target={id:'plugin-chosen-slot',x:0,y:0,width:80,height:80,default:true};
+  await handler({data:{type:'drop-targets',targets:[target]}});assert.deepEqual(accepted[0],[target]);
+  await handler({data:{type:'drop-targets',targets:[target,{...target,id:'other'}]}});assert.equal(accepted.length,1);
+  await handler({data:{type:'drop-targets',targets:[{...target,default:'yes'}]}});assert.equal(accepted.length,1);
+  await handler({data:{type:'escape-key'}});assert.equal(keys,1);assert.equal(closes,0);
+  await handler({data:{type:'escape'}});assert.equal(closes,1);scope.close();
+});
 test('two object receivers coexist; only the top hit consumes and unmounted receivers cannot consume',()=>{
   const calls=[];
   const receiver=name=>({begin:()=>({move:()=>calls.push(name+' move'),finish:()=>{calls.push(name+' finish');return true;},cancel:()=>calls.push(name+' cancel')})});

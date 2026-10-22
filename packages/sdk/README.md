@@ -95,7 +95,7 @@ UI 服务声明 `metadata: {surface: 'settings'}`，返回 `{html,width,height}`
 - `mewu.on(name, callback)` 接收 `drag` 与 `change` 事件，返回解除监听函数。
 - `mewu.onBeforeClose(async () => save())` 在 Esc 或关闭前保存编辑内容；
   回调失败保留界面和正文并报告错误，不能把失败视为已保存。
-- `mewu.setDropTargets([{id,x,y,width,height}])` 声明文档内的放置区域。
+- `mewu.setDropTargets([{id,x,y,width,height,default?}])` 声明文档内的放置区域。至多一个区域可标记 `default: true`，用于用户直接把对象放到此插件入口；界面首次加载时，宿主会等待接收区域就绪。默认位置及收藏规则由插件决定。
 - `await mewu.viewportPoint(x,y)` 将客户端坐标转换为当前空间比例坐标。
 - `await mewu.drag(pointerDownEvent)` 接续一次真实左键手势，返回
   `{cancelled,x,y}`（客户端坐标）。宿主只保证跨文档收到松手；移动、重排、删除、

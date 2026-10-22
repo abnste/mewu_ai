@@ -49,11 +49,13 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
   let pointerGesture:ReturnType<typeof surfacePointerDrag>|undefined;
   let nativeObject=false,escapeOwner:ReturnType<typeof registerSurfaceEscape>|undefined,stopClosed:(()=>void)|undefined;
   let nativeTargets:DropTarget[]=[],stopTargets:(()=>void)|undefined;
+  const dropWaiters=new Set<()=>void>();
+  const notifyDropTargets=()=>{for(const notify of [...dropWaiters])notify();};
   const identity={pluginId:props.choice.record.manifest.id,revision:props.choice.record.revision,serviceId:props.choice.service.id,sceneId:props.sceneId};
   const report=(error:unknown)=>{if(!disposed)props.onError(error instanceof Error?error.message:String(error));};
   const objectPresentation=(props.choice.service.metadata as Record<string,unknown>|undefined)?.presentation==='object';
   if(extensions.extensionNative)void extensions.subscribeSurfaceClosed(id=>{if(id===mounted()?.surfaceId){nativeObject=false;close();}}).then(stop=>{if(disposed)stop();else stopClosed=stop;}).catch(report);
-  if(extensions.extensionNative)void extensions.subscribeSurfaceTargets(value=>{if(value.surfaceId===mounted()?.surfaceId)nativeTargets=value.targets;}).then(stop=>{if(disposed)stop();else stopTargets=stop;}).catch(report);
+  if(extensions.extensionNative)void extensions.subscribeSurfaceTargets(value=>{if(value.surfaceId===mounted()?.surfaceId){nativeTargets=value.targets;notifyDropTargets();}}).then(stop=>{if(disposed)stop();else stopTargets=stop;}).catch(report);
   const sendEvent=(name:string,value:unknown)=>{
     if(nativeObject&&mounted()){
       if(name==='drag'){const next=JSON.stringify(value);if(next===lastDrag)return;lastDrag=next;}
@@ -89,6 +91,7 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
       else void extensions.invokeExtension({...identity,surface:{action:'close',id:value.surfaceId},input:null}).catch(()=>{});
     }
     nativeObject=false;
+    notifyDropTargets();
   }
   const requestClose=()=>{if(nativeObject){const id=mounted()?.surfaceId;if(id)void extensions.requestCloseSurfaceWindow(id).catch(report);return;}if(connection)connection.event('close-request',null);else close();};
   async function show(){
@@ -113,7 +116,7 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
         }
         escapeOwner=registerSurfaceEscape(requestClose);
         props.onWidth(Math.min(result.width,innerWidth-32));
-      }catch(error){close();report(error);}finally{opening=undefined;}
+      }catch(error){close();report(error);}finally{opening=undefined;notifyDropTargets();}
     })();
     return opening;
   }
@@ -125,7 +128,7 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
     return [...targets].reverse().find(t=>x>=t.x&&y>=t.y&&x<t.x+t.width&&y<t.y+t.height)?.id;
   };
   const unregister=registerObjectDrop({begin(source){
-    let live=true;
+    let live=true,hoverOpened=false;
     setDragging(true);
     return {
       move(point){
@@ -133,15 +136,29 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
         // Hovering a specific entry may reveal it. Moving any canvas object
         // must not start every installed UI plugin.
         const rect=trigger?.getBoundingClientRect();
-        if(!open()&&rect&&point.x>=rect.left&&point.x<rect.right&&point.y>=rect.top&&point.y<rect.bottom)void show();
+        if(!open()&&rect&&point.x>=rect.left&&point.x<rect.right&&point.y>=rect.top&&point.y<rect.bottom){hoverOpened=true;void show();}
         sendEvent('drag',{target:hit(point)??null,kind:source.source.kind});
       },
       finish(point){
-        const generation=mounted()?.surfaceId;
-        const target=hit(point);const accepts=live&&!disposed&&!props.disabled&&!!target;
+        const launcher=trigger?.getBoundingClientRect(),panel=frame?.getBoundingClientRect();
+        const inside=(r:DOMRect|undefined)=>!!r&&point.x>=r.left&&point.x<r.right&&point.y>=r.top&&point.y<r.bottom;
+        const onLauncher=inside(launcher),target=hit(point)??(onLauncher?(nativeObject?nativeTargets:targets).find(value=>value.default)?.id:undefined);
+        const pending=hoverOpened&&open()&&(onLauncher||inside(panel));
+        const accepts=live&&!disposed&&!props.disabled&&(!!target||pending);
         live=false;setDragging(false);sendEvent('drag',null);
         if(!accepts)return false;
-        void request({type:'drop',target,kind:source.source.kind},source.source).then(async result=>{
+        let generation=mounted()?.surfaceId;
+        const resolveTarget=()=>hit(point)??(onLauncher?(nativeObject?nativeTargets:targets).find(value=>value.default)?.id:undefined);
+        const ready=target?Promise.resolve(target):new Promise<string>((resolve,reject)=>{
+          const timer=setTimeout(()=>finish(undefined,Error('插件拖放区域尚未就绪')),5000);
+          const finish=(value?:string,error?:Error)=>{clearTimeout(timer);dropWaiters.delete(check);error?reject(error):resolve(value!);};
+          const check=()=>{
+            if(disposed||props.disabled||!open()||(generation&&generation!==mounted()?.surfaceId)){finish(undefined,Error('插件界面已关闭'));return;}
+            const value=resolveTarget();if(value)finish(value);
+          };
+          dropWaiters.add(check);check();
+        });
+        void ready.then(target=>{generation??=mounted()?.surfaceId;return request({type:'drop',target,kind:source.source.kind},source.source);}).then(async result=>{
           if(!disposed&&!props.disabled&&open()&&generation===mounted()?.surfaceId&&result&&typeof result==='object'&&(result as {removeSource?:boolean}).removeSource===true)await source.remove();
           sendEvent('change',result);
         }).catch(report);
@@ -164,7 +181,7 @@ function Surface(props:Props&{choice:ExtensionServiceChoice;left:number;onWidth:
         return {x:Math.max(0,Math.min(.95,(rect.left+x)/innerWidth)),y:Math.max(0,Math.min(.95,(rect.top+y)/innerHeight))};
       }
       return request(input);
-    },value=>{targets=value;},input=>{
+    },value=>{targets=value;notifyDropTargets();},input=>{
       if(disposed||props.disabled||!open()||!frame||pointerGesture)throw Error('拖动不可用');
       const gesture=surfacePointerDrag(frame,input);pointerGesture=gesture;
       void gesture.done.finally(()=>{if(pointerGesture===gesture)pointerGesture=undefined;});

@@ -273,6 +273,17 @@ pub async fn control_extension_surface_window(
             reconcile(&app);
         }
         "close" => close(&app, &id),
+        "escape" => {
+            if app.state::<ExtensionHost>().surfaces.pinned(&id) {
+                if let Some(space) = app.get_webview_window("space") {
+                    if space.is_visible().unwrap_or(false) {
+                        space.emit("pin-escape", ()).map_err(|_| "无法返回空间")?;
+                    }
+                }
+            } else {
+                request_close(&app, &id);
+            }
+        }
         _ => return Err("未知对象操作".into()),
     }
     Ok(())
@@ -372,7 +383,8 @@ pub fn publish_extension_surface_targets(
         "x":(origin.x as f64+r["x"].as_f64().unwrap()*source_scale-target.x as f64)/target_scale,
         "y":(origin.y as f64+r["y"].as_f64().unwrap()*source_scale-target.y as f64)/target_scale,
         "width":r["width"].as_f64().unwrap()*source_scale/target_scale,
-        "height":r["height"].as_f64().unwrap()*source_scale/target_scale
+        "height":r["height"].as_f64().unwrap()*source_scale/target_scale,
+        "default":r.get("default").and_then(Value::as_bool).unwrap_or(false)
     })).collect();
     app.emit_to(
         "space",

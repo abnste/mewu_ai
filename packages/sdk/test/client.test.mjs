@@ -19,6 +19,20 @@ function client(){
   listeners.get('message')({source:parent,data:{type:'mewu-connect'},ports:[port]});
   return {api:context.mewu,listeners,sent,port,PointerEvent,Element};
 }
+
+test('pinned object Escape returns to the space without saving or closing the object; explicit close still saves',async()=>{
+  const c=client();await c.api.ready;let saves=0;
+  c.api.onBeforeClose(()=>{saves++;});
+  c.port.onmessage({data:{type:'event',name:'window-state',value:{pinned:true}}});
+  c.listeners.get('keydown')({key:'Escape',preventDefault(){},stopPropagation(){}});
+  await new Promise(setImmediate);
+  assert.equal(saves,0);assert.equal(c.sent[0].type,'escape-key');
+  c.port.onmessage({data:{type:'event',name:'close-request'}});await new Promise(setImmediate);
+  assert.equal(saves,1);assert.equal(c.sent[1].type,'escape');
+  c.port.onmessage({data:{type:'event',name:'window-state',value:{pinned:false}}});
+  c.listeners.get('keydown')({key:'Escape',preventDefault(){},stopPropagation(){}});await new Promise(setImmediate);
+  assert.equal(saves,2);assert.equal(c.sent[2].type,'escape');c.api.dispose();
+});
 test('client drag requires an unconsumed current trusted pointer press',async()=>{
   const c=client();await c.api.ready;
   const fake=new c.PointerEvent(false);c.listeners.get('pointerdown')(fake);

@@ -1130,7 +1130,7 @@ export default function App() {
     } finally { setBusy(false); finishOperation(); }
   }
   function selectionCompleted(region: Region) {
-    if (!recordingSelection.completed(region.id)) setFocusRequest(value => value + 1);
+    recordingSelection.completed(region.id);
   }
   async function send(strict = false, controlInput?: AppControlParameters['chat.send']) {
     const current = scene();

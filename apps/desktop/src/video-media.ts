@@ -35,6 +35,7 @@ export class VideoPlayback {
   private completedRange?: { source: string; startTicks: number; endTicks: number };
   private frame?: number;
   private clockFrame?: number;
+  private looping = false;
   private frameGeneration = 0;
   private sourceFramePts?: number;
   private mediaIdentity: string;
@@ -42,10 +43,10 @@ export class VideoPlayback {
   private eosReset?: EosReset;
   private eosLoad?: EosLoad;
   readonly seeks: LatestVideoSeek;
-  constructor(private video: HTMLVideoElement, private hooks: { identity: () => string; range: () => VideoRange | undefined; position: (ticks: number) => void; playing: (value: boolean) => void; observation?: (value: VideoMediaObservation) => void; error: (error: unknown) => void }) {
+  constructor(private video: HTMLVideoElement, private hooks: { identity: () => string; range: () => VideoRange | undefined; position: (ticks: number) => void; playing: (value: boolean) => void; observation?: (value: VideoMediaObservation) => void; loop?: () => boolean; error: (error: unknown) => void }) {
     this.mediaIdentity = hooks.identity();
     this.seeks = new LatestVideoSeek({ currentIdentity: hooks.identity, work: (value, signal) => this.seekActual(value, signal), presented: value => { this.boundarySeek = false; hooks.position(value); this.sample(); }, error: error => { if (!(error instanceof TrimCanceled)) hooks.error(error); } });
-    video.addEventListener('timeupdate', this.sample); video.addEventListener('play', this.playing); video.addEventListener('pause', this.paused); video.addEventListener('ended', this.paused);
+    video.addEventListener('timeupdate', this.sample); video.addEventListener('play', this.playing); video.addEventListener('pause', this.paused); video.addEventListener('ended', this.ended);
     video.addEventListener('seeking', this.seeking); video.addEventListener('seeked', this.seeked); video.addEventListener('loadeddata', this.seeked); video.addEventListener('emptied', this.unavailable); video.addEventListener('error', this.unavailable);
     video.addEventListener('loadedmetadata', this.mediaReady);
   }
@@ -65,7 +66,10 @@ export class VideoPlayback {
     this.hooks.observation?.(!this.video.seeking && this.video.readyState >= 2 ? { sourcePlaybackTicks: ticks, sourceFramePts: this.sourceFramePts } : {});
     if (!this.video.paused && range && (ticks < range.startTicks || ticks >= range.endTicks)) {
       this.completedRange = ticks >= range.endTicks ? { source: this.hooks.identity(), ...range } : undefined;
-      this.pause(); this.requestSeek(clampPosition(ticks, range)); return;
+      this.pause();
+      if (ticks >= range.endTicks && this.hooks.loop?.()) this.queueLoop();
+      else this.requestSeek(clampPosition(ticks, range));
+      return;
     }
     this.hooks.position(ticks);
   };
@@ -140,6 +144,24 @@ export class VideoPlayback {
     if (this.clockFrame !== undefined) cancelAnimationFrame(this.clockFrame); this.clockFrame = undefined;
     this.sample();
   };
+  private ended = () => {
+    if (!this.video.ended) return;
+    const repeat = !this.interval && this.hooks.loop?.() && this.playOwner?.current();
+    this.paused();
+    if (repeat) this.queueLoop();
+  };
+  private queueLoop() {
+    if (this.looping || this.disposed || !this.hooks.loop?.()) return;
+    this.looping = true;
+    const intent = this.intentGeneration, source = this.hooks.identity();
+    queueMicrotask(async () => {
+      try {
+        if (this.disposed || intent !== this.intentGeneration || source !== this.hooks.identity() || !this.hooks.loop?.()) return;
+        await this.play(this.hooks.range()?.startTicks);
+      } catch (error) { if (!(error instanceof TrimCanceled) && !this.disposed) this.hooks.error(error); }
+      finally { this.looping = false; }
+    });
+  }
   private clockFrames() {
     if (this.disposed || this.video.paused || this.clockFrame !== undefined || typeof requestAnimationFrame !== 'function') return;
     const generation = this.generation;
@@ -327,7 +349,7 @@ export class VideoPlayback {
     if (this.disposed) return; this.disposed = true; this.invalidate(); this.seeks.dispose();
     if (this.frame !== undefined) this.video.cancelVideoFrameCallback?.(this.frame);
     if (this.clockFrame !== undefined) cancelAnimationFrame(this.clockFrame); this.clockFrame = undefined;
-    this.video.removeEventListener('timeupdate', this.sample); this.video.removeEventListener('play', this.playing); this.video.removeEventListener('pause', this.paused); this.video.removeEventListener('ended', this.paused);
+    this.video.removeEventListener('timeupdate', this.sample); this.video.removeEventListener('play', this.playing); this.video.removeEventListener('pause', this.paused); this.video.removeEventListener('ended', this.ended);
     this.video.removeEventListener('seeking', this.seeking); this.video.removeEventListener('seeked', this.seeked); this.video.removeEventListener('loadeddata', this.seeked); this.video.removeEventListener('emptied', this.unavailable); this.video.removeEventListener('error', this.unavailable);
     this.video.removeEventListener('loadedmetadata', this.mediaReady);
     this.video.removeAttribute('src'); this.video.load();

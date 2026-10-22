@@ -126,7 +126,7 @@ test('actual App completion starts only the saved region of the approved new bac
   const f = appFixture(); f.flow.arm(owner); f.api.selectionCompleted({ id: 'saved-region' }); await turn();
   assert.deepEqual(JSON.parse(JSON.stringify(f.starts)), [['scene', 'saved-region', f.selected, f.grant]]);
   assert.equal(f.busy, false); assert.equal(f.finishes, 1); assert.equal(f.focus, 0); assert.ok(f.order.includes('refs-cleared'));
-  f.api.selectionCompleted({ id: 'ordinary-selection' }); assert.equal(f.focus, 1);
+  f.api.selectionCompleted({ id: 'ordinary-selection' }); assert.equal(f.focus, 0);
 });
 test('actual App rejects missing saved regions and source/audio changes during flush', async () => {
   for (const change of ['missing-region', 'source', 'scene', 'exit', 'disposed', 'audio']) {

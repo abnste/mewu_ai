@@ -20,6 +20,18 @@ function harness(dispatch) {
   return { scope, calls };
 }
 
+test('region observation preserves safe native diagnostics and never invites an automatic input replay',async()=>{
+  const {default:activate}=await import('../../../extensions/examples/region-agent/index.mjs');
+  for(const code of ['region_display_changed','region_capture_failed','region_source_invalid','overlay_hide_failed']){
+    const {scope,calls}=harness(async()=>{throw Object.assign(Error('private native details'),{code});});
+    activate(scope.ctx);scope.finishRegistration();
+    const reply=await invoke(scope,'example.region-agent.operate',{task:'操作区域'},{regionId:'region'});
+    assert.equal(reply.ok,true);assert.equal(reply.result.stopReason,code);assert.equal(reply.result.retryable,false);
+    assert.equal(reply.result.steps,0);assert.equal(calls.length,1);assert.equal(calls[0].method,'region.observe');
+    assert.doesNotMatch(JSON.stringify(reply),/private native/);
+  }
+});
+
 test('plugin-owned toolbox uses only atomic object API; host has no folder or slot operations', async () => {
   const {default:activate}=await import('../../../extensions/official/object-toolbox/index.mjs');
   let value={revision:0,state:null,objects:{}};
@@ -347,7 +359,7 @@ test('region boundary failures reach the parent Agent with no input and no priva
   const reply = await invoke(scope, 'example.region-agent.operate', {task:'点击目标'}, {regionId:'authorized-region'});
   assert.equal(reply.ok, true);
   assert.deepEqual(reply.result, {
-    isError:true, completed:false, stopReason:'region_window_boundary', steps:0,
+    isError:true, completed:false, retryable:false, stopReason:'region_window_boundary', steps:0,
     content:'选区跨出了目标窗口，请重新框选同一窗口；本次未发出新的输入动作。',
   });
   assert.deepEqual(calls.map(call => call.method), ['region.observe']);

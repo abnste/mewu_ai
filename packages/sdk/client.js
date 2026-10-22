@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Installed before plugin HTML in an opaque-origin sandbox. No Tauri API.
 (() => {
-  let port, closed = false, closing = false, serial = 0;
+  let port, closed = false, closing = false, serial = 0, pinned = false;
   const beforeClose=new Set();
   const previews=new Set();
   async function previewRaster(source){
@@ -38,7 +38,8 @@
   // Keys in an opaque iframe never bubble to the containing space.
   addEventListener('keydown',event=>{
     if(event.key!=='Escape'||event.isComposing||event.keyCode===229||event.repeat||event.target instanceof HTMLSelectElement)return;
-    event.preventDefault();event.stopPropagation();void requestClose();
+    event.preventDefault();event.stopPropagation();
+    if(pinned)port?.postMessage({type:'escape-key'});else void requestClose();
   });
   const pending = new Map(), listeners = new Map();
   function request(type,input) {
@@ -64,6 +65,7 @@
           if(activeDrag?.id===data.id)releaseDrag();
           data.ok ? entry.resolve(data.value) : entry.reject(new Error(data.error || 'Plugin request failed'));
         } else if (data.type === 'event') {
+          if(data.name==='window-state')pinned=data.value?.pinned===true;
           if(data.name==='close-request'){void requestClose();return;}
           for (const callback of listeners.get(data.name) || []) {
             try { callback(data.value); } catch { /* one listener cannot break delivery */ }

@@ -4,7 +4,8 @@ export interface ClientSurface {
   /** Render an authorized object document in a disposable, opaque offline frame. */
   previewDocument(input:{html:string;width?:number;height?:number}):Promise<string|null>;
   call<T = unknown>(input: unknown): Promise<T>;
-  setDropTargets(targets: Array<{id:string;x:number;y:number;width:number;height:number}>): Promise<void>;
+  /** One optional default target receives a drop on this surface's launcher. */
+  setDropTargets(targets: Array<{id:string;x:number;y:number;width:number;height:number;default?:boolean}>): Promise<void>;
   on(name: string, callback: (value: unknown) => void): () => void;
   /** Flush edits before the host closes this surface. Reject to keep it open. */
   onBeforeClose(callback: () => void | Promise<void>): () => void;

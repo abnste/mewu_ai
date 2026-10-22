@@ -23,6 +23,7 @@ export default function ExtensionObjectView(){
   const report=(cause:unknown)=>setError(cause instanceof Error?cause.message:String(cause));
   const control=(action:string)=>invoke<void>('control_extension_surface_window',{action});
   const close=()=>connection?connection.event('close-request',null):void control('close').catch(report);
+  const escape=()=>state()?.pinned?void control('escape').catch(report):close();
   onMount(async()=>{try{
     stopClose=await listen('extension-surface-close-request',close);
     if(disposed){stopClose();return;}
@@ -49,11 +50,12 @@ export default function ExtensionObjectView(){
       const current=surfacePointerDrag(frame,input);gesture=current;
       void current.done.finally(()=>{if(gesture===current)gesture=undefined;});
       return current;
-    },()=>{void control('close').catch(report);},report);
+    },()=>{void control('close').catch(report);},report,escape);
     frame.contentWindow.postMessage({type:'mewu-connect'},'*',[channel.port2]);
+    connection.event('window-state',{pinned:state()?.pinned===true});
     void control('ready').catch(report);
   }
-  const key=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!e.isComposing&&e.keyCode!==229&&!e.repeat){e.preventDefault();close();}};
+  const key=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!e.isComposing&&e.keyCode!==229&&!e.repeat){e.preventDefault();escape();}};
   window.addEventListener('keydown',key);
   onCleanup(()=>{disposed=true;stopClose?.();stops.forEach(stop=>stop());connection?.close();gesture?.cancel();window.removeEventListener('keydown',key);});
   return <main class="extension-object-shell">
@@ -61,7 +63,7 @@ export default function ExtensionObjectView(){
       <iframe ref={frame} src={value().url} sandbox="allow-scripts" allow="" referrerpolicy="no-referrer" title="插件对象" onLoad={loaded}/>
       <ObjectMoveGrip label="移动" onPointerDown={()=>void control('drag').catch(report)}/>
       <div class="extension-object-controls">
-        <button title={value().pinned?'取消置顶':'置顶'} aria-label={value().pinned?'取消置顶':'置顶'} classList={{selected:value().pinned}} onClick={async()=>{try{const pinned=!value().pinned;await control(pinned?'pin':'unpin');setState({...value(),pinned});}catch(e){report(e);}}}><Pin size={15}/></button>
+        <button title={value().pinned?'取消置顶':'置顶'} aria-label={value().pinned?'取消置顶':'置顶'} aria-pressed={value().pinned} classList={{selected:value().pinned}} onClick={async()=>{try{const pinned=!value().pinned;await control(pinned?'pin':'unpin');setState({...value(),pinned});connection?.event('window-state',{pinned});}catch(e){report(e);}}}><Pin size={15} fill={value().pinned?'currentColor':'none'}/></button>
         <button title="关闭" aria-label="关闭" onClick={close}><X size={15}/></button>
       </div>
     </section>}</Show>
