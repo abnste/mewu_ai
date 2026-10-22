@@ -16,6 +16,7 @@ pub struct PinVideoAnnotation {
 #[serde(rename_all = "camelCase")]
 pub struct PinVideo {
     pub kind: &'static str,
+    pub canvas_presentation: bool,
     pub source_id: String,
     pub source_duration_ticks: Option<u64>,
     pub range: Option<VideoRange>,
@@ -170,6 +171,7 @@ pub(super) fn stage_video(
     asset.path = path.to_string_lossy().into_owned();
     let mut media = PinVideo {
         kind: "video",
+        canvas_presentation: cfg!(target_os = "macos"),
         source_id: item.asset.id.clone(),
         source_duration_ticks: item
             .video_edit

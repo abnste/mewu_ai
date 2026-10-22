@@ -21,6 +21,9 @@ const { validPinMedia } = (await load('pin-media.ts')).namespace;
 const source = 'http://127.0.0.1:49213/asset', media = { kind: 'video', sourceId: '12345678-1234-4234-9234-123456789abc', sourceDurationTicks: 100_000_000, range: { startTicks: 30_000_000, endTicks: 80_000_000 }, annotationRevision: 2, annotations: [{ id: 'annotation-1', interval: { startTicks: 40_000_000, endTicks: 50_000_000 }, bounds: { x: 10, y: 20, width: 50, height: 30 }, imageUrl: 'http://127.0.0.1:49213/overlay' }] };
 test('old image pins remain compatible; timed media requires bounded local immutable descriptors', () => {
   assert.equal(validPinMedia(undefined, source), true); assert.equal(validPinMedia(media, source), true);
+  assert.equal(validPinMedia({ ...media, canvasPresentation: true }, source), true);
+  assert.equal(validPinMedia({ ...media, canvasPresentation: false }, source), true);
+  assert.equal(validPinMedia({ ...media, canvasPresentation: 'macos' }, source), false);
   for (const change of [value => value.kind = 'html', value => value.range.endTicks = 200_000_000, value => value.range.startTicks = -1, value => value.sourceDurationTicks = NaN, value => value.annotations[0].imageUrl = 'https://remote/image', value => value.annotations[0].imageUrl += '?private=1', value => value.annotations[0].interval.endTicks = 200_000_000, value => value.annotations[0].bounds.width = 0, value => value.annotations.push({ ...value.annotations[0] }), value => value.annotations = Array.from({ length: 49 }, (_, index) => ({ ...value.annotations[0], id: String(index) }))]) {
     const invalid = structuredClone(media); change(invalid); assert.equal(validPinMedia(invalid, source), false);
   }

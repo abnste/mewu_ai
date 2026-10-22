@@ -2,6 +2,7 @@
 import type { VideoRange } from './contracts';
 export interface PinVideoMedia {
   kind: 'video'; sourceId: string; sourceDurationTicks: number | null; range: VideoRange | null; annotationRevision: number;
+  canvasPresentation?: boolean;
   annotations: { id: string; interval: VideoRange; bounds: { x: number; y: number; width: number; height: number }; imageUrl: string }[];
 }
 const interval = (value: VideoRange) => value && Number.isSafeInteger(value.startTicks) && Number.isSafeInteger(value.endTicks) && value.startTicks >= 0 && value.endTicks > value.startTicks;
@@ -10,6 +11,7 @@ export function validPinMedia(value: PinVideoMedia | undefined, sourceUrl: strin
   try {
     const origin = new URL(sourceUrl).origin;
     return value?.kind === 'video' && typeof value.sourceId === 'string' && /^[a-f0-9-]{36}$/.test(value.sourceId)
+      && (value.canvasPresentation === undefined || typeof value.canvasPresentation === 'boolean')
       && (value.sourceDurationTicks === null || Number.isSafeInteger(value.sourceDurationTicks) && value.sourceDurationTicks > 0)
       && (value.range === null || interval(value.range) && value.sourceDurationTicks !== null && value.range.endTicks <= value.sourceDurationTicks)
       && Number.isSafeInteger(value.annotationRevision) && value.annotationRevision >= 0 && Array.isArray(value.annotations) && value.annotations.length <= 48 && new Set(value.annotations.map(entry => entry.id)).size === value.annotations.length

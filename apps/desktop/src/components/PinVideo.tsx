@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createMemo, createSignal, For, onCleanup, onMount } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount } from 'solid-js';
 import { Pause, Play } from 'lucide-solid';
 import { t } from '../i18n';
 import type { PinVideoMedia } from '../pin-media';
 import { VideoPlayback } from '../video-media';
+import { reducedVideoPreview } from '../video-preview';
 import { TICKS_PER_SECOND, checkedRange } from '../video-trim';
 import { videoAnnotationPreviewTicks, videoAnnotationVisible } from '../video-annotations';
 import ObjectMoveGrip from './ObjectMoveGrip';
@@ -13,6 +14,11 @@ interface Props { source: string; media: PinVideoMedia; width: number; height: n
 /** Independent source-clock playback. No native mutation or scene lookup. */
 export default function PinVideo(props: Props) {
   let video!: HTMLVideoElement, playback: VideoPlayback | undefined, disposed = false, ready = false, stopVisibility: (() => void) | undefined;
+  let preview!: HTMLCanvasElement;
+  const [canvasVisible, setCanvasVisible] = createSignal(false);
+  createEffect(() => {
+    if (video && preview) onCleanup(reducedVideoPreview(video, preview, 100, visible => { setCanvasVisible(visible); if (visible) checkReady(); }, props.media.canvasPresentation === true));
+  });
   const [duration, setDuration] = createSignal(props.media.sourceDurationTicks ?? 0);
   const [position, setPosition] = createSignal(0), [playing, setPlaying] = createSignal(false);
   const [decoded, setDecoded] = createSignal(new Set<string>());
@@ -20,7 +26,7 @@ export default function PinVideo(props: Props) {
   const range = createMemo(() => duration() > 0 ? checkedRange(duration(), props.media.range) : undefined);
   const previewTicks = () => videoAnnotationPreviewTicks(position(), range(), !playing(), video?.seeking ?? true);
   const checkReady = () => {
-    if (ready || disposed || !video || video.readyState < 2 || video.seeking || decoded().size !== props.media.annotations.length) return;
+    if (ready || disposed || !video || video.readyState < 2 || video.seeking || decoded().size !== props.media.annotations.length || props.media.canvasPresentation && !canvasVisible()) return;
     ready = true; props.onReady?.();
   };
   function metadata() {
@@ -45,6 +51,7 @@ export default function PinVideo(props: Props) {
   });
   onCleanup(() => { disposed = true; stopVisibility?.(); playback?.dispose(); });
   return <div class="pin-video-content" onContextMenu={event => event.preventDefault()} onPointerDown={event => { if (!(event.target as Element).closest('.object-move-grip')) event.stopPropagation(); }} onDblClick={event => event.stopPropagation()}>
+    <canvas ref={preview} class="pin-video-preview" classList={{ visible: canvasVisible() }} aria-hidden="true" />
     <video ref={video} class="pin-video-element" src={props.source} playsinline preload="auto" draggable={false} onLoadedMetadata={metadata} onLoadedData={checkReady} onSeeked={checkReady} onError={() => props.onFailed?.()} onClick={event => { event.stopPropagation(); void toggle(); }} />
     <div class="pin-video-ink" aria-hidden="true"><For each={props.media.annotations.map(annotation => annotation.id)}>{id => { const annotation = () => annotationIndex().get(id)!; return <img src={annotation().imageUrl} alt="" draggable={false} style={{ left: `${annotation().bounds.x / props.width * 100}%`, top: `${annotation().bounds.y / props.height * 100}%`, width: `${annotation().bounds.width / props.width * 100}%`, height: `${annotation().bounds.height / props.height * 100}%`, visibility: range() && videoAnnotationVisible(annotation().interval, range()!, previewTicks()) ? 'visible' : 'hidden' }} onLoad={async event => { try { await event.currentTarget.decode(); if (!disposed) { setDecoded(old => new Set([...old, id])); checkReady(); } } catch { if (!disposed) props.onFailed?.(); } }} onError={() => props.onFailed?.()} />; }}</For></div>
     <ObjectMoveGrip label={t('移动')} onPointerDown={props.onDrag} />
