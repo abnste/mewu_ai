@@ -106,6 +106,18 @@ export interface ExtensionContext {
     set(key:string,value:string,origin:string,expectedRevision:number): Promise<{revision:number;configured:boolean;origin:string}>;
   };
   readonly commands: ServiceRegistry;
+  /** Historical memory migration. list/page/credential/activate require a live
+   * settings surface and declared memory.archive permissions. Runtime lookup
+   * and forgetting are restricted to the invocation's memory-enabled Agent.
+   * Credentials are copied within the native vault and never returned to JS. */
+  readonly memoryArchive: {
+    list(cursor?:string): Promise<JsonObject>;
+    page(bindingId:string,cursor?:string): Promise<JsonObject>;
+    lookup(bindingId:string,documentIds:string[]): Promise<JsonValue[]>;
+    credential(bindingId:string,expectedRevision:number,secretRevision:number): Promise<JsonObject>;
+    activate(request:{bindingId:string;expectedRevision:number;bindingRevision:number;serviceId:string}): Promise<JsonObject>;
+    forget(request:{bindingId:string;evidenceId:string;evidenceRevision:number}): Promise<JsonObject>;
+  };
   readonly tools: ServiceRegistry;
   readonly agents: ServiceRegistry;
   readonly memory: ServiceRegistry;

@@ -33,6 +33,44 @@ pub(super) fn cancel_authority(
 }
 
 impl Store {
+    /// Historical routes are data for an explicitly authorized migration, never
+    /// authority to dispatch old work. Credential references stay host-only.
+    pub fn memory_archive_route(&self, agent_id: &str, binding_id: &str) -> Result<MemoryRoute> {
+        let b = ledger::binding(&self.db, binding_id)?;
+        if b.agent_id != agent_id || !self.state.agents.iter().any(|a| a.id == agent_id && !a.archived) {
+            return Err(CoreError::MemoryDisabled);
+        }
+        Ok(b.route())
+    }
+
+    pub fn memory_archive_bindings(&self, after: &str, limit: usize) -> Result<Vec<MemoryBindingView>> {
+        if !after.is_empty() { ledger::uuid(after)?; }
+        if !(1..=26).contains(&limit) { return Err(invalid("记忆档案分页无效")); }
+        let mut query = self.db.prepare("SELECT id FROM external_memory_bindings WHERE id>?1 ORDER BY id LIMIT ?2")?;
+        let ids = query.query_map(params![after, limit as i64], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ids.into_iter().map(|id| self.memory_binding(&id)).collect()
+    }
+
+    /// Bounded lookup includes tombstones and uncertain writes. Importers must
+    /// not re-send unknown/pending records or turn a forgotten document live.
+    pub fn memory_archive_documents(&self, agent_id: &str, binding_id: &str, documents: &[String]) -> Result<Vec<serde_json::Value>> {
+        self.memory_archive_route(agent_id, binding_id)?;
+        if documents.len()>128 || documents.iter().any(|id| id.is_empty() || id.len()>200) {
+            return Err(invalid("记忆档案查询无效"));
+        }
+        let mut query = self.db.prepare("SELECT id FROM external_memory_evidence WHERE binding_id=?1 AND document_id=?2")?;
+        let mut result = Vec::new();
+        for document in documents {
+            let id: Option<String> = query.query_row(params![binding_id,document], |r| r.get(0)).optional()?;
+            if let Some(id) = id {
+                let detail = ledger::entry(&self.db, &self.state, agent_id, binding_id, &id)?;
+                result.push(serde_json::json!({"documentId":document,"evidence":detail.map(|d| d.summary)}));
+            }
+        }
+        Ok(result)
+    }
+
     /// Ledger mutations share the app_state revision fence, but do not clone or
     /// serialize the scene collection for background observations.
     fn ledger_transaction<T>(

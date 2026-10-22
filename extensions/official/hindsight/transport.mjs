@@ -14,16 +14,16 @@ export function bank(config,agentId) {
   if(typeof agentId!=='string'||!/^[A-Za-z0-9_-]{1,128}$/u.test(agentId))throw Error('Agent 身份无效');
   return `${config.bankPrefix}-${agentId}`;
 }
-export function api(ctx,settings,previewKey) {
+export function api(ctx,settings,previewKey,secretKey='api') {
   const base=config(settings);
   if(previewKey!==undefined&&(typeof previewKey!=='string'||previewKey.length>8192||/[\x00-\x20\x7f]/u.test(previewKey)))throw Error('API Key 无效');
   return async(method,path,body,{missing=false,readiness=false}={})=>{
-    const secret=previewKey===undefined?await ctx.secrets.status('api'):null;
+    const secret=previewKey===undefined?await ctx.secrets.status(secretKey):null;
     let response;
     try { response=await ctx.host.call('network.fetch',{
       url:base.endpoint+'/'+path.map(encodeURIComponent).join('/'),method,
       headers:{Accept:'application/json','Content-Type':'application/json',...(previewKey?{Authorization:'Bearer '+previewKey}:{})},
-      ...(secret?.configured?{authorization:{key:'api'}}:{}),...(body===undefined?{}:{body})
+      ...(secret?.configured?{authorization:{key:secretKey}}:{}),...(body===undefined?{}:{body})
     }); } catch { throw Error('连接中断，操作结果未知'); }
     if(response.status===404&&missing)return null;
     if(response.status===401||response.status===403)throw Error('服务拒绝认证');

@@ -131,3 +131,11 @@ Windows 的 layered 窗口同时具有 `WS_EX_TRANSPARENT` 时，鼠标输入由
 运行时没有 `process`、`require`、任意文件访问或直接网络接口。Node.js 的包不是可直接移植的宿主库；需要使用 SDK 服务或在插件包内提供兼容的 ESM 模块。
 
 发布包的 `index.mjs` 是 `crates/mewu-extension/src/sdk.js` 的精确副本。修改嵌入式源后运行 `npm run sync`，`npm run check:sync` 与 `prepack` 拒绝两个版本分叉；npm 包不引用仓库外路径。
+
+### 历史记忆迁移
+
+宿主能力 `memory.archive` 提供旧记忆账本的分页读取和受控凭据移交，服务协议与迁移规则由独立插件实现。插件声明 `memory.archive.read` / `memory.archive.write`，调用 `ctx.memoryArchive`；凭据移交另需 `secrets.write`。
+
+`list`、`page`、`credential`、`activate` 仅允许当前存活的设置界面调用。`credential` 将指定历史连接的凭据复制到当前插件的 `archive.<bindingId>` 托管名称，固定为原服务 origin，不返回明文。`activate` 校验历史连接版本、当前扩展绑定版本和本插件注册的记忆服务后才切换提供者。原账本、凭据与待处理任务保留，迁移读取本身不发送网络请求。
+
+运行期 `lookup` 和 `forget` 仅允许当前记忆调用的 Agent 访问自己的历史连接；返回提交状态和遗忘记录，插件不得重发不确定写入或恢复墓碑。插件停用、卸载、绑定变化或设置窗口关闭都会撤销这些调用的资格。

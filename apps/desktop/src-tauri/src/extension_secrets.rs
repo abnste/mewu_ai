@@ -63,16 +63,29 @@ pub(super) fn set(app: &AppHandle, context: &Context, params: Value) -> Result<V
     }
     let key = name(&params)?;
     let expected = params.get("expectedRevision").and_then(Value::as_u64).ok_or("缺少凭据版本")?;
+    let endpoint = origin(string(&params,"origin")?)?;
+    let secret = Zeroizing::new(string(&params,"value")?.to_owned());
+    commit(app, context, key, expected, endpoint, &secret)
+}
+
+/// Native archive imports use the same CAS/origin boundary without ever
+/// serializing the old credential into plugin input or a renderer response.
+pub(super) fn import_archive(app: &AppHandle, context: &Context, route: &mewu_core::MemoryRoute, expected: u64) -> Result<Value,String> {
+    context.permission("secrets.write")?;
+    let host=app.state::<Host>();
+    let secret=crate::credentials::read_memory(&host.root,&route.binding_id,route.credential_id.as_deref())?;
+    commit(app,context,&format!("archive.{}",route.binding_id),expected,origin(&route.endpoint)?,&secret)
+}
+
+fn commit(app:&AppHandle,context:&Context,key:&str,expected:u64,endpoint:String,secret:&str)->Result<Value,String> {
     let (old, reference) = read(app, context, key)?;
     if reference.as_ref().map_or(0, |r| r.revision) != expected { return Err("凭据已变化，请重新载入".into()); }
     let revision = expected.checked_add(1).ok_or("凭据版本已耗尽")?;
-    let endpoint = origin(string(&params,"origin")?)?;
-    let secret = Zeroizing::new(string(&params,"value")?.to_owned());
-    crate::credentials::validate_key(&secret)?;
+    crate::credentials::validate_key(secret)?;
     let host = app.state::<Host>();
     let owner = owner(&context.record.manifest.id);
     let credential = if secret.is_empty() { None } else {
-        Some(crate::credentials::create_scoped(&host.root,"extensions",&owner,&secret)?)
+        Some(crate::credentials::create_scoped(&host.root,"extensions",&owner,secret)?)
     };
     let next = Reference { revision, origin: endpoint, credential: credential.clone() };
     let commit = context.check(app).and_then(|()| live_store(app,context,|store|

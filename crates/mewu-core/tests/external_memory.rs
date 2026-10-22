@@ -330,6 +330,36 @@ fn queue(store: &mut Store, b: &MemoryBindingView, request: &str, text: &str) ->
         .queue_manual_memory_evidence(&b.agent_id, &b.id, b.revision, request, text)
         .unwrap()
 }
+
+#[test]
+fn archive_migration_preserves_bank_credentials_uncertain_work_and_tombstones_across_reopen() {
+    let temp=TestDb::new();let mut store=Store::open(&temp.0).unwrap();
+    let agent=enable(&mut store);let b=setup(&mut store,&agent,false);
+    let keep=queue(&mut store,&b,&uid(),"pending must not be resent by importing");
+    let forget=queue(&mut store,&b,&uid(),"forgotten must never reappear");
+    store.forget_memory_evidence(&agent,&b.id,&forget.evidence_id,forget.revision).unwrap();
+    let before=store.memory_archive_route(&agent,&b.id).unwrap();
+    assert!(before.credential_id.is_some());
+    let db=Database::open(&temp.0).unwrap();
+    let docs:Vec<String>=db.prepare("SELECT document_id FROM external_memory_evidence WHERE binding_id=?1 ORDER BY document_id").unwrap().query_map([&b.id],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+    let counts_before=counts(&db);let state_before=store.snapshot();
+    let results=store.memory_archive_documents(&agent,&b.id,&docs).unwrap();
+    assert_eq!(results.len(),2);
+    assert!(results.iter().any(|v|v["evidence"]["id"]==keep.evidence_id&&v["evidence"]["state"]=="queued"));
+    assert!(results.iter().any(|v|v["evidence"]["id"]==forget.evidence_id&&v["evidence"]["forgotten"]["localSuppressed"]==true));
+    assert!(!serde_json::to_string(&results).unwrap().contains("attributedText"));
+    assert!(store.memory_archive_route(&uid(),&b.id).is_err());
+    assert!(store.memory_archive_documents(&agent,&b.id,&vec!["x".into();129]).is_err());
+    assert!(store.memory_archive_bindings("not-a-cursor",25).is_err());
+    assert!(store.memory_archive_bindings("",27).is_err());
+    assert_eq!(store.memory_archive_bindings("",1).unwrap()[0].id,b.id);
+    assert!(store.memory_archive_bindings(&b.id,1).unwrap().is_empty());
+    assert_eq!(counts(&db),counts_before);assert_eq!(store.snapshot(),state_before);
+    drop(store);let reopened=Store::open(&temp.0).unwrap();
+    let after=reopened.memory_archive_route(&agent,&b.id).unwrap();
+    assert_eq!(before.bank_id,after.bank_id);assert_eq!(before.endpoint,after.endpoint);assert_eq!(before.credential_id,after.credential_id);
+    assert_eq!(results,reopened.memory_archive_documents(&agent,&b.id,&docs).unwrap());
+}
 fn start(store: &mut Store, scene: &str, b: &MemoryBindingView, text: &str) -> RunContext {
     store
         .apply(SceneCommand::SetDraft {

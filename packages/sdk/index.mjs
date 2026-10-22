@@ -66,6 +66,14 @@ export function createContext(send) {
       status: key => host.call('secrets.status', { key }),
       set: (key, value, origin, expectedRevision) => host.call('secrets.set', { key, value, origin, expectedRevision })
     }),
+    memoryArchive: Object.freeze({
+      list: cursor => host.call('memory.archive.list', { ...(cursor ? { cursor } : {}) }),
+      page: (bindingId,cursor) => host.call('memory.archive.page', { bindingId, ...(cursor ? { cursor } : {}) }),
+      lookup: (bindingId,documentIds) => host.call('memory.archive.lookup', { bindingId, documentIds }),
+      credential: (bindingId,expectedRevision,secretRevision) => host.call('memory.archive.credential', { bindingId, expectedRevision, secretRevision }),
+      activate: request => host.call('memory.archive.activate', request),
+      forget: request => host.call('memory.archive.forget', request)
+    }),
     commands: Object.freeze({ register: register('command') }),
     tools: Object.freeze({ register: register('tool') }),
     agents: Object.freeze({ register: register('agent') }),

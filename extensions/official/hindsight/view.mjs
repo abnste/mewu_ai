@@ -5,14 +5,32 @@ export const html=String.raw`<!doctype html><meta charset="utf-8">
 </style>
 <h2>Hindsight</h2>
 <form id="form"><label>服务地址<input id="endpoint" type="url" required placeholder="http://127.0.0.1:8888" autocomplete="off" spellcheck="false"></label><label>API Key<input id="key" type="password" autocomplete="new-password"></label><label>记忆库前缀<input id="prefix" value="mewu" required pattern="[A-Za-z0-9_-]{1,48}" autocomplete="off" spellcheck="false"></label><div class="actions"><button id="test" type="button">测试连接</button><button id="save" type="submit">保存</button><span id="status" role="status"></span></div></form><p id="error" role="alert"></p>
+<section id="archives" hidden><h2>旧连接</h2><div id="connections"></div><button type="button" id="more" hidden>加载更多</button></section>
 <script>
 const $=id=>document.getElementById(id);let data,busy=true,disposed=false,keyChanged=false;
-function controls(){document.querySelectorAll('input,button').forEach(e=>e.disabled=busy);}
+function controls(){document.querySelectorAll('input,button').forEach(e=>e.disabled=busy||e.dataset.unavailable==='true'||e.dataset.done==='true');}
 function show(value){data=value;$('endpoint').value=value.config?.endpoint||'';$('prefix').value=value.config?.bankPrefix||'mewu';$('key').value='';$('key').placeholder=value.secret.configured?'已保存，留空保留':'';keyChanged=false;}
 $('key').oninput=()=>{keyChanged=true;};
 async function perform(type){if(busy)return;busy=true;controls();$('error').textContent='';$('status').textContent=type==='test'?'检测中…':'';
 try{const result=await mewu.call({type,config:{endpoint:$('endpoint').value,bankPrefix:$('prefix').value},...(type==='save'?{expected:data.config,secretRevision:data.secret.revision}:{}),...(keyChanged?{key:$('key').value}:{})});if(disposed)return;if(result.ok===false)throw Error(result.error);if(type==='save')show(result);$('status').textContent=type==='test'?'连接正常':'已保存';}catch(error){$('status').textContent='';$('error').textContent=error.message||'操作失败';}finally{busy=false;controls();}}
 $('form').onsubmit=e=>{e.preventDefault();perform('save');};$('test').onclick=()=>perform('test');
+let archiveCursor;
+async function loadArchives(){
+  const page=await mewu.call({type:'archives',cursor:archiveCursor});
+  if(page.ok===false)throw Error(page.error);
+  archiveCursor=page.nextCursor;$('more').hidden=!archiveCursor;
+  for(const row of page.entries){
+    $('archives').hidden=false;
+    const line=document.createElement('div');line.className='actions';line.style.cssText='padding:12px 0;border-bottom:1px solid var(--line)';
+    const text=document.createElement('span');text.style.cssText='flex:1;overflow-wrap:anywhere';text.textContent=row.agentName+' · '+row.binding.endpoint;
+    const button=document.createElement('button');button.type='button';button.textContent='迁移并使用';button.dataset.unavailable=String(!row.binding.enabled||row.binding.status!=='ready');button.disabled=button.dataset.unavailable==='true';
+    button.onclick=async()=>{if(busy)return;busy=true;controls();$('error').textContent='';button.textContent='迁移中…';try{
+      const result=await mewu.call({type:'migrate',bindingId:row.binding.id,expectedRevision:row.binding.revision});if(result.ok===false)throw Error(result.error);button.textContent='已迁移';button.dataset.done='true';
+    }catch(error){button.textContent='迁移并使用';$('error').textContent=error.message||'迁移失败';}finally{busy=false;controls();document.querySelectorAll('[data-done]').forEach(e=>e.disabled=true);}};
+    line.append(text,button);$('connections').append(line);
+  }
+}
+$('more').onclick=()=>loadArchives().catch(error=>{$('error').textContent=error.message;});
 mewu.on('appearance',value=>{const root=document.documentElement,c=value?.colors||{};root.style.colorScheme=value.colorScheme||'light';if(c.text)root.style.color=c.text;for(const k of ['field','line','muted','accent'])if(c[k])root.style.setProperty('--'+k,c[k]);});
-controls();mewu.ready.then(()=>mewu.call({type:'get'})).then(value=>{if(disposed)return;show(value);busy=false;controls();}).catch(e=>{$('error').textContent=e.message;});addEventListener('pagehide',()=>{disposed=true;});
+controls();mewu.ready.then(()=>mewu.call({type:'get'})).then(async value=>{if(disposed)return;show(value);await loadArchives();busy=false;controls();}).catch(e=>{$('error').textContent=e.message;busy=false;controls();});addEventListener('pagehide',()=>{disposed=true;});
 </script>`;

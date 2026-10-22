@@ -29,6 +29,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 #[path = "extension_secrets.rs"]
 mod secrets;
+#[path = "extension_memory_archive.rs"]
+mod memory_archive;
 
 pub struct ExtensionHost {
     pub(crate) surfaces: crate::extension_surfaces::Surfaces,
@@ -1969,7 +1971,7 @@ fn tool_initialization_read(method: &str) -> bool {
     matches!(method, "runtime.describe" | "configuration.get" | "storage.get" | "storage.list" | "services.list" | "objects.library.describe")
 }
 pub(crate) fn runtime_capabilities()->Value {
-    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","process.jsonlines","process.frame-bindings"]})
+    json!({"hostApi":mewu_extension::HOST_API,"capabilities":["ui.settings","configuration.shared","secrets.network","memory.archive","process.jsonlines","process.frame-bindings"]})
 }
 
 fn bridge_impl(
@@ -1992,6 +1994,8 @@ fn bridge_impl(
         "configuration.compareAndSet" => "configuration.write",
         "secrets.status" => "secrets.use",
         "secrets.set" => "secrets.write",
+        "memory.archive.list"|"memory.archive.page"|"memory.archive.lookup"=>"memory.archive.read",
+        "memory.archive.credential"|"memory.archive.activate"|"memory.archive.forget"=>"memory.archive.write",
         "storage.set" | "storage.delete" | "storage.compareAndSet" => "storage.write",
         "model.invoke" => "model.invoke",
         "region.observe" => "region.observe",
@@ -2009,6 +2013,7 @@ fn bridge_impl(
         return Err("当前平台尚不支持区域操作".into());
     }
     let result = match method {
+        "memory.archive.list"|"memory.archive.page"|"memory.archive.lookup"|"memory.archive.credential"|"memory.archive.activate"|"memory.archive.forget"=>memory_archive::call(app,context,method,params),
         "secrets.status" => secrets::status(app,context,&params),
         "secrets.set" => secrets::set(app,context,params),
         "configuration.get" => live_store(app,context,|store|store.value(&context.record.manifest.id,"plugin-configuration",string(&params,"key")?)),
