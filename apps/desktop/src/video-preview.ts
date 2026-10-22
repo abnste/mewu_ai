@@ -6,7 +6,7 @@ export function previewSize(width: number, height: number, percent: PreviewResol
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 /** Scale only presentation. macOS uses a canvas at full resolution too: its native video surface can be white in a transparent window. */
-export function reducedVideoPreview(video: HTMLVideoElement, canvas: HTMLCanvasElement, percent: PreviewResolution, visible: (value: boolean) => void, canvasAtFullResolution = false) {
+export function reducedVideoPreview(video: HTMLVideoElement, canvas: HTMLCanvasElement, percent: PreviewResolution, visible: (value: boolean) => void, canvasAtFullResolution = false, retainFrameOnReset = false) {
   const context = percent === 100 && !canvasAtFullResolution ? null : canvas.getContext('2d', { alpha: false });
   let disposed = false, pending: number | undefined;
   function draw() {
@@ -24,7 +24,9 @@ export function reducedVideoPreview(video: HTMLVideoElement, canvas: HTMLCanvasE
     if (typeof video.requestVideoFrameCallback === 'function') pending = video.requestVideoFrameCallback(frame);
   }
   const update = () => { draw(); schedule(); };
-  const reset = () => visible(false);
+  // Immutable pinned media may reload its decoder at EOS. Retain its last
+  // presented frame until a newly decoded one replaces it; disposal still clears it.
+  const reset = () => { if (!retainFrameOnReset) visible(false); };
   const events = ['loadeddata', 'seeked', 'play', 'timeupdate', 'resize'] as const;
   if (context) { events.forEach(name => video.addEventListener(name, update)); video.addEventListener('emptied', reset); update(); }
   return () => {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, untrack } from 'solid-js';
 import { Pause, Play } from 'lucide-solid';
 import { t } from '../i18n';
 import type { PinVideoMedia } from '../pin-media';
@@ -16,8 +16,10 @@ export default function PinVideo(props: Props) {
   let video!: HTMLVideoElement, playback: VideoPlayback | undefined, disposed = false, ready = false, stopVisibility: (() => void) | undefined;
   let preview!: HTMLCanvasElement;
   const [canvasVisible, setCanvasVisible] = createSignal(false);
+  const canvasPresentation = createMemo(() => props.media.canvasPresentation === true);
   createEffect(() => {
-    if (video && preview) onCleanup(reducedVideoPreview(video, preview, 100, visible => { setCanvasVisible(visible); if (visible) checkReady(); }, props.media.canvasPresentation === true));
+    const canvas = canvasPresentation();
+    if (video && preview) onCleanup(reducedVideoPreview(video, preview, 100, visible => { setCanvasVisible(visible); if (visible) untrack(checkReady); }, canvas, canvas));
   });
   const [duration, setDuration] = createSignal(props.media.sourceDurationTicks ?? 0);
   const [position, setPosition] = createSignal(0), [playing, setPlaying] = createSignal(false);

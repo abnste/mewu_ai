@@ -57,3 +57,20 @@ test('Mac full-resolution presentation keeps the source clock and redraws paused
   assert.equal(drawn.length, 3); assert.equal(cancelled.length, 1); assert.equal(callbacks.size, 0);
   assert.equal(listeners.size, 0); assert.equal(visible, false);
 });
+
+test('immutable pinned decoder reload retains the last presented frame, and disposal still releases it', () => {
+  const events = new Map(), frames = new Map(), draws = [], states = [];
+  let next = 0;
+  const video = { readyState: 2, paused: false, ended: false, videoWidth: 320, videoHeight: 180,
+    addEventListener: (name, fn) => events.set(name, fn), removeEventListener: name => events.delete(name),
+    requestVideoFrameCallback: fn => { frames.set(++next, fn); return next; }, cancelVideoFrameCallback: id => frames.delete(id) };
+  const canvas = { width: 1, height: 1, getContext: () => ({ drawImage: () => draws.push(video.readyState) }) };
+  const stop = reducedVideoPreview(video, canvas, 100, value => states.push(value), true, true);
+  assert.equal(states.at(-1), true); assert.equal(draws.length, 1);
+  video.readyState = 0; events.get('emptied')(); events.get('seeked')();
+  assert.equal(states.at(-1), true); assert.equal(draws.length, 1); assert.equal(canvas.width, 320);
+  video.readyState = 2; events.get('loadeddata')(); assert.equal(draws.length, 2);
+  const late = [...frames.values()][0]; stop(); late();
+  assert.equal(draws.length, 2); assert.equal(states.at(-1), false); assert.equal(canvas.width, 1);
+  assert.equal(events.size, 0); assert.equal(frames.size, 0);
+});
