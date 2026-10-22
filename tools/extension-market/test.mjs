@@ -22,6 +22,7 @@ const entry = { id: manifest.id, name: manifest.name, description: manifest.desc
 const catalog = plugins => Buffer.from(`${JSON.stringify({ schemaVersion: 2, plugins }, null, 2)}\n`);
 // A test double only for exercising atomic/network orchestration, never a product parser.
 const validate = async (mode, bytes) => {
+  if(mode==='extension-package') {const m=JSON.parse(readZip(bytes).get('mewu-plugin.json').toString());return {id:m.id,version:m.version};}
   const value = JSON.parse(bytes.toString());
   if (mode === 'extension-catalog') {
     if (new Set(value.plugins.map(item => item.id)).size !== value.plugins.length) throw new Error('duplicate id');
@@ -97,6 +98,16 @@ test('pack excludes undeclared local data and makes deterministic packages', asy
   await assert.rejects(packPlugin({ input, out, files: ['.env'] }, validate), /私有文件/);
   await assert.rejects(packPlugin({ input, out, files: ['index.js'] }, validate), /重复/);
   assert.deepEqual(await readFile(out), packageBytes);
+});
+
+test('a failed native package check never writes or replaces an archive',async t=>{
+  const directory=await temporary(t),input=path.join(directory,'plugin'),out=path.join(directory,'one.zip');await mkdir(input);
+  for(const file of files())await writeFile(path.join(input,file.name),file.bytes);
+  await writeFile(out,'previous archive');
+  await assert.rejects(packPlugin({input,out,files:[]},async(mode,bytes)=>{
+    if(mode==='extension-package')throw Error('incomplete module graph');return validate(mode,bytes);
+  }),/incomplete module graph/);
+  assert.equal(await readFile(out,'utf8'),'previous archive');
 });
 
 test('pack rejects linked modules or parent directories before reading data', async t => {

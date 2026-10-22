@@ -21,6 +21,35 @@ use std::{
 pub const SDK_SOURCE: &str = include_str!("sdk.js");
 const BOOTSTRAP_MODULE: &str = "@mewu/bootstrap";
 
+/// Compile and resolve the entry's static dependencies with the runtime parser.
+/// COMPILE_ONLY + ResolveModule never evaluates plugin/module bodies, invokes
+/// activation, pumps jobs, or installs a host bridge. Incomplete archives must
+/// fail before the installed plugin or its state can be replaced.
+pub fn validate_module_graph(package:&ExtensionPackage)->Result<(),ExtensionError>{
+    validate_package(&package.manifest,&package.modules)?;
+    let invalid=||ExtensionError::InvalidPackage("JavaScript module graph is invalid or incomplete");
+    let runtime=Runtime::new().map_err(|_|invalid())?;
+    runtime.set_memory_limit(32*1024*1024);
+    runtime.set_max_stack_size(512*1024);
+    let expires=Instant::now()+Duration::from_secs(3);
+    runtime.set_interrupt_handler(Some(Box::new(move||Instant::now()>=expires)));
+    runtime.set_loader(PackageResolver{names:package.modules.keys().cloned().collect()},PackageLoader{modules:package.modules.clone()});
+    let context=Context::full(&runtime).map_err(|_|invalid())?;
+    context.with(|ctx|{
+        let source=std::ffi::CString::new(package.modules[&package.manifest.entry].as_str()).map_err(|_|invalid())?;
+        let name=std::ffi::CString::new(package.manifest.entry.as_str()).map_err(|_|invalid())?;
+        // Both CStrings and their validated lengths outlive these calls. The
+        // returned JSValue is released once, including failed dependency resolution.
+        let value=unsafe{rquickjs::qjs::JS_Eval(ctx.as_raw().as_ptr(),source.as_ptr(),source.as_bytes().len() as _,name.as_ptr(),
+            (rquickjs::qjs::JS_EVAL_TYPE_MODULE|rquickjs::qjs::JS_EVAL_FLAG_STRICT|rquickjs::qjs::JS_EVAL_FLAG_COMPILE_ONLY) as i32)};
+        if unsafe{rquickjs::qjs::JS_IsException(value)} {drop(ctx.catch());return Err(invalid())}
+        let linked=unsafe{rquickjs::qjs::JS_ResolveModule(ctx.as_raw().as_ptr(),value)};
+        unsafe{rquickjs::qjs::JS_FreeValue(ctx.as_raw().as_ptr(),value)};
+        if linked<0{drop(ctx.catch());return Err(invalid())}
+        Ok(())
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeLimits {
     pub memory_bytes: usize,

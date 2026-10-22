@@ -26,7 +26,7 @@ node tools/extension-market/cli.mjs publish <package.zip> --repository <owner/re
 
 所有命令支持 --validator <独立校验器>、--json。JSON 原始字节交给宿主的同一严格 Rust parser。
 build 默认实际核验 GitHub 发行 ZIP，全部通过后原子替换目录；--offline 仅用于开发。
-pack 默认仅包含根 mewu-plugin.json 和清单 entry，其他 JS 模块须逐个 --file 明确加入。
+pack 默认仅包含根 mewu-plugin.json 和清单 entry，其他 JS 模块须逐个 --file 明确加入；原生解析器会拒绝缺少静态导入的包。
 publish 明确上传到现有已发布 GitHub release，不创建仓库、tag 或 release，不覆盖同名资产。
 `;
 
@@ -133,6 +133,7 @@ export async function packPlugin(options, validate) {
     files.push({ name, bytes });
   }
   const bytes = createZip(files); readZip(bytes);
+  await validate('extension-package',bytes);
   const output = path.resolve(options.out);
   if (!output.endsWith('.zip') || within(directory, output)) throw new Error('输出必须是插件目录之外的 .zip 文件');
   await writeAtomic(output, bytes);
@@ -153,6 +154,7 @@ function ghUpload(repository, tag, filename) {
 
 export async function publishPlugin(options, validate, network = { getRelease, downloadReleaseAsset, upload: ghUpload }) {
   const bytes = await readBounded(options.input, MAX_PACKAGE_BYTES), files = readZip(bytes);
+  await validate('extension-package',bytes);
   const manifest = await validate('extension-manifest', files.get('mewu-plugin.json'));
   if (!files.has(manifest.entry)) throw new Error('ZIP 缺少清单指定的 JavaScript 入口');
   const entry = { id: manifest.id, name: manifest.name, description: manifest.description, tags: manifest.tags,

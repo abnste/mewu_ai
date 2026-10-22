@@ -255,5 +255,7 @@ pub fn load_directory_package(directory: &Path) -> Result<ExtensionPackage, Exte
     )?;
     let manifest = manifest.ok_or(ExtensionError::InvalidPackage("manifest is missing"))?;
     validate_package(&manifest, &modules)?;
-    Ok(ExtensionPackage { manifest, modules })
+    let package=ExtensionPackage { manifest, modules };
+    crate::runtime::validate_module_graph(&package)?;
+    Ok(package)
 }

@@ -33,6 +33,15 @@ test('actual host accepts the Mewu API manifest and preserves dynamic-registrati
   assert.match(await extensionFingerprint(), /^[a-f0-9]{64}$/);
 });
 
+test('actual package verifier rejects omitted static modules before publication',async()=>{
+  const {createZip}=await import('./zip.mjs');
+  const root={name:'mewu-plugin.json',bytes:encoded(manifest)};
+  const entry={name:'index.js',bytes:Buffer.from("import {html} from './view.mjs';export default ()=>html;")};
+  await assert.rejects(validate('extension-package',createZip([root,entry])),/module graph/);
+  const complete=createZip([root,entry,{name:'view.mjs',bytes:Buffer.from("export const html='ok';")}]);
+  assert.equal((await validate('extension-package',complete)).modules,2);
+});
+
 test('actual strict manifest parser rejects unknown fields, duplicate object keys and invalid UTF8/BOM', async () => {
   await assert.rejects(validate('extension-manifest', encoded({ ...manifest, contributions: [] })));
   await assert.rejects(validate('extension-manifest', Buffer.from(`{"id":"other",${JSON.stringify(manifest).slice(1)}`)));

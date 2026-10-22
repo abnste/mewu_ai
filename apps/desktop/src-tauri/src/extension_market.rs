@@ -194,7 +194,9 @@ pub fn decode_package(bytes: &[u8]) -> Result<ExtensionPackage, String> {
     }
     let manifest = manifest.ok_or("插件缺少根目录 mewu-plugin.json")?;
     mewu_extension::validate_package(&manifest, &modules).map_err(|e| e.to_string())?;
-    Ok(ExtensionPackage { manifest, modules })
+    let package=ExtensionPackage { manifest, modules };
+    mewu_extension::validate_module_graph(&package).map_err(|e|e.to_string())?;
+    Ok(package)
 }
 pub fn verify_package(entry: &Entry, bytes: &[u8]) -> Result<ExtensionPackage, String> {
     validate_entry(entry)?;

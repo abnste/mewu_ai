@@ -637,7 +637,8 @@ mod tests {
             assert!(service_platform_error(&service, "windows-x86_64").is_none());
             assert!(service_platform_error(&service, "darwin-aarch64").is_none());
             assert!(service_platform_error(&service, "linux-x86_64").is_none());
-            assert_eq!(service_platform_error(&service, "linux-aarch64"), Some("当前系统暂不支持区域操作"));
+            assert!(!region_platform_supported("linux-aarch64"));
+            assert_eq!(service_platform_error(&service, "linux-aarch64"), Some("此功能不支持当前系统"));
             service.metadata = Some(serde_json::json!({"platforms":["darwin-aarch64"]}));
             assert!(service_platform_error(&service, "darwin-aarch64").is_none());
             assert!(service_platform_error(&service, "windows-x86_64").is_some());

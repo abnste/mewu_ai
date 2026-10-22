@@ -24,6 +24,10 @@ const MAX_CATALOG: usize = 2 * 1024 * 1024;
 
 fn validate(kind: &str, bytes: &[u8]) -> Result<Value, String> {
     match kind {
+        "extension-package"=>{
+            let package=extension_market::decode_package(bytes)?;
+            Ok(json!({"id":package.manifest.id,"version":package.manifest.version,"modules":package.modules.len()}))
+        },
         "extension-project" => serde_json::to_value(extension_project::parse_project(bytes)?)
             .map_err(|e| e.to_string()),
         "extension-projects" => serde_json::to_value(extension_project::parse_projects(bytes)?)
@@ -70,7 +74,7 @@ fn validate(kind: &str, bytes: &[u8]) -> Result<Value, String> {
 fn run() -> Result<Value, String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.len() != 1 {
-        return Err("用法：mewu-plugin-validator <extension-manifest|extension-entry|extension-catalog|extension-project|extension-projects|--version>，从标准输入读取 JSON".into());
+        return Err("用法：mewu-plugin-validator <extension-manifest|extension-entry|extension-catalog|extension-package|extension-project|extension-projects|--version>；extension-package 从标准输入读取 ZIP，其他模式读取 JSON".into());
     }
     if args[0] == "--version" {
         return Ok(
@@ -82,6 +86,7 @@ fn run() -> Result<Value, String> {
         "extension-projects" => MAX_CATALOG,
         "extension-project-image" => 3 * 1024 * 1024,
         "extension-manifest" => mewu_extension::MAX_MANIFEST_BYTES,
+        "extension-package" => extension_market::MAX_ARCHIVE,
         "extension-entry" | "extension-catalog" => MAX_CATALOG,
         _ => return Err("不支持的校验模式".into()),
     };
@@ -113,6 +118,7 @@ fn main() {
         include_bytes!("../../crates/mewu-extension/src/contract.rs").as_slice(),
         include_bytes!("../../crates/mewu-extension/src/package.rs").as_slice(),
         include_bytes!("../../crates/mewu-extension/src/sdk.js").as_slice(),
+        include_bytes!("../../crates/mewu-extension/src/runtime.rs").as_slice(),
         include_bytes!("../../apps/desktop/src-tauri/src/extension_market.rs").as_slice(),
     ]
     .iter()

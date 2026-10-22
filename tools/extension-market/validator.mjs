@@ -11,6 +11,7 @@ export const CONTRACT_PATHS = [
   'crates/mewu-extension/src/contract.rs',
   'crates/mewu-extension/src/package.rs',
   'crates/mewu-extension/src/sdk.js',
+  'crates/mewu-extension/src/runtime.rs',
   'apps/desktop/src-tauri/src/extension_market.rs',
 ];
 
@@ -64,7 +65,7 @@ export async function createValidator(explicit) {
   const executable = await realpath(filename), fingerprint = await extensionFingerprint();
   return async (mode, bytes) => {
     const project = ['extension-project', 'extension-projects', 'extension-project-image'].includes(mode);
-    if (!project && !['extension-manifest', 'extension-entry', 'extension-catalog'].includes(mode)) throw new Error('原生扩展校验模式无效');
+    if (!project && !['extension-manifest', 'extension-entry', 'extension-catalog','extension-package'].includes(mode)) throw new Error('原生扩展校验模式无效');
     const expected = project ? await projectFingerprint() : fingerprint;
     const value = await invokeExtensionValidator(executable, mode, bytes, expected, 15_000, project);
     if ((project ? await projectFingerprint() : await extensionFingerprint()) !== expected) throw new Error('校验期间原生契约发生变化，请重试');
