@@ -121,6 +121,10 @@ mod extension_market;
 mod extension_project;
 mod extension_project_host;
 mod extension_region;
+#[cfg(any(target_os = "linux", test))]
+mod extension_region_desktop;
+#[cfg(target_os = "linux")]
+mod extension_region_gnome;
 mod extension_store;
 mod extension_ui;
 mod extension_overlay_policy;
