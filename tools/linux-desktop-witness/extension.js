@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-// GNOME 46 integration: no application content, text input, screenshots, shell
+// GNOME 50 integration: no application content, text input, screenshots, shell
 // evaluation, focus changes, or pointer/keyboard injection is exported here.
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';

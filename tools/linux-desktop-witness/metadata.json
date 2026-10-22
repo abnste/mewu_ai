@@ -2,7 +2,9 @@
   "uuid": "desktop-witness@mewu.ai",
   "name": "Mewu Desktop Witness",
   "description": "Window geometry and a temporary Escape stop binding for Mewu's user-approved region sessions. No screenshot or input-injection interface.",
-  "shell-version": ["46"],
+  "shell-version": [
+    "50"
+  ],
   "version": 1,
   "url": "https://github.com/abnste/mewu_ai"
 }
