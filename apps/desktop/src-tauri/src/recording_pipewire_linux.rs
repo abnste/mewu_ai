@@ -21,7 +21,7 @@ impl Frames {
         // libpipewire's context retains/duplicates this FD for its own connection.
         // The caller must keep the original session+FD alive until Frames drops.
         source.set_property("fd", session.remote.as_raw_fd());
-        source.set_property("path", session.node.to_string());
+        configure_target(&source, session.node, session.pipewire_serial)?;
         source.set_property("always-copy", true);
         source.set_property("max-buffers", 4i32);
         let convert = element("videoconvert")?;
@@ -59,6 +59,22 @@ impl Frames {
         Ok(Some(Frame { width: info.width(), height: info.height(), rgba }))
     }
 }
+
+fn configure_target(source: &gst::Element, node: u32, serial: Option<u64>) -> Result<(), String> {
+    if let Some(serial) = serial {
+        if serial == 0 || source.find_property("target-object").is_none() {
+            return Err("屏幕采集组件不支持授权流标识".into());
+        }
+        // Do not also set the deprecated numerical path: it can name a different
+        // stream after hotplug or suspend. The serial comes only from this
+        // portal response, never a plugin argument or the unrestricted daemon.
+        source.set_property("target-object", serial.to_string());
+    } else {
+        if node == 0 { return Err("屏幕共享流标识无效".into()); }
+        source.set_property("path", node.to_string());
+    }
+    Ok(())
+}
 fn packed_rows(data: &[u8], stride: usize, row: usize, height: usize) -> Result<Vec<u8>, String> {
     let end = height.checked_sub(1).and_then(|h| h.checked_mul(stride)).and_then(|v| v.checked_add(row)).ok_or("屏幕帧尺寸无效")?;
     if row == 0 || stride < row || data.len() < end { return Err("屏幕帧长度无效".into()); }
@@ -68,6 +84,20 @@ fn packed_rows(data: &[u8], stride: usize, row: usize, height: usize) -> Result<
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn authorized_serial_is_used_without_a_numeric_node_fallback() {
+        gst::init().unwrap();
+        let source = element("pipewiresrc").unwrap();
+        configure_target(&source, 42, Some(u64::from(u32::MAX) + 1)).unwrap();
+        assert_eq!(source.property::<Option<String>>("target-object").as_deref(), Some("4294967296"));
+        assert_eq!(source.property::<Option<String>>("path"), None);
+        assert!(configure_target(&source, 42, Some(0)).is_err());
+        let legacy = element("pipewiresrc").unwrap();
+        configure_target(&legacy, 42, None).unwrap();
+        assert_eq!(legacy.property::<Option<String>>("path").as_deref(), Some("42"));
+        assert!(configure_target(&legacy, 0, None).is_err());
+        let unrelated = element("fakesrc").unwrap();
+        assert!(configure_target(&unrelated, 42, Some(7)).is_err());
+    }
     #[test] fn padding_is_not_interpreted_as_pixels() {
         assert_eq!(packed_rows(&[1,2,3,4,99,99,5,6,7,8],6,4,2).unwrap(),[1,2,3,4,5,6,7,8]);
         assert!(packed_rows(&[0;10],3,4,2).is_err());

@@ -109,6 +109,7 @@ pub(crate) struct PortalSession {
     owner: String,
     path: OwnedObjectPath,
     pub(crate) node: u32,
+    pub(crate) pipewire_serial: Option<u64>,
     pub(crate) remote: OwnedFd,
     pub(crate) logical_size: Option<(i32, i32)>,
     pub(crate) logical_position: Option<(i32, i32)>,
@@ -195,16 +196,17 @@ impl PortalSession {
                 let streams: Vec<(u32, HashMap<String, OwnedValue>)> = result.remove("streams")
                     .ok_or_else(error)?.try_into().map_err(|_| error())?;
                 let (node, properties) = single_monitor(streams)?;
+                let pipewire_serial = stream_serial(&properties, version)?;
                 if !allowed() || Instant::now() >= expires { return Err("录屏已取消".into()); }
                 let empty = Options::new();
                 let remote: zbus::zvariant::OwnedFd = transport(desktop.call("OpenPipeWireRemote", &(&path, empty)), expires, allowed).await?;
                 let size = properties.get("logical_size").or_else(||properties.get("size")).and_then(|v| v.try_clone().ok()).and_then(|v| v.try_into().ok());
                 let position = properties.get("position").and_then(|v| v.try_clone().ok()).and_then(|v| v.try_into().ok());
-                Ok((node, remote.into(), size, position))
+                Ok((node, remote.into(), size, position, pipewire_serial))
             }.await;
             drop(desktop);
             match setup {
-                Ok((node, remote, logical_size, logical_position)) => Ok(Self { connection, owner, path, node, remote, logical_size, logical_position, control }),
+                Ok((node, remote, logical_size, logical_position, pipewire_serial)) => Ok(Self { connection, owner, path, node, pipewire_serial, remote, logical_size, logical_position, control }),
                 Err(error) => { bounded_close(&connection, &owner, path.as_str(), SESSION).await; Err(error) }
             }
     }
@@ -244,6 +246,18 @@ fn single_monitor(mut streams: Vec<(u32, HashMap<String, OwnedValue>)>) -> Resul
     Ok((node, properties))
 }
 
+/// ScreenCast v6 supplies object.serial because a removed node's numerical ID
+/// can be reused. A malformed or missing v6 identity must not silently select
+/// the old ID; earlier portal versions retain their session-restricted FD path.
+fn stream_serial(properties: &HashMap<String, OwnedValue>, version: u32) -> Result<Option<u64>, String> {
+    match properties.get("pipewire-serial") {
+        Some(value) => u64::try_from(value).ok().filter(|value| *value != 0)
+            .map(Some).ok_or_else(|| "屏幕共享流标识无效".into()),
+        None if version >= 6 => Err("屏幕共享流标识缺失".into()),
+        None => Ok(None),
+    }
+}
+
 fn valid_recording_parent(value:&str)->bool{
     // The desktop session may be Wayland while the owned GTK window is XWayland.
     // Its identifier must match that actual window, not the session backend.
@@ -258,6 +272,21 @@ fn valid_recording_parent(value:&str)->bool{
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn stream_identity_does_not_downgrade_to_a_reused_node_id() {
+        let mut properties = HashMap::new();
+        assert_eq!(stream_serial(&properties, 5).unwrap(), None);
+        assert!(stream_serial(&properties, 6).is_err());
+        for value in [1u64, u64::from(u32::MAX) + 1, u64::MAX] {
+            properties.insert("pipewire-serial".into(), OwnedValue::from(value));
+            assert_eq!(stream_serial(&properties, 6).unwrap(), Some(value));
+            assert_eq!(stream_serial(&properties, 5).unwrap(), Some(value));
+        }
+        properties.insert("pipewire-serial".into(), OwnedValue::from(0u64));
+        assert!(stream_serial(&properties, 6).is_err());
+        assert!(stream_serial(&properties, 5).is_err());
+        properties.insert("pipewire-serial".into(), OwnedValue::from(42u32));
+        assert!(stream_serial(&properties, 6).is_err());
+    }
     #[test] fn recording_parent_accepts_both_owned_portal_window_formats(){
         assert!(valid_recording_parent("wayland:~12l9jdl.-a"));
         for value in ["x11:1234","x11:1","x11:ffffffff","x11:ABCDEF12"]{assert!(valid_recording_parent(value));}
