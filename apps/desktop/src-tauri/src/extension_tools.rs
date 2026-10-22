@@ -73,6 +73,16 @@ impl ToolDescriptor {
             _ => Err("扩展工具的选区声明无效".into()),
         }
     }
+    pub(crate) fn requires_memory(&self)->Result<bool,String>{
+        match self.service.metadata.as_ref().and_then(|m|m.get("requiresMemory")) {
+            None=>Ok(false),Some(Value::Bool(value))=>Ok(*value),_=>Err("扩展工具的记忆声明无效".into())
+        }
+    }
+    pub(crate) fn required_provider(&self)->Result<Option<&str>,String>{
+        match self.service.metadata.as_ref().and_then(|m|m.get("requiresProvider")) {
+            None=>Ok(None),Some(Value::String(value)) if matches!(value.as_str(),"memory"|"agent")=>Ok(Some(value)),_=>Err("扩展工具的提供方声明无效".into())
+        }
+    }
     fn schema(&self) -> Value {
         self.service.input_schema.clone().unwrap_or_else(|| {
             json!({
@@ -81,6 +91,8 @@ impl ToolDescriptor {
         })
     }
     fn definition(&self) -> Result<Value, String> {
+        self.requires_memory()?;
+        self.required_provider()?;
         if self.service.kind != ServiceKind::Tool || self.revision == 0 {
             return Err("扩展工具目录无效".into());
         }
@@ -383,6 +395,8 @@ mod tests {
             "schema",
             "remote-schema",
             "region-flag",
+            "memory-flag",
+            "provider-kind",
         ] {
             let mut descriptors: Vec<_> = (0..3)
                 .map(|n| descriptor(&format!("tool-{n}"), false))
@@ -395,6 +409,8 @@ mod tests {
                 "alias" => definitions.push(json!({"type":"function","function":{"name":descriptors[0].alias(),"parameters":{"type":"object"}}})),
                 "schema" => descriptors[0].service.input_schema=Some(json!({"type":"array"})),
                 "remote-schema" => descriptors[0].service.input_schema=Some(json!({"type":"object","properties":{"value":{"$ref":"https://example.invalid/tool-schema.json"}}})),
+                "memory-flag"=>descriptors[0].service.metadata=Some(json!({"requiresMemory":"yes"})),
+                "provider-kind"=>descriptors[0].service.metadata=Some(json!({"requiresProvider":"other"})),
                 _ => descriptors[0].service.metadata=Some(json!({"requiresRegion":"yes"})),
             }
             let original = definitions.clone();

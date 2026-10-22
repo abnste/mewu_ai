@@ -20,7 +20,7 @@ Mewu 保留 Tauri、Rust 和隔离 JavaScript 运行时，不引入 Electron。�
 | 工具箱 | 旧方案的九宫格、文件夹及垃圾桶在宿主；新方案将规则和 HTML 界面放入独立包，宿主只提供对象事务、拖放来源与界面桥 | 两种独立包实装及 GUI 生命周期验收通过后才算交付 |
 | Agent | 默认循环仍为原生实现；独立 Agent 服务可被角色绑定，执行链有独立授权与撤销。内置 Agent 启停不应阻断已选的独立 Agent | 默认循环不冒充第三方插件；第三方 Agent 的会话、错误、停止、流式反馈需一致 |
 | 外部 Agent 接入 | 开发包 `agent-connectors` 自己实现 Codex/ACP 协议、会话与设置界面；宿主仅增加通用设置插槽、插件共享配置和受权限约束的本机 JSON 行进程 | 当前公开 1.0.3 不支持新接口；本机某平台连通不代表所有 CLI 版本或三端通过，不复制平台凭据到插件配置 |
-| 记忆 | 独立 memory 服务有绑定和存储接口；内置 Hindsight 的 HTTP 协议仍在 `hindsight.rs`，工作队列直接引用它 | Hindsight 协议与配置 UI 需迁入独立适配器；保留宿主证据、事务、删除及撤权语义，不能删代码造成既有记忆不可用 |
+| 记忆 | Hindsight HTTP 协议、设置界面、记忆库命名、保存/检索/遗忘工具和自动同步策略在独立 `extensions/official/hindsight` 包；宿主仅保留通用服务绑定、凭据和历史档案事务 | 开发中迁移保留原 endpoint/bank/策略/凭据/墓碑；只读归档不重发待处理或未知写入。停用阻断运行及设置授权，尚待三端实机验收与独立发布 |
 | 模型与接入预设 | 连接模板在声明文件；凭据和标准协议传输在宿主。`models.register` 存在，但尚无完整的模型选择、请求分发与故障回退入口 | 注册不等于可直接替换连接；需补齐通用模型绑定与分发 |
 | 通讯渠道 | `channels.register` 可被服务调用，但无完整的后台收发、订阅、恢复生命周期 | 需通用事件/后台作用域；不能为每种 IM 增加专用核心分支 |
 | 渲染器 | 独立插件可生成隔离 HTML；`renderers.register` 没有通用对象类型选择和恢复分发 | 需类型注册、版本迁移与无插件时的只读降级；不能把“返回 HTML”称为完整对象扩展 |
@@ -39,7 +39,7 @@ Mewu 保留 Tauri、Rust 和隔离 JavaScript 运行时，不引入 Electron。�
 | 包 | 包内负责的业务 | 宿主机制与实际限制 |
 | --- | --- | --- |
 | `example.region-agent` 0.1.2 | 决策提示词、动作 JSON 校验、未执行决策的纠正循环、逐步观察和结束条件 | 宿主负责授权区域、坐标、真实截图和系统输入；当前输入适配仅 Windows。系统调用失败不会由此包自动纠正，不能称为完整恢复策略 |
-| `example.journal-memory` 0.1.0 | 记忆命名、按 Agent 分区、序列分配、分页、检索评分、删除规则 | 宿主只提供隔离 KV/CAS。它已是独立实现，与仍耦合在原生层的 Hindsight 适配器不同 |
+| `example.journal-memory` 0.1.0 | 记忆命名、按 Agent 分区、序列分配、分页、检索评分、删除规则 | 宿主只提供隔离 KV/CAS。Hindsight 的独立适配器开发包另见上表，尚未发布 |
 | `example.interactive-widget` 0.1.0 | 尺的 HTML/SVG、刻度、拖动标记、归零按钮 | 宿主只提供隔离 HTML 对象及移动/关闭；文档源能恢复，内部 JavaScript 状态不会自动保存，尚无通用对象 codec |
 
 清单来源：[GitHub 社区目录](https://github.com/abnste/mewu-plugins/blob/main/mewu-market.json)。

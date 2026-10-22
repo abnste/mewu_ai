@@ -2015,7 +2015,7 @@ async fn send_message(
     if let Some(provider)=extension_host::external_agent_for_scene(&app,&scene_id)?{
         return extension_agent::start_external_run(app.clone(),scene_id,provider,prepared_region).await;
     }
-    let extension_catalog = extension_host::tool_catalog(&app)?;
+    let extension_catalog = extension_host::tool_catalog(&app,&scene_id)?;
     if let Some(grant) = &visual_annotations {
         host.plugins
             .lock()

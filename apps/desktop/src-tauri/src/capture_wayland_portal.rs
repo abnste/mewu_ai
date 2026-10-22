@@ -600,6 +600,7 @@ fn import_portal_image(
         path,
         width: dimensions.0,
         height: dimensions.1,
+        coordinates: None,
         retained: false,
     };
     let mut writer = LimitedWriter {

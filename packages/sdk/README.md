@@ -63,6 +63,8 @@ UI 服务声明 `metadata: {surface: 'settings'}`，返回 `{html,width,height}`
 
 让普通 Agent 按任务调用的能力使用 `ctx.tools.register`，提供明确的 `description` 和 `inputSchema`。需要本次用户授权选区的工具声明 `metadata: { requiresRegion: true }`；只有已明确授权区域的运行才会向模型提供该工具，插件也应拒绝缺少 `context.regionId` 的调用。注册工具不会创建截图工具条命令，也不会自行获得区域授权。
 
+提供方专属工具声明 `metadata.requiresProvider: 'memory' | 'agent'`，仅当前 Agent 选中的同包、同类型服务可提供；执行期间切换提供方会撤销原授权。记忆工具可另设 `requiresMemory: true`；选择记忆提供方本身也要求长期记忆开启。宿主自动同步已完成对话时，Memory 服务收到只读 `context.memoryOrigin: 'completedTurn'`，普通工具参数不能获得这个来源标记。插件自行决定是否启用自动同步，不应把所有 retain 请求都当作用户明确要求保存。
+
 [`region-agent`](https://github.com/abnste/mewu-plugin-region-agent) 的 0.1.2 版将区域操作注册为工具，并保留独立 Agent 服务；Agent 在没有选区时仍可正常聊天。它继续使用 API 与 SDK 0.1.0 已有的注册接口，普通 Agent 的自动工具调度需要支持该能力的新版宿主。独立仓库附有 Windows 原生运行截图。更新插件时发布新的版本与 ZIP，不覆盖社区已发布的资产。
 
 宿主按插件和 Agent 隔离持久存储。每条记忆可以独立保存，通过分页键目录检索；不存在固定 64 条的模型记忆槽位。`storage.list` 的 cursor 用于分页，prefix 用于过滤，不能互相替代。并发读改写使用 `storage.compareAndSet(key, expected, value)`：返回是否成功，`expected: null` 明确表示键不存在，不匹配已保存的 JSON null。单值及一次请求有资源限制，长期数据应拆分为独立记录。

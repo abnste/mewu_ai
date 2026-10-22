@@ -31,11 +31,13 @@ export interface ServiceDescriptor {
   description?: string;
   inputSchema?: JsonObject;
   /** platforms narrows this feature only; requiresRegion requests a native region grant. */
-  metadata?: JsonObject & { platforms?: PluginPlatform[]; requiresRegion?: boolean };
+  metadata?: JsonObject & { platforms?: PluginPlatform[]; requiresRegion?: boolean; requiresMemory?:boolean; requiresProvider?:'agent'|'memory' };
 }
 export interface ServiceRegistration extends ServiceDescriptor { kind: ServiceKind }
 /** The host sets context; extension input cannot grant region or agent access. */
 export interface InvocationContext {
+  /** Host-attested automatic retention; tool arguments cannot set this field. */
+  readonly memoryOrigin?: 'completedTurn' | null;
   readonly sceneId?: string;
   readonly agentId?: string;
   readonly runId?: string;

@@ -1573,7 +1573,12 @@ fn validate_tool_record(
 
 pub(crate) fn tool_catalog(
     app: &AppHandle,
+    scene_id:&str,
 ) -> Result<Vec<crate::extension_tools::ToolDescriptor>, String> {
+    let (agent_id,memory_enabled)={let host=app.state::<Host>();let engine=host.lock()?;
+        let scene=engine.store.scene(scene_id).map_err(|e|e.to_string())?;
+        let agent=engine.store.agent_profile(&scene.agent_id).map_err(|e|e.to_string())?;
+        (agent.id.clone(),agent.memory_enabled)};
     let extensions = app.state::<ExtensionHost>();
     let store = extensions.store()?;
     let mut tools = vec![];
@@ -1588,13 +1593,18 @@ pub(crate) fn tool_catalog(
         }
         for service in &record.services {
             if service.kind == mewu_extension::ServiceKind::Tool && service_platform_error(service, mewu_extension::current_plugin_platform()).is_none() {
-                tools.push(crate::extension_tools::ToolDescriptor {
+                let descriptor=crate::extension_tools::ToolDescriptor {
                     plugin_id: record.manifest.id.clone(),
                     revision: record.revision,
                     version: record.manifest.version.clone(),
                     sha256: record.sha256.clone(),
                     service: service.clone(),
-                });
+                };
+                if (descriptor.requires_memory()? || descriptor.required_provider()?==Some("memory")) && !memory_enabled {continue;}
+                if let Some(kind)=descriptor.required_provider()? {
+                    if !store.binding(&agent_id,kind)?.is_some_and(|b|provider_binding_matches(&record,&b,kind)) {continue;}
+                }
+                tools.push(descriptor);
             }
         }
     }
@@ -1624,12 +1634,22 @@ pub(crate) async fn invoke_tool_for_run(
         }) {
             return Err(NotSentReason::AuthorityChanged);
         }
-        let record = {
+        let prepared_agent={let host=app.state::<Host>();let engine=host.lock().map_err(|_|NotSentReason::PreparationFailed)?;
+            engine.store.scene(&scene_id).map_err(|_|NotSentReason::RunEnded)?.agent_id.clone()};
+        let (record,provider_binding) = {
             let extensions = app.state::<ExtensionHost>();
             let store = extensions
                 .store()
                 .map_err(|_| NotSentReason::PreparationFailed)?;
-            validate_tool_record(&store, &descriptor).map_err(|_| NotSentReason::CatalogChanged)?
+            let record=validate_tool_record(&store, &descriptor).map_err(|_| NotSentReason::CatalogChanged)?;
+            let binding=match descriptor.required_provider().map_err(|_|NotSentReason::CatalogChanged)? {
+                Some(kind)=>{
+                    let b=store.binding(&prepared_agent,kind).map_err(|_|NotSentReason::PreparationFailed)?.ok_or(NotSentReason::AuthorityChanged)?;
+                    if !provider_binding_matches(&record,&b,kind){return Err(NotSentReason::AuthorityChanged);}
+                    Some((kind.to_owned(),b.revision))
+                },None=>None,
+            };
+            (record,binding)
         };
         if descriptor
             .requires_region()
@@ -1664,6 +1684,9 @@ pub(crate) async fn invoke_tool_for_run(
             .map_err(|_| NotSentReason::RunEnded)?
             .agent_id
             .clone();
+        if agent_id!=prepared_agent{return Err(NotSentReason::AuthorityChanged);}
+        let requires_memory=descriptor.requires_memory().map_err(|_|NotSentReason::CatalogChanged)?
+            || provider_binding.as_ref().is_some_and(|(kind,_)|kind=="memory");
         Ok(Context {
             record,
             run_id: uuid::Uuid::new_v4().to_string(),
@@ -1684,11 +1707,11 @@ pub(crate) async fn invoke_tool_for_run(
             default_messages: vec![],
             history: None,
             default_images: vec![],
-            binding: None,
+            binding: provider_binding,
             delegated_permissions: None,
             authority_chain: vec![],
             public_reasoning: None,
-            memory_enabled_required: false,
+            memory_enabled_required: requires_memory,
             depth: 0,
                 object_access: None,
                 processes: Default::default(),
@@ -1908,7 +1931,8 @@ fn execute_with_dispatch(
     }
     let _=app.emit_to("space","extension-run-started",json!({"runId":context.run_id,"pluginId":context.record.manifest.id,"serviceId":service_id,"title":registration.title}));
     let id = uuid::Uuid::new_v4().to_string();
-    worker.send(&WorkerRequest::Invoke{id:id.clone(),service_id:service_id.into(),input,context:json!({"runId":context.run_id,"sceneId":context.scene_id,"regionId":context.region_id,"agentId":context.scope,"platform":std::env::consts::OS,"history":context.history})})?;
+    let memory_origin=memory_event_origin(registration.kind,context.binding.as_ref(),&input);
+    worker.send(&WorkerRequest::Invoke{id:id.clone(),service_id:service_id.into(),input,context:json!({"runId":context.run_id,"sceneId":context.scene_id,"regionId":context.region_id,"agentId":context.scope,"platform":std::env::consts::OS,"history":context.history,"memoryOrigin":memory_origin})})?;
     let result = worker.receive(app, context, &id, false);
     if let Some(dispatch) = dispatch {
         if let Ok(mut diagnostic) = dispatch.safe_failure.lock() {
@@ -1918,6 +1942,14 @@ fn execute_with_dispatch(
     result
 }
 
+fn memory_event_origin(kind:mewu_extension::ServiceKind,binding:Option<&(String,u64)>,input:&Value)->Option<&'static str>{
+    (kind==mewu_extension::ServiceKind::Memory && binding.is_some_and(|(kind,_)|kind=="memory")
+        && input.get("operation").and_then(Value::as_str)==Some("retain")).then_some("completedTurn")
+}
+fn provider_binding_matches(record:&Record,binding:&Binding,kind:&str)->bool{
+    let expected=match kind {"memory"=>mewu_extension::ServiceKind::Memory,"agent"=>mewu_extension::ServiceKind::Agent,_=>return false};
+    binding.plugin_id.as_deref()==Some(&record.manifest.id)&&record.services.iter().any(|s|Some(s.id.as_str())==binding.service_id.as_deref()&&s.kind==expected)
+}
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value
         .get(key)
@@ -2938,6 +2970,20 @@ fn begin_region_inner(
 #[cfg(test)]
 mod extension_tool_registry_tests {
     use super::*;
+
+    #[test]
+    fn only_the_host_memory_service_attests_automatic_retention() {
+        use mewu_extension::ServiceKind;
+        let binding=("memory".into(),7);
+        let forged=json!({"operation":"retain","memoryOrigin":"completedTurn"});
+        assert_eq!(memory_event_origin(ServiceKind::Memory,Some(&binding),&forged),Some("completedTurn"));
+        for kind in [ServiceKind::Tool,ServiceKind::Ui,ServiceKind::Agent] {
+            assert_eq!(memory_event_origin(kind,Some(&binding),&forged),None);
+        }
+        assert_eq!(memory_event_origin(ServiceKind::Memory,None,&forged),None);
+        assert_eq!(memory_event_origin(ServiceKind::Memory,Some(&("agent".into(),7)),&forged),None);
+        assert_eq!(memory_event_origin(ServiceKind::Memory,Some(&binding),&json!({"operation":"recall"})),None);
+    }
     fn external_model_run(
         connection: bool,
     ) -> (
@@ -3144,6 +3190,14 @@ mod extension_tool_registry_tests {
             service,
         };
         assert!(validate_tool_record(&store, &descriptor).is_ok());
+        let mut provider=installed.clone();provider.services=vec![ServiceRegistration{kind:mewu_extension::ServiceKind::Memory,id:"memory".into(),title:"Independent memory".into(),description:None,input_schema:None,metadata:None}];
+        let binding=Binding{agent_id:"own-agent".into(),kind:"memory".into(),plugin_id:Some(provider.manifest.id.clone()),service_id:Some("memory".into()),revision:1};
+        assert!(provider_binding_matches(&provider,&binding,"memory"));
+        assert!(!provider_binding_matches(&provider,&binding,"agent"));
+        let mut changed=binding.clone();changed.plugin_id=Some("another.provider".into());
+        assert!(!provider_binding_matches(&provider,&changed,"memory"));
+        changed=binding.clone();changed.service_id=Some("removed-memory".into());
+        assert!(!provider_binding_matches(&provider,&changed,"memory"));
         for mutation in 0..5 {
             let mut changed = descriptor.clone();
             match mutation {

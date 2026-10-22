@@ -20,6 +20,7 @@ function fixture(respond=()=>({status:200,body:'{}'})) {
     runtime:{describe:async()=>({capabilities:['secrets.network','memory.archive']})},
     secrets:{status:async()=>({configured:true,revision:1})},
     ui:{register:(d,h)=>services.set(d.id,h)},memory:{register:(d,h)=>services.set(d.id,h)},
+    tools:{register:(d,h)=>services.set('tool.'+d.id,{descriptor:d,invoke:h})},
     host:{call:async(method,params)=>{assert.equal(method,'network.fetch');requests.push(params);return await respond(params);}}
   };
   return {ctx,values,services,requests,invoke:async(input,agentId='alice')=>services.get('memory')(input,{context:{agentId}})};
@@ -100,7 +101,7 @@ test('migrated recall filters old tombstones and uncertain writes while preservi
   assert.deepEqual(await f.invoke({operation:'recall',query:'old'}),{memories:[{id:'committed',text:'kept'}]});
   assert.equal(f.requests[0].url,'https://old.example/v1/default/banks/original-bank/memories/recall');
   assert.deepEqual(f.requests[0].authorization,{key:'archive.old'});
-  await assert.rejects(f.invoke({operation:'retain',text:'blocked'}),/未允许保存/);
+  assert.match((await f.invoke({operation:'retain',text:'blocked'})).error,/未允许保存/);
   assert.equal(f.requests.length,1);
 });
 
@@ -112,4 +113,39 @@ test('forgetting an imported document durably suppresses its old ledger before r
   await activate(f.ctx);assert.deepEqual(await f.invoke({operation:'forget',id:'old-doc'}),{forgotten:true,id:'old-doc'});
   assert.deepEqual(calls,['tombstone','network']);
   assert.equal([...f.values.values()].find(v=>v.id==='old-doc').forgotten,true);
+});
+
+test('explicit memory tools share the provider handler without trusting a model-supplied origin',async()=>{
+  const f=fixture(()=>json({success:true,bank_id:'mewu-alice'}));await activate(f.ctx);
+  for(const operation of ['retain','recall','forget']){
+    const tool=f.services.get('tool.'+operation);
+    assert.deepEqual(tool.descriptor.metadata,{requiresMemory:true,requiresProvider:'memory'});
+    assert.equal(tool.descriptor.inputSchema.additionalProperties,false);
+    assert.equal(tool.descriptor.inputSchema.properties.memoryOrigin,undefined);
+  }
+  const saved=await f.services.get('tool.retain').invoke({text:'explicit fact',memoryOrigin:'completedTurn'},{context:{agentId:'alice'}});
+  assert.equal(saved.retained,true);assert.equal(f.requests.length,1);
+});
+
+test('automatic retention respects opt-in and preserves the independent legacy automatic policy',async()=>{
+  const f=fixture(()=>json({success:true,bank_id:'original-bank'}));await activate(f.ctx);
+  const automatic=input=>f.services.get('memory')(input,{context:{agentId:'alice',memoryOrigin:'completedTurn'}});
+  assert.deepEqual(await automatic({operation:'retain',text:'no automatic sync by default'}),{retained:false,skipped:true});
+  assert.equal(f.requests.length,0);assert.equal(f.values.size,0);
+  const archive={bindingId:'old',endpoint:'https://old.example',bankId:'original-bank',policy:{recall:true,explicitRetain:false,completedTurnSync:true}};
+  f.ctx.configuration.get=async key=>key==='archive.alice'?archive:null;
+  assert.equal((await automatic({operation:'retain',text:'allowed automatic fact'})).retained,true);
+  assert.equal(f.requests.length,1);
+  const denied=await f.services.get('tool.retain').invoke({text:'explicit fact',memoryOrigin:'completedTurn'},{context:{agentId:'alice'}});
+  assert.equal(denied.isError,true);assert.match(denied.error,/未允许保存/);assert.equal(f.requests.length,1);
+  archive.policy.completedTurnSync=false;
+  assert.deepEqual(await automatic({operation:'retain',text:'disabled again'}),{retained:false,skipped:true});
+  assert.equal(f.requests.length,1);
+});
+
+test('provider failures return a safe tool result for the parent Agent to inspect',async()=>{
+  const f=fixture();f.ctx.configuration.get=async()=>null;await activate(f.ctx);
+  const result=await f.services.get('tool.retain').invoke({text:'fact'},{context:{agentId:'alice'}});
+  assert.equal(result.isError,true);assert.equal(result.retryable,false);
+  assert.equal(result.error,'请配置 Hindsight 服务');assert.equal(f.requests.length,0);
 });

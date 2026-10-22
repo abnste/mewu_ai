@@ -8,7 +8,8 @@ export function config(value) {
   if(!/^https?:\/\/[^\s?#@]+$/u.test(endpoint))throw Error('服务地址无效');
   const prefix=value.bankPrefix??'mewu';
   if(typeof prefix!=='string'||!/^[A-Za-z0-9_-]{1,48}$/u.test(prefix))throw Error('记忆库前缀无效');
-  return {endpoint,bankPrefix:prefix};
+  if(value.completedTurnSync!==undefined&&typeof value.completedTurnSync!=='boolean')throw Error('记忆同步选项无效');
+  return {endpoint,bankPrefix:prefix,completedTurnSync:value.completedTurnSync===true};
 }
 export function bank(config,agentId) {
   if(typeof agentId!=='string'||!/^[A-Za-z0-9_-]{1,128}$/u.test(agentId))throw Error('Agent 身份无效');
