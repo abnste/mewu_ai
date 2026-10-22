@@ -362,7 +362,7 @@ pub(crate) struct RegionSession {
 
 impl RegionSession {
     pub(crate) fn supported() -> bool {
-        cfg!(any(windows,target_os="macos"))
+        cfg!(any(windows,target_os="macos",target_os="linux"))
             && crate::extension_store::region_platform_supported(mewu_extension::current_plugin_platform())
     }
 
@@ -405,9 +405,19 @@ impl RegionSession {
         // This owned guard also restores overlays if binding fails below.
         let overlays = HiddenOverlays::enter(hooks.clone())?;
         let _dpi = platform::dpi_scope()?;
-        let topology = topology()?;
-        validate_monitor(&binding, viewport, &topology)?;
-        let target = platform::bind(viewport, &binding)?;
+        #[cfg(not(target_os="linux"))]
+        let (topology,target)={
+            let topology=topology()?;
+            validate_monitor(&binding,viewport,&topology)?;
+            (topology,platform::bind(viewport,&binding)?)
+        };
+        #[cfg(target_os="linux")]
+        let (topology,target)={
+            let target=platform::bind(viewport,&binding,&hooks)?;
+            let topology=platform::topology(&target)?;
+            validate_monitor(&binding,viewport,&topology)?;
+            (topology,target)
+        };
         platform::neutral_input()?;
         let info = RegionSessionInfo {
             id: uuid::Uuid::new_v4().to_string(),
@@ -442,18 +452,18 @@ impl RegionSession {
         });
         slot.0 = false;
         session.check()?;
-        #[cfg(target_os="macos")]
+        #[cfg(any(target_os="macos",target_os="linux"))]
         {
             let weak=Arc::downgrade(&session);
             if std::thread::Builder::new().name("mewu-region-stop".into()).spawn(move||{
                 loop {
                     let Some(session)=weak.upgrade() else {break};
                     if session.revoked.load(Ordering::SeqCst){break}
-                    if platform::stop_requested()||session.created.elapsed()>MAX_SESSION {
+                    if platform_stopped(&session.target)||session.created.elapsed()>MAX_SESSION {
                         session.revoke();break;
                     }
                     drop(session);
-                    std::thread::sleep(Duration::from_millis(10));
+                    std::thread::sleep(Duration::from_millis(if cfg!(target_os="linux"){100}else{10}));
                 }
             }).is_err(){session.revoke();return Err(RegionError::new("region_stop_unavailable","无法启用区域停止控制"))}
         }
@@ -483,7 +493,7 @@ impl RegionSession {
     }
 
     fn check_inner(&self) -> Result<()> {
-        if platform::stop_requested() {
+        if platform_stopped(&self.target) {
             self.revoke();
         }
         if self.revoked.load(Ordering::SeqCst) || self.created.elapsed() > MAX_SESSION {
@@ -495,7 +505,11 @@ impl RegionSession {
         self.hooks
             .validate_source(&self.info.binding)
             .map_err(|e| RegionError::new("region_authority_revoked", e))?;
-        if topology()? != self.topology {
+        #[cfg(not(target_os="linux"))]
+        let current_topology=topology()?;
+        #[cfg(target_os="linux")]
+        let current_topology=platform::topology(&self.target)?;
+        if current_topology != self.topology {
             return Err(RegionError::new(
                 "region_display_changed",
                 "显示器设置已改变，请重新选择区域",
@@ -573,14 +587,26 @@ impl RegionSession {
     pub(crate) fn revoke(&self) {
         self.revoked.store(true, Ordering::SeqCst);
         self.release_button();
+        #[cfg(target_os="linux")]
+        platform::close(&self.target);
         self.overlays.restore();
         if self.owns_slot.swap(false, Ordering::SeqCst) {
             ACTIVE_REGION.store(false, Ordering::SeqCst);
         }
     }
     fn release_button(&self) {
+        #[cfg(not(target_os="linux"))]
         platform::release_button(&self.button_down);
+        #[cfg(target_os="linux")]
+        platform::release(&self.target,&self.button_down);
     }
+}
+
+fn platform_stopped(target:&platform::Target)->bool {
+    #[cfg(target_os="linux")]
+    { platform::stopped(target) }
+    #[cfg(not(target_os="linux"))]
+    { let _=target;platform::stop_requested() }
 }
 impl Drop for RegionSession {
     fn drop(&mut self) {
@@ -660,9 +686,11 @@ fn validate_monitor(
 ) -> Result<()> {
     let c = binding.coordinates;
     if !monitors.iter().any(|m| {
-        matches!((m.coordinate_space,c.space),
+        (matches!((m.coordinate_space,c.space),
             (crate::capture::CoordinateSpace::PhysicalPixels,CaptureCoordinateSpace::PhysicalPixels)
             |(crate::capture::CoordinateSpace::LogicalPoints,CaptureCoordinateSpace::QuartzPoints))
+            || cfg!(target_os="linux") && matches!((m.coordinate_space,c.space),
+                (crate::capture::CoordinateSpace::LogicalPoints,CaptureCoordinateSpace::PortalLogical)))
             && c.origin_x == f64::from(m.origin_x)
             && c.origin_y == f64::from(m.origin_y)
             && c.width == f64::from(m.display_width)
@@ -679,7 +707,7 @@ fn validate_monitor(
     Ok(())
 }
 
-#[cfg(not(any(windows,target_os="macos")))]
+#[cfg(not(any(windows,target_os="macos",target_os="linux")))]
 mod platform {
     use super::*;
     pub(super) struct Target;
@@ -726,6 +754,10 @@ mod platform;
 
 #[cfg(target_os="macos")]
 #[path="extension_region_macos.rs"]
+mod platform;
+
+#[cfg(target_os="linux")]
+#[path="extension_region_linux.rs"]
 mod platform;
 
 #[cfg(test)]

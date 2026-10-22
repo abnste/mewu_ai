@@ -50,6 +50,7 @@ pub(crate) struct Window {
     pub(crate) frame: Rect,
     pub(crate) buffer: Rect,
     pub(crate) override_redirect: bool,
+    pub(crate) label_digest: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,11 +60,19 @@ pub(crate) struct Snapshot {
     pub(crate) stopped: bool,
     pub(crate) blocked: bool,
     pub(crate) modifiers: u32,
+    pub(crate) pointer: Option<Pointer>,
     pub(crate) workspace: u32,
     pub(crate) focus: Option<u32>,
     pub(crate) monitors: Vec<Monitor>,
     pub(crate) windows: Vec<Window>,
     pub(crate) hits: Vec<Option<u32>>,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Pointer {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) window: Option<u32>,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Error {
@@ -87,6 +96,12 @@ impl Snapshot {
             || self.windows.len() > 256
             || self.hits.len() != hit_count
             || hit_count > 16
+            || self.pointer.as_ref().is_some_and(|p| {
+                !p.x.is_finite()
+                    || !p.y.is_finite()
+                    || p.x.abs() > 1_000_000.
+                    || p.y.abs() > 1_000_000.
+            })
             || !self.monitors.iter().all(|m| m.frame.valid())
             || self
                 .monitors
@@ -96,10 +111,14 @@ impl Snapshot {
                 .len()
                 != self.monitors.len()
             || !unique(self.windows.iter().map(|w| w.id).collect())
-            || !self
-                .windows
-                .iter()
-                .all(|w| w.pid >= 0 && w.frame.valid() && w.buffer.valid())
+            || !self.windows.iter().all(|w| {
+                w.pid >= 0
+                    && w.frame.valid()
+                    && w.buffer.valid()
+                    && w.label_digest
+                        .as_ref()
+                        .is_none_or(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+            })
         {
             return Err(Error::Invalid);
         }
@@ -158,7 +177,14 @@ impl Target {
             .iter()
             .position(|w| w.id == self.window.id)
             .ok_or(Error::TargetChanged)?;
-        if snapshot.focus != Some(self.window.id) || snapshot.windows[index] != self.window {
+        let current = &snapshot.windows[index];
+        if snapshot.focus != Some(self.window.id)
+            || current.id != self.window.id
+            || current.pid != self.window.pid
+            || current.frame != self.window.frame
+            || current.buffer != self.window.buffer
+            || current.override_redirect != self.window.override_redirect
+        {
             return Err(Error::TargetChanged);
         }
         // X11 override-redirect stacking is explicitly not guaranteed by
@@ -212,6 +238,37 @@ impl Target {
             return Err(Error::FocusOutside);
         }
         Ok(result)
+    }
+    pub(crate) fn keyboard_identity(
+        &self,
+        snapshot: &Snapshot,
+        label_digest: &str,
+        toplevel: Rect,
+    ) -> Result<(), Error> {
+        self.validate(snapshot, 0)?;
+        let current = snapshot
+            .windows
+            .iter()
+            .find(|w| w.id == self.window.id)
+            .ok_or(Error::FocusOutside)?;
+        if current.label_digest.as_deref() != Some(label_digest) {
+            return Err(Error::FocusOutside);
+        }
+        let candidates = snapshot
+            .windows
+            .iter()
+            .filter(|w| {
+                w.pid == current.pid
+                    && w.label_digest == current.label_digest
+                    && [w.frame, w.buffer]
+                        .iter()
+                        .any(|r| r.0[2..4] == toplevel.0[2..4])
+            })
+            .count();
+        if candidates != 1 {
+            return Err(Error::FocusOutside);
+        }
+        Ok(())
     }
 }
 
@@ -311,5 +368,36 @@ mod tests {
             ambiguous.focus_bounds(Rect([0, 0, 800, 600]), Rect([60, 60, 100, 30])),
             Err(Error::FocusOutside)
         );
+    }
+    #[test]
+    fn keyboard_window_matching_rejects_stale_or_ambiguous_accessibility_identity_without_stopping_legitimate_title_changes(
+    ) {
+        let mut s = snapshot();
+        let first = "a".repeat(64);
+        let second = "b".repeat(64);
+        s.windows[0].label_digest = Some(first.clone());
+        let t = Target::bind(&s, region()).unwrap();
+        s.hits.clear();
+        assert!(t
+            .keyboard_identity(&s, &first, Rect([0, 0, 800, 600]))
+            .is_ok());
+        let mut other = s.windows[0].clone();
+        other.id = 77;
+        other.frame = Rect([100, 0, 800, 600]);
+        other.buffer = Rect([90, -10, 820, 620]);
+        s.windows.insert(0, other);
+        assert_eq!(
+            t.keyboard_identity(&s, &first, Rect([0, 0, 800, 600])),
+            Err(Error::FocusOutside)
+        );
+        s.windows[1].label_digest = Some(second.clone());
+        assert!(t.validate(&s, 0).is_ok());
+        assert_eq!(
+            t.keyboard_identity(&s, &first, Rect([0, 0, 800, 600])),
+            Err(Error::FocusOutside)
+        );
+        assert!(t
+            .keyboard_identity(&s, &second, Rect([0, 0, 800, 600]))
+            .is_ok());
     }
 }

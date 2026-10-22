@@ -157,6 +157,7 @@ export default definePlugin(ctx => {
         region_observation_required: '操作前未取得有效的新截图，已停止',
         region_stopped: '本次区域操作已停止',
         region_stop_unavailable: '停止控制未能启用，未发出输入动作',
+        region_desktop_witness_unavailable: '请启用当前 GNOME 桌面的 Mewu Desktop Witness 后重新发起',
         MODEL_REQUEST_FAILED: '区域操作的模型请求失败',
       };
       const code = Object.prototype.hasOwnProperty.call(reasons, error?.code) ? error.code : 'region_observation_failed';

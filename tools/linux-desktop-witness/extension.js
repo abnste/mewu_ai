@@ -14,6 +14,7 @@ const path = '/org/gnome/Shell/Extensions/MewuWitness';
 const xml = `<node><interface name="dev.mewu.DesktopWitness">
 <method name="Arm"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
 <method name="Snapshot"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
+<method name="KeepAlive"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
 <method name="Disarm"><arg type="s" direction="in"/></method>
 </interface></node>`;
 
@@ -89,26 +90,32 @@ export default class DesktopWitness extends Extension {
         .map(window => {
           const actor = window.get_compositor_private();
           if (!actor || !actor.mapped || actor.get_paint_opacity() !== 255) throw Error('window transitioning');
-          return { id: window.get_stable_sequence(), pid: window.get_pid(), frame: rectangle(window.get_frame_rect()), buffer: rectangle(window.get_buffer_rect()), overrideRedirect: window.is_override_redirect() };
+          const title = window.get_title();
+          if (title !== null && (typeof title !== 'string' || title.length > 8192)) throw Error('unknown window');
+          const labelDigest = title ? GLib.compute_checksum_for_string(GLib.ChecksumType.SHA256, title, -1) : null;
+          return { id: window.get_stable_sequence(), pid: window.get_pid(), frame: rectangle(window.get_frame_rect()), buffer: rectangle(window.get_buffer_rect()), overrideRedirect: window.is_override_redirect(), labelDigest };
         });
       const focus = global.display.get_focus_window();
       const monitors = Main.layoutManager.monitors.map(monitor => ({ id: monitor.index, frame: rectangle(monitor) }));
       if (monitors.length < 1 || monitors.length > 32) throw Error('unknown monitors');
-      const hits = points.map(([x, y]) => {
+      const hit = (x, y) => {
         let actor = global.stage.get_actor_at_pos(Clutter.PickMode.ALL, x, y);
         for (let depth = 0; actor && depth < 32; depth++, actor = actor.get_parent()) {
           if (actor instanceof Meta.WindowActor) return actor.meta_window.get_stable_sequence();
         }
         return null;
-      });
-      const [, , modifiers] = global.get_pointer();
+      };
+      const hits = points.map(([x, y]) => hit(x, y));
+      const [pointerX, pointerY, modifiers] = global.get_pointer();
       const blocked = Main.modalCount > 0 || Main.sessionMode.isLocked || Main.overview.visible || global.display.is_grabbed();
       return { protocol: 1, epoch: this._epoch, stopped: lease.stopped, blocked: Boolean(blocked), modifiers,
+        pointer: { x: pointerX, y: pointerY, window: hit(pointerX, pointerY) },
         workspace: global.workspace_manager.get_active_workspace_index(), focus: focus?.get_stable_sequence() ?? null, monitors, windows, hits };
     });
   }
 
   DisarmAsync([token], invocation) { this._reply(invocation, sender => this._lease.disarm(sender, token), '()'); }
+  KeepAliveAsync([token], invocation) { this._reply(invocation, sender => this._lease.snapshot(sender, token)); }
 
   disable() {
     this._object?.unexport(); this._object = null;

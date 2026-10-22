@@ -2,7 +2,7 @@
 //! A single user-approved ScreenCast session. Never restores permission or
 //! connects to the unrestricted PipeWire daemon; the remote FD is session-owned.
 use futures_util::StreamExt;
-use std::{collections::HashMap, future::Future, os::fd::OwnedFd, time::{Duration, Instant}};
+use std::{collections::HashMap, future::Future, os::fd::OwnedFd, sync::{Arc,atomic::{AtomicBool,Ordering}}, time::{Duration, Instant}};
 use zbus::{zvariant::{OwnedObjectPath, OwnedValue, Value}, Connection, Proxy};
 
 type Options<'a> = HashMap<&'a str, Value<'a>>;
@@ -114,10 +114,12 @@ pub(crate) struct PortalSession {
     pub(crate) logical_size: Option<(i32, i32)>,
     pub(crate) logical_position: Option<(i32, i32)>,
     control: bool,
+    closed: Arc<AtomicBool>,
+    close_sent: AtomicBool,
 }
 impl Drop for PortalSession {
     fn drop(&mut self) {
-        futures_lite::future::block_on(bounded_close(&self.connection, &self.owner, self.path.as_str(), SESSION));
+        self.close();
     }
 }
 impl PortalSession {
@@ -206,7 +208,11 @@ impl PortalSession {
             }.await;
             drop(desktop);
             match setup {
-                Ok((node, remote, logical_size, logical_position, pipewire_serial)) => Ok(Self { connection, owner, path, node, pipewire_serial, remote, logical_size, logical_position, control }),
+                Ok((node, remote, logical_size, logical_position, pipewire_serial)) => {
+                    let result=Self { connection, owner, path, node, pipewire_serial, remote, logical_size, logical_position, control,closed:Arc::new(AtomicBool::new(false)),close_sent:AtomicBool::new(false) };
+                    if control { result.watch_control_close()?; }
+                    Ok(result)
+                },
                 Err(error) => { bounded_close(&connection, &owner, path.as_str(), SESSION).await; Err(error) }
             }
     }
@@ -214,7 +220,7 @@ impl PortalSession {
     /// These methods are native backend primitives, never exposed directly to
     /// a plugin. The region owner must validate its source and focus per input.
     pub(crate) fn input<B:serde::Serialize+zbus::zvariant::DynamicType>(&self,method:&str,body:&B,allowed:&mut impl FnMut()->bool)->Result<(),String>{
-        if !self.control || !matches!(method,"NotifyPointerMotionAbsolute"|"NotifyPointerButton"|"NotifyPointerAxisDiscrete"|"NotifyKeyboardKeysym") {return Err("区域输入会话未授权".into());}
+        if !self.control || self.closed.load(Ordering::SeqCst) || !matches!(method,"NotifyPointerMotionAbsolute"|"NotifyPointerButton"|"NotifyPointerAxisDiscrete"|"NotifyKeyboardKeysym") {return Err("区域输入会话未授权".into());}
         futures_lite::future::block_on(async{
             let expires=Instant::now()+TRANSPORT_TIMEOUT;
             let desktop=transport(Proxy::new(&self.connection,self.owner.as_str(),DESKTOP,REMOTE_DESKTOP),expires,allowed).await?;
@@ -234,6 +240,35 @@ impl PortalSession {
     }
     pub(crate) fn keysym(&self,key:i32,pressed:bool,allowed:&mut impl FnMut()->bool)->Result<(),String>{
         self.input("NotifyKeyboardKeysym",&(&self.path,Options::new(),key,u32::from(pressed)),allowed)
+    }
+    pub(crate) fn live(&self)->bool { !self.closed.load(Ordering::SeqCst) }
+    pub(crate) fn close(&self){
+        self.closed.store(true,Ordering::SeqCst);
+        if !self.close_sent.swap(true,Ordering::SeqCst){
+            futures_lite::future::block_on(bounded_close(&self.connection,&self.owner,self.path.as_str(),SESSION));
+        }
+    }
+    fn watch_control_close(&self)->Result<(),String>{
+        let connection=self.connection.clone(); let owner=self.owner.clone();let path=self.path.clone();
+        let closed=self.closed.clone();let (ready,sync)=std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new().name("mewu-portal-control-stop".into()).spawn(move||{
+            futures_lite::future::block_on(async {
+                let Ok(proxy)=Proxy::new(&connection,owner.as_str(),path.as_str(),SESSION).await else {let _=ready.send(false);closed.store(true,Ordering::SeqCst);return};
+                let Ok(mut signals)=proxy.receive_signal("Closed").await else {let _=ready.send(false);closed.store(true,Ordering::SeqCst);return};
+                let Ok(bus)=Proxy::new(&connection,"org.freedesktop.DBus","/org/freedesktop/DBus","org.freedesktop.DBus").await else {let _=ready.send(false);closed.store(true,Ordering::SeqCst);return};
+                let Ok(mut owners)=bus.receive_signal_with_args("NameOwnerChanged",&[(0,"org.freedesktop.portal.Desktop")]).await else {let _=ready.send(false);closed.store(true,Ordering::SeqCst);return};
+                let actual:Result<String,_>=bus.call("GetNameOwner",&("org.freedesktop.portal.Desktop",)).await;
+                if actual.as_ref().ok()!=Some(&owner){let _=ready.send(false);closed.store(true,Ordering::SeqCst);return}
+                let _=ready.send(true);
+                loop {
+                    if closed.load(Ordering::SeqCst){break}
+                    let ended=futures_lite::future::race(async {let _=signals.next().await;true},futures_lite::future::race(async {let _=owners.next().await;true},async {async_io::Timer::after(Duration::from_millis(25)).await;false})).await;
+                    if ended {closed.store(true,Ordering::SeqCst);break}
+                }
+            });
+        }).map_err(|_|"无法监听系统控制撤权")?;
+        if sync.recv_timeout(Duration::from_secs(2))!=Ok(true){self.close();return Err("无法监听系统控制撤权".into())}
+        Ok(())
     }
 }
 

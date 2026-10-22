@@ -37,6 +37,15 @@ impl Frames {
         Ok(frames)
     }
     pub(crate) fn next(&self, wait: Duration) -> Result<Option<Frame>, String> {
+        self.next_after(wait,None)
+    }
+    pub(crate) fn barrier(&self)->Result<u64,String>{
+        self.pipeline.current_running_time().map(|v|v.nseconds()).ok_or_else(||"无法确认屏幕帧时间".into())
+    }
+    /// A feedback frame must be captured after the caller's barrier, rather
+    /// than merely dequeued after input. Existing recording callers retain
+    /// their ordinary next() semantics.
+    pub(crate) fn next_after(&self, wait:Duration, minimum:Option<u64>)->Result<Option<Frame>,String>{
         let bus = self.pipeline.bus().ok_or("屏幕采集总线不可用")?;
         for _ in 0..16 {
             let Some(message) = bus.pop() else { break; };
@@ -45,6 +54,12 @@ impl Frames {
             }
         }
         let Some(sample) = self.sink.try_pull_sample(gst::ClockTime::from_nseconds(wait.as_nanos().min(u64::MAX as u128) as u64)) else { return Ok(None); };
+        if let Some(minimum)=minimum {
+            let pts=sample.buffer().and_then(|b|b.pts()).ok_or("屏幕帧时间缺失")?;
+            let segment=sample.segment().and_then(|s|s.downcast_ref::<gst::ClockTime>()).ok_or("屏幕帧时间轴无效")?;
+            let time=segment.to_running_time(pts).ok_or("屏幕帧时间轴无效")?;
+            if time.nseconds()<minimum{return Ok(None)}
+        }
         let info = video::VideoInfo::from_caps(sample.caps().ok_or("屏幕帧格式缺失")?).map_err(|_| "屏幕帧格式无效")?;
         if info.format() != video::VideoFormat::Rgba || info.width() < 2 || info.height() < 2
             || info.width() > 16_384 || info.height() > 16_384

@@ -125,6 +125,8 @@ mod extension_region;
 mod extension_region_desktop;
 #[cfg(target_os = "linux")]
 mod extension_region_gnome;
+#[cfg(target_os="linux")]
+mod extension_region_a11y_linux;
 mod extension_store;
 mod extension_ui;
 mod extension_overlay_policy;

@@ -46,7 +46,7 @@ pub struct Record {
     pub unsupported_services: BTreeMap<String, String>,
 }
 pub(crate) fn region_platform_supported(platform: &str) -> bool {
-    matches!(platform, "windows-x86_64" | "darwin-aarch64")
+    matches!(platform, "windows-x86_64" | "darwin-aarch64" | "linux-x86_64")
 }
 pub(crate) fn service_platform_error(service: &ServiceRegistration, platform: &str) -> Option<&'static str> {
     let Ok(platforms) = mewu_extension::service_platforms(service) else { return Some("插件平台声明无效") };
@@ -636,7 +636,8 @@ mod tests {
             service.metadata = Some(serde_json::json!({"requiresRegion":true}));
             assert!(service_platform_error(&service, "windows-x86_64").is_none());
             assert!(service_platform_error(&service, "darwin-aarch64").is_none());
-            assert_eq!(service_platform_error(&service, "linux-x86_64"), Some("当前系统暂不支持区域操作"));
+            assert!(service_platform_error(&service, "linux-x86_64").is_none());
+            assert_eq!(service_platform_error(&service, "linux-aarch64"), Some("当前系统暂不支持区域操作"));
             service.metadata = Some(serde_json::json!({"platforms":["darwin-aarch64"]}));
             assert!(service_platform_error(&service, "darwin-aarch64").is_none());
             assert!(service_platform_error(&service, "windows-x86_64").is_some());

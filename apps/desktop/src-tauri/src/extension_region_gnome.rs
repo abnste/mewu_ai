@@ -7,6 +7,7 @@ use std::{
     fs::File,
     os::{fd::OwnedFd, unix::fs::MetadataExt},
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use zbus::{Connection, Proxy};
@@ -87,6 +88,7 @@ pub(crate) struct Witness {
     process: Process,
     token: String,
     epoch: String,
+    closed: AtomicBool,
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -157,6 +159,7 @@ impl Witness {
                 process,
                 token: uuid::Uuid::new_v4().to_string(),
                 epoch: String::new(),
+                closed: AtomicBool::new(false),
             };
             let proxy = bounded(
                 Proxy::new(&result.connection, result.owner.as_str(), PATH, INTERFACE),
@@ -178,6 +181,9 @@ impl Witness {
         })
     }
     async fn check(&self) -> Result<(), String> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(unavailable());
+        }
         self.process.check()?;
         if owner(&self.connection).await? != self.owner {
             return Err(unavailable());
@@ -214,9 +220,32 @@ impl Witness {
             Ok(snapshot)
         })
     }
-}
-impl Drop for Witness {
-    fn drop(&mut self) {
+    pub(crate) fn keep_alive(&self) -> Result<bool, String> {
+        futures_lite::future::block_on(async {
+            self.check().await?;
+            let proxy = bounded(
+                Proxy::new(&self.connection, self.owner.as_str(), PATH, INTERFACE),
+                400,
+            )
+            .await?;
+            let text: String =
+                bounded(proxy.call("KeepAlive", &(self.token.as_str(),)), 400).await?;
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Alive {
+                stopped: bool,
+            }
+            if text.len() > 128 {
+                return Err(unavailable());
+            }
+            let alive: Alive = serde_json::from_str(&text).map_err(|_| unavailable())?;
+            Ok(!alive.stopped)
+        })
+    }
+    pub(crate) fn close(&self) {
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
         futures_lite::future::block_on(async {
             let close = async {
                 if let Ok(proxy) =
@@ -233,5 +262,10 @@ impl Drop for Witness {
             // when Arm or Disarm had an unknown transport outcome.
             let _ = bounded(self.connection.clone().close(), 200).await;
         });
+    }
+}
+impl Drop for Witness {
+    fn drop(&mut self) {
+        self.close()
     }
 }
