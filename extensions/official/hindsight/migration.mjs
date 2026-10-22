@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This plugin owns the Hindsight route and migration decisions. The host only
 // exposes a bounded archive and copies encrypted credentials without disclosure.
+import {probe} from './transport.mjs';
 export async function archives(ctx,cursor) {
   const page=await ctx.host.call('memory.archive.list',{...(cursor?{cursor}:{})});
   return {...page,entries:page.entries.filter(row=>row.binding.providerId==='hindsight')};
@@ -19,6 +20,9 @@ export async function migrate(ctx,input) {
   if(previous&&previous.bindingId!==b.id)throw Error('该 Agent 已迁移其他连接');
   const secretKey='archive.'+b.id,secret=await ctx.secrets.status(secretKey);
   await ctx.host.call('memory.archive.credential',{bindingId:b.id,expectedRevision:b.revision,secretRevision:secret.revision});
+  // Probe with the migrated origin-bound credential before changing the chosen
+  // provider. No legacy outbox work or new memory content is transmitted.
+  await probe(ctx,{endpoint:b.endpoint},undefined,secretKey);
   const next={bindingId:b.id,endpoint:b.endpoint,bankId:chosen.bankId,policy:b.policy};
   if(!await ctx.configuration.compareAndSet(key,previous,next))throw Error('配置已变化，请重新载入');
   // Publish the executable binding last. A stopped migration leaves the old

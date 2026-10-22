@@ -38,8 +38,8 @@ export function api(ctx,settings,previewKey,secretKey='api') {
 }
 export const route=(id,...parts)=>['v1','default','banks',id,...parts];
 
-export async function probe(ctx,settings,previewKey) {
-  const request=api(ctx,settings,previewKey);
+export async function probe(ctx,settings,previewKey,secretKey='api') {
+  const request=api(ctx,settings,previewKey,secretKey);
   const version=await request('GET',['version']);
   if(typeof version.api_version!=='string'||!/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test(version.api_version))throw Error('服务 API 不兼容');
   await request('GET',['health','ready'],undefined,{readiness:true});

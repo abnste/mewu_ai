@@ -85,9 +85,9 @@ test('readiness rejects non-success and credentials stay host-managed',async()=>
 test('archive migration keeps the exact bank, endpoint and policy; publishes binding last without replay',async()=>{
   const calls=[],values=new Map();
   const row={binding:{id:'old-binding',agentId:'alice',revision:7,enabled:true,status:'ready',providerId:'hindsight',endpoint:'https://old.example',policy:{recall:true,explicitRetain:false,completedTurnSync:false}},bankId:'original-bank',bindingRevision:3};
-  const ctx={configuration:{get:async k=>values.get(k)??null,compareAndSet:async(k,expected,value)=>{assert.deepEqual(values.get(k)??null,expected);calls.push('configuration');values.set(k,value);return true;}},secrets:{status:async()=>({revision:0})},host:{call:async(method,params)=>{calls.push(method);if(method==='memory.archive.list')return {entries:[row],nextCursor:null};if(method==='memory.archive.credential'){assert.deepEqual(params,{bindingId:'old-binding',expectedRevision:7,secretRevision:0});return {configured:true};}assert.equal(method,'memory.archive.activate');assert.equal(values.get('archive.alice').bankId,'original-bank');return {ok:true};}}};
+  const ctx={configuration:{get:async k=>values.get(k)??null,compareAndSet:async(k,expected,value)=>{assert.deepEqual(values.get(k)??null,expected);calls.push('configuration');values.set(k,value);return true;}},secrets:{status:async()=>({revision:0})},host:{call:async(method,params)=>{calls.push(method);if(method==='network.fetch'){assert.equal(params.method,'GET');return params.url.endsWith('/version')?json({api_version:'1.1.0'}):{status:200,body:''};}if(method==='memory.archive.list')return {entries:[row],nextCursor:null};if(method==='memory.archive.credential'){assert.deepEqual(params,{bindingId:'old-binding',expectedRevision:7,secretRevision:0});return {configured:true};}assert.equal(method,'memory.archive.activate');assert.equal(values.get('archive.alice').bankId,'original-bank');return {ok:true};}}};
   assert.deepEqual(await migrate(ctx,{bindingId:'old-binding',expectedRevision:7}),{ok:true});
-  assert.deepEqual(calls,['memory.archive.list','memory.archive.credential','configuration','memory.archive.activate']);
+  assert.deepEqual(calls,['memory.archive.list','memory.archive.credential','network.fetch','network.fetch','configuration','memory.archive.activate']);
   assert.deepEqual(values.get('archive.alice'),{bindingId:'old-binding',endpoint:row.binding.endpoint,bankId:'original-bank',policy:row.binding.policy});
   await assert.rejects(migrate(ctx,{bindingId:'old-binding',expectedRevision:6}),/旧连接已变化/);
 });
@@ -148,4 +148,19 @@ test('provider failures return a safe tool result for the parent Agent to inspec
   const result=await f.services.get('tool.retain').invoke({text:'fact'},{context:{agentId:'alice'}});
   assert.equal(result.isError,true);assert.equal(result.retryable,false);
   assert.equal(result.error,'请配置 Hindsight 服务');assert.equal(f.requests.length,0);
+});
+
+test('migration refuses to change configuration or provider when the archived service is not ready',async()=>{
+  const calls=[];
+  const row={binding:{id:'old',agentId:'alice',revision:3,enabled:true,status:'ready',providerId:'hindsight',endpoint:'https://old.example',policy:{recall:true}},bankId:'original-bank',bindingRevision:2};
+  const ctx={configuration:{get:async()=>null,compareAndSet:async()=>{throw Error('must not change configuration');}},secrets:{status:async()=>({revision:1,configured:true})},host:{call:async(method,params)=>{
+    calls.push(method);
+    if(method==='memory.archive.list')return {entries:[row],nextCursor:null};
+    if(method==='memory.archive.credential')return {configured:true};
+    assert.equal(method,'network.fetch');assert.equal(params.method,'GET');
+    assert.deepEqual(params.authorization,{key:'archive.old'});
+    return params.url.endsWith('/version')?json({api_version:'1.1.0'}):{status:503,body:'private server error'};
+  }}};
+  await assert.rejects(migrate(ctx,{bindingId:'old',expectedRevision:3}),/HTTP 503/);
+  assert.deepEqual(calls,['memory.archive.list','memory.archive.credential','network.fetch','network.fetch']);
 });
