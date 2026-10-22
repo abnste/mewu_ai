@@ -218,6 +218,7 @@ pub struct RunTools {
     video: Option<Arc<crate::video_annotation_tool::RunScope>>,
     extensions: BTreeMap<String, crate::extension_tools::ToolDescriptor>,
     extension_cancel: Arc<AtomicBool>,
+    model_lease: Option<Arc<crate::extension_model_lease::ModelLease>>,
     chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
 }
 
@@ -275,7 +276,16 @@ impl RunTools {
                 .map(|scope| scope.cancel_token())
                 .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
             chat_region,
+            model_lease: None,
         })
+    }
+
+    pub(crate) fn with_model_key(mut self, context: &RunContext, key: Arc<zeroize::Zeroizing<String>>) -> Self {
+        self.model_lease = Some(Arc::new(crate::extension_model_lease::ModelLease::new(
+            context.scene_id.clone(), context.run_id.clone(), context.connection_profile.clone(),
+            self.extension_cancel.clone(), key,
+        )));
+        self
     }
 
     pub fn definitions(&self) -> Vec<Value> {
@@ -319,6 +329,7 @@ impl RunTools {
                 descriptor,
                 self.extension_cancel.clone(),
                 self.chat_region.clone(),
+                self.model_lease.clone(),
                 call,
                 lease,
             )
@@ -676,6 +687,21 @@ mod tests {
             ],
             enabled: true,
         }
+    }
+    #[tokio::test]
+    async fn plugin_submodels_share_preflight_key_but_cannot_outlive_native_tools() {
+        let context = context();
+        let key = Arc::new(zeroize::Zeroizing::new("isolated-test-key".to_owned()));
+        let tools = RunTools::new(&context).unwrap().with_model_key(&context, key.clone());
+        let lease = tools.model_lease.clone().unwrap();
+        let canceled = tools.extension_cancel.clone();
+        let native_run = (context.scene_id.clone(), context.run_id.clone());
+        assert_eq!(lease.key(&context.scene_id, Some(&native_run), &canceled, &context.connection_profile).unwrap(), "isolated-test-key");
+        tools.abort().await;
+        assert!(lease.key(&context.scene_id, Some(&native_run), &canceled, &context.connection_profile).is_err());
+        drop(tools);
+        drop(lease);
+        assert_eq!(Arc::strong_count(&key), 1);
     }
     #[test]
     fn model_only_gets_this_agents_exact_grants_under_stable_names() {

@@ -193,7 +193,7 @@ pub(crate) fn schedule(
     run: &str,
     profile: ConnectionProfile,
     transport: provider_transport::Transport,
-    key: Zeroizing<String>,
+    key: Arc<Zeroizing<String>>,
 ) {
     let host = app.state::<Host>();
     if !enabled(&host)

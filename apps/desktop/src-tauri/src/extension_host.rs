@@ -937,6 +937,7 @@ struct Context {
     chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
     native_run: Option<(String, String)>,
     model_connection: Option<mewu_core::ConnectionProfile>,
+    model_lease: Option<Arc<crate::extension_model_lease::ModelLease>>,
     tool_preparing: bool,
     #[cfg(windows)]
     escape: crate::extension_escape::RunEscapeLease,
@@ -1003,6 +1004,10 @@ impl Context {
                 self.model_connection.as_ref(),
                 &self.canceled,
             )?;
+            if let Some(lease) = &self.model_lease {
+                let connection = self.model_connection.as_ref().ok_or("本轮模型授权缺失")?;
+                lease.key(scene_id, self.native_run.as_ref(), &self.canceled, connection)?;
+            }
             if self
                 .native_run
                 .as_ref()
@@ -1081,6 +1086,7 @@ fn activate(app: &AppHandle, record: &Record) -> Result<(), String> {
         chat_region: None,
         native_run: None,
         model_connection: None,
+        model_lease: None,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
@@ -1231,6 +1237,7 @@ pub async fn invoke_extension(
         chat_region: None,
         native_run: None,
         model_connection: None,
+        model_lease: None,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return,
@@ -1522,6 +1529,7 @@ pub async fn run_bound_service(
         chat_region: None,
         native_run: None,
         model_connection: None,
+        model_lease: None,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
@@ -1618,6 +1626,7 @@ pub(crate) async fn invoke_tool_for_run(
     run_id: String,
     canceled: Arc<AtomicBool>,
     chat_region: Option<Arc<crate::extension_chat_region::ChatRegionScope>>,
+    model_lease: Option<Arc<crate::extension_model_lease::ModelLease>>,
     input: Value,
     lease: mewu_core::DispatchLease,
 ) -> crate::extension_tools::ToolInvocationOutcome {
@@ -1697,7 +1706,8 @@ pub(crate) async fn invoke_tool_for_run(
             region: None,
             chat_region,
             native_run: Some((scene_id.clone(), run_id.clone())),
-            model_connection: None,
+            model_connection: model_lease.as_ref().map(|lease| lease.connection().clone()),
+            model_lease,
             tool_preparing: true,
             #[cfg(windows)]
             escape: crate::extension_escape::RunEscapeLease::default(),
@@ -1822,6 +1832,7 @@ pub(crate) async fn run_external_agent(
         chat_region,
         native_run: Some((scene_id, run_id)),
         model_connection,
+        model_lease: None,
         tool_preparing: false,
         #[cfg(windows)]
         focus_return: None,
@@ -2159,6 +2170,7 @@ fn bridge_impl(
                 chat_region: None,
                 native_run: context.native_run.clone(),
                 model_connection: context.model_connection.clone(),
+                model_lease: context.model_lease.clone(),
                 tool_preparing: false,
                 #[cfg(windows)]
                 focus_return: None,
@@ -2362,10 +2374,20 @@ fn model_invoke(app: &AppHandle, context: &Context, params: Value) -> Result<Val
         }
     };
     let transport = crate::connection_host::transport_for(&connection)?;
-    let key = if connection.advanced.auth_mode == mewu_core::ConnectionAuthMode::None {
-        zeroize::Zeroizing::new(String::new())
+    // Native Agent tools borrow the preflight key for this exact run. Opening
+    // the OS keychain here can block inside a finite plugin worker deadline.
+    // Standalone services retain their independent credential read path.
+    let fallback_key = if context.model_lease.is_none() {
+        Some(if connection.advanced.auth_mode == mewu_core::ConnectionAuthMode::None {
+            zeroize::Zeroizing::new(String::new())
+        } else {
+            crate::credentials::read_profile(&host.root, &connection)?
+        })
+    } else { None };
+    let key = if let Some(lease) = &context.model_lease {
+        lease.key(scene_id, context.native_run.as_ref(), &context.canceled, &connection)?
     } else {
-        crate::credentials::read_profile(&host.root, &connection)?
+        fallback_key.as_ref().ok_or("模型授权缺失")?.as_str()
     };
     if key.is_empty() && connection.advanced.auth_mode != mewu_core::ConnectionAuthMode::None {
         return Err("请先配置模型密钥".into());
@@ -2417,7 +2439,7 @@ fn model_invoke(app: &AppHandle, context: &Context, params: Value) -> Result<Val
     let body = crate::provider_transport::request_body(transport.protocol, canonical)?;
     tauri::async_runtime::block_on(async {
         context.check(app)?;
-        let request = crate::provider_transport::stream_turn(&transport, &key, body, |text| {
+        let request = crate::provider_transport::stream_turn(&transport, key, body, |text| {
             if context.check(app).is_ok() {
                 let _ = app.emit_to(
                     "space",

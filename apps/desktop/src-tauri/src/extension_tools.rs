@@ -186,6 +186,7 @@ pub(crate) async fn execute_recorded(
     descriptor: &ToolDescriptor,
     canceled: Arc<AtomicBool>,
     region: Option<Arc<ChatRegionScope>>,
+    model_lease: Option<Arc<crate::extension_model_lease::ModelLease>>,
     call: ai::ModelToolCall,
     lease: DispatchLease,
 ) -> Result<journal_runtime::CommittedToolOutput, String> {
@@ -201,6 +202,7 @@ pub(crate) async fn execute_recorded(
                     run_id.into(),
                     canceled.clone(),
                     region,
+                    model_lease,
                     input,
                     lease.clone(),
                 )

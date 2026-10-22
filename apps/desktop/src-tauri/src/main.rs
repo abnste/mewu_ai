@@ -114,6 +114,7 @@ mod pin_window;
 mod pixel_sampler;
 mod plugin_host;
 mod extension_host;
+mod extension_model_lease;
 mod extension_chat_region;
 mod extension_tools;
 mod extension_market;
@@ -2320,11 +2321,12 @@ fn start_run_with_extensions(
         key,
         connection,
     } = preflight;
+    let key = Arc::new(key);
     engine.agent_runs.insert(context.run_id.clone(), (scene_id.clone(), agent_grant.into()));
     let title_transport = transport.clone();
     let run_tools =
         match mcp_host::RunTools::with_extensions(&context, visual.clone(), video.clone(), extension_catalog, chat_region.clone()) {
-            Ok(tools) => Arc::new(tools),
+            Ok(tools) => Arc::new(tools.with_model_key(&context, key.clone())),
             Err(error) => {
                 engine.plugin_runs.remove(&context.run_id);
                 engine.agent_runs.remove(&context.run_id);
