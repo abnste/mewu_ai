@@ -345,19 +345,35 @@ pub(crate) async fn start(app:AppHandle,window:WebviewWindow,scene_id:String,reg
     // The prepared worker is already alive. Every early error or dropped
     // invoke must cancel this exact lease until the countdown task owns it.
     let mut starting=StartingGuard{nonce:id.clone(),armed:true};
-    // ScreenCast captures the compositor's monitor. Wayland offers neither
-    // WDA/SCK exclusion nor a guaranteed window position outside this crop.
-    // Admit an actual tray Stop entry before publishing countdown or hiding.
+    // Keep the same capture surface visible for 3/2/1. It must be unmapped and
+    // acknowledged before Start; a monitor stream cannot exclude this window.
     crate::recording_tray_linux::present(&app,&id).await?;
+    let transition=Arc::new(crate::begin_space_transition(&app,&host)?);
     emit(&app,&Some(status));
-    window.hide().map_err(|_|"无法隐藏录屏选区窗口")?;
     let owner=app.clone();tauri::async_runtime::spawn(async move {
-        for number in (1..=3).rev(){
-            if let Ok(mut s)=state().lock(){if let Some(status)=s.lease.as_mut().filter(|l|l.nonce==id).and_then(|l|l.status.as_mut()){
-                status.countdown=number;emit(&owner,&Some(status.clone()));}}
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        let result=async {
+            for number in (1..=3).rev(){
+                tray_admission(&owner,&id)?;
+                let status={let mut s=state().lock().map_err(|_|"录屏状态不可用")?;
+                    let status=s.lease.as_mut().filter(|l|l.nonce==id).and_then(|l|l.status.as_mut()).ok_or("录屏准备已结束")?;
+                    status.countdown=number;status.clone()};
+                emit(&owner,&Some(status));
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            let checked_owner=owner.clone();let checked_id=id.clone();
+            let allowed:crate::capture::CaptureCheck=Arc::new(move||tray_admission(&checked_owner,&checked_id));
+            crate::capture_wayland_host::hide_recording_parent(&window,allowed.clone(),transition).await?;
+            allowed()?;
+            let mut c=controls.lock().map_err(|_|"录屏控制不可用")?;
+            if c.terminal.is_some(){return Err("录屏准备已结束".to_string());}
+            c.start=Some(selection);Ok::<(),String>(())
+        }.await;
+        if let Err(error)=result {
+            // Preserve an explicit Stop/Cancel. A failed hide must never start
+            // recording the countdown or leave an unstarted worker alive.
+            let report=controls.lock().map(|mut c|{if c.terminal.is_some(){false}else{c.terminal=Some(true);c.start=None;true}}).unwrap_or(true);
+            if report&&owner.state::<Host>().exit.accepts_new_operations(){let _=owner.emit_to("space","host-error",error);}
         }
-        if let Ok(mut c)=controls.lock(){if c.terminal.is_none(){c.start=Some(selection);}}
     });
     starting.armed=false;
     Ok(true)

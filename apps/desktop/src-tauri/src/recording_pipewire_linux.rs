@@ -99,6 +99,29 @@ fn packed_rows(data: &[u8], stride: usize, row: usize, height: usize) -> Result<
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn fresh_frame_barrier_discards_queued_pre_hide_pixels_on_a_real_pipeline() {
+        gst::init().unwrap();
+        let pipeline=gst::Pipeline::new();
+        let source=element("appsrc").unwrap().downcast::<gstreamer_app::AppSrc>().unwrap();
+        source.set_format(gst::Format::Time);source.set_property("is-live",true);
+        source.set_caps(Some(&gst::Caps::builder("video/x-raw").field("format","RGBA")
+            .field("width",2i32).field("height",2i32).field("framerate",gst::Fraction::new(30,1)).build()));
+        let sink=element("appsink").unwrap().downcast::<gstreamer_app::AppSink>().unwrap();
+        sink.set_sync(false);sink.set_property("async",false);
+        pipeline.add_many([source.upcast_ref::<gst::Element>(),sink.upcast_ref::<gst::Element>()]).unwrap();source.link(&sink).unwrap();
+        let frames=Frames{pipeline,sink};frames.pipeline.set_state(gst::State::Playing).unwrap();
+        let push=|pts,pixel:&[u8]|{let mut buffer=gst::Buffer::from_mut_slice(pixel.repeat(4));
+            let writable=buffer.get_mut().unwrap();writable.set_pts(gst::ClockTime::from_nseconds(pts));
+            writable.set_duration(gst::ClockTime::from_mseconds(33));source.push_buffer(buffer).unwrap();};
+        push(0,&[255,0,0,255]);
+        std::thread::sleep(Duration::from_millis(2));
+        let barrier=frames.barrier().unwrap();assert!(barrier>0);
+        assert!(frames.next_after(Duration::from_secs(1),Some(barrier)).unwrap().is_none());
+        push(barrier+1,&[0,0,255,255]);
+        let fresh=frames.next_after(Duration::from_secs(1),Some(barrier)).unwrap().unwrap();
+        assert_eq!((fresh.width,fresh.height),(2,2));assert_eq!(fresh.rgba,[0,0,255,255].repeat(4));
+        assert!(frames.barrier().unwrap()>=barrier);
+    }
     #[test] fn authorized_serial_is_used_without_a_numeric_node_fallback() {
         gst::init().unwrap();
         let source = element("pipewiresrc").unwrap();

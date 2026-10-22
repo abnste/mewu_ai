@@ -136,7 +136,6 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
     image::codecs::png::PngEncoder::new(&mut preview).write_image(&first.rgba,first.width,first.height,image::ExtendedColorType::Rgba8)
         .map_err(|_|"无法保存录屏预览")?;
     preview.sync_all().map_err(|_|"无法完成录屏预览")?;drop(preview);
-    let mut latest=first;
     gate.prepared(&config.nonce)?;emit(Event::Prepared(prepared.clone()))?;
     let select_deadline=Instant::now()+Duration::from_secs(120);
     let selection=loop {
@@ -145,7 +144,18 @@ fn run(config:PrepareConfig, controls:&mpsc::Receiver<Control>, mut emit:impl Fn
             Ok(Control::Start(value)) if selection_valid(&value,&prepared)=>break value,
             Ok(Control::Cancel{}|Control::Stop{})|Err(mpsc::RecvTimeoutError::Disconnected)=>return Ok(None),
             Ok(_)=>return Err("录屏选区凭据无效".into()),Err(mpsc::RecvTimeoutError::Timeout)=>{}}
-        if let Some(frame)=frames.next(Duration::ZERO)?{latest=frame;}
+        let _=frames.next(Duration::ZERO)?;
+    };
+    // Start is sent only after the compositor acknowledges hiding the capture
+    // overlay. Discard every queued preview/countdown frame, using this live
+    // pipeline's running time instead of assuming the newest queue item is new.
+    let after=frames.barrier()?;
+    let fresh_deadline=Instant::now()+Duration::from_secs(3);
+    let mut latest=loop {
+        match controls.try_recv(){Ok(Control::Cancel{}|Control::Stop{})|Err(mpsc::TryRecvError::Disconnected)=>return Ok(None),
+            Ok(_)=>return Err("录屏控制顺序无效".into()),Err(mpsc::TryRecvError::Empty)=>{}}
+        if Instant::now()>=fresh_deadline{return Err("等待录屏新画面超时".into());}
+        if let Some(frame)=frames.next_after(Duration::from_millis(20),Some(after))?{break frame;}
     };
     if !matches!(selection.audio,AudioMode::Mute|AudioMode::System){return Err("此平台目前支持电脑声音或静音".into());}
     let expires=Instant::now()+Duration::from_secs(600);
