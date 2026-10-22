@@ -71,17 +71,18 @@ export default function PendingOwner(props) {
   const setCodeFocused = () => {}, setViewport = () => {};
   const hideToolbar = () => setToolbarVisible(false), deferGeometryPointer = () => false;
   const ocrRequests = { cancel() {}, dispose() {} }, snapshotSelections = { bind: (...args) => props.bound.push(args) };
+  const exportRegion = (region, copy, close) => props.exports.push({ region, copy, close });
   const snapMutations = {disconnect(){}}, toolbarObserver = undefined, flashTimer = undefined;
   const getWindowSnapMap = request => props.getWindowSnapMap(request);
   ${variable('snapLoader')}
   const codeFocus = () => {}, leave = () => {}, focusReference = () => {}, recordKey = () => {}, releaseKey = () => {}, snapFocus = () => {};
-  ${['hover', 'setSelectionActivity', 'trackPointer', 'begin', 'editRegion', 'currentPendingSource', 'currentPendingSelection', 'removePendingOutline', 'retirePendingSelection', 'clearPendingSelection', 'presentPendingSelection', 'activateItem', 'reconcilePendingSelection', 'revealToolbar', 'candidateAt', 'previewCandidateAt', 'updateSnapPreview', 'clearSnapPreview'].map(handler).join('\n')}
+  ${['hover', 'setSelectionActivity', 'trackPointer', 'begin', 'editRegion', 'currentPendingSource', 'currentPendingSelection', 'removePendingOutline', 'retirePendingSelection', 'clearPendingSelection', 'presentPendingSelection', 'activateItem', 'reconcilePendingSelection', 'pendingCopyBlocked', 'confirmPendingSelection', 'revealToolbar', 'candidateAt', 'previewCandidateAt', 'updateSnapPreview', 'clearSnapPreview'].map(handler).join('\n')}
   ${['blur', 'resize', 'snapVisibility'].map(variable).join('\n')}
   createEffect(reconcilePendingSelection);
   ${slice(snapEffect)};
   ${slice(sourceEffect)};
   ${slice(cleanup)};
-  Object.assign(props.control, { begin, editRegion, activateItem, hover, blur, resize, snapVisibility, previewCandidateAt, updateSnapPreview, revealToolbar, cancel: () => cancelGesture?.(),
+  Object.assign(props.control, { begin, editRegion, activateItem, hover, blur, resize, snapVisibility, previewCandidateAt, updateSnapPreview, revealToolbar, confirmPendingSelection, cancel: () => cancelGesture?.(),
     state: () => ({selection:selection(),pending:pendingSelection(),active:active(),preview:selectionPreview(),toolbar:toolbarVisible()}),
     lateVersion: () => interactionVersion });
   return <div>${slice(mask)}${slice(snapShow)}<For each={regionIds()}>{(id,index)=>{
@@ -92,7 +93,7 @@ const compiled = ts(transformSync(harness, { filename: 'capture-selection-pendin
   parserOpts: { plugins: ['typescript', 'jsx'] }, presets: [[solidPreset, { generate: 'universal', moduleName: 'test-renderer' }]] }).code);
 
 async function fixture({ automatic, map: suppliedMap, fetchMap, diagnostics = false, scale = 1, offset = { x: 0, y: 0 }, holdPresentation = false } = {}) {
-  const calls = [], completed = [], errors = [], placed = [], bound = [], activity = [], requests = [], geometryEnds = [], control = {};
+  const calls = [], completed = [], errors = [], placed = [], bound = [], activity = [], requests = [], geometryEnds = [], exports = [], control = {};
   const listeners = new Map(), capture = new Set();
   const canvas = { addEventListener(name, fn) { (listeners.get(name) ?? (listeners.set(name, new Set()), listeners.get(name))).add(fn); },
     removeEventListener(name, fn) { listeners.get(name)?.delete(fn); }, setPointerCapture(id) { capture.add(id); },
@@ -130,7 +131,7 @@ async function fixture({ automatic, map: suppliedMap, fetchMap, diagnostics = fa
   const mapRequests = [];
   const props = { get scene() { return scene(); }, get inputLocked() { return inputLocked(); }, canvas, control, geometry: { x: offset.x, y: offset.y, width: 1200, height: 800, scale },
     getWindowSnapMap(request) { mapRequests.push(request); return fetchMap ? fetchMap(request) : Promise.resolve(suppliedMap ?? (automatic ? { version: 1, backgroundId: 'background', width: 1200, height: 800, roots: [automatic] } : null)); },
-    viewport: { width: 1200, height: 800, deviceScale: 1 }, busy: false, geometryView: {}, geometryController: { beginPointer: () => true, previewPointer() {}, endPointer: async committed => { geometryEnds.push(committed); } }, maskOpacity: .4, placed, bound, readLayout: () => { layoutReads++; },
+    viewport: { width: 1200, height: 800, deviceScale: 1 }, busy: false, geometryView: {}, geometryController: { beginPointer: () => true, previewPointer() {}, endPointer: async committed => { geometryEnds.push(committed); } }, maskOpacity: .4, placed, bound, exports, readLayout: () => { layoutReads++; },
     onAddRegion(region) { calls.push(region); const request = deferred(); requests.push(request); return request.promise; },
     onSelectionComplete: region => completed.push(region), onSelectionActivity: value => activity.push(value), onError: value => errors.push(value) };
   const [mounted, setMounted] = solid.createSignal(true), root = renderer.createElement('root');
@@ -146,7 +147,7 @@ async function fixture({ automatic, map: suppliedMap, fetchMap, diagnostics = fa
   const drag = (x = 300, y = 260) => emit('pointermove', pointer(x, y));
   const up = (x = 300, y = 260) => emit('pointerup', pointer(x, y));
   const ack = (index = 0, patch = {}) => setScene(previous => ({ ...structuredClone(previous), regions: [...previous.regions, { ...calls[index], ...patch }] }));
-  return { control, props, calls, requests, completed, errors, placed, bound, activity, geometryEnds, document, target, mapRequests, diagnosticRows, begin, drag, up, emit, pointer, ack, setScene, scene, setInputLocked, dispose, all, outline, cutouts,
+  return { control, props, calls, requests, completed, errors, placed, bound, activity, geometryEnds, exports, document, target, mapRequests, diagnosticRows, begin, drag, up, emit, pointer, ack, setScene, scene, setInputLocked, dispose, all, outline, cutouts,
     flushPresentation:()=>{const tasks=presentationTasks.splice(0);tasks.forEach(callback=>callback());},
     get diagnosticClocks() { return diagnosticClocks; }, get layoutReads() { return layoutReads; }, get hitReads() { return hitReads; }, get pointerListeners() { return [...listeners.values()].reduce((n, set) => n + set.size, 0); } };
 }
@@ -654,4 +655,50 @@ test('a delayed saved-section handoff cannot restore cleared detached or success
       f.flushPresentation();assert.equal(f.outline(),undefined,action);assert.deepEqual(f.completed,[],action);assert.equal(f.control.state().toolbar,false,action);assert.deepEqual(f.errors,[],action);
     }finally{f.dispose();}
   }
+});
+
+const pendingEnter = (f, patch = {}) => ({ key: 'Enter', target: f.target, preventDefault() { this.defaultPrevented = true; }, stopImmediatePropagation() { this.stopped = true; }, ...patch });
+test('immediate Enter survives the exact native-save and DOM handoff once, without exporting an unsaved selection', async () => {
+  const f = await fixture({ holdPresentation: true });
+  try {
+    f.begin(); f.up(); await tick(); f.props.busy = true;
+    const event = pendingEnter(f); assert.equal(f.control.confirmPendingSelection(event), true);
+    assert.equal(event.defaultPrevented, true); assert.equal(event.stopped, true);
+    assert.equal(f.exports.length, 0); assert.equal(f.control.confirmPendingSelection(pendingEnter(f)), true);
+    f.ack(); f.requests[0].resolve(); await tick(); assert.equal(f.exports.length, 0);
+    f.props.busy = false; f.flushPresentation();
+    assert.equal(f.exports.length, 1); assert.equal(f.exports[0].region.id, f.calls[0].id);
+    assert.equal(f.exports[0].copy, true); assert.equal(f.exports[0].close, true);
+    f.setScene(previous => structuredClone(previous)); await tick(); assert.equal(f.exports.length, 1);
+  } finally { f.dispose(); }
+});
+test('failed, replaced, deactivated or newly focused editable selections never replay a pending confirmation', async () => {
+  for (const cause of ['failed', 'source', 'successor', 'blur', 'typing', 'recording']) {
+    const f = await fixture();
+    try {
+      f.begin(); f.up(); await tick(); assert.equal(f.control.confirmPendingSelection(pendingEnter(f)), true);
+      if (cause === 'failed') { f.requests[0].reject(Error('save failed')); await tick(); }
+      else {
+        if (cause === 'source') f.setScene(previous => ({ ...previous, background: { ...previous.background, id: 'new-background' }, regions: [] }));
+        if (cause === 'successor') { f.begin(500, 400); f.up(700, 600); await tick(); }
+        if (cause === 'blur') f.control.blur();
+        if (cause === 'typing') f.document.activeElement = { closest: () => true };
+        if (cause === 'recording') f.props.recordingSelection = true;
+        f.ack(); f.requests[0].resolve(); await tick();
+        if (cause === 'successor') { f.ack(1); f.requests[1].resolve(); await tick(); }
+      }
+      assert.equal(f.exports.length, 0, cause);
+    } finally { f.dispose(); }
+  }
+});
+test('pending Enter respects text focus, explicit controls, modifiers, IME, repeat and recording selection', async () => {
+  const f = await fixture();
+  try {
+    f.begin(); f.up(); await tick();
+    for (const patch of [{ key: 's' }, { isComposing: true }, { repeat: true }, { defaultPrevented: true }, { ctrlKey: true }, { metaKey: true }, { altKey: true }, { shiftKey: true }])
+      assert.equal(f.control.confirmPendingSelection(pendingEnter(f, patch)), false);
+    f.target.blocked = true; assert.equal(f.control.confirmPendingSelection(pendingEnter(f)), false); f.target.blocked = false;
+    f.props.recordingSelection = true; assert.equal(f.control.confirmPendingSelection(pendingEnter(f)), false); f.props.recordingSelection = false;
+    f.ack(); f.requests[0].resolve(); await tick(); assert.equal(f.exports.length, 0);
+  } finally { f.dispose(); }
 });

@@ -111,7 +111,7 @@ interface Props {
   maskOpacity: number;
 }
 interface Box { x: number; y: number; width: number; height: number }
-interface PendingSelection { sceneId: string; backgroundId: string; region: Region; version: number; automatic?: SnapNode; complete: boolean; acknowledged?: boolean; presented?: boolean }
+interface PendingSelection { sceneId: string; backgroundId: string; region: Region; version: number; automatic?: SnapNode; complete: boolean; acknowledged?: boolean; presented?: boolean; confirmCopy?: boolean }
 interface PluginEntry { plugin: PluginRecord; contribution: PluginContribution }
 type Handle = 'nw' | 'n' | 'ne' | 'w' | 'e' | 'sw' | 's' | 'se';
 const CORNERS: Handle[] = ['nw', 'ne', 'sw', 'se'];
@@ -632,7 +632,22 @@ export default function SpaceCanvas(props: Props) {
       setPendingSelection(undefined);
       if (pending.automatic) { snapshotSelections.bind(saved, pending.automatic); setSnapshotVersion(value => value + 1); }
       revealToolbar(saved, true); props.onSelectionComplete?.(saved);
+      if (pending.confirmCopy && !blocked() && !pendingCopyBlocked(document.activeElement)) void exportRegion(saved, true, true);
     });
+  }
+  function pendingCopyBlocked(target: Element | null | undefined) {
+    return !document.hasFocus() || props.recordingSelection || activity() || drawingSession() || imageDrawing() || exporting() || settling() || forceNew() || extensionRunning() || pluginMenu() || ocrPending() || props.translationPending || backgroundError()
+      || Boolean(target?.closest('input,textarea,select,button,a,.artifact-card,.ocr-text-layer,[contenteditable]:not([contenteditable="false"]),[role="menu"],iframe'))
+      || Boolean(document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu'));
+  }
+  function confirmPendingSelection(event: KeyboardEvent): boolean {
+    const pending = pendingSelection();
+    if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || !pending || !currentPendingSelection(pending) || pendingCopyBlocked(event.target instanceof Element ? event.target : document.activeElement)) return false;
+    // Keep the user's explicit confirmation through the store/DOM handoff.
+    // It belongs only to this exact selection and never authorizes an unsaved crop.
+    event.preventDefault(); event.stopImmediatePropagation();
+    if (!pending.confirmCopy) setPendingSelection({ ...pending, confirmCopy: true });
+    return true;
   }
   createEffect(reconcilePendingSelection);
   function editRegion(event: PointerEvent, region: Region, handle?: Handle) {
@@ -693,6 +708,7 @@ export default function SpaceCanvas(props: Props) {
       return;
     }
     if (nativeSelectOwnsEscape(event)) return;
+    if (event.key === 'Enter' && confirmPendingSelection(event)) return;
     const videoItem = props.scene.items.find(item => item.id === activeItemId() && item.asset.kind === 'video');
     if (props.onVideoCopy && videoCopyKey(event, { active: Boolean(videoItem), sceneId: props.scene.id, itemId: videoItem?.id ?? '', focused: document.hasFocus(), selectedText: Boolean(window.getSelection()?.toString()), target: event.target instanceof Element ? event.target : document.activeElement, blocked: activity() || Boolean(drawingSession()) || exporting() || forceNew() || blocked() || Boolean(pluginMenu() || document.querySelector('.modal-backdrop,.history-backdrop,.channel-popover,.reply-table-menu,[role="menu"]')) })) {
       event.preventDefault(); event.stopImmediatePropagation(); void props.onVideoCopy(videoItem!.id).catch(error => props.onError(error instanceof Error ? error.message : String(error))); return;
