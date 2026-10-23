@@ -42,7 +42,7 @@ function fixture() {
     selection: false, exiting: false, exporting: false, held: false, recording: null, scroll: null, operations: 0, references: {}, drafts: {}, errors: [] };
   const record = name => async (...args) => { f.calls.push([name, ...args]); f.saved.revision++; };
   const scope = {
-    AppControlError: control.AppControlError, disposed: false, crypto: webcrypto, drawingFlush: new DrawingFlushRegistry(),
+    AppControlError: control.AppControlError, sameControlReferences: control.sameControlReferences, disposed: false, crypto: webcrypto, drawingFlush: new DrawingFlushRegistry(),
     objectFlush: { interacting: () => f.objectInteracting ?? false },
     scene: () => f.saved.scenes.find(value => value.id === f.saved.activeSceneId), snapshot: () => f.saved,
     busy: () => f.busy, sending: () => f.sending, selectionActive: () => f.selection, exportActive: () => f.exporting,
@@ -317,4 +317,17 @@ test('actual shared send rejects a draft changed by the flush and propagates nat
   assert.equal(changed.f.calls.some(call => call[0] === 'save'), false); assert.equal(changed.f.sending, false); assert.equal(changed.f.operations, 0);
   const failure = sendFixture(); failure.f.sendFailure = true;
   await assert.rejects(failure.scope.send(true, { text: 'external task' }), /native send failed/); assert.equal(failure.f.operations, 0);
+});
+
+test('actual shared send accepts equivalent reference fields in native JSON order and rejects changed references after flush', async () => {
+  const { f, scope } = sendFixture();
+  await scope.send(true, { text: 'external task', expectedRefs: [{ id: 'region', kind: 'region' }] });
+  assert.equal(f.calls.filter(call => call[0] === 'native.send').length, 1);
+  for (const references of [[], [{ id: 'other', kind: 'region' }], [{ id: 'region', kind: 'item' }]]) {
+    const changed = sendFixture();
+    changed.f.duringFlush = async () => { changed.f.references.scene = references; };
+    await assert.rejects(changed.scope.send(true, { text: 'external task', expectedRefs: [{ id: 'region', kind: 'region' }] }), error => error.code === 'CONFLICT');
+    assert.equal(changed.f.calls.some(call => call[0] === 'save' || call[0] === 'native.send'), false);
+    assert.equal(changed.f.sending, false); assert.equal(changed.f.operations, 0);
+  }
 });

@@ -238,14 +238,14 @@ function interrupt(request: AppControlRequest): boolean {
   return request.method === 'chat.cancel' || request.method === 'scroll.control'
     || (request.method === 'recording.control' && ['stop', 'cancel'].includes(request.params.action));
 }
-function sameReferences(left: Reference[] | undefined, right: Reference[]): boolean {
+export function sameControlReferences(left: Reference[] | undefined, right: Reference[]): boolean {
   return left !== undefined && left.length === right.length
     && left.every((entry, index) => entry.kind === right[index].kind && entry.id === right[index].id);
 }
 function checkTarget(request: AppControlRequest, current: AppControlCurrent): void {
   const params = request.params as Record<string, unknown>;
   if ('expectedDraft' in params && current.draft !== params.expectedDraft) conflict();
-  if ('expectedRefs' in params && !sameReferences(current.refs, params.expectedRefs as Reference[])) conflict();
+  if ('expectedRefs' in params && !sameControlReferences(current.refs, params.expectedRefs as Reference[])) conflict();
   if (request.method === 'chat.cancel' && current.runId !== request.params.expectedRunId) conflict();
   if ('backgroundId' in params && current.backgroundId !== params.backgroundId) conflict();
   if (request.method === 'drawing.apply' || request.method === 'scene.command') {

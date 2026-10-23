@@ -77,7 +77,7 @@ import DrawingDraftsDialog from './components/DrawingDraftsDialog';
 import { discardUnsavedDrawingDraft, listUnsavedDrawingDrafts, type PendingDrawingDraft } from './components/drawing-properties';
 import { ContinuationController } from './run-journal';
 import type { ContinuationDecision, RunJournalSummary } from './journal-contracts';
-import { AppControlError, attachAppControl, type AppControlMethod, type AppControlOperation, type AppControlParameters } from './app-control';
+import { AppControlError, attachAppControl, sameControlReferences, type AppControlMethod, type AppControlOperation, type AppControlParameters } from './app-control';
 
 
 function withoutScene<T>(values: Record<string, T>, sceneId: string): Record<string, T> {
@@ -1156,7 +1156,7 @@ export default function App() {
       await regionGeometry.flush();
       if (scene()?.id !== id) throw new Error('会话已变化');
       if (controlInput?.expectedDraft !== undefined && draft() !== controlInput.expectedDraft) throw new AppControlError('CONFLICT', '对话草稿已变化');
-      if (controlInput?.expectedRefs !== undefined && JSON.stringify(refs()) !== JSON.stringify(controlInput.expectedRefs)) throw new AppControlError('CONFLICT', '截图引用已变化');
+      if (controlInput?.expectedRefs !== undefined && !sameControlReferences(refs(), controlInput.expectedRefs)) throw new AppControlError('CONFLICT', '截图引用已变化');
       const submittedDraft = controlInput?.text ?? draft(), submittedRefs = (controlInput?.refs ?? refs()).map(reference => ({ ...reference }));
       regionId = chatRegion(scene(), submittedRefs, controlInput?.regionId ?? activeCaptureRegions()[id]);
       if (controlInput?.regionId !== undefined && regionId !== controlInput.regionId) throw new AppControlError('CONFLICT', '截图引用已变化');
