@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "id": "example.region-actions",
+  "version": "0.1.0",
+  "name": "选区宿主动作",
+  "description": "通过宿主动作门面复制或贴图当前选区。",
+  "publisher": "Mewu contributors",
+  "license": "MPL-2.0",
+  "hostApi": 2,
+  "runtime": "javascript",
+  "entry": "index.mjs",
+  "permissions": ["action.clipboard", "action.pin"],
+  "tags": ["tools", "ui-enhancement"],
+  "dependencies": {}
+}

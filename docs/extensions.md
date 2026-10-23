@@ -110,6 +110,16 @@ Use the conversation's existing stop button or press Escape during region operat
 
 The separate [journal memory](../extensions/examples/journal-memory) and [interactive ruler](../extensions/examples/interactive-widget) demonstrate that these interfaces are not specific to desktop automation.
 
+## Host actions (`action.*`)
+
+`ctx.actions.invoke({ action, regionId, variant? })` asks the host to run one of its four existing region actions: `copy` (write the region, always annotated, to the clipboard), `save` (export through the native save dialog), `pin` (create a floating pinned window using the currently enabled pin contribution) and `reference` (add the region to the current conversation's references; an already-referenced region succeeds without changes). `variant: 'annotated' | 'original'` (default `annotated`) applies to `copy` and `save` only.
+
+Each action name maps to its own declared permission, dispatched per call by the host: `copy` → `action.clipboard`, `save` → `action.export`, `pin` → `action.pin`, `reference` → `action.reference`. An undeclared permission is rejected before any action starts (`HOST_PERMISSION_DENIED`).
+
+The region id comes from the host-provided invocation context — typically a `selection-toolbar` command's `context.regionId`. The space window re-checks that the region still exists in the current scene and that the host is not busy (an export in flight, recording, long screenshot or exit preparation), then runs exactly the same action implementation as the first-party toolbar. A failed or user-canceled action surfaces as a host call failure (`HOST_ACTION_FAILED`) with a fixed reason such as `已取消`, `宿主正忙` or `选区不存在或已关闭`; an unanswered request times out after 30 seconds with `动作执行超时`. This complements `region.observe`/`region.action`, which automate desktop input on Windows: host actions work on every platform, operate on the visible scene and never grant input authority.
+
+The [region-actions](../extensions/examples/region-actions) example registers two selection-toolbar commands that copy and pin the current selection through this facade.
+
 ## Lifecycle and permissions
 
 The development host also supports settings services: register a `ui` service with
