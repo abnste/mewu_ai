@@ -484,9 +484,6 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
             // is created before the user's portal consent.
             target.unminimize().map_err(|_| "无法显示截图空间")?;
             target.set_focus().map_err(|_| "无法显示截图空间")?;
-            if let PresentationPermit::Screenshot(work) = &permit {
-                if let Some(activation) = work.activation { activation.present(&widget); }
-            }
             Ok((widget,initial_size,trace))
         })();
         match start {
@@ -551,9 +548,6 @@ async fn present(window: &WebviewWindow, owned: Vec<Witness>, permit: Presentati
                                     // show/deiconify can then negotiate safely.
                                     widget.set_default_size(size.0,size.1);
                                     crate::show(target.app_handle());
-                                    if let PresentationPermit::Screenshot(work) = &permit {
-                                        if let Some(activation) = work.activation { activation.present(&widget); }
-                                    }
                                     final_size=Some(size);
                                     stable_ticks=0;
                                     return Ok(None);
@@ -779,6 +773,14 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
                 // Successful capture already completed its final native show
                 // and allocation checks before committing/publishing the image.
                 if !success {crate::show(&restore_app);}
+                // Ask for keyboard activation only after the acquired image
+                // has been adopted and this same owned surface is opaque.
+                // Earlier presents negotiate a deliberately invisible surface.
+                if success {
+                    if let (Some(activation), Ok(widget)) = (restore_work.activation, space.gtk_window()) {
+                        activation.present(&widget);
+                    }
+                }
                 #[cfg(debug_assertions)] {
                     let diagnostic_space=space.clone(); let diagnostic_owned=owned.clone();
                     gtk::glib::idle_add_local_once(move || {
