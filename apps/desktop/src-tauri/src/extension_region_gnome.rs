@@ -242,6 +242,20 @@ impl Witness {
             Ok(!alive.stopped)
         })
     }
+    pub(crate) fn request_frame(&self) -> Result<(), String> {
+        futures_lite::future::block_on(async {
+            self.check().await?;
+            let proxy = bounded(
+                Proxy::new(&self.connection, self.owner.as_str(), PATH, INTERFACE),
+                400,
+            ).await?;
+            let text: String = bounded(proxy.call("RequestFrame", &(self.token.as_str(),)), 400).await?;
+            if text.len() > 4096 { return Err(unavailable()); }
+            let response: Armed = serde_json::from_str(&text).map_err(|_| unavailable())?;
+            if response.protocol != 1 || response.epoch != self.epoch { return Err(unavailable()); }
+            self.check().await
+        })
+    }
     pub(crate) fn close(&self) {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;

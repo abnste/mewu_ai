@@ -15,6 +15,7 @@ const xml = `<node><interface name="dev.mewu.DesktopWitness">
 <method name="Arm"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
 <method name="Snapshot"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
 <method name="KeepAlive"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
+<method name="RequestFrame"><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
 <method name="Disarm"><arg type="s" direction="in"/></method>
 </interface></node>`;
 
@@ -116,6 +117,18 @@ export default class DesktopWitness extends Extension {
 
   DisarmAsync([token], invocation) { this._reply(invocation, sender => this._lease.disarm(sender, token), '()'); }
   KeepAliveAsync([token], invocation) { this._reply(invocation, sender => this._lease.snapshot(sender, token)); }
+  RequestFrameAsync([token], invocation) {
+    this._reply(invocation, sender => {
+      const lease = this._lease.snapshot(sender, token);
+      if (lease.stopped || Main.modalCount !== 0 || Main.sessionMode.isLocked !== false ||
+          Main.overview.visible !== false || global.display.is_grabbed()) throw Error('desktop unavailable');
+      // Static desktops need not emit another PipeWire frame until damaged.
+      // Only schedule a compositor repaint; pixels still come exclusively
+      // through the user's Portal stream, with a post-request PTS barrier.
+      global.stage.queue_redraw();
+      return { protocol: 1, epoch: this._epoch };
+    });
+  }
 
   disable() {
     this._object?.unexport(); this._object = null;

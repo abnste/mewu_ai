@@ -413,6 +413,11 @@ pub(super) fn capture(session: &RegionSession) -> Result<image::RgbaImage> {
             None => std::thread::sleep(Duration::from_millis(5)),
         }
     };
+    // Ask the compositor to repaint after this barrier. A static monitor may
+    // otherwise stop producing frames; never relabel a cached buffer as fresh.
+    s.witness.request_frame().map_err(|_| RegionError::new(
+        "region_desktop_witness_unavailable", "请更新并启用 Mewu Desktop Witness 后重新发起",
+    ))?;
     loop {
         check(session, &[])?;
         if Instant::now() >= expires {
