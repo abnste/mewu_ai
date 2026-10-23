@@ -6,7 +6,18 @@ GNOME 50 的区域操作见证组件。**输入和屏幕共享仍由 XDG Desktop
 
 版本 2 增加同一有效租约下的合成器重绘请求。静止桌面可能不再产生新 PipeWire 帧，宿主在建立时间屏障后请求一次重绘，随后仍须从原 Portal 流取得符合时间屏障的新帧。该请求不返回像素、不改变窗口和输入焦点，锁屏、系统模态界面、概览及已停止的租约均拒绝；不能用旧截图冒充操作反馈。
 
-该适配仍在开发验收中。开发构建包含 Linux x86_64 宿主适配，但社区区域插件仍未声明 Linux 支持，须完成真实桌面验收后才能发布。其他 GNOME 版本及其他 Wayland 合成器不在当前声明范围。键盘输入要求应用提供可验证的辅助功能角色和窗口几何；GTK4 不能可靠区分密码框的版本会拒绝自动输入，不会根据屏幕文字猜测保护状态。
+MewuAI 1.0.5 的区域操作插件支持此适配。已在 Ubuntu 26.04.1、GNOME 50.1、Wayland 完整桌面的 Firefox 中验证框选、点击、输入及截图反馈。其他 GNOME 版本及其他 Wayland 合成器不在当前声明范围。键盘输入要求应用提供可验证的辅助功能角色和窗口几何；GTK4 不能可靠区分密码框的版本会拒绝自动输入，不会根据屏幕文字猜测保护状态。
+
+从可信源码安装用户级组件（在项目根目录运行）：
+
+```sh
+mkdir -p "$HOME/.cache/mewu/witness"
+gnome-extensions pack tools/linux-desktop-witness --extra-source=policy.mjs --out-dir="$HOME/.cache/mewu/witness"
+gnome-extensions install --force "$HOME/.cache/mewu/witness/desktop-witness@mewu.ai.shell-extension.zip"
+gnome-extensions enable desktop-witness@mewu.ai
+```
+
+首次安装后若 GNOME 尚未载入组件，请正常退出桌面并重新登录。Firefox 键盘操作还需要系统应用辅助功能接口；这不要求启用屏幕朗读器。组件本身不替用户接受 Portal 授权，也不改变应用的密码框保护。
 
 契约检查：`node --experimental-vm-modules --test tools/linux-desktop-witness/*.test.mjs`。覆盖实际组件方法与租约策略，不代替 GNOME 桌面、Portal 授权及真实输入的端到端验收。
 

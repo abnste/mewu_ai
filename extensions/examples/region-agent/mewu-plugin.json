@@ -10,7 +10,9 @@
   "runtime": "javascript",
   "entry": "index.mjs",
   "platforms": [
-    "windows-x86_64"
+    "windows-x86_64",
+    "darwin-aarch64",
+    "linux-x86_64"
   ],
   "permissions": [
     "model.invoke",

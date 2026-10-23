@@ -43,7 +43,7 @@ export default definePlugin(ctx => {
 
 普通 JavaScript 插件省略清单 `platforms`、市场条目填写 `platforms: ["any"]`，同一个 ZIP 即可在 Windows、macOS、Linux 使用同一套 SDK。仅整包确实依赖本机能力时，才填写 `platforms: ["windows-x86_64"]` 等允许清单；另两个目标为 `darwin-aarch64`、`linux-x86_64`。市场不得声明比包更广的平台，`any` 不能与具体平台混用。本地安装、启用、回退、依赖和运行也受宿主校验，无法仅绕过按钮安装。
 
-同包只有个别功能受限时，用服务 `metadata.platforms` 限制该功能，其他 UI、记忆等继续跨平台。`metadata.requiresRegion: true` 的原生区域操作目前仅 Windows 可用，其他系统显示禁用原因；不能仅凭插件是 JavaScript 就宣称所有本机能力都已实现。处理函数内可按宿主提供的 `context.platform`（`windows` / `macos` / `linux`）适配可选行为。
+同包只有个别功能受限时，用服务 `metadata.platforms` 限制该功能，其他 UI、记忆等继续跨平台。`metadata.requiresRegion: true` 会核对宿主原生区域后端及系统授权，不支持的桌面会显示禁用原因；不能仅凭插件是 JavaScript 就宣称所有本机能力都已实现。处理函数内可按宿主提供的 `context.platform`（`windows` / `macos` / `linux`）适配可选行为。
 
 可注册命令、工具、Agent、记忆、模型、通讯渠道、渲染器和 UI 服务。注册发生在激活阶段；返回的函数可注销服务，`ctx.onDispose` 可登记卸载清理。服务的设置、菜单位置等通过 descriptor 的 `metadata` 声明。API 类型以 `index.d.ts` 为准。
 
@@ -126,7 +126,7 @@ PNG 缩略图（含标注）。HTML/SVG 对象返回 `{image:null, document:{htm
 worker 当前按服务调用创建；通用设置插槽见上文，常驻后台订阅与第三方场景对象 codec
 仍未完成。具体边界见 `docs/plugin-boundaries.md`。不要把注册方法存在当作产品接线完成。
 
-当前区域自动操作的原生适配器仅支持 Windows。macOS 与 Linux 的截图交互不受影响，但它们的输入适配器尚未实现，会返回明确的不支持错误。Windows 区域须来自真实截图、位于同一个前台应用内容区，目标身份、显示器、选区与输入焦点会持续校验；Esc 或宿主停止可撤权。
+区域自动操作的原生适配器支持 Windows、macOS 和 GNOME 50 Wayland x64。macOS 需要辅助功能和录屏权限；GNOME 需要 Mewu Desktop Witness 与 Portal 当次授权。其他 Linux 桌面尚未适配区域输入。区域须来自真实截图、位于同一个前台应用内容区，目标身份、显示器、选区与输入焦点会持续校验；密码框不允许填写，Esc 或宿主停止可撤权。输入送达不等于应用完成更新，插件应重新观察反馈；独立区域示例允许 `{observe:true}` 获取新图而不重放输入，观察也占用步骤预算。
 
 Windows 的 layered 窗口同时具有 `WS_EX_TRANSPARENT` 时，鼠标输入由系统穿透到下方应用，这类叠层不会阻止区域操作，但仍可能出现在授权区域的截图中。宿主不承诺截图只包含目标应用的像素；观察和鼠标操作仍校验实际命中目标，检查不能锁住外部窗口的后续变化。
 
