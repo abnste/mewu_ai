@@ -3,7 +3,7 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 export type Dispose = () => void;
-export type ServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'service';
+export type ServiceKind = 'command' | 'tool' | 'agent' | 'memory' | 'model' | 'channel' | 'renderer' | 'ui' | 'trigger' | 'service';
 export type PluginPlatform = 'any' | 'windows-x86_64' | 'darwin-aarch64' | 'linux-x86_64';
 /** SVG paths in a 24×24 viewBox. No markup, URLs, scripts or external assets. */
 export interface ExtensionIcon { paths: string[]; color?: string; filled?: boolean }
@@ -84,6 +84,22 @@ export interface RegionObservation { artifactId: string; width: number; height: 
 export interface ModelMessage { role: 'user' | 'assistant' | 'system'; content: string }
 export interface ModelRequest { prompt: string; images?: string[]; messages?: ModelMessage[] }
 export interface ModelReply { content: string; toolCalls: JsonValue[] }
+/** Hold triggers admit modifier keys only; the runtime rejects letters and
+ * digits at registration so a trigger can never forward typed characters. */
+export interface TriggerDescriptor {
+  id: string;
+  /** KeyboardEvent name of the modifier key that starts the hold. */
+  code: 'Alt' | 'Control' | 'Shift';
+  /** Extra modifiers that must be held together with code. */
+  with?: ('Ctrl' | 'Shift' | 'Alt')[];
+}
+export interface TriggerEvent {
+  phase: 'down' | 'up' | 'cancel';
+  reason?: 'escape' | 'blur';
+  /** Space-window CSS pixels at the moment of the event. */
+  pointer: { x: number; y: number; buttons: number };
+  modifiers: { ctrl: boolean; shift: boolean; alt: boolean };
+}
 export interface RenderedObject {
   html: string;
   width: number;
@@ -129,6 +145,11 @@ export interface ExtensionContext {
   readonly region: {
     observe(regionId: string): Promise<RegionObservation>;
     action(regionId: string, action: RegionAction): Promise<JsonValue>;
+  };
+  /** Hold-type modifier triggers. The host owns typing-conflict protection and
+   * forwards only phase, pointer state and modifier flags. */
+  readonly triggers: {
+    register(descriptor: TriggerDescriptor, handler: (event: TriggerEvent) => void): Dispose;
   };
   readonly services: ServiceRegistry & {
     list(kind?: ServiceKind): Promise<Array<{ pluginId: string; revision: number; serviceId: string; kind: ServiceKind; title: string }>>;

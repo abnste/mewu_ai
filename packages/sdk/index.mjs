@@ -89,6 +89,15 @@ export function createContext(send) {
       observe: regionId => host.call('region.observe', { regionId }),
       action: (regionId, action) => host.call('region.action', { regionId, action })
     }),
+    triggers: Object.freeze({
+      // Hold triggers carry modifier sets only. The host forwards phases and
+      // pointer state, never typed characters, and the runtime rejects any
+      // non-modifier code at registration.
+      register: (descriptor, handler) => register('trigger')({
+        id: descriptor.id, title: descriptor.id,
+        metadata: { trigger: { code: descriptor.code, ...(descriptor.with && descriptor.with.length ? { with: descriptor.with } : {}) } }
+      }, handler)
+    }),
     services: Object.freeze({
       register: register('service'),
       list: kind => host.call('services.list', { kind }),

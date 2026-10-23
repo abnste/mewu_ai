@@ -41,6 +41,10 @@ export function settingsExtensionServices(records: ExtensionRecord[]): Extension
     record.manifest.permissions?.includes('ui.render')
     && (service.metadata as Record<string, unknown> | undefined)?.surface === 'settings');
 }
+/** Hold triggers dispatch as ordinary invocations and need input.trigger. */
+export function triggerExtensionServices(records: ExtensionRecord[]): ExtensionServiceChoice[] {
+  return extensionServices(records, 'trigger').filter(({record}) => record.manifest.permissions.includes('input.trigger'));
+}
 function placedExtensionServices(records: ExtensionRecord[], placement: string): ExtensionServiceChoice[] {
   return extensionServices(records, 'command', true).filter(({ service }) => service.metadata !== null && typeof service.metadata === 'object'
     && !Array.isArray(service.metadata) && (service.metadata as Record<string, unknown>).placement === placement);

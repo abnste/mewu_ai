@@ -77,6 +77,10 @@ import { discardUnsavedDrawingDraft, listUnsavedDrawingDrafts, type PendingDrawi
 import { ContinuationController } from './run-journal';
 import type { ContinuationDecision, RunJournalSummary } from './journal-contracts';
 import { AppControlError, attachAppControl, type AppControlMethod, type AppControlOperation, type AppControlParameters } from './app-control';
+import * as extensions from './extension-bridge';
+import type { ExtensionRecord } from './extension-contracts';
+import { mergeExtensionRecords } from './extension-state';
+import { attachExtensionTriggers } from './extension-triggers';
 
 
 function withoutScene<T>(values: Record<string, T>, sceneId: string): Record<string, T> {
@@ -245,6 +249,8 @@ export default function App() {
   let stopControlEvents: (() => void) | undefined;
   let stopTranslationEvents: (() => void) | undefined;
   let stopPinEscape: (() => void) | undefined;
+  let stopExtensionTriggers: (() => void) | undefined;
+  let extensionRecords: ExtensionRecord[] = [];
   let pendingPin: { requestId: string; canceled: boolean } | undefined;
   let pendingMediaPin: { canceled: boolean } | undefined;
   let disposed = false;
@@ -445,6 +451,17 @@ export default function App() {
       if (disposed) { stopPluginEvents(); return; }
       acceptPlugins(await plugins.getPlugins());
     } catch (error) { showError(error); }
+    if (extensions.extensionNative) try {
+      const acceptExtensions = (value: ExtensionRecord[]) => { if (!disposed) extensionRecords = mergeExtensionRecords(extensionRecords, value); };
+      const stopExtensionState = await extensions.subscribeExtensions(acceptExtensions);
+      if (disposed) { stopExtensionState(); return; }
+      acceptExtensions(await extensions.getExtensions());
+      stopExtensionTriggers = attachExtensionTriggers({
+        sceneId: () => scene()?.id,
+        records: () => extensionRecords,
+        invoke: invocation => extensions.invokeExtension(invocation),
+      });
+    } catch (error) { showError(error); }
     try {
       stopRecordingEvents = await bridge.subscribeRecording(recordingEvent);
       if (disposed) { stopRecordingEvents(); return; }
@@ -499,7 +516,7 @@ export default function App() {
   onCleanup(() => { stopVideoEvents?.(); void videoLane.dispose().catch(() => {}); });
   onMount(() => { if (codeBridge.codeNative) void codeBridge.subscribeCodeInvalidated(id => codes.invalidate(id)).then(stop => { if (disposed) stop(); else { stopCodeEvents = stop; setCodesReady(true); } }).catch(() => {}); });
   onCleanup(() => { codes.dispose(); stopCodeEvents?.(); });
-  onCleanup(() => { disposed = true; stopControlEvents?.(); streamBuffer.dispose(); pinObjectsSubscription?.stop(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
+  onCleanup(() => { disposed = true; stopControlEvents?.(); streamBuffer.dispose(); pinObjectsSubscription?.stop(); voice.dispose(); stopVoiceEvents?.(); regionGeometry.dispose(); cancelPendingPin(); stopPinEscape?.(); stopExtensionTriggers?.(); translationRequests.dispose(); stopTranslationEvents?.(); exitPreparation.dispose(); stopExitEvents?.(); stopEvents?.(); stopRecordingEvents?.(); stopScrollEvents?.(); stopPluginEvents?.(); clearTimeout(debounce); clearTimeout(errorTimer); });
   createEffect(() => { voiceScope(); voice.reconcile(); });
   createEffect(on(() => scene()?.id, () => { voiceComposing = false; }));
   const voiceVisibility = () => { if (document.visibilityState === 'hidden') void voice.cancel().catch(showError); };
