@@ -781,7 +781,7 @@ async fn capture_inner(app: AppHandle, window: WebviewWindow, work: Arc<Work>, t
                             // X11 user time, which predates the Portal dialog.
                             // Ask GDK to let the compositor resolve CURRENT_TIME
                             // instead; never manufacture a fresh input timestamp.
-                            drawable.focus(gtk::gdk::CURRENT_TIME);
+                            drawable.focus(gtk::gdk::ffi::GDK_CURRENT_TIME as u32);
                         }
                     }
                 }
